@@ -26,15 +26,15 @@ export class AllowlistProxy {
     const server = http.createServer((req, res) => {
       let target: URL;
       try { target = new URL(req.url ?? ''); } catch { res.writeHead(400); res.end('bad request'); return; }
-      if (!hostAllowed(target.hostname, this.allow)) { this.denied.push(target.hostname); res.writeHead(403); res.end(`egress to ${target.hostname} is not on the allow-list`); return; }
+      if (!hostAllowed(target.hostname, this.allow) || (target.port && target.port !== '80')) { this.denied.push(target.hostname); res.writeHead(403); res.end(`egress to ${target.hostname}:${target.port || 80} is not allowed`); return; }
       const upstream = http.request({ host: target.hostname, port: target.port || 80, path: target.pathname + target.search, method: req.method, headers: req.headers }, (up) => { res.writeHead(up.statusCode ?? 502, up.headers); up.pipe(res); });
       upstream.on('error', () => { res.writeHead(502); res.end('upstream error'); });
       req.pipe(upstream);
     });
     server.on('connect', (req, socket, head) => {
       const [hostname, portStr] = (req.url ?? '').split(':');
-      if (!hostAllowed(hostname, this.allow)) { this.denied.push(hostname); socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return; }
       const port = Number(portStr || 443);
+      if (!hostAllowed(hostname, this.allow) || port !== 443) { this.denied.push(hostname); socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return; }
       const conn = net.connect(port, hostname, () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) conn.write(head); socket.pipe(conn); conn.pipe(socket); });
       conn.on('error', () => socket.destroy());
       socket.on('error', () => conn.destroy());

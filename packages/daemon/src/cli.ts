@@ -6,7 +6,7 @@ import { MemoryIndex } from '@cubicle/harness';
 import { Daemon, readDaemonInfo, isPidAlive } from './daemon.js';
 import { defaultConfig } from './config.js';
 import { rebuildCache } from './rebuild.js';
-import { runDoctor, formatDoctor } from './doctor.js';
+import { runDoctor, formatDoctor, doctorExitCode } from './doctor.js';
 import { createHeartbeatJob } from './heartbeat.js';
 import { createJob, listJobs, updateJob } from '@cubicle/core';
 import { writeQueueMd } from './queue-md.js';
@@ -230,14 +230,24 @@ const commands: Record<string, Handler> = {
     const rows = await runDoctor(process.env, { live: flags.live === true, buildSandbox: flags['build-sandbox'] === true, providersPath: providersConfigPath(flags) });
     console.log(formatDoctor(rows));
     const missing = rows.filter((r) => r.ok === false && r.area === 'services');
-    if (missing.length) console.log(`\nMissing service keys run in mock mode. Free signups and env var names: SETUP.md (${path.join(repoRoot(), 'SETUP.md')})`);
+    if (missing.length) console.log(`\nMissing service keys run in mock mode. See SETUP.md (${path.join(repoRoot(), 'SETUP.md')}) sections: ${missing.map((m) => m.item.split(' (')[0]).join(', ')}`);
+    process.exitCode = doctorExitCode(rows);
+  },
+  async open(args, flags) {
+    const root = resolveVaultPath(flags, args[0]);
+    const info = readDaemonInfo(root);
+    if (!info || !isPidAlive(info.pid) || !info.port) throw new Error('daemon is not running (cubicle start <vault>)');
+    const url = `http://127.0.0.1:${info.port + 1}/?token=${info.token ?? ''}`;
+    console.log(url);
+    const { spawn } = await import('node:child_process');
+    spawn('xdg-open', [url], { stdio: 'ignore', detached: true }).on('error', () => undefined).unref();
   },
   async help() {
     console.log(`cubicle <command>
 
   init <vault>              scaffold a new vault and git repo
   watch <vault>             print owner.edited events (debug)
-  start | stop | status     daemon (Phase 4)
+  start | stop | status | open   daemon; open prints/launches the office URL (with token)
   heartbeat                 force a heartbeat (Phase 4)
   providers test|refresh    model router (Phase 2)
   job add|cancel|list       job queue (Phase 4)

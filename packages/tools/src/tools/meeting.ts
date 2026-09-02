@@ -16,7 +16,7 @@ export const meetingOpen = defineTool({
   },
   async handler({ room, participants, agenda, rounds }, ctx) {
     if (!ctx.router) return { ok: false, text: 'no model router available for meetings' };
-    for (const p of participants) if (!isValidRoleId(p) || !ctx.vault.exists(`Roles/${p}.md`)) return { ok: false, text: `unknown role ${p}` };
+    for (const p of participants) { if (!isValidRoleId(p) || !ctx.vault.exists(`Roles/${p}.md`)) return { ok: false, text: `unknown role ${p}` }; const rf = RoleFrontmatter.safeParse(ctx.vault.readNoteOrNull(`Roles/${p}.md`)?.data); if (rf.success && !rf.data.active) return { ok: false, text: `${p} is not active` }; }
     const id = ctx.idempotencyKey ? idFromKey('meet', ctx.idempotencyKey) : makeId('meet');
     const rel = `Meetings/${stampForFilename()}-${room}-${id.slice(-6)}.md`;
     if (ctx.vault.list('Meetings', { ext: '.md' }).some((r) => r.endsWith(`-${id.slice(-6)}.md`))) return { ok: true, text: `meeting ${id} already held (replayed step)` };
@@ -41,12 +41,19 @@ export const meetingOpen = defineTool({
         catch (err) { text = `(no model available: ${(err as Error).message.slice(0, 80)})`; }
         transcript.push({ round, role, text });
         ctx.events.emit({ type: 'meeting.turn', agent: role, job: ctx.jobId, payload: { id, round, text: text.slice(0, 280) } });
+        // Persist after every turn (spec §1.2): a kill mid-meeting keeps the transcript so far.
+        ctx.vault.writeText(rel, stringifyNote({ id, room, opened: nowIso(), facilitator: ctx.roleId, participants: all, status: 'in_progress' }, `# ${room === 'board' ? 'Board' : 'Meeting'}: ${agenda.split('\n')[0].slice(0, 80)}\n\n## Agenda\n\n${agenda}\n\n## Transcript\n\n${transcript.map((t) => `**Round ${t.round} — ${t.role}:** ${t.text}`).join('\n\n')}\n`), ctx.roleId, { job: ctx.jobId, silent: true });
       }
     }
     let decisions = '';
     try {
       decisions = await say(ctx.roleId, `Agenda: ${agenda}\n\nTranscript:\n${transcript.map((t) => `${t.role}: ${t.text}`).join('\n')}\n\nAs facilitator, close the meeting. Output markdown with sections: ## Context, ## Options considered, ## Chosen, ## Why, ## Expected effect, ## Review date (ISO date about two weeks out). Be decisive.`, 'strong', 700);
-    } catch { decisions = '## Chosen\n\n(no model available to summarise; see transcript)'; }
+    } catch { decisions = ''; }
+    const required = ['## Context', '## Options considered', '## Chosen', '## Why', '## Expected effect', '## Review date'];
+    if (!required.every((h) => decisions.includes(h))) {
+      const review = new Date(Date.now() + 14 * 86400_000).toISOString().slice(0, 10);
+      decisions = `## Context\n\n${agenda}\n\n## Options considered\n\n${transcript.map((t) => `- ${t.role}: ${t.text.slice(0, 200)}`).join('\n')}\n\n## Chosen\n\n${decisions.trim() || '(no model summary available; the facilitator must decide from the transcript)'}\n\n## Why\n\nSee transcript.\n\n## Expected effect\n\nTo be verified by the COO.\n\n## Review date\n\n${review}`;
+    }
     const decId = idFromKey('dec', id);
     const decRel = `Decisions/${stampForFilename()}-${decId.slice(-6)}.md`;
     ctx.vault.writeText(decRel, stringifyNote({ id: decId, decided_by: ctx.roleId, cycle: ctx.jobId ?? '', status: 'adopted', inputs: [`[[${rel.replace(/\.md$/, '')}]]`], owner_rating: null }, `# Decision from ${room} meeting\n\n${decisions}\n`), ctx.roleId, { job: ctx.jobId });

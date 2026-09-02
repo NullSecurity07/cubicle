@@ -5,6 +5,7 @@ The CEO reads this every heartbeat. Free text is fine; the `approvals:` block is
 ```yaml
 approvals: {}
 feedback: []
+shell_local_fallback: false   # true = allow a bubblewrap-jailed local shell when Docker is unavailable
 ```
 
 ## How I like to work

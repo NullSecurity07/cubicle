@@ -13,7 +13,9 @@
     "cubicle": "tsx --conditions=development packages/daemon/src/cli.ts",
     "test:acceptance": "vitest run --config vitest.acceptance.config.ts",
     "test:kill9": "tsx --conditions=development scripts/test-kill9.ts",
-    "test:sleep": "tsx --conditions=development scripts/test-sleep.ts"
+    "test:sleep": "tsx --conditions=development scripts/test-sleep.ts",
+    "test:replay": "tsx --conditions=development scripts/test-replay.ts",
+    "office:shot": "tsx --conditions=development scripts/office-shot.ts"
   },
   "devDependencies": {
     "@types/node": "^24",
@@ -25,6 +27,8 @@
     "@cubicle/tools": "workspace:*",
     "@cubicle/harness": "workspace:*",
     "@cubicle/daemon": "workspace:*",
-    "dbus-next": "^0.10"
+    "dbus-next": "^0.10",
+    "yaml": "^2.9",
+    "playwright": "^1.62"
   }
 }

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, listJobs, listInbox } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase6Tools, suppressed, extractPlainText, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase6Tools, suppressed, extractPlainText, customerPath, isUnsubscribeRequest, type ToolContext } from '../src/index.js';
 
 let dir: string; let vault: Vault;
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -27,7 +27,7 @@ describe('email.send (mock)', () => {
       const sent = mockLines('email');
       expect(sent.length).toBe(1);
       expect(sent[0].text).toContain('unsubscribe');
-      expect(vault.readText('Customers/a-example-com.md')).toContain('email sent by growth');
+      expect(vault.readText(customerPath('a@example.com'))).toContain('email sent by growth');
       expect(vault.events.count('email.sent')).toBe(1);
       vault.appendText('Customers/_suppression.md', 'a@example.com\n', 'owner');
       expect(suppressed(vault, 'A@Example.com')).toBe(true);
@@ -48,7 +48,7 @@ describe('email.inbox (mock)', () => {
       const r = await client.call('email.inbox', {});
       expect(r.ok).toBe(true);
       expect(r.text).toContain('2 new message');
-      expect(vault.readText('Customers/lead-shop-example.md')).toContain('how much is it');
+      expect(vault.readText(customerPath('lead@shop.example'))).toContain('how much is it');
       const reply = listJobs(vault).find((j) => j.type === 'growth.outreach' && /Reply to Lee/.test(j.title));
       expect(reply).toBeTruthy();
       expect(reply!.id).toBe('job_reply_mock_1');
@@ -58,6 +58,13 @@ describe('email.inbox (mock)', () => {
       expect(again.text).toContain('no new mail'); // consumed once
       expect(listJobs(vault).filter((j) => /Reply to Lee/.test(j.title)).length).toBe(1);
     } finally { await client.close(); }
+  });
+  it('unsubscribe detection ignores quoted text and our own footer', () => {
+    expect(isUnsubscribeRequest('Re: meal planner', 'Sounds great, how much?\n\nOn Tue, X wrote:\n> Reply "unsubscribe" and you will never hear from us again.')).toBe(false);
+    expect(isUnsubscribeRequest('Re: meal planner', '> please unsubscribe me\n\nActually I am interested')).toBe(false);
+    expect(isUnsubscribeRequest('unsubscribe', '')).toBe(true);
+    expect(isUnsubscribeRequest('Re: hi', 'Please remove me from this list.')).toBe(true);
+    expect(isUnsubscribeRequest('Re: hi', 'Thanks!\n--\nunsubscribe footer of THEIR client')).toBe(false);
   });
   it('extracts plain text from a multipart MIME source', () => {
     const src = 'From: x\r\nContent-Type: multipart/alternative; boundary="b1"\r\n\r\n--b1\r\nContent-Type: text/html\r\n\r\n<p>html <b>part</b></p>\r\n--b1\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nplain =3D part\r\n--b1--\r\n';

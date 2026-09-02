@@ -36,4 +36,21 @@ export const gitCommit = defineTool({
   },
 });
 
-export const gitTools = [gitLog, gitDiff, gitCommit];
+export const gitRevert = defineTool({
+  name: 'git.revert',
+  description: 'Discard uncommitted changes under a Site/ path you made (never owner-changed files), restoring the last commit.',
+  schema: { path: z.string().default('Site') },
+  async handler({ path }, ctx) {
+    const rel = path.replace(/^\/+/, '');
+    if (!rel.startsWith('Site')) return { ok: false, text: 'git.revert only works under Site/' };
+    const changed = (await gitFor(ctx.vault.root).raw(['status', '--porcelain', '--', rel])).split('\n').filter(Boolean).map((l) => l.slice(3).trim());
+    const ownerChanged = changed.filter((f) => ctx.vault.isOwnerChanged(f));
+    if (ownerChanged.length) return { ok: false, text: `refusing: owner-changed files would be lost: ${ownerChanged.join(', ')}` };
+    await gitFor(ctx.vault.root).raw(['checkout', '--', rel]).catch(() => undefined);
+    await gitFor(ctx.vault.root).raw(['clean', '-fd', '--', rel]).catch(() => undefined);
+    ctx.vault.rescan('Site', ctx.roleId, { job: ctx.jobId });
+    return { ok: true, text: `reverted ${changed.length} file(s) under ${rel}` };
+  },
+});
+
+export const gitTools = [gitLog, gitDiff, gitCommit, gitRevert];

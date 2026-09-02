@@ -36,6 +36,7 @@ export interface DispatcherDeps {
   wake?: () => void;
   onRoleHired?: (role: string) => void;
   onRoleFired?: (role: string) => void;
+  guardrails?: { check(tool: string, args: Record<string, unknown>, ctx: ToolContext): Promise<string | null> | string | null }[];
 }
 
 function fenced(body: string): string | null {
@@ -60,6 +61,7 @@ export async function executeStoredCall(deps: DispatcherDeps, note: { path: stri
   const ctx: ToolContext = { vault: deps.vault, events: deps.vault.events, roleId, role, jobId, config: deps.toolsConfig, env: deps.env, scheduler: deps.scheduler, workspace: `.cubicle/workspace/${jobId ?? 'daemon'}`, now: () => new Date(), idempotencyKey: call.idempotency_key };
   const def = deps.registry.get(call.tool);
   if (!def) return { ok: false, text: `unknown tool ${call.tool}` };
+  for (const g of deps.guardrails ?? []) { const v = await g.check(call.tool, call.args, ctx); if (v) { deps.vault.events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason: v, approved: true } }); return { ok: false, text: `blocked even though approved: ${v}` }; } }
   const client = await createRoleToolClient([def], ctx);
   try {
     const res = await client.call(call.tool, call.args, { idempotencyKey: call.idempotency_key });

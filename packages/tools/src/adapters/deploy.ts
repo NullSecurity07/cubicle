@@ -13,15 +13,16 @@ export function deployer(env: NodeJS.ProcessEnv, repoRoot: string): Deployer {
       mode: 'live',
       deploy(_vault, { project, dir }) {
         return new Promise((resolve) => {
-          const args = ['exec', 'wrangler', 'pages', 'deploy', dir, '--project-name', project, '--commit-dirty=true'];
+          const args = ['exec', 'wrangler', 'pages', 'deploy', dir, '--project-name', project, '--branch', 'main', '--commit-dirty=true'];
           const p = spawn('pnpm', args, { cwd: repoRoot, env: { ...env, CI: '1', WRANGLER_SEND_METRICS: 'false' } });
           let out = '';
           p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (out += d));
           const t = setTimeout(() => p.kill('SIGKILL'), 10 * 60_000);
           p.on('close', (code) => {
             clearTimeout(t);
-            const url = out.match(/https:\/\/[a-z0-9.-]+\.pages\.dev\S*/i)?.[0]?.replace(/[.,)]+$/, '');
-            resolve({ ok: code === 0 && !!url, url, detail: code === 0 ? `deployed ${url ?? '(url not found in output)'}` : `wrangler exit ${code}: ${out.slice(-600)}` });
+            const preview = out.match(/https:\/\/[a-z0-9.-]+\.pages\.dev\S*/i)?.[0]?.replace(/[.,)]+$/, '');
+            const url = code === 0 ? `https://${project}.pages.dev` : undefined; // production URL of the main branch; the preview URL changes per deploy
+            resolve({ ok: code === 0, url, detail: code === 0 ? `deployed ${url}${preview ? ` (this deployment: ${preview})` : ''}` : `wrangler exit ${code}: ${out.slice(-600)}` });
           });
         });
       },

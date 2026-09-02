@@ -13,6 +13,8 @@ import { createHeartbeatJob, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
 import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, feedbackFor } from './evolution.js';
+import { StaticServer } from './static.js';
+import { pruneScreens } from './prune.js';
 
 export interface DaemonOverrides {
   llm?: Llm;
@@ -60,6 +62,7 @@ export class Daemon {
   registry!: ToolRegistry;
   workers!: WorkerPool;
   ws: WsServer | null = null;
+  web: StaticServer | null = null;
   memory: MemoryIndex | null = null;
   private watcher: VaultWatcher | null = null;
   private sleepWatcher: SleepWatcher | null = null;
@@ -71,6 +74,8 @@ export class Daemon {
   private jobsDoneSinceHeartbeat = 0;
   private heartbeatRequested: string | null = null;
   private startedAt = new Date();
+  private lastPrune = 0;
+  private guardrails: import('@cubicle/harness').Guardrail[] = [];
 
   constructor(public readonly config: DaemonConfig, private overrides: DaemonOverrides = {}) {
     this.log = overrides.log ?? ((m) => console.log(`[cubicle] ${m}`));
@@ -98,6 +103,7 @@ export class Daemon {
     }
     const scheduler = vaultScheduler(this.vault, 'daemon');
     const guardrails = [constitutionGuardrail(this.router), ...(this.overrides.guardrails ?? [])];
+    this.guardrails = guardrails;
     const openMeeting = async (agenda: string): Promise<string | null> => {
       const ceoNote = this.vault.readNoteOrNull('Roles/ceo.md');
       if (!ceoNote) return null;
@@ -117,8 +123,9 @@ export class Daemon {
       const client = await createRoleToolClient([tool], ctx);
       try { return await client.call(tool.name, args); } finally { await client.close(); }
     };
-    const pollInbox = async (): Promise<string[]> => { const r = await runSystemTool('coo', emailInbox, {}); return r?.ok ? r.text.split('\n').slice(1) : []; };
-    const pullAnalytics = async (): Promise<string | null> => { const r = await runSystemTool('coo', analyticsPull, {}); return r?.ok ? r.text : null; };
+    const withTimeout = <T,>(p: Promise<T>, ms: number, what: string): Promise<T> => Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms} ms`)), ms).unref())]);
+    const pollInbox = async (): Promise<string[]> => { const r = await withTimeout(runSystemTool('coo', emailInbox, {}), 60_000, 'email.inbox'); return r?.ok ? r.text.split('\n').slice(1) : []; };
+    const pullAnalytics = async (): Promise<string | null> => { const r = await withTimeout(runSystemTool('coo', analyticsPull, {}), 60_000, 'analytics.pull'); return r?.ok ? r.text : null; };
     const ownerFeedback = (roleId: string) => feedbackFor(collectOwnerFeedback(this.vault, this.vault.events.last('heartbeat.completed')?.ts), roleId).map((f) => `- (${f.source}) ${f.text}`);
     this.workers = new WorkerPool(this.vault, {
       harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback },
@@ -168,6 +175,9 @@ export class Daemon {
       const onFrame = (f: { session: string; seq: number; jpegBase64: string }) => this.ws?.frame(f.session, f.seq, f.jpegBase64);
       browserFrames.on('frame', onFrame);
       this.offEvents.push(() => browserFrames.off('frame', onFrame));
+      this.web = new StaticServer({ port: cfg.port + 1, vaultRoot: cfg.vaultPath, log: this.log });
+      const webPort = await this.web.start();
+      if (webPort) this.log(`open the office: http://127.0.0.1:${webPort}/?token=${this.ws.token}`);
     }
     writeFileSync(daemonInfoPath(cfg.vaultPath), JSON.stringify({ pid: process.pid, port: this.ws ? cfg.port : null, started: nowIso(), vault: cfg.vaultPath, token: this.ws?.token } satisfies DaemonInfo, null, 2), { mode: 0o600 });
     this.offSignals = onProcessSignals((s) => { this.log(`${s} received; checkpointing`); void this.stop().then(() => process.exit(0)); });
@@ -204,7 +214,8 @@ export class Daemon {
     if (this.stopping || this.ticking) return;
     this.ticking = true;
     try {
-      const n = await dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake() });
+      const n = await dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake(), guardrails: this.guardrails });
+      if (Date.now() - this.lastPrune > 3600_000) { this.lastPrune = Date.now(); const pruned = pruneScreens(this.vault); if (pruned) this.log(`pruned ${pruned} old screencast frames`); }
       if (n) this.log(`tick(${reason}): ${n} proposal/unblock action(s)`);
       const reviews = enqueueExperimentReviews(this.vault);
       if (reviews.length) this.log(`tick(${reason}): ${reviews.length} experiment review(s) queued`);
@@ -239,6 +250,7 @@ export class Daemon {
     await this.watcher?.stop();
     await this.sleepWatcher?.stop();
     await this.ws?.stop();
+    await this.web?.stop();
     try { rmSync(daemonInfoPath(this.config.vaultPath), { force: true }); } catch { /* ignore */ }
     // Keep the DB open until the process exits: a late LLM return in a worker must not throw on a closed handle.
     if (this.overrides.closeDbOnStop !== false) { setTimeout(() => { try { this.vault.close(); } catch { /* ignore */ } }, 250).unref(); }

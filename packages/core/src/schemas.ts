@@ -118,6 +118,8 @@ export type Constitution = z.infer<typeof Constitution>;
 export const OwnerPreferences = z.object({
   approvals: z.record(z.string(), ApprovalMode).default({}),
   feedback: z.array(z.string()).default([]),
+  /** Allow a bubblewrap-jailed local shell when Docker is unavailable (default: refuse). */
+  shell_local_fallback: z.boolean().default(false),
 });
 export type OwnerPreferences = z.infer<typeof OwnerPreferences>;
 

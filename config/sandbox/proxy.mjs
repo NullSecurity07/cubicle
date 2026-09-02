@@ -10,15 +10,15 @@ const ok = (host) => { const h = String(host).toLowerCase().replace(/:\d+$/, '')
 const log = (m) => process.stdout.write(`${new Date().toISOString()} ${m}\n`);
 const server = http.createServer((req, res) => {
   let t; try { t = new URL(req.url); } catch { res.writeHead(400); return res.end('bad request'); }
-  if (!ok(t.hostname)) { log(`DENY ${t.hostname}`); res.writeHead(403); return res.end(`egress to ${t.hostname} is not on the allow-list`); }
+  if (!ok(t.hostname) || (t.port && t.port !== '80')) { log(`DENY ${t.hostname}:${t.port || 80}`); res.writeHead(403); return res.end(`egress to ${t.hostname} is not allowed`); }
   const up = http.request({ host: t.hostname, port: t.port || 80, path: t.pathname + t.search, method: req.method, headers: req.headers }, (u) => { res.writeHead(u.statusCode || 502, u.headers); u.pipe(res); });
   up.on('error', () => { res.writeHead(502); res.end('upstream error'); });
   req.pipe(up);
 });
 server.on('connect', (req, socket, head) => {
   const [host, p] = String(req.url).split(':');
-  if (!ok(host)) { log(`DENY ${host}`); socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); return socket.destroy(); }
-  const conn = net.connect(Number(p || 443), host, () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) conn.write(head); socket.pipe(conn); conn.pipe(socket); });
+  if (!ok(host) || Number(p || 443) !== 443) { log(`DENY ${host}:${p || 443}`); socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); return socket.destroy(); }
+  const conn = net.connect(443, host, () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) conn.write(head); socket.pipe(conn); conn.pipe(socket); });
   conn.on('error', () => socket.destroy()); socket.on('error', () => conn.destroy());
 });
 server.listen(port, '0.0.0.0', () => log(`allowlist proxy on :${port} (${allow.join(', ')})`));

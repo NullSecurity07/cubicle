@@ -99,6 +99,7 @@ export class Vault {
       files = [];
       const walk = (d: string) => {
         for (const e of readdirSync(d, { withFileTypes: true })) {
+          if (e.isSymbolicLink()) continue; // never follow links (a sandbox could plant one)
           const a = path.join(d, e.name);
           const r = this.rel(a);
           if (isCachePath(r)) continue;
@@ -107,7 +108,7 @@ export class Vault {
       };
       walk(abs);
     } else {
-      files = readdirSync(abs, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => this.rel(path.join(abs, e.name)));
+      files = readdirSync(abs, { withFileTypes: true }).filter((e) => e.isFile() && !e.isSymbolicLink()).map((e) => this.rel(path.join(abs, e.name)));
     }
     if (opts.ext) files = files.filter((f) => f.endsWith(opts.ext!));
     return files.sort();

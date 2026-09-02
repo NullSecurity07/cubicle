@@ -1,6 +1,5 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, existsSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
@@ -14,12 +13,13 @@ export const SANDBOX_IMAGE = 'cubicle-sandbox';
 const SHELL_TIMEOUT_MS = 5 * 60_000;
 const MAX_OUTPUT = 60_000;
 
-let dockerAvailable: boolean | null = null;
+let dockerAvailable: { at: number; ok: boolean } | null = null;
 export function hasDocker(): boolean {
-  if (dockerAvailable !== null) return dockerAvailable;
-  try { execFileSync('docker', ['info', '--format', '{{.ServerVersion}}'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000 }); dockerAvailable = true; }
-  catch { dockerAvailable = false; }
-  return dockerAvailable;
+  if (dockerAvailable && Date.now() - dockerAvailable.at < 60_000) return dockerAvailable.ok; // re-check every minute (Docker may start later)
+  let ok = false;
+  try { execFileSync('docker', ['info', '--format', '{{.ServerVersion}}'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000 }); ok = true; } catch { ok = false; }
+  dockerAvailable = { at: Date.now(), ok };
+  return ok;
 }
 export function hasSandboxImage(): boolean {
   try { execFileSync('docker', ['image', 'inspect', SANDBOX_IMAGE], { stdio: 'ignore', timeout: 8000 }); return true; } catch { return false; }
@@ -51,7 +51,8 @@ export function ensureProxySidecar(allow: string[], log: (m: string) => void = (
   } catch { /* not present */ }
   if (!running) {
     docker(['run', '-d', '--name', PROXY_CONTAINER, '--restart', 'unless-stopped', '--label', `cubicle.allow=${wanted}`, '--network', 'bridge',
-      '--memory', '128m', '-v', `${proxyScriptPath()}:/proxy.mjs:ro`, 'node:26-bookworm', 'node', '/proxy.mjs', '--port', String(PROXY_PORT), '--allow', wanted]);
+      '--memory', '128m', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--user', '65534:65534', '--tmpfs', '/tmp',
+      '--mount', `type=bind,src=${proxyScriptPath()},dst=/proxy.mjs,readonly`, 'node:26-bookworm', 'node', '/proxy.mjs', '--port', String(PROXY_PORT), '--allow', wanted]);
     docker(['network', 'connect', INTERNAL_NETWORK, PROXY_CONTAINER]);
     log(`started ${PROXY_CONTAINER} (${wanted})`);
   }
@@ -100,9 +101,11 @@ export const shellRun = defineTool({
     let result: RunResult;
     let proxied = false;
     if (hasDocker() && hasSandboxImage()) {
-      const args = ['run', '--rm', '--init', '--name', `cubicle-${sessionId}`.replace(/[^a-zA-Z0-9_.-]/g, '-'),
-        '-v', `${siteDir}:/work/Site`, '-v', `${scratchDir}:/work/scratch`, '-w', cwd === 'Site' ? '/work/Site' : '/work/scratch',
-        '--memory', '2g', '--cpus', '2', '--pids-limit', '512', '-e', 'HOME=/work/scratch', '-e', 'CI=1', '-e', 'npm_config_update_notifier=false', '-e', 'npm_config_cache=/work/scratch/.npm'];
+      const cname = `cubicle-${sessionId}`.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 60);
+      const args = ['run', '--rm', '--init', '--name', cname,
+        '--mount', `type=bind,src=${siteDir},dst=/work/Site`, '--mount', `type=bind,src=${scratchDir},dst=/work/scratch`, '-w', cwd === 'Site' ? '/work/Site' : '/work/scratch',
+        '--memory', '2g', '--cpus', '2', '--pids-limit', '512', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:exec',
+        '-e', 'HOME=/work/scratch', '-e', 'CI=1', '-e', 'npm_config_update_notifier=false', '-e', 'npm_config_cache=/work/scratch/.npm'];
       // Run as the host user so files written under Site/ stay editable by the owner and the daemon.
       if (typeof process.getuid === 'function' && typeof process.getgid === 'function') args.push('--user', `${process.getuid()}:${process.getgid()}`);
       if (network === 'allowlist') {
@@ -117,15 +120,31 @@ export const shellRun = defineTool({
       } else {
         args.push('--network', 'none');
       }
-      args.push(SANDBOX_IMAGE, 'bash', '-lc', command);
-      const r = await runProcess('docker', args, { timeoutMs, onOutput });
-      if (r.timedOut) { try { execFileSync('docker', ['rm', '-f', `cubicle-${sessionId}`.replace(/[^a-zA-Z0-9_.-]/g, '-')], { stdio: 'ignore' }); } catch { /* gone */ } }
-      result = { ...r, mode: 'docker' };
+      // `timeout` inside the container too: a daemon kill -9 must not leave an unbounded process running.
+      args.push(SANDBOX_IMAGE, 'timeout', '--signal=KILL', String(Math.ceil(timeoutMs / 1000)), 'bash', '-lc', command);
+      const r = await runProcess('docker', args, { timeoutMs: timeoutMs + 5000, onOutput });
+      if (r.timedOut || r.code === 137) { try { execFileSync('docker', ['rm', '-f', cname], { stdio: 'ignore' }); } catch { /* gone */ } }
+      result = { ...r, timedOut: r.timedOut || r.code === 137, mode: 'docker' };
     } else {
-      // Fallback: restricted local shell in the scratch workspace (no Docker on this machine).
-      ctx.events.emit({ type: 'daemon.warning', agent: ctx.roleId, job: ctx.jobId, payload: { where: 'shell.run', message: hasDocker() ? `image ${SANDBOX_IMAGE} missing (run: cubicle doctor --build-sandbox); using local shell` : 'Docker unavailable; using restricted local shell' } });
-      const env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: scratchDir, TMPDIR: os.tmpdir(), CI: '1', LANG: 'C.UTF-8', CUBICLE_SANDBOX: 'local' };
-      const r = await runProcess('bash', ['-c', command], { cwd: cwd === 'Site' ? siteDir : scratchDir, env, timeoutMs, onOutput });
+      // No sandbox. The local fallback is opt-in (owner_preferences: shell_local_fallback: true) and jailed with bwrap when available.
+      const why = hasDocker() ? `image ${SANDBOX_IMAGE} missing (run: cubicle doctor --build-sandbox)` : 'Docker unavailable';
+      if (!ctx.vault.ownerPreferences().shell_local_fallback) {
+        ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: 'shell.run', reason: `${why}; local shell fallback is disabled (set shell_local_fallback: true in Memory/owner_preferences.md to allow a bwrap-jailed local shell)` } });
+        return { ok: false, text: `blocked: ${why}. The owner can enable a jailed local shell with shell_local_fallback: true in Memory/owner_preferences.md.` };
+      }
+      ctx.events.emit({ type: 'daemon.warning', agent: ctx.roleId, job: ctx.jobId, payload: { where: 'shell.run', message: `${why}; using the jailed local shell` } });
+      const env: NodeJS.ProcessEnv = { PATH: '/usr/bin:/bin', HOME: '/work/scratch', TMPDIR: '/tmp', CI: '1', LANG: 'C.UTF-8', CUBICLE_SANDBOX: 'local' };
+      let hasBwrap = false;
+      try { execFileSync('bwrap', ['--version'], { stdio: 'ignore', timeout: 3000 }); hasBwrap = true; } catch { hasBwrap = false; }
+      if (!hasBwrap) {
+        ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: 'shell.run', reason: 'bwrap (bubblewrap) is not installed; refusing an unjailed local shell' } });
+        return { ok: false, text: 'blocked: no Docker sandbox and no bubblewrap (bwrap) to jail a local shell. Install Docker or bubblewrap.' };
+      }
+      const bw = ['--ro-bind', '/usr', '/usr', '--ro-bind', '/etc', '/etc', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/sbin', '/sbin',
+        '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--bind', siteDir, '/work/Site', '--bind', scratchDir, '/work/scratch', '--chdir', cwd === 'Site' ? '/work/Site' : '/work/scratch',
+        '--unshare-all', '--die-with-parent', '--new-session', '--clearenv'];
+      for (const [k, v] of Object.entries(env)) bw.push('--setenv', k, String(v));
+      const r = await runProcess('bwrap', [...bw, 'bash', '-c', command], { timeoutMs, onOutput });
       result = { ...r, mode: 'local' };
     }
     // Out-of-band writes: record them so owner-edit detection stays exact (R2).
@@ -136,14 +155,3 @@ export const shellRun = defineTool({
     return { ok: !result.timedOut && result.code === 0, text: `[${result.mode}] ${status}${denied}\n${result.output || '(no output)'}${changed.length ? `\n[changed under Site/: ${changed.slice(0, 20).join(', ')}${changed.length > 20 ? ` +${changed.length - 20} more` : ''}]` : ''}`, data: { code: result.code, timedOut: result.timedOut, mode: result.mode, changed } };
   },
 });
-
-export function sandboxDockerfile(): string {
-  return `# cubicle-sandbox: what the Engineer's shell.run gets. Node + pnpm + Astro preinstalled so the default (no-network) mode can scaffold and build.
-FROM node:26-bookworm
-RUN corepack enable && corepack prepare pnpm@11 --activate || npm install -g pnpm@11
-RUN npm install -g astro@7 create-astro@latest && useradd -m -u 1000 -s /bin/bash worker || true
-WORKDIR /work/Site
-ENV CI=1 npm_config_update_notifier=false
-CMD ["bash"]
-`;
-}

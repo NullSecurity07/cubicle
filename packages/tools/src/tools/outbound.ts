@@ -8,6 +8,31 @@ import { deployer } from '../adapters/deploy.js';
 import { paymentLinks } from '../adapters/stripe.js';
 import { analytics, upsertDailyRow } from '../adapters/analytics.js';
 import { slugify } from '../adapters/common.js';
+import { createHash } from 'node:crypto';
+
+/** Customer note path: slug + short hash so a.b@x and a-b@x never merge. */
+export function customerPath(email: string): string {
+  const e = email.trim().toLowerCase();
+  return `Customers/${slugify(e)}-${createHash('sha1').update(e).digest('hex').slice(0, 6)}.md`;
+}
+
+/** Emails sent today (UTC): from the event log, or from Customers/ timelines when the cache was wiped. */
+export function emailsSentToday(vault: import('@cubicle/core').Vault, now = new Date()): number {
+  const day = now.toISOString().slice(0, 10);
+  const fromEvents = vault.events.count('email.sent', `${day}T00:00:00.000Z`);
+  let fromNotes = 0;
+  for (const rel of vault.list('Customers', { ext: '.md' })) { const t = vault.readTextOrNull(rel) ?? ''; fromNotes += (t.match(new RegExp(`^- ${day}T[^\\n]* email sent by`, 'gm')) ?? []).length; }
+  return Math.max(fromEvents, fromNotes);
+}
+
+/** True when the mail's own words (not quoted text, not our footer) ask to stop. */
+export function isUnsubscribeRequest(subject: string, text: string): boolean {
+  if (/^\s*(re:\s*)?unsubscribe\b/i.test(subject)) return true;
+  const own = text.split('\n').filter((l) => !/^\s*>/.test(l));
+  const cut = own.findIndex((l) => /^On .+ wrote:\s*$/.test(l) || /^-{2,}\s*Original Message/i.test(l) || /^--\s*$/.test(l) || /Reply "unsubscribe" and you will never hear from us again/i.test(l));
+  const body = (cut >= 0 ? own.slice(0, cut) : own).map((l) => l.trim()).filter(Boolean).slice(0, 5).join('\n');
+  return /^(please\s+)?(unsubscribe|stop emailing( me)?|remove me|take me off)\b/im.test(body);
+}
 
 function requireKey(ctx: { idempotencyKey?: string }): string | null {
   return ctx.idempotencyKey ?? null;
@@ -21,12 +46,16 @@ export const emailSend = defineTool({
     const key = requireKey(ctx);
     if (!key) return { ok: false, text: 'email.send requires an idempotency key (harness bug)' };
     if (suppressed(ctx.vault, to)) { ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: 'email.send', reason: 'suppressed address', to } }); return { ok: false, text: `${to} is on the suppression list; never email them` }; }
+    // Constitution hard cap, enforced here (tool layer) — not only in the harness pre-check, so approved or dispatched calls obey it too.
+    const cap = ctx.vault.constitution().max_emails_per_day;
+    const sent = emailsSentToday(ctx.vault, ctx.now());
+    if (sent >= cap) { ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: 'email.send', reason: `max_emails_per_day (${cap}) reached (${sent} sent today)`, to } }); return { ok: false, text: `blocked: constitution max_emails_per_day (${cap}) reached — ${sent} sent today` }; }
     const brand = parseNote(ctx.vault.readTextOrNull('Brand/name.md') ?? '').data as { name?: string };
     const sender = emailSender(ctx.env);
     const text = body.trimEnd() + UNSUBSCRIBE_FOOTER(brand.name ? `— ${brand.name}` : '');
     const res = await sender.send(ctx.vault, { to, toName: to_name, subject, text, html: html ? html + `<p style="color:#888;font-size:12px">Reply "unsubscribe" and you will never hear from us again.</p>` : undefined, idempotencyKey: key });
     if (!res.ok) return { ok: false, text: `send failed: ${res.detail}` };
-    const rel = `Customers/${slugify(to)}.md`;
+    const rel = customerPath(to);
     const existing = ctx.vault.readNoteOrNull(rel);
     const data = { ...(existing?.data ?? { email: to, name: to_name ?? '', status: 'contacted', created: nowIso() }), last_contact: nowIso(), touches: Number((existing?.data as { touches?: number })?.touches ?? 0) + 1 };
     const bodyMd = (existing?.body ?? `# ${to_name || to}\n\n## Timeline\n`) + `\n- ${nowIso()} email sent by ${ctx.roleId} (${sender.mode}): "${subject}" [[${ctx.jobId ?? 'job'}]]\n`;
@@ -46,18 +75,19 @@ export const emailInbox = defineTool({
     try { mails = (await reader.fetchNew(ctx.vault)).slice(0, max); } catch (err) { return { ok: false, text: `inbox poll failed (${reader.mode}): ${(err as Error).message}` }; }
     const lines: string[] = [];
     for (const m of mails) {
-      const rel = `Customers/${slugify(m.from)}.md`;
-      const wantsOut = /unsubscribe|stop emailing|remove me/i.test(`${m.subject}\n${m.text}`);
+      const rel = customerPath(m.from);
+      const wantsOut = isUnsubscribeRequest(m.subject, m.text);
       if (wantsOut) addSuppression(ctx.vault, m.from, ctx.roleId);
       const existing = ctx.vault.readNoteOrNull(rel);
       const data = { ...(existing?.data ?? { email: m.from, name: m.fromName ?? '', created: nowIso() }), status: wantsOut ? 'unsubscribed' : 'replied', last_reply: m.date, replies: Number((existing?.data as { replies?: number })?.replies ?? 0) + 1 };
-      const bodyMd = (existing?.body ?? `# ${m.fromName || m.from}\n\n## Timeline\n`) + `\n- ${m.date} reply received: "${m.subject}"\n\n> ${m.text.replace(/\n/g, '\n> ').slice(0, 3000)}\n`;
+      const bodyMd = (existing?.body ?? `# ${m.fromName || m.from}\n\n## Timeline\n`) + `\n- ${m.date} reply received: "${m.subject}"${wantsOut ? ' → unsubscribe detected, added to suppression (remove the line in Customers/_suppression.md to reverse)' : ''}\n\n> ${m.text.replace(/\n/g, '\n> ').slice(0, 3000)}\n`;
       ctx.vault.writeText(rel, stringifyNote(data, bodyMd), ctx.roleId, { job: ctx.jobId });
       ctx.events.emit({ type: 'email.received', agent: ctx.roleId, job: ctx.jobId, payload: { from: m.from, subject: m.subject, id: m.id, unsubscribe: wantsOut, mode: reader.mode } });
       if (!wantsOut) {
         const jobId = createJob(ctx.vault, { id: idFromKey('job', `reply:${m.id}`), type: 'growth.outreach', title: `Reply to ${m.fromName || m.from}: ${m.subject.slice(0, 50)}`, assigned: 'growth', priority: 2, goal: `${m.fromName || m.from} <${m.from}> replied to us:\n\n"""\n${m.text.slice(0, 3000)}\n"""\n\nRead [[${rel.replace(/\.md$/, '')}]], draft a short, honest reply that moves things forward, and send it with email.send (the owner approves). If they asked a question you cannot answer, ask the owner via proposal.create kind=message.`, links: [`[[${rel.replace(/\.md$/, '')}]]`, ...(ctx.jobId ? [`[[${ctx.jobId}]]`] : [])] }, ctx.roleId);
         lines.push(`${m.from}: "${m.subject}" → ${rel}, reply job ${jobId}`);
       } else lines.push(`${m.from}: unsubscribe → suppressed`);
+      await reader.ack?.(m.id).catch((err: Error) => ctx.events.emit({ type: 'daemon.warning', agent: ctx.roleId, job: ctx.jobId, payload: { where: 'email.inbox', message: `ack failed for ${m.id}: ${err.message.slice(0, 100)}` } }));
     }
     return { ok: true, text: mails.length ? `${mails.length} new message(s) (${reader.mode}):\n${lines.join('\n')}` : `no new mail (${reader.mode})`, data: { count: mails.length, mode: reader.mode } };
   },
@@ -70,12 +100,19 @@ export const deploySite = defineTool({
   async handler({ project, dir }, ctx) {
     const key = requireKey(ctx);
     if (!key) return { ok: false, text: 'deploy.site requires an idempotency key (harness bug)' };
-    const abs = ctx.vault.abs(dir);
-    if (!existsSync(abs)) return { ok: false, text: `${dir} does not exist — build the site first (shell.run: npm run build)` };
+    let rel: string;
+    try { rel = (await import('@cubicle/core')).normalizeRel(dir); } catch (err) { return { ok: false, text: (err as Error).message }; }
+    if (!/^Site\/[^/]+(\/.*)?$/.test(rel) || rel.startsWith('Site/node_modules')) return { ok: false, text: `deploy.site only publishes a build directory under Site/ (e.g. Site/dist), not "${dir}"` };
+    const abs = ctx.vault.abs(rel);
+    if (!existsSync(abs)) return { ok: false, text: `${rel} does not exist — build the site first (shell.run: npm run build)` };
+    const { lstatSync } = await import('node:fs');
+    if (lstatSync(abs).isSymbolicLink()) return { ok: false, text: `${rel} is a symlink; refusing` };
     const brand = parseNote(ctx.vault.readTextOrNull('Brand/name.md') ?? '').data as { name?: string; url?: string };
-    const name = project ?? slugify(brand.name || 'cubicle-site');
+    const name = (project ?? slugify(brand.name || 'cubicle-site')).toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{0,57}$/.test(name)) return { ok: false, text: `invalid project name "${name}" (lowercase letters, digits, dashes)` };
     const d = deployer(ctx.env, repoRoot());
     const res = await d.deploy(ctx.vault, { project: name, dir: abs, idempotencyKey: key });
+    void rel;
     if (!res.ok) return { ok: false, text: `deploy failed: ${res.detail}` };
     ctx.events.emit({ type: 'deploy.done', agent: ctx.roleId, job: ctx.jobId, payload: { url: res.url, project: name, mode: d.mode, key } });
     if (res.url && brand.url !== res.url) {

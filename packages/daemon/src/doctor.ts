@@ -40,9 +40,10 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
   // Playwright
   try {
     const { chromium } = await import('playwright');
-    const b = await chromium.launch({ headless: true });
-    await b.close();
-    rows.push({ area: 'local', item: 'playwright chromium', ok: true, detail: 'launches' });
+    const exe = chromium.executablePath();
+    if (!existsSync(exe)) throw new Error(`chromium binary missing at ${exe}`);
+    if (opts.live) { const b = await chromium.launch({ headless: true }); await b.close(); }
+    rows.push({ area: 'local', item: 'playwright chromium', ok: true, detail: opts.live ? 'launches' : 'binary present (run with --live to launch)' });
   } catch (err) { rows.push({ area: 'local', item: 'playwright chromium', ok: false, detail: String((err as Error).message).split('\n')[0].slice(0, 80), fix: 'pnpm --filter @cubicle/tools exec playwright install chromium' }); }
 
   // git identity
@@ -71,7 +72,7 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
   const svc: { item: string; vars: string[]; live?: () => Promise<{ status: number; text: string }> }[] = [
     { item: 'brevo (email out)', vars: ['BREVO_API_KEY', 'BREVO_SENDER_EMAIL'], live: () => get('https://api.brevo.com/v3/account', { 'api-key': env.BREVO_API_KEY! }) },
     { item: 'imap (email in)', vars: ['IMAP_HOST', 'IMAP_USER', 'IMAP_PASS'] },
-    { item: 'cloudflare pages (deploy)', vars: ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID'], live: () => get(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}`, { authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` }) },
+    { item: 'cloudflare pages (deploy)', vars: ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID'], live: () => get(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/pages/projects`, { authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` }) },
     { item: 'stripe (payment links)', vars: ['STRIPE_SECRET_KEY'], live: () => get('https://api.stripe.com/v1/balance', { authorization: `Bearer ${env.STRIPE_SECRET_KEY}` }) },
     { item: 'goatcounter (analytics)', vars: ['GOATCOUNTER_CODE', 'GOATCOUNTER_API_TOKEN'], live: () => get(`https://${env.GOATCOUNTER_CODE}.goatcounter.com/api/v0/me`, { authorization: `Bearer ${env.GOATCOUNTER_API_TOKEN}` }) },
   ];
@@ -89,6 +90,12 @@ export function formatDoctor(rows: DoctorRow[]): string {
   const w = (s: string, n: number) => s.padEnd(n).slice(0, n);
   const lines = rows.map((r) => `${r.ok === true ? '✔' : r.ok === false ? '✘' : '·'} ${w(r.area, 10)}${w(r.item, 32)}${r.detail}${r.ok === false && r.fix ? `\n      fix: ${r.fix}` : ''}`);
   const bad = rows.filter((r) => r.ok === false).length;
-  lines.push('', bad ? `${bad} item(s) need attention — none block the daemon; missing services run in mock mode.` : 'all checks passed');
+  const blocking = rows.filter((r) => r.ok === false && r.area === 'local' && /^ollama/.test(r.item)).length;
+  lines.push('', bad ? `${bad} item(s) need attention${blocking ? ` — ${blocking} of them block the local floor (Ollama)` : ' — none block the daemon; missing services run in mock mode.'}` : 'all checks passed');
   return lines.join('\n');
+}
+
+/** Exit status for the CLI: 1 only when the always-available floor (Ollama + its models) is missing. */
+export function doctorExitCode(rows: DoctorRow[]): number {
+  return rows.some((r) => r.ok === false && r.area === 'local' && /^ollama/.test(r.item)) ? 1 : 0;
 }

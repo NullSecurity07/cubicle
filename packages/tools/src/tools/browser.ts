@@ -4,6 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import type { BrowserContext, Page, CDPSession } from 'playwright';
 import { defineTool, type ToolContext } from '../registry.js';
+import { assertPublicHost } from './http.js';
 
 /** Frames flow to the daemon's WS `frame` op through this emitter: ('frame', {session, seq, jpegBase64}). */
 export const browserFrames = new EventEmitter();
@@ -22,9 +23,23 @@ async function launch(ctx: ToolContext): Promise<Session> {
     const oldest = [...sessions.values()].sort((a, b) => a.lastUsed - b.lastUsed)[0];
     await closeSession(oldest.id, ctx);
   }
-  const profile = ctx.vault.abs('.cubicle/browser');
+  const profile = ctx.vault.abs(`.cubicle/browser/${ctx.roleId.replace(/[^a-z0-9_-]/gi, '_')}`); // one profile per role: logins never cross roles
   mkdirSync(profile, { recursive: true });
   const bctx = await chromium.launchPersistentContext(profile, { headless: ctx.env.CUBICLE_BROWSER_HEADED !== '1', viewport: { width: 1024, height: 700 }, args: ['--disable-dev-shm-usage'] });
+  // Every request (navigations, redirects, clicks, subresources) is checked: only http(s) to public hosts.
+  await bctx.route('**/*', async (route) => {
+    const u = route.request().url();
+    let reason: string | null = null;
+    try {
+      const url = new URL(u);
+      if (!/^https?:$/.test(url.protocol)) reason = `scheme ${url.protocol} refused`;
+      else reason = await assertPublicHost(url.hostname, ctx.env);
+      const banned = ctx.vault.constitution().banned_channels.map((b) => b.toLowerCase());
+      if (!reason && banned.some((b) => url.hostname.toLowerCase().includes(b))) reason = `constitution: channel ${url.hostname} is banned`;
+    } catch { reason = 'unparsable url'; }
+    if (reason) { ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: 'browser', url: u.slice(0, 200), reason } }); return route.abort('blockedbyclient'); }
+    return route.continue();
+  });
   const page = bctx.pages()[0] ?? (await bctx.newPage());
   const id = `${ctx.jobId ?? ctx.roleId}-${Date.now().toString(36)}`;
   const s: Session = { id, ctx: bctx, page, cdp: null, seq: 0, lastFrameAt: 0, lastUsed: Date.now(), roleId: ctx.roleId, jobId: ctx.jobId };
@@ -38,20 +53,34 @@ async function launch(ctx: ToolContext): Promise<Session> {
     mkdirSync(dir, { recursive: true });
     cdp.on('Page.screencastFrame', (ev: { data: string; sessionId: number }) => {
       cdp.send('Page.screencastFrameAck', { sessionId: ev.sessionId }).catch(() => undefined);
-      const now = Date.now();
-      if (now - s.lastFrameAt < 1000 / FPS) return; // drop at the daemon, not the viewer
-      s.lastFrameAt = now; s.seq++;
-      const rel = `.cubicle/screens/${id}/${String(s.seq).padStart(5, '0')}.jpg`;
-      try { writeFileSync(ctx.vault.abs(rel), Buffer.from(ev.data, 'base64')); } catch { return; }
-      ctx.vault.db.prepare('INSERT OR REPLACE INTO screens(session_id, seq, ts, path) VALUES (?, ?, ?, ?)').run(id, s.seq, new Date(now).toISOString(), rel);
-      ctx.events.emit({ type: 'browser.frame', agent: ctx.roleId, job: ctx.jobId, payload: { session: id, seq: s.seq, path: rel } });
-      browserFrames.emit('frame', { session: id, seq: s.seq, jpegBase64: ev.data });
+      storeFrame(ctx, s, ev.data);
     });
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 45, maxWidth: 640, maxHeight: 440, everyNthFrame: 2 });
   } catch (err) {
     ctx.events.emit({ type: 'daemon.warning', agent: ctx.roleId, job: ctx.jobId, payload: { where: 'browser.screencast', message: String((err as Error).message) } });
   }
   return s;
+}
+
+/** Persist one JPEG frame (base64) for a session: file + screens row + event + WS push; throttled to FPS. */
+function storeFrame(ctx: ToolContext, s: Session, jpegBase64: string, force = false): boolean {
+  const now = Date.now();
+  if (!force && now - s.lastFrameAt < 1000 / FPS) return false; // drop at the daemon, not the viewer
+  s.lastFrameAt = now; s.seq++;
+  const rel = `.cubicle/screens/${s.id}/${String(s.seq).padStart(5, '0')}.jpg`;
+  try { mkdirSync(path.dirname(ctx.vault.abs(rel)), { recursive: true }); writeFileSync(ctx.vault.abs(rel), Buffer.from(jpegBase64, 'base64')); } catch { return false; }
+  ctx.vault.db.prepare('INSERT OR REPLACE INTO screens(session_id, seq, ts, path) VALUES (?, ?, ?, ?)').run(s.id, s.seq, new Date(now).toISOString(), rel);
+  ctx.events.emit({ type: 'browser.frame', agent: ctx.roleId, job: ctx.jobId, payload: { session: s.id, seq: s.seq, path: rel } });
+  browserFrames.emit('frame', { session: s.id, seq: s.seq, jpegBase64 });
+  return true;
+}
+
+/** After a navigation, make sure the billboard has something to show even if the screencast has not fired yet. */
+async function ensureFrame(ctx: ToolContext, s: Session): Promise<void> {
+  const before = s.seq;
+  await s.page.waitForTimeout(350).catch(() => undefined);
+  if (s.seq > before) return;
+  try { const buf = await s.page.screenshot({ type: 'jpeg', quality: 45 }); storeFrame(ctx, s, buf.toString('base64'), true); } catch { /* page gone */ }
 }
 
 export async function closeSession(id: string, ctx: Pick<ToolContext, 'events' | 'roleId' | 'jobId'>): Promise<void> {
@@ -67,21 +96,36 @@ export async function closeAllSessions(events: ToolContext['events']): Promise<v
   for (const id of [...sessions.keys()]) await closeSession(id, { events, roleId: 'daemon', jobId: null });
 }
 
+let launching: Promise<Session> | null = null;
 async function get(ctx: ToolContext, session?: string): Promise<Session> {
-  if (session && sessions.has(session)) { const s = sessions.get(session)!; s.lastUsed = Date.now(); return s; }
-  const own = [...sessions.values()].find((s) => s.jobId === ctx.jobId);
+  if (session && sessions.has(session)) {
+    const s = sessions.get(session)!;
+    if (s.roleId !== ctx.roleId) throw new Error(`session ${session} belongs to ${s.roleId}`);
+    s.lastUsed = Date.now(); return s;
+  }
+  const own = [...sessions.values()].find((s) => s.jobId === ctx.jobId && s.roleId === ctx.roleId);
   if (own) { own.lastUsed = Date.now(); return own; }
-  return launch(ctx);
+  if (launching) await launching.catch(() => undefined); // serialise launches so MAX_SESSIONS holds
+  launching = launch(ctx);
+  try { return await launching; } finally { launching = null; }
 }
 
-/** Idle sessions are closed so a forgotten browser does not sit on the billboard forever. */
-setInterval(() => { for (const s of sessions.values()) if (Date.now() - s.lastUsed > IDLE_MS) void closeSession(s.id, { events: { emit: () => undefined } as never, roleId: s.roleId, jobId: s.jobId }); }, 60_000).unref();
+/** Idle sessions are closed (with a real session_ended event) so a forgotten browser does not sit on the billboard forever. */
+const idleEvents: { emit: ToolContext['events']['emit'] }[] = [];
+setInterval(() => { for (const s of sessions.values()) if (Date.now() - s.lastUsed > IDLE_MS) void closeSession(s.id, { events: (idleEvents[0] ?? { emit: () => undefined }) as never, roleId: s.roleId, jobId: s.jobId }); }, 60_000).unref();
 
 const sessionArg = z.string().optional().describe('session id from browser.open (defaults to this job\'s session)');
 
-function isPrivateUrl(u: string, env: NodeJS.ProcessEnv): boolean {
-  if (env.CUBICLE_ALLOW_LOCAL_FETCH) return false;
-  try { const url = new URL(u); return /^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.0\.0\.0|\[::1\]|172\.(1[6-9]|2\d|3[01])\.)/.test(url.hostname) || url.hostname.endsWith('.local'); } catch { return true; }
+/** Pre-navigation check (the route handler is the enforcement; this gives a clear error before a session is opened). */
+async function refuseUrl(u: string, ctx: ToolContext): Promise<string | null> {
+  let url: URL;
+  try { url = new URL(u); } catch { return 'invalid url'; }
+  if (!/^https?:$/.test(url.protocol)) return `only http(s) URLs may be opened (got ${url.protocol})`;
+  const bad = await assertPublicHost(url.hostname, ctx.env);
+  if (bad) return bad;
+  const banned = ctx.vault.constitution().banned_channels.map((b) => b.toLowerCase());
+  if (banned.some((b) => url.hostname.toLowerCase().includes(b))) return `constitution: channel ${url.hostname} is banned`;
+  return null;
 }
 
 export const browserOpen = defineTool({
@@ -89,8 +133,10 @@ export const browserOpen = defineTool({
   description: 'Open a browser session (persistent profile). Returns the session id. Optionally navigates to a URL.',
   schema: { url: z.string().url().optional() },
   async handler({ url }, ctx) {
-    const s = await launch(ctx);
-    if (url) { if (isPrivateUrl(url, ctx.env)) return { ok: false, text: 'refusing to open a private/local address' }; await s.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 }); }
+    idleEvents[0] = ctx.events;
+    if (url) { const bad = await refuseUrl(url, ctx); if (bad) return { ok: false, text: `blocked: ${bad}` }; }
+    const s = await get(ctx);
+    if (url) { await s.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 }); await ensureFrame(ctx, s); }
     return { ok: true, text: `session ${s.id} open${url ? ` at ${s.page.url()}` : ''}`, data: { session: s.id } };
   },
 });
@@ -100,9 +146,10 @@ export const browserGoto = defineTool({
   description: 'Navigate the session to a URL and return the page title + first 2000 chars of visible text.',
   schema: { url: z.string().url(), session: sessionArg },
   async handler({ url, session }, ctx) {
-    if (isPrivateUrl(url, ctx.env)) return { ok: false, text: 'refusing to open a private/local address' };
+    const bad = await refuseUrl(url, ctx); if (bad) return { ok: false, text: `blocked: ${bad}` };
     const s = await get(ctx, session);
-    const res = await s.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    const res = await s.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch((err: Error) => { throw new Error(`navigation failed: ${err.message.split('\n')[0]}`); });
+    await ensureFrame(ctx, s);
     const text = (await s.page.innerText('body').catch(() => '')).replace(/\s+\n/g, '\n').slice(0, 2000);
     return { ok: !!res && res.ok(), text: `${res?.status() ?? '?'} ${await s.page.title()}\n${s.page.url()}\n\n${text}`, data: { session: s.id, status: res?.status() } };
   },
@@ -114,7 +161,17 @@ export const browserClick = defineTool({
   schema: { selector: z.string(), session: sessionArg },
   async handler({ selector, session }, ctx) {
     const s = await get(ctx, session);
-    await s.page.click(selector, { timeout: 10_000 });
+    const el = s.page.locator(selector).first();
+    const submits = await el.evaluate((e) => {
+      const el = e as HTMLElement;
+      const tag = el.tagName.toLowerCase();
+      const type = (el.getAttribute('type') ?? '').toLowerCase();
+      if (tag === 'button' && type !== 'button' && (el.closest('form') || el.getAttribute('form'))) return true;
+      if (tag === 'input' && (type === 'submit' || type === 'image')) return true;
+      return false;
+    }, { timeout: 10_000 }).catch(() => false);
+    if (submits) return { ok: false, text: `"${selector}" submits a form; use browser.submit (owner approval) instead` };
+    await el.click({ timeout: 10_000 });
     await s.page.waitForLoadState('domcontentloaded').catch(() => undefined);
     return { ok: true, text: `clicked ${selector}; now at ${s.page.url()}` };
   },
@@ -125,6 +182,7 @@ export const browserType = defineTool({
   description: 'Type text into an input (CSS selector). Does NOT submit; use browser.submit for forms that send data.',
   schema: { selector: z.string(), text: z.string(), session: sessionArg },
   async handler({ selector, text, session }, ctx) {
+    if (/[\r\n]/.test(text)) return { ok: false, text: 'newlines are not allowed in browser.type (they could submit); use browser.submit for the final action' };
     const s = await get(ctx, session);
     await s.page.fill(selector, text, { timeout: 10_000 });
     return { ok: true, text: `typed ${text.length} chars into ${selector}` };
@@ -133,15 +191,26 @@ export const browserType = defineTool({
 
 export const browserSubmit = defineTool({
   name: 'browser.submit',
-  description: 'Submit a form (press Enter in / click the submit control). Outbound: requires owner approval by default.',
-  schema: { selector: z.string().describe('submit button selector, or the input to press Enter in'), session: sessionArg },
-  async handler({ selector, session }, ctx) {
+  description: 'Submit a form as one self-contained action: navigate to url, fill fields, press the submit control. Outbound: the owner approves exactly this url + fields. Works even after the session was closed.',
+  schema: {
+    url: z.string().url().describe('the page with the form'),
+    fields: z.record(z.string(), z.string()).default({}).describe('CSS selector → value to fill before submitting'),
+    submit: z.string().describe('submit button selector, or the input to press Enter in'),
+    session: sessionArg,
+  },
+  async handler({ url, fields, submit, session }, ctx) {
+    const bad = await refuseUrl(url, ctx); if (bad) return { ok: false, text: `blocked: ${bad}` };
     const s = await get(ctx, session);
-    const el = s.page.locator(selector).first();
+    const wantHost = new URL(url).hostname;
+    if (s.page.url() !== url) await s.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    if (new URL(s.page.url()).hostname !== wantHost) return { ok: false, text: `page is at ${s.page.url()}, not ${wantHost}; refusing to submit` };
+    for (const [sel, val] of Object.entries(fields)) await s.page.fill(sel, val, { timeout: 10_000 });
+    const el = s.page.locator(submit).first();
     const tag = (await el.evaluate((e) => e.tagName.toLowerCase()).catch(() => 'button'));
     if (tag === 'input' || tag === 'textarea') await el.press('Enter'); else await el.click({ timeout: 10_000 });
     await s.page.waitForLoadState('domcontentloaded').catch(() => undefined);
-    return { ok: true, text: `submitted via ${selector}; now at ${s.page.url()}`, sideEffectKey: ctx.idempotencyKey };
+    await ensureFrame(ctx, s);
+    return { ok: true, text: `submitted ${Object.keys(fields).length} field(s) at ${url}; now at ${s.page.url()}`, sideEffectKey: ctx.idempotencyKey };
   },
 });
 

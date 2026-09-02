@@ -213,8 +213,13 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       if (prop && prop.data.approved === true && call) {
         const step = job.checkpoint_step; // the pending call owns this step
         const key = call.idempotency_key;
+        let vetoed: string | null = null;
+        for (const g of deps.guardrails ?? []) { vetoed = await g.check(call.tool, call.args, baseCtx); if (vetoed) break; }
         if (job.side_effects_done.includes(key)) {
           record({ step, kind: 'tool', tool: call.tool, args: call.args, result: 'already executed before the interruption (idempotency key recorded)', ok: true });
+        } else if (vetoed) {
+          events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason: vetoed, step, approved: true } });
+          record({ step, kind: 'tool', tool: call.tool, args: call.args, result: `blocked even though approved: ${vetoed}`, ok: false });
         } else {
           // At-most-once: record the key before the external call (a kill mid-call must not replay it).
           updateJob(vault, jobId, { side_effects_done: [...job.side_effects_done, key] }, roleId, `- step ${step}: ${call.tool} ATTEMPTING after owner approval (${key})`);
@@ -335,7 +340,14 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       let mode = blockedReason ? 'never' : resolveMode(toolName, deps.toolsConfig, role, prefs);
       // R17: tools marked first_time_only (deploy.site) need approval once; after a recorded completion they run automatically
       // unless the owner pinned a stricter mode in owner_preferences.
-      if (mode === 'propose' && policy.first_time_only && !prefs.approvals[toolName] && events.count('deploy.done') > 0) mode = 'auto';
+      if (mode === 'propose' && policy.first_time_only && !prefs.approvals[toolName]) {
+        const liveDone = events.query({ types: ['deploy.done'], limit: 500 }).some((e) => e.payload.mode === 'live');
+        const brandUrl = /^url:\s*["']?https?:\/\//m.test(vault.readTextOrNull('Brand/name.md') ?? '');
+        const anyDone = events.count('deploy.done') > 0;
+        // Mock deploys do not count once live keys exist: the first *live* deploy still needs approval.
+        const live = !!(env.CLOUDFLARE_API_TOKEN && env.CLOUDFLARE_ACCOUNT_ID);
+        if ((live ? liveDone || brandUrl : anyDone)) mode = 'auto';
+      }
       if (mode === 'never') {
         const reason = blockedReason ?? 'approval mode is never';
         events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: toolName, reason, step } });

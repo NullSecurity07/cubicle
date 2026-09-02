@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync, renameSync, mkdirSync } from 'no
 import path from 'node:path';
 
 export interface InboundMail { id: string; from: string; fromName?: string; subject: string; text: string; date: string; inReplyTo?: string }
-export interface InboxReader { mode: 'mock' | 'live'; fetchNew(vault: Vault): Promise<InboundMail[]> }
+export interface InboxReader { mode: 'mock' | 'live'; fetchNew(vault: Vault): Promise<InboundMail[]>; /** Acknowledge a processed message (live: flag \\Seen) — called only after the vault note and job exist. */ ack?(id: string): Promise<void> }
 
 /**
  * Inbound mail. Live: IMAP (Gmail app password) via imapflow, unseen messages are fetched and flagged \\Seen.
@@ -22,15 +22,24 @@ export function inboxReader(env: NodeJS.ProcessEnv): InboxReader {
         try {
           const lock = await client.getMailboxLock('INBOX');
           try {
-            for await (const msg of client.fetch({ seen: false }, { envelope: true, source: true, uid: true })) {
+            // No IMAP commands inside the fetch loop (imapflow deadlocks otherwise): collect first, flag later via ack().
+            for await (const msg of client.fetch({ seen: false }, { envelope: true, source: true, uid: true }, { uid: true })) {
               const src = msg.source?.toString('utf8') ?? '';
-              const text = extractPlainText(src);
-              out.push({ id: `imap-${msg.uid}`, from: msg.envelope?.from?.[0]?.address ?? 'unknown', fromName: msg.envelope?.from?.[0]?.name ?? undefined, subject: msg.envelope?.subject ?? '(no subject)', text, date: msg.envelope?.date?.toISOString?.() ?? new Date().toISOString(), inReplyTo: msg.envelope?.inReplyTo ?? undefined });
-              await client.messageFlagsAdd({ uid: msg.uid }, ['\\Seen'], { uid: true });
+              out.push({ id: `imap-${msg.uid}`, from: msg.envelope?.from?.[0]?.address ?? 'unknown', fromName: msg.envelope?.from?.[0]?.name ?? undefined, subject: msg.envelope?.subject ?? '(no subject)', text: extractPlainText(src), date: msg.envelope?.date?.toISOString?.() ?? new Date().toISOString(), inReplyTo: msg.envelope?.inReplyTo ?? undefined });
+              if (out.length >= 100) break;
             }
           } finally { lock.release(); }
         } finally { await client.logout().catch(() => undefined); }
         return out;
+      },
+      async ack(id) {
+        const uid = Number(id.replace(/^imap-/, ''));
+        if (!Number.isFinite(uid)) return;
+        const { ImapFlow } = await import('imapflow');
+        const client = new ImapFlow({ host: env.IMAP_HOST!, port: Number(env.IMAP_PORT ?? 993), secure: true, auth: { user: env.IMAP_USER!, pass: env.IMAP_PASS! }, logger: false });
+        await client.connect();
+        try { const lock = await client.getMailboxLock('INBOX'); try { await client.messageFlagsAdd({ uid }, ['\\Seen'], { uid: true }); } finally { lock.release(); } }
+        finally { await client.logout().catch(() => undefined); }
       },
     };
   }

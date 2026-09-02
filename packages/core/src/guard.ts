@@ -46,7 +46,9 @@ export function isValidRoleId(id: string): boolean {
 /** Files agents may never read (secrets, git internals). */
 export function isSecretPath(rel: string): boolean {
   const p = normalizeRel(rel);
-  return /^\.env(\.|$)/.test(p) || p.startsWith('.git/') || p === '.git';
+  if (/^\.env(\.|$)/.test(p) || p.startsWith('.git/') || p === '.git') return true;
+  if ((p.startsWith('.cubicle/') || p === '.cubicle') && !p.startsWith('.cubicle/screens/')) return true; // daemon.json token, mock ledgers, transcripts
+  return false;
 }
 
 export function isOwnerOwned(rel: string, extraNeverModify: string[] = []): boolean {

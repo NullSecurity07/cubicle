@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CUBICLE — the office</title>
+    <link rel="icon" href="data:," />
+    <style>
+      html, body { margin: 0; height: 100%; background: #0f1115; color: #e6e6e6; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+      #game { position: absolute; inset: 0; }
+      #hud { position: absolute; left: 12px; top: 10px; display: flex; gap: 10px; align-items: center; pointer-events: none; z-index: 5; }
+      #hud > * { pointer-events: auto; }
+      .pill { background: rgba(20,22,28,.85); border: 1px solid #2a2e37; border-radius: 999px; padding: 4px 10px; }
+      .pill.bad { border-color: #b33; }
+      #panel { position: absolute; right: 12px; top: 12px; bottom: 12px; width: min(560px, 46vw); background: rgba(16,18,24,.96); border: 1px solid #2a2e37; border-radius: 10px; display: none; flex-direction: column; z-index: 6; overflow: hidden; }
+      #panel.open { display: flex; }
+      #panel header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #2a2e37; }
+      #panel header h2 { margin: 0; font-size: 14px; flex: 1; }
+      #panel .body { flex: 1; overflow: auto; padding: 12px; white-space: pre-wrap; word-break: break-word; }
+      #panel .body img { max-width: 100%; image-rendering: pixelated; border: 1px solid #2a2e37; }
+      #panel .body pre { background: #0b0d11; padding: 8px; border-radius: 6px; overflow: auto; }
+      #panel .body h1, #panel .body h2, #panel .body h3 { margin: 10px 0 6px; }
+      #panel form { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid #2a2e37; }
+      #panel input { flex: 1; background: #0b0d11; color: #eee; border: 1px solid #2a2e37; border-radius: 6px; padding: 8px; }
+      button { background: #232734; color: #eee; border: 1px solid #333846; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+      button:hover { background: #2c3140; }
+      #time { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; background: rgba(20,22,28,.85); border: 1px solid #2a2e37; border-radius: 10px; padding: 8px 10px; z-index: 5; }
+      #time input[type=range] { width: 240px; }
+      #time input[type=date] { background: #0b0d11; color: #eee; border: 1px solid #2a2e37; border-radius: 6px; padding: 3px 6px; }
+      .muted { color: #8a90a0; }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="hud">
+      <span class="pill" id="conn">connecting…</span>
+      <span class="pill" id="pending" title="proposals waiting for you">0 to approve</span>
+      <span class="pill muted">drag / WASD to pan · wheel to zoom · click things</span>
+    </div>
+    <div id="panel">
+      <header><h2 id="panel-title">—</h2><button id="panel-close">✕</button></header>
+      <div class="body" id="panel-body"></div>
+      <form id="chat" hidden><input id="chat-text" placeholder="Tell the CEO…" autocomplete="off" /><button type="submit">Send</button></form>
+    </div>
+    <div id="time">
+      <button id="live">● live</button>
+      <input type="date" id="replay-date" />
+      <button id="replay-load">replay</button>
+      <input type="range" id="scrub" min="0" max="1000" value="0" disabled />
+      <select id="speed"><option>1</option><option>5</option><option>10</option><option selected>25</option><option>50</option></select>
+      <span id="clock" class="muted">—</span>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
