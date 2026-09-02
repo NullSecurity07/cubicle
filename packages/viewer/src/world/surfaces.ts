@@ -19,8 +19,9 @@ export class Surface {
   private lastKey = '';
 
   constructor(private scene: Phaser.Scene, world: World, public readonly kind: SurfaceKind, public readonly anchor: Anchor, onClick: (k: SurfaceKind) => void) {
-    const x = anchor.tx * TILE, y = kind === 'whiteboard' ? (anchor.ty - 3) * TILE : anchor.ty * TILE;
-    const w = anchor.tw * TILE, h = kind === 'whiteboard' ? TILE * 3 : Math.max(TILE * 2, (anchor.th - 1) * TILE);
+    // The whiteboard preview hangs on the corridor wall just above the board room (rows ty-2..ty-1), clear of the cabin.
+    const x = anchor.tx * TILE, y = kind === 'whiteboard' ? (anchor.ty - 2) * TILE : anchor.ty * TILE;
+    const w = anchor.tw * TILE, h = kind === 'whiteboard' ? TILE * 2 : Math.max(TILE * 2, (anchor.th - 1) * TILE);
     const inset = anchor.type === 'surface' && anchor.th > 1 ? 4 : 0;
     this.bg = scene.add.rectangle(w / 2, h / 2 + inset, w - inset * 2, h - inset, 0x0b0d11, 0.92).setStrokeStyle(1, 0x3a4050, 1);
     this.text = scene.add.text(6, 8 + inset, '', { fontFamily: 'ui-monospace, monospace', fontSize: '7px', color: '#cfe3ff', wordWrap: { width: w - 12 }, lineSpacing: 1 }).setOrigin(0, 0);

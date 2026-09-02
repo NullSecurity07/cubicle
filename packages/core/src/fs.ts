@@ -57,7 +57,8 @@ export function makeId(prefix: string): string {
 
 /** Deterministic id derived from an idempotency key, so a replayed step recreates the same note instead of a duplicate. */
 export function idFromKey(prefix: string, key: string): string {
-  return `${prefix}_${key.replace(/[^A-Za-z0-9]+/g, '_')}`;
+  const body = key.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return body.startsWith(`${prefix}_`) ? body : `${prefix}_${body}`; // no "job_job_…" when the key is itself a job id
 }
 
 /** Timestamp for note filenames: YYYY-MM-DD-HHmm */
