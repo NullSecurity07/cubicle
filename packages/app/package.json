@@ -1,0 +1,16 @@
+{
+  "name": "@cubicle/app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CUBICLE tray shell: start/stop the daemon, open the office, open the vault, checkpoint on sleep",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "build": "node -e \"console.log('electron app: run with pnpm --filter @cubicle/app start')\"",
+    "test": "node src/tray-icon.test.cjs"
+  },
+  "devDependencies": {
+    "electron": "^44.1"
+  }
+}

@@ -1,6 +1,7 @@
 packages:
   - 'packages/*'
 allowBuilds:
+  electron: true
   better-sqlite3: true
   esbuild: true
   usocket: false
