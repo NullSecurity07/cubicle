@@ -10,12 +10,12 @@
   "scripts": {
     "build": "pnpm -r --filter './packages/**' run build",
     "test": "pnpm -r --filter './packages/**' run test",
-    "cubicle": "tsx --conditions=development packages/daemon/src/cli.ts",
+    "cubicle": "node --import tsx/esm --conditions=development packages/daemon/src/cli.ts",
     "test:acceptance": "vitest run --config vitest.acceptance.config.ts",
-    "test:kill9": "tsx --conditions=development scripts/test-kill9.ts",
-    "test:sleep": "tsx --conditions=development scripts/test-sleep.ts",
-    "test:replay": "tsx --conditions=development scripts/test-replay.ts",
-    "office:shot": "tsx --conditions=development scripts/office-shot.ts"
+    "test:kill9": "node --import tsx/esm --conditions=development scripts/test-kill9.ts",
+    "test:sleep": "node --import tsx/esm --conditions=development scripts/test-sleep.ts",
+    "test:replay": "node --import tsx/esm --conditions=development scripts/test-replay.ts",
+    "office:shot": "node --import tsx/esm --conditions=development scripts/office-shot.ts"
   },
   "devDependencies": {
     "@types/node": "^24",

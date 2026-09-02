@@ -199,6 +199,7 @@ export const browserSubmit = defineTool({
     session: sessionArg,
   },
   async handler({ url, fields, submit, session }, ctx) {
+    if (!ctx.idempotencyKey) return { ok: false, text: 'browser.submit requires an idempotency key (harness bug)' };
     const bad = await refuseUrl(url, ctx); if (bad) return { ok: false, text: `blocked: ${bad}` };
     const s = await get(ctx, session);
     const wantHost = new URL(url).hostname;

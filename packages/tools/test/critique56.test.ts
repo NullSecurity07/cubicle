@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, utimesSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase5Tools, phase6Tools, constitutionGuardrail, hasDocker, hasSandboxImage, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, hasDocker, hasSandboxImage, type ToolContext } from '../src/index.js';
 
 let dir: string; let vault: Vault; let server: http.Server; let port: number;
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -109,5 +109,31 @@ describe('screencast pruning (B9)', () => {
     expect(existsSync(path.join(sdir, '00005.jpg'))).toBe(true);
     expect(existsSync(path.join(sdir, '00004.jpg'))).toBe(false);
     expect((vault.db.prepare('SELECT COUNT(*) c FROM screens WHERE session_id = ?').get('sess1') as { c: number }).c).toBe(4);
+  });
+});
+
+describe('final critique', () => {
+  it('shell.run restores owner-edited Site/ files it clobbered and reports it', async () => {
+    const reg = new ToolRegistry().registerAll([...phase3Tools(), ...phase5Tools()]);
+    const client = await createRoleToolClient(reg.forRole(role('engineer'), cfg), ctxFor('engineer', 'job_ro'));
+    try {
+      await client.call('vault.write', { path: 'Site/keep.html', content: '<p>agent</p>' });
+      writeFileSync(path.join(dir, 'Site/keep.html'), '<p>OWNER</p>');
+      const r = await client.call('shell.run', { command: 'echo clobbered > keep.html && echo ok > other.html' });
+      expect(readFileSync(path.join(dir, 'Site/keep.html'), 'utf8')).toBe('<p>OWNER</p>');
+      expect(readFileSync(path.join(dir, 'Site/other.html'), 'utf8').trim()).toBe('ok');
+      expect(r.text).toContain('RESTORED');
+      expect(vault.isOwnerChanged('Site/keep.html')).toBe(true);
+      expect(vault.events.count('guardrail.blocked')).toBeGreaterThanOrEqual(1);
+    } finally { await client.close(); }
+  }, 120_000);
+  it('the banned-tactics classifier warns instead of failing silently', async () => {
+    const { classifyBannedTactic } = await import('../src/guardrails.js');
+    const warnings: string[] = [];
+    const broken = { async chat() { throw new Error('ollama down'); } } as never;
+    expect(await classifyBannedTactic(broken, 'buy now', ['fake urgency'], (m) => warnings.push(m))).toBeNull();
+    const noJson = { async chat() { return { content: 'sure thing' }; } } as never;
+    expect(await classifyBannedTactic(noJson, 'buy now', ['fake urgency'], (m) => warnings.push(m))).toBeNull();
+    expect(warnings.length).toBe(2);
   });
 });

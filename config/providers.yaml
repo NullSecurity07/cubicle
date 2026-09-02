@@ -51,7 +51,7 @@ providers:
     timeout_ms: 300000                  # a 7B model on a 4 GB GPU can take minutes on a long prompt
     models:
       - { id: "qwen2.5:7b", tier: local, tools: json, context: 32768, max_prompt_tokens: 6000, max_output_tokens: 1024, limits: {} }
-      - { id: "R4C3R/gemma-3-4b-it-heretic:q4_k_m", tier: local, tools: json, context: 8192, max_prompt_tokens: 4000, max_output_tokens: 768, limits: {}, note: "smaller/faster; used by the guardrail classifier" }
+      - { id: "R4C3R/gemma-3-4b-it-heretic:q4_k_m", enabled: false, tier: local, tools: json, context: 8192, max_prompt_tokens: 4000, max_output_tokens: 768, limits: {}, note: "optional extra local model found on the build machine; disabled so a fresh install needs only qwen2.5:7b + nomic-embed-text" }
     embeddings: { id: nomic-embed-text, dims: 768 }
 
   - id: cerebras

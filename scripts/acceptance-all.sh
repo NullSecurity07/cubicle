@@ -21,7 +21,7 @@ step "test:sleep"          pnpm test:sleep
 step "test:acceptance"     pnpm test:acceptance
 step "test:replay"         pnpm test:replay
 step "office:shot"         pnpm office:shot /tmp/cubicle-fresh-shots
-step "doctor"              bash -c 'pnpm cubicle doctor >/tmp/cubicle-doctor.txt 2>&1; grep -q "ollama model qwen2.5:7b *pulled" /tmp/cubicle-doctor.txt'
+step "doctor"              bash -c 'pnpm cubicle doctor >/tmp/cubicle-doctor.txt 2>&1 && grep -q "ollama model .* pulled" /tmp/cubicle-doctor.txt'
 step "app smoke"           bash -c 'CUBICLE_VAULT=/tmp/cubicle-fresh-vault timeout 90 pnpm --filter @cubicle/app smoke 2>&1 | grep -q "SMOKE PASS"'
 step "no model ids in src" bash -c '! grep -rEn "gemini-[0-9]|gpt-oss|qwen2\.5:|:free\"" packages/*/src --include=*.ts | grep -v "providers-cli\|/test/" '
 step "no localStorage state" bash -c '! grep -rn "localStorage" packages/viewer/src | grep -v "cubicle.token"'

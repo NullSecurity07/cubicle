@@ -1,5 +1,5 @@
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdirSync, existsSync } from 'node:fs';
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
@@ -98,6 +98,9 @@ export const shellRun = defineTool({
     const onOutput = (chunk: string, stream: 'stdout' | 'stderr') => ctx.events.emit({ type: 'shell.output', agent: ctx.roleId, job: ctx.jobId, payload: { session: sessionId, stream, text: chunk.slice(0, 4000) } });
     ctx.events.emit({ type: 'shell.output', agent: ctx.roleId, job: ctx.jobId, payload: { session: sessionId, stream: 'cmd', text: `$ ${command}`, cwd, network } });
 
+    // Owner-edited Site/ files are protected even inside the sandbox: snapshot them, restore after the run (R34, principle 4).
+    const protectedFiles = new Map<string, Buffer>();
+    for (const rel of ctx.vault.list('Site', { recursive: true })) if (ctx.vault.isOwnerChanged(rel)) { try { protectedFiles.set(rel, readFileSync(ctx.vault.abs(rel))); } catch { /* unreadable */ } }
     let result: RunResult;
     let proxied = false;
     if (hasDocker() && hasSandboxImage()) {
@@ -147,11 +150,20 @@ export const shellRun = defineTool({
       const r = await runProcess('bwrap', [...bw, 'bash', '-c', command], { timeoutMs, onOutput });
       result = { ...r, mode: 'local' };
     }
+    // Restore any owner-edited file the command touched, before the rescan would re-label it as an agent write.
+    const clobbered: string[] = [];
+    for (const [rel, before] of protectedFiles) {
+      const abs = ctx.vault.abs(rel);
+      const after = existsSync(abs) ? readFileSync(abs) : null;
+      if (!after || !after.equals(before)) { mkdirSync(path.dirname(abs), { recursive: true }); writeFileSync(abs, before); clobbered.push(rel); }
+    }
+    if (clobbered.length) ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: 'shell.run', reason: `restored ${clobbered.length} owner-edited Site/ file(s) the command changed`, files: clobbered.slice(0, 20) } });
     // Out-of-band writes: record them so owner-edit detection stays exact (R2).
-    const changed = ctx.vault.rescan('Site', `${ctx.roleId}/shell`, { job: ctx.jobId });
+    const changed = ctx.vault.rescan('Site', `${ctx.roleId}/shell`, { job: ctx.jobId, skip: new Set(protectedFiles.keys()) });
     const deniedHosts = proxied ? proxyDenials('2m') : [];
     const denied = deniedHosts.length ? `\n[proxy denied: ${deniedHosts.join(', ')}]` : '';
     const status = result.timedOut ? `TIMED OUT after ${timeoutMs / 1000}s` : `exit ${result.code}`;
-    return { ok: !result.timedOut && result.code === 0, text: `[${result.mode}] ${status}${denied}\n${result.output || '(no output)'}${changed.length ? `\n[changed under Site/: ${changed.slice(0, 20).join(', ')}${changed.length > 20 ? ` +${changed.length - 20} more` : ''}]` : ''}`, data: { code: result.code, timedOut: result.timedOut, mode: result.mode, changed } };
+    const restored = clobbered.length ? `\n[RESTORED owner-edited files your command changed (they are read-only for you): ${clobbered.join(', ')} — ask the owner via proposal.create kind=message if they must change]` : '';
+    return { ok: !result.timedOut && result.code === 0, text: `[${result.mode}] ${status}${denied}\n${result.output || '(no output)'}${changed.length ? `\n[changed under Site/: ${changed.slice(0, 20).join(', ')}${changed.length > 20 ? ` +${changed.length - 20} more` : ''}]` : ''}${restored}`, data: { code: result.code, timedOut: result.timedOut, mode: result.mode, changed, restored: clobbered } };
   },
 });

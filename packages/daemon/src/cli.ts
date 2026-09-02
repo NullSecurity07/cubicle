@@ -217,7 +217,7 @@ const commands: Record<string, Handler> = {
       console.log(`${events.length} events on ${date}`);
       for (const [h, types] of Object.entries(byHour)) console.log(`${h}:00  ${Object.entries(types).map(([t, n]) => `${t}×${n}`).join('  ')}`);
       const info = readDaemonInfo(vault.root);
-      console.log(`viewer: open the office (cubicle start --tray, Phase 9+) and choose replay ${date}; or send {"op":"replay","from":"${date}T00:00:00.000Z"} on ws://127.0.0.1:${info?.port ?? 7411}?token=<token from .cubicle/daemon.json>`);
+      console.log(`viewer: open the office (cubicle open) and pick ${date} in the replay controls; or send {"op":"replay","from":"${date}T00:00:00.000Z"} on ws://127.0.0.1:${info?.port ?? 7411}?token=<token from .cubicle/daemon.json>`);
     } finally { vault.close(); }
   },
   async rebuild(args, flags) {
@@ -248,12 +248,12 @@ const commands: Record<string, Handler> = {
   init <vault>              scaffold a new vault and git repo
   watch <vault>             print owner.edited events (debug)
   start | stop | status | open   daemon; open prints/launches the office URL (with token)
-  heartbeat                 force a heartbeat (Phase 4)
-  providers test|refresh    model router (Phase 2)
-  job add|cancel|list       job queue (Phase 4)
-  replay <date>             event replay (Phase 4)
+  heartbeat                 force a heartbeat (queues one if the daemon runs, else runs inline)
+  providers test|refresh    ping every model | refresh the OpenRouter :free list
+  job add|cancel|list       job queue
+  replay <date>             per-hour event summary for a day
   doctor [--live] [--build-sandbox]   environment + keys check; --live pings each key
-  rebuild                   rebuild the .cubicle cache from the vault (Phase 4)
+  rebuild                   rebuild the .cubicle cache from the vault
   memory rebuild|index|search <vault> [query]   embedding index over Memory/ Skills/ Decisions/
   chat [--tier t] [--local] <prompt>            one completion through the cascade (debug)
 `);

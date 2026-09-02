@@ -224,9 +224,10 @@ export class Vault {
   }
 
   /** Rescan a directory after out-of-band writes (e.g. shell.run) and record every changed file. */
-  rescan(dirRel: string, by: string, opts: { job?: string | null } = {}): string[] {
+  rescan(dirRel: string, by: string, opts: { job?: string | null; skip?: Set<string> } = {}): string[] {
     const changed: string[] = [];
     for (const rel of this.list(dirRel, { recursive: true })) {
+      if (opts.skip?.has(rel)) continue; // owner-edited files keep their owner provenance
       const cur = this.currentSha(rel);
       if (cur === null) continue;
       if (this.writtenSha(rel) !== cur) {

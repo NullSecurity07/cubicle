@@ -11,12 +11,11 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const tsx = path.join(root, 'node_modules/tsx/dist/cli.mjs');
 const child = path.join(here, 'lib', 'sleep-child.ts');
 const dir = mkdtempSync(path.join(tmpdir(), 'cubicle-sleep-'));
 
 function startDaemon(env: NodeJS.ProcessEnv) {
-  const p = spawn(process.execPath, [tsx, '--conditions=development', child, 'daemon', dir], { cwd: root, env: { ...process.env, ...env } });
+  const p = spawn(process.execPath, ['--import', 'tsx/esm', '--conditions=development', child, 'daemon', dir], { cwd: root, env: { ...process.env, ...env } });
   let out = '';
   p.stdout.on('data', (d) => { out += d; process.stdout.write(d); });
   p.stderr.on('data', (d) => { out += d; process.stderr.write(d); });
@@ -30,7 +29,7 @@ async function waitOut(get: () => string, needle: string, ms: number) {
 }
 
 async function main() {
-  spawnSync(process.execPath, [tsx, '--conditions=development', child, 'init', dir], { cwd: root, stdio: 'inherit' });
+  spawnSync(process.execPath, ['--import', 'tsx/esm', '--conditions=development', child, 'init', dir], { cwd: root, stdio: 'inherit' });
   let pass = true;
 
   // --- SIGTERM ---
@@ -49,7 +48,7 @@ async function main() {
   if (hasDbus) {
     const bus = spawn('dbus-daemon', ['--session', '--nofork', '--print-address', '--address=unix:tmpdir=' + tmpdir()], { stdio: ['ignore', 'pipe', 'inherit'] });
     const addr: string = await new Promise((r) => bus.stdout.once('data', (d) => r(String(d).trim())));
-    const fake = spawn(process.execPath, [tsx, '--conditions=development', child, 'fake-login1'], { cwd: root, env: { ...process.env, CUBICLE_DBUS_ADDRESS: addr }, stdio: ['pipe', 'pipe', 'inherit'] });
+    const fake = spawn(process.execPath, ['--import', 'tsx/esm', '--conditions=development', child, 'fake-login1'], { cwd: root, env: { ...process.env, CUBICLE_DBUS_ADDRESS: addr }, stdio: ['pipe', 'pipe', 'inherit'] });
     let fakeOut = '';
     fake.stdout.on('data', (d) => { fakeOut += d; });
     await waitOut(() => fakeOut, 'FAKE LOGIN1 READY', 10000);

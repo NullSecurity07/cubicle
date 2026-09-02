@@ -16,7 +16,7 @@ const runner = path.join(here, 'lib', 'kill9-child.ts');
 
 function child(args: string[]): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
-    const p = spawn(process.execPath, [path.join(root, 'node_modules/tsx/dist/cli.mjs'), '--conditions=development', runner, ...args], { cwd: root, env: { ...process.env, CUBICLE_MOCK_TOOLS: '1' } });
+    const p = spawn(process.execPath, ['--import', 'tsx/esm', '--conditions=development', runner, ...args], { cwd: root, env: { ...process.env, CUBICLE_MOCK_TOOLS: '1' } });
     let out = '';
     p.stdout.on('data', (d) => { out += d; process.stdout.write(d); });
     p.stderr.on('data', (d) => { out += d; process.stderr.write(d); });
@@ -29,7 +29,7 @@ async function main() {
   await child(['init', dir]);
   // Phase A: start, run the 4-step job; the child prints "STEP 2 DONE" after checkpointing step 2 and then sleeps
   // detached → own process group, so SIGKILL reaches the real daemon (tsx runs it as a grandchild)
-  const a = spawn(process.execPath, [path.join(root, 'node_modules/tsx/dist/cli.mjs'), '--conditions=development', runner, 'run', dir], { cwd: root, env: { ...process.env, CUBICLE_MOCK_TOOLS: '1', CUBICLE_HANG_AFTER_STEP: '2' }, detached: true });
+  const a = spawn(process.execPath, ['--import', 'tsx/esm', '--conditions=development', runner, 'run', dir], { cwd: root, env: { ...process.env, CUBICLE_MOCK_TOOLS: '1', CUBICLE_HANG_AFTER_STEP: '2' }, detached: true });
   let aOut = '';
   await new Promise<void>((resolve) => {
     a.stdout.on('data', (d) => { aOut += d; process.stdout.write(d); if (aOut.includes('STEP 2 DONE')) resolve(); });

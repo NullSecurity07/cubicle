@@ -19,7 +19,9 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
   const cfg = loadProvidersConfig(opts.providersPath ?? path.join(repoRoot(), 'config', 'providers.yaml'));
   // Required local models come from config/providers.yaml (no model ids in source): every enabled ollama chat model + the embeddings model.
   const ollamaCfg = cfg.providers.find((p) => p.id === 'ollama' && p.enabled);
-  const REQUIRED_OLLAMA = [...(ollamaCfg?.models.filter((m) => m.enabled).map((m) => m.id) ?? []), ...(ollamaCfg?.embeddings ? [ollamaCfg.embeddings.id] : [])];
+  // The floor needs one local chat model (the first enabled one) and the embeddings model; other local models are optional.
+  const firstLocal = ollamaCfg?.models.find((m) => m.enabled)?.id;
+  const REQUIRED_OLLAMA = [...(firstLocal ? [firstLocal] : []), ...(ollamaCfg?.embeddings ? [ollamaCfg.embeddings.id] : [])];
 
   // Ollama
   const tags = await get('http://localhost:11434/api/tags');
@@ -31,7 +33,7 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
   } else rows.push({ area: 'local', item: 'ollama', ok: false, detail: `not reachable (${tags.text.slice(0, 60)})`, fix: `install and start Ollama; ollama pull ${REQUIRED_OLLAMA.join(' ')}` });
 
   // Docker + sandbox
-  rows.push({ area: 'local', item: 'docker', ok: hasDocker(), detail: hasDocker() ? 'daemon reachable' : 'not reachable', fix: 'start Docker (shell.run falls back to a local shell otherwise)' });
+  rows.push({ area: 'local', item: 'docker', ok: hasDocker(), detail: hasDocker() ? 'daemon reachable' : 'not reachable', fix: 'start Docker (without it shell.run is refused unless shell_local_fallback: true and bubblewrap are present)' });
   if (hasDocker()) {
     if (opts.buildSandbox && !hasSandboxImage()) {
       const r = spawnSync('docker', ['build', '-t', SANDBOX_IMAGE, path.join(repoRoot(), 'config', 'sandbox')], { stdio: 'inherit' });
@@ -55,7 +57,7 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
 
   // Tauri deps
   const pk = spawnSync('pkg-config', ['--exists', 'webkit2gtk-4.1']);
-  rows.push({ area: 'local', item: 'webkit2gtk-4.1 (tray app)', ok: pk.status === 0, detail: pk.status === 0 ? 'installed' : 'missing', fix: 'sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg xdotool' });
+  rows.push({ area: 'local', item: 'webkit2gtk-4.1 (only for a Tauri tray build)', ok: pk.status === 0 ? true : null, detail: pk.status === 0 ? 'installed' : 'missing — not needed: the shipped tray app is Electron' });
 
   // Providers
   for (const p of cfg.providers) {
