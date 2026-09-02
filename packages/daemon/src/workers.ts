@@ -78,8 +78,15 @@ export class WorkerPool extends EventEmitter {
     return null;
   }
 
+  private roleActive(roleId: string): boolean {
+    const n = this.vault.readNoteOrNull(`Roles/${roleId}.md`);
+    const p = n && RoleFrontmatter.safeParse(n.data);
+    return !!(p && p.success && p.data.active);
+  }
+
   private async loop(roleId: string): Promise<void> {
     while (!this.stopped) {
+      if (!this.roleActive(roleId)) { this.emit('worker.exit', { roleId }); return; } // fired or archived
       if (this.paused || this.active.size >= this.opts.maxConcurrent) { await this.sleep(1000); continue; }
       const jobId = this.nextJob(roleId);
       if (!jobId) { await this.sleep(this.opts.idleMs ?? 15_000); continue; }

@@ -4,6 +4,7 @@ import {
 import { createRoleToolClient, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer } from '@cubicle/tools';
 import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
+import { applyHire, applyFire } from './evolution.js';
 import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
 
 /** kind → allowed targets. Everything else leaves the note unresolved with a warning (an approval must mean what its title says). */
@@ -33,6 +34,8 @@ export interface DispatcherDeps {
   onFire?: (note: { path: string; data: InboxFrontmatter; body: string }) => Promise<string>;
   /** Called after a proposal is resolved so workers wake. */
   wake?: () => void;
+  onRoleHired?: (role: string) => void;
+  onRoleFired?: (role: string) => void;
 }
 
 function fenced(body: string): string | null {
@@ -89,8 +92,15 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
       n++;
       continue;
     }
-    if (d.kind === 'message' || d.approved === null || d.resolved_at) continue;
-    if (!ownerFlipped) {
+    if (d.kind === 'message' || d.resolved_at) continue;
+    // Constitution autonomy flags: the owner pre-approved these kinds; the daemon approves agent-created notes itself.
+    const c = vault.constitution();
+    const autoApproved = d.approved === null && ((d.kind === 'hire' && c.auto_approve_hire) || (d.kind === 'charter_change' && c.auto_approve_charter_changes));
+    if (d.approved === null && !autoApproved) continue;
+    if (autoApproved) {
+      vault.updateNote(note.path, (nn) => ({ data: { ...nn.data, approved: true, approved_by: 'constitution' }, body: nn.body }), 'daemon');
+      d.approved = true;
+    } else if (!ownerFlipped) {
       vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: d.id, reason: 'approval flag was not set by the owner (sha matches a system write); ignoring' } });
       continue;
     }
@@ -100,8 +110,8 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
         outcome = 'rejected';
       } else {
         switch (d.kind) {
-          case 'hire': outcome = deps.onHire ? await deps.onHire(note) : 'hire dispatch arrives in Phase 7; resolved without action'; break;
-          case 'fire': outcome = deps.onFire ? await deps.onFire(note) : 'fire dispatch arrives in Phase 7; resolved without action'; break;
+          case 'hire': outcome = deps.onHire ? await deps.onHire(note) : await applyHire(vault, note, deps.onRoleHired); break;
+          case 'fire': outcome = deps.onFire ? await deps.onFire(note) : await applyFire(vault, note, deps.onRoleFired); break;
           case 'brand_change':
           case 'charter_change':
           case 'file_change': {

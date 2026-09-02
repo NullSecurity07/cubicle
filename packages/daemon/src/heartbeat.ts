@@ -5,6 +5,11 @@ import {
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
 import { writeQueueMd } from './queue-md.js';
+import { collectOwnerFeedback } from './evolution.js';
+
+function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
+  try { return collectOwnerFeedback(vault, since); } catch { return []; }
+}
 
 export interface HeartbeatDeps {
   vault: Vault;
@@ -189,8 +194,12 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           const planCur = vault.readTextOrNull('Plans/plan.md') ?? '';
           const prevArchive = vault.list('Plans/archive', { ext: '.md' }).sort().pop();
           if (planCur.trim() && (!prevArchive || vault.readText(prevArchive) !== planCur)) vault.writeText(`Plans/archive/${stampForFilename(now())}-${hbId.slice(-4)}.md`, planCur, 'ceo', { job: jobId });
+          const experiments = vault.list('Experiments', { ext: '.md' }).filter((r) => !r.endsWith('_template.md') && !r.startsWith('Experiments/posts/')).map((r) => ({ r, d: vault.readNoteOrNull(r)?.data as Record<string, unknown> | undefined })).filter((x) => x.d && ['won', 'lost', 'running'].includes(String(x.d.status)));
+          const feedback = collectOwnerFeedbackSafe(vault, state.since ?? undefined);
           const summary = [
             `Elapsed since last heartbeat: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}.`,
+            experiments.length ? `Experiments: ${experiments.map((x) => `${String(x.d!.title ?? x.r)} — ${String(x.d!.status)}${x.d!.result ? ` (${String(x.d!.result).slice(0, 80)})` : ''}`).join('; ')}. Adopt winners into the plan; propose Brand/ changes if a winner implies one.` : '',
+            feedback.length ? `Owner feedback since last cycle: ${feedback.map((f) => `[${f.role}] ${f.text}`).join(' | ')}.` : '',
             state.ownerEdits?.length ? `Owner edited: ${state.ownerEdits.join(', ')}.` : 'No owner edits.',
             state.finished?.length ? `Jobs finished: ${state.finished.map((f) => `${f.id} (${f.type}, ${f.status}): ${f.summary.slice(0, 120)}`).join('; ')}.` : 'No jobs finished.',
             state.mail?.length ? `Inbound mail: ${state.mail.length}.` : '',

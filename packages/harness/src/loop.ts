@@ -42,6 +42,8 @@ export interface HarnessDeps {
   noVerifyTypes?: string[];
   maxSteps?: number;
   localMaxSteps?: number;
+  /** Owner feedback lines addressed to a role (inline %%cubicle: …%% comments, preferences feedback, decision ratings). */
+  ownerFeedback?: (roleId: string) => string[];
 }
 
 export type JobOutcome =
@@ -151,6 +153,31 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       body: setSection(n.body, '## Result', '```json\n' + JSON.stringify(result, null, 2) + '\n```'),
     }), roleId, { job: jobId });
     events.emit({ type: result.status === 'done' ? 'job.done' : result.status === 'blocked' ? 'job.blocked' : 'job.failed', agent: roleId, job: jobId, payload: { status: result.status, summary: result.summary, artifacts: result.artifacts, blockers: result.blockers, metrics: result.metrics, lessons: result.lessons } });
+    // Skills loop (spec §9.3): a failed job counts a failure against every skill it loaded; two failures archive the skill.
+    if (result.status === 'failed') {
+      const loaded = [...new Set(observations.filter((o) => o.kind === 'tool' && o.tool === 'skills.load' && o.ok !== false).map((o) => String(o.args?.name ?? '')))].filter(Boolean);
+      for (const name of loaded) {
+        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+        const rel = `Skills/${slug}.md`;
+        const note = vault.readNoteOrNull<{ failures?: number; name?: string }>(rel);
+        if (!note) continue;
+        const failures = Number(note.data.failures ?? 0) + 1;
+        if (failures >= 2) {
+          vault.move(rel, `Skills/archive/${slug}-${nowIso().slice(0, 10)}.md`, 'daemon', { job: jobId });
+          vault.appendText('Memory/lessons.md', `- [${nowIso().slice(0, 10)}] [[${jobId}]] skill "${note.data.name ?? slug}" failed twice and was archived (coo)\n`, 'daemon', { job: jobId });
+          events.emit({ type: 'daemon.warning', agent: 'coo', job: jobId, payload: { where: 'skills', message: `skill ${slug} archived after 2 failures` } });
+        } else {
+          vault.writeNote(rel, { ...note.data, failures }, note.body, 'daemon', { job: jobId });
+        }
+      }
+    }
+    // Lessons loop (spec §9.1): every reported lesson lands in Memory/lessons.md, one line, deduplicated per job.
+    const lessons = (result.lessons ?? []).map((l) => l.trim()).filter(Boolean);
+    if (lessons.length) {
+      const existing = vault.readTextOrNull('Memory/lessons.md') ?? '# Lessons\n';
+      const lines = lessons.filter((l) => !existing.includes(`[[${jobId}]] ${l}`)).map((l) => `- [${nowIso().slice(0, 10)}] [[${jobId}]] ${l} (${roleId})`);
+      if (lines.length) vault.appendText('Memory/lessons.md', lines.join('\n') + '\n', roleId, { job: jobId });
+    }
     if (!noVerify.includes(job.type) && result.status !== 'blocked') {
       deps.scheduler.enqueue({ type: 'coo.verify', title: `Verify: ${job.title}`, assigned: 'coo', goal: `Verify job [[${jobId}]] (${job.type}) against its goal. Read its Result block and artifacts, confirm with evidence, append one lesson to Memory/lessons.md, then finish.`, priority: 4, parent: jobId, links: [`[[${jobId}]]`], privacy: job.privacy });
     }
@@ -239,10 +266,15 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     const unread = unreadMessages(vault, roleId, false);
     if (unread.length) { record({ step, kind: 'system', text: `New messages for you:\n${renderMessages(unread)}` }); unreadMessages(vault, roleId, true); }
     if (!ownerEditCache || Date.now() - ownerEditCache.at > 30_000) ownerEditCache = { at: Date.now(), list: events.query({ types: ['owner.edited'], from: ownerEditsSince, limit: 200 }).slice(-50) };
+    const feedback = deps.ownerFeedback?.(roleId) ?? [];
+    const extraSystem = [
+      feedback.length ? `# Owner feedback for you (act on it; it outranks your own plans)\n${feedback.slice(0, 20).join('\n')}` : '',
+      noToolStreak >= 2 ? 'You have replied twice without calling a tool. You MUST call a tool now, or call `finish`.' : '',
+    ].filter(Boolean).join('\n\n');
     const messages = await assembleContext({
       vault, role, roleBody, job, jobBody: jobNote.body, observations, memory: deps.memory, maxPromptTokens: promptBudget,
       ownerEdits: ownerEditCache.list, summarize: deps.summarize, maxSteps,
-      extraSystem: noToolStreak >= 2 ? 'You have replied twice without calling a tool. You MUST call a tool now, or call `finish`.' : undefined,
+      extraSystem: extraSystem || undefined,
     });
     events.emit({ type: 'agent.thinking', agent: roleId, job: jobId, payload: { step } });
     let reply: RoutedChatResult;

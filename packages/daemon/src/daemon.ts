@@ -12,6 +12,7 @@ import { WsServer } from './ws.js';
 import { createHeartbeatJob, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
+import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, feedbackFor } from './evolution.js';
 
 export interface DaemonOverrides {
   llm?: Llm;
@@ -118,8 +119,9 @@ export class Daemon {
     };
     const pollInbox = async (): Promise<string[]> => { const r = await runSystemTool('coo', emailInbox, {}); return r?.ok ? r.text.split('\n').slice(1) : []; };
     const pullAnalytics = async (): Promise<string | null> => { const r = await runSystemTool('coo', analyticsPull, {}); return r?.ok ? r.text : null; };
+    const ownerFeedback = (roleId: string) => feedbackFor(collectOwnerFeedback(this.vault, this.vault.events.last('heartbeat.completed')?.ts), roleId).map((f) => `- (${f.source}) ${f.text}`);
     this.workers = new WorkerPool(this.vault, {
-      harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env },
+      harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback },
       heartbeat: { llm, router: this.router, openMeeting, pollInbox, pullAnalytics, ...this.overrides.heartbeatHooks },
       maxConcurrent: cfg.maxConcurrentJobs,
     });
@@ -152,7 +154,11 @@ export class Daemon {
       this.workers.wake();
     }));
     this.offEvents.push(this.vault.events.on('job.queued', () => this.workers.wake()));
-    this.offEvents.push(this.vault.events.on('heartbeat.completed', () => { this.jobsDoneSinceHeartbeat = 0; }));
+    this.offEvents.push(this.vault.events.on('heartbeat.completed', () => {
+      this.jobsDoneSinceHeartbeat = 0;
+      const id = maybeEnqueueCharterCompression(this.vault);
+      if (id) this.log(`charter compression queued: ${id}`);
+    }));
     this.offEvents.push(this.vault.events.on('quota.updated', () => this.writeQuotaMd()));
 
     if (!this.overrides.disableWs) {
@@ -198,8 +204,10 @@ export class Daemon {
     if (this.stopping || this.ticking) return;
     this.ticking = true;
     try {
-      const n = await dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake() });
+      const n = await dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake() });
       if (n) this.log(`tick(${reason}): ${n} proposal/unblock action(s)`);
+      const reviews = enqueueExperimentReviews(this.vault);
+      if (reviews.length) this.log(`tick(${reason}): ${reviews.length} experiment review(s) queued`);
       const last = this.vault.events.last('heartbeat.completed');
       const since = last ? (Date.now() - Date.parse(last.ts)) / 3600_000 : Infinity;
       const hasOpen = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat');

@@ -7,3 +7,5 @@ export * from './ws.js';
 export * from './signals.js';
 export * from './rebuild.js';
 export * from './queue-md.js';
+export * from './evolution.js';
+export * from './doctor.js';
