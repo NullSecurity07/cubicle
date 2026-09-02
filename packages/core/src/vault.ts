@@ -3,7 +3,7 @@ import path from 'node:path';
 import { openDb, type Db } from './db.js';
 import { EventLog } from './events.js';
 import { atomicWriteSync, listFilesRecursive, nowIso, sha256 } from './fs.js';
-import { parseNote, stringifyNote, extractYamlBlock, type Note } from './frontmatter.js';
+import { parseNote, stringifyNote, extractYamlBlock, extractOwnerComments, type Note } from './frontmatter.js';
 import { assertWritable, isCachePath, normalizeRel } from './guard.js';
 import { Constitution, OwnerPreferences, type Constitution as ConstitutionT, type OwnerPreferences as OwnerPreferencesT } from './schemas.js';
 
@@ -128,7 +128,7 @@ export class Vault {
     if (isCachePath(r)) throw new Error(`Refusing to write cache path through the vault API: ${r}`);
     assertWritable(r, by, this.constitution().never_modify);
     const sha = atomicWriteSync(this.abs(r), content);
-    this.recordWritten(r, sha, by);
+    this.recordWritten(r, sha, by, content);
     if (!opts.silent) this.events.emit({ type: 'vault.wrote', agent: by, job: opts.job ?? null, payload: { path: r, sha, by } });
     return sha;
   }
@@ -192,8 +192,16 @@ export class Vault {
   }
 
   // ---------- written_sha bookkeeping ----------
-  recordWritten(rel: string, sha: string, by: string): void {
-    this.db.prepare('INSERT OR REPLACE INTO written_sha(path, sha, ts, by) VALUES (?, ?, ?, ?)').run(normalizeRel(rel), sha, nowIso(), by);
+  recordWritten(rel: string, sha: string, by: string, content?: string): void {
+    const comments = content !== undefined ? JSON.stringify(extractOwnerComments(content)) : null;
+    this.db.prepare('INSERT OR REPLACE INTO written_sha(path, sha, ts, by, comments_json) VALUES (?, ?, ?, ?, ?)').run(normalizeRel(rel), sha, nowIso(), by, comments);
+  }
+
+  /** %%cubicle: …%% comments that were present the last time the system wrote this file (null when unknown). */
+  writtenComments(rel: string): string[] | null {
+    const row = this.db.prepare('SELECT comments_json FROM written_sha WHERE path = ?').get(normalizeRel(rel)) as { comments_json: string | null } | undefined;
+    if (!row || row.comments_json === null) return null;
+    try { return JSON.parse(row.comments_json) as string[]; } catch { return null; }
   }
 
   writtenSha(rel: string): string | null {
@@ -222,7 +230,7 @@ export class Vault {
       const cur = this.currentSha(rel);
       if (cur === null) continue;
       if (this.writtenSha(rel) !== cur) {
-        this.recordWritten(rel, cur, by);
+        this.recordWritten(rel, cur, by, /\.(md|txt|html|astro)$/i.test(rel) ? this.readTextOrNull(rel) ?? undefined : undefined);
         this.events.emit({ type: 'vault.wrote', agent: by, job: opts.job ?? null, payload: { path: rel, sha: cur, by } });
         changed.push(rel);
       }

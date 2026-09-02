@@ -45,8 +45,9 @@ export async function scaffoldVault(target: string, opts: { force?: boolean; mem
   for (const rel of files) {
     const p = path.join(abs, rel);
     if (!existsSync(p) || statSync(p).isDirectory()) continue;
-    const sha = sha256(readFileSync(p));
-    vault.recordWritten(rel, sha, 'init');
+    const buf = readFileSync(p);
+    const sha = sha256(buf);
+    vault.recordWritten(rel, sha, 'init', /\.md$/.test(rel) ? buf.toString('utf8') : undefined);
     vault.events.emit({ type: 'vault.wrote', agent: 'init', payload: { path: rel, sha, by: 'init' } });
   }
   const commit = await autoCommit(abs, 'cubicle: init vault');

@@ -179,7 +179,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       if (lines.length) vault.appendText('Memory/lessons.md', lines.join('\n') + '\n', roleId, { job: jobId });
     }
     if (!noVerify.includes(job.type) && result.status !== 'blocked') {
-      deps.scheduler.enqueue({ type: 'coo.verify', title: `Verify: ${job.title}`, assigned: 'coo', goal: `Verify job [[${jobId}]] (${job.type}) against its goal. Read its Result block and artifacts, confirm with evidence, append one lesson to Memory/lessons.md, then finish.`, priority: 4, parent: jobId, links: [`[[${jobId}]]`], privacy: job.privacy });
+      deps.scheduler.enqueue({ type: 'coo.verify', title: `Verify: ${job.title}`, assigned: 'coo', goal: `Verify job [[${jobId}]] (${job.type}) against its goal. Read its Result block and artifacts, confirm with evidence, then finish with status done|failed and exactly one lesson in finish.lessons (the harness writes it to Memory/lessons.md).`, priority: 4, parent: jobId, links: [`[[${jobId}]]`], privacy: job.privacy });
     }
     await client.close();
     return { status: result.status === 'done' ? 'done' : result.status === 'blocked' ? 'blocked' : 'failed', result } as JobOutcome;
@@ -273,7 +273,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     if (!ownerEditCache || Date.now() - ownerEditCache.at > 30_000) ownerEditCache = { at: Date.now(), list: events.query({ types: ['owner.edited'], from: ownerEditsSince, limit: 200 }).slice(-50) };
     const feedback = deps.ownerFeedback?.(roleId) ?? [];
     const extraSystem = [
-      feedback.length ? `# Owner feedback for you (act on it; it outranks your own plans)\n${feedback.slice(0, 20).join('\n')}` : '',
+      feedback.length ? `# Owner feedback for you (the owner's instructions outrank your own plans)\n${feedback.slice(0, 20).join('\n')}` : '',
       noToolStreak >= 2 ? 'You have replied twice without calling a tool. You MUST call a tool now, or call `finish`.' : '',
     ].filter(Boolean).join('\n\n');
     const messages = await assembleContext({

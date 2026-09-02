@@ -32,6 +32,7 @@ export class MemoryIndex {
   }
 
   async indexFile(rel: string): Promise<boolean> {
+    if (rel.includes('/archive/')) { this.vault.db.prepare('DELETE FROM memory_vectors WHERE path = ?').run(rel); return false; }
     const text = this.vault.readTextOrNull(rel);
     if (text === null) { this.vault.db.prepare('DELETE FROM memory_vectors WHERE path = ?').run(rel); return false; }
     const sha = sha256(text);
@@ -53,6 +54,7 @@ export class MemoryIndex {
     const seen = new Set<string>();
     for (const d of this.dirs) {
       for (const rel of this.vault.list(d, { recursive: true, ext: '.md' })) {
+        if (rel.includes('/archive/')) { this.vault.db.prepare('DELETE FROM memory_vectors WHERE path = ?').run(rel); continue; } // pruned skills / old plans never surface
         seen.add(rel);
         if (await this.indexFile(rel)) n++;
       }
@@ -73,7 +75,7 @@ export class MemoryIndex {
     const rows = this.vault.db.prepare('SELECT path, chunk_idx, text, vector FROM memory_vectors').all() as { path: string; chunk_idx: number; text: string; vector: Buffer }[];
     const q = new Float32Array(qv);
     const scored = rows
-      .filter((r) => !dirs || dirs.some((d) => r.path.startsWith(d.replace(/\/$/, '') + '/')))
+      .filter((r) => !r.path.includes('/archive/') && (!dirs || dirs.some((d) => r.path.startsWith(d.replace(/\/$/, '') + '/'))))
       .map((r) => ({ path: r.path, text: r.text, score: cosine(q, new Float32Array(r.vector.buffer, r.vector.byteOffset, r.vector.byteLength / 4)) }))
       .sort((a, b) => b.score - a.score);
     // one hit per path

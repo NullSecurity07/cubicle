@@ -74,3 +74,27 @@ describe('viewer state machine (spec §10)', () => {
     expect(targetFor('vault.read')).toBeNull();
   });
 });
+
+describe('critique 7-9 reducer fixes', () => {
+  it('snapshot resets stale in-flight states, keeps a still-running job, bounds surfaces; fired agents are inert; arrival resumes working', () => {
+    let s = applySnapshot(emptyState(), snap);
+    s = applyEvent(s, ev('agent.tool_call', 'growth', { tool: 'browser.goto' }));
+    expect(s.agents.growth.state).toBe('walking');
+    s = applyEvent(s, ev('agent.tool_result', 'growth', { tool: 'browser.goto', ok: true }));
+    expect(s.agents.growth.state).toBe('walking'); // still has a target → keeps walking
+    s = applyEvent(s, ev('agent.tool_call', 'growth', { tool: 'vault.write' }));
+    s = applyEvent(s, ev('agent.tool_result', 'growth', { tool: 'vault.write', ok: true }));
+    expect(s.agents.growth.state).toBe('working'); // no target → back to typing
+    const again = applySnapshot(s, { ...snap, jobs: [] }); // job gone while disconnected
+    expect(again.agents.growth.state).toBe('idle_at_desk');
+    expect(again.agents.growth.job).toBeNull();
+    const still = applySnapshot(s, snap);
+    expect(still.agents.growth.state).toBe('working');
+    let f = applyEvent(s, ev('role.fired', 'daemon', { role: 'growth' }, null));
+    f = applyEvent(f, ev('agent.tool_call', 'growth', { tool: 'browser.goto' }));
+    expect(f.agents.growth.state).toBe('leaving');
+    const d = applyEvent(s, ev('vault.wrote', 'ceo', { path: 'Decisions/d1.md', sha: 'x', by: 'ceo' }, null));
+    expect(d.feed.at(-1)!.text).toContain('decision recorded');
+    expect(applyEvent(s, ev('vault.wrote', 'cto', { path: 'Plans/plan.md', sha: 'x', by: 'cto' }, null)).staleSnapshot).toBe(true);
+  });
+});

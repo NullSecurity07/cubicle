@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 
 export type Db = Database.Database;
 
@@ -63,11 +63,17 @@ CREATE TABLE IF NOT EXISTS screens (
   path TEXT NOT NULL,
   PRIMARY KEY (session_id, seq)
 );
+CREATE TABLE IF NOT EXISTS refusals (
+  path TEXT PRIMARY KEY,
+  sha TEXT NOT NULL,
+  at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS written_sha (
   path TEXT PRIMARY KEY,
   sha TEXT NOT NULL,
   ts TEXT NOT NULL,
-  by TEXT NOT NULL
+  by TEXT NOT NULL,
+  comments_json TEXT
 );
 `;
 

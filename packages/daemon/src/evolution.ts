@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import {
-  type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, isValidRoleId, repoRoot, extractOwnerComments, idFromKey, JobResult,
+  type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -27,17 +27,27 @@ function fencedCharter(body: string): string | null {
 }
 
 /** Apply an approved hire: validate the charter, cap headcount, assign a desk, write Roles/<role>.md, emit role.hired. */
-export async function applyHire(vault: Vault, note: { path: string; data: InboxFrontmatter; body: string }, onHired?: (role: string) => void): Promise<string> {
+export async function applyHire(vault: Vault, note: { path: string; data: InboxFrontmatter; body: string }, onHired?: (role: string) => void, opts: { autoApproved?: boolean } = {}): Promise<string> {
   const c = vault.constitution();
   const charter = fencedCharter(note.body);
   if (!charter) return 'no fenced charter (```markdown … ```) in the proposal';
-  const parsed = RoleFrontmatter.safeParse(parseNote(charter).data);
+  const raw = parseNote(charter).data as Record<string, unknown>;
+  // hired/desk/sprite are assigned here; a CEO-drafted charter need not guess them.
+  const parsed = RoleFrontmatter.safeParse({ hired: '', sprite: String(raw.role ?? ''), desk: '', active: true, ...raw });
   if (!parsed.success) return `charter frontmatter invalid: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`;
   const role = parsed.data;
+  if (opts.autoApproved) {
+    // Under auto_approve_hire the new role may only use tools some existing charter already has (no privilege escalation without the owner).
+    const known = new Set(activeRoles(vault).flatMap((r) => r.tools));
+    const novel = role.tools.filter((t) => !known.has(t) && ![...known].some((k) => k.endsWith('.*') && t.startsWith(k.slice(0, -1))));
+    if (novel.length) return `auto-approved hires may not introduce tools no current role has (${novel.join(', ')}); the owner must approve`;
+    if (Object.values(role.approval_overrides).length) return 'auto-approved hires may not set approval overrides; the owner must approve';
+  }
   if (!isValidRoleId(role.role)) return `invalid role id ${role.role}`;
   if (vault.exists(`Roles/${role.role}.md`)) return `role ${role.role} already exists`;
-  const links = (note.body.match(/\[\[job_[^\]]+\]\]/g) ?? []).length;
-  if (links < 2) return `hire needs links to at least 2 blocked or repeated jobs (found ${links})`;
+  const linked = [...new Set((note.body.match(/\[\[(job_[^\]|]+)/g) ?? []).map((m) => m.slice(2)))];
+  const justified = linked.filter((id) => { const j = readJob(vault, id); return !!j && (['blocked', 'failed'].includes(j.data.status) || j.data.attempt > 1); });
+  if (justified.length < 2) return `hire needs links to at least 2 distinct blocked, failed or retried jobs (found ${justified.length} of ${linked.length} linked)`;
   const active = activeRoles(vault).filter((r) => r.active).length;
   if (active >= c.max_roles) return `max_roles (${c.max_roles}) reached`;
   const desk = freeDesk(vault);
@@ -52,6 +62,7 @@ export async function applyHire(vault: Vault, note: { path: string; data: InboxF
 
 /** Apply an approved fire: deactivate, archive the charter, emit role.fired. Founding roles can be fired too — the owner decided. */
 export async function applyFire(vault: Vault, note: { path: string; data: InboxFrontmatter; body: string }, onFired?: (role: string) => void): Promise<string> {
+  if (note.data.from !== 'ceo' && note.data.from !== 'owner') return `only the CEO (or the owner) may file fire proposals (this one is from ${note.data.from})`;
   const target = note.data.target?.match(/^Roles\/([a-z0-9_-]+)\.md$/)?.[1] ?? note.body.match(/role:\s*([a-z0-9_-]+)/)?.[1];
   if (!target || !isValidRoleId(target)) return 'fire proposal must set target: Roles/<role>.md';
   const rel = `Roles/${target}.md`;
@@ -60,24 +71,13 @@ export async function applyFire(vault: Vault, note: { path: string; data: InboxF
   if (target === 'ceo') return 'the CEO cannot be fired (it owns the heartbeat); edit its charter instead';
   vault.writeText(rel, stringifyNote({ ...n.data, active: false, fired: nowIso() }, n.body), 'daemon', { job: note.data.job ?? null });
   vault.move(rel, `Roles/archive/${target}-${nowIso().slice(0, 10)}.md`, 'daemon');
-  for (const j of listJobs(vault, { assigned: target, status: ['queued', 'blocked'] })) vault.updateNote(`Jobs/${j.id}.md`, (x) => ({ data: { ...x.data, status: 'cancelled', updated: nowIso() }, body: x.body }), 'daemon');
+  for (const j of listJobs(vault, { assigned: target, status: ['queued', 'blocked', 'running'] })) vault.updateNote(`Jobs/${j.id}.md`, (x) => ({ data: { ...x.data, status: 'cancelled', updated: nowIso() }, body: x.body }), 'daemon'); // running jobs stop at their next tool step
   vault.events.emit({ type: 'role.fired', agent: 'daemon', job: note.data.job ?? null, payload: { role: target, proposal: note.data.id } });
   onFired?.(target);
   return `fired ${target}; charter archived, open jobs cancelled`;
 }
 
-// ---------- lessons (spec §9.1) ----------
-/** Append the lessons a finished job reported (finish.lessons[]) as one line each; COO verify jobs are the main source. */
-export function appendLessons(vault: Vault, jobId: string, roleId: string, result: JobResult): number {
-  const lessons = (result.lessons ?? []).map((l) => l.trim()).filter(Boolean);
-  if (!lessons.length) return 0;
-  const date = nowIso().slice(0, 10);
-  const existing = vault.readTextOrNull('Memory/lessons.md') ?? '# Lessons\n';
-  const lines = lessons.filter((l) => !existing.includes(`[[${jobId}]] ${l}`)).map((l) => `- [${date}] [[${jobId}]] ${l} (${roleId})`);
-  if (!lines.length) return 0;
-  vault.appendText('Memory/lessons.md', lines.join('\n') + '\n', roleId, { job: jobId });
-  return lines.length;
-}
+// ---------- lessons (spec §9.1): appended by the harness from finish.lessons[] (packages/harness/src/loop.ts) ----------
 
 // ---------- charter compression (spec §9.2) ----------
 export const CHARTER_COMPRESSION_EVERY = 7;
@@ -113,8 +113,9 @@ export function enqueueExperimentReviews(vault: Vault, now = new Date()): string
   for (const e of listExperiments(vault)) {
     if (e.status !== 'running' || !e.review_date) continue;
     if (Date.parse(e.review_date) > now.getTime()) continue;
-    const id = idFromKey('job', `judge:${e.id}`);
-    if (listJobs(vault).some((j) => j.id === id)) continue;
+    const prior = listJobs(vault).filter((j) => j.type === 'coo.verify' && (j.links ?? []).includes(`[[${e.path.replace(/\.md$/, '')}]]`));
+    if (prior.some((j) => ['queued', 'running', 'blocked'].includes(j.status))) continue;
+    const id = idFromKey('job', `judge:${e.path}:${prior.length}`); // a failed/cancelled judgement gets a fresh one
     createJob(vault, { id, type: 'coo.verify', title: `Judge experiment: ${e.title ?? e.id}`, assigned: 'coo', priority: 2, goal: `Experiment [[${e.path.replace(/\.md$/, '')}]] reached its review date (${e.review_date}). Read it and Metrics/daily.md, decide won | lost | inconclusive from the evidence, then vault.write the experiment note with status set accordingly, the result filled in, and a short ## Verdict. Append one lesson via finish.lessons. Do not invent numbers.`, links: [`[[${e.path.replace(/\.md$/, '')}]]`] }, 'daemon');
     out.push(id);
   }
@@ -124,7 +125,11 @@ export function enqueueExperimentReviews(vault: Vault, now = new Date()): string
 // ---------- owner feedback (spec §9.6) ----------
 export interface OwnerFeedback { role: string; source: string; text: string }
 
-/** %%cubicle: …%% comments in files the owner edited since `since`, attributed to the note's author role; plus owner_preferences feedback and decision ratings. */
+/**
+ * %%cubicle: …%% comments in files the owner edited since `since`, attributed to the note's author role; plus owner_preferences
+ * feedback and decision ratings. Provenance: a comment counts as the owner's only if it was NOT present in the last version the
+ * system wrote (recorded at write time; git HEAD as fallback) — text that arrived through email, scraping or an LLM is ignored.
+ */
 export function collectOwnerFeedback(vault: Vault, since?: string): OwnerFeedback[] {
   const out: OwnerFeedback[] = [];
   const seen = new Set<string>();
@@ -134,19 +139,30 @@ export function collectOwnerFeedback(vault: Vault, since?: string): OwnerFeedbac
     seen.add(rel);
     const text = vault.readTextOrNull(rel);
     if (!text) continue;
-    const comments = extractOwnerComments(text);
+    const prior = new Set(vault.writtenComments(rel) ?? extractOwnerComments(gitHead(vault, rel) ?? ''));
+    const comments = extractOwnerComments(text).filter((c) => !prior.has(c));
     if (!comments.length) continue;
     const d = parseNote(text).data as Record<string, unknown>;
-    const role = String(d.assigned ?? d.decided_by ?? d.by ?? d.author ?? d.owner ?? (rel.startsWith('Site/') ? 'engineer' : rel.startsWith('Customers/') || rel.startsWith('Experiments/') ? 'growth' : rel.startsWith('Plans/') ? 'cto' : 'ceo'));
+    const byName = rel.match(/^(?:Roles|Messages)\/([a-z0-9_-]+)\.md$/)?.[1];
+    const role = String(byName ?? d.assigned ?? d.decided_by ?? d.from ?? d.by ?? d.author ?? d.owner ?? (rel.startsWith('Site/') ? 'engineer' : rel.startsWith('Customers/') || rel.startsWith('Experiments/') ? 'growth' : rel.startsWith('Plans/') ? 'cto' : 'ceo'));
     for (const c of comments) out.push({ role, source: rel, text: c });
   }
   for (const f of vault.ownerPreferences().feedback) out.push({ role: 'ceo', source: 'Memory/owner_preferences.md', text: f });
   for (const rel of vault.list('Decisions', { ext: '.md' })) {
-    const d = vault.readNoteOrNull(rel)?.data as { owner_rating?: string; decided_by?: string } | undefined;
-    if (d?.owner_rating === 'down') out.push({ role: String(d.decided_by ?? 'ceo'), source: rel, text: `the owner rated this decision down` });
+    const d = vault.readNoteOrNull(rel)?.data as { owner_rating?: string; decided_by?: string; rating_seen?: string } | undefined;
+    if (d?.owner_rating === 'down' && !d.rating_seen) {
+      out.push({ role: String(d.decided_by ?? 'ceo'), source: rel, text: `the owner rated this decision down` });
+      try { vault.updateNote(rel, (n) => ({ data: { ...n.data, rating_seen: nowIso() }, body: n.body }), 'daemon'); } catch { /* keep going */ }
+    }
   }
   return out;
 }
+
+function gitHead(vault: Vault, rel: string): string | null {
+  try { const { execFileSync } = require_cp(); return execFileSync('git', ['show', `HEAD:${rel}`], { cwd: vault.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; }
+}
+import * as cp from 'node:child_process';
+function require_cp() { return cp; }
 
 export function feedbackFor(all: OwnerFeedback[], role: string): OwnerFeedback[] {
   return all.filter((f) => f.role === role || (role === 'ceo' && f.source === 'Memory/owner_preferences.md'));

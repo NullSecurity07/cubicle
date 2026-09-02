@@ -66,7 +66,9 @@ console.log('replay state:', JSON.stringify(shown));
 const framePath = shown.frames[0];
 if (shown.mode !== 'replay' || !framePath) pass = false;
 if (framePath) {
-  const res = await page.request.get(`http://127.0.0.1:7522/screens/${framePath.replace('.cubicle/screens/', '')}`);
+  const res = await page.request.get(`http://127.0.0.1:7522/screens/${framePath.replace('.cubicle/screens/', '')}?token=${token}`);
+  const noTok = await fetch(`http://127.0.0.1:7522/screens/${framePath.replace('.cubicle/screens/', '')}`); // cookie-less client
+  console.log(`frame without token/cookie: HTTP ${noTok.status}`); if (noTok.status !== 403) pass = false;
   console.log(`billboard frame served: HTTP ${res.status()} ${res.headers()['content-type']}`);
   if (res.status() !== 200) pass = false;
 }

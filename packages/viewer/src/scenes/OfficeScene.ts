@@ -5,7 +5,7 @@ import { AgentSprite } from '../world/agents.js';
 import { Surface, type SurfaceKind } from '../world/surfaces.js';
 import type { State } from '../state.js';
 
-export interface SceneHooks { getState(): State; frames(): Record<string, string>; onSurfaceClick(kind: SurfaceKind): void; onAgentClick(role: string): void; hour(): number; }
+export interface SceneHooks { getState(): State; frames(): Record<string, string>; onSurfaceClick(kind: SurfaceKind): void; onAgentClick(role: string): void; hour(): number; /** wall clock live, event clock in replay (bubbles expire against it) */ clock(): number; }
 
 const SURFACES: SurfaceKind[] = ['billboard', 'terminal', 'postoffice', 'newsstand', 'bank', 'vault', 'workshop', 'whiteboard', 'noticeboard'];
 
@@ -67,7 +67,7 @@ export class OfficeScene extends Phaser.Scene {
       if (!ag) { ag = new AgentSprite(this, this.world, view, (r) => this.hooks.onAgentClick(r)); this.agents.set(role, ag); this.minimap.ignore(ag.container); }
       if ((view.target === 'boardroom' || view.target === 'meetingroom') && !ag.seat) this.assignSeat(role, view.target);
       if (!view.target && ag.seat) ag.seat = null;
-      ag.update(view, dt, Date.now());
+      ag.update(view, dt, this.hooks.clock());
     }
     for (const [role, ag] of this.agents) if (!s.agents[role]) { ag.destroy(); this.agents.delete(role); }
     // surfaces at ~4 fps

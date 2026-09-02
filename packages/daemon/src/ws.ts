@@ -65,7 +65,7 @@ export class WsServer {
     const token = url.searchParams.get('token') ?? (typeof info.req.headers['x-cubicle-token'] === 'string' ? info.req.headers['x-cubicle-token'] : '');
     if (token !== this.token) { this.rejected.push(`bad token from ${info.origin ?? 'no-origin'}`); return false; }
     const origin = info.origin ?? (typeof info.req.headers.origin === 'string' ? info.req.headers.origin : undefined);
-    if (!origin || origin === 'null') return true; // non-browser client (CLI, tests, Tauri without origin)
+    if (!origin) return true; // non-browser client (CLI, tests); browsers always send an Origin ("null" from sandboxed frames is refused)
     const allowed = [...(this.deps.allowedOrigins ?? []), `http://127.0.0.1:${this.deps.port + 1}`, `http://localhost:${this.deps.port + 1}`, 'tauri://localhost', 'http://tauri.localhost'];
     if (allowed.includes(origin) || /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin)) return true;
     this.rejected.push(`origin ${origin}`);
@@ -104,6 +104,8 @@ export class WsServer {
     const addr = wss.address();
     return typeof addr === 'object' && addr ? addr.port : this.deps.port;
   }
+
+  clientCount(): number { return this.wss?.clients.size ?? 0; }
 
   broadcast(payload: unknown): void {
     if (!this.wss) return;

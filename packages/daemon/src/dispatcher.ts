@@ -44,6 +44,23 @@ function fenced(body: string): string | null {
   return m ? m[1] + (m[1].endsWith('\n') ? '' : '\n') : null;
 }
 
+/**
+ * Leave a proposal unresolved with a reason. The footer write is a system write (sha now matches), so the owner's
+ * approval is remembered via `refused_sha`/`refused_at`: the note is retried when the owner edits it again or after 10 minutes.
+ */
+function refuseNote(vault: Vault, note: { path: string; data: InboxFrontmatter }, why: string, extra: Record<string, unknown> = {}): void {
+  vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: note.data.id, kind: note.data.kind, reason: why, ...extra } });
+  vault.updateNote(note.path, (nn) => ({ data: { ...nn.data, refused: why, refused_at: nowIso() }, body: nn.body.replace(/\n\n---\n_Not applied:[^\n]*_\n?$/s, '').trimEnd() + `\n\n---\n_Not applied: ${why}. Fix it and set approved again (retried automatically every 10 minutes)._\n` }), 'daemon');
+  const sha = vault.currentSha(note.path);
+  if (sha) vault.db.prepare('INSERT OR REPLACE INTO refusals(path, sha, at) VALUES (?, ?, ?)').run(note.path, sha, nowIso());
+}
+
+function retryDue(vault: Vault, note: { path: string; data: InboxFrontmatter }): boolean {
+  const row = vault.db.prepare('SELECT sha, at FROM refusals WHERE path = ?').get(note.path) as { sha: string; at: string } | undefined;
+  if (!row) return false;
+  return vault.currentSha(note.path) !== row.sha || Date.now() - Date.parse(row.at) > 10 * 60_000;
+}
+
 /** Execute a stored call as the daemon, with the original role's permissions and the stored idempotency key. */
 export async function executeStoredCall(deps: DispatcherDeps, note: { path: string; data: InboxFrontmatter }): Promise<{ ok: boolean; text: string }> {
   const call = note.data.call!;
@@ -97,11 +114,14 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     if (d.kind === 'message' || d.resolved_at) continue;
     // Constitution autonomy flags: the owner pre-approved these kinds; the daemon approves agent-created notes itself.
     const c = vault.constitution();
-    const autoApproved = d.approved === null && ((d.kind === 'hire' && c.auto_approve_hire) || (d.kind === 'charter_change' && c.auto_approve_charter_changes));
+    const autoApproved = d.approved === null && ((d.kind === 'hire' && c.auto_approve_hire && d.from === 'ceo') || (d.kind === 'charter_change' && c.auto_approve_charter_changes && d.from === 'cto'));
     if (d.approved === null && !autoApproved) continue;
+    const previouslyRefused = !!(d as { refused?: string }).refused;
     if (autoApproved) {
       vault.updateNote(note.path, (nn) => ({ data: { ...nn.data, approved: true, approved_by: 'constitution' }, body: nn.body }), 'daemon');
       d.approved = true;
+    } else if (previouslyRefused) {
+      if (!retryDue(vault, note)) continue; // the owner's earlier flip stands; retry on edit or every 10 min
     } else if (!ownerFlipped) {
       vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: d.id, reason: 'approval flag was not set by the owner (sha matches a system write); ignoring' } });
       continue;
@@ -112,28 +132,25 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
         outcome = 'rejected';
       } else {
         switch (d.kind) {
-          case 'hire': outcome = deps.onHire ? await deps.onHire(note) : await applyHire(vault, note, deps.onRoleHired); break;
-          case 'fire': outcome = deps.onFire ? await deps.onFire(note) : await applyFire(vault, note, deps.onRoleFired); break;
+          case 'hire':
+          case 'fire': {
+            const r = d.kind === 'hire' ? (deps.onHire ? await deps.onHire(note) : await applyHire(vault, note, deps.onRoleHired, { autoApproved })) : (deps.onFire ? await deps.onFire(note) : await applyFire(vault, note, deps.onRoleFired));
+            if (!/^(hired|fired) /.test(r)) { refuseNote(vault, note, r); continue; }
+            outcome = r;
+            break;
+          }
           case 'brand_change':
           case 'charter_change':
           case 'file_change': {
             const target = d.target;
             if (!target) { outcome = 'no target path on proposal'; break; }
             const invalid = validateTarget(d.kind, target, !!d.call);
-            if (invalid) {
-              vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: d.id, kind: d.kind, target, reason: invalid } });
-              vault.updateNote(note.path, (nn) => ({ data: nn.data, body: nn.body.trimEnd() + `\n\n---\n_Not applied: ${invalid}. Fix the target and set approved again, or set approved: false._\n` }), 'daemon');
-              continue; // leave unresolved
-            }
+            if (invalid) { refuseNote(vault, note, invalid, { target }); continue; }
             let content = (d.call?.tool === 'vault.write' && typeof d.call.args.content === 'string') ? String(d.call.args.content) : fenced(note.body);
             if (d.kind === 'brand_change' && target === 'Brand/name.md' && !content) {
               const options = note.body.split('\n').filter((l) => /^\s*\d+\.\s/.test(l));
               const line = d.chosen ? options.find((l) => new RegExp(`^\\s*${d.chosen}\\.\\s`).test(l)) : undefined;
-              if (options.length && !line) {
-                vault.events.emit({ type: 'daemon.warning', payload: { proposal: d.id, reason: d.chosen ? `chosen: ${d.chosen} matches no option` : 'set chosen: <n> to pick an option' } });
-                vault.updateNote(note.path, (nn) => ({ data: nn.data, body: nn.body.trimEnd() + `\n\n---\n_Not applied: set \`chosen: 1..${options.length}\` and approve again._\n` }), 'daemon');
-                continue;
-              }
+              if (options.length && !line) { refuseNote(vault, note, d.chosen ? `chosen: ${d.chosen} matches no option; set chosen: 1..${options.length}` : `set chosen: 1..${options.length} to pick an option`); continue; }
               if (line) {
                 const clean = (x: string) => x.replace(/[*_`]/g, '').trim();
                 const name = clean(line.replace(/^\s*\d+\.\s*/, '').split(/\s+—\s+|\s+-\s+|:/)[0]);
@@ -143,8 +160,26 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             }
             if (!content) { outcome = 'no "## Proposed content" block found'; break; }
             if (d.kind === 'charter_change') {
-              const parsed = RoleFrontmatter.safeParse(parseNote(content).data);
-              if (!parsed.success) { vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: d.id, reason: 'charter frontmatter does not validate' } }); vault.updateNote(note.path, (nn) => ({ data: nn.data, body: nn.body.trimEnd() + '\n\n---\n_Not applied: charter frontmatter does not validate._\n' }), 'daemon'); continue; }
+              // A charter change edits the *body* and tools of an existing role. Identity and staffing fields belong to the
+              // owner (spec §11) and to hire/fire (§9.5): they are carried over from the current note, never taken from the proposal.
+              const current = vault.readNoteOrNull(target);
+              const cur = current && RoleFrontmatter.safeParse(current.data);
+              const refuse = (why: string) => refuseNote(vault, note, why, { target });
+              if (!cur || !cur.success) { refuse('charter_change may only edit an existing role (use a hire proposal to add one)'); continue; }
+              const incoming = parseNote(content);
+              const parsed = RoleFrontmatter.safeParse({ ...incoming.data, role: cur.data.role, desk: cur.data.desk, hired: cur.data.hired, sprite: cur.data.sprite, active: cur.data.active, model_tier: cur.data.model_tier, display: cur.data.display });
+              if (!parsed.success) { refuse('charter frontmatter does not validate'); continue; }
+              if (autoApproved) {
+                // Auto-approval covers only the CTO's compression output (spec §9.2) and may not widen tools or loosen approvals.
+                const widened = parsed.data.tools.filter((t) => !cur.data.tools.some((c) => c === t || (c.endsWith('.*') && t.startsWith(c.slice(0, -1)))));
+                const order: Record<string, number> = { auto: 0, propose: 1, ask: 2, never: 3 };
+                const loosened = Object.entries(parsed.data.approval_overrides).filter(([k, v]) => k in cur.data.approval_overrides && order[v] < order[cur.data.approval_overrides[k]]);
+                if (d.from !== 'cto') { refuse(`auto_approve_charter_changes applies to the CTO's compression proposals only (this one is from ${d.from})`); continue; }
+                if (widened.length) { refuse(`auto-approved charter changes may not add tools (${widened.join(', ')}); the owner must approve this one`); continue; }
+                if (loosened.length) { refuse(`auto-approved charter changes may not loosen approval overrides (${loosened.map(([k]) => k).join(', ')})`); continue; }
+                if (!incoming.body.trim() || incoming.body.length > (current!.body.length + 200)) { refuse('auto-approved compression must not lengthen the charter (or empty it)'); continue; }
+              }
+              content = stringifyNote(parsed.data as Record<string, unknown>, incoming.body);
             }
             vault.writeText(target, content, 'daemon', { job: d.job ?? null });
             outcome = `applied to ${target}`;
@@ -170,7 +205,8 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
       outcome = `dispatch error: ${(err as Error).message}`;
       vault.events.emit({ type: 'daemon.warning', payload: { where: 'dispatcher', proposal: d.id, message: outcome } });
     }
-    vault.updateNote(note.path, (nn) => ({ data: { ...nn.data, resolved_at: nowIso() }, body: nn.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: ${outcome}_\n` }), 'daemon');
+    vault.updateNote(note.path, (nn) => { const { refused: _r, refused_at: _a, ...rest } = nn.data as Record<string, unknown>; return { data: { ...rest, resolved_at: nowIso() }, body: nn.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: ${outcome}_\n` }; }, 'daemon');
+    vault.db.prepare('DELETE FROM refusals WHERE path = ?').run(note.path);
     vault.events.emit({ type: 'proposal.resolved', agent: 'owner', job: d.job ?? null, payload: { id: d.id, kind: d.kind, approved: d.approved, outcome } });
     n++;
   }

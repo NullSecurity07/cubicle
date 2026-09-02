@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, createProposal, listJobs, listInbox, findInboxById, JobResult, stringifyNote } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, createProposal, listJobs, listInbox, findInboxById, JobResult, stringifyNote, updateJob } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler, runJob, type Llm } from '@cubicle/harness';
 import { dispatchProposals, applyHire, applyFire, freeDesk, activeRoles, maybeEnqueueCharterCompression, enqueueExperimentReviews, collectOwnerFeedback, feedbackFor } from '../src/index.js';
@@ -35,6 +35,8 @@ describe('hire / fire (acceptance test 7, headless)', () => {
   it('a hire proposal with ≥2 job links, approved by the owner, creates the role, desk, inbox, event', async () => {
     const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'growth', goal: 'g' }, 'cto');
     const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'growth', goal: 'g' }, 'cto');
+    updateJob(vault, j1, { status: 'blocked', blocked_on: { kind: 'owner', id: 'x', since: 'now' } }, 'daemon');
+    updateJob(vault, j2, { status: 'failed' }, 'daemon');
     const p = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'Hire Support', body: `Growth keeps blocking on [[${j1}]] and [[${j2}]].\n\n\`\`\`markdown\n${CHARTER}\`\`\`\n` }, 'ceo');
     let hired: string | null = null;
     expect(await dispatchProposals({ ...deps(), onRoleHired: (r) => (hired = r) })).toBe(0);
@@ -58,10 +60,14 @@ describe('hire / fire (acceptance test 7, headless)', () => {
     const p1 = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: '```markdown\n' + CHARTER + '```' }, 'ceo');
     expect(await applyHire(vault, { ...p1, ...findInboxById(vault, p1.id)! })).toMatch(/at least 2/);
     const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'growth', goal: 'g' }, 'cto');
-    const bad = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: `[[${j1}]] [[${j1}]]\n\`\`\`markdown\n---\nrole: Bad Role\n---\n# c\n\`\`\`` }, 'ceo');
+    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'growth', goal: 'g' }, 'cto');
+    updateJob(vault, j1, { status: 'failed' }, 'daemon'); updateJob(vault, j2, { status: 'failed' }, 'daemon');
+    const dup = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: `[[${j1}]] [[${j1}]]\n\`\`\`markdown\n${CHARTER}\`\`\`` }, 'ceo');
+    expect(await applyHire(vault, findInboxById(vault, dup.id)!)).toMatch(/at least 2 distinct/);
+    const bad = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: `[[${j1}]] [[${j2}]]\n\`\`\`markdown\n---\nrole: Bad Role\n---\n# c\n\`\`\`` }, 'ceo');
     expect(await applyHire(vault, findInboxById(vault, bad.id)!)).toMatch(/invalid/);
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('max_roles: 8', 'max_roles: 5') }), 'owner');
-    const full = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: `[[${j1}]] [[${j1}]]\n\`\`\`markdown\n${CHARTER}\`\`\`` }, 'ceo');
+    const full = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: `[[${j1}]] [[${j2}]]\n\`\`\`markdown\n${CHARTER}\`\`\`` }, 'ceo');
     expect(await applyHire(vault, findInboxById(vault, full.id)!)).toMatch(/max_roles/);
   });
   it('fire deactivates, archives the charter, cancels open jobs; the CEO is protected', async () => {
@@ -72,14 +78,16 @@ describe('hire / fire (acceptance test 7, headless)', () => {
     expect(vault.list('Roles/archive', { ext: '.md' }).some((r) => r.includes('growth'))).toBe(true);
     expect(listJobs(vault).find((j) => j.id === open)!.status).toBe('cancelled');
     expect(vault.events.count('role.fired')).toBe(1);
-    const ceo = createProposal(vault, { kind: 'fire', from: 'cto', target: 'Roles/ceo.md', title: 'x', body: 'x' }, 'cto');
+    const ceo = createProposal(vault, { kind: 'fire', from: 'ceo', target: 'Roles/ceo.md', title: 'x', body: 'x' }, 'ceo');
     expect(await applyFire(vault, findInboxById(vault, ceo.id)!)).toMatch(/cannot be fired/);
     expect(freeDesk(vault)).toBe('cubicle_3'); // growth's desk is free again
   });
   it('auto_approve_hire applies agent-created hires without an owner flip', async () => {
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('auto_approve_hire: false', 'auto_approve_hire: true') }), 'owner');
     const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'growth', goal: 'g' }, 'cto');
-    createProposal(vault, { kind: 'hire', from: 'ceo', title: 'Hire Support', body: `[[${j1}]] [[${j1}]]\n\`\`\`markdown\n${CHARTER}\`\`\`` }, 'ceo');
+    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'growth', goal: 'g' }, 'cto');
+    updateJob(vault, j1, { status: 'failed' }, 'daemon'); updateJob(vault, j2, { status: 'failed' }, 'daemon');
+    createProposal(vault, { kind: 'hire', from: 'ceo', title: 'Hire Support', body: `[[${j1}]] [[${j2}]]\n\`\`\`markdown\n${CHARTER}\`\`\`` }, 'ceo');
     expect(await dispatchProposals(deps())).toBe(1);
     expect(vault.exists('Roles/support.md')).toBe(true);
   });
@@ -110,9 +118,12 @@ describe('charter compression, experiments, owner feedback', () => {
   it('running experiments past review_date get one COO judgement job; owner feedback is attributed to roles', () => {
     vault.writeText('Experiments/exp_1.md', stringifyNote({ id: 'exp_1', title: 'Cold email v2', owner: 'growth', status: 'running', metric: 'replies', review_date: '2026-01-01' }, '## Hypothesis\n\nx\n'), 'growth');
     vault.writeText('Experiments/exp_2.md', stringifyNote({ id: 'exp_2', title: 'later', owner: 'growth', status: 'running', review_date: '2099-01-01' }, 'x'), 'growth');
-    expect(enqueueExperimentReviews(vault)).toEqual(['job_judge_exp_1']);
+    const first = enqueueExperimentReviews(vault);
+    expect(first.length).toBe(1);
     expect(enqueueExperimentReviews(vault)).toEqual([]);
-    expect(listJobs(vault).find((j) => j.id === 'job_judge_exp_1')!.assigned).toBe('coo');
+    expect(listJobs(vault).find((j) => j.id === first[0])!.assigned).toBe('coo');
+    updateJob(vault, first[0], { status: 'failed' }, 'daemon'); // a failed judgement gets a fresh one
+    expect(enqueueExperimentReviews(vault).length).toBe(1);
     // owner comments
     writeFileSync(path.join(dir, 'Plans/plan.md'), '---\ncycle: 1\n---\n# Plan\n\n%%cubicle: too ambitious, cut to one job%%\n');
     vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: 'Plans/plan.md', area: 'Plans' } });
