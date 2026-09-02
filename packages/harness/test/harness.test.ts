@@ -203,8 +203,9 @@ describe('approval modes in the loop', () => {
     expect(JSON.stringify(llm.prompts[0])).toContain('Use Astro');
   });
 
-  it('invalid JSON three times → failed; step limit → requeued with attempt+1', async () => {
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'growth', goal: 'g' }, 'cto');
+  it('invalid JSON three times → requeued, then failed on the last attempt; step limit → requeued with attempt+1', async () => {
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'growth', goal: 'g', max_attempts: 2 }, 'cto');
+    expect((await runJob(deps(scripted([{ badJson: true }])), id)).status).toBe('requeued');
     const out = await runJob(deps(scripted([{ badJson: true }])), id);
     expect(out.status).toBe('failed');
     const id2 = createJob(vault, { type: 'research', title: 'r2', assigned: 'growth', goal: 'g' }, 'cto');

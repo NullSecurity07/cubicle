@@ -3,6 +3,12 @@ import path from 'node:path';
 import { scaffoldVault, Vault, VaultWatcher, openMemoryDb, EventLog, repoRoot, type ModelTier } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, providersTest, providersRefresh, formatTestRows, embedTexts } from '@cubicle/router';
 import { MemoryIndex } from '@cubicle/harness';
+import { Daemon, readDaemonInfo, isPidAlive } from './daemon.js';
+import { defaultConfig } from './config.js';
+import { rebuildCache } from './rebuild.js';
+import { createHeartbeatJob } from './heartbeat.js';
+import { createJob, listJobs, updateJob } from '@cubicle/core';
+import { writeQueueMd } from './queue-md.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
@@ -13,6 +19,8 @@ export function providersConfigPath(flags: Record<string, string | boolean>): st
 
 type Handler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>;
 
+const BOOLEAN_FLAGS = new Set(['force', 'tools', 'local', 'json']);
+
 function parseArgs(argv: string[]): { cmd: string[]; flags: Record<string, string | boolean> } {
   const cmd: string[] = [];
   const flags: Record<string, string | boolean> = {};
@@ -21,6 +29,7 @@ function parseArgs(argv: string[]): { cmd: string[]; flags: Record<string, strin
     if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=');
       if (v !== undefined) flags[k] = v;
+      else if (BOOLEAN_FLAGS.has(k)) flags[k] = true;
       else if (argv[i + 1] && !argv[i + 1].startsWith('--')) flags[k] = argv[++i];
       else flags[k] = true;
     } else cmd.push(a);
@@ -97,6 +106,102 @@ const commands: Record<string, Handler> = {
       if (sub === 'search') { const hits = await mem.search(args.slice(2).join(' '), 5); for (const h of hits) console.log(`${h.score.toFixed(3)}  ${h.path}\n    ${h.text.slice(0, 120).replace(/\n/g, ' ')}`); return; }
       throw new Error('usage: cubicle memory rebuild|index|search <vault> [query]');
     } finally { vault.close(); }
+  },
+  async start(args, flags) {
+    const root = resolveVaultPath(flags, args[0]);
+    const daemon = new Daemon(defaultConfig(root, process.env, typeof flags.port === 'string' ? { port: Number(flags.port) } : {}));
+    await daemon.start();
+    console.log(`daemon running (pid ${process.pid}); vault ${root}. Ctrl-C or \`cubicle stop\` to checkpoint and exit.`);
+    await new Promise(() => undefined); // run until a signal stops us
+  },
+  async stop(args, flags) {
+    const root = resolveVaultPath(flags, args[0]);
+    const info = readDaemonInfo(root);
+    if (!info || !isPidAlive(info.pid)) { console.log('daemon is not running'); return; }
+    process.kill(info.pid, 'SIGTERM');
+    const t0 = Date.now();
+    while (isPidAlive(info.pid) && Date.now() - t0 < 10_000) await new Promise((r) => setTimeout(r, 200));
+    console.log(isPidAlive(info.pid) ? `daemon (pid ${info.pid}) did not exit within 10 s` : `daemon stopped in ${Date.now() - t0} ms`);
+  },
+  async status(args, flags) {
+    const root = resolveVaultPath(flags, args[0]);
+    const info = readDaemonInfo(root);
+    const alive = info ? isPidAlive(info.pid) : false;
+    console.log(`vault: ${root}`);
+    console.log(`daemon: ${alive ? `running (pid ${info!.pid}, ws port ${info!.port ?? 'off'}, since ${info!.started})` : 'stopped'}`);
+    const vault = Vault.open(root);
+    try {
+      const jobs = listJobs(vault);
+      const counts: Record<string, number> = {};
+      for (const j of jobs) counts[j.status] = (counts[j.status] ?? 0) + 1;
+      console.log(`jobs: ${Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(' ') || 'none'}`);
+      const hb = vault.events.last('heartbeat.completed');
+      console.log(`last heartbeat: ${hb ? hb.ts : 'never'}`);
+      console.log(`events: ${vault.events.count()}`);
+    } finally { vault.close(); }
+  },
+  async heartbeat(args, flags) {
+    // Force a heartbeat: if the daemon runs, it picks the job up; otherwise run one inline (no WS/workers).
+    const root = resolveVaultPath(flags, args[0]);
+    const info = readDaemonInfo(root);
+    if (info && isPidAlive(info.pid)) {
+      const vault = Vault.open(root);
+      const id = createHeartbeatJob(vault, 'forced by cubicle heartbeat');
+      vault.close();
+      console.log(`queued heartbeat ${id}; the running daemon will execute it`);
+      return;
+    }
+    const daemon = new Daemon(defaultConfig(root, process.env, { tickMs: 2000, maxConcurrentJobs: 2 }), { disableWs: true, disableSleepWatch: true, log: (m) => console.log(`[cubicle] ${m}`) });
+    await daemon.start();
+    daemon.requestHeartbeat('forced by cubicle heartbeat');
+    const deadline = Date.now() + Number(flags.timeout ?? 20 * 60) * 1000;
+    while (Date.now() < deadline) {
+      const open = listJobs(daemon.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat' || j.type === 'cto.plan');
+      if (!open && daemon.vault.events.last('heartbeat.completed')) break;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    const hb = daemon.vault.events.last('heartbeat.completed');
+    console.log(hb ? `heartbeat ${hb.payload.id} completed; brief: ${hb.payload.run}` : 'heartbeat did not complete in time (jobs remain; start the daemon to continue)');
+    await daemon.stop();
+  },
+  async job(args, flags) {
+    const sub = args[0];
+    const root = resolveVaultPath(flags, typeof flags.vault === 'string' ? undefined : undefined);
+    const vault = Vault.open(root);
+    try {
+      if (sub === 'add') {
+        const title = args.slice(1).join(' ');
+        if (!title) throw new Error('usage: cubicle job add "<title>" --role engineer --type custom --goal "..." [--priority 3] --vault <path>');
+        const id = createJob(vault, { type: String(flags.type ?? 'custom'), title, assigned: String(flags.role ?? 'engineer'), goal: String(flags.goal ?? title), priority: flags.priority ? Number(flags.priority) : 3 }, 'owner');
+        writeQueueMd(vault);
+        console.log(`queued ${id}`);
+      } else if (sub === 'cancel') {
+        const id = args[1]; if (!id) throw new Error('usage: cubicle job cancel <id> --vault <path>');
+        updateJob(vault, id, { status: 'cancelled' }, 'owner', `- ${new Date().toISOString()}: cancelled by owner (cli)`);
+        console.log(`cancelled ${id}`);
+      } else if (sub === 'list' || !sub) {
+        for (const j of listJobs(vault)) console.log(`${j.status.padEnd(9)} p${j.priority} ${j.id}  ${j.assigned.padEnd(9)} ${j.type.padEnd(16)} step ${String(j.checkpoint_step).padStart(2)}  ${j.title}`);
+      } else throw new Error('usage: cubicle job add|cancel|list');
+    } finally { vault.close(); }
+  },
+  async replay(args, flags) {
+    const date = args[0]; if (!date) throw new Error('usage: cubicle replay YYYY-MM-DD --vault <path>');
+    const vault = Vault.open(resolveVaultPath(flags));
+    try {
+      const events = vault.events.query({ from: `${date}T00:00:00.000Z`, to: `${date}T23:59:59.999Z` });
+      const byHour: Record<string, Record<string, number>> = {};
+      for (const e of events) { const h = e.ts.slice(11, 13); (byHour[h] ??= {})[e.type] = ((byHour[h] ?? {})[e.type] ?? 0) + 1; }
+      console.log(`${events.length} events on ${date}`);
+      for (const [h, types] of Object.entries(byHour)) console.log(`${h}:00  ${Object.entries(types).map(([t, n]) => `${t}×${n}`).join('  ')}`);
+      const info = readDaemonInfo(vault.root);
+      console.log(`viewer: http://127.0.0.1:${(info?.port ?? 7411) + 1}/?replay=${date}  (Phase 9 serves the viewer; until then use the WS replay op)`);
+    } finally { vault.close(); }
+  },
+  async rebuild(args, flags) {
+    const root = resolveVaultPath(flags, args[0]);
+    const cfg = loadProvidersConfig(providersConfigPath(flags));
+    const r = await rebuildCache(root, { memory: async (v) => new MemoryIndex(v, (t) => embedTexts(cfg, t)).rebuild().catch(() => 0) });
+    console.log(`rebuilt .cubicle cache: ${r.events} events, ${r.writtenSha} written_sha rows, ${r.jobs} jobs indexed, ${r.memoryFiles} memory files`);
   },
   async help() {
     console.log(`cubicle <command>

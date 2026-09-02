@@ -12,6 +12,8 @@ providers:
     # OpenAI-compatible endpoint (verified 2026-09-02). Gemini 2.5 models are rejected for new users; use 3.x.
     base_url: https://generativelanguage.googleapis.com/v1beta/openai
     api_key_env: GEMINI_API_KEY
+    timeout_ms: 90000
+    day_reset_tz: America/Los_Angeles   # Google quotas reset at midnight Pacific
     models:
       - { id: gemini-3.5-flash, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 10, rpd: 250, tpm: 250000 }, note: "verified ok 2026-09-02 (thinking model: keep max_output_tokens generous)" }
       - { id: gemini-3.7-flash, enabled: false, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 10, rpd: 250, tpm: 250000 }, note: "disabled: 503 high demand / 120 s timeouts on 2026-09-02; re-enable after `cubicle providers test --only gemini` passes" }
@@ -33,6 +35,8 @@ providers:
     # `cubicle providers refresh` rewrites this models list from the live /models endpoint; entries with manual: true are kept.
     base_url: https://openrouter.ai/api/v1
     api_key_env: OPENROUTER_API_KEY
+    limits: { rpm: 20, rpd: 50 }        # account-wide, summed across models
+    # `providers refresh` sets tier by context length and tools from supported_parameters — hand-edit tiers if a model disappoints.
     models:
       - { id: "google/gemma-4-31b-it:free",               tier: medium, tools: native, context: 262144, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
       - { id: "z-ai/glm-5.2:free",                        tier: medium, tools: native, context: 256000, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
@@ -44,6 +48,7 @@ providers:
     # Local floor — always available. qwen2.5:7b verified via /v1/chat/completions; embeddings via /api/embed (768 dims).
     base_url: http://localhost:11434/v1
     privacy: local
+    timeout_ms: 300000                  # a 7B model on a 4 GB GPU can take minutes on a long prompt
     models:
       - { id: "qwen2.5:7b", tier: local, tools: json, context: 32768, max_prompt_tokens: 6000, max_output_tokens: 1024, limits: {} }
       - { id: "R4C3R/gemma-3-4b-it-heretic:q4_k_m", tier: local, tools: json, context: 8192, max_prompt_tokens: 4000, max_output_tokens: 768, limits: {}, note: "smaller/faster; used by the guardrail classifier" }

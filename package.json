@@ -19,6 +19,12 @@
     "@types/node": "^24",
     "tsx": "^4.23",
     "typescript": "~5.9",
-    "vitest": "^4.1"
+    "vitest": "^4.1",
+    "@cubicle/core": "workspace:*",
+    "@cubicle/router": "workspace:*",
+    "@cubicle/tools": "workspace:*",
+    "@cubicle/harness": "workspace:*",
+    "@cubicle/daemon": "workspace:*",
+    "dbus-next": "^0.10"
   }
 }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, realpathSync, unlinkSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import { openDb, type Db } from './db.js';
 import { EventLog } from './events.js';
@@ -6,6 +6,8 @@ import { atomicWriteSync, listFilesRecursive, nowIso, sha256 } from './fs.js';
 import { parseNote, stringifyNote, extractYamlBlock, type Note } from './frontmatter.js';
 import { assertWritable, isCachePath, normalizeRel } from './guard.js';
 import { Constitution, OwnerPreferences, type Constitution as ConstitutionT, type OwnerPreferences as OwnerPreferencesT } from './schemas.js';
+
+export const TOMBSTONE = 'deleted';
 
 export interface VaultOptions {
   /** Use an in-memory database (tests). */
@@ -48,8 +50,15 @@ export class Vault {
 
   // ---------- paths ----------
   abs(rel: string): string {
-    const p = path.resolve(this.root, normalizeRel(rel));
+    const n = normalizeRel(rel); // throws UnsafePathError on `..`
+    const p = path.resolve(this.root, n);
     if (!p.startsWith(this.root + path.sep) && p !== this.root) throw new Error(`Path escapes vault: ${rel}`);
+    // Symlink escape: the nearest existing ancestor must resolve inside the vault.
+    let probe = p;
+    while (!existsSync(probe)) probe = path.dirname(probe);
+    const real = realpathSync(probe);
+    const rootReal = realpathSync(this.root);
+    if (!(real === rootReal || real.startsWith(rootReal + path.sep))) throw new Error(`Path escapes vault via symlink: ${rel}`);
     return p;
   }
 
@@ -133,12 +142,42 @@ export class Vault {
     return this.writeText(rel, existing + sep + text, by, opts);
   }
 
-  /** Read-modify-write a note in one step. */
+  /** Read-modify-write a note in one step. Refuses to touch a note whose frontmatter is present but unparsable. */
   updateNote<T extends Record<string, unknown>>(rel: string, mutate: (note: Note<T>) => Note<T> | void, by: string, opts: { job?: string | null } = {}): Note<T> {
-    const note = this.readNote<T>(rel);
+    const text = this.readText(rel);
+    const note = parseNote<T>(text);
+    if (text.startsWith('---') && Object.keys(note.data as object).length === 0) {
+      this.events.emit({ type: 'daemon.warning', payload: { path: rel, reason: 'malformed frontmatter; refusing to rewrite' } });
+      throw new Error(`malformed frontmatter in ${rel}; not rewriting`);
+    }
     const next = mutate(note) ?? note;
     this.writeNote(rel, next.data as Record<string, unknown>, next.body, by, opts);
     return next;
+  }
+
+  /** Delete a file on behalf of the system; leaves a tombstone so the watcher does not report an owner deletion. */
+  remove(rel: string, by: string, opts: { job?: string | null } = {}): void {
+    const r = normalizeRel(rel);
+    assertWritable(r, by, this.constitution().never_modify);
+    const p = this.abs(r);
+    if (existsSync(p)) unlinkSync(p);
+    this.recordWritten(r, TOMBSTONE, by);
+    this.events.emit({ type: 'vault.wrote', agent: by, job: opts.job ?? null, payload: { path: r, sha: TOMBSTONE, by, deleted: true } });
+  }
+
+  /** Move a file on behalf of the system (archive), recording both ends. */
+  move(fromRel: string, toRel: string, by: string, opts: { job?: string | null } = {}): void {
+    const from = normalizeRel(fromRel); const to = normalizeRel(toRel);
+    assertWritable(from, by, this.constitution().never_modify);
+    assertWritable(to, by, this.constitution().never_modify);
+    const content = readFileSync(this.abs(from));
+    mkdirSync(path.dirname(this.abs(to)), { recursive: true });
+    renameSync(this.abs(from), this.abs(to));
+    const sha = sha256(content);
+    this.recordWritten(from, TOMBSTONE, by);
+    this.recordWritten(to, sha, by);
+    this.events.emit({ type: 'vault.wrote', agent: by, job: opts.job ?? null, payload: { path: to, sha, by, moved_from: from } });
+    this.events.emit({ type: 'vault.wrote', agent: by, job: opts.job ?? null, payload: { path: from, sha: TOMBSTONE, by, deleted: true } });
   }
 
   // ---------- written_sha bookkeeping ----------
@@ -162,7 +201,7 @@ export class Vault {
     const cur = this.currentSha(rel);
     if (cur === null) return false;
     const rec = this.writtenSha(rel);
-    return rec === null || rec !== cur;
+    return rec === null || rec === TOMBSTONE || rec !== cur;
   }
 
   /** Rescan a directory after out-of-band writes (e.g. shell.run) and record every changed file. */

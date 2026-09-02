@@ -11,7 +11,7 @@ export const ToolPolicy = z.object({
   outbound: z.boolean().default(false),
   proposal_kind: z.string().optional(),
   owner_owned_mode: ApprovalMode.optional(),
-  first_time_only: z.boolean().default(false),
+  first_time_only: z.boolean().default(false), // TODO(Phase 6): deploy.site first-time propose logic
   roles: z.array(z.string()).optional(),
 });
 export type ToolPolicy = z.infer<typeof ToolPolicy>;
@@ -69,7 +69,7 @@ export interface ToolResult {
 }
 
 export interface SchedulerApi {
-  enqueue(job: { type: string; title: string; assigned: string; goal: string; priority?: number; depends_on?: string[]; privacy?: 'cloud' | 'local'; parent?: string; links?: string[] }): string;
+  enqueue(job: { id?: string; type: string; title: string; assigned: string; goal: string; priority?: number; depends_on?: string[]; privacy?: 'cloud' | 'local'; parent?: string; links?: string[] }): string;
   reprioritize?(jobId: string, priority: number): void;
 }
 

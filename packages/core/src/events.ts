@@ -52,8 +52,12 @@ export class EventLog {
   }
 
   last(type: EventType, filter?: (e: CubicleEvent) => boolean): CubicleEvent | undefined {
+    if (!filter) {
+      const r = this.db.prepare('SELECT id, ts, type, agent, job, payload_json FROM events WHERE type = ? ORDER BY id DESC LIMIT 1').get(type) as { id: number; ts: string; type: string; agent: string | null; job: string | null; payload_json: string } | undefined;
+      return r ? { id: r.id, ts: r.ts, type: r.type as EventType, agent: r.agent, job: r.job, payload: JSON.parse(r.payload_json) } : undefined;
+    }
     const rows = this.query({ types: [type] });
-    for (let i = rows.length - 1; i >= 0; i--) if (!filter || filter(rows[i])) return rows[i];
+    for (let i = rows.length - 1; i >= 0; i--) if (filter(rows[i])) return rows[i];
     return undefined;
   }
 

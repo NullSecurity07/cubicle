@@ -14,11 +14,24 @@
     "@cubicle/core": "workspace:*",
     "@cubicle/router": "workspace:*",
     "@cubicle/harness": "workspace:*",
-    "@cubicle/tools": "workspace:*"
+    "@cubicle/tools": "workspace:*",
+    "ws": "^8.21",
+    "dbus-next": "^0.10",
+    "yaml": "^2.9",
+    "zod": "^4.5"
   },
   "devDependencies": {
     "typescript": "~5.9",
     "vitest": "^4.1",
-    "@types/node": "^24"
-  }
+    "@types/node": "^24",
+    "@types/ws": "^8"
+  },
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js"
 }

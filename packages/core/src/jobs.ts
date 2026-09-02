@@ -24,7 +24,12 @@ export function jobPath(id: string): string {
 
 /** Create a queued job note. `by` is the actor (role id or daemon). */
 export function createJob(vault: Vault, job: NewJob, by: string): string {
-  const id = job.id ?? makeId('job');
+  let id = job.id ?? makeId('job');
+  if (job.id) {
+    if (vault.exists(jobPath(id))) return id; // deterministic id already created (idempotent replay)
+  } else {
+    while (vault.exists(jobPath(id))) id = makeId('job');
+  }
   const ts = nowIso();
   const data = JobFrontmatter.parse({
     id, type: job.type, title: job.title, assigned: job.assigned,

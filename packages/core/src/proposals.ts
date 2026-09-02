@@ -19,8 +19,14 @@ export const INBOX = '00 Inbox';
 
 /** Write a proposal/message note into `00 Inbox/` and emit proposal.created. Returns the relative path. */
 export function createProposal(vault: Vault, p: NewProposal, by: string): { id: string; path: string } {
-  const id = p.id ?? makeId(p.kind === 'message' ? 'msg' : 'prop');
-  const rel = `${INBOX}/${stampForFilename()}-${p.kind}-${id.split('_').pop()}.md`;
+  let id = p.id ?? makeId(p.kind === 'message' ? 'msg' : 'prop');
+  if (p.id) {
+    const existing = findInboxById(vault, id);
+    if (existing) return { id, path: existing.path }; // idempotent replay
+  } else {
+    while (findInboxById(vault, id)) id = makeId(p.kind === 'message' ? 'msg' : 'prop');
+  }
+  const rel = `${INBOX}/${stampForFilename()}-${p.kind}-${id.split('_').slice(-1)[0].slice(-8)}.md`;
   const data = InboxFrontmatter.parse({ id, kind: p.kind, created: nowIso(), from: p.from, to: p.to ?? 'owner', call: p.call, target: p.target, job: p.job });
   const body = `# ${p.title.trim()}\n\n${p.body.trim()}\n`;
   vault.writeText(rel, stringifyNote(data as Record<string, unknown>, body), by, { job: p.job ?? null });

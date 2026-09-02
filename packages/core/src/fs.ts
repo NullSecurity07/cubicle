@@ -48,11 +48,16 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
-/** Compact id: prefix_YYYYMMDD_xxxx */
+/** Compact id: prefix_YYYYMMDD_xxxxxx (24 random bits; callers still check for collisions). */
 export function makeId(prefix: string): string {
   const d = new Date();
   const ymd = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
-  return `${prefix}_${ymd}_${randomBytes(2).toString('hex')}`;
+  return `${prefix}_${ymd}_${randomBytes(3).toString('hex')}`;
+}
+
+/** Deterministic id derived from an idempotency key, so a replayed step recreates the same note instead of a duplicate. */
+export function idFromKey(prefix: string, key: string): string {
+  return `${prefix}_${key.replace(/[^A-Za-z0-9]+/g, '_')}`;
 }
 
 /** Timestamp for note filenames: YYYY-MM-DD-HHmm */

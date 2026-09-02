@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { isOwnerOwned, createProposal, OwnerOwnedPathError } from '@cubicle/core';
+import { isOwnerOwned, createProposal, OwnerOwnedPathError, isSecretPath, parseNote, idFromKey, UnsafePathError } from '@cubicle/core';
 import { policyFor, proposalKindFor } from '../registry.js';
 
 const MAX_READ = 60_000;
@@ -10,7 +10,9 @@ export const vaultRead = defineTool({
   description: 'Read a note or file from the vault by relative path (e.g. "Plans/plan.md").',
   schema: { path: z.string().describe('vault-relative path') },
   async handler({ path }, ctx) {
-    const text = ctx.vault.readTextOrNull(path);
+    try { if (isSecretPath(path)) return { ok: false, text: `refusing to read ${path} (secrets / git internals)` }; } catch (err) { return { ok: false, text: (err as Error).message }; }
+    let text: string | null;
+    try { text = ctx.vault.readTextOrNull(path); } catch (err) { return { ok: false, text: (err as Error).message }; }
     if (text === null) return { ok: false, text: `not found: ${path}` };
     return { ok: true, text: text.length > MAX_READ ? text.slice(0, MAX_READ) + `\n…[truncated ${text.length - MAX_READ} chars]` : text };
   },
@@ -45,9 +47,34 @@ export const vaultSearch = defineTool({
   },
 });
 
+/**
+ * Paths agents may never write through vault.write/append even though they are not owner-owned:
+ * `00 Inbox/` (approvals are the owner's; agents use proposal.create), `Messages/` (colleague.message only),
+ * other roles' job notes and any job note's frontmatter (the state machine belongs to the harness).
+ */
+function agentWriteRestriction(rel: string, content: string, ctx: Parameters<typeof vaultRead.handler>[1]): string | null {
+  if (rel.startsWith('00 Inbox/')) return '00 Inbox/ is written only via proposal.create';
+  if (rel.startsWith('Messages/')) return 'Messages/ is written only via colleague.message';
+  if (rel.startsWith('Jobs/')) {
+    if (rel === 'Jobs/queue.md' || rel === 'Jobs/_template.md') return `${rel} is generated`;
+    if (!ctx.jobId || rel !== `Jobs/${ctx.jobId}.md`) return 'agents may only edit their own job note';
+    const cur = ctx.vault.readTextOrNull(rel);
+    if (cur !== null && JSON.stringify(parseNote(cur).data) !== JSON.stringify(parseNote(content).data)) return 'job frontmatter is managed by the harness; edit the body sections only';
+  }
+  return null;
+}
+
 /** Shared write path: owner-owned targets become file_change proposals when policy says `propose`. */
-async function guardedWrite(path: string, content: string, append: boolean, ctx: Parameters<typeof vaultRead.handler>[1]) {
+async function guardedWrite(rawPath: string, content: string, append: boolean, ctx: Parameters<typeof vaultRead.handler>[1]) {
   const toolName = append ? 'vault.append' : 'vault.write';
+  let path: string;
+  try { path = (await import('@cubicle/core')).normalizeRel(rawPath); } catch (err) { return { ok: false, text: (err as Error).message }; }
+  if (isSecretPath(path)) { ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: toolName, path, reason: 'secret path' } }); return { ok: false, text: `blocked: ${path}` }; }
+  const restricted = agentWriteRestriction(path, append ? (ctx.vault.readTextOrNull(path) ?? '') + content : content, ctx);
+  if (restricted) {
+    ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: toolName, path, reason: restricted } });
+    return { ok: false, text: `blocked: ${restricted}` };
+  }
   if (isOwnerOwned(path, ctx.vault.constitution().never_modify)) {
     const mode = policyFor(ctx.config, toolName).owner_owned_mode ?? 'propose';
     if (mode === 'never') {
@@ -56,11 +83,15 @@ async function guardedWrite(path: string, content: string, append: boolean, ctx:
     }
     const current = ctx.vault.readTextOrNull(path) ?? '';
     const proposed = append ? current + (current.endsWith('\n') || !current ? '' : '\n') + content : content;
+    const key = ctx.idempotencyKey ?? `${ctx.jobId ?? 'nojob'}:0:${Date.now()}`;
+    const fence = proposed.includes('```') ? '````' : '```';
     const { id, path: p } = createProposal(ctx.vault, {
+      id: idFromKey('prop', key),
       kind: proposalKindFor(ctx.config, toolName) === 'outbound_batch' ? 'file_change' : (proposalKindFor(ctx.config, toolName) as 'file_change'),
       from: ctx.roleId, target: path, job: ctx.jobId ?? undefined,
+      call: { tool: 'vault.write', args: { path, content: proposed }, idempotency_key: key, job: ctx.jobId ?? undefined, role: ctx.roleId },
       title: `Proposed change to ${path}`,
-      body: `${ctx.roleId} wants to ${append ? 'append to' : 'rewrite'} \`${path}\`.\n\n## Proposed content\n\n\`\`\`\n${proposed}\n\`\`\`\n\nSet \`approved: true\` to apply.`,
+      body: `${ctx.roleId} wants to ${append ? 'append to' : 'rewrite'} \`${path}\`.\n\n## Proposed content\n\n${fence}\n${proposed}\n${fence}\n\nSet \`approved: true\` to apply (the daemon applies \`call.args.content\`).`,
     }, ctx.roleId);
     return { ok: true, text: `proposed: ${path} is owner-owned; filed proposal ${id} at ${p} for the owner to approve`, data: { status: 'proposed', proposal: id } };
   }
@@ -68,7 +99,7 @@ async function guardedWrite(path: string, content: string, append: boolean, ctx:
     const sha = append ? ctx.vault.appendText(path, content, ctx.roleId, { job: ctx.jobId }) : ctx.vault.writeText(path, content, ctx.roleId, { job: ctx.jobId });
     return { ok: true, text: `wrote ${path} (sha ${sha.slice(0, 8)})`, data: { sha } };
   } catch (err) {
-    if (err instanceof OwnerOwnedPathError) return { ok: false, text: err.message };
+    if (err instanceof OwnerOwnedPathError || err instanceof UnsafePathError) return { ok: false, text: err.message };
     throw err;
   }
 }

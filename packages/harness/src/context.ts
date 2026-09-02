@@ -1,6 +1,5 @@
-import { parseNote, type Vault, type RoleFrontmatter, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
+import { parseNote, RoleFrontmatter as RoleSchema, type Vault, type RoleFrontmatter, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
 import { estimateTokens, type ChatMessage } from '@cubicle/router';
-import { unreadMessages } from '@cubicle/tools';
 import type { MemoryIndex } from './memory.js';
 
 export interface Observation {
@@ -27,6 +26,7 @@ export interface ContextInput {
   ownerEdits?: CubicleEvent[];
   summarize?: (text: string) => Promise<string>;
   extraSystem?: string;
+  maxSteps?: number;
 }
 
 function clip(s: string, max: number): string {
@@ -49,8 +49,6 @@ export async function assembleContext(inp: ContextInput): Promise<ChatMessage[]>
   const ownerEdits = (inp.ownerEdits ?? []).map((e) => `- ${String(e.payload.path)}${e.payload.deleted ? ' (deleted)' : ''}`);
   const ownerBlock = ownerEdits.length ? `The owner edited these files since the last cycle; treat them as instructions:\n${[...new Set(ownerEdits)].join('\n')}` : '';
 
-  const unread = unreadMessages(v, inp.role.role, true);
-  const messagesBlock = unread.length ? unread.map((m) => `From ${m.from} (${m.kind}, ${m.ts}, id ${m.id}):\n${m.body}`).join('\n\n') : '';
 
   let memoryBlock = '';
   if (inp.memory && inp.memory.count() > 0) {
@@ -63,7 +61,7 @@ export async function assembleContext(inp: ContextInput): Promise<ChatMessage[]>
   const toolList = role.tools.join(', ');
   const rules = [
     `You are ${role.display} (role id "${role.role}") at a small company run from the owner's laptop. Work only through tools. When the goal is met, blocked, or impossible, call \`finish\`.`,
-    `Job ${inp.job.id} is at checkpoint step ${inp.job.checkpoint_step} of at most ${inp.job.type.startsWith('ceo.') ? 40 : 40}; be economical — one clear tool call per turn.`,
+    `Job ${inp.job.id} is at checkpoint step ${inp.job.checkpoint_step} of at most ${inp.maxSteps ?? 40}; be economical — one clear tool call per turn.`,
     `Never fabricate results; read before you write. Owner-owned files (Brand/, Roles/, constitution, preferences) can only be proposed, not written.`,
     `Tools you may use: ${toolList}.`,
   ].join('\n');
@@ -75,7 +73,6 @@ export async function assembleContext(inp: ContextInput): Promise<ChatMessage[]>
     { key: 'prefs', priority: 70, text: prefs ? `# Owner preferences\n${prefs}` : '' },
     { key: 'plan', priority: 60, text: plan ? `# Current plan (Plans/plan.md)\n${plan}` : '' },
     { key: 'owner', priority: 90, text: ownerBlock },
-    { key: 'messages', priority: 85, text: messagesBlock ? `# Unread messages for you\n${messagesBlock}` : '' },
     { key: 'memory', priority: 40, text: memoryBlock ? `# Relevant memory (skills, lessons, decisions)\n${memoryBlock}` : '' },
     { key: 'extra', priority: 80, text: inp.extraSystem ?? '' },
   ].filter((b) => b.text.trim());
@@ -95,8 +92,16 @@ export async function assembleContext(inp: ContextInput): Promise<ChatMessage[]>
     b.text = clip(b.text, Math.max(400, Math.floor(b.text.length / 3)));
   }
   let obs = obsMsgs;
-  while (size() > budget && obs.length > 4) obs = [obs[0], ...obs.slice(3)];
+  let dropped = 0;
+  while (size() > budget && obs.length > 4) { obs = [obs[0], ...obs.slice(3)]; dropped++; }
+  if (dropped && inp.summarize) {
+    const droppedText = inp.observations.slice(0, dropped + 1).map((o) => o.kind === 'tool' ? `${o.tool}(${JSON.stringify(o.args ?? {}).slice(0, 100)}) → ${(o.result ?? '').slice(0, 300)}` : (o.text ?? '').slice(0, 300)).join('\n');
+    const summary = await inp.summarize(droppedText).catch(() => '');
+    if (summary) obs = [{ role: 'user', content: `Summary of earlier steps:\n${clip(summary, 1500)}` }, ...obs.slice(1)];
+  }
   if (size() > budget) for (const b of trimOrder) { if (b.priority >= 99) continue; b.text = clip(b.text, 400); if (size() <= budget) break; }
+  // Last resort: shrink tool results in the retained observations.
+  if (size() > budget) obs = obs.map((m) => (typeof m.content === 'string' && m.content.startsWith('[') ? { ...m, content: clip(m.content, 800) } as ChatMessage : m));
 
   return [
     { role: 'system', content: blocks.map((b) => b.text).join('\n\n') },
@@ -126,11 +131,6 @@ export function readRole(vault: Vault, roleId: string): { data: RoleFrontmatter;
   const text = vault.readTextOrNull(`Roles/${roleId}.md`);
   if (!text) return null;
   const note = parseNote(text);
-  const { RoleFrontmatter } = require_core();
-  const parsed = RoleFrontmatter.safeParse(note.data);
+  const parsed = RoleSchema.safeParse(note.data);
   return parsed.success ? { data: parsed.data, body: note.body } : null;
 }
-
-// Small indirection so context.ts stays free of a top-level circular import in tests.
-import * as core from '@cubicle/core';
-function require_core() { return core; }

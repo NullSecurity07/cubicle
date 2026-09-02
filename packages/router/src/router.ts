@@ -36,7 +36,6 @@ export interface RouterOptions {
   events?: EventLog;
   now?: () => Date;
   backoffBaseMs?: number;
-  maxRateLimitRetries?: number;
 }
 
 export class NoModelAvailableError extends Error {
@@ -55,7 +54,6 @@ export class Router {
   private events?: EventLog;
   private now: () => Date;
   private backoffBaseMs: number;
-  private maxRateLimitRetries: number;
   private attemptCounts = new Map<string, number>();
 
   constructor(public readonly config: ProvidersFile, public readonly quota: QuotaTracker, opts: RouterOptions = {}) {
@@ -63,7 +61,6 @@ export class Router {
     this.events = opts.events;
     this.now = opts.now ?? (() => new Date());
     this.backoffBaseMs = opts.backoffBaseMs ?? 2000;
-    this.maxRateLimitRetries = opts.maxRateLimitRetries ?? 5;
   }
 
   /** Enabled providers with a usable key, in cascade order. */
@@ -107,13 +104,9 @@ export class Router {
   /** Pick the first candidate with quota headroom. */
   route(req: RouteRequest, estimatedTokens = 1000): Candidate | null {
     for (const c of this.candidates(req)) {
-      if (this.quota.hasHeadroom(c.provider.id, c.model, estimatedTokens).ok) return c;
+      if (this.quota.hasHeadroom(c.provider.id, c.model, estimatedTokens, c.provider).ok) return c;
     }
     return null;
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise((r) => setTimeout(r, ms));
   }
 
   /**
@@ -131,7 +124,7 @@ export class Router {
 
     for (const c of cands) {
       const key = `${c.provider.id}/${c.model.id}`;
-      const head = this.quota.hasHeadroom(c.provider.id, c.model, est);
+      const head = this.quota.hasHeadroom(c.provider.id, c.model, est, c.provider);
       if (!head.ok) { tried.push(`${key} (${head.reason})`); continue; }
       const isDowngrade = TIER_RANK[c.model.tier] < wantRank;
       if (isDowngrade && !downgradedLogged) {
@@ -145,8 +138,12 @@ export class Router {
       if (chat.tools?.length && c.model.tools === 'native') {
         nativeTools = chat.tools.map((t) => ({ type: 'function' as const, function: { name: t.name, description: t.description, parameters: t.parameters } }));
       } else if (useJsonTools) {
+        // Append to the existing system message so the constitution stays first (spec §6 order).
         const instr = buildJsonToolInstruction(chat.tools!);
-        messages = [{ role: 'system', content: instr }, ...chat.messages];
+        const first = chat.messages[0];
+        messages = first && first.role === 'system' && typeof first.content === 'string'
+          ? [{ role: 'system', content: `${first.content}\n\n# Tool protocol\n${instr}` }, ...chat.messages.slice(1)]
+          : [{ role: 'system', content: instr }, ...chat.messages];
       }
       const maxTokens = Math.min(chat.maxTokens ?? c.model.max_output_tokens, c.model.max_output_tokens);
       try {
@@ -209,7 +206,7 @@ export class Router {
     const out = [];
     for (const p of this.config.providers) {
       if (!p.enabled) continue;
-      for (const m of p.models) if (m.enabled) out.push(this.quota.status(p.id, m));
+      for (const m of p.models) if (m.enabled) out.push(this.quota.status(p.id, m, p.day_reset_tz));
     }
     return out;
   }

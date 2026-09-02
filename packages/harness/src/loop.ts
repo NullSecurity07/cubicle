@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import {
   type Vault, type EventLog, type JobFrontmatter, type RoleFrontmatter, JobResult, InboxFrontmatter,
@@ -7,7 +7,7 @@ import {
 import { NoModelAvailableError, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
 import {
-  ToolRegistry, createRoleToolClient, resolveMode, policyFor, proposalKindFor, findAnswer,
+  ToolRegistry, createRoleToolClient, resolveMode, policyFor, proposalKindFor, findAnswer, unreadMessages, renderMessages,
   type ToolsConfig, type ToolContext, type SchedulerApi, type MemoryApi, type ToolResult, type RoleToolClient,
 } from '@cubicle/tools';
 import { assembleContext, type Observation } from './context.js';
@@ -58,8 +58,23 @@ export function observationsPath(vault: Vault, jobId: string): string {
 
 export function loadObservations(vault: Vault, jobId: string): Observation[] {
   const p = observationsPath(vault, jobId);
-  if (!existsSync(p)) return [];
-  return readFileSync(p, 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as Observation]; } catch { return []; } });
+  if (existsSync(p)) return readFileSync(p, 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as Observation]; } catch { return []; } });
+  // Cache wiped: rebuild a coarse transcript from the note's Checkpoint log (vault is the source of truth).
+  const note = readJob(vault, jobId);
+  if (!note || note.data.checkpoint_step === 0) return [];
+  const log = note.body.split('## Checkpoint log')[1]?.split('\n## ')[0] ?? '';
+  const out: Observation[] = [];
+  for (const line of log.split('\n')) {
+    const m = line.match(/^- step (\d+): ([\w.]+)(?:\(([^)]*)\))? → (.*)$/);
+    if (m) out.push({ step: Number(m[1]), kind: 'tool', tool: m[2], args: {}, result: `(from checkpoint log) ${m[4]}`, ok: !/FAILED|BLOCKED/.test(m[4]), ts: note.data.updated });
+  }
+  return out;
+}
+
+/** Archive attempt N's transcript so a retry starts clean. */
+function archiveObservations(vault: Vault, jobId: string, attempt: number): void {
+  const p = observationsPath(vault, jobId);
+  if (existsSync(p)) renameSync(p, p.replace(/\.jsonl$/, `.attempt${attempt}.jsonl`));
 }
 
 function appendObservation(vault: Vault, jobId: string, o: Observation): void {
@@ -94,6 +109,8 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   let job = jobNote.data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   if (job.status === 'done') return { status: 'done' };
+  if (job.status === 'failed') return { status: 'failed' };
+  if (job.status === 'blocked' && (!job.blocked_on || job.blocked_on.kind === 'owner') && job.approval !== 'pending') return { status: 'blocked', on: job.blocked_on ?? { kind: 'owner', id: jobId } };
 
   const roleNote = vault.readNoteOrNull(`Roles/${job.assigned}.md`);
   if (!roleNote) { updateJob(vault, jobId, { status: 'failed' }, 'daemon', `- ${nowIso()}: no charter for role ${job.assigned}`); return { status: 'failed' }; }
@@ -118,12 +135,19 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
 
   const observations = loadObservations(vault, jobId);
   const record = (o: Omit<Observation, 'ts'>) => { const full = { ...o, ts: nowIso() }; observations.push(full); appendObservation(vault, jobId, full); };
-  const refresh = () => { jobNote = readJob(vault, jobId)!; job = jobNote.data; return job; };
+  const refresh = () => {
+    const n = readJob(vault, jobId);
+    if (n) { jobNote = n; job = n.data; }
+    else events.emit({ type: 'daemon.warning', agent: roleId, job: jobId, payload: { reason: 'job note unreadable mid-run (owner editing?); keeping last good copy' } });
+    return job;
+  };
   const cancelled = () => refresh().status === 'cancelled';
 
   const finishWith = async (result: JobResult, step: number): Promise<JobOutcome> => {
-    const body = setSection(jobNote!.body, '## Result', '```json\n' + JSON.stringify(result, null, 2) + '\n```');
-    vault.updateNote(`Jobs/${jobId}.md`, (n) => ({ data: { ...n.data, status: result.status === 'done' ? 'done' : result.status === 'blocked' ? 'blocked' : 'failed', checkpoint_step: step, updated: nowIso() }, body }), roleId, { job: jobId });
+    vault.updateNote(`Jobs/${jobId}.md`, (n) => ({
+      data: { ...n.data, status: result.status === 'done' ? 'done' : result.status === 'blocked' ? 'blocked' : 'failed', checkpoint_step: step, updated: nowIso(), ...(result.status === 'blocked' ? { blocked_on: { kind: 'owner', id: jobId, since: nowIso() } } : {}) },
+      body: setSection(n.body, '## Result', '```json\n' + JSON.stringify(result, null, 2) + '\n```'),
+    }), roleId, { job: jobId });
     events.emit({ type: result.status === 'done' ? 'job.done' : result.status === 'blocked' ? 'job.blocked' : 'job.failed', agent: roleId, job: jobId, payload: { status: result.status, summary: result.summary, artifacts: result.artifacts, blockers: result.blockers, metrics: result.metrics, lessons: result.lessons } });
     if (!noVerify.includes(job.type) && result.status !== 'blocked') {
       deps.scheduler.enqueue({ type: 'coo.verify', title: `Verify: ${job.title}`, assigned: 'coo', goal: `Verify job [[${jobId}]] (${job.type}) against its goal. Read its Result block and artifacts, confirm with evidence, append one lesson to Memory/lessons.md, then finish.`, priority: 4, parent: jobId, links: [`[[${jobId}]]`], privacy: job.privacy });
@@ -132,15 +156,18 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     return { status: result.status === 'done' ? 'done' : result.status === 'blocked' ? 'blocked' : 'failed', result } as JobOutcome;
   };
 
-  const failStepLimit = async (step: number): Promise<JobOutcome> => {
+  /** Non-explicit failures (step limit, bad JSON, no tool calls) retry while attempts remain; explicit finish(failed) is final. */
+  const failOrRequeue = async (step: number, reason: string, summary: string): Promise<JobOutcome> => {
     if (job.attempt < job.max_attempts) {
-      updateJob(vault, jobId, { status: 'queued', attempt: job.attempt + 1, checkpoint_step: 0 }, roleId, `- ${nowIso()}: step limit ${maxSteps} reached at step ${step}; requeued as attempt ${job.attempt + 1}`);
-      events.emit({ type: 'job.failed', agent: roleId, job: jobId, payload: { reason: 'step_limit', requeued: true, attempt: job.attempt + 1 } });
+      archiveObservations(vault, jobId, job.attempt);
+      updateJob(vault, jobId, { status: 'queued', attempt: job.attempt + 1, checkpoint_step: 0 }, roleId, `- ${nowIso()}: ${reason} at step ${step}; requeued as attempt ${job.attempt + 1}`);
+      events.emit({ type: 'job.failed', agent: roleId, job: jobId, payload: { reason, requeued: true, attempt: job.attempt + 1 } });
       await client.close();
       return { status: 'requeued', attempt: job.attempt + 1 };
     }
-    return finishWith(JobResult.parse({ status: 'failed', summary: `Step limit (${maxSteps}) reached without finishing.`, blockers: ['step limit'] }), step);
+    return finishWith(JobResult.parse({ status: 'failed', summary, blockers: [reason] }), step);
   };
+  const failStepLimit = (step: number) => failOrRequeue(step, 'step_limit', `Step limit (${maxSteps}) reached without finishing.`);
 
   // ---- resume handling: pending proposal or answered question ----
   if (job.status === 'blocked' && job.blocked_on) {
@@ -154,9 +181,10 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
         if (job.side_effects_done.includes(key)) {
           record({ step, kind: 'tool', tool: call.tool, args: call.args, result: 'already executed before the interruption (idempotency key recorded)', ok: true });
         } else {
+          // At-most-once: record the key before the external call (a kill mid-call must not replay it).
+          updateJob(vault, jobId, { side_effects_done: [...job.side_effects_done, key] }, roleId, `- step ${step}: ${call.tool} ATTEMPTING after owner approval (${key})`);
           const res = await client.call(call.tool, call.args, { idempotencyKey: key });
-          const sideEffects = [...job.side_effects_done, key];
-          updateJob(vault, jobId, { side_effects_done: sideEffects }, roleId, `- step ${step}: ${call.tool} executed after owner approval → ${res.ok ? 'ok' : 'failed'}`);
+          updateJob(vault, jobId, {}, roleId, `- step ${step}: ${call.tool} → ${res.ok ? 'ok' : 'failed'}`);
           record({ step, kind: 'tool', tool: call.tool, args: call.args, result: `(approved by owner) ${res.text}`, ok: res.ok });
           events.emit({ type: 'agent.tool_result', agent: roleId, job: jobId, payload: { tool: call.tool, ok: res.ok, step, approved: true } });
         }
@@ -197,11 +225,16 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   let noToolStreak = 0;
   let jsonRetries = 0;
 
+  let ownerEditCache: { at: number; list: ReturnType<typeof events.query> } | null = null;
   while (step < maxSteps) {
     if (cancelled()) { events.emit({ type: 'job.cancelled', agent: roleId, job: jobId, payload: { at_step: step } }); await client.close(); return { status: 'cancelled' }; }
+    // Colleague messages are persisted into the transcript first, then marked read (survive kills and turns).
+    const unread = unreadMessages(vault, roleId, false);
+    if (unread.length) { record({ step, kind: 'system', text: `New messages for you:\n${renderMessages(unread)}` }); unreadMessages(vault, roleId, true); }
+    if (!ownerEditCache || Date.now() - ownerEditCache.at > 30_000) ownerEditCache = { at: Date.now(), list: events.query({ types: ['owner.edited'], from: ownerEditsSince, limit: 200 }).slice(-50) };
     const messages = await assembleContext({
       vault, role, roleBody, job, jobBody: jobNote.body, observations, memory: deps.memory, maxPromptTokens: promptBudget,
-      ownerEdits: events.query({ types: ['owner.edited'], from: ownerEditsSince }), summarize: deps.summarize,
+      ownerEdits: ownerEditCache.list, summarize: deps.summarize, maxSteps,
       extraSystem: noToolStreak >= 2 ? 'You have replied twice without calling a tool. You MUST call a tool now, or call `finish`.' : undefined,
     });
     events.emit({ type: 'agent.thinking', agent: roleId, job: jobId, payload: { step } });
@@ -219,7 +252,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     if (reply.jsonParseError) {
       jsonRetries++;
       record({ step, kind: 'system', text: `Your reply was not a single JSON object (${reply.jsonParseError}). Reply again with exactly one JSON object: {"tool": ..., "args": {...}} or {"final": "..."}.` });
-      if (jsonRetries >= 3) return finishWith(JobResult.parse({ status: 'failed', summary: 'Model could not produce a valid tool call after 3 attempts.', blockers: ['invalid tool JSON'] }), step);
+      if (jsonRetries >= 3) return failOrRequeue(step, 'invalid_tool_json', 'Model could not produce a valid tool call after 3 attempts.');
       continue;
     }
     jsonRetries = 0;
@@ -230,7 +263,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     if (reply.parsedToolCalls.length === 0) {
       noToolStreak++;
       record({ step, kind: 'assistant', text: reply.content || '(empty reply)' });
-      if (noToolStreak >= 4) return finishWith(JobResult.parse({ status: 'failed', summary: `Model stopped calling tools. Last reply: ${reply.content.slice(0, 300)}`, blockers: ['no tool calls'] }), step);
+      if (noToolStreak >= 4) return failOrRequeue(step, 'no_tool_calls', `Model stopped calling tools. Last reply: ${reply.content.slice(0, 300)}`);
       continue;
     }
     noToolStreak = 0;
@@ -293,8 +326,13 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
         continue;
       }
       // auto (or propose on a non-outbound tool, which handles its own proposal logic)
+      if (policy.outbound) {
+        // At-most-once: the key and the step are committed to the note BEFORE the external call.
+        updateJob(vault, jobId, { checkpoint_step: step, side_effects_done: [...job.side_effects_done, key] }, roleId, `- step ${step}: ${toolName} ATTEMPTING (${key})`);
+        refresh();
+      }
       const res: ToolResult = await client.call(toolName, args, { idempotencyKey: key });
-      const sideEffects = policy.outbound || res.sideEffectKey ? [...job.side_effects_done, res.sideEffectKey ?? key] : job.side_effects_done;
+      const sideEffects = !policy.outbound && res.sideEffectKey ? [...job.side_effects_done, res.sideEffectKey] : job.side_effects_done;
       record({ step, kind: 'tool', tool: toolName, args, result: res.text, ok: res.ok });
       events.emit({ type: 'agent.tool_result', agent: roleId, job: jobId, payload: { tool: toolName, ok: res.ok, step, summary: res.text.slice(0, 200) } });
       const patch: Partial<JobFrontmatter> = { checkpoint_step: step, side_effects_done: sideEffects };

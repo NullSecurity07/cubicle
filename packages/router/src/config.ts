@@ -32,6 +32,12 @@ export const ProviderConfig = z.object({
   base_url: z.string().url(),
   api_key_env: z.string().optional(),
   privacy: z.enum(['cloud', 'local']).default('cloud'),
+  /** Request timeout for this provider (local models on small GPUs can be slow). */
+  timeout_ms: z.number().int().min(1000).default(60_000),
+  /** Account-wide limits summed across the provider's models (e.g. OpenRouter's 50 RPD per account). */
+  limits: ModelLimits.optional(),
+  /** IANA time zone in which daily limits reset (UTC if unknown). */
+  day_reset_tz: z.string().default('UTC'),
   models: z.array(ModelConfig).default([]),
   embeddings: z.object({ id: z.string(), endpoint: z.string().optional(), dims: z.number().int().optional() }).optional(),
   note: z.string().optional(),

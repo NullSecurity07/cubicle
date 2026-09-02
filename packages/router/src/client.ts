@@ -49,9 +49,19 @@ export function apiKeyFor(p: ProviderConfig, env: NodeJS.ProcessEnv = process.en
   return v && v.trim() ? v : null;
 }
 
-export function makeClient(p: ProviderConfig, env: NodeJS.ProcessEnv = process.env, timeoutMs = 60_000): OpenAI {
+export function makeClient(p: ProviderConfig, env: NodeJS.ProcessEnv = process.env, timeoutMs?: number): OpenAI {
   const key = apiKeyFor(p, env);
-  return new OpenAI({ apiKey: key ?? 'missing', baseURL: p.base_url, maxRetries: 0, timeout: timeoutMs });
+  return new OpenAI({ apiKey: key ?? 'missing', baseURL: p.base_url, maxRetries: 0, timeout: timeoutMs ?? p.timeout_ms });
+}
+
+/** Gemini (and some others) put the retry hint in the JSON body: {"error":{"details":[{"retryDelay":"34s"}]}}. */
+export function parseRetryDelayFromBody(err: unknown): number | null {
+  const e = err as { error?: { error?: { details?: { retryDelay?: string }[] }; details?: { retryDelay?: string }[] }; message?: string };
+  const details = e.error?.error?.details ?? e.error?.details;
+  const d = details?.find((x) => x.retryDelay)?.retryDelay ?? e.message?.match(/retryDelay"?\s*:\s*"?(\d+(?:\.\d+)?)s/)?.[1];
+  if (!d) return null;
+  const secs = parseFloat(String(d).replace(/s$/, ''));
+  return Number.isFinite(secs) ? Math.ceil(secs * 1000) : null;
 }
 
 function parseRetryAfter(headers: Headers | Record<string, string> | undefined): number | null {
@@ -115,7 +125,7 @@ export async function chatOnce(p: ProviderConfig, modelId: string, req: ChatRequ
   } catch (err) {
     const e = err as { status?: number; headers?: Headers | Record<string, string>; message?: string; name?: string };
     const msg = e.message ?? String(err);
-    if (e.status === 429) throw new RateLimitedError(p.id, modelId, parseRetryAfter(e.headers), msg);
+    if (e.status === 429) throw new RateLimitedError(p.id, modelId, parseRetryAfter(e.headers) ?? parseRetryDelayFromBody(err), msg);
     if (e.status && e.status >= 500) throw new ProviderError(p.id, modelId, e.status, msg);
     if (e.status && e.status >= 400) throw new ProviderError(p.id, modelId, e.status, msg, true);
     throw new ProviderError(p.id, modelId, null, msg); // network / timeout

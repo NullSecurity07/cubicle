@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const SCHEMA_VERSION = 1;
@@ -84,6 +84,17 @@ export function openDb(file: string): Db {
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[];
     for (const t of tables) db.exec(`DROP TABLE IF EXISTS "${t.name}"`);
     db.exec(SCHEMA);
+    // The JSONL mirror next to the db is the durable copy; restore the index right away.
+    const jsonlDir = path.join(path.dirname(file), 'events');
+    if (existsSync(jsonlDir)) {
+      const insert = db.prepare('INSERT INTO events(ts, type, agent, job, payload_json) VALUES (?, ?, ?, ?, ?)');
+      for (const f of readdirSync(jsonlDir).filter((x) => x.endsWith('.jsonl')).sort()) {
+        for (const line of readFileSync(path.join(jsonlDir, f), 'utf8').split('\n')) {
+          if (!line.trim()) continue;
+          try { const e = JSON.parse(line); insert.run(e.ts, e.type, e.agent ?? null, e.job ?? null, JSON.stringify(e.payload ?? {})); } catch { /* skip */ }
+        }
+      }
+    }
   }
   db.prepare('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)').run('schema_version', String(SCHEMA_VERSION));
   return db;

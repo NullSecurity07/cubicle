@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { KNOWN_JOB_TYPES } from '@cubicle/core';
+import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey } from '@cubicle/core';
+
+const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'cto.compress_charters': ['ceo', 'cto'] };
 
 export const schedulerRequest = defineTool({
   name: 'scheduler.request',
@@ -21,8 +23,11 @@ export const schedulerRequest = defineTool({
       ctx.scheduler.reprioritize?.(args.reprioritize.job, args.reprioritize.priority);
       return { ok: true, text: `job ${args.reprioritize.job} priority set to ${args.reprioritize.priority}` };
     }
+    if (!isValidRoleId(args.assigned)) return { ok: false, text: `invalid role id: ${JSON.stringify(args.assigned)}` };
     if (!ctx.vault.exists(`Roles/${args.assigned}.md`)) return { ok: false, text: `unknown role: ${args.assigned}` };
-    const id = ctx.scheduler.enqueue({ type: args.type, title: args.title, assigned: args.assigned, goal: args.goal, priority: args.priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [] });
+    const allowed = SYSTEM_TYPES[args.type];
+    if (allowed && !allowed.includes(ctx.roleId)) return { ok: false, text: `job type ${args.type} is reserved for the daemon${allowed.length ? ` / ${allowed.join(', ')}` : ''}` };
+    const id = ctx.scheduler.enqueue({ id: ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey) : undefined, type: args.type, title: args.title, assigned: args.assigned, goal: args.goal, priority: args.priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [] });
     return { ok: true, text: `queued ${id} for ${args.assigned}: ${args.title}`, data: { id } };
   },
 });

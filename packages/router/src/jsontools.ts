@@ -53,11 +53,47 @@ export function repairJson(raw: string): string {
   s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
   const obj = extractJsonObject(s);
   if (obj) s = obj;
-  s = s.replace(/,\s*([}\]])/g, '$1');                  // trailing commas
-  s = s.replace(/([{,]\s*)'([^']*)'\s*:/g, '$1"$2":');    // single-quoted keys
-  s = s.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":'); // unquoted keys
-  s = s.replace(/:\s*'([^']*)'/g, (_m, v: string) => `: "${v.replace(/"/g, '\\"')}"`); // single-quoted values
+  s = quoteKeysOutsideStrings(s);
+  s = s.replace(/,\s*([}\]])/g, '$1'); // trailing commas (safe: only after a value/closer)
   return s;
+}
+
+/** Quote unquoted or single-quoted object keys and convert single-quoted values — only outside double-quoted strings. */
+export function quoteKeysOutsideStrings(src: string): string {
+  let out = '';
+  let i = 0;
+  let inStr = false;
+  let expectKey = false; // right after { or , at object level
+  const stack: ('obj' | 'arr')[] = [];
+  while (i < src.length) {
+    const ch = src[i];
+    if (inStr) {
+      out += ch;
+      if (ch === '\\') { out += src[i + 1] ?? ''; i += 2; continue; }
+      if (ch === '"') inStr = false;
+      i++; continue;
+    }
+    if (ch === '"') { inStr = true; expectKey = false; out += ch; i++; continue; }
+    if (ch === '{') { stack.push('obj'); expectKey = true; out += ch; i++; continue; }
+    if (ch === '[') { stack.push('arr'); expectKey = false; out += ch; i++; continue; }
+    if (ch === '}' || ch === ']') { stack.pop(); expectKey = false; out += ch; i++; continue; }
+    if (ch === ',') { expectKey = stack[stack.length - 1] === 'obj'; out += ch; i++; continue; }
+    if (ch === "'") {
+      // single-quoted string (key or value)
+      let j = i + 1; let val = '';
+      while (j < src.length && src[j] !== "'") { if (src[j] === '\\') { val += src[j + 1] ?? ''; j += 2; continue; } val += src[j]; j++; }
+      out += '"' + val.replace(/"/g, '\\"') + '"';
+      i = j + 1; expectKey = false; continue;
+    }
+    if (expectKey && /[A-Za-z_$]/.test(ch)) {
+      let j = i; while (j < src.length && /[A-Za-z0-9_$]/.test(src[j])) j++;
+      const k = j; let m = j; while (m < src.length && /\s/.test(src[m])) m++;
+      if (src[m] === ':') { out += '"' + src.slice(i, k) + '"'; i = k; expectKey = false; continue; }
+    }
+    if (ch === ':') expectKey = false;
+    out += ch; i++;
+  }
+  return out;
 }
 
 export function parseJsonToolReply(raw: string): ParsedToolReply {

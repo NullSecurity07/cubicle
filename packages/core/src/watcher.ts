@@ -2,6 +2,7 @@ import { watch, type FSWatcher } from 'chokidar';
 import path from 'node:path';
 import type { Vault } from './vault.js';
 import { isCachePath } from './guard.js';
+import { TOMBSTONE } from './vault.js';
 
 export interface WatcherOptions {
   debounceMs?: number;
@@ -55,10 +56,9 @@ export class VaultWatcher {
   private fire(rel: string, deleted: boolean): void {
     const area = rel.split('/')[0];
     if (deleted) {
-      if (this.vault.writtenSha(rel) !== null) {
-        // The system wrote this file at some point; the owner removed it.
-        this.vault.db.prepare('DELETE FROM written_sha WHERE path = ?').run(rel);
-      }
+      const rec = this.vault.writtenSha(rel);
+      if (rec === TOMBSTONE) return; // system delete/move — not an owner edit
+      if (rec !== null) this.vault.db.prepare('DELETE FROM written_sha WHERE path = ?').run(rel);
       this.vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: rel, area, deleted: true, wakes_heartbeat: HEARTBEAT_WAKE_AREAS.includes(area) } });
       return;
     }
