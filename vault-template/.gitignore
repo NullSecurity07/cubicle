@@ -1,0 +1,5 @@
+.cubicle/
+.obsidian/workspace*.json
+.env
+Site/node_modules/
+Site/dist/

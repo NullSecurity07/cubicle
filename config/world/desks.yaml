@@ -1,0 +1,11 @@
+# Desk anchors for the office map (tile coordinates, 16px tiles). The viewer's Tiled map uses the same ids.
+desks:
+  - { id: ceo_cabin, x: 34, y: 6, room: cabin }
+  - { id: cubicle_1, x: 8,  y: 10 }
+  - { id: cubicle_2, x: 14, y: 10 }
+  - { id: cubicle_3, x: 20, y: 10 }
+  - { id: cubicle_4, x: 8,  y: 16 }
+  - { id: cubicle_5, x: 14, y: 16 }
+  - { id: cubicle_6, x: 20, y: 16 }
+  - { id: cubicle_7, x: 8,  y: 22 }
+  - { id: cubicle_8, x: 14, y: 22 }
