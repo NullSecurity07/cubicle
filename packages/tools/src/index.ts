@@ -14,6 +14,7 @@ export * from './tools/git.js';
 export * from './tools/meeting.js';
 export * from './proxy.js';
 export * from './guardrails.js';
+export * from './prune.js';
 export * from './tools/outbound.js';
 export * from './adapters/common.js';
 export * from './adapters/email.js';

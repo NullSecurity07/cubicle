@@ -7,7 +7,6 @@ import { hasDocker, hasSandboxImage, SANDBOX_IMAGE } from '@cubicle/tools';
 
 export interface DoctorRow { area: string; item: string; ok: boolean | null; detail: string; fix?: string }
 
-const REQUIRED_OLLAMA = ['qwen2.5:7b', 'nomic-embed-text'];
 
 async function get(url: string, headers: Record<string, string> = {}, timeoutMs = 8000): Promise<{ status: number; text: string }> {
   try { const r = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) }); return { status: r.status, text: (await r.text()).slice(0, 300) }; }
@@ -17,6 +16,10 @@ async function get(url: string, headers: Record<string, string> = {}, timeoutMs 
 export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; buildSandbox?: boolean; providersPath?: string } = {}): Promise<DoctorRow[]> {
   const rows: DoctorRow[] = [];
   const setup = 'see SETUP.md';
+  const cfg = loadProvidersConfig(opts.providersPath ?? path.join(repoRoot(), 'config', 'providers.yaml'));
+  // Required local models come from config/providers.yaml (no model ids in source): every enabled ollama chat model + the embeddings model.
+  const ollamaCfg = cfg.providers.find((p) => p.id === 'ollama' && p.enabled);
+  const REQUIRED_OLLAMA = [...(ollamaCfg?.models.filter((m) => m.enabled).map((m) => m.id) ?? []), ...(ollamaCfg?.embeddings ? [ollamaCfg.embeddings.id] : [])];
 
   // Ollama
   const tags = await get('http://localhost:11434/api/tags');
@@ -25,7 +28,7 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
     const full = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(8000) }).then((r) => r.json() as Promise<{ models?: { name: string }[] }>).catch(() => ({ models: [] }));
     const have = (full.models ?? []).map((m) => m.name);
     for (const m of REQUIRED_OLLAMA) { const ok = have.some((h) => h === m || h.startsWith(m + ':')); rows.push({ area: 'local', item: `ollama model ${m}`, ok, detail: ok ? 'pulled' : 'missing', fix: `ollama pull ${m}` }); }
-  } else rows.push({ area: 'local', item: 'ollama', ok: false, detail: `not reachable (${tags.text.slice(0, 60)})`, fix: 'install and start Ollama; ollama pull qwen2.5:7b nomic-embed-text' });
+  } else rows.push({ area: 'local', item: 'ollama', ok: false, detail: `not reachable (${tags.text.slice(0, 60)})`, fix: `install and start Ollama; ollama pull ${REQUIRED_OLLAMA.join(' ')}` });
 
   // Docker + sandbox
   rows.push({ area: 'local', item: 'docker', ok: hasDocker(), detail: hasDocker() ? 'daemon reachable' : 'not reachable', fix: 'start Docker (shell.run falls back to a local shell otherwise)' });
@@ -55,7 +58,6 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
   rows.push({ area: 'local', item: 'webkit2gtk-4.1 (tray app)', ok: pk.status === 0, detail: pk.status === 0 ? 'installed' : 'missing', fix: 'sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg xdotool' });
 
   // Providers
-  const cfg = loadProvidersConfig(opts.providersPath ?? path.join(repoRoot(), 'config', 'providers.yaml'));
   for (const p of cfg.providers) {
     if (!p.enabled) continue;
     if (!p.api_key_env) continue;

@@ -14,7 +14,7 @@ import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
 import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, feedbackFor } from './evolution.js';
 import { StaticServer } from './static.js';
-import { pruneScreens } from './prune.js';
+import { pruneScreens } from '@cubicle/tools';
 
 export interface DaemonOverrides {
   llm?: Llm;

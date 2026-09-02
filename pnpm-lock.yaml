@@ -205,9 +205,6 @@ importers:
         specifier: ^4.5
         version: 4.5.4
     devDependencies:
-      '@cubicle/daemon':
-        specifier: workspace:*
-        version: link:../daemon
       '@types/node':
         specifier: ^24
         version: 24.13.3

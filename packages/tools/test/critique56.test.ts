@@ -99,7 +99,7 @@ describe('deploy.site dir (B7) and local shell fallback (B10)', () => {
 
 describe('screencast pruning (B9)', () => {
   it('keeps every 5th frame after 7 days and caps frames per session', async () => {
-    const { pruneScreens } = await import('@cubicle/daemon');
+    const { pruneScreens } = await import('../src/prune.js');
     const sdir = path.join(dir, '.cubicle/screens/sess1'); mkdirSync(sdir, { recursive: true });
     const ins = vault.db.prepare('INSERT OR REPLACE INTO screens(session_id, seq, ts, path) VALUES (?, ?, ?, ?)');
     const old = new Date(Date.now() - 10 * 86400_000);

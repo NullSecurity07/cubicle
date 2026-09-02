@@ -5,6 +5,15 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { trayIconPng } = require('./tray-icon.cjs');
+const { execSync } = require('node:child_process');
+
+/** The daemon runs on the system Node (native modules are built for it), never on Electron's bundled runtime. */
+function nodeBinary() {
+  for (const c of [process.env.CUBICLE_NODE, 'node']) { if (!c) continue; try { const p = execSync(`command -v ${c}`, { encoding: 'utf8' }).trim(); if (p) return p; } catch { /* next */ } }
+  return process.execPath;
+}
+const NODE = nodeBinary();
+const daemonEnv = () => { const e = { ...process.env }; delete e.ELECTRON_RUN_AS_NODE; return e; };
 
 const SMOKE = process.argv.includes('--smoke');
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
@@ -30,7 +39,7 @@ async function pickVault() {
   if (r.canceled || !r.filePaths[0]) return false;
   cfg.vault = r.filePaths[0]; saveCfg();
   if (!fs.existsSync(path.join(cfg.vault, 'Memory', 'constitution.md'))) {
-    const init = spawn(process.execPath, [path.join(repoRoot, 'packages', 'daemon', 'dist', 'cli.js'), 'init', cfg.vault], { cwd: repoRoot, stdio: 'inherit', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+    const init = spawn(NODE, [path.join(repoRoot, 'packages', 'daemon', 'dist', 'cli.js'), 'init', cfg.vault], { cwd: repoRoot, stdio: 'inherit', env: daemonEnv() });
     await new Promise((res) => init.on('exit', res));
   }
   return true;
@@ -39,7 +48,7 @@ async function pickVault() {
 function startDaemon() {
   if (running()) { log('daemon already running'); return; }
   if (!cfg.vault) { log('no vault configured'); return; }
-  daemon = spawn(process.execPath, [path.join(repoRoot, 'packages', 'daemon', 'dist', 'cli.js'), 'start', cfg.vault], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+  daemon = spawn(NODE, [path.join(repoRoot, 'packages', 'daemon', 'dist', 'cli.js'), 'start', cfg.vault], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'], env: daemonEnv() });
   daemon.stdout.on('data', (d) => process.stdout.write(`[daemon] ${d}`));
   daemon.stderr.on('data', (d) => process.stderr.write(`[daemon] ${d}`));
   daemon.on('exit', (code) => { log(`daemon exited (${code})`); daemon = null; refresh(); });

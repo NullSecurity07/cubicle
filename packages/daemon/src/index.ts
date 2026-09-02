@@ -9,5 +9,4 @@ export * from './rebuild.js';
 export * from './queue-md.js';
 export * from './evolution.js';
 export * from './doctor.js';
-export * from './prune.js';
 export * from './static.js';

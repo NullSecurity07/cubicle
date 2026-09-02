@@ -27,7 +27,6 @@
   "devDependencies": {
     "@types/node": "^24",
     "typescript": "~5.9",
-    "vitest": "^4.1",
-    "@cubicle/daemon": "workspace:*"
+    "vitest": "^4.1"
   }
 }
