@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { scaffoldVault, Vault, VaultWatcher, openMemoryDb, EventLog, repoRoot, type ModelTier } from '@cubicle/core';
-import { loadProvidersConfig, QuotaTracker, Router, providersTest, providersRefresh, formatTestRows } from '@cubicle/router';
+import { loadProvidersConfig, QuotaTracker, Router, providersTest, providersRefresh, formatTestRows, embedTexts } from '@cubicle/router';
+import { MemoryIndex } from '@cubicle/harness';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
@@ -85,6 +86,18 @@ const commands: Record<string, Handler> = {
     console.log(`[${res.provider}/${res.model} tier=${res.tier}${res.downgraded ? ' DOWNGRADED' : ''} tokens=${res.usage.prompt_tokens}/${res.usage.completion_tokens}]`);
     console.log(res.content.trim());
   },
+  async memory(args, flags) {
+    const sub = args[0];
+    const vault = Vault.open(resolveVaultPath(flags, args[1]));
+    try {
+      const cfg = loadProvidersConfig(providersConfigPath(flags));
+      const mem = new MemoryIndex(vault, (t) => embedTexts(cfg, t));
+      if (sub === 'rebuild') { const n = await mem.rebuild(); console.log(`memory rebuilt: ${n} files indexed, ${mem.count()} chunks`); return; }
+      if (sub === 'index') { const n = await mem.indexAll(); console.log(`memory updated: ${n} files (re)indexed, ${mem.count()} chunks`); return; }
+      if (sub === 'search') { const hits = await mem.search(args.slice(2).join(' '), 5); for (const h of hits) console.log(`${h.score.toFixed(3)}  ${h.path}\n    ${h.text.slice(0, 120).replace(/\n/g, ' ')}`); return; }
+      throw new Error('usage: cubicle memory rebuild|index|search <vault> [query]');
+    } finally { vault.close(); }
+  },
   async help() {
     console.log(`cubicle <command>
 
@@ -97,6 +110,8 @@ const commands: Record<string, Handler> = {
   replay <date>             event replay (Phase 4)
   doctor                    environment + keys check (Phase 6)
   rebuild                   rebuild the .cubicle cache from the vault (Phase 4)
+  memory rebuild|index|search <vault> [query]   embedding index over Memory/ Skills/ Decisions/
+  chat [--tier t] [--local] <prompt>            one completion through the cascade (debug)
 `);
   },
 };

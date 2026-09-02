@@ -19,7 +19,6 @@
   "dependencies": {
     "better-sqlite3": "^13.0.3",
     "chokidar": "^5.0",
-    "gray-matter": "^4.0",
     "simple-git": "^3.36",
     "yaml": "^2.9",
     "zod": "^4.5"

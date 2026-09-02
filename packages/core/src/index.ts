@@ -8,3 +8,5 @@ export * from './git.js';
 export * from './vault.js';
 export * from './watcher.js';
 export * from './template.js';
+export * from './jobs.js';
+export * from './proposals.js';

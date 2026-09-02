@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@cubicle/core": "workspace:*",
-    "@cubicle/router": "workspace:*"
+    "@cubicle/router": "workspace:*",
+    "@cubicle/harness": "workspace:*",
+    "@cubicle/tools": "workspace:*"
   },
   "devDependencies": {
     "typescript": "~5.9",

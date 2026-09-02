@@ -10,6 +10,11 @@ describe('frontmatter', () => {
     expect(Object.keys(back.data)).toEqual(Object.keys(data));
     expect(back.body).toBe('## Goal\n\nhi\n');
   });
+  it('keeps ISO timestamps as strings', () => {
+    const n = parseNote('---\ncreated: 2026-09-02T13:55:06.921Z\nn: 1\n---\nx');
+    expect(n.data.created).toBe('2026-09-02T13:55:06.921Z');
+    expect(n.data.n).toBe(1);
+  });
   it('handles notes without frontmatter', () => {
     const n = parseNote('# Hello\n');
     expect(n.data).toEqual({});

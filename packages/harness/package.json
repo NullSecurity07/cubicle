@@ -1,0 +1,16 @@
+{
+  "name": "@cubicle/harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "development": "./src/index.ts", "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": { "build": "tsc -p tsconfig.json", "test": "vitest run" },
+  "dependencies": {
+    "@cubicle/core": "workspace:*",
+    "@cubicle/router": "workspace:*",
+    "@cubicle/tools": "workspace:*",
+    "yaml": "^2.9",
+    "zod": "^4.5"
+  },
+  "devDependencies": { "typescript": "~5.9", "vitest": "^4.1", "@types/node": "^24" }
+}

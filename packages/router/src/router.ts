@@ -27,6 +27,8 @@ export interface RoutedChatResult extends ChatResult {
   /** Tool calls parsed from a `tools: json` model reply, unified with native ones. */
   parsedToolCalls: { name: string; args: Record<string, unknown> }[];
   jsonParseError?: string;
+  /** A `tools: json` model answered with {"final": ...} — an explicit finish signal, content holds the text. */
+  finalAnswer?: boolean;
 }
 
 export interface RouterOptions {
@@ -92,6 +94,16 @@ export class Router {
     return [...atOrAbove, ...below];
   }
 
+  /** Prompt budget for a request: the smallest max_prompt_tokens among the top same-tier candidates (so context fits whichever answers). */
+  promptBudget(req: RouteRequest): number {
+    const cands = this.candidates(req);
+    if (cands.length === 0) return 6000;
+    const want = TIER_RANK[req.tier];
+    const top = cands.filter((c) => TIER_RANK[c.model.tier] >= want);
+    const pool = (top.length ? top : cands).slice(0, 3);
+    return Math.min(...pool.map((c) => c.model.max_prompt_tokens));
+  }
+
   /** Pick the first candidate with quota headroom. */
   route(req: RouteRequest, estimatedTokens = 1000): Candidate | null {
     for (const c of this.candidates(req)) {
@@ -145,6 +157,7 @@ export class Router {
         this.emitQuotaUpdated(c);
         const parsed: RoutedChatResult['parsedToolCalls'] = [];
         let jsonParseError: string | undefined;
+        let finalAnswer = false;
         if (nativeTools) {
           for (const tc of res.toolCalls) {
             try { parsed.push({ name: tc.name, args: tc.arguments ? JSON.parse(tc.arguments) : {} }); }
@@ -153,10 +166,10 @@ export class Router {
         } else if (useJsonTools) {
           const r = parseJsonToolReply(res.content);
           if (r.kind === 'tool') parsed.push({ name: r.name, args: r.args });
-          else if (r.kind === 'final') res.content = r.text;
+          else if (r.kind === 'final') { res.content = r.text; finalAnswer = true; }
           else jsonParseError = r.reason;
         }
-        return { ...res, provider: c.provider.id, model: c.model.id, tier: c.model.tier, downgraded: isDowngrade, parsedToolCalls: parsed, jsonParseError };
+        return { ...res, provider: c.provider.id, model: c.model.id, tier: c.model.tier, downgraded: isDowngrade, parsedToolCalls: parsed, jsonParseError, finalAnswer };
       } catch (err) {
         if (err instanceof RateLimitedError) {
           const n = (this.attemptCounts.get(key) ?? 0) + 1;

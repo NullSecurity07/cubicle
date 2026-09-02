@@ -18,7 +18,8 @@ export function buildJsonToolInstruction(tools: ToolSchema[]): string {
   return [
     'You can use tools. You MUST respond with exactly one JSON object and nothing else — no prose, no markdown fences.',
     'To call a tool: {"tool": "<name>", "args": { ... }}',
-    'To finish without a tool: {"final": "<your answer>"}',
+    'When the job is complete, call the finish tool: {"tool": "finish", "args": {"status": "done", "summary": "<what you did>"}}',
+    'Only if no finish tool exists, end with: {"final": "<your answer>"}',
     'Available tools:',
     ...lines,
   ].join('\n');
