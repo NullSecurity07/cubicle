@@ -108,6 +108,13 @@ describe('VaultWatcher', () => {
       expect(seen).toContain('Jobs/job_owner.md');
       const ev = vault.events.last('owner.edited');
       expect(ev?.payload.wakes_heartbeat).toBe(true);
+      // owner edit followed by an agent write inside the debounce window still wakes the heartbeat
+      seen.length = 0;
+      writeFileSync(path.join(dir, 'Jobs/job_agent.md'), '---\nid: job_agent\nstatus: cancelled\n---\nowner\n');
+      await new Promise((r) => setTimeout(r, 60));
+      vault.writeNote('Jobs/job_agent.md', { id: 'job_agent', status: 'cancelled' }, 'agent again', 'cto');
+      await new Promise((r) => setTimeout(r, 900));
+      expect(seen).toContain('Jobs/job_agent.md');
     } finally {
       off();
       await w.stop();

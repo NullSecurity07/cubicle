@@ -17,6 +17,8 @@ export const HEARTBEAT_WAKE_AREAS = ['Jobs', '00 Inbox', 'Brand', 'Roles'];
 export class VaultWatcher {
   private watcher: FSWatcher | null = null;
   private timers = new Map<string, NodeJS.Timeout>();
+  /** Paths where some generation inside the debounce window already differed from the last system write. */
+  private ownerSeen = new Set<string>();
   private readonly debounceMs: number;
 
   constructor(private vault: Vault, opts: WatcherOptions = {}) {
@@ -40,6 +42,8 @@ export class VaultWatcher {
     const schedule = (p: string, deleted: boolean) => {
       const rel = path.relative(root, p).split(path.sep).join('/');
       if (!rel || isCachePath(rel)) return;
+      // Check this generation now: an agent write landing later in the window must not hide an owner edit.
+      if (!deleted) { const cur = this.vault.currentSha(rel); const rec = this.vault.writtenSha(rel); if (cur !== null && (rec === null || rec !== cur)) this.ownerSeen.add(rel); }
       const prev = this.timers.get(rel);
       if (prev) clearTimeout(prev);
       this.timers.set(rel, setTimeout(() => { this.timers.delete(rel); this.fire(rel, deleted); }, this.debounceMs));
@@ -62,10 +66,11 @@ export class VaultWatcher {
       this.vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: rel, area, deleted: true, wakes_heartbeat: HEARTBEAT_WAKE_AREAS.includes(area) } });
       return;
     }
+    const seen = this.ownerSeen.delete(rel);
     const cur = this.vault.currentSha(rel);
     if (cur === null) return;
     const rec = this.vault.writtenSha(rel);
-    if (rec !== null && rec === cur) return; // agent write echo — suppressed
+    if (!seen && rec !== null && rec === cur) return; // agent write echo — suppressed
     this.vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: rel, area, deleted: false, wakes_heartbeat: HEARTBEAT_WAKE_AREAS.includes(area) } });
   }
 
