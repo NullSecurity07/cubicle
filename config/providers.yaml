@@ -1,0 +1,65 @@
+# CUBICLE model providers — all free tiers or local. No model ids live in source; edit here.
+# verified: 2026-09-02 (ids probed live with the owner's Gemini key; limits from vendor docs where public)
+#
+# tier: strong | medium | cheap | local      tools: native | json | none
+# limits: 0 = unlimited/unknown. A 429 from the provider marks the model "cooling" regardless of these numbers.
+# Gemini free-tier RPM/RPD are only visible in AI Studio (https://aistudio.google.com/rate-limit) — paste yours below.
+verified: "2026-09-02"
+cascade: [gemini, groq, openrouter, ollama]
+
+providers:
+  - id: gemini
+    # OpenAI-compatible endpoint (verified 2026-09-02). Gemini 2.5 models are rejected for new users; use 3.x.
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    api_key_env: GEMINI_API_KEY
+    models:
+      - { id: gemini-3.5-flash, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 10, rpd: 250, tpm: 250000 }, note: "verified ok 2026-09-02 (thinking model: keep max_output_tokens generous)" }
+      - { id: gemini-3.7-flash, enabled: false, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 10, rpd: 250, tpm: 250000 }, note: "disabled: 503 high demand / 120 s timeouts on 2026-09-02; re-enable after `cubicle providers test --only gemini` passes" }
+      - { id: gemini-3.6-flash, enabled: false, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 10, rpd: 250, tpm: 250000 }, note: "disabled: slow (27 s) and returned empty content on 2026-09-02; re-enable after a passing providers test" }
+      - { id: gemini-3.5-flash-lite, tier: medium, tools: native, context: 1048576, max_prompt_tokens: 120000, max_output_tokens: 8192, limits: { rpm: 15, rpd: 500, tpm: 250000 }, note: "verified ok + native tool calls 2026-09-02" }
+      - { id: gemini-3.1-flash-lite, tier: cheap, tools: native, context: 1048576, max_prompt_tokens: 60000, max_output_tokens: 4096, limits: { rpm: 15, rpd: 500, tpm: 250000 }, note: "verified ok 2026-09-02" }
+
+  - id: groq
+    # https://console.groq.com/docs/openai — free tier limits from https://console.groq.com/docs/rate-limits (2026-09-02)
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+    models:
+      - { id: openai/gpt-oss-120b, tier: medium, tools: native, context: 131072, max_prompt_tokens: 6000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 1000, tpm: 8000 } }
+      - { id: qwen/qwen3.8-27b,    tier: medium, tools: native, context: 131072, max_prompt_tokens: 6000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 1000, tpm: 8000 } }
+      - { id: openai/gpt-oss-20b,  tier: cheap,  tools: native, context: 131072, max_prompt_tokens: 6000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 1000, tpm: 8000 } }
+
+  - id: openrouter
+    # :free models, 20 rpm / 50 rpd without purchased credits (https://openrouter.ai/docs/api-reference/limits, 2026-09-02).
+    # `cubicle providers refresh` rewrites this models list from the live /models endpoint; entries with manual: true are kept.
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    models:
+      - { id: "google/gemma-4-31b-it:free",               tier: medium, tools: native, context: 262144, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
+      - { id: "z-ai/glm-5.2:free",                        tier: medium, tools: native, context: 256000, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
+      - { id: "minimax/minimax-m2.7:free",                tier: medium, tools: native, context: 196608, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
+      - { id: "nvidia/nemotron-3-super-120b-a12b:free",   tier: medium, tools: native, context: 262144, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
+      - { id: "liquid/lfm-2.5-2.6b:free",                 tier: cheap,  tools: native, context: 65536,  max_prompt_tokens: 16000, limits: { rpm: 20, rpd: 50 } }
+
+  - id: ollama
+    # Local floor — always available. qwen2.5:7b verified via /v1/chat/completions; embeddings via /api/embed (768 dims).
+    base_url: http://localhost:11434/v1
+    privacy: local
+    models:
+      - { id: "qwen2.5:7b", tier: local, tools: json, context: 32768, max_prompt_tokens: 6000, max_output_tokens: 1024, limits: {} }
+      - { id: "R4C3R/gemma-3-4b-it-heretic:q4_k_m", tier: local, tools: json, context: 8192, max_prompt_tokens: 4000, max_output_tokens: 768, limits: {}, note: "smaller/faster; used by the guardrail classifier" }
+    embeddings: { id: nomic-embed-text, dims: 768 }
+
+  - id: cerebras
+    enabled: false
+    # NOT FREE: Cerebras offers only a $5 / 30-day trial (https://inference-docs.cerebras.ai/support/rate-limits, 2026-09-02). Kept for reference.
+    base_url: https://api.cerebras.ai/v1
+    api_key_env: CEREBRAS_API_KEY
+    models:
+      - { id: gpt-oss-120b, tier: medium, tools: native, context: 131072, limits: { rpm: 5, tpm: 30000 } }
+
+  - id: xai
+    enabled: false
+    # Optional; only if the owner supplies a key. Not required by anything.
+    base_url: https://api.x.ai/v1
+    api_key_env: XAI_API_KEY
+    models: []

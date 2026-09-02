@@ -3,13 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": { "cubicle": "./dist/cli.js" },
+  "bin": {
+    "cubicle": "./dist/cli.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
-    "@cubicle/core": "workspace:*"
+    "@cubicle/core": "workspace:*",
+    "@cubicle/router": "workspace:*"
   },
   "devDependencies": {
     "typescript": "~5.9",

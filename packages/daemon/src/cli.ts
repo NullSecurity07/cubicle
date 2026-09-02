@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 import path from 'node:path';
-import { scaffoldVault, Vault, VaultWatcher } from '@cubicle/core';
+import { scaffoldVault, Vault, VaultWatcher, openMemoryDb, EventLog, repoRoot, type ModelTier } from '@cubicle/core';
+import { loadProvidersConfig, QuotaTracker, Router, providersTest, providersRefresh, formatTestRows } from '@cubicle/router';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
+export function providersConfigPath(flags: Record<string, string | boolean>): string {
+  return typeof flags.providers === 'string' ? path.resolve(flags.providers) : path.join(repoRoot(), 'config', 'providers.yaml');
+}
+
 
 type Handler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>;
 
@@ -44,6 +52,38 @@ const commands: Record<string, Handler> = {
     const stop = async () => { await w.stop(); vault.close(); process.exit(0); };
     process.on('SIGINT', stop);
     process.on('SIGTERM', stop);
+  },
+  async providers(args, flags) {
+    const sub = args[0];
+    const file = providersConfigPath(flags);
+    if (sub === 'test') {
+      const cfg = loadProvidersConfig(file);
+      const rows = await providersTest(cfg, process.env, { toolsCheck: flags.tools === true, only: typeof flags.only === 'string' ? flags.only : undefined });
+      console.log(formatTestRows(rows));
+      const ok = rows.filter((r) => r.ok).length;
+      console.log(`\n${ok}/${rows.length} models ok`);
+      if (ok === 0) process.exitCode = 1;
+      return;
+    }
+    if (sub === 'refresh') {
+      const { count } = await providersRefresh(file);
+      console.log(`openrouter block refreshed from ${count} :free models → ${file}`);
+      return;
+    }
+    throw new Error('usage: cubicle providers test [--tools] [--only <provider>] | refresh');
+  },
+  async chat(args, flags) {
+    // Debug helper: one completion through the cascade. `cubicle chat --tier strong "prompt"`
+    const prompt = args.join(' ') || 'Reply with the single word: pong';
+    const cfg = loadProvidersConfig(providersConfigPath(flags));
+    const db = openMemoryDb();
+    const events = new EventLog(db, mkdtempSync(path.join(tmpdir(), 'cubicle-chat-')));
+    events.on('router.downgraded', (e) => console.error(`[router.downgraded] ${e.payload.requested_tier} → ${e.payload.chosen_tier} via ${e.payload.provider}/${e.payload.model}; tried: ${(e.payload.tried as string[]).join(', ') || 'none'}`));
+    const router = new Router(cfg, new QuotaTracker(db), { events });
+    const tier = (typeof flags.tier === 'string' ? flags.tier : 'medium') as ModelTier;
+    const res = await router.chat({ tier, needsTools: false, privacy: flags.local === true ? 'local' : 'cloud' }, { messages: [{ role: 'user', content: prompt }], maxTokens: 256 });
+    console.log(`[${res.provider}/${res.model} tier=${res.tier}${res.downgraded ? ' DOWNGRADED' : ''} tokens=${res.usage.prompt_tokens}/${res.usage.completion_tokens}]`);
+    console.log(res.content.trim());
   },
   async help() {
     console.log(`cubicle <command>
