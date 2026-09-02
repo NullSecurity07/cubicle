@@ -1,0 +1,94 @@
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { repoRoot } from '@cubicle/core';
+import { loadProvidersConfig, apiKeyFor } from '@cubicle/router';
+import { hasDocker, hasSandboxImage, SANDBOX_IMAGE } from '@cubicle/tools';
+
+export interface DoctorRow { area: string; item: string; ok: boolean | null; detail: string; fix?: string }
+
+const REQUIRED_OLLAMA = ['qwen2.5:7b', 'nomic-embed-text'];
+
+async function get(url: string, headers: Record<string, string> = {}, timeoutMs = 8000): Promise<{ status: number; text: string }> {
+  try { const r = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) }); return { status: r.status, text: (await r.text()).slice(0, 300) }; }
+  catch (err) { return { status: 0, text: (err as Error).message }; }
+}
+
+export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; buildSandbox?: boolean; providersPath?: string } = {}): Promise<DoctorRow[]> {
+  const rows: DoctorRow[] = [];
+  const setup = 'see SETUP.md';
+
+  // Ollama
+  const tags = await get('http://localhost:11434/api/tags');
+  if (tags.status === 200) {
+    rows.push({ area: 'local', item: 'ollama', ok: true, detail: 'reachable at localhost:11434' });
+    const full = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(8000) }).then((r) => r.json() as Promise<{ models?: { name: string }[] }>).catch(() => ({ models: [] }));
+    const have = (full.models ?? []).map((m) => m.name);
+    for (const m of REQUIRED_OLLAMA) { const ok = have.some((h) => h === m || h.startsWith(m + ':')); rows.push({ area: 'local', item: `ollama model ${m}`, ok, detail: ok ? 'pulled' : 'missing', fix: `ollama pull ${m}` }); }
+  } else rows.push({ area: 'local', item: 'ollama', ok: false, detail: `not reachable (${tags.text.slice(0, 60)})`, fix: 'install and start Ollama; ollama pull qwen2.5:7b nomic-embed-text' });
+
+  // Docker + sandbox
+  rows.push({ area: 'local', item: 'docker', ok: hasDocker(), detail: hasDocker() ? 'daemon reachable' : 'not reachable', fix: 'start Docker (shell.run falls back to a local shell otherwise)' });
+  if (hasDocker()) {
+    if (opts.buildSandbox && !hasSandboxImage()) {
+      const r = spawnSync('docker', ['build', '-t', SANDBOX_IMAGE, path.join(repoRoot(), 'config', 'sandbox')], { stdio: 'inherit' });
+      rows.push({ area: 'local', item: 'sandbox image build', ok: r.status === 0, detail: r.status === 0 ? 'built' : `exit ${r.status}` });
+    }
+    rows.push({ area: 'local', item: `image ${SANDBOX_IMAGE}`, ok: hasSandboxImage(), detail: hasSandboxImage() ? 'present' : 'missing', fix: 'pnpm cubicle doctor --build-sandbox' });
+  }
+
+  // Playwright
+  try {
+    const { chromium } = await import('playwright');
+    const b = await chromium.launch({ headless: true });
+    await b.close();
+    rows.push({ area: 'local', item: 'playwright chromium', ok: true, detail: 'launches' });
+  } catch (err) { rows.push({ area: 'local', item: 'playwright chromium', ok: false, detail: String((err as Error).message).split('\n')[0].slice(0, 80), fix: 'pnpm --filter @cubicle/tools exec playwright install chromium' }); }
+
+  // git identity
+  try { const n = execFileSync('git', ['config', '--global', 'user.name'], { encoding: 'utf8' }).trim(); rows.push({ area: 'local', item: 'git identity', ok: true, detail: n }); }
+  catch { rows.push({ area: 'local', item: 'git identity', ok: null, detail: 'none globally (the vault repo gets a local "cubicle" identity)' }); }
+
+  // Tauri deps
+  const pk = spawnSync('pkg-config', ['--exists', 'webkit2gtk-4.1']);
+  rows.push({ area: 'local', item: 'webkit2gtk-4.1 (tray app)', ok: pk.status === 0, detail: pk.status === 0 ? 'installed' : 'missing', fix: 'sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg xdotool' });
+
+  // Providers
+  const cfg = loadProvidersConfig(opts.providersPath ?? path.join(repoRoot(), 'config', 'providers.yaml'));
+  for (const p of cfg.providers) {
+    if (!p.enabled) continue;
+    if (!p.api_key_env) continue;
+    const key = apiKeyFor(p, env);
+    if (!key) { rows.push({ area: 'providers', item: p.id, ok: false, detail: `${p.api_key_env} not set`, fix: setup }); continue; }
+    if (opts.live) {
+      const r = await get(`${p.base_url.replace(/\/$/, '')}/models`, { authorization: `Bearer ${key}` });
+      rows.push({ area: 'providers', item: p.id, ok: r.status === 200, detail: r.status === 200 ? 'key valid (models list ok)' : `HTTP ${r.status}`, fix: setup });
+    } else rows.push({ area: 'providers', item: p.id, ok: true, detail: `${p.api_key_env} set (run with --live to verify)` });
+  }
+  if (env.GEMINI_API_KEY) rows.push({ area: 'providers', item: 'gemini limits', ok: null, detail: 'copy your real free-tier RPM/RPD from https://aistudio.google.com/rate-limit into config/providers.yaml' });
+
+  // Services
+  const svc: { item: string; vars: string[]; live?: () => Promise<{ status: number; text: string }> }[] = [
+    { item: 'brevo (email out)', vars: ['BREVO_API_KEY', 'BREVO_SENDER_EMAIL'], live: () => get('https://api.brevo.com/v3/account', { 'api-key': env.BREVO_API_KEY! }) },
+    { item: 'imap (email in)', vars: ['IMAP_HOST', 'IMAP_USER', 'IMAP_PASS'] },
+    { item: 'cloudflare pages (deploy)', vars: ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID'], live: () => get(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}`, { authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` }) },
+    { item: 'stripe (payment links)', vars: ['STRIPE_SECRET_KEY'], live: () => get('https://api.stripe.com/v1/balance', { authorization: `Bearer ${env.STRIPE_SECRET_KEY}` }) },
+    { item: 'goatcounter (analytics)', vars: ['GOATCOUNTER_CODE', 'GOATCOUNTER_API_TOKEN'], live: () => get(`https://${env.GOATCOUNTER_CODE}.goatcounter.com/api/v0/me`, { authorization: `Bearer ${env.GOATCOUNTER_API_TOKEN}` }) },
+  ];
+  for (const s of svc) {
+    const missing = s.vars.filter((v) => !env[v]);
+    if (missing.length) { rows.push({ area: 'services', item: s.item, ok: false, detail: `missing ${missing.join(', ')} → mock mode`, fix: setup }); continue; }
+    if (opts.live && s.live) { const r = await s.live(); rows.push({ area: 'services', item: s.item, ok: r.status === 200, detail: r.status === 200 ? 'key valid' : `HTTP ${r.status}: ${r.text.slice(0, 80)}`, fix: setup }); }
+    else rows.push({ area: 'services', item: s.item, ok: true, detail: 'keys set (run with --live to verify)' });
+  }
+  if (!existsSync(path.join(repoRoot(), '.env'))) rows.push({ area: 'services', item: '.env', ok: null, detail: 'no .env at the repo root; keys come from the environment only', fix: 'cp .env.example .env' });
+  return rows;
+}
+
+export function formatDoctor(rows: DoctorRow[]): string {
+  const w = (s: string, n: number) => s.padEnd(n).slice(0, n);
+  const lines = rows.map((r) => `${r.ok === true ? '✔' : r.ok === false ? '✘' : '·'} ${w(r.area, 10)}${w(r.item, 32)}${r.detail}${r.ok === false && r.fix ? `\n      fix: ${r.fix}` : ''}`);
+  const bad = rows.filter((r) => r.ok === false).length;
+  lines.push('', bad ? `${bad} item(s) need attention — none block the daemon; missing services run in mock mode.` : 'all checks passed');
+  return lines.join('\n');
+}

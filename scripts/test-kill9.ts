@@ -28,21 +28,23 @@ async function main() {
   console.log(`vault: ${dir}`);
   await child(['init', dir]);
   // Phase A: start, run the 4-step job; the child prints "STEP 2 DONE" after checkpointing step 2 and then sleeps
-  const a = spawn(process.execPath, [path.join(root, 'node_modules/tsx/dist/cli.mjs'), '--conditions=development', runner, 'run', dir], { cwd: root, env: { ...process.env, CUBICLE_MOCK_TOOLS: '1', CUBICLE_HANG_AFTER_STEP: '2' } });
+  // detached → own process group, so SIGKILL reaches the real daemon (tsx runs it as a grandchild)
+  const a = spawn(process.execPath, [path.join(root, 'node_modules/tsx/dist/cli.mjs'), '--conditions=development', runner, 'run', dir], { cwd: root, env: { ...process.env, CUBICLE_MOCK_TOOLS: '1', CUBICLE_HANG_AFTER_STEP: '2' }, detached: true });
   let aOut = '';
   await new Promise<void>((resolve) => {
     a.stdout.on('data', (d) => { aOut += d; process.stdout.write(d); if (aOut.includes('STEP 2 DONE')) resolve(); });
     a.stderr.on('data', (d) => process.stderr.write(d));
     a.on('exit', () => resolve());
   });
-  a.kill('SIGKILL');
-  await new Promise((r) => setTimeout(r, 300));
+  const aExit = new Promise<void>((r) => a.on('exit', () => r()));
+  try { process.kill(-a.pid!, 'SIGKILL'); } catch { a.kill('SIGKILL'); }
+  await aExit; // reaped: the daemon pid is gone, daemon.json is stale
   console.log('>>> killed -9 after step 2');
   const keysA = existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl')) ? readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n').length : 0;
   // Phase B: restart and let it finish
   const b = await child(['run', dir]);
   const keys = readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).key);
-  const ok = b.out.includes('RESUMED FROM STEP 2') && b.out.includes('JOB DONE step=4') && keys.length === 2 && new Set(keys).size === 2 && keysA === 1;
+  const ok = b.out.includes('RESUMED FROM STEP 2') && b.out.includes('JOB.INTERRUPTED EMITTED') && b.out.includes('stale daemon.json') && b.out.includes('JOB DONE step=4') && keys.length === 2 && new Set(keys).size === 2 && keysA === 1;
   console.log(`\nidempotency keys executed: ${JSON.stringify(keys)} (1 before kill, ${keys.length} total)`);
   console.log(ok ? 'PASS: resumed at step 3, no duplicate side effects' : 'FAIL');
   rmSync(dir, { recursive: true, force: true });

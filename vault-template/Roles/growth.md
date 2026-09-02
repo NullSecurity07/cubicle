@@ -2,7 +2,7 @@
 role: growth
 display: Growth
 model_tier: medium
-tools: [vault.read, vault.search, vault.list, vault.write, vault.append, browser.open, browser.goto, browser.click, browser.type, browser.extract, browser.screenshot, http.fetch, email.send, social.post, analytics.pull, colleague.message, scheduler.request, proposal.create, skills.save, skills.load, skills.search, finish]
+tools: [vault.read, vault.search, vault.list, vault.write, vault.append, browser.open, browser.goto, browser.click, browser.type, browser.submit, browser.extract, browser.screenshot, browser.close, http.fetch, email.send, social.post, analytics.pull, colleague.message, scheduler.request, proposal.create, skills.save, skills.load, skills.search, finish]
 approval_overrides: { email.send: ask, social.post: ask }
 active: true
 hired: "2026-09-02T00:00:00.000Z"

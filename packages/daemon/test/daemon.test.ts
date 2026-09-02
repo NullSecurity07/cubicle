@@ -104,6 +104,7 @@ describe('heartbeat as a resumable job', () => {
     const llm = fakeLlm();
     const hb = createHeartbeatJob(vault, 'test');
     await runHeartbeat({ vault, llm }, hb); // blocked on cto.plan
+    rmSync(path.join(dir, '.cubicle/jobs'), { recursive: true, force: true }); // cache wiped: state must come from the vault
     vault.close();
     // "restart": a daemon comes up, marks nothing (heartbeat is blocked, not running), runs the plan job and resumes
     const d = daemonFor(llm);
@@ -115,7 +116,32 @@ describe('heartbeat as a resumable job', () => {
     const log = (await import('node:child_process')).execSync('git log --oneline', { cwd: dir }).toString();
     expect(log.split('\n').filter((l) => l.includes('cubicle: heartbeat')).length).toBe(1);
     expect(listJobs(v2).filter((j) => j.type === 'ceo.heartbeat').length).toBe(1);
+    expect(listJobs(v2).filter((j) => j.type === 'cto.plan').length).toBe(1);
+    expect(v2.list('Plans/archive', { ext: '.md' }).length).toBeLessThanOrEqual(1);
     v2.close();
+  });
+});
+
+describe('brand reconcile (acceptance test 3, heartbeat half)', () => {
+  it('owner edits Brand/palette.md → next heartbeat enqueues "Reconcile site with brand" once', async () => {
+    const vault = Vault.open(dir);
+    const llm = fakeLlm();
+    // seed a completed heartbeat so "since" is meaningful, then an owner edit
+    vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } });
+    writeFileSync(path.join(dir, 'Brand/palette.md'), readFileSync(path.join(dir, 'Brand/palette.md'), 'utf8').replace('#f59e0b', '#0ea5e9'));
+    vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: 'Brand/palette.md', area: 'Brand', wakes_heartbeat: true } });
+    const hb = createHeartbeatJob(vault, 'owner edited Brand/palette.md');
+    await runHeartbeat({ vault, llm }, hb);
+    const rec = listJobs(vault).filter((j) => /reconcile site with brand/i.test(j.title));
+    expect(rec.length).toBe(1);
+    expect(rec[0].assigned).toBe('engineer');
+    expect(rec[0].type).toBe('engineer.ship');
+    // a second heartbeat while it is still open does not duplicate it
+    const hb2 = createHeartbeatJob(vault, 'again');
+    vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: 'Brand/voice.md', area: 'Brand', wakes_heartbeat: true } });
+    await runHeartbeat({ vault, llm }, hb2);
+    expect(listJobs(vault).filter((j) => /reconcile site with brand/i.test(j.title)).length).toBe(1);
+    vault.close();
   });
 });
 
@@ -147,7 +173,9 @@ describe('daemon lifecycle', () => {
     const vault = Vault.open(dir);
     const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
     const deps = { vault, registry: new ToolRegistry().registerAll(phase3Tools()), toolsConfig: cfg, scheduler: vaultScheduler(vault), env: {} };
-    const fc = createProposal(vault, { kind: 'file_change', from: 'cto', target: 'Memory/owner_preferences.md', title: 'x', body: '## Proposed content\n\n```\n# Owner preferences\n\nchanged by proposal\n```\n' }, 'cto');
+    const fc = createProposal(vault, { kind: 'file_change', from: 'cto', target: 'Memory/owner_preferences.md', title: 'x', body: '## Proposed content\n\n```\n# Owner preferences\n\nchanged by proposal\n```\n', call: { tool: 'vault.write', args: { path: 'Memory/owner_preferences.md', content: '# Owner preferences\n\nchanged by proposal\n' }, idempotency_key: 'job_x:1:1', role: 'cto' } }, 'cto');
+    // an agent-authored brand_change pointing at the constitution must never be applied, even when approved
+    const evil = createProposal(vault, { kind: 'brand_change', from: 'growth', target: 'Memory/constitution.md', title: 'Tagline tweak', body: '## Proposed content\n\n```\nmax_emails_per_day: 99999\n```\n' }, 'growth');
     const bc = createProposal(vault, { kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'ideas', body: '1. Bright Ledger — bookkeeping for tiny shops.\n2. Porch Pantry — veg box.\n3. Quiet Desk — timer.' }, 'ceo');
     const q = createProposal(vault, { kind: 'message', from: 'engineer', to: 'owner', title: 'q', body: 'Which colour?', job: 'job_x' }, 'engineer');
     expect(await dispatchProposals(deps)).toBe(0);
@@ -156,8 +184,12 @@ describe('daemon lifecycle', () => {
     ownerEdit(fc.path, (t) => t.replace('approved: null', 'approved: true'));
     ownerEdit(bc.path, (t) => t.replace('approved: null', 'approved: true').replace('chosen: null', 'chosen: 2'));
     ownerEdit(q.path, (t) => t.replace('answered: null', 'answered: true') + '\n## Owner\n\nBlue.\n');
+    ownerEdit(evil.path, (t) => t.replace('approved: null', 'approved: true'));
     expect(await dispatchProposals(deps)).toBe(3);
     expect(vault.readText('Memory/owner_preferences.md')).toContain('changed by proposal');
+    expect(vault.readText('Memory/constitution.md')).toContain('max_emails_per_day: 20');
+    expect(findInboxById(vault, evil.id)!.data.resolved_at).toBeNull();
+    expect(findInboxById(vault, evil.id)!.body).toContain('Not applied');
     expect(vault.readText('Brand/name.md')).toContain('name: Porch Pantry');
     expect(listJobs(vault).some((j) => /reconcile site with brand/i.test(j.title))).toBe(true);
     expect(vault.readText('Messages/engineer.md')).toContain(`re:${q.id} Blue.`);
@@ -171,6 +203,63 @@ describe('daemon lifecycle', () => {
     expect(vault.readText('Memory/lessons.md')).not.toContain('forged');
     expect(vault.events.count('guardrail.blocked')).toBeGreaterThanOrEqual(1);
     vault.close();
+  });
+
+  it('approved spend proposal executes the stored deploy exactly once via the dispatcher (R17/R31)', async () => {
+    const vault = Vault.open(dir);
+    const { phase6Tools } = await import('@cubicle/tools');
+    const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
+    const deps = { vault, registry: new ToolRegistry().registerAll([...phase3Tools(), ...phase6Tools()]), toolsConfig: cfg, scheduler: vaultScheduler(vault), env: {} };
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(path.join(dir, 'Site/dist'), { recursive: true }); writeFileSync(path.join(dir, 'Site/dist/index.html'), '<h1>v1</h1>');
+    const job = createJob(vault, { type: 'engineer.ship', title: 'ship', assigned: 'engineer', goal: 'x' }, 'cto');
+    const p = createProposal(vault, { kind: 'spend', from: 'engineer', job, title: 'deploy', body: 'x', call: { tool: 'deploy.site', args: {}, idempotency_key: `${job}:1:3`, job, role: 'engineer' } }, 'engineer');
+    writeFileSync(path.join(dir, p.path), readFileSync(path.join(dir, p.path), 'utf8').replace('approved: null', 'approved: true'));
+    expect(await dispatchProposals(deps)).toBe(1);
+    expect(vault.events.count('deploy.done')).toBe(1);
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([`${job}:1:3`]);
+    expect(await dispatchProposals(deps)).toBe(0);
+    expect(vault.events.count('deploy.done')).toBe(1);
+    const mock = readFileSync(path.join(dir, '.cubicle/mock/deploy.jsonl'), 'utf8').trim().split('\n');
+    expect(mock.length).toBe(1);
+    vault.close();
+  });
+
+  it('ask-mode call: owner approves → dispatcher requeues → worker executes the stored call exactly once (B1)', async () => {
+    const vault = Vault.open(dir);
+    vault.updateNote('Roles/growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
+    vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } });
+    const id = createJob(vault, { type: 'growth.outreach', title: 'ask', assigned: 'growth', goal: 'g' }, 'cto');
+    vault.close();
+    const askCfg = readFileSync(path.join(root, 'config/tools.yaml'), 'utf8').replace('mock.outbound:         { mode: auto', 'mock.outbound:         { mode: ask');
+    const cfgPath = path.join(dir, '.cubicle', 'tools-ask.yaml');
+    writeFileSync(cfgPath, askCfg);
+    let calls = 0;
+    const llm: Llm = {
+      async chat(req, chat) {
+        const base = { content: 'ok', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'strong' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
+        if (!chat.tools) return base;
+        if (req.roleId !== 'growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
+        calls++;
+        const j = readJob(d.vault, id)!.data;
+        if (j.side_effects_done.length >= 1) return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'sent' } }] };
+        return { ...base, parsedToolCalls: [{ name: 'mock.outbound', args: { to: 'a@x', body: 'hi' } }] };
+      },
+    };
+    const d = new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 400, maxConcurrentJobs: 2, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: cfgPath }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+    await d.start();
+    await waitFor(() => readJob(d.vault, id)!.data.status === 'blocked' && readJob(d.vault, id)!.data.approval === 'pending', 15000);
+    const prop = findInboxById(d.vault, readJob(d.vault, id)!.data.blocked_on!.id)!;
+    expect(listInbox(d.vault).filter((n) => n.data.kind === 'outbound_batch').length).toBe(1);
+    writeFileSync(path.join(dir, prop.path), readFileSync(path.join(dir, prop.path), 'utf8').replace('approved: null', 'approved: true')); // owner in Obsidian
+    await waitFor(() => readJob(d.vault, id)!.data.status === 'done', 20000);
+    const j = readJob(d.vault, id)!.data;
+    expect(j.side_effects_done).toEqual([`${id}:1:1`]);
+    expect(j.approval).toBe('approved');
+    expect(listInbox(d.vault).filter((n) => n.data.kind === 'outbound_batch').length).toBe(1); // no re-ask
+    const keys = readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).key);
+    expect(keys).toEqual([`${id}:1:1`]);
+    await d.stop();
   });
 
   it('owner cancels a running job → worker stops within one step (acceptance test 2)', async () => {
@@ -200,7 +289,13 @@ describe('daemon lifecycle', () => {
     const d = daemonFor(fakeLlm(), 0);
     d.config.port = 47411;
     await d.start();
-    const ws = new WebSocket('ws://127.0.0.1:47411');
+    const info = JSON.parse(readFileSync(path.join(dir, '.cubicle/daemon.json'), 'utf8')) as { token: string };
+    const bad = new WebSocket('ws://127.0.0.1:47411', { headers: { origin: 'http://evil.example' } });
+    const badClosed = await new Promise<boolean>((r) => { bad.once('error', () => r(true)); bad.once('open', () => r(false)); });
+    expect(badClosed).toBe(true);
+    const noToken = new WebSocket('ws://127.0.0.1:47411');
+    expect(await new Promise<boolean>((r) => { noToken.once('error', () => r(true)); noToken.once('open', () => r(false)); })).toBe(true);
+    const ws = new WebSocket(`ws://127.0.0.1:47411?token=${info.token}`);
     const msgs: Record<string, unknown>[] = [];
     ws.on('message', (m) => msgs.push(JSON.parse(String(m))));
     await new Promise((r) => ws.once('open', r));

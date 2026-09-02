@@ -23,6 +23,7 @@ tools:
   browser.extract:       { mode: auto }
   browser.screenshot:    { mode: auto }
   browser.submit:        { mode: ask, outbound: true, proposal_kind: outbound_batch }
+  browser.close:         { mode: auto }
   email.send:            { mode: ask, outbound: true, proposal_kind: outbound_batch }
   email.inbox:           { mode: auto }
   deploy.site:           { mode: propose, outbound: true, proposal_kind: spend, first_time_only: true }

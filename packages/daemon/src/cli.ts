@@ -6,6 +6,7 @@ import { MemoryIndex } from '@cubicle/harness';
 import { Daemon, readDaemonInfo, isPidAlive } from './daemon.js';
 import { defaultConfig } from './config.js';
 import { rebuildCache } from './rebuild.js';
+import { runDoctor, formatDoctor } from './doctor.js';
 import { createHeartbeatJob } from './heartbeat.js';
 import { createJob, listJobs, updateJob } from '@cubicle/core';
 import { writeQueueMd } from './queue-md.js';
@@ -19,7 +20,7 @@ export function providersConfigPath(flags: Record<string, string | boolean>): st
 
 type Handler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>;
 
-const BOOLEAN_FLAGS = new Set(['force', 'tools', 'local', 'json']);
+const BOOLEAN_FLAGS = new Set(['force', 'tools', 'local', 'json', 'live', 'build-sandbox']);
 
 function parseArgs(argv: string[]): { cmd: string[]; flags: Record<string, string | boolean> } {
   const cmd: string[] = [];
@@ -36,6 +37,25 @@ function parseArgs(argv: string[]): { cmd: string[]; flags: Record<string, strin
   }
   return { cmd, flags };
 }
+
+/** Load `.env` from the repo root into process.env (existing variables win). No dependency: KEY=value lines, # comments, optional quotes. */
+export function loadDotEnv(file = path.join(repoRoot(), '.env')): number {
+  const { existsSync, readFileSync } = require_fs();
+  if (!existsSync(file)) return 0;
+  let n = 0;
+  for (const raw of readFileSync(file, 'utf8').split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    let v = m[2].trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    if (process.env[m[1]] === undefined && v !== '') { process.env[m[1]] = v; n++; }
+  }
+  return n;
+}
+import * as fsMod from 'node:fs';
+function require_fs() { return fsMod; }
 
 export function resolveVaultPath(flags: Record<string, string | boolean>, positional?: string): string {
   const p = positional ?? (typeof flags.vault === 'string' ? flags.vault : process.env.CUBICLE_VAULT);
@@ -109,7 +129,9 @@ const commands: Record<string, Handler> = {
   },
   async start(args, flags) {
     const root = resolveVaultPath(flags, args[0]);
-    const daemon = new Daemon(defaultConfig(root, process.env, typeof flags.port === 'string' ? { port: Number(flags.port) } : {}));
+    const port = typeof flags.port === 'string' ? Number(flags.port) : undefined;
+    if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) throw new Error(`invalid --port ${flags.port}`);
+    const daemon = new Daemon(defaultConfig(root, process.env, port !== undefined ? { port } : {}));
     await daemon.start();
     console.log(`daemon running (pid ${process.pid}); vault ${root}. Ctrl-C or \`cubicle stop\` to checkpoint and exit.`);
     await new Promise(() => undefined); // run until a signal stops us
@@ -146,14 +168,15 @@ const commands: Record<string, Handler> = {
     const info = readDaemonInfo(root);
     if (info && isPidAlive(info.pid)) {
       const vault = Vault.open(root);
-      const id = createHeartbeatJob(vault, 'forced by cubicle heartbeat');
+      const open = listJobs(vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
+      const id = open?.id ?? createHeartbeatJob(vault, 'forced by cubicle heartbeat');
       vault.close();
-      console.log(`queued heartbeat ${id}; the running daemon will execute it`);
+      console.log(open ? `heartbeat ${id} is already open (step ${open.checkpoint_step}); the running daemon continues it` : `queued heartbeat ${id}; the running daemon will execute it`);
       return;
     }
     const daemon = new Daemon(defaultConfig(root, process.env, { tickMs: 2000, maxConcurrentJobs: 2 }), { disableWs: true, disableSleepWatch: true, log: (m) => console.log(`[cubicle] ${m}`) });
-    await daemon.start();
-    daemon.requestHeartbeat('forced by cubicle heartbeat');
+    await daemon.start(); // start() already requests a heartbeat on a fresh/stale vault; request again only if none is open
+    if (!listJobs(daemon.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat')) daemon.requestHeartbeat('forced by cubicle heartbeat');
     const deadline = Date.now() + Number(flags.timeout ?? 20 * 60) * 1000;
     while (Date.now() < deadline) {
       const open = listJobs(daemon.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat' || j.type === 'cto.plan');
@@ -166,7 +189,7 @@ const commands: Record<string, Handler> = {
   },
   async job(args, flags) {
     const sub = args[0];
-    const root = resolveVaultPath(flags, typeof flags.vault === 'string' ? undefined : undefined);
+    const root = resolveVaultPath(flags);
     const vault = Vault.open(root);
     try {
       if (sub === 'add') {
@@ -194,7 +217,7 @@ const commands: Record<string, Handler> = {
       console.log(`${events.length} events on ${date}`);
       for (const [h, types] of Object.entries(byHour)) console.log(`${h}:00  ${Object.entries(types).map(([t, n]) => `${t}×${n}`).join('  ')}`);
       const info = readDaemonInfo(vault.root);
-      console.log(`viewer: http://127.0.0.1:${(info?.port ?? 7411) + 1}/?replay=${date}  (Phase 9 serves the viewer; until then use the WS replay op)`);
+      console.log(`viewer: open the office (cubicle start --tray, Phase 9+) and choose replay ${date}; or send {"op":"replay","from":"${date}T00:00:00.000Z"} on ws://127.0.0.1:${info?.port ?? 7411}?token=<token from .cubicle/daemon.json>`);
     } finally { vault.close(); }
   },
   async rebuild(args, flags) {
@@ -202,6 +225,12 @@ const commands: Record<string, Handler> = {
     const cfg = loadProvidersConfig(providersConfigPath(flags));
     const r = await rebuildCache(root, { memory: async (v) => new MemoryIndex(v, (t) => embedTexts(cfg, t)).rebuild().catch(() => 0) });
     console.log(`rebuilt .cubicle cache: ${r.events} events, ${r.writtenSha} written_sha rows, ${r.jobs} jobs indexed, ${r.memoryFiles} memory files`);
+  },
+  async doctor(_args, flags) {
+    const rows = await runDoctor(process.env, { live: flags.live === true, buildSandbox: flags['build-sandbox'] === true, providersPath: providersConfigPath(flags) });
+    console.log(formatDoctor(rows));
+    const missing = rows.filter((r) => r.ok === false && r.area === 'services');
+    if (missing.length) console.log(`\nMissing service keys run in mock mode. Free signups and env var names: SETUP.md (${path.join(repoRoot(), 'SETUP.md')})`);
   },
   async help() {
     console.log(`cubicle <command>
@@ -213,7 +242,7 @@ const commands: Record<string, Handler> = {
   providers test|refresh    model router (Phase 2)
   job add|cancel|list       job queue (Phase 4)
   replay <date>             event replay (Phase 4)
-  doctor                    environment + keys check (Phase 6)
+  doctor [--live] [--build-sandbox]   environment + keys check; --live pings each key
   rebuild                   rebuild the .cubicle cache from the vault (Phase 4)
   memory rebuild|index|search <vault> [query]   embedding index over Memory/ Skills/ Decisions/
   chat [--tier t] [--local] <prompt>            one completion through the cascade (debug)
@@ -222,6 +251,7 @@ const commands: Record<string, Handler> = {
 };
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
+  loadDotEnv();
   const { cmd, flags } = parseArgs(argv);
   const name = cmd[0] ?? 'help';
   const handler = commands[name];

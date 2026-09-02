@@ -28,6 +28,8 @@ export interface Guardrail {
 export interface HarnessDeps {
   vault: Vault;
   llm: Llm;
+  /** The real router (for tools that talk to models themselves, e.g. meetings, classifiers). */
+  router?: import('@cubicle/router').Router;
   toolsConfig: ToolsConfig;
   registry: ToolRegistry;
   scheduler: SchedulerApi;
@@ -126,7 +128,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
 
   const memoryApi: MemoryApi | undefined = deps.memory ? { search: (q, k, dirs) => deps.memory!.search(q, k, dirs), indexFile: (rel) => deps.memory!.indexFile(rel).then(() => undefined) } : undefined;
   const baseCtx: ToolContext = {
-    vault, events, roleId, role, jobId, config: deps.toolsConfig, env, scheduler: deps.scheduler, memory: memoryApi,
+    vault, events, roleId, role, jobId, config: deps.toolsConfig, env, scheduler: deps.scheduler, memory: memoryApi, router: deps.router,
     workspace: `.cubicle/workspace/${jobId}`, now,
   };
   const defs = deps.registry.forRole(role, deps.toolsConfig);
@@ -169,9 +171,15 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   };
   const failStepLimit = (step: number) => failOrRequeue(step, 'step_limit', `Step limit (${maxSteps}) reached without finishing.`);
 
-  // ---- resume handling: pending proposal or answered question ----
-  if (job.status === 'blocked' && job.blocked_on) {
+  // ---- resume handling: pending proposal, answered question, finished sub-job ----
+  // The dispatcher requeues such jobs as `queued` while leaving `blocked_on` in place, so key on blocked_on, not status.
+  if (job.blocked_on && job.blocked_on.kind !== 'owner' && job.blocked_on.kind !== 'quota') {
     const b = job.blocked_on;
+    const stillBlocked = async (): Promise<JobOutcome> => {
+      if (job.status !== 'blocked') updateJob(vault, jobId, { status: 'blocked' }, roleId);
+      await client.close();
+      return { status: 'blocked', on: b };
+    };
     if (b.kind === 'proposal') {
       const prop = findInboxById(vault, b.id);
       const call = prop?.data.call;
@@ -193,20 +201,19 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
         record({ step: job.checkpoint_step, kind: 'tool', tool: call?.tool ?? 'unknown', args: call?.args ?? {}, result: 'rejected by owner. Do not retry this action; adapt or finish.', ok: false });
         updateJob(vault, jobId, { status: 'running', approval: 'rejected', blocked_on: undefined }, roleId, `- step ${job.checkpoint_step}: ${call?.tool ?? 'call'} rejected by owner`);
       } else {
-        await client.close();
-        return { status: 'blocked', on: b };
+        return stillBlocked();
       }
     } else if (b.kind === 'message') {
       const answer = findAnswer(vault, roleId, b.id) ?? (() => {
         const n = findInboxById(vault, b.id);
         return n && n.data.answered ? { from: 'owner', body: (n.body.split('## Owner')[1] ?? n.body).trim() } : null;
       })();
-      if (!answer) { await client.close(); return { status: 'blocked', on: b }; }
+      if (!answer) return stillBlocked();
       record({ step: job.checkpoint_step, kind: 'system', text: `Answer from ${answer.from} to your question ${b.id}:\n${answer.body}` });
       updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, roleId, `- ${nowIso()}: question ${b.id} answered by ${answer.from}`);
     } else if (b.kind === 'job') {
       const sub = readJob(vault, b.id);
-      if (!sub || !['done', 'failed', 'cancelled'].includes(sub.data.status)) { await client.close(); return { status: 'blocked', on: b }; }
+      if (!sub || !['done', 'failed', 'cancelled'].includes(sub.data.status)) return stillBlocked();
       record({ step: job.checkpoint_step, kind: 'system', text: `Sub-job ${b.id} finished with status ${sub.data.status}.\n${sub.body.split('## Result')[1]?.trim() ?? ''}` });
       updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, roleId);
     }
@@ -244,7 +251,8 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     } catch (err) {
       if (!(err instanceof NoModelAvailableError)) { await client.close().catch(() => undefined); throw err; }
       const msg = (err as Error).message;
-      updateJob(vault, jobId, { status: 'blocked', blocked_on: { kind: 'quota', id: 'all-providers', since: nowIso() } }, roleId, `- ${nowIso()}: no model available (${msg.slice(0, 120)}); blocked on quota`);
+      const prevRetries = job.blocked_on?.kind === 'quota' ? Number((job.blocked_on as { retries?: number }).retries ?? 0) : 0;
+      updateJob(vault, jobId, { status: 'blocked', blocked_on: { kind: 'quota', id: 'all-providers', since: nowIso(), retries: prevRetries } as JobFrontmatter['blocked_on'] }, roleId, prevRetries ? undefined : `- ${nowIso()}: no model available (${msg.slice(0, 120)}); blocked on quota`);
       events.emit({ type: 'job.blocked', agent: roleId, job: jobId, payload: { reason: 'quota', message: msg.slice(0, 200) } });
       await client.close();
       return { status: 'blocked', on: { kind: 'quota', id: 'all-providers' } };
@@ -292,7 +300,10 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       // Guardrails (constitution etc.)
       let blockedReason: string | null = null;
       for (const g of deps.guardrails ?? []) { blockedReason = await g.check(toolName, args, baseCtx); if (blockedReason) break; }
-      const mode = blockedReason ? 'never' : resolveMode(toolName, deps.toolsConfig, role, prefs);
+      let mode = blockedReason ? 'never' : resolveMode(toolName, deps.toolsConfig, role, prefs);
+      // R17: tools marked first_time_only (deploy.site) need approval once; after a recorded completion they run automatically
+      // unless the owner pinned a stricter mode in owner_preferences.
+      if (mode === 'propose' && policy.first_time_only && !prefs.approvals[toolName] && events.count('deploy.done') > 0) mode = 'auto';
       if (mode === 'never') {
         const reason = blockedReason ?? 'approval mode is never';
         events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: toolName, reason, step } });

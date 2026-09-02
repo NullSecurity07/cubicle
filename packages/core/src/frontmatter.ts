@@ -40,8 +40,9 @@ export function parseNote<T = Record<string, unknown>>(text: string): Note<T> {
 export function stringifyNote(data: Record<string, unknown>, body: string): string {
   const clean: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) if (v !== undefined) clean[k] = normalize(v);
-  const yaml = YAML.stringify(clean, { lineWidth: 0, nullStr: 'null', schema: 'core' }).trimEnd();
   const b = body.endsWith('\n') ? body : body + '\n';
+  if (Object.keys(clean).length === 0) return b; // no frontmatter block for empty data
+  const yaml = YAML.stringify(clean, { lineWidth: 0, nullStr: 'null', schema: 'core' }).trimEnd();
   return `---\n${yaml}\n---\n${b}`;
 }
 

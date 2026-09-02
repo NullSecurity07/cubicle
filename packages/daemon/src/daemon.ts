@@ -2,7 +2,8 @@ import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown } from '@cubicle/router';
-import { loadToolsConfig, ToolRegistry, phase3Tools, type AnyTool } from '@cubicle/tools';
+import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
+import { RoleFrontmatter } from '@cubicle/core';
 import { MemoryIndex, vaultScheduler, type Llm, type Guardrail } from '@cubicle/harness';
 import type { DaemonConfig } from './config.js';
 import { WorkerPool } from './workers.js';
@@ -21,9 +22,11 @@ export interface DaemonOverrides {
   disableSleepWatch?: boolean;
   memory?: boolean;
   log?: (msg: string) => void;
+  /** Tests set false and close the vault themselves. */
+  closeDbOnStop?: boolean;
 }
 
-export interface DaemonInfo { pid: number; port: number | null; started: string; vault: string }
+export interface DaemonInfo { pid: number; port: number | null; started: string; vault: string; token?: string }
 
 export function daemonInfoPath(vaultPath: string): string {
   return path.join(vaultPath, '.cubicle', 'daemon.json');
@@ -36,7 +39,14 @@ export function readDaemonInfo(vaultPath: string): DaemonInfo | null {
 }
 
 export function isPidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { process.kill(pid, 0); } catch { return false; }
+  // Linux: a zombie answers kill(0) but is dead; and a reused pid must still look like a cubicle daemon.
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const state = stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3);
+    if (state === 'Z' || state === 'X') return false;
+  } catch { /* not linux or gone */ }
+  try { const cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8'); return cmd.length === 0 ? false : /cubicle|daemon|tsx|node/.test(cmd); } catch { return true; }
 }
 
 /**
@@ -66,6 +76,11 @@ export class Daemon {
   }
 
   async start(): Promise<void> {
+    try { await this.startInner(); }
+    catch (err) { await this.stop().catch(() => undefined); throw err; }
+  }
+
+  private async startInner(): Promise<void> {
     const cfg = this.config;
     if (!Vault.isVault(cfg.vaultPath)) throw new Error(`${cfg.vaultPath} is not a cubicle vault (run: cubicle init <path>)`);
     const info = readDaemonInfo(cfg.vaultPath);
@@ -74,23 +89,50 @@ export class Daemon {
     const providers = loadProvidersConfig(cfg.providersPath);
     this.router = new Router(providers, new QuotaTracker(this.vault.db), { env: cfg.env, events: this.vault.events });
     const toolsConfig = loadToolsConfig(cfg.toolsPath);
-    this.registry = new ToolRegistry().registerAll([...phase3Tools({ includeMock: !!cfg.env.CUBICLE_MOCK_TOOLS }), ...(this.overrides.extraTools ?? [])]);
+    this.registry = new ToolRegistry().registerAll([...phase3Tools({ includeMock: !!cfg.env.CUBICLE_MOCK_TOOLS }), ...phase5Tools(), ...phase6Tools(), ...(this.overrides.extraTools ?? [])]);
     const llm: Llm = this.overrides.llm ?? this.router;
     if (this.overrides.memory !== false) {
       this.memory = new MemoryIndex(this.vault, (t) => embedTexts(providers, t));
       this.memory.indexAll().then((n) => n && this.log(`memory: indexed ${n} files`)).catch((e) => this.log(`memory index unavailable: ${(e as Error).message}`));
     }
     const scheduler = vaultScheduler(this.vault, 'daemon');
+    const guardrails = [constitutionGuardrail(this.router), ...(this.overrides.guardrails ?? [])];
+    const openMeeting = async (agenda: string): Promise<string | null> => {
+      const ceoNote = this.vault.readNoteOrNull('Roles/ceo.md');
+      if (!ceoNote) return null;
+      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId: 'ceo', role: RoleFrontmatter.parse(ceoNote.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/meeting', now: () => new Date() };
+      const client = await createRoleToolClient([meetingOpen], ctx);
+      try {
+        const participants = this.workers.roles().map((r) => r.role).filter((r) => r !== 'ceo');
+        const r = await client.call('meeting.open', { room: 'board', participants, agenda, rounds: 2 });
+        return r.ok ? String((r.data as { path?: string })?.path ?? 'held') : null;
+      } finally { await client.close(); }
+    };
+    // Heartbeat hooks run system tools as the COO/CEO without an LLM in the loop.
+    const runSystemTool = async (roleId: string, tool: AnyTool, args: Record<string, unknown>) => {
+      const note = this.vault.readNoteOrNull(`Roles/${roleId}.md`);
+      if (!note) return null;
+      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId, role: RoleFrontmatter.parse(note.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/system', now: () => new Date() };
+      const client = await createRoleToolClient([tool], ctx);
+      try { return await client.call(tool.name, args); } finally { await client.close(); }
+    };
+    const pollInbox = async (): Promise<string[]> => { const r = await runSystemTool('coo', emailInbox, {}); return r?.ok ? r.text.split('\n').slice(1) : []; };
+    const pullAnalytics = async (): Promise<string | null> => { const r = await runSystemTool('coo', analyticsPull, {}); return r?.ok ? r.text : null; };
     this.workers = new WorkerPool(this.vault, {
-      harness: { llm, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails: this.overrides.guardrails, env: cfg.env },
-      heartbeat: { llm, router: this.router, ...this.overrides.heartbeatHooks },
+      harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env },
+      heartbeat: { llm, router: this.router, openMeeting, pollInbox, pullAnalytics, ...this.overrides.heartbeatHooks },
       maxConcurrent: cfg.maxConcurrentJobs,
     });
     this.workers.on('outcome', ({ jobId, outcome }: { jobId: string; outcome: { status: string } }) => {
+      if (this.stopping) return;
       if (outcome.status === 'done' || outcome.status === 'failed') {
         const j = readJob(this.vault, jobId)?.data;
-        if (j && j.type !== 'ceo.heartbeat') this.jobsDoneSinceHeartbeat++;
-        if (this.jobsDoneSinceHeartbeat >= cfg.heartbeat.jobsCompletedN) this.requestHeartbeat(`${this.jobsDoneSinceHeartbeat} jobs completed`);
+        if (j && j.type !== 'ceo.heartbeat') {
+          // Counted from the event log, so a restart does not forget completed work.
+          const since = this.vault.events.last('heartbeat.completed')?.ts;
+          const done = this.vault.events.query({ types: ['job.done', 'job.failed'], from: since }).filter((e) => e.job && readJob(this.vault, e.job)?.data.type !== 'ceo.heartbeat').length;
+          if (done >= cfg.heartbeat.jobsCompletedN) this.requestHeartbeat(`${done} jobs completed`);
+        }
       }
       this.workers.wake();
     });
@@ -117,8 +159,11 @@ export class Daemon {
       this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.runTick('chat'); } });
       const port = await this.ws.start();
       this.log(`ws listening on ws://127.0.0.1:${port}`);
+      const onFrame = (f: { session: string; seq: number; jpegBase64: string }) => this.ws?.frame(f.session, f.seq, f.jpegBase64);
+      browserFrames.on('frame', onFrame);
+      this.offEvents.push(() => browserFrames.off('frame', onFrame));
     }
-    writeFileSync(daemonInfoPath(cfg.vaultPath), JSON.stringify({ pid: process.pid, port: this.ws ? cfg.port : null, started: nowIso(), vault: cfg.vaultPath } satisfies DaemonInfo, null, 2));
+    writeFileSync(daemonInfoPath(cfg.vaultPath), JSON.stringify({ pid: process.pid, port: this.ws ? cfg.port : null, started: nowIso(), vault: cfg.vaultPath, token: this.ws?.token } satisfies DaemonInfo, null, 2), { mode: 0o600 });
     this.offSignals = onProcessSignals((s) => { this.log(`${s} received; checkpointing`); void this.stop().then(() => process.exit(0)); });
     if (!this.overrides.disableSleepWatch) {
       // Non-blocking: a hung system bus must never delay workers.
@@ -137,11 +182,11 @@ export class Daemon {
     await this.runTick('startup');
   }
 
-  /** Ask for a heartbeat; coalesced — one open heartbeat job at a time. */
+  /** Ask for a heartbeat; coalesced — one open heartbeat job at a time. A request while an open heartbeat has not gathered yet is already covered by it. */
   requestHeartbeat(trigger: string): string | null {
     if (this.stopping) return null;
     const open = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
-    if (open) { this.heartbeatRequested = trigger; return open.id; }
+    if (open) { if (open.checkpoint_step >= 1) this.heartbeatRequested = trigger; return open.id; }
     const id = createHeartbeatJob(this.vault, trigger);
     this.heartbeatRequested = null;
     this.workers.wake();
@@ -176,17 +221,19 @@ export class Daemon {
     if (this.stopping) return;
     this.stopping = true;
     const t0 = Date.now();
-    this.vault.events.emit({ type: 'daemon.stopping', payload: { active_jobs: this.workers.activeJobs() } });
+    try { this.vault?.events.emit({ type: 'daemon.stopping', payload: { active_jobs: this.workers?.activeJobs() ?? [] } }); } catch { /* vault may not be open */ }
     if (this.tick) clearInterval(this.tick);
     this.offSignals?.();
     for (const off of this.offEvents) off();
-    this.workers.pause();
-    await Promise.race([this.workers.stop(), new Promise((r) => setTimeout(r, Math.max(500, this.config.shutdownMs - 2000)))]);
+    if (this.workers) { this.workers.pause(); await Promise.race([this.workers.stop(), new Promise((r) => setTimeout(r, Math.max(500, this.config.shutdownMs - 2000)))]); }
+    if (!this.vault) { this.log(`stopped in ${Date.now() - t0} ms`); return; }
+    await Promise.race([closeAllSessions(this.vault.events), new Promise((r) => setTimeout(r, 1500))]);
     await this.watcher?.stop();
     await this.sleepWatcher?.stop();
     await this.ws?.stop();
     try { rmSync(daemonInfoPath(this.config.vaultPath), { force: true }); } catch { /* ignore */ }
-    this.vault.close();
+    // Keep the DB open until the process exits: a late LLM return in a worker must not throw on a closed handle.
+    if (this.overrides.closeDbOnStop !== false) { setTimeout(() => { try { this.vault.close(); } catch { /* ignore */ } }, 250).unref(); }
     this.log(`stopped in ${Date.now() - t0} ms`);
   }
 }

@@ -12,19 +12,20 @@
   },
   "dependencies": {
     "@cubicle/core": "workspace:*",
-    "@cubicle/router": "workspace:*",
     "@cubicle/harness": "workspace:*",
+    "@cubicle/router": "workspace:*",
     "@cubicle/tools": "workspace:*",
-    "ws": "^8.21",
     "dbus-next": "^0.10",
+    "playwright": "^1.62.1",
+    "ws": "^8.21",
     "yaml": "^2.9",
     "zod": "^4.5"
   },
   "devDependencies": {
-    "typescript": "~5.9",
-    "vitest": "^4.1",
     "@types/node": "^24",
-    "@types/ws": "^8"
+    "@types/ws": "^8",
+    "typescript": "~5.9",
+    "vitest": "^4.1"
   },
   "exports": {
     ".": {

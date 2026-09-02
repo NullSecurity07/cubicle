@@ -13,6 +13,7 @@ export const BlockedOn = z.object({
   kind: z.enum(['message', 'job', 'proposal', 'quota', 'owner']),
   id: z.string(),
   since: z.string(),
+  retries: z.number().int().optional(),
 });
 
 export const JobFrontmatter = z.looseObject({

@@ -55,6 +55,7 @@ export const vaultSearch = defineTool({
 function agentWriteRestriction(rel: string, content: string, ctx: Parameters<typeof vaultRead.handler>[1]): string | null {
   if (rel.startsWith('00 Inbox/')) return '00 Inbox/ is written only via proposal.create';
   if (rel.startsWith('Messages/')) return 'Messages/ is written only via colleague.message';
+  if (rel.startsWith('Site/') && ctx.vault.exists(rel) && ctx.vault.isOwnerChanged(rel)) return `Site/ file "${rel}" was changed by the owner and is read-only for you; ask the owner (proposal.create kind=message) if it must change`;
   if (rel.startsWith('Jobs/')) {
     if (rel === 'Jobs/queue.md' || rel === 'Jobs/_template.md') return `${rel} is generated`;
     if (!ctx.jobId || rel !== `Jobs/${ctx.jobId}.md`) return 'agents may only edit their own job note';

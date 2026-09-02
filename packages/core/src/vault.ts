@@ -146,11 +146,21 @@ export class Vault {
   updateNote<T extends Record<string, unknown>>(rel: string, mutate: (note: Note<T>) => Note<T> | void, by: string, opts: { job?: string | null } = {}): Note<T> {
     const text = this.readText(rel);
     const note = parseNote<T>(text);
-    if (text.startsWith('---') && Object.keys(note.data as object).length === 0) {
+    const fmBlock = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1]?.trim();
+    if (fmBlock && fmBlock !== '{}' && Object.keys(note.data as object).length === 0) {
       this.events.emit({ type: 'daemon.warning', payload: { path: rel, reason: 'malformed frontmatter; refusing to rewrite' } });
       throw new Error(`malformed frontmatter in ${rel}; not rewriting`);
     }
     const next = mutate(note) ?? note;
+    // Compare-and-write: if the file changed under us (an Obsidian save), re-read and re-apply once, then last-writer-wins with a warning.
+    const before = sha256(text);
+    if (this.currentSha(rel) !== before) {
+      const fresh = parseNote<T>(this.readText(rel));
+      const again = mutate(fresh) ?? fresh;
+      this.events.emit({ type: 'daemon.warning', payload: { path: rel, reason: 'note changed during update; re-applied mutation on the fresh copy' } });
+      this.writeNote(rel, again.data as Record<string, unknown>, again.body, by, opts);
+      return again;
+    }
     this.writeNote(rel, next.data as Record<string, unknown>, next.body, by, opts);
     return next;
   }

@@ -3,6 +3,24 @@ import {
 } from '@cubicle/core';
 import { createRoleToolClient, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer } from '@cubicle/tools';
+import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
+import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
+
+/** kind → allowed targets. Everything else leaves the note unresolved with a warning (an approval must mean what its title says). */
+export function validateTarget(kind: string, target: string, hasCall: boolean): string | null {
+  let t: string;
+  try { t = normalizeRel(target); } catch (err) { return (err as Error).message; }
+  if (!t) return 'empty target';
+  if (isSecretPath(t) || t.startsWith('.cubicle/')) return `target ${t} is not writable by proposals`;
+  if (kind === 'brand_change') return t.startsWith('Brand/') ? null : `brand_change may only target Brand/ (got ${t})`;
+  if (kind === 'charter_change') { const m = t.match(/^Roles\/([^/]+)\.md$/); return m && isValidRoleId(m[1]) ? null : `charter_change may only target Roles/<role>.md (got ${t})`; }
+  if (kind === 'file_change') {
+    if (t.startsWith('00 Inbox/') || t.startsWith('Jobs/') || t.startsWith('Messages/')) return `file_change may not target ${t}`;
+    if ((t === 'Memory/constitution.md' || t === 'Memory/owner_preferences.md') && !hasCall) return `${t} can only be changed through a harness-generated file_change (with a stored call)`;
+    return null;
+  }
+  return `kind ${kind} does not take a target`;
+}
 
 export interface DispatcherDeps {
   vault: Vault;
@@ -23,8 +41,11 @@ function fenced(body: string): string | null {
 }
 
 /** Execute a stored call as the daemon, with the original role's permissions and the stored idempotency key. */
-export async function executeStoredCall(deps: DispatcherDeps, note: { data: InboxFrontmatter }): Promise<{ ok: boolean; text: string }> {
+export async function executeStoredCall(deps: DispatcherDeps, note: { path: string; data: InboxFrontmatter }): Promise<{ ok: boolean; text: string }> {
   const call = note.data.call!;
+  // At-most-once: mark the note (and the job) BEFORE running the external call.
+  if ((note.data as { executing_at?: string }).executing_at) return { ok: false, text: 'a previous attempt was interrupted after starting this call; not re-running it (lost result)' };
+  deps.vault.updateNote(note.path, (n) => ({ data: { ...n.data, executing_at: nowIso() }, body: n.body }), 'daemon');
   const roleId = call.role ?? note.data.from;
   const roleNote = deps.vault.readNoteOrNull(`Roles/${roleId}.md`);
   if (!roleNote) return { ok: false, text: `no charter for ${roleId}` };
@@ -32,13 +53,14 @@ export async function executeStoredCall(deps: DispatcherDeps, note: { data: Inbo
   const jobId = call.job ?? note.data.job ?? null;
   const job = jobId ? readJob(deps.vault, jobId) : null;
   if (job && job.data.side_effects_done.includes(call.idempotency_key)) return { ok: true, text: 'already executed (idempotency key recorded)' };
+  if (job) updateJob(deps.vault, job.data.id, { side_effects_done: [...job.data.side_effects_done, call.idempotency_key] }, 'daemon', `- ${nowIso()}: ${call.tool} ATTEMPTING by the daemon after owner approval (${call.idempotency_key})`);
   const ctx: ToolContext = { vault: deps.vault, events: deps.vault.events, roleId, role, jobId, config: deps.toolsConfig, env: deps.env, scheduler: deps.scheduler, workspace: `.cubicle/workspace/${jobId ?? 'daemon'}`, now: () => new Date(), idempotencyKey: call.idempotency_key };
   const def = deps.registry.get(call.tool);
   if (!def) return { ok: false, text: `unknown tool ${call.tool}` };
   const client = await createRoleToolClient([def], ctx);
   try {
     const res = await client.call(call.tool, call.args, { idempotencyKey: call.idempotency_key });
-    if (job) updateJob(deps.vault, job.data.id, { side_effects_done: [...job.data.side_effects_done, call.idempotency_key] }, 'daemon', `- ${nowIso()}: ${call.tool} executed by the daemon after owner approval → ${res.ok ? 'ok' : 'failed'}`);
+    if (job) updateJob(deps.vault, job.data.id, {}, 'daemon', `- ${nowIso()}: ${call.tool} → ${res.ok ? 'ok' : 'failed'}`);
     return { ok: res.ok, text: res.text };
   } finally {
     await client.close();
@@ -58,7 +80,9 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     const ownerFlipped = vault.isOwnerChanged(note.path);
     // Owner answered an agent's question (kind: message, to: owner)
     if (d.kind === 'message' && d.to === 'owner' && d.from !== 'owner' && d.answered && !d.resolved_at) {
-      const answer = (note.body.split('## Owner')[1] ?? '').trim();
+      if (!ownerFlipped) { vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: d.id, reason: 'answered flag was not set by the owner' } }); continue; }
+      const answer = (note.body.split('## Owner')[1] ?? note.body.split('\n').slice(-8).join('\n')).trim();
+      if (!answer) { vault.events.emit({ type: 'daemon.warning', payload: { proposal: d.id, reason: 'answered: true but no answer text under "## Owner"' } }); continue; }
       vault.appendText(`Messages/${d.from}.md`, `\n## ${nowIso()} from owner (fyi) <!-- id:msg_${d.id} -->\n\nre:${d.id} ${answer}\n`, 'daemon');
       vault.updateNote(note.path, (nn) => ({ data: { ...nn.data, resolved_at: nowIso() }, body: nn.body }), 'daemon');
       vault.events.emit({ type: 'proposal.resolved', agent: 'owner', job: d.job ?? null, payload: { id: d.id, kind: 'message', answered: true } });
@@ -83,23 +107,38 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
           case 'file_change': {
             const target = d.target;
             if (!target) { outcome = 'no target path on proposal'; break; }
+            const invalid = validateTarget(d.kind, target, !!d.call);
+            if (invalid) {
+              vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: d.id, kind: d.kind, target, reason: invalid } });
+              vault.updateNote(note.path, (nn) => ({ data: nn.data, body: nn.body.trimEnd() + `\n\n---\n_Not applied: ${invalid}. Fix the target and set approved again, or set approved: false._\n` }), 'daemon');
+              continue; // leave unresolved
+            }
             let content = (d.call?.tool === 'vault.write' && typeof d.call.args.content === 'string') ? String(d.call.args.content) : fenced(note.body);
-            if (d.kind === 'brand_change' && target === 'Brand/name.md' && d.chosen && !content) {
-              const line = note.body.split('\n').find((l) => new RegExp(`^\\s*${d.chosen}\\.\\s`).test(l));
-              const name = line?.replace(/^\s*\d+\.\s*/, '').split(/\s+—\s+|\s+-\s+|:/)[0].trim() ?? 'Untitled Co';
-              const tagline = line?.split(/\s+—\s+|\s+-\s+/)[1]?.trim() ?? '';
-              content = stringifyNote({ name, tagline, url: '' }, `# ${name}\n\n${tagline}\n`);
+            if (d.kind === 'brand_change' && target === 'Brand/name.md' && !content) {
+              const options = note.body.split('\n').filter((l) => /^\s*\d+\.\s/.test(l));
+              const line = d.chosen ? options.find((l) => new RegExp(`^\\s*${d.chosen}\\.\\s`).test(l)) : undefined;
+              if (options.length && !line) {
+                vault.events.emit({ type: 'daemon.warning', payload: { proposal: d.id, reason: d.chosen ? `chosen: ${d.chosen} matches no option` : 'set chosen: <n> to pick an option' } });
+                vault.updateNote(note.path, (nn) => ({ data: nn.data, body: nn.body.trimEnd() + `\n\n---\n_Not applied: set \`chosen: 1..${options.length}\` and approve again._\n` }), 'daemon');
+                continue;
+              }
+              if (line) {
+                const clean = (x: string) => x.replace(/[*_`]/g, '').trim();
+                const name = clean(line.replace(/^\s*\d+\.\s*/, '').split(/\s+—\s+|\s+-\s+|:/)[0]);
+                const tagline = clean(line.split(/\s+—\s+|\s+-\s+/)[1] ?? '');
+                content = stringifyNote({ name, tagline, url: '' }, `# ${name}\n\n${tagline}\n`);
+              }
             }
             if (!content) { outcome = 'no "## Proposed content" block found'; break; }
+            if (d.kind === 'charter_change') {
+              const parsed = RoleFrontmatter.safeParse(parseNote(content).data);
+              if (!parsed.success) { vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: d.id, reason: 'charter frontmatter does not validate' } }); vault.updateNote(note.path, (nn) => ({ data: nn.data, body: nn.body.trimEnd() + '\n\n---\n_Not applied: charter frontmatter does not validate._\n' }), 'daemon'); continue; }
+            }
             vault.writeText(target, content, 'daemon', { job: d.job ?? null });
             outcome = `applied to ${target}`;
             if (target.startsWith('Brand/')) {
               const open = listJobs(vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'engineer.ship' && /reconcile site with brand/i.test(j.title));
               if (!open) createJob(vault, { type: 'engineer.ship', title: 'Reconcile site with brand', assigned: 'engineer', priority: 2, goal: `${target} changed (owner approved a proposal). Read Brand/ and update Site/ to match. Never revert owner edits under Site/.` }, 'daemon');
-            }
-            if (target.startsWith('Roles/')) {
-              const parsed = RoleFrontmatter.safeParse(parseNote(content).data);
-              if (!parsed.success) outcome += ' (warning: charter frontmatter does not validate)';
             }
             break;
           }
@@ -133,7 +172,7 @@ export function requeueUnblocked(vault: Vault): number {
   let n = 0;
   for (const j of listJobs(vault, { status: 'blocked' })) {
     const b = j.blocked_on;
-    if (!b) { updateJob(vault, j.id, { status: 'queued' }, 'daemon'); n++; continue; }
+    if (!b) { if (j.approval === 'pending') { updateJob(vault, j.id, { status: 'queued' }, 'daemon'); n++; } continue; } // no blocked_on = owner paused it
     if (b.kind === 'owner') continue; // finished as blocked; the owner requeues by setting status: queued
     let ready = false;
     if (b.kind === 'proposal') {
@@ -141,11 +180,13 @@ export function requeueUnblocked(vault: Vault): number {
       ready = !!p && p.data.approved !== null;
     } else if (b.kind === 'job') {
       const sub = readJob(vault, b.id);
-      ready = !!sub && ['done', 'failed', 'cancelled'].includes(sub.data.status);
+      ready = (!!sub && ['done', 'failed', 'cancelled'].includes(sub.data.status)) || Date.now() - Date.parse(b.since) > PLAN_WAIT_BUDGET_MS;
     } else if (b.kind === 'message') {
       ready = !!findAnswer(vault, j.assigned, b.id) || !!listInbox(vault).find((x) => x.data.id === b.id && x.data.answered);
     } else if (b.kind === 'quota') {
-      ready = Date.now() - Date.parse(b.since) > 10 * 60_000; // retry every 10 minutes
+      const retries = Number((b as { retries?: number }).retries ?? 0);
+      ready = Date.now() - Date.parse(b.since) > Math.min(10 * 2 ** retries, 240) * 60_000; // 10 → 20 → 40 … ≤ 240 min
+      if (ready) { updateJob(vault, j.id, { status: 'queued', blocked_on: { ...b, retries: retries + 1 } as typeof b }, 'daemon'); n++; continue; }
     }
     if (ready) { updateJob(vault, j.id, { status: 'queued' }, 'daemon', `- ${nowIso()}: unblocked (${b.kind} ${b.id})`); n++; }
   }

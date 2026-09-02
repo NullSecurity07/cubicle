@@ -77,6 +77,7 @@ export function openDb(file: string): Db {
   const db = new Database(file);
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
+  db.pragma('busy_timeout = 5000');
   db.exec(SCHEMA);
   const row = db.prepare('SELECT value FROM meta WHERE key = ?').get('schema_version') as { value: string } | undefined;
   if (row && Number(row.value) !== SCHEMA_VERSION) {

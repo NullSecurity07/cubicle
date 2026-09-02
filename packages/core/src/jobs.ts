@@ -44,6 +44,14 @@ export function createJob(vault: Vault, job: NewJob, by: string): string {
   return id;
 }
 
+const warned = new Map<string, string>();
+function warnOnce(vault: Vault, rel: string, issue: string): void {
+  const sha = vault.currentSha(rel) ?? '';
+  if (warned.get(rel) === sha) return;
+  warned.set(rel, sha);
+  vault.events.emit({ type: 'daemon.warning', payload: { path: rel, reason: 'malformed job frontmatter; skipped', issue } });
+}
+
 export function readJob(vault: Vault, id: string): { data: JobFrontmatter; body: string } | null {
   const note = vault.readNoteOrNull(jobPath(id));
   if (!note) return null;
@@ -59,7 +67,7 @@ export function listJobs(vault: Vault, filter: { status?: JobStatus | JobStatus[
     const note = vault.readNoteOrNull(rel);
     if (!note) continue;
     const parsed = JobFrontmatter.safeParse(note.data);
-    if (!parsed.success) continue;
+    if (!parsed.success) { warnOnce(vault, rel, parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')); continue; }
     const j = parsed.data;
     if (filter.status && !(Array.isArray(filter.status) ? filter.status : [filter.status]).includes(j.status)) continue;
     if (filter.assigned && j.assigned !== filter.assigned) continue;
