@@ -67,7 +67,15 @@ export class OfficeScene extends Phaser.Scene {
     const ctx = { speaker: talkingSprite ? { x: talkingSprite.container.x, y: talkingSprite.container.y, role: talking!.role } : null };
     for (const [role, view] of Object.entries(s.agents)) {
       let ag = this.agents.get(role);
-      if (!ag) { ag = new AgentSprite(this, this.world, view, (r) => this.hooks.onAgentClick(r)); this.agents.set(role, ag); this.minimap.ignore(ag.container); }
+      if (!ag) {
+        ag = new AgentSprite(this, this.world, view, (r) => this.hooks.onAgentClick(r));
+        this.agents.set(role, ag);
+        // The sprite (with its bubbles, labels and emotes) is main-camera only; the minimap shows its dot instead,
+        // sized in minimap pixels so it stays legible however large the map is.
+        this.minimap.ignore(ag.container);
+        this.cameras.main.ignore(ag.dot);
+        ag.dot.setScale(1 / this.minimap.zoom);
+      }
       if ((view.target === 'boardroom' || view.target === 'meetingroom') && !ag.seat) this.assignSeat(role, view.target);
       if (!view.target && ag.seat) ag.seat = null;
       ag.update(view, dt, this.hooks.clock(), ctx);

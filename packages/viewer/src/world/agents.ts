@@ -13,6 +13,8 @@ const RES = 3; // bubble text rasterised at 3× for crisp glyphs under zoom
 
 export interface SpriteContext { /** the sprite currently speaking in a meeting, for the others to glance at */ speaker: { x: number; y: number; role: string } | null }
 
+const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
+
 /**
  * One sprite per role; its pose and position follow the reducer state (never local persistence).
  * The sprite adds only what the state cannot know: blinks, idle gestures, the walking bob, a coffee stop after a
@@ -20,6 +22,8 @@ export interface SpriteContext { /** the sprite currently speaking in a meeting,
  */
 export class AgentSprite {
   readonly container: Phaser.GameObjects.Container;
+  /** Position marker the minimap renders instead of the sprite (the main camera ignores it). */
+  readonly dot: Phaser.GameObjects.Rectangle;
   private body: Phaser.GameObjects.Sprite;
   private face: Phaser.GameObjects.Image;
   private label: Phaser.GameObjects.Text;
@@ -64,9 +68,11 @@ export class AgentSprite {
     this.body.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.onClick(view.role));
     const ring = scene.add.circle(0, -2, 5, roleColor(view.role), 0.9).setStrokeStyle(1, 0x000000, 0.6);
     this.container.addAt(ring, 0);
+    this.dot = scene.add.rectangle(0, 0, DOT, DOT, roleColor(view.role), 1).setDepth(9);
     const home = this.homeTile();
     const p = toPx(view.state === 'entering' ? this.world.standTile('door') ?? home : home);
     this.container.setPosition(p.x, p.y + 6);
+    this.dot.setPosition(p.x, p.y + 6);
     if (view.state === 'entering') this.goTo('home');
   }
 
@@ -150,6 +156,7 @@ export class AgentSprite {
     if (emoteKind) { this.emote.setFrame(emoteKind).setVisible(true); this.emote.y = -SPRITE_H - 6 + emoteBob(nowMs); } else this.emote.setVisible(false);
     this.updateBubble(view.bubble, nowMs, emoteKind ? -SPRITE_H - EMOTE_H - 8 : -SPRITE_H - 6);
     this.container.setDepth(10 + this.container.y / 10000);
+    this.dot.setPosition(this.container.x, this.container.y).setVisible(this.container.visible && view.state !== 'offline');
     if (prev.state === 'leaving' && !view.active && this.gone) this.container.setVisible(false);
     if (view.state === 'offline') this.container.setAlpha(0.35); else this.container.setAlpha(1);
   }
@@ -202,5 +209,5 @@ export class AgentSprite {
 
   debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, tile: this.tile(), seat: this.seat }; }
 
-  destroy(): void { this.container.destroy(); }
+  destroy(): void { this.container.destroy(); this.dot.destroy(); }
 }
