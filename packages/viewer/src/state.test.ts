@@ -113,6 +113,7 @@ describe('critique 7-9 reducer fixes', () => {
     const d = applyEvent(s, ev('vault.wrote', 'ceo', { path: 'Decisions/d1.md', sha: 'x', by: 'ceo' }, null));
     expect(d.feed.at(-1)!.text).toContain('decision recorded');
     expect(applyEvent(s, ev('vault.wrote', 'cto', { path: 'Plans/plan.md', sha: 'x', by: 'cto' }, null)).staleSnapshot).toBe(true);
+    expect(applyEvent(s, ev('vault.wrote', 'daemon', { path: 'Plans/plan.md', sha: 'x', generated: true }, null)).staleSnapshot).toBeFalsy(); // generated files re-render themselves; no snapshot round trip
   });
 
   describe('expressions (moods, emotes, bubble kinds)', () => {

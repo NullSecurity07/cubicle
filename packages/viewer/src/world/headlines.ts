@@ -3,7 +3,7 @@
  * the HTML layer (ui/content.ts); these previews are deliberately terse so they always fit their box.
  */
 import type { State } from '../state.js';
-import { briefTitle, kindLabel } from '../ui/content.js';
+import { briefTitle, kindLabel, callsToday } from '../ui/content.js';
 
 export interface Headline { head: string; lines: string[]; badge?: string; /** what a screen too narrow for a sentence shows instead (a count, a word) */ short?: string }
 
@@ -47,7 +47,7 @@ const who = (s: State, role: string): string => s.agents[role]?.display ?? DISPL
 export function headlineFor(kind: string, s: State): Headline {
   switch (kind) {
     case 'whiteboard': { const p = planBits(s.plan); return p.objective || p.items.length ? { head: cut(p.objective || 'This cycle', 44), lines: p.items.slice(0, 3).map((i) => '• ' + cut(i, 40)) } : { head: 'No plan yet', lines: ['The CTO writes it on heartbeat #1'] }; }
-    case 'newsstand': { if (!s.latestRun) return { head: 'No brief yet', lines: ['Written after each heartbeat'] }; const b = briefBits(s.latestRun.body); const needs = b.needs.filter((n) => !/^none\b/i.test(n)); return { head: briefTitle(s.latestRun.path).replace('Brief · ', 'Brief '), lines: [...b.happened.slice(0, 2).map((h) => '• ' + cut(h, 40)), ...(needs.length ? ['Needs you: ' + cut(needs[0], 30)] : [])], badge: needs.length ? String(needs.length) : undefined }; }
+    case 'newsstand': { if (!s.latestRun) { const recent = s.feed.slice(-2).reverse(); return { head: 'No brief yet', lines: recent.length ? recent.map((f) => '• ' + cut(f.text, 40)) : ['Written after each heartbeat'] }; } const b = briefBits(s.latestRun.body); const needs = b.needs.filter((n) => !/^none\b/i.test(n)); return { head: briefTitle(s.latestRun.path).replace('Brief · ', 'Brief '), lines: [...b.happened.slice(0, 2).map((h) => '• ' + cut(h, 40)), ...(needs.length ? ['Needs you: ' + cut(needs[0], 30)] : [])], badge: needs.length ? String(needs.length) : undefined }; }
     case 'noticeboard': { const open = Object.values(s.jobs).filter((j) => ['queued', 'running', 'blocked', 'in_review'].includes(j.status)).sort((a, b) => a.priority - b.priority); return { head: open.length ? `${open.length} open` : 'Queue empty', short: String(open.length), lines: open.slice(0, 3).map((j) => `${j.status} · ${who(s, j.assigned)}: ${cut(j.title, 26)}`) }; }
     case 'postoffice': { const n = s.inbox.length || s.pendingProposals; return { head: n ? `${n} to approve` : 'Nothing to approve', short: String(n), lines: s.inbox.slice(0, 3).map((p) => `${kindLabel(p.kind)}: ${cut(p.title, 34)}`), badge: n ? String(n) : undefined }; }
     case 'terminal': { const last = s.terminal.slice(-3); return { head: last.length ? 'Shell' : 'Shell idle', lines: last.map((l) => cut(l, 44)) }; }
@@ -55,7 +55,7 @@ export function headlineFor(kind: string, s: State): Headline {
     case 'workshop': { const url = s.deploys.at(-1)?.url; return url ? { head: 'Deployed', lines: [cut(url.replace(/^https?:\/\//, ''), 40)] } : { head: 'Not deployed yet', lines: ['Preview of Site/dist'] }; }
     case 'cabin': { const last = s.chat.filter((c) => c.from === 'ceo').at(-1); return last ? { head: 'CEO', lines: [cut(last.text, 96)] } : { head: 'Talk to the CEO', lines: ['Click to start a company'] }; }
     case 'billboard': { const cur = Object.values(s.surfaces).filter((x) => x.streamKind === 'browser').sort((a, b) => Number(b.active) - Number(a.active))[0]; return { head: cur ? (cur.active ? 'Browser live' : 'Last screenshot') : 'No browser session', lines: cur ? [] : ['Growth and the Engineer browse here'], badge: cur?.active ? 'LIVE' : undefined }; }
-    case 'bank': { const rows = s.quota.filter((q) => q.limits.rpd > 0).slice(0, 7); return { head: rows.length ? 'Runway' : 'No limits set', lines: rows.map((q) => cut(q.model, 16)) }; }
+    case 'bank': { const rows = s.quota.filter((q) => q.limits.rpd > 0).slice(0, 7); const total = callsToday(s); return { head: rows.length ? `${total} calls today` : 'No limits set', short: String(total), lines: rows.map((q) => cut(q.model, 16)) }; }
   }
   return { head: kind, lines: [] };
 }

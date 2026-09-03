@@ -62,6 +62,15 @@ function byTeam(jobs: JobView[], s: State): string {
     .join('');
 }
 
+/** Total free-tier calls made today, across every provider and model the daemon reported. */
+export const callsToday = (s: State): number => s.quota.reduce((n, q) => n + (q.rpd_used || 0), 0);
+
+/** The decision feed: decisions, proposals, vetoes, guardrail hits, deploys and org changes, newest first. */
+export function feedHtml(s: State): string {
+  const items = s.feed.slice(-30).reverse();
+  return section('Decision feed', items.length ? rows(items.map((f) => row({ title: f.text, right: esc(fmtTime(f.ts)) }))) : empty('Nothing decided yet. Decisions, proposals and guardrail hits appear here.'), items.length || undefined);
+}
+
 /** Title of a Runs/ brief from its path (Runs/2026-09-03-1016.md → "Brief · 3 Sep 10:16"). */
 export function briefTitle(path: string): string {
   const m = path.match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})/);
@@ -73,8 +82,8 @@ export function viewFor(kind: string, s: State, ctx: Ctx): View {
   switch (kind) {
     case 'whiteboard': return { mode: 'doc', title: 'Plan', sub: 'Plans/plan.md', html: s.plan ? md(s.plan) : `<p class="muted">No plan yet. The CTO writes the first one during heartbeat #1.</p>`, copy: s.plan, link: obsidianUrl(ctx.vaultName, 'Plans/plan.md') };
     case 'newsstand': return s.latestRun
-      ? { mode: 'doc', title: briefTitle(s.latestRun.path), sub: s.latestRun.path, html: md(s.latestRun.body), copy: s.latestRun.body, link: obsidianUrl(ctx.vaultName, s.latestRun.path) }
-      : { mode: 'doc', title: 'Latest brief', html: `<p class="muted">No brief yet. One is written after every heartbeat.</p>` };
+      ? { mode: 'doc', title: briefTitle(s.latestRun.path), sub: s.latestRun.path, html: md(s.latestRun.body) + feedHtml(s), copy: s.latestRun.body, link: obsidianUrl(ctx.vaultName, s.latestRun.path) }
+      : { mode: 'doc', title: 'Latest brief', html: `<p class="muted">No brief yet. One is written after every heartbeat.</p>` + feedHtml(s) };
     case 'noticeboard': {
       const open = Object.values(s.jobs).filter((j) => ['queued', 'running', 'blocked', 'in_review'].includes(j.status)).sort((a, b) => a.priority - b.priority || byUpdated(a, b));
       return { mode: 'drawer', title: 'Queue', sub: `${open.length} open`, html: open.length ? byTeam(open, s) : empty('Nothing queued. The next heartbeat plans new work.') };
@@ -104,7 +113,7 @@ export function viewFor(kind: string, s: State, ctx: Ctx): View {
     }
     case 'bank': {
       const table = s.quota.length ? `<table class="data"><tr><th>Model</th><th>Today</th><th>Runway</th><th></th></tr>${s.quota.map((q) => { const pct = q.limits.rpd ? q.rpd_used / q.limits.rpd : 0; const cls = pct > 0.9 ? 'hot' : pct > 0.6 ? 'warn' : ''; return `<tr><td>${esc(q.model)}<br><small class="muted">${esc(q.provider)}</small></td><td>${q.rpd_used}${q.limits.rpd ? ` / ${q.limits.rpd}` : ''}</td><td><div class="meter ${cls}"><i style="width:${Math.round((1 - Math.min(1, pct)) * 100)}%"></i></div></td><td>${q.cooling_until ? chip('blocked', 'cooling') : chip('done', 'ok')}</td></tr>`; }).join('')}</table>` : empty('No providers reported yet.');
-      return { mode: 'drawer', title: 'Bank', sub: 'free-tier runway per model', html: table + `<p class="hintline">Free calls are the runway. Limits live in config/providers.yaml.</p>` };
+      return { mode: 'drawer', title: 'Bank', sub: 'free-tier runway per model', html: section(`${callsToday(s)} calls today`, table) + `<p class="hintline">Free calls are the runway. Limits live in config/providers.yaml.</p>` };
     }
     case 'terminal': return { mode: 'drawer', title: 'Terminal shed', sub: 'shell output', html: `<pre class="term">${esc(s.terminal.slice(-160).join('\n')) || 'No commands run yet.'}</pre>` };
     case 'billboard': {
