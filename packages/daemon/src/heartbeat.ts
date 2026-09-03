@@ -1,6 +1,7 @@
 import {
   type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
+  loadOrg, expandProcess, childrenOf, rollup, JobResult,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -23,10 +24,10 @@ export interface HeartbeatDeps {
   openMeeting?: (agenda: string) => Promise<string | null>;
 }
 
-export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { kind: 'job'; id: string } } | { status: 'cancelled' };
+export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { kind: 'job'; id: string } } | { status: 'cancelled' } | { status: 'requeued'; attempt: number };
 
-export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'plan', 'brief', 'commit'] as const;
-/** How long a heartbeat waits for cto.plan before writing the brief with "planning pending" (R33). */
+export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'company_plan', 'critic', 'team_plans', 'brief', 'commit'] as const;
+/** How long a heartbeat waits for company.plan/critic.premortem/team.plan before writing the brief with "planning pending" (R33). */
 export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
 
 /** Create the `ceo.heartbeat` job note (the heartbeat is a job so R9/R10/R12 apply). */
@@ -97,14 +98,19 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { planJob?: string; runPath?: string; heartbeatId: string; planPending?: boolean }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { companyPlanJob?: string; criticJob?: string; vetoes?: number; criticFindings?: string[]; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
   // The vault is the source of truth: recover what the cache may have lost.
-  if (!state.planJob) {
-    const fromNote = job.blocked_on?.kind === 'job' ? job.blocked_on.id : listJobs(vault).find((j) => j.parent === jobId && j.type === 'cto.plan')?.id;
-    if (fromNote) state = { ...state, planJob: fromNote };
+  if (job.blocked_on?.kind === 'job') {
+    const atStep = HEARTBEAT_STEPS[job.checkpoint_step];
+    if (atStep === 'company_plan' && !state.companyPlanJob) state = { ...state, companyPlanJob: job.blocked_on.id };
+    if (atStep === 'critic' && !state.criticJob) state = { ...state, criticJob: job.blocked_on.id };
+    if (atStep === 'team_plans' && !state.teamPlanJobs) {
+      const ids = listJobs(vault).filter((j) => j.parent === jobId && j.type === 'team.plan').map((j) => j.id);
+      if (ids.length) state = { ...state, teamPlanJobs: ids };
+    }
   }
   if (!state.runPath) {
     const fromLinks = job.links.find((l) => l.startsWith('[[Runs/'))?.replace(/^\[\[|\]\]$/g, '');
@@ -119,6 +125,42 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   const done = (stepIdx: number, note: string) => { updateJob(vault, jobId, { checkpoint_step: stepIdx + 1 }, 'ceo', `- step ${stepIdx + 1} ${HEARTBEAT_STEPS[stepIdx]}: ${note}`); job = read().data; };
   const cancelled = () => read().data.status === 'cancelled';
 
+  // The situation the CEO plans against: elapsed time, experiments to adopt, owner feedback, edits and finished jobs.
+  const situationSummary = (): string => {
+    const experiments = vault.list('Experiments', { ext: '.md' }).filter((r) => !r.endsWith('_template.md') && !r.startsWith('Experiments/posts/')).map((r) => ({ r, d: vault.readNoteOrNull(r)?.data as Record<string, unknown> | undefined })).filter((x) => x.d && ['won', 'lost', 'running'].includes(String(x.d.status)));
+    const feedback = collectOwnerFeedbackSafe(vault, state.since ?? undefined);
+    return [
+      `Elapsed since last heartbeat: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}.`,
+      experiments.length ? `Experiments: ${experiments.map((x) => `${String(x.d!.title ?? x.r)} — ${String(x.d!.status)}${x.d!.result ? ` (${String(x.d!.result).slice(0, 80)})` : ''}`).join('; ')}. Adopt winners into the plan; propose Brand/ changes if a winner implies one.` : '',
+      feedback.length ? `Owner feedback since last cycle: ${feedback.map((f) => `[${f.role}] ${f.text}`).join(' | ')}.` : '',
+      state.ownerEdits?.length ? `Owner edited: ${state.ownerEdits.join(', ')}.` : 'No owner edits.',
+      state.finished?.length ? `Jobs finished: ${state.finished.map((f) => `${f.id} (${f.type}, ${f.status}): ${f.summary.slice(0, 120)}`).join('; ')}.` : 'No jobs finished.',
+      state.mail?.length ? `Inbound mail: ${state.mail.length}.` : '',
+      state.analytics ? `Analytics: ${state.analytics}` : '',
+    ].filter(Boolean).join('\n');
+  };
+  // Archive the previous cycle's plan before the CEO overwrites it (R33: never lose a plan to a rewrite).
+  const archivePlan = (): void => {
+    const planCur = vault.readTextOrNull('Plans/plan.md') ?? '';
+    const prevArchive = vault.list('Plans/archive', { ext: '.md' }).sort().pop();
+    if (planCur.trim() && (!prevArchive || vault.readText(prevArchive) !== planCur)) vault.writeText(`Plans/archive/${stampForFilename(now())}-${hbId.slice(-4)}.md`, planCur, 'ceo', { job: jobId });
+  };
+  // Extract the last `## Result` JSON block a sub-job finished with (verdict/findings for gates and the Critic).
+  const parseResult = (body: string): JobResult | null => {
+    const raw = body.split('## Result')[1]?.match(/```json\n([\s\S]*?)\n```/)?.[1];
+    if (!raw) return null;
+    try { return JobResult.parse(JSON.parse(raw)); } catch { return null; }
+  };
+  // What the last brief told a team to do next, so this cycle's plan can build on it instead of starting cold.
+  const lastNextAction = (teamId: string): string => {
+    const last = vault.list('Runs', { ext: '.md' }).sort().at(-1);
+    if (!last) return 'none recorded';
+    const section = (vault.readTextOrNull(last) ?? '').split('## Next action per team')[1];
+    if (!section) return 'none recorded';
+    const line = section.split('\n').find((l) => l.trim().startsWith(`- ${teamId}:`));
+    return line ? line.trim().slice(`- ${teamId}:`.length).trim() : 'none recorded';
+  };
+
   if (job.checkpoint_step > 0 && !state.finished) {
     const m = readJob(vault, jobId)?.body.match(/## Plan\s*\n+```json\n([\s\S]*?)\n```/);
     if (m) { try { const f = JSON.parse(m[1]); state = { ...state, since: f.since, gathered_at: f.gathered_at, elapsedHours: f.elapsedHours ?? Infinity, ownerEdits: f.ownerEdits ?? [], finished: f.finished ?? [], mail: [], analytics: f.analytics ?? null, unansweredOwnerMessages: [] }; } catch { /* fall through with defaults */ } }
@@ -126,6 +168,28 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   for (let i = job.checkpoint_step; i < HEARTBEAT_STEPS.length; i++) {
     if (cancelled()) return { status: 'cancelled' };
     const step = HEARTBEAT_STEPS[i];
+    // Block the heartbeat on a single sub-job (company.plan, critic.premortem): resumes when it finishes (R33).
+    const block = (id: string, log: string): HeartbeatOutcome => {
+      updateJob(vault, jobId, { status: 'blocked', blocked_on: { kind: 'job', id, since: nowIso() } }, 'ceo', `- step ${i + 1} ${step}: ${log}`);
+      vault.events.emit({ type: 'job.blocked', agent: 'ceo', job: jobId, payload: { reason: 'job', id } });
+      return { status: 'blocked', on: { kind: 'job', id } };
+    };
+    // Block on the first of several sub-jobs (team.plan fan-out); the step re-checks the rest on each revisit.
+    const blockMany = (ids: string[], log: string): HeartbeatOutcome => block(ids[0], log);
+    // Still waiting → re-block (same start time). Budget exceeded → mark planPending, advance the step, and let
+    // the caller continue with a stale plan rather than block the company forever (returns null to continue).
+    const waitOrGiveUp = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => {
+      const since = job.blocked_on?.since;
+      const waitedMs = since ? now().getTime() - Date.parse(since) : 0;
+      if (waitedMs < PLAN_WAIT_BUDGET_MS) {
+        updateJob(vault, jobId, { status: 'blocked', blocked_on: { kind: 'job', id, since: since ?? nowIso() } }, 'ceo');
+        return { status: 'blocked', on: { kind: 'job', id } };
+      }
+      state = { ...state, planPending: true }; saveState(state);
+      updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
+      done(i, giveUpNote(Math.round(waitedMs / 60000)));
+      return null;
+    };
     switch (step) {
       case 'gather': {
         const mail = deps.pollInbox ? await deps.pollInbox().catch(() => []) : [];
@@ -189,46 +253,102 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         } else done(i, 'no meeting needed');
         break;
       }
-      case 'plan': {
-        // Await cto.plan as a sub-job. First visit: create it and block. Second visit: it finished.
-        if (!state.planJob) {
-          const planCur = vault.readTextOrNull('Plans/plan.md') ?? '';
-          const prevArchive = vault.list('Plans/archive', { ext: '.md' }).sort().pop();
-          if (planCur.trim() && (!prevArchive || vault.readText(prevArchive) !== planCur)) vault.writeText(`Plans/archive/${stampForFilename(now())}-${hbId.slice(-4)}.md`, planCur, 'ceo', { job: jobId });
-          const experiments = vault.list('Experiments', { ext: '.md' }).filter((r) => !r.endsWith('_template.md') && !r.startsWith('Experiments/posts/')).map((r) => ({ r, d: vault.readNoteOrNull(r)?.data as Record<string, unknown> | undefined })).filter((x) => x.d && ['won', 'lost', 'running'].includes(String(x.d.status)));
-          const feedback = collectOwnerFeedbackSafe(vault, state.since ?? undefined);
-          const summary = [
-            `Elapsed since last heartbeat: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}.`,
-            experiments.length ? `Experiments: ${experiments.map((x) => `${String(x.d!.title ?? x.r)} — ${String(x.d!.status)}${x.d!.result ? ` (${String(x.d!.result).slice(0, 80)})` : ''}`).join('; ')}. Adopt winners into the plan; propose Brand/ changes if a winner implies one.` : '',
-            feedback.length ? `Owner feedback since last cycle: ${feedback.map((f) => `[${f.role}] ${f.text}`).join(' | ')}.` : '',
-            state.ownerEdits?.length ? `Owner edited: ${state.ownerEdits.join(', ')}.` : 'No owner edits.',
-            state.finished?.length ? `Jobs finished: ${state.finished.map((f) => `${f.id} (${f.type}, ${f.status}): ${f.summary.slice(0, 120)}`).join('; ')}.` : 'No jobs finished.',
-            state.mail?.length ? `Inbound mail: ${state.mail.length}.` : '',
-            state.analytics ? `Analytics: ${state.analytics}` : '',
-          ].filter(Boolean).join('\n');
-          const planJob = createJob(vault, {
-            type: 'cto.plan', title: 'Plan this cycle', assigned: 'cto', priority: 1, parent: jobId,
-            goal: `Plan the next cycle.\n\nSituation:\n${summary}\n\nDo, in order: (1) vault.read Plans/plan.md, Brand/name.md, Memory/lessons.md and the latest Runs/ note if any; (2) vault.list Jobs to see open work; (3) rewrite Plans/plan.md via vault.write with Objective / This cycle / Next / Risks — concrete, checklist style, under 60 lines; (4) enqueue at most 4 jobs with scheduler.request for engineer/head_of_growth/coo that are each finishable in one sitting (first cycle: an engineer.ship job to scaffold Site/ from Brand/, a research job for head_of_growth to find the first organic channel, nothing outbound); (5) finish with a one-paragraph summary.`,
+      case 'company_plan': {
+        // Await company.plan as a sub-job. First visit: create it and block. Second visit: it finished.
+        if (!state.companyPlanJob) {
+          archivePlan();
+          const org = loadOrg(vault);
+          const teams = Object.values(org.teams).filter((t) => t.lead !== 'ceo' || t.members.length).map((t) => `${t.id} (lead ${t.lead}: ${t.mission})`).join('; ');
+          const findings = state.criticFindings?.length ? `\n\nThe Critic returned the previous draft with these findings; address each one:\n${state.criticFindings.map((f) => `- ${f}`).join('\n')}` : '';
+          const id = createJob(vault, {
+            type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the Critic' : 'Write the company plan', assigned: 'ceo', priority: 1, parent: jobId, team: 'strategy', owner_role: 'ceo',
+            goal: `Write this cycle's objectives per team, not jobs.\n\nSituation:\n${situationSummary()}\n\nTeams: ${teams}.\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <team id>" subsection per team that has work this cycle (a bullet per objective; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); teams with nothing to do get no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
           }, 'ceo');
-          state = { ...state, planJob }; saveState(state);
-          updateJob(vault, jobId, { status: 'blocked', blocked_on: { kind: 'job', id: planJob, since: nowIso() } }, 'ceo', `- step ${i + 1} plan: waiting for ${planJob}`);
-          vault.events.emit({ type: 'job.blocked', agent: 'ceo', job: jobId, payload: { reason: 'job', id: planJob } });
-          return { status: 'blocked', on: { kind: 'job', id: planJob } };
+          state = { ...state, companyPlanJob: id }; saveState(state);
+          return block(id, `waiting for company.plan ${id}`);
         }
-        const sub = readJob(vault, state.planJob);
-        const waitedMs = job.blocked_on?.since ? now().getTime() - Date.parse(job.blocked_on.since) : 0;
+        const sub = readJob(vault, state.companyPlanJob);
         if (!sub || !['done', 'failed', 'cancelled'].includes(sub.data.status)) {
-          if (waitedMs < PLAN_WAIT_BUDGET_MS) {
-            updateJob(vault, jobId, { status: 'blocked', blocked_on: { kind: 'job', id: state.planJob, since: job.blocked_on?.since ?? nowIso() } }, 'ceo');
-            return { status: 'blocked', on: { kind: 'job', id: state.planJob } };
-          }
-          state = { ...state, planPending: true }; saveState(state);
-          updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
-          done(i, `cto.plan ${state.planJob} still ${sub?.data.status ?? 'missing'} after ${Math.round(waitedMs / 60000)} min — planning pending`);
+          const w = waitOrGiveUp(state.companyPlanJob, (min) => `company.plan ${state.companyPlanJob} still ${sub?.data.status ?? 'missing'} after ${min} min — planning pending`);
+          if (w) return w;
           break;
         }
         if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
-        done(i, `cto.plan ${state.planJob} ${sub.data.status}`);
+        done(i, `company.plan ${sub.data.status}`);
+        break;
+      }
+      case 'critic': {
+        const org = loadOrg(vault);
+        const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
+        const substantive = /^### /m.test(plan) && !/^### \w+\n(?:- (?:Verify|Reconcile)[^\n]*\n)+$/m.test(plan.split('## Objectives')[1] ?? '');
+        if (!org.roles.critic || !substantive) { done(i, 'critic skipped'); break; }
+        if (!state.criticJob) {
+          const id = createJob(vault, {
+            type: 'critic.premortem', title: `Pre-mortem for ${hbId}`, assigned: 'critic', priority: 1, parent: jobId, team: 'strategy', owner_role: 'ceo',
+            goal: `Read Plans/plan.md. Write Decisions/premortem-${hbId.slice(-6)}.md: imagine the cycle failed; list the three most likely reasons and a fix each. Then finish with verdict pass if the plan survives, or verdict return with findings (one line each, concrete). You may return at most once; you cannot delay.`,
+          }, 'ceo');
+          state = { ...state, criticJob: id }; saveState(state);
+          return block(id, `waiting for critic ${id}`);
+        }
+        const sub = readJob(vault, state.criticJob);
+        if (!sub || !['done', 'failed', 'cancelled'].includes(sub.data.status)) {
+          const w = waitOrGiveUp(state.criticJob, (min) => `critic ${state.criticJob} still ${sub?.data.status ?? 'missing'} after ${min} min — planning pending`);
+          if (w) return w;
+          break;
+        }
+        if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
+        const result = parseResult(sub.body);
+        if (result?.verdict === 'return') {
+          const vetoes = (state.vetoes ?? 0) + 1;
+          vault.events.emit({ type: 'plan.vetoed', agent: 'critic', job: jobId, payload: { findings: result.findings, vetoes } });
+          if (vetoes === 1) {
+            state = { ...state, vetoes, criticFindings: result.findings, companyPlanJob: undefined, criticJob: undefined }; saveState(state);
+            updateJob(vault, jobId, { status: 'queued', checkpoint_step: i - 1, blocked_on: undefined }, 'ceo', `- step ${i + 1} critic: returned; rewriting the plan`);
+            return { status: 'requeued', attempt: job.attempt };
+          }
+          state = { ...state, vetoes }; saveState(state);
+          createProposal(vault, { kind: 'message', from: 'ceo', to: 'owner', title: `The Critic vetoed the plan twice`, body: `Findings:\n${result.findings.map((f) => `- ${f}`).join('\n')}\n\nThe cycle continues with the current plan; reply if you want it changed.`, job: jobId }, 'ceo');
+        }
+        done(i, `critic ${result?.verdict ?? 'pass'}`);
+        break;
+      }
+      case 'team_plans': {
+        const org = loadOrg(vault);
+        if (!state.teamPlanJobs) {
+          const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
+          const sections = [...plan.matchAll(/^### (\w+)\n([\s\S]*?)(?=^### |\s*$)/gm)].map((m) => ({ team: m[1], text: m[2].trim() })).filter((s) => s.text);
+          const ids: string[] = [];
+          for (const s of sections) {
+            const t = org.teams[s.team]; if (!t) continue;
+            for (const m of s.text.matchAll(/^process:\s*(\w+)/gm)) {
+              try { ids.push(...expandProcess(vault, m[1], s.text.split('\n')[0].replace(/^- /, ''), { parent: jobId, by: 'ceo', team: s.team, owner_role: t.lead })); }
+              catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'team_plans', message: String((err as Error).message) } }); }
+            }
+            if (t.lead === 'ceo') continue;
+            ids.push(createJob(vault, {
+              type: 'team.plan', title: `Plan ${t.name}`, assigned: t.lead, priority: 1, parent: jobId, team: t.id, owner_role: t.lead,
+              goal: `Your team's objectives this cycle:\n${s.text}\n\nNext action from the last brief: ${lastNextAction(t.id)}\n\nDo: (1) vault.read Plans/plan.md and vault.list Jobs to see open work; (2) enqueue at most 4 jobs with scheduler.request for your members (${t.members.join(', ') || 'none — do the work yourself as a custom job assigned to you'}), each finishable in one sitting, each with done_when; research needs go to research_analyst with for: ${t.lead}; (3) vault.append the job ids under your "### ${t.id}" section in Plans/plan.md; (4) finish with a one-paragraph summary.`,
+            }, 'ceo'));
+          }
+          state = { ...state, teamPlanJobs: ids }; saveState(state);
+          if (!ids.length) { done(i, 'no team plans needed'); break; }
+          return blockMany(ids, `waiting for ${ids.length} team plan(s)`);
+        }
+        const emitTeamPlanned = () => {
+          for (const id of state.teamPlanJobs!) {
+            const j = readJob(vault, id);
+            if (j?.data.type === 'team.plan' && j.data.status === 'done') vault.events.emit({ type: 'team.planned', agent: j.data.assigned, job: id, payload: { team: j.data.team, jobs: childrenOf(vault, id).map((c) => c.id) } });
+          }
+        };
+        if (rollup(vault, jobId) === 'open') {
+          const w = waitOrGiveUp(state.teamPlanJobs[0], (min) => `${state.teamPlanJobs!.length} team plan(s) still open after ${min} min — planning pending`);
+          if (w) return w;
+          emitTeamPlanned(); // waitOrGiveUp already advanced the checkpoint on give-up
+          break;
+        }
+        if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
+        emitTeamPlanned();
+        done(i, `${state.teamPlanJobs.length} team plan(s) finished`);
         break;
       }
       case 'brief': {
@@ -254,7 +374,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         let drafted = await ask(deps, ceoSystem(vault), `Write the owner's "since you were away" brief from these facts, under 200 words, three sections: ## What happened, ## What's next, ## What needs you. Bullet points only. Do not invent anything not in the facts.\n\n${facts}`, 1200);
         if (drafted && !(/## What happened/.test(drafted) && /## What'?s next/.test(drafted) && /## What needs you/.test(drafted) && drafted.trim().length > 80)) drafted = null; // truncated or malformed → template
         const fallback = `## What happened\n- ${state.finished?.length ? state.finished.map((f) => `${f.title}: ${f.status}`).join('\n- ') : 'Nothing finished since the last heartbeat.'}\n\n## What's next\n- ${queued.length ? queued.map((j) => `${j.assigned}: ${j.title}`).join('\n- ') : 'Waiting on the plan.'}\n\n## What needs you\n${needsYou.length ? needsYou.join('\n') : '- Nothing right now.'}`;
-        const content = stringifyNote({ heartbeat: hbId, at: nowIso(), elapsed_hours: Number.isFinite(state.elapsedHours) ? Number(state.elapsedHours!.toFixed(1)) : null, trigger: job.title }, `# Since you were away\n\n${drafted ?? fallback}\n\n---\n_Facts used:_\n\n\`\`\`\n${facts}\n\`\`\`\n`);
+        const org = loadOrg(vault);
+        const nextActionPerTeam = Object.values(org.teams).map((t) => `- ${t.id}: ${queued.find((j) => j.team === t.id)?.title ?? 'nothing queued'}`).join('\n');
+        const content = stringifyNote({ heartbeat: hbId, at: nowIso(), elapsed_hours: Number.isFinite(state.elapsedHours) ? Number(state.elapsedHours!.toFixed(1)) : null, trigger: job.title }, `# Since you were away\n\n${drafted ?? fallback}\n\n## Next action per team\n\n${nextActionPerTeam}\n\n---\n_Facts used:_\n\n\`\`\`\n${facts}\n\`\`\`\n`);
         vault.writeText(runRel, content, 'ceo', { job: jobId });
         state = { ...state, runPath: runRel }; saveState(state);
         writeQueueMd(vault);

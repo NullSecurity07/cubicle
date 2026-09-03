@@ -15,9 +15,20 @@ let dir: string;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-daemon-')); const { vault } = await scaffoldVault(dir); vault.close(); });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-/** Role-aware scripted LLM: CTO writes the plan and enqueues jobs, everyone else finishes immediately; CEO prose calls get canned text. */
+/** The CEO's objectives for the cycle: only the engineering team has work, so only the CTO gets a team.plan. */
+const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Scaffold the site from Brand/\n';
+
+/**
+ * Role-aware scripted LLM for the two-level planning cycle: the CEO writes the company plan, the Critic always
+ * passes, the CTO's team.plan enqueues the scaffold job, everyone else finishes immediately; CEO prose calls get
+ * canned text.
+ */
 function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: string; tools: boolean }[] } {
   const perJob = new Map<string, number>();
+  // The scaffold objective is only real work once; a second cycle (e.g. auto-triggered by jobsCompletedN once the
+  // planning jobs push the count over the threshold) sees nothing left to do and writes an empty plan, so the
+  // company.plan → critic → team_plans → engineer.ship → qa.review → coo.verify chain does not run forever.
+  let companyPlanCycles = 0;
   const llm = {
     calls: [] as { role?: string; tools: boolean }[],
     async chat(req: RouteRequest, chat: { messages: ChatMessage[]; tools?: ToolSchema[] }): Promise<RoutedChatResult> {
@@ -33,16 +44,19 @@ function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: stri
       const jobMsg = String(chat.messages[1]?.content ?? '');
       const jobId = jobMsg.match(/Jobs\/(job_\w+)\.md/)?.[1] ?? 'x';
       const n = perJob.get(jobId) ?? 0; perJob.set(jobId, n + 1);
-      if (req.roleId === 'cto') {
-        const steps = [
-          { name: 'vault.write', args: { path: 'Plans/plan.md', content: '---\ncycle: 1\n---\n# Plan\n\n## Objective\nShip a landing page.\n\n## This cycle\n- [ ] scaffold Site/\n' } },
-          { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.' } },
-          { name: 'finish', args: { status: 'done', summary: 'Planned one job.' } },
-        ];
-        return { ...base, parsedToolCalls: [steps[Math.min(n, steps.length - 1)]] };
+      const jobType = jobMsg.match(/type: (\S+)/)?.[1] ?? '';
+      if (jobType === 'company.plan') {
+        if (n === 0) companyPlanCycles++;
+        const content = companyPlanCycles <= 1 ? PLAN : `---\ncycle: ${companyPlanCycles}\n---\n# Plan\n\n## Objectives\n`;
+        return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
+      }
+      if (jobType === 'critic.premortem') {
+        return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'fine', verdict: 'pass', findings: [] } }] };
+      }
+      if (jobType === 'team.plan' && req.roleId === 'cto') {
+        return { ...base, parsedToolCalls: [n === 0 ? { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.' } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
       }
       // Gate jobs (qa.review, coo.verify, requester.review) need an explicit verdict to advance the parent's gate chain.
-      const jobType = jobMsg.match(/type: (\S+)/)?.[1] ?? '';
       const isGate = /\.(review|verify)$/.test(jobType);
       return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: `${req.roleId} done`, ...(isGate ? { verdict: 'pass' } : {}) } }] };
     },
@@ -61,7 +75,7 @@ async function waitFor(pred: () => boolean, ms = 15000): Promise<void> {
 }
 
 describe('heartbeat as a resumable job', () => {
-  it('runs all steps, awaits cto.plan, writes Runs/, queue.md, commits, answers the owner, proposes a name', async () => {
+  it('runs all steps, awaits company.plan/critic/team.plan, writes Runs/, queue.md, commits, answers the owner, proposes a name', async () => {
     const vault = Vault.open(dir);
     const llm = fakeLlm();
     createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
@@ -69,22 +83,36 @@ describe('heartbeat as a resumable job', () => {
     const deps = { vault, llm };
     const first = await runHeartbeat(deps, hb);
     expect(first.status).toBe('blocked');
-    expect(readJob(vault, hb)!.data.checkpoint_step).toBe(4);
-    const plan = listJobs(vault).find((j) => j.type === 'cto.plan')!;
+    expect(readJob(vault, hb)!.data.checkpoint_step).toBe(4); // company_plan
+    const plan = listJobs(vault).find((j) => j.type === 'company.plan')!;
     expect(plan).toBeTruthy();
     // owner message answered + name proposed during step 3
     const msgs = listInbox(vault).filter((n) => n.data.kind === 'message');
     expect(msgs[0].data.answered).toBe(true);
     expect(msgs[0].body).toContain('## CEO');
     expect(listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md' && n.body.includes('Bright Ledger'))).toBe(true);
-    // second visit while plan still running → still blocked
+    // second visit while company.plan still running → still blocked
     expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
-    // finish the plan job via the harness
+    // finish company.plan via the harness → heartbeat resumes into critic and blocks on the pre-mortem
     const { runJob } = await import('@cubicle/harness');
     const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
-    const out = await runJob({ vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} }, plan.id);
-    expect(out.status).toBe('done');
-    expect(vault.readText('Plans/plan.md')).toContain('Ship a landing page');
+    const harnessDeps = { vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} };
+    const planOut = await runJob(harnessDeps, plan.id);
+    expect(planOut.status).toBe('done');
+    expect(vault.readText('Plans/plan.md')).toContain('Scaffold the site from Brand/');
+    expect(requeueUnblocked(vault)).toBe(1);
+    expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
+    // finish critic.premortem → heartbeat resumes into team_plans and blocks on the CTO's team.plan
+    const critic = listJobs(vault).find((j) => j.type === 'critic.premortem')!;
+    expect(critic).toBeTruthy();
+    expect((await runJob(harnessDeps, critic.id)).status).toBe('done');
+    expect(existsSync(path.join(dir, 'Decisions'))).toBe(true);
+    expect(requeueUnblocked(vault)).toBe(1);
+    expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
+    // finish the CTO's team.plan → it enqueues the scaffold job
+    const teamPlan = listJobs(vault).find((j) => j.type === 'team.plan')!;
+    expect(teamPlan.assigned).toBe('cto');
+    expect((await runJob(harnessDeps, teamPlan.id)).status).toBe('done');
     expect(listJobs(vault).some((j) => j.type === 'engineer.ship')).toBe(true);
     expect(requeueUnblocked(vault)).toBe(1);
     const done = await runHeartbeat(deps, hb);
@@ -92,9 +120,11 @@ describe('heartbeat as a resumable job', () => {
     const runs = vault.list('Runs', { ext: '.md' });
     expect(runs.length).toBe(1);
     expect(vault.readText(runs[0])).toContain('## What needs you');
+    expect(vault.readText(runs[0])).toContain('## Next action per team');
     expect(vault.readText('Jobs/queue.md')).toContain(hb);
     expect(vault.events.count('heartbeat.completed')).toBe(1);
     expect(vault.events.count('job.done')).toBeGreaterThanOrEqual(2);
+    expect(vault.events.count('team.planned')).toBe(1);
     const { lastCommitHash } = await import('@cubicle/core');
     const log = (await import('node:child_process')).execSync('git log --oneline', { cwd: dir }).toString();
     expect(log).toContain('cubicle: heartbeat');
@@ -106,20 +136,20 @@ describe('heartbeat as a resumable job', () => {
     const vault = Vault.open(dir);
     const llm = fakeLlm();
     const hb = createHeartbeatJob(vault, 'test');
-    await runHeartbeat({ vault, llm }, hb); // blocked on cto.plan
+    await runHeartbeat({ vault, llm }, hb); // blocked on company.plan
     rmSync(path.join(dir, '.cubicle/jobs'), { recursive: true, force: true }); // cache wiped: state must come from the vault
     vault.close();
     // "restart": a daemon comes up, marks nothing (heartbeat is blocked, not running), runs the plan job and resumes
     const d = daemonFor(llm);
     await d.start();
-    await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
+    await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 30000);
     await d.stop();
     const v2 = Vault.open(dir);
     expect(v2.list('Runs', { ext: '.md' }).length).toBe(1);
     const log = (await import('node:child_process')).execSync('git log --oneline', { cwd: dir }).toString();
     expect(log.split('\n').filter((l) => l.includes('cubicle: heartbeat')).length).toBe(1);
     expect(listJobs(v2).filter((j) => j.type === 'ceo.heartbeat').length).toBe(1);
-    expect(listJobs(v2).filter((j) => j.type === 'cto.plan').length).toBe(1);
+    expect(listJobs(v2).filter((j) => j.type === 'company.plan').length).toBe(1);
     expect(v2.list('Plans/archive', { ext: '.md' }).length).toBeLessThanOrEqual(1);
     v2.close();
   });
