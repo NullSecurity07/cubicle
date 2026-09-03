@@ -53,7 +53,8 @@ export function headlineFor(kind: string, s: State): Headline {
     case 'terminal': { const last = s.terminal.slice(-3); return { head: last.length ? 'Shell' : 'Shell idle', lines: last.map((l) => cut(l, 44)) }; }
     case 'vault': { const all = Object.values(s.jobs); const c = (st: string) => all.filter((j) => j.status === st).length; return { head: `${all.length} jobs`, short: String(all.length), lines: [`${c('done')} done · ${c('running')} running · ${c('blocked')} blocked`, 'Open in Obsidian'] }; }
     case 'workshop': { const url = s.deploys.at(-1)?.url; return url ? { head: 'Deployed', lines: [cut(url.replace(/^https?:\/\//, ''), 40)] } : { head: 'Not deployed yet', lines: ['Preview of Site/dist'] }; }
-    case 'cabin': { const last = s.chat.filter((c) => c.from === 'ceo').at(-1); return last ? { head: 'CEO', lines: [cut(last.text, 96)] } : { head: 'Talk to the CEO', lines: ['Click to start a company'] }; }
+    // The brief is pinned on the cabin wall (spec §10); before there is one, the wall asks the first-run question (§12 e).
+    case 'cabin': return s.latestRun ? headlineFor('newsstand', s) : { head: 'What company will you start today?', lines: ['Click to tell the CEO, or say “surprise me”'] };
     case 'billboard': { const cur = Object.values(s.surfaces).filter((x) => x.streamKind === 'browser').sort((a, b) => Number(b.active) - Number(a.active))[0]; return { head: cur ? (cur.active ? 'Browser live' : 'Last screenshot') : 'No browser session', lines: cur ? [] : ['Growth and the Engineer browse here'], badge: cur?.active ? 'LIVE' : undefined }; }
     case 'bank': { const rows = s.quota.filter((q) => q.limits.rpd > 0).slice(0, 7); const total = callsToday(s); return { head: rows.length ? `${total} calls today` : 'No limits set', short: String(total), lines: rows.map((q) => cut(q.model, 16)) }; }
   }

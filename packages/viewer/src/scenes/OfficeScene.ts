@@ -20,6 +20,7 @@ export class OfficeScene extends Phaser.Scene {
   private dragging = false;
   private lastRender = 0;
   private seatIndex: Record<string, number> = {};
+  private pendingFocus: string | null = null;
   hooks!: SceneHooks;
 
   constructor() { super('office'); }
@@ -48,6 +49,7 @@ export class OfficeScene extends Phaser.Scene {
     this.minimap = this.cameras.add(this.scale.width - 190, this.scale.height - 130, 180, 120).setZoom(180 / w).setBounds(0, 0, w, h).setBackgroundColor(0x000000).setName('minimap');
     this.minimap.ignore(this.night);
     this.scale.on('resize', (g: Phaser.Structs.Size) => this.minimap.setPosition(g.width - 190, g.height - 130));
+    if (this.pendingFocus) { const f = this.pendingFocus; this.pendingFocus = null; this.focusOn(f); }
   }
 
   private assignSeat(role: string, room: 'boardroom' | 'meetingroom'): void {
@@ -99,6 +101,7 @@ export class OfficeScene extends Phaser.Scene {
   debugAnchors(): Record<string, unknown> { return Object.fromEntries(Object.entries(this.world.anchors).map(([k, a]) => [k, { tx: a.tx, ty: a.ty, props: a.props }])); }
 
   focusOn(name: string): void {
+    if (!this.world) { this.pendingFocus = name; return; }   // the snapshot can arrive before the map has loaded
     const a = this.world.anchors[name] ?? null;
     const d = this.world.desks[name];
     const t = a ? { x: (a.tx + a.tw / 2) * TILE, y: (a.ty + a.th / 2) * TILE } : d ? { x: d.tx * TILE, y: d.ty * TILE } : null;

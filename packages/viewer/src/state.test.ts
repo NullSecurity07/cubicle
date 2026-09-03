@@ -85,6 +85,14 @@ describe('viewer state machine (spec §10)', () => {
     s = applyEvent(s, ev('deploy.done', 'engineer', { url: 'https://x.pages.dev' }));
     expect(s.deploys.at(-1)!.url).toBe('https://x.pages.dev');
   });
+  it('first snapshot of an empty company makes the CEO enter and walk to the cabin', () => {
+    const s = applySnapshot(emptyState(), { ...snap, brand: { name: '', tagline: '', url: '' }, jobs: [], chat: [] });
+    expect(s.firstRun).toBe(true);
+    expect(s.agents.ceo.state).toBe('entering');
+    const named = applySnapshot(emptyState(), { ...snap, brand: { name: 'PlateReady', tagline: '', url: '' }, jobs: [], chat: [] });
+    expect(named.firstRun).toBe(false);
+    expect(named.agents.ceo.state).toBe('idle_at_desk');
+  });
   it('icons and targets', () => {
     expect(toolIcon('email.send')).toBe('envelope');
     expect(targetFor('shell.run')).toBe('terminal');

@@ -139,7 +139,7 @@ function jobView(id: string, s: State, ctx: Ctx): View {
 
 export function chatHtml(s: State): string {
   const pinned = s.latestRun ? `<details class="pinned"><summary>${esc(briefTitle(s.latestRun.path))}</summary><div class="prose">${md(s.latestRun.body)}</div></details>` : '';
-  if (!s.chat.length) return pinned + `<div class="empty">Nothing said yet. Describe the company you want, or type “surprise me” for three ideas.</div>`;
+  if (!s.chat.length) return pinned + `<div class="empty first-run"><b>What company will you start today?</b><span>Describe the company you want, or type “surprise me” for three ideas.</span><button data-action="surprise-me">Surprise me</button></div>`;
   let lastDay = '';
   const out: string[] = [pinned];
   for (const m of s.chat.slice(-60)) {

@@ -91,6 +91,15 @@ describe('drawer and document views', () => {
     expect(viewFor('cabin', s, ctx).sub).toContain('PlateReady');
     expect(chatHtml(s)).toContain('surprise me');
   });
+  it('cabin asks the first-run question when the company has no name and no chat', () => {
+    const v = viewFor('cabin', emptyState(), ctx);
+    expect(v.html).toContain('What company will you start today?');
+    expect(v.html).toContain('data-action="surprise-me"');
+  });
+  it('the cabin wall shows the latest brief when there is one, else the first-run question', () => {
+    expect(headlineFor('cabin', s).head).toBe(headlineFor('newsstand', s).head);
+    expect(headlineFor('cabin', emptyState()).head).toBe('What company will you start today?');
+  });
 });
 
 describe('org view (spec §6)', () => {
