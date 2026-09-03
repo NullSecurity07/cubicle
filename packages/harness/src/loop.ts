@@ -256,7 +256,10 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       return;
     }
     vault.updateNote(`Jobs/${parentId}.md`, (n) => ({
-      data: { ...n.data, status: 'queued', attempt: Number(n.data.attempt ?? 1) + 1, returns, gate_index: idx, updated: nowIso() },
+      // A returned job resumes from its checkpoint (the observations are kept) but must get a fresh step budget,
+      // not the remainder of the attempt that already reached the gate (F3): budget_from anchors maxSteps to the
+      // step the job was at when it was returned, instead of the loop comparing step against a bare maxSteps.
+      data: { ...n.data, status: 'queued', attempt: Number(n.data.attempt ?? 1) + 1, returns, gate_index: idx, budget_from: n.data.checkpoint_step, updated: nowIso() },
       body: appendToSection(n.body, '## Review findings', `- ${nowIso().slice(0, 16)} ${gate}: ${result.findings.join('; ') || result.summary}`),
     }), 'daemon', { job: parentId });
     events.emit({ type: 'review.returned', agent: roleId, job: parentId, payload: { gate, findings: result.findings } });
@@ -266,7 +269,9 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   const failOrRequeue = async (step: number, reason: string, summary: string): Promise<JobOutcome> => {
     if (job.attempt < job.max_attempts) {
       archiveObservations(vault, jobId, job.attempt);
-      updateJob(vault, jobId, { status: 'queued', attempt: job.attempt + 1, checkpoint_step: 0 }, roleId, `- ${nowIso()}: ${reason} at step ${step}; requeued as attempt ${job.attempt + 1}`);
+      // A fresh attempt starts its transcript over at step 0, so any budget_from anchored to a stale checkpoint
+      // (e.g. a prior gate return) must be cleared, or this attempt would get more than its own maxSteps.
+      updateJob(vault, jobId, { status: 'queued', attempt: job.attempt + 1, checkpoint_step: 0, budget_from: 0 }, roleId, `- ${nowIso()}: ${reason} at step ${step}; requeued as attempt ${job.attempt + 1}`);
       events.emit({ type: 'job.failed', agent: roleId, job: jobId, payload: { reason, requeued: true, attempt: job.attempt + 1 } });
       await client.close();
       return { status: 'requeued', attempt: job.attempt + 1 };
@@ -338,11 +343,14 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   const toolSchemas = await client.listTools();
   const ownerEditsSince = events.last('heartbeat.completed')?.ts;
   let step = job.checkpoint_step;
+  // A job resumed after a gate return gets a fresh budget of maxSteps from the checkpoint it was returned at
+  // (F3), not the bare maxSteps its remaining attempt would otherwise be squeezed into.
+  const stepLimit = (job.budget_from ?? 0) + maxSteps;
   let noToolStreak = 0;
   let jsonRetries = 0;
 
   let ownerEditCache: { at: number; list: ReturnType<typeof events.query> } | null = null;
-  while (step < maxSteps) {
+  while (step < stepLimit) {
     if (cancelled()) { events.emit({ type: 'job.cancelled', agent: roleId, job: jobId, payload: { at_step: step } }); await client.close(); return { status: 'cancelled' }; }
     // Colleague messages are persisted into the transcript first, then marked read (survive kills and turns).
     const unread = unreadMessages(vault, roleId, false);

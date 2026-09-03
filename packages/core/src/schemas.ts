@@ -43,6 +43,7 @@ export const JobFrontmatter = z.looseObject({
   done_when: z.string().optional(),
   returns: z.record(z.string(), z.number().int()).default({}),
   gate_index: z.number().int().optional(),
+  budget_from: z.number().int().optional(),
 });
 export type JobFrontmatter = z.infer<typeof JobFrontmatter>;
 

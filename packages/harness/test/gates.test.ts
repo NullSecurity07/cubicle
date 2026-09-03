@@ -12,7 +12,20 @@ let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-gates-')); vault = (await scaffoldVault(dir)).vault; });
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 const finishing = (args: Record<string, unknown>): Llm => ({ async chat(_r: RouteRequest, _c: { messages: ChatMessage[]; tools?: ToolSchema[] }): Promise<RoutedChatResult> { return { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium', downgraded: false, parsedToolCalls: [{ name: 'finish', args }] }; }, promptBudget: () => 6000 });
-const deps = (llm: Llm) => ({ vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), scheduler: vaultScheduler(vault), env: {} });
+const deps = (llm: Llm, extra: { maxSteps?: number } = {}) => ({ vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), scheduler: vaultScheduler(vault), env: {}, ...extra });
+/** Calls a harmless tool `n` times, then finishes. */
+const stepsThenFinish = (n: number, args: Record<string, unknown>): Llm => {
+  let i = 0;
+  return {
+    async chat(_r: RouteRequest, _c: { messages: ChatMessage[]; tools?: ToolSchema[] }): Promise<RoutedChatResult> {
+      const base = { content: '', toolCalls: [], finishReason: 'stop' as const, usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false };
+      const call = i < n ? { name: 'vault.read', args: { path: 'Plans/plan.md' } } : { name: 'finish', args };
+      i++;
+      return { ...base, parsedToolCalls: [call] };
+    },
+    promptBudget: () => 6000,
+  };
+};
 
 describe('review gates (spec §3)', () => {
   it('engineer.ship → in_review with a qa.review job; pass → coo.verify; pass → done', async () => {
@@ -78,5 +91,22 @@ describe('review gates (spec §3)', () => {
     const qa = listJobs(vault).find((j) => j.type === 'qa.review')!;
     expect(qa.assigned).toBe('cto'); // qa's lead
     expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => /qa\.review/.test(String(e.payload.message)) && /cto/.test(String(e.payload.message)))).toBe(true);
+  });
+  it('a job returned at a high checkpoint step still gets a fresh maxSteps budget, not the remainder (F3)', async () => {
+    const maxSteps = 5;
+    const id = createJob(vault, { type: 'engineer.ship', title: 'Build', assigned: 'engineer', goal: 'g', team: 'engineering', owner_role: 'cto' }, 'cto');
+    await runJob(deps(finishing({ status: 'done', summary: 'built' }), { maxSteps }), id);
+    const qa = listJobs(vault).find((j) => j.type === 'qa.review')!;
+    // Simulate the job having already used most of its budget by the time it reached the gate.
+    vault.updateNote(`Jobs/${id}.md`, (n) => ({ data: { ...n.data, checkpoint_step: maxSteps - 1 }, body: n.body }), 'daemon');
+    await runJob(deps(finishing({ status: 'done', summary: 'nope', verdict: 'return', findings: ['needs work'] })), qa.id);
+    const back = readJob(vault, id)!.data;
+    expect(back.status).toBe('queued');
+    expect(back.budget_from).toBe(maxSteps - 1);
+    // Old (buggy) behaviour: while (step < maxSteps) with step already at maxSteps-1 allows only ONE more step
+    // before step_limit. New behaviour: while (step < budget_from + maxSteps) allows a full fresh maxSteps.
+    const resumed = await runJob(deps(stepsThenFinish(maxSteps - 1, { status: 'done', summary: 'built again' }), { maxSteps }), id);
+    expect(resumed.status).not.toBe('failed');
+    expect(readJob(vault, id)!.data.checkpoint_step).toBe((maxSteps - 1) + maxSteps);
   });
 });
