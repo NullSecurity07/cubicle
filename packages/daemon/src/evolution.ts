@@ -3,7 +3,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
-  loadOrg, leadOf, openSubtree, expandProcess,
+  loadOrg, leadOf, teamOf, openSubtree, expandProcess,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -139,17 +139,33 @@ export async function applyFire(vault: Vault, note: { path: string; data: InboxF
   const managerRole = manager === 'owner' ? 'ceo' : manager;
   vault.writeText(rel, stringifyNote({ ...n.data, active: false, fired: nowIso() }, n.body), 'daemon', { job: note.data.job ?? null });
   vault.move(rel, `Roles/archive/${target}-${nowIso().slice(0, 10)}.md`, 'daemon');
-  // Gate jobs (qa.review/coo.verify/requester.review) and any job another still-open job depends_on must not be
-  // cancelled — that would strand the parent in_review or deadlock a depends_on chain forever (F1). Reassign them
-  // to the manager instead; only the fired role's own, nothing-depends-on-it work jobs are cancelled as before.
+  // Gate jobs (qa.review/coo.verify/requester.review) must not be cancelled — that would strand the parent
+  // in_review forever (F1) — so they always go to the manager. A work job cannot go to the manager blindly: a
+  // lead/manager's charter rarely carries the tools (shell.run, git.*, deploy.*, …) a specialist's work needs, so
+  // a reassigned engineer.ship would just fail or exhaust its budget and strand its dependents again. Instead try
+  // a team-mate whose charter's tool families (compared by prefix before the dot, so `shell.*` covers `shell.run`)
+  // cover every family the fired role's charter had; only if none qualifies is the job cancelled — and then any
+  // job still depending on it is blocked on the owner instead of waiting on a cancelled dependency forever.
+  const team = teamOf(org, target);
+  const firedFamilies = new Set(((n.data.tools as string[] | undefined) ?? []).map((t) => t.split('.')[0]));
+  const standIn = team
+    ? ([team.lead, ...team.members].filter((r) => r !== target).find((r) => {
+        const candidateFamilies = new Set((org.roles[r]?.tools ?? []).map((t) => t.split('.')[0]));
+        return [...firedFamilies].every((f) => candidateFamilies.has(f));
+      }) ?? null)
+    : null;
   const allJobs = listJobs(vault);
-  const dependedOn = new Set(allJobs.flatMap((j) => j.depends_on));
   for (const j of allJobs.filter((x) => x.assigned === target && ['queued', 'blocked', 'running'].includes(x.status))) {
     const isGate = /\.(review|verify)$/.test(j.type) && !!j.parent;
-    if (isGate || dependedOn.has(j.id)) {
+    if (isGate) {
       updateJob(vault, j.id, { assigned: managerRole }, 'daemon', `- ${nowIso()}: ${target} was fired; job reassigned to ${managerRole}`);
+    } else if (standIn) {
+      updateJob(vault, j.id, { assigned: standIn }, 'daemon', `- ${nowIso()}: ${target} was fired; job reassigned to ${standIn} (tools cover it)`);
     } else {
-      vault.updateNote(`Jobs/${j.id}.md`, (x) => ({ data: { ...x.data, status: 'cancelled', updated: nowIso() }, body: x.body }), 'daemon'); // running jobs stop at their next tool step
+      updateJob(vault, j.id, { status: 'cancelled' }, 'daemon', `- ${nowIso()}: cancelled (role ${target} left; no team-mate's tools cover it)`); // running jobs stop at their next tool step
+      for (const dep of allJobs.filter((y) => y.depends_on.includes(j.id) && !['done', 'failed', 'cancelled'].includes(y.status))) {
+        updateJob(vault, dep.id, { status: 'blocked', blocked_on: { kind: 'owner', id: j.id, since: nowIso() } }, 'daemon', `- ${nowIso()}: dependency ${j.id} cancelled (role ${target} left); needs the owner`);
+      }
     }
   }
   // Reassign everything the fired role was accountable for (owner_role) that it wasn't itself doing, to its manager.

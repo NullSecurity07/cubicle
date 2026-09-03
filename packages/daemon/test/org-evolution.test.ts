@@ -87,6 +87,56 @@ describe('firing a lead (spec §2)', () => {
     expect(after.assigned).toBe('cto'); // qa's lead
     expect(readJob(vault, parent)!.data.status).toBe('in_review'); // still awaiting its gate, not stranded
   });
+
+  it('reassigns a fired role\'s queued work job to a team-mate whose tools cover it, not the manager', async () => {
+    // A second Engineer with the same tool families as the first (shell.run, git.*, deploy.*, stripe.*,
+    // proposal.*, …) — the manager (cto/tech_lead) does not carry those, so it must not receive work jobs.
+    const engineer2Charter = `---
+role: engineer_2
+display: Engineer II
+title: Engineer
+model_tier: medium
+tools: [vault.read, vault.search, vault.list, vault.write, vault.append, shell.run, git.log, git.diff, git.commit, http.fetch, browser.open, browser.goto, browser.extract, browser.screenshot, browser.close, deploy.site, stripe.payment_link, colleague.message, scheduler.request, proposal.create, skills.save, skills.load, skills.search, finish]
+approval_overrides: {}
+active: true
+hired: ""
+sprite: engineer_2
+desk: ""
+team: engineering
+reports_to: cto
+---
+# Charter
+
+A second Engineer with the same tool access as the first.
+`;
+    const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'cto', goal: 'g' }, 'ceo');
+    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'cto', goal: 'g' }, 'ceo');
+    updateJob(vault, j1, { status: 'failed' }, 'daemon'); updateJob(vault, j2, { status: 'failed' }, 'daemon');
+    const hire = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'Hire Engineer II', body: `[[${j1}]] [[${j2}]]\n\`\`\`markdown\n${engineer2Charter}\`\`\`` }, 'ceo');
+    expect(await applyHire(vault, findInboxById(vault, hire.id)!)).toMatch(/^hired engineer_2/);
+
+    const ship = createJob(vault, { type: 'engineer.ship', title: 'Ship it', assigned: 'engineer', goal: 'g', team: 'engineering', owner_role: 'cto' }, 'cto');
+    const dependent = createJob(vault, { type: 'custom', title: 'depends on ship', assigned: 'tech_lead', goal: 'g', depends_on: [ship] }, 'cto');
+    const { path: p } = createProposal(vault, { kind: 'fire', from: 'ceo', title: 'Fire Engineer', body: 'role: engineer', target: 'Roles/engineer.md' }, 'ceo');
+    const n = vault.readNoteOrNull(p)!;
+    expect(await applyFire(vault, { path: p, data: n.data as never, body: n.body })).toMatch(/^fired/);
+    const after = readJob(vault, ship)!.data;
+    expect(after.status).toBe('queued'); // not cancelled
+    expect(after.assigned).toBe('engineer_2'); // not the manager (cto), which lacks the tools
+    expect(readJob(vault, dependent)!.data.status).toBe('queued'); // untouched — its dependency is still alive
+  });
+
+  it('cancels a fired role\'s work job when no team-mate\'s tools cover it, and blocks anything depending on it', async () => {
+    const ship = createJob(vault, { type: 'engineer.ship', title: 'Ship it', assigned: 'engineer', goal: 'g', team: 'engineering', owner_role: 'cto' }, 'cto');
+    const dependent = createJob(vault, { type: 'custom', title: 'depends on ship', assigned: 'tech_lead', goal: 'g', depends_on: [ship] }, 'cto');
+    const { path: p } = createProposal(vault, { kind: 'fire', from: 'ceo', title: 'Fire Engineer', body: 'role: engineer', target: 'Roles/engineer.md' }, 'ceo');
+    const n = vault.readNoteOrNull(p)!;
+    expect(await applyFire(vault, { path: p, data: n.data as never, body: n.body })).toMatch(/^fired/);
+    expect(readJob(vault, ship)!.data.status).toBe('cancelled');
+    const after = readJob(vault, dependent)!.data;
+    expect(after.status).toBe('blocked');
+    expect(after.blocked_on).toMatchObject({ kind: 'owner', id: ship });
+  });
 });
 
 describe('postmortem and weekly review triggers (spec §3, §4)', () => {
