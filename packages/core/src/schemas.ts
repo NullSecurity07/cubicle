@@ -1,12 +1,13 @@
 import { z } from 'zod';
 
 // ---------- Jobs ----------
-export const JobStatus = z.enum(['queued', 'running', 'blocked', 'done', 'failed', 'cancelled']);
+export const JobStatus = z.enum(['queued', 'running', 'blocked', 'in_review', 'done', 'failed', 'cancelled']);
 export type JobStatus = z.infer<typeof JobStatus>;
 
 export const KNOWN_JOB_TYPES = [
   'engineer.ship', 'growth.outreach', 'growth.post', 'growth.seo', 'coo.verify',
   'cto.plan', 'cto.compress_charters', 'ceo.heartbeat', 'research', 'custom',
+  'team.plan', 'critic.premortem', 'qa.review', 'company.plan',
 ] as const;
 
 export const BlockedOn = z.object({
@@ -36,6 +37,12 @@ export const JobFrontmatter = z.looseObject({
   runs_on: z.enum(['laptop', 'any']).default('laptop'),
   blocked_on: BlockedOn.optional(),
   parent: z.string().optional(),
+  team: z.string().optional(),
+  owner_role: z.string().optional(),
+  for: z.string().optional(),
+  done_when: z.string().optional(),
+  returns: z.record(z.string(), z.number().int()).default({}),
+  gate_index: z.number().int().optional(),
 });
 export type JobFrontmatter = z.infer<typeof JobFrontmatter>;
 
@@ -45,6 +52,10 @@ export type ModelTier = z.infer<typeof ModelTier>;
 
 export const ApprovalMode = z.enum(['auto', 'propose', 'ask', 'never']);
 export type ApprovalMode = z.infer<typeof ApprovalMode>;
+
+export const PERMISSIONS = ['schedule', 'plan', 'review', 'hire', 'fire', 'veto', 'research_request', 'reprioritize', 'meeting'] as const;
+export const Permission = z.enum(PERMISSIONS);
+export type Permission = z.infer<typeof Permission>;
 
 export const RoleFrontmatter = z.looseObject({
   role: z.string(),
@@ -56,8 +67,25 @@ export const RoleFrontmatter = z.looseObject({
   hired: z.string(),
   sprite: z.string(),
   desk: z.string(),
+  team: z.string().optional(),
+  reports_to: z.string().optional(),
+  title: z.string().optional(),
+  persona: z.string().optional(),
+  permissions: z.array(Permission).default([]),
 });
 export type RoleFrontmatter = z.infer<typeof RoleFrontmatter>;
+
+// ---------- Teams ----------
+export const TeamFrontmatter = z.looseObject({
+  id: z.string(),
+  name: z.string(),
+  lead: z.string(),
+  members: z.array(z.string()).default([]),
+  mission: z.string().default(''),
+  room: z.string().optional(),
+  processes: z.array(z.string()).default([]),
+});
+export type TeamFrontmatter = z.infer<typeof TeamFrontmatter>;
 
 // ---------- Decisions ----------
 export const DecisionFrontmatter = z.looseObject({
@@ -72,7 +100,7 @@ export type DecisionFrontmatter = z.infer<typeof DecisionFrontmatter>;
 
 // ---------- Inbox notes: proposals and messages ----------
 export const ProposalKind = z.enum([
-  'message', 'hire', 'fire', 'brand_change', 'charter_change', 'file_change', 'spend', 'outbound_batch',
+  'message', 'hire', 'fire', 'brand_change', 'charter_change', 'file_change', 'spend', 'outbound_batch', 'reorg',
 ]);
 export type ProposalKind = z.infer<typeof ProposalKind>;
 
@@ -111,6 +139,8 @@ export const Constitution = z.object({
   auto_approve_charter_changes: z.boolean().default(false),
   pii_local_only: z.boolean().default(false),
   never_modify: z.array(z.string()).default([]),
+  max_team_size: z.number().int().min(1).default(6),
+  auto_approve_reorg: z.boolean().default(false),
 });
 export type Constitution = z.infer<typeof Constitution>;
 
@@ -139,6 +169,7 @@ export const EVENT_TYPES = [
   'router.call', 'router.downgraded',
   'quota.updated',
   'vault.wrote', 'owner.edited',
+  'team.planned', 'review.passed', 'review.returned', 'plan.vetoed', 'research.delivered', 'org.changed',
   'guardrail.blocked',
 ] as const;
 export const EventType = z.enum(EVENT_TYPES);
@@ -163,5 +194,7 @@ export const JobResult = z.object({
   blockers: z.array(z.string()).default([]),
   lessons: z.array(z.string()).default([]),
   summary: z.string().default(''),
+  verdict: z.enum(['pass', 'return']).optional(),
+  findings: z.array(z.string()).default([]),
 });
 export type JobResult = z.infer<typeof JobResult>;
