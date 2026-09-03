@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, listJobs, createProposal, loadOrg } from '@cubicle/core';
-import { applyReorg, applyFire, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview } from '../src/evolution.js';
+import { scaffoldVault, Vault, createJob, readJob, listJobs, createProposal, findInboxById, updateJob, loadOrg, can } from '@cubicle/core';
+import { applyReorg, applyHire, applyFire, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview } from '../src/evolution.js';
 
+const root = path.resolve(__dirname, '../../..');
 let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-orgev-')); vault = (await scaffoldVault(dir)).vault; });
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
@@ -36,6 +37,30 @@ describe('reorg (spec §2)', () => {
     expect(await applyReorg(vault, reorg('teams: [unclosed\n'))).toMatch(/does not parse/);
     expect(loadOrg(vault).teams).toEqual(before.teams);
     expect(vault.events.count('org.changed')).toBe(0);
+  });
+
+  it('refuses a reorg that leaves an active non-CEO role in no team (F6)', async () => {
+    const before = loadOrg(vault);
+    // Engineering listed without tech_lead or engineer, and neither is added to any other listed team: they'd
+    // belong to no team at all.
+    expect(await applyReorg(vault, reorg('teams:\n  engineering: { lead: cto, members: [] }\n'))).toMatch(/would belong to no team/);
+    expect(loadOrg(vault).teams).toEqual(before.teams);
+    expect(vault.events.count('org.changed')).toBe(0);
+  });
+});
+
+describe('hiring joins a team (spec §9.5, F2)', () => {
+  it('a hire whose charter has team: joins Teams/<team>.md members so its lead can schedule it', async () => {
+    const devopsCharter = readFileSync(path.join(root, 'vault-template/Roles/_hireable/devops.md'), 'utf8');
+    const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'cto', goal: 'g' }, 'ceo');
+    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'cto', goal: 'g' }, 'ceo');
+    updateJob(vault, j1, { status: 'failed' }, 'daemon'); updateJob(vault, j2, { status: 'failed' }, 'daemon');
+    const p = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'Hire DevOps', body: `[[${j1}]] [[${j2}]]\n\`\`\`markdown\n${devopsCharter}\`\`\`` }, 'ceo');
+    expect(await applyHire(vault, findInboxById(vault, p.id)!)).toMatch(/^hired devops/);
+    const org = loadOrg(vault);
+    expect(org.teams.engineering.members).toContain('devops');
+    expect(org.roles.devops.team).toBe('engineering');
+    expect(can(org, 'cto', 'schedule', 'devops')).toBe(true);
   });
 });
 

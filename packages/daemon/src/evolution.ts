@@ -52,9 +52,20 @@ export async function applyReorg(vault: Vault, note: { path: string; data: Inbox
   const moved = new Set(seen.keys());
   // An unlisted team must not silently lose its lead because that lead moved into a listed team.
   for (const [id, t] of Object.entries(org.teams)) if (!parsed.teams[id] && moved.has(t.lead)) return `team ${id} would lose its lead`;
+  const nextByTeam: Record<string, { lead: string; members: string[] }> = {};
   for (const [id, t] of Object.entries(org.teams)) {
     const next = parsed.teams[id] ? { lead: parsed.teams[id].lead!, members: parsed.teams[id].members ?? [] } : { lead: t.lead, members: t.members.filter((m) => !moved.has(m)) };
     if (!org.roles[next.lead]) return `team ${id} would lose its lead`;
+    nextByTeam[id] = next;
+  }
+  // F6: a reorg must not leave an active, non-CEO role belonging to no team at all — computed against every
+  // team's final membership (listed and derived-unlisted) before anything is written.
+  const placed = new Set(Object.values(nextByTeam).flatMap((t) => [t.lead, ...t.members]));
+  for (const r of Object.keys(org.roles)) {
+    if (r === 'ceo' || placed.has(r)) continue;
+    return `role ${r} would belong to no team`;
+  }
+  for (const [id, next] of Object.entries(nextByTeam)) {
     const n = vault.readNoteOrNull(`Teams/${id}.md`)!;
     vault.writeText(`Teams/${id}.md`, stringifyNote({ ...n.data, ...next }, n.body), 'daemon', { job: note.data.job ?? null });
     for (const r of [next.lead, ...next.members]) {
@@ -93,8 +104,21 @@ export async function applyHire(vault: Vault, note: { path: string; data: InboxF
   if (active >= c.max_roles) return `max_roles (${c.max_roles}) reached`;
   const desk = freeDesk(vault);
   if (!desk) return 'no free desk';
-  const data = { ...role, active: true, hired: nowIso(), desk, sprite: role.sprite || role.role };
+  // F2: a charter naming a team joins it — otherwise reportsOf(lead) never sees the hire and the lead can't
+  // schedule it. Refuse the hire outright rather than silently exceeding max_team_size.
+  const org = loadOrg(vault);
+  const team = role.team ? org.teams[role.team] : undefined;
+  if (role.team && !team) return `unknown team ${role.team} (create it as Teams/${role.team}.md first)`;
+  if (team && team.members.length + 2 > c.max_team_size) return `team ${role.team} would exceed max_team_size (${c.max_team_size})`;
+  const reports_to = role.reports_to ?? team?.lead;
+  const data = { ...role, active: true, hired: nowIso(), desk, sprite: role.sprite || role.role, ...(reports_to ? { reports_to } : {}) };
   vault.writeText(`Roles/${role.role}.md`, stringifyNote(data, parseNote(charter).body), 'daemon', { job: note.data.job ?? null });
+  if (team) {
+    const teamNote = vault.readNoteOrNull(`Teams/${role.team!}.md`)!;
+    const members = [...new Set([...(teamNote.data.members as string[] ?? []), role.role])];
+    vault.writeText(`Teams/${role.team!}.md`, stringifyNote({ ...teamNote.data, members }, teamNote.body), 'daemon', { job: note.data.job ?? null });
+    vault.events.emit({ type: 'org.changed', agent: 'daemon', job: note.data.job ?? null, payload: { reason: 'hire', role: role.role, team: role.team } });
+  }
   if (!vault.exists(`Messages/${role.role}.md`)) vault.writeText(`Messages/${role.role}.md`, `# Messages for ${role.role}\n\nColleagues append sections here; the harness includes unread ones in context.\n`, 'daemon');
   vault.events.emit({ type: 'role.hired', agent: 'daemon', job: note.data.job ?? null, payload: { role: role.role, display: role.display, desk, sprite: data.sprite, proposal: note.data.id } });
   onHired?.(role.role);
