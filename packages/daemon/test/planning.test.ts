@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault, Vault, listJobs, readJob } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, HEARTBEAT_STEPS } from '../src/index.js';
+import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob } from '../src/index.js';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
@@ -38,6 +38,38 @@ function orgLlm(opts: { vetoes?: number } = {}): Llm & { calls: Record<string, n
 const daemonFor = (llm: Llm) => new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 300, maxConcurrentJobs: 3, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
 async function waitFor(pred: () => boolean, ms = 30000): Promise<void> { const t0 = Date.now(); while (!pred()) { if (Date.now() - t0 > ms) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 100)); } }
 
+describe('planIsSubstantive (Task 9 review finding 1)', () => {
+  it('is false for a plan with no ### sections at all', () => {
+    expect(planIsSubstantive('---\ncycle: 1\n---\n# Plan\n\n## Objectives\n')).toBe(false);
+  });
+  it('is false when every section is verify/reconcile-only busywork', () => {
+    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Verify the deployed site\n- Reconcile Site/ with Brand/\n';
+    expect(planIsSubstantive(plan)).toBe(false);
+  });
+  it('is true when a real objective sits alongside a verify/reconcile-only section (the bug: a per-section-scoped regex would stop at the first busywork-only section)', () => {
+    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Verify the deployed site\n\n### growth\n- Find the first organic channel\n';
+    expect(planIsSubstantive(plan)).toBe(true);
+  });
+});
+
+describe('firstOpenJob (Task 9 review finding 2)', () => {
+  it('returns the first id that is not done/failed/cancelled', () => {
+    const status: Record<string, string> = { a: 'done', b: 'running', c: 'queued' };
+    expect(firstOpenJob(['a', 'b', 'c'], (id) => status[id])).toBe('b');
+  });
+  it('does not keep re-selecting ids[0] once it finishes while a later one is still open (the busy-loop bug)', () => {
+    const status: Record<string, string> = { a: 'done', b: 'done', c: 'queued' };
+    expect(firstOpenJob(['a', 'b', 'c'], (id) => status[id])).toBe('c');
+  });
+  it('falls back to the last id when every one already looks finished (defensive; rollup should have said "not open")', () => {
+    const status: Record<string, string> = { a: 'done', b: 'failed' };
+    expect(firstOpenJob(['a', 'b'], (id) => status[id])).toBe('b');
+  });
+  it('treats an unknown/missing status as open', () => {
+    expect(firstOpenJob(['a', 'b'], () => undefined)).toBe('a');
+  });
+});
+
 describe('two-level planning (spec §3)', () => {
   it('steps are company_plan → critic → team_plans; a veto reruns the CEO once; leads fan out; brief has next actions per team', async () => {
     expect(HEARTBEAT_STEPS).toEqual(['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'company_plan', 'critic', 'team_plans', 'brief', 'commit']);
@@ -57,6 +89,9 @@ describe('two-level planning (spec §3)', () => {
       expect(jobs.some((j) => j.type === 'engineer.ship' && j.owner_role === 'cto' && j.team === 'engineering')).toBe(true);
       expect(jobs.some((j) => j.type === 'research' && j.for === 'head_of_growth')).toBe(true);
       expect(v.events.count('team.planned')).toBe(2);
+      // Task 9 review finding 2 (busy loop when team_plans re-blocks on an already-finished ids[0]) is covered
+      // directly by the firstOpenJob unit tests above — job.blocked events are only emitted by block()/blockMany(),
+      // which team_plans calls at most once regardless, so an event count here would not have caught the bug.
       const brief = readFileSync(path.join(dir, 'Runs', readFileSync(path.join(dir, 'Jobs/queue.md'), 'utf8') && require('node:fs').readdirSync(path.join(dir, 'Runs')).filter((f: string) => f.endsWith('.md')).sort().at(-1)!), 'utf8');
       expect(brief).toContain('## Next action per team');
       expect(existsSync(path.join(dir, 'Decisions'))).toBe(true);

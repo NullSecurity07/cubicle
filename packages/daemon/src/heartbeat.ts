@@ -30,6 +30,36 @@ export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'me
 /** How long a heartbeat waits for company.plan/critic.premortem/team.plan before writing the brief with "planning pending" (R33). */
 export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
 
+/**
+ * True iff `Plans/plan.md` has at least one real objective, so the Critic step is worth running. A plan with no
+ * `### <team>` sections at all is not substantive. Within each section, a bullet counts as real work unless it is
+ * pure busywork ("Verify ..." / "Reconcile ..."); the plan is substantive iff ANY bullet in ANY section is real
+ * work — a single verify-only section next to a real objective in another section must still run the Critic
+ * (Task 9 review finding 1: the previous regex used `.test()` with `m` and matched per-line, so it wrongly
+ * short-circuited to "skip" on the first verify/reconcile-only section it found).
+ */
+export function planIsSubstantive(plan: string): boolean {
+  const sections = [...plan.matchAll(/^### \w+\n([\s\S]*?)(?=^### |\s*$)/gm)];
+  if (!sections.length) return false;
+  return sections.some(([, body]) => body.split('\n').some((line) => {
+    const bullet = line.trim().match(/^-\s*(.+)/);
+    return !!bullet && !/^(verify|reconcile)\b/i.test(bullet[1]);
+  }));
+}
+
+/**
+ * The id `team_plans` should (re-)block on: the first of `ids` whose status is not done/failed/cancelled, or the
+ * last id if every one of them already looks finished (defensive — the caller only asks for this while
+ * `rollup` still says "open", so that shouldn't happen). Always returning `ids[0]` regardless of its status
+ * (Task 9 review finding 2) meant that once the first team.plan finished, `requeueUnblocked` would see its
+ * `blocked_on` target as satisfied on every dispatcher tick even while other team plans were still running,
+ * busy-looping the heartbeat between `blocked` and `queued` until the slowest one finished.
+ */
+export function firstOpenJob(ids: string[], statusOf: (id: string) => string | undefined): string {
+  const open = ids.find((id) => { const s = statusOf(id); return !s || !['done', 'failed', 'cancelled'].includes(s); });
+  return open ?? ids[ids.length - 1];
+}
+
 /** Create the `ceo.heartbeat` job note (the heartbeat is a job so R9/R10/R12 apply). */
 export function createHeartbeatJob(vault: Vault, trigger: string): string {
   return createJob(vault, {
@@ -98,7 +128,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { companyPlanJob?: string; criticJob?: string; vetoes?: number; criticFindings?: string[]; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { companyPlanJob?: string; criticJob?: string; processedCritic?: string; vetoes?: number; criticFindings?: string[]; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -280,8 +310,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
       case 'critic': {
         const org = loadOrg(vault);
         const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
-        const substantive = /^### /m.test(plan) && !/^### \w+\n(?:- (?:Verify|Reconcile)[^\n]*\n)+$/m.test(plan.split('## Objectives')[1] ?? '');
-        if (!org.roles.critic || !substantive) { done(i, 'critic skipped'); break; }
+        if (!org.roles.critic || !planIsSubstantive(plan)) { done(i, 'critic skipped'); break; }
         if (!state.criticJob) {
           const id = createJob(vault, {
             type: 'critic.premortem', title: `Pre-mortem for ${hbId}`, assigned: 'critic', priority: 1, parent: jobId, team: 'strategy', owner_role: 'ceo',
@@ -297,6 +326,17 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           break;
         }
         if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
+        if (state.processedCritic === state.criticJob) {
+          // Crash-recovery re-entry (Task 9 review finding 3): the verdict for this critic job was already
+          // counted/acted on — the crash window is between saving processedCritic below and the vetoes===1
+          // requeue's own updateJob (checkpoint_step/status/blocked_on). Re-running the verdict branch here would
+          // double-count the veto (or re-open a resolved owner-escalation), so just advance past the step.
+          done(i, `critic ${state.criticJob} already processed`);
+          break;
+        }
+        // Durably mark this critic job's verdict as being processed BEFORE counting the veto or requeuing, so a
+        // crash after this write and before the requeue's updateJob resumes here instead of double-processing.
+        state = { ...state, processedCritic: state.criticJob }; saveState(state);
         const result = parseResult(sub.body);
         if (result?.verdict === 'return') {
           const vetoes = (state.vetoes ?? 0) + 1;
@@ -341,7 +381,11 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           }
         };
         if (rollup(vault, jobId) === 'open') {
-          const w = waitOrGiveUp(state.teamPlanJobs[0], (min) => `${state.teamPlanJobs!.length} team plan(s) still open after ${min} min — planning pending`);
+          // Re-block on whichever job is still actually open (firstOpenJob), not always ids[0] — see its doc
+          // comment for the busy-loop this fixes (Task 9 review finding 2).
+          const blockOn = firstOpenJob(state.teamPlanJobs, (id) => readJob(vault, id)?.data.status);
+          const openCount = state.teamPlanJobs.filter((id) => { const s = readJob(vault, id)?.data.status; return !s || !['done', 'failed', 'cancelled'].includes(s); }).length;
+          const w = waitOrGiveUp(blockOn, (min) => `${openCount} team plan(s) still open after ${min} min — planning pending`);
           if (w) return w;
           emitTeamPlanned(); // waitOrGiveUp already advanced the checkpoint on give-up
           break;
