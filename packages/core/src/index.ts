@@ -4,6 +4,7 @@ export * from './fs.js';
 export * from './guard.js';
 export * from './db.js';
 export * from './events.js';
+export * from './diff.js';
 export * from './git.js';
 export * from './vault.js';
 export * from './watcher.js';
