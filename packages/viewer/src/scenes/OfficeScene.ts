@@ -5,6 +5,7 @@ import { AgentSprite } from '../world/agents.js';
 import { Surface } from '../world/surfaces.js';
 import { SURFACES } from '../world/surface-registry.js';
 import type { State } from '../state.js';
+import { tintFor } from '../ui/time.js';
 
 export interface SceneHooks { getState(): State; frames(): Record<string, string>; onSurfaceClick(kind: string): void; onAgentClick(role: string): void; hour(): number; /** wall clock live, event clock in replay (bubbles expire against it) */ clock(): number; }
 
@@ -91,9 +92,7 @@ export class OfficeScene extends Phaser.Scene {
     if (this.keys.W.isDown || this.keys.UP.isDown) cam.scrollY -= v;
     if (this.keys.S.isDown || this.keys.DOWN.isDown) cam.scrollY += v;
     // day / night
-    const hr = this.hooks.hour();
-    const dark = hr < 6 ? 0.55 : hr < 8 ? 0.55 * (8 - hr) / 2 : hr < 18 ? 0 : hr < 21 ? 0.55 * (hr - 18) / 3 : 0.55;
-    this.night.setAlpha(dark);
+    this.night.setAlpha(tintFor(this.hooks.hour()));
   }
 
   debugAgents(): Record<string, unknown>[] { return [...this.agents.values()].map((a) => a.debug()); }
