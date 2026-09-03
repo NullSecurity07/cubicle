@@ -88,6 +88,9 @@ const map = {
   ],
   properties: [{ name: 'generated', type: 'string', value: 'scripts/gen-world.ts' }],
 };
-const out = path.join(root, 'config/world/office.json');
-writeFileSync(out, JSON.stringify(map));
-console.log(`wrote ${out}: ${W}×${H} tiles, ${objects.length} objects, ${desks.length} desks`);
+// Both destinations are generated: config/world/office.json is the checked-in source of truth and
+// packages/viewer/public/office.json is the copy the viewer serves at /office.json. They must not drift.
+const json = JSON.stringify(map);
+const outs = [path.join(root, 'config/world/office.json'), path.join(root, 'packages/viewer/public/office.json')];
+for (const out of outs) writeFileSync(out, json);
+console.log(`wrote ${outs.join(' and ')}: ${W}×${H} tiles, ${objects.length} objects, ${desks.length} desks`);
