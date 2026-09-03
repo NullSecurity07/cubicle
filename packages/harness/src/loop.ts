@@ -1,8 +1,9 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import {
-  type Vault, type EventLog, type JobFrontmatter, type RoleFrontmatter, JobResult, InboxFrontmatter,
-  readJob, updateJob, setSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
+  type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
+  readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
+  loadGates, gatesFor, criteriaFor, gateAssignee, type GateTable,
 } from '@cubicle/core';
 import { NoModelAvailableError, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -38,8 +39,8 @@ export interface HarnessDeps {
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
   summarize?: (text: string) => Promise<string>;
-  /** Job types that never get a coo.verify follow-up. */
-  noVerifyTypes?: string[];
+  /** Review gates per job type (spec §3); defaults to config/gates.yaml. */
+  gates?: GateTable;
   maxSteps?: number;
   localMaxSteps?: number;
   /** Owner feedback lines addressed to a role (inline %%cubicle: …%% comments, preferences feedback, decision ratings). */
@@ -54,7 +55,6 @@ export type JobOutcome =
 
 const DEFAULT_MAX_STEPS = 40;
 const DEFAULT_LOCAL_MAX_STEPS = 15;
-const NO_VERIFY = ['coo.verify', 'ceo.heartbeat', 'cto.plan'];
 
 export function observationsPath(vault: Vault, jobId: string): string {
   return path.join(vault.cubicleDir, 'jobs', `${jobId}.jsonl`);
@@ -106,7 +106,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   const events = vault.events;
   const now = deps.now ?? (() => new Date());
   const env = deps.env ?? process.env;
-  const noVerify = deps.noVerifyTypes ?? NO_VERIFY;
+  const gates = deps.gates ?? loadGates();
 
   let jobNote = readJob(vault, jobId);
   if (!jobNote) throw new Error(`job not found: ${jobId}`);
@@ -114,6 +114,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   if (job.status === 'cancelled') return { status: 'cancelled' };
   if (job.status === 'done') return { status: 'done' };
   if (job.status === 'failed') return { status: 'failed' };
+  if (job.status === 'in_review') return { status: 'done' };
   if (job.status === 'blocked' && (!job.blocked_on || job.blocked_on.kind === 'owner') && job.approval !== 'pending') return { status: 'blocked', on: job.blocked_on ?? { kind: 'owner', id: jobId } };
 
   const roleNote = vault.readNoteOrNull(`Roles/${job.assigned}.md`);
@@ -147,12 +148,30 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   };
   const cancelled = () => refresh().status === 'cancelled';
 
+  /** Extract the last `## Result` JSON block written into a job's body (survives the sub-job's own writes to that section). */
+  const resultFrom = (body: string): JobResult => {
+    const raw = body.split('## Result')[1]?.match(/```json\n([\s\S]*?)\n```/)?.[1];
+    if (!raw) return JobResult.parse({ status: 'done' });
+    try { return JobResult.parse(JSON.parse(raw)); } catch { return JobResult.parse({ status: 'done' }); }
+  };
+
   const finishWith = async (result: JobResult, step: number): Promise<JobOutcome> => {
+    const isGateJob = /\.(review|verify)$/.test(job.type) && !!job.parent;
+    const chain = gatesFor(gates, job.type);
+    const gateIndex = Number(job.gate_index ?? 0);
+    const nextGate = result.status === 'done' && !isGateJob ? chain[gateIndex] : undefined;
+    const finalStatus: JobStatus = result.status === 'done' ? (nextGate ? 'in_review' : 'done') : result.status === 'blocked' ? 'blocked' : 'failed';
     vault.updateNote(`Jobs/${jobId}.md`, (n) => ({
-      data: { ...n.data, status: result.status === 'done' ? 'done' : result.status === 'blocked' ? 'blocked' : 'failed', checkpoint_step: step, updated: nowIso(), ...(result.status === 'blocked' ? { blocked_on: { kind: 'owner', id: jobId, since: nowIso() } } : {}) },
+      data: { ...n.data, status: finalStatus, checkpoint_step: step, updated: nowIso(), ...(result.status === 'blocked' ? { blocked_on: { kind: 'owner', id: jobId, since: nowIso() } } : {}) },
       body: setSection(n.body, '## Result', '```json\n' + JSON.stringify(result, null, 2) + '\n```'),
     }), roleId, { job: jobId });
-    events.emit({ type: result.status === 'done' ? 'job.done' : result.status === 'blocked' ? 'job.blocked' : 'job.failed', agent: roleId, job: jobId, payload: { status: result.status, summary: result.summary, artifacts: result.artifacts, blockers: result.blockers, metrics: result.metrics, lessons: result.lessons } });
+    if (finalStatus === 'in_review') {
+      events.emit({ type: 'job.checkpoint', agent: roleId, job: jobId, payload: { in_review: nextGate, summary: result.summary } });
+      enqueueGate(nextGate!, job, result);
+    } else {
+      events.emit({ type: finalStatus === 'done' ? 'job.done' : finalStatus === 'blocked' ? 'job.blocked' : 'job.failed', agent: roleId, job: jobId, payload: { status: result.status, summary: result.summary, artifacts: result.artifacts, blockers: result.blockers, metrics: result.metrics, lessons: result.lessons, verdict: result.verdict } });
+    }
+    if (isGateJob && result.status === 'done') applyVerdict(job.parent!, job.type, result);
     // Skills loop (spec §9.3): a failed job counts a failure against every skill it loaded; two failures archive the skill.
     if (result.status === 'failed') {
       const loaded = [...new Set(observations.filter((o) => o.kind === 'tool' && o.tool === 'skills.load' && o.ok !== false).map((o) => String(o.args?.name ?? '')))].filter(Boolean);
@@ -178,11 +197,50 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       const lines = lessons.filter((l) => !existing.includes(`[[${jobId}]] ${l}`)).map((l) => `- [${nowIso().slice(0, 10)}] [[${jobId}]] ${l} (${roleId})`);
       if (lines.length) vault.appendText('Memory/lessons.md', lines.join('\n') + '\n', roleId, { job: jobId });
     }
-    if (!noVerify.includes(job.type) && result.status !== 'blocked') {
-      deps.scheduler.enqueue({ type: 'coo.verify', title: `Verify: ${job.title}`, assigned: 'coo', goal: `Verify job [[${jobId}]] (${job.type}) against its goal. Read its Result block and artifacts, confirm with evidence, then finish with status done|failed and exactly one lesson in finish.lessons (the harness writes it to Memory/lessons.md).`, priority: 4, parent: jobId, links: [`[[${jobId}]]`], privacy: job.privacy });
-    }
     await client.close();
-    return { status: result.status === 'done' ? 'done' : result.status === 'blocked' ? 'blocked' : 'failed', result } as JobOutcome;
+    return { status: finalStatus === 'in_review' ? 'done' : finalStatus, result } as JobOutcome;
+  };
+
+  /** Create the review job for one gate of `parent`. */
+  const enqueueGate = (gate: string, parent: JobFrontmatter, result: JobResult): void => {
+    const assignee = gateAssignee(gate, parent);
+    const criteria = criteriaFor(gates, parent.type);
+    deps.scheduler.enqueue({
+      type: gate, title: `${gate === 'coo.verify' ? 'Verify' : 'Review'}: ${parent.title}`, assigned: assignee, priority: 4, parent: parent.id, links: [`[[${parent.id}]]`], privacy: parent.privacy,
+      team: parent.team, owner_role: parent.owner_role, for: parent.for,
+      goal: `Review job [[${parent.id}]] (${parent.type}) as the ${gate} gate. What good looks like: ${criteria}\nDone when (author's): ${parent.done_when ?? 'not stated'}\nAuthor's summary: ${result.summary}\nRead its Result block and artifacts, check with evidence, then finish with status done and verdict pass, or verdict return with findings that name a file or an output line${gate === 'coo.verify' ? ', plus exactly one lesson in finish.lessons' : ''}. A job may be returned once per gate; a second return fails it.`,
+    });
+  };
+
+  /** A gate job finished: advance or return the parent. */
+  const applyVerdict = (parentId: string, gate: string, result: JobResult): void => {
+    const p = readJob(vault, parentId); if (!p || p.data.status !== 'in_review') return;
+    const chain = gatesFor(gates, p.data.type);
+    const idx = Number(p.data.gate_index ?? 0);
+    if (result.verdict !== 'return') {
+      events.emit({ type: 'review.passed', agent: roleId, job: parentId, payload: { gate, findings: result.findings } });
+      const next = chain[idx + 1];
+      if (next) {
+        updateJob(vault, parentId, { gate_index: idx + 1 }, 'daemon', `- ${nowIso()}: ${gate} passed; next gate ${next}`);
+        enqueueGate(next, readJob(vault, parentId)!.data, resultFrom(p.body));
+      } else {
+        updateJob(vault, parentId, { status: 'done' }, 'daemon', `- ${nowIso()}: all gates passed`);
+        events.emit({ type: 'job.done', agent: p.data.assigned, job: parentId, payload: { status: 'done', summary: `passed ${chain.join(' → ')}` } });
+        if (p.data.type === 'research') events.emit({ type: 'research.delivered', agent: p.data.assigned, job: parentId, payload: {} });
+      }
+      return;
+    }
+    const returns = { ...p.data.returns, [gate]: (p.data.returns[gate] ?? 0) + 1 };
+    if (returns[gate] > 1) {
+      updateJob(vault, parentId, { status: 'failed', returns }, 'daemon', `- ${nowIso()}: returned twice by ${gate}; failed`);
+      events.emit({ type: 'job.failed', agent: p.data.assigned, job: parentId, payload: { reason: `returned twice by ${gate}`, findings: result.findings } });
+      return;
+    }
+    vault.updateNote(`Jobs/${parentId}.md`, (n) => ({
+      data: { ...n.data, status: 'queued', attempt: Number(n.data.attempt ?? 1) + 1, returns, gate_index: idx, updated: nowIso() },
+      body: appendToSection(n.body, '## Review findings', `- ${nowIso().slice(0, 16)} ${gate}: ${result.findings.join('; ') || result.summary}`),
+    }), 'daemon', { job: parentId });
+    events.emit({ type: 'review.returned', agent: roleId, job: parentId, payload: { gate, findings: result.findings } });
   };
 
   /** Non-explicit failures (step limit, bad JSON, no tool calls) retry while attempts remain; explicit finish(failed) is final. */

@@ -41,7 +41,10 @@ function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: stri
         ];
         return { ...base, parsedToolCalls: [steps[Math.min(n, steps.length - 1)]] };
       }
-      return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: `${req.roleId} done` } }] };
+      // Gate jobs (qa.review, coo.verify, requester.review) need an explicit verdict to advance the parent's gate chain.
+      const jobType = jobMsg.match(/type: (\S+)/)?.[1] ?? '';
+      const isGate = /\.(review|verify)$/.test(jobType);
+      return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: `${req.roleId} done`, ...(isGate ? { verdict: 'pass' } : {}) } }] };
     },
     promptBudget: () => 6000,
   };

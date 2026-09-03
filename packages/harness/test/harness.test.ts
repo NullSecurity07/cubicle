@@ -52,22 +52,25 @@ const fourStep: Step[] = [
 ];
 
 describe('runJob checkpointing and resume', () => {
-  it('runs a 4-step job, records idempotency keys, writes the Result, enqueues coo.verify', async () => {
+  it('runs a 4-step job, records idempotency keys, writes the Result, enqueues coo.verify (review gate)', async () => {
     growthWithMock();
     const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
     const out = await runJob(deps(scripted(fourStep)), id);
     expect(out.status).toBe('done');
     const j = readJob(vault, id)!;
-    expect(j.data.status).toBe('done');
+    expect(j.data.status).toBe('in_review');
     expect(j.data.checkpoint_step).toBe(4);
     expect(j.data.side_effects_done).toEqual([`${id}:1:2`, `${id}:1:3`]);
     expect(j.body).toContain('"sent": 2');
     expect(j.body).toContain('- step 1: vault.read');
     const keys = readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).key);
     expect(keys).toEqual([`${id}:1:2`, `${id}:1:3`]);
-    expect(listJobs(vault, { assigned: 'coo' }).map((x) => x.type)).toEqual(['coo.verify']);
-    expect(vault.events.count('job.done')).toBe(1);
+    const coo = listJobs(vault, { assigned: 'coo' });
+    expect(coo.map((x) => x.type)).toEqual(['coo.verify']);
     expect(vault.events.count('agent.tool_call')).toBe(4);
+    await runJob(deps(scripted([{ tool: 'finish', args: { status: 'done', summary: 'verified', verdict: 'pass', lessons: ['ok'] } }])), coo[0].id);
+    expect(readJob(vault, id)!.data.status).toBe('done');
+    expect(vault.events.count('review.passed')).toBe(1);
   });
 
   it('kill after step 2 → resume at step 3 with no duplicate side effects (acceptance test 1, harness half)', async () => {
