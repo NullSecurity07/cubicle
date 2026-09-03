@@ -51,4 +51,9 @@ describe('org resolver (spec §2)', () => {
     expect(can(o2, 'engineer', 'schedule', 'qa')).toBe(false); // explicit list replaces defaults
     expect(can(org, 'nobody', 'schedule', 'qa')).toBe(false);
   });
+  it('self-schedule guard defends against malformed orgs where lead is in members', () => {
+    const malformed: Org = { ...org, teams: { ...org.teams, engineering: { ...org.teams.engineering, members: ['tech_lead', 'engineer', 'qa', 'cto'] } } };
+    expect(can(malformed, 'cto', 'schedule', 'cto')).toBe(false); // lead cannot schedule self even if in members
+    expect(can(malformed, 'ceo', 'schedule', 'ceo')).toBe(false); // CEO cannot schedule self
+  });
 });

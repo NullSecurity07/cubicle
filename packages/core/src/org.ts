@@ -69,11 +69,12 @@ export function can(org: Org, role: string, action: Action, target?: string): bo
   switch (action) {
     case 'schedule': {
       if (!target || !org.roles[target]) return false;
+      if (target === role) return false; // explicit guard: no role schedules itself
       if (role === 'ceo') return true;
       if (target === 'research_analyst') return false;
       if (isLead(org, role)) return reportsOf(org, role).includes(target);
       const mine = teamOf(org, role);
-      return !!mine && target !== role && mine.members.includes(target);
+      return !!mine && mine.members.includes(target);
     }
     case 'reprioritize': return role === 'ceo' || !target || teamOf(org, role)?.id === target;
     default: return true;
