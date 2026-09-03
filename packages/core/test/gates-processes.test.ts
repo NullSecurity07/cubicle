@@ -37,4 +37,16 @@ describe('processes (spec §3)', () => {
     expect(readProcess(vault, 'nope')).toBeNull();
     expect(() => expandProcess(vault, 'nope', 'x', { parent: 'p', by: 'ceo', owner_role: 'ceo' })).toThrow(/unknown process/);
   });
+  it('refuses to expand a process step naming an unknown or inactive role (F1)', () => {
+    vault.writeText('Processes/broken.md', '---\nname: broken\nsteps:\n  - { role: nope, type: custom, title: "X" }\n---\nbroken process\n', 'daemon');
+    expect(() => expandProcess(vault, 'broken', 'x', { parent: 'p', by: 'ceo', owner_role: 'ceo' })).toThrow(/unknown or inactive role nope in process broken/);
+  });
+  it('a process omitting `parent` threads its idempotency marker through `links` only (F9)', () => {
+    const ids = expandProcess(vault, 'opportunity', 'a new idea', { by: 'ceo', owner_role: 'ceo', marker: 'weekly-7' });
+    for (const id of ids) {
+      const j = readJob(vault, id)!.data;
+      expect(j.parent).toBeUndefined();
+      expect(j.links).toContain('[[weekly-7]]');
+    }
+  });
 });

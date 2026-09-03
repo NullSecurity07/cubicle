@@ -115,7 +115,19 @@ export async function applyFire(vault: Vault, note: { path: string; data: InboxF
   const managerRole = manager === 'owner' ? 'ceo' : manager;
   vault.writeText(rel, stringifyNote({ ...n.data, active: false, fired: nowIso() }, n.body), 'daemon', { job: note.data.job ?? null });
   vault.move(rel, `Roles/archive/${target}-${nowIso().slice(0, 10)}.md`, 'daemon');
-  for (const j of listJobs(vault, { assigned: target, status: ['queued', 'blocked', 'running'] })) vault.updateNote(`Jobs/${j.id}.md`, (x) => ({ data: { ...x.data, status: 'cancelled', updated: nowIso() }, body: x.body }), 'daemon'); // running jobs stop at their next tool step
+  // Gate jobs (qa.review/coo.verify/requester.review) and any job another still-open job depends_on must not be
+  // cancelled — that would strand the parent in_review or deadlock a depends_on chain forever (F1). Reassign them
+  // to the manager instead; only the fired role's own, nothing-depends-on-it work jobs are cancelled as before.
+  const allJobs = listJobs(vault);
+  const dependedOn = new Set(allJobs.flatMap((j) => j.depends_on));
+  for (const j of allJobs.filter((x) => x.assigned === target && ['queued', 'blocked', 'running'].includes(x.status))) {
+    const isGate = /\.(review|verify)$/.test(j.type) && !!j.parent;
+    if (isGate || dependedOn.has(j.id)) {
+      updateJob(vault, j.id, { assigned: managerRole }, 'daemon', `- ${nowIso()}: ${target} was fired; job reassigned to ${managerRole}`);
+    } else {
+      vault.updateNote(`Jobs/${j.id}.md`, (x) => ({ data: { ...x.data, status: 'cancelled', updated: nowIso() }, body: x.body }), 'daemon'); // running jobs stop at their next tool step
+    }
+  }
   // Reassign everything the fired role was accountable for (owner_role) that it wasn't itself doing, to its manager.
   for (const j of openSubtree(vault, target)) if (j.assigned !== target) updateJob(vault, j.id, { owner_role: managerRole }, 'daemon', `- ${nowIso()}: owner ${target} left; now owned by ${managerRole}`);
   // If the fired role led a team, the manager is promoted to lead; otherwise just drop it from whichever team it was a member of.
@@ -168,7 +180,9 @@ export async function maybeEnqueueWeeklyReview(vault: Vault, openMeeting?: (agen
   if (n === 0 || n % WEEKLY_REVIEW_EVERY !== 0) return [];
   const marker = `weekly-${n}`;
   if (listJobs(vault).some((j) => j.links.includes(`[[${marker}]]`))) return [];
-  const ids = expandProcess(vault, 'weekly_review', `week ${n / WEEKLY_REVIEW_EVERY}`, { parent: marker, by: 'daemon', owner_role: 'ceo' });
+  // `marker` is not a job id, so it must not be passed as `parent` (F9) — expandProcess threads it through
+  // `links` instead, which is all this idempotency check reads.
+  const ids = expandProcess(vault, 'weekly_review', `week ${n / WEEKLY_REVIEW_EVERY}`, { by: 'daemon', owner_role: 'ceo', marker });
   const org = loadOrg(vault);
   const leads = Object.values(org.teams).map((t) => t.lead).filter((l) => l !== 'ceo');
   if (openMeeting) await openMeeting(`Weekly review ${n / WEEKLY_REVIEW_EVERY}: what shipped, what failed, what each team does next; the COO proposes which team skills go company-wide.`, leads).catch(() => null);

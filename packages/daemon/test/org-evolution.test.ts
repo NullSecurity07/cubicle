@@ -49,6 +49,19 @@ describe('firing a lead (spec §2)', () => {
     expect(loadOrg(vault).teams.engineering.lead).toBe('ceo');
     expect(vault.events.count('org.changed')).toBe(1);
   });
+
+  it('reassigns a fired role\'s queued gate jobs to its manager instead of cancelling them, stranding the parent (F1)', async () => {
+    const parent = createJob(vault, { type: 'engineer.ship', title: 'Ship it', assigned: 'engineer', goal: 'g', team: 'engineering', owner_role: 'cto' }, 'cto');
+    vault.updateNote(`Jobs/${parent}.md`, (n) => ({ data: { ...n.data, status: 'in_review' }, body: n.body }), 'daemon');
+    const gate = createJob(vault, { type: 'qa.review', title: 'Review: Ship it', assigned: 'qa', goal: 'g', team: 'engineering', owner_role: 'cto', parent }, 'daemon');
+    const { path: p } = createProposal(vault, { kind: 'fire', from: 'ceo', title: 'Fire QA', body: 'role: qa', target: 'Roles/qa.md' }, 'ceo');
+    const n = vault.readNoteOrNull(p)!;
+    expect(await applyFire(vault, { path: p, data: n.data as never, body: n.body })).toMatch(/^fired/);
+    const after = readJob(vault, gate)!.data;
+    expect(after.status).toBe('queued'); // not cancelled
+    expect(after.assigned).toBe('cto'); // qa's lead
+    expect(readJob(vault, parent)!.data.status).toBe('in_review'); // still awaiting its gate, not stranded
+  });
 });
 
 describe('postmortem and weekly review triggers (spec §3, §4)', () => {

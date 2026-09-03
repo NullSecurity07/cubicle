@@ -32,9 +32,12 @@ export const schedulerRequest = defineTool({
     if (!org.roles[args.assigned]) return { ok: false, text: `unknown or inactive role: ${args.assigned}` };
     const type = args.type ?? 'custom';
     const isResearch = type === 'research';
+    let forRole: string | undefined;
     if (isResearch) {
       if (args.assigned !== 'research_analyst') return { ok: false, text: 'research jobs are done by research_analyst (set assigned: research_analyst and for: <your role>)' };
       if (!can(org, ctx.roleId, 'research_request')) return { ok: false, text: `${ctx.roleId} may not request research; ask your lead` };
+      forRole = args.for ?? ctx.roleId;
+      if (!org.roles[forRole]) return { ok: false, text: 'for must be an active role id' };
     } else if (!can(org, ctx.roleId, 'schedule', args.assigned)) {
       return { ok: false, text: `${ctx.roleId} may not schedule ${args.assigned}: leads schedule their own team, members hand off to a teammate, the CEO anyone` };
     }
@@ -44,7 +47,7 @@ export const schedulerRequest = defineTool({
     if (lead && !args.done_when?.trim()) return { ok: false, text: 'leads must give done_when: one sentence a stranger could check' };
     const owner_role = lead ? ctx.roleId : (leadOf(org, ctx.roleId) ?? ctx.roleId);
     const team = teamOf(org, args.assigned)?.id;
-    const id = ctx.scheduler.enqueue({ id: ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey) : undefined, type, title: args.title, assigned: args.assigned, goal: args.goal, priority: args.priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: isResearch ? (args.for ?? ctx.roleId) : undefined, done_when: args.done_when });
+    const id = ctx.scheduler.enqueue({ id: ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey) : undefined, type, title: args.title, assigned: args.assigned, goal: args.goal, priority: args.priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: forRole, done_when: args.done_when });
     return { ok: true, text: `queued ${id} for ${args.assigned}: ${args.title}`, data: { id } };
   },
 });

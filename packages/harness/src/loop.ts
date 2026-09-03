@@ -4,7 +4,7 @@ import {
   type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
   readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
   loadGates, gatesFor, criteriaFor, gateAssignee, type GateTable,
-  loadOrg, isLead, teamOf,
+  loadOrg, isLead, teamOf, leadOf,
 } from '@cubicle/core';
 import { NoModelAvailableError, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -215,7 +215,14 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
 
   /** Create the review job for one gate of `parent`. */
   const enqueueGate = (gate: string, parent: JobFrontmatter, result: JobResult): void => {
-    const assignee = gateAssignee(gate, parent);
+    let assignee = gateAssignee(gate, parent);
+    // The named assignee may have no active worker (role fired/deactivated, or a `for`/owner_role naming an
+    // unknown role): fall back to its lead so the parent never sits in_review forever (F1).
+    if (!org.roles[assignee]) {
+      const fallback = leadOf(org, assignee) ?? (gate === 'requester.review' ? (leadOf(org, parent.owner_role ?? '') ?? 'ceo') : 'ceo');
+      events.emit({ type: 'daemon.warning', agent: roleId, job: parent.id, payload: { where: 'enqueueGate', message: `gate ${gate} assignee "${assignee}" has no active worker; reassigned to ${fallback}` } });
+      assignee = fallback;
+    }
     const criteria = criteriaFor(gates, parent.type);
     deps.scheduler.enqueue({
       type: gate, title: `${gate === 'coo.verify' ? 'Verify' : 'Review'}: ${parent.title}`, assigned: assignee, priority: 4, parent: parent.id, links: [`[[${parent.id}]]`], privacy: parent.privacy,

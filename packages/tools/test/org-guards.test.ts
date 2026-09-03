@@ -36,6 +36,11 @@ describe('scheduler.request through the org (spec §2)', () => {
     expect(ok.ok).toBe(true); expect(readJob(vault, (ok.data as { id: string }).id)!.data.for).toBe('head_of_growth');
     expect((await call('scheduler.request', 'engineer', { type: 'research', title: 'X', assigned: 'research_analyst', goal: 'g' })).ok).toBe(false);
   });
+  it('`for` naming a team id (or any non-role string) instead of an active role is refused (F1)', async () => {
+    const r = await call('scheduler.request', 'head_of_growth', { type: 'research', title: 'Channels', assigned: 'research_analyst', goal: 'g', done_when: 'report', for: 'engineering' });
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/for must be an active role id/);
+  });
   it('reprioritize is scoped to the caller\'s team unless CEO', async () => {
     const g = createJob(vault, { type: 'growth.post', title: 'p', assigned: 'head_of_growth', goal: 'g', team: 'growth' }, 'ceo');
     expect((await call('scheduler.request', 'cto', { title: '-', assigned: 'engineer', goal: '-', reprioritize: { job: g, priority: 1 } })).ok).toBe(false);

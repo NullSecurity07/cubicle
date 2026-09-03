@@ -69,4 +69,14 @@ describe('review gates (spec §3)', () => {
     await runJob(deps(finishing({ status: 'failed', summary: 'could not run the build again', blockers: ['docker down'] })), qa.id);
     expect(readJob(vault, id)!.data.status).toBe('failed');
   });
+  it('a gate assignee with no active worker falls back to its lead, with a warning (F1)', async () => {
+    const id = createJob(vault, { type: 'engineer.ship', title: 'Build', assigned: 'engineer', goal: 'g', team: 'engineering', owner_role: 'cto' }, 'cto');
+    // Deactivate QA's charter directly (still a Teams/engineering.md member, unlike a fire) so the qa.review
+    // gate about to be enqueued names a role with no active worker.
+    vault.updateNote('Roles/qa.md', (n) => ({ data: { ...n.data, active: false }, body: n.body }), 'daemon');
+    await runJob(deps(finishing({ status: 'done', summary: 'built' })), id);
+    const qa = listJobs(vault).find((j) => j.type === 'qa.review')!;
+    expect(qa.assigned).toBe('cto'); // qa's lead
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => /qa\.review/.test(String(e.payload.message)) && /cto/.test(String(e.payload.message)))).toBe(true);
+  });
 });
