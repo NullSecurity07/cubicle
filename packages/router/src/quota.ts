@@ -13,8 +13,9 @@ export interface QuotaStatus {
 }
 
 /**
- * Sliding-window quota accounting over the `quota_calls` table, plus a `cooling_until` mark per
- * provider+model set from 429 responses. Windows: rpm/tpm = last 60 s, rpd/tpd = last 24 h.
+ * Quota accounting over the `quota_calls` table, plus a `cooling_until` mark per provider+model set
+ * from 429 responses. Windows: rpm/tpm are a sliding last-60s window; rpd/tpd are a calendar-day window
+ * that resets at midnight in the provider's `day_reset_tz` (see `dayStart`), not a rolling 24h lookback.
  */
 export class QuotaTracker {
   constructor(private db: Db, private now: () => Date = () => new Date()) {}

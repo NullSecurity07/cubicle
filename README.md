@@ -24,7 +24,7 @@ pnpm cubicle start ~/Vaults/Cubicle                      # daemon; prints the of
 pnpm cubicle open ~/Vaults/Cubicle                       # launch the office in your browser
 ```
 
-In the office, click the CEO cabin screen and type your idea (or "surprise me"). Or, in Obsidian, create a note in `00 Inbox/`:
+In the office, click the CEO cabin screen — on a fresh company it asks "What company will you start today?" — and type your idea, or click "Surprise me". Or, in Obsidian, create a note in `00 Inbox/`:
 
 ```markdown
 ---
@@ -49,7 +49,7 @@ Tray app (Electron): `pnpm --filter @cubicle/app start` — start/stop the daemo
 |---|---|
 | talk to the CEO | cabin chat in the office, or a `kind: message` note in `00 Inbox/` |
 | approve or reject something | set `approved: true` / `false` on the proposal note in `00 Inbox/` (the daemon acts on the next tick) |
-| change the brand | edit `Brand/name.md`, `palette.md`, `voice.md` — the Engineer reconciles the site on the next heartbeat |
+| change the brand | edit `Brand/name.md`, `palette.md`, `voice.md`, `logo.png` (scaffolded as a placeholder on `cubicle init`) — the Engineer reconciles the site on the next heartbeat |
 | edit the site yourself | edit anything under `Site/`; the Engineer never reverts your edits and asks you when they collide |
 | add / cancel / reprioritise a job | copy `Jobs/_template.md`; set `status: cancelled`; change `priority` |
 | pause a job | set `status: blocked` (no `blocked_on`) |
@@ -87,6 +87,8 @@ cubicle chat [--tier t] <prompt>     one completion through the cascade (debug)
 
 The company is a real org, not a flat list of roles: teams (`Teams/<team>.md`), leads, review gates (`config/gates.yaml`), a Critic who premortems the plan, and a Research Analyst who writes ADRs and research notes. Planning is two levels — the CEO writes objectives per team, the Critic passes or returns them once, then each lead turns their team's objective into up to four jobs with a "Done when". A job counts as accepted only once it clears its gate (QA then the COO for engineering, the requester for research). See [CHECKPOINT-C.md](CHECKPOINT-C.md) for the full picture, how to open the **Org** drawer in the office, and how to reorganize a team through a `reorg` proposal.
 
+Colleagues ask each other questions with `colleague.message(kind: question)`; asking creates a `colleague.answer` job for the recipient so the question is real, tracked work, not a fire-and-forget message. If nobody answers within two heartbeat intervals, the question escalates to the CEO: the asker's job is unblocked, a `colleague.answer` job is created for the CEO, and `Messages/ceo.md` gets a handoff note naming the asker, the recipient and the question.
+
 ## Tests and acceptance
 
 ```bash
@@ -94,7 +96,7 @@ pnpm -r test                 # unit + integration (offline: mocks, local servers
 pnpm test:kill9              # kill -9 mid-job → resume, no duplicate side effects
 pnpm test:sleep              # SIGTERM and PrepareForSleep → checkpoint + exit < 5 s → resume
 pnpm test:replay             # close viewer, browse, reopen → replay shows frames on the billboard
-pnpm test:acceptance         # tagged spec §14 cases
+pnpm test:acceptance         # tagged spec §14 cases (tests 1–11)
 scripts/acceptance-all.sh    # everything above on a fresh clone
 ```
 
