@@ -35,7 +35,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | field | type | notes |
 |---|---|---|
 | `id` | string |  |
-| `type` | string |  |
+| `type` | string | known types: `engineer.ship`, `growth.outreach`, `growth.post`, `growth.seo`, `coo.verify`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `research`, `custom`, `team.plan`, `critic.premortem`, `qa.review`, `company.plan`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`); each has a `config/gates.yaml` entry |
 | `title` | string |  |
 | `assigned` | string |  |
 | `status` | `queued` \| `running` \| `blocked` \| `in_review` \| `done` \| `failed` \| `cancelled` = `"queued"` | you may set `cancelled`; `blocked` without `blocked_on` = paused by you; `in_review` = the job's own work is done but it still owes a gate from `config/gates.yaml` |
