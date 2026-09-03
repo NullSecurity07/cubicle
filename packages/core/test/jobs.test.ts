@@ -62,6 +62,14 @@ describe('owner-created job notes (spec §11)', () => {
     expect(vault.currentSha('Jobs/mine.md')).toBe(sha);
   });
 
+  it('skips underscore-prefixed notes in both listJobs and readJob', () => {
+    vault.writeText('Jobs/_urgent.md', jobTemplate('Draft'), 'owner');
+    const before = vault.currentSha('Jobs/_urgent.md');
+
+    expect(listJobs(vault).some((j) => j.title === 'Draft')).toBe(false);
+    expect(readJob(vault, '_urgent')?.data.id).toBe('job_REPLACE');
+    expect(vault.currentSha('Jobs/_urgent.md')).toBe(before);
+  });
   it('never rewrites the template or the generated queue note', () => {
     const before = vault.currentSha('Jobs/_template.md');
 
