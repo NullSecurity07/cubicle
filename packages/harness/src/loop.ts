@@ -4,6 +4,7 @@ import {
   type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
   readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
   loadGates, gatesFor, criteriaFor, gateAssignee, type GateTable,
+  loadOrg, isLead, teamOf,
 } from '@cubicle/core';
 import { NoModelAvailableError, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -54,6 +55,7 @@ export type JobOutcome =
   | { status: 'requeued'; attempt: number };
 
 const DEFAULT_MAX_STEPS = 40;
+const DEFAULT_MEMBER_MAX_STEPS = 25;
 const DEFAULT_LOCAL_MAX_STEPS = 15;
 
 export function observationsPath(vault: Vault, jobId: string): string {
@@ -122,11 +124,13 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   const role = RoleSchema.parse(roleNote.data);
   const roleBody = roleNote.body;
   const roleId = role.role;
+  const org = loadOrg(vault);
 
   const constitution = vault.constitution();
   const privacy: 'cloud' | 'local' = constitution.pii_local_only && (job.type === 'growth.outreach' || /Customers\//.test(jobNote.body) || role.tools.some((t) => t.startsWith('email.'))) ? 'local' : job.privacy;
   const routeReq: RouteRequest = { tier: role.model_tier, needsTools: true, privacy, roleId };
-  const maxSteps = privacy === 'local' || role.model_tier === 'local' ? (deps.localMaxSteps ?? DEFAULT_LOCAL_MAX_STEPS) : (deps.maxSteps ?? DEFAULT_MAX_STEPS);
+  const isLeadOrCeo = isLead(org, roleId) || roleId === 'ceo';
+  const maxSteps = privacy === 'local' || role.model_tier === 'local' ? (deps.localMaxSteps ?? DEFAULT_LOCAL_MAX_STEPS) : (deps.maxSteps ?? (isLeadOrCeo ? DEFAULT_MAX_STEPS : DEFAULT_MEMBER_MAX_STEPS));
   const promptBudget = deps.llm.promptBudget?.(routeReq) ?? 6000;
 
   const memoryApi: MemoryApi | undefined = deps.memory ? { search: (q, k, dirs) => deps.memory!.search(q, k, dirs), indexFile: (rel) => deps.memory!.indexFile(rel).then(() => undefined) } : undefined;
@@ -197,10 +201,12 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       }
     }
     // Lessons loop (spec §9.1): every reported lesson lands in Memory/lessons.md, one line, deduplicated per job.
+    // Each line is tagged with its team so assembleContext can filter out other teams' lessons.
     const lessons = (result.lessons ?? []).map((l) => l.trim()).filter(Boolean);
     if (lessons.length) {
+      const teamTag = job.team ?? teamOf(org, roleId)?.id ?? 'company';
       const existing = vault.readTextOrNull('Memory/lessons.md') ?? '# Lessons\n';
-      const lines = lessons.filter((l) => !existing.includes(`[[${jobId}]] ${l}`)).map((l) => `- [${nowIso().slice(0, 10)}] [[${jobId}]] ${l} (${roleId})`);
+      const lines = lessons.filter((l) => !existing.includes(`[[${jobId}]] ${l}`)).map((l) => `- [${nowIso().slice(0, 10)}] [[${jobId}]] ${l} (${roleId}) #team:${teamTag}`);
       if (lines.length) vault.appendText('Memory/lessons.md', lines.join('\n') + '\n', roleId, { job: jobId });
     }
     await client.close();
@@ -342,7 +348,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     ].filter(Boolean).join('\n\n');
     const messages = await assembleContext({
       vault, role, roleBody, job, jobBody: jobNote.body, observations, memory: deps.memory, maxPromptTokens: promptBudget,
-      ownerEdits: ownerEditCache.list, summarize: deps.summarize, maxSteps,
+      ownerEdits: ownerEditCache.list, summarize: deps.summarize, maxSteps, org, gates,
       extraSystem: extraSystem || undefined,
     });
     events.emit({ type: 'agent.thinking', agent: roleId, job: jobId, payload: { step } });

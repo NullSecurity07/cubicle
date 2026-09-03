@@ -3,7 +3,7 @@ import { cosine } from '@cubicle/router';
 
 export type EmbedFn = (texts: string[]) => Promise<number[][]>;
 
-export const MEMORY_DIRS = ['Memory', 'Skills', 'Decisions'];
+export const MEMORY_DIRS = ['Memory', 'Skills', 'Decisions', 'Docs'];
 
 /** Split markdown into ~`size`-char chunks on paragraph boundaries. */
 export function chunkText(text: string, size = 900): string[] {

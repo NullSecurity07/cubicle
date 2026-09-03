@@ -1,4 +1,7 @@
-import { parseNote, RoleFrontmatter as RoleSchema, type Vault, type RoleFrontmatter, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
+import {
+  parseNote, RoleFrontmatter as RoleSchema, type Vault, type RoleFrontmatter, type JobFrontmatter, type CubicleEvent,
+  loadOrg, teamOf, leadOf, isLead, reportsOf, can, listJobs, loadGates, gatesFor, criteriaFor, type Org, type GateTable,
+} from '@cubicle/core';
 import { estimateTokens, type ChatMessage } from '@cubicle/router';
 import type { MemoryIndex } from './memory.js';
 
@@ -27,6 +30,8 @@ export interface ContextInput {
   summarize?: (text: string) => Promise<string>;
   extraSystem?: string;
   maxSteps?: number;
+  org?: Org;
+  gates?: GateTable;
 }
 
 function clip(s: string, max: number): string {
@@ -49,29 +54,53 @@ export async function assembleContext(inp: ContextInput): Promise<ChatMessage[]>
   const ownerEdits = (inp.ownerEdits ?? []).map((e) => `- ${String(e.payload.path)}${e.payload.deleted ? ' (deleted)' : ''}`);
   const ownerBlock = ownerEdits.length ? `The owner edited these files since the last cycle; treat them as instructions:\n${[...new Set(ownerEdits)].join('\n')}` : '';
 
+  const role = inp.role;
+  const toolList = role.tools.join(', ');
+
+  const org = inp.org ?? loadOrg(v);
+  const gates = inp.gates ?? loadGates();
+  const team = teamOf(org, role.role);
 
   let memoryBlock = '';
   if (inp.memory && inp.memory.count() > 0) {
     const q = `${inp.job.title}\n${inp.jobBody.slice(0, 600)}`;
-    const hits = await inp.memory.search(q, 5).catch(() => []);
+    const hits = (await inp.memory.search(q, 5).catch(() => []))
+      .filter((h) => !/#team:(\w+)/.test(h.text) || h.text.includes(`#team:${team?.id}`));
     if (hits.length) memoryBlock = hits.map((h) => `### ${h.path} (relevance ${h.score.toFixed(2)})\n${clip(h.text, 900)}`).join('\n\n');
   }
 
-  const role = inp.role;
-  const toolList = role.tools.join(', ');
+  const lead = leadOf(org, role.role);
+  const isLeadRole = isLead(org, role.role) || role.role === 'ceo';
+  const teammates = team ? [team.lead, ...team.members].filter((r) => r !== role.role) : [];
+  const disp = (r: string) => org.roles[r]?.display ?? r;
+  const teamBlock = team ? `# Your team\n${team.name} — ${team.mission}\nLead: ${lead === 'owner' ? 'the owner' : disp(lead ?? '')}. Teammates: ${teammates.map(disp).join(', ') || 'none'}.\n${isLeadRole ? `Your reports: ${reportsOf(org, role.role).map(disp).join(', ') || 'none'} — schedule work for them with scheduler.request (done_when required).` : `Ask ${disp(lead ?? 'ceo')} for anything outside the team; hand off only to a teammate.`}\nResearch: ${can(org, role.role, 'research_request') ? 'request it with scheduler.request(type: research, assigned: research_analyst, for: your role)' : 'ask your lead to request it'}.` : '';
+  const openWork = listJobs(v, { assigned: role.role, status: ['queued', 'blocked', 'in_review'] }).filter((j) => j.id !== inp.job.id).slice(0, 8);
+  const openBlock = openWork.length ? `# Your open work\n${openWork.map((j) => `- ${j.status} ${j.id}: ${j.title}`).join('\n')}\nDo not re-plan these; finish the current job.` : '';
+  const criteria = criteriaFor(gates, inp.job.type);
+  const criteriaBlock = criteria || inp.job.done_when ? `# What good looks like\n${criteria}${inp.job.done_when ? `\nDone when: ${inp.job.done_when}` : ''}${gatesFor(gates, inp.job.type).length ? `\nThis job is reviewed by: ${gatesFor(gates, inp.job.type).join(' then ')}.` : ''}` : '';
+  const findings = inp.jobBody.split('## Review findings')[1]?.split(/\n## /)[0]?.trim();
+  const findingsBlock = findings ? `The reviewer returned this job; address every finding before finishing again:\n${findings}` : '';
+  const personaBlock = role.persona ? `# Who you are\n${role.persona}` : '';
+
   const rules = [
     `You are ${role.display} (role id "${role.role}") at a small company run from the owner's laptop. Work only through tools. When the goal is met, blocked, or impossible, call \`finish\`.`,
     `Job ${inp.job.id} is at checkpoint step ${inp.job.checkpoint_step} of at most ${inp.maxSteps ?? 40}; be economical — one clear tool call per turn.`,
     `Never fabricate results; read before you write. Owner-owned files (Brand/, Roles/, constitution, preferences) can only be proposed, not written.`,
     `Tools you may use: ${toolList}.`,
-  ].join('\n');
+    !isLeadRole && inp.job.checkpoint_step === 0 ? 'Before your first tool call, plan your next three steps in one line, then act.' : '',
+  ].filter(Boolean).join('\n');
 
   const blocks: { key: string; priority: number; text: string }[] = [
     { key: 'constitution', priority: 100, text: `# Constitution (hard rules, verbatim)\n${constitution}` },
     { key: 'charter', priority: 95, text: `# Your charter\n${inp.roleBody}` },
+    { key: 'persona', priority: 94, text: personaBlock },
     { key: 'rules', priority: 99, text: rules },
+    { key: 'findings', priority: 89, text: findingsBlock },
+    { key: 'criteria', priority: 86, text: criteriaBlock },
+    { key: 'team', priority: 85, text: teamBlock },
     { key: 'prefs', priority: 70, text: prefs ? `# Owner preferences\n${prefs}` : '' },
     { key: 'plan', priority: 60, text: plan ? `# Current plan (Plans/plan.md)\n${plan}` : '' },
+    { key: 'openwork', priority: 55, text: openBlock },
     { key: 'owner', priority: 90, text: ownerBlock },
     { key: 'memory', priority: 40, text: memoryBlock ? `# Relevant memory (skills, lessons, decisions)\n${memoryBlock}` : '' },
     { key: 'extra', priority: 80, text: inp.extraSystem ?? '' },
