@@ -5,15 +5,16 @@ export type Mood = 'neutral' | 'happy' | 'worried' | 'puzzled' | 'asleep' | 'thi
 export type Emote = '!' | '?' | 'idea' | 'zzz' | 'sweat' | 'heart' | 'cheer' | 'clipboard' | 'coffee' | 'wave';
 export type BubbleKind = 'speech' | 'thought' | 'action';
 export interface Bubble { text: string; until: number; kind: BubbleKind }
-export interface AgentView { role: string; display: string; sprite: string; desk: string; active: boolean; state: AgentState; tool: ToolIcon; job: string | null; bubble: Bubble | null; target: string | null; badge: 'error' | 'blocked' | null; /** face drawn on the sprite; `moodUntil` null = until the next change */ mood: Mood; moodUntil: number | null; /** pixel icon above the head */ emote: { kind: Emote; until: number } | null; /** when the agent last did anything (drives the asleep mood) */ idleSince: number | null }
-export interface JobView { id: string; type: string; title: string; assigned: string; status: string; priority: number; checkpoint_step: number; updated: string }
+export interface AgentView { role: string; display: string; sprite: string; desk: string; active: boolean; state: AgentState; tool: ToolIcon; job: string | null; bubble: Bubble | null; target: string | null; badge: 'error' | 'blocked' | null; /** face drawn on the sprite; `moodUntil` null = until the next change */ mood: Mood; moodUntil: number | null; /** pixel icon above the head */ emote: { kind: Emote; until: number } | null; /** when the agent last did anything (drives the asleep mood) */ idleSince: number | null; /** persona job title from the role charter, e.g. "Chief Technology Officer" */ title?: string }
+export interface JobView { id: string; type: string; title: string; assigned: string; status: string; priority: number; checkpoint_step: number; updated: string; team?: string }
+export interface TeamView { id: string; name: string; lead: string; members: string[]; mission: string }
 export interface SurfaceView { streamKind: 'browser' | 'terminal' | 'markdown' | 'chart' | 'iframe'; streamId: string; lastFrame?: string; active: boolean; text?: string }
 export interface QuotaView { provider: string; model: string; rpm_used: number; rpd_used: number; tpm_used: number; cooling_until: string | null; limits: { rpm: number; rpd: number; tpm: number } }
 export interface CubicleEvent { id?: number; ts: string; type: string; agent: string | null; job: string | null; payload: Record<string, unknown> }
 export interface ChatMsg { ts: string; from: 'ceo' | 'you'; text: string }
 export interface BrandView { name: string; tagline: string; url: string }
 export interface InboxRow { id: string; kind: string; title: string; path: string; created: string }
-export interface Snapshot { op: 'snapshot'; at: string; roles: { role: string; display: string; sprite: string; desk: string; active: boolean }[]; jobs: JobView[]; surfaces: { streamKind: string; streamId: string; lastFrame?: string; active: boolean }[]; quota: QuotaView[]; latestRun: { path: string; body: string } | null; plan: string; pendingProposals: number; brand?: BrandView; inbox?: InboxRow[]; chat?: ChatMsg[] }
+export interface Snapshot { op: 'snapshot'; at: string; roles: { role: string; display: string; sprite: string; desk: string; active: boolean; title?: string }[]; jobs: JobView[]; surfaces: { streamKind: string; streamId: string; lastFrame?: string; active: boolean }[]; quota: QuotaView[]; latestRun: { path: string; body: string } | null; plan: string; pendingProposals: number; brand?: BrandView; inbox?: InboxRow[]; chat?: ChatMsg[]; teams?: TeamView[] }
 
 export interface State {
   connected: boolean;
@@ -27,6 +28,7 @@ export interface State {
   plan: string;
   pendingProposals: number;
   brand: BrandView;
+  teams: TeamView[];               // Teams/*.md — the org chart
   inbox: InboxRow[];              // proposals awaiting the owner (from the snapshot)
   chat: ChatMsg[];                // the CEO cabin thread (snapshot history + live events)
   terminal: string[];              // last shell output lines
@@ -40,7 +42,7 @@ export interface State {
   staleSnapshot?: boolean;
 }
 
-export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, frames: {}, lastEventTs: null, deploys: [] });
+export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, frames: {}, lastEventTs: null, deploys: [] });
 
 export function toolIcon(tool: string): ToolIcon {
   if (tool.startsWith('browser.') || tool === 'social.post' || tool === 'http.fetch') return 'browser';
@@ -71,24 +73,26 @@ function mergeChat(fromSnapshot: ChatMsg[], local: ChatMsg[]): ChatMsg[] {
 
 export function applySnapshot(s: State, snap: Snapshot): State {
   const agents: Record<string, AgentView> = {};
-  const runningBy = new Map(snap.jobs.filter((j) => j.status === 'running').map((j) => [j.assigned, j.id]));
-  for (const r of snap.roles) {
+  const roles = Array.isArray(snap.roles) ? snap.roles : [];
+  const jobList = Array.isArray(snap.jobs) ? snap.jobs : [];
+  const runningBy = new Map(jobList.filter((j) => j.status === 'running').map((j) => [j.assigned, j.id]));
+  for (const r of roles) {
     const prev = s.agents[r.role];
     const stillRunning = prev?.job && runningBy.get(r.role) === prev.job;
     // A snapshot is ground truth: keep in-flight pose only for a job that is still running.
-    agents[r.role] = { role: r.role, display: r.display, sprite: r.sprite, desk: r.desk, active: r.active, state: !r.active ? 'offline' : stillRunning ? prev!.state : 'idle_at_desk', tool: stillRunning ? prev!.tool : null, job: stillRunning ? prev!.job : null, bubble: prev?.bubble ?? null, target: stillRunning ? prev!.target : null, badge: prev?.badge ?? null, mood: !r.active ? 'asleep' : stillRunning ? prev!.mood : prev?.mood ?? 'neutral', moodUntil: prev?.moodUntil ?? null, emote: prev?.emote ?? null, idleSince: prev?.idleSince ?? Date.now() };
+    agents[r.role] = { role: r.role, display: r.display, sprite: r.sprite, desk: r.desk, active: r.active, title: r.title, state: !r.active ? 'offline' : stillRunning ? prev!.state : 'idle_at_desk', tool: stillRunning ? prev!.tool : null, job: stillRunning ? prev!.job : null, bubble: prev?.bubble ?? null, target: stillRunning ? prev!.target : null, badge: prev?.badge ?? null, mood: !r.active ? 'asleep' : stillRunning ? prev!.mood : prev?.mood ?? 'neutral', moodUntil: prev?.moodUntil ?? null, emote: prev?.emote ?? null, idleSince: prev?.idleSince ?? Date.now() };
   }
   const jobs: Record<string, JobView> = {};
-  for (const j of snap.jobs) jobs[j.id] = j;
+  for (const j of jobList) jobs[j.id] = j;
   // running jobs at snapshot time → their role is working
-  for (const j of snap.jobs) if (j.status === 'running' && agents[j.assigned]) { agents[j.assigned].state = 'working'; agents[j.assigned].job = j.id; }
-  for (const j of snap.jobs) if (j.status === 'blocked' && agents[j.assigned] && agents[j.assigned].state !== 'working') agents[j.assigned].badge = 'blocked';
+  for (const j of jobList) if (j.status === 'running' && agents[j.assigned]) { agents[j.assigned].state = 'working'; agents[j.assigned].job = j.id; }
+  for (const j of jobList) if (j.status === 'blocked' && agents[j.assigned] && agents[j.assigned].state !== 'working') agents[j.assigned].badge = 'blocked';
   // Surfaces: only the sessions the daemon still knows about (bounded), newest first.
   const surfaces: Record<string, SurfaceView> = {};
-  for (const su of snap.surfaces) surfaces[su.streamId] = { streamKind: su.streamKind as SurfaceView['streamKind'], streamId: su.streamId, lastFrame: su.lastFrame, active: su.active };
+  for (const su of Array.isArray(snap.surfaces) ? snap.surfaces : []) surfaces[su.streamId] = { streamKind: su.streamKind as SurfaceView['streamKind'], streamId: su.streamId, lastFrame: su.lastFrame, active: su.active };
   const frames: State['frames'] = {};
   for (const id of Object.keys(surfaces)) if (s.frames[id]) frames[id] = s.frames[id];
-  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, inbox: snap.inbox ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, staleSnapshot: false };
+  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, teams: snap.teams ?? [], inbox: snap.inbox ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, staleSnapshot: false };
 }
 
 const BUBBLE_MS = 6000;
@@ -146,7 +150,13 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'agent.tool_result': { const ag = a(e.agent); if (ag) { if (ag.state !== 'walking' || !ag.target) ag.state = 'working'; if (p.ok === false) { feel(ag, 'worried', 3000); emote(ag, 'sweat', 3000); } if (ag.bubble?.kind === 'action') ag.bubble = null; } break; }
     case 'shell.output': st.terminal = [...st.terminal.slice(-300), String(p.text ?? '')]; break;
     case 'agent.spoke': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'speech', text: `→ ${String(p.to)}: ${String(p.text ?? '').slice(0, 120)}`, until: nowMs + BUBBLE_MS }; if (ag.state !== 'walking') ag.state = 'talking'; if (ag.mood === 'thinking') feel(ag, 'neutral', null); } if (p.to === 'owner') { st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `CEO → you: ${String(p.text ?? '')}` }]; if (e.agent === 'ceo') st.chat = [...st.chat.slice(-200), { ts: e.ts, from: 'ceo', text: String(p.text ?? '') }]; } break; }
-    case 'job.checkpoint': break;
+    case 'job.checkpoint': { if (p.in_review) { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'in_review', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.job = null; ag.tool = null; ag.target = null; feel(ag, 'neutral', null); } } break; }
+    case 'review.returned': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'queued', updated: e.ts }; const author = a(j?.assigned); if (author) { feel(author, 'worried', 8000); emote(author, 'sweat', 4000); } const rev = a(e.agent); if (rev) { rev.bubble = { kind: 'speech', text: `→ ${j?.assigned ?? 'author'}: ${String((p.findings as string[] | undefined)?.[0] ?? 'please fix')}`.slice(0, 140), until: nowMs + BUBBLE_MS }; if (rev.state !== 'walking') rev.state = 'talking'; } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${String(p.gate)} returned ${String(e.job)}` }]; break; }
+    case 'review.passed': { const rev = a(e.agent); if (rev) feel(rev, 'happy', 3000); break; }
+    case 'plan.vetoed': { const c = a('critic'); if (c) { emote(c, '!', 6000); feel(c, 'puzzled', 6000); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `the Critic returned the plan: ${String((p.findings as string[] | undefined)?.[0] ?? '')}` }]; break; }
+    case 'research.delivered': { const r = a(e.agent); if (r) { emote(r, 'idea', 5000); feel(r, 'happy'); } break; }
+    case 'team.planned': { const l = a(e.agent); if (l) feel(l, 'happy', 3000); st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${String(p.team)} planned ${(p.jobs as string[] | undefined)?.length ?? 0} job(s)` }]; break; }
+    case 'org.changed': st.staleSnapshot = true; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `org changed (${String(p.reason)})` }]; break;
     case 'job.blocked': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'blocked', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.badge = 'blocked'; ag.bubble = { kind: 'thought', text: String(p.reason ?? 'blocked'), until: nowMs + BUBBLE_MS * 2 }; ag.target = null; ag.tool = null; feel(ag, 'puzzled', null); emote(ag, '?', BUBBLE_MS * 2); } break; }
     case 'job.done': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'done', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'walking'; ag.target = null; ag.tool = null; ag.job = null; ag.badge = null; ag.bubble = null; feel(ag, 'happy'); emote(ag, 'cheer', 3000); } break; }
     case 'job.failed': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: p.requeued ? 'queued' : 'failed', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.badge = 'error'; ag.target = null; ag.tool = null; ag.job = null; ag.bubble = null; feel(ag, 'worried', 10000); emote(ag, 'sweat', 6000); } const coo = a('coo'); if (coo && e.agent !== 'coo') { coo.target = `desk:${e.agent}`; coo.state = 'walking'; emote(coo, 'clipboard', 20000); } break; }

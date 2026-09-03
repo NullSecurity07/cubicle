@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'node:crypto';
-import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, type CubicleEvent } from '@cubicle/core';
+import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, type CubicleEvent } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
 
 export interface WsDeps {
@@ -31,6 +31,8 @@ export interface Snapshot {
   inbox: { id: string; kind: string; title: string; path: string; created: string }[];
   /** Owner ↔ CEO conversation from 00 Inbox/ message notes (oldest first) — the cabin thread. */
   chat: { ts: string; from: 'you' | 'ceo'; text: string }[];
+  /** Teams/*.md — the org chart in the Org drawer. */
+  teams: { id: string; name: string; lead: string; members: string[]; mission: string }[];
 }
 
 export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
@@ -54,6 +56,8 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
   }
   const brandNote = parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data as Record<string, unknown>;
   const brand = { name: String(brandNote.name ?? ''), tagline: String(brandNote.tagline ?? ''), url: String(brandNote.url ?? '') };
+  const org = loadOrg(vault);
+  const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission }));
   return {
     op: 'snapshot', at: nowIso(), roles, jobs: listJobs(vault),
     surfaces: sessions.map((s) => ({ streamKind: 'browser', streamId: s.session_id, lastFrame: s.path, active: activeSessions.has(s.session_id) })),
@@ -61,7 +65,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
     latestRun: latest ? { path: latest, body: vault.readTextOrNull(latest) ?? '' } : null,
     plan: vault.readTextOrNull('Plans/plan.md') ?? '',
     pendingProposals: inbox.length,
-    brand, inbox, chat,
+    brand, inbox, chat, teams,
   };
 }
 

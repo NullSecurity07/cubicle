@@ -20,8 +20,10 @@ export function obsidianUrl(vaultName: string, file: string): string {
 const KIND_LABEL: Record<string, string> = { spend: 'Spend', outbound_batch: 'Send batch', brand_change: 'Brand', charter_change: 'Charter', file_change: 'File change', hire: 'Hire', fire: 'Fire', message: 'Question' };
 export const kindLabel = (k: string): string => KIND_LABEL[k] ?? k.replace(/_/g, ' ');
 
-const DISPLAY: Record<string, string> = { ceo: 'CEO', cto: 'CTO', coo: 'COO', engineer: 'Engineer', growth: 'Growth' };
+const DISPLAY: Record<string, string> = { ceo: 'CEO', cto: 'CTO', coo: 'COO', engineer: 'Engineer', growth: 'Growth', head_of_growth: 'Head of Growth', tech_lead: 'Tech Lead', qa: 'QA', critic: 'Critic', research_analyst: 'Research' };
 const who = (s: State, role: string): string => s.agents[role]?.display ?? DISPLAY[role] ?? role;
+const roleTitle = (s: State, role: string): string => s.agents[role]?.title || role;
+const teamName = (s: State, id?: string): string => (id ? s.teams.find((t) => t.id === id)?.name ?? id : 'Unassigned');
 
 export function fmtTime(ts: string): string {
   const d = new Date(ts);
@@ -45,8 +47,20 @@ function row(o: { left?: string; title: string; small?: string; right?: string; 
   return o.open ? `<button class="row click" data-open="${esc(o.open)}">${inner}</button>` : `<div class="row">${inner}</div>`;
 }
 
-const jobRow = (j: JobView, s: State): string => row({ left: chip(j.status), title: j.title, small: `${who(s, j.assigned)} · ${j.type} · step ${j.checkpoint_step}`, right: esc(fmtWhen(j.updated)), open: `job:${j.id}` });
+const statusChip = (status: string): string => (status === 'in_review' ? chip('in_review', 'in review') : chip(status));
+const jobRow = (j: JobView, s: State): string => row({ left: statusChip(j.status), title: j.title, small: `${who(s, j.assigned)} · ${teamName(s, j.team)} · ${j.type} · step ${j.checkpoint_step}`, right: esc(fmtWhen(j.updated)), open: `job:${j.id}` });
 const byUpdated = (a: JobView, b: JobView): number => b.updated.localeCompare(a.updated);
+
+/** Section-per-team breakdown of a job list, ordered by state.teams then "Unassigned" last. */
+function byTeam(jobs: JobView[], s: State): string {
+  const order = [...s.teams.map((t) => t.id), ''];
+  const groups = new Map<string, JobView[]>();
+  for (const j of jobs) { const key = j.team ?? ''; const g = groups.get(key) ?? []; g.push(j); groups.set(key, g); }
+  return [...groups.keys()]
+    .sort((x, y) => order.indexOf(x) - order.indexOf(y))
+    .map((k) => section(teamName(s, k || undefined), rows(groups.get(k)!.map((j) => jobRow(j, s))), groups.get(k)!.length))
+    .join('');
+}
 
 /** Title of a Runs/ brief from its path (Runs/2026-09-03-1016.md → "Brief · 3 Sep 10:16"). */
 export function briefTitle(path: string): string {
@@ -62,15 +76,26 @@ export function viewFor(kind: string, s: State, ctx: Ctx): View {
       ? { mode: 'doc', title: briefTitle(s.latestRun.path), sub: s.latestRun.path, html: md(s.latestRun.body), copy: s.latestRun.body, link: obsidianUrl(ctx.vaultName, s.latestRun.path) }
       : { mode: 'doc', title: 'Latest brief', html: `<p class="muted">No brief yet. One is written after every heartbeat.</p>` };
     case 'noticeboard': {
-      const open = Object.values(s.jobs).filter((j) => ['queued', 'running', 'blocked'].includes(j.status)).sort((a, b) => a.priority - b.priority || byUpdated(a, b));
-      return { mode: 'drawer', title: 'Queue', sub: `${open.length} open`, html: open.length ? rows(open.map((j) => jobRow(j, s))) : empty('Nothing queued. The next heartbeat plans new work.') };
+      const open = Object.values(s.jobs).filter((j) => ['queued', 'running', 'blocked', 'in_review'].includes(j.status)).sort((a, b) => a.priority - b.priority || byUpdated(a, b));
+      return { mode: 'drawer', title: 'Queue', sub: `${open.length} open`, html: open.length ? byTeam(open, s) : empty('Nothing queued. The next heartbeat plans new work.') };
     }
     case 'vault': {
       const all = Object.values(s.jobs).sort(byUpdated);
-      const active = all.filter((j) => ['queued', 'running', 'blocked'].includes(j.status));
-      const done = all.filter((j) => !['queued', 'running', 'blocked'].includes(j.status)).slice(0, 30);
+      const active = all.filter((j) => ['queued', 'running', 'blocked', 'in_review'].includes(j.status));
+      const done = all.filter((j) => !['queued', 'running', 'blocked', 'in_review'].includes(j.status)).slice(0, 30);
       const link = ctx.vaultName ? `<p class="hintline"><a href="obsidian://open?vault=${encodeURIComponent(ctx.vaultName)}">Open the vault in Obsidian</a></p>` : `<p class="hintline">Add <code>?vault=&lt;name&gt;</code> to this URL to enable Obsidian links.</p>`;
-      return { mode: 'drawer', title: 'Vault', sub: `${all.length} jobs`, html: section('In progress', active.length ? rows(active.map((j) => jobRow(j, s))) : empty('Nothing running right now.'), active.length) + section('Finished', done.length ? rows(done.map((j) => jobRow(j, s))) : empty('No finished jobs yet.'), done.length) + link };
+      return { mode: 'drawer', title: 'Vault', sub: `${all.length} jobs`, html: section('In progress', active.length ? byTeam(active, s) : empty('Nothing running right now.'), active.length) + section('Finished', done.length ? byTeam(done, s) : empty('No finished jobs yet.'), done.length) + link };
+    }
+    case 'org': {
+      if (!s.teams.length) return { mode: 'drawer', title: 'Org', html: empty('No teams yet. Start the daemon once to create the default org.') };
+      const jobList = Object.values(s.jobs);
+      const html = s.teams.map((t) => {
+        const openCount = jobList.filter((j) => j.team === t.id && ['queued', 'running', 'blocked', 'in_review'].includes(j.status)).length;
+        const leadRow = row({ left: chip('kind', 'Lead'), title: who(s, t.lead), small: t.mission, open: `agent:${t.lead}` });
+        const memberRows = t.members.map((m) => row({ title: who(s, m), small: roleTitle(s, m), open: `agent:${m}` }));
+        return section(t.name, rows([leadRow, ...memberRows]), `${openCount} open`);
+      }).join('');
+      return { mode: 'drawer', title: 'Org', sub: `${s.teams.length} teams`, html };
     }
     case 'postoffice': {
       const list = s.inbox.length ? rows(s.inbox.map((n) => row({ left: chip('kind', kindLabel(n.kind)), title: n.title, small: n.path.replace(/^00 Inbox\//, ''), right: ctx.vaultName ? `<a href="${esc(obsidianUrl(ctx.vaultName, n.path))}">Open</a>` : esc(fmtWhen(n.created)) }))) : empty('Nothing waiting for you.');

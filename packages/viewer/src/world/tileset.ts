@@ -39,7 +39,7 @@ export function makeTileset(scene: Phaser.Scene): void {
 
 /** Palette per role (deterministic for unknown roles from the name). */
 export function roleColor(role: string): number {
-  const known: Record<string, number> = { ceo: 0xf2c14e, cto: 0x4e9af2, engineer: 0x4ed3a3, growth: 0xf26b6b, coo: 0xb98ef2 };
+  const known: Record<string, number> = { ceo: 0xf2c14e, cto: 0x4e9af2, engineer: 0x4ed3a3, growth: 0xf26b6b, head_of_growth: 0xf26b6b, coo: 0xb98ef2 };
   if (known[role]) return known[role];
   let h = 0; for (const ch of role) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return Phaser.Display.Color.HSLToColor((h % 360) / 360, 0.55, 0.6).color;

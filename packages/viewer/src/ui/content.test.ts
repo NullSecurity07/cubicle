@@ -72,3 +72,19 @@ describe('drawer and document views', () => {
     expect(chatHtml(s)).toContain('surprise me');
   });
 });
+
+describe('org view (spec §6)', () => {
+  const withTeams = applySnapshot(emptyState(), { ...snap, roles: [...snap.roles, { role: 'cto', display: 'CTO', sprite: 'cto', desk: 'cubicle_1', active: true }], teams: [{ id: 'engineering', name: 'Engineering', lead: 'cto', members: ['engineer'], mission: 'Ship.' }], jobs: [{ ...snap.jobs[0], team: 'engineering' } as never] });
+  it('the Org drawer lists teams with lead and members as openable rows, with open-job counts', () => {
+    const v = viewFor('org', withTeams, ctx);
+    expect(v.mode).toBe('drawer');
+    expect(v.html).toContain('Engineering'); expect(v.html).toContain('data-open="agent:cto"'); expect(v.html).toContain('data-open="agent:engineer"');
+    expect(v.html).toMatch(/1 open/);
+    expect(viewFor('org', emptyState(), ctx).html).toContain('No teams yet');
+  });
+  it('queue rows are grouped by team and the in_review chip exists', () => {
+    const s2 = applySnapshot(emptyState(), { ...withTeams as never, jobs: [{ ...snap.jobs[0], team: 'engineering', status: 'in_review' } as never] } as never);
+    const html = viewFor('noticeboard', s2, ctx).html;
+    expect(html).toContain('Engineering'); expect(html).toContain('chip in_review');
+  });
+});

@@ -171,5 +171,17 @@ describe('critique 7-9 reducer fixes', () => {
       expect(actionVerb('finish', '')).toBe('wrapping up');
       expect(actionVerb('shell.run', 'not json at all but a very long command line that keeps going').length).toBeLessThanOrEqual(34);
     });
+
+    it('review, veto, research and team.planned events drive expressions', () => {
+      let s = applySnapshot(emptyState(), { ...snap, roles: [...snap.roles, { role: 'qa', display: 'QA', sprite: 'qa', desk: 'cubicle_5', active: true }, { role: 'critic', display: 'Critic', sprite: 'critic', desk: 'cubicle_9', active: true }, { role: 'research_analyst', display: 'Research', sprite: 'research_analyst', desk: 'cubicle_7', active: true }] });
+      s = applyEvent(s, ev('review.returned', 'qa', { gate: 'qa.review', findings: ['no title'] }), 1000);
+      expect(s.agents.growth.mood).toBe('worried'); expect(s.agents.qa.bubble).toMatchObject({ kind: 'speech', text: expect.stringContaining('no title') });
+      s = applyEvent(s, ev('plan.vetoed', 'critic', { findings: ['x'] }, null), 1000);
+      expect(s.agents.critic.emote?.kind).toBe('!');
+      s = applyEvent(s, ev('research.delivered', 'research_analyst', {}, 'job_1'), 1000);
+      expect(s.agents.research_analyst.emote?.kind).toBe('idea');
+      s = applyEvent(s, ev('job.checkpoint', 'growth', { in_review: 'qa.review' }), 1000);
+      expect(s.jobs.job_1.status).toBe('in_review');
+    });
   });
 });

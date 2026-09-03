@@ -191,6 +191,7 @@ describe('snapshot for the office', () => {
     expect(snap.pendingProposals).toBe(1);
     writeFileSync(path.join(dir, '00 Inbox/idea.md'), '---\nid: msg_idea\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-03T04:37:00.000Z\nanswered: true\n---\nA meal-planning site.\n\n## CEO\n\nGot it. I proposed **PlateReady**.\n');
     expect(buildSnapshot(vault).chat).toEqual([{ ts: '2026-09-03T04:37:00.000Z', from: 'you', text: 'A meal-planning site.' }, { ts: '2026-09-03T04:37:00.000Z', from: 'ceo', text: 'Got it. I proposed **PlateReady**.' }]);
+    expect(snap.teams.map((t) => t.id).sort()).toEqual(['engineering', 'growth', 'operations', 'research', 'strategy']);
     vault.close();
   });
 });

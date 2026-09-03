@@ -41,7 +41,7 @@ export function briefBits(body: string): { happened: string[]; needs: string[] }
   return { happened, needs };
 }
 
-const DISPLAY: Record<string, string> = { ceo: 'CEO', cto: 'CTO', coo: 'COO', engineer: 'Engineer', growth: 'Growth' };
+const DISPLAY: Record<string, string> = { ceo: 'CEO', cto: 'CTO', coo: 'COO', engineer: 'Engineer', growth: 'Growth', head_of_growth: 'Head of Growth', tech_lead: 'Tech Lead', qa: 'QA', critic: 'Critic', research_analyst: 'Research' };
 const who = (s: State, role: string): string => s.agents[role]?.display ?? DISPLAY[role] ?? role;
 
 export function headlineFor(kind: string, s: State): Headline {
