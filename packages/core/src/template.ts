@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { Vault } from './vault.js';
 import { autoCommit } from './git.js';
 import { listFilesRecursive, sha256, atomicWriteSync } from './fs.js';
+import { placeholderSquare } from './png.js';
+import { parseNote } from './frontmatter.js';
 
 /** Repo root, resolved from this file (works from src/ via tsx and from dist/). */
 export function repoRoot(): string {
@@ -40,9 +42,17 @@ export async function scaffoldVault(target: string, opts: { force?: boolean; mem
   }
   const envExample = path.join(repoRoot(), '.env.example');
   if (existsSync(envExample) && !existsSync(path.join(abs, '.env.example'))) cpSync(envExample, path.join(abs, '.env.example'));
+  const generated: string[] = [];
+  const logo = path.join(abs, 'Brand', 'logo.png');
+  if (!existsSync(logo)) {
+    const paletteFile = path.join(abs, 'Brand', 'palette.md');
+    const palette = (existsSync(paletteFile) ? parseNote(readFileSync(paletteFile, 'utf8')).data : {}) as { primary?: string; accent?: string };
+    atomicWriteSync(logo, placeholderSquare(64, palette.primary ?? '#1f2937', palette.accent ?? '#f59e0b'));
+    generated.push('Brand/logo.png');
+  }
 
   const vault = Vault.open(abs, { memory: opts.memoryDb });
-  for (const rel of files) {
+  for (const rel of [...files, ...generated]) {
     const p = path.join(abs, rel);
     if (!existsSync(p) || statSync(p).isDirectory()) continue;
     const buf = readFileSync(p);
@@ -51,7 +61,7 @@ export async function scaffoldVault(target: string, opts: { force?: boolean; mem
     vault.events.emit({ type: 'vault.wrote', agent: 'init', payload: { path: rel, sha, by: 'init' } });
   }
   const commit = await autoCommit(abs, 'cubicle: init vault');
-  return { vault, files, commit };
+  return { vault, files: [...files, ...generated], commit };
 }
 
 export { atomicWriteSync };

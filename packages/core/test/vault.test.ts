@@ -25,11 +25,22 @@ afterAll(() => {
 
 describe('scaffoldVault', () => {
   it('creates the vault tree, .cubicle, and an initial commit', async () => {
-    for (const p of ['00 Inbox', 'Brand/name.md', 'Plans/plan.md', 'Roles/ceo.md', 'Runs', 'Decisions', 'Customers/_suppression.md', 'Metrics/daily.md', 'Metrics/quota.md', 'Memory/constitution.md', 'Memory/owner_preferences.md', 'Memory/lessons.md', 'Skills', 'Experiments', 'Jobs/_template.md', 'Jobs/queue.md', 'Site', 'Meetings', 'Messages/ceo.md', '.cubicle/events', '.env.example', '.gitignore']) {
+    for (const p of ['00 Inbox', 'Brand/name.md', 'Brand/logo.png', 'Plans/plan.md', 'Roles/ceo.md', 'Runs', 'Decisions', 'Customers/_suppression.md', 'Metrics/daily.md', 'Metrics/quota.md', 'Memory/constitution.md', 'Memory/owner_preferences.md', 'Memory/lessons.md', 'Skills', 'Experiments', 'Jobs/_template.md', 'Jobs/queue.md', 'Site', 'Meetings', 'Messages/ceo.md', '.cubicle/events', '.env.example', '.gitignore']) {
       expect(existsSync(path.join(dir, p)), p).toBe(true);
     }
     expect(await lastCommitHash(dir)).toBeTruthy();
     expect(readFileSync(path.join(dir, '.gitignore'), 'utf8')).toContain('.cubicle/');
+  });
+  it('scaffolds a 64x64 Brand/logo.png placeholder', () => {
+    const png = readFileSync(path.join(dir, 'Brand', 'logo.png'));
+    expect([...png.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(png.subarray(12, 16).toString('latin1')).toBe('IHDR');
+    expect(png.readUInt32BE(16)).toBe(64); // width
+    expect(png.readUInt32BE(20)).toBe(64); // height
+    expect(png[24]).toBe(8); // bit depth
+    expect(png[25]).toBe(6); // colour type: RGBA
+    expect(vault.writtenSha('Brand/logo.png')).toBeTruthy();
+    expect(vault.isOwnerChanged('Brand/logo.png')).toBe(false);
   });
   it('records template files as written by init', () => {
     expect(vault.writtenSha('Roles/ceo.md')).toBeTruthy();
