@@ -1,7 +1,7 @@
 import {
   type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
-  loadOrg, expandProcess, childrenOf, rollup, JobResult,
+  loadOrg, expandProcess, childrenOf, JobResult,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -31,6 +31,24 @@ export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'me
 export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
 
 /**
+ * Every `### <team>` section in `Plans/plan.md`: its team id and its full body text (everything up to the next
+ * `### ` header or the end of the plan), trimmed. Splits on the header line instead of using a lazy
+ * `[\s\S]*?` + lookahead match (Task 9 review round 2: that lookahead was `(?=^### |\s*$)` — under the `m` flag,
+ * `\s*$` matches the end of ANY line, not just a real section boundary, so the old regex silently truncated
+ * every section to just its first line whenever a section had more than one line of content. This broke both
+ * `planIsSubstantive` below on multi-bullet sections and the goal text `team_plans` sends a lead — a second
+ * objective bullet, or a `process:` line after the first bullet, was silently dropped).
+ */
+export function parseObjectiveSections(plan: string): { team: string; text: string }[] {
+  return plan.split(/^### /m).slice(1).map((chunk) => {
+    const nl = chunk.indexOf('\n');
+    const team = (nl < 0 ? chunk : chunk.slice(0, nl)).trim();
+    const text = (nl < 0 ? '' : chunk.slice(nl + 1)).trim();
+    return { team, text };
+  }).filter((s) => /^\w+$/.test(s.team));
+}
+
+/**
  * True iff `Plans/plan.md` has at least one real objective, so the Critic step is worth running. A plan with no
  * `### <team>` sections at all is not substantive. Within each section, a bullet counts as real work unless it is
  * pure busywork ("Verify ..." / "Reconcile ..."); the plan is substantive iff ANY bullet in ANY section is real
@@ -39,9 +57,9 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
  * short-circuited to "skip" on the first verify/reconcile-only section it found).
  */
 export function planIsSubstantive(plan: string): boolean {
-  const sections = [...plan.matchAll(/^### \w+\n([\s\S]*?)(?=^### |\s*$)/gm)];
+  const sections = parseObjectiveSections(plan);
   if (!sections.length) return false;
-  return sections.some(([, body]) => body.split('\n').some((line) => {
+  return sections.some((s) => s.text.split('\n').some((line) => {
     const bullet = line.trim().match(/^-\s*(.+)/);
     return !!bullet && !/^(verify|reconcile)\b/i.test(bullet[1]);
   }));
@@ -49,9 +67,9 @@ export function planIsSubstantive(plan: string): boolean {
 
 /**
  * The id `team_plans` should (re-)block on: the first of `ids` whose status is not done/failed/cancelled, or the
- * last id if every one of them already looks finished (defensive — the caller only asks for this while
- * `rollup` still says "open", so that shouldn't happen). Always returning `ids[0]` regardless of its status
- * (Task 9 review finding 2) meant that once the first team.plan finished, `requeueUnblocked` would see its
+ * last id if every one of them already looks finished (defensive — the caller only asks for this while at least
+ * one of `state.teamPlanJobs` is still open, so that shouldn't happen). Always returning `ids[0]` regardless of
+ * its status (Task 9 review finding 2) meant that once the first team.plan finished, `requeueUnblocked` would see its
  * `blocked_on` target as satisfied on every dispatcher tick even while other team plans were still running,
  * busy-looping the heartbeat between `blocked` and `queued` until the slowest one finished.
  */
@@ -356,12 +374,15 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const org = loadOrg(vault);
         if (!state.teamPlanJobs) {
           const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
-          const sections = [...plan.matchAll(/^### (\w+)\n([\s\S]*?)(?=^### |\s*$)/gm)].map((m) => ({ team: m[1], text: m[2].trim() })).filter((s) => s.text);
+          const sections = parseObjectiveSections(plan).filter((s) => s.text);
           const ids: string[] = [];
           for (const s of sections) {
             const t = org.teams[s.team]; if (!t) continue;
             for (const m of s.text.matchAll(/^process:\s*(\w+)/gm)) {
-              try { ids.push(...expandProcess(vault, m[1], s.text.split('\n')[0].replace(/^- /, ''), { parent: jobId, by: 'ceo', team: s.team, owner_role: t.lead })); }
+              // Process-expanded jobs (parent = this heartbeat, like team.plan) can run for hours across several
+              // roles, so the heartbeat must not wait on them — only on the team.plan jobs pushed below (Task 9
+              // review round 2: waiting on rollup() of every child, including these, delayed the brief for hours).
+              try { expandProcess(vault, m[1], s.text.split('\n')[0].replace(/^- /, ''), { parent: jobId, by: 'ceo', team: s.team, owner_role: t.lead }); }
               catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'team_plans', message: String((err as Error).message) } }); }
             }
             if (t.lead === 'ceo') continue;
@@ -380,12 +401,15 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
             if (j?.data.type === 'team.plan' && j.data.status === 'done') vault.events.emit({ type: 'team.planned', agent: j.data.assigned, job: id, payload: { team: j.data.team, jobs: childrenOf(vault, id).map((c) => c.id) } });
           }
         };
-        if (rollup(vault, jobId) === 'open') {
+        // Readiness comes solely from the team.plan jobs themselves, not rollup() of every heartbeat child — a
+        // process: line's expanded jobs (parent = this heartbeat too) are not among state.teamPlanJobs, so they
+        // never gate this step (Task 9 review round 2).
+        const openTeamPlans = state.teamPlanJobs.filter((id) => { const s = readJob(vault, id)?.data.status; return !s || !['done', 'failed', 'cancelled'].includes(s); });
+        if (openTeamPlans.length) {
           // Re-block on whichever job is still actually open (firstOpenJob), not always ids[0] — see its doc
           // comment for the busy-loop this fixes (Task 9 review finding 2).
           const blockOn = firstOpenJob(state.teamPlanJobs, (id) => readJob(vault, id)?.data.status);
-          const openCount = state.teamPlanJobs.filter((id) => { const s = readJob(vault, id)?.data.status; return !s || !['done', 'failed', 'cancelled'].includes(s); }).length;
-          const w = waitOrGiveUp(blockOn, (min) => `${openCount} team plan(s) still open after ${min} min — planning pending`);
+          const w = waitOrGiveUp(blockOn, (min) => `${openTeamPlans.length} team plan(s) still open after ${min} min — planning pending`);
           if (w) return w;
           emitTeamPlanned(); // waitOrGiveUp already advanced the checkpoint on give-up
           break;

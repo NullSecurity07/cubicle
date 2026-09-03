@@ -14,8 +14,9 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Scaffold the site from Brand/\n\n### growth\n- Find the first organic channel\n';
 /** CEO writes the plan; the Critic returns once then passes; leads enqueue one job each; everyone else finishes. */
-function orgLlm(opts: { vetoes?: number } = {}): Llm & { calls: Record<string, number> } {
+function orgLlm(opts: { vetoes?: number; plan?: string } = {}): Llm & { calls: Record<string, number> } {
   let vetoes = opts.vetoes ?? 1;
+  const plan = opts.plan ?? PLAN;
   const per = new Map<string, number>();
   const llm = {
     calls: {} as Record<string, number>,
@@ -23,10 +24,17 @@ function orgLlm(opts: { vetoes?: number } = {}): Llm & { calls: Record<string, n
       const role = req.roleId ?? '?'; llm.calls[role] = (llm.calls[role] ?? 0) + 1;
       const base = { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 5, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
       if (!chat.tools) return { ...base, content: /NAME:/.test(String(chat.messages.at(-1)?.content)) ? 'NAME: X\nTAGLINE: y' : 'ok' };
-      const jobId = String(chat.messages[1]?.content ?? '').match(/Jobs\/(job_\w+)\.md/)?.[1] ?? 'x';
+      const jobMsg = String(chat.messages[1]?.content ?? '');
+      const jobId = jobMsg.match(/Jobs\/(job_\w+)\.md/)?.[1] ?? 'x';
       const n = per.get(jobId) ?? 0; per.set(jobId, n + 1);
-      const jobType = String(chat.messages[1]?.content ?? '').match(/type: ([\w.]+)/)?.[1] ?? '';
-      if (jobType === 'company.plan') return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content: PLAN } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
+      const jobType = jobMsg.match(/type: ([\w.]+)/)?.[1] ?? '';
+      const jobTitle = jobMsg.match(/title: ([^·\n]+)/)?.[1]?.trim() ?? '';
+      // The "launch" process's step titles ("Build: ...", "Announce: ...", "Outreach: ...", "Measure launch") —
+      // never finish these so they are provably still open (queued/running) when the heartbeat completes, proving
+      // team_plans does not wait on process-expanded jobs (Task 9 review round 2). No other test's jobs use these
+      // titles, so this is a no-op everywhere else.
+      if (/^(Build|Announce|Outreach|Measure launch):? /.test(jobTitle) || jobTitle === 'Measure launch') return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Plans/plan.md' } }] };
+      if (jobType === 'company.plan') return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content: plan } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
       if (jobType === 'critic.premortem') { const v = vetoes-- > 0; return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: v ? 'too vague' : 'fine', verdict: v ? 'return' : 'pass', findings: v ? ['growth objective has no metric'] : [] } }] }; }
       if (jobType === 'team.plan') { const member = role === 'cto' ? 'engineer' : role === 'head_of_growth' ? 'research_analyst' : null; return { ...base, parsedToolCalls: [n === 0 && member ? { name: 'scheduler.request', args: { type: member === 'engineer' ? 'engineer.ship' : 'research', title: `Do ${role}`, assigned: member, goal: 'g', done_when: 'd', for: member === 'research_analyst' ? role : undefined } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] }; }
       return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: `${role} done`, verdict: 'pass' } }] };
@@ -61,7 +69,7 @@ describe('firstOpenJob (Task 9 review finding 2)', () => {
     const status: Record<string, string> = { a: 'done', b: 'done', c: 'queued' };
     expect(firstOpenJob(['a', 'b', 'c'], (id) => status[id])).toBe('c');
   });
-  it('falls back to the last id when every one already looks finished (defensive; rollup should have said "not open")', () => {
+  it('falls back to the last id when every one already looks finished (defensive; the caller only asks while one is still open)', () => {
     const status: Record<string, string> = { a: 'done', b: 'failed' };
     expect(firstOpenJob(['a', 'b'], (id) => status[id])).toBe('b');
   });
@@ -108,6 +116,31 @@ describe('two-level planning (spec §3)', () => {
       expect(v.events.count('plan.vetoed')).toBe(2);
       expect(listJobs(v).filter((j) => j.type === 'company.plan')).toHaveLength(2);
       expect(v.events.query({ types: ['proposal.created'] }).some((e) => e.payload.kind === 'message' && String(e.payload.title).toLowerCase().includes('veto'))).toBe(true);
+    } finally { v.close(); await d.stop(); }
+  });
+
+  it('a process: line does not make team_plans wait for its expanded jobs (Task 9 review round 2)', async () => {
+    // "launch" has no team.plan/critic.premortem/company.plan step, so its expanded jobs can't be confused with
+    // the ones team_plans itself creates; its first step (engineer.ship, no depends_on) is queued immediately but
+    // needs its own worker cycle, so it should still be open when the heartbeat completes if team_plans correctly
+    // waits only on the team.plan jobs (not rollup() of every heartbeat child).
+    const planWithProcess = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Scaffold the site from Brand/\nprocess: launch\n\n### growth\n- Find the first organic channel\n';
+    const llm = orgLlm({ vetoes: 0, plan: planWithProcess });
+    const d = daemonFor(llm);
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      const jobs = listJobs(v);
+      const hb = jobs.find((j) => j.type === 'ceo.heartbeat')!;
+      const teamPlans = jobs.filter((j) => j.type === 'team.plan');
+      expect(teamPlans.every((j) => j.status === 'done')).toBe(true);
+      // Expanded jobs are direct children of the heartbeat, like team.plan/critic.premortem/company.plan, but a
+      // different type — the lead's own scheduler.request jobs (e.g. engineer.ship from a team.plan) are parented
+      // to that team.plan job instead, so this filter only catches the process expansion.
+      const expanded = jobs.filter((j) => j.parent === hb.id && !['company.plan', 'critic.premortem', 'team.plan'].includes(j.type));
+      expect(expanded.length).toBeGreaterThan(0);
+      expect(expanded.some((j) => !['done', 'failed', 'cancelled'].includes(j.status))).toBe(true);
     } finally { v.close(); await d.stop(); }
   });
 });
