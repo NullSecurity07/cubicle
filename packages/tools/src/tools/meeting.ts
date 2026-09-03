@@ -43,7 +43,7 @@ export const meetingOpen = defineTool({
         transcript.push({ round, role, text });
         ctx.events.emit({ type: 'meeting.turn', agent: role, job: ctx.jobId, payload: { id, round, text: text.slice(0, 280) } });
         // Persist after every turn (spec §1.2): a kill mid-meeting keeps the transcript so far.
-        ctx.vault.writeText(rel, stringifyNote({ id, room, opened: nowIso(), facilitator: ctx.roleId, participants: all, status: 'in_progress' }, `# ${room === 'board' ? 'Board' : 'Meeting'}: ${agenda.split('\n')[0].slice(0, 80)}\n\n## Agenda\n\n${agenda}\n\n## Transcript\n\n${transcript.map((t) => `**Round ${t.round} — ${t.role}:** ${t.text}`).join('\n\n')}\n`), ctx.roleId, { job: ctx.jobId, silent: true });
+        ctx.vault.writeText(rel, stringifyNote({ id, room, opened: nowIso(), facilitator: ctx.roleId, participants: all, status: 'in_progress' }, `# ${room === 'board' ? 'Board' : 'Meeting'}: ${agenda.split('\n')[0].slice(0, 80)}\n\n## Agenda\n\n${agenda}\n\n## Transcript\n\n${transcript.map((t) => `**Round ${t.round} — ${t.role}:** ${t.text}`).join('\n\n')}\n`), ctx.roleId, { job: ctx.jobId, generated: true });
       }
     }
     let decisions = '';

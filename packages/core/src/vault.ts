@@ -123,13 +123,15 @@ export class Vault {
    * Write a file atomically on behalf of `by` (a role id, or a privileged actor: daemon|owner|system|init).
    * Agents cannot write owner-owned paths (OwnerOwnedPathError). Records written_sha and emits vault.wrote.
    */
-  writeText(rel: string, content: string, by: string, opts: { job?: string | null; silent?: boolean } = {}): string {
+  writeText(rel: string, content: string, by: string, opts: { job?: string | null; generated?: boolean } = {}): string {
     const r = normalizeRel(rel);
     if (isCachePath(r)) throw new Error(`Refusing to write cache path through the vault API: ${r}`);
     assertWritable(r, by, this.constitution().never_modify);
     const sha = atomicWriteSync(this.abs(r), content);
     this.recordWritten(r, sha, by, content);
-    if (!opts.silent) this.events.emit({ type: 'vault.wrote', agent: by, job: opts.job ?? null, payload: { path: r, sha, by } });
+    // Generated files (Jobs/queue.md, Metrics/*.md, …) still record an event (spec §4.2): the flag lets the
+    // viewer ignore them as owner-visible churn, while a cache rebuild from events keeps their provenance.
+    this.events.emit({ type: 'vault.wrote', agent: by, job: opts.job ?? null, payload: { path: r, sha, by, ...(opts.generated ? { generated: true } : {}) } });
     return sha;
   }
 

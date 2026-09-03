@@ -96,6 +96,19 @@ describe('Vault writes', () => {
     expect(changed).toContain('Site/built.html');
     expect(vault.isOwnerChanged('Site/built.html')).toBe(false);
   });
+  it('a generated write still emits vault.wrote, flagged generated', () => {
+    const before = vault.events.count('vault.wrote');
+    vault.writeText('Jobs/queue.md', '# Queue\n\n- nothing\n', 'daemon', { generated: true });
+    expect(vault.events.count('vault.wrote')).toBe(before + 1);
+    const ev = vault.events.last('vault.wrote')!;
+    expect((ev.payload as { path: string; generated?: boolean }).path).toBe('Jobs/queue.md');
+    expect((ev.payload as { generated?: boolean }).generated).toBe(true);
+  });
+  it('a generated file survives a cache rebuild as system-written', () => {
+    vault.writeText('Metrics/quota.md', '# Quota\n\nnone yet\n', 'daemon', { generated: true });
+    vault.rebuildWrittenSha();
+    expect(vault.isOwnerChanged('Metrics/quota.md')).toBe(false);
+  });
   it('rebuilds written_sha from events', () => {
     const n = vault.rebuildWrittenSha();
     expect(n).toBeGreaterThan(5);

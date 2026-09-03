@@ -465,7 +465,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         vault.writeText(runRel, content, 'ceo', { job: jobId });
         state = { ...state, runPath: runRel }; saveState(state);
         writeQueueMd(vault);
-        if (deps.router) vault.writeText('Metrics/quota.md', renderQuotaMarkdown(deps.router.quotaSnapshot(), now()), 'daemon', { silent: true });
+        if (deps.router) vault.writeText('Metrics/quota.md', renderQuotaMarkdown(deps.router.quotaSnapshot(), now()), 'daemon', { generated: true });
         done(i, `wrote ${runRel}`);
         break;
       }

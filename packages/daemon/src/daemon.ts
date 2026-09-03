@@ -246,7 +246,7 @@ export class Daemon {
   }
 
   private writeQuotaMd(): void {
-    try { this.vault.writeText('Metrics/quota.md', renderQuotaMarkdown(this.router.quotaSnapshot()), 'daemon', { silent: true }); } catch { /* ignore */ }
+    try { this.vault.writeText('Metrics/quota.md', renderQuotaMarkdown(this.router.quotaSnapshot()), 'daemon', { generated: true }); } catch { /* ignore */ }
   }
 
   /** Graceful stop: no new jobs, wait up to shutdownMs for in-flight steps, close everything. */

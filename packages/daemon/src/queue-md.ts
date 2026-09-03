@@ -16,5 +16,5 @@ export function writeQueueMd(vault: Vault, by = 'daemon'): void {
     lines.push('');
   }
   if (jobs.length === 0) lines.push('_No jobs yet._', '');
-  vault.writeText('Jobs/queue.md', lines.join('\n'), by, { silent: true });
+  vault.writeText('Jobs/queue.md', lines.join('\n'), by, { generated: true });
 }
