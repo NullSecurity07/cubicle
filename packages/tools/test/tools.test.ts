@@ -88,9 +88,9 @@ describe('MCP tools', () => {
       await cto.call('colleague.message', { to: 'engineer', body: `re:${qid} Use Astro.`, kind: 'fyi' });
       await cto.close();
       expect(findAnswer(vault, 'engineer', qid)?.body).toContain('Use Astro');
-      const h = await client.call('colleague.message', { to: 'coo', body: 'please verify', kind: 'handoff' });
+      const h = await client.call('colleague.message', { to: 'qa', body: 'please verify', kind: 'handoff' });
       expect(h.ok).toBe(true);
-      expect(listJobs(vault, { assigned: 'coo' }).length).toBe(1);
+      expect(listJobs(vault, { assigned: 'qa' }).length).toBe(1);
       expect(vault.events.count('agent.spoke')).toBeGreaterThanOrEqual(3);
     } finally { await client.close(); }
   });

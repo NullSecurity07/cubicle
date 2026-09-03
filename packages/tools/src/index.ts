@@ -48,9 +48,9 @@ export function phase6Tools(): AnyTool[] {
   return [..._p6];
 }
 
-/** Phase 3 tool set (Phases 5–6 append shell/browser/git/email/deploy/stripe/analytics/social/meeting). */
+/** Phase 3 tool set (org guards apply to scheduler/proposal/meeting/colleague; Phases 5–6 append shell/browser/git/email/deploy/stripe/analytics/social). */
 export function phase3Tools(opts: { includeMock?: boolean } = {}): AnyTool[] {
-  const t: AnyTool[] = [...vaultTools, httpFetch, colleagueMessage, proposalCreate, schedulerRequest, ...skillsTools, finish];
+  const t: AnyTool[] = [...vaultTools, httpFetch, colleagueMessage, proposalCreate, schedulerRequest, ...skillsTools, finish, meetingOpen];
   if (opts.includeMock) t.push(mockOutbound);
   return t;
 }

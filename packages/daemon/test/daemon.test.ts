@@ -36,7 +36,7 @@ function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: stri
       if (req.roleId === 'cto') {
         const steps = [
           { name: 'vault.write', args: { path: 'Plans/plan.md', content: '---\ncycle: 1\n---\n# Plan\n\n## Objective\nShip a landing page.\n\n## This cycle\n- [ ] scaffold Site/\n' } },
-          { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'engineer', goal: 'Create Site/index.html from Brand/.' } },
+          { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.' } },
           { name: 'finish', args: { status: 'done', summary: 'Planned one job.' } },
         ];
         return { ...base, parsedToolCalls: [steps[Math.min(n, steps.length - 1)]] };

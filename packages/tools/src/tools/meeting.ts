@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { makeId, idFromKey, nowIso, stringifyNote, RoleFrontmatter, isValidRoleId, stampForFilename } from '@cubicle/core';
+import { makeId, idFromKey, nowIso, stringifyNote, RoleFrontmatter, isValidRoleId, stampForFilename, loadOrg, can } from '@cubicle/core';
 
 const MAX_ROUNDS = 3;
 const TURN_TOKENS = 300;
@@ -15,6 +15,7 @@ export const meetingOpen = defineTool({
     rounds: z.number().int().min(1).max(MAX_ROUNDS).default(2),
   },
   async handler({ room, participants, agenda, rounds }, ctx) {
+    if (!can(loadOrg(ctx.vault), ctx.roleId, 'meeting')) return { ok: false, text: `${ctx.roleId} may not open meetings; ask your lead` };
     if (!ctx.router) return { ok: false, text: 'no model router available for meetings' };
     for (const p of participants) { if (!isValidRoleId(p) || !ctx.vault.exists(`Roles/${p}.md`)) return { ok: false, text: `unknown role ${p}` }; const rf = RoleFrontmatter.safeParse(ctx.vault.readNoteOrNull(`Roles/${p}.md`)?.data); if (rf.success && !rf.data.active) return { ok: false, text: `${p} is not active` }; }
     const id = ctx.idempotencyKey ? idFromKey('meet', ctx.idempotencyKey) : makeId('meet');

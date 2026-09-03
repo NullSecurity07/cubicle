@@ -11,6 +11,8 @@ export const finish = defineTool({
     metrics: z.record(z.string(), z.union([z.number(), z.string()])).default({}),
     blockers: z.array(z.string()).default([]),
     lessons: z.array(z.string()).default([]),
+    verdict: z.enum(['pass', 'return']).optional().describe('review gates only'),
+    findings: z.array(z.string()).default([]),
   },
   async handler(args) {
     return { ok: true, text: `finished: ${args.status}`, data: args, finished: true };

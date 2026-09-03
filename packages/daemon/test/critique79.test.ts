@@ -72,7 +72,7 @@ describe('hire with a minimal CEO charter; failures keep the approval (B2)', () 
     // duplicate links / non-justifying jobs are rejected at applyHire; and no one but the CEO may file hires via the tool
     const growthCtx: ToolContext = { vault, events: vault.events, roleId: 'head_of_growth', role: RoleFrontmatter.parse(parseNote(vault.readText('Roles/head_of_growth.md')).data), jobId: 'job_x', config: cfg, env: {}, workspace: 'x', now: () => new Date(), scheduler: vaultScheduler(vault) };
     const client = await createRoleToolClient(phase3Tools().filter((t) => t.name === 'proposal.create'), growthCtx);
-    try { const r2 = await client.call('proposal.create', { kind: 'hire', title: 'x', body: 'x' }); expect(r2.ok).toBe(false); expect(r2.text).toContain('CEO'); } finally { await client.close(); }
+    try { const r2 = await client.call('proposal.create', { kind: 'hire', title: 'x', body: 'x' }); expect(r2.ok).toBe(false); expect(r2.text).toMatch(/may not file/); } finally { await client.close(); }
   });
 });
 

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { nowIso, makeId, idFromKey, isValidRoleId, parseNote, RoleFrontmatter } from '@cubicle/core';
+import { nowIso, makeId, idFromKey, isValidRoleId, parseNote, RoleFrontmatter, loadOrg, can, teamOf } from '@cubicle/core';
 
 export const MessageKind = z.enum(['fyi', 'question', 'handoff', 'meeting_request']);
 
@@ -27,6 +27,8 @@ export const colleagueMessage = defineTool({
     ctx.vault.appendText(messagePath(to), section, ctx.roleId, { job: ctx.jobId });
     ctx.events.emit({ type: 'agent.spoke', agent: ctx.roleId, job: ctx.jobId, payload: { to, kind, text: body.slice(0, 280), id } });
     if (kind === 'handoff') {
+      const org = loadOrg(ctx.vault);
+      if (!can(org, ctx.roleId, 'schedule', to)) return { ok: false, text: `handoff only to a teammate (${teamOf(org, ctx.roleId)?.members.join(', ') ?? 'none'}); cross-team needs go through your lead` };
       const jobId = ctx.scheduler.enqueue({ id: ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey) : undefined, type: 'custom', title: `Handoff from ${ctx.roleId}: ${body.slice(0, 60)}`, assigned: to, goal: body, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [] });
       return { ok: true, text: `handed off to ${to} as job ${jobId}`, data: { id, jobId } };
     }

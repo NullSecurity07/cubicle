@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { createProposal, ProposalKind, idFromKey } from '@cubicle/core';
+import { createProposal, ProposalKind, idFromKey, loadOrg, can } from '@cubicle/core';
 
 export const proposalCreate = defineTool({
   name: 'proposal.create',
@@ -13,7 +13,12 @@ export const proposalCreate = defineTool({
   },
   async handler({ kind, title, body, target }, ctx) {
     if (kind === 'outbound_batch') return { ok: false, text: 'outbound_batch proposals are created by the tool layer, not directly' };
-    if ((kind === 'hire' || kind === 'fire') && ctx.roleId !== 'ceo') return { ok: false, text: `${kind} proposals are filed by the CEO (spec §9.5); message the CEO instead` };
+    const org = loadOrg(ctx.vault);
+    if ((kind === 'hire' || kind === 'fire') && !can(org, ctx.roleId, kind)) return { ok: false, text: `${ctx.roleId} may not file ${kind} proposals` };
+    if (kind === 'reorg') {
+      if (ctx.roleId !== 'ceo') return { ok: false, text: 'reorg proposals are filed by the CEO' };
+      if (!/```ya?ml\s*\n[\s\S]*?\bteams:\s*\n[\s\S]*?```/.test(body)) return { ok: false, text: 'a reorg proposal must contain a ```yaml fence with a teams: map ({ <team>: { lead, members } })' };
+    }
     if (kind === 'hire') {
       const links = (body.match(/\[\[job_[^\]]+\]\]/g) ?? []).length;
       if (links < 2) return { ok: false, text: 'a hire proposal must link at least 2 blocked or repeated jobs ([[job_…]]) as justification' };

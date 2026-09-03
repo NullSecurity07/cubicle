@@ -69,7 +69,7 @@ export interface ToolResult {
 }
 
 export interface SchedulerApi {
-  enqueue(job: { id?: string; type: string; title: string; assigned: string; goal: string; priority?: number; depends_on?: string[]; privacy?: 'cloud' | 'local'; parent?: string; links?: string[] }): string;
+  enqueue(job: { id?: string; type: string; title: string; assigned: string; goal: string; priority?: number; depends_on?: string[]; privacy?: 'cloud' | 'local'; parent?: string; links?: string[]; team?: string; owner_role?: string; for?: string; done_when?: string }): string;
   reprioritize?(jobId: string, priority: number): void;
 }
 
