@@ -22,6 +22,11 @@ describe('gates (spec §3)', () => {
     expect(gateAssignee('requester.review', { for: 'cto' })).toBe('cto'); expect(gateAssignee('requester.review', { owner_role: 'head_of_growth' })).toBe('head_of_growth');
     expect(gatesFor(loadGates(), 'research')).toEqual(['requester.review']);
   });
+  it('requester.review and ceo.heartbeat have explicit (empty) gate entries in config/gates.yaml, not the custom fallback (F7)', () => {
+    const t = loadGates();
+    expect(gatesFor(t, 'requester.review')).toEqual([]);
+    expect(gatesFor(t, 'ceo.heartbeat')).toEqual([]);
+  });
 });
 
 describe('processes (spec §3)', () => {

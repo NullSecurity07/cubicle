@@ -143,3 +143,21 @@ describe('two-level planning (spec §3)', () => {
     } finally { v.close(); await d.stop(); }
   });
 });
+
+describe('brief notes a recent org migration (F10)', () => {
+  it('a migration org.changed event since the previous heartbeat surfaces under What needs you', async () => {
+    const seed = Vault.open(dir);
+    seed.events.emit({ type: 'org.changed', agent: 'daemon', payload: { reason: 'migration', changed: ['Teams/engineering.md'] } });
+    seed.close();
+    const llm = orgLlm({ vetoes: 0, plan: '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n' });
+    const d = daemonFor(llm);
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      const runs = v.list('Runs', { ext: '.md' }).sort();
+      const brief = readFileSync(path.join(dir, runs.at(-1)!), 'utf8');
+      expect(brief).toContain('The company was reorganised into teams');
+    } finally { v.close(); await d.stop(); }
+  });
+});

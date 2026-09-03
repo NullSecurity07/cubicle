@@ -12,9 +12,11 @@ gates:
   critic.premortem: []
   qa.review: []
   coo.verify: []
+  requester.review: []
   company.plan: []
   cto.plan: []
   cto.compress_charters: []
+  ceo.heartbeat: []
 
 criteria:
   engineer.ship: "The change builds and runs; Site/ has no broken links; tests or a smoke check exist; the job's Done when holds."

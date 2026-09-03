@@ -123,7 +123,12 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
     if (rel.includes('/archive/') || rel.includes('/_hireable/')) continue;
     const n = vault.readNoteOrNull(rel); if (!n) continue;
     const tplPath = path.join(tpl, rel);
-    if (!existsSync(tplPath)) continue;
+    if (!existsSync(tplPath)) {
+      // A custom-hired role has no template counterpart to copy org fields from: if it also has no team of its
+      // own, migration leaves it teamless with no way to fix that automatically (F13).
+      if (n.data.team === undefined) vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { path: rel, reason: 'no team assigned; add team/reports_to to the charter' } });
+      continue;
+    }
     const t = parseNote(readFileSync(tplPath, 'utf8')).data as Record<string, unknown>;
     const patch: Record<string, unknown> = {};
     for (const f of ORG_FIELDS) if (n.data[f] === undefined && t[f] !== undefined) patch[f] = t[f];

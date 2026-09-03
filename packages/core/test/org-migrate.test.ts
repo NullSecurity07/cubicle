@@ -62,3 +62,43 @@ describe('migrateOrg constitution patch (missing max_roles anchor)', () => {
     } finally { vault2.close(); rmSync(dir2, { recursive: true, force: true }); }
   });
 });
+
+describe('migrateOrg constitution patch (never_modify append branch) (T5)', () => {
+  it('a constitution whose never_modify is missing Teams/ gets it appended once, then a second run is a no-op', async () => {
+    const dir4 = mkdtempSync(path.join(tmpdir(), 'cubicle-migrate-nevermod-'));
+    const vault4 = (await scaffoldVault(dir4)).vault;
+    try {
+      const original = readFileSync(path.join(dir4, 'Memory', 'constitution.md'), 'utf8');
+      // Same trigger as the "no max_roles anchor" branch above (this append only runs alongside it), but this
+      // time also strip the `- Teams/` line out of never_modify so the append branch itself is exercised.
+      const stripped = original
+        .replace(/^max_roles:.*\n|^max_team_size:.*\n|^auto_approve_reorg:.*\n/gm, '')
+        .replace(/^\s+-\s+Teams\/\s*\n/m, '');
+      expect(stripped).not.toContain('Teams/');
+      writeFileSync(path.join(dir4, 'Memory', 'constitution.md'), stripped);
+      const before = vault4.events.count('org.changed');
+      const r1 = migrateOrg(vault4, templateDir());
+      expect(r1.changed).toContain('Memory/constitution.md');
+      const patched = vault4.readTextOrNull('Memory/constitution.md')!;
+      expect(patched).toMatch(/never_modify:\n(?:\s+-.*\n)*\s+-\s+Teams\/\n/);
+      expect(vault4.events.count('org.changed')).toBe(before + 1);
+      const r2 = migrateOrg(vault4, templateDir());
+      expect(r2.changed).toEqual([]);
+      expect(vault4.events.count('org.changed')).toBe(before + 1);
+    } finally { vault4.close(); rmSync(dir4, { recursive: true, force: true }); }
+  });
+});
+
+describe('migrateOrg warns about a teamless custom-hired charter with no template counterpart (F13)', () => {
+  it('emits one daemon.warning naming the charter path', async () => {
+    const dir3 = mkdtempSync(path.join(tmpdir(), 'cubicle-migrate-custom-'));
+    const vault3 = (await scaffoldVault(dir3)).vault;
+    try {
+      vault3.writeText('Roles/custom_role.md', '---\nrole: custom_role\ndisplay: Custom\nactive: true\nhired: ""\nsprite: custom_role\ndesk: cubicle_9\n---\n# Charter\n\nDoes custom things.\n', 'daemon');
+      const before = vault3.events.count('daemon.warning');
+      migrateOrg(vault3, templateDir());
+      const warnings = vault3.events.query({ types: ['daemon.warning'] }).slice(before);
+      expect(warnings.some((e) => e.payload.path === 'Roles/custom_role.md' && /no team assigned/.test(String(e.payload.reason)))).toBe(true);
+    } finally { vault3.close(); rmSync(dir3, { recursive: true, force: true }); }
+  });
+});

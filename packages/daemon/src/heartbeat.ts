@@ -438,13 +438,17 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const queued = listJobs(vault, { status: 'queued' });
         const blocked = listJobs(vault, { status: 'blocked' }).filter((j) => j.id !== jobId);
         const pending = listInbox(vault).filter((n) => n.data.kind !== 'message' && n.data.approved === null);
+        // A migration (spec §1) happened since the previous heartbeat: flag it once so the owner notices the new
+        // teams/charters instead of finding out from a stray diff (F10).
+        const migrated = vault.events.query({ types: ['org.changed'], from: state.since ?? undefined }).some((e) => e.payload.reason === 'migration');
         const needsYou = [
           ...pending.map((p) => `- Approve or reject: ${p.body.split('\n')[0].replace(/^#\s*/, '')} (\`${p.path}\`)`),
           ...blocked.filter((j) => j.blocked_on?.kind === 'message').map((j) => `- Answer ${j.assigned}'s question on job ${j.id}`),
+          ...(migrated ? ['- The company was reorganised into teams — review Teams/ and the new charters'] : []),
         ];
         const facts = [
           `Elapsed: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}`,
-          ...(state.planPending ? ['Planning: PENDING — the CTO has not finished planning this cycle; the previous plan stands.'] : []),
+          ...(state.planPending ? ['Planning: PENDING — the team plans have not finished this cycle; the previous plan stands.'] : []),
           `Owner edits: ${state.ownerEdits?.length ? state.ownerEdits.join(', ') : 'none'}`,
           `Finished jobs: ${state.finished?.length ? state.finished.map((f) => `${f.title} (${f.status})`).join('; ') : 'none'}`,
           `Queued next: ${queued.map((j) => `${j.assigned}: ${j.title}`).join('; ') || 'nothing'}`,
