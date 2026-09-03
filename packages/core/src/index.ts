@@ -11,3 +11,5 @@ export * from './template.js';
 export * from './jobs.js';
 export * from './proposals.js';
 export * from './org.js';
+export * from './gates.js';
+export * from './processes.js';
