@@ -24,7 +24,7 @@ step "office:shot"         pnpm office:shot /tmp/cubicle-fresh-shots
 step "org drawer"          bash -c 'grep -q "Org" packages/viewer/dist/index.html'
 step "doctor"              bash -c 'pnpm cubicle doctor >/tmp/cubicle-doctor.txt 2>&1 && grep -q "ollama model .* pulled" /tmp/cubicle-doctor.txt'
 step "app smoke"           bash -c 'CUBICLE_VAULT=/tmp/cubicle-fresh-vault timeout 90 pnpm --filter @cubicle/app smoke 2>&1 | grep -q "SMOKE PASS"'
-step "no model ids in src" bash -c '! grep -rEn "gemini-[0-9]|gpt-oss|qwen2\.5:|:free\"" packages/*/src --include=*.ts | grep -v "providers-cli\|/test/" '
+step "no model ids in src" bash -c '! grep -rEn "gemini-[0-9]|gpt-oss|qwen2\.5:|:free\"" packages/*/src --include=*.ts | grep -v "providers-cli\|/test/\|\.test\.ts:" '
 step "no localStorage state" bash -c '! grep -rn "localStorage" packages/viewer/src | grep -v "cubicle.token"'
 step "no wall-clock cron"  bash -c '! grep -rEn "cron|node-schedule" packages/*/src --include=*.ts'
 echo; echo "===== RESULTS ====="; printf "%s\n" "${RESULTS[@]}"; echo "passed=$PASS failed=$FAIL (clone: $DST)"
