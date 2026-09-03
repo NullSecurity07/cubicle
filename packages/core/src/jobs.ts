@@ -16,6 +16,10 @@ export interface NewJob {
   parent?: string;
   max_attempts?: number;
   id?: string;
+  team?: string;
+  owner_role?: string;
+  for?: string;
+  done_when?: string;
 }
 
 export function jobPath(id: string): string {
@@ -37,8 +41,11 @@ export function createJob(vault: Vault, job: NewJob, by: string): string {
     attempt: 1, max_attempts: job.max_attempts ?? 3, depends_on: job.depends_on ?? [],
     approval: 'none', checkpoint_step: 0, side_effects_done: [], links: job.links ?? [],
     privacy: job.privacy ?? 'cloud', runs_on: job.runs_on ?? 'laptop', parent: job.parent,
+    team: job.team, owner_role: job.owner_role, for: job.for, done_when: job.done_when,
   });
-  const body = `## Goal\n\n${job.goal.trim()}\n\n## Plan\n\n## Checkpoint log\n\n## Result\n`;
+  let body = `## Goal\n\n${job.goal.trim()}\n\n`;
+  if (job.done_when) body += `## Done when\n\n${job.done_when}\n\n`;
+  body += `## Plan\n\n## Checkpoint log\n\n## Result\n`;
   vault.writeText(jobPath(id), stringifyNote(data as Record<string, unknown>, body), by, { job: id });
   vault.events.emit({ type: 'job.queued', agent: by, job: id, payload: { type: job.type, title: job.title, assigned: job.assigned, priority: data.priority } });
   return id;
@@ -106,4 +113,25 @@ export function setSection(body: string, heading: string, content: string): stri
   const after = idx + heading.length;
   const next = body.indexOf('\n## ', after);
   return body.slice(0, idx) + block + (next < 0 ? '' : body.slice(next + 1));
+}
+
+const OPEN: JobStatus[] = ['queued', 'running', 'blocked', 'in_review'];
+
+/** Direct children (jobs whose `parent` is `id`). */
+export function childrenOf(vault: Vault, id: string): JobFrontmatter[] {
+  return listJobs(vault).filter((j) => j.parent === id);
+}
+
+/** 'empty' (no children) | 'done' (all done) | 'failed' (any failed/cancelled and none open) | 'open'. */
+export function rollup(vault: Vault, id: string): 'done' | 'failed' | 'open' | 'empty' {
+  const kids = childrenOf(vault, id);
+  if (!kids.length) return 'empty';
+  if (kids.some((j) => OPEN.includes(j.status))) return 'open';
+  if (kids.some((j) => j.status === 'failed' || j.status === 'cancelled')) return 'failed';
+  return 'done';
+}
+
+/** Every open job a lead is accountable for (owner_role), including its own. */
+export function openSubtree(vault: Vault, role: string): JobFrontmatter[] {
+  return listJobs(vault, { status: OPEN }).filter((j) => j.owner_role === role);
 }
