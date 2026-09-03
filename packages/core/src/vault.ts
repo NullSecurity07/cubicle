@@ -226,6 +226,15 @@ export class Vault {
     return out;
   }
 
+  /**
+   * Replace the recorded owner-comment baseline for a path (`null` = unknown). A write that only touches
+   * machine-owned frontmatter must call this with the baseline it captured beforehand, or the owner's
+   * `%%cubicle: …%%` comments in the file become "system-written" and are never delivered as feedback.
+   */
+  setWrittenComments(rel: string, comments: string[] | null): void {
+    this.db.prepare('UPDATE written_sha SET comments_json = ? WHERE path = ?').run(comments === null ? null : JSON.stringify(comments), normalizeRel(rel));
+  }
+
   writtenSha(rel: string): string | null {
     const row = this.db.prepare('SELECT sha FROM written_sha WHERE path = ?').get(normalizeRel(rel)) as { sha: string } | undefined;
     return row?.sha ?? null;

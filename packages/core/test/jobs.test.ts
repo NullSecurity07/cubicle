@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, templateDir } from '../src/template.js';
@@ -62,6 +62,16 @@ describe('owner-created job notes (spec §11)', () => {
     expect(vault.currentSha('Jobs/mine.md')).toBe(sha);
   });
 
+  it('reconciling a note does not claim the owner comments as system-written', () => {
+    vault.writeText('Jobs/mine.md', jobTemplate('Mine'), 'daemon'); // system baseline: no comments
+    writeFileSync(vault.abs('Jobs/mine.md'), jobTemplate('Mine').replace('## Goal', '## Goal\n\n%%cubicle: hurry%%')); // owner edits in Obsidian
+
+    listJobs(vault); // rewrites id and timestamps
+
+    expect(vault.writtenComments('Jobs/mine.md')).toEqual([]);
+    expect(vault.commentsChangedSinceWritten()).toEqual([{ path: 'Jobs/mine.md', added: ['hurry'] }]);
+    expect(vault.readText('Jobs/mine.md')).toContain('%%cubicle: hurry%%');
+  });
   it('skips underscore-prefixed notes in both listJobs and readJob', () => {
     vault.writeText('Jobs/_urgent.md', jobTemplate('Draft'), 'owner');
     const before = vault.currentSha('Jobs/_urgent.md');

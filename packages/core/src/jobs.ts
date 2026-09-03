@@ -82,11 +82,15 @@ function reconcile(vault: Vault, rel: string, raw: Record<string, unknown>, pars
   if (!idChanged && !stamped) return parsed;
   if (idChanged) warnOnce(vault, rel, 'job id reconciled to filename', { from: parsed.id, to: stem });
   const data = { ...parsed, id: stem };
+  // This write touches machine-owned frontmatter only, so it must not adopt the owner's %%cubicle:%%
+  // comments as a system baseline — they would then never reach the role as feedback.
+  const baseline = vault.writtenComments(rel);
   try {
     vault.updateNote(rel, (n) => ({ data: { ...n.data, id: stem, created: data.created, updated: data.updated }, body: n.body }), 'daemon', { job: stem });
   } catch {
     return data; // a concurrent owner edit; the in-memory view still uses the filename
   }
+  vault.setWrittenComments(rel, baseline);
   return data;
 }
 
