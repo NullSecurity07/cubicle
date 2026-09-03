@@ -34,7 +34,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 
 | field | type | notes |
 |---|---|---|
-| `id` | string |  |
+| `id` | string | the filename is authoritative: `Jobs/<id>.md` — if a note's `id` field disagrees with its filename (e.g. you copied `_template.md` by hand), the daemon rewrites `id` to match the filename and logs one `daemon.warning` |
 | `type` | string |  |
 | `title` | string |  |
 | `assigned` | string |  |
@@ -134,6 +134,8 @@ Body: freeform notes, appended to every expanded step's job goal.
 | `status` | `proposed` \| `adopted` \| `reverted` = `"proposed"` |  |
 | `inputs` | string[] = `[]` |  |
 | `owner_rating` | `up` \| `down` \| null (optional) | set `up`/`down`; `down` reaches the author as feedback |
+| `rating_seen` | string (optional, ISO timestamp) | set to the delivery time once a `down` `owner_rating` has been delivered to the author as feedback, so it reaches them exactly once |
+| `review_date` | string (optional) | when set, the decision is resurfaced to its author around this date for a second look |
 
 Body sections: Context / Options considered / Chosen / Why / Expected effect / Review date.
 
