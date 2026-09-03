@@ -36,33 +36,33 @@ describe('charter_change is pinned to identity fields and cannot escalate (B1)',
     expect(after.tools).toContain('email.send'); // the owner approved this one explicitly
     // auto-approval: only the CTO, and never widening tools
     setConst('auto_approve_charter_changes: false', 'auto_approve_charter_changes: true');
-    const widened = `---\nrole: growth\ndisplay: Growth\nmodel_tier: medium\ntools: [vault.read, shell.run]\n---\n# tiny\n`;
-    createProposal(vault, { kind: 'charter_change', from: 'growth', target: 'Roles/growth.md', title: 'x', body: `## Proposed content\n\n\`\`\`markdown\n${widened}\`\`\`` }, 'growth');
-    createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/growth.md', title: 'x', body: `## Proposed content\n\n\`\`\`markdown\n${widened}\`\`\`` }, 'cto');
+    const widened = `---\nrole: head_of_growth\ndisplay: Head of Growth\nmodel_tier: medium\ntools: [vault.read, shell.run]\n---\n# tiny\n`;
+    createProposal(vault, { kind: 'charter_change', from: 'head_of_growth', target: 'Roles/head_of_growth.md', title: 'x', body: `## Proposed content\n\n\`\`\`markdown\n${widened}\`\`\`` }, 'head_of_growth');
+    createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/head_of_growth.md', title: 'x', body: `## Proposed content\n\n\`\`\`markdown\n${widened}\`\`\`` }, 'cto');
     expect(await dispatchProposals(deps())).toBe(0);
-    expect(vault.readText('Roles/growth.md')).not.toContain('shell.run');
-    const ok = `---\nrole: growth\ndisplay: Growth\nmodel_tier: medium\ntools: [vault.read, vault.write, finish]\n---\n# tighter charter\n`;
-    createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/growth.md', title: 'x', body: `## Proposed content\n\n\`\`\`markdown\n${ok}\`\`\`` }, 'cto');
+    expect(vault.readText('Roles/head_of_growth.md')).not.toContain('shell.run');
+    const ok = `---\nrole: head_of_growth\ndisplay: Head of Growth\nmodel_tier: medium\ntools: [vault.read, vault.write, finish]\n---\n# tighter charter\n`;
+    createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/head_of_growth.md', title: 'x', body: `## Proposed content\n\n\`\`\`markdown\n${ok}\`\`\`` }, 'cto');
     expect(await dispatchProposals(deps())).toBe(1);
-    expect(vault.readText('Roles/growth.md')).toContain('tighter charter');
-    expect(RoleFrontmatter.parse(parseNote(vault.readText('Roles/growth.md')).data).desk).toBe('cubicle_3');
+    expect(vault.readText('Roles/head_of_growth.md')).toContain('tighter charter');
+    expect(RoleFrontmatter.parse(parseNote(vault.readText('Roles/head_of_growth.md')).data).desk).toBe('cubicle_3');
   });
 });
 
 describe('hire with a minimal CEO charter; failures keep the approval (B2)', () => {
   it('a charter without hired/sprite/desk is accepted; capacity failures leave the note unresolved', async () => {
-    const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'growth', goal: 'g' }, 'cto');
-    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'growth', goal: 'g' }, 'cto');
+    const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'head_of_growth', goal: 'g' }, 'cto');
     updateJob(vault, j1, { status: 'blocked', blocked_on: { kind: 'owner', id: 'x', since: 'now' } }, 'daemon');
     updateJob(vault, j2, { status: 'failed' }, 'daemon');
     const minimal = '---\nrole: support\ndisplay: Support\nmodel_tier: cheap\ntools: [vault.read, vault.write, colleague.message, finish]\napproval_overrides: {}\nactive: true\n---\n# Charter\n\nBe helpful.\n';
-    setConst('max_roles: 8', 'max_roles: 5');
+    setConst('max_roles: 12', 'max_roles: 5');
     const p = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'Hire Support', body: `[[${j1}]] [[${j2}]]\n\n\`\`\`markdown\n${minimal}\`\`\`` }, 'ceo');
     ownerEdit(p.path, (t) => t.replace('approved: null', 'approved: true'));
     expect(await dispatchProposals(deps())).toBe(0);
     expect(findInboxById(vault, p.id)!.data.resolved_at).toBeNull();
     expect(findInboxById(vault, p.id)!.body).toContain('max_roles');
-    setConst('max_roles: 5', 'max_roles: 8');
+    setConst('max_roles: 5', 'max_roles: 12');
     expect(await dispatchProposals(deps())).toBe(0); // refused notes retry when the owner edits them again (or after 10 min)
     ownerEdit(p.path, (t) => t + '\nplease retry\n');
     expect(await dispatchProposals(deps())).toBe(1); // same approval, now applied
@@ -70,7 +70,7 @@ describe('hire with a minimal CEO charter; failures keep the approval (B2)', () 
     const r = RoleFrontmatter.parse(parseNote(vault.readText('Roles/support.md')).data);
     expect(r.desk).toMatch(/^cubicle_/); expect(r.sprite).toBe('support'); expect(r.hired).toBeTruthy();
     // duplicate links / non-justifying jobs are rejected at applyHire; and no one but the CEO may file hires via the tool
-    const growthCtx: ToolContext = { vault, events: vault.events, roleId: 'growth', role: RoleFrontmatter.parse(parseNote(vault.readText('Roles/growth.md')).data), jobId: 'job_x', config: cfg, env: {}, workspace: 'x', now: () => new Date(), scheduler: vaultScheduler(vault) };
+    const growthCtx: ToolContext = { vault, events: vault.events, roleId: 'head_of_growth', role: RoleFrontmatter.parse(parseNote(vault.readText('Roles/head_of_growth.md')).data), jobId: 'job_x', config: cfg, env: {}, workspace: 'x', now: () => new Date(), scheduler: vaultScheduler(vault) };
     const client = await createRoleToolClient(phase3Tools().filter((t) => t.name === 'proposal.create'), growthCtx);
     try { const r2 = await client.call('proposal.create', { kind: 'hire', title: 'x', body: 'x' }); expect(r2.ok).toBe(false); expect(r2.text).toContain('CEO'); } finally { await client.close(); }
   });
@@ -86,19 +86,19 @@ describe('%%cubicle%% provenance (B3), fire stops running jobs (B4)', () => {
     vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: 'Customers/lead.md', area: 'Customers' } });
     const fb = collectOwnerFeedback(vault).filter((f) => f.source === 'Customers/lead.md');
     expect(fb.map((f) => f.text)).toEqual(['call this lead tomorrow']);
-    expect(fb[0].role).toBe('growth');
+    expect(fb[0].role).toBe('head_of_growth');
     // Messages/<role>.md and Roles/<role>.md attribute by filename
     ownerEdit('Messages/cto.md', (t) => t + '\n%%cubicle: plan smaller%%\n');
     vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: 'Messages/cto.md', area: 'Messages' } });
     expect(collectOwnerFeedback(vault).find((f) => f.source === 'Messages/cto.md')!.role).toBe('cto');
   });
   it('firing cancels the running job too; only the CEO may fire', async () => {
-    const running = createJob(vault, { type: 'custom', title: 'r', assigned: 'growth', goal: 'g' }, 'cto');
-    updateJob(vault, running, { status: 'running', checkpoint_step: 5 }, 'growth');
-    const bad = createProposal(vault, { kind: 'fire', from: 'cto', target: 'Roles/growth.md', title: 'x', body: 'x' }, 'cto');
+    const running = createJob(vault, { type: 'custom', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    updateJob(vault, running, { status: 'running', checkpoint_step: 5 }, 'head_of_growth');
+    const bad = createProposal(vault, { kind: 'fire', from: 'cto', target: 'Roles/head_of_growth.md', title: 'x', body: 'x' }, 'cto');
     expect(await applyFire(vault, findInboxById(vault, bad.id)!)).toMatch(/only the CEO/);
-    const p = createProposal(vault, { kind: 'fire', from: 'ceo', target: 'Roles/growth.md', title: 'x', body: 'x' }, 'ceo');
-    expect(await applyFire(vault, findInboxById(vault, p.id)!)).toMatch(/fired growth/);
+    const p = createProposal(vault, { kind: 'fire', from: 'ceo', target: 'Roles/head_of_growth.md', title: 'x', body: 'x' }, 'ceo');
+    expect(await applyFire(vault, findInboxById(vault, p.id)!)).toMatch(/fired head_of_growth/);
     expect(readJob(vault, running)!.data.status).toBe('cancelled');
   });
 });

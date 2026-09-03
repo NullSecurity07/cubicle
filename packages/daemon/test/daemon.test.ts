@@ -265,9 +265,9 @@ describe('daemon lifecycle', () => {
 
   it('ask-mode call: owner approves → dispatcher requeues → worker executes the stored call exactly once (B1)', async () => {
     const vault = Vault.open(dir);
-    vault.updateNote('Roles/growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
+    vault.updateNote('Roles/head_of_growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
     vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } });
-    const id = createJob(vault, { type: 'growth.outreach', title: 'ask', assigned: 'growth', goal: 'g' }, 'cto');
+    const id = createJob(vault, { type: 'growth.outreach', title: 'ask', assigned: 'head_of_growth', goal: 'g' }, 'cto');
     vault.close();
     const askCfg = readFileSync(path.join(root, 'config/tools.yaml'), 'utf8').replace('mock.outbound:         { mode: auto', 'mock.outbound:         { mode: ask');
     const cfgPath = path.join(dir, '.cubicle', 'tools-ask.yaml');
@@ -277,7 +277,7 @@ describe('daemon lifecycle', () => {
       async chat(req, chat) {
         const base = { content: 'ok', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'strong' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
         if (!chat.tools) return base;
-        if (req.roleId !== 'growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
+        if (req.roleId !== 'head_of_growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
         calls++;
         const j = readJob(d.vault, id)!.data;
         if (j.side_effects_done.length >= 1) return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'sent' } }] };
@@ -302,7 +302,7 @@ describe('daemon lifecycle', () => {
 
   it('owner cancels a running job → worker stops within one step (acceptance test 2)', async () => {
     const vault = Vault.open(dir);
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'growth', goal: 'g' }, 'owner');
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'owner');
     vault.close();
     let cancelled = false;
     let d!: Daemon;
@@ -310,7 +310,7 @@ describe('daemon lifecycle', () => {
       async chat(req, chat) {
         const base = { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'strong' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
         if (!chat.tools) return { ...base, content: 'ok' };
-        if (req.roleId !== 'growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
+        if (req.roleId !== 'head_of_growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
         if (!cancelled) { cancelled = true; updateJob(d.vault, id, { status: 'cancelled' }, 'owner'); }
         return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Plans/plan.md' } }] };
       },
@@ -339,7 +339,7 @@ describe('daemon lifecycle', () => {
     await new Promise((r) => ws.once('open', r));
     await waitFor(() => msgs.some((m) => m.op === 'snapshot'));
     const snap = msgs.find((m) => m.op === 'snapshot') as ReturnType<typeof buildSnapshot>;
-    expect(snap.roles.map((r) => r.role)).toEqual(expect.arrayContaining(['ceo', 'cto', 'engineer', 'growth', 'coo']));
+    expect(snap.roles.map((r) => r.role)).toEqual(expect.arrayContaining(['ceo', 'cto', 'engineer', 'head_of_growth', 'coo']));
     ws.send(JSON.stringify({ op: 'chat', text: 'Bookkeeping for tiny shops' }));
     await waitFor(() => msgs.some((m) => m.op === 'chat.ack'));
     expect(listInbox(d.vault).some((n) => n.data.kind === 'message' && n.data.from === 'owner')).toBe(true);

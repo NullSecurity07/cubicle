@@ -32,13 +32,13 @@ describe('approval resolution', () => {
   });
   it('filters tools per role with wildcards and role restrictions', () => {
     const reg = new ToolRegistry().registerAll(phase3Tools({ includeMock: true }));
-    const names = reg.forRole(role('growth'), cfg).map((t) => t.name);
+    const names = reg.forRole(role('head_of_growth'), cfg).map((t) => t.name);
     expect(names).toContain('vault.read');
     expect(names).toContain('http.fetch');
     expect(names).not.toContain('mock.outbound');
     const eng = { ...role('engineer'), tools: ['shell.run', 'vault.*'] } as RoleFrontmatter;
     expect(reg.forRole(eng, cfg).map((t) => t.name)).toEqual(expect.arrayContaining(['vault.read', 'vault.write']));
-    const growthShell = { ...role('growth'), tools: ['shell.run'] } as RoleFrontmatter;
+    const growthShell = { ...role('head_of_growth'), tools: ['shell.run'] } as RoleFrontmatter;
     expect(reg.forRole(growthShell, cfg)).toEqual([]); // shell.run restricted to engineer (and not registered in phase 3 anyway)
   });
 });

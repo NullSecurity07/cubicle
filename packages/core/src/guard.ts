@@ -1,5 +1,5 @@
 /** Paths agents may never write directly. Daemon-side dispatcher writes bypass this by construction. */
-export const OWNER_OWNED_PREFIXES = ['Brand/', 'Roles/'];
+export const OWNER_OWNED_PREFIXES = ['Brand/', 'Roles/', 'Teams/'];
 export const OWNER_OWNED_FILES = ['Memory/constitution.md', 'Memory/owner_preferences.md'];
 export const CACHE_PREFIXES = ['.cubicle/', '.obsidian/', '.git/'];
 

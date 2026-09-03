@@ -33,8 +33,8 @@ You answer customer questions kindly.
 
 describe('hire / fire (acceptance test 7, headless)', () => {
   it('a hire proposal with ≥2 job links, approved by the owner, creates the role, desk, inbox, event', async () => {
-    const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'growth', goal: 'g' }, 'cto');
-    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'growth', goal: 'g' }, 'cto');
+    const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'head_of_growth', goal: 'g' }, 'cto');
     updateJob(vault, j1, { status: 'blocked', blocked_on: { kind: 'owner', id: 'x', since: 'now' } }, 'daemon');
     updateJob(vault, j2, { status: 'failed' }, 'daemon');
     const p = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'Hire Support', body: `Growth keeps blocking on [[${j1}]] and [[${j2}]].\n\n\`\`\`markdown\n${CHARTER}\`\`\`\n` }, 'ceo');
@@ -59,23 +59,23 @@ describe('hire / fire (acceptance test 7, headless)', () => {
   it('rejects hires without justification, over max_roles, or with a bad charter', async () => {
     const p1 = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: '```markdown\n' + CHARTER + '```' }, 'ceo');
     expect(await applyHire(vault, { ...p1, ...findInboxById(vault, p1.id)! })).toMatch(/at least 2/);
-    const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'growth', goal: 'g' }, 'cto');
-    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'growth', goal: 'g' }, 'cto');
+    const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'head_of_growth', goal: 'g' }, 'cto');
     updateJob(vault, j1, { status: 'failed' }, 'daemon'); updateJob(vault, j2, { status: 'failed' }, 'daemon');
     const dup = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: `[[${j1}]] [[${j1}]]\n\`\`\`markdown\n${CHARTER}\`\`\`` }, 'ceo');
     expect(await applyHire(vault, findInboxById(vault, dup.id)!)).toMatch(/at least 2 distinct/);
     const bad = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: `[[${j1}]] [[${j2}]]\n\`\`\`markdown\n---\nrole: Bad Role\n---\n# c\n\`\`\`` }, 'ceo');
     expect(await applyHire(vault, findInboxById(vault, bad.id)!)).toMatch(/invalid/);
-    vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('max_roles: 8', 'max_roles: 5') }), 'owner');
+    vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('max_roles: 12', 'max_roles: 9') }), 'owner');
     const full = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: `[[${j1}]] [[${j2}]]\n\`\`\`markdown\n${CHARTER}\`\`\`` }, 'ceo');
     expect(await applyHire(vault, findInboxById(vault, full.id)!)).toMatch(/max_roles/);
   });
   it('fire deactivates, archives the charter, cancels open jobs; the CEO is protected', async () => {
-    const open = createJob(vault, { type: 'custom', title: 'pending', assigned: 'growth', goal: 'g' }, 'cto');
-    const p = createProposal(vault, { kind: 'fire', from: 'ceo', target: 'Roles/growth.md', title: 'Fire growth', body: 'no results' }, 'ceo');
-    expect(await applyFire(vault, findInboxById(vault, p.id)!)).toMatch(/fired growth/);
-    expect(vault.exists('Roles/growth.md')).toBe(false);
-    expect(vault.list('Roles/archive', { ext: '.md' }).some((r) => r.includes('growth'))).toBe(true);
+    const open = createJob(vault, { type: 'custom', title: 'pending', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const p = createProposal(vault, { kind: 'fire', from: 'ceo', target: 'Roles/head_of_growth.md', title: 'Fire head_of_growth', body: 'no results' }, 'ceo');
+    expect(await applyFire(vault, findInboxById(vault, p.id)!)).toMatch(/fired head_of_growth/);
+    expect(vault.exists('Roles/head_of_growth.md')).toBe(false);
+    expect(vault.list('Roles/archive', { ext: '.md' }).some((r) => r.includes('head_of_growth'))).toBe(true);
     expect(listJobs(vault).find((j) => j.id === open)!.status).toBe('cancelled');
     expect(vault.events.count('role.fired')).toBe(1);
     const ceo = createProposal(vault, { kind: 'fire', from: 'ceo', target: 'Roles/ceo.md', title: 'x', body: 'x' }, 'ceo');
@@ -84,8 +84,8 @@ describe('hire / fire (acceptance test 7, headless)', () => {
   });
   it('auto_approve_hire applies agent-created hires without an owner flip', async () => {
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('auto_approve_hire: false', 'auto_approve_hire: true') }), 'owner');
-    const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'growth', goal: 'g' }, 'cto');
-    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'growth', goal: 'g' }, 'cto');
+    const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'head_of_growth', goal: 'g' }, 'cto');
     updateJob(vault, j1, { status: 'failed' }, 'daemon'); updateJob(vault, j2, { status: 'failed' }, 'daemon');
     createProposal(vault, { kind: 'hire', from: 'ceo', title: 'Hire Support', body: `[[${j1}]] [[${j2}]]\n\`\`\`markdown\n${CHARTER}\`\`\`` }, 'ceo');
     expect(await dispatchProposals(deps())).toBe(1);
@@ -104,16 +104,16 @@ describe('charter compression, experiments, owner feedback', () => {
     expect(listJobs(vault).find((j) => j.id === id)!.type).toBe('cto.compress_charters');
   });
   it('charter_change proposals with a valid fenced charter are applied on approval (and auto-approved when allowed)', async () => {
-    const shorter = CHARTER.replace('role: support', 'role: growth').replace('display: Support', 'display: Growth').replace('sprite: support', 'sprite: growth').replace('desk: ""', 'desk: cubicle_3');
-    const p = createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/growth.md', title: 'Shorter growth charter', body: `## Proposed content\n\n\`\`\`markdown\n${shorter}\`\`\`` }, 'cto');
+    const shorter = CHARTER.replace('role: support', 'role: head_of_growth').replace('display: Support', 'display: Head of Growth').replace('sprite: support', 'sprite: growth').replace('desk: ""', 'desk: cubicle_3');
+    const p = createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/head_of_growth.md', title: 'Shorter head_of_growth charter', body: `## Proposed content\n\n\`\`\`markdown\n${shorter}\`\`\`` }, 'cto');
     expect(await dispatchProposals(deps())).toBe(0);
     ownerEdit(p.path, (t) => t.replace('approved: null', 'approved: true'));
     expect(await dispatchProposals(deps())).toBe(1);
-    expect(vault.readText('Roles/growth.md')).toContain('kindly');
+    expect(vault.readText('Roles/head_of_growth.md')).toContain('kindly');
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('auto_approve_charter_changes: false', 'auto_approve_charter_changes: true') }), 'owner');
-    createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/growth.md', title: 'v2', body: `## Proposed content\n\n\`\`\`markdown\n${shorter.replace('kindly', 'briskly')}\`\`\`` }, 'cto');
+    createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/head_of_growth.md', title: 'v2', body: `## Proposed content\n\n\`\`\`markdown\n${shorter.replace('kindly', 'briskly')}\`\`\`` }, 'cto');
     expect(await dispatchProposals(deps())).toBe(1);
-    expect(vault.readText('Roles/growth.md')).toContain('briskly');
+    expect(vault.readText('Roles/head_of_growth.md')).toContain('briskly');
   });
   it('running experiments past review_date get one COO judgement job; owner feedback is attributed to roles', () => {
     vault.writeText('Experiments/exp_1.md', stringifyNote({ id: 'exp_1', title: 'Cold email v2', owner: 'growth', status: 'running', metric: 'replies', review_date: '2026-01-01' }, '## Hypothesis\n\nx\n'), 'growth');

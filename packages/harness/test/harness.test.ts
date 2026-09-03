@@ -40,8 +40,8 @@ function deps(llm: Llm, extra: Partial<Parameters<typeof runJob>[0]> = {}) {
 }
 
 function growthWithMock() {
-  // give growth the mock outbound tool for tests
-  vault.updateNote('Roles/growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'], approval_overrides: {} }, body: n.body }), 'owner');
+  // give the head of growth the mock outbound tool for tests
+  vault.updateNote('Roles/head_of_growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'], approval_overrides: {} }, body: n.body }), 'owner');
 }
 
 const fourStep: Step[] = [
@@ -54,7 +54,7 @@ const fourStep: Step[] = [
 describe('runJob checkpointing and resume', () => {
   it('runs a 4-step job, records idempotency keys, writes the Result, enqueues coo.verify', async () => {
     growthWithMock();
-    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'growth', goal: 'send' }, 'cto');
+    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
     const out = await runJob(deps(scripted(fourStep)), id);
     expect(out.status).toBe('done');
     const j = readJob(vault, id)!;
@@ -72,7 +72,7 @@ describe('runJob checkpointing and resume', () => {
 
   it('kill after step 2 → resume at step 3 with no duplicate side effects (acceptance test 1, harness half)', async () => {
     growthWithMock();
-    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'growth', goal: 'send' }, 'cto');
+    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
     const llm = scripted(fourStep);
     llm.throwAtCall = 3; // dies while asking the model for step 3, after step 2 was checkpointed
     await expect(runJob(deps(llm), id)).rejects.toThrow(/kill -9/);
@@ -96,7 +96,7 @@ describe('runJob checkpointing and resume', () => {
 
   it('a model that repeats an already-done outbound step is skipped by idempotency key', async () => {
     growthWithMock();
-    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'growth', goal: 'send' }, 'cto');
+    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
     const llm = scripted(fourStep);
     llm.throwAtCall = 3;
     await expect(runJob(deps(llm), id)).rejects.toThrow();
@@ -109,7 +109,7 @@ describe('runJob checkpointing and resume', () => {
   });
 
   it('owner cancels a running job → stops before the next tool call', async () => {
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'growth', goal: 'g' }, 'cto');
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
     const steps: Step[] = [{ tool: 'vault.read', args: { path: 'Plans/plan.md' } }, { tool: 'vault.read', args: { path: 'Plans/plan.md' } }, { tool: 'finish', args: { status: 'done', summary: 'x' } }];
     const llm = scripted(steps);
     const origChat = llm.chat.bind(llm);
@@ -125,7 +125,7 @@ describe('approval modes in the loop', () => {
   it('ask → blocks with an outbound_batch proposal; approved:true → resumes and executes once', async () => {
     growthWithMock();
     const strict = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8').replace('mock.outbound:         { mode: auto', 'mock.outbound:         { mode: ask'));
-    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'growth', goal: 'send' }, 'cto');
+    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
     const out = await runJob(deps(scripted(fourStep), { toolsConfig: strict }), id);
     expect(out.status).toBe('blocked');
     const j = readJob(vault, id)!;
@@ -157,7 +157,7 @@ describe('approval modes in the loop', () => {
   it('ask → approved:false feeds a rejection and the job adapts', async () => {
     growthWithMock();
     const strict = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8').replace('mock.outbound:         { mode: auto', 'mock.outbound:         { mode: ask'));
-    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'growth', goal: 'send' }, 'cto');
+    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
     await runJob(deps(scripted(fourStep), { toolsConfig: strict }), id);
     const j = readJob(vault, id)!;
     const prop = findInboxById(vault, j.data.blocked_on!.id)!;
@@ -172,7 +172,7 @@ describe('approval modes in the loop', () => {
   it('propose on an outbound tool stores the call and the job continues', async () => {
     growthWithMock();
     const prop = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8').replace('mock.outbound:         { mode: auto, outbound: true, proposal_kind: outbound_batch', 'mock.outbound:         { mode: propose, outbound: true, proposal_kind: spend'));
-    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'growth', goal: 'send' }, 'cto');
+    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
     const out = await runJob(deps(scripted(fourStep), { toolsConfig: prop }), id);
     expect(out.status).toBe('done');
     const spends = listInbox(vault).filter((n) => n.data.kind === 'spend');
@@ -183,7 +183,7 @@ describe('approval modes in the loop', () => {
 
   it('never (via guardrail) → guardrail.blocked, job continues', async () => {
     growthWithMock();
-    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'growth', goal: 'send' }, 'cto');
+    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
     const out = await runJob(deps(scripted(fourStep), { guardrails: [{ check: (t) => (t === 'mock.outbound' ? 'constitution: max_emails_per_day' : null) }] }), id);
     expect(out.status).toBe('done');
     expect(vault.events.count('guardrail.blocked')).toBe(2);
@@ -204,11 +204,11 @@ describe('approval modes in the loop', () => {
   });
 
   it('invalid JSON three times → requeued, then failed on the last attempt; step limit → requeued with attempt+1', async () => {
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'growth', goal: 'g', max_attempts: 2 }, 'cto');
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g', max_attempts: 2 }, 'cto');
     expect((await runJob(deps(scripted([{ badJson: true }])), id)).status).toBe('requeued');
     const out = await runJob(deps(scripted([{ badJson: true }])), id);
     expect(out.status).toBe('failed');
-    const id2 = createJob(vault, { type: 'research', title: 'r2', assigned: 'growth', goal: 'g' }, 'cto');
+    const id2 = createJob(vault, { type: 'research', title: 'r2', assigned: 'head_of_growth', goal: 'g' }, 'cto');
     const out2 = await runJob(deps(scripted([{ tool: 'vault.read', args: { path: 'Plans/plan.md' } }]), { maxSteps: 3 }), id2);
     expect(out2).toEqual({ status: 'requeued', attempt: 2 });
     expect(readJob(vault, id2)!.data.status).toBe('queued');

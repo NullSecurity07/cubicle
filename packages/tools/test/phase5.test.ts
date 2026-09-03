@@ -66,7 +66,7 @@ describe('browser.*', () => {
     const frames: unknown[] = [];
     const onFrame = (f: unknown) => frames.push(f);
     browserFrames.on('frame', onFrame);
-    const client = await createRoleToolClient(reg.forRole(role('growth'), cfg), ctxFor('growth', 'job_br'));
+    const client = await createRoleToolClient(reg.forRole(role('head_of_growth'), cfg), ctxFor('head_of_growth', 'job_br'));
     try {
       const open = await client.call('browser.open', { url: `http://127.0.0.1:${port}/start` });
       expect(open.ok).toBe(true);
@@ -98,10 +98,10 @@ describe('browser.*', () => {
 describe('constitution guardrail (acceptance test 6)', () => {
   it('blocks outbound email past max_emails_per_day and cheap banned-tactic matches', async () => {
     const g = constitutionGuardrail();
-    const ctx = ctxFor('growth', 'job_g');
+    const ctx = ctxFor('head_of_growth', 'job_g');
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('max_emails_per_day: 20', 'max_emails_per_day: 2') }), 'owner');
     expect(await g.check('email.send', { to: 'a@x', body: 'hi' }, ctx)).toBeNull();
-    for (let i = 0; i < 2; i++) vault.events.emit({ type: 'email.sent', agent: 'growth', payload: { mock: true } });
+    for (let i = 0; i < 2; i++) vault.events.emit({ type: 'email.sent', agent: 'head_of_growth', payload: { mock: true } });
     expect(await g.check('email.send', { to: 'a@x', body: 'hi' }, ctx)).toMatch(/max_emails_per_day/);
     expect(await g.check('email.send', { to: 'a@x', body: 'Only 2 left! Fake urgency: buy now' }, ctx)).toMatch(/max_emails_per_day|banned tactic/);
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('max_emails_per_day: 2', 'max_emails_per_day: 20').replace('banned_channels: []', 'banned_channels: [reddit]') }), 'owner');

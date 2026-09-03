@@ -20,8 +20,8 @@ const steps = [
 async function main() {
   if (cmd === 'init') {
     const { vault } = await scaffoldVault(vaultPath);
-    vault.updateNote('Roles/growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
-    createJob(vault, { type: 'growth.outreach', title: 'kill9 outreach', assigned: 'growth', goal: 'send two' }, 'cto');
+    vault.updateNote('Roles/head_of_growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
+    createJob(vault, { type: 'growth.outreach', title: 'kill9 outreach', assigned: 'head_of_growth', goal: 'send two' }, 'cto');
     vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed', synthetic: true } }); // keep the startup heartbeat quiet
     vault.close();
     return;
@@ -36,7 +36,7 @@ async function main() {
     async chat(req: RouteRequest, chat: { messages: ChatMessage[]; tools?: ToolSchema[] }): Promise<RoutedChatResult> {
       const base = { content: 'ok', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
       if (!chat.tools) return base;
-      if (req.roleId !== 'growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
+      if (req.roleId !== 'head_of_growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
       const m = String(chat.messages[1]?.content ?? '').match(/Jobs\/(job_\w+)\.md/);
       const v = Vault.open(vaultPath); const j = m ? readJob(v, m[1]) : null; v.close();
       const step = j?.data.checkpoint_step ?? 0;

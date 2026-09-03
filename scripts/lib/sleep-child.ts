@@ -12,7 +12,7 @@ const [cmd, vaultPath] = process.argv.slice(2);
 async function main() {
   if (cmd === 'init') {
     const { vault } = await scaffoldVault(vaultPath);
-    createJob(vault, { type: 'research', title: 'sleep test', assigned: 'growth', goal: 'read the plan twice' }, 'cto');
+    createJob(vault, { type: 'research', title: 'sleep test', assigned: 'head_of_growth', goal: 'read the plan twice' }, 'cto');
     vault.close();
     return;
   }

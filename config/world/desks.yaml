@@ -9,3 +9,7 @@ desks:
   - { id: cubicle_6, x: 20, y: 16 }
   - { id: cubicle_7, x: 8,  y: 22 }
   - { id: cubicle_8, x: 14, y: 22 }
+  - { id: cubicle_9, x: 20, y: 22 }
+  - { id: cubicle_10, x: 8,  y: 30 }
+  - { id: cubicle_11, x: 14, y: 30 }
+  - { id: cubicle_12, x: 20, y: 30 }

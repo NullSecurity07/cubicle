@@ -22,7 +22,7 @@ function ctxFor(roleId: string, jobId: string | null, env: NodeJS.ProcessEnv = {
 describe('browser hardening (B1–B3)', () => {
   it('refuses file:// and private hosts unless explicitly allowed; click cannot submit; submit is self-contained', async () => {
     const reg = new ToolRegistry().registerAll(phase5Tools());
-    const strict = await createRoleToolClient(reg.forRole(role('growth'), cfg), ctxFor('growth', 'job_b1'));
+    const strict = await createRoleToolClient(reg.forRole(role('head_of_growth'), cfg), ctxFor('head_of_growth', 'job_b1'));
     try {
       for (const url of ['file:///etc/hostname', `http://127.0.0.1:${port}/x`, `http://[::1]:${port}/x`, 'http://localhost/x']) {
         const r = await strict.call('browser.open', { url });
@@ -31,7 +31,7 @@ describe('browser hardening (B1–B3)', () => {
       }
       expect(vault.events.count('browser.session_started')).toBe(0); // nothing opened on refusal
     } finally { await strict.close(); }
-    const lax = await createRoleToolClient(reg.forRole(role('growth'), cfg), ctxFor('growth', 'job_b2', { CUBICLE_ALLOW_LOCAL_FETCH: '1' }));
+    const lax = await createRoleToolClient(reg.forRole(role('head_of_growth'), cfg), ctxFor('head_of_growth', 'job_b2', { CUBICLE_ALLOW_LOCAL_FETCH: '1' }));
     try {
       const open = await lax.call('browser.open', { url: `http://127.0.0.1:${port}/form` });
       expect(open.ok).toBe(true);
@@ -58,7 +58,7 @@ describe('guardrails at the tool layer (B4, B8)', () => {
   it('banned channels are matched on URL hostnames, including browser tools', async () => {
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('banned_channels: []', 'banned_channels: [reddit]') }), 'owner');
     const g = constitutionGuardrail();
-    const ctx = ctxFor('growth', 'job_g');
+    const ctx = ctxFor('head_of_growth', 'job_g');
     expect(await g.check('social.post', { channel: 'forum', url: 'https://www.reddit.com/r/x/submit', title: 't', body: 'b' }, ctx)).toMatch(/banned/);
     expect(await g.check('browser.goto', { url: 'https://old.reddit.com/' }, ctx)).toMatch(/banned/);
     expect(await g.check('browser.goto', { url: 'https://news.ycombinator.com/' }, ctx)).toBeNull();
@@ -66,7 +66,7 @@ describe('guardrails at the tool layer (B4, B8)', () => {
   });
   it('email.send itself enforces max_emails_per_day (not only the harness pre-check)', async () => {
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('max_emails_per_day: 20', 'max_emails_per_day: 1') }), 'owner');
-    const client = await createRoleToolClient(new ToolRegistry().registerAll(phase6Tools()).forRole(role('growth'), cfg), ctxFor('growth', 'job_cap'));
+    const client = await createRoleToolClient(new ToolRegistry().registerAll(phase6Tools()).forRole(role('head_of_growth'), cfg), ctxFor('head_of_growth', 'job_cap'));
     try {
       expect((await client.call('email.send', { to: 'one@x.example', subject: 's', body: 'b' }, { idempotencyKey: 'job_cap:1:1' })).ok).toBe(true);
       const second = await client.call('email.send', { to: 'two@x.example', subject: 's', body: 'b' }, { idempotencyKey: 'job_cap:1:2' });

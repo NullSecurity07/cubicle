@@ -144,7 +144,7 @@ export function collectOwnerFeedback(vault: Vault, since?: string): OwnerFeedbac
     if (!comments.length) continue;
     const d = parseNote(text).data as Record<string, unknown>;
     const byName = rel.match(/^(?:Roles|Messages)\/([a-z0-9_-]+)\.md$/)?.[1];
-    const role = String(byName ?? d.assigned ?? d.decided_by ?? d.from ?? d.by ?? d.author ?? d.owner ?? (rel.startsWith('Site/') ? 'engineer' : rel.startsWith('Customers/') || rel.startsWith('Experiments/') ? 'growth' : rel.startsWith('Plans/') ? 'cto' : 'ceo'));
+    const role = String(byName ?? d.assigned ?? d.decided_by ?? d.from ?? d.by ?? d.author ?? d.owner ?? (rel.startsWith('Site/') ? 'engineer' : rel.startsWith('Customers/') || rel.startsWith('Experiments/') ? 'head_of_growth' : rel.startsWith('Plans/') ? 'cto' : 'ceo'));
     for (const c of comments) out.push({ role, source: rel, text: c });
   }
   for (const f of vault.ownerPreferences().feedback) out.push({ role: 'ceo', source: 'Memory/owner_preferences.md', text: f });

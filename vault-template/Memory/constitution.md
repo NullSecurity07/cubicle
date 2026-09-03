@@ -9,7 +9,7 @@ banned_tactics:
   - fake urgency
   - fabricated testimonials
   - impersonation
-max_roles: 8
+max_roles: 12
 auto_approve_hire: false
 auto_approve_charter_changes: false
 pii_local_only: false
@@ -18,10 +18,14 @@ never_modify:
   - Memory/owner_preferences.md
   - Brand/
   - Roles/
+  - Teams/
+max_team_size: 6
+auto_approve_reorg: false
 ```
 
 ## Notes
 
 - `pii_local_only: true` forces any job that touches `Customers/` or email to run only on the local model.
 - `banned_tactics` is checked by a local classifier on every outbound text.
-- `max_roles` caps headcount including the founding five.
+- `max_roles` caps headcount including the founding nine.
+- `max_team_size` caps how many members a lead can hold before a `reorg` proposal is required; `auto_approve_reorg` gates whether that proposal needs the owner.

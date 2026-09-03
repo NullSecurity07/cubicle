@@ -1,0 +1,28 @@
+# Review gates per job type (spec §3). Each job type maps to an ordered list of gate job types that must pass
+# before the job counts as accepted; `criteria` under the matching key is shown to the author and the reviewer
+# as "What good looks like".
+gates:
+  engineer.ship: [qa.review, coo.verify]
+  research: [requester.review]
+  growth.outreach: [coo.verify]
+  growth.post: [coo.verify]
+  growth.seo: [coo.verify]
+  custom: [coo.verify]
+  team.plan: []
+  critic.premortem: []
+  qa.review: []
+  coo.verify: []
+  company.plan: []
+
+criteria:
+  engineer.ship: "The change builds and runs; Site/ has no broken links; tests or a smoke check exist; the job's Done when holds."
+  research: "Sources linked; options compared against the free-tier constraint; one clear recommendation; a next step the requester can schedule."
+  growth.outreach: "Every message is approved before it leaves; the audience and the offer are named; results are measurable."
+  growth.post: "On-brand, no banned tactics, one call to action."
+  growth.seo: "Pages have titles, descriptions and internal links; nothing fabricated."
+  custom: "The job's Done when holds and the evidence is in the Result."
+  team.plan: "At most 4 jobs, each finishable in one sitting with a Done when; the plan section names them."
+  critic.premortem: "Concrete failure modes with a fix each; pass or return, never delay."
+  qa.review: "Findings cite files or output; verdict pass or return."
+  coo.verify: "Evidence-based; exactly one lesson."
+  company.plan: "One objective section per team."

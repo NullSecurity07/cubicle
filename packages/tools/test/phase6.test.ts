@@ -17,7 +17,7 @@ const mockLines = (name: string) => existsSync(path.join(dir, `.cubicle/mock/${n
 
 describe('email.send (mock)', () => {
   it('adds the footer, records the customer touch, refuses suppressed addresses, needs a key', async () => {
-    const client = await createRoleToolClient(new ToolRegistry().registerAll(phase6Tools()).forRole(role('growth'), cfg), ctxFor('growth', 'job_e'));
+    const client = await createRoleToolClient(new ToolRegistry().registerAll(phase6Tools()).forRole(role('head_of_growth'), cfg), ctxFor('head_of_growth', 'job_e'));
     try {
       const nokey = await client.call('email.send', { to: 'a@example.com', subject: 'hi', body: 'hello' });
       expect(nokey.ok).toBe(false);
@@ -27,7 +27,7 @@ describe('email.send (mock)', () => {
       const sent = mockLines('email');
       expect(sent.length).toBe(1);
       expect(sent[0].text).toContain('unsubscribe');
-      expect(vault.readText(customerPath('a@example.com'))).toContain('email sent by growth');
+      expect(vault.readText(customerPath('a@example.com'))).toContain('email sent by head_of_growth');
       expect(vault.events.count('email.sent')).toBe(1);
       vault.appendText('Customers/_suppression.md', 'a@example.com\n', 'owner');
       expect(suppressed(vault, 'A@Example.com')).toBe(true);
@@ -107,7 +107,7 @@ describe('deploy.site / stripe / analytics (mock)', () => {
     } finally { await client.close(); }
   });
   it('social.post records the draft and points at the browser', async () => {
-    const client = await createRoleToolClient(new ToolRegistry().registerAll(phase6Tools()).forRole(role('growth'), cfg), ctxFor('growth', 'job_s'));
+    const client = await createRoleToolClient(new ToolRegistry().registerAll(phase6Tools()).forRole(role('head_of_growth'), cfg), ctxFor('head_of_growth', 'job_s'));
     try {
       const r = await client.call('social.post', { channel: 'hn', url: 'https://news.ycombinator.com/submit', title: 'Show HN: meal planner', body: 'text' }, { idempotencyKey: 'job_s:1:1' });
       expect(r.ok).toBe(true);
