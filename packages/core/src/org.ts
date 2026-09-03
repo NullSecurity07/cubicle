@@ -30,6 +30,18 @@ export function teamOf(org: Org, role: string): TeamFrontmatter | null {
   if (byField && org.teams[byField]) return org.teams[byField];
   return Object.values(org.teams).find((t) => t.lead === role || t.members.includes(role)) ?? null;
 }
+
+/**
+ * Resolve a `### <header>` section header (from Plans/plan.md) to a team id, matching case-insensitively
+ * against either the team's id or its display name, and tolerating a trailing "team" (`### Growth team`) — the
+ * plan is CEO-written prose, not a machine key (F4). Returns null when nothing matches.
+ */
+export function resolveTeamSection(org: Org, header: string): string | null {
+  const norm = header.trim().replace(/\s+team$/i, '').trim().toLowerCase();
+  if (!norm) return null;
+  for (const t of Object.values(org.teams)) if (t.id.toLowerCase() === norm || t.name.toLowerCase() === norm) return t.id;
+  return null;
+}
 export function isLead(org: Org, role: string): boolean { return Object.values(org.teams).some((t) => t.lead === role); }
 export function leadOf(org: Org, role: string): string | null {
   if (role === 'ceo') return 'owner';

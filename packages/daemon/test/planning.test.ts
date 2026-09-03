@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listJobs, readJob } from '@cubicle/core';
+import { scaffoldVault, Vault, listJobs, readJob, loadOrg, resolveTeamSection } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob } from '../src/index.js';
+import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 
 const root = path.resolve(__dirname, '../../..');
@@ -26,6 +26,36 @@ describe('planIsSubstantive (Task 9 review finding 1)', () => {
   it('is true when a real objective sits alongside a verify/reconcile-only section (the bug: a per-section-scoped regex would stop at the first busywork-only section)', () => {
     const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Verify the deployed site\n\n### growth\n- Find the first organic channel\n';
     expect(planIsSubstantive(plan)).toBe(true);
+  });
+});
+
+describe('team section header matching (F4)', () => {
+  it('parseObjectiveSections keeps multi-word and differently-cased headers instead of dropping them', () => {
+    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### Engineering\n- Ship it\n\n### Growth team\n- Find channels\n';
+    expect(parseObjectiveSections(plan).map((s) => s.team)).toEqual(['Engineering', 'Growth team']);
+  });
+  it('resolveTeamSection matches a header against a team id or name, case-insensitively and tolerant of a trailing "team"; an unmatched header returns null', async () => {
+    const vault = Vault.open(dir);
+    try {
+      const org = loadOrg(vault);
+      expect(resolveTeamSection(org, 'Engineering')).toBe('engineering');
+      expect(resolveTeamSection(org, 'growth team')).toBe('growth');
+      expect(resolveTeamSection(org, 'GROWTH TEAM')).toBe('growth');
+      expect(resolveTeamSection(org, 'Nonexistent')).toBeNull();
+    } finally { vault.close(); }
+  });
+  it('a plan with differently-cased/multi-word headers still fans out to both teams; an unmatched header warns and creates no team.plan', async () => {
+    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### Engineering\n- Scaffold the site from Brand/\n\n### growth team\n- Find the first organic channel\n\n### Nonexistent\n- Should warn, not crash\n';
+    const llm = orgLlm({ vetoes: 0, plan });
+    const d = daemonFor(llm);
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      const teamPlans = listJobs(v).filter((j) => j.type === 'team.plan');
+      expect(teamPlans.map((j) => j.assigned).sort()).toEqual(['cto', 'head_of_growth']);
+      expect(v.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'team_plans' && /Nonexistent/.test(String(e.payload.message)))).toBe(true);
+    } finally { v.close(); await d.stop(); }
   });
 });
 

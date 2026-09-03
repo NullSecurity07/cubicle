@@ -1,7 +1,7 @@
 import {
   type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
-  loadOrg, expandProcess, childrenOf, JobResult,
+  loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -38,6 +38,11 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
  * every section to just its first line whenever a section had more than one line of content. This broke both
  * `planIsSubstantive` below on multi-bullet sections and the goal text `team_plans` sends a lead — a second
  * objective bullet, or a `process:` line after the first bullet, was silently dropped).
+ *
+ * The header itself is kept as written (`Engineering`, `Growth team`, `growth`, …) rather than filtered to a
+ * bare `\w+` team-id shape (F4): a CEO-written plan header is prose, not a machine key, and dropping a
+ * multi-word or differently-cased header here silently lost the whole section for both `planIsSubstantive` and
+ * `team_plans`. Resolving the header to an actual team id is the caller's job (`resolveTeamSection`).
  */
 export function parseObjectiveSections(plan: string): { team: string; text: string }[] {
   return plan.split(/^### /m).slice(1).map((chunk) => {
@@ -45,7 +50,7 @@ export function parseObjectiveSections(plan: string): { team: string; text: stri
     const team = (nl < 0 ? chunk : chunk.slice(0, nl)).trim();
     const text = (nl < 0 ? '' : chunk.slice(nl + 1)).trim();
     return { team, text };
-  }).filter((s) => /^\w+$/.test(s.team));
+  }).filter((s) => s.team.length > 0);
 }
 
 /**
@@ -356,6 +361,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // crash after this write and before the requeue's updateJob resumes here instead of double-processing.
         state = { ...state, processedCritic: state.criticJob }; saveState(state);
         const result = parseResult(sub.body);
+        // A critic job with no parseable ## Result block fails open to "pass" below (never blocking the cycle
+        // on a malformed Result), but that must not happen silently (T9).
+        if (!result) vault.events.emit({ type: 'daemon.warning', agent: 'ceo', job: jobId, payload: { where: 'critic', message: `critic ${state.criticJob} has no parseable Result; treated as pass` } });
         if (result?.verdict === 'return') {
           const vetoes = (state.vetoes ?? 0) + 1;
           vault.events.emit({ type: 'plan.vetoed', agent: 'critic', job: jobId, payload: { findings: result.findings, vetoes } });
@@ -377,12 +385,17 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           const sections = parseObjectiveSections(plan).filter((s) => s.text);
           const ids: string[] = [];
           for (const s of sections) {
-            const t = org.teams[s.team]; if (!t) continue;
+            // Match the section header against a team's id or name, case-insensitively and tolerant of a
+            // trailing "team" (F4) — a CEO-written plan header ("### Engineering", "### Growth team") is prose,
+            // not a machine key. An unmatched header warns instead of silently dropping the whole section.
+            const teamId = resolveTeamSection(org, s.team);
+            const t = teamId ? org.teams[teamId] : undefined;
+            if (!t) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'team_plans', message: `no team matches section "${s.team}"` } }); continue; }
             for (const m of s.text.matchAll(/^process:\s*(\w+)/gm)) {
               // Process-expanded jobs (parent = this heartbeat, like team.plan) can run for hours across several
               // roles, so the heartbeat must not wait on them — only on the team.plan jobs pushed below (Task 9
               // review round 2: waiting on rollup() of every child, including these, delayed the brief for hours).
-              try { expandProcess(vault, m[1], s.text.split('\n')[0].replace(/^- /, ''), { parent: jobId, by: 'ceo', team: s.team, owner_role: t.lead }); }
+              try { expandProcess(vault, m[1], s.text.split('\n')[0].replace(/^- /, ''), { parent: jobId, by: 'ceo', team: t.id, owner_role: t.lead }); }
               catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'team_plans', message: String((err as Error).message) } }); }
             }
             if (t.lead === 'ceo') continue;

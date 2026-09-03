@@ -153,6 +153,29 @@ describe('heartbeat as a resumable job', () => {
     expect(v2.list('Plans/archive', { ext: '.md' }).length).toBeLessThanOrEqual(1);
     v2.close();
   });
+
+  it('a critic job with no parseable ## Result fails open to pass, but with a daemon.warning (T9)', async () => {
+    const vault = Vault.open(dir);
+    const llm = fakeLlm();
+    const hb = createHeartbeatJob(vault, 'test');
+    const deps = { vault, llm };
+    await runHeartbeat(deps, hb); // blocked on company.plan
+    const plan = listJobs(vault).find((j) => j.type === 'company.plan')!;
+    const { runJob } = await import('@cubicle/harness');
+    const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
+    const harnessDeps = { vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} };
+    await runJob(harnessDeps, plan.id);
+    expect(requeueUnblocked(vault)).toBe(1);
+    await runHeartbeat(deps, hb); // blocked on critic
+    const critic = listJobs(vault).find((j) => j.type === 'critic.premortem')!;
+    // Simulate a critic job that reached done/failed/cancelled without ever writing a parseable ## Result block
+    // (a corrupted note, or a crash before finish wrote it) — the critic step must not silently fail open.
+    vault.updateNote(`Jobs/${critic.id}.md`, (n) => ({ data: { ...n.data, status: 'done' }, body: n.body }), 'daemon');
+    expect(requeueUnblocked(vault)).toBe(1);
+    await runHeartbeat(deps, hb);
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'critic' && String(e.payload.message).includes(critic.id))).toBe(true);
+    vault.close();
+  });
 });
 
 describe('brand reconcile (acceptance test 3, heartbeat half)', () => {
