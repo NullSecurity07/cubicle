@@ -109,6 +109,20 @@ describe('Vault writes', () => {
     vault.rebuildWrittenSha();
     expect(vault.isOwnerChanged('Metrics/quota.md')).toBe(false);
   });
+  it('finds %%cubicle:%% comments added while nothing was watching', () => {
+    vault.writeText('Plans/plan.md', '# Plan\n\n- ship the pricing page\n', 'cto');
+    expect(vault.commentsChangedSinceWritten()).toEqual([]);
+
+    writeFileSync(path.join(dir, 'Plans/plan.md'), '# Plan\n\n- ship the pricing page %%cubicle: do X%%\n');
+
+    expect(vault.commentsChangedSinceWritten()).toEqual([{ path: 'Plans/plan.md', added: ['do X'] }]);
+  });
+  it('ignores comments the system itself wrote, and files it never wrote', () => {
+    vault.writeText('Plans/plan.md', '# Plan\n\n- ship it %%cubicle: do X%%\n', 'cto');
+    writeFileSync(path.join(dir, 'Meetings/owner-only.md'), 'notes %%cubicle: never seen%%\n');
+
+    expect(vault.commentsChangedSinceWritten()).toEqual([]);
+  });
   it('rebuilds written_sha from events', () => {
     const n = vault.rebuildWrittenSha();
     expect(n).toBeGreaterThan(5);

@@ -206,6 +206,26 @@ export class Vault {
     try { return JSON.parse(row.comments_json) as string[]; } catch { return null; }
   }
 
+  /**
+   * Owner comments added since the system last wrote each note — the startup sweep for `%%cubicle: …%%`
+   * feedback typed while the daemon was stopped (the watcher starts with `ignoreInitial`, so those edits
+   * raise no `owner.edited`). Files the system has never written are skipped: their comments have no
+   * recorded baseline, so nothing can prove the owner (rather than a model or an email) wrote them.
+   */
+  commentsChangedSinceWritten(): { path: string; added: string[] }[] {
+    const out: { path: string; added: string[] }[] = [];
+    for (const rel of this.list('', { recursive: true, ext: '.md' })) {
+      const prior = this.writtenComments(rel);
+      if (prior === null) continue;
+      const text = this.readTextOrNull(rel);
+      if (text === null) continue;
+      const known = new Set(prior);
+      const added = extractOwnerComments(text).filter((c) => !known.has(c));
+      if (added.length) out.push({ path: rel, added });
+    }
+    return out;
+  }
+
   writtenSha(rel: string): string | null {
     const row = this.db.prepare('SELECT sha FROM written_sha WHERE path = ?').get(normalizeRel(rel)) as { sha: string } | undefined;
     return row?.sha ?? null;
