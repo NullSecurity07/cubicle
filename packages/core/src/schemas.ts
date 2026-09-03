@@ -103,6 +103,8 @@ export const DecisionFrontmatter = z.looseObject({
   status: z.enum(['proposed', 'adopted', 'reverted']).default('proposed'),
   inputs: z.array(z.string()).default([]),
   owner_rating: z.enum(['up', 'down']).nullable().optional(),
+  rating_seen: z.string().optional(),   // when the owner's thumbs-down reached its author
+  review_date: z.string().optional(),   // mirrors the `## Review date` section
 });
 export type DecisionFrontmatter = z.infer<typeof DecisionFrontmatter>;
 

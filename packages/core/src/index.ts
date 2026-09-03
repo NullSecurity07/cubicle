@@ -12,6 +12,7 @@ export * from './png.js';
 export * from './template.js';
 export * from './jobs.js';
 export * from './proposals.js';
+export * from './decisions.js';
 export * from './org.js';
 export * from './gates.js';
 export * from './processes.js';
