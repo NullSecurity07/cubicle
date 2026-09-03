@@ -172,6 +172,12 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       events.emit({ type: finalStatus === 'done' ? 'job.done' : finalStatus === 'blocked' ? 'job.blocked' : 'job.failed', agent: roleId, job: jobId, payload: { status: result.status, summary: result.summary, artifacts: result.artifacts, blockers: result.blockers, metrics: result.metrics, lessons: result.lessons, verdict: result.verdict } });
     }
     if (isGateJob && result.status === 'done') applyVerdict(job.parent!, job.type, result);
+    // A gate job that fails (explicit finish(failed), or step_limit/no_tool_calls/invalid_tool_json exhausting
+    // attempts via failOrRequeue) must not strand the parent in in_review forever: treat it as a return.
+    if (isGateJob && result.status === 'failed') {
+      const findings = result.blockers.length ? result.blockers : result.summary ? [result.summary] : ['reviewer could not complete the review'];
+      applyVerdict(job.parent!, job.type, { ...result, verdict: 'return', findings });
+    }
     // Skills loop (spec §9.3): a failed job counts a failure against every skill it loaded; two failures archive the skill.
     if (result.status === 'failed') {
       const loaded = [...new Set(observations.filter((o) => o.kind === 'tool' && o.tool === 'skills.load' && o.ok !== false).map((o) => String(o.args?.name ?? '')))].filter(Boolean);

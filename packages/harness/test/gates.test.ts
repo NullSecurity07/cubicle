@@ -55,4 +55,18 @@ describe('review gates (spec §3)', () => {
     await runJob(deps(finishing({ status: 'failed', summary: 'no' })), f);
     expect(readJob(vault, f)!.data.status).toBe('failed'); expect(listJobs(vault).some((j) => j.parent === f)).toBe(false);
   });
+  it('a failed gate job returns the parent (not stranded); a second gate failure fails the parent', async () => {
+    const id = createJob(vault, { type: 'engineer.ship', title: 'Build', assigned: 'engineer', goal: 'g', team: 'engineering', owner_role: 'cto' }, 'cto');
+    await runJob(deps(finishing({ status: 'done', summary: 'built' })), id);
+    let qa = listJobs(vault).find((j) => j.type === 'qa.review')!;
+    await runJob(deps(finishing({ status: 'failed', summary: 'could not run the build', blockers: ['docker down'] })), qa.id);
+    const back = readJob(vault, id)!;
+    expect(back.data.status).toBe('queued'); expect(back.data.attempt).toBe(2); expect(back.data.returns).toEqual({ 'qa.review': 1 });
+    expect(back.body).toContain('## Review findings'); expect(back.body).toContain('docker down');
+    expect(vault.events.count('review.returned')).toBe(1);
+    await runJob(deps(finishing({ status: 'done', summary: 'built again' })), id);
+    qa = listJobs(vault).filter((j) => j.type === 'qa.review').sort((a, b) => a.created.localeCompare(b.created)).at(-1)!;
+    await runJob(deps(finishing({ status: 'failed', summary: 'could not run the build again', blockers: ['docker down'] })), qa.id);
+    expect(readJob(vault, id)!.data.status).toBe('failed');
+  });
 });
