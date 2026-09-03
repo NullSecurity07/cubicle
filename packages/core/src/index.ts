@@ -7,6 +7,7 @@ export * from './events.js';
 export * from './git.js';
 export * from './vault.js';
 export * from './watcher.js';
+export * from './env-example.js';
 export * from './png.js';
 export * from './template.js';
 export * from './jobs.js';

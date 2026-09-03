@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault } from '../src/template.js';
+import { scaffoldVault, repoRoot } from '../src/template.js';
+import { ENV_EXAMPLE } from '../src/env-example.js';
 import { Vault } from '../src/vault.js';
 import { VaultWatcher } from '../src/watcher.js';
 import { OwnerOwnedPathError } from '../src/guard.js';
@@ -41,6 +42,15 @@ describe('scaffoldVault', () => {
     expect(png[25]).toBe(6); // colour type: RGBA
     expect(vault.writtenSha('Brand/logo.png')).toBeTruthy();
     expect(vault.isOwnerChanged('Brand/logo.png')).toBe(false);
+  });
+  it('generates .env.example from ENV_EXAMPLE, not by copying the repo root', () => {
+    const written = readFileSync(path.join(dir, '.env.example'), 'utf8');
+    expect(written).toBe(ENV_EXAMPLE);
+    expect(written).toContain('GEMINI_API_KEY=');
+    expect(vault.writtenSha('.env.example')).toBeTruthy();
+  });
+  it('ENV_EXAMPLE and the repo-root .env.example cannot drift', () => {
+    expect(readFileSync(path.join(repoRoot(), '.env.example'), 'utf8')).toBe(ENV_EXAMPLE);
   });
   it('records template files as written by init', () => {
     expect(vault.writtenSha('Roles/ceo.md')).toBeTruthy();

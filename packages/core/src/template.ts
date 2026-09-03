@@ -5,6 +5,7 @@ import { Vault } from './vault.js';
 import { autoCommit } from './git.js';
 import { listFilesRecursive, sha256, atomicWriteSync } from './fs.js';
 import { placeholderSquare } from './png.js';
+import { ENV_EXAMPLE } from './env-example.js';
 import { parseNote } from './frontmatter.js';
 
 /** Repo root, resolved from this file (works from src/ via tsx and from dist/). */
@@ -40,9 +41,11 @@ export async function scaffoldVault(target: string, opts: { force?: boolean; mem
     mkdirSync(path.dirname(dst), { recursive: true });
     cpSync(path.join(tpl, rel), dst);
   }
-  const envExample = path.join(repoRoot(), '.env.example');
-  if (existsSync(envExample) && !existsSync(path.join(abs, '.env.example'))) cpSync(envExample, path.join(abs, '.env.example'));
   const generated: string[] = [];
+  if (!existsSync(path.join(abs, '.env.example'))) {
+    atomicWriteSync(path.join(abs, '.env.example'), ENV_EXAMPLE);
+    generated.push('.env.example');
+  }
   const logo = path.join(abs, 'Brand', 'logo.png');
   if (!existsSync(logo)) {
     const paletteFile = path.join(abs, 'Brand', 'palette.md');
