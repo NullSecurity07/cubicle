@@ -96,7 +96,8 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
   // 1. growth → head_of_growth
   if (vault.exists('Roles/growth.md') && !vault.exists('Roles/head_of_growth.md')) {
     const n = parseNote(vault.readText('Roles/growth.md'));
-    vault.writeText('Roles/head_of_growth.md', stringifyNote({ ...n.data, role: 'head_of_growth', display: 'Head of Growth' }, n.body), 'daemon');
+    const display = n.data.display === 'Growth' ? 'Head of Growth' : n.data.display; // preserve an owner-customised display
+    vault.writeText('Roles/head_of_growth.md', stringifyNote({ ...n.data, role: 'head_of_growth', display }, n.body), 'daemon');
     vault.remove('Roles/growth.md', 'daemon');
     if (vault.exists('Messages/growth.md') && !vault.exists('Messages/head_of_growth.md')) vault.move('Messages/growth.md', 'Messages/head_of_growth.md', 'daemon');
     for (const j of listJobs(vault)) if (j.assigned === 'growth') updateJob(vault, j.id, { assigned: 'head_of_growth' }, 'daemon', `- ${nowIso()}: reassigned growth → head_of_growth (org migration)`);
@@ -118,10 +119,15 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
   }
   // 4. constitution fields
   const c = vault.readTextOrNull('Memory/constitution.md') ?? '';
+  let patched = c;
   if (c && !/^max_team_size:/m.test(c)) {
-    const patched = c.replace(/^max_roles:.*$/m, (m) => `${m.replace(/\d+/, (d) => String(Math.max(12, Number(d))))}\nmax_team_size: 6\nauto_approve_reorg: false`).replace(/^never_modify:\n((?:\s+-.*\n)*)/m, (m) => (m.includes('Teams/') ? m : m + '  - Teams/\n'));
-    vault.writeText('Memory/constitution.md', patched, 'daemon'); changed.push('Memory/constitution.md');
+    patched = /^max_roles:.*$/m.test(c)
+      ? c.replace(/^max_roles:.*$/m, (m) => `${m.replace(/\d+/, (d) => String(Math.max(12, Number(d))))}\nmax_team_size: 6\nauto_approve_reorg: false`)
+      // no max_roles anchor at all (corrupted or pre-dates the field): add it, inside the fenced yaml block, instead of a no-op replace
+      : c.replace(/^```ya?ml\s*\n/m, (m) => `${m}max_roles: 12\nmax_team_size: 6\nauto_approve_reorg: false\n`);
+    patched = patched.replace(/^never_modify:\n((?:\s+-.*\n)*)/m, (m) => (m.includes('Teams/') ? m : m + '  - Teams/\n'));
   }
+  if (patched !== c) { vault.writeText('Memory/constitution.md', patched, 'daemon'); changed.push('Memory/constitution.md'); }
   if (changed.length) vault.events.emit({ type: 'org.changed', agent: 'daemon', payload: { reason: 'migration', changed } });
   return { changed };
 }

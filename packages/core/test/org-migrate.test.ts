@@ -41,3 +41,24 @@ describe('migrateOrg (spec §1 compatibility)', () => {
     expect(vault.events.count('org.changed')).toBe(before + 1);
   });
 });
+
+describe('migrateOrg constitution patch (missing max_roles anchor)', () => {
+  it('a constitution with no max_roles: line migrates once, then the second run is a no-op', async () => {
+    const dir2 = mkdtempSync(path.join(tmpdir(), 'cubicle-migrate-noanchor-'));
+    const vault2 = (await scaffoldVault(dir2)).vault;
+    // Simulate a corrupted/pre-field constitution: no max_roles, max_team_size or auto_approve_reorg lines at all.
+    writeFileSync(path.join(dir2, 'Memory', 'constitution.md'), readFileSync(path.join(dir2, 'Memory', 'constitution.md'), 'utf8').replace(/^max_roles:.*\n|^max_team_size:.*\n|^auto_approve_reorg:.*\n/gm, ''));
+    try {
+      const before = vault2.events.count('org.changed');
+      const r1 = migrateOrg(vault2, templateDir());
+      expect(r1.changed).toContain('Memory/constitution.md');
+      expect(vault2.constitution().max_roles).toBe(12);
+      expect(vault2.constitution().max_team_size).toBe(6);
+      expect(vault2.constitution().auto_approve_reorg).toBe(false);
+      expect(vault2.events.count('org.changed')).toBe(before + 1);
+      const r2 = migrateOrg(vault2, templateDir());
+      expect(r2.changed).toEqual([]);
+      expect(vault2.events.count('org.changed')).toBe(before + 1);
+    } finally { vault2.close(); rmSync(dir2, { recursive: true, force: true }); }
+  });
+});
