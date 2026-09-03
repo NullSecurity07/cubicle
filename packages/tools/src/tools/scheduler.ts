@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { defineTool } from '../registry.js';
 import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob } from '@cubicle/core';
 
-const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'] };
+const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'] };
 
 export const schedulerRequest = defineTool({
   name: 'scheduler.request',

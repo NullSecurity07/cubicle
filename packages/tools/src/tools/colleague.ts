@@ -19,6 +19,10 @@ export const colleagueMessage = defineTool({
     if (!roleNote) return { ok: false, text: `unknown role: ${to}` };
     const parsedRole = RoleFrontmatter.safeParse(roleNote.data);
     if (parsedRole.success && !parsedRole.data.active) return { ok: false, text: `${to} is no longer active` };
+    if (kind === 'handoff') {
+      const org = loadOrg(ctx.vault);
+      if (!can(org, ctx.roleId, 'schedule', to)) return { ok: false, text: `handoff only to a teammate (${teamOf(org, ctx.roleId)?.members.join(', ') ?? 'none'}); cross-team needs go through your lead` };
+    }
     const id = ctx.idempotencyKey ? idFromKey('msg', ctx.idempotencyKey) : makeId('msg');
     const existing = ctx.vault.readTextOrNull(messagePath(to)) ?? '';
     if (existing.includes(`<!-- id:${id}`)) return { ok: true, text: `message ${id} already delivered to ${to} (replayed step)`, data: { id }, block: kind === 'question' ? { kind: 'message', id } : undefined };
@@ -27,8 +31,6 @@ export const colleagueMessage = defineTool({
     ctx.vault.appendText(messagePath(to), section, ctx.roleId, { job: ctx.jobId });
     ctx.events.emit({ type: 'agent.spoke', agent: ctx.roleId, job: ctx.jobId, payload: { to, kind, text: body.slice(0, 280), id } });
     if (kind === 'handoff') {
-      const org = loadOrg(ctx.vault);
-      if (!can(org, ctx.roleId, 'schedule', to)) return { ok: false, text: `handoff only to a teammate (${teamOf(org, ctx.roleId)?.members.join(', ') ?? 'none'}); cross-team needs go through your lead` };
       const jobId = ctx.scheduler.enqueue({ id: ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey) : undefined, type: 'custom', title: `Handoff from ${ctx.roleId}: ${body.slice(0, 60)}`, assigned: to, goal: body, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [] });
       return { ok: true, text: `handed off to ${to} as job ${jobId}`, data: { id, jobId } };
     }

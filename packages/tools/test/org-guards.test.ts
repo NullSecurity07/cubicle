@@ -28,6 +28,9 @@ describe('scheduler.request through the org (spec §2)', () => {
     const m = await call('scheduler.request', 'engineer', { title: 'B', assigned: 'qa', goal: 'g' });
     expect(readJob(vault, (m.data as { id: string }).id)!.data.owner_role).toBe('cto'); // a member's handoff is owned by its lead
   });
+  it('cto.plan is reserved for the daemon (via ceo), not schedulable through the tool', async () => {
+    expect((await call('scheduler.request', 'cto', { type: 'cto.plan', title: 'x', assigned: 'engineer', goal: 'g', done_when: 'd' })).ok).toBe(false);
+  });
   it('research goes through research_request and lands on the analyst with `for`', async () => {
     const ok = await call('scheduler.request', 'head_of_growth', { type: 'research', title: 'Channels', assigned: 'research_analyst', goal: 'g', done_when: 'report', for: 'head_of_growth' });
     expect(ok.ok).toBe(true); expect(readJob(vault, (ok.data as { id: string }).id)!.data.for).toBe('head_of_growth');
@@ -51,7 +54,10 @@ describe('proposal.create, meeting.open, colleague.message, finish', () => {
   });
   it('meeting.open requires the meeting permission; handoff only to a teammate; finish takes a verdict', async () => {
     expect((await call('meeting.open', 'engineer', { participants: ['qa'], agenda: 'a' })).text).toMatch(/may not open meetings/);
+    const spokeBefore = vault.events.count('agent.spoke');
     expect((await call('colleague.message', 'engineer', { to: 'head_of_growth', kind: 'handoff', body: 'take this' })).ok).toBe(false);
+    expect(vault.readTextOrNull('Messages/head_of_growth.md') ?? '').not.toContain('take this'); // refused handoff has no side effect
+    expect(vault.events.count('agent.spoke')).toBe(spokeBefore);
     expect((await call('colleague.message', 'engineer', { to: 'qa', kind: 'handoff', body: 'take this' })).ok).toBe(true);
     const f = await call('finish', 'qa', { status: 'done', summary: 's', verdict: 'return', findings: ['no tests'] });
     expect((f.data as { verdict: string; findings: string[] })).toMatchObject({ verdict: 'return', findings: ['no tests'] });
