@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
-import type { World, Anchor } from './map.js';
+import type { Anchor } from './map.js';
 import { TILE } from './tileset.js';
 import type { State } from '../state.js';
-import { headlineFor, cut } from './headlines.js';
-
-export type SurfaceKind = 'billboard' | 'terminal' | 'postoffice' | 'newsstand' | 'bank' | 'vault' | 'workshop' | 'whiteboard' | 'noticeboard' | 'cabin';
+import { cut } from './headlines.js';
+import type { SurfaceDef } from './surface-registry.js';
+import { headlineFor } from './surface-registry.js';
 
 const PAD = 6;
 const HEAD_PX = 10, LINE_PX = 8, LINE_H = 10, HEAD_H = 14;
@@ -30,10 +30,10 @@ export class Surface {
   private readonly innerH: number;
   private readonly inset: number;
 
-  constructor(private scene: Phaser.Scene, world: World, public readonly kind: SurfaceKind, public readonly anchor: Anchor, onClick: (k: SurfaceKind) => void) {
-    // The whiteboard preview hangs on the corridor wall just above the board room (rows ty-2..ty-1), clear of the cabin.
-    const x = anchor.tx * TILE, y = kind === 'whiteboard' ? (anchor.ty - 2) * TILE : anchor.ty * TILE;
-    const w = anchor.tw * TILE, h = kind === 'whiteboard' ? TILE * 2 : Math.max(TILE * 2, (anchor.th - 1) * TILE);
+  constructor(private scene: Phaser.Scene, public readonly def: SurfaceDef, public readonly anchor: Anchor, onClick: (kind: string) => void) {
+    // The anchor is the registry's box for this surface: the map rectangle, or the wall its entry picked out of a room.
+    const x = anchor.tx * TILE, y = anchor.ty * TILE;
+    const w = anchor.tw * TILE, h = Math.max(TILE * 2, (anchor.th - 1) * TILE);
     this.inset = anchor.type === 'surface' && anchor.th > 1 ? 4 : 0;
     this.innerW = w - this.inset * 2 - PAD * 2;
     this.innerH = h - this.inset - PAD;
@@ -43,14 +43,14 @@ export class Surface {
     this.text = scene.add.text(this.inset + PAD, this.inset + 4 + HEAD_H, '', { fontFamily: 'system-ui, sans-serif', fontSize: `${LINE_PX * RES}px`, color: '#b9c2d6', lineSpacing: (LINE_H - LINE_PX - 2) * RES }).setOrigin(0, 0).setScale(1 / RES);
     this.bars = scene.add.graphics();
     this.badge = scene.add.text(w - this.inset - 3, this.inset + 3, '', { fontFamily: 'system-ui, sans-serif', fontSize: `${8 * RES}px`, fontStyle: 'bold', color: '#2a1f08', backgroundColor: '#e6a93c', padding: { x: 3 * RES, y: RES } }).setOrigin(1, 0).setScale(1 / RES).setVisible(false);
-    const title = scene.add.text(w / 2, -9, String(anchor.props.label ?? kind).split('—')[0].trim(), { fontFamily: 'system-ui, sans-serif', fontSize: `${8 * RES}px`, color: '#ffe9a8', stroke: '#000', strokeThickness: 2 * RES }).setOrigin(0.5, 1).setScale(1 / RES);
+    const title = scene.add.text(w / 2, -9, String(anchor.props.label ?? def.kind).split('—')[0].trim(), { fontFamily: 'system-ui, sans-serif', fontSize: `${8 * RES}px`, color: '#ffe9a8', stroke: '#000', strokeThickness: 2 * RES }).setOrigin(0.5, 1).setScale(1 / RES);
     this.container = scene.add.container(x, y, [this.bg, this.head, this.text, this.bars, this.badge, title]).setDepth(5);
-    this.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => onClick(kind));
+    this.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => onClick(def.kind));
   }
 
   private setImage(dataUrlOrKey: string | null): void {
     if (!dataUrlOrKey) { this.image?.setVisible(false); return; }
-    const key = `surface:${this.kind}`;
+    const key = `surface:${this.def.kind}`;
     const w = this.bg.width - 4, h = this.bg.height - 4;
     const apply = () => {
       if (!this.image) { this.image = this.scene.add.image(this.bg.x, this.bg.y, key).setDepth(6); this.container.addAt(this.image, 1); }
@@ -77,15 +77,16 @@ export class Surface {
   }
 
   render(s: State, frames: Record<string, string>): void {
-    const hl = headlineFor(this.kind, s);
+    const hl = headlineFor(this.def.kind, s);
     this.badge.setText(hl.badge ?? '').setVisible(!!hl.badge);
-    if (this.kind === 'billboard') {
-      const active = Object.values(s.surfaces).filter((x) => x.streamKind === 'browser').sort((a, b) => Number(b.active) - Number(a.active));
-      const data = active[0] ? frames[active[0].streamId] : undefined;
+    // How a surface draws follows its stream kind, not its name: an image stream shows its latest frame …
+    if (this.def.streamKind === 'browser') {
+      const data = frames[this.def.streamId(s)];
       if (data) this.setImage(data); else this.setHeadline(hl.head, hl.lines);
       return;
     }
-    if (this.kind === 'bank') {
+    // … and a chart stream draws runway bars beside its head lines.
+    if (this.def.streamKind === 'chart') {
       this.bars.clear();
       const rows = s.quota.filter((q) => q.limits.rpd > 0).slice(0, Math.max(0, Math.floor((this.innerH - HEAD_H) / LINE_H)));
       if (!rows.length) { this.setHeadline(hl.head, ['Set rpm/rpd in providers.yaml']); return; }

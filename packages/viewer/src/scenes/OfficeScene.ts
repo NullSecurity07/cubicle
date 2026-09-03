@@ -2,18 +2,17 @@ import Phaser from 'phaser';
 import { makeTileset, TILE } from '../world/tileset.js';
 import { buildWorld, type World } from '../world/map.js';
 import { AgentSprite } from '../world/agents.js';
-import { Surface, type SurfaceKind } from '../world/surfaces.js';
+import { Surface } from '../world/surfaces.js';
+import { SURFACES } from '../world/surface-registry.js';
 import type { State } from '../state.js';
 
-export interface SceneHooks { getState(): State; frames(): Record<string, string>; onSurfaceClick(kind: SurfaceKind): void; onAgentClick(role: string): void; hour(): number; /** wall clock live, event clock in replay (bubbles expire against it) */ clock(): number; }
-
-const SURFACES: SurfaceKind[] = ['billboard', 'terminal', 'postoffice', 'newsstand', 'bank', 'vault', 'workshop', 'whiteboard', 'noticeboard'];
+export interface SceneHooks { getState(): State; frames(): Record<string, string>; onSurfaceClick(kind: string): void; onAgentClick(role: string): void; hour(): number; /** wall clock live, event clock in replay (bubbles expire against it) */ clock(): number; }
 
 /** The office: tilemap, sprites driven by the reducer state, surfaces, camera controls, minimap, day/night. */
 export class OfficeScene extends Phaser.Scene {
   private world!: World;
   private agents = new Map<string, AgentSprite>();
-  private surfaces = new Map<SurfaceKind, Surface>();
+  private surfaces = new Map<string, Surface>();
   private night!: Phaser.GameObjects.Rectangle;
   private minimap!: Phaser.Cameras.Scene2D.Camera;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
@@ -32,12 +31,12 @@ export class OfficeScene extends Phaser.Scene {
     this.world = buildWorld(this, 'office');
     const w = this.world.width * TILE, h = this.world.height * TILE;
     this.cameras.main.setBounds(-64, -64, w + 128, h + 128).setZoom(2.2).centerOn(w * 0.4, h * 0.4).setRoundPixels(true);
-    for (const kind of SURFACES) {
-      const a = this.world.anchors[kind];
-      if (a) this.surfaces.set(kind, new Surface(this, this.world, kind, a, (k) => this.hooks.onSurfaceClick(k)));
+    // One Surface per registry entry that has an anchor of the same name: placing a tile is all a new one needs.
+    for (const def of Object.values(SURFACES)) {
+      const a = this.world.anchors[def.kind];
+      if (!a) { console.warn(`[office] surface "${def.kind}" has no anchor in the map; not placed`); continue; }
+      this.surfaces.set(def.kind, new Surface(this, def, def.anchorAdjust ? def.anchorAdjust(a) : a, (k) => this.hooks.onSurfaceClick(k)));
     }
-    const cabin = this.world.anchors.cabin;
-    if (cabin) this.surfaces.set('cabin', new Surface(this, this.world, 'cabin', { ...cabin, ty: cabin.ty + cabin.th - 3, th: 3 }, (k) => this.hooks.onSurfaceClick(k)));
     this.night = this.add.rectangle(0, 0, w, h, 0x0a1030, 0).setOrigin(0).setDepth(50).setScrollFactor(1);
     // camera: drag / WASD / wheel
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => { if (p.button === 0) this.dragging = true; });

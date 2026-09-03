@@ -5,7 +5,6 @@ import { emptyState, applyEvent, applySnapshot, tick, type State, type CubicleEv
 import { Ui } from './ui/panel.js';
 import { viewFor, esc, obsidianUrl, chip, type Ctx } from './ui/content.js';
 import { TimeControls } from './ui/time.js';
-import type { SurfaceKind } from './world/surfaces.js';
 
 let state: State = emptyState();
 let liveState: State | null = null;   // saved while replaying
@@ -97,7 +96,7 @@ function refresh(): void {
   ui.setBrand(state.brand.name, state.brand.tagline);
 }
 
-ui.onOpen = (kind) => open(kind as SurfaceKind);
+ui.onOpen = (kind) => open(kind);
 ui.onChat = (text) => {
   if (!net.chat(text)) return;
   state = { ...state, chat: [...state.chat, { ts: new Date().toISOString(), from: 'you', text }] };
