@@ -75,7 +75,7 @@ describe('drawer and document views', () => {
 
 describe('org view (spec §6)', () => {
   const withTeams = applySnapshot(emptyState(), { ...snap, roles: [...snap.roles, { role: 'cto', display: 'CTO', sprite: 'cto', desk: 'cubicle_1', active: true }], teams: [{ id: 'engineering', name: 'Engineering', lead: 'cto', members: ['engineer'], mission: 'Ship.' }], jobs: [{ ...snap.jobs[0], team: 'engineering' } as never] });
-  it('the Org drawer lists teams with lead and members as openable rows, with open-job counts', () => {
+  it('the Org drawer lists teams with lead and members as openable rows, with open-job counts (acceptance test 11)', () => {
     const v = viewFor('org', withTeams, ctx);
     expect(v.mode).toBe('drawer');
     expect(v.html).toContain('Engineering'); expect(v.html).toContain('data-open="agent:cto"'); expect(v.html).toContain('data-open="agent:engineer"');

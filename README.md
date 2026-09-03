@@ -83,6 +83,10 @@ cubicle memory rebuild|search        embedding index over Memory/, Skills/, Deci
 cubicle chat [--tier t] <prompt>     one completion through the cascade (debug)
 ```
 
+## The org
+
+The company is a real org, not a flat list of roles: teams (`Teams/<team>.md`), leads, review gates (`config/gates.yaml`), a Critic who premortems the plan, and a Research Analyst who writes ADRs and research notes. Planning is two levels — the CEO writes objectives per team, the Critic passes or returns them once, then each lead turns their team's objective into up to four jobs with a "Done when". A job counts as accepted only once it clears its gate (QA then the COO for engineering, the requester for research). See [CHECKPOINT-C.md](CHECKPOINT-C.md) for the full picture, how to open the **Org** drawer in the office, and how to reorganize a team through a `reorg` proposal.
+
 ## Tests and acceptance
 
 ```bash

@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { EVENT_TYPES, JobFrontmatter, RoleFrontmatter, DecisionFrontmatter, InboxFrontmatter, Constitution, OwnerPreferences, JobResult } from '@cubicle/core';
+import { EVENT_TYPES, JobFrontmatter, RoleFrontmatter, TeamFrontmatter, DecisionFrontmatter, InboxFrontmatter, Constitution, OwnerPreferences, JobResult, MAX_PROCESS_STEPS } from '@cubicle/core';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -42,6 +42,7 @@ const EVENT_NOTES: Record<string, string> = {
   'proposal.created': 'id, kind, path, title, to', 'proposal.resolved': 'id, kind, approved, outcome', 'role.hired': 'role, display, desk, sprite', 'role.fired': 'role',
   'router.call': 'provider, model, tier, tokens {prompt_tokens, completion_tokens}, tools, downgraded', 'router.downgraded': 'requested_tier, chosen_tier, provider, model, tried', 'quota.updated': 'provider, model, rpm_used, rpd_used, tpm_used, cooling_until, limits',
   'vault.wrote': 'path, sha, by (role | daemon | init | <role>/shell), deleted?, moved_from?', 'owner.edited': 'path, area, deleted, wakes_heartbeat', 'guardrail.blocked': 'tool, reason, step — every refused call, never silent',
+  'team.planned': 'team, jobs (ids the team.plan job scheduled)', 'review.passed': 'gate, findings', 'review.returned': 'gate, findings', 'plan.vetoed': 'findings, vetoes (count so far this cycle)', 'research.delivered': 'emitted on the requester\'s research job', 'org.changed': 'reason (migration | reorg | fire), changed | teams | role',
 };
 
 const events = `# Events
@@ -96,11 +97,23 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 
 ## Frontmatter contracts
 
-${table('Job note (Jobs/<id>.md)', JobFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { status: 'you may set `cancelled`; `blocked` without `blocked_on` = paused by you', checkpoint_step: 'last completed tool step; resume starts after it', side_effects_done: 'idempotency keys `<job>:<attempt>:<step>` of external actions already performed', privacy: '`local` forces Ollama-only routing', runs_on: 'reserved for a future remote mode', blocked_on: 'kind: message | job | proposal | quota | owner' })}
+${table('Job note (Jobs/<id>.md)', JobFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { status: 'you may set `cancelled`; `blocked` without `blocked_on` = paused by you; `in_review` = the job\'s own work is done but it still owes a gate from `config/gates.yaml`', checkpoint_step: 'last completed tool step; resume starts after it', side_effects_done: 'idempotency keys `<job>:<attempt>:<step>` of external actions already performed', privacy: '`local` forces Ollama-only routing', runs_on: 'reserved for a future remote mode', blocked_on: 'kind: message | job | proposal | quota | owner', team: 'the team id (`Teams/<id>.md`) the job belongs to', owner_role: 'the lead who scheduled it, for jobs a member didn\'t request themselves', for: 'who a `research` job\'s findings are for (a lead, not a team)', done_when: 'the "Done when" a `team.plan` job set for a job it scheduled', returns: 'gate job type → how many times that gate has returned this job (once-per-gate: a second return from the same gate passes through instead of looping forever)', gate_index: 'how far through its `config/gates.yaml` gate list the job has passed' })}
 Body sections: \`## Goal\`, \`## Plan\`, \`## Checkpoint log\`, \`## Result\` (JSON block \`{status, artifacts, metrics, blockers, lessons, summary}\`).
 
-${table('Role charter (Roles/<role>.md)', RoleFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { tools: 'names or `prefix.*`; charters may only *tighten* approval modes', desk: 'anchor id from config/world/desks.yaml' })}
+${table('Role charter (Roles/<role>.md)', RoleFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { tools: 'names or `prefix.*`; charters may only *tighten* approval modes', desk: 'anchor id from config/world/desks.yaml', team: 'the team id (`Teams/<id>.md`) this role belongs to', reports_to: 'who this role reports to; a lead\'s own default is `ceo`', title: 'shown in the office and in prompts, e.g. "Head of Growth"', persona: 'a short voice/approach paragraph folded into the system prompt', permissions: 'explicit grant; empty defers to the resolver\'s role-shaped default (`defaultPermissions`)' })}
 Body: \`# Charter\` (system prompt), \`# Standing rules\`, \`# What good looks like\`.
+
+${table('Team note (Teams/<id>.md)', TeamFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { id: 'matches the filename', lead: 'role id; the resolver treats this role as the team\'s lead', members: 'role ids who report to the lead through this team', room: 'office room id the team\'s desks sit in', processes: '`Processes/<name>.md` ids this team can run' })}
+Body: freeform notes on how the team works, read into role prompts.
+
+### Process note (Processes/<name>.md)
+
+| field | type | notes |
+|---|---|---|
+| \`name\` | string | matches the filename |
+| \`steps\` | array, 1–${MAX_PROCESS_STEPS} entries | each: \`role\` (string), \`type\` (string, default \`"custom"\`, a job type), \`title\` (string; \`{objective}\` is filled in when the process is expanded), \`for\` (string, optional — who the step's output is for), \`gate\` (string, optional) |
+
+Body: freeform notes, appended to every expanded step's job goal.
 
 ${table('Inbox note (00 Inbox/*.md)', InboxFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { kind: '`message` is a conversation; the rest are proposals', approved: 'set `true`/`false`; the daemon acts on the next tick and stamps `resolved_at`', chosen: 'for multi-option brand proposals', call: 'stored tool call executed after approval (`spend`, `outbound_batch`, `file_change`)', target: 'file a brand/charter/file change applies to (validated per kind)' })}
 ${table('Decision note (Decisions/*.md)', DecisionFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { owner_rating: 'set `up`/`down`; `down` reaches the author as feedback' })}

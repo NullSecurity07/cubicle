@@ -42,6 +42,12 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `quota.updated` | provider, model, rpm_used, rpd_used, tpm_used, cooling_until, limits |
 | `vault.wrote` | path, sha, by (role | daemon | init | <role>/shell), deleted?, moved_from? |
 | `owner.edited` | path, area, deleted, wakes_heartbeat |
+| `team.planned` | team, jobs (ids the team.plan job scheduled) |
+| `review.passed` | gate, findings |
+| `review.returned` | gate, findings |
+| `plan.vetoed` | findings, vetoes (count so far this cycle) |
+| `research.delivered` | emitted on the requester's research job |
+| `org.changed` | reason (migration | reorg | fire), changed | teams | role |
 | `guardrail.blocked` | tool, reason, step — every refused call, never silent |
 
 ## WebSocket (ws://127.0.0.1:7411?token=…)

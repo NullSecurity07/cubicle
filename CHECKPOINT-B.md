@@ -23,6 +23,7 @@ Add `&vault=<your vault name>` to the URL to make the Vault building's Obsidian 
 - **Board room / meeting room**: sprites walk in when `meeting.open` fires and speak in bubbles.
 - **Courtyard**: Billboard (live browser stream while a session is open, else the last screenshot), Terminal shed (shell output), Post office (mail + the red "N to approve" count), Newsstand (brief + decision feed), Bank (quota runway bars), Vault (job list + Obsidian link), Workshop (`Site/dist` preview + last deploy).
 - **Time controls** (bottom left): live, or pick a date → replay; double-click the slider to play/pause at the chosen speed. Day/night tint follows real time live and event timestamps in replay.
+- **Org** (top bar): teams as openable rows with their lead, members and open-job count; the queue groups jobs by team and shows an `in_review` chip for jobs still waiting on a gate. See [CHECKPOINT-C.md](CHECKPOINT-C.md).
 
 ## Acceptance checks you can run yourself
 

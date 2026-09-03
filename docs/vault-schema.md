@@ -38,7 +38,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | `type` | string |  |
 | `title` | string |  |
 | `assigned` | string |  |
-| `status` | `queued` \| `running` \| `blocked` \| `done` \| `failed` \| `cancelled` = `"queued"` | you may set `cancelled`; `blocked` without `blocked_on` = paused by you |
+| `status` | `queued` \| `running` \| `blocked` \| `in_review` \| `done` \| `failed` \| `cancelled` = `"queued"` | you may set `cancelled`; `blocked` without `blocked_on` = paused by you; `in_review` = the job's own work is done but it still owes a gate from `config/gates.yaml` |
 | `priority` | number = `3` |  |
 | `created` | string |  |
 | `updated` | string |  |
@@ -53,6 +53,12 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | `runs_on` | `laptop` \| `any` = `"laptop"` | reserved for a future remote mode |
 | `blocked_on` | object (optional) | kind: message | job | proposal | quota | owner |
 | `parent` | string (optional) |  |
+| `team` | string (optional) | the team id (`Teams/<id>.md`) the job belongs to |
+| `owner_role` | string (optional) | the lead who scheduled it, for jobs a member didn't request themselves |
+| `for` | string (optional) | who a `research` job's findings are for (a lead, not a team) |
+| `done_when` | string (optional) | the "Done when" a `team.plan` job set for a job it scheduled |
+| `returns` | record<string, number> = `{}` | gate job type → how many times that gate has returned this job (once-per-gate: a second return from the same gate passes through instead of looping forever) |
+| `gate_index` | number (optional) | how far through its `config/gates.yaml` gate list the job has passed |
 
 Body sections: `## Goal`, `## Plan`, `## Checkpoint log`, `## Result` (JSON block `{status, artifacts, metrics, blockers, lessons, summary}`).
 
@@ -69,15 +75,43 @@ Body sections: `## Goal`, `## Plan`, `## Checkpoint log`, `## Result` (JSON bloc
 | `hired` | string |  |
 | `sprite` | string |  |
 | `desk` | string | anchor id from config/world/desks.yaml |
+| `team` | string (optional) | the team id (`Teams/<id>.md`) this role belongs to |
+| `reports_to` | string (optional) | who this role reports to; a lead's own default is `ceo` |
+| `title` | string (optional) | shown in the office and in prompts, e.g. "Head of Growth" |
+| `persona` | string (optional) | a short voice/approach paragraph folded into the system prompt |
+| `permissions` | `schedule` \| `plan` \| `review` \| `hire` \| `fire` \| `veto` \| `research_request` \| `reprioritize` \| `meeting`[] = `[]` | explicit grant; empty defers to the resolver's role-shaped default (`defaultPermissions`) |
 
 Body: `# Charter` (system prompt), `# Standing rules`, `# What good looks like`.
+
+### Team note (Teams/<id>.md)
+
+| field | type | notes |
+|---|---|---|
+| `id` | string | matches the filename |
+| `name` | string |  |
+| `lead` | string | role id; the resolver treats this role as the team's lead |
+| `members` | string[] = `[]` | role ids who report to the lead through this team |
+| `mission` | string = `""` |  |
+| `room` | string (optional) | office room id the team's desks sit in |
+| `processes` | string[] = `[]` | `Processes/<name>.md` ids this team can run |
+
+Body: freeform notes on how the team works, read into role prompts.
+
+### Process note (Processes/<name>.md)
+
+| field | type | notes |
+|---|---|---|
+| `name` | string | matches the filename |
+| `steps` | array, 1–6 entries | each: `role` (string), `type` (string, default `"custom"`, a job type), `title` (string; `{objective}` is filled in when the process is expanded), `for` (string, optional — who the step's output is for), `gate` (string, optional) |
+
+Body: freeform notes, appended to every expanded step's job goal.
 
 ### Inbox note (00 Inbox/*.md)
 
 | field | type | notes |
 |---|---|---|
 | `id` | string |  |
-| `kind` | `message` \| `hire` \| `fire` \| `brand_change` \| `charter_change` \| `file_change` \| `spend` \| `outbound_batch` | `message` is a conversation; the rest are proposals |
+| `kind` | `message` \| `hire` \| `fire` \| `brand_change` \| `charter_change` \| `file_change` \| `spend` \| `outbound_batch` \| `reorg` | `message` is a conversation; the rest are proposals |
 | `created` | string |  |
 | `from` | string |  |
 | `to` | string = `"owner"` |  |
@@ -112,6 +146,8 @@ Body sections: Context / Options considered / Chosen / Why / Expected effect / R
 | `blockers` | string[] = `[]` |  |
 | `lessons` | string[] = `[]` |  |
 | `summary` | string = `""` |  |
+| `verdict` | `pass` \| `return` (optional) |  |
+| `findings` | string[] = `[]` |  |
 
 ### Constitution (fenced `yaml` block in Memory/constitution.md)
 
@@ -127,6 +163,8 @@ Body sections: Context / Options considered / Chosen / Why / Expected effect / R
 | `auto_approve_charter_changes` | boolean = `false` |  |
 | `pii_local_only` | boolean = `false` | customer/email jobs run only on Ollama |
 | `never_modify` | string[] = `[]` | extra owner-owned paths |
+| `max_team_size` | number = `6` |  |
+| `auto_approve_reorg` | boolean = `false` |  |
 
 ### Owner preferences (fenced `yaml` block in Memory/owner_preferences.md)
 
