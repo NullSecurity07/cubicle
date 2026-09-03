@@ -351,4 +351,11 @@ describe('daemon lifecycle', () => {
     ws.close();
     await d.stop();
   });
+
+  it('an old vault is migrated to the default org on start and the brief mentions it', async () => {
+    rmSync(path.join(dir, 'Teams'), { recursive: true, force: true });
+    const d = daemonFor(fakeLlm());
+    await d.start();
+    try { expect(existsSync(path.join(dir, 'Teams/engineering.md'))).toBe(true); expect(d.vault.events.count('org.changed')).toBe(1); } finally { await d.stop(); }
+  });
 });

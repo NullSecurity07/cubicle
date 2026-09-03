@@ -1,6 +1,6 @@
 import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox } from '@cubicle/core';
+import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown } from '@cubicle/router';
 import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter } from '@cubicle/core';
@@ -92,6 +92,8 @@ export class Daemon {
     const info = readDaemonInfo(cfg.vaultPath);
     if (info && info.pid !== process.pid && isPidAlive(info.pid)) throw new Error(`daemon already running (pid ${info.pid})`);
     this.vault = Vault.open(cfg.vaultPath);
+    const mig = migrateOrg(this.vault, templateDir());
+    if (mig.changed.length) this.log(`org migrated: ${mig.changed.length} file(s) written`);
     const providers = loadProvidersConfig(cfg.providersPath);
     this.router = new Router(providers, new QuotaTracker(this.vault.db), { env: cfg.env, events: this.vault.events });
     const toolsConfig = loadToolsConfig(cfg.toolsPath);
