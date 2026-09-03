@@ -61,13 +61,16 @@ export class OfficeScene extends Phaser.Scene {
   update(time: number, deltaMs: number): void {
     const s = this.hooks.getState();
     const dt = Math.min(deltaMs, 100) / 1000;
-    // sprites
+    // sprites; whoever is talking with a speech bubble is the one the seated others glance at
+    const talking = Object.values(s.agents).find((v) => v.state === 'talking' && v.bubble?.kind === 'speech');
+    const talkingSprite = talking ? this.agents.get(talking.role) : undefined;
+    const ctx = { speaker: talkingSprite ? { x: talkingSprite.container.x, y: talkingSprite.container.y, role: talking!.role } : null };
     for (const [role, view] of Object.entries(s.agents)) {
       let ag = this.agents.get(role);
       if (!ag) { ag = new AgentSprite(this, this.world, view, (r) => this.hooks.onAgentClick(r)); this.agents.set(role, ag); this.minimap.ignore(ag.container); }
       if ((view.target === 'boardroom' || view.target === 'meetingroom') && !ag.seat) this.assignSeat(role, view.target);
       if (!view.target && ag.seat) ag.seat = null;
-      ag.update(view, dt, this.hooks.clock());
+      ag.update(view, dt, this.hooks.clock(), ctx);
     }
     for (const [role, ag] of this.agents) if (!s.agents[role]) { ag.destroy(); this.agents.delete(role); }
     // surfaces at ~4 fps

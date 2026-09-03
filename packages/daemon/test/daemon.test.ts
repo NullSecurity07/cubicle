@@ -145,7 +145,45 @@ describe('brand reconcile (acceptance test 3, heartbeat half)', () => {
   });
 });
 
+describe('snapshot for the office', () => {
+  it('carries the brand and the pending proposals (title, kind, path), never plain messages', () => {
+    const vault = Vault.open(dir);
+    writeFileSync(path.join(dir, 'Brand/name.md'), '---\nname: "PlateReady"\ntagline: "Meal plans for busy parents"\nurl: "https://plateready.pages.dev"\n---\n# PlateReady\n');
+    createProposal(vault, { kind: 'spend', from: 'engineer', title: 'Deploy the site', body: 'x' }, 'engineer');
+    createProposal(vault, { kind: 'message', from: 'cto', to: 'owner', title: 'Q', body: 'Which colour?' }, 'cto');
+    const snap = buildSnapshot(vault);
+    expect(snap.brand).toEqual({ name: 'PlateReady', tagline: 'Meal plans for busy parents', url: 'https://plateready.pages.dev' });
+    expect(snap.inbox.map((n) => [n.kind, n.title])).toEqual([['spend', 'Deploy the site']]);
+    expect(snap.inbox[0].path).toMatch(/^00 Inbox\//);
+    expect(snap.pendingProposals).toBe(1);
+    writeFileSync(path.join(dir, '00 Inbox/idea.md'), '---\nid: msg_idea\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-03T04:37:00.000Z\nanswered: true\n---\nA meal-planning site.\n\n## CEO\n\nGot it. I proposed **PlateReady**.\n');
+    expect(buildSnapshot(vault).chat).toEqual([{ ts: '2026-09-03T04:37:00.000Z', from: 'you', text: 'A meal-planning site.' }, { ts: '2026-09-03T04:37:00.000Z', from: 'ceo', text: 'Got it. I proposed **PlateReady**.' }]);
+    vault.close();
+  });
+});
+
 describe('daemon lifecycle', () => {
+  it('an owner note typed while the daemon was down (only kind: message) triggers a heartbeat that answers it', async () => {
+    const seed = Vault.open(dir);
+    seed.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } }); // recent → no startup heartbeat
+    seed.close();
+    writeFileSync(path.join(dir, '00 Inbox/idea.md'), '---\nkind: message\n---\nA one-page site selling a printable meal-planning template.\n');
+    const d = daemonFor(fakeLlm());
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await waitFor(() => listJobs(v).some((j) => j.type === 'ceo.heartbeat' && /unanswered owner message/.test(j.title)), 10000);
+      await waitFor(() => /answered: true/.test(readFileSync(path.join(dir, '00 Inbox/idea.md'), 'utf8')), 20000);
+    } finally { await d.stop(); }
+    const text = readFileSync(path.join(dir, '00 Inbox/idea.md'), 'utf8');
+    expect(text).toMatch(/## CEO/);
+    expect(text).toMatch(/^id: msg_/m);
+    expect(text).toMatch(/^created: /m);
+    expect(listInbox(v).some((n) => n.data.kind === 'brand_change')).toBe(true);
+    expect(listJobs(v).filter((j) => j.type === 'ceo.heartbeat').length).toBe(1); // no re-trigger loop once answered
+    v.close();
+  });
+
   it('first start runs heartbeat #1 from an owner idea with zero outbound events; verify chain terminates', async () => {
     const vault = Vault.open(dir);
     createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');

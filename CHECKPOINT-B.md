@@ -14,9 +14,12 @@ Add `&vault=<your vault name>` to the URL to make the Vault building's Obsidian 
 
 ## What to look at
 
-- **Cubicles**: one sprite per active role at its desk; a coloured ring marks the role; a small glyph over the head shows the tool in use (W browser, >_ shell, M mail, D docs, % analytics, … chat); `!` = last job failed, `?` = blocked.
-- **CEO cabin** (top right): click the dark screen to talk to the CEO (writes `00 Inbox/…-message-….md`); the latest brief is pinned there. Type "surprise me" for three ideas.
-- **Whiteboard**: `Plans/plan.md`, live. **Notice board** (by the door): the open queue.
+- **Top bar**: the company name and tagline from `Brand/name.md`, the connection state, an amber "N to approve" badge (opens the post office), and shortcuts to the brief, the plan, the queue and the CEO.
+- **Screens in the office** show a head line and a few short lines only (they are cropped to their box); click any of them for the full content. Lists open in the right-hand drawer, documents (plan, brief, job notes) open in a centered reader with Copy and an Obsidian link.
+- **Cubicles**: one sprite per active role at its desk; a coloured ring marks the role; a small glyph over the head shows the tool in use (W browser, >_ shell, M mail, D docs, % analytics, … chat); `!` = last job failed, `?` = blocked. Click a sprite for its current job and charter.
+- **Expressions**: faces change with the job (thinking, happy on done, worried on a failure, puzzled when blocked, asleep after a quiet spell or when offline) and pixel emotes float above the head (sweat, ?, !, a lightbulb when proposing, a heart on hire, a star on deploy, zzz, the COO's clipboard on the way to a failed job). Thought bubbles (cloud, animated dots) show thinking; speech bubbles (tail, role-coloured border) show what an agent said; dark action strips name the tool call ("running npm run build"). Sprites blink, type, stretch, glance around, stop at the kitchen for a coffee after a finished job, wave when you message the CEO, and turn towards whoever is speaking in a meeting.
+- **CEO cabin** (top right): click the dark screen for the conversation with the CEO as a message thread (your notes in `00 Inbox/` and the `## CEO` replies), with the latest brief pinned above it. Type "surprise me" for three ideas.
+- **Whiteboard**: `Plans/plan.md`, live. **Notice board** (by the door): the open queue, each row opening the job.
 - **Board room / meeting room**: sprites walk in when `meeting.open` fires and speak in bubbles.
 - **Courtyard**: Billboard (live browser stream while a session is open, else the last screenshot), Terminal shed (shell output), Post office (mail + the red "N to approve" count), Newsstand (brief + decision feed), Bank (quota runway bars), Vault (job list + Obsidian link), Workshop (`Site/dist` preview + last deploy).
 - **Time controls** (bottom left): live, or pick a date → replay; double-click the slider to play/pause at the chosen speed. Day/night tint follows real time live and event timestamps in replay.

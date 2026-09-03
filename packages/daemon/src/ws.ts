@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'node:crypto';
-import { type Vault, listJobs, RoleFrontmatter, createProposal, nowIso, type CubicleEvent } from '@cubicle/core';
+import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, type CubicleEvent } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
 
 export interface WsDeps {
@@ -25,6 +25,12 @@ export interface Snapshot {
   latestRun: { path: string; body: string } | null;
   plan: string;
   pendingProposals: number;
+  /** Brand/name.md frontmatter — the office top bar. */
+  brand: { name: string; tagline: string; url: string };
+  /** Proposals awaiting the owner (never plain messages) — the post office list. */
+  inbox: { id: string; kind: string; title: string; path: string; created: string }[];
+  /** Owner ↔ CEO conversation from 00 Inbox/ message notes (oldest first) — the cabin thread. */
+  chat: { ts: string; from: 'you' | 'ceo'; text: string }[];
 }
 
 export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
@@ -37,14 +43,25 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
   const sessions = vault.db.prepare('SELECT session_id, MAX(seq) seq, MAX(path) path FROM screens GROUP BY session_id ORDER BY MAX(ts) DESC LIMIT 5').all() as { session_id: string; seq: number; path: string }[];
   const ended = new Set(vault.events.query({ types: ['browser.session_ended'], limit: 500 }).map((e) => String(e.payload.session)));
   const activeSessions = new Set(vault.events.query({ types: ['browser.session_started'], limit: 500 }).map((e) => String(e.payload.session)).filter((s) => !ended.has(s)));
-  const pending = vault.list('00 Inbox', { ext: '.md' }).filter((r) => !r.endsWith('README.md')).filter((r) => { const n = vault.readNoteOrNull(r); return n && n.data.kind !== 'message' && n.data.approved === null; }).length;
+  const inbox = listInbox(vault).filter((n) => n.data.kind !== 'message' && n.data.approved === null && !n.data.resolved_at)
+    .map((n) => ({ id: n.data.id, kind: n.data.kind, title: (n.body.match(/^#\s+(.+)$/m)?.[1] ?? n.data.kind).trim(), path: n.path, created: n.data.created }));
+  const chat: Snapshot['chat'] = [];
+  for (const n of listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo').slice(-40)) {
+    const [ask, reply] = n.body.split(/^## CEO\s*$/m);
+    const text = ask.replace(/^#\s.*$/m, '').trim();
+    if (text) chat.push({ ts: n.data.created, from: 'you', text });
+    if (reply?.trim()) chat.push({ ts: n.data.created, from: 'ceo', text: reply.trim() });
+  }
+  const brandNote = parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data as Record<string, unknown>;
+  const brand = { name: String(brandNote.name ?? ''), tagline: String(brandNote.tagline ?? ''), url: String(brandNote.url ?? '') };
   return {
     op: 'snapshot', at: nowIso(), roles, jobs: listJobs(vault),
     surfaces: sessions.map((s) => ({ streamKind: 'browser', streamId: s.session_id, lastFrame: s.path, active: activeSessions.has(s.session_id) })),
     quota: router?.quotaSnapshot() ?? [],
     latestRun: latest ? { path: latest, body: vault.readTextOrNull(latest) ?? '' } : null,
     plan: vault.readTextOrNull('Plans/plan.md') ?? '',
-    pendingProposals: pending,
+    pendingProposals: inbox.length,
+    brand, inbox, chat,
   };
 }
 

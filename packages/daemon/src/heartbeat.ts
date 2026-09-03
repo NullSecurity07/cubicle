@@ -45,7 +45,7 @@ interface Gathered {
   finished: { id: string; type: string; title: string; status: string; summary: string }[];
   mail: string[];
   analytics: string | null;
-  unansweredOwnerMessages: { path: string; id: string; body: string }[];
+  unansweredOwnerMessages: { path: string; id: string; created: string; body: string }[];
 }
 
 /** The previous heartbeat's gather moment: from its completion event, else from the last done heartbeat note (kill between updateJob and emit). */
@@ -64,7 +64,7 @@ function gather(vault: Vault, now: Date, mail: string[], analytics: string | nul
     .filter((e) => e.job)
     .map((e) => { const j = readJob(vault, e.job!); return { id: e.job!, type: j?.data.type ?? '?', title: j?.data.title ?? '?', status: e.type === 'job.done' ? 'done' : 'failed', summary: String(e.payload.summary ?? e.payload.reason ?? '') }; })
     .filter((f) => f.type !== 'ceo.heartbeat');
-  const unansweredOwnerMessages = listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && !n.data.answered).map((n) => ({ path: n.path, id: n.data.id, body: n.body }));
+  const unansweredOwnerMessages = listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && !n.data.answered).map((n) => ({ path: n.path, id: n.data.id, created: n.data.created, body: n.body }));
   return { since, gathered_at: now.toISOString(), elapsedHours, ownerEdits, finished, mail, analytics, unansweredOwnerMessages };
 }
 
@@ -172,7 +172,8 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           } else {
             reply = (await ask(deps, ceoSystem(vault), `The owner wrote:\n\n${body}\n\nReply briefly and concretely. If it is an instruction, say what you will do and enqueue nothing yourself (the CTO plans). If it is a question, answer it.`)) ?? 'Noted. (No model was available to draft a fuller reply; I will act on this next cycle.)';
           }
-          vault.updateNote(m.path, (n) => ({ data: { ...n.data, answered: true }, body: setSection(n.body, '## CEO', reply!) }), 'ceo', { job: jobId });
+          // Persist the defaults listInbox derived for an owner-typed note (id/created/from/to) so later ticks see a stable, complete note.
+          vault.updateNote(m.path, (n) => ({ data: { ...n.data, id: m.id, created: m.created, from: 'owner', to: 'ceo', answered: true }, body: setSection(n.body, '## CEO', reply!) }), 'ceo', { job: jobId });
           vault.events.emit({ type: 'agent.spoke', agent: 'ceo', job: jobId, payload: { to: 'owner', text: reply!.slice(0, 280), id: m.id } });
           answered++;
         }

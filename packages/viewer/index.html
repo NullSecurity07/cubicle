@@ -6,41 +6,156 @@
     <title>CUBICLE — the office</title>
     <link rel="icon" href="data:," />
     <style>
-      html, body { margin: 0; height: 100%; background: #0f1115; color: #e6e6e6; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+      :root {
+        --bg: #0e1014; --card: #151820; --card-2: #1b1f2a; --line: #272c38; --line-2: #343a48;
+        --text: #e7e9ee; --muted: #8d93a5; --dim: #5c6273;
+        --amber: #e6a93c; --amber-ink: #2a1f08; --ok: #4cae5c; --bad: #d6493a; --run: #5b8def;
+        --radius: 12px; --radius-s: 8px;
+        --font: "Inter", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+        --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font); overflow: hidden; }
+      a { color: #9db8ff; text-decoration: none; } a:hover { text-decoration: underline; }
+      button { font: inherit; color: var(--text); background: var(--card-2); border: 1px solid var(--line-2); border-radius: var(--radius-s); padding: 6px 12px; cursor: pointer; }
+      button:hover { background: #232838; }
+      button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+      .muted { color: var(--muted); }
+      .dim { color: var(--dim); }
       #game { position: absolute; inset: 0; }
-      #hud { position: absolute; left: 12px; top: 10px; display: flex; gap: 10px; align-items: center; pointer-events: none; z-index: 5; }
-      #hud > * { pointer-events: auto; }
-      .pill { background: rgba(20,22,28,.85); border: 1px solid #2a2e37; border-radius: 999px; padding: 4px 10px; }
-      .pill.bad { border-color: #b33; }
-      #panel { position: absolute; right: 12px; top: 12px; bottom: 12px; width: min(560px, 46vw); background: rgba(16,18,24,.96); border: 1px solid #2a2e37; border-radius: 10px; display: none; flex-direction: column; z-index: 6; overflow: hidden; }
+
+      /* ---- top bar ---- */
+      #top { position: absolute; left: 0; right: 0; top: 0; height: 52px; display: flex; align-items: center; gap: 16px; padding: 0 16px; background: linear-gradient(rgba(14,16,20,.96), rgba(14,16,20,.82)); border-bottom: 1px solid var(--line); z-index: 5; }
+      #top .brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+      #top .brand strong { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; }
+      #top .brand span { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34vw; }
+      #top nav { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+      .pill { display: inline-flex; align-items: center; gap: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font-size: 13px; line-height: 1.2; color: var(--text); }
+      .pill.bad { border-color: var(--bad); color: #ffb3aa; }
+      .pill.attn { background: var(--amber); border-color: var(--amber); color: var(--amber-ink); font-weight: 600; }
+      .pill.attn:hover { background: #f0b64a; }
+      .pill.quiet { color: var(--muted); }
+      #hint { position: absolute; left: 16px; top: 62px; color: var(--dim); font-size: 12px; z-index: 4; pointer-events: none; }
+
+      /* ---- drawer ---- */
+      #panel { position: absolute; right: 12px; top: 62px; bottom: 12px; width: min(520px, 46vw); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); display: none; flex-direction: column; z-index: 6; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.45); }
       #panel.open { display: flex; }
-      #panel header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #2a2e37; }
-      #panel header h2 { margin: 0; font-size: 14px; flex: 1; }
-      #panel .body { flex: 1; overflow: auto; padding: 12px; white-space: pre-wrap; word-break: break-word; }
-      #panel .body img { max-width: 100%; image-rendering: pixelated; border: 1px solid #2a2e37; }
-      #panel .body pre { background: #0b0d11; padding: 8px; border-radius: 6px; overflow: auto; }
-      #panel .body h1, #panel .body h2, #panel .body h3 { margin: 10px 0 6px; }
-      #panel form { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid #2a2e37; }
-      #panel input { flex: 1; background: #0b0d11; color: #eee; border: 1px solid #2a2e37; border-radius: 6px; padding: 8px; }
-      button { background: #232734; color: #eee; border: 1px solid #333846; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
-      button:hover { background: #2c3140; }
-      #time { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; background: rgba(20,22,28,.85); border: 1px solid #2a2e37; border-radius: 10px; padding: 8px 10px; z-index: 5; }
-      #time input[type=range] { width: 240px; }
-      #time input[type=date] { background: #0b0d11; color: #eee; border: 1px solid #2a2e37; border-radius: 6px; padding: 3px 6px; }
-      .muted { color: #8a90a0; }
+      #panel > header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+      #panel > header .titles { flex: 1; min-width: 0; }
+      #panel > header h2 { margin: 0; font-size: 15px; font-weight: 650; line-height: 1.3; }
+      #panel > header .sub { margin: 0; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #panel > header button { padding: 4px 10px; font-size: 12px; }
+      #panel .body { flex: 1; overflow: auto; padding: 14px; word-break: break-word; }
+      #panel.chat .body { display: flex; flex-direction: column; gap: 14px; padding: 14px 14px 8px; }
+      #panel form { display: flex; gap: 8px; padding: 10px 14px 12px; border-top: 1px solid var(--line); background: var(--card); }
+      #panel input { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line-2); border-radius: 10px; padding: 9px 12px; font: inherit; }
+      #panel input::placeholder { color: var(--dim); }
+
+      /* ---- cards, rows, chips ---- */
+      .section { margin: 0 0 16px; }
+      .section > h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+      .section > h3 .count { margin-left: auto; font-weight: 500; color: var(--dim); }
+      .card { background: var(--card-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+      .rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+      .row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 9px 12px; background: var(--card-2); border-top: 1px solid var(--line); min-height: 40px; text-align: left; font: inherit; color: inherit; border-left: 0; border-right: 0; border-bottom: 0; border-radius: 0; }
+      .row:first-child { border-top: 0; }
+      .row.click { cursor: pointer; } .row.click:hover { background: #222736; }
+      .row .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .row .t small { display: block; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+      .row .when { color: var(--dim); font-size: 12px; white-space: nowrap; }
+      .chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .01em; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); background: var(--card); white-space: nowrap; }
+      .chip.running { color: #b9cdff; border-color: #35508a; }
+      .chip.done { color: #b7e6bf; border-color: #2f6b3a; }
+      .chip.failed { color: #ffb8ae; border-color: #7a3229; }
+      .chip.blocked, .chip.pending { color: #ffd98a; border-color: #7a5a1c; }
+      .chip.kind { color: var(--amber); border-color: #5f4514; }
+      .empty { color: var(--muted); padding: 18px 14px; border: 1px dashed var(--line-2); border-radius: var(--radius); text-align: center; }
+      .hintline { color: var(--muted); font-size: 12px; margin: 8px 2px 0; }
+      table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+      table.data th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+      table.data td { padding: 7px 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+      table.data tr:last-child td { border-bottom: 0; }
+      .meter { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; min-width: 90px; }
+      .meter i { display: block; height: 100%; background: var(--ok); }
+      .meter.warn i { background: var(--amber); } .meter.hot i { background: var(--bad); }
+      pre.term { margin: 0; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; font: 12.5px/1.5 var(--mono); color: #cfd6e6; white-space: pre-wrap; word-break: break-word; max-height: 100%; }
+      img.frame { display: block; width: 100%; border: 1px solid var(--line); border-radius: var(--radius); image-rendering: auto; }
+      iframe.site { width: 100%; height: 62vh; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }
+
+      /* ---- chat thread ---- */
+      .msg { max-width: 86%; }
+      .msg .who { font-size: 11px; color: var(--muted); margin: 0 0 3px 2px; display: flex; gap: 8px; }
+      .msg .who b { color: var(--text); font-weight: 600; }
+      .msg .bubble { padding: 10px 13px; border-radius: 14px; background: var(--card-2); border: 1px solid var(--line); white-space: pre-wrap; }
+      .msg.me { align-self: flex-end; } .msg.me .bubble { background: #22304f; border-color: #2f4477; border-bottom-right-radius: 4px; } .msg.me .who { justify-content: flex-end; }
+      .msg.ceo .bubble { border-bottom-left-radius: 4px; }
+      .day { align-self: center; color: var(--dim); font-size: 11px; }
+      details.pinned { border: 1px solid var(--line); border-radius: var(--radius); background: var(--card-2); }
+      details.pinned summary { cursor: pointer; padding: 10px 14px; font-weight: 600; font-size: 13px; color: var(--muted); list-style: none; display: flex; gap: 8px; align-items: center; }
+      details.pinned summary::before { content: "▸"; color: var(--dim); } details.pinned[open] summary::before { content: "▾"; }
+      details.pinned .prose { padding: 0 14px 12px; }
+
+      /* ---- document modal ---- */
+      #modal { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(6,8,12,.6); backdrop-filter: blur(6px); z-index: 8; }
+      #modal.open { display: flex; }
+      #modal .doc { width: min(760px, 92vw); max-height: 86vh; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: 0 30px 80px rgba(0,0,0,.6); overflow: hidden; }
+      #modal .doc > header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+      #modal .doc > header h2 { margin: 0; flex: 1; min-width: 0; font-size: 15px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #modal .doc > header button, #modal .doc > header a.btn { padding: 4px 10px; font-size: 12px; }
+      a.btn { display: inline-block; color: var(--text); background: var(--card-2); border: 1px solid var(--line-2); border-radius: var(--radius-s); }
+      a.btn:hover { text-decoration: none; background: #232838; }
+      #modal .body { overflow: auto; padding: 18px 22px 24px; }
+
+      /* ---- prose (markdown) ---- */
+      .prose { font-size: 14.5px; line-height: 1.6; max-width: 68ch; }
+      .prose h1 { font-size: 20px; margin: 4px 0 12px; letter-spacing: -0.01em; }
+      .prose h2 { font-size: 15px; margin: 18px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+      .prose h3 { font-size: 14px; margin: 14px 0 4px; color: var(--muted); }
+      .prose p { margin: 0 0 10px; } .prose ul { margin: 0 0 10px; padding-left: 20px; } .prose li { margin: 2px 0; }
+      .prose pre { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 10px 12px; overflow: auto; font: 12.5px/1.5 var(--mono); }
+      .prose code { font: 12.5px var(--mono); background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+      .prose img { max-width: 100%; border: 1px solid var(--line); border-radius: var(--radius-s); }
+      .prose i { color: var(--muted); font-style: normal; }
+
+      /* ---- time controls ---- */
+      #time { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; z-index: 5; }
+      #time input[type=range] { width: 220px; accent-color: var(--amber); }
+      #time input[type=date], #time select { background: var(--bg); color: var(--text); border: 1px solid var(--line-2); border-radius: var(--radius-s); padding: 4px 8px; font: inherit; font-size: 13px; }
+      #time button { padding: 4px 10px; font-size: 13px; }
+      #time button.on { border-color: var(--amber); color: var(--amber); }
+      @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+      @media (max-width: 720px) { #panel { width: auto; left: 12px; } #hint { display: none; } #top .brand span { display: none; } }
     </style>
   </head>
   <body>
     <div id="game"></div>
-    <div id="hud">
-      <span class="pill" id="conn">connecting…</span>
-      <span class="pill" id="pending" title="proposals waiting for you">0 to approve</span>
-      <span class="pill muted">drag / WASD to pan · wheel to zoom · click things</span>
-    </div>
-    <div id="panel">
-      <header><h2 id="panel-title">—</h2><button id="panel-close">✕</button></header>
+    <header id="top">
+      <div class="brand"><strong id="brand-name">Your company</strong><span id="brand-tagline">No name yet. Tell the CEO your idea.</span></div>
+      <nav>
+        <span class="pill quiet" id="conn">connecting…</span>
+        <button class="pill" id="pending" data-open="postoffice" title="proposals waiting for you">0 to approve</button>
+        <button class="pill" data-open="newsstand">Brief</button>
+        <button class="pill" data-open="whiteboard">Plan</button>
+        <button class="pill" data-open="noticeboard">Queue</button>
+        <button class="pill" data-open="cabin">Talk to the CEO</button>
+      </nav>
+    </header>
+    <span id="hint">Drag or WASD to pan, scroll to zoom, click anything in the office</span>
+    <aside id="panel" aria-label="details">
+      <header>
+        <div class="titles"><h2 id="panel-title">—</h2><p class="sub" id="panel-sub" hidden></p></div>
+        <button id="panel-copy" hidden>Copy</button>
+        <button id="panel-close" aria-label="close">✕</button>
+      </header>
       <div class="body" id="panel-body"></div>
-      <form id="chat" hidden><input id="chat-text" placeholder="Tell the CEO…" autocomplete="off" /><button type="submit">Send</button></form>
+      <form id="chat" hidden><input id="chat-text" placeholder="Message your CEO" autocomplete="off" /><button type="submit">Send</button></form>
+    </aside>
+    <div id="modal" role="dialog" aria-modal="true">
+      <div class="doc">
+        <header><h2 id="modal-title">—</h2><a id="modal-link" class="btn" hidden>Open in Obsidian</a><button id="modal-copy">Copy</button><button id="modal-close" aria-label="close">✕</button></header>
+        <div class="body prose" id="modal-body"></div>
+      </div>
     </div>
     <div id="time">
       <button id="live">● live</button>

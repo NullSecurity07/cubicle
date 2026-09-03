@@ -57,7 +57,7 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
 
   // Tauri deps
   const pk = spawnSync('pkg-config', ['--exists', 'webkit2gtk-4.1']);
-  rows.push({ area: 'local', item: 'webkit2gtk-4.1 (only for a Tauri tray build)', ok: pk.status === 0 ? true : null, detail: pk.status === 0 ? 'installed' : 'missing — not needed: the shipped tray app is Electron' });
+  rows.push({ area: 'local', item: 'webkit2gtk-4.1 (Tauri only)', ok: pk.status === 0 ? true : null, detail: pk.status === 0 ? 'installed' : 'missing — not needed: the shipped tray app is Electron' });
 
   // Providers
   for (const p of cfg.providers) {

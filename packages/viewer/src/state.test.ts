@@ -1,10 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, type Snapshot } from './state.js';
+import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, SLEEP_AFTER_MS, type Snapshot } from './state.js';
 
 const snap: Snapshot = { op: 'snapshot', at: 'now', roles: [{ role: 'ceo', display: 'CEO', sprite: 'ceo', desk: 'ceo_cabin', active: true }, { role: 'growth', display: 'Growth', sprite: 'growth', desk: 'cubicle_3', active: true }, { role: 'coo', display: 'COO', sprite: 'coo', desk: 'cubicle_4', active: true }], jobs: [{ id: 'job_1', type: 'research', title: 'r', assigned: 'growth', status: 'running', priority: 3, checkpoint_step: 2, updated: 'now' }], surfaces: [], quota: [], latestRun: null, plan: '# Plan', pendingProposals: 1 };
 const ev = (type: string, agent: string | null, payload: Record<string, unknown> = {}, job: string | null = 'job_1') => ({ ts: '2026-09-02T00:00:00.000Z', type, agent, job, payload });
 
 describe('viewer state machine (spec §10)', () => {
+  it('snapshot carries brand and pending inbox rows; proposal events mark the snapshot stale so the list refreshes', () => {
+    let s = applySnapshot(emptyState(), { ...snap, brand: { name: 'PlateReady', tagline: 'Meal plans', url: '' }, inbox: [{ id: 'p1', kind: 'spend', title: 'Deploy the site', path: '00 Inbox/x.md', created: 'now' }] });
+    expect(s.brand.name).toBe('PlateReady');
+    expect(s.inbox[0].title).toBe('Deploy the site');
+    s = applyEvent(s, ev('proposal.created', 'engineer', { kind: 'spend', title: 't' }));
+    expect(s.staleSnapshot).toBe(true);
+    s = applySnapshot(s, snap); // an older daemon without the fields still works
+    expect(s.brand.name).toBe('');
+    expect(s.inbox).toEqual([]);
+  });
+  it('snapshot chat history replaces local lines, keeping a just-sent message the note does not have yet', () => {
+    let s = applyEvent(applySnapshot(emptyState(), snap), ev('agent.spoke', 'ceo', { to: 'owner', text: 'Got it.' }));
+    s = { ...s, chat: [...s.chat, { ts: '2026-09-03T05:00:00.000Z', from: 'you', text: 'Add a pricing page' }] };
+    s = applySnapshot(s, { ...snap, chat: [{ ts: '2026-09-03T04:37:00.000Z', from: 'you', text: 'A meal site' }, { ts: '2026-09-03T04:46:00.000Z', from: 'ceo', text: 'Got it.' }] });
+    expect(s.chat.map((m) => m.text)).toEqual(['A meal site', 'Got it.', 'Add a pricing page']);
+  });
   it('snapshot seeds agents at desks and marks running jobs as working', () => {
     const s = applySnapshot(emptyState(), snap);
     expect(s.agents.ceo.state).toBe('idle_at_desk');
@@ -32,7 +48,8 @@ describe('viewer state machine (spec §10)', () => {
     expect(s.agents.coo.target).toBe('desk:growth');
     s = applyEvent(s, ev('job.blocked', 'growth', { reason: 'approval' }));
     expect(s.agents.growth.badge).toBe('blocked');
-    expect(s.agents.growth.bubble?.text.startsWith('?')).toBe(true);
+    expect(s.agents.growth.bubble?.kind).toBe('thought');
+    expect(s.agents.growth.emote?.kind).toBe('?');
     const later = tick(s, Date.now() + 60_000);
     expect(later.agents.growth.bubble).toBeNull();
   });
@@ -96,5 +113,63 @@ describe('critique 7-9 reducer fixes', () => {
     const d = applyEvent(s, ev('vault.wrote', 'ceo', { path: 'Decisions/d1.md', sha: 'x', by: 'ceo' }, null));
     expect(d.feed.at(-1)!.text).toContain('decision recorded');
     expect(applyEvent(s, ev('vault.wrote', 'cto', { path: 'Plans/plan.md', sha: 'x', by: 'cto' }, null)).staleSnapshot).toBe(true);
+  });
+
+  describe('expressions (moods, emotes, bubble kinds)', () => {
+    const base = () => applySnapshot(emptyState(), snap);
+    it('thinking → thought bubble with no text and a thinking face; a tool call → action bubble with a verb', () => {
+      let s = applyEvent(base(), ev('agent.thinking', 'growth', { step: 1 }), 1000);
+      expect(s.agents.growth.bubble).toEqual({ kind: 'thought', text: '', until: 5000 });
+      expect(s.agents.growth.mood).toBe('thinking');
+      s = applyEvent(s, ev('agent.tool_call', 'growth', { tool: 'browser.goto', summary: '{"url":"https://example.com/a"}' }), 2000);
+      expect(s.agents.growth.bubble).toMatchObject({ kind: 'action', text: 'opening example.com' });
+      s = applyEvent(s, ev('agent.tool_result', 'growth', { tool: 'browser.goto', ok: true }), 2500);
+      expect(s.agents.growth.bubble).toBeNull();
+      s = applyEvent(s, ev('agent.tool_result', 'growth', { tool: 'shell.run', ok: false }), 2600);
+      expect(s.agents.growth.mood).toBe('worried');
+      expect(s.agents.growth.emote?.kind).toBe('sweat');
+    });
+    it('speech bubbles for spoke and meeting turns; job done → happy + cheer; failed → worried + sweat, COO brings a clipboard', () => {
+      let s = applyEvent(base(), ev('agent.spoke', 'growth', { to: 'cto', text: 'hi' }), 1000);
+      expect(s.agents.growth.bubble?.kind).toBe('speech');
+      s = applyEvent(s, ev('meeting.turn', 'coo', { id: 'm', text: 'ok' }), 1000);
+      expect(s.agents.coo.bubble?.kind).toBe('speech');
+      s = applyEvent(s, ev('job.done', 'growth', { status: 'done' }), 2000);
+      expect(s.agents.growth.mood).toBe('happy'); expect(s.agents.growth.emote?.kind).toBe('cheer');
+      s = applyEvent(s, ev('job.started', 'growth', {}), 3000);
+      s = applyEvent(s, ev('job.failed', 'growth', { reason: 'x' }), 4000);
+      expect(s.agents.growth.mood).toBe('worried'); expect(s.agents.growth.emote?.kind).toBe('sweat');
+      expect(s.agents.coo.emote?.kind).toBe('clipboard'); expect(s.agents.coo.target).toBe('desk:growth');
+    });
+    it('blocked → puzzled face, ? emote and a thought bubble with the reason', () => {
+      const s = applyEvent(base(), ev('job.blocked', 'growth', { reason: 'need a key' }), 1000);
+      expect(s.agents.growth.mood).toBe('puzzled'); expect(s.agents.growth.emote?.kind).toBe('?');
+      expect(s.agents.growth.bubble).toMatchObject({ kind: 'thought', text: 'need a key' });
+    });
+    it('deploy.done cheers everyone; an owner message makes the CEO wave; a hire arrives with a heart', () => {
+      let s = applyEvent(base(), ev('deploy.done', 'engineer', { url: 'https://x.pages.dev' }, null), 1000);
+      for (const r of ['ceo', 'growth', 'coo']) { expect(s.agents[r].mood).toBe('happy'); expect(s.agents[r].emote?.kind).toBe('cheer'); }
+      s = applyEvent(s, ev('proposal.created', 'owner', { kind: 'message', to: 'ceo', title: 'Build a site' }, null), 2000);
+      expect(s.agents.ceo.emote?.kind).toBe('wave');
+      s = applyEvent(s, ev('role.hired', 'daemon', { role: 'support', display: 'Support', desk: 'cubicle_5', sprite: 'support' }, null), 3000);
+      expect(s.agents.support.emote?.kind).toBe('heart'); expect(s.agents.support.mood).toBe('happy');
+    });
+    it('moods and emotes expire on tick; a long quiet desk dozes off with zzz and any event wakes it', () => {
+      let s = applyEvent(base(), ev('job.done', 'coo', { status: 'done' }), 1000);
+      s = tick(s, 7000);
+      expect(s.agents.coo.mood).toBe('neutral'); expect(s.agents.coo.emote).toBeNull();
+      s = applyEvent(s, ev('job.cancelled', 'coo', {}), 8000); // idle at the desk from now on
+      s = tick(s, 8000 + SLEEP_AFTER_MS + 1);
+      expect(s.agents.coo.mood).toBe('asleep'); expect(s.agents.coo.emote?.kind).toBe('zzz');
+      s = applyEvent(s, ev('agent.spoke', 'coo', { to: 'ceo', text: 'awake' }), 8000 + SLEEP_AFTER_MS + 2);
+      expect(s.agents.coo.mood).toBe('neutral'); expect(s.agents.coo.emote).toBeNull();
+    });
+    it('actionVerb turns tool calls into short present-tense lines', () => {
+      expect(actionVerb('shell.run', '{"cmd":"npm run build"}')).toBe('running npm run build');
+      expect(actionVerb('vault.write', '{"path":"Plans/plan.md"}')).toBe('writing Plans/plan.md');
+      expect(actionVerb('email.send', {})).toBe('sending an email');
+      expect(actionVerb('finish', '')).toBe('wrapping up');
+      expect(actionVerb('shell.run', 'not json at all but a very long command line that keeps going').length).toBeLessThanOrEqual(34);
+    });
   });
 });

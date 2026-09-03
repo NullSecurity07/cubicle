@@ -1,6 +1,6 @@
 import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS } from '@cubicle/core';
+import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown } from '@cubicle/router';
 import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter } from '@cubicle/core';
@@ -222,7 +222,9 @@ export class Daemon {
       const last = this.vault.events.last('heartbeat.completed');
       const since = last ? (Date.now() - Date.parse(last.ts)) / 3600_000 : Infinity;
       const hasOpen = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat');
-      if (!hasOpen && (since >= this.config.heartbeat.maxElapsedHours || this.heartbeatRequested)) this.requestHeartbeat(this.heartbeatRequested ?? `${since.toFixed(1)} h elapsed`);
+      // An owner note nobody has answered (typed while the daemon was down, or missed by an older build) is a heartbeat trigger too.
+      const unanswered = hasOpen ? undefined : listInbox(this.vault).find((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && !n.data.answered);
+      if (!hasOpen && (since >= this.config.heartbeat.maxElapsedHours || this.heartbeatRequested || unanswered)) this.requestHeartbeat(this.heartbeatRequested ?? (unanswered ? `unanswered owner message ${unanswered.data.id}` : `${since.toFixed(1)} h elapsed`));
       this.workers.wake();
     } catch (err) {
       this.vault.events.emit({ type: 'daemon.warning', payload: { where: 'tick', message: String((err as Error).stack ?? err).slice(0, 500) } });
