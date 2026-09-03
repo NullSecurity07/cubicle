@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, createJob, readJob, loadOrg, loadGates } from '@cubicle/core';
-import { assembleContext, readRole, MEMORY_DIRS } from '../src/index.js';
+import { assembleContext, readRole, MEMORY_DIRS, filterMemoryHits } from '../src/index.js';
 
 let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-ctx-')); vault = (await scaffoldVault(dir)).vault; });
@@ -27,5 +27,30 @@ describe('role-shaped prompts (spec §5)', () => {
   });
   it('lessons tagged with another team are filtered from the memory block; Docs is indexed', () => {
     expect(MEMORY_DIRS).toContain('Docs');
+  });
+
+  it('filterMemoryHits drops other teams\' lines but keeps the reader\'s own and untagged lines', () => {
+    const mixed = [{ path: 'Memory/lessons.md', score: 0.9, text: [
+      '- [2026-09-03] [[job-a]] send the newsletter on Tuesdays (head_of_growth) #team:growth',
+      '- [2026-09-03] [[job-b]] use retries for flaky network calls (engineer) #team:engineering',
+      '- [2026-09-03] [[job-c]] keep the constitution short (ceo)',
+    ].join('\n') }];
+
+    const forEngineering = filterMemoryHits(mixed, 'engineering');
+    expect(forEngineering).toHaveLength(1);
+    expect(forEngineering[0].text).toContain('use retries for flaky network calls');
+    expect(forEngineering[0].text).toContain('keep the constitution short');
+    expect(forEngineering[0].text).not.toContain('send the newsletter on Tuesdays');
+
+    const forGrowth = filterMemoryHits(mixed, 'growth');
+    expect(forGrowth).toHaveLength(1);
+    expect(forGrowth[0].text).toContain('send the newsletter on Tuesdays');
+    expect(forGrowth[0].text).toContain('keep the constitution short');
+    expect(forGrowth[0].text).not.toContain('use retries for flaky network calls');
+
+    const onlyOtherTeam = [{ path: 'Memory/lessons.md', score: 0.9, text: '- [2026-09-03] [[job-a]] send the newsletter on Tuesdays (head_of_growth) #team:growth' }];
+    expect(filterMemoryHits(onlyOtherTeam, 'engineering')).toHaveLength(0);
+
+    expect(filterMemoryHits(mixed, undefined)).toEqual(mixed);
   });
 });

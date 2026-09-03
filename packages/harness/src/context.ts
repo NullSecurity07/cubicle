@@ -39,6 +39,24 @@ function clip(s: string, max: number): string {
 }
 
 /**
+ * Drop lines tagged `#team:<other>` for a team other than `teamId`, line by line (a memory chunk can mix several
+ * teams' lessons). A line with no `#team:` tag, or tagged with `teamId`'s own tag, stays. A hit left with no lines
+ * is dropped entirely. `teamId` undefined (no team context) keeps everything untouched.
+ */
+export function filterMemoryHits<T extends { text: string }>(hits: T[], teamId: string | undefined): T[] {
+  if (teamId === undefined) return hits;
+  const out: T[] = [];
+  for (const h of hits) {
+    const lines = h.text.split('\n').filter((line) => {
+      const m = line.match(/#team:(\w+)/);
+      return !m || m[1] === teamId;
+    });
+    if (lines.length) out.push({ ...h, text: lines.join('\n') });
+  }
+  return out;
+}
+
+/**
  * Context assembly in the spec §6 order: constitution → charter → owner_preferences → plan (summary if long)
  * → owner edits since last cycle → job note → unread colleague messages → relevant memory → observations.
  * Trimmed to `maxPromptTokens` by shrinking the least important blocks first.
@@ -64,8 +82,7 @@ export async function assembleContext(inp: ContextInput): Promise<ChatMessage[]>
   let memoryBlock = '';
   if (inp.memory && inp.memory.count() > 0) {
     const q = `${inp.job.title}\n${inp.jobBody.slice(0, 600)}`;
-    const hits = (await inp.memory.search(q, 5).catch(() => []))
-      .filter((h) => !/#team:(\w+)/.test(h.text) || h.text.includes(`#team:${team?.id}`));
+    const hits = filterMemoryHits(await inp.memory.search(q, 5).catch(() => []), team?.id);
     if (hits.length) memoryBlock = hits.map((h) => `### ${h.path} (relevance ${h.score.toFixed(2)})\n${clip(h.text, 900)}`).join('\n\n');
   }
 
