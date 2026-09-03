@@ -19,7 +19,7 @@ runs_on: laptop
 ---
 ## Goal
 
-Copy this file, rename it to `<id>.md`, set `id` to match, and fill in the goal. The daemon picks it up on the next tick.
+Copy this file, rename it to `<id>.md`, and fill in the goal. The filename is the job id: the daemon reconciles the `id` field and fills in blank timestamps for you. It picks the job up on the next tick.
 
 ## Plan
 
