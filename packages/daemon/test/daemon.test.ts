@@ -240,6 +240,24 @@ describe('daemon lifecycle', () => {
     expect(existsSync(path.join(dir, '.cubicle', 'daemon.json'))).toBe(false);
   });
 
+  it('planning and gate sub-jobs (company.plan, critic.premortem, team.plan, qa.review, coo.verify) never retrigger a second heartbeat on their own (Task 11)', async () => {
+    const vault = Vault.open(dir);
+    createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
+    vault.close();
+    const d = daemonFor(fakeLlm());
+    await d.start();
+    await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
+    // the first heartbeat's own cycle produces company.plan, critic.premortem, team.plan, engineer.ship, qa.review, coo.verify —
+    // five of those six are planning/gate jobs; if they counted toward jobsCompletedN (5) a second heartbeat would fire.
+    await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'coo.verify' && j.status === 'done').length >= 1, 20000);
+    await new Promise((r) => setTimeout(r, 1500)); // let the tick settle
+    const heartbeats = listJobs(d.vault).filter((j) => j.type === 'ceo.heartbeat');
+    expect(heartbeats).toHaveLength(1);
+    expect(heartbeats[0].title).toMatch(/first start/);
+    expect(d.config.heartbeat.jobsCompletedN).toBe(5); // default, unchanged
+    await d.stop();
+  });
+
   it('dispatcher: file_change applies the diff; brand_change with chosen sets the name and queues reconcile; message answers route to Messages/', async () => {
     const vault = Vault.open(dir);
     const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));

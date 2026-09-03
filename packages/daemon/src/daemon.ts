@@ -12,9 +12,14 @@ import { WsServer } from './ws.js';
 import { createHeartbeatJob, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
-import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, feedbackFor } from './evolution.js';
+import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview } from './evolution.js';
 import { StaticServer } from './static.js';
 import { pruneScreens } from '@cubicle/tools';
+
+/** Planning and gate job types never count toward the "N jobs completed" heartbeat trigger — otherwise a single
+ *  cycle's own planning/gate sub-jobs (company.plan, critic.premortem, team.plan, qa.review, coo.verify,
+ *  requester.review) push the count past the threshold and the heartbeat retriggers itself. */
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', 'qa.review', 'coo.verify', 'requester.review'];
 
 export interface DaemonOverrides {
   llm?: Llm;
@@ -76,6 +81,7 @@ export class Daemon {
   private startedAt = new Date();
   private lastPrune = 0;
   private guardrails: import('@cubicle/harness').Guardrail[] = [];
+  private openMeeting: (agenda: string, participants?: string[]) => Promise<string | null> = async () => null;
 
   constructor(public readonly config: DaemonConfig, private overrides: DaemonOverrides = {}) {
     this.log = overrides.log ?? ((m) => console.log(`[cubicle] ${m}`));
@@ -106,14 +112,14 @@ export class Daemon {
     const scheduler = vaultScheduler(this.vault, 'daemon');
     const guardrails = [constitutionGuardrail(this.router), ...(this.overrides.guardrails ?? [])];
     this.guardrails = guardrails;
-    const openMeeting = async (agenda: string): Promise<string | null> => {
+    this.openMeeting = async (agenda: string, participants?: string[]): Promise<string | null> => {
       const ceoNote = this.vault.readNoteOrNull('Roles/ceo.md');
       if (!ceoNote) return null;
       const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId: 'ceo', role: RoleFrontmatter.parse(ceoNote.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/meeting', now: () => new Date() };
       const client = await createRoleToolClient([meetingOpen], ctx);
       try {
-        const participants = this.workers.roles().map((r) => r.role).filter((r) => r !== 'ceo');
-        const r = await client.call('meeting.open', { room: 'board', participants, agenda, rounds: 2 });
+        const attendees = participants ?? this.workers.roles().map((r) => r.role).filter((r) => r !== 'ceo');
+        const r = await client.call('meeting.open', { room: 'board', participants: attendees, agenda, rounds: 2 });
         return r.ok ? String((r.data as { path?: string })?.path ?? 'held') : null;
       } finally { await client.close(); }
     };
@@ -131,17 +137,17 @@ export class Daemon {
     const ownerFeedback = (roleId: string) => feedbackFor(collectOwnerFeedback(this.vault, this.vault.events.last('heartbeat.completed')?.ts), roleId).map((f) => `- (${f.source}) ${f.text}`);
     this.workers = new WorkerPool(this.vault, {
       harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback },
-      heartbeat: { llm, router: this.router, openMeeting, pollInbox, pullAnalytics, ...this.overrides.heartbeatHooks },
+      heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, ...this.overrides.heartbeatHooks },
       maxConcurrent: cfg.maxConcurrentJobs,
     });
     this.workers.on('outcome', ({ jobId, outcome }: { jobId: string; outcome: { status: string } }) => {
       if (this.stopping) return;
       if (outcome.status === 'done' || outcome.status === 'failed') {
         const j = readJob(this.vault, jobId)?.data;
-        if (j && j.type !== 'ceo.heartbeat') {
+        if (j && !NON_WORK_TYPES.includes(j.type)) {
           // Counted from the event log, so a restart does not forget completed work.
           const since = this.vault.events.last('heartbeat.completed')?.ts;
-          const done = this.vault.events.query({ types: ['job.done', 'job.failed'], from: since }).filter((e) => e.job && readJob(this.vault, e.job)?.data.type !== 'ceo.heartbeat').length;
+          const done = this.vault.events.query({ types: ['job.done', 'job.failed'], from: since }).filter((e) => e.job && !NON_WORK_TYPES.includes(readJob(this.vault, e.job)?.data.type ?? '')).length;
           if (done >= cfg.heartbeat.jobsCompletedN) this.requestHeartbeat(`${done} jobs completed`);
         }
       }
@@ -221,6 +227,10 @@ export class Daemon {
       if (n) this.log(`tick(${reason}): ${n} proposal/unblock action(s)`);
       const reviews = enqueueExperimentReviews(this.vault);
       if (reviews.length) this.log(`tick(${reason}): ${reviews.length} experiment review(s) queued`);
+      const pm = maybeEnqueuePostmortem(this.vault);
+      if (pm) this.log(`tick(${reason}): postmortem ${pm}`);
+      const wr = await maybeEnqueueWeeklyReview(this.vault, this.openMeeting);
+      if (wr.length) this.log(`tick(${reason}): weekly review expanded (${wr.length} job(s))`);
       const last = this.vault.events.last('heartbeat.completed');
       const since = last ? (Date.now() - Date.parse(last.ts)) / 3600_000 : Infinity;
       const hasOpen = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat');

@@ -4,7 +4,7 @@ import {
 import { createRoleToolClient, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer } from '@cubicle/tools';
 import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
-import { applyHire, applyFire } from './evolution.js';
+import { applyHire, applyFire, applyReorg } from './evolution.js';
 import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
 
 /** kind → allowed targets. Everything else leaves the note unresolved with a warning (an approval must mean what its title says). */
@@ -114,7 +114,7 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     if (d.kind === 'message' || d.resolved_at) continue;
     // Constitution autonomy flags: the owner pre-approved these kinds; the daemon approves agent-created notes itself.
     const c = vault.constitution();
-    const autoApproved = d.approved === null && ((d.kind === 'hire' && c.auto_approve_hire && d.from === 'ceo') || (d.kind === 'charter_change' && c.auto_approve_charter_changes && d.from === 'cto'));
+    const autoApproved = d.approved === null && ((d.kind === 'hire' && c.auto_approve_hire && d.from === 'ceo') || (d.kind === 'charter_change' && c.auto_approve_charter_changes && d.from === 'cto') || (d.kind === 'reorg' && c.auto_approve_reorg && d.from === 'ceo'));
     if (d.approved === null && !autoApproved) continue;
     const previouslyRefused = !!(d as { refused?: string }).refused;
     if (autoApproved) {
@@ -136,6 +136,12 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
           case 'fire': {
             const r = d.kind === 'hire' ? (deps.onHire ? await deps.onHire(note) : await applyHire(vault, note, deps.onRoleHired, { autoApproved })) : (deps.onFire ? await deps.onFire(note) : await applyFire(vault, note, deps.onRoleFired));
             if (!/^(hired|fired) /.test(r)) { refuseNote(vault, note, r); continue; }
+            outcome = r;
+            break;
+          }
+          case 'reorg': {
+            const r = await applyReorg(vault, note);
+            if (!/^applied/.test(r)) { refuseNote(vault, note, r); continue; }
             outcome = r;
             break;
           }

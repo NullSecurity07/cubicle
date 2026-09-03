@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import {
-  type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
+  type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
+  loadOrg, leadOf, openSubtree, expandProcess,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -24,6 +25,42 @@ export function freeDesk(vault: Vault): string | null {
 function fencedCharter(body: string): string | null {
   const m = body.match(/```(?:markdown|md)?\s*\n(---\n[\s\S]*?)\n```/);
   return m ? m[1] + '\n' : null;
+}
+
+// ---------- reorg (spec §2) ----------
+
+/** Apply an approved reorg: `teams:` map from the fenced yaml; validated against the constitution and the org. */
+export async function applyReorg(vault: Vault, note: { path: string; data: InboxFrontmatter; body: string }): Promise<string> {
+  const fence = note.body.match(/```ya?ml\s*\n([\s\S]*?)```/)?.[1];
+  if (!fence) return 'no ```yaml fence with teams:';
+  const parsed = (YAML.parse(fence) ?? {}) as { teams?: Record<string, { lead?: string; members?: string[] }> };
+  if (!parsed.teams || !Object.keys(parsed.teams).length) return 'teams: map is empty';
+  const org = loadOrg(vault);
+  const c = vault.constitution();
+  const seen = new Map<string, string>();
+  for (const [id, t] of Object.entries(parsed.teams)) {
+    if (!org.teams[id]) return `unknown team ${id} (create it as Teams/${id}.md first)`;
+    if (!t.lead || !org.roles[t.lead]) return `team ${id} needs an active lead`;
+    const members = t.members ?? [];
+    for (const m of members) { if (!org.roles[m]) return `unknown role ${m}`; if (m === t.lead) return `${m} cannot be both lead and member of ${id}`; }
+    if (members.length + 1 > c.max_team_size) return `team ${id} would exceed max_team_size (${c.max_team_size})`;
+    for (const r of [t.lead, ...members]) { const prev = seen.get(r); if (prev && prev !== id) return `${r} would be in two teams (${prev}, ${id})`; seen.set(r, id); }
+  }
+  // untouched teams keep their members; a role moved into a listed team leaves its old one
+  const moved = new Set(seen.keys());
+  for (const [id, t] of Object.entries(org.teams)) {
+    const next = parsed.teams[id] ? { lead: parsed.teams[id].lead!, members: parsed.teams[id].members ?? [] } : { lead: t.lead, members: t.members.filter((m) => !moved.has(m)) };
+    if (!org.roles[next.lead]) return `team ${id} would lose its lead`;
+    const n = vault.readNoteOrNull(`Teams/${id}.md`)!;
+    vault.writeText(`Teams/${id}.md`, stringifyNote({ ...n.data, ...next }, n.body), 'daemon', { job: note.data.job ?? null });
+    for (const r of [next.lead, ...next.members]) {
+      const rn = vault.readNoteOrNull(`Roles/${r}.md`); if (!rn) continue;
+      const reports_to = r === next.lead ? (r === 'ceo' ? 'owner' : 'ceo') : next.lead;
+      if (rn.data.team !== id || rn.data.reports_to !== reports_to) vault.writeText(`Roles/${r}.md`, stringifyNote({ ...rn.data, team: id, reports_to }, rn.body), 'daemon', { job: note.data.job ?? null });
+    }
+  }
+  vault.events.emit({ type: 'org.changed', agent: 'daemon', job: note.data.job ?? null, payload: { reason: 'reorg', proposal: note.data.id, teams: Object.keys(parsed.teams) } });
+  return `applied reorg to ${Object.keys(parsed.teams).join(', ')}`;
 }
 
 /** Apply an approved hire: validate the charter, cap headcount, assign a desk, write Roles/<role>.md, emit role.hired. */
@@ -69,12 +106,69 @@ export async function applyFire(vault: Vault, note: { path: string; data: InboxF
   const n = vault.readNoteOrNull(rel);
   if (!n) return `no such role ${target}`;
   if (target === 'ceo') return 'the CEO cannot be fired (it owns the heartbeat); edit its charter instead';
+  const org = loadOrg(vault);
+  const manager = leadOf(org, target) ?? 'ceo';
+  const managerRole = manager === 'owner' ? 'ceo' : manager;
   vault.writeText(rel, stringifyNote({ ...n.data, active: false, fired: nowIso() }, n.body), 'daemon', { job: note.data.job ?? null });
   vault.move(rel, `Roles/archive/${target}-${nowIso().slice(0, 10)}.md`, 'daemon');
   for (const j of listJobs(vault, { assigned: target, status: ['queued', 'blocked', 'running'] })) vault.updateNote(`Jobs/${j.id}.md`, (x) => ({ data: { ...x.data, status: 'cancelled', updated: nowIso() }, body: x.body }), 'daemon'); // running jobs stop at their next tool step
+  // Reassign everything the fired role was accountable for (owner_role) that it wasn't itself doing, to its manager.
+  for (const j of openSubtree(vault, target)) if (j.assigned !== target) updateJob(vault, j.id, { owner_role: managerRole }, 'daemon', `- ${nowIso()}: owner ${target} left; now owned by ${managerRole}`);
+  // If the fired role led a team, the manager is promoted to lead; otherwise just drop it from whichever team it was a member of.
+  const led = Object.values(org.teams).find((t) => t.lead === target);
+  if (led) {
+    const tn = vault.readNoteOrNull(`Teams/${led.id}.md`)!;
+    vault.writeText(`Teams/${led.id}.md`, stringifyNote({ ...tn.data, lead: managerRole, members: led.members.filter((m) => m !== target) }, tn.body), 'daemon');
+  } else {
+    for (const t of Object.values(org.teams)) {
+      if (t.members.includes(target)) {
+        const tn = vault.readNoteOrNull(`Teams/${t.id}.md`)!;
+        vault.writeText(`Teams/${t.id}.md`, stringifyNote({ ...tn.data, members: t.members.filter((m) => m !== target) }, tn.body), 'daemon');
+      }
+    }
+  }
+  vault.events.emit({ type: 'org.changed', agent: 'daemon', job: note.data.job ?? null, payload: { reason: 'fire', role: target } });
   vault.events.emit({ type: 'role.fired', agent: 'daemon', job: note.data.job ?? null, payload: { role: target, proposal: note.data.id } });
   onFired?.(target);
   return `fired ${target}; charter archived, open jobs cancelled`;
+}
+
+// ---------- postmortems (spec §3) ----------
+
+/** Two failures of the same job type since the last heartbeat → one postmortem research job for the CTO. */
+export function maybeEnqueuePostmortem(vault: Vault): string | null {
+  const since = vault.events.last('heartbeat.completed')?.ts;
+  const failed = vault.events.query({ types: ['job.failed'], from: since }).filter((e) => e.job && !e.payload.requeued);
+  const byType = new Map<string, string[]>();
+  for (const e of failed) { const t = readJob(vault, e.job!)?.data.type; if (t) byType.set(t, [...(byType.get(t) ?? []), e.job!]); }
+  for (const [type, jobs] of byType) {
+    if (jobs.length < 2) continue;
+    const title = `Postmortem: ${type} failed ${jobs.length}× this cycle`;
+    if (listJobs(vault).some((j) => j.type === 'research' && j.title.startsWith(`Postmortem: ${type}`) && j.status !== 'cancelled' && (!since || j.created >= since))) continue;
+    return createJob(vault, {
+      type: 'research', title, assigned: 'research_analyst', priority: 2, team: 'research', owner_role: 'cto', for: 'cto',
+      done_when: `Docs/postmortems/<date>-${type}.md exists with a root cause and one proposed change`,
+      goal: `Root-cause ${jobs.length} failures of ${type}: ${jobs.map((j) => `[[${j}]]`).join(', ')}.\n\nDo: (1) vault.read each job note (Result, Checkpoint log, Review findings) and Memory/lessons.md; (2) if shell output is involved read the latest .cubicle/jobs observations via vault.read of the job note only (no shell); (3) vault.write Docs/postmortems/${nowIso().slice(0, 10)}-${type.replace(/\W/g, '_')}.md with: what happened, root cause, evidence, one proposed change (a charter line, a skill, or a gate criterion); (4) finish with a two-line summary.`,
+    }, 'daemon');
+  }
+  return null;
+}
+
+// ---------- weekly review (spec §4) ----------
+
+export const WEEKLY_REVIEW_EVERY = 7;
+
+/** Every 7 heartbeats: expand Processes/weekly_review.md once and open a board meeting with all leads. */
+export async function maybeEnqueueWeeklyReview(vault: Vault, openMeeting?: (agenda: string, participants: string[]) => Promise<string | null>): Promise<string[]> {
+  const n = vault.events.count('heartbeat.completed');
+  if (n === 0 || n % WEEKLY_REVIEW_EVERY !== 0) return [];
+  const marker = `weekly-${n}`;
+  if (listJobs(vault).some((j) => j.links.includes(`[[${marker}]]`))) return [];
+  const ids = expandProcess(vault, 'weekly_review', `week ${n / WEEKLY_REVIEW_EVERY}`, { parent: marker, by: 'daemon', owner_role: 'ceo' });
+  const org = loadOrg(vault);
+  const leads = Object.values(org.teams).map((t) => t.lead).filter((l) => l !== 'ceo');
+  if (openMeeting) await openMeeting(`Weekly review ${n / WEEKLY_REVIEW_EVERY}: what shipped, what failed, what each team does next; the COO proposes which team skills go company-wide.`, leads).catch(() => null);
+  return ids;
 }
 
 // ---------- lessons (spec §9.1): appended by the harness from finish.lessons[] (packages/harness/src/loop.ts) ----------
