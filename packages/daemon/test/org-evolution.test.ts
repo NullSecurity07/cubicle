@@ -20,6 +20,23 @@ describe('reorg (spec §2)', () => {
     expect(await applyReorg(vault, reorg('teams:\n  engineering: { lead: cto, members: [engineer] }\n  growth: { lead: head_of_growth, members: [engineer] }\n'))).toMatch(/two teams/);
     expect(await applyReorg(vault, reorg('teams:\n  engineering: { lead: cto, members: [tech_lead, engineer, qa, critic, coo, research_analyst] }\n'))).toMatch(/max_team_size/);
   });
+
+  it('refuses to move a role away from a team it still leads when that team is left unlisted', async () => {
+    const before = loadOrg(vault);
+    expect(await applyReorg(vault, reorg('teams:\n  operations: { lead: coo, members: [qa, cto] }\n'))).toMatch(/lose its lead/);
+    const after = loadOrg(vault);
+    expect(after.teams).toEqual(before.teams);
+    expect(after.roles.cto).toEqual(before.roles.cto);
+    expect(after.roles.qa).toEqual(before.roles.qa);
+    expect(vault.events.count('org.changed')).toBe(0);
+  });
+
+  it('refuses malformed reorg yaml through the same refusal path (not a dispatch error)', async () => {
+    const before = loadOrg(vault);
+    expect(await applyReorg(vault, reorg('teams: [unclosed\n'))).toMatch(/does not parse/);
+    expect(loadOrg(vault).teams).toEqual(before.teams);
+    expect(vault.events.count('org.changed')).toBe(0);
+  });
 });
 
 describe('firing a lead (spec §2)', () => {

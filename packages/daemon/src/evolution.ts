@@ -33,7 +33,9 @@ function fencedCharter(body: string): string | null {
 export async function applyReorg(vault: Vault, note: { path: string; data: InboxFrontmatter; body: string }): Promise<string> {
   const fence = note.body.match(/```ya?ml\s*\n([\s\S]*?)```/)?.[1];
   if (!fence) return 'no ```yaml fence with teams:';
-  const parsed = (YAML.parse(fence) ?? {}) as { teams?: Record<string, { lead?: string; members?: string[] }> };
+  let parsed: { teams?: Record<string, { lead?: string; members?: string[] }> };
+  try { parsed = (YAML.parse(fence) ?? {}) as { teams?: Record<string, { lead?: string; members?: string[] }> }; }
+  catch (err) { return `reorg yaml does not parse: ${(err as Error).message}`; }
   if (!parsed.teams || !Object.keys(parsed.teams).length) return 'teams: map is empty';
   const org = loadOrg(vault);
   const c = vault.constitution();
@@ -48,6 +50,8 @@ export async function applyReorg(vault: Vault, note: { path: string; data: Inbox
   }
   // untouched teams keep their members; a role moved into a listed team leaves its old one
   const moved = new Set(seen.keys());
+  // An unlisted team must not silently lose its lead because that lead moved into a listed team.
+  for (const [id, t] of Object.entries(org.teams)) if (!parsed.teams[id] && moved.has(t.lead)) return `team ${id} would lose its lead`;
   for (const [id, t] of Object.entries(org.teams)) {
     const next = parsed.teams[id] ? { lead: parsed.teams[id].lead!, members: parsed.teams[id].members ?? [] } : { lead: t.lead, members: t.members.filter((m) => !moved.has(m)) };
     if (!org.roles[next.lead]) return `team ${id} would lose its lead`;
