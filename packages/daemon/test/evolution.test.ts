@@ -296,6 +296,29 @@ describe('charter_change proposals show a diff (D6)', () => {
     expect(vault.readText(target)).toContain(newLine);
   });
 
+  it('a proposal that changes nothing, and one with no fenced content, still get a ## Diff so the sweep settles', async () => {
+    const target = 'Roles/coo.md';
+    const current = vault.readNoteOrNull(target)!;
+    const identical = createProposal(vault, { kind: 'charter_change', from: 'cto', target, title: 'No-op', body: `Tidy.\n\n## Proposed content\n\n\`\`\`markdown\n${stringifyNote(current.data, current.body)}\`\`\`\n` }, 'cto');
+    const noFence = createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/engineer.md', title: 'Forgot the fence', body: 'I meant to paste the charter here.\n' }, 'cto');
+
+    expect(await dispatchProposals(deps())).toBe(0);
+
+    const identicalBody = findInboxById(vault, identical.id)!.body;
+    expect(identicalBody).toContain('## Diff');
+    expect(identicalBody).toMatch(/no change/i);
+    expect(identicalBody.indexOf('## Diff')).toBeLessThan(identicalBody.indexOf('## Proposed content'));
+
+    const noFenceBody = findInboxById(vault, noFence.id)!.body;
+    expect(noFenceBody).toContain('## Diff');
+    expect(noFenceBody).toMatch(/nothing to compare/i);
+
+    // The marker settles the sweep: a second tick leaves both notes byte-identical.
+    const shas = [identical, noFence].map((p) => vault.currentSha(findInboxById(vault, p.id)!.path));
+    expect(await dispatchProposals(deps())).toBe(0);
+    expect([identical, noFence].map((p) => vault.currentSha(findInboxById(vault, p.id)!.path))).toEqual(shas);
+  });
+
   it('a changed line containing $& or $1 lands in the diff verbatim', async () => {
     const target = 'Roles/engineer.md';
     const current = vault.readNoteOrNull(target)!;

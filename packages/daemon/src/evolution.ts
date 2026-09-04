@@ -252,16 +252,21 @@ export function maybeEnqueueCharterCompression(vault: Vault): string | null {
 /**
  * The `## Diff` block a `charter_change` proposal owes the owner: what its "## Proposed content" would actually
  * change in the charter on disk, as a unified diff of the two bodies (frontmatter is carried over by the
- * dispatcher, so diffing it would only show noise). Returns null when there is nothing to compare or nothing
- * changed — a proposal that rewrites nothing gets no block rather than an empty one.
+ * dispatcher, so diffing it would only show noise).
+ *
+ * Always returns a section, never null. "Nothing to diff" is itself worth telling the owner — a proposal that
+ * would change nothing, or one that forgot its fence, is a proposal not worth approving — and it doubles as the
+ * marker that stops the dispatcher recomputing this on every tick for as long as the note sits unapproved.
  */
-export function charterDiffSection(vault: Vault, target: string, proposedContent: string): string | null {
+export function charterDiffSection(vault: Vault, target: string, proposedContent: string | null): string {
+  const block = (text: string) => `## Diff\n\n${text}\n\n`;
   const current = vault.readNoteOrNull(target);
-  if (!current) return null;
+  if (!current) return block(`\`${target}\` does not exist, so there is nothing to compare. A charter_change may only edit an existing role.`);
+  if (!proposedContent) return block('This proposal has no fenced "## Proposed content" charter, so there is nothing to compare.');
   let proposedBody: string;
-  try { proposedBody = parseNote(proposedContent).body; } catch { return null; }
+  try { proposedBody = parseNote(proposedContent).body; } catch { return block('The proposed charter could not be parsed, so there is nothing to compare.'); }
   const diff = unifiedDiff(current.body, proposedBody, `${target} (current)`, `${target} (proposed)`).trim();
-  return diff ? `## Diff\n\n\`\`\`diff\n${diff}\n\`\`\`\n\n` : null;
+  return diff ? block('```diff\n' + diff + '\n```') : block('No change to the charter body; only the frontmatter or the formatting would differ.');
 }
 
 // ---------- experiments (spec §9.4) ----------

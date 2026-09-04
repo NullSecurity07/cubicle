@@ -137,10 +137,16 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     // block written above its "## Proposed content" showing exactly what the rewrite changes. Only unapproved
     // notes are touched, so this system write never lands between the owner's flip and `isOwnerChanged`.
     if (d.kind === 'charter_change' && d.approved === null && d.target && !/^## Diff$/m.test(note.body)) {
-      const proposed = fenced(note.body);
-      const section = proposed ? charterDiffSection(vault, d.target, proposed) : null;
+      const section = charterDiffSection(vault, d.target, fenced(note.body));
+      // The section is written even when there is nothing to diff: it tells the owner why, and its `## Diff`
+      // heading is what stops this being recomputed on every tick while the note waits for approval.
       // Function replacement, not a string: a diff line containing `$&` or `$1` must land verbatim.
-      if (section) vault.updateNote(note.path, (nn) => ({ data: nn.data, body: nn.body.replace('## Proposed content', () => section + '## Proposed content') }), 'daemon');
+      vault.updateNote(note.path, (nn) => ({
+        data: nn.data,
+        body: nn.body.includes('## Proposed content')
+          ? nn.body.replace('## Proposed content', () => section + '## Proposed content')
+          : nn.body.trimEnd() + '\n\n' + section.trimEnd() + '\n',
+      }), 'daemon');
     }
     // Constitution autonomy flags: the owner pre-approved these kinds; the daemon approves agent-created notes itself.
     const c = vault.constitution();
