@@ -18,6 +18,8 @@ const [cmd, vaultPath] = process.argv.slice(2);
 async function main() {
   if (cmd === 'init') {
     const { vault } = await scaffoldVault(vaultPath);
+    // The startup heartbeat only fires once the company has an idea (spec §12); naming the brand is the inert way.
+    vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'PlateReady' }, body: n.body }), 'owner');
     vault.close();
     return;
   }
