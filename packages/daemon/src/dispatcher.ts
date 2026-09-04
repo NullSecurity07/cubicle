@@ -1,7 +1,7 @@
 import {
   type Vault, listInbox, readJob, updateJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
 } from '@cubicle/core';
-import { createRoleToolClient, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
+import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath } from '@cubicle/tools';
 import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
 import { applyHire, applyFire, applyReorg } from './evolution.js';
@@ -72,14 +72,24 @@ export async function executeStoredCall(deps: DispatcherDeps, note: { path: stri
   // interrupted or already executed; the owner needs a fresh proposal once the reason no longer applies.
   const vetoed = (note.data as { blocked_by_guardrail?: string }).blocked_by_guardrail;
   if (vetoed) return { ok: false, text: `blocked by a guardrail after approval and not executed (${vetoed}); its idempotency key is spent, so file a fresh proposal once that no longer applies` };
-  // At-most-once: mark the note (and the job) BEFORE running the external call.
-  if ((note.data as { executing_at?: string }).executing_at) return { ok: false, text: 'a previous attempt was interrupted after starting this call; not re-running it (lost result)' };
-  deps.vault.updateNote(note.path, (n) => ({ data: { ...n.data, executing_at: nowIso() }, body: n.body }), 'daemon');
   const roleId = call.role ?? note.data.from;
   const roleNote = deps.vault.readNoteOrNull(`Roles/${roleId}.md`);
   if (!roleNote) return { ok: false, text: `no charter for ${roleId}` };
   const role = RoleFrontmatter.parse(roleNote.data);
   const jobId = call.job ?? note.data.job ?? null;
+  // The approval is older than the config: the tool's mode may have moved to `never` (in tools.yaml, in this
+  // role's charter, or in the owner's preferences) since the proposal was filed. The wrapper would refuse the
+  // call anyway, but only after the idempotency key was spent — and an approval the owner has since revoked in
+  // the config must leave the key intact, so re-approving works once the mode is relaxed again.
+  const mode = resolveMode(call.tool, deps.toolsConfig, role, deps.vault.ownerPreferences());
+  if (mode === 'never') {
+    const reason = `${call.tool} is set to mode never; the owner's configuration outranks this approval`;
+    deps.vault.events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason, approved: true } });
+    return { ok: false, text: `blocked even though approved: ${reason}` };
+  }
+  // At-most-once: mark the note (and the job) BEFORE running the external call.
+  if ((note.data as { executing_at?: string }).executing_at) return { ok: false, text: 'a previous attempt was interrupted after starting this call; not re-running it (lost result)' };
+  deps.vault.updateNote(note.path, (n) => ({ data: { ...n.data, executing_at: nowIso() }, body: n.body }), 'daemon');
   const job = jobId ? readJob(deps.vault, jobId) : null;
   if (job && job.data.side_effects_done.includes(call.idempotency_key)) return { ok: true, text: 'already executed (idempotency key recorded)' };
   if (job) updateJob(deps.vault, job.data.id, { side_effects_done: [...job.data.side_effects_done, call.idempotency_key] }, 'daemon', `- ${nowIso()}: ${call.tool} ATTEMPTING by the daemon after owner approval (${call.idempotency_key})`);
