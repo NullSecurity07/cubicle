@@ -55,9 +55,11 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
   try { const n = execFileSync('git', ['config', '--global', 'user.name'], { encoding: 'utf8' }).trim(); rows.push({ area: 'local', item: 'git identity', ok: true, detail: n }); }
   catch { rows.push({ area: 'local', item: 'git identity', ok: null, detail: 'none globally (the vault repo gets a local "cubicle" identity)' }); }
 
-  // Tauri deps
+  // Tray shell (Tauri): both are required to build packages/app.
   const pk = spawnSync('pkg-config', ['--exists', 'webkit2gtk-4.1']);
-  rows.push({ area: 'local', item: 'webkit2gtk-4.1 (Tauri only)', ok: pk.status === 0 ? true : null, detail: pk.status === 0 ? 'installed' : 'missing — not needed: the shipped tray app is Electron' });
+  rows.push({ area: 'local', item: 'webkit2gtk-4.1 (tray shell)', ok: pk.status === 0, detail: pk.status === 0 ? 'installed' : 'missing — the Tauri tray cannot build', fix: 'sudo pacman -S --needed webkit2gtk-4.1 libappindicator-gtk3 librsvg base-devel' });
+  const cargo = spawnSync('cargo', ['--version'], { encoding: 'utf8' });
+  rows.push({ area: 'local', item: 'cargo (tray shell)', ok: cargo.status === 0, detail: cargo.status === 0 ? String(cargo.stdout).trim() : 'missing — the Tauri tray cannot build', fix: 'https://rustup.rs' });
 
   // Providers
   for (const p of cfg.providers) {

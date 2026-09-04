@@ -21,4 +21,4 @@ Not free, not used: Cerebras (30-day trial only), xAI (optional, key required).
 - Ollama running with `qwen2.5:7b` and `nomic-embed-text`
 - Docker daemon, and the sandbox image: `docker build -t cubicle-sandbox config/sandbox` (or `pnpm cubicle doctor --build-sandbox`)
 - Playwright Chromium: `pnpm --filter @cubicle/tools exec playwright install chromium` if the doctor says it is missing
-- Tray app: Electron, no system packages needed (`pnpm --filter @cubicle/app start`). Only if you later switch the shell to Tauri: `sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg xdotool`
+- Tray app (Tauri): Rust (https://rustup.rs) and `sudo pacman -S --needed webkit2gtk-4.1 libappindicator-gtk3 librsvg base-devel`. `pnpm -r build` compiles the tray binary; `pnpm --filter @cubicle/app start` runs it.
