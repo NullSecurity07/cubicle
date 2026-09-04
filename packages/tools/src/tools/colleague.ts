@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { nowIso, makeId, idFromKey, isValidRoleId, parseNote, RoleFrontmatter, loadOrg, can, teamOf } from '@cubicle/core';
+import { nowIso, makeId, idFromKey, isValidRoleId, parseNote, RoleFrontmatter, loadOrg, can, teamOf, createJob } from '@cubicle/core';
 
 export const MessageKind = z.enum(['fyi', 'question', 'handoff', 'meeting_request']);
 
@@ -10,7 +10,7 @@ export function messagePath(role: string): string {
 
 export const colleagueMessage = defineTool({
   name: 'colleague.message',
-  description: 'Send a message to another role. kind=question blocks your job until they answer; handoff also creates a job for them.',
+  description: 'Send a message to another role. kind=question blocks your job until they answer and queues them a colleague.answer job; handoff also creates a job for them.',
   schema: { to: z.string().describe('role id, e.g. "cto"'), body: z.string(), kind: MessageKind.default('fyi') },
   async handler({ to, body, kind }, ctx) {
     if (!isValidRoleId(to)) return { ok: false, text: `invalid role id: ${JSON.stringify(to)}` };
@@ -35,7 +35,16 @@ export const colleagueMessage = defineTool({
       return { ok: true, text: `handed off to ${to} as job ${jobId}`, data: { id, jobId } };
     }
     if (kind === 'question') {
-      return { ok: true, text: `question sent to ${to} (${id}); this job is now blocked until they answer`, data: { id }, block: { kind: 'message', id } };
+      // A question blocks the asker, so answering it is real work: the recipient gets a job for it rather than
+      // a line in Messages/ nobody is accountable for. The job id derives from the message id, so a replayed
+      // step (same idempotency key) reuses the job instead of queueing a second one.
+      const answerJob = createJob(ctx.vault, {
+        id: idFromKey('job', `answer:${id}`), type: 'colleague.answer', assigned: to, priority: 2,
+        title: `Answer ${ctx.roleId}: ${body.trim().slice(0, 60)}`,
+        links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [],
+        goal: `${ctx.roleId} asked you a question and is blocked until you answer:\n\n> ${body.trim().split('\n').join('\n> ')}\n\nAnswer with colleague.message(to: "${ctx.roleId}", body: "re:${id} <your answer>"). The "re:${id}" prefix is what unblocks their job, so keep it exactly.`,
+      }, ctx.roleId);
+      return { ok: true, text: `question sent to ${to} (${id}); job ${answerJob} queued for them; this job is now blocked until they answer`, data: { id, jobId: answerJob }, block: { kind: 'message', id } };
     }
     if (kind === 'meeting_request') {
       ctx.scheduler.enqueue({ id: ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey + ':m') : undefined, type: 'custom', title: `Meeting requested by ${ctx.roleId}`, assigned: 'ceo', goal: `${ctx.roleId} requests a meeting with ${to}:\n\n${body}\n\nDecide whether to call meeting.open.`, priority: 2 });
