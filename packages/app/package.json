@@ -2,13 +2,12 @@
   "name": "@cubicle/app",
   "version": "0.1.0",
   "private": true,
-  "description": "CUBICLE tray shell: start/stop the daemon, open the office, open the vault, checkpoint on sleep",
-  "main": "src/main.cjs",
+  "description": "CUBICLE tray shell (Tauri): start/stop the daemon, open the office, open the vault, checkpoint on sleep",
   "scripts": {
-    "start": "electron .",
-    "smoke": "electron . --smoke",
-    "build": "node -e \"console.log('electron app: run with pnpm --filter @cubicle/app start')\"",
-    "test": "node src/tray-icon.test.cjs"
+    "build": "cargo build --release --manifest-path src-tauri/Cargo.toml",
+    "start": "src-tauri/target/release/cubicle-tray",
+    "smoke": "src-tauri/target/release/cubicle-tray --smoke",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
     "electron": "^44.1"

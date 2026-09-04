@@ -7,3 +7,5 @@ coverage/
 .shots/
 .worktrees/
 
+packages/app/src-tauri/target/
+packages/app/src-tauri/gen/
