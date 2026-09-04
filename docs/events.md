@@ -13,7 +13,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `heartbeat.completed` | id, commit, run (Runs/ path), gathered_at |
 | `job.queued` | type, title, assigned, priority |
 | `job.started` | attempt, from_step, resumed |
-| `job.checkpoint` | reserved |
+| `job.checkpoint` | `in_review` (the next gate job type the job now owes, or absent when it has none left), `summary` |
 | `job.blocked` | reason (approval | message | job | quota), id |
 | `job.done` | summary, artifacts, metrics, lessons |
 | `job.failed` | reason, requeued, attempt |
