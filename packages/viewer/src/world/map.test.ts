@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseMap, nearestWalkable, standTile, toPx, TILE, type TiledMap } from './map.js';
 
@@ -23,9 +25,20 @@ function objectNamesOfType(map: Record<string, unknown>, type: string): Set<stri
 }
 
 describe('office map', () => {
-  it('serves the same map the generator writes', () => {
-    expect(served).toEqual(generated);
-  });
+  // Regenerating into a temp directory is what makes this catch a stale commit: comparing the two committed
+  // copies to each other passes whenever both are stale, and passes trivially once `pnpm -r build` has
+  // rewritten them. The generator is the source of truth, so the committed bytes are compared against it.
+  it('serves the map the generator writes today, in both copies', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'cubicle-world-'));
+    try {
+      execFileSync(process.execPath, ['--import', 'tsx/esm', path.join(root, 'scripts/gen-world.ts'), '--out', dir], { cwd: root, stdio: 'pipe' });
+      const fresh = JSON.parse(readFileSync(path.join(dir, 'packages/viewer/public/office.json'), 'utf8'));
+      expect(served).toEqual(fresh);
+      expect(generated).toEqual(fresh);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
   it('has a desk object for every desk in desks.yaml', () => {
     const names = objectNamesOfType(served, 'desk');
     const ids = deskIds();

@@ -224,6 +224,9 @@ importers:
         specifier: 3.90.0
         version: 3.90.0
     devDependencies:
+      tsx:
+        specifier: ^4.23
+        version: 4.23.13
       typescript:
         specifier: ~5.9
         version: 5.9.3
@@ -233,6 +236,9 @@ importers:
       vitest:
         specifier: ^4.1
         version: 4.1.11(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      yaml:
+        specifier: ^2.9
+        version: 2.9.0
 
 packages:
 
