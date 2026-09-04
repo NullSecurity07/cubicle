@@ -14,20 +14,28 @@ export const FIRST_JOB_TITLES = [
   'Research the first organic channel',
 ] as const;
 
+/** The words of a title, lowercased. */
+function words(title: string): string[] {
+  return title.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
 /** The first three words of a title, lowercased — how a seed decides some job already covers it. */
 function titleKey(title: string): string {
-  return title.trim().toLowerCase().split(/\s+/).slice(0, 3).join(' ');
+  return words(title).slice(0, 3).join(' ');
 }
 
 /**
- * True when `existing` is the same piece of work as `seed`: their first three words agree as far as the shorter
- * of the two goes. A lead's "Scaffold Site/" is the site seed under another name; "Research competitors" is not
- * the channel seed.
+ * True when an existing job is already the piece of work `seed` describes: its own first three words are the
+ * seed's first three words. "Scaffold Site/ from Brand/ (v2)" covers the site seed; "Research competitors" does
+ * not cover the channel seed.
+ *
+ * The match is one-directional on purpose. A title with fewer than three words has not said enough to claim a
+ * seed's work — a job called "Research" would otherwise silently cancel the channel seed — so it never covers
+ * one.
  */
 function covers(existing: string, seed: string): boolean {
-  const a = titleKey(existing);
-  const b = titleKey(seed);
-  return a.startsWith(b) || b.startsWith(a);
+  if (words(existing).length < 3) return false;
+  return titleKey(existing).startsWith(titleKey(seed));
 }
 
 function specs(org: Org): NewJob[] {
@@ -57,16 +65,19 @@ function specs(org: Org): NewJob[] {
   ];
 }
 
+/** Statuses that mean a job will never deliver anything. */
+const DEAD = ['cancelled', 'failed'];
+
 /**
  * Seed the first-run jobs, once, on the first cycle only. Returns the ids created (possibly none).
  *
  * Skipped entirely once any `heartbeat.completed` event exists — later cycles plan for themselves. A seed whose
- * work some existing job already covers is skipped too, so a lead who planned the scaffold does not get a
- * second one.
+ * work a live job already covers is skipped too, so a lead who planned the scaffold does not get a second one.
  */
 export function seedFirstJobs(vault: Vault, org: Org): string[] {
   if (vault.events.count('heartbeat.completed') > 0) return [];
-  const titles = listJobs(vault).map((j) => j.title);
+  // A cancelled or failed job is not going to produce anything, so it cannot stand in for a seed.
+  const titles = listJobs(vault).filter((j) => !DEAD.includes(j.status)).map((j) => j.title);
   const out: string[] = [];
   for (const spec of specs(org)) {
     if (titles.some((t) => covers(t, spec.title))) continue;

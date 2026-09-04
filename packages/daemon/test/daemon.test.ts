@@ -74,6 +74,25 @@ async function waitFor(pred: () => boolean, ms = 15000): Promise<void> {
   while (!pred()) { if (Date.now() - t0 > ms) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 100)); }
 }
 
+/**
+ * Wait until `pred` has held continuously for `stableMs`. "The queue is empty" is momentarily true in the gap
+ * between a job finishing and its gate job being enqueued, so a plain waitFor on it can return mid-chain and the
+ * assertion after it then races the next gate.
+ */
+async function waitForStable(pred: () => boolean, stableMs = 1500, ms = 40000): Promise<void> {
+  const t0 = Date.now();
+  for (;;) {
+    await waitFor(pred, Math.max(1000, ms - (Date.now() - t0)));
+    const held = Date.now();
+    while (Date.now() - held < stableMs) {
+      await new Promise((r) => setTimeout(r, 100));
+      if (!pred()) break;
+    }
+    if (pred() && Date.now() - held >= stableMs) return;
+    if (Date.now() - t0 > ms) throw new Error('timeout waiting for a stable state');
+  }
+}
+
 describe('heartbeat as a resumable job', () => {
   it('runs all steps, awaits company.plan/critic/team.plan, writes Runs/, queue.md, commits, answers the owner, proposes a name', async () => {
     const vault = Vault.open(dir);
@@ -250,8 +269,7 @@ describe('daemon lifecycle', () => {
     await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
     // engineer.ship (scaffold) runs and finishes; its coo.verify runs; then nothing else is enqueued
     await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'coo.verify' && j.status === 'done').length >= 1, 20000);
-    await waitFor(() => listJobs(d.vault).filter((j) => ['queued', 'running'].includes(j.status)).length === 0, 30000);
-    await new Promise((r) => setTimeout(r, 1500));
+    await waitForStable(() => listJobs(d.vault).filter((j) => ['queued', 'running'].includes(j.status)).length === 0);
     const jobs = listJobs(d.vault);
     // No verify-of-verify chain: a gate job never itself sits under another gate job.
     const gateTypes = ['qa.review', 'coo.verify', 'requester.review'];
@@ -273,8 +291,12 @@ describe('daemon lifecycle', () => {
     expect(channel).toBeTruthy();
     expect(['growth.seo', 'research']).toContain(channel.type);
     expect(readJob(d.vault, channel.id)!.body).toContain('## Done when');
-    // The CTO's team plan already queued the scaffold, so the site seed is not duplicated.
-    expect(jobs.filter((j) => j.type === 'engineer.ship' && /^scaffold site\//i.test(j.title))).toHaveLength(1);
+    // The CTO's team plan queued a two-word "Scaffold Site/", which is not enough to claim the seed's work, so
+    // the seed is created too and its Done when spells out what "scaffolded" has to mean.
+    const site = jobs.find((j) => j.title === 'Scaffold Site/ from Brand/ (first cut)')!;
+    expect(site).toBeTruthy();
+    expect(site.type).toBe('engineer.ship');
+    expect(readJob(d.vault, site.id)!.body).toContain('## Done when');
 
     const t0 = Date.now();
     await d.stop();
@@ -302,6 +324,35 @@ describe('daemon lifecycle', () => {
       expect(seedFirstJobs(v, loadOrg(v))).toEqual([]);
       v.events.emit({ type: 'heartbeat.completed', payload: { id: 'h1' } });
       expect(seedFirstJobs(v, loadOrg(v))).toEqual([]);
+    } finally { v.close(); }
+  });
+
+  it('a seed is skipped only by a live job whose own first three words match it (D8)', async () => {
+    const { seedFirstJobs, FIRST_JOB_TITLES } = await import('../src/index.js');
+    const v = Vault.open(dir);
+    try {
+      // Same first three words, different wording → the lead already planned it.
+      createJob(v, { type: 'engineer.ship', title: 'Scaffold Site/ from Brand/ (v2)', assigned: 'engineer', goal: 'g' }, 'cto');
+      // Shorter than three words → not enough to claim the work; must not suppress anything.
+      createJob(v, { type: 'research', title: 'Research', assigned: 'research_analyst', goal: 'g' }, 'cto');
+      createJob(v, { type: 'research', title: 'Define the', assigned: 'research_analyst', goal: 'g' }, 'cto');
+      // A job nobody will ever run cannot stand in for a seed.
+      const dead = createJob(v, { type: 'growth.seo', title: 'Research the first organic channel', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+      updateJob(v, dead, { status: 'cancelled' }, 'daemon');
+
+      const seeded = seedFirstJobs(v, loadOrg(v)).map((id) => readJob(v, id)!.data.title);
+      expect(seeded).toEqual([FIRST_JOB_TITLES[1], FIRST_JOB_TITLES[2]]);
+      expect(seeded).not.toContain(FIRST_JOB_TITLES[0]); // covered by the lead's "Scaffold Site/ from Brand/ (v2)"
+    } finally { v.close(); }
+  });
+
+  it('a failed job does not stand in for a seed either (D8)', async () => {
+    const { seedFirstJobs, FIRST_JOB_TITLES } = await import('../src/index.js');
+    const v = Vault.open(dir);
+    try {
+      const dead = createJob(v, { type: 'engineer.ship', title: 'Scaffold Site/ from Brand/ (first cut)', assigned: 'engineer', goal: 'g' }, 'cto');
+      updateJob(v, dead, { status: 'failed' }, 'daemon');
+      expect(seedFirstJobs(v, loadOrg(v)).map((id) => readJob(v, id)!.data.title)).toContain(FIRST_JOB_TITLES[0]);
     } finally { v.close(); }
   });
 
