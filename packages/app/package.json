@@ -8,8 +8,5 @@
     "start": "src-tauri/target/release/cubicle-tray",
     "smoke": "src-tauri/target/release/cubicle-tray --smoke",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml"
-  },
-  "devDependencies": {
-    "electron": "^44.1"
   }
 }
