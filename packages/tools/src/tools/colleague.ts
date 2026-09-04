@@ -62,7 +62,7 @@ export function unreadMessages(vault: import('@cubicle/core').Vault, role: strin
     rebuilt.push(mark ? part.trimEnd() + `\n<!-- read:${nowIso()} -->\n` : part);
     if (mark) changed = true;
   }
-  if (changed) vault.writeText(rel, rebuilt.join('\n'), role, { silent: true });
+  if (changed) vault.writeText(rel, rebuilt.join('\n'), role, { generated: true });
   return out;
 }
 

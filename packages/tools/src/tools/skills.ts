@@ -31,7 +31,7 @@ export const skillsLoad = defineTool({
     const text = ctx.vault.readTextOrNull(rel);
     if (text === null) return { ok: false, text: `no skill "${name}"` };
     const note = parseNote<{ uses?: number }>(text);
-    ctx.vault.writeText(rel, stringifyNote({ ...note.data, uses: (note.data.uses ?? 0) + 1 }, note.body), ctx.roleId, { silent: true });
+    ctx.vault.writeText(rel, stringifyNote({ ...note.data, uses: (note.data.uses ?? 0) + 1 }, note.body), ctx.roleId, { generated: true });
     return { ok: true, text };
   },
 });

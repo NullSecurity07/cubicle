@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { nowIso } from './fs.js';
 
 // ---------- Jobs ----------
 export const JobStatus = z.enum(['queued', 'running', 'blocked', 'in_review', 'done', 'failed', 'cancelled']);
@@ -7,8 +8,14 @@ export type JobStatus = z.infer<typeof JobStatus>;
 export const KNOWN_JOB_TYPES = [
   'engineer.ship', 'growth.outreach', 'growth.post', 'growth.seo', 'coo.verify',
   'cto.plan', 'cto.compress_charters', 'ceo.heartbeat', 'research', 'custom',
-  'team.plan', 'critic.premortem', 'qa.review', 'company.plan',
+  'team.plan', 'critic.premortem', 'qa.review', 'company.plan', 'colleague.answer',
 ] as const;
+
+/**
+ * A note timestamp. An owner who copies `Jobs/_template.md` verbatim leaves `created`/`updated` blank,
+ * so blank (or missing) reads as "now" rather than failing the whole note's validation.
+ */
+export const Timestamp = z.preprocess((v) => (typeof v === 'string' && v.trim() !== '' ? v : nowIso()), z.string());
 
 export const BlockedOn = z.object({
   kind: z.enum(['message', 'job', 'proposal', 'quota', 'owner']),
@@ -24,8 +31,8 @@ export const JobFrontmatter = z.looseObject({
   assigned: z.string(),
   status: JobStatus.default('queued'),
   priority: z.number().int().min(1).max(5).default(3),
-  created: z.string(),
-  updated: z.string(),
+  created: Timestamp,
+  updated: Timestamp,
   attempt: z.number().int().min(1).default(1),
   max_attempts: z.number().int().min(1).default(3),
   depends_on: z.array(z.string()).default([]),
@@ -96,6 +103,8 @@ export const DecisionFrontmatter = z.looseObject({
   status: z.enum(['proposed', 'adopted', 'reverted']).default('proposed'),
   inputs: z.array(z.string()).default([]),
   owner_rating: z.enum(['up', 'down']).nullable().optional(),
+  rating_seen: z.string().optional(),   // when the owner's thumbs-down reached its author
+  review_date: z.string().optional(),   // mirrors the `## Review date` section
 });
 export type DecisionFrontmatter = z.infer<typeof DecisionFrontmatter>;
 

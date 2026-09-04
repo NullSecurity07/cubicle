@@ -52,30 +52,66 @@ export function createJob(vault: Vault, job: NewJob, by: string): string {
 }
 
 const warned = new Map<string, string>();
-function warnOnce(vault: Vault, rel: string, issue: string): void {
+function warnOnce(vault: Vault, rel: string, reason: string, extra: Record<string, unknown> = {}): void {
   const sha = vault.currentSha(rel) ?? '';
-  if (warned.get(rel) === sha) return;
-  warned.set(rel, sha);
-  vault.events.emit({ type: 'daemon.warning', payload: { path: rel, reason: 'malformed job frontmatter; skipped', issue } });
+  const key = `${rel}::${reason}`;
+  if (warned.get(key) === sha) return;
+  warned.set(key, sha);
+  vault.events.emit({ type: 'daemon.warning', payload: { path: rel, reason, ...extra } });
+}
+
+/** `Jobs/_template.md` and the generated `Jobs/queue.md` are not job notes and are never rewritten. */
+function isJobNote(rel: string): boolean {
+  const stem = jobStem(rel);
+  return stem !== 'queue' && !stem.startsWith('_');
+}
+
+function jobStem(rel: string): string {
+  return rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/, '');
+}
+
+/**
+ * The filename is authoritative for a job's id (spec §11: the owner copies the template and renames it).
+ * Reconciles a mismatched `id` and blank template timestamps back into the note so `readJob` finds it.
+ */
+function reconcile(vault: Vault, rel: string, raw: Record<string, unknown>, parsed: JobFrontmatter): JobFrontmatter {
+  if (!isJobNote(rel)) return parsed;
+  const stem = jobStem(rel);
+  const idChanged = parsed.id !== stem;
+  const stamped = raw.created !== parsed.created || raw.updated !== parsed.updated;
+  if (!idChanged && !stamped) return parsed;
+  if (idChanged) warnOnce(vault, rel, 'job id reconciled to filename', { from: parsed.id, to: stem });
+  const data = { ...parsed, id: stem };
+  // This write touches machine-owned frontmatter only, so it must not adopt the owner's %%cubicle:%%
+  // comments as a system baseline — they would then never reach the role as feedback.
+  const baseline = vault.writtenComments(rel);
+  try {
+    vault.updateNote(rel, (n) => ({ data: { ...n.data, id: stem, created: data.created, updated: data.updated }, body: n.body }), 'daemon', { job: stem });
+  } catch {
+    return data; // a concurrent owner edit; the in-memory view still uses the filename
+  }
+  vault.setWrittenComments(rel, baseline);
+  return data;
 }
 
 export function readJob(vault: Vault, id: string): { data: JobFrontmatter; body: string } | null {
-  const note = vault.readNoteOrNull(jobPath(id));
+  const rel = jobPath(id);
+  const note = vault.readNoteOrNull(rel);
   if (!note) return null;
   const parsed = JobFrontmatter.safeParse(note.data);
   if (!parsed.success) return null;
-  return { data: parsed.data, body: note.body };
+  return { data: reconcile(vault, rel, note.data, parsed.data), body: note.body };
 }
 
 export function listJobs(vault: Vault, filter: { status?: JobStatus | JobStatus[]; assigned?: string } = {}): JobFrontmatter[] {
   const out: JobFrontmatter[] = [];
   for (const rel of vault.list('Jobs', { ext: '.md' })) {
-    if (rel.endsWith('/_template.md') || rel.endsWith('/queue.md')) continue;
+    if (!isJobNote(rel)) continue;
     const note = vault.readNoteOrNull(rel);
     if (!note) continue;
     const parsed = JobFrontmatter.safeParse(note.data);
-    if (!parsed.success) { warnOnce(vault, rel, parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')); continue; }
-    const j = parsed.data;
+    if (!parsed.success) { warnOnce(vault, rel, 'malformed job frontmatter; skipped', { issue: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') }); continue; }
+    const j = reconcile(vault, rel, note.data, parsed.data);
     if (filter.status && !(Array.isArray(filter.status) ? filter.status : [filter.status]).includes(j.status)) continue;
     if (filter.assigned && j.assigned !== filter.assigned) continue;
     out.push(j);

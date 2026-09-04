@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault } from '../src/template.js';
+import { scaffoldVault, repoRoot } from '../src/template.js';
+import { ENV_EXAMPLE } from '../src/env-example.js';
 import { Vault } from '../src/vault.js';
 import { VaultWatcher } from '../src/watcher.js';
 import { OwnerOwnedPathError } from '../src/guard.js';
@@ -12,6 +14,13 @@ import { lastCommitHash } from '../src/git.js';
 
 let dir: string;
 let vault: Vault;
+
+/** Put a file in the vault's git HEAD without ever writing it through the Vault (an owner-authored, committed note). */
+function commitFile(rel: string, text: string): void {
+  writeFileSync(path.join(dir, rel), text);
+  execFileSync('git', ['add', '--', rel], { cwd: dir });
+  execFileSync('git', ['commit', '-q', '-m', `owner adds ${rel}`], { cwd: dir });
+}
 
 beforeAll(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-vault-'));
@@ -25,11 +34,31 @@ afterAll(() => {
 
 describe('scaffoldVault', () => {
   it('creates the vault tree, .cubicle, and an initial commit', async () => {
-    for (const p of ['00 Inbox', 'Brand/name.md', 'Plans/plan.md', 'Roles/ceo.md', 'Runs', 'Decisions', 'Customers/_suppression.md', 'Metrics/daily.md', 'Metrics/quota.md', 'Memory/constitution.md', 'Memory/owner_preferences.md', 'Memory/lessons.md', 'Skills', 'Experiments', 'Jobs/_template.md', 'Jobs/queue.md', 'Site', 'Meetings', 'Messages/ceo.md', '.cubicle/events', '.env.example', '.gitignore']) {
+    for (const p of ['00 Inbox', 'Brand/name.md', 'Brand/logo.png', 'Plans/plan.md', 'Roles/ceo.md', 'Runs', 'Decisions', 'Customers/_suppression.md', 'Metrics/daily.md', 'Metrics/quota.md', 'Memory/constitution.md', 'Memory/owner_preferences.md', 'Memory/lessons.md', 'Skills', 'Experiments', 'Jobs/_template.md', 'Jobs/queue.md', 'Site', 'Meetings', 'Messages/ceo.md', '.cubicle/events', '.env.example', '.gitignore']) {
       expect(existsSync(path.join(dir, p)), p).toBe(true);
     }
     expect(await lastCommitHash(dir)).toBeTruthy();
     expect(readFileSync(path.join(dir, '.gitignore'), 'utf8')).toContain('.cubicle/');
+  });
+  it('scaffolds a 64x64 Brand/logo.png placeholder', () => {
+    const png = readFileSync(path.join(dir, 'Brand', 'logo.png'));
+    expect([...png.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(png.subarray(12, 16).toString('latin1')).toBe('IHDR');
+    expect(png.readUInt32BE(16)).toBe(64); // width
+    expect(png.readUInt32BE(20)).toBe(64); // height
+    expect(png[24]).toBe(8); // bit depth
+    expect(png[25]).toBe(6); // colour type: RGBA
+    expect(vault.writtenSha('Brand/logo.png')).toBeTruthy();
+    expect(vault.isOwnerChanged('Brand/logo.png')).toBe(false);
+  });
+  it('generates .env.example from ENV_EXAMPLE, not by copying the repo root', () => {
+    const written = readFileSync(path.join(dir, '.env.example'), 'utf8');
+    expect(written).toBe(ENV_EXAMPLE);
+    expect(written).toContain('GEMINI_API_KEY=');
+    expect(vault.writtenSha('.env.example')).toBeTruthy();
+  });
+  it('ENV_EXAMPLE and the repo-root .env.example cannot drift', () => {
+    expect(readFileSync(path.join(repoRoot(), '.env.example'), 'utf8')).toBe(ENV_EXAMPLE);
   });
   it('records template files as written by init', () => {
     expect(vault.writtenSha('Roles/ceo.md')).toBeTruthy();
@@ -74,6 +103,60 @@ describe('Vault writes', () => {
     const changed = vault.rescan('Site', 'engineer/shell');
     expect(changed).toContain('Site/built.html');
     expect(vault.isOwnerChanged('Site/built.html')).toBe(false);
+  });
+  it('a generated write still emits vault.wrote, flagged generated', () => {
+    const before = vault.events.count('vault.wrote');
+    vault.writeText('Jobs/queue.md', '# Queue\n\n- nothing\n', 'daemon', { generated: true });
+    expect(vault.events.count('vault.wrote')).toBe(before + 1);
+    const ev = vault.events.last('vault.wrote')!;
+    expect((ev.payload as { path: string; generated?: boolean }).path).toBe('Jobs/queue.md');
+    expect((ev.payload as { generated?: boolean }).generated).toBe(true);
+  });
+  it('a generated file survives a cache rebuild as system-written', () => {
+    vault.writeText('Metrics/quota.md', '# Quota\n\nnone yet\n', 'daemon', { generated: true });
+    vault.rebuildWrittenSha();
+    expect(vault.isOwnerChanged('Metrics/quota.md')).toBe(false);
+  });
+  it('finds %%cubicle:%% comments added while nothing was watching', () => {
+    vault.writeText('Plans/plan.md', '# Plan\n\n- ship the pricing page\n', 'cto');
+    expect(vault.commentsChangedSinceWritten()).toEqual([]);
+
+    writeFileSync(path.join(dir, 'Plans/plan.md'), '# Plan\n\n- ship the pricing page %%cubicle: do X%%\n');
+
+    expect(vault.commentsChangedSinceWritten()).toEqual([{ path: 'Plans/plan.md', added: ['do X'] }]);
+  });
+  it('ignores comments the system itself wrote, and untracked files it never wrote', () => {
+    vault.writeText('Plans/plan.md', '# Plan\n\n- ship it %%cubicle: do X%%\n', 'cto');
+    writeFileSync(path.join(dir, 'Meetings/owner-only.md'), 'notes %%cubicle: never seen%%\n');
+
+    expect(vault.commentsChangedSinceWritten()).toEqual([]);
+  });
+  it('falls back to the git HEAD version for a tracked file the system never wrote', () => {
+    const rel = 'Plans/owner-authored.md';
+    commitFile(rel, '# Mine\n\n- a plan I typed myself\n');
+    try {
+      expect(vault.writtenComments(rel)).toBeNull();
+      expect(vault.commentsChangedSinceWritten()).toEqual([]);
+
+      writeFileSync(path.join(dir, rel), '# Mine\n\n- a plan I typed myself %%cubicle: make it cheaper%%\n');
+
+      expect(vault.commentsChangedSinceWritten()).toEqual([{ path: rel, added: ['make it cheaper'] }]);
+    } finally {
+      rmSync(path.join(dir, rel), { force: true });
+    }
+  });
+  it('reports only the comments absent from the committed version', () => {
+    const rel = 'Plans/owner-commented.md';
+    commitFile(rel, '# Mine\n\n- a plan %%cubicle: already asked%%\n');
+    try {
+      expect(vault.commentsChangedSinceWritten()).toEqual([]);
+
+      writeFileSync(path.join(dir, rel), '# Mine\n\n- a plan %%cubicle: already asked%% %%cubicle: and this too%%\n');
+
+      expect(vault.commentsChangedSinceWritten()).toEqual([{ path: rel, added: ['and this too'] }]);
+    } finally {
+      rmSync(path.join(dir, rel), { force: true });
+    }
   });
   it('rebuilds written_sha from events', () => {
     const n = vault.rebuildWrittenSha();

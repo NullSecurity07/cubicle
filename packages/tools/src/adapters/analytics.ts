@@ -34,5 +34,5 @@ export function upsertDailyRow(vault: Vault, by: string, s: DailyStats, extra: P
   const cell = (i: number, v?: number | string) => (v !== undefined ? String(v) : prev[i] ?? '0');
   const row = `| ${s.date} | ${s.visitors} | ${s.pageviews} | ${cell(4, extra.leads)} | ${cell(5, extra.emails_sent)} | ${cell(6, extra.replies)} | ${cell(7, extra.revenue)} |`;
   if (idx >= 0) lines[idx] = row; else lines.push(row);
-  vault.writeText('Metrics/daily.md', lines.join('\n').replace(/\n*$/, '\n'), by, { silent: true });
+  vault.writeText('Metrics/daily.md', lines.join('\n').replace(/\n*$/, '\n'), by, { generated: true });
 }
