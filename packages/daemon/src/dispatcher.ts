@@ -64,6 +64,12 @@ function retryDue(vault: Vault, note: { path: string; data: InboxFrontmatter }):
 /** Execute a stored call as the daemon, with the original role's permissions and the stored idempotency key. */
 export async function executeStoredCall(deps: DispatcherDeps, note: { path: string; data: InboxFrontmatter }): Promise<{ ok: boolean; text: string }> {
   const call = note.data.call!;
+  // A guardrail refused this call inside the tool layer after the owner approved it. The handler provably
+  // never ran, but the idempotency key is already in the job's at-most-once ledger and that ledger is
+  // append-only, so the call cannot be retried under this approval. Say so, rather than reporting it as
+  // interrupted or already executed; the owner needs a fresh proposal once the reason no longer applies.
+  const vetoed = (note.data as { blocked_by_guardrail?: string }).blocked_by_guardrail;
+  if (vetoed) return { ok: false, text: `blocked by a guardrail after approval and not executed (${vetoed}); its idempotency key is spent, so file a fresh proposal once that no longer applies` };
   // At-most-once: mark the note (and the job) BEFORE running the external call.
   if ((note.data as { executing_at?: string }).executing_at) return { ok: false, text: 'a previous attempt was interrupted after starting this call; not re-running it (lost result)' };
   deps.vault.updateNote(note.path, (n) => ({ data: { ...n.data, executing_at: nowIso() }, body: n.body }), 'daemon');
@@ -82,7 +88,10 @@ export async function executeStoredCall(deps: DispatcherDeps, note: { path: stri
   const client = await createRoleToolClient([def], ctx);
   try {
     const res = await client.call(call.tool, call.args, { idempotencyKey: call.idempotency_key });
-    if (job) updateJob(deps.vault, job.data.id, {}, 'daemon', `- ${nowIso()}: ${call.tool} → ${res.ok ? 'ok' : 'failed'}`);
+    // The wrapper can still veto a call this function's pre-check cleared (a guardrail whose answer moved
+    // between the two). Record that on the note so a re-approval reports the block instead of the spent key.
+    if (res.guardrailBlocked) deps.vault.updateNote(note.path, (n) => ({ data: { ...n.data, blocked_by_guardrail: res.guardrailBlocked }, body: n.body }), 'daemon');
+    if (job) updateJob(deps.vault, job.data.id, {}, 'daemon', `- ${nowIso()}: ${call.tool} → ${res.guardrailBlocked ? `BLOCKED (${res.guardrailBlocked})` : res.ok ? 'ok' : 'failed'}`);
     return { ok: res.ok, text: res.text };
   } finally {
     await client.close();

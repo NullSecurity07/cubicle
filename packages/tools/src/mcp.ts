@@ -26,7 +26,7 @@ export async function createRoleToolClient(defs: AnyTool[], baseCtx: ToolContext
       let res: ToolResult;
       const refuse = (reason: string): ToolResult => {
         ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: def.name, reason } });
-        return { ok: false, text: `blocked: ${reason}` };
+        return { ok: false, text: `blocked: ${reason}`, guardrailBlocked: reason };
       };
       try {
         // Spec §7: `never` and the constitution are enforced *in the tool layer*, so a call made outside

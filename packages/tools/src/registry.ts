@@ -63,6 +63,11 @@ export interface ToolResult {
   data?: unknown;
   /** Set by handlers that performed an external side effect. */
   sideEffectKey?: string;
+  /**
+   * Set by the MCP wrapper when it refused the call, carrying the reason. Its presence is a guarantee that
+   * the handler never ran, so a caller that recorded an idempotency key up front knows nothing happened.
+   */
+  guardrailBlocked?: string;
   /** Set by colleague.message(kind: question) etc. to block the calling job. */
   block?: { kind: 'message' | 'job' | 'proposal'; id: string };
   /** Set by `finish`. */

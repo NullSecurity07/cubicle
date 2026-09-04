@@ -6,7 +6,7 @@ import WebSocket from 'ws';
 import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, requeueUnblocked, buildSnapshot } from '../src/index.js';
+import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot } from '../src/index.js';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 
@@ -432,5 +432,34 @@ describe('daemon lifecycle', () => {
     const d = daemonFor(fakeLlm());
     await d.start();
     try { expect(existsSync(path.join(dir, 'Teams/engineering.md'))).toBe(true); expect(d.vault.events.count('org.changed')).toBe(1); } finally { await d.stop(); }
+  });
+});
+
+describe('an approved call the wrapper vetoes', () => {
+  it('reports the block on re-approval instead of "already executed" (C1)', async () => {
+    const vault = Vault.open(dir);
+    vault.updateNote('Roles/head_of_growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
+    const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
+    const job = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
+    const key = `${job}:1:1`;
+    const p = createProposal(vault, { kind: 'outbound_batch', from: 'head_of_growth', job, title: 'send one', body: 'x', call: { tool: 'mock.outbound', args: { to: 'a@x', body: 'hi' }, idempotency_key: key, job, role: 'head_of_growth' } }, 'head_of_growth');
+    // The pre-check clears the call; the wrapper, evaluating a moment later, refuses it. That is the race the
+    // classifier's non-determinism used to open, and it must not silently consume the owner's approval.
+    let seen = 0;
+    const guardrails = [{ check: () => (++seen > 1 ? 'constitution: max_emails_per_day (1) reached' : null) }];
+    const deps = { vault, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), toolsConfig: cfg, scheduler: vaultScheduler(vault), env: {}, guardrails };
+
+    const first = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(first.ok).toBe(false);
+    expect(first.text).toContain('max_emails_per_day');
+    expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false); // the handler never ran
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([key]); // at-most-once ledger untouched
+
+    const again = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(again.ok).toBe(false);
+    expect(again.text).toContain('blocked');
+    expect(again.text).toContain('max_emails_per_day');
+    expect(again.text).not.toMatch(/already executed|interrupted/);
+    vault.close();
   });
 });
