@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import type { Mood, Emote } from '../state.js';
+import { TILE } from './map.js';
 
 /** Tile ids must match scripts/gen-world.ts `T`. Drawn procedurally: CC0-by-construction placeholder art. */
-export const TILE = 16;
+export { TILE };
 export const TILES = ['EMPTY', 'GRASS', 'PATH', 'FLOOR', 'WALL', 'WALL_TOP', 'DOOR', 'DESK', 'CHAIR', 'TABLE', 'WHITEBOARD', 'PLANT', 'KITCHEN', 'NOTICE', 'CARPET', 'WINDOW', 'TREE', 'BENCH', 'SIGN'] as const;
 export const COLUMNS = 6;
 

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 7412 --strictPort",
-    "build": "vite build",
+    "world:gen": "node --import tsx/esm ../../scripts/gen-world.ts",
+    "build": "pnpm world:gen && vite build",
     "preview": "vite preview --port 7412",
     "test": "vitest run"
   },
@@ -14,8 +15,10 @@
     "phaser": "3.90.0"
   },
   "devDependencies": {
+    "tsx": "^4.23",
     "typescript": "~5.9",
     "vite": "^8.2",
-    "vitest": "^4.1"
+    "vitest": "^4.1",
+    "yaml": "^2.9"
   }
 }

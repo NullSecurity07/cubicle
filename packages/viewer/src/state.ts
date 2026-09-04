@@ -38,11 +38,13 @@ export interface State {
   frames: Record<string, { seq: number; jpegBase64?: string; path?: string }>;
   lastEventTs: string | null;
   deploys: { ts: string; url: string }[];
+  /** No company name, no jobs and nothing said yet: the office is empty and the owner has not started (spec §12). */
+  firstRun: boolean;
   /** Set when plan/brief text changed on disk; the client re-requests the snapshot. */
   staleSnapshot?: boolean;
 }
 
-export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, frames: {}, lastEventTs: null, deploys: [] });
+export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, frames: {}, lastEventTs: null, deploys: [], firstRun: false });
 
 export function toolIcon(tool: string): ToolIcon {
   if (tool.startsWith('browser.') || tool === 'social.post' || tool === 'http.fetch') return 'browser';
@@ -76,11 +78,17 @@ export function applySnapshot(s: State, snap: Snapshot): State {
   const roles = Array.isArray(snap.roles) ? snap.roles : [];
   const jobList = Array.isArray(snap.jobs) ? snap.jobs : [];
   const runningBy = new Map(jobList.filter((j) => j.status === 'running').map((j) => [j.assigned, j.id]));
+  // Spec §12 d): on an empty company the office is empty and the CEO walks in through the door to the cabin.
+  const firstRun = !(snap.brand?.name ?? '').trim() && jobList.length === 0 && (snap.chat ?? []).length === 0;
+  // The entrance is a one-shot: it starts on the first snapshot of a viewer session and lasts until the CEO is
+  // doing something else. Setting it on every snapshot sent the CEO back through the door for as long as the
+  // vault stayed empty, overriding wherever an event had asked it to walk.
+  const entering = firstRun && (Object.keys(s.agents).length === 0 || s.agents.ceo?.state === 'entering');
   for (const r of roles) {
     const prev = s.agents[r.role];
     const stillRunning = prev?.job && runningBy.get(r.role) === prev.job;
     // A snapshot is ground truth: keep in-flight pose only for a job that is still running.
-    agents[r.role] = { role: r.role, display: r.display, sprite: r.sprite, desk: r.desk, active: r.active, title: r.title, state: !r.active ? 'offline' : stillRunning ? prev!.state : 'idle_at_desk', tool: stillRunning ? prev!.tool : null, job: stillRunning ? prev!.job : null, bubble: prev?.bubble ?? null, target: stillRunning ? prev!.target : null, badge: prev?.badge ?? null, mood: !r.active ? 'asleep' : stillRunning ? prev!.mood : prev?.mood ?? 'neutral', moodUntil: prev?.moodUntil ?? null, emote: prev?.emote ?? null, idleSince: prev?.idleSince ?? Date.now() };
+    agents[r.role] = { role: r.role, display: r.display, sprite: r.sprite, desk: r.desk, active: r.active, title: r.title, state: !r.active ? 'offline' : stillRunning ? prev!.state : entering && r.role === 'ceo' ? 'entering' : 'idle_at_desk', tool: stillRunning ? prev!.tool : null, job: stillRunning ? prev!.job : null, bubble: prev?.bubble ?? null, target: stillRunning ? prev!.target : null, badge: prev?.badge ?? null, mood: !r.active ? 'asleep' : stillRunning ? prev!.mood : prev?.mood ?? 'neutral', moodUntil: prev?.moodUntil ?? null, emote: prev?.emote ?? null, idleSince: prev?.idleSince ?? Date.now() };
   }
   const jobs: Record<string, JobView> = {};
   for (const j of jobList) jobs[j.id] = j;
@@ -92,7 +100,7 @@ export function applySnapshot(s: State, snap: Snapshot): State {
   for (const su of Array.isArray(snap.surfaces) ? snap.surfaces : []) surfaces[su.streamId] = { streamKind: su.streamKind as SurfaceView['streamKind'], streamId: su.streamId, lastFrame: su.lastFrame, active: su.active };
   const frames: State['frames'] = {};
   for (const id of Object.keys(surfaces)) if (s.frames[id]) frames[id] = s.frames[id];
-  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, teams: snap.teams ?? [], inbox: snap.inbox ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, staleSnapshot: false };
+  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, teams: snap.teams ?? [], inbox: snap.inbox ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, firstRun, staleSnapshot: false };
 }
 
 const BUBBLE_MS = 6000;
@@ -180,7 +188,7 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'quota.updated': { if (p.provider && p.model && 'rpm_used' in p) { const q = p as unknown as QuotaView; const i = st.quota.findIndex((x) => x.provider === q.provider && x.model === q.model); st.quota = i >= 0 ? st.quota.map((x, k) => (k === i ? q : x)) : [...st.quota, q]; } break; }
     case 'guardrail.blocked': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'thought', text: `not allowed: ${String(p.reason ?? 'blocked')}`.slice(0, 120), until: nowMs + BUBBLE_MS }; feel(ag, 'worried'); emote(ag, '!', 4000); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `guardrail: ${String(p.reason ?? '')}` }]; break; }
     case 'owner.edited': st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `you edited ${String(p.path)}` }]; break;
-    case 'vault.wrote': { const pth = String(p.path ?? ''); if (pth.startsWith('Decisions/') && !p.deleted) st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `decision recorded: ${pth.replace(/^Decisions\//, '').replace(/\.md$/, '')} (${String(e.agent ?? '')})` }]; if (pth === 'Plans/plan.md' || pth.startsWith('Runs/')) st.staleSnapshot = true; break; }
+    case 'vault.wrote': { const pth = String(p.path ?? ''); if (pth.startsWith('Decisions/') && !p.deleted) st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `decision recorded: ${pth.replace(/^Decisions\//, '').replace(/\.md$/, '')} (${String(e.agent ?? '')})` }]; if ((pth === 'Plans/plan.md' || pth.startsWith('Runs/')) && p.generated !== true) st.staleSnapshot = true; break; }
     default: break;
   }
   return st;

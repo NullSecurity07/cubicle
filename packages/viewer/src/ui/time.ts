@@ -1,5 +1,20 @@
 import type { CubicleEvent } from '../state.js';
 
+/** How dark the night overlay gets at its deepest. */
+export const NIGHT_ALPHA = 0.55;
+
+/**
+ * Day/night overlay alpha for an hour of the day (0–24): dark until 6, fading out until 8, clear through the
+ * working day, fading back in from 18 and full dark from 21.
+ */
+export function tintFor(hour: number): number {
+  if (hour < 6) return NIGHT_ALPHA;
+  if (hour < 8) return NIGHT_ALPHA * (8 - hour) / 2;
+  if (hour < 18) return 0;
+  if (hour < 21) return NIGHT_ALPHA * (hour - 18) / 3;
+  return NIGHT_ALPHA;
+}
+
 export interface TimeHandlers { onLive(): void; onReplayRequest(date: string): void; onScrub(index: number): void; }
 
 /** Live/replay controls: date picker loads a day's events; the slider scrubs through them at 1×–50×. */

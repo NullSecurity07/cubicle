@@ -85,6 +85,25 @@ describe('viewer state machine (spec §10)', () => {
     s = applyEvent(s, ev('deploy.done', 'engineer', { url: 'https://x.pages.dev' }));
     expect(s.deploys.at(-1)!.url).toBe('https://x.pages.dev');
   });
+  it('first snapshot of an empty company makes the CEO enter and walk to the cabin', () => {
+    const s = applySnapshot(emptyState(), { ...snap, brand: { name: '', tagline: '', url: '' }, jobs: [], chat: [] });
+    expect(s.firstRun).toBe(true);
+    expect(s.agents.ceo.state).toBe('entering');
+    const named = applySnapshot(emptyState(), { ...snap, brand: { name: 'PlateReady', tagline: '', url: '' }, jobs: [], chat: [] });
+    expect(named.firstRun).toBe(false);
+    expect(named.agents.ceo.state).toBe('idle_at_desk');
+  });
+  it('the CEO entrance is a one-shot, not something every snapshot restarts', () => {
+    const emptyCo = { ...snap, brand: { name: '', tagline: '', url: '' }, jobs: [], chat: [] };
+    const first = applySnapshot(emptyState(), emptyCo);
+    expect(first.agents.ceo.state).toBe('entering');
+    // still walking in: a second snapshot must not cut the walk short either
+    const second = applySnapshot(first, emptyCo);
+    expect(second.agents.ceo.state).toBe('entering');
+    // once the CEO is doing something else, an empty vault no longer sends it back out through the door
+    const busy = { ...second, agents: { ...second.agents, ceo: { ...second.agents.ceo, state: 'talking' as const } } };
+    expect(applySnapshot(busy, emptyCo).agents.ceo.state).toBe('idle_at_desk');
+  });
   it('icons and targets', () => {
     expect(toolIcon('email.send')).toBe('envelope');
     expect(targetFor('shell.run')).toBe('terminal');
@@ -113,6 +132,7 @@ describe('critique 7-9 reducer fixes', () => {
     const d = applyEvent(s, ev('vault.wrote', 'ceo', { path: 'Decisions/d1.md', sha: 'x', by: 'ceo' }, null));
     expect(d.feed.at(-1)!.text).toContain('decision recorded');
     expect(applyEvent(s, ev('vault.wrote', 'cto', { path: 'Plans/plan.md', sha: 'x', by: 'cto' }, null)).staleSnapshot).toBe(true);
+    expect(applyEvent(s, ev('vault.wrote', 'daemon', { path: 'Plans/plan.md', sha: 'x', generated: true }, null)).staleSnapshot).toBeFalsy(); // generated files re-render themselves; no snapshot round trip
   });
 
   describe('expressions (moods, emotes, bubble kinds)', () => {

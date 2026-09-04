@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { trayIconPng } = require('./tray-icon.cjs');
+const { resolveDaemonEntry } = require('./daemon-entry.cjs');
 const { execSync } = require('node:child_process');
 
 /** The daemon runs on the system Node (native modules are built for it), never on Electron's bundled runtime. */
@@ -25,6 +26,12 @@ let office = null;          // BrowserWindow
 let lastState = 'stopped';
 const log = (m) => console.log(`[cubicle-app] ${m}`);
 
+/** The built daemon CLI, or null after telling the owner what to run (never a silent no-op). */
+function daemonEntry() {
+  try { return resolveDaemonEntry(repoRoot); }
+  catch (err) { log(err.message); dialog.showErrorBox('CUBICLE', `${err.message}\n\nThe tray starts the daemon from packages/daemon/dist, which this checkout does not have yet.`); return null; }
+}
+
 function loadCfg() { try { cfg = { ...cfg, ...JSON.parse(fs.readFileSync(configFile(), 'utf8')) }; } catch { /* first run */ } }
 function saveCfg() { fs.mkdirSync(path.dirname(configFile()), { recursive: true }); fs.writeFileSync(configFile(), JSON.stringify(cfg, null, 2)); }
 function daemonInfo() { try { return JSON.parse(fs.readFileSync(path.join(cfg.vault, '.cubicle', 'daemon.json'), 'utf8')); } catch { return null; } }
@@ -39,7 +46,9 @@ async function pickVault() {
   if (r.canceled || !r.filePaths[0]) return false;
   cfg.vault = r.filePaths[0]; saveCfg();
   if (!fs.existsSync(path.join(cfg.vault, 'Memory', 'constitution.md'))) {
-    const init = spawn(NODE, [path.join(repoRoot, 'packages', 'daemon', 'dist', 'cli.js'), 'init', cfg.vault], { cwd: repoRoot, stdio: 'inherit', env: daemonEnv() });
+    const entry = daemonEntry();
+    if (!entry) return false;
+    const init = spawn(NODE, [entry, 'init', cfg.vault], { cwd: repoRoot, stdio: 'inherit', env: daemonEnv() });
     await new Promise((res) => init.on('exit', res));
   }
   return true;
@@ -48,7 +57,9 @@ async function pickVault() {
 function startDaemon() {
   if (running()) { log('daemon already running'); return; }
   if (!cfg.vault) { log('no vault configured'); return; }
-  daemon = spawn(NODE, [path.join(repoRoot, 'packages', 'daemon', 'dist', 'cli.js'), 'start', cfg.vault], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'], env: daemonEnv() });
+  const entry = daemonEntry();
+  if (!entry) return;
+  daemon = spawn(NODE, [entry, 'start', cfg.vault], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'], env: daemonEnv() });
   daemon.stdout.on('data', (d) => process.stdout.write(`[daemon] ${d}`));
   daemon.stderr.on('data', (d) => process.stderr.write(`[daemon] ${d}`));
   daemon.on('exit', (code) => { log(`daemon exited (${code})`); daemon = null; refresh(); });
