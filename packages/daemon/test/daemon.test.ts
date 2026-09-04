@@ -197,6 +197,54 @@ describe('heartbeat as a resumable job', () => {
   });
 });
 
+/**
+ * Acceptance test 4, second clause: "the system still completes a heartbeat with only Ollama".
+ * `localFloor` stands in for a Router whose cloud providers are all keyless — the router half of this test
+ * (`packages/router/test/router.test.ts`) proves that state leaves exactly one candidate, the local model — so
+ * every request, whatever tier the caller asked for, comes back answered by the floor and marked downgraded.
+ * (It answers rather than throws for the same reason the real router does: a downgrade is not a failure.)
+ */
+function localFloor(inner: Llm): Llm & { served: { asked: string; on: string }[] } {
+  const wrapped = {
+    served: [] as { asked: string; on: string }[],
+    async chat(req: Parameters<Llm['chat']>[0], chat: Parameters<Llm['chat']>[1]) {
+      const r = await inner.chat({ ...req, tier: 'local' }, chat);
+      const out = { ...r, provider: 'ollama', model: 'qwen2.5:7b', tier: 'local' as const, downgraded: req.tier !== 'local' };
+      wrapped.served.push({ asked: req.tier, on: out.tier });
+      return out;
+    },
+    promptBudget: () => 6000,
+  };
+  return wrapped;
+}
+
+describe('only the local floor is up', () => {
+  it('heartbeat completes on the local tier alone (acceptance test 4)', async () => {
+    const llm = localFloor(fakeLlm());
+    const d = daemonFor(llm);
+    await d.start();
+    try {
+      await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 40000);
+    } finally { await d.stop(); }
+    const vault = Vault.open(dir);
+    try {
+      // callers did ask for cloud tiers, and every one of them was answered by the floor
+      expect(llm.served.length).toBeGreaterThan(0);
+      expect(llm.served.some((c) => c.asked !== 'local')).toBe(true);
+      expect(llm.served.every((c) => c.on === 'local')).toBe(true);
+      // …and the heartbeat still produced its two durable outputs: the brief and the commit
+      const runs = vault.list('Runs', { ext: '.md' });
+      expect(runs.length).toBe(1);
+      expect(vault.readText(runs[0])).toContain('## What happened');
+      const done = vault.events.last('heartbeat.completed')!;
+      expect(String(done.payload.run)).toBe(runs[0]);
+      expect(done.payload.commit).toBeTruthy();
+      const log = (await import('node:child_process')).execSync('git log --oneline', { cwd: dir }).toString();
+      expect(log).toContain('cubicle: heartbeat');
+    } finally { vault.close(); }
+  }, 60000);
+});
+
 describe('the pre-mortem note survives a crash mid-critic-step (D7)', () => {
   it('is written before processedCritic is saved, so a resume can never skip it', async () => {
     const vault = Vault.open(dir);

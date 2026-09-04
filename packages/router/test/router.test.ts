@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import http from 'node:http';
 import { openMemoryDb, EventLog } from '@cubicle/core';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseProvidersConfig } from '../src/config.js';
@@ -102,7 +102,7 @@ describe('Router', () => {
     expect(hits.slice(before).some((h) => h.includes('alpha-strong'))).toBe(false);
   });
 
-  it('downgrades tier only after same-tier options are exhausted, emitting router.downgraded', async () => {
+  it('downgrades tier only after same-tier options are exhausted, emitting router.downgraded (acceptance test 4, same-tier first)', async () => {
     behaviours.clear();
     behaviours.set('alpha-strong', { status: 429 });
     behaviours.set('beta-strong', { status: 503 });
@@ -117,7 +117,7 @@ describe('Router', () => {
     expect(ev.payload.chosen_tier).toBe('cheap');
   });
 
-  it('falls all the way to the local floor when cloud keys are missing', async () => {
+  it('falls all the way to the local floor when cloud keys are missing (acceptance test 4, synthetic cascade)', async () => {
     behaviours.clear();
     const { router, events } = mk(config(), {});
     const r = await router.chat({ tier: 'strong', needsTools: true }, { messages: [{ role: 'user', content: 'hi' }] });
@@ -172,5 +172,71 @@ describe('Router', () => {
     expect(byModel['alpha-strong'].detail).toContain('tools:ok');
     expect(byModel['beta-strong'].ok).toBe(false);
     expect(byModel['beta-strong'].detail).toContain('401');
+  });
+});
+
+/**
+ * Acceptance test 4, against the file that actually ships. The synthetic cascade above proves the *mechanics*
+ * (same tier first, then one downgrade); this proves the *configuration*: with `config/providers.yaml` as
+ * written, a strong request walks gemini → groq → openrouter → ollama and lands on the local floor exactly
+ * once, whether the cloud is refusing calls or has no key at all. Every base_url is rebound to a loopback
+ * server, so the test cannot reach a provider even if a key is exported in the environment.
+ * (`cerebras` and `xai` ship disabled and are absent from `cascade:`, so they are not in the chain.)
+ */
+describe('the shipped cascade (acceptance test 4, config/providers.yaml)', () => {
+  const CASCADE = ['gemini', 'groq', 'openrouter', 'ollama'];
+  const KEYS = { GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q', OPENROUTER_API_KEY: 'o' };
+  let fakes: http.Server[] = [];
+  let seen: string[] = [];
+
+  /** Parse the shipped file and point every provider at its own loopback server. Cloud providers answer with
+   *  `cloudStatus`; the local floor always answers, the way an Ollama on the machine would. */
+  async function shipped(cloudStatus: number) {
+    seen = [];
+    const cfg = parseProvidersConfig(readFileSync(path.resolve(__dirname, '../../../config/providers.yaml'), 'utf8'));
+    for (const p of cfg.providers) {
+      const isCloud = !!p.api_key_env;
+      const s = http.createServer((req, res) => {
+        let data = '';
+        req.on('data', (c) => (data += c));
+        req.on('end', () => {
+          seen.push(`${p.id}/${(JSON.parse(data || '{}') as { model?: string }).model ?? '?'}`);
+          if (isCloud) return reply(res, cloudStatus, { error: { message: 'down' } });
+          reply(res, 200, { id: 'x', choices: [{ index: 0, message: { role: 'assistant', content: 'pong' }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 2 } });
+        });
+      });
+      await new Promise<void>((r) => s.listen(0, '127.0.0.1', r));
+      fakes.push(s);
+      p.base_url = `http://127.0.0.1:${(s.address() as { port: number }).port}/v1`;
+    }
+    return cfg;
+  }
+
+  afterEach(() => { for (const s of fakes) s.close(); fakes = []; });
+
+  it('walks gemini → groq → openrouter → ollama when the cloud is down (acceptance test 4)', async () => {
+    const cfg = await shipped(503);
+    const { router, events } = mk(cfg, KEYS);
+    expect(router.availableProviders().map((p) => p.id)).toEqual(CASCADE);
+    const r = await router.chat({ tier: 'strong', needsTools: true }, { messages: [{ role: 'user', content: 'hi' }] });
+    expect([...new Set(seen.map((h) => h.split('/')[0]))]).toEqual(CASCADE);
+    expect(seen[0]).toBe('gemini/gemini-3.5-flash');           // the one strong model, tried first
+    expect(seen[seen.length - 1]).toBe('ollama/qwen2.5:7b');   // the local floor, tried last
+    expect(r.provider).toBe('ollama');
+    expect(r.tier).toBe('local');
+    expect(r.downgraded).toBe(true);
+    expect(events.count('router.downgraded')).toBe(1);
+    expect(events.last('router.downgraded')!.payload.requested_tier).toBe('strong');
+  });
+
+  it('reaches the local floor without a single cloud call when every api_key_env is unset (acceptance test 4)', async () => {
+    const cfg = await shipped(503);
+    const { router, events } = mk(cfg, {});   // no GEMINI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, …
+    expect(router.availableProviders().map((p) => p.id)).toEqual(['ollama']);
+    const r = await router.chat({ tier: 'strong', needsTools: true }, { messages: [{ role: 'user', content: 'hi' }] });
+    expect(seen).toEqual(['ollama/qwen2.5:7b']);               // keyless providers are never dialled
+    expect(r.provider).toBe('ollama');
+    expect(r.downgraded).toBe(true);
+    expect(events.count('router.downgraded')).toBe(1);
   });
 });
