@@ -93,6 +93,17 @@ describe('viewer state machine (spec §10)', () => {
     expect(named.firstRun).toBe(false);
     expect(named.agents.ceo.state).toBe('idle_at_desk');
   });
+  it('the CEO entrance is a one-shot, not something every snapshot restarts', () => {
+    const emptyCo = { ...snap, brand: { name: '', tagline: '', url: '' }, jobs: [], chat: [] };
+    const first = applySnapshot(emptyState(), emptyCo);
+    expect(first.agents.ceo.state).toBe('entering');
+    // still walking in: a second snapshot must not cut the walk short either
+    const second = applySnapshot(first, emptyCo);
+    expect(second.agents.ceo.state).toBe('entering');
+    // once the CEO is doing something else, an empty vault no longer sends it back out through the door
+    const busy = { ...second, agents: { ...second.agents, ceo: { ...second.agents.ceo, state: 'talking' as const } } };
+    expect(applySnapshot(busy, emptyCo).agents.ceo.state).toBe('idle_at_desk');
+  });
   it('icons and targets', () => {
     expect(toolIcon('email.send')).toBe('envelope');
     expect(targetFor('shell.run')).toBe('terminal');

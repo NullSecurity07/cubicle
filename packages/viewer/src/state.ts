@@ -80,11 +80,15 @@ export function applySnapshot(s: State, snap: Snapshot): State {
   const runningBy = new Map(jobList.filter((j) => j.status === 'running').map((j) => [j.assigned, j.id]));
   // Spec §12 d): on an empty company the office is empty and the CEO walks in through the door to the cabin.
   const firstRun = !(snap.brand?.name ?? '').trim() && jobList.length === 0 && (snap.chat ?? []).length === 0;
+  // The entrance is a one-shot: it starts on the first snapshot of a viewer session and lasts until the CEO is
+  // doing something else. Setting it on every snapshot sent the CEO back through the door for as long as the
+  // vault stayed empty, overriding wherever an event had asked it to walk.
+  const entering = firstRun && (Object.keys(s.agents).length === 0 || s.agents.ceo?.state === 'entering');
   for (const r of roles) {
     const prev = s.agents[r.role];
     const stillRunning = prev?.job && runningBy.get(r.role) === prev.job;
     // A snapshot is ground truth: keep in-flight pose only for a job that is still running.
-    agents[r.role] = { role: r.role, display: r.display, sprite: r.sprite, desk: r.desk, active: r.active, title: r.title, state: !r.active ? 'offline' : stillRunning ? prev!.state : firstRun && r.role === 'ceo' ? 'entering' : 'idle_at_desk', tool: stillRunning ? prev!.tool : null, job: stillRunning ? prev!.job : null, bubble: prev?.bubble ?? null, target: stillRunning ? prev!.target : null, badge: prev?.badge ?? null, mood: !r.active ? 'asleep' : stillRunning ? prev!.mood : prev?.mood ?? 'neutral', moodUntil: prev?.moodUntil ?? null, emote: prev?.emote ?? null, idleSince: prev?.idleSince ?? Date.now() };
+    agents[r.role] = { role: r.role, display: r.display, sprite: r.sprite, desk: r.desk, active: r.active, title: r.title, state: !r.active ? 'offline' : stillRunning ? prev!.state : entering && r.role === 'ceo' ? 'entering' : 'idle_at_desk', tool: stillRunning ? prev!.tool : null, job: stillRunning ? prev!.job : null, bubble: prev?.bubble ?? null, target: stillRunning ? prev!.target : null, badge: prev?.badge ?? null, mood: !r.active ? 'asleep' : stillRunning ? prev!.mood : prev?.mood ?? 'neutral', moodUntil: prev?.moodUntil ?? null, emote: prev?.emote ?? null, idleSince: prev?.idleSince ?? Date.now() };
   }
   const jobs: Record<string, JobView> = {};
   for (const j of jobList) jobs[j.id] = j;
