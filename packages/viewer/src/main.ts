@@ -4,7 +4,7 @@ import { Net, resolveWs } from './net.js';
 import { emptyState, applyEvent, applySnapshot, tick, type State, type CubicleEvent, type Snapshot } from './state.js';
 import { Ui } from './ui/panel.js';
 import { esc, obsidianUrl, chip, type Ctx } from './ui/content.js';
-import { viewFor } from './ui/surfaces.js';
+import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
 
 let state: State = emptyState();
@@ -143,7 +143,16 @@ const net = new Net(url, token, {
 });
 net.connect();
 
-(window as unknown as { __cubicle: unknown }).__cubicle = { get state() { return state; }, agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), open, zoom: (z: number) => scene.cameras.main.setZoom(z), center: (tx: number, ty: number) => scene.cameras.main.centerOn(tx * 16, ty * 16) };
+/** What a registry surface is bound to right now: the stream its own entry picks, and the frame it would draw.
+ *  Exposed so an end-to-end test can assert the billboard through the registry instead of guessing its stream. */
+function debugSurfaces(): Record<string, { streamKind: string; streamId: string; lastFrame: string | null; image: string | null }> {
+  return Object.fromEntries(Object.values(SURFACES).map((d) => {
+    const id = d.streamId(state);
+    return [d.kind, { streamKind: d.streamKind, streamId: id, lastFrame: state.surfaces[id]?.lastFrame ?? null, image: frames[id] ?? null }];
+  }));
+}
+
+(window as unknown as { __cubicle: unknown }).__cubicle = { get state() { return state; }, agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), desks: () => scene.debugDesks(), stand: (name: string) => scene.debugStand(name), surfaces: () => debugSurfaces(), open, zoom: (z: number) => scene.cameras.main.setZoom(z), center: (tx: number, ty: number) => scene.cameras.main.centerOn(tx * 16, ty * 16) };
 
 let last = performance.now();
 function loop(now: number): void {

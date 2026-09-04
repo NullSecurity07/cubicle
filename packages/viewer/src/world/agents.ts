@@ -207,7 +207,7 @@ export class AgentSprite {
     this.bubble.setVisible(true);
   }
 
-  debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, tile: this.tile(), seat: this.seat }; }
+  debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, tile: this.tile(), seat: this.seat, desk: this.view.desk, home: this.homeTile() }; }
 
   destroy(): void { this.container.destroy(); this.dot.destroy(); }
 }

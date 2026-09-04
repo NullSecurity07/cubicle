@@ -97,6 +97,8 @@ export class OfficeScene extends Phaser.Scene {
 
   debugAgents(): Record<string, unknown>[] { return [...this.agents.values()].map((a) => a.debug()); }
   debugAnchors(): Record<string, unknown> { return Object.fromEntries(Object.entries(this.world.anchors).map(([k, a]) => [k, { tx: a.tx, ty: a.ty, props: a.props }])); }
+  debugDesks(): Record<string, { tx: number; ty: number }> { return { ...this.world.desks }; }
+  debugStand(name: string): { tx: number; ty: number } | null { return this.world.standTile(name); }
 
   focusOn(name: string): void {
     if (!this.world) { this.pendingFocus = name; return; }   // the snapshot can arrive before the map has loaded
