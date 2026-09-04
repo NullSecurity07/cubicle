@@ -5,6 +5,7 @@
 mod config;
 mod daemon;
 mod icon;
+mod sleep;
 
 use config::Config;
 use icon::TrayState;
@@ -289,6 +290,31 @@ fn on_menu(app: &AppHandle, id: &str) {
     }
 }
 
+/// Checkpoint the daemon before the machine suspends and bring it back on wake (spec §14 test 9).
+fn watch_for_sleep(app: &AppHandle) {
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let app = handle.clone();
+        let result = sleep::watch(move |suspending| {
+            if suspending {
+                in_background(&app, |app| {
+                    let ms = stop_daemon(app);
+                    log(&format!("suspend: daemon checkpointed and exited in {ms} ms"));
+                });
+            } else {
+                log("resume: restarting daemon");
+                in_background(&app, start_daemon);
+            }
+        })
+        .await;
+        if let Err(err) = result {
+            log(&format!(
+                "sleep watcher unavailable ({err}); the daemon checkpoints on PrepareForSleep by itself"
+            ));
+        }
+    });
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -317,6 +343,8 @@ fn main() {
                 choose_vault(app.handle());
             }
 
+            watch_for_sleep(app.handle());
+
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(REFRESH_EVERY);
@@ -329,11 +357,17 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("failed to build the CUBICLE tray")
-        .run(|_app, event| {
+        .run(|app, event| match event {
             // Closing the office window must not end the app: the tray is the app.
-            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
-                api.prevent_exit();
+            tauri::RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
+            // However we are leaving, the daemon gets its SIGTERM so the vault is checkpointed.
+            tauri::RunEvent::Exit => {
+                let ms = stop_daemon(app);
+                if ms > 0 {
+                    log(&format!("exit: daemon checkpointed and exited in {ms} ms"));
+                }
             }
+            _ => {}
         });
 }
 
