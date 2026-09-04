@@ -210,6 +210,33 @@ pub fn init(root: &Path, entry: &Path, vault: &Path) -> std::io::Result<std::pro
         .status()
 }
 
+/// Reap a child that has already exited and empty the slot. `std::process::Child` does not wait on
+/// drop, so a child dropped unreaped stays a `<defunct>` entry for the life of the tray.
+/// Only call this for a process already known to be gone: `wait` blocks on a live one.
+pub fn reap(child: &mut Option<Child>) {
+    if let Some(c) = child.as_mut() {
+        let _ = c.wait();
+    }
+    *child = None;
+}
+
+/// One poll of the child slot. When the daemon exited on its own this reaps it, empties the slot and
+/// returns how it exited; `None` means it is still running, or there was nothing to watch.
+pub fn poll_exit(child: &mut Option<Child>) -> Option<std::process::ExitStatus> {
+    let status = match child.as_mut()?.try_wait() {
+        Ok(Some(status)) => status,
+        Ok(None) => return None,
+        Err(_) => return None,
+    };
+    *child = None;
+    Some(status)
+}
+
+/// How a child exited, the way Electron's `daemon.on('exit', code)` reported it.
+pub fn exit_label(status: std::process::ExitStatus) -> String {
+    status.code().map_or_else(|| status.to_string(), |code| code.to_string())
+}
+
 /// SIGTERM whichever process owns the vault (our child if we have one) and wait for it to checkpoint.
 /// Returns the milliseconds it took, or 0 when nothing was running.
 pub fn stop(vault: &Path, child: &mut Option<Child>) -> u128 {
@@ -218,12 +245,12 @@ pub fn stop(vault: &Path, child: &mut Option<Child>) -> u128 {
         .map(|c| c.id() as i32)
         .or_else(|| daemon_info(vault).map(|i| i.pid));
     let Some(pid) = pid.filter(|p| pid_alive(*p)) else {
-        *child = None;
+        reap(child); // it died on its own; wait for it rather than dropping a zombie
         return 0;
     };
     let started = Instant::now();
     if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
-        *child = None;
+        reap(child);
         return 0;
     }
     loop {
@@ -236,7 +263,7 @@ pub fn stop(vault: &Path, child: &mut Option<Child>) -> u128 {
         std::thread::sleep(POLL);
     }
     if !pid_alive(pid) {
-        *child = None;
+        reap(child);
     }
     started.elapsed().as_millis()
 }
@@ -325,6 +352,13 @@ mod tests {
             "---\nid: msg_hi\nkind: message\nfrom: owner\nanswered: null\n---\nhello\n",
         )
         .unwrap();
+        // Every inbox note gets `approved: null` from the schema default, so this is the shape that
+        // separates us from the Electron regex: a message is never a proposal awaiting approval.
+        fs::write(
+            inbox.join("msg_idea.md"),
+            "---\nid: msg_idea\nkind: message\nfrom: owner\napproved: null\n---\nan idea\n",
+        )
+        .unwrap();
         fs::write(
             inbox.join("prop_brand.md"),
             "---\nid: prop_brand\nkind: brand_change\napproved: null\n---\nrename us\n",
@@ -374,6 +408,67 @@ mod tests {
         assert!(owned.is_none(), "the child is reaped, not left a zombie");
         assert!(!pid_alive(pid));
         fs::remove_dir_all(&vault).ok();
+    }
+
+    #[test]
+    fn stopping_a_daemon_the_tray_does_not_own_uses_the_pid_from_daemon_json() {
+        // adopt_vault leans on this: after a tray restart the daemon is nobody's child.
+        let vault = tmpdir("stop-unowned");
+        let mut sleeper = Command::new("sleep").arg("30").spawn().expect("spawn sleep");
+        let pid = sleeper.id() as i32;
+        fs::create_dir_all(vault.join(".cubicle")).unwrap();
+        fs::write(daemon_info_path(&vault), format!(r#"{{"pid":{pid},"port":7411}}"#)).unwrap();
+        assert!(running(&vault));
+
+        let mut unowned: Option<Child> = None;
+        let ms = stop(&vault, &mut unowned);
+        assert!(ms < STOP_TIMEOUT.as_millis(), "took {ms} ms");
+        assert!(!running(&vault), "the daemon.json pid was signalled");
+
+        let _ = sleeper.wait(); // this test process is its parent, so this test reaps it
+        fs::remove_dir_all(&vault).ok();
+    }
+
+    #[test]
+    fn a_daemon_that_exited_on_its_own_is_reaped_rather_than_left_defunct() {
+        let vault = tmpdir("reap");
+        let child = Command::new("true").spawn().expect("spawn true");
+        let pid = child.id() as i32;
+        let mut owned = Some(child);
+        for _ in 0..200 {
+            if !pid_alive(pid) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!pid_alive(pid), "the child exited");
+        assert!(Path::new(&format!("/proc/{pid}")).exists(), "and is defunct until reaped");
+
+        assert_eq!(stop(&vault, &mut owned), 0, "nothing to signal");
+        assert!(owned.is_none(), "the slot is emptied");
+        assert!(!Path::new(&format!("/proc/{pid}")).exists(), "and the zombie is gone");
+        fs::remove_dir_all(&vault).ok();
+    }
+
+    #[test]
+    fn polling_the_slot_reaps_the_daemon_and_reports_how_it_exited() {
+        let child = Command::new("true").spawn().expect("spawn true");
+        let pid = child.id() as i32;
+        let mut owned = Some(child);
+        let mut status = None;
+        for _ in 0..200 {
+            status = poll_exit(&mut owned);
+            if status.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let status = status.expect("the child exited");
+        assert!(status.success());
+        assert_eq!(exit_label(status), "0");
+        assert!(owned.is_none(), "the slot is emptied so the tray can restart");
+        assert!(!Path::new(&format!("/proc/{pid}")).exists(), "and nothing is left defunct");
+        assert_eq!(poll_exit(&mut owned), None, "an empty slot polls to nothing");
     }
 
     #[test]

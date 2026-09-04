@@ -22,6 +22,11 @@ use tokio::signal::unix::{signal, SignalKind};
 
 /// Refresh cadence of the tray while nothing else is happening.
 const REFRESH_EVERY: Duration = Duration::from_secs(5);
+/// How often the watcher thread looks for a daemon that exited on its own.
+const CHILD_POLL: Duration = Duration::from_millis(500);
+/// Reconnect backoff for the sleep subscription, from first retry to cap.
+const SLEEP_RETRY: Duration = Duration::from_secs(2);
+const SLEEP_RETRY_MAX: Duration = Duration::from_secs(60);
 /// The office window's label; there is only ever one.
 const OFFICE: &str = "office";
 
@@ -157,6 +162,29 @@ fn daemon_entry(app: &AppHandle) -> Option<PathBuf> {
     }
 }
 
+/// Watch a daemon we spawned. `std::process::Child` never waits on drop, so a daemon that crashes
+/// has to be reaped here or it stays `<defunct>`; this also restores Electron's immediate repaint
+/// when the daemon goes away by itself. The thread retires as soon as the slot stops being ours.
+fn watch_child(app: &AppHandle, pid: u32) {
+    let handle = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(CHILD_POLL);
+        let exited = {
+            let shell = handle.state::<Shell>();
+            let mut slot = shell.child.lock().unwrap();
+            match slot.as_ref() {
+                Some(c) if c.id() == pid => daemon::poll_exit(&mut slot),
+                _ => return, // stopped, or replaced by a newer daemon: not ours any more
+            }
+        };
+        let Some(status) = exited else { continue };
+        log(&format!("daemon exited ({})", daemon::exit_label(status)));
+        let refreshed = handle.clone();
+        let _ = handle.run_on_main_thread(move || refresh(&refreshed));
+        return;
+    });
+}
+
 fn start_daemon(app: &AppHandle) {
     let shell = app.state::<Shell>();
     let Some(vault) = shell.vault() else {
@@ -170,8 +198,13 @@ fn start_daemon(app: &AppHandle) {
     let Some(entry) = daemon_entry(app) else { return };
     match daemon::start(&shell.root, &entry, &vault) {
         Ok(child) => {
-            log(&format!("daemon started (pid {})", child.id()));
-            *shell.child.lock().unwrap() = Some(child);
+            let pid = child.id();
+            log(&format!("daemon started (pid {pid})"));
+            let mut slot = shell.child.lock().unwrap();
+            daemon::reap(&mut slot); // whatever was here has exited; do not drop it unreaped
+            *slot = Some(child);
+            drop(slot);
+            watch_child(app, pid);
         }
         Err(err) => log(&format!("daemon failed to start: {err}")),
     }
@@ -253,7 +286,9 @@ fn adopt_vault(app: &AppHandle, path: &Path) {
     if previous.as_deref() != Some(path) {
         if let Some(previous) = previous {
             let mut child = shell.child.lock().unwrap();
-            if child.is_some() {
+            // A daemon started outside the tray, or before a tray restart, is nobody's child — but
+            // it still holds port 7411, so the new vault's daemon could not bind behind it.
+            if child.is_some() || daemon::running(&previous) {
                 let ms = daemon::stop(&previous, &mut child);
                 log(&format!("leaving {}: daemon exited in {ms} ms", previous.display()));
             }
@@ -291,7 +326,8 @@ fn on_menu(app: &AppHandle, id: &str) {
             }
         }),
         "office" => open_office(app),
-        "vault" => open_vault(app),
+        // xdg-open is waited on for its exit status, so it cannot run on the GTK main thread.
+        "vault" => in_background(app, open_vault),
         "choose" => choose_vault(app),
         "quit" => in_background(app, |app| {
             let ms = stop_daemon(app);
@@ -334,23 +370,45 @@ fn watch_for_signals(app: &AppHandle) {
 fn watch_for_sleep(app: &AppHandle) {
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        let app = handle.clone();
-        let result = sleep::watch(move |suspending| {
-            if suspending {
-                in_background(&app, |app| {
-                    let ms = stop_daemon(app);
-                    log(&format!("suspend: daemon checkpointed and exited in {ms} ms"));
-                });
-            } else {
-                log("resume: restarting daemon");
-                in_background(&app, start_daemon);
+        let mut backoff = SLEEP_RETRY;
+        let mut reported = false;
+        loop {
+            let app = handle.clone();
+            let outcome = sleep::watch(move |suspending| {
+                if suspending {
+                    in_background(&app, |app| {
+                        let ms = stop_daemon(app);
+                        log(&format!("suspend: daemon checkpointed and exited in {ms} ms"));
+                    });
+                } else {
+                    log("resume: restarting daemon");
+                    in_background(&app, start_daemon);
+                }
+            })
+            .await;
+            match outcome {
+                // The subscription was live and the bus went away. Nothing else restarts the daemon
+                // on wake, so this has to come back rather than end the task silently.
+                Ok(()) => {
+                    log("sleep watcher: the PrepareForSleep stream ended; reconnecting");
+                    backoff = SLEEP_RETRY;
+                    reported = false;
+                }
+                // Never connected. Say so once, then keep retrying quietly: the daemon subscribes to
+                // the same signal itself, so a bus that never comes back is not fatal.
+                Err(err) => {
+                    if !reported {
+                        log(&format!(
+                            "sleep watcher unavailable ({err}); retrying — the daemon checkpoints on PrepareForSleep by itself"
+                        ));
+                        reported = true;
+                    }
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(SLEEP_RETRY_MAX);
+                    continue;
+                }
             }
-        })
-        .await;
-        if let Err(err) = result {
-            log(&format!(
-                "sleep watcher unavailable ({err}); the daemon checkpoints on PrepareForSleep by itself"
-            ));
+            tokio::time::sleep(backoff).await;
         }
     });
 }

@@ -37,7 +37,8 @@ pub fn run() -> i32 {
         .and_then(|info| daemon::office_url(&vault, &info))
         .is_some();
     let ms = daemon::stop(&vault, &mut child);
-    let ok = up && office && ms > 0 && ms < STOP_BUDGET_MS && !daemon::running(&vault);
+    // No `ms > 0`: a daemon that exits inside the first poll is a success, not a failure.
+    let ok = up && office && ms < STOP_BUDGET_MS && !daemon::running(&vault);
     println!(
         "SMOKE {}: daemon up={up} office={office} stop={ms}ms",
         if ok { "PASS" } else { "FAIL" }

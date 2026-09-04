@@ -18,8 +18,10 @@ trait Login1Manager {
     fn prepare_for_sleep(&self, start: bool) -> zbus::Result<()>;
 }
 
-/// Call `on_sleep(true)` before suspend and `on_sleep(false)` on resume, forever.
-/// Returns only when the bus is unreachable or the signal stream ends.
+/// Call `on_sleep(true)` before suspend and `on_sleep(false)` on resume, for as long as the bus
+/// lasts. `Err` means we never connected; `Ok(())` means we did and the stream then ended, which is
+/// what a dbus or logind restart looks like — the caller reconnects, because nothing else restarts
+/// the daemon on wake.
 pub async fn watch<F: Fn(bool)>(on_sleep: F) -> zbus::Result<()> {
     let connection = zbus::Connection::system().await?;
     let manager = Login1ManagerProxy::new(&connection).await?;
