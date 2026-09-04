@@ -111,9 +111,11 @@ const commands: Record<string, Handler> = {
     events.on('router.downgraded', (e) => console.error(`[router.downgraded] ${e.payload.requested_tier} → ${e.payload.chosen_tier} via ${e.payload.provider}/${e.payload.model}; tried: ${(e.payload.tried as string[]).join(', ') || 'none'}`));
     const router = new Router(cfg, new QuotaTracker(db), { events });
     const tier = (typeof flags.tier === 'string' ? flags.tier : 'medium') as ModelTier;
-    const res = await router.chat({ tier, needsTools: false, privacy: flags.local === true ? 'local' : 'cloud' }, { messages: [{ role: 'user', content: prompt }], maxTokens: 256 });
+    // Streamed: the answer appears as it is generated, and the provider/model line follows once the usage
+    // chunk has arrived. This is the one caller that proves the router's streaming path end to end.
+    const res = await router.chat({ tier, needsTools: false, privacy: flags.local === true ? 'local' : 'cloud' }, { messages: [{ role: 'user', content: prompt }], maxTokens: 256, onDelta: (t) => process.stdout.write(t) });
+    if (res.content) process.stdout.write('\n');
     console.log(`[${res.provider}/${res.model} tier=${res.tier}${res.downgraded ? ' DOWNGRADED' : ''} tokens=${res.usage.prompt_tokens}/${res.usage.completion_tokens}]`);
-    console.log(res.content.trim());
   },
   async memory(args, flags) {
     const sub = args[0];
