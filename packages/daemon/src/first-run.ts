@@ -1,4 +1,4 @@
-import { type Vault, type Org, type NewJob, createJob, listJobs } from '@cubicle/core';
+import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, parseNote } from '@cubicle/core';
 
 /**
  * The three jobs a company must leave its first heartbeat with (spec §12): something on the web, something to
@@ -68,14 +68,54 @@ function specs(org: Org): NewJob[] {
 /** Statuses that mean a job will never deliver anything. */
 const DEAD = ['cancelled', 'failed'];
 
+/** Stand-in date for evidence of an idea that carries no timestamp of its own. */
+const EPOCH = new Date(0).toISOString();
+
 /**
- * Seed the first-run jobs, once, on the first cycle only. Returns the ids created (possibly none).
+ * When the company got its idea — the ISO timestamp of the earliest evidence of one, or null when it has none.
  *
- * Skipped entirely once any `heartbeat.completed` event exists — later cycles plan for themselves. A seed whose
- * work a live job already covers is skipped too, so a lead who planned the scaffold does not get a second one.
+ * Spec §12: nothing happens until the owner types an idea, so neither the startup heartbeat nor these seeds may
+ * fire before one exists — a nameless company that scaffolds a site and researches a channel is working on
+ * nothing. An idea can arrive in three shapes and any one of them counts: the brand is already named (the owner
+ * typed a name, or approved the CEO's proposal), a `brand_change` proposal is open (what the CEO files from an
+ * idea it was given), or an owner message is sitting in `00 Inbox/` (what the cabin chat writes). Mirrors the
+ * `isFirstIdea` test in heartbeat.ts, widened to any brand_change and any owner message.
+ *
+ * A named brand with no `vault.wrote` event behind it (the owner typed it in while the daemon was down, or the
+ * log was trimmed) is dated to the epoch: the idea has been there as long as anything we can see, so every
+ * heartbeat in the log counts as having had it.
+ */
+export function ideaAt(vault: Vault): string | null {
+  const stamps: string[] = [];
+  const name = parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data.name;
+  if (typeof name === 'string' && name.trim()) stamps.push(vault.events.query({ types: ['vault.wrote'] }).find((e) => e.payload.path === 'Brand/name.md')?.ts ?? EPOCH);
+  for (const n of listInbox(vault)) {
+    if (n.data.kind === 'brand_change' || (n.data.kind === 'message' && n.data.from === 'owner')) stamps.push(String(n.data.created ?? EPOCH));
+  }
+  return stamps.length ? stamps.sort()[0] : null;
+}
+
+/** True once the owner has given the company something to run on; see {@link ideaAt}. */
+export function hasIdea(vault: Vault): boolean {
+  return ideaAt(vault) !== null;
+}
+
+/**
+ * Seed the first-run jobs on the first heartbeat that completes after the owner's idea. Returns the ids created
+ * (possibly none).
+ *
+ * The guard used to be "no `heartbeat.completed` exists at all", which the startup heartbeat broke: that one
+ * runs before the owner has typed anything, so all three seeds were spent on a nameless company and the
+ * heartbeat that followed the idea then seeded nothing (C1). Anchoring the window to the idea instead keeps the
+ * once-only guarantee — later cycles plan for themselves — while putting the seeds on the cycle they belong to.
+ *
+ * A seed whose work a live job already covers is skipped, so a lead who planned the scaffold does not get a
+ * second one.
  */
 export function seedFirstJobs(vault: Vault, org: Org): string[] {
-  if (vault.events.count('heartbeat.completed') > 0) return [];
+  const since = ideaAt(vault);
+  if (since === null) return [];
+  if (vault.events.query({ types: ['heartbeat.completed'], from: since, limit: 1 }).length > 0) return [];
   // A cancelled or failed job is not going to produce anything, so it cannot stand in for a seed.
   const titles = listJobs(vault).filter((j) => !DEAD.includes(j.status)).map((j) => j.title);
   const out: string[] = [];

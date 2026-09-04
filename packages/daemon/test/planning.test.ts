@@ -9,7 +9,14 @@ import { orgLlm } from '../../../scripts/lib/org-llm.js';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
-beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-plan-')); const { vault } = await scaffoldVault(dir); vault.close(); });
+// Every heartbeat here needs a company to plan for: nothing runs before the owner has given one an idea
+// (spec §12, C1). The brand name is the inert way to say so — an inbox message would also land in the brief.
+beforeEach(async () => {
+  dir = mkdtempSync(path.join(tmpdir(), 'cubicle-plan-'));
+  const { vault } = await scaffoldVault(dir);
+  vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'PlateReady' }, body: n.body }), 'owner');
+  vault.close();
+});
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const daemonFor = (llm: Llm) => new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 300, maxConcurrentJobs: 3, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });

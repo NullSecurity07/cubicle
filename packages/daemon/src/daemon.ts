@@ -13,6 +13,7 @@ import { createHeartbeatJob, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
 import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview } from './evolution.js';
+import { hasIdea } from './first-run.js';
 import { StaticServer } from './static.js';
 import { pruneScreens } from '@cubicle/tools';
 
@@ -249,9 +250,18 @@ export class Daemon {
     }
   }
 
-  /** Ask for a heartbeat; coalesced — one open heartbeat job at a time. A request while an open heartbeat has not gathered yet is already covered by it. */
+  /**
+   * Ask for a heartbeat; coalesced — one open heartbeat job at a time. A request while an open heartbeat has not
+   * gathered yet is already covered by it.
+   *
+   * Nothing runs before the owner has typed an idea (spec §12): on a freshly scaffolded vault the startup
+   * trigger used to plan, critique and seed a whole first cycle for a nameless company, and it wrote a job note
+   * into the vault before any viewer could see the empty office (C1). The gate applies only to the very first
+   * heartbeat — once one has completed the company is real, and every later trigger stands on its own.
+   */
   requestHeartbeat(trigger: string): string | null {
     if (this.stopping) return null;
+    if (!this.vault.events.last('heartbeat.completed') && !hasIdea(this.vault)) return null;
     const open = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
     if (open) { if (open.checkpoint_step >= 1) this.heartbeatRequested = trigger; return open.id; }
     const id = createHeartbeatJob(this.vault, trigger);

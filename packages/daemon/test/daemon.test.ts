@@ -220,6 +220,10 @@ function localFloor(inner: Llm): Llm & { served: { asked: string; on: string }[]
 
 describe('only the local floor is up', () => {
   it('heartbeat completes on the local tier alone (acceptance test 4)', async () => {
+    // A heartbeat needs something to plan for: nothing runs before the owner has typed an idea (spec §12, C1).
+    const seed = Vault.open(dir);
+    createProposal(seed, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
+    seed.close();
     const llm = localFloor(fakeLlm());
     const d = daemonFor(llm);
     await d.start();
@@ -358,6 +362,29 @@ describe('daemon lifecycle', () => {
     v.close();
   });
 
+  it('an empty vault runs no heartbeat and seeds nothing until the owner types an idea, then heartbeat #1 does both (C1)', async () => {
+    const d = daemonFor(fakeLlm());
+    await d.start();
+    try {
+      // Several ticks with a scaffolded but idealess vault: no company name, no owner note, nothing to plan for.
+      await new Promise((r) => setTimeout(r, 2000));
+      expect(listJobs(d.vault)).toEqual([]);
+      expect(d.vault.events.count('heartbeat.started')).toBe(0);
+      expect(d.vault.events.count('heartbeat.completed')).toBe(0);
+
+      // The owner types the idea into the cabin chat.
+      createProposal(d.vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
+      await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
+
+      // Heartbeat #1 is the one that names the company and the one that seeds the three first jobs.
+      expect(listJobs(d.vault).filter((j) => j.type === 'ceo.heartbeat')).toHaveLength(1);
+      expect(listInbox(d.vault).some((n) => n.data.kind === 'brand_change')).toBe(true);
+      const titles = listJobs(d.vault).map((j) => j.title);
+      const { FIRST_JOB_TITLES } = await import('../src/index.js');
+      for (const t of FIRST_JOB_TITLES) expect(titles).toContain(t);
+    } finally { await d.stop(); }
+  });
+
   it('first start runs heartbeat #1 from an owner idea with zero outbound events; verify chain terminates; the cycle seeds the offer and channel jobs (D8)', async () => {
     const vault = Vault.open(dir);
     createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
@@ -408,6 +435,7 @@ describe('daemon lifecycle', () => {
     const { seedFirstJobs } = await import('../src/index.js');
     const v = Vault.open(dir);
     try {
+      createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
       const first = seedFirstJobs(v, loadOrg(v));
       expect(first).toHaveLength(3);
       const titles = listJobs(v).map((j) => j.title);
@@ -429,6 +457,7 @@ describe('daemon lifecycle', () => {
     const { seedFirstJobs, FIRST_JOB_TITLES } = await import('../src/index.js');
     const v = Vault.open(dir);
     try {
+      createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
       // Same first three words, different wording → the lead already planned it.
       createJob(v, { type: 'engineer.ship', title: 'Scaffold Site/ from Brand/ (v2)', assigned: 'engineer', goal: 'g' }, 'cto');
       // Shorter than three words → not enough to claim the work; must not suppress anything.
@@ -448,6 +477,7 @@ describe('daemon lifecycle', () => {
     const { seedFirstJobs, FIRST_JOB_TITLES } = await import('../src/index.js');
     const v = Vault.open(dir);
     try {
+      createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
       const dead = createJob(v, { type: 'engineer.ship', title: 'Scaffold Site/ from Brand/ (first cut)', assigned: 'engineer', goal: 'g' }, 'cto');
       updateJob(v, dead, { status: 'failed' }, 'daemon');
       expect(seedFirstJobs(v, loadOrg(v)).map((id) => readJob(v, id)!.data.title)).toContain(FIRST_JOB_TITLES[0]);

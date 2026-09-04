@@ -92,6 +92,13 @@ describe('viewer state machine (spec §10)', () => {
     const named = applySnapshot(emptyState(), { ...snap, brand: { name: 'PlateReady', tagline: '', url: '' }, jobs: [], chat: [] });
     expect(named.firstRun).toBe(false);
     expect(named.agents.ceo.state).toBe('idle_at_desk');
+    // The CEO's own heartbeat is not work the company is doing: a heartbeat job note in an otherwise empty
+    // vault must not cancel the entrance (C1). Any other job does.
+    const hb = { id: 'job_hb', type: 'ceo.heartbeat', title: 'heartbeat', assigned: 'ceo', status: 'running', priority: 2, checkpoint_step: 0, updated: '2026-01-01T00:00:00.000Z' };
+    const beating = applySnapshot(emptyState(), { ...snap, brand: { name: '', tagline: '', url: '' }, jobs: [hb], chat: [] });
+    expect(beating.firstRun).toBe(true);
+    const working = applySnapshot(emptyState(), { ...snap, brand: { name: '', tagline: '', url: '' }, jobs: [hb, { ...hb, id: 'job_x', type: 'engineer.ship', assigned: 'engineer' }], chat: [] });
+    expect(working.firstRun).toBe(false);
   });
   it('the CEO entrance is a one-shot, not something every snapshot restarts', () => {
     const emptyCo = { ...snap, brand: { name: '', tagline: '', url: '' }, jobs: [], chat: [] };

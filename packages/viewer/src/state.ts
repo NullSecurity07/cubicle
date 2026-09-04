@@ -79,7 +79,9 @@ export function applySnapshot(s: State, snap: Snapshot): State {
   const jobList = Array.isArray(snap.jobs) ? snap.jobs : [];
   const runningBy = new Map(jobList.filter((j) => j.status === 'running').map((j) => [j.assigned, j.id]));
   // Spec §12 d): on an empty company the office is empty and the CEO walks in through the door to the cabin.
-  const firstRun = !(snap.brand?.name ?? '').trim() && jobList.length === 0 && (snap.chat ?? []).length === 0;
+  // The CEO's own heartbeat does not count as work the company is doing — a heartbeat job note can be in the
+  // vault before the owner has said anything, and counting it hid the entrance entirely (C1).
+  const firstRun = !(snap.brand?.name ?? '').trim() && jobList.every((j) => j.type === 'ceo.heartbeat') && (snap.chat ?? []).length === 0;
   // The entrance is a one-shot: it starts on the first snapshot of a viewer session and lasts until the CEO is
   // doing something else. Setting it on every snapshot sent the CEO back through the door for as long as the
   // vault stayed empty, overriding wherever an event had asked it to walk.
