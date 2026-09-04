@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, realpathSync, unlinkSync, renameSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { openDb, type Db } from './db.js';
 import { EventLog } from './events.js';
@@ -209,21 +210,40 @@ export class Vault {
   /**
    * Owner comments added since the system last wrote each note — the startup sweep for `%%cubicle: …%%`
    * feedback typed while the daemon was stopped (the watcher starts with `ignoreInitial`, so those edits
-   * raise no `owner.edited`). Files the system has never written are skipped: their comments have no
-   * recorded baseline, so nothing can prove the owner (rather than a model or an email) wrote them.
+   * raise no `owner.edited`).
+   *
+   * The baseline is `written_sha.comments_json`; where that is missing, the committed (git HEAD) version
+   * of the file is used instead, the same fallback `collectOwnerFeedback` applies on the `owner.edited`
+   * path, so the two agree on which comments are new. The fallback is also what keeps this sweep working
+   * after `rebuildWrittenSha()`: that replays `vault.wrote` events, which carry no content, so
+   * `comments_json` is NULL for every path afterwards and the recorded baseline is gone.
+   *
+   * A file with neither baseline (never written by the system, never committed) is skipped: nothing can
+   * prove the owner, rather than a model or a scrape, wrote its comments.
    */
   commentsChangedSinceWritten(): { path: string; added: string[] }[] {
     const out: { path: string; added: string[] }[] = [];
+    const tracked = existsSync(path.join(this.root, '.git'));
     for (const rel of this.list('', { recursive: true, ext: '.md' })) {
-      const prior = this.writtenComments(rel);
-      if (prior === null) continue;
       const text = this.readTextOrNull(rel);
       if (text === null) continue;
+      const current = extractOwnerComments(text);
+      if (!current.length) continue; // nothing to report, so do not pay for a baseline lookup
+      const prior = this.writtenComments(rel) ?? (tracked ? this.committedComments(rel) : null);
+      if (prior === null) continue;
       const known = new Set(prior);
-      const added = extractOwnerComments(text).filter((c) => !known.has(c));
+      const added = current.filter((c) => !known.has(c));
       if (added.length) out.push({ path: rel, added });
     }
     return out;
+  }
+
+  /** `%%cubicle: …%%` comments in the committed (git HEAD) version of a path; null when git has no such file. */
+  private committedComments(rel: string): string[] | null {
+    try {
+      const text = execFileSync('git', ['show', `HEAD:${normalizeRel(rel)}`], { cwd: this.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
+      return extractOwnerComments(text);
+    } catch { return null; }
   }
 
   /**

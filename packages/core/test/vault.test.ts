@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, repoRoot } from '../src/template.js';
@@ -13,6 +14,13 @@ import { lastCommitHash } from '../src/git.js';
 
 let dir: string;
 let vault: Vault;
+
+/** Put a file in the vault's git HEAD without ever writing it through the Vault (an owner-authored, committed note). */
+function commitFile(rel: string, text: string): void {
+  writeFileSync(path.join(dir, rel), text);
+  execFileSync('git', ['add', '--', rel], { cwd: dir });
+  execFileSync('git', ['commit', '-q', '-m', `owner adds ${rel}`], { cwd: dir });
+}
 
 beforeAll(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-vault-'));
@@ -117,11 +125,38 @@ describe('Vault writes', () => {
 
     expect(vault.commentsChangedSinceWritten()).toEqual([{ path: 'Plans/plan.md', added: ['do X'] }]);
   });
-  it('ignores comments the system itself wrote, and files it never wrote', () => {
+  it('ignores comments the system itself wrote, and untracked files it never wrote', () => {
     vault.writeText('Plans/plan.md', '# Plan\n\n- ship it %%cubicle: do X%%\n', 'cto');
     writeFileSync(path.join(dir, 'Meetings/owner-only.md'), 'notes %%cubicle: never seen%%\n');
 
     expect(vault.commentsChangedSinceWritten()).toEqual([]);
+  });
+  it('falls back to the git HEAD version for a tracked file the system never wrote', () => {
+    const rel = 'Plans/owner-authored.md';
+    commitFile(rel, '# Mine\n\n- a plan I typed myself\n');
+    try {
+      expect(vault.writtenComments(rel)).toBeNull();
+      expect(vault.commentsChangedSinceWritten()).toEqual([]);
+
+      writeFileSync(path.join(dir, rel), '# Mine\n\n- a plan I typed myself %%cubicle: make it cheaper%%\n');
+
+      expect(vault.commentsChangedSinceWritten()).toEqual([{ path: rel, added: ['make it cheaper'] }]);
+    } finally {
+      rmSync(path.join(dir, rel), { force: true });
+    }
+  });
+  it('reports only the comments absent from the committed version', () => {
+    const rel = 'Plans/owner-commented.md';
+    commitFile(rel, '# Mine\n\n- a plan %%cubicle: already asked%%\n');
+    try {
+      expect(vault.commentsChangedSinceWritten()).toEqual([]);
+
+      writeFileSync(path.join(dir, rel), '# Mine\n\n- a plan %%cubicle: already asked%% %%cubicle: and this too%%\n');
+
+      expect(vault.commentsChangedSinceWritten()).toEqual([{ path: rel, added: ['and this too'] }]);
+    } finally {
+      rmSync(path.join(dir, rel), { force: true });
+    }
   });
   it('rebuilds written_sha from events', () => {
     const n = vault.rebuildWrittenSha();
