@@ -6,7 +6,7 @@ import {
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
 import { writeQueueMd } from './queue-md.js';
-import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas } from './evolution.js';
+import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
 import { seedFirstJobs } from './first-run.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
@@ -175,7 +175,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { companyPlanJob?: string; criticJob?: string; processedCritic?: string; vetoes?: number; criticFindings?: string[]; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; feedbackShas?: string[] }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { companyPlanJob?: string; criticJob?: string; processedCritic?: string; vetoes?: number; criticFindings?: string[]; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -275,8 +275,12 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // The owner `feedback:` entries this cycle can actually show the CEO are the ones that exist now. Their
         // shas are recorded here and marked delivered at commit; see markFeedbackDelivered for why a fresh read
         // at commit would destroy an entry the owner adds mid-cycle.
-        const feedbackShas = preferenceFeedbackShas(collectOwnerFeedbackSafe(vault, g.since ?? undefined));
-        state = { ...state, ...g, feedbackShas }; saveState(state);
+        const gatheredFeedback = collectOwnerFeedbackSafe(vault, g.since ?? undefined);
+        const feedbackShas = preferenceFeedbackShas(gatheredFeedback);
+        // Same idea for `%%cubicle:%%` comments, retired by advancing each note's comment baseline at commit;
+        // see markCommentsDelivered for why a system-written note otherwise repeats its comment every restart.
+        const commentBaselines = gatheredCommentBaselines(vault, gatheredFeedback);
+        state = { ...state, ...g, feedbackShas, commentBaselines }; saveState(state);
         // Persist the gathered facts in the job note so a cache wipe cannot change what later steps see.
         vault.updateNote(`Jobs/${jobId}.md`, (n) => ({ data: n.data, body: setSection(n.body, '## Plan', '```json\n' + JSON.stringify({ since: g.since, gathered_at: g.gathered_at, elapsedHours: Number.isFinite(g.elapsedHours) ? g.elapsedHours : null, ownerEdits: g.ownerEdits, finished: g.finished, mail: g.mail.length, analytics: g.analytics, owner_messages: g.unansweredOwnerMessages.map((m) => m.id) }, null, 2) + '\n```') }), 'ceo', { job: jobId });
         done(i, `elapsed ${Number.isFinite(g.elapsedHours) ? g.elapsedHours.toFixed(1) + 'h' : 'first run'}; ${g.ownerEdits.length} owner edits; ${g.finished.length} jobs finished; ${g.mail.length} mails; ${g.unansweredOwnerMessages.length} owner messages`);
@@ -519,6 +523,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // rather than at collection keeps them available to a mid-cycle plan rewrite and re-delivers them if a
         // cycle never finished; the marker lives in the event log, so `cubicle rebuild` does not resurrect them.
         try { markFeedbackDelivered(vault, state.feedbackShas ?? []); } catch { /* never block the commit */ }
+        // The owner comments this cycle carried are spent too: advance each note's baseline so neither the next
+        // startup sweep nor the next cycle's collection reports them again (I1).
+        try { markCommentsDelivered(vault, state.commentBaselines ?? {}); } catch { /* never block the commit */ }
         updateJob(vault, jobId, { status: 'done', checkpoint_step: HEARTBEAT_STEPS.length }, 'ceo', `- step ${i + 1} commit: ${hash ?? commitNote}`);
         vault.events.emit({ type: 'job.done', agent: 'ceo', job: jobId, payload: { type: 'ceo.heartbeat', summary: `heartbeat ${hbId}` } });
         vault.events.emit({ type: 'heartbeat.completed', agent: 'ceo', job: jobId, payload: { id: hbId, commit: hash, run: state.runPath, trigger: job.title, gathered_at: state.gathered_at ?? nowIso() } });

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault, Vault, createJob, readJob, parseNote, createProposal, listJobs, listInbox, findInboxById, JobResult, stringifyNote, updateJob } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler, runJob, type Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, requeueUnblocked, dispatchProposals, applyHire, applyFire, freeDesk, activeRoles, maybeEnqueueCharterCompression, enqueueExperimentReviews, collectOwnerFeedback, feedbackFor } from '../src/index.js';
+import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, requeueUnblocked, dispatchProposals, applyHire, applyFire, freeDesk, activeRoles, maybeEnqueueCharterCompression, enqueueExperimentReviews, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor } from '../src/index.js';
 
 const root = path.resolve(__dirname, '../../..');
 const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
@@ -252,6 +252,30 @@ describe('preference feedback is delivered once (D5)', () => {
     expect(next).toContain('ship smaller');
     expect(vault.events.query({ types: ['owner.feedback_delivered'] })).toHaveLength(1);
     expect(await runCycle()).not.toContain('ship smaller');
+  });
+
+  it('a swept offline comment is retired by the cycle that delivered it, so a second restart does not re-deliver it (I1)', async () => {
+    setFeedback([]);
+    // A note the system writes once and never rewrites — a brief, a decision, a skill. Its comment baseline is
+    // recorded at that write, and nothing else ever moves it, so the startup sweep kept finding the same comment.
+    vault.writeText('Runs/2026-01-01-aaaa.md', '---\nheartbeat: hb_a\n---\n# Since you were away\n\nWe shipped.\n', 'ceo');
+    ownerEdit('Runs/2026-01-01-aaaa.md', (t) => t + '\n%%cubicle: too long, three bullets max%%\n');
+
+    // Restart 1: the sweep finds it and the cycle shows it to the CEO.
+    expect(collectOfflineOwnerComments(vault)).toContain('Runs/2026-01-01-aaaa.md');
+    expect(await runCycle()).toContain('too long, three bullets max');
+
+    // Restart 2: the comment is the same text in the same unmodified file, and it must not come round again.
+    expect(collectOfflineOwnerComments(vault)).not.toContain('Runs/2026-01-01-aaaa.md');
+    expect(await runCycle()).not.toContain('too long, three bullets max');
+
+    // Restart 3, and a genuinely new comment on the same note still gets through.
+    expect(collectOfflineOwnerComments(vault)).not.toContain('Runs/2026-01-01-aaaa.md');
+    ownerEdit('Runs/2026-01-01-aaaa.md', (t) => t + '\n%%cubicle: name the customer%%\n');
+    expect(collectOfflineOwnerComments(vault)).toContain('Runs/2026-01-01-aaaa.md');
+    const third = await runCycle();
+    expect(third).toContain('name the customer');
+    expect(third).not.toContain('too long, three bullets max');
   });
 });
 
