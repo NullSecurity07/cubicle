@@ -1,4 +1,6 @@
 const CONTEXT = 3;
+/** Per side, after the common head and tail are trimmed. The LCS table is (n+1)(m+1) Uint32: 4000 x 4000 is 64 MB. */
+const MAX_LINES = 4000;
 
 type Op = { kind: ' ' | '-' | '+'; text: string };
 
@@ -34,9 +36,32 @@ function ops(a: string[], b: string[]): Op[] {
 /**
  * A unified diff of two texts (line granularity, 3 lines of context), for showing an owner what a
  * proposal would change. Returns '' when the texts are identical.
+ *
+ * A trailing newline is stripped before splitting, so a change that only adds or removes the final
+ * newline is not shown. Only the lines between the common head and tail reach the quadratic LCS table;
+ * when more than MAX_LINES of those remain on either side the diff is refused with a single
+ * `(diff too large: N vs M lines)` line rather than allocating a table of gigabytes.
  */
 export function unifiedDiff(a: string, b: string, aName = 'current', bName = 'proposed'): string {
-  const list = ops(toLines(a), toLines(b));
+  const aLines = toLines(a);
+  const bLines = toLines(b);
+
+  // Common head and tail are unchanged by definition; diffing only the middle keeps the table small.
+  let head = 0;
+  while (head < aLines.length && head < bLines.length && aLines[head] === bLines[head]) head++;
+  let tail = 0;
+  while (tail < aLines.length - head && tail < bLines.length - head && aLines[aLines.length - 1 - tail] === bLines[bLines.length - 1 - tail]) tail++;
+  const midA = aLines.slice(head, aLines.length - tail);
+  const midB = bLines.slice(head, bLines.length - tail);
+  if (!midA.length && !midB.length) return '';
+  if (midA.length > MAX_LINES || midB.length > MAX_LINES) return `(diff too large: ${aLines.length} vs ${bLines.length} lines)\n`;
+
+  const unchanged = (text: string): Op => ({ kind: ' ', text });
+  const list: Op[] = [
+    ...aLines.slice(0, head).map(unchanged),
+    ...ops(midA, midB),
+    ...aLines.slice(aLines.length - tail).map(unchanged),
+  ];
   const changed = list.map((o, k) => (o.kind === ' ' ? -1 : k)).filter((k) => k >= 0);
   if (!changed.length) return '';
 
