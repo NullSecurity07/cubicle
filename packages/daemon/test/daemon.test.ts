@@ -521,22 +521,35 @@ describe('daemon lifecycle', () => {
     const vault = Vault.open(dir);
     const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'owner');
     vault.close();
-    let cancelled = false;
-    let d!: Daemon;
+    // The owner cancels the way Obsidian does: by editing `status:` in the job note on disk, from outside the
+    // daemon, while the worker is mid-step. Nothing in the test touches the daemon's own job API.
+    let announceMidStep!: () => void;
+    const midStep = new Promise<void>((r) => { announceMidStep = r; });
+    let releaseStep!: () => void;
+    const edited = new Promise<void>((r) => { releaseStep = r; });
+    let paused = false;
     const slow: Llm = {
       async chat(req, chat) {
         const base = { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'strong' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
         if (!chat.tools) return { ...base, content: 'ok' };
         if (req.roleId !== 'head_of_growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
-        if (!cancelled) { cancelled = true; updateJob(d.vault, id, { status: 'cancelled' }, 'owner'); }
+        if (!paused) { paused = true; announceMidStep(); await edited; }
         return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Plans/plan.md' } }] };
       },
     };
-    d = daemonFor(slow);
+    const d = daemonFor(slow);
     await d.start();
+    await midStep;
+    const notePath = path.join(dir, 'Jobs', `${id}.md`);
+    const before = readFileSync(notePath, 'utf8');
+    expect(before).toMatch(/^status: running$/m);
+    writeFileSync(notePath, before.replace(/^status: running$/m, 'status: cancelled'));
+    releaseStep();
     await waitFor(() => d.vault.events.count('job.cancelled') >= 1, 15000);
+    // "within one step": the model was asked for exactly one tool call and none of it was executed.
     expect(readJob(d.vault, id)!.data.checkpoint_step).toBeLessThanOrEqual(1);
     expect(readJob(d.vault, id)!.data.status).toBe('cancelled');
+    expect(d.vault.events.count('agent.tool_call')).toBe(0);
     await d.stop();
   });
 
