@@ -6,10 +6,22 @@ export interface Guardrail {
   check(tool: string, args: Record<string, unknown>, ctx: ToolContext): Promise<string | null> | string | null;
 }
 
-const OUTBOUND_TEXT_TOOLS: Record<string, string[]> = { 'email.send': ['subject', 'body', 'html'], 'social.post': ['title', 'body', 'text'], 'mock.outbound': ['body'] };
+/** Every tool that can carry outbound copy, and how to pull that copy out of its arguments. */
+const OUTBOUND_TEXT_TOOLS: Record<string, (args: Record<string, unknown>) => string> = {
+  'email.send': fields('subject', 'body', 'html'),
+  'social.post': fields('title', 'body', 'text'),
+  'mock.outbound': fields('body'),
+  // social.post tells the agent to finish the post through browser.submit, so the values it fills in
+  // are outbound copy too and must reach the classifier (audit gap 2).
+  'browser.submit': (args) => Object.values((args.fields ?? {}) as Record<string, unknown>).map((v) => (typeof v === 'string' ? v : '')).join('\n'),
+};
+
+function fields(...keys: string[]): (args: Record<string, unknown>) => string {
+  return (args) => keys.map((k) => (typeof args[k] === 'string' ? args[k] : '')).join('\n');
+}
 
 function textOf(tool: string, args: Record<string, unknown>): string {
-  return (OUTBOUND_TEXT_TOOLS[tool] ?? []).map((k) => (typeof args[k] === 'string' ? args[k] : '')).join('\n').trim();
+  return (OUTBOUND_TEXT_TOOLS[tool]?.(args) ?? '').trim();
 }
 
 /** Ask the smallest local model whether text uses a banned tactic. Fails closed on an explicit "yes", open on no model. */
@@ -36,7 +48,8 @@ export async function classifyBannedTactic(router: Router, text: string, tactics
 /**
  * Constitution enforcement at the tool layer (spec §7): max_emails_per_day, banned_channels, banned_tactics
  * (local classifier), never_modify (vault guard already), pii_local_only (harness routing). Emits nothing itself;
- * the harness turns a non-null reason into `guardrail.blocked`.
+ * the caller turns a non-null reason into `guardrail.blocked` — the MCP wrapper for every call, and the
+ * harness loop and proposal dispatcher for the calls they refuse before reaching it.
  */
 export function constitutionGuardrail(router?: Router): Guardrail {
   return {

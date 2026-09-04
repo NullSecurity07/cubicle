@@ -109,6 +109,15 @@ describe('constitution guardrail (acceptance test 6)', () => {
     expect(await g.check('social.post', { channel: 'hn', body: 'x' }, ctx)).toBeNull();
     expect(await g.check('email.send', { to: 'a@x', body: 'We use fabricated testimonials' }, ctx)).toMatch(/banned tactic/);
   });
+
+  it('classifies browser.submit field values, the tool social.post hands off to (C2)', async () => {
+    const g = constitutionGuardrail();
+    const ctx = ctxFor('head_of_growth', 'job_g2');
+    expect(vault.constitution().banned_tactics).toContain('fake urgency');
+    const args = { url: 'https://example.com/post', fields: { '#title': 'Launch', '#body': 'Only today! Fake urgency, act now' }, submit: '#go' };
+    expect(await g.check('browser.submit', args, ctx)).toMatch(/banned tactic "fake urgency"/i);
+    expect(await g.check('browser.submit', { ...args, fields: { '#title': 'Launch', '#body': 'We shipped a thing' } }, ctx)).toBeNull();
+  });
 });
 
 describe('Site/ owner-edit safety (acceptance test 3, tool half)', () => {
