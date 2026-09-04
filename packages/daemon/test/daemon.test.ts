@@ -538,3 +538,37 @@ describe('local-tier summariser (D1)', () => {
     expect(readJob(Vault.open(dir), id)).toBeTruthy();
   });
 });
+
+describe('Brand/logo.png on an existing vault (D10)', () => {
+  const LOGO = 'Brand/logo.png';
+  const PNG_SIGNATURE = '89504e470d0a1a0a';
+  const quietDaemon = () => new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 500, maxConcurrentJobs: 1, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm: fakeLlm(), disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+
+  it('is drawn at start when missing, and a vault that already has one is untouched', async () => {
+    const seed = Vault.open(dir);
+    seed.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } }); // recent → no startup heartbeat
+    seed.close();
+    rmSync(path.join(dir, LOGO), { force: true }); // a vault scaffolded before the logo existed
+
+    const d = quietDaemon();
+    await d.start();
+    let sha: unknown;
+    try {
+      const png = readFileSync(path.join(dir, LOGO));
+      expect(png.subarray(0, 8).toString('hex')).toBe(PNG_SIGNATURE);
+      const wrote = d.vault.events.query({ types: ['vault.wrote'] }).filter((e) => e.payload.path === LOGO && e.agent === 'daemon');
+      expect(wrote).toHaveLength(1);
+      expect(wrote[0].payload.generated).toBe(true);
+      sha = wrote[0].payload.sha;
+      expect(typeof sha).toBe('string');
+    } finally { await d.stop(); }
+
+    const before = readFileSync(path.join(dir, LOGO));
+    const d2 = quietDaemon();
+    await d2.start();
+    try {
+      expect(readFileSync(path.join(dir, LOGO)).equals(before)).toBe(true);
+      expect(d2.vault.events.query({ types: ['vault.wrote'] }).filter((e) => e.payload.path === LOGO && e.agent === 'daemon')).toHaveLength(1);
+    } finally { await d2.stop(); }
+  });
+});

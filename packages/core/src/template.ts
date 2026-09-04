@@ -18,6 +18,18 @@ export function templateDir(): string {
   return path.join(repoRoot(), 'vault-template');
 }
 
+export const BRAND_LOGO = 'Brand/logo.png';
+
+/**
+ * The placeholder logo a new vault gets: a 64px square in the brand's primary colour with a centred accent
+ * square, drawn from `Brand/palette.md` (defaults when it is missing or has no colours). Exported so a vault
+ * scaffolded before `Brand/logo.png` existed can be given the very same image later.
+ */
+export function placeholderLogo(paletteMarkdown: string | null): Buffer {
+  const palette = (paletteMarkdown ? parseNote(paletteMarkdown).data : {}) as { primary?: string; accent?: string };
+  return placeholderSquare(64, palette.primary ?? '#1f2937', palette.accent ?? '#f59e0b');
+}
+
 export interface ScaffoldResult {
   vault: Vault;
   files: string[];
@@ -46,12 +58,11 @@ export async function scaffoldVault(target: string, opts: { force?: boolean; mem
     atomicWriteSync(path.join(abs, '.env.example'), ENV_EXAMPLE);
     generated.push('.env.example');
   }
-  const logo = path.join(abs, 'Brand', 'logo.png');
+  const logo = path.join(abs, BRAND_LOGO);
   if (!existsSync(logo)) {
     const paletteFile = path.join(abs, 'Brand', 'palette.md');
-    const palette = (existsSync(paletteFile) ? parseNote(readFileSync(paletteFile, 'utf8')).data : {}) as { primary?: string; accent?: string };
-    atomicWriteSync(logo, placeholderSquare(64, palette.primary ?? '#1f2937', palette.accent ?? '#f59e0b'));
-    generated.push('Brand/logo.png');
+    atomicWriteSync(logo, placeholderLogo(existsSync(paletteFile) ? readFileSync(paletteFile, 'utf8') : null));
+    generated.push(BRAND_LOGO);
   }
 
   const vault = Vault.open(abs, { memory: opts.memoryDb });

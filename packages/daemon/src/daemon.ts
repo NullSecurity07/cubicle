@@ -1,6 +1,6 @@
 import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir } from '@cubicle/core';
+import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown } from '@cubicle/router';
 import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter } from '@cubicle/core';
@@ -100,6 +100,7 @@ export class Daemon {
     this.vault = Vault.open(cfg.vaultPath);
     const mig = migrateOrg(this.vault, templateDir());
     if (mig.changed.length) this.log(`org migrated: ${mig.changed.length} file(s) written`);
+    this.ensureBrandLogo();
     const providers = loadProvidersConfig(cfg.providersPath);
     this.router = new Router(providers, new QuotaTracker(this.vault.db), { env: cfg.env, events: this.vault.events });
     const toolsConfig = loadToolsConfig(cfg.toolsPath);
@@ -225,6 +226,27 @@ export class Daemon {
     if (away >= cfg.heartbeat.startupAwayHours) this.requestHeartbeat(last ? `startup after ${away.toFixed(1)} h away` : 'first start');
     this.tick = setInterval(() => void this.runTick('interval'), cfg.tickMs);
     await this.runTick('startup');
+  }
+
+  /**
+   * Spec §11 names `Brand/logo.png` and the Engineer's charter tells it to use one, but vaults scaffolded before
+   * the logo existed have none. Draw the same placeholder `cubicle init` draws — never over an existing file, so
+   * the owner's own logo is safe, and flagged `generated` so the viewer does not read it as owner churn.
+   *
+   * Written with the low-level helpers rather than `vault.writeText`: the content is binary, and `Brand/` is
+   * owner-owned, so this is the same privileged path `scaffoldVault` uses for exactly this file.
+   */
+  private ensureBrandLogo(): void {
+    if (existsSync(this.vault.abs(BRAND_LOGO))) return;
+    try {
+      const png = placeholderLogo(this.vault.readTextOrNull('Brand/palette.md'));
+      const sha = atomicWriteSync(this.vault.abs(BRAND_LOGO), png);
+      this.vault.recordWritten(BRAND_LOGO, sha, 'daemon');
+      this.vault.events.emit({ type: 'vault.wrote', agent: 'daemon', payload: { path: BRAND_LOGO, sha, by: 'daemon', generated: true } });
+      this.log(`scaffolded ${BRAND_LOGO}`);
+    } catch (err) {
+      this.vault.events.emit({ type: 'daemon.warning', payload: { where: 'brand-logo', message: String((err as Error).message) } });
+    }
   }
 
   /** Ask for a heartbeat; coalesced — one open heartbeat job at a time. A request while an open heartbeat has not gathered yet is already covered by it. */
