@@ -2,9 +2,9 @@ import Phaser from 'phaser';
 import type { Anchor } from './map.js';
 import { TILE } from './tileset.js';
 import type { State } from '../state.js';
-import { cut } from './headlines.js';
-import type { SurfaceDef } from './surface-registry.js';
-import { headlineFor } from './surface-registry.js';
+import { cut } from '../ui/headlines.js';
+import type { SurfaceDef } from '../ui/surfaces.js';
+import { chartBars, headlineFor } from '../ui/surfaces.js';
 
 const PAD = 6;
 const HEAD_PX = 10, LINE_PX = 8, LINE_H = 10, HEAD_H = 14;
@@ -85,16 +85,17 @@ export class Surface {
       if (data) this.setImage(data); else this.setHeadline(hl.head, hl.lines);
       return;
     }
-    // … and a chart stream draws runway bars beside its head lines.
+    // … and a chart stream draws a runway bar per row its own entry supplies. Nothing here knows what the rows
+    // mean: the labels and the numbers come from `def.bars`, so a second chart surface draws its own data.
     if (this.def.streamKind === 'chart') {
       this.bars.clear();
-      const rows = s.quota.filter((q) => q.limits.rpd > 0).slice(0, Math.max(0, Math.floor((this.innerH - HEAD_H) / LINE_H)));
-      if (!rows.length) { this.setHeadline(hl.head, ['Set rpm/rpd in providers.yaml']); return; }
+      const rows = chartBars(this.def, s, Math.floor((this.innerH - HEAD_H) / LINE_H));
+      if (!rows.length) { this.setHeadline(hl.head, hl.lines); return; }
       const labelW = Math.floor(this.innerW * 0.42), x0 = this.inset + PAD + labelW + 4, w = this.innerW - labelW - 4;
-      this.setHeadline(hl.head, hl.lines.map((l) => cut(l, Math.floor(labelW / (LINE_PX * CHAR_W)))));
+      this.setHeadline(hl.head, rows.map((b) => cut(b.label, Math.floor(labelW / (LINE_PX * CHAR_W)))));
       const y0 = this.inset + 4 + HEAD_H;
-      rows.forEach((q, i) => {
-        const pct = Math.min(1, q.rpd_used / q.limits.rpd);
+      rows.forEach((b, i) => {
+        const pct = Math.min(1, b.used / b.limit);
         const y = y0 + i * LINE_H + 2;
         this.bars.fillStyle(0x2a2e37, 1).fillRect(x0, y, w, 6);
         this.bars.fillStyle(pct > 0.9 ? 0xd6493a : pct > 0.6 ? 0xe6a93c : 0x4cae5c, 1).fillRect(x0, y, w * (1 - pct), 6);

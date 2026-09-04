@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { emptyState, applyEvent, type State, type CubicleEvent } from '../state.js';
-import { headlineFor } from './headlines.js';
-import { tintFor, NIGHT_ALPHA } from '../ui/time.js';
+import { headlineFor } from './surfaces.js';
+import { tintFor, NIGHT_ALPHA } from './time.js';
 
 const ev = (type: string, payload: Record<string, unknown>): CubicleEvent => ({ ts: '2026-09-03T12:00:00.000Z', type, agent: 'engineer', job: null, payload });
 const withTerminal = (lines: string[]): State => lines.reduce((s, text) => applyEvent(s, ev('shell.output', { text })), emptyState());

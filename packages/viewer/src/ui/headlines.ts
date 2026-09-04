@@ -1,9 +1,8 @@
 /**
  * What an in-world surface says at a glance: one head line and a few short lines. Each surface's preview lives
- * in its registry entry (world/surface-registry.ts); this module holds the text helpers they share and
- * re-exports the lookup. Previews are deliberately terse so they always fit their box.
+ * in its registry entry (ui/surfaces.ts); this module holds the text helpers they share. Previews are
+ * deliberately terse so they always fit their box. A leaf: it imports nothing, so nothing here can cycle.
  */
-export { headlineFor } from './surface-registry.js';
 
 export interface Headline { head: string; lines: string[]; badge?: string; /** what a screen too narrow for a sentence shows instead (a count, a word) */ short?: string }
 

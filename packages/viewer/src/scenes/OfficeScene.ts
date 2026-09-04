@@ -3,7 +3,7 @@ import { makeTileset, TILE } from '../world/tileset.js';
 import { buildWorld, type World } from '../world/map.js';
 import { AgentSprite } from '../world/agents.js';
 import { Surface } from '../world/surfaces.js';
-import { SURFACES } from '../world/surface-registry.js';
+import { SURFACES } from '../ui/surfaces.js';
 import type { State } from '../state.js';
 import { tintFor } from '../ui/time.js';
 
@@ -36,7 +36,7 @@ export class OfficeScene extends Phaser.Scene {
     for (const def of Object.values(SURFACES)) {
       const a = this.world.anchors[def.kind];
       if (!a) { console.warn(`[office] surface "${def.kind}" has no anchor in the map; not placed`); continue; }
-      this.surfaces.set(def.kind, new Surface(this, def, def.anchorAdjust ? def.anchorAdjust(a) : a, (k) => this.hooks.onSurfaceClick(k)));
+      this.surfaces.set(def.kind, new Surface(this, def, def.anchorAdjust ? { ...a, ...def.anchorAdjust(a) } : a, (k) => this.hooks.onSurfaceClick(k)));
     }
     this.night = this.add.rectangle(0, 0, w, h, 0x0a1030, 0).setOrigin(0).setDepth(50).setScrollFactor(1);
     // camera: drag / WASD / wheel

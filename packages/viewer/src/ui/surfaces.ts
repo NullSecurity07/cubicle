@@ -2,14 +2,27 @@
  * One entry per place on the map that shows a stream (spec §10 "Surface"). Adding an integration is a registry
  * entry plus a map anchor of the same name: `headlineFor` and `viewFor` are lookups, and the scene places a
  * Surface for every entry it finds an anchor for. Nothing else needs a new branch.
+ *
+ * This lives in `ui/` because an entry is mostly presentation: it owns the panel HTML and the on-map preview
+ * text. The dependency therefore runs one way, `world/` → `ui/`, and nothing under `ui/` imports `world/`.
+ * The registry used to sit in `world/` and import the view builders back out of `ui/content.ts`, which was a
+ * real import cycle held together only by every read happening inside a closure.
  */
 import type { State } from '../state.js';
-import type { Anchor } from './map.js';
 import type { Headline } from './headlines.js';
 import { cut, planBits, briefBits } from './headlines.js';
-import type { Ctx, View } from '../ui/content.js';
-import { briefTitle, byUpdated, callsToday, chatHtml, chip, empty, esc, feedHtml, fmtTime, fmtWhen, isOpen, kindLabel, obsidianUrl, row, rows, section, teamJobs, who } from '../ui/content.js';
-import { md } from '../ui/markdown.js';
+import type { Ctx, View } from './content.js';
+import { briefTitle, byUpdated, callsToday, chatHtml, chip, empty, esc, feedHtml, fmtTime, fmtWhen, isOpen, jobView, kindLabel, obsidianUrl, orgView, row, rows, section, teamJobs, who } from './content.js';
+import { md } from './markdown.js';
+
+/**
+ * The map rectangle a surface hangs on, in tiles. Structurally `world/map.ts`'s `Anchor`, declared here so the
+ * presentation layer never has to reach into the world layer — the scene merges the result back onto the anchor.
+ */
+export interface SurfaceBox { tx: number; ty: number; tw: number; th: number }
+
+/** One bar of a chart surface. `limit` is the ceiling the bar drains towards; a limit of 0 is not drawn. */
+export interface Bar { label: string; used: number; limit: number }
 
 export interface SurfaceDef {
   /** anchor object name in the map */
@@ -21,8 +34,10 @@ export interface SurfaceDef {
   headline: (s: State) => Headline;
   /** full panel */
   view: (s: State, ctx: Ctx) => View;
+  /** what a `chart` surface draws: its own rows, so the drawing code never reaches into a state field of its own choosing */
+  bars?: (s: State) => Bar[];
   /** where the in-world box sits, when it is not the anchor rectangle itself (a wall inside a room) */
-  anchorAdjust?: (a: Anchor) => Anchor;
+  anchorAdjust?: (a: SurfaceBox) => SurfaceBox;
 }
 
 export const SURFACES: Record<string, SurfaceDef> = {};
@@ -30,6 +45,20 @@ export function registerSurface(def: SurfaceDef): void { SURFACES[def.kind] = de
 
 export function headlineFor(kind: string, s: State): Headline {
   return SURFACES[kind]?.headline(s) ?? { head: kind, lines: [] };
+}
+
+/** The bars a chart surface draws: the entry's own rows, minus the ones with no ceiling, cropped to what fits. */
+export function chartBars(def: SurfaceDef, s: State, max: number): Bar[] {
+  return (def.bars?.(s) ?? []).filter((b) => b.limit > 0).slice(0, Math.max(0, max));
+}
+
+/** Which panel a click opens: a registry entry, one job note, or the org chart (the only kinds with no anchor). */
+export function viewFor(kind: string, s: State, ctx: Ctx): View {
+  if (kind.startsWith('job:')) return jobView(kind.slice(4), s, ctx);
+  const def = SURFACES[kind];
+  if (def) return def.view(s, ctx);
+  if (kind === 'org') return orgView(s);
+  return { mode: 'drawer', title: kind, html: empty('Nothing here yet.') };
 }
 
 /** The browser session a billboard-style surface is showing: the live one, else the most recent. */
@@ -73,7 +102,8 @@ for (const def of [
   },
   {
     kind: 'bank', streamKind: 'chart', streamId: () => 'quota',
-    headline: (s) => { const list = s.quota.filter((q) => q.limits.rpd > 0).slice(0, 7); const total = callsToday(s); return { head: list.length ? `${total} calls today` : 'No limits set', short: String(total), lines: list.map((q) => cut(q.model, 16)) }; },
+    bars: (s) => s.quota.map((q) => ({ label: q.model, used: q.rpd_used, limit: q.limits.rpd })),
+    headline: (s) => { const list = s.quota.filter((q) => q.limits.rpd > 0).slice(0, 7); const total = callsToday(s); return { head: list.length ? `${total} calls today` : 'No limits set', short: String(total), lines: list.length ? list.map((q) => cut(q.model, 16)) : ['Set rpm/rpd in providers.yaml'] }; },
     view: (s) => {
       const table = s.quota.length ? `<table class="data"><tr><th>Model</th><th>Today</th><th>Runway</th><th></th></tr>${s.quota.map((q) => { const pct = q.limits.rpd ? q.rpd_used / q.limits.rpd : 0; const cls = pct > 0.9 ? 'hot' : pct > 0.6 ? 'warn' : ''; return `<tr><td>${esc(q.model)}<br><small class="muted">${esc(q.provider)}</small></td><td>${q.rpd_used}${q.limits.rpd ? ` / ${q.limits.rpd}` : ''}</td><td><div class="meter ${cls}"><i style="width:${Math.round((1 - Math.min(1, pct)) * 100)}%"></i></div></td><td>${q.cooling_until ? chip('blocked', 'cooling') : chip('done', 'ok')}</td></tr>`; }).join('')}</table>` : empty('No providers reported yet.');
       return { mode: 'drawer', title: 'Bank', sub: 'free-tier runway per model', html: section(`${callsToday(s)} calls today`, table) + `<p class="hintline">Free calls are the runway. Limits live in config/providers.yaml.</p>` };

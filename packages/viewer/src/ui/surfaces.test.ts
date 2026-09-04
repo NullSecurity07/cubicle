@@ -1,9 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { SURFACES, registerSurface } from './surface-registry.js';
-import { headlineFor } from './headlines.js';
-import { viewFor, type Ctx } from '../ui/content.js';
+import { SURFACES, registerSurface, chartBars, headlineFor, viewFor } from './surfaces.js';
+import type { Ctx } from './content.js';
 import { emptyState } from '../state.js';
 
 /** Captured before the registration test adds one, so the two tests do not depend on their order. */
@@ -25,10 +24,25 @@ describe('surface registry', () => {
   });
 
   it('registering a new surface needs no other change', () => {
-    registerSurface({ kind: 'test', streamKind: 'markdown', streamId: () => 'x', headline: () => ({ head: 'h', lines: [] }), view: () => ({ mode: 'doc', title: 't', html: '' }) });
-    expect(headlineFor('test', emptyState()).head).toBe('h');
-    expect(viewFor('test', emptyState(), ctx).title).toBe('t');
-    delete SURFACES.test;
+    try {
+      registerSurface({ kind: 'test', streamKind: 'markdown', streamId: () => 'x', headline: () => ({ head: 'h', lines: [] }), view: () => ({ mode: 'doc', title: 't', html: '' }) });
+      expect(headlineFor('test', emptyState()).head).toBe('h');
+      expect(viewFor('test', emptyState(), ctx).title).toBe('t');
+    } finally {
+      delete SURFACES.test;   // a failing assertion must not leak the fake entry into the next test
+    }
+  });
+
+  it('a chart surface draws the bars its own entry supplies, not the bank quota', () => {
+    const s = emptyState();
+    s.quota = [{ provider: 'gemini', model: 'gemini-3.5-flash', rpm_used: 0, rpd_used: 7, tpm_used: 0, cooling_until: null, limits: { rpm: 0, rpd: 100, tpm: 0 } }];
+    try {
+      registerSurface({ kind: 'test', streamKind: 'chart', streamId: () => 'disk', bars: () => [{ label: 'disk', used: 3, limit: 4 }, { label: 'unmetered', used: 9, limit: 0 }], headline: () => ({ head: 'h', lines: [] }), view: () => ({ mode: 'doc', title: 't', html: '' }) });
+      expect(chartBars(SURFACES.test, s, 7)).toEqual([{ label: 'disk', used: 3, limit: 4 }]);
+      expect(chartBars(SURFACES.bank, s, 7)).toEqual([{ label: 'gemini-3.5-flash', used: 7, limit: 100 }]);
+    } finally {
+      delete SURFACES.test;
+    }
   });
 
   it('each entry names the stream it is bound to', () => {

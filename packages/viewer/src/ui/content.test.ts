@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { emptyState, applySnapshot, type Snapshot, type State } from '../state.js';
-import { viewFor, briefTitle, kindLabel, chatHtml, type Ctx } from './content.js';
-import { headlineFor, planBits, briefBits, cut } from '../world/headlines.js';
+import { briefTitle, kindLabel, chatHtml, type Ctx } from './content.js';
+import { headlineFor, viewFor } from './surfaces.js';
+import { planBits, briefBits, cut } from './headlines.js';
 
 const ctx: Ctx = { frames: {}, tokenQuery: '?token=t', vaultName: 'Cubicle' };
 const PLAN = `---\nupdated: "2026-09-03"\ncycle: 2\n---\n# Plan\n\n## Objective\nEstablish initial web presence and research the first organic channel.\n\n## This cycle\n- Scaffold initial static site from Brand/ (engineer.ship)\n- Research first organic acquisition channel (research)\n- [ ] Verify site deployment and review analytics setup\n\n## Next\n- Launch\n`;

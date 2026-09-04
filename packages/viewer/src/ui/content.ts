@@ -2,9 +2,11 @@
  * What each office surface shows when opened: pure builders from State → { title, html, mode }.
  * `drawer` = right-side cards and rows; `doc` = the centered document modal; `chat` = the CEO thread.
  * No DOM here, so every builder is unit-testable.
+ *
+ * The builders live below the registry that calls them (`ui/surfaces.ts` imports this file, never the other
+ * way round), so this module has no cycle to be careful about and can be read top to bottom.
  */
 import type { State, JobView } from '../state.js';
-import { SURFACES } from '../world/surface-registry.js';
 import { md, inline } from './markdown.js';
 
 export type ViewMode = 'drawer' | 'doc' | 'chat';
@@ -80,26 +82,21 @@ export function briefTitle(path: string): string {
   return m ? `Brief · ${fmtWhen(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00`)}` : 'Latest brief';
 }
 
-export function viewFor(kind: string, s: State, ctx: Ctx): View {
-  if (kind.startsWith('job:')) return jobView(kind.slice(4), s, ctx);
-  const def = SURFACES[kind];
-  if (def) return def.view(s, ctx);
-  // The org chart has no place on the map: it is opened from the top bar, not by walking to a building.
-  if (kind === 'org') {
-    if (!s.teams.length) return { mode: 'drawer', title: 'Org', html: empty('No teams yet. Start the daemon once to create the default org.') };
-    const jobList = Object.values(s.jobs);
-    const html = s.teams.map((t) => {
-      const openCount = jobList.filter((j) => j.team === t.id && isOpen(j.status)).length;
-      const leadRow = row({ left: chip('kind', 'Lead'), title: who(s, t.lead), small: t.mission, open: `agent:${t.lead}` });
-      const memberRows = t.members.map((m) => row({ title: who(s, m), small: roleTitle(s, m), open: `agent:${m}` }));
-      return section(t.name, rows([leadRow, ...memberRows]), `${openCount} open`);
-    }).join('');
-    return { mode: 'drawer', title: 'Org', sub: `${s.teams.length} teams`, html };
-  }
-  return { mode: 'drawer', title: kind, html: empty('Nothing here yet.') };
+/** The org chart has no place on the map: it is opened from the top bar, not by walking to a building. */
+export function orgView(s: State): View {
+  if (!s.teams.length) return { mode: 'drawer', title: 'Org', html: empty('No teams yet. Start the daemon once to create the default org.') };
+  const jobList = Object.values(s.jobs);
+  const html = s.teams.map((t) => {
+    const openCount = jobList.filter((j) => j.team === t.id && isOpen(j.status)).length;
+    const leadRow = row({ left: chip('kind', 'Lead'), title: who(s, t.lead), small: t.mission, open: `agent:${t.lead}` });
+    const memberRows = t.members.map((m) => row({ title: who(s, m), small: roleTitle(s, m), open: `agent:${m}` }));
+    return section(t.name, rows([leadRow, ...memberRows]), `${openCount} open`);
+  }).join('');
+  return { mode: 'drawer', title: 'Org', sub: `${s.teams.length} teams`, html };
 }
 
-function jobView(id: string, s: State, ctx: Ctx): View {
+/** One job note, opened from a queue row. */
+export function jobView(id: string, s: State, ctx: Ctx): View {
   const j = s.jobs[id];
   if (!j) return { mode: 'drawer', title: 'Job', html: empty('This job is not in the current snapshot.') };
   const body = `<p>${chip(j.status)} &nbsp;<span class="muted">${esc(who(s, j.assigned))} · ${esc(j.type)} · priority ${j.priority} · step ${j.checkpoint_step}</span></p><p class="muted">Updated ${esc(fmtWhen(j.updated))}. The full note, checkpoint log and result live in the vault.</p>`;

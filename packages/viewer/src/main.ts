@@ -3,7 +3,8 @@ import { OfficeScene } from './scenes/OfficeScene.js';
 import { Net, resolveWs } from './net.js';
 import { emptyState, applyEvent, applySnapshot, tick, type State, type CubicleEvent, type Snapshot } from './state.js';
 import { Ui } from './ui/panel.js';
-import { viewFor, esc, obsidianUrl, chip, type Ctx } from './ui/content.js';
+import { esc, obsidianUrl, chip, type Ctx } from './ui/content.js';
+import { viewFor } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
 
 let state: State = emptyState();
