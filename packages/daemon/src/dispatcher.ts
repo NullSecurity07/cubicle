@@ -1,8 +1,8 @@
 import {
-  type Vault, listInbox, readJob, updateJob, listJobs, nowIso, parseNote, stringifyNote, createJob, RoleFrontmatter, type InboxFrontmatter,
+  type Vault, listInbox, readJob, updateJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
 } from '@cubicle/core';
 import { createRoleToolClient, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
-import { findAnswer } from '@cubicle/tools';
+import { findAnswer, messagePath } from '@cubicle/tools';
 import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
 import { applyHire, applyFire, applyReorg } from './evolution.js';
 import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
@@ -36,6 +36,8 @@ export interface DispatcherDeps {
   wake?: () => void;
   onRoleHired?: (role: string) => void;
   onRoleFired?: (role: string) => void;
+  /** How long a question may go unanswered before it escalates to the CEO; defaults to two heartbeat intervals. */
+  questionWaitMs?: number;
   guardrails?: { check(tool: string, args: Record<string, unknown>, ctx: ToolContext): Promise<string | null> | string | null }[];
 }
 
@@ -225,13 +227,54 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     vault.events.emit({ type: 'proposal.resolved', agent: 'owner', job: d.job ?? null, payload: { id: d.id, kind: d.kind, approved: d.approved, outcome } });
     n++;
   }
-  n += requeueUnblocked(vault);
+  n += requeueUnblocked(vault, deps.questionWaitMs);
   if (n) deps.wake?.();
   return n;
 }
 
+/** Two heartbeat intervals (spec §8: 6 h) — the same default `defaultConfig` computes. */
+export const DEFAULT_QUESTION_WAIT_MS = 12 * 3600_000;
+
+/** The colleague question `id` as it was written into some role's `Messages/` note: who asked, who owes an answer, and what was asked. */
+export function findQuestion(vault: Vault, id: string): { to: string; from: string; body: string } | null {
+  const marker = `<!-- id:${id}`;
+  for (const rel of vault.list('Messages', { ext: '.md' })) {
+    const text = vault.readTextOrNull(rel);
+    if (!text || !text.includes(marker)) continue;
+    const to = rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/, '');
+    const section = text.split(/\n(?=## )/).find((s) => s.includes(marker));
+    const m = section?.match(/^## \S+ from (\S+) \(\w+\)[^\n]*\n([\s\S]*)$/);
+    return { to, from: m?.[1] ?? 'unknown', body: (m?.[2] ?? '').trim() };
+  }
+  return null;
+}
+
+/**
+ * A colleague who has not answered across two whole heartbeat intervals is not going to. Rather than leave the
+ * asker blocked forever (the only other exit is the owner), hand the question to the CEO: the asker is requeued so
+ * it can proceed or re-ask, the CEO gets the question in `Messages/ceo.md` and a `colleague.answer` job for it.
+ */
+function escalateQuestionToCeo(vault: Vault, job: JobFrontmatter, id: string): void {
+  const q = findQuestion(vault, id);
+  const recipient = q?.to ?? 'unknown';
+  const question = q?.body ?? '(the question text is no longer in Messages/)';
+  const answerJob = idFromKey('job', `escalate:${id}`);
+  const already = !!readJob(vault, answerJob);
+  if (!already) {
+    vault.appendText(messagePath('ceo'), `\n## ${nowIso()} from daemon (handoff) <!-- id:msg_${answerJob} job:${job.id} -->\n\n${job.assigned} asked ${recipient} a question on job [[${job.id}]] and ${recipient} has not answered it. The question (${id}):\n\n> ${question.split('\n').join('\n> ')}\n\nAnswer it yourself or reassign it; ${job.assigned} has been requeued in the meantime.\n`, 'daemon', { job: job.id });
+    createJob(vault, {
+      id: answerJob, type: 'colleague.answer', assigned: 'ceo', priority: 2,
+      title: `Answer ${job.assigned} (escalated): ${question.slice(0, 60)}`,
+      parent: job.id, links: [`[[${job.id}]]`],
+      goal: `${job.assigned} asked ${recipient} this question ${Math.round((Date.now() - Date.parse(job.blocked_on?.since ?? nowIso())) / 3600_000)} h ago and got no answer, so it is yours now:\n\n> ${question.split('\n').join('\n> ')}\n\nAnswer with colleague.message(to: "${job.assigned}", body: "re:${id} <your answer>"). The "re:${id}" prefix is what unblocks their job, so keep it exactly.`,
+      done_when: `${job.assigned} has an answer to ${id} in Messages/${job.assigned}.md.`,
+    }, 'daemon');
+  }
+  vault.events.emit({ type: 'job.blocked', agent: 'daemon', job: job.id, payload: { reason: 'question_timeout', id, escalated_to: 'ceo', asked: recipient } });
+}
+
 /** Requeue blocked jobs whose wait condition (answered message, finished sub-job, resolved proposal) is satisfied. */
-export function requeueUnblocked(vault: Vault): number {
+export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION_WAIT_MS): number {
   let n = 0;
   for (const j of listJobs(vault, { status: 'blocked' })) {
     const b = j.blocked_on;
@@ -246,6 +289,12 @@ export function requeueUnblocked(vault: Vault): number {
       ready = (!!sub && ['done', 'failed', 'cancelled'].includes(sub.data.status)) || Date.now() - Date.parse(b.since) > PLAN_WAIT_BUDGET_MS;
     } else if (b.kind === 'message') {
       ready = !!findAnswer(vault, j.assigned, b.id) || !!listInbox(vault).find((x) => x.data.id === b.id && x.data.answered);
+      if (!ready && Date.now() - Date.parse(b.since) > questionWaitMs) {
+        escalateQuestionToCeo(vault, j, b.id);
+        updateJob(vault, j.id, { status: 'queued', blocked_on: undefined }, 'daemon', `- ${nowIso()}: unanswered question ${b.id} escalated to ceo`);
+        n++;
+        continue;
+      }
     } else if (b.kind === 'quota') {
       const retries = Number((b as { retries?: number }).retries ?? 0);
       ready = Date.now() - Date.parse(b.since) > Math.min(10 * 2 ** retries, 240) * 60_000; // 10 → 20 → 40 … ≤ 240 min
