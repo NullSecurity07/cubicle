@@ -131,10 +131,15 @@ export function updateJob(vault: Vault, id: string, patch: Partial<JobFrontmatte
 }
 
 /**
- * Cancel a job and say so — the one way anything outside the harness loop cancels (spec §11). The loop emits
- * `job.cancelled` when a *running* job notices the flag at its next step, but a job cancelled while queued or
- * blocked is never picked up again, so a bare `updateJob(..., { status: 'cancelled' })` left the office showing
- * it as open forever and the event log with no trace of who stopped it or why.
+ * Cancel a job and say so — the one way anything outside the harness loop cancels (spec §11). A job cancelled
+ * while queued or blocked is never picked up again, so a bare `updateJob(..., { status: 'cancelled' })` left the
+ * office showing it as open forever and the event log with no trace of who stopped it or why.
+ *
+ * A *running* job is the exception: its loop notices the flag at its next tool step and emits `job.cancelled`
+ * itself, with the step it actually stopped on. Emitting here as well produced two events for one stop — the
+ * office tolerated it (the second just re-parks the sprite) but the log double-counted every `cubicle job
+ * cancel` of a running job. The flag is still written, which is what stops the work; only the announcement is
+ * left to the loop, which is the one that knows when the job really came to rest (M3).
  *
  * Returns false without touching anything when the job is unknown or already finished: a done, failed or
  * cancelled job has no work left to stop, and re-cancelling would emit a second event for the same stop.
@@ -143,7 +148,7 @@ export function cancelJob(vault: Vault, id: string, by: string, reason: string):
   const cur = readJob(vault, id);
   if (!cur || ['done', 'failed', 'cancelled'].includes(cur.data.status)) return false;
   updateJob(vault, id, { status: 'cancelled' }, by, `- ${nowIso()}: cancelled (${reason})`);
-  vault.events.emit({ type: 'job.cancelled', agent: by, job: id, payload: { at_step: cur.data.checkpoint_step, reason } });
+  if (cur.data.status !== 'running') vault.events.emit({ type: 'job.cancelled', agent: by, job: id, payload: { at_step: cur.data.checkpoint_step, reason } });
   return true;
 }
 

@@ -106,9 +106,22 @@ describe('cancelJob (spec §11: a cancel is always visible)', () => {
 
   it('carries the step the job had reached, so the office knows where it stopped', () => {
     const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
-    updateJob(vault, id, { status: 'running', checkpoint_step: 3 }, 'head_of_growth');
+    updateJob(vault, id, { status: 'blocked', checkpoint_step: 3 }, 'head_of_growth');
     expect(cancelJob(vault, id, 'daemon', 'role left')).toBe(true);
     expect(vault.events.last('job.cancelled')!.payload.at_step).toBe(3);
+  });
+
+  it('sets the flag on a running job but leaves the announcement to its loop, so one stop is one event (M3)', () => {
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    updateJob(vault, id, { status: 'running', checkpoint_step: 3 }, 'head_of_growth');
+    expect(cancelJob(vault, id, 'owner', 'the owner ran cubicle job cancel')).toBe(true);
+
+    // The flag — the thing that actually stops the work — is written, and the reason is in the checkpoint log.
+    const j = readJob(vault, id)!;
+    expect(j.data.status).toBe('cancelled');
+    expect(j.body).toContain('cancelled (the owner ran cubicle job cancel)');
+    // The event is the loop's to emit at the next tool step; emitting here too double-counted the stop.
+    expect(vault.events.count('job.cancelled')).toBe(0);
   });
 
   it('leaves a finished job alone and emits nothing', () => {

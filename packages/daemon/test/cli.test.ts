@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { main } from '../src/cli.js';
+import { scaffoldVault, Vault, createJob, readJob, updateJob } from '@cubicle/core';
 
 let chunks: unknown[] = [];
 let server: http.Server;
@@ -70,5 +71,40 @@ describe('cubicle chat streams (D9)', () => {
     expect(all).toContain('Hello world');
     expect(all).toContain('alpha/alpha-strong');
     expect(all).toContain('tokens=4/3');
+  });
+});
+
+describe('cubicle job cancel (M3)', () => {
+  /** A vault with one job in `status`, and the ids needed to inspect it afterwards. */
+  async function vaultWithJob(status: 'queued' | 'running'): Promise<{ id: string }> {
+    const { vault } = await scaffoldVault(dir);
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    if (status === 'running') updateJob(vault, id, { status, checkpoint_step: 2 }, 'head_of_growth');
+    vault.close();
+    return { id };
+  }
+
+  it('cancels a queued job and announces it once', async () => {
+    const { id } = await vaultWithJob('queued');
+    const out = await captureStdout(() => main(['job', 'cancel', id, '--vault', dir]));
+    expect(out.join('')).toContain(`cancelled ${id}`);
+    const vault = Vault.open(dir);
+    try {
+      expect(readJob(vault, id)!.data.status).toBe('cancelled');
+      expect(vault.events.count('job.cancelled')).toBe(1);
+    } finally { vault.close(); }
+  });
+
+  it('cancels a running job by writing the flag, leaving the single announcement to its loop', async () => {
+    const { id } = await vaultWithJob('running');
+    await captureStdout(() => main(['job', 'cancel', id, '--vault', dir]));
+    const vault = Vault.open(dir);
+    try {
+      const j = readJob(vault, id)!;
+      expect(j.data.status).toBe('cancelled');
+      expect(j.body).toContain('cancelled (cancelled by owner (cli))');
+      // The harness loop emits when the job stops at its next tool step; emitting here too logged the stop twice.
+      expect(vault.events.count('job.cancelled')).toBe(0);
+    } finally { vault.close(); }
   });
 });
