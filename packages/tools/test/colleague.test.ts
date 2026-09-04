@@ -39,6 +39,7 @@ describe('colleague.message(kind: question)', () => {
       expect(answer!.priority).toBe(2);
       expect(answer!.title).toBe(`Answer engineer: ${QUESTION.slice(0, 60)}`);
       expect(answer!.links.some((l) => l.includes(asker))).toBe(true);
+      expect(answer!.parent).toBe(asker); // same shape as a handoff: the question's job owns the answer
       const body = readJob(vault, answer!.id)!.body;
       expect(body).toContain('## Goal');
       expect(body).toContain(`colleague.message(to: "engineer", body: "re:${msgId}`);

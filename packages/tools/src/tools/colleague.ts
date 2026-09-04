@@ -41,7 +41,7 @@ export const colleagueMessage = defineTool({
       const answerJob = createJob(ctx.vault, {
         id: idFromKey('job', `answer:${id}`), type: 'colleague.answer', assigned: to, priority: 2,
         title: `Answer ${ctx.roleId}: ${body.trim().slice(0, 60)}`,
-        links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [],
+        parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [],
         goal: `${ctx.roleId} asked you a question and is blocked until you answer:\n\n> ${body.trim().split('\n').join('\n> ')}\n\nAnswer with colleague.message(to: "${ctx.roleId}", body: "re:${id} <your answer>"). The "re:${id}" prefix is what unblocks their job, so keep it exactly.`,
       }, ctx.roleId);
       return { ok: true, text: `question sent to ${to} (${id}); job ${answerJob} queued for them; this job is now blocked until they answer`, data: { id, jobId: answerJob }, block: { kind: 'message', id } };
