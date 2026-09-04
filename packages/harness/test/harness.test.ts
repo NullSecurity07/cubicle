@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, updateJob } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
-import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
+import { parseToolsConfig, ToolRegistry, phase3Tools, constitutionGuardrail } from '@cubicle/tools';
 import { runJob, vaultScheduler, MemoryIndex, hashEmbed, loadObservations, type Llm } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -184,13 +184,31 @@ describe('approval modes in the loop', () => {
     expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false);
   });
 
-  it('never (via guardrail) → guardrail.blocked, job continues', async () => {
+  /**
+   * Acceptance test 6, joined: the real constitution, the real guardrail and the real event in one run.
+   * `packages/tools/test/phase5.test.ts` checks the reason string the guardrail returns; only here does a job
+   * actually run into the cap, so the tool layer's refusal becomes the `guardrail.blocked` event the spec asks
+   * for and the send that was over the cap leaves no side effect behind. (It lives in the harness package
+   * because that is where `runJob` lives: `@cubicle/tools` cannot import it without a dependency cycle.)
+   */
+  it('an outbound call past max_emails_per_day is refused by the constitution and emits guardrail.blocked (acceptance test 6, joined)', async () => {
     growthWithMock();
+    vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('max_emails_per_day: 20', 'max_emails_per_day: 1') }), 'owner');
+    expect(vault.constitution().max_emails_per_day).toBe(1);
     const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
-    const out = await runJob(deps(scripted(fourStep), { guardrails: [{ check: (t) => (t === 'mock.outbound' ? 'constitution: max_emails_per_day' : null) }] }), id);
+    const out = await runJob(deps(scripted(fourStep), { guardrails: [constitutionGuardrail()] }), id);
     expect(out.status).toBe('done');
-    expect(vault.events.count('guardrail.blocked')).toBe(2);
-    expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false);
+    // Step 2 is under the cap and sends; step 3 is over it, is blocked, and the job carries on to `finish`.
+    const blocked = vault.events.query({ types: ['guardrail.blocked'] });
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0].payload.tool).toBe('mock.outbound');
+    expect(String(blocked[0].payload.reason)).toMatch(/max_emails_per_day/);
+    expect(blocked[0].job).toBe(id);
+    expect(blocked[0].agent).toBe('head_of_growth');
+    const sent = readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n');
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0]).key).toBe(`${id}:1:2`);
+    expect(readJob(vault, id)!.body).toMatch(/step 3: mock\.outbound BLOCKED/);
   });
 
   it('question to a colleague blocks; an answer resumes', async () => {
