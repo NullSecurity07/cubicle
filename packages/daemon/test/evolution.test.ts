@@ -269,4 +269,20 @@ describe('charter_change proposals show a diff (D6)', () => {
     expect(await dispatchProposals(deps())).toBe(1);
     expect(vault.readText(target)).toContain(newLine);
   });
+
+  it('a changed line containing $& or $1 lands in the diff verbatim', async () => {
+    const target = 'Roles/engineer.md';
+    const current = vault.readNoteOrNull(target)!;
+    const oldLine = current.body.split('\n').find((l) => l.trim().length > 20 && !l.startsWith('#'))!;
+    const newLine = 'Escape shell arguments: use "$@", never $& or $1.';
+    // Function replacement here too: `$&` in the new line would otherwise be expanded by String.replace itself.
+    const proposed = stringifyNote(current.data, current.body.replace(oldLine, () => newLine));
+    createProposal(vault, { kind: 'charter_change', from: 'cto', target, title: 'Shell rule', body: `Tighter.\n\n## Proposed content\n\n\`\`\`markdown\n${proposed}\`\`\`\n` }, 'cto');
+
+    expect(await dispatchProposals(deps())).toBe(0);
+
+    const body = listInbox(vault).find((nn) => nn.data.kind === 'charter_change')!.body;
+    expect(body).toContain(`+${newLine}`);
+    expect(body.indexOf('## Diff')).toBeLessThan(body.indexOf('## Proposed content'));
+  });
 });

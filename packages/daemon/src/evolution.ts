@@ -324,11 +324,6 @@ export function markFeedbackDelivered(vault: Vault, feedback: OwnerFeedback[]): 
 }
 
 /**
- * %%cubicle: …%% comments in files the owner edited since `since`, attributed to the note's author role; plus owner_preferences
- * feedback and decision ratings. Provenance: a comment counts as the owner's only if it was NOT present in the last version the
- * system wrote (recorded at write time; git HEAD as fallback) — text that arrived through email, scraping or an LLM is ignored.
- */
-/**
  * Comments the owner typed while the daemon was down. The watcher starts with `ignoreInitial`, so nothing ever
  * replays those edits and `collectOwnerFeedback` — which reads only `owner.edited` events — would never see them.
  * This startup sweep compares each note's `%%cubicle: …%%` comments against the last version the system wrote
@@ -345,6 +340,11 @@ export function collectOfflineOwnerComments(vault: Vault): string[] {
   return out;
 }
 
+/**
+ * %%cubicle: …%% comments in files the owner edited since `since`, attributed to the note's author role; plus owner_preferences
+ * feedback and decision ratings. Provenance: a comment counts as the owner's only if it was NOT present in the last version the
+ * system wrote (recorded at write time; git HEAD as fallback) — text that arrived through email, scraping or an LLM is ignored.
+ */
 export function collectOwnerFeedback(vault: Vault, since?: string): OwnerFeedback[] {
   const out: OwnerFeedback[] = [];
   const seen = new Set<string>();

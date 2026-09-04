@@ -233,8 +233,8 @@ export class Daemon {
    * the logo existed have none. Draw the same placeholder `cubicle init` draws — never over an existing file, so
    * the owner's own logo is safe, and flagged `generated` so the viewer does not read it as owner churn.
    *
-   * Written with the low-level helpers rather than `vault.writeText`: the content is binary, and `Brand/` is
-   * owner-owned, so this is the same privileged path `scaffoldVault` uses for exactly this file.
+   * Written with the low-level helpers rather than `vault.writeText`, which takes a string: this is a PNG, and
+   * it is the same path `scaffoldVault` uses for exactly this file.
    */
   private ensureBrandLogo(): void {
     if (existsSync(this.vault.abs(BRAND_LOGO))) return;

@@ -139,7 +139,8 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     if (d.kind === 'charter_change' && d.approved === null && d.target && !/^## Diff$/m.test(note.body)) {
       const proposed = fenced(note.body);
       const section = proposed ? charterDiffSection(vault, d.target, proposed) : null;
-      if (section) vault.updateNote(note.path, (nn) => ({ data: nn.data, body: nn.body.replace(/## Proposed content/, section + '## Proposed content') }), 'daemon');
+      // Function replacement, not a string: a diff line containing `$&` or `$1` must land verbatim.
+      if (section) vault.updateNote(note.path, (nn) => ({ data: nn.data, body: nn.body.replace('## Proposed content', () => section + '## Proposed content') }), 'daemon');
     }
     // Constitution autonomy flags: the owner pre-approved these kinds; the daemon approves agent-created notes itself.
     const c = vault.constitution();
@@ -288,7 +289,7 @@ function escalateQuestionToCeo(vault: Vault, job: JobFrontmatter, id: string): v
       done_when: `${job.assigned} has an answer to ${id} in Messages/${job.assigned}.md.`,
     }, 'daemon');
   }
-  vault.events.emit({ type: 'job.blocked', agent: 'daemon', job: job.id, payload: { reason: 'question_timeout', id, escalated_to: 'ceo', asked: recipient } });
+  vault.events.emit({ type: 'daemon.warning', agent: 'daemon', job: job.id, payload: { where: 'question_timeout', message: `${recipient} never answered ${job.assigned}'s question ${id}; escalated to ceo as ${answerJob}`, id, escalated_to: 'ceo' } });
 }
 
 /** Requeue blocked jobs whose wait condition (answered message, finished sub-job, resolved proposal) is satisfied. */
