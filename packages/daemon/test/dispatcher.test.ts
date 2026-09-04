@@ -67,6 +67,7 @@ describe('unanswered questions time out and escalate to the CEO (D2)', () => {
     expect(cto.data.status).toBe('cancelled');
     expect(cto.body).toContain('escalated to ceo');
     expect(section).toContain('cancelled');
+    expect(vault.events.last('job.cancelled')!.job).toBe(ctoJob);
 
     // Idempotent: a second sweep neither re-escalates nor queues a second answer job.
     requeueUnblocked(vault);

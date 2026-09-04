@@ -130,6 +130,23 @@ export function updateJob(vault: Vault, id: string, patch: Partial<JobFrontmatte
   return JobFrontmatter.parse(note.data);
 }
 
+/**
+ * Cancel a job and say so — the one way anything outside the harness loop cancels (spec §11). The loop emits
+ * `job.cancelled` when a *running* job notices the flag at its next step, but a job cancelled while queued or
+ * blocked is never picked up again, so a bare `updateJob(..., { status: 'cancelled' })` left the office showing
+ * it as open forever and the event log with no trace of who stopped it or why.
+ *
+ * Returns false without touching anything when the job is unknown or already finished: a done, failed or
+ * cancelled job has no work left to stop, and re-cancelling would emit a second event for the same stop.
+ */
+export function cancelJob(vault: Vault, id: string, by: string, reason: string): boolean {
+  const cur = readJob(vault, id);
+  if (!cur || ['done', 'failed', 'cancelled'].includes(cur.data.status)) return false;
+  updateJob(vault, id, { status: 'cancelled' }, by, `- ${nowIso()}: cancelled (${reason})`);
+  vault.events.emit({ type: 'job.cancelled', agent: by, job: id, payload: { at_step: cur.data.checkpoint_step, reason } });
+  return true;
+}
+
 /** Append a line under a `## Heading` (creating it before `## Result` or at the end). */
 export function appendToSection(body: string, heading: string, line: string): string {
   const idx = body.indexOf(heading);

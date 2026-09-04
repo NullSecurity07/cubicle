@@ -1,5 +1,5 @@
 import {
-  type Vault, listInbox, readJob, updateJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
+  type Vault, listInbox, readJob, updateJob, cancelJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath } from '@cubicle/tools';
@@ -293,7 +293,7 @@ function escalateQuestionToCeo(vault: Vault, job: JobFrontmatter, id: string): v
     const owed = idFromKey('job', `answer:${id}`);
     const recipientJob = readJob(vault, owed);
     const superseded = !!recipientJob && ['queued', 'blocked'].includes(recipientJob.data.status);
-    if (superseded) updateJob(vault, owed, { status: 'cancelled' }, 'daemon', `- ${nowIso()}: cancelled; ${job.assigned}'s question ${id} went unanswered and was escalated to ceo as ${answerJob}`);
+    if (superseded) cancelJob(vault, owed, 'daemon', `${job.assigned}'s question ${id} went unanswered and was escalated to ceo as ${answerJob}`);
     const handover = superseded
       ? `${recipient}'s own answer job [[${owed}]] has been cancelled, so this question is yours alone.`
       : recipientJob

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, templateDir } from '../src/template.js';
 import { Vault } from '../src/vault.js';
-import { listJobs, readJob } from '../src/jobs.js';
+import { listJobs, readJob, createJob, updateJob, cancelJob } from '../src/jobs.js';
 
 let dir: string;
 let vault: Vault;
@@ -86,5 +86,44 @@ describe('owner-created job notes (spec §11)', () => {
     expect(readJob(vault, '_template')?.data.id).toBe('job_REPLACE');
 
     expect(vault.currentSha('Jobs/_template.md')).toBe(before);
+  });
+});
+
+describe('cancelJob (spec §11: a cancel is always visible)', () => {
+  it('sets cancelled, logs the reason, emits job.cancelled and reports the change', () => {
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    expect(cancelJob(vault, id, 'owner', 'the owner ran cubicle job cancel')).toBe(true);
+
+    const j = readJob(vault, id)!;
+    expect(j.data.status).toBe('cancelled');
+    expect(j.body).toContain('cancelled (the owner ran cubicle job cancel)');
+    const ev = vault.events.last('job.cancelled')!;
+    expect(ev.job).toBe(id);
+    expect(ev.agent).toBe('owner');
+    expect(ev.payload.reason).toBe('the owner ran cubicle job cancel');
+    expect(ev.payload.at_step).toBe(0);
+  });
+
+  it('carries the step the job had reached, so the office knows where it stopped', () => {
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    updateJob(vault, id, { status: 'running', checkpoint_step: 3 }, 'head_of_growth');
+    expect(cancelJob(vault, id, 'daemon', 'role left')).toBe(true);
+    expect(vault.events.last('job.cancelled')!.payload.at_step).toBe(3);
+  });
+
+  it('leaves a finished job alone and emits nothing', () => {
+    for (const status of ['done', 'failed', 'cancelled'] as const) {
+      const id = createJob(vault, { type: 'research', title: status, assigned: 'head_of_growth', goal: 'g' }, 'cto');
+      updateJob(vault, id, { status }, 'coo');
+      const before = vault.events.count('job.cancelled');
+      expect(cancelJob(vault, id, 'daemon', 'too late')).toBe(false);
+      expect(readJob(vault, id)!.data.status).toBe(status);
+      expect(vault.events.count('job.cancelled')).toBe(before);
+    }
+  });
+
+  it('is a no-op on a job that does not exist', () => {
+    expect(cancelJob(vault, 'job_nope', 'owner', 'x')).toBe(false);
+    expect(vault.events.count('job.cancelled')).toBe(0);
   });
 });

@@ -8,7 +8,7 @@ import { defaultConfig } from './config.js';
 import { rebuildCache } from './rebuild.js';
 import { runDoctor, formatDoctor, doctorExitCode } from './doctor.js';
 import { createHeartbeatJob } from './heartbeat.js';
-import { createJob, listJobs, updateJob } from '@cubicle/core';
+import { createJob, listJobs, updateJob, cancelJob } from '@cubicle/core';
 import { writeQueueMd } from './queue-md.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -202,7 +202,7 @@ const commands: Record<string, Handler> = {
         console.log(`queued ${id}`);
       } else if (sub === 'cancel') {
         const id = args[1]; if (!id) throw new Error('usage: cubicle job cancel <id> --vault <path>');
-        updateJob(vault, id, { status: 'cancelled' }, 'owner', `- ${new Date().toISOString()}: cancelled by owner (cli)`);
+        cancelJob(vault, id, 'owner', 'cancelled by owner (cli)');
         console.log(`cancelled ${id}`);
       } else if (sub === 'list' || !sub) {
         for (const j of listJobs(vault)) console.log(`${j.status.padEnd(9)} p${j.priority} ${j.id}  ${j.assigned.padEnd(9)} ${j.type.padEnd(16)} step ${String(j.checkpoint_step).padStart(2)}  ${j.title}`);

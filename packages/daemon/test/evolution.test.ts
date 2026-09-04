@@ -78,6 +78,7 @@ describe('hire / fire (acceptance test 7, headless)', () => {
     expect(vault.list('Roles/archive', { ext: '.md' }).some((r) => r.includes('head_of_growth'))).toBe(true);
     expect(listJobs(vault).find((j) => j.id === open)!.status).toBe('cancelled');
     expect(vault.events.count('role.fired')).toBe(1);
+    expect(vault.events.last('job.cancelled')!.job).toBe(open);
     const ceo = createProposal(vault, { kind: 'fire', from: 'ceo', target: 'Roles/ceo.md', title: 'x', body: 'x' }, 'ceo');
     expect(await applyFire(vault, findInboxById(vault, ceo.id)!)).toMatch(/cannot be fired/);
     expect(freeDesk(vault)).toBe('cubicle_3'); // growth's desk is free again
