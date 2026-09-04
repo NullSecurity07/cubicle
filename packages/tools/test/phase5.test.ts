@@ -110,6 +110,22 @@ describe('constitution guardrail (acceptance test 6)', () => {
     expect(await g.check('email.send', { to: 'a@x', body: 'We use fabricated testimonials' }, ctx)).toMatch(/banned tactic/);
   });
 
+  it('asks the classifier once for the same text, however many times it is checked', async () => {
+    let calls = 0;
+    const counting = { async chat(): Promise<RoutedChatResult> { calls++; return { content: '{"violates": false, "tactic": ""}', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'local', downgraded: false, parsedToolCalls: [] }; } } as unknown as Router;
+    const g = constitutionGuardrail(counting);
+    const ctx = ctxFor('head_of_growth', 'job_memo');
+    // No banned tactic appears literally, so the cheap substring check misses and the model is asked.
+    const body = `A perfectly ordinary note about our roadmap ${Date.now()}`;
+    expect(await g.check('email.send', { to: 'a@x', body }, ctx)).toBeNull();
+    expect(calls).toBe(1);
+    // The harness pre-check and the MCP wrapper both evaluate the same call; the second must be free.
+    expect(await g.check('email.send', { to: 'a@x', body }, ctx)).toBeNull();
+    expect(calls).toBe(1);
+    expect(await g.check('email.send', { to: 'a@x', body: `${body} and something else` }, ctx)).toBeNull();
+    expect(calls).toBe(2);
+  });
+
   it('classifies browser.submit field values, the tool social.post hands off to (C2)', async () => {
     const g = constitutionGuardrail();
     const ctx = ctxFor('head_of_growth', 'job_g2');
