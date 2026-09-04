@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, listJobs, updateJob, createProposal, findInboxById, nowIso } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, listJobs, updateJob, createProposal, findInboxById, idFromKey, nowIso } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { requeueUnblocked, executeStoredCall, defaultConfig } from '../src/index.js';
@@ -15,9 +15,18 @@ afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); 
 
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
 
-/** The section colleague.message writes into the recipient's Messages/ note for a question. */
+/** What colleague.message(kind: question) leaves behind: the section in the recipient's Messages/ note … */
 function askQuestion(to: string, from: string, id: string, jobId: string, body: string): void {
   vault.appendText(`Messages/${to}.md`, `\n## ${nowIso()} from ${from} (question) <!-- id:${id} job:${jobId} -->\n\n${body}\n`, from, { job: jobId });
+}
+
+/** … and the colleague.answer job it queues for the recipient (packages/tools/src/tools/colleague.ts). */
+function answerJob(to: string, from: string, id: string, jobId: string, body: string): string {
+  return createJob(vault, {
+    id: idFromKey('job', `answer:${id}`), type: 'colleague.answer', assigned: to, priority: 2,
+    title: `Answer ${from}: ${body.slice(0, 60)}`, parent: jobId, links: [`[[${jobId}]]`],
+    goal: `${from} asked you a question and is blocked until you answer:\n\n> ${body}\n\nAnswer with colleague.message(to: "${from}", body: "re:${id} <your answer>").`,
+  }, from);
 }
 
 describe('unanswered questions time out and escalate to the CEO (D2)', () => {
@@ -31,6 +40,7 @@ describe('unanswered questions time out and escalate to the CEO (D2)', () => {
     const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'engineer', goal: 'g' }, 'cto');
     const msgId = 'msg_stale1';
     askQuestion('cto', 'engineer', msgId, asker, 'Which palette do I use for the hero?');
+    const ctoJob = answerJob('cto', 'engineer', msgId, asker, 'Which palette do I use for the hero?');
     updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(13) } }, 'engineer');
 
     expect(requeueUnblocked(vault)).toBe(1);
@@ -49,12 +59,34 @@ describe('unanswered questions time out and escalate to the CEO (D2)', () => {
     const answerJobs = listJobs(vault).filter((x) => x.type === 'colleague.answer' && x.assigned === 'ceo');
     expect(answerJobs).toHaveLength(1);
     expect(answerJobs[0].links).toContain(`[[${asker}]]`);
-    expect(answerJobs[0].goal ?? '').toBeDefined();
     expect(readJob(vault, answerJobs[0].id)!.body).toContain(msgId);
+
+    // The original recipient must not answer as well: two roles answering spends quota twice and appends two
+    // re:<id> sections to an asker that is no longer blocked.
+    const cto = readJob(vault, ctoJob)!;
+    expect(cto.data.status).toBe('cancelled');
+    expect(cto.body).toContain('escalated to ceo');
+    expect(section).toContain('cancelled');
 
     // Idempotent: a second sweep neither re-escalates nor queues a second answer job.
     requeueUnblocked(vault);
     expect(listJobs(vault).filter((x) => x.type === 'colleague.answer' && x.assigned === 'ceo')).toHaveLength(1);
+  });
+
+  it('a recipient already working on the answer keeps their job, and the handoff says so', () => {
+    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'engineer', goal: 'g' }, 'cto');
+    const msgId = 'msg_stale2';
+    askQuestion('cto', 'engineer', msgId, asker, 'Which palette?');
+    const ctoJob = answerJob('cto', 'engineer', msgId, asker, 'Which palette?');
+    updateJob(vault, ctoJob, { status: 'running' }, 'cto');
+    updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(13) } }, 'engineer');
+
+    expect(requeueUnblocked(vault)).toBe(1);
+
+    expect(readJob(vault, ctoJob)!.data.status).toBe('running'); // never yank a job mid-step
+    const section = vault.readText('Messages/ceo.md').split(/\n(?=## )/).find((x) => /from daemon \(handoff\)/.test(x))!;
+    expect(section).toContain('still working on');
+    expect(section).toContain('you would both be replying');
   });
 
   it('nothing happens while the question is still within the wait budget', () => {

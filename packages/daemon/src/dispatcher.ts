@@ -280,7 +280,20 @@ function escalateQuestionToCeo(vault: Vault, job: JobFrontmatter, id: string): v
   const answerJob = idFromKey('job', `escalate:${id}`);
   const already = !!readJob(vault, answerJob);
   if (!already) {
-    vault.appendText(messagePath('ceo'), `\n## ${nowIso()} from daemon (handoff) <!-- id:msg_${answerJob} job:${job.id} -->\n\n${job.assigned} asked ${recipient} a question on job [[${job.id}]] and ${recipient} has not answered it. The question (${id}):\n\n> ${question.split('\n').join('\n> ')}\n\nAnswer it yourself or reassign it; ${job.assigned} has been requeued in the meantime.\n`, 'daemon', { job: job.id });
+    // The recipient still holds the colleague.answer job this question created (packages/tools/src/tools/
+    // colleague.ts). Left alive, two roles would answer the same question: two models spend quota on it and two
+    // `re:<id>` sections land on an asker that is no longer blocked. Cancel it — unless it is already running or
+    // finished, because yanking a job mid-step loses work and the answer may be seconds away.
+    const owed = idFromKey('job', `answer:${id}`);
+    const recipientJob = readJob(vault, owed);
+    const superseded = !!recipientJob && ['queued', 'blocked'].includes(recipientJob.data.status);
+    if (superseded) updateJob(vault, owed, { status: 'cancelled' }, 'daemon', `- ${nowIso()}: cancelled; ${job.assigned}'s question ${id} went unanswered and was escalated to ceo as ${answerJob}`);
+    const handover = superseded
+      ? `${recipient}'s own answer job [[${owed}]] has been cancelled, so this question is yours alone.`
+      : recipientJob
+        ? `${recipient} is still working on [[${owed}]], so check there before answering — you would both be replying to the same question.`
+        : `${recipient} has no open job for it.`;
+    vault.appendText(messagePath('ceo'), `\n## ${nowIso()} from daemon (handoff) <!-- id:msg_${answerJob} job:${job.id} -->\n\n${job.assigned} asked ${recipient} a question on job [[${job.id}]] and ${recipient} has not answered it. The question (${id}):\n\n> ${question.split('\n').join('\n> ')}\n\n${handover} Answer it yourself or reassign it; ${job.assigned} has been requeued in the meantime.\n`, 'daemon', { job: job.id });
     createJob(vault, {
       id: answerJob, type: 'colleague.answer', assigned: 'ceo', priority: 2,
       title: `Answer ${job.assigned} (escalated): ${question.slice(0, 60)}`,
