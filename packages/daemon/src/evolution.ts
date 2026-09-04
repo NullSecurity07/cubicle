@@ -304,20 +304,28 @@ function deliveredFeedbackShas(vault: Vault): Set<string> {
   return new Set(vault.events.query({ types: ['owner.feedback_delivered'] }).map((e) => String(e.payload.sha)));
 }
 
+/** The shas of the `feedback:` entries in `feedback` that come from the owner's preferences, in order. */
+export function preferenceFeedbackShas(feedback: OwnerFeedback[]): string[] {
+  return feedback.filter((f) => f.source === OWNER_PREFERENCES).map((f) => feedbackSha(f.text));
+}
+
 /**
  * Record that these `feedback:` entries have now been put in front of the CEO, so the next cycle leaves them out.
- * Called once the cycle that carried them completes, which keeps them available to a mid-cycle plan rewrite and
- * re-delivers them if the cycle never finished. Returns how many entries it marked.
+ *
+ * Takes the shas gathered at the *start* of the cycle, not a fresh read: `Memory/` is not a heartbeat-wake area,
+ * so an entry the owner adds mid-cycle is in no prompt this cycle. Re-reading here would mark it delivered
+ * without ever having shown it, and `collectOwnerFeedback` would then filter it out of every future cycle — the
+ * line would be lost for good, which is the very failure this machinery exists to prevent. Marking the gathered
+ * shas instead keeps the entries available to a mid-cycle plan rewrite and re-delivers everything if the cycle
+ * never finished. Returns how many entries it marked.
  */
-export function markFeedbackDelivered(vault: Vault, feedback: OwnerFeedback[]): number {
+export function markFeedbackDelivered(vault: Vault, shas: string[]): number {
   const already = deliveredFeedbackShas(vault);
   let n = 0;
-  for (const f of feedback) {
-    if (f.source !== OWNER_PREFERENCES) continue;
-    const sha = feedbackSha(f.text);
+  for (const sha of shas) {
     if (already.has(sha)) continue;
     already.add(sha);
-    vault.events.emit({ type: 'owner.feedback_delivered', agent: 'ceo', payload: { sha, source: f.source } });
+    vault.events.emit({ type: 'owner.feedback_delivered', agent: 'ceo', payload: { sha, source: OWNER_PREFERENCES } });
     n++;
   }
   return n;

@@ -193,17 +193,27 @@ describe('preference feedback is delivered once (D5)', () => {
     writeFileSync(rel, readFileSync(rel, 'utf8').replace(/feedback: \[[^\]]*\]/, `feedback: [${entries.map((e) => JSON.stringify(e)).join(', ')}]`));
   };
 
-  /** Run one whole heartbeat; returns the goal text the CEO's company.plan job was given. */
-  async function runCycle(): Promise<string> {
-    const harnessDeps = { vault, llm: planLlm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} };
-    const deps = { vault, llm: planLlm };
+  /** Start a heartbeat: gather has run and the CEO's company.plan job exists. Returns its id and its goal text. */
+  async function beginCycle(): Promise<{ hb: string; goal: string }> {
     const hb = createHeartbeatJob(vault, 'test');
-    expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
+    expect((await runHeartbeat({ vault, llm: planLlm }, hb)).status).toBe('blocked');
     const plan = listJobs(vault).filter((j) => j.type === 'company.plan').at(-1)!;
-    const goal = readJob(vault, plan.id)!.body;
+    return { hb, goal: readJob(vault, plan.id)!.body };
+  }
+
+  /** Finish the company.plan job and let the heartbeat run through to commit. */
+  async function endCycle(hb: string): Promise<void> {
+    const harnessDeps = { vault, llm: planLlm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} };
+    const plan = listJobs(vault).filter((j) => j.type === 'company.plan').at(-1)!;
     expect((await runJob(harnessDeps, plan.id)).status).toBe('done');
     requeueUnblocked(vault);
-    expect((await runHeartbeat(deps, hb)).status).toBe('done');
+    expect((await runHeartbeat({ vault, llm: planLlm }, hb)).status).toBe('done');
+  }
+
+  /** Run one whole heartbeat; returns the goal text the CEO's company.plan job was given. */
+  async function runCycle(): Promise<string> {
+    const { hb, goal } = await beginCycle();
+    await endCycle(hb);
     return goal;
   }
 
@@ -225,6 +235,22 @@ describe('preference feedback is delivered once (D5)', () => {
     expect(new Set(delivered.map((e) => e.payload.sha)).size).toBe(2);
 
     expect(await runCycle()).not.toContain('more experiments');
+  });
+
+  it('an entry the owner adds mid-cycle is not marked by that cycle, and reaches the CEO in the next one', async () => {
+    setFeedback([]);
+    const { hb, goal } = await beginCycle(); // gather ran against an empty feedback list
+    expect(goal).not.toContain('ship smaller');
+    setFeedback(['ship smaller']); // Memory/ is not a heartbeat-wake area, so this cycle never sees it
+    await endCycle(hb);
+
+    // Nothing was shown, so nothing may be marked — otherwise the line is lost for good.
+    expect(vault.events.query({ types: ['owner.feedback_delivered'] })).toEqual([]);
+
+    const next = await runCycle();
+    expect(next).toContain('ship smaller');
+    expect(vault.events.query({ types: ['owner.feedback_delivered'] })).toHaveLength(1);
+    expect(await runCycle()).not.toContain('ship smaller');
   });
 });
 
