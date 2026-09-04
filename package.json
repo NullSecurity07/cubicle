@@ -11,6 +11,7 @@
     "build": "pnpm -r --filter './packages/**' run build",
     "test": "pnpm -r --filter './packages/**' run test",
     "cubicle": "node --import tsx/esm --conditions=development packages/daemon/src/cli.ts",
+    "launch": "bash scripts/run.sh",
     "test:acceptance": "vitest run --config vitest.acceptance.config.ts",
     "test:kill9": "node --import tsx/esm --conditions=development scripts/test-kill9.ts",
     "test:sleep": "node --import tsx/esm --conditions=development scripts/test-sleep.ts",

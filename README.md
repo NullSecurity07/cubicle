@@ -14,6 +14,10 @@ Everything runs on free tiers (Gemini/Groq/OpenRouter free models, Ollama locall
 
 ## Quick start
 
+The short way: `scripts/run.sh` (or `pnpm launch`) checks Node, pnpm, Ollama and Docker, builds only what is stale, scaffolds `~/Vaults/Cubicle` if needed, then launches the tray when your desktop has a tray host or a background daemon plus the office in your browser otherwise. `scripts/run.sh status|stop|logs` do what they say; `--tray`, `--headless`, `--no-open` override the guesses.
+
+The long way, step by step:
+
 ```bash
 pnpm install && pnpm -r build && pnpm --filter @cubicle/viewer build
 docker build -t cubicle-sandbox config/sandbox          # or: pnpm cubicle doctor --build-sandbox

@@ -23,6 +23,7 @@ step "test:replay"         pnpm test:replay
 step "office:shot"         pnpm office:shot /tmp/cubicle-fresh-shots
 step "org drawer"          bash -c 'grep -q "Org" packages/viewer/dist/index.html'
 step "doctor"              bash -c 'pnpm cubicle doctor >/tmp/cubicle-doctor.txt 2>&1 && grep -q "ollama model .* pulled" /tmp/cubicle-doctor.txt'
+step "run.sh"             bash -c 'rm -rf /tmp/cubicle-run-vault && scripts/run.sh start /tmp/cubicle-run-vault --headless --no-open --skip-checks </dev/null | grep -q "daemon running" && scripts/run.sh status /tmp/cubicle-run-vault | grep -q "daemon: running" && scripts/run.sh stop /tmp/cubicle-run-vault | grep -q "stopped in"'
 step "app smoke"           bash -c 'CUBICLE_VAULT=/tmp/cubicle-fresh-vault timeout 90 pnpm --filter @cubicle/app smoke 2>&1 | grep -q "SMOKE PASS"'
 step "no model ids in src" bash -c '! grep -rEn "gemini-[0-9]|gpt-oss|qwen2\.5:|:free\"" packages/*/src --include=*.ts | grep -v "providers-cli\|/test/\|\.test\.ts:" '
 step "no localStorage state" bash -c '! grep -rn "localStorage" packages/viewer/src | grep -v "cubicle.token"'
