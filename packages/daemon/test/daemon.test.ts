@@ -197,6 +197,56 @@ describe('heartbeat as a resumable job', () => {
   });
 });
 
+describe('the pre-mortem note survives a crash mid-critic-step (D7)', () => {
+  it('is written before processedCritic is saved, so a resume can never skip it', async () => {
+    const vault = Vault.open(dir);
+    const llm = fakeLlm();
+    const deps = { vault, llm };
+    const hb = createHeartbeatJob(vault, 'test');
+    const { runJob } = await import('@cubicle/harness');
+    const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
+    const harnessDeps = { vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} };
+
+    await runHeartbeat(deps, hb); // blocked on company.plan
+    await runJob(harnessDeps, listJobs(vault).find((j) => j.type === 'company.plan')!.id);
+    requeueUnblocked(vault);
+    await runHeartbeat(deps, hb); // blocked on critic.premortem
+    const critic = listJobs(vault).find((j) => j.type === 'critic.premortem')!;
+    await runJob(harnessDeps, critic.id);
+    requeueUnblocked(vault);
+
+    // The checkpoint that says "this critic's verdict was handled" must not become durable before the note it
+    // is supposed to have produced: a crash in that window resumes into the already-processed branch and the
+    // pre-mortem is lost for the cycle. Sample the on-disk state at the instant the note is written.
+    const statePath = path.join(dir, '.cubicle', 'jobs', `${hb}.heartbeat.json`);
+    let stateAtWrite: string | null = null;
+    const off = vault.events.on('vault.wrote', (e) => {
+      if (String(e.payload.path).startsWith('Decisions/premortem-') && stateAtWrite === null) stateAtWrite = readFileSync(statePath, 'utf8');
+    });
+    try { await runHeartbeat(deps, hb); } finally { off(); }
+
+    expect(stateAtWrite).toBeTruthy();
+    expect(JSON.parse(stateAtWrite!).processedCritic).toBeUndefined();
+    expect(vault.exists(`Decisions/premortem-${hb}.md`)).toBe(true);
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).processedCritic).toBe(critic.id);
+    vault.close();
+  });
+
+  it('writePremortemDecision overwrites the same note, so a resume rewrites rather than duplicates', async () => {
+    const vault = Vault.open(dir);
+    const { writePremortemDecision } = await import('../src/index.js');
+    const now = new Date();
+    const first = writePremortemDecision(vault, 'job_hb1', 'job_critic1', { status: 'done', artifacts: [], metrics: {}, blockers: [], lessons: [], summary: 'too vague', verdict: 'return', findings: ['no metric'] }, now);
+    const second = writePremortemDecision(vault, 'job_hb1', 'job_critic1', { status: 'done', artifacts: [], metrics: {}, blockers: [], lessons: [], summary: 'fine now', verdict: 'pass', findings: [] }, now);
+    expect(second).toBe(first);
+    expect(vault.list('Decisions', { ext: '.md' }).filter((r) => r.includes('premortem'))).toHaveLength(1);
+    const note = vault.readNoteOrNull(first)!;
+    expect(note.data.status).toBe('adopted'); // the verdict the cycle actually ran with
+    expect(note.body).toContain('fine now');
+    vault.close();
+  });
+});
+
 describe('brand reconcile (acceptance test 3, heartbeat half)', () => {
   it('owner edits Brand/palette.md → next heartbeat enqueues "Reconcile site with brand" once', async () => {
     const vault = Vault.open(dir);

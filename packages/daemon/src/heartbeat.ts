@@ -385,19 +385,23 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           done(i, `critic ${state.criticJob} already processed`);
           break;
         }
-        // Durably mark this critic job's verdict as being processed BEFORE counting the veto or requeuing, so a
-        // crash after this write and before the requeue's updateJob resumes here instead of double-processing.
-        state = { ...state, processedCritic: state.criticJob }; saveState(state);
         const result = parseResult(sub.body);
         // A critic job with no parseable ## Result block fails open to "pass" below (never blocking the cycle
         // on a malformed Result), but that must not happen silently (T9).
         if (!result) vault.events.emit({ type: 'daemon.warning', agent: 'ceo', job: jobId, payload: { where: 'critic', message: `critic ${state.criticJob} has no parseable Result; treated as pass` } });
         // A pre-mortem is a decision the company should be able to look back on (spec §4.1), so the heartbeat
         // writes it as a validated Decisions/ note rather than trusting the Critic to hand-roll the frontmatter
-        // and the six sections. A second visit for the same heartbeat (the one veto is allowed) overwrites it,
-        // so the note always states the verdict the cycle actually ran with.
+        // and the six sections.
+        //
+        // Written BEFORE processedCritic becomes durable: a crash in the other order resumes into the
+        // "already processed" branch below and the cycle loses its pre-mortem for good. `writeDecision` keys off
+        // the heartbeat id, so a resume — or the one allowed veto's second visit — rewrites the same note, which
+        // then states the verdict the cycle actually ran with.
         try { writePremortemDecision(vault, hbId, state.criticJob!, result, now()); }
         catch (err) { vault.events.emit({ type: 'daemon.warning', agent: 'ceo', job: jobId, payload: { where: 'critic', message: `could not write the pre-mortem decision note: ${(err as Error).message}` } }); }
+        // Durably mark this critic job's verdict as being processed BEFORE counting the veto or requeuing, so a
+        // crash after this write and before the requeue's updateJob resumes here instead of double-processing.
+        state = { ...state, processedCritic: state.criticJob }; saveState(state);
         if (result?.verdict === 'return') {
           const vetoes = (state.vetoes ?? 0) + 1;
           vault.events.emit({ type: 'plan.vetoed', agent: 'critic', job: jobId, payload: { findings: result.findings, vetoes } });
