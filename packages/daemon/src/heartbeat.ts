@@ -7,6 +7,7 @@ import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered } from './evolution.js';
+import { seedFirstJobs } from './first-run.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -462,6 +463,11 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         break;
       }
       case 'brief': {
+        // D8: heartbeat #1 must leave the company with a site, an offer and a channel to work on, whatever the
+        // plan turned out to say. Runs after team_plans (every exit path of it, including the give-up one) so a
+        // lead's own scheduling wins and only what nobody covered is seeded; later cycles seed nothing.
+        const seeded = seedFirstJobs(vault, loadOrg(vault));
+        if (seeded.length) updateJob(vault, jobId, {}, 'ceo', `- step ${i + 1} ${step}: seeded ${seeded.length} first job(s)`);
         const runRel = state.runPath ?? `Runs/${stampForFilename(now())}.md`;
         if (!state.runPath) updateJob(vault, jobId, { links: [...job.links, `[[${runRel.replace(/\.md$/, '')}]]`] }, 'ceo');
         const queued = listJobs(vault, { status: 'queued' });

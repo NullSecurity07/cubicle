@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob, loadOrg } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot } from '../src/index.js';
@@ -241,7 +241,7 @@ describe('daemon lifecycle', () => {
     v.close();
   });
 
-  it('first start runs heartbeat #1 from an owner idea with zero outbound events; verify chain terminates', async () => {
+  it('first start runs heartbeat #1 from an owner idea with zero outbound events; verify chain terminates; the cycle seeds the offer and channel jobs (D8)', async () => {
     const vault = Vault.open(dir);
     createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
     vault.close();
@@ -250,18 +250,59 @@ describe('daemon lifecycle', () => {
     await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
     // engineer.ship (scaffold) runs and finishes; its coo.verify runs; then nothing else is enqueued
     await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'coo.verify' && j.status === 'done').length >= 1, 20000);
+    await waitFor(() => listJobs(d.vault).filter((j) => ['queued', 'running'].includes(j.status)).length === 0, 30000);
     await new Promise((r) => setTimeout(r, 1500));
     const jobs = listJobs(d.vault);
-    expect(jobs.filter((j) => j.type === 'coo.verify').length).toBe(1); // no verify-of-verify chain
+    // No verify-of-verify chain: a gate job never itself sits under another gate job.
+    const gateTypes = ['qa.review', 'coo.verify', 'requester.review'];
+    const byId = new Map(jobs.map((j) => [j.id, j]));
+    expect(jobs.filter((j) => gateTypes.includes(j.type)).every((j) => !gateTypes.includes(byId.get(j.parent ?? '')?.type ?? ''))).toBe(true);
     expect(jobs.filter((j) => ['queued', 'running'].includes(j.status)).length).toBe(0);
     expect(d.vault.events.count('email.sent')).toBe(0);
     expect(d.vault.events.count('deploy.done')).toBe(0);
     expect(listInbox(d.vault).some((n) => n.data.kind === 'brand_change')).toBe(true);
     expect(existsSync(path.join(dir, '.cubicle', 'daemon.json'))).toBe(true);
+
+    // D8: whatever the plan said, heartbeat #1 leaves the company with a site, an offer and a channel to work on.
+    const offer = jobs.find((j) => j.title === 'Define the offer and price point')!;
+    expect(offer).toBeTruthy();
+    expect(offer.type).toBe('research');
+    expect(offer.for).toBe('head_of_growth');
+    expect(readJob(d.vault, offer.id)!.body).toContain('## Done when');
+    const channel = jobs.find((j) => j.title === 'Research the first organic channel')!;
+    expect(channel).toBeTruthy();
+    expect(['growth.seo', 'research']).toContain(channel.type);
+    expect(readJob(d.vault, channel.id)!.body).toContain('## Done when');
+    // The CTO's team plan already queued the scaffold, so the site seed is not duplicated.
+    expect(jobs.filter((j) => j.type === 'engineer.ship' && /^scaffold site\//i.test(j.title))).toHaveLength(1);
+
     const t0 = Date.now();
     await d.stop();
     expect(Date.now() - t0).toBeLessThan(5000);
     expect(existsSync(path.join(dir, '.cubicle', 'daemon.json'))).toBe(false);
+  });
+
+  it('a fresh vault whose plan queued nothing still gets all three first jobs, and a second heartbeat seeds nothing (D8)', async () => {
+    const vault = Vault.open(dir);
+    vault.close();
+    const { seedFirstJobs } = await import('../src/index.js');
+    const v = Vault.open(dir);
+    try {
+      const first = seedFirstJobs(v, loadOrg(v));
+      expect(first).toHaveLength(3);
+      const titles = listJobs(v).map((j) => j.title);
+      expect(titles).toContain('Scaffold Site/ from Brand/ (first cut)');
+      expect(titles).toContain('Define the offer and price point');
+      expect(titles).toContain('Research the first organic channel');
+      const site = listJobs(v).find((j) => j.title === 'Scaffold Site/ from Brand/ (first cut)')!;
+      expect(site.type).toBe('engineer.ship');
+      expect(site.assigned).toBe('engineer');
+      for (const id of first) expect(readJob(v, id)!.body).toContain('## Done when');
+      // Idempotent within the first cycle, and silent once a heartbeat has completed.
+      expect(seedFirstJobs(v, loadOrg(v))).toEqual([]);
+      v.events.emit({ type: 'heartbeat.completed', payload: { id: 'h1' } });
+      expect(seedFirstJobs(v, loadOrg(v))).toEqual([]);
+    } finally { v.close(); }
   });
 
   it('planning and gate sub-jobs (company.plan, critic.premortem, team.plan, qa.review, coo.verify) never retrigger a second heartbeat on their own (Task 11)', async () => {
