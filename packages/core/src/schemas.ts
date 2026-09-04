@@ -178,7 +178,7 @@ export const EVENT_TYPES = [
   'role.hired', 'role.fired',
   'router.call', 'router.downgraded',
   'quota.updated',
-  'vault.wrote', 'owner.edited',
+  'vault.wrote', 'owner.edited', 'owner.feedback_delivered',
   'team.planned', 'review.passed', 'review.returned', 'plan.vetoed', 'research.delivered', 'org.changed',
   'guardrail.blocked',
 ] as const;

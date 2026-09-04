@@ -13,7 +13,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `heartbeat.completed` | id, commit, run (Runs/ path), gathered_at |
 | `job.queued` | type, title, assigned, priority |
 | `job.started` | attempt, from_step, resumed |
-| `job.checkpoint` | `in_review` (the next gate job type the job now owes, or absent when it has none left), `summary` |
+| `job.checkpoint` | reserved |
 | `job.blocked` | reason (approval | message | job | quota), id |
 | `job.done` | summary, artifacts, metrics, lessons |
 | `job.failed` | reason, requeued, attempt |
@@ -42,7 +42,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `quota.updated` | provider, model, rpm_used, rpd_used, tpm_used, cooling_until, limits |
 | `vault.wrote` | path, sha, by (role | daemon | init | <role>/shell), deleted?, moved_from?, generated? (true for daemon-generated files such as `Jobs/queue.md`, `Metrics/quota.md`, `Metrics/daily.md`; the viewer ignores these for staleness) |
 | `owner.edited` | path, area, deleted, wakes_heartbeat |
-| `owner.feedback_delivered` | sha (of the trimmed `feedback:` line delivered to the CEO's prompt this heartbeat; each entry is delivered once, tracked by this event so it survives `cubicle rebuild`) |
+| `owner.feedback_delivered` | sha (sha1 of the trimmed `feedback:` line), source (`Memory/owner_preferences.md`) — emitted once per entry when the heartbeat that carried it to the CEO commits, so it is never re-delivered and `cubicle rebuild` keeps the marker |
 | `team.planned` | team, jobs (ids the team.plan job scheduled) |
 | `review.passed` | gate, findings |
 | `review.returned` | gate, findings |

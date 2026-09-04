@@ -6,7 +6,7 @@ import {
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
 import { writeQueueMd } from './queue-md.js';
-import { collectOwnerFeedback } from './evolution.js';
+import { collectOwnerFeedback, markFeedbackDelivered } from './evolution.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -471,6 +471,10 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
       case 'commit': {
         let commitNote = 'nothing to commit';
         const hash = await autoCommit(vault.root, `cubicle: heartbeat ${hbId}`).catch((e) => { commitNote = `COMMIT FAILED: ${String((e as Error).message ?? e).slice(0, 160)}`; vault.events.emit({ type: 'daemon.warning', payload: { where: 'heartbeat.commit', message: String(e) } }); return null; });
+        // The cycle that carried the owner's `feedback:` entries is over, so they are spent (D5). Marking here
+        // rather than at collection keeps them available to a mid-cycle plan rewrite and re-delivers them if a
+        // cycle never finished; the marker lives in the event log, so `cubicle rebuild` does not resurrect them.
+        try { markFeedbackDelivered(vault, collectOwnerFeedbackSafe(vault, state.since ?? undefined)); } catch { /* never block the commit */ }
         updateJob(vault, jobId, { status: 'done', checkpoint_step: HEARTBEAT_STEPS.length }, 'ceo', `- step ${i + 1} commit: ${hash ?? commitNote}`);
         vault.events.emit({ type: 'job.done', agent: 'ceo', job: jobId, payload: { type: 'ceo.heartbeat', summary: `heartbeat ${hbId}` } });
         vault.events.emit({ type: 'heartbeat.completed', agent: 'ceo', job: jobId, payload: { id: hbId, commit: hash, run: state.runPath, trigger: job.title, gathered_at: state.gathered_at ?? nowIso() } });

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import YAML from 'yaml';
 import {
@@ -277,6 +278,36 @@ export function enqueueExperimentReviews(vault: Vault, now = new Date()): string
 // ---------- owner feedback (spec §9.6) ----------
 export interface OwnerFeedback { role: string; source: string; text: string }
 
+export const OWNER_PREFERENCES = 'Memory/owner_preferences.md';
+
+/** Identity of a `feedback:` entry: sha1 of its trimmed text, so re-indenting or re-ordering the list is not a new entry. */
+export function feedbackSha(text: string): string {
+  return createHash('sha1').update(text.trim()).digest('hex');
+}
+
+function deliveredFeedbackShas(vault: Vault): Set<string> {
+  return new Set(vault.events.query({ types: ['owner.feedback_delivered'] }).map((e) => String(e.payload.sha)));
+}
+
+/**
+ * Record that these `feedback:` entries have now been put in front of the CEO, so the next cycle leaves them out.
+ * Called once the cycle that carried them completes, which keeps them available to a mid-cycle plan rewrite and
+ * re-delivers them if the cycle never finished. Returns how many entries it marked.
+ */
+export function markFeedbackDelivered(vault: Vault, feedback: OwnerFeedback[]): number {
+  const already = deliveredFeedbackShas(vault);
+  let n = 0;
+  for (const f of feedback) {
+    if (f.source !== OWNER_PREFERENCES) continue;
+    const sha = feedbackSha(f.text);
+    if (already.has(sha)) continue;
+    already.add(sha);
+    vault.events.emit({ type: 'owner.feedback_delivered', agent: 'ceo', payload: { sha, source: f.source } });
+    n++;
+  }
+  return n;
+}
+
 /**
  * %%cubicle: …%% comments in files the owner edited since `since`, attributed to the note's author role; plus owner_preferences
  * feedback and decision ratings. Provenance: a comment counts as the owner's only if it was NOT present in the last version the
@@ -316,7 +347,13 @@ export function collectOwnerFeedback(vault: Vault, since?: string): OwnerFeedbac
     const role = String(byName ?? d.assigned ?? d.decided_by ?? d.from ?? d.by ?? d.author ?? d.owner ?? (rel.startsWith('Site/') ? 'engineer' : rel.startsWith('Customers/') || rel.startsWith('Experiments/') ? 'head_of_growth' : rel.startsWith('Plans/') ? 'cto' : 'ceo'));
     for (const c of comments) out.push({ role, source: rel, text: c });
   }
-  for (const f of vault.ownerPreferences().feedback) out.push({ role: 'ceo', source: 'Memory/owner_preferences.md', text: f });
+  const alreadyDelivered = deliveredFeedbackShas(vault);
+  for (const f of vault.ownerPreferences().feedback) {
+    // An entry the owner typed once must not be repeated to the CEO every cycle for the rest of the company's
+    // life; `owner.feedback_delivered` is the marker, and it lives in the event log so `cubicle rebuild` keeps it.
+    if (alreadyDelivered.has(feedbackSha(f))) continue;
+    out.push({ role: 'ceo', source: OWNER_PREFERENCES, text: f });
+  }
   for (const rel of vault.list('Decisions', { ext: '.md' })) {
     const d = vault.readNoteOrNull(rel)?.data as { owner_rating?: string; decided_by?: string; rating_seen?: string } | undefined;
     if (d?.owner_rating === 'down' && !d.rating_seen) {

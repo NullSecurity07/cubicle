@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, createProposal, listJobs, listInbox, findInboxById, JobResult, stringifyNote, updateJob } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, createProposal, listJobs, listInbox, findInboxById, JobResult, stringifyNote, updateJob } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler, runJob, type Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, dispatchProposals, applyHire, applyFire, freeDesk, activeRoles, maybeEnqueueCharterCompression, enqueueExperimentReviews, collectOwnerFeedback, feedbackFor } from '../src/index.js';
+import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, requeueUnblocked, dispatchProposals, applyHire, applyFire, freeDesk, activeRoles, maybeEnqueueCharterCompression, enqueueExperimentReviews, collectOwnerFeedback, feedbackFor } from '../src/index.js';
 
 const root = path.resolve(__dirname, '../../..');
 const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
@@ -168,5 +168,62 @@ describe('owner comments left while the daemon was off (D4)', () => {
     try {
       expect(d.vault.events.query({ types: ['owner.edited'] }).filter((e) => e.payload.offline === true)).toEqual([]);
     } finally { await d.stop(); }
+  });
+});
+
+describe('preference feedback is delivered once (D5)', () => {
+  /** A cycle with no team sections in the plan: one company.plan sub-job, no critic, no team plans. */
+  const EMPTY_PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n';
+  const per = new Map<string, number>();
+  const planLlm: Llm = {
+    async chat(_req, chat) {
+      const base = { content: 'ok', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'cheap' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
+      if (!chat.tools) return base;
+      const jobMsg = String(chat.messages[1]?.content ?? '');
+      const jobId = jobMsg.match(/Jobs\/(job_\w+)\.md/)?.[1] ?? 'x';
+      const n = per.get(jobId) ?? 0; per.set(jobId, n + 1);
+      if (/type: company\.plan/.test(jobMsg) && n === 0) return { ...base, parsedToolCalls: [{ name: 'vault.write', args: { path: 'Plans/plan.md', content: EMPTY_PLAN } }] };
+      return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'done', verdict: 'pass' } }] };
+    },
+    promptBudget: () => 6000,
+  };
+
+  const setFeedback = (entries: string[]) => {
+    const rel = path.join(dir, 'Memory/owner_preferences.md');
+    writeFileSync(rel, readFileSync(rel, 'utf8').replace(/feedback: \[[^\]]*\]/, `feedback: [${entries.map((e) => JSON.stringify(e)).join(', ')}]`));
+  };
+
+  /** Run one whole heartbeat; returns the goal text the CEO's company.plan job was given. */
+  async function runCycle(): Promise<string> {
+    const harnessDeps = { vault, llm: planLlm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} };
+    const deps = { vault, llm: planLlm };
+    const hb = createHeartbeatJob(vault, 'test');
+    expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
+    const plan = listJobs(vault).filter((j) => j.type === 'company.plan').at(-1)!;
+    const goal = readJob(vault, plan.id)!.body;
+    expect((await runJob(harnessDeps, plan.id)).status).toBe('done');
+    requeueUnblocked(vault);
+    expect((await runHeartbeat(deps, hb)).status).toBe('done');
+    return goal;
+  }
+
+  it('a feedback: entry reaches the CEO once and is never re-delivered; a new entry is delivered once too', async () => {
+    setFeedback(['shorter briefs']);
+    expect(await runCycle()).toContain('shorter briefs');
+    expect(vault.events.query({ types: ['owner.feedback_delivered'] })).toHaveLength(1);
+
+    expect(await runCycle()).not.toContain('shorter briefs');
+
+    setFeedback(['shorter briefs', 'more experiments']);
+    const third = await runCycle();
+    expect(third).toContain('more experiments');
+    expect(third).not.toContain('shorter briefs');
+
+    const delivered = vault.events.query({ types: ['owner.feedback_delivered'] });
+    expect(delivered).toHaveLength(2);
+    expect(delivered.every((e) => typeof e.payload.sha === 'string' && e.payload.source === 'Memory/owner_preferences.md')).toBe(true);
+    expect(new Set(delivered.map((e) => e.payload.sha)).size).toBe(2);
+
+    expect(await runCycle()).not.toContain('more experiments');
   });
 });
