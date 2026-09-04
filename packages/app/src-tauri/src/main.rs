@@ -18,6 +18,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tokio::signal::unix::{signal, SignalKind};
 
 /// Refresh cadence of the tray while nothing else is happening.
 const REFRESH_EVERY: Duration = Duration::from_secs(5);
@@ -302,6 +303,33 @@ fn on_menu(app: &AppHandle, id: &str) {
     }
 }
 
+/// A SIGTERM or SIGINT to the tray checkpoints the daemon before we go (spec §8: OS shutdown
+/// signals checkpoint and exit). Without this the tray dies instantly and orphans its child.
+fn watch_for_signals(app: &AppHandle) {
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut terminate = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(err) => return log(&format!("cannot listen for SIGTERM: {err}")),
+        };
+        let mut interrupt = match signal(SignalKind::interrupt()) {
+            Ok(s) => s,
+            Err(err) => return log(&format!("cannot listen for SIGINT: {err}")),
+        };
+        let name = tokio::select! {
+            _ = terminate.recv() => "SIGTERM",
+            _ = interrupt.recv() => "SIGINT",
+        };
+        // Off the async runtime: the checkpoint blocks for as long as the daemon needs.
+        in_background(&handle, move |app| {
+            let ms = stop_daemon(app);
+            log(&format!("{name}: daemon checkpointed and exited in {ms} ms"));
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || handle.exit(0));
+        });
+    });
+}
+
 /// Checkpoint the daemon before the machine suspends and bring it back on wake (spec §14 test 9).
 fn watch_for_sleep(app: &AppHandle) {
     let handle = app.clone();
@@ -358,6 +386,7 @@ fn main() {
                 choose_vault(app.handle());
             }
 
+            watch_for_signals(app.handle());
             watch_for_sleep(app.handle());
 
             let handle = app.handle().clone();
