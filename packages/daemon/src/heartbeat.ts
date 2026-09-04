@@ -1,12 +1,13 @@
 import {
   type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
-  loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection,
+  loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection, writeDecision,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
 import { writeQueueMd } from './queue-md.js';
-import { collectOwnerFeedback } from './evolution.js';
+import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
+import { seedFirstJobs } from './first-run.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -17,10 +18,9 @@ export interface HeartbeatDeps {
   llm: Llm;
   router?: Router;
   now?: () => Date;
-  /** Phase 6 hooks; stubs until then. */
+  /** Adapters supplied by the daemon; tests inject fakes. */
   pollInbox?: () => Promise<string[]>;
   pullAnalytics?: () => Promise<string | null>;
-  /** Phase 5 hook. */
   openMeeting?: (agenda: string) => Promise<string | null>;
 }
 
@@ -81,6 +81,30 @@ export function planIsSubstantive(plan: string): boolean {
 export function firstOpenJob(ids: string[], statusOf: (id: string) => string | undefined): string {
   const open = ids.find((id) => { const s = statusOf(id); return !s || !['done', 'failed', 'cancelled'].includes(s); });
   return open ?? ids[ids.length - 1];
+}
+
+/**
+ * The Critic's pre-mortem as a `Decisions/premortem-<heartbeat id>.md` note: `adopted` when the plan survived,
+ * `proposed` when the Critic returned it (the plan it judged is not the plan that will run). The findings are the
+ * failure modes it foresaw, which is what makes the note worth reading a cycle later.
+ */
+export function writePremortemDecision(vault: Vault, hbId: string, criticJobId: string, result: JobResult | null, now: Date): string {
+  const verdict = result?.verdict ?? 'pass';
+  const findings = result?.findings ?? [];
+  const risks = findings.length
+    ? findings.map((f) => `- ${f}`).join('\n')
+    : '- The Critic found nothing in this plan likely to sink the cycle.';
+  const review = new Date(now.getTime() + 7 * 24 * 3600_000).toISOString().slice(0, 10);
+  return writeDecision(vault, `premortem-${hbId}`, {
+    decided_by: 'critic', cycle: hbId, status: verdict === 'pass' ? 'adopted' : 'proposed', inputs: ['[[Plans/plan]]'],
+  }, {
+    context: `Pre-mortem for heartbeat ${hbId}: the Critic read this cycle's \`Plans/plan.md\` and imagined the cycle had already failed. Its own working is in [[${criticJobId}]].`,
+    options: '- Run the plan as the CEO wrote it\n- Return it to the CEO to rewrite before any team plans against it',
+    chosen: verdict === 'pass' ? 'Run the plan as written.' : 'Return the plan to the CEO for one rewrite.',
+    why: result?.summary?.trim() || (verdict === 'pass' ? 'The plan survived the pre-mortem.' : 'The Critic found failure modes the plan does not answer.'),
+    expected_effect: `Most likely ways this cycle fails, and what would prevent each:\n\n${risks}`,
+    review_date: review,
+  }, 'critic');
 }
 
 /** Create the `ceo.heartbeat` job note (the heartbeat is a job so R9/R10/R12 apply). */
@@ -151,7 +175,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { companyPlanJob?: string; criticJob?: string; processedCritic?: string; vetoes?: number; criticFindings?: string[]; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { companyPlanJob?: string; criticJob?: string; processedCritic?: string; vetoes?: number; criticFindings?: string[]; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -248,7 +272,15 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const mail = deps.pollInbox ? await deps.pollInbox().catch(() => []) : [];
         const analytics = deps.pullAnalytics ? await deps.pullAnalytics().catch(() => null) : null;
         const g = gather(vault, now(), mail, analytics);
-        state = { ...state, ...g }; saveState(state);
+        // The owner `feedback:` entries this cycle can actually show the CEO are the ones that exist now. Their
+        // shas are recorded here and marked delivered at commit; see markFeedbackDelivered for why a fresh read
+        // at commit would destroy an entry the owner adds mid-cycle.
+        const gatheredFeedback = collectOwnerFeedbackSafe(vault, g.since ?? undefined);
+        const feedbackShas = preferenceFeedbackShas(gatheredFeedback);
+        // Same idea for `%%cubicle:%%` comments, retired by advancing each note's comment baseline at commit;
+        // see markCommentsDelivered for why a system-written note otherwise repeats its comment every restart.
+        const commentBaselines = gatheredCommentBaselines(vault, gatheredFeedback);
+        state = { ...state, ...g, feedbackShas, commentBaselines }; saveState(state);
         // Persist the gathered facts in the job note so a cache wipe cannot change what later steps see.
         vault.updateNote(`Jobs/${jobId}.md`, (n) => ({ data: n.data, body: setSection(n.body, '## Plan', '```json\n' + JSON.stringify({ since: g.since, gathered_at: g.gathered_at, elapsedHours: Number.isFinite(g.elapsedHours) ? g.elapsedHours : null, ownerEdits: g.ownerEdits, finished: g.finished, mail: g.mail.length, analytics: g.analytics, owner_messages: g.unansweredOwnerMessages.map((m) => m.id) }, null, 2) + '\n```') }), 'ceo', { job: jobId });
         done(i, `elapsed ${Number.isFinite(g.elapsedHours) ? g.elapsedHours.toFixed(1) + 'h' : 'first run'}; ${g.ownerEdits.length} owner edits; ${g.finished.length} jobs finished; ${g.mail.length} mails; ${g.unansweredOwnerMessages.length} owner messages`);
@@ -337,7 +369,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         if (!state.criticJob) {
           const id = createJob(vault, {
             type: 'critic.premortem', title: `Pre-mortem for ${hbId}`, assigned: 'critic', priority: 1, parent: jobId, team: 'strategy', owner_role: 'ceo',
-            goal: `Read Plans/plan.md. Write Decisions/premortem-${hbId.slice(-6)}.md: imagine the cycle failed; list the three most likely reasons and a fix each. Then finish with verdict pass if the plan survives, or verdict return with findings (one line each, concrete). You may return at most once; you cannot delay.`,
+            goal: `Read Plans/plan.md. Imagine this cycle has already failed: work out the three most likely reasons and one concrete fix for each. Then finish with verdict pass if the plan survives, or verdict return with findings (one line each, concrete) — put the reasons and fixes in your finish summary and findings. The heartbeat records them as the pre-mortem decision note for you; do not write one yourself. You may return at most once; you cannot delay.`,
           }, 'ceo');
           state = { ...state, criticJob: id }; saveState(state);
           return block(id, `waiting for critic ${id}`);
@@ -357,13 +389,23 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           done(i, `critic ${state.criticJob} already processed`);
           break;
         }
-        // Durably mark this critic job's verdict as being processed BEFORE counting the veto or requeuing, so a
-        // crash after this write and before the requeue's updateJob resumes here instead of double-processing.
-        state = { ...state, processedCritic: state.criticJob }; saveState(state);
         const result = parseResult(sub.body);
         // A critic job with no parseable ## Result block fails open to "pass" below (never blocking the cycle
         // on a malformed Result), but that must not happen silently (T9).
         if (!result) vault.events.emit({ type: 'daemon.warning', agent: 'ceo', job: jobId, payload: { where: 'critic', message: `critic ${state.criticJob} has no parseable Result; treated as pass` } });
+        // A pre-mortem is a decision the company should be able to look back on (spec §4.1), so the heartbeat
+        // writes it as a validated Decisions/ note rather than trusting the Critic to hand-roll the frontmatter
+        // and the six sections.
+        //
+        // Written BEFORE processedCritic becomes durable: a crash in the other order resumes into the
+        // "already processed" branch below and the cycle loses its pre-mortem for good. `writeDecision` keys off
+        // the heartbeat id, so a resume — or the one allowed veto's second visit — rewrites the same note, which
+        // then states the verdict the cycle actually ran with.
+        try { writePremortemDecision(vault, hbId, state.criticJob!, result, now()); }
+        catch (err) { vault.events.emit({ type: 'daemon.warning', agent: 'ceo', job: jobId, payload: { where: 'critic', message: `could not write the pre-mortem decision note: ${(err as Error).message}` } }); }
+        // Durably mark this critic job's verdict as being processed BEFORE counting the veto or requeuing, so a
+        // crash after this write and before the requeue's updateJob resumes here instead of double-processing.
+        state = { ...state, processedCritic: state.criticJob }; saveState(state);
         if (result?.verdict === 'return') {
           const vetoes = (state.vetoes ?? 0) + 1;
           vault.events.emit({ type: 'plan.vetoed', agent: 'critic', job: jobId, payload: { findings: result.findings, vetoes } });
@@ -433,6 +475,11 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         break;
       }
       case 'brief': {
+        // D8: heartbeat #1 must leave the company with a site, an offer and a channel to work on, whatever the
+        // plan turned out to say. Runs after team_plans (every exit path of it, including the give-up one) so a
+        // lead's own scheduling wins and only what nobody covered is seeded; later cycles seed nothing.
+        const seeded = seedFirstJobs(vault, loadOrg(vault));
+        if (seeded.length) updateJob(vault, jobId, {}, 'ceo', `- step ${i + 1} ${step}: seeded ${seeded.length} first job(s)`);
         const runRel = state.runPath ?? `Runs/${stampForFilename(now())}.md`;
         if (!state.runPath) updateJob(vault, jobId, { links: [...job.links, `[[${runRel.replace(/\.md$/, '')}]]`] }, 'ceo');
         const queued = listJobs(vault, { status: 'queued' });
@@ -465,13 +512,20 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         vault.writeText(runRel, content, 'ceo', { job: jobId });
         state = { ...state, runPath: runRel }; saveState(state);
         writeQueueMd(vault);
-        if (deps.router) vault.writeText('Metrics/quota.md', renderQuotaMarkdown(deps.router.quotaSnapshot(), now()), 'daemon', { silent: true });
+        if (deps.router) vault.writeText('Metrics/quota.md', renderQuotaMarkdown(deps.router.quotaSnapshot(), now()), 'daemon', { generated: true });
         done(i, `wrote ${runRel}`);
         break;
       }
       case 'commit': {
         let commitNote = 'nothing to commit';
         const hash = await autoCommit(vault.root, `cubicle: heartbeat ${hbId}`).catch((e) => { commitNote = `COMMIT FAILED: ${String((e as Error).message ?? e).slice(0, 160)}`; vault.events.emit({ type: 'daemon.warning', payload: { where: 'heartbeat.commit', message: String(e) } }); return null; });
+        // The cycle that carried the owner's `feedback:` entries is over, so they are spent (D5). Marking here
+        // rather than at collection keeps them available to a mid-cycle plan rewrite and re-delivers them if a
+        // cycle never finished; the marker lives in the event log, so `cubicle rebuild` does not resurrect them.
+        try { markFeedbackDelivered(vault, state.feedbackShas ?? []); } catch { /* never block the commit */ }
+        // The owner comments this cycle carried are spent too: advance each note's baseline so neither the next
+        // startup sweep nor the next cycle's collection reports them again (I1).
+        try { markCommentsDelivered(vault, state.commentBaselines ?? {}); } catch { /* never block the commit */ }
         updateJob(vault, jobId, { status: 'done', checkpoint_step: HEARTBEAT_STEPS.length }, 'ceo', `- step ${i + 1} commit: ${hash ?? commitNote}`);
         vault.events.emit({ type: 'job.done', agent: 'ceo', job: jobId, payload: { type: 'ceo.heartbeat', summary: `heartbeat ${hbId}` } });
         vault.events.emit({ type: 'heartbeat.completed', agent: 'ceo', job: jobId, payload: { id: hbId, commit: hash, run: state.runPath, trigger: job.title, gathered_at: state.gathered_at ?? nowIso() } });

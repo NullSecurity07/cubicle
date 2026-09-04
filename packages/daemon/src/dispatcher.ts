@@ -1,10 +1,10 @@
 import {
-  type Vault, listInbox, readJob, updateJob, listJobs, nowIso, parseNote, stringifyNote, createJob, RoleFrontmatter, type InboxFrontmatter,
+  type Vault, listInbox, readJob, updateJob, cancelJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
 } from '@cubicle/core';
-import { createRoleToolClient, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
-import { findAnswer } from '@cubicle/tools';
+import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
+import { findAnswer, messagePath } from '@cubicle/tools';
 import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
-import { applyHire, applyFire, applyReorg } from './evolution.js';
+import { applyHire, applyFire, applyReorg, charterDiffSection } from './evolution.js';
 import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
 
 /** kind → allowed targets. Everything else leaves the note unresolved with a warning (an approval must mean what its title says). */
@@ -36,6 +36,8 @@ export interface DispatcherDeps {
   wake?: () => void;
   onRoleHired?: (role: string) => void;
   onRoleFired?: (role: string) => void;
+  /** How long a question may go unanswered before it escalates to the CEO; defaults to two heartbeat intervals. */
+  questionWaitMs?: number;
   guardrails?: { check(tool: string, args: Record<string, unknown>, ctx: ToolContext): Promise<string | null> | string | null }[];
 }
 
@@ -64,25 +66,46 @@ function retryDue(vault: Vault, note: { path: string; data: InboxFrontmatter }):
 /** Execute a stored call as the daemon, with the original role's permissions and the stored idempotency key. */
 export async function executeStoredCall(deps: DispatcherDeps, note: { path: string; data: InboxFrontmatter }): Promise<{ ok: boolean; text: string }> {
   const call = note.data.call!;
-  // At-most-once: mark the note (and the job) BEFORE running the external call.
-  if ((note.data as { executing_at?: string }).executing_at) return { ok: false, text: 'a previous attempt was interrupted after starting this call; not re-running it (lost result)' };
-  deps.vault.updateNote(note.path, (n) => ({ data: { ...n.data, executing_at: nowIso() }, body: n.body }), 'daemon');
+  // A guardrail refused this call inside the tool layer after the owner approved it. The handler provably
+  // never ran, but the idempotency key is already in the job's at-most-once ledger and that ledger is
+  // append-only, so the call cannot be retried under this approval. Say so, rather than reporting it as
+  // interrupted or already executed; the owner needs a fresh proposal once the reason no longer applies.
+  const vetoed = (note.data as { blocked_by_guardrail?: string }).blocked_by_guardrail;
+  if (vetoed) return { ok: false, text: `blocked by a guardrail after approval and not executed (${vetoed}); its idempotency key is spent, so file a fresh proposal once that no longer applies` };
   const roleId = call.role ?? note.data.from;
   const roleNote = deps.vault.readNoteOrNull(`Roles/${roleId}.md`);
   if (!roleNote) return { ok: false, text: `no charter for ${roleId}` };
   const role = RoleFrontmatter.parse(roleNote.data);
   const jobId = call.job ?? note.data.job ?? null;
+  // The approval is older than the config: the tool's mode may have moved to `never` (in tools.yaml, in this
+  // role's charter, or in the owner's preferences) since the proposal was filed. The wrapper would refuse the
+  // call anyway, but only after the idempotency key was spent, so the check happens here instead and the key
+  // stays unspent. Note that the proposal itself is finished either way: `dispatchProposals` stamps `resolved_at`
+  // on the note straight after this returns, so relaxing the mode does not re-dispatch it — the owner has to
+  // clear `resolved_at` (or file a fresh proposal) for the unspent key to be worth anything (M7).
+  const mode = resolveMode(call.tool, deps.toolsConfig, role, deps.vault.ownerPreferences());
+  if (mode === 'never') {
+    const reason = `${call.tool} is set to mode never; the owner's configuration outranks this approval`;
+    deps.vault.events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason, approved: true } });
+    return { ok: false, text: `blocked even though approved: ${reason}` };
+  }
+  // At-most-once: mark the note (and the job) BEFORE running the external call.
+  if ((note.data as { executing_at?: string }).executing_at) return { ok: false, text: 'a previous attempt was interrupted after starting this call; not re-running it (lost result)' };
+  deps.vault.updateNote(note.path, (n) => ({ data: { ...n.data, executing_at: nowIso() }, body: n.body }), 'daemon');
   const job = jobId ? readJob(deps.vault, jobId) : null;
   if (job && job.data.side_effects_done.includes(call.idempotency_key)) return { ok: true, text: 'already executed (idempotency key recorded)' };
   if (job) updateJob(deps.vault, job.data.id, { side_effects_done: [...job.data.side_effects_done, call.idempotency_key] }, 'daemon', `- ${nowIso()}: ${call.tool} ATTEMPTING by the daemon after owner approval (${call.idempotency_key})`);
-  const ctx: ToolContext = { vault: deps.vault, events: deps.vault.events, roleId, role, jobId, config: deps.toolsConfig, env: deps.env, scheduler: deps.scheduler, workspace: `.cubicle/workspace/${jobId ?? 'daemon'}`, now: () => new Date(), idempotencyKey: call.idempotency_key };
+  const ctx: ToolContext = { vault: deps.vault, events: deps.vault.events, roleId, role, jobId, config: deps.toolsConfig, env: deps.env, scheduler: deps.scheduler, workspace: `.cubicle/workspace/${jobId ?? 'daemon'}`, now: () => new Date(), idempotencyKey: call.idempotency_key, guardrails: deps.guardrails };
   const def = deps.registry.get(call.tool);
   if (!def) return { ok: false, text: `unknown tool ${call.tool}` };
   for (const g of deps.guardrails ?? []) { const v = await g.check(call.tool, call.args, ctx); if (v) { deps.vault.events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason: v, approved: true } }); return { ok: false, text: `blocked even though approved: ${v}` }; } }
   const client = await createRoleToolClient([def], ctx);
   try {
     const res = await client.call(call.tool, call.args, { idempotencyKey: call.idempotency_key });
-    if (job) updateJob(deps.vault, job.data.id, {}, 'daemon', `- ${nowIso()}: ${call.tool} → ${res.ok ? 'ok' : 'failed'}`);
+    // The wrapper can still veto a call this function's pre-check cleared (a guardrail whose answer moved
+    // between the two). Record that on the note so a re-approval reports the block instead of the spent key.
+    if (res.guardrailBlocked) deps.vault.updateNote(note.path, (n) => ({ data: { ...n.data, blocked_by_guardrail: res.guardrailBlocked }, body: n.body }), 'daemon');
+    if (job) updateJob(deps.vault, job.data.id, {}, 'daemon', `- ${nowIso()}: ${call.tool} → ${res.guardrailBlocked ? `BLOCKED (${res.guardrailBlocked})` : res.ok ? 'ok' : 'failed'}`);
     return { ok: res.ok, text: res.text };
   } finally {
     await client.close();
@@ -112,6 +135,21 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
       continue;
     }
     if (d.kind === 'message' || d.resolved_at) continue;
+    // D6: the owner should not have to diff a charter by eye. An unapproved charter_change gets a `## Diff`
+    // block written above its "## Proposed content" showing exactly what the rewrite changes. Only unapproved
+    // notes are touched, so this system write never lands between the owner's flip and `isOwnerChanged`.
+    if (d.kind === 'charter_change' && d.approved === null && d.target && !/^## Diff$/m.test(note.body)) {
+      const section = charterDiffSection(vault, d.target, fenced(note.body));
+      // The section is written even when there is nothing to diff: it tells the owner why, and its `## Diff`
+      // heading is what stops this being recomputed on every tick while the note waits for approval.
+      // Function replacement, not a string: a diff line containing `$&` or `$1` must land verbatim.
+      vault.updateNote(note.path, (nn) => ({
+        data: nn.data,
+        body: nn.body.includes('## Proposed content')
+          ? nn.body.replace('## Proposed content', () => section + '## Proposed content')
+          : nn.body.trimEnd() + '\n\n' + section.trimEnd() + '\n',
+      }), 'daemon');
+    }
     // Constitution autonomy flags: the owner pre-approved these kinds; the daemon approves agent-created notes itself.
     const c = vault.constitution();
     const autoApproved = d.approved === null && ((d.kind === 'hire' && c.auto_approve_hire && d.from === 'ceo') || (d.kind === 'charter_change' && c.auto_approve_charter_changes && d.from === 'cto') || (d.kind === 'reorg' && c.auto_approve_reorg && d.from === 'ceo'));
@@ -216,13 +254,71 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     vault.events.emit({ type: 'proposal.resolved', agent: 'owner', job: d.job ?? null, payload: { id: d.id, kind: d.kind, approved: d.approved, outcome } });
     n++;
   }
-  n += requeueUnblocked(vault);
+  n += requeueUnblocked(vault, deps.questionWaitMs);
   if (n) deps.wake?.();
   return n;
 }
 
+/** Two heartbeat intervals (spec §8: 6 h) — the same default `defaultConfig` computes. */
+export const DEFAULT_QUESTION_WAIT_MS = 12 * 3600_000;
+
+/** The colleague question `id` as it was written into some role's `Messages/` note: who asked, who owes an answer, and what was asked. */
+export function findQuestion(vault: Vault, id: string): { to: string; from: string; body: string } | null {
+  const marker = `<!-- id:${id}`;
+  for (const rel of vault.list('Messages', { ext: '.md' })) {
+    const text = vault.readTextOrNull(rel);
+    if (!text || !text.includes(marker)) continue;
+    const to = rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/, '');
+    const section = text.split(/\n(?=## )/).find((s) => s.includes(marker));
+    const m = section?.match(/^## \S+ from (\S+) \(\w+\)[^\n]*\n([\s\S]*)$/);
+    return { to, from: m?.[1] ?? 'unknown', body: (m?.[2] ?? '').trim() };
+  }
+  return null;
+}
+
+/**
+ * A colleague who has not answered across two whole heartbeat intervals is not going to. Rather than leave the
+ * asker blocked forever (the only other exit is the owner), hand the question to the CEO: the asker is requeued so
+ * it can proceed or re-ask, the CEO gets the question in `Messages/ceo.md` and a `colleague.answer` job for it.
+ */
+function escalateQuestionToCeo(vault: Vault, job: JobFrontmatter, id: string): void {
+  const q = findQuestion(vault, id);
+  const recipient = q?.to ?? 'unknown';
+  const question = q?.body ?? '(the question text is no longer in Messages/)';
+  const answerJob = idFromKey('job', `escalate:${id}`);
+  const already = !!readJob(vault, answerJob);
+  if (!already) {
+    // The recipient still holds the colleague.answer job this question created (packages/tools/src/tools/
+    // colleague.ts). Left alive, two roles would answer the same question: two models spend quota on it and two
+    // `re:<id>` sections land on an asker that is no longer blocked. Cancel it — unless it is already running or
+    // finished, because yanking a job mid-step loses work and the answer may be seconds away.
+    const owed = idFromKey('job', `answer:${id}`);
+    const recipientJob = readJob(vault, owed);
+    const superseded = !!recipientJob && ['queued', 'blocked'].includes(recipientJob.data.status);
+    // The CEO's job is the re-entry guard for this whole escalation, so it is created first (M2). Written after
+    // the handoff, a kill in between re-ran everything on the next tick: the handoff was appended a second time,
+    // and because the recipient's job had by then been cancelled, that second copy told the CEO the recipient
+    // "is still working on" a job nothing was working on. Creating it first makes a repeat a no-op instead.
+    createJob(vault, {
+      id: answerJob, type: 'colleague.answer', assigned: 'ceo', priority: 2,
+      title: `Answer ${job.assigned} (escalated): ${question.slice(0, 60)}`,
+      parent: job.id, links: [`[[${job.id}]]`],
+      goal: `${job.assigned} asked ${recipient} this question ${Math.round((Date.now() - Date.parse(job.blocked_on?.since ?? nowIso())) / 3600_000)} h ago and got no answer, so it is yours now:\n\n> ${question.split('\n').join('\n> ')}\n\nAnswer with colleague.message(to: "${job.assigned}", body: "re:${id} <your answer>"). The "re:${id}" prefix is what unblocks their job, so keep it exactly.`,
+      done_when: `${job.assigned} has an answer to ${id} in Messages/${job.assigned}.md.`,
+    }, 'daemon');
+    if (superseded) cancelJob(vault, owed, 'daemon', `${job.assigned}'s question ${id} went unanswered and was escalated to ceo as ${answerJob}`);
+    const handover = superseded
+      ? `${recipient}'s own answer job [[${owed}]] has been cancelled, so this question is yours alone.`
+      : recipientJob
+        ? `${recipient} is still working on [[${owed}]], so check there before answering — you would both be replying to the same question.`
+        : `${recipient} has no open job for it.`;
+    vault.appendText(messagePath('ceo'), `\n## ${nowIso()} from daemon (handoff) <!-- id:msg_${answerJob} job:${job.id} -->\n\n${job.assigned} asked ${recipient} a question on job [[${job.id}]] and ${recipient} has not answered it. The question (${id}):\n\n> ${question.split('\n').join('\n> ')}\n\n${handover} Answer it yourself or reassign it; ${job.assigned} has been requeued in the meantime.\n`, 'daemon', { job: job.id });
+  }
+  vault.events.emit({ type: 'daemon.warning', agent: 'daemon', job: job.id, payload: { where: 'question_timeout', message: `${recipient} never answered ${job.assigned}'s question ${id}; escalated to ceo as ${answerJob}`, id, escalated_to: 'ceo' } });
+}
+
 /** Requeue blocked jobs whose wait condition (answered message, finished sub-job, resolved proposal) is satisfied. */
-export function requeueUnblocked(vault: Vault): number {
+export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION_WAIT_MS): number {
   let n = 0;
   for (const j of listJobs(vault, { status: 'blocked' })) {
     const b = j.blocked_on;
@@ -237,6 +333,12 @@ export function requeueUnblocked(vault: Vault): number {
       ready = (!!sub && ['done', 'failed', 'cancelled'].includes(sub.data.status)) || Date.now() - Date.parse(b.since) > PLAN_WAIT_BUDGET_MS;
     } else if (b.kind === 'message') {
       ready = !!findAnswer(vault, j.assigned, b.id) || !!listInbox(vault).find((x) => x.data.id === b.id && x.data.answered);
+      if (!ready && Date.now() - Date.parse(b.since) > questionWaitMs) {
+        escalateQuestionToCeo(vault, j, b.id);
+        updateJob(vault, j.id, { status: 'queued', blocked_on: undefined }, 'daemon', `- ${nowIso()}: unanswered question ${b.id} escalated to ceo`);
+        n++;
+        continue;
+      }
     } else if (b.kind === 'quota') {
       const retries = Number((b as { retries?: number }).retries ?? 0);
       ready = Date.now() - Date.parse(b.since) > Math.min(10 * 2 ** retries, 240) * 60_000; // 10 → 20 → 40 … ≤ 240 min

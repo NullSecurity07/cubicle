@@ -17,6 +17,7 @@ gates:
   cto.plan: []
   cto.compress_charters: []
   ceo.heartbeat: []
+  colleague.answer: []
 
 criteria:
   engineer.ship: "The change builds and runs; Site/ has no broken links; tests or a smoke check exist; the job's Done when holds."
@@ -30,3 +31,4 @@ criteria:
   qa.review: "Findings cite files or output; verdict pass or return."
   coo.verify: "Evidence-based; exactly one lesson."
   company.plan: "One objective section per team."
+  colleague.answer: "The question is answered with colleague.message(re:<id>)"

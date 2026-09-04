@@ -130,10 +130,14 @@ describe('final critique', () => {
   it('the banned-tactics classifier warns instead of failing silently', async () => {
     const { classifyBannedTactic } = await import('../src/guardrails.js');
     const warnings: string[] = [];
+    // Distinct texts: a verdict is memoised per (text, tactics), so the same text would be asked once.
     const broken = { async chat() { throw new Error('ollama down'); } } as never;
     expect(await classifyBannedTactic(broken, 'buy now', ['fake urgency'], (m) => warnings.push(m))).toBeNull();
     const noJson = { async chat() { return { content: 'sure thing' }; } } as never;
-    expect(await classifyBannedTactic(noJson, 'buy now', ['fake urgency'], (m) => warnings.push(m))).toBeNull();
+    expect(await classifyBannedTactic(noJson, 'buy today', ['fake urgency'], (m) => warnings.push(m))).toBeNull();
+    expect(warnings.length).toBe(2);
+    // A repeat of a failed classification is served from the memo and does not warn again.
+    expect(await classifyBannedTactic(broken, 'buy now', ['fake urgency'], (m) => warnings.push(m))).toBeNull();
     expect(warnings.length).toBe(2);
   });
 });

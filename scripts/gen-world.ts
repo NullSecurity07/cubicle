@@ -3,7 +3,7 @@
  * Tile ids index a tileset the viewer draws at runtime (no image assets): see packages/viewer/src/world/tileset.ts.
  * Usage: pnpm exec tsx scripts/gen-world.ts
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
@@ -88,6 +88,13 @@ const map = {
   ],
   properties: [{ name: 'generated', type: 'string', value: 'scripts/gen-world.ts' }],
 };
-const out = path.join(root, 'config/world/office.json');
-writeFileSync(out, JSON.stringify(map));
-console.log(`wrote ${out}: ${W}×${H} tiles, ${objects.length} objects, ${desks.length} desks`);
+// Both destinations are generated: config/world/office.json is the checked-in source of truth and
+// packages/viewer/public/office.json is the copy the viewer serves at /office.json. They must not drift.
+// `--out <dir>` writes the same pair under another root, so a test can regenerate into a temp directory and
+// compare the committed copies against fresh output without a build having rewritten them first.
+const json = JSON.stringify(map);
+const flag = process.argv.indexOf('--out');
+const outRoot = flag > -1 && process.argv[flag + 1] ? path.resolve(process.argv[flag + 1]) : root;
+const outs = [path.join(outRoot, 'config/world/office.json'), path.join(outRoot, 'packages/viewer/public/office.json')];
+for (const out of outs) { mkdirSync(path.dirname(out), { recursive: true }); writeFileSync(out, json); }
+console.log(`wrote ${outs.join(' and ')}: ${W}×${H} tiles, ${objects.length} objects, ${desks.length} desks`);

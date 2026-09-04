@@ -4,6 +4,9 @@
  */
 import type { View } from './content.js';
 
+/** What the "Surprise me" button sends; the daemon matches this to draft three company ideas. */
+export const SURPRISE_ME = 'surprise me';
+
 export class Ui {
   private drawer = document.getElementById('panel')!;
   private dTitle = document.getElementById('panel-title')!;
@@ -38,6 +41,9 @@ export class Ui {
     this.form.addEventListener('submit', (e) => { e.preventDefault(); const t = this.input.value.trim(); if (t && this.onChat) { this.onChat(t); this.input.value = ''; } });
     window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (this.currentDoc) this.closeDoc(); else this.closeDrawer(); } });
     document.addEventListener('click', (e) => {
+      // "Surprise me" goes through the same path as the composer, so the daemon's existing regex fires.
+      const act = (e.target as HTMLElement).closest<HTMLElement>('[data-action="surprise-me"]');
+      if (act && this.onChat) { e.preventDefault(); this.onChat(SURPRISE_ME); return; }
       const el = (e.target as HTMLElement).closest<HTMLElement>('[data-open]');
       if (el && this.onOpen) { e.preventDefault(); this.onOpen(el.dataset.open!); }
     });

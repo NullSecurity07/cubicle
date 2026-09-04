@@ -8,17 +8,17 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 |---|---|
 | `daemon.started` | pid, port, roles |
 | `daemon.stopping` | active_jobs |
-| `daemon.warning` | where, message — never silent |
+| `daemon.warning` | where, message — never silent; a question timeout adds id (the unanswered message) and escalated_to |
 | `heartbeat.started` | trigger |
 | `heartbeat.completed` | id, commit, run (Runs/ path), gathered_at |
 | `job.queued` | type, title, assigned, priority |
 | `job.started` | attempt, from_step, resumed |
-| `job.checkpoint` | reserved |
+| `job.checkpoint` | `in_review` (the next gate job type the job now owes, or absent when it has none left), `summary` |
 | `job.blocked` | reason (approval | message | job | quota), id |
 | `job.done` | summary, artifacts, metrics, lessons |
 | `job.failed` | reason, requeued, attempt |
 | `job.interrupted` | checkpoint_step (daemon restart) |
-| `job.cancelled` | at_step |
+| `job.cancelled` | at_step, reason — one per stop: a job cancelled while queued or blocked is announced by whatever cancelled it, a running one by its own loop at the next tool step |
 | `agent.thinking` | step |
 | `agent.tool_call` | tool, summary (≤120 chars of args), step |
 | `agent.tool_result` | tool, ok, step, summary |
@@ -40,15 +40,16 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `router.call` | provider, model, tier, tokens {prompt_tokens, completion_tokens}, tools, downgraded |
 | `router.downgraded` | requested_tier, chosen_tier, provider, model, tried |
 | `quota.updated` | provider, model, rpm_used, rpd_used, tpm_used, cooling_until, limits |
-| `vault.wrote` | path, sha, by (role | daemon | init | <role>/shell), deleted?, moved_from? |
-| `owner.edited` | path, area, deleted, wakes_heartbeat |
+| `vault.wrote` | path, sha, by (role | daemon | init | <role>/shell), deleted?, moved_from?, generated? (true for daemon-generated files such as `Jobs/queue.md`, `Metrics/quota.md`, `Metrics/daily.md`; the viewer ignores these for staleness) |
+| `owner.edited` | path, area, deleted, wakes_heartbeat; a startup sweep of comments left while the daemon was down adds offline: true and comments (how many new %%cubicle: …%% comments the file gained) |
+| `owner.feedback_delivered` | sha (sha1 of the trimmed `feedback:` line), source (`Memory/owner_preferences.md`) — emitted once per entry, at the commit of the heartbeat whose gather step collected it, so an entry added mid-cycle is deferred rather than lost, it is never re-delivered, and `cubicle rebuild` keeps the marker |
 | `team.planned` | team, jobs (ids the team.plan job scheduled) |
 | `review.passed` | gate, findings |
 | `review.returned` | gate, findings |
 | `plan.vetoed` | findings, vetoes (count so far this cycle) |
 | `research.delivered` | emitted on the requester's research job |
 | `org.changed` | reason (migration | reorg | fire), changed | teams | role |
-| `guardrail.blocked` | tool, reason, step — every refused call, never silent |
+| `guardrail.blocked` | tool, reason — every refused call, never silent. The tool wrapper emits just those two; the harness loop and the dispatcher, which pre-check before spending an idempotency key, add step and approved: true; a refused stored call in a proposal note adds proposal and kind instead |
 
 ## WebSocket (ws://127.0.0.1:7411?token=…)
 

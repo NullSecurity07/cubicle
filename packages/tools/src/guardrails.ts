@@ -6,15 +6,46 @@ export interface Guardrail {
   check(tool: string, args: Record<string, unknown>, ctx: ToolContext): Promise<string | null> | string | null;
 }
 
-const OUTBOUND_TEXT_TOOLS: Record<string, string[]> = { 'email.send': ['subject', 'body', 'html'], 'social.post': ['title', 'body', 'text'], 'mock.outbound': ['body'] };
+/** Every tool that can carry outbound copy, and how to pull that copy out of its arguments. */
+const OUTBOUND_TEXT_TOOLS: Record<string, (args: Record<string, unknown>) => string> = {
+  'email.send': fields('subject', 'body', 'html'),
+  'social.post': fields('title', 'body', 'text'),
+  'mock.outbound': fields('body'),
+  // social.post tells the agent to finish the post through browser.submit, so the values it fills in
+  // are outbound copy too and must reach the classifier (audit gap 2).
+  'browser.submit': (args) => Object.values((args.fields ?? {}) as Record<string, unknown>).map((v) => (typeof v === 'string' ? v : '')).join('\n'),
+};
+
+function fields(...keys: string[]): (args: Record<string, unknown>) => string {
+  return (args) => keys.map((k) => (typeof args[k] === 'string' ? args[k] : '')).join('\n');
+}
 
 function textOf(tool: string, args: Record<string, unknown>): string {
-  return (OUTBOUND_TEXT_TOOLS[tool] ?? []).map((k) => (typeof args[k] === 'string' ? args[k] : '')).join('\n').trim();
+  return (OUTBOUND_TEXT_TOOLS[tool]?.(args) ?? '').trim();
 }
+
+/**
+ * A verdict is remembered briefly per (text, tactics), because the same call is now classified twice:
+ * once by the caller's pre-check (harness loop, proposal dispatcher) and once inside the MCP wrapper.
+ * Without this the second evaluation would cost another local model round-trip and, when the model is
+ * down, emit the fail-open warning a second time. Short TTL and a hard cap, so the constitution can
+ * change and nothing is retained.
+ */
+const CLASSIFIER_TTL_MS = 60_000;
+const CLASSIFIER_MAX = 200;
+const classifierMemo = new Map<string, { at: number; verdict: string | null }>();
 
 /** Ask the smallest local model whether text uses a banned tactic. Fails closed on an explicit "yes", open on no model. */
 export async function classifyBannedTactic(router: Router, text: string, tactics: string[], onWarn?: (m: string) => void): Promise<string | null> {
   if (!text || tactics.length === 0) return null;
+  const memoKey = `${tactics.join('\u0000')}\u0001${text}`;
+  const hit = classifierMemo.get(memoKey);
+  if (hit && Date.now() - hit.at < CLASSIFIER_TTL_MS) return hit.verdict;
+  const remember = (verdict: string | null): string | null => {
+    if (classifierMemo.size >= CLASSIFIER_MAX) classifierMemo.clear();
+    classifierMemo.set(memoKey, { at: Date.now(), verdict });
+    return verdict;
+  };
   try {
     const r = await router.chat({ tier: 'local', needsTools: false, privacy: 'local', roleId: 'guardrail' }, {
       messages: [
@@ -24,19 +55,20 @@ export async function classifyBannedTactic(router: Router, text: string, tactics
       ], maxTokens: 60,
     });
     const m = (r.content ?? '').match(/\{[\s\S]*\}/);
-    if (!m) { onWarn?.('banned_tactics classifier returned no JSON; failing open'); return null; }
+    if (!m) { onWarn?.('banned_tactics classifier returned no JSON; failing open'); return remember(null); }
     const j = JSON.parse(m[0]) as { violates?: boolean; tactic?: string };
-    return j.violates ? `banned tactic detected: ${j.tactic || 'unspecified'}` : null;
+    return remember(j.violates ? `banned tactic detected: ${j.tactic || 'unspecified'}` : null);
   } catch (err) {
     onWarn?.(`banned_tactics classifier unavailable (${(err as Error).message.slice(0, 80)}); failing open`);
-    return null;
+    return remember(null);
   }
 }
 
 /**
  * Constitution enforcement at the tool layer (spec §7): max_emails_per_day, banned_channels, banned_tactics
  * (local classifier), never_modify (vault guard already), pii_local_only (harness routing). Emits nothing itself;
- * the harness turns a non-null reason into `guardrail.blocked`.
+ * the caller turns a non-null reason into `guardrail.blocked` — the MCP wrapper for every call, and the
+ * harness loop and proposal dispatcher for the calls they refuse before reaching it.
  */
 export function constitutionGuardrail(router?: Router): Guardrail {
   return {

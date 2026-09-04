@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { Vault } from './vault.js';
 import { autoCommit } from './git.js';
 import { listFilesRecursive, sha256, atomicWriteSync } from './fs.js';
+import { placeholderSquare } from './png.js';
+import { ENV_EXAMPLE } from './env-example.js';
+import { parseNote } from './frontmatter.js';
 
 /** Repo root, resolved from this file (works from src/ via tsx and from dist/). */
 export function repoRoot(): string {
@@ -13,6 +16,18 @@ export function repoRoot(): string {
 
 export function templateDir(): string {
   return path.join(repoRoot(), 'vault-template');
+}
+
+export const BRAND_LOGO = 'Brand/logo.png';
+
+/**
+ * The placeholder logo a new vault gets: a 64px square in the brand's primary colour with a centred accent
+ * square, drawn from `Brand/palette.md` (defaults when it is missing or has no colours). Exported so a vault
+ * scaffolded before `Brand/logo.png` existed can be given the very same image later.
+ */
+export function placeholderLogo(paletteMarkdown: string | null): Buffer {
+  const palette = (paletteMarkdown ? parseNote(paletteMarkdown).data : {}) as { primary?: string; accent?: string };
+  return placeholderSquare(64, palette.primary ?? '#1f2937', palette.accent ?? '#f59e0b');
 }
 
 export interface ScaffoldResult {
@@ -38,11 +53,20 @@ export async function scaffoldVault(target: string, opts: { force?: boolean; mem
     mkdirSync(path.dirname(dst), { recursive: true });
     cpSync(path.join(tpl, rel), dst);
   }
-  const envExample = path.join(repoRoot(), '.env.example');
-  if (existsSync(envExample) && !existsSync(path.join(abs, '.env.example'))) cpSync(envExample, path.join(abs, '.env.example'));
+  const generated: string[] = [];
+  if (!existsSync(path.join(abs, '.env.example'))) {
+    atomicWriteSync(path.join(abs, '.env.example'), ENV_EXAMPLE);
+    generated.push('.env.example');
+  }
+  const logo = path.join(abs, BRAND_LOGO);
+  if (!existsSync(logo)) {
+    const paletteFile = path.join(abs, 'Brand', 'palette.md');
+    atomicWriteSync(logo, placeholderLogo(existsSync(paletteFile) ? readFileSync(paletteFile, 'utf8') : null));
+    generated.push(BRAND_LOGO);
+  }
 
   const vault = Vault.open(abs, { memory: opts.memoryDb });
-  for (const rel of files) {
+  for (const rel of [...files, ...generated]) {
     const p = path.join(abs, rel);
     if (!existsSync(p) || statSync(p).isDirectory()) continue;
     const buf = readFileSync(p);
@@ -51,7 +75,7 @@ export async function scaffoldVault(target: string, opts: { force?: boolean; mem
     vault.events.emit({ type: 'vault.wrote', agent: 'init', payload: { path: rel, sha, by: 'init' } });
   }
   const commit = await autoCommit(abs, 'cubicle: init vault');
-  return { vault, files, commit };
+  return { vault, files: [...files, ...generated], commit };
 }
 
 export { atomicWriteSync };

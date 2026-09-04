@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import YAML from 'yaml';
 import {
-  type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
-  loadOrg, leadOf, teamOf, openSubtree, expandProcess,
+  type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
+  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -162,7 +163,7 @@ export async function applyFire(vault: Vault, note: { path: string; data: InboxF
     } else if (standIn) {
       updateJob(vault, j.id, { assigned: standIn }, 'daemon', `- ${nowIso()}: ${target} was fired; job reassigned to ${standIn} (tools cover it)`);
     } else {
-      updateJob(vault, j.id, { status: 'cancelled' }, 'daemon', `- ${nowIso()}: cancelled (role ${target} left; no team-mate's tools cover it)`); // running jobs stop at their next tool step
+      cancelJob(vault, j.id, 'daemon', `role ${target} left; no team-mate's tools cover it`); // running jobs stop at their next tool step
       for (const dep of allJobs.filter((y) => y.depends_on.includes(j.id) && !['done', 'failed', 'cancelled'].includes(y.status))) {
         updateJob(vault, dep.id, { status: 'blocked', blocked_on: { kind: 'owner', id: j.id, since: nowIso() } }, 'daemon', `- ${nowIso()}: dependency ${j.id} cancelled (role ${target} left); needs the owner`);
       }
@@ -248,6 +249,26 @@ export function maybeEnqueueCharterCompression(vault: Vault): string | null {
   }, 'daemon');
 }
 
+/**
+ * The `## Diff` block a `charter_change` proposal owes the owner: what its "## Proposed content" would actually
+ * change in the charter on disk, as a unified diff of the two bodies (frontmatter is carried over by the
+ * dispatcher, so diffing it would only show noise).
+ *
+ * Always returns a section, never null. "Nothing to diff" is itself worth telling the owner — a proposal that
+ * would change nothing, or one that forgot its fence, is a proposal not worth approving — and it doubles as the
+ * marker that stops the dispatcher recomputing this on every tick for as long as the note sits unapproved.
+ */
+export function charterDiffSection(vault: Vault, target: string, proposedContent: string | null): string {
+  const block = (text: string) => `## Diff\n\n${text}\n\n`;
+  const current = vault.readNoteOrNull(target);
+  if (!current) return block(`\`${target}\` does not exist, so there is nothing to compare. A charter_change may only edit an existing role.`);
+  if (!proposedContent) return block('This proposal has no fenced "## Proposed content" charter, so there is nothing to compare.');
+  let proposedBody: string;
+  try { proposedBody = parseNote(proposedContent).body; } catch { return block('The proposed charter could not be parsed, so there is nothing to compare.'); }
+  const diff = unifiedDiff(current.body, proposedBody, `${target} (current)`, `${target} (proposed)`).trim();
+  return diff ? block('```diff\n' + diff + '\n```') : block('No change to the charter body; only the frontmatter or the formatting would differ.');
+}
+
 // ---------- experiments (spec §9.4) ----------
 export interface ExperimentNote { path: string; id: string; status: string; review_date?: string; owner?: string; title?: string; metric?: string }
 
@@ -275,7 +296,110 @@ export function enqueueExperimentReviews(vault: Vault, now = new Date()): string
 }
 
 // ---------- owner feedback (spec §9.6) ----------
-export interface OwnerFeedback { role: string; source: string; text: string }
+/**
+ * One thing the owner said, addressed to a role. `kind` says which of the three channels it came from, because
+ * each is retired differently: a `comment` by advancing the note's comment baseline, a `preference` by an
+ * `owner.feedback_delivered` event, a `rating` by the `rating_seen` stamp written when it is collected.
+ */
+export interface OwnerFeedback { role: string; source: string; text: string; kind: 'comment' | 'preference' | 'rating' }
+
+export const OWNER_PREFERENCES = 'Memory/owner_preferences.md';
+
+/** Identity of a `feedback:` entry: sha1 of its trimmed text, so re-indenting or re-ordering the list is not a new entry. */
+export function feedbackSha(text: string): string {
+  return createHash('sha1').update(text.trim()).digest('hex');
+}
+
+function deliveredFeedbackShas(vault: Vault): Set<string> {
+  return new Set(vault.events.query({ types: ['owner.feedback_delivered'] }).map((e) => String(e.payload.sha)));
+}
+
+/** The shas of the `feedback:` entries in `feedback` that come from the owner's preferences, in order. */
+export function preferenceFeedbackShas(feedback: OwnerFeedback[]): string[] {
+  return feedback.filter((f) => f.kind === 'preference').map((f) => feedbackSha(f.text));
+}
+
+/**
+ * Record that these `feedback:` entries have now been put in front of the CEO, so the next cycle leaves them out.
+ *
+ * Takes the shas gathered at the *start* of the cycle, not a fresh read: `Memory/` is not a heartbeat-wake area,
+ * so an entry the owner adds mid-cycle is in no prompt this cycle. Re-reading here would mark it delivered
+ * without ever having shown it, and `collectOwnerFeedback` would then filter it out of every future cycle — the
+ * line would be lost for good, which is the very failure this machinery exists to prevent. Marking the gathered
+ * shas instead keeps the entries available to a mid-cycle plan rewrite and re-delivers everything if the cycle
+ * never finished. Returns how many entries it marked.
+ */
+export function markFeedbackDelivered(vault: Vault, shas: string[]): number {
+  const already = deliveredFeedbackShas(vault);
+  let n = 0;
+  for (const sha of shas) {
+    if (already.has(sha)) continue;
+    already.add(sha);
+    vault.events.emit({ type: 'owner.feedback_delivered', agent: 'ceo', payload: { sha, source: OWNER_PREFERENCES } });
+    n++;
+  }
+  return n;
+}
+
+/**
+ * For every note whose `%%cubicle: …%%` comments this cycle is showing the CEO, the note's full comment list as
+ * it stood when they were gathered. Pass the result to {@link markCommentsDelivered} at the cycle's commit.
+ *
+ * The full list, not just the new comments: the baseline it becomes means "everything present at the last system
+ * write", so keeping only the new ones would drop the older comments out of the baseline and make them new again.
+ * A gather-time snapshot, not a fresh read at commit, for the same reason D5 records shas at gather — a comment
+ * the owner types mid-cycle is in no prompt this cycle and must survive into the next one.
+ */
+export function gatheredCommentBaselines(vault: Vault, feedback: OwnerFeedback[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const f of feedback) {
+    if (f.kind !== 'comment' || out[f.source]) continue;
+    const text = vault.readTextOrNull(f.source);
+    if (text !== null) out[f.source] = extractOwnerComments(text);
+  }
+  return out;
+}
+
+/**
+ * Retire the owner comments this cycle delivered, by advancing each note's recorded comment baseline.
+ *
+ * Without this the startup sweep (`collectOfflineOwnerComments`) re-reports the same comment after every restart
+ * for any note the system writes once and never rewrites — a run brief, a decision, a skill — because only a
+ * system write moved `written_sha.comments_json`, and `collectOwnerFeedback` then re-delivered it in the cycle
+ * that followed. A comment on yesterday's brief reached its author every morning, forever (I1).
+ *
+ * Merged with the baseline as it stands now rather than replacing it: a system rewrite mid-cycle has already
+ * recorded its own comments there, and dropping those would hand the agent's own text to the owner's author as
+ * owner feedback. Returns how many paths it advanced.
+ */
+export function markCommentsDelivered(vault: Vault, gathered: Record<string, string[]>): number {
+  let n = 0;
+  for (const [rel, comments] of Object.entries(gathered)) {
+    // No `written_sha` row means the system never wrote this note, so there is nothing to update; that path
+    // baselines against git HEAD instead and the heartbeat's own auto-commit retires it.
+    if (vault.writtenSha(rel) === null) continue;
+    vault.setWrittenComments(rel, [...new Set([...(vault.writtenComments(rel) ?? []), ...comments])]);
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Comments the owner typed while the daemon was down. The watcher starts with `ignoreInitial`, so nothing ever
+ * replays those edits and `collectOwnerFeedback` — which reads only `owner.edited` events — would never see them.
+ * This startup sweep compares each note's `%%cubicle: …%%` comments against the last version the system wrote
+ * (git HEAD as the fallback) and emits one `owner.edited { offline: true }` per file that gained some, which is
+ * exactly the shape the rest of the feedback path already consumes. Returns the paths it reported.
+ */
+export function collectOfflineOwnerComments(vault: Vault): string[] {
+  const out: string[] = [];
+  for (const { path: rel, added } of vault.commentsChangedSinceWritten()) {
+    const area = rel.split('/')[0];
+    vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: rel, area, deleted: false, offline: true, comments: added.length, wakes_heartbeat: HEARTBEAT_WAKE_AREAS.includes(area) } });
+    out.push(rel);
+  }
+  return out;
+}
 
 /**
  * %%cubicle: …%% comments in files the owner edited since `since`, attributed to the note's author role; plus owner_preferences
@@ -297,13 +421,19 @@ export function collectOwnerFeedback(vault: Vault, since?: string): OwnerFeedbac
     const d = parseNote(text).data as Record<string, unknown>;
     const byName = rel.match(/^(?:Roles|Messages)\/([a-z0-9_-]+)\.md$/)?.[1];
     const role = String(byName ?? d.assigned ?? d.decided_by ?? d.from ?? d.by ?? d.author ?? d.owner ?? (rel.startsWith('Site/') ? 'engineer' : rel.startsWith('Customers/') || rel.startsWith('Experiments/') ? 'head_of_growth' : rel.startsWith('Plans/') ? 'cto' : 'ceo'));
-    for (const c of comments) out.push({ role, source: rel, text: c });
+    for (const c of comments) out.push({ role, source: rel, text: c, kind: 'comment' });
   }
-  for (const f of vault.ownerPreferences().feedback) out.push({ role: 'ceo', source: 'Memory/owner_preferences.md', text: f });
+  const alreadyDelivered = deliveredFeedbackShas(vault);
+  for (const f of vault.ownerPreferences().feedback) {
+    // An entry the owner typed once must not be repeated to the CEO every cycle for the rest of the company's
+    // life; `owner.feedback_delivered` is the marker, and it lives in the event log so `cubicle rebuild` keeps it.
+    if (alreadyDelivered.has(feedbackSha(f))) continue;
+    out.push({ role: 'ceo', source: OWNER_PREFERENCES, text: f, kind: 'preference' });
+  }
   for (const rel of vault.list('Decisions', { ext: '.md' })) {
     const d = vault.readNoteOrNull(rel)?.data as { owner_rating?: string; decided_by?: string; rating_seen?: string } | undefined;
     if (d?.owner_rating === 'down' && !d.rating_seen) {
-      out.push({ role: String(d.decided_by ?? 'ceo'), source: rel, text: `the owner rated this decision down` });
+      out.push({ role: String(d.decided_by ?? 'ceo'), source: rel, text: `the owner rated this decision down`, kind: 'rating' });
       try { vault.updateNote(rel, (n) => ({ data: { ...n.data, rating_seen: nowIso() }, body: n.body }), 'daemon'); } catch { /* keep going */ }
     }
   }

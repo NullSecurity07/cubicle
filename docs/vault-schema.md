@@ -34,8 +34,8 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 
 | field | type | notes |
 |---|---|---|
-| `id` | string |  |
-| `type` | string |  |
+| `id` | string | the filename is authoritative: `Jobs/<id>.md` — if a note's `id` field disagrees with its filename (e.g. you copied `_template.md` by hand), the daemon rewrites `id` to match the filename and logs one `daemon.warning` |
+| `type` | string | known types: `engineer.ship`, `research`, `growth.outreach`, `growth.post`, `growth.seo`, `custom`, `team.plan`, `critic.premortem`, `qa.review`, `coo.verify`, `requester.review`, `company.plan`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`); each has a `config/gates.yaml` entry |
 | `title` | string |  |
 | `assigned` | string |  |
 | `status` | `queued` \| `running` \| `blocked` \| `in_review` \| `done` \| `failed` \| `cancelled` = `"queued"` | you may set `cancelled`; `blocked` without `blocked_on` = paused by you; `in_review` = the job's own work is done but it still owes a gate from `config/gates.yaml` |
@@ -134,6 +134,8 @@ Body: freeform notes, appended to every expanded step's job goal.
 | `status` | `proposed` \| `adopted` \| `reverted` = `"proposed"` |  |
 | `inputs` | string[] = `[]` |  |
 | `owner_rating` | `up` \| `down` \| null (optional) | set `up`/`down`; `down` reaches the author as feedback |
+| `rating_seen` | string (optional, ISO timestamp) | set to the delivery time once a `down` `owner_rating` has been delivered to the author as feedback, so it reaches them exactly once |
+| `review_date` | string (optional) | optional date the author records for a second look, mirroring the `## Review date` body section; nothing schedules it — only `Experiments/` review dates are acted on |
 
 Body sections: Context / Options considered / Chosen / Why / Expected effect / Review date.
 

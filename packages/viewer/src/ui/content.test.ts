@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { emptyState, applySnapshot, type Snapshot, type State } from '../state.js';
-import { viewFor, briefTitle, kindLabel, chatHtml, type Ctx } from './content.js';
-import { headlineFor, planBits, briefBits, cut } from '../world/headlines.js';
+import { briefTitle, kindLabel, chatHtml, type Ctx } from './content.js';
+import { headlineFor, viewFor } from './surfaces.js';
+import { planBits, briefBits, cut } from './headlines.js';
 
 const ctx: Ctx = { frames: {}, tokenQuery: '?token=t', vaultName: 'Cubicle' };
 const PLAN = `---\nupdated: "2026-09-03"\ncycle: 2\n---\n# Plan\n\n## Objective\nEstablish initial web presence and research the first organic channel.\n\n## This cycle\n- Scaffold initial static site from Brand/ (engineer.ship)\n- Research first organic acquisition channel (research)\n- [ ] Verify site deployment and review analytics setup\n\n## Next\n- Launch\n`;
@@ -58,6 +59,26 @@ describe('drawer and document views', () => {
     expect(viewFor('job:nope', s, ctx).html).toContain('not in the current snapshot');
   });
   it('bank shows a runway meter that turns hot near the limit', () => { expect(viewFor('bank', s, ctx).html).toContain('meter hot'); });
+  it('newsstand lists the decision feed under the brief', () => {
+    const withFeed: State = { ...s, feed: [{ ts: '2026-09-03T11:00:00.000Z', text: 'guardrail: max_emails_per_day' }, { ts: '2026-09-03T12:00:00.000Z', text: 'decision recorded: pricing (ceo)' }] };
+    const v = viewFor('newsstand', withFeed, ctx);
+    expect(v.html).toContain('decision recorded: pricing (ceo)');
+    expect(v.html).toContain('guardrail: max_emails_per_day');
+    expect(v.html.indexOf('decision recorded')).toBeLessThan(v.html.indexOf('guardrail:')); // newest first
+    expect(viewFor('newsstand', s, ctx).html).toContain('Nothing decided yet');
+  });
+  it('the newsstand headline falls back to the feed before the first brief', () => {
+    const noBrief: State = { ...s, latestRun: null, feed: [{ ts: '2026-09-03T12:00:00.000Z', text: 'proposal: Name the company' }] };
+    expect(headlineFor('newsstand', noBrief).lines[0]).toContain('Name the company');
+  });
+  it('bank shows total calls today across providers', () => {
+    const two: State = applySnapshot(emptyState(), { ...snap, quota: [
+      { provider: 'gemini', model: 'a', rpm_used: 0, rpd_used: 7, tpm_used: 0, cooling_until: null, limits: { rpm: 10, rpd: 100, tpm: 0 } },
+      { provider: 'groq', model: 'b', rpm_used: 0, rpd_used: 5, tpm_used: 0, cooling_until: null, limits: { rpm: 10, rpd: 50, tpm: 0 } },
+    ] });
+    expect(viewFor('bank', two, ctx).html).toContain('12 calls today');
+    expect(headlineFor('bank', two).head).toBe('12 calls today');
+  });
   it('escapes user-controlled text everywhere', () => {
     const evil = applySnapshot(emptyState(), { ...snap, inbox: [{ id: 'x', kind: 'spend', title: '<img src=x onerror=1>', path: '00 Inbox/x.md', created: 'now' }], jobs: [{ ...snap.jobs[0], title: '<script>alert(1)</script>' }] });
     for (const k of ['postoffice', 'noticeboard', 'vault', 'job:job_a']) expect(viewFor(k, evil, ctx).html).not.toMatch(/<script|<img src=x/);
@@ -70,6 +91,15 @@ describe('drawer and document views', () => {
     expect(viewFor('cabin', s, ctx).mode).toBe('chat');
     expect(viewFor('cabin', s, ctx).sub).toContain('PlateReady');
     expect(chatHtml(s)).toContain('surprise me');
+  });
+  it('cabin asks the first-run question when the company has no name and no chat', () => {
+    const v = viewFor('cabin', emptyState(), ctx);
+    expect(v.html).toContain('What company will you start today?');
+    expect(v.html).toContain('data-action="surprise-me"');
+  });
+  it('the cabin wall shows the latest brief when there is one, else the first-run question', () => {
+    expect(headlineFor('cabin', s).head).toBe(headlineFor('newsstand', s).head);
+    expect(headlineFor('cabin', emptyState()).head).toBe('What company will you start today?');
   });
 });
 

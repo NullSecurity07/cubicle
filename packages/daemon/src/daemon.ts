@@ -1,6 +1,6 @@
 import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir } from '@cubicle/core';
+import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown } from '@cubicle/router';
 import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter } from '@cubicle/core';
@@ -12,7 +12,8 @@ import { WsServer } from './ws.js';
 import { createHeartbeatJob, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
-import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview } from './evolution.js';
+import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview } from './evolution.js';
+import { hasIdea } from './first-run.js';
 import { StaticServer } from './static.js';
 import { pruneScreens } from '@cubicle/tools';
 
@@ -100,6 +101,7 @@ export class Daemon {
     this.vault = Vault.open(cfg.vaultPath);
     const mig = migrateOrg(this.vault, templateDir());
     if (mig.changed.length) this.log(`org migrated: ${mig.changed.length} file(s) written`);
+    this.ensureBrandLogo();
     const providers = loadProvidersConfig(cfg.providersPath);
     this.router = new Router(providers, new QuotaTracker(this.vault.db), { env: cfg.env, events: this.vault.events });
     const toolsConfig = loadToolsConfig(cfg.toolsPath);
@@ -115,7 +117,7 @@ export class Daemon {
     this.openMeeting = async (agenda: string, participants?: string[]): Promise<string | null> => {
       const ceoNote = this.vault.readNoteOrNull('Roles/ceo.md');
       if (!ceoNote) return null;
-      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId: 'ceo', role: RoleFrontmatter.parse(ceoNote.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/meeting', now: () => new Date() };
+      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId: 'ceo', role: RoleFrontmatter.parse(ceoNote.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/meeting', now: () => new Date(), guardrails };
       const client = await createRoleToolClient([meetingOpen], ctx);
       try {
         const attendees = participants ?? this.workers.roles().map((r) => r.role).filter((r) => r !== 'ceo');
@@ -127,7 +129,7 @@ export class Daemon {
     const runSystemTool = async (roleId: string, tool: AnyTool, args: Record<string, unknown>) => {
       const note = this.vault.readNoteOrNull(`Roles/${roleId}.md`);
       if (!note) return null;
-      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId, role: RoleFrontmatter.parse(note.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/system', now: () => new Date() };
+      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId, role: RoleFrontmatter.parse(note.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/system', now: () => new Date(), guardrails };
       const client = await createRoleToolClient([tool], ctx);
       try { return await client.call(tool.name, args); } finally { await client.close(); }
     };
@@ -135,8 +137,23 @@ export class Daemon {
     const pollInbox = async (): Promise<string[]> => { const r = await withTimeout(runSystemTool('coo', emailInbox, {}), 60_000, 'email.inbox'); return r?.ok ? r.text.split('\n').slice(1) : []; };
     const pullAnalytics = async (): Promise<string | null> => { const r = await withTimeout(runSystemTool('coo', analyticsPull, {}), 60_000, 'analytics.pull'); return r?.ok ? r.text : null; };
     const ownerFeedback = (roleId: string) => feedbackFor(collectOwnerFeedback(this.vault, this.vault.events.last('heartbeat.completed')?.ts), roleId).map((f) => `- (${f.source}) ${f.text}`);
+    // Context compaction (spec §6): observations the prompt budget drops, and an over-long plan, are summarised
+    // by the cheapest model there is — the local tier — so compaction never spends cloud quota. A failure here is
+    // never fatal: the harness treats '' as "no summary" and falls back to clipping.
+    const summarize = async (text: string): Promise<string> => {
+      try {
+        const r = await llm.chat({ tier: 'local', needsTools: false }, {
+          messages: [
+            { role: 'system', content: 'Summarize the following observations in ≤ 200 words, keeping file paths, ids and numbers.' },
+            { role: 'user', content: text },
+          ],
+          maxTokens: 400,
+        });
+        return r.content;
+      } catch { return ''; }
+    };
     this.workers = new WorkerPool(this.vault, {
-      harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback },
+      harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback, summarize },
       heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, ...this.overrides.heartbeatHooks },
       maxConcurrent: cfg.maxConcurrentJobs,
     });
@@ -198,6 +215,12 @@ export class Daemon {
     this.workers.start();
     writeQueueMd(this.vault);
 
+    // The watcher ignores what was already on disk, so `%%cubicle: …%%` comments the owner typed while the daemon
+    // was down would be lost. Sweep for them now that the owner.edited handlers are wired, so a comment left
+    // overnight still wakes the heartbeat and still reaches the role it was written at.
+    const offline = collectOfflineOwnerComments(this.vault);
+    if (offline.length) this.log(`owner comments found in ${offline.length} file(s) edited while the daemon was off`);
+
     // Startup trigger: away ≥ 1 h, or never run
     const last = this.vault.events.last('heartbeat.completed');
     const away = last ? (Date.now() - Date.parse(last.ts)) / 3600_000 : Infinity;
@@ -206,9 +229,39 @@ export class Daemon {
     await this.runTick('startup');
   }
 
-  /** Ask for a heartbeat; coalesced — one open heartbeat job at a time. A request while an open heartbeat has not gathered yet is already covered by it. */
+  /**
+   * Spec §11 names `Brand/logo.png` and the Engineer's charter tells it to use one, but vaults scaffolded before
+   * the logo existed have none. Draw the same placeholder `cubicle init` draws — never over an existing file, so
+   * the owner's own logo is safe, and flagged `generated` so the viewer does not read it as owner churn.
+   *
+   * Written with the low-level helpers rather than `vault.writeText`, which takes a string: this is a PNG, and
+   * it is the same path `scaffoldVault` uses for exactly this file.
+   */
+  private ensureBrandLogo(): void {
+    if (existsSync(this.vault.abs(BRAND_LOGO))) return;
+    try {
+      const png = placeholderLogo(this.vault.readTextOrNull('Brand/palette.md'));
+      const sha = atomicWriteSync(this.vault.abs(BRAND_LOGO), png);
+      this.vault.recordWritten(BRAND_LOGO, sha, 'daemon');
+      this.vault.events.emit({ type: 'vault.wrote', agent: 'daemon', payload: { path: BRAND_LOGO, sha, by: 'daemon', generated: true } });
+      this.log(`scaffolded ${BRAND_LOGO}`);
+    } catch (err) {
+      this.vault.events.emit({ type: 'daemon.warning', payload: { where: 'brand-logo', message: String((err as Error).message) } });
+    }
+  }
+
+  /**
+   * Ask for a heartbeat; coalesced — one open heartbeat job at a time. A request while an open heartbeat has not
+   * gathered yet is already covered by it.
+   *
+   * Nothing runs before the owner has typed an idea (spec §12): on a freshly scaffolded vault the startup
+   * trigger used to plan, critique and seed a whole first cycle for a nameless company, and it wrote a job note
+   * into the vault before any viewer could see the empty office (C1). The gate applies only to the very first
+   * heartbeat — once one has completed the company is real, and every later trigger stands on its own.
+   */
   requestHeartbeat(trigger: string): string | null {
     if (this.stopping) return null;
+    if (!this.vault.events.last('heartbeat.completed') && !hasIdea(this.vault)) return null;
     const open = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
     if (open) { if (open.checkpoint_step >= 1) this.heartbeatRequested = trigger; return open.id; }
     const id = createHeartbeatJob(this.vault, trigger);
@@ -222,7 +275,7 @@ export class Daemon {
     if (this.stopping || this.ticking) return;
     this.ticking = true;
     try {
-      const n = await dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake(), guardrails: this.guardrails });
+      const n = await dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake(), guardrails: this.guardrails, questionWaitMs: this.config.questionWaitMs });
       if (Date.now() - this.lastPrune > 3600_000) { this.lastPrune = Date.now(); const pruned = pruneScreens(this.vault); if (pruned) this.log(`pruned ${pruned} old screencast frames`); }
       if (n) this.log(`tick(${reason}): ${n} proposal/unblock action(s)`);
       const reviews = enqueueExperimentReviews(this.vault);
@@ -246,7 +299,7 @@ export class Daemon {
   }
 
   private writeQuotaMd(): void {
-    try { this.vault.writeText('Metrics/quota.md', renderQuotaMarkdown(this.router.quotaSnapshot()), 'daemon', { silent: true }); } catch { /* ignore */ }
+    try { this.vault.writeText('Metrics/quota.md', renderQuotaMarkdown(this.router.quotaSnapshot()), 'daemon', { generated: true }); } catch { /* ignore */ }
   }
 
   /** Graceful stop: no new jobs, wait up to shutdownMs for in-flight steps, close everything. */

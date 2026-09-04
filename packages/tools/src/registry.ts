@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { ZodRawShape } from 'zod';
 import { ApprovalMode, type Vault, type EventLog, type RoleFrontmatter, type ProposalKind, type OwnerPreferences } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
+import type { Guardrail } from './guardrails.js';
 
 // ---------- tools.yaml ----------
 export const ToolPolicy = z.object({
@@ -11,7 +12,7 @@ export const ToolPolicy = z.object({
   outbound: z.boolean().default(false),
   proposal_kind: z.string().optional(),
   owner_owned_mode: ApprovalMode.optional(),
-  first_time_only: z.boolean().default(false), // TODO(Phase 6): deploy.site first-time propose logic
+  first_time_only: z.boolean().default(false), // first-time propose is implemented in the harness loop
   roles: z.array(z.string()).optional(),
 });
 export type ToolPolicy = z.infer<typeof ToolPolicy>;
@@ -62,6 +63,11 @@ export interface ToolResult {
   data?: unknown;
   /** Set by handlers that performed an external side effect. */
   sideEffectKey?: string;
+  /**
+   * Set by the MCP wrapper when it refused the call, carrying the reason. Its presence is a guarantee that
+   * the handler never ran, so a caller that recorded an idempotency key up front knows nothing happened.
+   */
+  guardrailBlocked?: string;
   /** Set by colleague.message(kind: question) etc. to block the calling job. */
   block?: { kind: 'message' | 'job' | 'proposal'; id: string };
   /** Set by `finish`. */
@@ -93,6 +99,11 @@ export interface ToolContext {
   idempotencyKey?: string;
   /** Vault-relative working directory for the job (scratch). */
   workspace: string;
+  /**
+   * Constitution guardrails. The MCP wrapper runs these before every handler, so a tool call made
+   * outside the harness loop is enforced too (spec §7: `never` and the constitution live in the tool layer).
+   */
+  guardrails?: Guardrail[];
   now(): Date;
 }
 

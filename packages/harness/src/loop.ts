@@ -137,6 +137,9 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   const baseCtx: ToolContext = {
     vault, events, roleId, role, jobId, config: deps.toolsConfig, env, scheduler: deps.scheduler, memory: memoryApi, router: deps.router,
     workspace: `.cubicle/workspace/${jobId}`, now,
+    // The MCP wrapper re-checks these. The pre-checks below block *before* calling the client, so a call
+    // the loop refuses never reaches the wrapper and `guardrail.blocked` is emitted exactly once.
+    guardrails: deps.guardrails,
   };
   const defs = deps.registry.forRole(role, deps.toolsConfig);
   const client = await createRoleToolClient(defs, baseCtx);
@@ -295,13 +298,22 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       if (prop && prop.data.approved === true && call) {
         const step = job.checkpoint_step; // the pending call owns this step
         const key = call.idempotency_key;
-        let vetoed: string | null = null;
-        for (const g of deps.guardrails ?? []) { vetoed = await g.check(call.tool, call.args, baseCtx); if (vetoed) break; }
+        // The approval is older than the config: the tool's mode may have moved to `never` — in tools.yaml, in
+        // this charter, or in the owner's preferences — while the job sat blocked. Preferences are re-read here
+        // rather than reused from `prefs` above, which is the snapshot taken when the run started. Checking
+        // before the call keeps the idempotency key unspent, so re-approving works once the mode is relaxed;
+        // without it the wrapper refused the call only after the key was burned. Mirrors the dispatcher (D3/M1).
+        const revoked = resolveMode(call.tool, deps.toolsConfig, role, vault.ownerPreferences()) === 'never'
+          ? `${call.tool} is set to mode never; the owner's configuration outranks this approval`
+          : null;
+        let vetoed: string | null = revoked;
+        if (!vetoed) for (const g of deps.guardrails ?? []) { vetoed = await g.check(call.tool, call.args, baseCtx); if (vetoed) break; }
         if (job.side_effects_done.includes(key)) {
           record({ step, kind: 'tool', tool: call.tool, args: call.args, result: 'already executed before the interruption (idempotency key recorded)', ok: true });
         } else if (vetoed) {
           events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason: vetoed, step, approved: true } });
           record({ step, kind: 'tool', tool: call.tool, args: call.args, result: `blocked even though approved: ${vetoed}`, ok: false });
+          updateJob(vault, jobId, {}, roleId, `- step ${step}: ${call.tool} BLOCKED even though approved: ${vetoed}`);
         } else {
           // At-most-once: record the key before the external call (a kill mid-call must not replay it).
           updateJob(vault, jobId, { side_effects_done: [...job.side_effects_done, key] }, roleId, `- step ${step}: ${call.tool} ATTEMPTING after owner approval (${key})`);

@@ -62,8 +62,14 @@ async function main() {
     console.log(`\nPrepareForSleep(true) → exit ${codeB} in ${dtB} ms`);
     if (codeB !== 0 || dtB > 5000) pass = false;
     fake.kill(); bus.kill();
+  } else if (process.env.CUBICLE_ALLOW_NO_DBUS === '1') {
+    // Deliberate opt-out: the run covers SIGTERM only and says so.
+    console.log('dbus-daemon not installed; CUBICLE_ALLOW_NO_DBUS=1 — accepting SIGTERM-only coverage');
   } else {
-    console.log('dbus-daemon not installed; skipping the PrepareForSleep half');
+    // Half of acceptance test 9 is the sleep signal. Skipping it silently used to print PASS on a machine that
+    // never tested a suspend at all, so the missing dependency is a failure unless the owner opts out.
+    console.log('FAIL: dbus-daemon not installed (set CUBICLE_ALLOW_NO_DBUS=1 to accept SIGTERM-only)');
+    pass = false;
   }
 
   // --- resume ---

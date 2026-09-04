@@ -8,7 +8,7 @@ import { defaultConfig } from './config.js';
 import { rebuildCache } from './rebuild.js';
 import { runDoctor, formatDoctor, doctorExitCode } from './doctor.js';
 import { createHeartbeatJob } from './heartbeat.js';
-import { createJob, listJobs, updateJob } from '@cubicle/core';
+import { createJob, listJobs, updateJob, cancelJob } from '@cubicle/core';
 import { writeQueueMd } from './queue-md.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -111,9 +111,11 @@ const commands: Record<string, Handler> = {
     events.on('router.downgraded', (e) => console.error(`[router.downgraded] ${e.payload.requested_tier} → ${e.payload.chosen_tier} via ${e.payload.provider}/${e.payload.model}; tried: ${(e.payload.tried as string[]).join(', ') || 'none'}`));
     const router = new Router(cfg, new QuotaTracker(db), { events });
     const tier = (typeof flags.tier === 'string' ? flags.tier : 'medium') as ModelTier;
-    const res = await router.chat({ tier, needsTools: false, privacy: flags.local === true ? 'local' : 'cloud' }, { messages: [{ role: 'user', content: prompt }], maxTokens: 256 });
+    // Streamed: the answer appears as it is generated, and the provider/model line follows once the usage
+    // chunk has arrived. This is the one caller that proves the router's streaming path end to end.
+    const res = await router.chat({ tier, needsTools: false, privacy: flags.local === true ? 'local' : 'cloud' }, { messages: [{ role: 'user', content: prompt }], maxTokens: 256, onDelta: (t) => process.stdout.write(t) });
+    if (res.content) process.stdout.write('\n');
     console.log(`[${res.provider}/${res.model} tier=${res.tier}${res.downgraded ? ' DOWNGRADED' : ''} tokens=${res.usage.prompt_tokens}/${res.usage.completion_tokens}]`);
-    console.log(res.content.trim());
   },
   async memory(args, flags) {
     const sub = args[0];
@@ -200,7 +202,7 @@ const commands: Record<string, Handler> = {
         console.log(`queued ${id}`);
       } else if (sub === 'cancel') {
         const id = args[1]; if (!id) throw new Error('usage: cubicle job cancel <id> --vault <path>');
-        updateJob(vault, id, { status: 'cancelled' }, 'owner', `- ${new Date().toISOString()}: cancelled by owner (cli)`);
+        cancelJob(vault, id, 'owner', 'cancelled by owner (cli)');
         console.log(`cancelled ${id}`);
       } else if (sub === 'list' || !sub) {
         for (const j of listJobs(vault)) console.log(`${j.status.padEnd(9)} p${j.priority} ${j.id}  ${j.assigned.padEnd(9)} ${j.type.padEnd(16)} step ${String(j.checkpoint_step).padStart(2)}  ${j.title}`);

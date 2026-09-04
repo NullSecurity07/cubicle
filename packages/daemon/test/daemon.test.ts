@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob, loadOrg } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, requeueUnblocked, buildSnapshot } from '../src/index.js';
+import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot } from '../src/index.js';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 
@@ -72,6 +72,25 @@ function daemonFor(llm: Llm, port = 0) {
 async function waitFor(pred: () => boolean, ms = 15000): Promise<void> {
   const t0 = Date.now();
   while (!pred()) { if (Date.now() - t0 > ms) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 100)); }
+}
+
+/**
+ * Wait until `pred` has held continuously for `stableMs`. "The queue is empty" is momentarily true in the gap
+ * between a job finishing and its gate job being enqueued, so a plain waitFor on it can return mid-chain and the
+ * assertion after it then races the next gate.
+ */
+async function waitForStable(pred: () => boolean, stableMs = 1500, ms = 40000): Promise<void> {
+  const t0 = Date.now();
+  for (;;) {
+    await waitFor(pred, Math.max(1000, ms - (Date.now() - t0)));
+    const held = Date.now();
+    while (Date.now() - held < stableMs) {
+      await new Promise((r) => setTimeout(r, 100));
+      if (!pred()) break;
+    }
+    if (pred() && Date.now() - held >= stableMs) return;
+    if (Date.now() - t0 > ms) throw new Error('timeout waiting for a stable state');
+  }
 }
 
 describe('heartbeat as a resumable job', () => {
@@ -178,6 +197,108 @@ describe('heartbeat as a resumable job', () => {
   });
 });
 
+/**
+ * Acceptance test 4, second clause: "the system still completes a heartbeat with only Ollama".
+ * `localFloor` stands in for a Router whose cloud providers are all keyless — the router half of this test
+ * (`packages/router/test/router.test.ts`) proves that state leaves exactly one candidate, the local model — so
+ * every request, whatever tier the caller asked for, comes back answered by the floor and marked downgraded.
+ * (It answers rather than throws for the same reason the real router does: a downgrade is not a failure.)
+ */
+function localFloor(inner: Llm): Llm & { served: { asked: string; on: string }[] } {
+  const wrapped = {
+    served: [] as { asked: string; on: string }[],
+    async chat(req: Parameters<Llm['chat']>[0], chat: Parameters<Llm['chat']>[1]) {
+      const r = await inner.chat({ ...req, tier: 'local' }, chat);
+      const out = { ...r, provider: 'ollama', model: 'qwen2.5:7b', tier: 'local' as const, downgraded: req.tier !== 'local' };
+      wrapped.served.push({ asked: req.tier, on: out.tier });
+      return out;
+    },
+    promptBudget: () => 6000,
+  };
+  return wrapped;
+}
+
+describe('only the local floor is up', () => {
+  it('heartbeat completes on the local tier alone (acceptance test 4)', async () => {
+    // A heartbeat needs something to plan for: nothing runs before the owner has typed an idea (spec §12, C1).
+    const seed = Vault.open(dir);
+    createProposal(seed, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
+    seed.close();
+    const llm = localFloor(fakeLlm());
+    const d = daemonFor(llm);
+    await d.start();
+    try {
+      await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 40000);
+    } finally { await d.stop(); }
+    const vault = Vault.open(dir);
+    try {
+      // callers did ask for cloud tiers, and every one of them was answered by the floor
+      expect(llm.served.length).toBeGreaterThan(0);
+      expect(llm.served.some((c) => c.asked !== 'local')).toBe(true);
+      expect(llm.served.every((c) => c.on === 'local')).toBe(true);
+      // …and the heartbeat still produced its two durable outputs: the brief and the commit
+      const runs = vault.list('Runs', { ext: '.md' });
+      expect(runs.length).toBe(1);
+      expect(vault.readText(runs[0])).toContain('## What happened');
+      const done = vault.events.last('heartbeat.completed')!;
+      expect(String(done.payload.run)).toBe(runs[0]);
+      expect(done.payload.commit).toBeTruthy();
+      const log = (await import('node:child_process')).execSync('git log --oneline', { cwd: dir }).toString();
+      expect(log).toContain('cubicle: heartbeat');
+    } finally { vault.close(); }
+  }, 60000);
+});
+
+describe('the pre-mortem note survives a crash mid-critic-step (D7)', () => {
+  it('is written before processedCritic is saved, so a resume can never skip it', async () => {
+    const vault = Vault.open(dir);
+    const llm = fakeLlm();
+    const deps = { vault, llm };
+    const hb = createHeartbeatJob(vault, 'test');
+    const { runJob } = await import('@cubicle/harness');
+    const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
+    const harnessDeps = { vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} };
+
+    await runHeartbeat(deps, hb); // blocked on company.plan
+    await runJob(harnessDeps, listJobs(vault).find((j) => j.type === 'company.plan')!.id);
+    requeueUnblocked(vault);
+    await runHeartbeat(deps, hb); // blocked on critic.premortem
+    const critic = listJobs(vault).find((j) => j.type === 'critic.premortem')!;
+    await runJob(harnessDeps, critic.id);
+    requeueUnblocked(vault);
+
+    // The checkpoint that says "this critic's verdict was handled" must not become durable before the note it
+    // is supposed to have produced: a crash in that window resumes into the already-processed branch and the
+    // pre-mortem is lost for the cycle. Sample the on-disk state at the instant the note is written.
+    const statePath = path.join(dir, '.cubicle', 'jobs', `${hb}.heartbeat.json`);
+    let stateAtWrite: string | null = null;
+    const off = vault.events.on('vault.wrote', (e) => {
+      if (String(e.payload.path).startsWith('Decisions/premortem-') && stateAtWrite === null) stateAtWrite = readFileSync(statePath, 'utf8');
+    });
+    try { await runHeartbeat(deps, hb); } finally { off(); }
+
+    expect(stateAtWrite).toBeTruthy();
+    expect(JSON.parse(stateAtWrite!).processedCritic).toBeUndefined();
+    expect(vault.exists(`Decisions/premortem-${hb}.md`)).toBe(true);
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).processedCritic).toBe(critic.id);
+    vault.close();
+  });
+
+  it('writePremortemDecision overwrites the same note, so a resume rewrites rather than duplicates', async () => {
+    const vault = Vault.open(dir);
+    const { writePremortemDecision } = await import('../src/index.js');
+    const now = new Date();
+    const first = writePremortemDecision(vault, 'job_hb1', 'job_critic1', { status: 'done', artifacts: [], metrics: {}, blockers: [], lessons: [], summary: 'too vague', verdict: 'return', findings: ['no metric'] }, now);
+    const second = writePremortemDecision(vault, 'job_hb1', 'job_critic1', { status: 'done', artifacts: [], metrics: {}, blockers: [], lessons: [], summary: 'fine now', verdict: 'pass', findings: [] }, now);
+    expect(second).toBe(first);
+    expect(vault.list('Decisions', { ext: '.md' }).filter((r) => r.includes('premortem'))).toHaveLength(1);
+    const note = vault.readNoteOrNull(first)!;
+    expect(note.data.status).toBe('adopted'); // the verdict the cycle actually ran with
+    expect(note.body).toContain('fine now');
+    vault.close();
+  });
+});
+
 describe('brand reconcile (acceptance test 3, heartbeat half)', () => {
   it('owner edits Brand/palette.md → next heartbeat enqueues "Reconcile site with brand" once', async () => {
     const vault = Vault.open(dir);
@@ -241,7 +362,30 @@ describe('daemon lifecycle', () => {
     v.close();
   });
 
-  it('first start runs heartbeat #1 from an owner idea with zero outbound events; verify chain terminates', async () => {
+  it('an empty vault runs no heartbeat and seeds nothing until the owner types an idea, then heartbeat #1 does both (C1)', async () => {
+    const d = daemonFor(fakeLlm());
+    await d.start();
+    try {
+      // Several ticks with a scaffolded but idealess vault: no company name, no owner note, nothing to plan for.
+      await new Promise((r) => setTimeout(r, 2000));
+      expect(listJobs(d.vault)).toEqual([]);
+      expect(d.vault.events.count('heartbeat.started')).toBe(0);
+      expect(d.vault.events.count('heartbeat.completed')).toBe(0);
+
+      // The owner types the idea into the cabin chat.
+      createProposal(d.vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
+      await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
+
+      // Heartbeat #1 is the one that names the company and the one that seeds the three first jobs.
+      expect(listJobs(d.vault).filter((j) => j.type === 'ceo.heartbeat')).toHaveLength(1);
+      expect(listInbox(d.vault).some((n) => n.data.kind === 'brand_change')).toBe(true);
+      const titles = listJobs(d.vault).map((j) => j.title);
+      const { FIRST_JOB_TITLES } = await import('../src/index.js');
+      for (const t of FIRST_JOB_TITLES) expect(titles).toContain(t);
+    } finally { await d.stop(); }
+  });
+
+  it('first start runs heartbeat #1 from an owner idea with zero outbound events; verify chain terminates; the cycle seeds the offer and channel jobs (D8)', async () => {
     const vault = Vault.open(dir);
     createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
     vault.close();
@@ -250,18 +394,94 @@ describe('daemon lifecycle', () => {
     await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
     // engineer.ship (scaffold) runs and finishes; its coo.verify runs; then nothing else is enqueued
     await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'coo.verify' && j.status === 'done').length >= 1, 20000);
-    await new Promise((r) => setTimeout(r, 1500));
+    await waitForStable(() => listJobs(d.vault).filter((j) => ['queued', 'running'].includes(j.status)).length === 0);
     const jobs = listJobs(d.vault);
-    expect(jobs.filter((j) => j.type === 'coo.verify').length).toBe(1); // no verify-of-verify chain
+    // No verify-of-verify chain: a gate job never itself sits under another gate job.
+    const gateTypes = ['qa.review', 'coo.verify', 'requester.review'];
+    const byId = new Map(jobs.map((j) => [j.id, j]));
+    expect(jobs.filter((j) => gateTypes.includes(j.type)).every((j) => !gateTypes.includes(byId.get(j.parent ?? '')?.type ?? ''))).toBe(true);
     expect(jobs.filter((j) => ['queued', 'running'].includes(j.status)).length).toBe(0);
     expect(d.vault.events.count('email.sent')).toBe(0);
     expect(d.vault.events.count('deploy.done')).toBe(0);
     expect(listInbox(d.vault).some((n) => n.data.kind === 'brand_change')).toBe(true);
     expect(existsSync(path.join(dir, '.cubicle', 'daemon.json'))).toBe(true);
+
+    // D8: whatever the plan said, heartbeat #1 leaves the company with a site, an offer and a channel to work on.
+    const offer = jobs.find((j) => j.title === 'Define the offer and price point')!;
+    expect(offer).toBeTruthy();
+    expect(offer.type).toBe('research');
+    expect(offer.for).toBe('head_of_growth');
+    expect(readJob(d.vault, offer.id)!.body).toContain('## Done when');
+    const channel = jobs.find((j) => j.title === 'Research the first organic channel')!;
+    expect(channel).toBeTruthy();
+    expect(['growth.seo', 'research']).toContain(channel.type);
+    expect(readJob(d.vault, channel.id)!.body).toContain('## Done when');
+    // The CTO's team plan queued a two-word "Scaffold Site/", which is not enough to claim the seed's work, so
+    // the seed is created too and its Done when spells out what "scaffolded" has to mean.
+    const site = jobs.find((j) => j.title === 'Scaffold Site/ from Brand/ (first cut)')!;
+    expect(site).toBeTruthy();
+    expect(site.type).toBe('engineer.ship');
+    expect(readJob(d.vault, site.id)!.body).toContain('## Done when');
+
     const t0 = Date.now();
     await d.stop();
     expect(Date.now() - t0).toBeLessThan(5000);
     expect(existsSync(path.join(dir, '.cubicle', 'daemon.json'))).toBe(false);
+  });
+
+  it('a fresh vault whose plan queued nothing still gets all three first jobs, and a second heartbeat seeds nothing (D8)', async () => {
+    const vault = Vault.open(dir);
+    vault.close();
+    const { seedFirstJobs } = await import('../src/index.js');
+    const v = Vault.open(dir);
+    try {
+      createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
+      const first = seedFirstJobs(v, loadOrg(v));
+      expect(first).toHaveLength(3);
+      const titles = listJobs(v).map((j) => j.title);
+      expect(titles).toContain('Scaffold Site/ from Brand/ (first cut)');
+      expect(titles).toContain('Define the offer and price point');
+      expect(titles).toContain('Research the first organic channel');
+      const site = listJobs(v).find((j) => j.title === 'Scaffold Site/ from Brand/ (first cut)')!;
+      expect(site.type).toBe('engineer.ship');
+      expect(site.assigned).toBe('engineer');
+      for (const id of first) expect(readJob(v, id)!.body).toContain('## Done when');
+      // Idempotent within the first cycle, and silent once a heartbeat has completed.
+      expect(seedFirstJobs(v, loadOrg(v))).toEqual([]);
+      v.events.emit({ type: 'heartbeat.completed', payload: { id: 'h1' } });
+      expect(seedFirstJobs(v, loadOrg(v))).toEqual([]);
+    } finally { v.close(); }
+  });
+
+  it('a seed is skipped only by a live job whose own first three words match it (D8)', async () => {
+    const { seedFirstJobs, FIRST_JOB_TITLES } = await import('../src/index.js');
+    const v = Vault.open(dir);
+    try {
+      createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
+      // Same first three words, different wording → the lead already planned it.
+      createJob(v, { type: 'engineer.ship', title: 'Scaffold Site/ from Brand/ (v2)', assigned: 'engineer', goal: 'g' }, 'cto');
+      // Shorter than three words → not enough to claim the work; must not suppress anything.
+      createJob(v, { type: 'research', title: 'Research', assigned: 'research_analyst', goal: 'g' }, 'cto');
+      createJob(v, { type: 'research', title: 'Define the', assigned: 'research_analyst', goal: 'g' }, 'cto');
+      // A job nobody will ever run cannot stand in for a seed.
+      const dead = createJob(v, { type: 'growth.seo', title: 'Research the first organic channel', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+      updateJob(v, dead, { status: 'cancelled' }, 'daemon');
+
+      const seeded = seedFirstJobs(v, loadOrg(v)).map((id) => readJob(v, id)!.data.title);
+      expect(seeded).toEqual([FIRST_JOB_TITLES[1], FIRST_JOB_TITLES[2]]);
+      expect(seeded).not.toContain(FIRST_JOB_TITLES[0]); // covered by the lead's "Scaffold Site/ from Brand/ (v2)"
+    } finally { v.close(); }
+  });
+
+  it('a failed job does not stand in for a seed either (D8)', async () => {
+    const { seedFirstJobs, FIRST_JOB_TITLES } = await import('../src/index.js');
+    const v = Vault.open(dir);
+    try {
+      createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
+      const dead = createJob(v, { type: 'engineer.ship', title: 'Scaffold Site/ from Brand/ (first cut)', assigned: 'engineer', goal: 'g' }, 'cto');
+      updateJob(v, dead, { status: 'failed' }, 'daemon');
+      expect(seedFirstJobs(v, loadOrg(v)).map((id) => readJob(v, id)!.data.title)).toContain(FIRST_JOB_TITLES[0]);
+    } finally { v.close(); }
   });
 
   it('planning and gate sub-jobs (company.plan, critic.premortem, team.plan, qa.review, coo.verify) never retrigger a second heartbeat on their own (Task 11)', async () => {
@@ -379,22 +599,35 @@ describe('daemon lifecycle', () => {
     const vault = Vault.open(dir);
     const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'owner');
     vault.close();
-    let cancelled = false;
-    let d!: Daemon;
+    // The owner cancels the way Obsidian does: by editing `status:` in the job note on disk, from outside the
+    // daemon, while the worker is mid-step. Nothing in the test touches the daemon's own job API.
+    let announceMidStep!: () => void;
+    const midStep = new Promise<void>((r) => { announceMidStep = r; });
+    let releaseStep!: () => void;
+    const edited = new Promise<void>((r) => { releaseStep = r; });
+    let paused = false;
     const slow: Llm = {
       async chat(req, chat) {
         const base = { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'strong' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
         if (!chat.tools) return { ...base, content: 'ok' };
         if (req.roleId !== 'head_of_growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
-        if (!cancelled) { cancelled = true; updateJob(d.vault, id, { status: 'cancelled' }, 'owner'); }
+        if (!paused) { paused = true; announceMidStep(); await edited; }
         return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Plans/plan.md' } }] };
       },
     };
-    d = daemonFor(slow);
+    const d = daemonFor(slow);
     await d.start();
+    await midStep;
+    const notePath = path.join(dir, 'Jobs', `${id}.md`);
+    const before = readFileSync(notePath, 'utf8');
+    expect(before).toMatch(/^status: running$/m);
+    writeFileSync(notePath, before.replace(/^status: running$/m, 'status: cancelled'));
+    releaseStep();
     await waitFor(() => d.vault.events.count('job.cancelled') >= 1, 15000);
+    // "within one step": the model was asked for exactly one tool call and none of it was executed.
     expect(readJob(d.vault, id)!.data.checkpoint_step).toBeLessThanOrEqual(1);
     expect(readJob(d.vault, id)!.data.status).toBe('cancelled');
+    expect(d.vault.events.count('agent.tool_call')).toBe(0);
     await d.stop();
   });
 
@@ -432,5 +665,102 @@ describe('daemon lifecycle', () => {
     const d = daemonFor(fakeLlm());
     await d.start();
     try { expect(existsSync(path.join(dir, 'Teams/engineering.md'))).toBe(true); expect(d.vault.events.count('org.changed')).toBe(1); } finally { await d.stop(); }
+  });
+});
+
+describe('an approved call the wrapper vetoes', () => {
+  it('reports the block on re-approval instead of "already executed" (C1)', async () => {
+    const vault = Vault.open(dir);
+    vault.updateNote('Roles/head_of_growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
+    const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
+    const job = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
+    const key = `${job}:1:1`;
+    const p = createProposal(vault, { kind: 'outbound_batch', from: 'head_of_growth', job, title: 'send one', body: 'x', call: { tool: 'mock.outbound', args: { to: 'a@x', body: 'hi' }, idempotency_key: key, job, role: 'head_of_growth' } }, 'head_of_growth');
+    // The pre-check clears the call; the wrapper, evaluating a moment later, refuses it. That is the race the
+    // classifier's non-determinism used to open, and it must not silently consume the owner's approval.
+    let seen = 0;
+    const guardrails = [{ check: () => (++seen > 1 ? 'constitution: max_emails_per_day (1) reached' : null) }];
+    const deps = { vault, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), toolsConfig: cfg, scheduler: vaultScheduler(vault), env: {}, guardrails };
+
+    const first = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(first.ok).toBe(false);
+    expect(first.text).toContain('max_emails_per_day');
+    expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false); // the handler never ran
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([key]); // at-most-once ledger untouched
+
+    const again = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(again.ok).toBe(false);
+    expect(again.text).toContain('blocked');
+    expect(again.text).toContain('max_emails_per_day');
+    expect(again.text).not.toMatch(/already executed|interrupted/);
+    vault.close();
+  });
+});
+
+describe('local-tier summariser (D1)', () => {
+  it('the daemon hands the harness a summarize() that runs on the local tier', async () => {
+    const vault = Vault.open(dir);
+    vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } }); // recent → no startup heartbeat
+    vault.writeText('Docs/big.md', 'x'.repeat(2000), 'daemon');
+    const id = createJob(vault, { type: 'research', title: 'read a lot', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    vault.close();
+    const prose: { tier: string; system: string; user: string }[] = [];
+    let reads = 0;
+    const llm: Llm = {
+      async chat(req, chat) {
+        const base = { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'strong' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
+        if (!chat.tools) {
+          prose.push({ tier: req.tier, system: String(chat.messages[0]?.content ?? ''), user: String(chat.messages[1]?.content ?? '') });
+          return { ...base, content: 'read Docs/big.md repeatedly' };
+        }
+        if (req.roleId !== 'head_of_growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
+        if (reads++ < 20) return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Docs/big.md' } }] };
+        return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'read it all' } }] };
+      },
+      promptBudget: () => 6000,
+    };
+    const d = new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 500, maxConcurrentJobs: 2, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+    await d.start();
+    try {
+      await waitFor(() => prose.some((p) => p.tier === 'local' && p.system.startsWith('Summarize the following observations')), 30000);
+    } finally { await d.stop(); }
+    const call = prose.find((p) => p.system.startsWith('Summarize the following observations'))!;
+    expect(call.tier).toBe('local');
+    expect(call.user).toContain('vault.read');
+    expect(readJob(Vault.open(dir), id)).toBeTruthy();
+  });
+});
+
+describe('Brand/logo.png on an existing vault (D10)', () => {
+  const LOGO = 'Brand/logo.png';
+  const PNG_SIGNATURE = '89504e470d0a1a0a';
+  const quietDaemon = () => new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 500, maxConcurrentJobs: 1, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm: fakeLlm(), disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+
+  it('is drawn at start when missing, and a vault that already has one is untouched', async () => {
+    const seed = Vault.open(dir);
+    seed.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } }); // recent → no startup heartbeat
+    seed.close();
+    rmSync(path.join(dir, LOGO), { force: true }); // a vault scaffolded before the logo existed
+
+    const d = quietDaemon();
+    await d.start();
+    let sha: unknown;
+    try {
+      const png = readFileSync(path.join(dir, LOGO));
+      expect(png.subarray(0, 8).toString('hex')).toBe(PNG_SIGNATURE);
+      const wrote = d.vault.events.query({ types: ['vault.wrote'] }).filter((e) => e.payload.path === LOGO && e.agent === 'daemon');
+      expect(wrote).toHaveLength(1);
+      expect(wrote[0].payload.generated).toBe(true);
+      sha = wrote[0].payload.sha;
+      expect(typeof sha).toBe('string');
+    } finally { await d.stop(); }
+
+    const before = readFileSync(path.join(dir, LOGO));
+    const d2 = quietDaemon();
+    await d2.start();
+    try {
+      expect(readFileSync(path.join(dir, LOGO)).equals(before)).toBe(true);
+      expect(d2.vault.events.query({ types: ['vault.wrote'] }).filter((e) => e.payload.path === LOGO && e.agent === 'daemon')).toHaveLength(1);
+    } finally { await d2.stop(); }
   });
 });

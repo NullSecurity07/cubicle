@@ -3,9 +3,9 @@ import { OfficeScene } from './scenes/OfficeScene.js';
 import { Net, resolveWs } from './net.js';
 import { emptyState, applyEvent, applySnapshot, tick, type State, type CubicleEvent, type Snapshot } from './state.js';
 import { Ui } from './ui/panel.js';
-import { viewFor, esc, obsidianUrl, chip, type Ctx } from './ui/content.js';
+import { esc, obsidianUrl, chip, type Ctx } from './ui/content.js';
+import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
-import type { SurfaceKind } from './world/surfaces.js';
 
 let state: State = emptyState();
 let liveState: State | null = null;   // saved while replaying
@@ -24,6 +24,7 @@ const time = new TimeControls({
   onReplayRequest(date) { replayBuffer = []; const start = new Date(`${date}T00:00:00`); const end = new Date(start.getTime() + 86400_000 - 1); net.replay(start.toISOString(), end.toISOString(), 0); ui.setConn(true, `loading ${date}…`); }, // local day → ISO
   onScrub(index) { rebuildReplayTo(index); },
 });
+let firstRunOpened = false;
 let replayBuffer: CubicleEvent[] = [];
 let replayBase: State | null = null;
 // Incremental replay: apply only the new slice when scrubbing forward; rebuild from the nearest checkpoint when going back.
@@ -96,7 +97,7 @@ function refresh(): void {
   ui.setBrand(state.brand.name, state.brand.tagline);
 }
 
-ui.onOpen = (kind) => open(kind as SurfaceKind);
+ui.onOpen = (kind) => open(kind);
 ui.onChat = (text) => {
   if (!net.chat(text)) return;
   state = { ...state, chat: [...state.chat, { ts: new Date().toISOString(), from: 'you', text }] };
@@ -110,7 +111,14 @@ function seedFrames(snap: Snapshot): void {
   for (const id of Object.keys(frames)) if (!snap.surfaces.some((su) => su.streamId === id)) delete frames[id];
 }
 const net = new Net(url, token, {
-  onSnapshot(snap: Snapshot) { if (state.mode === 'replay') { liveState = applySnapshot(liveState ?? emptyState(), snap); return; } state = applySnapshot(state, snap); seedFrames(snap); refresh(); },
+  onSnapshot(snap: Snapshot) {
+    if (state.mode === 'replay') { liveState = applySnapshot(liveState ?? emptyState(), snap); return; }
+    state = applySnapshot(state, snap);
+    seedFrames(snap);
+    refresh();
+    // Spec §12 d/e: an empty company opens on the cabin with the first-run question, once per session.
+    if (state.firstRun && !firstRunOpened) { firstRunOpened = true; open('cabin'); }
+  },
   onEvent(e) {
     if (state.mode === 'replay') { if (liveState) liveState = applyEvent(liveState, e); return; }
     state = applyEvent(state, e);
@@ -135,7 +143,16 @@ const net = new Net(url, token, {
 });
 net.connect();
 
-(window as unknown as { __cubicle: unknown }).__cubicle = { get state() { return state; }, agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), open, zoom: (z: number) => scene.cameras.main.setZoom(z), center: (tx: number, ty: number) => scene.cameras.main.centerOn(tx * 16, ty * 16) };
+/** What a registry surface is bound to right now: the stream its own entry picks, and the frame it would draw.
+ *  Exposed so an end-to-end test can assert the billboard through the registry instead of guessing its stream. */
+function debugSurfaces(): Record<string, { streamKind: string; streamId: string; lastFrame: string | null; image: string | null }> {
+  return Object.fromEntries(Object.values(SURFACES).map((d) => {
+    const id = d.streamId(state);
+    return [d.kind, { streamKind: d.streamKind, streamId: id, lastFrame: state.surfaces[id]?.lastFrame ?? null, image: frames[id] ?? null }];
+  }));
+}
+
+(window as unknown as { __cubicle: unknown }).__cubicle = { get state() { return state; }, agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), desks: () => scene.debugDesks(), stand: (name: string) => scene.debugStand(name), surfaces: () => debugSurfaces(), open, zoom: (z: number) => scene.cameras.main.setZoom(z), center: (tx: number, ty: number) => scene.cameras.main.centerOn(tx * 16, ty * 16) };
 
 let last = performance.now();
 function loop(now: number): void {
