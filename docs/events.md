@@ -8,7 +8,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 |---|---|
 | `daemon.started` | pid, port, roles |
 | `daemon.stopping` | active_jobs |
-| `daemon.warning` | where, message — never silent |
+| `daemon.warning` | where, message — never silent; a question timeout adds id (the unanswered message) and escalated_to |
 | `heartbeat.started` | trigger |
 | `heartbeat.completed` | id, commit, run (Runs/ path), gathered_at |
 | `job.queued` | type, title, assigned, priority |
@@ -41,8 +41,8 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `router.downgraded` | requested_tier, chosen_tier, provider, model, tried |
 | `quota.updated` | provider, model, rpm_used, rpd_used, tpm_used, cooling_until, limits |
 | `vault.wrote` | path, sha, by (role | daemon | init | <role>/shell), deleted?, moved_from?, generated? (true for daemon-generated files such as `Jobs/queue.md`, `Metrics/quota.md`, `Metrics/daily.md`; the viewer ignores these for staleness) |
-| `owner.edited` | path, area, deleted, wakes_heartbeat |
-| `owner.feedback_delivered` | sha (sha1 of the trimmed `feedback:` line), source (`Memory/owner_preferences.md`) — emitted once per entry when the heartbeat that carried it to the CEO commits, so it is never re-delivered and `cubicle rebuild` keeps the marker |
+| `owner.edited` | path, area, deleted, wakes_heartbeat; a startup sweep of comments left while the daemon was down adds offline: true and comments (how many new %%cubicle: …%% comments the file gained) |
+| `owner.feedback_delivered` | sha (sha1 of the trimmed `feedback:` line), source (`Memory/owner_preferences.md`) — emitted once per entry, at the commit of the heartbeat whose gather step collected it, so an entry added mid-cycle is deferred rather than lost, it is never re-delivered, and `cubicle rebuild` keeps the marker |
 | `team.planned` | team, jobs (ids the team.plan job scheduled) |
 | `review.passed` | gate, findings |
 | `review.returned` | gate, findings |
