@@ -247,6 +247,17 @@ fn choose_vault(app: &AppHandle) {
 
 fn adopt_vault(app: &AppHandle, path: &Path) {
     let shell = app.state::<Shell>();
+    // Our child, if we have one, serves the vault we are leaving; it has to checkpoint first.
+    let previous = shell.vault();
+    if previous.as_deref() != Some(path) {
+        if let Some(previous) = previous {
+            let mut child = shell.child.lock().unwrap();
+            if child.is_some() {
+                let ms = daemon::stop(&previous, &mut child);
+                log(&format!("leaving {}: daemon exited in {ms} ms", previous.display()));
+            }
+        }
+    }
     {
         let mut cfg = shell.cfg.lock().unwrap();
         cfg.vault = path.to_string_lossy().into_owned();
@@ -255,16 +266,16 @@ fn adopt_vault(app: &AppHandle, path: &Path) {
         }
     }
     log(&format!("vault: {}", path.display()));
-    if path.join("Memory").join("constitution.md").is_file() {
-        return;
+    if !path.join("Memory").join("constitution.md").is_file() {
+        let Some(entry) = daemon_entry(app) else { return };
+        log("new vault: running cubicle init");
+        match daemon::init(&shell.root, &entry, path) {
+            Ok(status) if status.success() => log("vault initialised"),
+            Ok(status) => log(&format!("cubicle init exited with {status}")),
+            Err(err) => log(&format!("cubicle init failed: {err}")),
+        }
     }
-    let Some(entry) = daemon_entry(app) else { return };
-    log("new vault: running cubicle init");
-    match daemon::init(&shell.root, &entry, path) {
-        Ok(status) if status.success() => log("vault initialised"),
-        Ok(status) => log(&format!("cubicle init exited with {status}")),
-        Err(err) => log(&format!("cubicle init failed: {err}")),
-    }
+    start_daemon(app);
 }
 
 fn on_menu(app: &AppHandle, id: &str) {
