@@ -3,7 +3,7 @@ import http from 'node:http';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob } from '@cubicle/core';
+import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, listDecisions, decisionPath } from '@cubicle/core';
 import type { Router, RoutedChatResult } from '@cubicle/router';
 import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, phase5Tools, constitutionGuardrail, hostAllowed, AllowlistProxy, hasDocker, hasSandboxImage, browserFrames, mockOutbound, type ToolContext } from '../src/index.js';
 
@@ -152,6 +152,48 @@ describe('meeting.open', () => {
       expect(vault.readText(meet.decision)).toContain('## Chosen');
       expect(vault.events.count('meeting.turn')).toBe(6);
       expect(vault.events.count('meeting.closed')).toBe(1);
+    } finally { await client.close(); }
+  });
+
+  const HEADS = ['Context', 'Options considered', 'Chosen', 'Why', 'Expected effect', 'Review date'];
+  const headingsOf = (body: string) => [...body.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+  const routerSaying = (close: string) => {
+    let n = 0;
+    return { async chat(req: { roleId?: string }): Promise<RoutedChatResult> { n++; return { content: n % 7 === 0 ? close : `${req.roleId} says point ${n}`, toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium', downgraded: false, parsedToolCalls: [] }; } } as unknown as Router;
+  };
+
+  it('writes the decision through writeDecision (C5)', async () => {
+    const close = '## Context\nboard context\n## Options considered\nstay or move\n## Chosen\nship it\n## Why\nfastest path\n## Expected effect\nsignups up\n## Review date\n2026-09-16';
+    const reg = new ToolRegistry().registerAll(phase5Tools());
+    const client = await createRoleToolClient(reg.forRole({ ...role('ceo'), tools: ['meeting.open'] } as RoleFrontmatter, cfg), ctxFor('ceo', 'job_m5', { router: routerSaying(close) }));
+    try {
+      const r = await client.call('meeting.open', { room: 'board', participants: ['cto', 'coo'], agenda: 'Ship or wait?', rounds: 2 });
+      expect(r.ok).toBe(true);
+      const meet = r.data as { path: string; decision: string };
+      const note = listDecisions(vault).find((d) => d.path === meet.decision);
+      expect(note).toBeDefined();
+      expect(meet.decision).toBe(decisionPath(note!.data.id));
+      expect(note!.data.decided_by).toBe('ceo');
+      expect(note!.data.status).toBe('adopted');
+      expect(note!.data.inputs).toContain(`[[${meet.path.replace(/\.md$/, '')}]]`);
+      expect(note!.data.review_date).toBe('2026-09-16');
+      expect(headingsOf(note!.body)).toEqual(HEADS);
+      expect(note!.body).toContain('ship it');
+    } finally { await client.close(); }
+  });
+
+  it('keeps the template fallback when the closing summary is malformed (C5)', async () => {
+    const reg = new ToolRegistry().registerAll(phase5Tools());
+    const client = await createRoleToolClient(reg.forRole({ ...role('ceo'), tools: ['meeting.open'] } as RoleFrontmatter, cfg), ctxFor('ceo', 'job_m6', { router: routerSaying('I could not decide.') }));
+    try {
+      const r = await client.call('meeting.open', { room: 'meeting', participants: ['cto'], agenda: 'Pick a database', rounds: 1 });
+      expect(r.ok).toBe(true);
+      const meet = r.data as { path: string; decision: string };
+      const note = listDecisions(vault).find((d) => d.path === meet.decision);
+      expect(note).toBeDefined();
+      expect(headingsOf(note!.body)).toEqual(HEADS);
+      expect(note!.body).toContain('Pick a database');
+      expect(note!.data.review_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     } finally { await client.close(); }
   });
 });

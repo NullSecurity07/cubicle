@@ -1,9 +1,25 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { makeId, idFromKey, nowIso, stringifyNote, RoleFrontmatter, isValidRoleId, stampForFilename, loadOrg, can } from '@cubicle/core';
+import { makeId, idFromKey, nowIso, stringifyNote, RoleFrontmatter, isValidRoleId, stampForFilename, loadOrg, can, writeDecision, type DecisionSections } from '@cubicle/core';
 
 const MAX_ROUNDS = 3;
 const TURN_TOKENS = 300;
+
+/** The six spec sections, in the order a decision note carries them. */
+const DECISION_HEADS: [keyof DecisionSections, string][] = [
+  ['context', 'Context'], ['options', 'Options considered'], ['chosen', 'Chosen'],
+  ['why', 'Why'], ['expected_effect', 'Expected effect'], ['review_date', 'Review date'],
+];
+
+/** Split a closing summary that already has all six `## ` headings into the shape `writeDecision` wants. */
+function decisionSections(md: string): DecisionSections {
+  const out = {} as DecisionSections;
+  for (const [key, heading] of DECISION_HEADS) {
+    const m = md.match(new RegExp(`^## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, 'm'));
+    out[key] = (m?.[1] ?? '').trim();
+  }
+  return out;
+}
 
 export const meetingOpen = defineTool({
   name: 'meeting.open',
@@ -50,14 +66,17 @@ export const meetingOpen = defineTool({
     try {
       decisions = await say(ctx.roleId, `Agenda: ${agenda}\n\nTranscript:\n${transcript.map((t) => `${t.role}: ${t.text}`).join('\n')}\n\nAs facilitator, close the meeting. Output markdown with sections: ## Context, ## Options considered, ## Chosen, ## Why, ## Expected effect, ## Review date (ISO date about two weeks out). Be decisive.`, 'strong', 700);
     } catch { decisions = ''; }
-    const required = ['## Context', '## Options considered', '## Chosen', '## Why', '## Expected effect', '## Review date'];
+    const required = DECISION_HEADS.map(([, h]) => `## ${h}`);
     if (!required.every((h) => decisions.includes(h))) {
       const review = new Date(Date.now() + 14 * 86400_000).toISOString().slice(0, 10);
       decisions = `## Context\n\n${agenda}\n\n## Options considered\n\n${transcript.map((t) => `- ${t.role}: ${t.text.slice(0, 200)}`).join('\n')}\n\n## Chosen\n\n${decisions.trim() || '(no model summary available; the facilitator must decide from the transcript)'}\n\n## Why\n\nSee transcript.\n\n## Expected effect\n\nTo be verified by the COO.\n\n## Review date\n\n${review}`;
     }
     const decId = idFromKey('dec', id);
-    const decRel = `Decisions/${stampForFilename()}-${decId.slice(-6)}.md`;
-    ctx.vault.writeText(decRel, stringifyNote({ id: decId, decided_by: ctx.roleId, cycle: ctx.jobId ?? '', status: 'adopted', inputs: [`[[${rel.replace(/\.md$/, '')}]]`], owner_rating: null }, `# Decision from ${room} meeting\n\n${decisions}\n`), ctx.roleId, { job: ctx.jobId });
+    // One writer for decision notes (core), so the frontmatter, the section order and the path are the same
+    // whoever records the decision — a meeting here, the owner-rating machinery elsewhere.
+    const decRel = writeDecision(ctx.vault, decId, {
+      decided_by: ctx.roleId, cycle: ctx.jobId ?? '', status: 'adopted', inputs: [`[[${rel.replace(/\.md$/, '')}]]`],
+    }, decisionSections(decisions), ctx.roleId);
     const body = `# ${room === 'board' ? 'Board' : 'Meeting'}: ${agenda.split('\n')[0].slice(0, 80)}\n\n## Agenda\n\n${agenda}\n\n## Transcript\n\n${transcript.map((t) => `**Round ${t.round} — ${t.role}:** ${t.text}`).join('\n\n')}\n\n## Decisions\n\nSee [[${decRel.replace(/\.md$/, '')}]].\n`;
     ctx.vault.writeText(rel, stringifyNote({ id, room, opened: nowIso(), facilitator: ctx.roleId, participants: all, decision: decId }, body), ctx.roleId, { job: ctx.jobId });
     ctx.events.emit({ type: 'meeting.closed', agent: ctx.roleId, job: ctx.jobId, payload: { id, path: rel, decision: decRel, turns: transcript.length } });
