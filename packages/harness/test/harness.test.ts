@@ -157,6 +157,33 @@ describe('approval modes in the loop', () => {
     expect(readJob(vault, id)!.data.side_effects_done).toEqual([`${id}:1:2`, `${id}:1:3`]);
   });
 
+  it('an approval the owner has since revoked in the config is refused before the key is spent (M1)', async () => {
+    growthWithMock();
+    const strict = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8').replace('mock.outbound:         { mode: auto', 'mock.outbound:         { mode: ask'));
+    const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
+    expect((await runJob(deps(scripted(fourStep), { toolsConfig: strict }), id)).status).toBe('blocked');
+    const prop = findInboxById(vault, readJob(vault, id)!.data.blocked_on!.id)!;
+    vault.updateNote(prop.path, (n) => ({ data: { ...n.data, approved: true }, body: n.body }), 'owner');
+
+    // The owner approves, then changes their mind in Memory/owner_preferences.md while the job is still blocked.
+    // The run started before that edit, so the preferences must be re-read here, not taken from the run's snapshot.
+    vault.updateNote('Memory/owner_preferences.md', (n) => ({ data: n.data, body: n.body.replace('approvals: {}', 'approvals: { mock.outbound: never }') }), 'owner');
+
+    const out = await runJob(deps(scripted(fourStep.slice(3)), { toolsConfig: strict }), id);
+    expect(out.status).toBe('done'); // the step is spent, so the job carries on rather than blocking forever
+
+    // Nothing was sent, and the key is unspent, so re-approving works if the mode is ever relaxed again.
+    expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false);
+    expect(readJob(vault, id)!.data.side_effects_done).toEqual([]);
+    expect(readJob(vault, id)!.body).toContain('BLOCKED even though approved');
+    expect(readJob(vault, id)!.body).not.toContain('ATTEMPTING');
+    const blocked = vault.events.query({ types: ['guardrail.blocked'] });
+    expect(blocked).toHaveLength(1);
+    expect(String(blocked[0].payload.reason)).toMatch(/mode never/);
+    expect(blocked[0].payload.approved).toBe(true);
+    expect(blocked[0].payload.tool).toBe('mock.outbound');
+  });
+
   it('ask → approved:false feeds a rejection and the job adapts', async () => {
     growthWithMock();
     const strict = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8').replace('mock.outbound:         { mode: auto', 'mock.outbound:         { mode: ask'));

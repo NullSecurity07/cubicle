@@ -72,6 +72,17 @@ describe('unanswered questions time out and escalate to the CEO (D2)', () => {
     // Idempotent: a second sweep neither re-escalates nor queues a second answer job.
     requeueUnblocked(vault);
     expect(listJobs(vault).filter((x) => x.type === 'colleague.answer' && x.assigned === 'ceo')).toHaveLength(1);
+
+    // M2: the CEO's job is the escalation's re-entry guard, so it must be written before the handoff and the
+    // cancel. Written after them, a kill in between re-ran the whole escalation on the next tick: a second
+    // handoff section, and — because the recipient's job was cancelled by then — one claiming the recipient was
+    // "still working on" it. Ordering is the fix, so the ordering is what is pinned here.
+    const queued = vault.events.query({ types: ['job.queued'] }).find((e) => e.job === answerJobs[0].id)!;
+    // The handoff append is attributed to the asker's job; the scaffold's own write of the file is not.
+    const handoff = vault.events.query({ types: ['vault.wrote'], job: asker }).find((e) => e.payload.path === 'Messages/ceo.md')!;
+    const cancel = vault.events.query({ types: ['job.cancelled'] }).find((e) => e.job === ctoJob)!;
+    expect(queued.id).toBeLessThan(cancel.id);
+    expect(queued.id).toBeLessThan(handoff.id);
   });
 
   it('a recipient already working on the answer keeps their job, and the handoff says so', () => {

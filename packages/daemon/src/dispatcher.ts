@@ -79,8 +79,10 @@ export async function executeStoredCall(deps: DispatcherDeps, note: { path: stri
   const jobId = call.job ?? note.data.job ?? null;
   // The approval is older than the config: the tool's mode may have moved to `never` (in tools.yaml, in this
   // role's charter, or in the owner's preferences) since the proposal was filed. The wrapper would refuse the
-  // call anyway, but only after the idempotency key was spent — and an approval the owner has since revoked in
-  // the config must leave the key intact, so re-approving works once the mode is relaxed again.
+  // call anyway, but only after the idempotency key was spent, so the check happens here instead and the key
+  // stays unspent. Note that the proposal itself is finished either way: `dispatchProposals` stamps `resolved_at`
+  // on the note straight after this returns, so relaxing the mode does not re-dispatch it — the owner has to
+  // clear `resolved_at` (or file a fresh proposal) for the unspent key to be worth anything (M7).
   const mode = resolveMode(call.tool, deps.toolsConfig, role, deps.vault.ownerPreferences());
   if (mode === 'never') {
     const reason = `${call.tool} is set to mode never; the owner's configuration outranks this approval`;
@@ -293,13 +295,10 @@ function escalateQuestionToCeo(vault: Vault, job: JobFrontmatter, id: string): v
     const owed = idFromKey('job', `answer:${id}`);
     const recipientJob = readJob(vault, owed);
     const superseded = !!recipientJob && ['queued', 'blocked'].includes(recipientJob.data.status);
-    if (superseded) cancelJob(vault, owed, 'daemon', `${job.assigned}'s question ${id} went unanswered and was escalated to ceo as ${answerJob}`);
-    const handover = superseded
-      ? `${recipient}'s own answer job [[${owed}]] has been cancelled, so this question is yours alone.`
-      : recipientJob
-        ? `${recipient} is still working on [[${owed}]], so check there before answering — you would both be replying to the same question.`
-        : `${recipient} has no open job for it.`;
-    vault.appendText(messagePath('ceo'), `\n## ${nowIso()} from daemon (handoff) <!-- id:msg_${answerJob} job:${job.id} -->\n\n${job.assigned} asked ${recipient} a question on job [[${job.id}]] and ${recipient} has not answered it. The question (${id}):\n\n> ${question.split('\n').join('\n> ')}\n\n${handover} Answer it yourself or reassign it; ${job.assigned} has been requeued in the meantime.\n`, 'daemon', { job: job.id });
+    // The CEO's job is the re-entry guard for this whole escalation, so it is created first (M2). Written after
+    // the handoff, a kill in between re-ran everything on the next tick: the handoff was appended a second time,
+    // and because the recipient's job had by then been cancelled, that second copy told the CEO the recipient
+    // "is still working on" a job nothing was working on. Creating it first makes a repeat a no-op instead.
     createJob(vault, {
       id: answerJob, type: 'colleague.answer', assigned: 'ceo', priority: 2,
       title: `Answer ${job.assigned} (escalated): ${question.slice(0, 60)}`,
@@ -307,6 +306,13 @@ function escalateQuestionToCeo(vault: Vault, job: JobFrontmatter, id: string): v
       goal: `${job.assigned} asked ${recipient} this question ${Math.round((Date.now() - Date.parse(job.blocked_on?.since ?? nowIso())) / 3600_000)} h ago and got no answer, so it is yours now:\n\n> ${question.split('\n').join('\n> ')}\n\nAnswer with colleague.message(to: "${job.assigned}", body: "re:${id} <your answer>"). The "re:${id}" prefix is what unblocks their job, so keep it exactly.`,
       done_when: `${job.assigned} has an answer to ${id} in Messages/${job.assigned}.md.`,
     }, 'daemon');
+    if (superseded) cancelJob(vault, owed, 'daemon', `${job.assigned}'s question ${id} went unanswered and was escalated to ceo as ${answerJob}`);
+    const handover = superseded
+      ? `${recipient}'s own answer job [[${owed}]] has been cancelled, so this question is yours alone.`
+      : recipientJob
+        ? `${recipient} is still working on [[${owed}]], so check there before answering — you would both be replying to the same question.`
+        : `${recipient} has no open job for it.`;
+    vault.appendText(messagePath('ceo'), `\n## ${nowIso()} from daemon (handoff) <!-- id:msg_${answerJob} job:${job.id} -->\n\n${job.assigned} asked ${recipient} a question on job [[${job.id}]] and ${recipient} has not answered it. The question (${id}):\n\n> ${question.split('\n').join('\n> ')}\n\n${handover} Answer it yourself or reassign it; ${job.assigned} has been requeued in the meantime.\n`, 'daemon', { job: job.id });
   }
   vault.events.emit({ type: 'daemon.warning', agent: 'daemon', job: job.id, payload: { where: 'question_timeout', message: `${recipient} never answered ${job.assigned}'s question ${id}; escalated to ceo as ${answerJob}`, id, escalated_to: 'ceo' } });
 }
