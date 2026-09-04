@@ -3,7 +3,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
-  loadOrg, leadOf, teamOf, openSubtree, expandProcess,
+  loadOrg, leadOf, teamOf, openSubtree, expandProcess, HEARTBEAT_WAKE_AREAS,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -282,6 +282,23 @@ export interface OwnerFeedback { role: string; source: string; text: string }
  * feedback and decision ratings. Provenance: a comment counts as the owner's only if it was NOT present in the last version the
  * system wrote (recorded at write time; git HEAD as fallback) — text that arrived through email, scraping or an LLM is ignored.
  */
+/**
+ * Comments the owner typed while the daemon was down. The watcher starts with `ignoreInitial`, so nothing ever
+ * replays those edits and `collectOwnerFeedback` — which reads only `owner.edited` events — would never see them.
+ * This startup sweep compares each note's `%%cubicle: …%%` comments against the last version the system wrote
+ * (git HEAD as the fallback) and emits one `owner.edited { offline: true }` per file that gained some, which is
+ * exactly the shape the rest of the feedback path already consumes. Returns the paths it reported.
+ */
+export function collectOfflineOwnerComments(vault: Vault): string[] {
+  const out: string[] = [];
+  for (const { path: rel, added } of vault.commentsChangedSinceWritten()) {
+    const area = rel.split('/')[0];
+    vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: rel, area, deleted: false, offline: true, comments: added.length, wakes_heartbeat: HEARTBEAT_WAKE_AREAS.includes(area) } });
+    out.push(rel);
+  }
+  return out;
+}
+
 export function collectOwnerFeedback(vault: Vault, since?: string): OwnerFeedback[] {
   const out: OwnerFeedback[] = [];
   const seen = new Set<string>();

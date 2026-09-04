@@ -12,7 +12,7 @@ import { WsServer } from './ws.js';
 import { createHeartbeatJob, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
-import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview } from './evolution.js';
+import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview } from './evolution.js';
 import { StaticServer } from './static.js';
 import { pruneScreens } from '@cubicle/tools';
 
@@ -212,6 +212,12 @@ export class Daemon {
     this.vault.events.emit({ type: 'daemon.started', payload: { pid: process.pid, port: this.ws ? cfg.port : null, roles: this.workers.roles().map((r) => r.role) } });
     this.workers.start();
     writeQueueMd(this.vault);
+
+    // The watcher ignores what was already on disk, so `%%cubicle: …%%` comments the owner typed while the daemon
+    // was down would be lost. Sweep for them now that the owner.edited handlers are wired, so a comment left
+    // overnight still wakes the heartbeat and still reaches the role it was written at.
+    const offline = collectOfflineOwnerComments(this.vault);
+    if (offline.length) this.log(`owner comments found in ${offline.length} file(s) edited while the daemon was off`);
 
     // Startup trigger: away ≥ 1 h, or never run
     const last = this.vault.events.last('heartbeat.completed');

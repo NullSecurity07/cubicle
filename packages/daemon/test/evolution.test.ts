@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault, Vault, createJob, createProposal, listJobs, listInbox, findInboxById, JobResult, stringifyNote, updateJob } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler, runJob, type Llm } from '@cubicle/harness';
-import { dispatchProposals, applyHire, applyFire, freeDesk, activeRoles, maybeEnqueueCharterCompression, enqueueExperimentReviews, collectOwnerFeedback, feedbackFor } from '../src/index.js';
+import { Daemon, defaultConfig, dispatchProposals, applyHire, applyFire, freeDesk, activeRoles, maybeEnqueueCharterCompression, enqueueExperimentReviews, collectOwnerFeedback, feedbackFor } from '../src/index.js';
 
 const root = path.resolve(__dirname, '../../..');
 const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
@@ -131,5 +131,42 @@ describe('charter compression, experiments, owner feedback', () => {
     const all = collectOwnerFeedback(vault);
     expect(feedbackFor(all, 'cto').map((f) => f.text)).toEqual(['too ambitious, cut to one job']);
     expect(feedbackFor(all, 'growth').some((f) => /rated this decision down/.test(f.text))).toBe(true);
+  });
+});
+
+/** A model nothing in these tests actually calls: the daemon needs one to construct its worker pool. */
+const idleLlm: Llm = {
+  async chat() { return { content: 'ok', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'cheap', downgraded: false, parsedToolCalls: [] }; },
+  promptBudget: () => 6000,
+};
+
+function daemonFor(llm: Llm) {
+  return new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 500, maxConcurrentJobs: 1, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+}
+
+describe('owner comments left while the daemon was off (D4)', () => {
+  it('are swept up at startup as owner.edited { offline: true } and reach the note\'s author role', async () => {
+    vault.writeText('Plans/plan.md', '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Ship it\n', 'cto');
+    vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } }); // recent → no startup heartbeat
+    // The owner types into Obsidian with the daemon stopped: a raw write the watcher never sees.
+    writeFileSync(path.join(dir, 'Plans/plan.md'), readFileSync(path.join(dir, 'Plans/plan.md'), 'utf8') + '\n%%cubicle: shorter briefs%%\n');
+
+    const d = daemonFor(idleLlm);
+    await d.start();
+    try {
+      const offline = d.vault.events.query({ types: ['owner.edited'] }).filter((e) => e.payload.offline === true);
+      expect(offline.map((e) => e.payload.path)).toContain('Plans/plan.md');
+      expect(feedbackFor(collectOwnerFeedback(d.vault), 'cto').map((f) => f.text)).toContain('shorter briefs');
+    } finally { await d.stop(); }
+  });
+
+  it('a comment the system itself wrote is not mistaken for the owner', async () => {
+    vault.writeText('Plans/plan.md', '---\ncycle: 1\n---\n# Plan\n\n%%cubicle: written by an agent%%\n', 'cto');
+    vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } });
+    const d = daemonFor(idleLlm);
+    await d.start();
+    try {
+      expect(d.vault.events.query({ types: ['owner.edited'] }).filter((e) => e.payload.offline === true)).toEqual([]);
+    } finally { await d.stop(); }
   });
 });
