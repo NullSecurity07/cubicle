@@ -39,7 +39,7 @@ A one-page site selling a printable weekly meal-planning template for busy paren
 
 Within one tick (≤ 30 s) heartbeat #1 runs: the CEO answers you and proposes a company name in `00 Inbox/` (set `approved: true`), the CTO writes `Plans/plan.md` and queues jobs, the Engineer scaffolds `Site/`, Growth researches a channel, the COO verifies, and `Runs/<timestamp>.md` is your "since you were away" brief. Every heartbeat ends with a git commit inside the vault (`cubicle: heartbeat <id>`), so you can always revert.
 
-Tray app (Electron): `pnpm --filter @cubicle/app start` — start/stop the daemon, open the office/vault, and checkpoint before your laptop sleeps.
+Tray app (Tauri): build it once with `pnpm -r build`, then `pnpm --filter @cubicle/app start` — start/stop the daemon, open the office/vault, and checkpoint before your laptop sleeps. It needs Rust and `webkit2gtk-4.1 libappindicator-gtk3 librsvg` (see SETUP.md).
 
 ## How the vault works
 

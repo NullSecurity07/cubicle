@@ -6,6 +6,7 @@ mod config;
 mod daemon;
 mod icon;
 mod sleep;
+mod smoke;
 
 use config::Config;
 use icon::TrayState;
@@ -316,6 +317,9 @@ fn watch_for_sleep(app: &AppHandle) {
 }
 
 fn main() {
+    if std::env::args().skip(1).any(|arg| arg == "--smoke") {
+        std::process::exit(smoke::run());
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
