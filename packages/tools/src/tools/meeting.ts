@@ -11,11 +11,15 @@ const DECISION_HEADS: [keyof DecisionSections, string][] = [
   ['why', 'Why'], ['expected_effect', 'Expected effect'], ['review_date', 'Review date'],
 ];
 
-/** Split a closing summary that already has all six `## ` headings into the shape `writeDecision` wants. */
+/**
+ * Split a closing summary that already has all six `## ` headings into the shape `writeDecision` wants.
+ * No `m` flag: with it, `$` in the lookahead matches every line end and each section is truncated to
+ * its first line. The heading is anchored explicitly instead, so `$` means end of the summary.
+ */
 function decisionSections(md: string): DecisionSections {
   const out = {} as DecisionSections;
   for (const [key, heading] of DECISION_HEADS) {
-    const m = md.match(new RegExp(`^## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, 'm'));
+    const m = md.match(new RegExp(`(?:^|\\n)## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`));
     out[key] = (m?.[1] ?? '').trim();
   }
   return out;

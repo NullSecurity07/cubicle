@@ -163,7 +163,7 @@ describe('meeting.open', () => {
   };
 
   it('writes the decision through writeDecision (C5)', async () => {
-    const close = '## Context\nboard context\n## Options considered\nstay or move\n## Chosen\nship it\n## Why\nfastest path\n## Expected effect\nsignups up\n## Review date\n2026-09-16';
+    const close = '## Context\nboard context line one\nline two of context\n## Options considered\n- cto: keep it\n- coo: move it\n- ceo: wait a cycle\n## Chosen\nship it\n## Why\nfastest path\n## Expected effect\nsignups up\n## Review date\n2026-09-16';
     const reg = new ToolRegistry().registerAll(phase5Tools());
     const client = await createRoleToolClient(reg.forRole({ ...role('ceo'), tools: ['meeting.open'] } as RoleFrontmatter, cfg), ctxFor('ceo', 'job_m5', { router: routerSaying(close) }));
     try {
@@ -179,6 +179,9 @@ describe('meeting.open', () => {
       expect(note!.data.review_date).toBe('2026-09-16');
       expect(headingsOf(note!.body)).toEqual(HEADS);
       expect(note!.body).toContain('ship it');
+      // Every line of a multi-line section must survive the split, not just the first.
+      expect(note!.body).toContain('board context line one\nline two of context');
+      for (const bullet of ['- cto: keep it', '- coo: move it', '- ceo: wait a cycle']) expect(note!.body).toContain(bullet);
     } finally { await client.close(); }
   });
 
@@ -194,6 +197,25 @@ describe('meeting.open', () => {
       expect(headingsOf(note!.body)).toEqual(HEADS);
       expect(note!.body).toContain('Pick a database');
       expect(note!.data.review_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      // The fallback renders the whole transcript as bullets under Options considered; none may be lost.
+      expect(note!.body).toContain('- ceo: ceo says point 1');
+      expect(note!.body).toContain('- cto: cto says point 2');
+    } finally { await client.close(); }
+  });
+
+  it('the decision inputs link resolves to the meeting note that produced it (C5)', async () => {
+    const reg = new ToolRegistry().registerAll(phase5Tools());
+    const client = await createRoleToolClient(reg.forRole({ ...role('ceo'), tools: ['meeting.open'] } as RoleFrontmatter, cfg), ctxFor('ceo', 'job_m7', { router: routerSaying('nothing structured') }));
+    try {
+      const r = await client.call('meeting.open', { room: 'meeting', participants: ['cto'], agenda: 'Where does the link point?', rounds: 1 });
+      const meet = r.data as { path: string; decision: string };
+      const note = listDecisions(vault).find((d) => d.path === meet.decision)!;
+      // Ratified deviation: inputs carries the meeting note's path, not `[[Meetings/<meeting id>]]`,
+      // because no note lives at the id. The link must therefore resolve to a real file.
+      const link = note.data.inputs.find((i) => i.startsWith('[[Meetings/'))!;
+      const target = `${link.slice(2, -2)}.md`;
+      expect(target).toBe(meet.path);
+      expect(vault.exists(target)).toBe(true);
     } finally { await client.close(); }
   });
 });
