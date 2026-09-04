@@ -135,8 +135,23 @@ export class Daemon {
     const pollInbox = async (): Promise<string[]> => { const r = await withTimeout(runSystemTool('coo', emailInbox, {}), 60_000, 'email.inbox'); return r?.ok ? r.text.split('\n').slice(1) : []; };
     const pullAnalytics = async (): Promise<string | null> => { const r = await withTimeout(runSystemTool('coo', analyticsPull, {}), 60_000, 'analytics.pull'); return r?.ok ? r.text : null; };
     const ownerFeedback = (roleId: string) => feedbackFor(collectOwnerFeedback(this.vault, this.vault.events.last('heartbeat.completed')?.ts), roleId).map((f) => `- (${f.source}) ${f.text}`);
+    // Context compaction (spec §6): observations the prompt budget drops, and an over-long plan, are summarised
+    // by the cheapest model there is — the local tier — so compaction never spends cloud quota. A failure here is
+    // never fatal: the harness treats '' as "no summary" and falls back to clipping.
+    const summarize = async (text: string): Promise<string> => {
+      try {
+        const r = await llm.chat({ tier: 'local', needsTools: false }, {
+          messages: [
+            { role: 'system', content: 'Summarize the following observations in ≤ 200 words, keeping file paths, ids and numbers.' },
+            { role: 'user', content: text },
+          ],
+          maxTokens: 400,
+        });
+        return r.content;
+      } catch { return ''; }
+    };
     this.workers = new WorkerPool(this.vault, {
-      harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback },
+      harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback, summarize },
       heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, ...this.overrides.heartbeatHooks },
       maxConcurrent: cfg.maxConcurrentJobs,
     });

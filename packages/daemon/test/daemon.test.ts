@@ -463,3 +463,37 @@ describe('an approved call the wrapper vetoes', () => {
     vault.close();
   });
 });
+
+describe('local-tier summariser (D1)', () => {
+  it('the daemon hands the harness a summarize() that runs on the local tier', async () => {
+    const vault = Vault.open(dir);
+    vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } }); // recent → no startup heartbeat
+    vault.writeText('Docs/big.md', 'x'.repeat(2000), 'daemon');
+    const id = createJob(vault, { type: 'research', title: 'read a lot', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    vault.close();
+    const prose: { tier: string; system: string; user: string }[] = [];
+    let reads = 0;
+    const llm: Llm = {
+      async chat(req, chat) {
+        const base = { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'strong' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
+        if (!chat.tools) {
+          prose.push({ tier: req.tier, system: String(chat.messages[0]?.content ?? ''), user: String(chat.messages[1]?.content ?? '') });
+          return { ...base, content: 'read Docs/big.md repeatedly' };
+        }
+        if (req.roleId !== 'head_of_growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
+        if (reads++ < 20) return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Docs/big.md' } }] };
+        return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'read it all' } }] };
+      },
+      promptBudget: () => 6000,
+    };
+    const d = new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 500, maxConcurrentJobs: 2, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+    await d.start();
+    try {
+      await waitFor(() => prose.some((p) => p.tier === 'local' && p.system.startsWith('Summarize the following observations')), 30000);
+    } finally { await d.stop(); }
+    const call = prose.find((p) => p.system.startsWith('Summarize the following observations'))!;
+    expect(call.tier).toBe('local');
+    expect(call.user).toContain('vault.read');
+    expect(readJob(Vault.open(dir), id)).toBeTruthy();
+  });
+});
