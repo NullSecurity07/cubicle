@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, createProposal, listJobs, listInbox, findInboxById, JobResult, stringifyNote, updateJob } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, parseNote, createProposal, listJobs, listInbox, findInboxById, JobResult, stringifyNote, updateJob } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler, runJob, type Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, requeueUnblocked, dispatchProposals, applyHire, applyFire, freeDesk, activeRoles, maybeEnqueueCharterCompression, enqueueExperimentReviews, collectOwnerFeedback, feedbackFor } from '../src/index.js';
@@ -225,5 +225,48 @@ describe('preference feedback is delivered once (D5)', () => {
     expect(new Set(delivered.map((e) => e.payload.sha)).size).toBe(2);
 
     expect(await runCycle()).not.toContain('more experiments');
+  });
+});
+
+describe('charter_change proposals show a diff (D6)', () => {
+  it('the CTO\'s compression proposal gains a ## Diff section, before ## Proposed content, showing the changed line', async () => {
+    for (let i = 0; i < 7; i++) vault.events.emit({ type: 'heartbeat.completed', payload: { id: `h${i}` } });
+    const jobId = maybeEnqueueCharterCompression(vault)!;
+    const target = 'Roles/head_of_growth.md';
+    const current = vault.readNoteOrNull(target)!;
+    const oldLine = current.body.split('\n').find((l) => l.trim().length > 20 && !l.startsWith('#'))!;
+    const newLine = 'You keep this charter short.';
+    const proposed = stringifyNote(current.data, current.body.replace(oldLine, newLine));
+
+    const per = new Map<string, number>();
+    const llm: Llm = {
+      async chat(_req, chat) {
+        const base = { content: 'ok', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'cheap' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
+        if (!chat.tools) return base;
+        const id = String(chat.messages[1]?.content ?? '').match(/Jobs\/(job_\w+)\.md/)?.[1] ?? 'x';
+        const n = per.get(id) ?? 0; per.set(id, n + 1);
+        if (n === 0) return { ...base, parsedToolCalls: [{ name: 'proposal.create', args: { kind: 'charter_change', target, title: 'Shorter head_of_growth charter', body: `One line says it better.\n\n## Proposed content\n\n\`\`\`markdown\n${proposed}\`\`\`\n` } }] };
+        return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'one proposal filed' } }] };
+      },
+      promptBudget: () => 6000,
+    };
+    await runJob({ vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} }, jobId);
+
+    const filed = listInbox(vault).find((nn) => nn.data.kind === 'charter_change')!;
+    expect(filed).toBeTruthy();
+    expect(await dispatchProposals(deps())).toBe(0); // still unapproved: the sweep only annotates
+
+    const body = listInbox(vault).find((nn) => nn.data.id === filed.data.id)!.body;
+    expect(body).toContain('## Diff');
+    expect(body.indexOf('## Diff')).toBeLessThan(body.indexOf('## Proposed content'));
+    expect(body).toContain(`-${oldLine}`);
+    expect(body).toContain(`+${newLine}`);
+    expect(body).toContain(`--- ${target} (current)`);
+    expect(body).toContain(`+++ ${target} (proposed)`);
+
+    // Annotating is a system write, so the owner's later approval still reads as an owner flip.
+    ownerEdit(filed.path, (t) => t.replace('approved: null', 'approved: true'));
+    expect(await dispatchProposals(deps())).toBe(1);
+    expect(vault.readText(target)).toContain(newLine);
   });
 });

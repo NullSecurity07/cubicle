@@ -4,7 +4,7 @@ import {
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath } from '@cubicle/tools';
 import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
-import { applyHire, applyFire, applyReorg } from './evolution.js';
+import { applyHire, applyFire, applyReorg, charterDiffSection } from './evolution.js';
 import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
 
 /** kind → allowed targets. Everything else leaves the note unresolved with a warning (an approval must mean what its title says). */
@@ -133,6 +133,14 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
       continue;
     }
     if (d.kind === 'message' || d.resolved_at) continue;
+    // D6: the owner should not have to diff a charter by eye. An unapproved charter_change gets a `## Diff`
+    // block written above its "## Proposed content" showing exactly what the rewrite changes. Only unapproved
+    // notes are touched, so this system write never lands between the owner's flip and `isOwnerChanged`.
+    if (d.kind === 'charter_change' && d.approved === null && d.target && !/^## Diff$/m.test(note.body)) {
+      const proposed = fenced(note.body);
+      const section = proposed ? charterDiffSection(vault, d.target, proposed) : null;
+      if (section) vault.updateNote(note.path, (nn) => ({ data: nn.data, body: nn.body.replace(/## Proposed content/, section + '## Proposed content') }), 'daemon');
+    }
     // Constitution autonomy flags: the owner pre-approved these kinds; the daemon approves agent-created notes itself.
     const c = vault.constitution();
     const autoApproved = d.approved === null && ((d.kind === 'hire' && c.auto_approve_hire && d.from === 'ceo') || (d.kind === 'charter_change' && c.auto_approve_charter_changes && d.from === 'cto') || (d.kind === 'reorg' && c.auto_approve_reorg && d.from === 'ceo'));

@@ -4,7 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
-  loadOrg, leadOf, teamOf, openSubtree, expandProcess, HEARTBEAT_WAKE_AREAS,
+  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -247,6 +247,21 @@ export function maybeEnqueueCharterCompression(vault: Vault): string | null {
     id, type: 'cto.compress_charters', title: `Compress charters after ${heartbeats} heartbeats`, assigned: 'cto', priority: 3,
     goal: `Every ${CHARTER_COMPRESSION_EVERY} heartbeats the CTO tightens the role charters from what the company learned.\n\nDo: (1) vault.read Memory/lessons.md and every Roles/<role>.md for ${roles.join(', ')}; (2) for each role whose charter should change, file ONE proposal.create with kind=charter_change, target=Roles/<role>.md, a title naming the role, and a body that contains "## Proposed content" followed by the COMPLETE new charter note (frontmatter + body) inside a \`\`\`markdown fence — keep the frontmatter identical except tools/approval_overrides if a lesson justifies it, and make the body shorter, not longer; (3) skip roles with nothing to change; (4) finish with a one-paragraph summary listing the proposals.`,
   }, 'daemon');
+}
+
+/**
+ * The `## Diff` block a `charter_change` proposal owes the owner: what its "## Proposed content" would actually
+ * change in the charter on disk, as a unified diff of the two bodies (frontmatter is carried over by the
+ * dispatcher, so diffing it would only show noise). Returns null when there is nothing to compare or nothing
+ * changed — a proposal that rewrites nothing gets no block rather than an empty one.
+ */
+export function charterDiffSection(vault: Vault, target: string, proposedContent: string): string | null {
+  const current = vault.readNoteOrNull(target);
+  if (!current) return null;
+  let proposedBody: string;
+  try { proposedBody = parseNote(proposedContent).body; } catch { return null; }
+  const diff = unifiedDiff(current.body, proposedBody, `${target} (current)`, `${target} (proposed)`).trim();
+  return diff ? `## Diff\n\n\`\`\`diff\n${diff}\n\`\`\`\n\n` : null;
 }
 
 // ---------- experiments (spec §9.4) ----------
