@@ -18,7 +18,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `job.done` | summary, artifacts, metrics, lessons |
 | `job.failed` | reason, requeued, attempt |
 | `job.interrupted` | checkpoint_step (daemon restart) |
-| `job.cancelled` | at_step |
+| `job.cancelled` | at_step, reason — one per stop: a job cancelled while queued or blocked is announced by whatever cancelled it, a running one by its own loop at the next tool step |
 | `agent.thinking` | step |
 | `agent.tool_call` | tool, summary (≤120 chars of args), step |
 | `agent.tool_result` | tool, ok, step, summary |
@@ -49,7 +49,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `plan.vetoed` | findings, vetoes (count so far this cycle) |
 | `research.delivered` | emitted on the requester's research job |
 | `org.changed` | reason (migration | reorg | fire), changed | teams | role |
-| `guardrail.blocked` | tool, reason, step — every refused call, never silent |
+| `guardrail.blocked` | tool, reason — every refused call, never silent. The tool wrapper emits just those two; the harness loop and the dispatcher, which pre-check before spending an idempotency key, add step and approved: true; a refused stored call in a proposal note adds proposal and kind instead |
 
 ## WebSocket (ws://127.0.0.1:7411?token=…)
 

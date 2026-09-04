@@ -39,7 +39,12 @@ describe('generated docs', () => {
     expect(events).toMatch(/`job\.checkpoint` \| `in_review`.*`summary`/);
     expect(schema).toMatch(/`colleague\.answer` \(a question a colleague asked/);
     expect(schema).toMatch(/`rating_seen` \| string \(optional, ISO timestamp\)/);
-    expect(schema).toMatch(/`review_date` \| string \(optional\) \| when set, the decision is resurfaced/);
+    // M5: nothing schedules a decision's review_date; the doc must not promise the resurfacing it once claimed.
+    expect(schema).toMatch(/`review_date` \| string \(optional\) \| optional date the author records for a second look/);
+    expect(schema).not.toMatch(/the decision is resurfaced/);
+    // M4: the two payload notes E8/C1 changed and the generator had not caught up with.
+    expect(events).toMatch(/`job\.cancelled` \| at_step, reason/);
+    expect(events).toMatch(/`guardrail\.blocked` \| tool, reason —.*add step and approved: true/);
     expect(schema).toMatch(/the filename is authoritative: `Jobs\/<id>\.md`/);
     expect(schema).toMatch(/^\| `created` \| string \|/m);   // a zod pipe, not the word "pipe"
   });

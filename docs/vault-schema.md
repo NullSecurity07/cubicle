@@ -135,7 +135,7 @@ Body: freeform notes, appended to every expanded step's job goal.
 | `inputs` | string[] = `[]` |  |
 | `owner_rating` | `up` \| `down` \| null (optional) | set `up`/`down`; `down` reaches the author as feedback |
 | `rating_seen` | string (optional, ISO timestamp) | set to the delivery time once a `down` `owner_rating` has been delivered to the author as feedback, so it reaches them exactly once |
-| `review_date` | string (optional) | when set, the decision is resurfaced to its author around this date for a second look |
+| `review_date` | string (optional) | optional date the author records for a second look, mirroring the `## Review date` body section; nothing schedules it — only `Experiments/` review dates are acted on |
 
 Body sections: Context / Options considered / Chosen / Why / Expected effect / Review date.
 

@@ -96,7 +96,8 @@ pnpm -r test                 # unit + integration (offline: mocks, local servers
 pnpm test:kill9              # kill -9 mid-job → resume, no duplicate side effects
 pnpm test:sleep              # SIGTERM and PrepareForSleep → checkpoint + exit < 5 s → resume
 pnpm test:replay             # close viewer, browse, reopen → replay shows frames on the billboard
-pnpm test:acceptance         # tagged spec §14 cases (tests 1–11)
+pnpm test:acceptance         # tagged spec §14 cases (tests 1–4, 6–11; test 5 is live-only)
+CUBICLE_LIVE=1 pnpm --filter @cubicle/harness test  # spec §14 test 5, against a local Ollama
 scripts/acceptance-all.sh    # everything above on a fresh clone
 ```
 
