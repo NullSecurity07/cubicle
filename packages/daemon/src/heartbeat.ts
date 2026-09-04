@@ -1,7 +1,7 @@
 import {
   type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
-  loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection,
+  loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection, writeDecision,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -80,6 +80,30 @@ export function planIsSubstantive(plan: string): boolean {
 export function firstOpenJob(ids: string[], statusOf: (id: string) => string | undefined): string {
   const open = ids.find((id) => { const s = statusOf(id); return !s || !['done', 'failed', 'cancelled'].includes(s); });
   return open ?? ids[ids.length - 1];
+}
+
+/**
+ * The Critic's pre-mortem as a `Decisions/premortem-<heartbeat id>.md` note: `adopted` when the plan survived,
+ * `proposed` when the Critic returned it (the plan it judged is not the plan that will run). The findings are the
+ * failure modes it foresaw, which is what makes the note worth reading a cycle later.
+ */
+export function writePremortemDecision(vault: Vault, hbId: string, criticJobId: string, result: JobResult | null, now: Date): string {
+  const verdict = result?.verdict ?? 'pass';
+  const findings = result?.findings ?? [];
+  const risks = findings.length
+    ? findings.map((f) => `- ${f}`).join('\n')
+    : '- The Critic found nothing in this plan likely to sink the cycle.';
+  const review = new Date(now.getTime() + 7 * 24 * 3600_000).toISOString().slice(0, 10);
+  return writeDecision(vault, `premortem-${hbId}`, {
+    decided_by: 'critic', cycle: hbId, status: verdict === 'pass' ? 'adopted' : 'proposed', inputs: ['[[Plans/plan]]'],
+  }, {
+    context: `Pre-mortem for heartbeat ${hbId}: the Critic read this cycle's \`Plans/plan.md\` and imagined the cycle had already failed. Its own working is in [[${criticJobId}]].`,
+    options: '- Run the plan as the CEO wrote it\n- Return it to the CEO to rewrite before any team plans against it',
+    chosen: verdict === 'pass' ? 'Run the plan as written.' : 'Return the plan to the CEO for one rewrite.',
+    why: result?.summary?.trim() || (verdict === 'pass' ? 'The plan survived the pre-mortem.' : 'The Critic found failure modes the plan does not answer.'),
+    expected_effect: `Most likely ways this cycle fails, and what would prevent each:\n\n${risks}`,
+    review_date: review,
+  }, 'critic');
 }
 
 /** Create the `ceo.heartbeat` job note (the heartbeat is a job so R9/R10/R12 apply). */
@@ -336,7 +360,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         if (!state.criticJob) {
           const id = createJob(vault, {
             type: 'critic.premortem', title: `Pre-mortem for ${hbId}`, assigned: 'critic', priority: 1, parent: jobId, team: 'strategy', owner_role: 'ceo',
-            goal: `Read Plans/plan.md. Write Decisions/premortem-${hbId.slice(-6)}.md: imagine the cycle failed; list the three most likely reasons and a fix each. Then finish with verdict pass if the plan survives, or verdict return with findings (one line each, concrete). You may return at most once; you cannot delay.`,
+            goal: `Read Plans/plan.md. Imagine this cycle has already failed: work out the three most likely reasons and one concrete fix for each. Then finish with verdict pass if the plan survives, or verdict return with findings (one line each, concrete) — put the reasons and fixes in your finish summary and findings. The heartbeat records them as the pre-mortem decision note for you; do not write one yourself. You may return at most once; you cannot delay.`,
           }, 'ceo');
           state = { ...state, criticJob: id }; saveState(state);
           return block(id, `waiting for critic ${id}`);
@@ -363,6 +387,12 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // A critic job with no parseable ## Result block fails open to "pass" below (never blocking the cycle
         // on a malformed Result), but that must not happen silently (T9).
         if (!result) vault.events.emit({ type: 'daemon.warning', agent: 'ceo', job: jobId, payload: { where: 'critic', message: `critic ${state.criticJob} has no parseable Result; treated as pass` } });
+        // A pre-mortem is a decision the company should be able to look back on (spec §4.1), so the heartbeat
+        // writes it as a validated Decisions/ note rather than trusting the Critic to hand-roll the frontmatter
+        // and the six sections. A second visit for the same heartbeat (the one veto is allowed) overwrites it,
+        // so the note always states the verdict the cycle actually ran with.
+        try { writePremortemDecision(vault, hbId, state.criticJob!, result, now()); }
+        catch (err) { vault.events.emit({ type: 'daemon.warning', agent: 'ceo', job: jobId, payload: { where: 'critic', message: `could not write the pre-mortem decision note: ${(err as Error).message}` } }); }
         if (result?.verdict === 'return') {
           const vetoes = (state.vetoes ?? 0) + 1;
           vault.events.emit({ type: 'plan.vetoed', agent: 'critic', job: jobId, payload: { findings: result.findings, vetoes } });

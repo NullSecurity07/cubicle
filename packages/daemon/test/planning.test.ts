@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listJobs, readJob, loadOrg, resolveTeamSection } from '@cubicle/core';
+import { scaffoldVault, Vault, listJobs, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
@@ -158,6 +158,46 @@ describe('brief notes a recent org migration (F10)', () => {
       const runs = v.list('Runs', { ext: '.md' }).sort();
       const brief = readFileSync(path.join(dir, runs.at(-1)!), 'utf8');
       expect(brief).toContain('The company was reorganised into teams');
+    } finally { v.close(); await d.stop(); }
+  });
+});
+
+describe('critic pre-mortems are validated decision notes (D7)', () => {
+  const SECTIONS = ['## Context', '## Options considered', '## Chosen', '## Why', '## Expected effect', '## Review date'];
+
+  it('a passing pre-mortem is an adopted decision note, and the Critic is no longer asked to write one itself', async () => {
+    const d = daemonFor(orgLlm({ vetoes: 0 }));
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      const hb = listJobs(v).find((j) => j.type === 'ceo.heartbeat')!;
+      const rel = `Decisions/premortem-${hb.id}.md`;
+      expect(v.exists(rel)).toBe(true);
+      const note = v.readNoteOrNull(rel)!;
+      const fm = DecisionFrontmatter.parse(note.data);
+      expect(fm.id).toBe(`premortem-${hb.id}`);
+      expect(fm.decided_by).toBe('critic');
+      expect(fm.cycle).toBe(hb.id);
+      expect(fm.status).toBe('adopted');
+      expect(fm.inputs).toEqual(['[[Plans/plan]]']);
+      for (const h of SECTIONS) expect(note.body).toContain(h);
+      expect(listDecisions(v).map((x) => x.path)).toContain(rel);
+      const critic = listJobs(v).find((j) => j.type === 'critic.premortem')!;
+      expect(readJob(v, critic.id)!.body).not.toContain('Decisions/');
+    } finally { v.close(); await d.stop(); }
+  });
+
+  it('a returned pre-mortem is a proposed decision note carrying the findings', async () => {
+    const d = daemonFor(orgLlm({ vetoes: 2 }));
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      const hb = listJobs(v).find((j) => j.type === 'ceo.heartbeat')!;
+      const note = v.readNoteOrNull(`Decisions/premortem-${hb.id}.md`)!;
+      expect(DecisionFrontmatter.parse(note.data).status).toBe('proposed');
+      expect(note.body).toContain('growth objective has no metric');
     } finally { v.close(); await d.stop(); }
   });
 });
