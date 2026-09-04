@@ -33,7 +33,10 @@ export async function createRoleToolClient(defs: AnyTool[], baseCtx: ToolContext
         // the harness loop (daemon system tools, an approved stored call) inherits them too. Callers that
         // block before calling (the harness pre-check) never reach here, so no event is emitted twice.
         res = await (async () => {
+          // Owner preferences are read here rather than passed in, so every caller inherits an owner-pinned
+          // `never` without having to remember to supply it — including the daemon's own tool paths.
           if (resolveMode(def.name, ctx.config, ctx.role) === 'never') return refuse('mode never');
+          if (resolveMode(def.name, ctx.config, ctx.role, ctx.vault.ownerPreferences()) === 'never') return refuse('mode never (owner preference)');
           for (const g of ctx.guardrails ?? []) {
             const veto = await g.check(def.name, args, ctx);
             if (veto) return refuse(veto);

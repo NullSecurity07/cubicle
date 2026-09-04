@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, listDecisions, decisionPath } from '@cubicle/core';
 import type { Router, RoutedChatResult } from '@cubicle/router';
-import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, phase5Tools, constitutionGuardrail, hostAllowed, AllowlistProxy, hasDocker, hasSandboxImage, browserFrames, mockOutbound, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, phase5Tools, constitutionGuardrail, hostAllowed, AllowlistProxy, hasDocker, hasSandboxImage, browserFrames, mockOutbound, emailInbox, type ToolContext } from '../src/index.js';
 
 let dir: string; let vault: Vault; let server: http.Server; let port: number;
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -251,6 +251,21 @@ describe('tool-layer enforcement (C1)', () => {
       expect(vault.events.count('guardrail.blocked') - blockedBefore).toBe(1);
       expect(vault.events.count('email.sent')).toBe(sentBefore);
     } finally { await client.close(); setCap(20); }
+  });
+
+  it('refuses a tool the owner pinned to never in owner_preferences', async () => {
+    const setApprovals = (yaml: string) => vault.updateNote('Memory/owner_preferences.md', (n) => ({ data: n.data, body: n.body.replace(/approvals: \{[^}]*\}/, `approvals: ${yaml}`) }), 'owner');
+    setApprovals('{ email.inbox: never }');
+    const blockedBefore = vault.events.count('guardrail.blocked');
+    // email.inbox is `auto` in config/tools.yaml, so only the owner preference can refuse it — and this
+    // client is the daemon's own path (runSystemTool), which has no pre-check of its own.
+    const client = await createRoleToolClient([emailInbox], ctxFor('coo', null));
+    try {
+      const res = await client.call('email.inbox', {});
+      expect(res.ok).toBe(false);
+      expect(res.text).toContain('owner preference');
+      expect(vault.events.count('guardrail.blocked') - blockedBefore).toBe(1);
+    } finally { await client.close(); setApprovals('{}'); }
   });
 
   it('a config-level never is refused by the tool layer even when the caller resolved a different mode', async () => {
