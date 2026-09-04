@@ -12,7 +12,7 @@ export const ToolPolicy = z.object({
   outbound: z.boolean().default(false),
   proposal_kind: z.string().optional(),
   owner_owned_mode: ApprovalMode.optional(),
-  first_time_only: z.boolean().default(false), // TODO(Phase 6): deploy.site first-time propose logic
+  first_time_only: z.boolean().default(false), // first-time propose is implemented in the harness loop
   roles: z.array(z.string()).optional(),
 });
 export type ToolPolicy = z.infer<typeof ToolPolicy>;

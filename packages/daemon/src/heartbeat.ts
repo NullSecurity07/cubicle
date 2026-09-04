@@ -17,10 +17,9 @@ export interface HeartbeatDeps {
   llm: Llm;
   router?: Router;
   now?: () => Date;
-  /** Phase 6 hooks; stubs until then. */
+  /** Adapters supplied by the daemon; tests inject fakes. */
   pollInbox?: () => Promise<string[]>;
   pullAnalytics?: () => Promise<string | null>;
-  /** Phase 5 hook. */
   openMeeting?: (agenda: string) => Promise<string | null>;
 }
 

@@ -15,6 +15,7 @@ tools:
   git.log:               { mode: auto }
   git.diff:              { mode: auto }
   git.commit:            { mode: auto }
+  git.revert:            { mode: auto }
   http.fetch:            { mode: auto }
   browser.open:          { mode: auto }
   browser.goto:          { mode: auto }
