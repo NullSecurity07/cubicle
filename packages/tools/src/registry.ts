@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { ZodRawShape } from 'zod';
 import { ApprovalMode, type Vault, type EventLog, type RoleFrontmatter, type ProposalKind, type OwnerPreferences } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
+import type { Guardrail } from './guardrails.js';
 
 // ---------- tools.yaml ----------
 export const ToolPolicy = z.object({
@@ -93,6 +94,11 @@ export interface ToolContext {
   idempotencyKey?: string;
   /** Vault-relative working directory for the job (scratch). */
   workspace: string;
+  /**
+   * Constitution guardrails. The MCP wrapper runs these before every handler, so a tool call made
+   * outside the harness loop is enforced too (spec §7: `never` and the constitution live in the tool layer).
+   */
+  guardrails?: Guardrail[];
   now(): Date;
 }
 

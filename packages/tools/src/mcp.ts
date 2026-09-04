@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { AnyTool, ToolContext, ToolResult } from './registry.js';
+import { resolveMode, type AnyTool, type ToolContext, type ToolResult } from './registry.js';
 
 export interface RoleToolClient {
   client: Client;
@@ -24,8 +24,22 @@ export async function createRoleToolClient(defs: AnyTool[], baseCtx: ToolContext
     server.registerTool(def.name, { description: def.description, inputSchema: def.schema }, (async (args: Record<string, unknown>) => {
       const callId = `${def.name}#${Math.random().toString(36).slice(2)}`;
       let res: ToolResult;
+      const refuse = (reason: string): ToolResult => {
+        ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: def.name, reason } });
+        return { ok: false, text: `blocked: ${reason}` };
+      };
       try {
-        res = await def.handler(args as never, ctx);
+        // Spec §7: `never` and the constitution are enforced *in the tool layer*, so a call made outside
+        // the harness loop (daemon system tools, an approved stored call) inherits them too. Callers that
+        // block before calling (the harness pre-check) never reach here, so no event is emitted twice.
+        res = await (async () => {
+          if (resolveMode(def.name, ctx.config, ctx.role) === 'never') return refuse('mode never');
+          for (const g of ctx.guardrails ?? []) {
+            const veto = await g.check(def.name, args, ctx);
+            if (veto) return refuse(veto);
+          }
+          return def.handler(args as never, ctx);
+        })();
       } catch (err) {
         res = { ok: false, text: `tool error: ${(err as Error).message}` };
       }

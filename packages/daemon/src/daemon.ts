@@ -115,7 +115,7 @@ export class Daemon {
     this.openMeeting = async (agenda: string, participants?: string[]): Promise<string | null> => {
       const ceoNote = this.vault.readNoteOrNull('Roles/ceo.md');
       if (!ceoNote) return null;
-      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId: 'ceo', role: RoleFrontmatter.parse(ceoNote.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/meeting', now: () => new Date() };
+      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId: 'ceo', role: RoleFrontmatter.parse(ceoNote.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/meeting', now: () => new Date(), guardrails };
       const client = await createRoleToolClient([meetingOpen], ctx);
       try {
         const attendees = participants ?? this.workers.roles().map((r) => r.role).filter((r) => r !== 'ceo');
@@ -127,7 +127,7 @@ export class Daemon {
     const runSystemTool = async (roleId: string, tool: AnyTool, args: Record<string, unknown>) => {
       const note = this.vault.readNoteOrNull(`Roles/${roleId}.md`);
       if (!note) return null;
-      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId, role: RoleFrontmatter.parse(note.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/system', now: () => new Date() };
+      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId, role: RoleFrontmatter.parse(note.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/system', now: () => new Date(), guardrails };
       const client = await createRoleToolClient([tool], ctx);
       try { return await client.call(tool.name, args); } finally { await client.close(); }
     };

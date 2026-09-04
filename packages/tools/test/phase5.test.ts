@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob } from '@cubicle/core';
 import type { Router, RoutedChatResult } from '@cubicle/router';
-import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, phase5Tools, constitutionGuardrail, hostAllowed, AllowlistProxy, hasDocker, hasSandboxImage, browserFrames, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, phase5Tools, constitutionGuardrail, hostAllowed, AllowlistProxy, hasDocker, hasSandboxImage, browserFrames, mockOutbound, type ToolContext } from '../src/index.js';
 
 let dir: string; let vault: Vault; let server: http.Server; let port: number;
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -143,6 +143,38 @@ describe('meeting.open', () => {
       expect(vault.readText(meet.decision)).toContain('## Chosen');
       expect(vault.events.count('meeting.turn')).toBe(6);
       expect(vault.events.count('meeting.closed')).toBe(1);
+    } finally { await client.close(); }
+  });
+});
+
+describe('tool-layer enforcement (C1)', () => {
+  const setCap = (n: number) => vault.updateNote('Memory/constitution.md', (nn) => ({ data: nn.data, body: nn.body.replace(/max_emails_per_day: \d+/, `max_emails_per_day: ${n}`) }), 'owner');
+
+  it('a direct tool client call past the constitution cap is blocked inside the tool layer (no harness)', async () => {
+    setCap(0);
+    const blockedBefore = vault.events.count('guardrail.blocked');
+    const sentBefore = vault.events.count('email.sent');
+    const client = await createRoleToolClient([mockOutbound], ctxFor('head_of_growth', 'job_c1', { guardrails: [constitutionGuardrail()] }));
+    try {
+      const res = await client.call('mock.outbound', { to: 'a@b.c', body: 'hi' }, { idempotencyKey: 'k1' });
+      expect(res.ok).toBe(false);
+      expect(res.text).toMatch(/max_emails_per_day/);
+      expect(vault.events.count('guardrail.blocked') - blockedBefore).toBe(1);
+      expect(vault.events.count('email.sent')).toBe(sentBefore);
+    } finally { await client.close(); setCap(20); }
+  });
+
+  it('a config-level never is refused by the tool layer even when the caller resolved a different mode', async () => {
+    const neverCfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8').replace('mock.outbound:         { mode: auto,', 'mock.outbound:         { mode: never,'));
+    const blockedBefore = vault.events.count('guardrail.blocked');
+    const sentBefore = vault.events.count('email.sent');
+    const client = await createRoleToolClient([mockOutbound], ctxFor('head_of_growth', 'job_c1b', { config: neverCfg }));
+    try {
+      const res = await client.call('mock.outbound', { to: 'a@b.c', body: 'hi' }, { idempotencyKey: 'k2' });
+      expect(res.ok).toBe(false);
+      expect(res.text).toMatch(/never/);
+      expect(vault.events.count('guardrail.blocked') - blockedBefore).toBe(1);
+      expect(vault.events.count('email.sent')).toBe(sentBefore);
     } finally { await client.close(); }
   });
 });

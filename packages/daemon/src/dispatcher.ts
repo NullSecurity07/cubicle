@@ -75,7 +75,7 @@ export async function executeStoredCall(deps: DispatcherDeps, note: { path: stri
   const job = jobId ? readJob(deps.vault, jobId) : null;
   if (job && job.data.side_effects_done.includes(call.idempotency_key)) return { ok: true, text: 'already executed (idempotency key recorded)' };
   if (job) updateJob(deps.vault, job.data.id, { side_effects_done: [...job.data.side_effects_done, call.idempotency_key] }, 'daemon', `- ${nowIso()}: ${call.tool} ATTEMPTING by the daemon after owner approval (${call.idempotency_key})`);
-  const ctx: ToolContext = { vault: deps.vault, events: deps.vault.events, roleId, role, jobId, config: deps.toolsConfig, env: deps.env, scheduler: deps.scheduler, workspace: `.cubicle/workspace/${jobId ?? 'daemon'}`, now: () => new Date(), idempotencyKey: call.idempotency_key };
+  const ctx: ToolContext = { vault: deps.vault, events: deps.vault.events, roleId, role, jobId, config: deps.toolsConfig, env: deps.env, scheduler: deps.scheduler, workspace: `.cubicle/workspace/${jobId ?? 'daemon'}`, now: () => new Date(), idempotencyKey: call.idempotency_key, guardrails: deps.guardrails };
   const def = deps.registry.get(call.tool);
   if (!def) return { ok: false, text: `unknown tool ${call.tool}` };
   for (const g of deps.guardrails ?? []) { const v = await g.check(call.tool, call.args, ctx); if (v) { deps.vault.events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason: v, approved: true } }); return { ok: false, text: `blocked even though approved: ${v}` }; } }

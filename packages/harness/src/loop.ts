@@ -137,6 +137,9 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   const baseCtx: ToolContext = {
     vault, events, roleId, role, jobId, config: deps.toolsConfig, env, scheduler: deps.scheduler, memory: memoryApi, router: deps.router,
     workspace: `.cubicle/workspace/${jobId}`, now,
+    // The MCP wrapper re-checks these. The pre-checks below block *before* calling the client, so a call
+    // the loop refuses never reaches the wrapper and `guardrail.blocked` is emitted exactly once.
+    guardrails: deps.guardrails,
   };
   const defs = deps.registry.forRole(role, deps.toolsConfig);
   const client = await createRoleToolClient(defs, baseCtx);
