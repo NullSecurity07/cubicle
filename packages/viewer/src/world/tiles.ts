@@ -7,10 +7,20 @@ export const TILES = [
   'EMPTY', 'GRASS', 'PATH', 'FLOOR', 'WALL', 'WALL_TOP', 'DOOR', 'DESK', 'CHAIR', 'TABLE', 'WHITEBOARD', 'PLANT', 'KITCHEN', 'NOTICE', 'CARPET', 'WINDOW', 'TREE', 'BENCH', 'SIGN',
   // tower (2026-09-11): sky above the roof, per-floor carpets, wall screens, the shaft, its doors, the pantry counter, the slab between floors
   'SKY', 'CARPET_BLUE', 'CARPET_GREEN', 'CARPET_ORANGE', 'SCREEN', 'SHAFT', 'ELEVATOR_DOOR', 'COUNTER', 'SLAB',
+  // --- appended by the visual layer (ids 28+); never reorder ---
+  'STREET', 'KERB', 'PAVEMENT', 'FACADE', 'FACADE_EDGE', 'LOBBY_FLOOR', 'LOBBY_FLOOR_ALT', 'ROOF_EDGE',
+  'FLOOR_F1', 'FLOOR_F2', 'FLOOR_F3', 'FLOOR_F4', 'FLOOR_ALT_F1', 'FLOOR_ALT_F2', 'FLOOR_ALT_F3', 'FLOOR_ALT_F4',
+  'CARPET_F1', 'CARPET_F2', 'CARPET_F3', 'CARPET_F4', 'WALL_F1', 'WALL_F2', 'WALL_F3', 'WALL_F4', 'SIGN_F1', 'SIGN_F2', 'SIGN_F3', 'SIGN_F4',
+  'WALL_TOP_INT', 'CORRIDOR', 'GLASS_V', 'GLASS_H', 'GLASS_CORNER', 'GLASS_DOOR', 'DOOR_INT', 'WINDOW_DAY', 'WINDOW_DUSK', 'WINDOW_NIGHT',
+  'ELEV_SHAFT', 'ELEV_RAIL', 'ELEV_DOOR_L', 'ELEV_DOOR_R', 'ELEV_FRAME', 'ELEV_CALL',
+  'DESK_L', 'DESK_R', 'DESK_EXEC_L', 'DESK_EXEC_R', 'CHAIR_TASK', 'CHAIR_EXEC', 'OWNER_CHAIR',
+  'BT_TL', 'BT_TM', 'BT_TR', 'BT_BL', 'BT_BM', 'BT_BR',
+  'COUNTER_L', 'COUNTER_M', 'COUNTER_R', 'COFFEE_MACHINE', 'FRIDGE', 'CAFE_TABLE', 'STOOL', 'WATER_COOLER',
+  'PLANT_TALL_T', 'PLANT_TALL_B', 'PLANT_SMALL', 'BOOKSHELF_T', 'BOOKSHELF_B', 'FILING', 'LAMP_FLOOR', 'RACK_T', 'RACK_B', 'SAFE_DOOR', 'SCREEN_BEZEL', 'SCREEN_BEZEL_L', 'SCREEN_BEZEL_R',
 ] as const;
 export type TileName = (typeof TILES)[number];
 export const T = Object.fromEntries(TILES.map((n, i) => [n, i])) as Record<TileName, number>;
-export const COLUMNS = 6;
+export const COLUMNS = 16;
 /** Tile size in pixels. The generated map uses 16. */
 export const TILE = 16;
 
