@@ -137,8 +137,8 @@ describe('viewer state machine (spec §10)', () => {
     expect(s.agents.advisor_skeptic.emote?.kind).toBe('!');
     s = applyEvent(s, ev('plan.vetoed', 'cmo', { findings: ['y'] }, null), 2000);
     expect(s.agents.cmo.emote?.kind).toBe('!');
-    const hired = applyEvent(s, ev('role.hired', 'daemon', { role: 'sales_rep', display: 'Rep', desk: 'sales_1', sprite: 'sales_rep', team: 'sales' }, null));
-    expect(hired.agents.sales_rep).toMatchObject({ desk: 'sales_1', team: 'sales', state: 'entering' });
+    const hired = applyEvent(s, ev('role.hired', 'daemon', { role: 'sales_rep', display: 'Rep', desk: 'sales_1', sprite: 'sales_rep', team: 'sales', reports_to: 'cso' }, null));
+    expect(hired.agents.sales_rep).toMatchObject({ desk: 'sales_1', team: 'sales', reportsTo: 'cso', state: 'entering' });
   });
 });
 
