@@ -47,12 +47,15 @@ ev.emit({ type: 'agent.spoke', agent: 'ceo', job: null, payload: { to: 'owner', 
 createProposal(d.vault, { kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Name the company: WeekPlate', body: 'x' }, 'ceo');
 await page.waitForTimeout(6000);
 await page.screenshot({ path: path.join(out, '2-working.png') });
-console.log('agents:', JSON.stringify(await page.evaluate(() => (window as unknown as { __cubicle: { agents: () => unknown } }).__cubicle.agents())));
 console.log('billboard anchor:', JSON.stringify(await page.evaluate(() => (window as unknown as { __cubicle: { anchors: () => Record<string, unknown> } }).__cubicle.anchors().billboard)));
 ev.emit({ type: 'meeting.opened', agent: 'ceo', job: null, payload: { id: 'm1', room: 'board', participants: ['ceo', 'cto', 'coo'], agenda: 'Two jobs failed' } });
-ev.emit({ type: 'job.failed', agent: 'cmo', job: g, payload: { reason: 'step_limit' } });
+// fail the backend engineer's job, not the CMO's: the CMO and the COO are both on floor 4, so failing the CMO's
+// job never leaves the floor. The engineer's desk is in Dev on floor 2, so this is what actually exercises the
+// COO's cross-floor ride and the elevator on the way there.
+ev.emit({ type: 'job.failed', agent: 'backend_engineer', job: e, payload: { reason: 'step_limit' } });
 ev.emit({ type: 'role.hired', agent: 'daemon', job: null, payload: { role: 'sales_rep', display: 'Sales rep', desk: 'sales_1', sprite: 'sales_rep' } });
 await page.waitForTimeout(4500);
+console.log('agents:', JSON.stringify(await page.evaluate(() => (window as unknown as { __cubicle: { agents: () => unknown } }).__cubicle.agents())));
 ev.emit({ type: 'meeting.turn', agent: 'cto', job: null, payload: { id: 'm1', round: 1, text: 'Let us cut the queue to one job per role.' } });
 await page.waitForTimeout(1500);
 await page.screenshot({ path: path.join(out, '3-meeting.png') });
