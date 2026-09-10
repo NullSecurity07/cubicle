@@ -133,10 +133,46 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
     for (const j of listJobs(vault)) if (j.assigned === 'growth') updateJob(vault, j.id, { assigned: 'head_of_growth' }, 'daemon', `- ${nowIso()}: reassigned growth → head_of_growth (org migration)`);
     changed.push('Roles/head_of_growth.md');
   }
-  // 2. teams, processes, docs, missing charters, hireable charters
+  // 2. tower roster (v2, 2026-09-11): a v1 vault still has the nine-role org. Archive the legacy six, move open
+  //    work to their tower successors, and take team notes and processes from the template (the v1 ones name
+  //    legacy roles). Guarded on the template too, so a repo that has not shipped the roster leaves v1 alone.
+  let towerMigrated = false;
+  if (vault.exists('Roles/engineer.md') && !vault.exists('Roles/dev_manager.md') && existsSync(path.join(tpl, 'Roles/dev_manager.md'))) {
+    const date = nowIso().slice(0, 10);
+    for (const id of Object.keys(LEGACY_ROLES)) {
+      const rel = `Roles/${id}.md`;
+      if (!vault.exists(rel)) continue;
+      const n = parseNote(vault.readText(rel));
+      vault.writeText(`Roles/archive/${id}-${date}.md`, stringifyNote({ ...n.data, active: false, archived: `tower migration ${date}` }, n.body), 'daemon');
+      vault.remove(rel, 'daemon');
+      changed.push(rel);
+    }
+    for (const j of listJobs(vault)) {
+      const to = LEGACY_ROLES[j.assigned];
+      if (to && !['done', 'failed', 'cancelled'].includes(j.status)) updateJob(vault, j.id, { assigned: to }, 'daemon', `- ${nowIso()}: reassigned ${j.assigned} → ${to} (tower migration)`);
+    }
+    for (const t of ['engineering', 'growth', 'strategy']) { const rel = `Teams/${t}.md`; if (vault.exists(rel)) { vault.remove(rel, 'daemon'); changed.push(rel); } }
+    for (const dir of ['Teams', 'Processes']) {
+      const abs = path.join(tpl, dir);
+      if (!existsSync(abs)) continue;
+      for (const f of readdirSync(abs)) { if (statSync(path.join(abs, f)).isDirectory()) continue; const rel = `${dir}/${f}`; vault.writeText(rel, readFileSync(path.join(abs, f), 'utf8'), 'daemon'); if (!changed.includes(rel)) changed.push(rel); }
+    }
+    for (const f of readdirSync(path.join(tpl, 'Roles'))) if (f.endsWith('.md')) copyMissing(`Roles/${f}`);
+    // kept charters (ceo, cto, coo …) take the template's desk, team and line of report; everything else the owner wrote stays
+    for (const rel of vault.list('Roles', { ext: '.md' })) {
+      if (rel.includes('/archive/') || rel.includes('/_hireable/')) continue;
+      const tplPath = path.join(tpl, rel); if (!existsSync(tplPath)) continue;
+      const n = vault.readNoteOrNull(rel); if (!n) continue;
+      const t = parseNote(readFileSync(tplPath, 'utf8')).data as Record<string, unknown>;
+      const patch: Record<string, unknown> = {};
+      for (const f of ['desk', 'team', 'reports_to'] as const) if (t[f] !== undefined && n.data[f] !== t[f]) patch[f] = t[f];
+      if (Object.keys(patch).length) { vault.writeText(rel, stringifyNote({ ...n.data, ...patch }, n.body), 'daemon'); if (!changed.includes(rel)) changed.push(rel); }
+    }
+    towerMigrated = true;
+  }
+  // 3. teams, processes, docs, hireable charters that are simply missing
   copyDir('Teams'); copyDir('Processes'); copyDir('Docs'); copyDir('Roles/_hireable');
-  for (const r of ['critic', 'tech_lead', 'qa', 'research_analyst']) copyMissing(`Roles/${r}.md`);
-  // 3. org fields on every active charter, from the template's charter of the same role
+  // 4. org fields on every active charter, from the template's charter of the same role
   for (const rel of vault.list('Roles', { ext: '.md' })) {
     if (rel.includes('/archive/') || rel.includes('/_hireable/')) continue;
     const n = vault.readNoteOrNull(rel); if (!n) continue;
@@ -152,7 +188,7 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
     for (const f of ORG_FIELDS) if (n.data[f] === undefined && t[f] !== undefined) patch[f] = t[f];
     if (Object.keys(patch).length) { vault.writeText(rel, stringifyNote({ ...n.data, ...patch }, n.body), 'daemon'); changed.push(rel); }
   }
-  // 4. constitution fields
+  // 5. constitution fields
   const c = vault.readTextOrNull('Memory/constitution.md') ?? '';
   let patched = c;
   if (c && !/^max_team_size:/m.test(c)) {
@@ -161,6 +197,9 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
       // no max_roles anchor at all (corrupted or pre-dates the field): add it, inside the fenced yaml block, instead of a no-op replace
       : c.replace(/^```ya?ml\s*\n/m, (m) => `${m}max_roles: 12\nmax_team_size: 6\nauto_approve_reorg: false\n`);
     patched = patched.replace(/^never_modify:\n((?:\s+-.*\n)*)/m, (m) => (m.includes('Teams/') ? m : m + '  - Teams/\n'));
+  }
+  if (towerMigrated) {
+    patched = patched.replace(/^max_roles:\s*(\d+)\s*$/m, (_m, d: string) => `max_roles: ${Math.max(40, Number(d))}`).replace(/^max_team_size:\s*(\d+)\s*$/m, (_m, d: string) => `max_team_size: ${Math.max(8, Number(d))}`);
   }
   if (patched !== c) { vault.writeText('Memory/constitution.md', patched, 'daemon'); changed.push('Memory/constitution.md'); }
   if (changed.length) vault.events.emit({ type: 'org.changed', agent: 'daemon', payload: { reason: 'migration', changed } });
