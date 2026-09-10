@@ -68,3 +68,20 @@ describe('proposal.create, meeting.open, colleague.message, finish', () => {
     expect((f.data as { verdict: string; findings: string[] })).toMatchObject({ verdict: 'return', findings: ['no tests'] });
   });
 });
+
+describe('scheduler.request refusals tell the caller what it may do instead', () => {
+  it('a lead scheduling outside its team is told who it may schedule', async () => {
+    const r = await call('scheduler.request', 'cto', { type: 'growth.outreach', title: 'B', assigned: 'cto', goal: 'g', done_when: 'x' });
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/may not schedule cto/);
+    expect(r.text).toMatch(/tech_lead, engineer, qa/);
+    expect(r.text).toMatch(/yourself/i);
+  });
+  it('a lead whose team has no members is told there is nobody to schedule and what to do instead', async () => {
+    const r = await call('scheduler.request', 'head_of_growth', { type: 'engineer.ship', title: 'B', assigned: 'engineer', goal: 'g', done_when: 'x' });
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/growth has no members/);
+    expect(r.text).toMatch(/do the work in this job/i);
+    expect(r.text).toMatch(/research_analyst/);
+  });
+});

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listJobs, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter } from '@cubicle/core';
+import { scaffoldVault, Vault, listJobs, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
@@ -205,6 +205,28 @@ describe('critic pre-mortems are validated decision notes (D7)', () => {
       const note = v.readNoteOrNull(`Decisions/premortem-${hb.id}.md`)!;
       expect(DecisionFrontmatter.parse(note.data).status).toBe('proposed');
       expect(note.body).toContain('growth objective has no metric');
+    } finally { v.close(); await d.stop(); }
+  });
+});
+
+describe('brief lists jobs that stopped and wait for the owner', () => {
+  it('a job finished as blocked (blocked_on owner) appears under What needs you with its blocker', async () => {
+    const seed = Vault.open(dir);
+    const id = createJob(seed, { type: 'growth.outreach', title: 'Review outreach', assigned: 'cto', priority: 3, goal: 'g' }, 'ceo');
+    updateJob(seed, id, { status: 'blocked', blocked_on: { kind: 'owner', id, since: new Date().toISOString() } }, 'cto');
+    seed.updateNote(`Jobs/${id}.md`, (n) => ({ data: n.data, body: setSection(n.body, '## Result', '```json\n' + JSON.stringify({ status: 'blocked', blockers: ['cto may not schedule cto'], summary: 'stuck' }) + '\n```') }), 'cto');
+    seed.close();
+    const d = daemonFor(orgLlm({ vetoes: 0, plan: '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n' }));
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      const runs = v.list('Runs', { ext: '.md' }).sort();
+      const brief = readFileSync(path.join(dir, runs.at(-1)!), 'utf8');
+      const facts = brief.split('_Facts used:_')[1] ?? '';
+      expect(facts).toContain(`Decide on ${id}`);
+      expect(facts).toContain('cto may not schedule cto');
+      expect(facts).toContain('status: queued');
     } finally { v.close(); await d.stop(); }
   });
 });

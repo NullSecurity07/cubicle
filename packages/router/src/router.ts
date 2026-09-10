@@ -47,7 +47,7 @@ export class NoModelAvailableError extends Error {
 
 /**
  * Quota-aware, capability-aware model router. Order: cascade providers, same tier first, then downgrade.
- * Every call is recorded; 429s mark the model cooling; failures cascade to the next candidate.
+ * Every call is recorded; 429s and 503s mark the model cooling; failures cascade to the next candidate.
  */
 export class Router {
   private env: NodeJS.ProcessEnv;
@@ -185,6 +185,16 @@ export class Router {
             // Bad key: skip the whole provider for this call
             tried.push(`${key} (401)`);
             continue;
+          }
+          if (err.status === 503 || err.status === 502 || err.status === 529) {
+            // "High demand" lasts minutes, not one request: without a cooling mark every call re-pays the failed
+            // round-trip before cascading (a live day showed 162 downgrades in 244 calls). Same backoff ladder as
+            // 429, capped lower — overload clears sooner than a quota does.
+            const n = (this.attemptCounts.get(key) ?? 0) + 1;
+            this.attemptCounts.set(key, n);
+            const backoff = Math.min(this.backoffBaseMs * 15 * 2 ** (n - 1), 5 * 60_000);
+            this.quota.setCooling(c.provider.id, c.model.id, new Date(this.now().getTime() + backoff));
+            this.events?.emit({ type: 'quota.updated', payload: { provider: c.provider.id, model: c.model.id, cooling_ms: backoff, reason: String(err.status) } });
           }
           tried.push(`${key} (${err.status ?? 'net'})`);
           continue;

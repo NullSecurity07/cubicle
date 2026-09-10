@@ -43,6 +43,14 @@ describe.skipIf(noViewer)('close the viewer, work, reopen, replay the day', () =
   }, TIMEOUT_MS);
 });
 
+describe.skipIf(noViewer)('presses on the HTML layer stay off the office', () => {
+  it('scripts/test-overlay-clicks.ts: a click in the drawer does not hit the surface beneath it, a drag released over it ends', () => {
+    const r = runScript('test-overlay-clicks.ts');
+    expect(r.status, r.tail).toBe(0);
+    expect(r.stdout).toContain('PASS:');
+  }, TIMEOUT_MS);
+});
+
 describe.skipIf(noDbus)('sleep and SIGTERM checkpoint, exit and resume', () => {
   it('scripts/test-sleep.ts checkpoints, exits under 5 s and resumes (acceptance test 9)', () => {
     const r = runScript('test-sleep.ts');

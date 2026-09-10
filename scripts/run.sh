@@ -8,8 +8,9 @@
 #   scripts/run.sh doctor [flags]        delegate to `cubicle doctor`
 #
 # Vault: --vault <path> | positional | $CUBICLE_VAULT | ~/Vaults/Cubicle (scaffolded if empty).
-# Mode:  tray when a display and a StatusNotifier host exist (the Tauri tray owns the daemon);
-#        headless otherwise (daemon in the background, office in your browser). Flags override.
+# Mode:  tray when a display and a StatusNotifier host exist (the Tauri tray owns the daemon and shows the office in
+#        its own window; snixembed is started for you when installed); headless otherwise (daemon in the background,
+#        office in your browser). Flags override.
 # Builds only what is stale: node_modules, TypeScript dists, the viewer, the Rust tray (tray mode only).
 set -euo pipefail
 
@@ -68,8 +69,21 @@ stale() { # stale <artifact> <src...>  → 0 when artifact is missing or older t
 pending_count() { local n=0 f; shopt -s nullglob; for f in "$VAULT/00 Inbox"/*.md; do [[ "$(basename "$f")" == README.md ]] && continue; grep -qE '^kind:[[:space:]]*(message)?[[:space:]]*$' "$f" && continue; grep -qE '^approved:[[:space:]]*null' "$f" && n=$((n + 1)); done; shopt -u nullglob; echo "$n"; }
 has_display() { [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; }
 has_tray_host() { have dbus-send && dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null | grep -q StatusNotifierWatcher; }
+# i3bar / polybar only have an XEmbed tray; snixembed proxies StatusNotifier icons (the Tauri tray) into it. Start it when it
+# is installed but not running, so the tray does not silently fall back to a browser tab. `--fork` returns once the watcher is up.
+ensure_tray_host() {
+  has_tray_host && return 0
+  have snixembed || return 1
+  if snixembed --fork >/dev/null 2>&1 && has_tray_host; then ok "started snixembed (StatusNotifier → XEmbed tray bridge)"; else warn "snixembed did not register a StatusNotifierWatcher"; return 1; fi
+}
 can_build_tray() { have cargo && pkg-config --exists webkit2gtk-4.1 2>/dev/null; }
 open_url() { local url="$1"; if [[ "$OPEN" == 1 ]] && has_display && have xdg-open; then (xdg-open "$url" >/dev/null 2>&1 &); ok "opened the office in your browser"; else info "office: $url"; fi; }
+# The office window: the tray's own webview when the tray is running (SIGUSR2 asks it to show the office), the browser otherwise.
+show_office() {
+  local url="$1"
+  if [[ "$OPEN" != 1 ]]; then info "office: $url"; return 0; fi
+  if tray_running && kill -USR2 "$(tray_pid)" 2>/dev/null; then ok "opened the office window (Open Office in the tray brings it back)"; else open_url "$url"; fi
+}
 wait_for_daemon() { local i; for i in $(seq 1 "${1:-60}"); do daemon_running && json_field port >/dev/null && return 0; sleep 0.5; done; return 1; }
 
 # ---------- preflight ----------
@@ -139,13 +153,15 @@ ensure_vault() {
 # ---------- mode ----------
 choose_mode() {
   if [[ "$MODE" == auto ]]; then
-    if has_display && has_tray_host && can_build_tray; then MODE=tray
+    if has_display && ensure_tray_host && can_build_tray; then MODE=tray
     else
       MODE=headless
-      if has_display && ! has_tray_host; then info "no StatusNotifier tray host on this desktop — running headless (add a tray host, e.g. polybar's tray module or snixembed, to use the tray)"; fi
+      if has_display && ! has_tray_host; then info "no StatusNotifier tray host on this desktop — running headless (install snixembed, or another tray host, to use the tray)"; fi
       has_display || info "no display — running headless"
       can_build_tray || { has_display && has_tray_host && info "cargo or webkit2gtk-4.1 missing — running headless"; }
     fi
+  elif [[ "$MODE" == tray ]]; then
+    has_display && ensure_tray_host || warn "no StatusNotifier tray host — the tray icon will not be visible (install snixembed)"
   fi
   ok "mode: $MODE"
 }
@@ -158,7 +174,7 @@ cmd_start() {
   ensure_vault
   step "Run"
   if daemon_running; then
-    ok "daemon already running (pid $(daemon_pid))"; open_url "$(office_url)"; return 0
+    ok "daemon already running (pid $(daemon_pid))"; show_office "$(office_url)"; return 0
   fi
   if [[ "$MODE" == tray ]]; then
     if tray_running; then ok "tray already running (pid $(tray_pid))"; else
@@ -171,7 +187,7 @@ cmd_start() {
   fi
   if wait_for_daemon 90; then ok "daemon running (pid $(daemon_pid))"; else die "daemon did not come up within 45 s — see $LOGS/daemon.log"; fi
   local url; url="$(office_url)"
-  if [[ "$MODE" == tray ]]; then info "office: $url  (or Open Office from the tray)"; [[ "$OPEN" == 1 ]] && open_url "$url" || true; else open_url "$url"; fi
+  show_office "$url"
   local n; n="$(pending_count)"; [[ "$n" -gt 0 ]] && warn "$n proposal(s) waiting for you in 00 Inbox/" || true
   info "next: talk to the CEO in the cabin, or write a kind: message note in 00 Inbox/ — then  $0 status"
 }

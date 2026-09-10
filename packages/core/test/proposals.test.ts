@@ -57,3 +57,22 @@ describe('listInbox — owner-written notes', () => {
     expect(n!.data.to).toBe('owner');
   });
 });
+
+describe('listInbox — owner-typed approval values', () => {
+  it('accepts a quoted "true"/"false" (Obsidian writes text properties that way) and a quoted chosen number', () => {
+    writeFileSync(path.join(dir, '00 Inbox', 'quoted-true.md'), '---\nid: prop_q1\nkind: brand_change\nfrom: ceo\nto: owner\ncreated: 2026-09-03T04:46:31.177Z\napproved: "true"\ntarget: Brand/name.md\nchosen: "2"\n---\n# Name\n');
+    writeFileSync(path.join(dir, '00 Inbox', 'quoted-false.md'), '---\nid: prop_q2\nkind: brand_change\nfrom: ceo\nto: owner\ncreated: 2026-09-03T04:46:31.177Z\napproved: "No"\ntarget: Brand/name.md\nanswered: "yes"\n---\n# Name\n');
+    const a = listInbox(vault).find((x) => x.data.id === 'prop_q1')!;
+    expect(a.data.approved).toBe(true);
+    expect(a.data.chosen).toBe(2);
+    const b = listInbox(vault).find((x) => x.data.id === 'prop_q2')!;
+    expect(b.data.approved).toBe(false);
+    expect(b.data.answered).toBe(true);
+  });
+  it('still ignores a value that is not a decision, with one warning naming the field', () => {
+    writeFileSync(path.join(dir, '00 Inbox', 'maybe.md'), '---\nid: prop_q3\nkind: brand_change\nfrom: ceo\nto: owner\ncreated: 2026-09-03T04:46:31.177Z\napproved: maybe\ntarget: Brand/name.md\n---\n# Name\n');
+    expect(listInbox(vault).find((x) => x.data.id === 'prop_q3')).toBeUndefined();
+    const w = vault.events.query({ types: ['daemon.warning'] }).find((e) => e.payload.path === '00 Inbox/maybe.md');
+    expect(String(w?.payload.reason)).toMatch(/approved/);
+  });
+});

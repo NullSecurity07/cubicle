@@ -13,7 +13,7 @@ export function renderQuotaMarkdown(statuses: QuotaStatus[], now = new Date()): 
   return [
     '# Quota runway',
     '',
-    `Updated ${now.toISOString()} by the router after every call. Limits are what \`config/providers.yaml\` declares; a 429 marks a model cooling.`,
+    `Updated ${now.toISOString()} by the router after every call. Limits are what \`config/providers.yaml\` declares; a 429 (or a 503 overload) marks a model cooling.`,
     '',
     '| provider | model | calls/min | calls/day | tokens/min | status |',
     '|---|---|---|---|---|---|',

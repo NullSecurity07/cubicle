@@ -18,6 +18,11 @@ const ctx: Ctx = { frames, tokenQuery: token ? `?token=${encodeURIComponent(toke
 const scene = new OfficeScene();
 const game = new Phaser.Game({ type: Phaser.AUTO, parent: 'game', backgroundColor: '#0e1014', pixelArt: true, roundPixels: true, scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' }, scene: [scene] });
 void game;
+// Phaser also listens for mousedown / touchstart on the window (`input.windowEvents`, on by default) and hit-tests
+// those against the office, so a press on the drawer, the modal, the top bar or the time bar would "click" whatever
+// surface or agent is drawn beneath it. A press that starts outside the office stays outside it. Releases still
+// reach Phaser, so a drag let go over the HTML layer ends cleanly (the pointer's `isDown` clears).
+for (const type of ['mousedown', 'touchstart'] as const) document.addEventListener(type, (e) => { if (!(e.target as Element).closest?.('#game')) e.stopPropagation(); });
 
 const time = new TimeControls({
   onLive() { if (liveState) { state = liveState; liveState = null; } state = { ...state, mode: 'live' }; net.snapshot(); },

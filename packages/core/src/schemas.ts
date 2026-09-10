@@ -123,16 +123,29 @@ export const StoredCall = z.object({
 });
 export type StoredCall = z.infer<typeof StoredCall>;
 
+// The owner edits 00 Inbox/ by hand or in Obsidian, whose property editor stores a text property as `approved: "true"`.
+// A quoted true/false/yes/no (any case) means what it says and a quoted number is a number; anything else stays
+// invalid, so a typo like `approved: maybe` is reported (listInbox warns) rather than silently read as a decision.
+const ownerFlag = z.preprocess((v) => {
+  if (typeof v !== 'string') return v;
+  const s = v.trim().toLowerCase();
+  if (s === 'true' || s === 'yes') return true;
+  if (s === 'false' || s === 'no') return false;
+  if (s === '' || s === 'null' || s === '~') return null;
+  return v;
+}, z.boolean().nullable()).default(null);
+const ownerInt = z.preprocess((v) => (typeof v === 'string' && /^\s*\d+\s*$/.test(v) ? Number(v) : v), z.number().int().nullable()).default(null);
+
 export const InboxFrontmatter = z.looseObject({
   id: z.string(),
   kind: ProposalKind,
   created: z.string(),
   from: z.string(),
   to: z.string().default('owner'),
-  approved: z.boolean().nullable().default(null),
+  approved: ownerFlag,
   resolved_at: z.string().nullable().default(null),
-  answered: z.boolean().nullable().default(null),
-  chosen: z.number().int().nullable().default(null),
+  answered: ownerFlag,
+  chosen: ownerInt,
   call: StoredCall.optional(),
   target: z.string().optional(),   // file path for brand_change / charter_change / file_change
   job: z.string().optional(),      // originating job id

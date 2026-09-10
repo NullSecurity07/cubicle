@@ -491,6 +491,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const needsYou = [
           ...pending.map((p) => `- Approve or reject: ${p.body.split('\n')[0].replace(/^#\s*/, '')} (\`${p.path}\`)`),
           ...blocked.filter((j) => j.blocked_on?.kind === 'message').map((j) => `- Answer ${j.assigned}'s question on job ${j.id}`),
+          // A job that finished as blocked waits for the owner and nothing else requeues it (loop.ts / requeueUnblocked):
+          // unlisted, it sat for a day while the brief said "nothing needs you".
+          ...blocked.filter((j) => j.blocked_on?.kind === 'owner').map((j) => `- Decide on ${j.id} (${j.assigned}: ${j.title}) — it stopped: ${jobBlockers(vault, j.id) || 'no reason given'}. Set status: queued to retry it or status: cancelled to drop it`),
           ...(migrated ? ['- The company was reorganised into teams — review Teams/ and the new charters'] : []),
         ];
         const facts = [
@@ -534,6 +537,18 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     }
   }
   return { status: 'done' };
+}
+
+/** The blockers a job reported in its `## Result` JSON, joined; '' when there is no parsable result. */
+function jobBlockers(vault: Vault, id: string): string {
+  const body = readJob(vault, id)?.body ?? '';
+  const m = body.split('## Result')[1]?.match(/```json\s*([\s\S]*?)```/);
+  if (!m) return '';
+  try {
+    const r = JSON.parse(m[1]) as { blockers?: unknown; summary?: unknown };
+    const blockers = Array.isArray(r.blockers) ? r.blockers.map(String).filter(Boolean) : [];
+    return (blockers.length ? blockers.join('; ') : typeof r.summary === 'string' ? r.summary : '').slice(0, 200);
+  } catch { return ''; }
 }
 
 import * as core from '@cubicle/core';

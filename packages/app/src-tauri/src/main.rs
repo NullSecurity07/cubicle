@@ -364,6 +364,24 @@ fn watch_for_signals(app: &AppHandle) {
             let _ = app.run_on_main_thread(move || handle.exit(0));
         });
     });
+    // SIGUSR2 means "show the office". It is how `scripts/run.sh` reaches a tray that is already
+    // running: the office belongs in this window, not in a browser tab. Not SIGUSR1: WebKit's
+    // JavaScriptCore takes that one over for its garbage collector once the first webview exists.
+    // Windows are GTK, so the open happens on the main thread.
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut show = match signal(SignalKind::user_defined2()) {
+            Ok(s) => s,
+            Err(err) => return log(&format!("cannot listen for SIGUSR2: {err}")),
+        };
+        while show.recv().await.is_some() {
+            log("SIGUSR2: opening the office");
+            let h = handle.clone();
+            if handle.run_on_main_thread(move || open_office(&h)).is_err() {
+                return; // the app is gone
+            }
+        }
+    });
 }
 
 /// Checkpoint the daemon before the machine suspends and bring it back on wake (spec §14 test 9).

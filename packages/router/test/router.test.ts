@@ -240,3 +240,20 @@ describe('the shipped cascade (acceptance test 4, config/providers.yaml)', () =>
     expect(events.count('router.downgraded')).toBe(1);
   });
 });
+
+describe('overloaded models are skipped for a while (503 high demand)', () => {
+  it('a 503 marks the model cooling so the next call cascades without paying for the failed round-trip', async () => {
+    behaviours.clear();
+    behaviours.set('alpha-strong', { status: 503 });
+    const { router, events, quota } = mk();
+    const r = await router.chat({ tier: 'strong', needsTools: false }, { messages: [{ role: 'user', content: 'hi' }] });
+    expect(r.provider).toBe('beta');
+    expect(quota.coolingUntil('alpha', 'alpha-strong')).not.toBeNull();
+    const ev = events.query({ types: ['quota.updated'] }).find((e) => e.payload.reason === '503');
+    expect(ev?.payload.model).toBe('alpha-strong');
+    const before = hits.length;
+    const r2 = await router.chat({ tier: 'strong', needsTools: false }, { messages: [{ role: 'user', content: 'hi' }] });
+    expect(r2.provider).toBe('beta');
+    expect(hits.slice(before).some((h) => h.includes('alpha-strong'))).toBe(false);
+  });
+});

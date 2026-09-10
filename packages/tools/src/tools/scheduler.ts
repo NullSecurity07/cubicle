@@ -1,12 +1,27 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob } from '@cubicle/core';
+import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, type Org } from '@cubicle/core';
 
 const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'] };
 
+/**
+ * A refusal the model can act on. The old one-liner ("leads schedule their own team…") left a lead whose team has no
+ * members, or a CTO handed growth work, retrying with other names and then giving up as "blocked on the owner".
+ * Name who this role may schedule, or say plainly that there is nobody, and what to do instead.
+ */
+export function cannotScheduleText(org: Org, roleId: string, assigned: string): string {
+  const allowed = [...new Set([...(teamOf(org, roleId)?.members ?? []), ...Object.keys(org.roles)])].filter((r) => can(org, roleId, 'schedule', r)); // own team first, in charter order
+  const self = assigned === roleId ? ' Nobody schedules themselves: do the work in this job.' : '';
+  const fallback = 'Otherwise do the work in this job yourself, request research (type: research, assigned: research_analyst), or tell your lead (the ceo, for a lead) with colleague.message.';
+  if (allowed.length) return `${roleId} may not schedule ${assigned}.${self} You may schedule: ${allowed.join(', ')} (leads schedule their own team's members, members hand off to a teammate, the CEO anyone). ${fallback}`;
+  const team = isLead(org, roleId) ? teamOf(org, roleId) : null;
+  const why = team ? `${roleId} leads ${team.id}, and ${team.id} has no members, so there is nobody to schedule.` : `${roleId} may not schedule ${assigned}, and has no teammate to hand off to.`;
+  return `${why}${self} Do the work in this job yourself, request research (type: research, assigned: research_analyst), or ask the ceo with colleague.message.`;
+}
+
 export const schedulerRequest = defineTool({
   name: 'scheduler.request',
-  description: `Enqueue a job for a role. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). CEO/CTO may also set priority on existing jobs via reprioritize.`,
+  description: `Enqueue a job for a role. Leads schedule their own team's members, members hand off to a teammate, the CEO anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). CEO/CTO may also set priority on existing jobs via reprioritize.`,
   schema: {
     type: z.string().default('custom'),
     title: z.string(),
@@ -39,7 +54,7 @@ export const schedulerRequest = defineTool({
       forRole = args.for ?? ctx.roleId;
       if (!org.roles[forRole]) return { ok: false, text: 'for must be an active role id' };
     } else if (!can(org, ctx.roleId, 'schedule', args.assigned)) {
-      return { ok: false, text: `${ctx.roleId} may not schedule ${args.assigned}: leads schedule their own team, members hand off to a teammate, the CEO anyone` };
+      return { ok: false, text: cannotScheduleText(org, ctx.roleId, args.assigned) };
     }
     const allowed = SYSTEM_TYPES[type];
     if (allowed && !allowed.includes(ctx.roleId)) return { ok: false, text: `job type ${type} is reserved for the daemon${allowed.length ? ` / ${allowed.join(', ')}` : ''}` };
