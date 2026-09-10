@@ -1,9 +1,11 @@
 import Phaser from 'phaser';
 import type { Mood, Emote } from '../state.js';
 import { TILES, T, COLUMNS, TILE, tilesetMeta } from './tiles.js';
+import { roleColor } from './palette.js';
 
 /** Tile ids come from tiles.ts (shared with scripts/world/tower.ts). Drawn procedurally: CC0-by-construction placeholder art. */
 export { TILES, T, COLUMNS, TILE, tilesetMeta };
+export { roleColor };
 
 function px(g: CanvasRenderingContext2D, x: number, y: number, c: string, w = 1, h = 1) { g.fillStyle = c; g.fillRect(x, y, w, h); }
 function noise(g: CanvasRenderingContext2D, ox: number, oy: number, colors: string[], n: number, seed: number) { let s = seed; for (let i = 0; i < n; i++) { s = (s * 9301 + 49297) % 233280; const x = s % TILE; s = (s * 9301 + 49297) % 233280; const y = s % TILE; px(g, ox + x, oy + y, colors[i % colors.length]); } }
@@ -44,14 +46,6 @@ export function makeTileset(scene: Phaser.Scene): void {
   draw(T.COUNTER, (x, y) => { px(g, x, y, '#dcd4c5', TILE, TILE); px(g, x, y + 5, '#8a5a2b', TILE, 10); px(g, x, y + 5, '#c9a56e', TILE, 2); });
   draw(T.SLAB, (x, y) => { px(g, x, y, '#6b7282', TILE, TILE); px(g, x, y, '#8a92a3', TILE, 2); px(g, x, y + 14, '#4a505c', TILE, 2); });
   tex.refresh();
-}
-
-/** Palette per role (deterministic for unknown roles from the name). */
-export function roleColor(role: string): number {
-  const known: Record<string, number> = { ceo: 0xf2c14e, cto: 0x4e9af2, engineer: 0x4ed3a3, growth: 0xf26b6b, head_of_growth: 0xf26b6b, coo: 0xb98ef2 };
-  if (known[role]) return known[role];
-  let h = 0; for (const ch of role) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return Phaser.Display.Color.HSLToColor((h % 360) / 360, 0.55, 0.6).color;
 }
 
 /** Sprite sheet frames beyond the 12 walking frames (4 directions × 3 steps). All face the viewer. */
