@@ -1,7 +1,7 @@
 import type Phaser from 'phaser';
 import EasyStar from 'easystarjs';
 
-import { TILE } from './tiles.js';
+import { T, TILE } from './tiles.js';
 export { TILE };
 
 export interface Tile { tx: number; ty: number }
@@ -29,8 +29,8 @@ export interface World extends MapData {
   standTile(name: string): Tile | null;
 }
 
-const DOOR = 6;                              // walls layer: a door is walkable
-const WALKABLE_FURNITURE = new Set([8, 14]); // furniture layer: chairs and carpet are walkable
+const WALKABLE_WALLS = new Set([T.DOOR, T.ELEVATOR_DOOR]); // walls layer: room and elevator doors are walkable
+const WALKABLE_FURNITURE = new Set([T.CHAIR, T.CARPET]);   // furniture layer: chairs and carpet are walkable
 
 /** Tiled JSON → office geometry: the collision grid, the object anchors, the desks and the meeting seats. */
 export function parseMap(json: TiledMap): MapData {
@@ -43,7 +43,7 @@ export function parseMap(json: TiledMap): MapData {
     for (let x = 0; x < json.width; x++) {
       const i = y * json.width + x;
       const w = walls[i] ?? 0, f = furniture[i] ?? 0;
-      row.push((w > 0 && w !== DOOR) || (f > 0 && !WALKABLE_FURNITURE.has(f)) ? 1 : 0);
+      row.push((w > 0 && !WALKABLE_WALLS.has(w)) || (f > 0 && !WALKABLE_FURNITURE.has(f)) ? 1 : 0);
     }
     grid.push(row);
   }
@@ -55,7 +55,7 @@ export function parseMap(json: TiledMap): MapData {
     for (const p of o.properties ?? []) props[p.name] = p.value;
     const a: Anchor = { name: o.name, type: String(o.type ?? ''), tx: Math.round((o.x ?? 0) / tile), ty: Math.round((o.y ?? 0) / tile), tw: Math.round((o.width ?? tile) / tile), th: Math.round((o.height ?? tile) / tile), props };
     anchors[o.name] = a;
-    if (a.type === 'seat') (seats[String(props.room)] ??= []).push({ tx: a.tx, ty: a.ty });
+    if (a.type === 'seat' && !props.reserved) (seats[String(props.room)] ??= []).push({ tx: a.tx, ty: a.ty });
     if (a.type === 'desk') desks[o.name] = { tx: a.tx, ty: a.ty };
   }
   return { width: json.width, height: json.height, grid, anchors, seats, desks };
