@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault } from '../src/template.js';
@@ -53,6 +53,22 @@ describe('migrateOrg: tower roster step', () => {
       expect(vault.readText('Processes/feature.md')).toContain('dev_manager');
       expect(vault.constitution()).toMatchObject({ max_roles: 40, max_team_size: 8 });
       expect(migrateOrg(vault, tpl).changed).toEqual([]);
+    } finally { vault.close(); rmSync(dir, { recursive: true, force: true }); rmSync(tpl, { recursive: true, force: true }); }
+  });
+  it('archives an owner-edited Teams note before the tower template overwrites it', async () => {
+    const tpl = makeTemplate();
+    const { dir, vault } = await makeLegacyVault();
+    try {
+      const edited = teamNote('operations', 'coo', [], 'mission: keep the lights on, my way\n');
+      writeFileSync(path.join(dir, 'Teams/operations.md'), edited);
+      migrateOrg(vault, tpl);
+      const archived = readdirSync(path.join(dir, 'Teams/archive'));
+      const match = archived.find((f) => f.startsWith('operations-'));
+      expect(match, archived.join(',')).toBeTruthy();
+      expect(readFileSync(path.join(dir, 'Teams/archive', match!), 'utf8')).toContain('keep the lights on, my way');
+      expect(vault.readText('Teams/operations.md')).not.toContain('keep the lights on, my way');
+      const org = loadOrg(vault);
+      expect(org.teams.operations.lead).toBe('coo');   // the archived copy (same team id) is not picked up as live
     } finally { vault.close(); rmSync(dir, { recursive: true, force: true }); rmSync(tpl, { recursive: true, force: true }); }
   });
   it('does nothing on a vault that already has the tower roster', async () => {

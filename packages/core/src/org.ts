@@ -13,6 +13,7 @@ export type Action = Permission;
 export function loadOrg(vault: Vault): Org {
   const teams: Org['teams'] = {};
   for (const rel of vault.list('Teams', { ext: '.md' })) {
+    if (rel.includes('/archive/')) continue;
     const n = vault.readNoteOrNull(rel); const p = n && TeamFrontmatter.safeParse(n.data);
     if (p && p.success) teams[p.data.id] = p.data;
   }
@@ -160,7 +161,20 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
     for (const dir of ['Teams', 'Processes']) {
       const abs = path.join(tpl, dir);
       if (!existsSync(abs)) continue;
-      for (const f of readdirSync(abs)) { if (statSync(path.join(abs, f)).isDirectory()) continue; const rel = `${dir}/${f}`; vault.writeText(rel, readFileSync(path.join(abs, f), 'utf8'), 'daemon'); if (!changed.includes(rel)) changed.push(rel); }
+      for (const f of readdirSync(abs)) {
+        if (statSync(path.join(abs, f)).isDirectory()) continue;
+        const rel = `${dir}/${f}`;
+        const tplContent = readFileSync(path.join(abs, f), 'utf8');
+        const existing = vault.readTextOrNull(rel);
+        // the template's tower note replaces whatever is there; archive an owner-edited one first so it is not silently lost
+        if (existing !== null && existing !== tplContent) {
+          const archiveRel = `${dir}/archive/${f.replace(/\.md$/, '')}-${date}.md`;
+          vault.writeText(archiveRel, existing, 'daemon');
+          if (!changed.includes(archiveRel)) changed.push(archiveRel);
+        }
+        vault.writeText(rel, tplContent, 'daemon');
+        if (!changed.includes(rel)) changed.push(rel);
+      }
     }
     for (const f of readdirSync(path.join(tpl, 'Roles'))) if (f.endsWith('.md')) copyMissing(`Roles/${f}`);
     // kept charters (ceo, cto, coo …) take the template's desk, team and line of report; everything else the owner wrote stays
