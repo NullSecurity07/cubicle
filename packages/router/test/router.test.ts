@@ -163,6 +163,14 @@ describe('Router', () => {
     await expect(router.chat({ tier: 'cheap', needsTools: false }, { messages: [{ role: 'user', content: 'hi' }] })).rejects.toThrow(NoModelAvailableError);
   });
 
+  it('missingKeyProviders lists enabled cascade providers whose api_key_env is unset, in cascade order, never the keyless local floor', () => {
+    expect(mk(config(), {}).router.missingKeyProviders()).toEqual([{ id: 'alpha', env: 'ALPHA_KEY' }, { id: 'beta', env: 'BETA_KEY' }]);
+    expect(mk(config(), { ALPHA_KEY: 'a', BETA_KEY: '   ' }).router.missingKeyProviders()).toEqual([{ id: 'beta', env: 'BETA_KEY' }]); // blank counts as unset, like apiKeyFor
+    expect(mk(config(), env).router.missingKeyProviders()).toEqual([]);
+    // A disabled provider is not missing anything: it was never going to be dialled.
+    expect(mk(config('  - id: gamma\n    enabled: false\n    base_url: http://127.0.0.1:1/v1\n    api_key_env: GAMMA_KEY\n    models: []\n'), env).router.missingKeyProviders()).toEqual([]);
+  });
+
   it('providersTest reports per-model status', async () => {
     behaviours.clear();
     behaviours.set('beta-strong', { status: 401 });

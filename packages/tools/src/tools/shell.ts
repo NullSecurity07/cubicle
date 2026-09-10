@@ -80,9 +80,21 @@ async function runProcess(cmd: string, args: string[], opts: { cwd?: string; env
   });
 }
 
+/**
+ * Only the vault's Site/ folder is mounted, at /work/Site, and that is the cwd; the rest of the vault is not in the
+ * container. Models carry vault-relative paths over from vault.read (`cat Site/astro.config.mjs`) and get a bare
+ * "No such file". When such a command fails, say where it ran and what the path should have been.
+ */
+export function sitePathHint(command: string, cwd: 'Site' | 'scratch', ok: boolean): string {
+  if (ok || cwd !== 'Site') return '';
+  const m = command.match(/(?:^|[\s'"=(])Site\/([^\s'"|;&)]*)/);
+  if (!m) return '';
+  return `\n[hint: cwd is /work/Site, which IS the vault's Site/ folder, and nothing else of the vault is mounted. Use paths relative to it: ${m[1] ? `\`${m[1]}\`` : '`.`'} instead of \`${m[0].trim()}\`]`;
+}
+
 export const shellRun = defineTool({
   name: 'shell.run',
-  description: 'Run a shell command in the sandbox: Site/ is mounted at /work/Site (cwd), scratch at /work/scratch, a ready Astro template with deps at /opt/templates/minimal (cp -a /opt/templates/minimal/. . && npm run build). No network unless network="allowlist" (npm registry, GitHub, jsDelivr only). 5-minute limit.',
+  description: 'Run a shell command in the sandbox. cwd is /work/Site = the vault\'s Site/ folder, so use paths relative to it (astro.config.mjs, not Site/astro.config.mjs); nothing else of the vault is mounted (use vault.read for that). Scratch is at /work/scratch (cwd="scratch"); a ready Astro template with deps is at /opt/templates/minimal (cp -a /opt/templates/minimal/. . && npm run build). No network unless network="allowlist" (npm registry, GitHub, jsDelivr only). 5-minute limit.',
   schema: {
     command: z.string().describe('bash command line'),
     cwd: z.enum(['Site', 'scratch']).default('Site'),
@@ -164,6 +176,7 @@ export const shellRun = defineTool({
     const denied = deniedHosts.length ? `\n[proxy denied: ${deniedHosts.join(', ')}]` : '';
     const status = result.timedOut ? `TIMED OUT after ${timeoutMs / 1000}s` : `exit ${result.code}`;
     const restored = clobbered.length ? `\n[RESTORED owner-edited files your command changed (they are read-only for you): ${clobbered.join(', ')} — ask the owner via proposal.create kind=message if they must change]` : '';
-    return { ok: !result.timedOut && result.code === 0, text: `[${result.mode}] ${status}${denied}\n${result.output || '(no output)'}${changed.length ? `\n[changed under Site/: ${changed.slice(0, 20).join(', ')}${changed.length > 20 ? ` +${changed.length - 20} more` : ''}]` : ''}${restored}`, data: { code: result.code, timedOut: result.timedOut, mode: result.mode, changed, restored: clobbered } };
+    const ok = !result.timedOut && result.code === 0;
+    return { ok, text: `[${result.mode}] ${status}${denied}\n${result.output || '(no output)'}${sitePathHint(command, cwd, ok)}${changed.length ? `\n[changed under Site/: ${changed.slice(0, 20).join(', ')}${changed.length > 20 ? ` +${changed.length - 20} more` : ''}]` : ''}${restored}`, data: { code: result.code, timedOut: result.timedOut, mode: result.mode, changed, restored: clobbered } };
   },
 });

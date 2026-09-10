@@ -341,6 +341,29 @@ describe('snapshot for the office', () => {
 });
 
 describe('daemon lifecycle', () => {
+  it('start logs one line per cloud provider whose API key is unset and emits exactly one provider_key daemon.warning; with keys set it stays quiet', async () => {
+    // The live run that motivated this: a blank .env left every call on ollama for three days, and Metrics/quota.md
+    // showed Gemini "ok 0/250" — the router's availableProviders() filter had silently removed it.
+    const mkDaemon = (env: NodeJS.ProcessEnv, lines: string[]) => new Daemon(defaultConfig(dir, env, { port: 0, tickMs: 500, maxConcurrentJobs: 1, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm: fakeLlm(), disableWs: true, disableSleepWatch: true, memory: false, log: (m) => lines.push(m) });
+    const lines: string[] = [];
+    const d = mkDaemon({ CUBICLE_MOCK_TOOLS: '1' }, lines);
+    await d.start();
+    try {
+      const warnings = d.vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'provider_key');
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].payload.providers).toEqual([{ id: 'gemini', env: 'GEMINI_API_KEY' }, { id: 'groq', env: 'GROQ_API_KEY' }, { id: 'openrouter', env: 'OPENROUTER_API_KEY' }]);
+      expect(lines).toContain('provider gemini: GEMINI_API_KEY not set — its models are unavailable; set it in .env or the environment');
+      expect(lines.filter((l) => /^provider \w+: \w+ not set/.test(l))).toHaveLength(3);
+    } finally { await d.stop(); }
+    const quiet: string[] = [];
+    const d2 = mkDaemon({ CUBICLE_MOCK_TOOLS: '1', GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q', OPENROUTER_API_KEY: 'o' }, quiet);
+    await d2.start();
+    try {
+      expect(d2.vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'provider_key')).toHaveLength(1); // still the one from the first start
+      expect(quiet.some((l) => /not set/.test(l))).toBe(false);
+    } finally { await d2.stop(); }
+  });
+
   it('an owner note typed while the daemon was down (only kind: message) triggers a heartbeat that answers it', async () => {
     const seed = Vault.open(dir);
     seed.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } }); // recent → no startup heartbeat

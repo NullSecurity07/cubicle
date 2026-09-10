@@ -5,7 +5,7 @@ export const finish = defineTool({
   name: 'finish',
   description: 'End the job with a structured result. Call this exactly once when the goal is met, blocked, or impossible.',
   schema: {
-    status: z.enum(['done', 'failed', 'blocked']),
+    status: z.enum(['done', 'failed', 'blocked', 'pass', 'return']).describe('done | failed | blocked; review gates may say pass or return instead of done + verdict'),
     summary: z.string().describe('one paragraph for the COO and the owner'),
     artifacts: z.array(z.string()).default([]).describe('vault paths or URLs produced'),
     metrics: z.record(z.string(), z.union([z.number(), z.string()])).default({}),
@@ -15,6 +15,10 @@ export const finish = defineTool({
     findings: z.array(z.string()).default([]),
   },
   async handler(args) {
-    return { ok: true, text: `finished: ${args.status}`, data: args, finished: true };
+    // Gate reviewers kept calling finish({status: 'return'}) (20 opaque "Invalid option" rejections in one live run):
+    // the verdict is what they mean, so accept it as an alias for done + verdict. An explicit verdict still wins.
+    const aliased = args.status === 'pass' || args.status === 'return';
+    const result = aliased ? { ...args, status: 'done' as const, verdict: args.verdict ?? args.status as 'pass' | 'return' } : args;
+    return { ok: true, text: `finished: ${result.status}${result.verdict ? ` (verdict ${result.verdict})` : ''}`, data: result, finished: true };
   },
 });

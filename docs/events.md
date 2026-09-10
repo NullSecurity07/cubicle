@@ -8,7 +8,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 |---|---|
 | `daemon.started` | pid, port, roles |
 | `daemon.stopping` | active_jobs |
-| `daemon.warning` | where, message — never silent; a question timeout adds id (the unanswered message) and escalated_to |
+| `daemon.warning` | where, message — never silent; a question timeout adds id (the unanswered message) and escalated_to; `where: provider_key` carries providers [{id, env}] instead of message (a cascade provider has no API key, so its models are unavailable) |
 | `heartbeat.started` | trigger |
 | `heartbeat.completed` | id, commit, run (Runs/ path), gathered_at |
 | `job.queued` | type, title, assigned, priority |

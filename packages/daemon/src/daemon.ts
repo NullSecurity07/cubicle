@@ -9,7 +9,7 @@ import type { DaemonConfig } from './config.js';
 import { WorkerPool } from './workers.js';
 import { dispatchProposals } from './dispatcher.js';
 import { WsServer } from './ws.js';
-import { createHeartbeatJob, type HeartbeatDeps } from './heartbeat.js';
+import { createHeartbeatJob, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
 import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview } from './evolution.js';
@@ -17,16 +17,11 @@ import { hasIdea } from './first-run.js';
 import { StaticServer } from './static.js';
 import { pruneScreens } from '@cubicle/tools';
 
-/** Planning and gate job types never count toward the "N jobs completed" heartbeat trigger — otherwise a single
- *  cycle's own planning/gate sub-jobs (company.plan, critic.premortem, team.plan, qa.review, coo.verify,
- *  requester.review) push the count past the threshold and the heartbeat retriggers itself. */
-export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', 'qa.review', 'coo.verify', 'requester.review'];
-
 export interface DaemonOverrides {
   llm?: Llm;
   extraTools?: AnyTool[];
   guardrails?: Guardrail[];
-  heartbeatHooks?: Partial<Pick<HeartbeatDeps, 'pollInbox' | 'pullAnalytics' | 'openMeeting'>>;
+  heartbeatHooks?: Partial<Pick<HeartbeatDeps, 'pollInbox' | 'pullAnalytics' | 'openMeeting' | 'noCloudKeys'>>;
   disableWs?: boolean;
   disableSleepWatch?: boolean;
   memory?: boolean;
@@ -104,6 +99,15 @@ export class Daemon {
     this.ensureBrandLogo();
     const providers = loadProvidersConfig(cfg.providersPath);
     this.router = new Router(providers, new QuotaTracker(this.vault.db), { env: cfg.env, events: this.vault.events });
+    // A cloud provider without its key is not an error to the router (the cascade just gets shorter) but it is
+    // news to the owner: a blank .env once ran the whole company on the local model for three days with nothing
+    // in the log, the brief or Metrics/quota.md saying so. One line per provider, one event for the office.
+    const missingKeys = this.router.missingKeyProviders();
+    for (const m of missingKeys) this.log(`provider ${m.id}: ${m.env} not set — its models are unavailable; set it in .env or the environment`);
+    if (missingKeys.length) this.vault.events.emit({ type: 'daemon.warning', payload: { where: 'provider_key', providers: missingKeys } });
+    // "No cloud at all" (every keyed provider is keyless) is what turns the brief's degraded-mode row from
+    // "rate-limited or cooling" into "no cloud provider has an API key".
+    const noCloudKeys = () => missingKeys.length > 0 && this.router.availableProviders().every((p) => p.privacy === 'local');
     const toolsConfig = loadToolsConfig(cfg.toolsPath);
     this.registry = new ToolRegistry().registerAll([...phase3Tools({ includeMock: !!cfg.env.CUBICLE_MOCK_TOOLS }), ...phase5Tools(), ...phase6Tools(), ...(this.overrides.extraTools ?? [])]);
     const llm: Llm = this.overrides.llm ?? this.router;
@@ -154,7 +158,7 @@ export class Daemon {
     };
     this.workers = new WorkerPool(this.vault, {
       harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback, summarize },
-      heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, ...this.overrides.heartbeatHooks },
+      heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, env: cfg.env, noCloudKeys, planMaxAgeDays: cfg.planMaxAgeDays, log: this.log, ...this.overrides.heartbeatHooks },
       maxConcurrent: cfg.maxConcurrentJobs,
     });
     this.workers.on('outcome', ({ jobId, outcome }: { jobId: string; outcome: { status: string } }) => {

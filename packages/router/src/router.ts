@@ -63,12 +63,29 @@ export class Router {
     this.backoffBaseMs = opts.backoffBaseMs ?? 2000;
   }
 
-  /** Enabled providers with a usable key, in cascade order. */
-  availableProviders(): ProviderConfig[] {
+  /** Every configured provider in cascade order (those absent from `cascade:` trail in file order). */
+  private orderedProviders(): ProviderConfig[] {
     const byId = new Map(this.config.providers.map((p) => [p.id, p]));
     const ordered = this.config.cascade.map((id) => byId.get(id)).filter((p): p is ProviderConfig => !!p);
     for (const p of this.config.providers) if (!ordered.includes(p)) ordered.push(p);
-    return ordered.filter((p) => p.enabled && apiKeyFor(p, this.env) !== null);
+    return ordered;
+  }
+
+  /** Enabled providers with a usable key, in cascade order. */
+  availableProviders(): ProviderConfig[] {
+    return this.orderedProviders().filter((p) => p.enabled && apiKeyFor(p, this.env) !== null);
+  }
+
+  /**
+   * Enabled providers whose `api_key_env` is unset (or blank) in this router's env. `availableProviders` drops
+   * them silently, which is right for routing but wrong for the owner: a live run spent three days on the local
+   * floor because `.env` was blank, while Metrics/quota.md showed Gemini "ok 0/250" and nothing said why. The
+   * daemon logs and warns from this list at start. Keyless providers (ollama) have nothing to miss and never appear.
+   */
+  missingKeyProviders(): { id: string; env: string }[] {
+    return this.orderedProviders()
+      .filter((p) => p.enabled && p.api_key_env && apiKeyFor(p, this.env) === null)
+      .map((p) => ({ id: p.id, env: p.api_key_env! }));
   }
 
   /** Candidate list for a request: same-or-higher tier first (closest tier first), then lower tiers. */

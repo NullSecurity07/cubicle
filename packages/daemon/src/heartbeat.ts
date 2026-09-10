@@ -1,10 +1,11 @@
 import {
   type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
-  loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection, writeDecision,
+  loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
+import { deployer, emailSender, analytics } from '@cubicle/tools';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
 import { seedFirstJobs } from './first-run.js';
@@ -22,6 +23,13 @@ export interface HeartbeatDeps {
   pollInbox?: () => Promise<string[]>;
   pullAnalytics?: () => Promise<string | null>;
   openMeeting?: (agenda: string) => Promise<string | null>;
+  /** The outbound adapters (deploy/email/analytics) pick mock or live from this env; the brief says which. */
+  env?: NodeJS.ProcessEnv;
+  /** True when every cloud provider in the cascade lacks its API key (the daemon warned `provider_key` at start). */
+  noCloudKeys?: () => boolean;
+  /** See DaemonConfig.planMaxAgeDays; undefined disables the re-planning gate. */
+  planMaxAgeDays?: number;
+  log?: (msg: string) => void;
 }
 
 export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { kind: 'job'; id: string } } | { status: 'cancelled' } | { status: 'requeued'; attempt: number };
@@ -29,6 +37,86 @@ export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { k
 export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'company_plan', 'critic', 'team_plans', 'brief', 'commit'] as const;
 /** How long a heartbeat waits for company.plan/critic.premortem/team.plan before writing the brief with "planning pending" (R33). */
 export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
+
+/** Planning and gate job types never count toward the "N jobs completed" heartbeat trigger — otherwise a single
+ *  cycle's own planning/gate sub-jobs (company.plan, critic.premortem, team.plan, qa.review, coo.verify,
+ *  requester.review) push the count past the threshold and the heartbeat retriggers itself. The re-planning gate
+ *  uses the same list for "work still open": a queued coo.verify is bookkeeping, not work from the plan. */
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', 'qa.review', 'coo.verify', 'requester.review'];
+
+/**
+ * The outbound services whose adapters are in mock mode for this env, in the order the brief names them. Asks the
+ * adapters themselves (`deployer`, `emailSender`, `analytics`) rather than repeating their env-var names here, so
+ * the brief can never disagree with what `email.send` or `deploy` actually did.
+ */
+export function mockedServices(env: NodeJS.ProcessEnv): ('deploy' | 'email' | 'analytics')[] {
+  const modes = { deploy: deployer(env, repoRoot()).mode, email: emailSender(env).mode, analytics: analytics(env).mode } as const;
+  return (['deploy', 'email', 'analytics'] as const).filter((s) => modes[s] === 'mock');
+}
+
+const SERVICE_KEYS = { deploy: 'CLOUDFLARE_*', email: 'BREVO_*', analytics: 'GOATCOUNTER_*' } as const;
+
+/**
+ * The brief's "What needs you" row for mocked outbound services, naming only the ones that are. Without it a
+ * brief could say "Verified site deployment" about a copy into `.cubicle/mock/deploy/` and the owner would
+ * believe a customer could have seen the site.
+ */
+export function mockedServicesRow(mocked: ('deploy' | 'email' | 'analytics')[]): string | null {
+  if (!mocked.length) return null;
+  const names = mocked.map((s, i) => (i === 0 ? s[0].toUpperCase() + s.slice(1) : s));
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `- ${list} ${mocked.length === 1 ? 'is' : 'are'} simulated (no ${mocked.map((s) => SERVICE_KEYS[s]).join('/')} keys): nothing has reached a customer. See SETUP.md`;
+}
+
+/**
+ * Model use over the heartbeat window, from `router.call` events: a fact line always, and a "What needs you" row
+ * when the team ran mostly on the local floor — at least 5 calls, at least half of them downgraded (a one-off
+ * cascade is noise; a whole cycle on ollama is news). `noCloudKeys` picks the cause: the live run this fixes had
+ * no key at all, which Metrics/quota.md ("ok 0/250") could not distinguish from an idle cloud tier.
+ */
+export function modelUseRows(use: { calls: number; downgraded: number }, noCloudKeys: boolean): { fact: string; needsYou: string | null } {
+  const fact = `Model use: ${use.calls} calls, ${use.downgraded} downgraded to local`;
+  if (use.calls < 5 || use.downgraded * 2 < use.calls) return { fact, needsYou: null };
+  const reason = noCloudKeys ? 'no cloud provider has an API key' : 'cloud models were rate-limited or cooling';
+  return { fact, needsYou: `- The team ran mostly on the local model (${use.downgraded} of ${use.calls} calls downgraded): ${reason}. Check API keys in .env (\`cubicle doctor\`) and Metrics/quota.md` };
+}
+
+/**
+ * Whether this heartbeat may keep the current Plans/plan.md instead of rewriting it. Every heartbeat used to run
+ * company.plan → critic.premortem → one team.plan per lead → gates (≈16 model calls) before any work, and on the
+ * local floor one such "Plan Growth" took three days. Skip only when ALL hold: the plan's frontmatter `updated`
+ * parses to a date less than `maxAgeDays` old (the template's `updated: ""` and a future or garbled stamp mean
+ * "age unknown" → plan), the plan is substantive, work from it is still queued or running, nobody asked for a
+ * change (owner message, owner edit, owner-triggered heartbeat), and this is not the Critic's requested rewrite.
+ */
+export function planningGate(opts: { plan: string; now: Date; maxAgeDays: number | undefined; openJobs: number; ownerAsked: boolean; rewrite: boolean }): { skip: true; planDate: string } | { skip: false; reason: string } {
+  const { plan, now, maxAgeDays, openJobs, ownerAsked, rewrite } = opts;
+  if (maxAgeDays === undefined || !(maxAgeDays > 0)) return { skip: false, reason: 'gate disabled' };
+  if (rewrite) return { skip: false, reason: 'the Critic returned the plan' };
+  if (ownerAsked) return { skip: false, reason: 'the owner asked for something' };
+  if (openJobs === 0) return { skip: false, reason: 'no work from the plan is open' };
+  if (!planIsSubstantive(plan)) return { skip: false, reason: 'the plan has no real objective' };
+  let updated: unknown;
+  try { updated = parseNote(plan).data.updated; } catch { return { skip: false, reason: 'plan frontmatter unreadable' }; }
+  const stamp = updated instanceof Date ? updated.toISOString() : typeof updated === 'string' ? updated.trim() : '';
+  const t = stamp ? Date.parse(stamp) : NaN;
+  if (Number.isNaN(t)) return { skip: false, reason: 'plan age unknown' };
+  const ageDays = (now.getTime() - t) / 86400_000;
+  if (ageDays < 0) return { skip: false, reason: 'plan stamp is in the future' };
+  if (ageDays >= maxAgeDays) return { skip: false, reason: `plan is ${ageDays.toFixed(1)} days old` };
+  return { skip: true, planDate: new Date(t).toISOString().slice(0, 10) };
+}
+
+/**
+ * The goal text of a lead's `team.plan` job. A lead with no members (the shipped `operations` team is only the
+ * COO) used to be told to "do the work yourself as a custom job assigned to you" and then tried
+ * `scheduler.request` on itself every cycle, which the org guards refuse; say instead how such a lead gets work
+ * onto the queue — through the CEO, or as research.
+ */
+export function teamPlanGoal(t: TeamFrontmatter, objectives: string, lastNextAction: string): string {
+  const alone = t.members.length === 0;
+  return `Your team's objectives this cycle:\n${objectives}\n\nNext action from the last brief: ${lastNextAction}\n\nDo: (1) vault.read Plans/plan.md and vault.list Jobs to see open work; (2) enqueue at most 4 jobs with scheduler.request for your members (${t.members.join(', ') || 'none'}), each finishable in one sitting, each with done_when; research needs go to research_analyst with for: ${t.lead}; (3) vault.append the job ids under your "### ${t.id}" section in Plans/plan.md; (4) finish with a one-paragraph summary.${alone ? ' Your team has no members: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from research_analyst; do not call scheduler.request for yourself.' : ''}`;
+}
 
 /**
  * Every `### <team>` section in `Plans/plan.md`: its team id and its full body text (everything up to the next
@@ -175,7 +263,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { companyPlanJob?: string; criticJob?: string; processedCritic?: string; vetoes?: number; criticFindings?: string[]; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { companyPlanJob?: string; criticJob?: string; processedCritic?: string; vetoes?: number; criticFindings?: string[]; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -341,6 +429,20 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
       case 'company_plan': {
         // Await company.plan as a sub-job. First visit: create it and block. Second visit: it finished.
         if (!state.companyPlanJob) {
+          // Re-planning gate: a fresh, substantive plan with work still open stands (see planningGate). "Owner
+          // asked" is read broadly — an unanswered message, any owner edit, or an owner-/forced-triggered
+          // heartbeat — because skipping wrongly costs a cycle of stale direction while planning wrongly costs
+          // only quota. A Critic return (state.vetoes) is a rewrite request and is never skipped.
+          const openJobs = listJobs(vault, { status: ['queued', 'running'] }).filter((j) => !NON_WORK_TYPES.includes(j.type)).length;
+          const ownerAsked = (state.unansweredOwnerMessages?.length ?? 0) > 0 || (state.ownerEdits?.length ?? 0) > 0 || /owner|forced/i.test(job.title);
+          const gate = planningGate({ plan: vault.readTextOrNull('Plans/plan.md') ?? '', now: now(), maxAgeDays: deps.planMaxAgeDays, openJobs, ownerAsked, rewrite: (state.vetoes ?? 0) > 0 });
+          if (gate.skip) {
+            state = { ...state, planSkipped: { planDate: gate.planDate, open: openJobs } }; saveState(state);
+            const note = `planning skipped — the plan from ${gate.planDate} stands and ${openJobs} job${openJobs === 1 ? ' is' : 's are'} still open`;
+            deps.log?.(`heartbeat ${hbId}: ${note}`);
+            done(i, note);
+            break;
+          }
           archivePlan();
           const org = loadOrg(vault);
           const teams = Object.values(org.teams).filter((t) => t.lead !== 'ceo' || t.members.length).map((t) => `${t.id} (lead ${t.lead}: ${t.mission})`).join('; ');
@@ -363,6 +465,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         break;
       }
       case 'critic': {
+        if (state.planSkipped) { done(i, 'critic skipped — the plan was not rewritten'); break; }
         const org = loadOrg(vault);
         const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
         if (!org.roles.critic || !planIsSubstantive(plan)) { done(i, 'critic skipped'); break; }
@@ -421,6 +524,8 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         break;
       }
       case 'team_plans': {
+        // The leads already planned against this plan last cycle and their jobs are the open work the gate saw.
+        if (state.planSkipped && !state.teamPlanJobs) { done(i, 'team plans skipped — the plan was not rewritten'); break; }
         const org = loadOrg(vault);
         if (!state.teamPlanJobs) {
           const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
@@ -443,7 +548,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
             if (t.lead === 'ceo') continue;
             ids.push(createJob(vault, {
               type: 'team.plan', title: `Plan ${t.name}`, assigned: t.lead, priority: 1, parent: jobId, team: t.id, owner_role: t.lead,
-              goal: `Your team's objectives this cycle:\n${s.text}\n\nNext action from the last brief: ${lastNextAction(t.id)}\n\nDo: (1) vault.read Plans/plan.md and vault.list Jobs to see open work; (2) enqueue at most 4 jobs with scheduler.request for your members (${t.members.join(', ') || 'none — do the work yourself as a custom job assigned to you'}), each finishable in one sitting, each with done_when; research needs go to research_analyst with for: ${t.lead}; (3) vault.append the job ids under your "### ${t.id}" section in Plans/plan.md; (4) finish with a one-paragraph summary.`,
+              goal: teamPlanGoal(t, s.text, lastNextAction(t.id)),
             }, 'ceo'));
           }
           state = { ...state, teamPlanJobs: ids }; saveState(state);
@@ -488,6 +593,11 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // A migration (spec §1) happened since the previous heartbeat: flag it once so the owner notices the new
         // teams/charters instead of finding out from a stray diff (F10).
         const migrated = vault.events.query({ types: ['org.changed'], from: state.since ?? undefined }).some((e) => e.payload.reason === 'migration');
+        // Same window as the other facts (since the previous gather): how much of the cycle ran on the local floor,
+        // and which outbound services only pretended. Both were invisible in a live run's briefs for three days.
+        const calls = vault.events.query({ types: ['router.call'], from: state.since ?? undefined });
+        const modelUse = modelUseRows({ calls: calls.length, downgraded: calls.filter((e) => e.payload.downgraded === true).length }, deps.noCloudKeys?.() ?? false);
+        const mocked = deps.env ? mockedServices(deps.env) : [];
         const needsYou = [
           ...pending.map((p) => `- Approve or reject: ${p.body.split('\n')[0].replace(/^#\s*/, '')} (\`${p.path}\`)`),
           ...blocked.filter((j) => j.blocked_on?.kind === 'message').map((j) => `- Answer ${j.assigned}'s question on job ${j.id}`),
@@ -495,10 +605,15 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           // unlisted, it sat for a day while the brief said "nothing needs you".
           ...blocked.filter((j) => j.blocked_on?.kind === 'owner').map((j) => `- Decide on ${j.id} (${j.assigned}: ${j.title}) — it stopped: ${jobBlockers(vault, j.id) || 'no reason given'}. Set status: queued to retry it or status: cancelled to drop it`),
           ...(migrated ? ['- The company was reorganised into teams — review Teams/ and the new charters'] : []),
+          ...(modelUse.needsYou ? [modelUse.needsYou] : []),
+          ...(mockedServicesRow(mocked) ? [mockedServicesRow(mocked)!] : []),
         ];
         const facts = [
           `Elapsed: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}`,
           ...(state.planPending ? ['Planning: PENDING — the team plans have not finished this cycle; the previous plan stands.'] : []),
+          ...(state.planSkipped ? [`Planning: skipped — the plan from ${state.planSkipped.planDate} stands and ${state.planSkipped.open} job${state.planSkipped.open === 1 ? ' is' : 's are'} still open`] : []),
+          modelUse.fact,
+          ...(deps.env ? [`Outbound services: ${(['deploy', 'email', 'analytics'] as const).map((s) => `${s} ${mocked.includes(s) ? 'mock' : 'live'}`).join(', ')}`] : []),
           `Owner edits: ${state.ownerEdits?.length ? state.ownerEdits.join(', ') : 'none'}`,
           `Finished jobs: ${state.finished?.length ? state.finished.map((f) => `${f.title} (${f.status})`).join('; ') : 'none'}`,
           `Queued next: ${queued.map((j) => `${j.assigned}: ${j.title}`).join('; ') || 'nothing'}`,

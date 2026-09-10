@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, type Org } from '@cubicle/core';
+import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, type Org } from '@cubicle/core';
 
 const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'] };
 
@@ -18,6 +18,21 @@ export function cannotScheduleText(org: Org, roleId: string, assigned: string): 
   const why = team ? `${roleId} leads ${team.id}, and ${team.id} has no members, so there is nobody to schedule.` : `${roleId} may not schedule ${assigned}, and has no teammate to hand off to.`;
   return `${why}${self} Do the work in this job yourself, request research (type: research, assigned: research_analyst), or ask the ceo with colleague.message.`;
 }
+
+/**
+ * Why a role id was not accepted. `growth` stopped being a role and became a team when the lead was renamed
+ * head_of_growth, and models kept writing `assigned: "growth"` (13 failures in one live run). Say it is a team
+ * and who is on it, but do not pick the lead for the caller: whether the work is the lead's or a member's is theirs
+ * to decide. Unknown ids get the active roster so the next attempt can be right.
+ */
+export function unknownRoleText(org: Org, id: string, what = 'unknown or inactive role'): string {
+  const team = org.teams[id];
+  if (team) return `${id} is a team, not a role. Its lead is ${team.lead}; members: ${team.members.length ? team.members.join(', ') : '(none)'}. Use a role id.`;
+  return `${what}: ${id} (active roles: ${Object.keys(org.roles).join(', ')})`;
+}
+
+const OPEN_STATUSES = ['queued', 'running', 'blocked', 'in_review'] as const;
+const normTitle = (t: string) => t.trim().toLowerCase().replace(/\s+/g, ' ');
 
 export const schedulerRequest = defineTool({
   name: 'scheduler.request',
@@ -44,7 +59,7 @@ export const schedulerRequest = defineTool({
       return { ok: true, text: `job ${args.reprioritize.job} priority set to ${args.reprioritize.priority}` };
     }
     if (!isValidRoleId(args.assigned)) return { ok: false, text: `invalid role id: ${JSON.stringify(args.assigned)}` };
-    if (!org.roles[args.assigned]) return { ok: false, text: `unknown or inactive role: ${args.assigned}` };
+    if (!org.roles[args.assigned]) return { ok: false, text: unknownRoleText(org, args.assigned) };
     const type = args.type ?? 'custom';
     const isResearch = type === 'research';
     let forRole: string | undefined;
@@ -62,7 +77,16 @@ export const schedulerRequest = defineTool({
     if (lead && !args.done_when?.trim()) return { ok: false, text: 'leads must give done_when: one sentence a stranger could check' };
     const owner_role = lead ? ctx.roleId : (leadOf(org, ctx.roleId) ?? ctx.roleId);
     const team = teamOf(org, args.assigned)?.id;
-    const id = ctx.scheduler.enqueue({ id: ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey) : undefined, type, title: args.title, assigned: args.assigned, goal: args.goal, priority: args.priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: forRole, done_when: args.done_when });
+    const wantedId = ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey) : undefined;
+    // Agents re-queue the same work (two open "Plan Growth", two "Define Target Segments" 15 s apart in one live
+    // run). Same assignee + same title while the first is still open is a duplicate, not new work. System types are
+    // exempt because the daemon schedules e.g. team.plan every cycle; a replayed step keeps its own job.
+    if (!allowed) {
+      const title = normTitle(args.title);
+      const dup = listJobs(ctx.vault, { status: [...OPEN_STATUSES], assigned: args.assigned }).find((j) => j.id !== wantedId && normTitle(j.title) === title);
+      if (dup) return { ok: false, text: `a job with this title is already open for ${args.assigned}: ${dup.id} (${dup.status}). Wait for it, or give the new job a different title if it really is different work` };
+    }
+    const id = ctx.scheduler.enqueue({ id: wantedId, type, title: args.title, assigned: args.assigned, goal: args.goal, priority: args.priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: forRole, done_when: args.done_when });
     return { ok: true, text: `queued ${id} for ${args.assigned}: ${args.title}`, data: { id } };
   },
 });

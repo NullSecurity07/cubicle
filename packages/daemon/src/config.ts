@@ -16,6 +16,12 @@ export interface DaemonConfig {
   shutdownMs: number;
   /** Max concurrent LLM jobs across all workers (free tiers are small). */
   maxConcurrentJobs: number;
+  /**
+   * A heartbeat does not rewrite Plans/plan.md while the current plan is younger than this, is substantive and
+   * still has work open (one live run re-planned everything — ~16 model calls — on every heartbeat before doing
+   * any work). Env: CUBICLE_PLAN_MAX_AGE_DAYS.
+   */
+  planMaxAgeDays: number;
 }
 
 export function defaultConfig(vaultPath: string, env: NodeJS.ProcessEnv = process.env, overrides: Partial<DaemonConfig> = {}): DaemonConfig {
@@ -32,6 +38,7 @@ export function defaultConfig(vaultPath: string, env: NodeJS.ProcessEnv = proces
     questionWaitMs: 2 * heartbeat.maxElapsedHours * 3600_000,
     shutdownMs: 5_000,
     maxConcurrentJobs: 2,
+    planMaxAgeDays: Number(env.CUBICLE_PLAN_MAX_AGE_DAYS ?? 3),
     ...overrides,
   };
 }

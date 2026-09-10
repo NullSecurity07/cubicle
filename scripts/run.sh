@@ -85,6 +85,16 @@ show_office() {
   if tray_running && kill -USR2 "$(tray_pid)" 2>/dev/null; then ok "opened the office window (Open Office in the tray brings it back)"; else open_url "$url"; fi
 }
 wait_for_daemon() { local i; for i in $(seq 1 "${1:-60}"); do daemon_running && json_field port >/dev/null && return 0; sleep 0.5; done; return 1; }
+# Cloud LLM keys, names only — never values. Set in the environment, or a non-empty `KEY=value` line in .env (the same
+# shape the daemon's loadDotEnv accepts: optional `export`, optional quotes). .env is grepped, never sourced.
+LLM_KEYS=(GEMINI_API_KEY GROQ_API_KEY OPENROUTER_API_KEY)
+key_in_env_file() { [[ -f "$ROOT/.env" ]] && grep -qE "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=[[:space:]]*[\"']?[^[:space:]\"']" "$ROOT/.env"; }
+check_llm_keys() {
+  local k found=""
+  for k in "${LLM_KEYS[@]}"; do if [[ -n "${!k:-}" ]] || key_in_env_file "$k"; then found="${found:+$found }$k"; fi; done
+  if [[ -n "$found" ]]; then ok "LLM key: $found"
+  else warn "no cloud LLM key (GEMINI_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY) in the environment or .env — the company will run only on the local model; see SETUP.md"; fi
+}
 
 # ---------- preflight ----------
 preflight() {
@@ -97,6 +107,7 @@ preflight() {
   have pnpm || die "pnpm not found (npm i -g pnpm@11 --prefix ~/.local, then add ~/.local/bin to PATH)"
   ok "pnpm $(pnpm --version)"
   if [[ ! -f .env ]]; then cp .env.example .env; warn ".env created from .env.example — no API keys yet, so the company runs on Ollama alone (see SETUP.md)"; else ok ".env present"; fi
+  check_llm_keys
   # Ollama is the always-available floor; start it if it is installed but not running
   if ! curl -sf --max-time 3 http://localhost:11434/api/tags >/dev/null; then
     if have ollama; then

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
+import { unknownRoleText } from './scheduler.js';
 import { nowIso, makeId, idFromKey, isValidRoleId, parseNote, RoleFrontmatter, loadOrg, can, teamOf, createJob } from '@cubicle/core';
 
 export const MessageKind = z.enum(['fyi', 'question', 'handoff', 'meeting_request']);
@@ -16,7 +17,7 @@ export const colleagueMessage = defineTool({
     if (!isValidRoleId(to)) return { ok: false, text: `invalid role id: ${JSON.stringify(to)}` };
     const rolePath = `Roles/${to}.md`;
     const roleNote = ctx.vault.readNoteOrNull(rolePath);
-    if (!roleNote) return { ok: false, text: `unknown role: ${to}` };
+    if (!roleNote) return { ok: false, text: unknownRoleText(loadOrg(ctx.vault), to, 'unknown role') };
     const parsedRole = RoleFrontmatter.safeParse(roleNote.data);
     if (parsedRole.success && !parsedRole.data.active) return { ok: false, text: `${to} is no longer active` };
     if (kind === 'handoff') {

@@ -33,6 +33,7 @@ GOATCOUNTER_API_TOKEN=
 
 # Daemon
 CUBICLE_PORT=7411
+CUBICLE_PLAN_MAX_AGE_DAYS=3   # a substantive plan younger than this, with work still open, is not rewritten every heartbeat
 CUBICLE_VAULT=
 CUBICLE_DBUS_ADDRESS=
 `;

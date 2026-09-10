@@ -6,9 +6,11 @@
 //! fail silently, so resolving the entry point is a loud step of its own.
 
 use serde::Deserialize;
-use std::io::{BufRead, BufReader};
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// What the daemon writes to `<vault>/.cubicle/daemon.json` while it runs.
@@ -168,33 +170,58 @@ pub fn awaits_approval(text: &str) -> bool {
     proposal && unanswered
 }
 
-/// Spawn `node <entry> start <vault>` from the repo root, forwarding its output with a `[daemon]` prefix.
+/// Spawn `node <entry> start <vault>` from the repo root, forwarding its output with a `[daemon]` prefix
+/// and appending it to the vault's daemon log.
 pub fn start(root: &Path, entry: &Path, vault: &Path) -> std::io::Result<Child> {
-    let mut child = Command::new(node_binary())
-        .arg(entry)
-        .arg("start")
-        .arg(vault)
-        .current_dir(root)
+    let mut cmd = Command::new(node_binary());
+    cmd.arg(entry).arg("start").arg(vault).current_dir(root);
+    spawn_logged(cmd, vault)
+}
+
+/// Where the daemon's output goes on disk: the same file `scripts/run.sh logs` tails and headless mode
+/// writes, so the log is in one place whichever shell owns the daemon.
+pub fn daemon_log_path(vault: &Path) -> PathBuf {
+    vault.join(".cubicle").join("logs").join("daemon.log")
+}
+
+/// The daemon log open for appending, its folder created on the way. `None` when it cannot be opened:
+/// the daemon still starts and its lines still reach the tray's stdout, there is just no copy on disk.
+fn open_daemon_log(vault: &Path) -> Option<File> {
+    let path = daemon_log_path(vault);
+    std::fs::create_dir_all(path.parent()?).ok()?;
+    OpenOptions::new().create(true).append(true).open(path).ok()
+}
+
+/// Spawn `cmd` with its output piped, each line printed to the tray's stdout/stderr with a `[daemon]`
+/// prefix and, when the log can be opened, appended verbatim to `<vault>/.cubicle/logs/daemon.log`.
+fn spawn_logged(mut cmd: Command, vault: &Path) -> std::io::Result<Child> {
+    let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let log = open_daemon_log(vault).map(|f| Arc::new(Mutex::new(f)));
     if let Some(out) = child.stdout.take() {
-        forward(out, false);
+        forward(out, false, log.clone());
     }
     if let Some(err) = child.stderr.take() {
-        forward(err, true);
+        forward(err, true, log);
     }
     Ok(child)
 }
 
-fn forward<R: std::io::Read + Send + 'static>(pipe: R, is_err: bool) {
+fn forward<R: std::io::Read + Send + 'static>(pipe: R, is_err: bool, log: Option<Arc<Mutex<File>>>) {
     std::thread::spawn(move || {
         for line in BufReader::new(pipe).lines().map_while(Result::ok) {
             if is_err {
                 eprintln!("[daemon] {line}");
             } else {
                 println!("[daemon] {line}");
+            }
+            if let Some(log) = &log {
+                if let Ok(mut f) = log.lock() {
+                    let _ = writeln!(f, "{line}"); // a full disk must not stop the forwarding
+                }
             }
         }
     });
@@ -469,6 +496,57 @@ mod tests {
         assert!(owned.is_none(), "the slot is emptied so the tray can restart");
         assert!(!Path::new(&format!("/proc/{pid}")).exists(), "and nothing is left defunct");
         assert_eq!(poll_exit(&mut owned), None, "an empty slot polls to nothing");
+    }
+
+    /// Read the log until both lines are there or 2 s pass: the forwarding threads finish after `wait` returns.
+    fn read_log_with(vault: &Path, needles: &[&str]) -> String {
+        let mut text = String::new();
+        for _ in 0..200 {
+            text = fs::read_to_string(daemon_log_path(vault)).unwrap_or_default();
+            if needles.iter().all(|n| text.lines().any(|l| l == *n)) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        text
+    }
+
+    #[test]
+    fn the_daemon_output_is_appended_to_the_vault_log_as_well_as_forwarded() {
+        // `scripts/run.sh logs` and its error messages tail `<vault>/.cubicle/logs/daemon.log`; when the tray
+        // owns the daemon that file must carry the same lines the tray prints to its own stdout.
+        let vault = tmpdir("log");
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo hi; echo err >&2"]);
+        let mut child = spawn_logged(cmd, &vault).expect("spawn sh");
+        assert!(child.wait().expect("wait").success());
+        let text = read_log_with(&vault, &["hi", "err"]);
+        assert!(text.lines().any(|l| l == "hi"), "stdout line is in the log: {text:?}");
+        assert!(text.lines().any(|l| l == "err"), "stderr line is in the log: {text:?}");
+
+        // A restart appends rather than truncating the day so far.
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo again"]);
+        let mut child = spawn_logged(cmd, &vault).expect("spawn sh");
+        assert!(child.wait().expect("wait").success());
+        let text = read_log_with(&vault, &["hi", "err", "again"]);
+        assert_eq!(text.lines().filter(|l| *l == "hi").count(), 1, "appended: {text:?}");
+        assert!(text.lines().any(|l| l == "again"), "appended: {text:?}");
+        fs::remove_dir_all(&vault).ok();
+    }
+
+    #[test]
+    fn a_vault_whose_log_cannot_be_opened_still_gets_its_daemon_started() {
+        // `.cubicle/logs` cannot be created under a plain file, so the log is skipped and stdout still gets the lines.
+        let dir = tmpdir("log-unwritable");
+        let not_a_dir = dir.join("vault");
+        fs::write(&not_a_dir, "not a directory\n").unwrap();
+        assert!(open_daemon_log(&not_a_dir).is_none());
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo hi"]);
+        let mut child = spawn_logged(cmd, &not_a_dir).expect("spawn sh without a log");
+        assert!(child.wait().expect("wait").success());
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

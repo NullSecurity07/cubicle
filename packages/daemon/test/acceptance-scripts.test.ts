@@ -44,7 +44,7 @@ describe.skipIf(noViewer)('close the viewer, work, reopen, replay the day', () =
 });
 
 describe.skipIf(noViewer)('presses on the HTML layer stay off the office', () => {
-  it('scripts/test-overlay-clicks.ts: a click in the drawer does not hit the surface beneath it, a drag released over it ends', () => {
+  it('scripts/test-overlay-clicks.ts: a click in the drawer does not hit the surface beneath it, a drag released over it ends (acceptance test 8b)', () => {
     const r = runScript('test-overlay-clicks.ts');
     expect(r.status, r.tail).toBe(0);
     expect(r.stdout).toContain('PASS:');

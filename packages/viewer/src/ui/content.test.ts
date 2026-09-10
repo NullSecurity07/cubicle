@@ -104,7 +104,8 @@ describe('drawer and document views', () => {
 });
 
 describe('org view (spec §6)', () => {
-  const withTeams = applySnapshot(emptyState(), { ...snap, roles: [...snap.roles, { role: 'cto', display: 'CTO', sprite: 'cto', desk: 'cubicle_1', active: true }], teams: [{ id: 'engineering', name: 'Engineering', lead: 'cto', members: ['engineer'], mission: 'Ship.' }], jobs: [{ ...snap.jobs[0], team: 'engineering' } as never] });
+  const teamSnap: Snapshot = { ...snap, roles: [...snap.roles, { role: 'cto', display: 'CTO', sprite: 'cto', desk: 'cubicle_1', active: true }], teams: [{ id: 'engineering', name: 'Engineering', lead: 'cto', members: ['engineer'], mission: 'Ship.' }], jobs: [{ ...snap.jobs[0], team: 'engineering' }] };
+  const withTeams = applySnapshot(emptyState(), teamSnap);
   it('the Org drawer lists teams with lead and members as openable rows, with open-job counts (acceptance test 11)', () => {
     const v = viewFor('org', withTeams, ctx);
     expect(v.mode).toBe('drawer');
@@ -113,7 +114,7 @@ describe('org view (spec §6)', () => {
     expect(viewFor('org', emptyState(), ctx).html).toContain('No teams yet');
   });
   it('queue rows are grouped by team and the in_review chip exists', () => {
-    const s2 = applySnapshot(emptyState(), { ...withTeams as never, jobs: [{ ...snap.jobs[0], team: 'engineering', status: 'in_review' } as never] } as never);
+    const s2 = applySnapshot(emptyState(), { ...teamSnap, jobs: [{ ...snap.jobs[0], team: 'engineering', status: 'in_review' }] });
     const html = viewFor('noticeboard', s2, ctx).html;
     expect(html).toContain('Engineering'); expect(html).toContain('chip in_review');
   });

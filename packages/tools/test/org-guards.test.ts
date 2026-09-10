@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, RoleFrontmatter, listInbox } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, phase3Tools, type ToolContext } from '../src/index.js';
+import { scaffoldVault, Vault, createJob, readJob, updateJob, RoleFrontmatter, listInbox } from '@cubicle/core';
+import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, type ToolContext } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 let dir: string; let vault: Vault; let reg: ToolRegistry;
@@ -25,7 +25,7 @@ describe('scheduler.request through the org (spec §2)', () => {
     expect((await call('scheduler.request', 'cto', { title: 'B', assigned: 'head_of_growth', goal: 'g', done_when: 'x' })).text).toMatch(/may not schedule/);
     expect((await call('scheduler.request', 'engineer', { title: 'B', assigned: 'qa', goal: 'g' })).ok).toBe(true);
     expect((await call('scheduler.request', 'engineer', { title: 'B', assigned: 'head_of_growth', goal: 'g' })).ok).toBe(false);
-    const m = await call('scheduler.request', 'engineer', { title: 'B', assigned: 'qa', goal: 'g' });
+    const m = await call('scheduler.request', 'engineer', { title: 'B2', assigned: 'qa', goal: 'g' }); // 'B' again would be a duplicate of the open job above
     expect(readJob(vault, (m.data as { id: string }).id)!.data.owner_role).toBe('cto'); // a member's handoff is owned by its lead
   });
   it('cto.plan is reserved for the daemon (via ceo), not schedulable through the tool', async () => {
@@ -83,5 +83,78 @@ describe('scheduler.request refusals tell the caller what it may do instead', ()
     expect(r.text).toMatch(/growth has no members/);
     expect(r.text).toMatch(/do the work in this job/i);
     expect(r.text).toMatch(/research_analyst/);
+  });
+});
+
+describe('live-run failures: team ids, duplicate titles, finish aliases', () => {
+  it('scheduler.request naming a team id says it is a team, names the lead and members, and does not redirect', async () => {
+    const r = await call('scheduler.request', 'ceo', { title: 'Plan Growth', assigned: 'growth', goal: 'g', done_when: 'x' });
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/growth is a team, not a role/);
+    expect(r.text).toMatch(/lead is head_of_growth/);
+    expect(r.text).toMatch(/members: \(none\)/);
+    expect(r.text).toMatch(/Use a role id/);
+    expect(readJob(vault, 'growth')).toBeNull();
+    const e = await call('scheduler.request', 'ceo', { title: 'Ship', assigned: 'engineering', goal: 'g', done_when: 'x' });
+    expect(e.text).toMatch(/engineering is a team, not a role\. Its lead is cto; members: tech_lead, engineer, qa\. Use a role id/);
+  });
+  it('scheduler.request with an unknown role lists the active role ids', async () => {
+    const r = await call('scheduler.request', 'ceo', { title: 'x', assigned: 'nobody', goal: 'g', done_when: 'x' });
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/unknown or inactive role: nobody/);
+    expect(r.text).toMatch(/active roles: .*head_of_growth.*/);
+  });
+  it('colleague.message to a team id is refused with the lead and members; unknown roles list the active ids', async () => {
+    const r = await call('colleague.message', 'cto', { to: 'growth', body: 'hi' });
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/growth is a team, not a role\. Its lead is head_of_growth; members: \(none\)\. Use a role id/);
+    expect(vault.readTextOrNull('Messages/growth.md') ?? '').not.toContain('hi'); // refused: nothing delivered
+    const u = await call('colleague.message', 'cto', { to: 'nobody', body: 'hi' });
+    expect(u.ok).toBe(false);
+    expect(u.text).toMatch(/unknown role: nobody.*active roles: .*cto/);
+  });
+  it('a second open job with the same assignee and (normalised) title is refused; closed jobs and system types are not', async () => {
+    const first = await call('scheduler.request', 'cto', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'engineer', goal: 'g', done_when: 'x' });
+    expect(first.ok).toBe(true);
+    const id = (first.data as { id: string }).id;
+    const dup = await call('scheduler.request', 'cto', { type: 'engineer.ship', title: '  define target   SEGMENTS ', assigned: 'engineer', goal: 'other', done_when: 'x' });
+    expect(dup.ok).toBe(false);
+    expect(dup.text).toBe(`a job with this title is already open for engineer: ${id} (queued). Wait for it, or give the new job a different title if it really is different work`);
+    // same title for someone else, or a different title, is fine
+    expect((await call('scheduler.request', 'cto', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'qa', goal: 'g', done_when: 'x' })).ok).toBe(true);
+    expect((await call('scheduler.request', 'cto', { type: 'engineer.ship', title: 'Define Target Segments v2', assigned: 'engineer', goal: 'g', done_when: 'x' })).ok).toBe(true);
+    // once the first is closed the title is free again
+    updateJob(vault, id, { status: 'done' }, 'cto');
+    expect((await call('scheduler.request', 'cto', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'engineer', goal: 'g', done_when: 'x' })).ok).toBe(true);
+    // daemon system types are exempt (the daemon schedules e.g. team.plan every cycle)
+    expect((await call('scheduler.request', 'ceo', { type: 'team.plan', title: 'Plan Growth', assigned: 'head_of_growth', goal: 'g', done_when: 'x' })).ok).toBe(true);
+    expect((await call('scheduler.request', 'ceo', { type: 'team.plan', title: 'Plan Growth', assigned: 'head_of_growth', goal: 'g', done_when: 'x' })).ok).toBe(true);
+  });
+  it('a replayed step (same idempotency key) returns the job it already queued instead of a duplicate refusal', async () => {
+    const c = { ...ctx('cto'), idempotencyKey: 'job_t:1:1' };
+    const args = { type: 'engineer.ship', title: 'Replayed', assigned: 'engineer', goal: 'g', done_when: 'x' };
+    const a = await reg.get('scheduler.request')!.handler(args as never, c);
+    const b = await reg.get('scheduler.request')!.handler(args as never, c);
+    expect(a.ok).toBe(true); expect(b.ok).toBe(true);
+    expect((b.data as { id: string }).id).toBe((a.data as { id: string }).id);
+  });
+  it('finish accepts status return/pass as an alias for done + verdict', async () => {
+    const ret = await call('finish', 'qa', { status: 'return', summary: 's', findings: ['no tests'] });
+    expect(ret.ok).toBe(true); expect(ret.finished).toBe(true);
+    expect(ret.data).toMatchObject({ status: 'done', verdict: 'return', findings: ['no tests'] });
+    const pass = await call('finish', 'qa', { status: 'pass', summary: 's' });
+    expect(pass.data).toMatchObject({ status: 'done', verdict: 'pass' });
+    // an explicit verdict wins over the alias
+    const explicit = await call('finish', 'qa', { status: 'return', verdict: 'pass', summary: 's' });
+    expect(explicit.data).toMatchObject({ status: 'done', verdict: 'pass' });
+    expect((await call('finish', 'qa', { status: 'done', summary: 's' })).data).not.toHaveProperty('verdict');
+  });
+  it('finish status alias round-trips through the MCP schema', async () => {
+    const client = await createRoleToolClient(reg.forRole({ ...role('qa'), tools: ['finish'] } as RoleFrontmatter, cfg), ctx('qa'));
+    try {
+      const r = await client.call('finish', { status: 'return', summary: 's', findings: ['f'] });
+      expect(r.ok).toBe(true);
+      expect(r.data).toMatchObject({ status: 'done', verdict: 'return' });
+    } finally { await client.close(); }
   });
 });
