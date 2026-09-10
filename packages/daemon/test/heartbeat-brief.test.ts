@@ -25,7 +25,7 @@ const factsOf = (brief: string) => brief.split('_Facts used:_')[1] ?? '';
 
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => new Date(Date.now() - n * 86400_000).toISOString().slice(0, 10);
-const planOn = (updated: string) => `---\nupdated: "${updated}"\ncycle: 3\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Ship the staging branch\n\n### growth\n- Run the second outreach iteration\n\n### operations\n- Verify the outreach iteration\n`;
+const planOn = (updated: string) => `---\nupdated: "${updated}"\ncycle: 3\n---\n# Plan\n\n## Objectives\n\n### dev\n- Ship the staging branch\n\n### revenue\n- Run the second outreach iteration\n\n### security\n- Verify the outreach iteration\n`;
 const seedRouterCalls = (v: Vault, downgraded: number, cloud: number) => {
   for (let i = 0; i < downgraded; i++) v.events.emit({ type: 'router.call', agent: 'ceo', payload: { provider: 'ollama', model: 'qwen2.5:7b', tier: 'local', tokens: { prompt_tokens: 1, completion_tokens: 1 }, tools: 'json', downgraded: true } });
   for (let i = 0; i < cloud; i++) v.events.emit({ type: 'router.call', agent: 'ceo', payload: { provider: 'gemini', model: 'gemini-3.5-flash', tier: 'strong', tokens: { prompt_tokens: 1, completion_tokens: 1 }, tools: 'native', downgraded: false } });
@@ -112,7 +112,7 @@ describe('re-planning gate', () => {
     expect(planningGate({ ...base, plan: planOn('') }).skip).toBe(false);                          // the template's empty stamp: age unknown
     expect(planningGate({ ...base, plan: planOn('last tuesday') }).skip).toBe(false);              // unparseable: age unknown
     expect(planningGate({ ...base, plan: planOn(daysAgo(-2)) }).skip).toBe(false);                 // a future stamp is not an age either
-    expect(planningGate({ ...base, plan: '# Plan\n\n## Objectives\n\n### engineering\n- Ship it\n' }).skip).toBe(false); // no frontmatter at all
+    expect(planningGate({ ...base, plan: '# Plan\n\n## Objectives\n\n### dev\n- Ship it\n' }).skip).toBe(false); // no frontmatter at all
     expect(planningGate({ ...base, plan: `---\nupdated: "${today}"\n---\n# Plan\n\n## Objectives\n\n### operations\n- Verify the site\n` }).skip).toBe(false); // not substantive
     expect(planningGate({ ...base, openJobs: 0 }).skip).toBe(false);
     expect(planningGate({ ...base, ownerAsked: true }).skip).toBe(false);
@@ -125,9 +125,9 @@ describe('re-planning gate', () => {
     const seed = Vault.open(dir);
     seed.writeText('Plans/plan.md', planOn(today), 'ceo');
     // Open work from that plan: queued, but never runnable here because it depends on a job that is parked on the owner.
-    const parked = createJob(seed, { type: 'engineer.ship', title: 'Staging branch', assigned: 'engineer', priority: 3, goal: 'g' }, 'cto');
+    const parked = createJob(seed, { type: 'engineer.ship', title: 'Staging branch', assigned: 'backend_engineer', priority: 3, goal: 'g' }, 'cto');
     updateJob(seed, parked, { status: 'blocked', blocked_on: { kind: 'owner', id: parked, since: new Date().toISOString() } }, 'cto');
-    createJob(seed, { type: 'engineer.ship', title: 'Deploy staging', assigned: 'engineer', priority: 3, goal: 'g', depends_on: [parked] }, 'cto');
+    createJob(seed, { type: 'engineer.ship', title: 'Deploy staging', assigned: 'backend_engineer', priority: 3, goal: 'g', depends_on: [parked] }, 'cto');
     seed.close();
     const d = daemonFor(orgLlm({ vetoes: 0 }));
     await d.start();
@@ -147,9 +147,9 @@ describe('re-planning gate', () => {
   it('an unanswered owner message re-plans even against a fresh plan with open work; so does a stale plan', async () => {
     const seed = Vault.open(dir);
     seed.writeText('Plans/plan.md', planOn(today), 'ceo');
-    const parked = createJob(seed, { type: 'engineer.ship', title: 'Staging branch', assigned: 'engineer', priority: 3, goal: 'g' }, 'cto');
+    const parked = createJob(seed, { type: 'engineer.ship', title: 'Staging branch', assigned: 'backend_engineer', priority: 3, goal: 'g' }, 'cto');
     updateJob(seed, parked, { status: 'blocked', blocked_on: { kind: 'owner', id: parked, since: new Date().toISOString() } }, 'cto');
-    createJob(seed, { type: 'engineer.ship', title: 'Deploy staging', assigned: 'engineer', priority: 3, goal: 'g', depends_on: [parked] }, 'cto');
+    createJob(seed, { type: 'engineer.ship', title: 'Deploy staging', assigned: 'backend_engineer', priority: 3, goal: 'g', depends_on: [parked] }, 'cto');
     createProposal(seed, { kind: 'message', from: 'owner', to: 'ceo', title: 'change', body: 'Drop the staging branch, ship straight to production.' }, 'owner');
     seed.close();
     const d = daemonFor(orgLlm({ vetoes: 0 }));
@@ -175,19 +175,19 @@ describe('re-planning gate', () => {
 describe('member-less team planning', () => {
   it('teamPlanGoal tells a lead with no members to plan work for themself via the CEO, never scheduler.request for themself', () => {
     const org = loadOrg(Vault.open(dir));
-    const ops = org.teams.operations, eng = org.teams.engineering;
-    expect(ops.members).toEqual([]);
-    const opsGoal = teamPlanGoal(ops, '- Verify the outreach iteration', 'none recorded');
-    const engGoal = teamPlanGoal(eng, '- Ship it', 'none recorded');
-    const sentence = 'Your team has no members: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from research_analyst; do not call scheduler.request for yourself.';
-    expect(opsGoal).toContain(sentence);
-    expect(opsGoal).toContain('for your members (none)');
-    expect(engGoal).not.toContain(sentence);
-    expect(engGoal).toContain('for your members (tech_lead, engineer, qa)');
-    expect(engGoal).not.toContain('do the work yourself as a custom job');
+    const sec = org.teams.security, dev = org.teams.dev;   // the CISO is alone on the security floor; the dev room is full
+    expect(sec.members).toEqual([]);
+    const secGoal = teamPlanGoal(sec, '- Verify the outreach iteration', 'none recorded');
+    const devGoal = teamPlanGoal(dev, '- Ship it', 'none recorded');
+    const sentence = 'Your team has no members: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from research_manager; do not call scheduler.request for yourself.';
+    expect(secGoal).toContain(sentence);
+    expect(secGoal).toContain('for your members (none)');
+    expect(devGoal).not.toContain(sentence);
+    expect(devGoal).toContain('for your members (product_manager, product_designer, backend_engineer, frontend_engineer, fullstack_engineer, platform_engineer, sre)');
+    expect(devGoal).not.toContain('do the work yourself as a custom job');
   });
 
-  it('the COO\'s team.plan job carries the sentence; the CTO\'s does not', async () => {
+  it('the CISO\'s team.plan job carries the sentence; the dev manager\'s does not', async () => {
     const d = daemonFor(orgLlm({ vetoes: 0, plan: planOn('') }));
     await d.start();
     const v = Vault.open(dir);
@@ -195,9 +195,9 @@ describe('member-less team planning', () => {
       await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
       const plans = listJobs(v).filter((j) => j.type === 'team.plan');
       const goal = (role: string) => readJob(v, plans.find((j) => j.assigned === role)!.id)!.body.split('## Goal')[1].split('## Plan')[0];
-      expect(plans.map((j) => j.assigned).sort()).toEqual(['coo', 'cto', 'head_of_growth']);
-      expect(goal('coo')).toContain('Your team has no members');
-      expect(goal('cto')).not.toContain('Your team has no members');
+      expect(plans.map((j) => j.assigned).sort()).toEqual(['cfo', 'ciso', 'dev_manager']);
+      expect(goal('ciso')).toContain('Your team has no members');
+      expect(goal('dev_manager')).not.toContain('Your team has no members');
     } finally { v.close(); await d.stop(); }
   });
 });

@@ -21,7 +21,7 @@ const sitePort = (site.address() as { port: number }).port;
 
 const { vault } = await scaffoldVault(dir);
 vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } });
-const jobId = createJob(vault, { type: 'research', title: 'Look at the test page', assigned: 'head_of_growth', goal: 'browse' }, 'cto');
+const jobId = createJob(vault, { type: 'research', title: 'Look at the test page', assigned: 'cmo', goal: 'browse' }, 'cto');
 vault.close();
 // scripted head of growth: open the page, extract, close, finish
 const steps = [{ name: 'browser.open', args: { url: `http://127.0.0.1:${sitePort}/` } }, { name: 'browser.extract', args: {} }, { name: 'browser.close', args: {} }, { name: 'finish', args: { status: 'done', summary: 'looked' } }];
@@ -29,7 +29,7 @@ const llm: Llm = {
   async chat(req, chat): Promise<RoutedChatResult> {
     const base = { content: 'ok', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
     if (!chat.tools) return base;
-    if (req.roleId !== 'head_of_growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
+    if (req.roleId !== 'cmo') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
     const m = String(chat.messages[1]?.content ?? '').match(/Jobs\/(job_\w+)\.md/);
     const v = new (await import('@cubicle/core')).Vault.constructor as unknown; void v;
     const { Vault } = await import('@cubicle/core');

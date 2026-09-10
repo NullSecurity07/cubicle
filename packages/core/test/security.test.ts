@@ -39,11 +39,11 @@ describe('path hardening', () => {
   });
   it('symlinks that escape the vault are refused', () => {
     symlinkSync(outside, path.join(dir, 'Skills', 'escape'));
-    expect(() => vault.writeText('Skills/escape/x.md', 'x', 'engineer')).toThrow(/symlink/);
+    expect(() => vault.writeText('Skills/escape/x.md', 'x', 'backend_engineer')).toThrow(/symlink/);
     expect(() => vault.abs('Skills/escape/x.md')).toThrow(/symlink/);
   });
   it('validates role ids and secret paths', () => {
-    expect(isValidRoleId('growth')).toBe(true);
+    expect(isValidRoleId('cmo')).toBe(true);
     expect(isValidRoleId('../Brand/voice')).toBe(false);
     expect(isValidRoleId('Growth Team')).toBe(false);
     expect(isSecretPath('.env')).toBe(true);

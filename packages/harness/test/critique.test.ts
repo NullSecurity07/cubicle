@@ -43,13 +43,13 @@ function deps(llm: Llm) {
   return { vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll([...phase3Tools({ includeMock: true }), mockCrash]), scheduler: vaultScheduler(vault), env: {} };
 }
 function growthWith(tools: string[]) {
-  vault.updateNote('Roles/head_of_growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), ...tools] }, body: n.body }), 'owner');
+  vault.updateNote('Roles/cmo.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), ...tools] }, body: n.body }), 'owner');
 }
 
 describe('critique fixes', () => {
   it('outbound keys are recorded before the call: a crash inside the tool never replays the send (at-most-once)', async () => {
     growthWith(['mock.crash', 'mock.outbound']);
-    const id = createJob(vault, { type: 'growth.outreach', title: 'o', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const id = createJob(vault, { type: 'growth.outreach', title: 'o', assigned: 'cmo', goal: 'g' }, 'cto');
     const steps: Step[] = [{ tool: 'mock.crash', args: { to: 'a@x' } }, { tool: 'finish', args: { status: 'done', summary: 'ok' } }];
     const out = await runJob(deps(scripted(steps)), id);
     expect(out.status).toBe('done');
@@ -65,13 +65,13 @@ describe('critique fixes', () => {
   });
 
   it('colleague messages delivered mid-job are persisted and survive a restart', async () => {
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'cmo', goal: 'g' }, 'cto');
     const llm = scripted([{ tool: 'vault.read', args: { path: 'Plans/plan.md' } }, { tool: 'vault.read', args: { path: 'Plans/plan.md' } }, { tool: 'finish', args: { status: 'done', summary: 'ok' } }]);
     const orig = llm.chat.bind(llm);
     let injected = false;
     llm.chat = async (r, c) => {
       const res = await orig(r, c);
-      if (!injected) { injected = true; vault.appendText('Messages/head_of_growth.md', `\n## ${new Date().toISOString()} from cto (fyi) <!-- id:msg_hello -->\n\nRemember the tone guide.\n`, 'cto'); }
+      if (!injected) { injected = true; vault.appendText('Messages/cmo.md', `\n## ${new Date().toISOString()} from cto (fyi) <!-- id:msg_hello -->\n\nRemember the tone guide.\n`, 'cto'); }
       return res;
     };
     const out = await runJob(deps(llm), id);
@@ -79,18 +79,18 @@ describe('critique fixes', () => {
     const withMsg = llm.prompts.filter((p) => JSON.stringify(p).includes('Remember the tone guide'));
     expect(withMsg.length).toBeGreaterThanOrEqual(2); // present in every later step, not just one
     expect(loadObservations(vault, id).some((o) => o.kind === 'system' && (o.text ?? '').includes('Remember the tone guide'))).toBe(true);
-    expect(vault.readText('Messages/head_of_growth.md')).toContain('<!-- read:');
+    expect(vault.readText('Messages/cmo.md')).toContain('<!-- read:');
   });
 
   it('final failed / owner-blocked jobs are not re-run; retries archive the transcript', async () => {
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g', max_attempts: 2 }, 'cto');
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'cmo', goal: 'g', max_attempts: 2 }, 'cto');
     const bad = { ...scripted([]), async chat(): Promise<RoutedChatResult> { return { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium', downgraded: false, parsedToolCalls: [], jsonParseError: 'nope' }; }, promptBudget: () => 6000 } as Llm;
     expect((await runJob(deps(bad), id)).status).toBe('requeued');
     expect(existsSync(path.join(dir, `.cubicle/jobs/${id}.attempt1.jsonl`))).toBe(true);
     expect(readJob(vault, id)!.data.attempt).toBe(2);
     expect((await runJob(deps(bad), id)).status).toBe('failed');
     expect((await runJob(deps(bad), id)).status).toBe('failed'); // terminal: no re-run, no extra events
-    const blockedId = createJob(vault, { type: 'research', title: 'b', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const blockedId = createJob(vault, { type: 'research', title: 'b', assigned: 'cmo', goal: 'g' }, 'cto');
     expect((await runJob(deps(scripted([{ tool: 'finish', args: { status: 'blocked', summary: 'need owner', blockers: ['x'] } }])), blockedId)).status).toBe('blocked');
     expect(readJob(vault, blockedId)!.data.blocked_on?.kind).toBe('owner');
     const before = vault.events.count('job.started');
@@ -99,7 +99,7 @@ describe('critique fixes', () => {
   });
 
   it('observations are synthesised from the checkpoint log when the cache is wiped', async () => {
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'cmo', goal: 'g' }, 'cto');
     const llm = scripted([{ tool: 'vault.read', args: { path: 'Plans/plan.md' } }, { tool: 'vault.read', args: { path: 'Brand/name.md' } }, { tool: 'finish', args: { status: 'done', summary: 'ok' } }]);
     const orig = llm.chat.bind(llm);
     let n = 0;

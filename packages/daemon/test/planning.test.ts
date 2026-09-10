@@ -27,32 +27,32 @@ describe('planIsSubstantive (Task 9 review finding 1)', () => {
     expect(planIsSubstantive('---\ncycle: 1\n---\n# Plan\n\n## Objectives\n')).toBe(false);
   });
   it('is false when every section is verify/reconcile-only busywork', () => {
-    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Verify the deployed site\n- Reconcile Site/ with Brand/\n';
+    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Verify the deployed site\n- Reconcile Site/ with Brand/\n';
     expect(planIsSubstantive(plan)).toBe(false);
   });
   it('is true when a real objective sits alongside a verify/reconcile-only section (the bug: a per-section-scoped regex would stop at the first busywork-only section)', () => {
-    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Verify the deployed site\n\n### growth\n- Find the first organic channel\n';
+    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Verify the deployed site\n\n### revenue\n- Find the first organic channel\n';
     expect(planIsSubstantive(plan)).toBe(true);
   });
 });
 
 describe('team section header matching (F4)', () => {
   it('parseObjectiveSections keeps multi-word and differently-cased headers instead of dropping them', () => {
-    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### Engineering\n- Ship it\n\n### Growth team\n- Find channels\n';
-    expect(parseObjectiveSections(plan).map((s) => s.team)).toEqual(['Engineering', 'Growth team']);
+    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### Dev\n- Ship it\n\n### Revenue team\n- Find channels\n';
+    expect(parseObjectiveSections(plan).map((s) => s.team)).toEqual(['Dev', 'Revenue team']);
   });
   it('resolveTeamSection matches a header against a team id or name, case-insensitively and tolerant of a trailing "team"; an unmatched header returns null', async () => {
     const vault = Vault.open(dir);
     try {
       const org = loadOrg(vault);
-      expect(resolveTeamSection(org, 'Engineering')).toBe('engineering');
-      expect(resolveTeamSection(org, 'growth team')).toBe('growth');
-      expect(resolveTeamSection(org, 'GROWTH TEAM')).toBe('growth');
+      expect(resolveTeamSection(org, 'Dev')).toBe('dev');
+      expect(resolveTeamSection(org, 'revenue team')).toBe('revenue');
+      expect(resolveTeamSection(org, 'REVENUE TEAM')).toBe('revenue');
       expect(resolveTeamSection(org, 'Nonexistent')).toBeNull();
     } finally { vault.close(); }
   });
   it('a plan with differently-cased/multi-word headers still fans out to both teams; an unmatched header warns and creates no team.plan', async () => {
-    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### Engineering\n- Scaffold the site from Brand/\n\n### growth team\n- Find the first organic channel\n\n### Nonexistent\n- Should warn, not crash\n';
+    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### Dev\n- Scaffold the site from Brand/\n\n### revenue team\n- Find the first organic channel\n\n### Nonexistent\n- Should warn, not crash\n';
     const llm = orgLlm({ vetoes: 0, plan });
     const d = daemonFor(llm);
     await d.start();
@@ -60,7 +60,7 @@ describe('team section header matching (F4)', () => {
     try {
       await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
       const teamPlans = listJobs(v).filter((j) => j.type === 'team.plan');
-      expect(teamPlans.map((j) => j.assigned).sort()).toEqual(['cto', 'head_of_growth']);
+      expect(teamPlans.map((j) => j.assigned).sort()).toEqual(['cfo', 'dev_manager']);
       expect(v.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'team_plans' && /Nonexistent/.test(String(e.payload.message)))).toBe(true);
     } finally { v.close(); await d.stop(); }
   });
@@ -98,10 +98,10 @@ describe('two-level planning (spec §3)', () => {
       expect(jobs.filter((j) => j.type === 'critic.premortem')).toHaveLength(2);
       expect(v.events.count('plan.vetoed')).toBe(1);
       const teamPlans = jobs.filter((j) => j.type === 'team.plan');
-      expect(teamPlans.map((j) => j.assigned).sort()).toEqual(['cto', 'head_of_growth']);
+      expect(teamPlans.map((j) => j.assigned).sort()).toEqual(['cfo', 'dev_manager']);
       expect(teamPlans.every((j) => j.status === 'done')).toBe(true);
-      expect(jobs.some((j) => j.type === 'engineer.ship' && j.owner_role === 'cto' && j.team === 'engineering')).toBe(true);
-      expect(jobs.some((j) => j.type === 'research' && j.for === 'head_of_growth')).toBe(true);
+      expect(jobs.some((j) => j.type === 'engineer.ship' && j.owner_role === 'dev_manager' && j.team === 'dev')).toBe(true);
+      expect(jobs.some((j) => j.type === 'research' && j.for === 'cfo')).toBe(true);
       expect(v.events.count('team.planned')).toBe(2);
       // Task 9 review finding 2 (busy loop when team_plans re-blocks on an already-finished ids[0]) is covered
       // directly by the firstOpenJob unit tests above — job.blocked events are only emitted by block()/blockMany(),
@@ -130,7 +130,7 @@ describe('two-level planning (spec §3)', () => {
     // the ones team_plans itself creates; its first step (engineer.ship, no depends_on) is queued immediately but
     // needs its own worker cycle, so it should still be open when the heartbeat completes if team_plans correctly
     // waits only on the team.plan jobs (not rollup() of every heartbeat child).
-    const planWithProcess = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Scaffold the site from Brand/\nprocess: launch\n\n### growth\n- Find the first organic channel\n';
+    const planWithProcess = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\nprocess: launch\n\n### revenue\n- Find the first organic channel\n';
     const llm = orgLlm({ vetoes: 0, plan: planWithProcess });
     const d = daemonFor(llm);
     await d.start();
@@ -154,7 +154,7 @@ describe('two-level planning (spec §3)', () => {
 describe('brief notes a recent org migration (F10)', () => {
   it('a migration org.changed event since the previous heartbeat surfaces under What needs you', async () => {
     const seed = Vault.open(dir);
-    seed.events.emit({ type: 'org.changed', agent: 'daemon', payload: { reason: 'migration', changed: ['Teams/engineering.md'] } });
+    seed.events.emit({ type: 'org.changed', agent: 'daemon', payload: { reason: 'migration', changed: ['Teams/dev.md'] } });
     seed.close();
     const llm = orgLlm({ vetoes: 0, plan: '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n' });
     const d = daemonFor(llm);
@@ -184,7 +184,7 @@ describe('critic pre-mortems are validated decision notes (D7)', () => {
       const note = v.readNoteOrNull(rel)!;
       const fm = DecisionFrontmatter.parse(note.data);
       expect(fm.id).toBe(`premortem-${hb.id}`);
-      expect(fm.decided_by).toBe('critic');
+      expect(fm.decided_by).toBe('advisor_skeptic');
       expect(fm.cycle).toBe(hb.id);
       expect(fm.status).toBe('adopted');
       expect(fm.inputs).toEqual(['[[Plans/plan]]']);

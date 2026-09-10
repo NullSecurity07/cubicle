@@ -37,11 +37,11 @@ describe('unanswered questions time out and escalate to the CEO (D2)', () => {
   });
 
   it('a question nobody answered for 13 h requeues the asker, hands off to the CEO and queues them a colleague.answer job', () => {
-    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'engineer', goal: 'g' }, 'cto');
+    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'backend_engineer', goal: 'g' }, 'cto');
     const msgId = 'msg_stale1';
-    askQuestion('cto', 'engineer', msgId, asker, 'Which palette do I use for the hero?');
-    const ctoJob = answerJob('cto', 'engineer', msgId, asker, 'Which palette do I use for the hero?');
-    updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(13) } }, 'engineer');
+    askQuestion('cto', 'backend_engineer', msgId, asker, 'Which palette do I use for the hero?');
+    const ctoJob = answerJob('cto', 'backend_engineer', msgId, asker, 'Which palette do I use for the hero?');
+    updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(13) } }, 'backend_engineer');
 
     expect(requeueUnblocked(vault)).toBe(1);
 
@@ -52,7 +52,7 @@ describe('unanswered questions time out and escalate to the CEO (D2)', () => {
     const ceoMail = vault.readText('Messages/ceo.md');
     const section = ceoMail.split(/\n(?=## )/).find((s) => /from daemon \(handoff\)/.test(s))!;
     expect(section).toBeTruthy();
-    expect(section).toContain('engineer'); // the asker
+    expect(section).toContain('backend_engineer'); // the asker
     expect(section).toContain('cto'); // the recipient who never answered
     expect(section).toContain('Which palette do I use for the hero?');
 
@@ -86,12 +86,12 @@ describe('unanswered questions time out and escalate to the CEO (D2)', () => {
   });
 
   it('a recipient already working on the answer keeps their job, and the handoff says so', () => {
-    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'engineer', goal: 'g' }, 'cto');
+    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'backend_engineer', goal: 'g' }, 'cto');
     const msgId = 'msg_stale2';
-    askQuestion('cto', 'engineer', msgId, asker, 'Which palette?');
-    const ctoJob = answerJob('cto', 'engineer', msgId, asker, 'Which palette?');
+    askQuestion('cto', 'backend_engineer', msgId, asker, 'Which palette?');
+    const ctoJob = answerJob('cto', 'backend_engineer', msgId, asker, 'Which palette?');
     updateJob(vault, ctoJob, { status: 'running' }, 'cto');
-    updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(13) } }, 'engineer');
+    updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(13) } }, 'backend_engineer');
 
     expect(requeueUnblocked(vault)).toBe(1);
 
@@ -102,10 +102,10 @@ describe('unanswered questions time out and escalate to the CEO (D2)', () => {
   });
 
   it('nothing happens while the question is still within the wait budget', () => {
-    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'engineer', goal: 'g' }, 'cto');
+    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'backend_engineer', goal: 'g' }, 'cto');
     const msgId = 'msg_fresh1';
-    askQuestion('cto', 'engineer', msgId, asker, 'Which palette?');
-    updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(11) } }, 'engineer');
+    askQuestion('cto', 'backend_engineer', msgId, asker, 'Which palette?');
+    updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(11) } }, 'backend_engineer');
 
     expect(requeueUnblocked(vault)).toBe(0);
     expect(readJob(vault, asker)!.data.status).toBe('blocked');
@@ -116,10 +116,10 @@ describe('unanswered questions time out and escalate to the CEO (D2)', () => {
 
 describe('an approved call whose mode changed to never (D3)', () => {
   it('is refused with a reason naming never, spends no idempotency key, and emits one approved guardrail.blocked', async () => {
-    vault.updateNote('Roles/head_of_growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
-    const job = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
+    vault.updateNote('Roles/cmo.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
+    const job = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'cmo', goal: 'send' }, 'cto');
     const key = `${job}:1:1`;
-    const p = createProposal(vault, { kind: 'outbound_batch', from: 'head_of_growth', job, title: 'send one', body: 'x', call: { tool: 'mock.outbound', args: { to: 'a@x', body: 'hi' }, idempotency_key: key, job, role: 'head_of_growth' } }, 'head_of_growth');
+    const p = createProposal(vault, { kind: 'outbound_batch', from: 'cmo', job, title: 'send one', body: 'x', call: { tool: 'mock.outbound', args: { to: 'a@x', body: 'hi' }, idempotency_key: key, job, role: 'cmo' } }, 'cmo');
     // The owner approved the batch, then pinned the tool to `never` before the daemon got to it.
     const neverCfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8').replace('mock.outbound:         { mode: auto', 'mock.outbound:         { mode: never'));
     const deps = { vault, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), toolsConfig: neverCfg, scheduler: vaultScheduler(vault), env: {} };
@@ -143,11 +143,11 @@ describe('question timeouts count time the daemon was actually running (live-run
   // whose answer job had never had a chance to run and escalated it: the CEO answered a question the COO was about
   // to answer, and the asker — requeued before any answer existed — finished itself as blocked on the owner.
   it('a question older than the wait but asked before the daemon started is not escalated yet', () => {
-    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'engineer', goal: 'g' }, 'cto');
+    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'backend_engineer', goal: 'g' }, 'cto');
     const msgId = 'msg_downtime';
-    askQuestion('cto', 'engineer', msgId, asker, 'Which palette?');
-    answerJob('cto', 'engineer', msgId, asker, 'Which palette?');
-    updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(14) } }, 'engineer');
+    askQuestion('cto', 'backend_engineer', msgId, asker, 'Which palette?');
+    answerJob('cto', 'backend_engineer', msgId, asker, 'Which palette?');
+    updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(14) } }, 'backend_engineer');
 
     expect(requeueUnblocked(vault, 12 * 3600_000, { sinceFloor: Date.now() - 3600_000 })).toBe(0);
     expect(readJob(vault, asker)!.data.status).toBe('blocked');
@@ -159,11 +159,11 @@ describe('question timeouts count time the daemon was actually running (live-run
   });
 
   it('the escalation tells the asker, in its own transcript, to go on without the answer', () => {
-    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'engineer', goal: 'g' }, 'cto');
+    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'backend_engineer', goal: 'g' }, 'cto');
     const msgId = 'msg_goon';
-    askQuestion('cto', 'engineer', msgId, asker, 'Which palette?');
-    answerJob('cto', 'engineer', msgId, asker, 'Which palette?');
-    updateJob(vault, asker, { status: 'blocked', checkpoint_step: 3, blocked_on: { kind: 'message', id: msgId, since: hoursAgo(13) } }, 'engineer');
+    askQuestion('cto', 'backend_engineer', msgId, asker, 'Which palette?');
+    answerJob('cto', 'backend_engineer', msgId, asker, 'Which palette?');
+    updateJob(vault, asker, { status: 'blocked', checkpoint_step: 3, blocked_on: { kind: 'message', id: msgId, since: hoursAgo(13) } }, 'backend_engineer');
     expect(requeueUnblocked(vault)).toBe(1);
     const transcript = readFileSync(path.join(dir, '.cubicle/jobs', `${asker}.jsonl`), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     const note = transcript.find((o) => o.kind === 'system' && o.text.includes(msgId));

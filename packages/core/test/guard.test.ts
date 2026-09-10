@@ -11,9 +11,9 @@ describe('guard', () => {
     expect(isOwnerOwned('Plans/plan.md', ['Plans/'])).toBe(true);
   });
   it('blocks agents, allows privileged actors', () => {
-    expect(() => assertWritable('Brand/name.md', 'engineer')).toThrow(OwnerOwnedPathError);
+    expect(() => assertWritable('Brand/name.md', 'backend_engineer')).toThrow(OwnerOwnedPathError);
     expect(() => assertWritable('Brand/name.md', 'daemon')).not.toThrow();
-    expect(() => assertWritable('Site/index.html', 'engineer')).not.toThrow();
+    expect(() => assertWritable('Site/index.html', 'backend_engineer')).not.toThrow();
   });
   it('identifies cache paths', () => {
     expect(isCachePath('.cubicle/cubicle.db')).toBe(true);

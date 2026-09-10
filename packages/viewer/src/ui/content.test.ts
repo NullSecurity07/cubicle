@@ -7,7 +7,7 @@ import { planBits, briefBits, cut } from './headlines.js';
 const ctx: Ctx = { frames: {}, tokenQuery: '?token=t', vaultName: 'Cubicle' };
 const PLAN = `---\nupdated: "2026-09-03"\ncycle: 2\n---\n# Plan\n\n## Objective\nEstablish initial web presence and research the first organic channel.\n\n## This cycle\n- Scaffold initial static site from Brand/ (engineer.ship)\n- Research first organic acquisition channel (research)\n- [ ] Verify site deployment and review analytics setup\n\n## Next\n- Launch\n`;
 const BRIEF = `---\nheartbeat: job_1\n---\n# Since you were away\n\n## What happened\n- Company initialized for first heartbeat (cycle 1).\n- Scaffolded the site.\n\n## What's next\n- Research.\n\n## What needs you\n- Approve the company name PlateReady.\n\n---\n_Facts used:_\n- ignored\n`;
-const snap: Snapshot = { op: 'snapshot', at: 'now', roles: [{ role: 'ceo', display: 'CEO', sprite: 'ceo', desk: 'ceo_cabin', active: true }, { role: 'engineer', display: 'Engineer', sprite: 'engineer', desk: 'cubicle_1', active: true }], jobs: [{ id: 'job_a', type: 'engineer.ship', title: 'Scaffold the site with a very long title that should be cut in previews', assigned: 'engineer', status: 'running', priority: 3, checkpoint_step: 4, updated: '2026-09-03T04:38:00.000Z' }, { id: 'job_b', type: 'coo.verify', title: 'Verify', assigned: 'coo', status: 'done', priority: 4, checkpoint_step: 2, updated: '2026-09-03T04:39:00.000Z' }], surfaces: [], quota: [{ provider: 'gemini', model: 'gemini-3.5-flash', rpm_used: 2, rpd_used: 95, tpm_used: 0, cooling_until: null, limits: { rpm: 10, rpd: 100, tpm: 0 } }], latestRun: { path: 'Runs/2026-09-03-1016.md', body: BRIEF }, plan: PLAN, pendingProposals: 1, brand: { name: 'PlateReady', tagline: 'Meal plans for busy parents', url: '' }, inbox: [{ id: 'p1', kind: 'brand_change', title: 'Name the company: PlateReady', path: '00 Inbox/2026-09-03-1016-brand_change-idea.md', created: '2026-09-03T04:46:00.000Z' }] };
+const snap: Snapshot = { op: 'snapshot', at: 'now', roles: [{ role: 'ceo', display: 'CEO', sprite: 'ceo', desk: 'ceo', active: true }, { role: 'backend_engineer', display: 'Backend Engineer', sprite: 'backend_engineer', desk: 'backend_engineer', active: true }], jobs: [{ id: 'job_a', type: 'engineer.ship', title: 'Scaffold the site with a very long title that should be cut in previews', assigned: 'backend_engineer', status: 'running', priority: 3, checkpoint_step: 4, updated: '2026-09-03T04:38:00.000Z' }, { id: 'job_b', type: 'coo.verify', title: 'Verify', assigned: 'coo', status: 'done', priority: 4, checkpoint_step: 2, updated: '2026-09-03T04:39:00.000Z' }], surfaces: [], quota: [{ provider: 'gemini', model: 'gemini-3.5-flash', rpm_used: 2, rpd_used: 95, tpm_used: 0, cooling_until: null, limits: { rpm: 10, rpd: 100, tpm: 0 } }], latestRun: { path: 'Runs/2026-09-03-1016.md', body: BRIEF }, plan: PLAN, pendingProposals: 1, brand: { name: 'PlateReady', tagline: 'Meal plans for busy parents', url: '' }, inbox: [{ id: 'p1', kind: 'brand_change', title: 'Name the company: PlateReady', path: '00 Inbox/2026-09-03-1016-brand_change-idea.md', created: '2026-09-03T04:46:00.000Z' }] };
 const s: State = applySnapshot(emptyState(), snap);
 
 describe('in-world headlines stay short', () => {
@@ -104,18 +104,18 @@ describe('drawer and document views', () => {
 });
 
 describe('org view (spec §6)', () => {
-  const teamSnap: Snapshot = { ...snap, roles: [...snap.roles, { role: 'cto', display: 'CTO', sprite: 'cto', desk: 'cubicle_1', active: true }], teams: [{ id: 'engineering', name: 'Engineering', lead: 'cto', members: ['engineer'], mission: 'Ship.' }], jobs: [{ ...snap.jobs[0], team: 'engineering' }] };
+  const teamSnap: Snapshot = { ...snap, roles: [...snap.roles, { role: 'dev_manager', display: 'Dev Manager', sprite: 'dev_manager', desk: 'dev_manager', active: true }], teams: [{ id: 'dev', name: 'Dev', lead: 'dev_manager', members: ['backend_engineer'], mission: 'Ship.' }], jobs: [{ ...snap.jobs[0], team: 'dev' }] };
   const withTeams = applySnapshot(emptyState(), teamSnap);
   it('the Org drawer lists teams with lead and members as openable rows, with open-job counts (acceptance test 11)', () => {
     const v = viewFor('org', withTeams, ctx);
     expect(v.mode).toBe('drawer');
-    expect(v.html).toContain('Engineering'); expect(v.html).toContain('data-open="agent:cto"'); expect(v.html).toContain('data-open="agent:engineer"');
+    expect(v.html).toContain('Dev'); expect(v.html).toContain('data-open="agent:dev_manager"'); expect(v.html).toContain('data-open="agent:backend_engineer"');
     expect(v.html).toMatch(/1 open/);
     expect(viewFor('org', emptyState(), ctx).html).toContain('No teams yet');
   });
   it('queue rows are grouped by team and the in_review chip exists', () => {
-    const s2 = applySnapshot(emptyState(), { ...teamSnap, jobs: [{ ...snap.jobs[0], team: 'engineering', status: 'in_review' }] });
+    const s2 = applySnapshot(emptyState(), { ...teamSnap, jobs: [{ ...snap.jobs[0], team: 'dev', status: 'in_review' }] });
     const html = viewFor('noticeboard', s2, ctx).html;
-    expect(html).toContain('Engineering'); expect(html).toContain('chip in_review');
+    expect(html).toContain('Dev'); expect(html).toContain('chip in_review');
   });
 });

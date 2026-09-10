@@ -85,7 +85,7 @@ for (const def of [
   },
   {
     kind: 'noticeboard', streamKind: 'list', streamId: () => 'jobs:open',
-    headline: (s) => { const open = Object.values(s.jobs).filter((j) => isOpen(j.status)).sort((a, b) => a.priority - b.priority); return { head: open.length ? `${open.length} open` : 'Queue empty', short: String(open.length), lines: open.slice(0, 3).map((j) => `${j.status} · ${who(s, j.assigned)}: ${cut(j.title, 26)}`) }; },
+    headline: (s) => { const open = Object.values(s.jobs).filter((j) => isOpen(j.status)).sort((a, b) => a.priority - b.priority); return { head: open.length ? `${open.length} open` : 'Queue empty', short: String(open.length), lines: open.slice(0, 3).map((j) => cut(`${j.status} · ${who(s, j.assigned)}: ${cut(j.title, 26)}`, 48)) }; },   // the tower's display names are long: clip the whole line, not only the title
     view: (s) => {
       const open = Object.values(s.jobs).filter((j) => isOpen(j.status)).sort((a, b) => a.priority - b.priority || byUpdated(a, b));
       return { mode: 'drawer', title: 'Queue', sub: `${open.length} open`, html: open.length ? teamJobs(open, s) : empty('Nothing queued. The next heartbeat plans new work.') };

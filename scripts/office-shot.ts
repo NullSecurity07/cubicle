@@ -31,18 +31,18 @@ page.on('pageerror', (e) => console.log('[page exception]', String(e).slice(0, 2
 await page.goto(`http://127.0.0.1:7512/?token=${token}`, { waitUntil: 'load' });
 await page.waitForTimeout(2500);
 await page.screenshot({ path: path.join(out, '1-office.png') });
-// burst of events: head of growth browses, engineer shells, ceo speaks, a meeting, a failed job, a hire
+// burst of events: the CMO browses, the backend engineer shells, ceo speaks, a meeting, a failed job, a hire
 const ev = d.vault.events;
-const g = 'job_demo_growth'; // synthetic ids: a real job note would be picked up and finished by the worker at once
-ev.emit({ type: 'job.queued', agent: 'cto', job: g, payload: { type: 'research', title: 'Find a channel', assigned: 'head_of_growth' } });
-ev.emit({ type: 'job.started', agent: 'head_of_growth', job: g, payload: { type: 'research', title: 'Find a channel' } });
-ev.emit({ type: 'agent.tool_call', agent: 'head_of_growth', job: g, payload: { tool: 'browser.goto', summary: '{"url":"https://example.com"}', step: 1 } });
-ev.emit({ type: 'browser.session_started', agent: 'head_of_growth', job: g, payload: { session: 'demo' } });
+const g = 'job_demo_cmo'; // synthetic ids: a real job note would be picked up and finished by the worker at once
+ev.emit({ type: 'job.queued', agent: 'cto', job: g, payload: { type: 'research', title: 'Find a channel', assigned: 'cmo' } });
+ev.emit({ type: 'job.started', agent: 'cmo', job: g, payload: { type: 'research', title: 'Find a channel' } });
+ev.emit({ type: 'agent.tool_call', agent: 'cmo', job: g, payload: { tool: 'browser.goto', summary: '{"url":"https://example.com"}', step: 1 } });
+ev.emit({ type: 'browser.session_started', agent: 'cmo', job: g, payload: { session: 'demo' } });
 const e = 'job_demo_engineer';
-ev.emit({ type: 'job.queued', agent: 'cto', job: e, payload: { type: 'engineer.ship', title: 'Build site', assigned: 'engineer' } });
-ev.emit({ type: 'job.started', agent: 'engineer', job: e, payload: { type: 'engineer.ship', title: 'Build site' } });
-ev.emit({ type: 'agent.tool_call', agent: 'engineer', job: e, payload: { tool: 'shell.run', summary: 'npm run build', step: 1 } });
-ev.emit({ type: 'shell.output', agent: 'engineer', job: e, payload: { session: 's', stream: 'stdout', text: '> astro build\n✓ 3 pages built in 412ms' } });
+ev.emit({ type: 'job.queued', agent: 'cto', job: e, payload: { type: 'engineer.ship', title: 'Build site', assigned: 'backend_engineer' } });
+ev.emit({ type: 'job.started', agent: 'backend_engineer', job: e, payload: { type: 'engineer.ship', title: 'Build site' } });
+ev.emit({ type: 'agent.tool_call', agent: 'backend_engineer', job: e, payload: { tool: 'shell.run', summary: 'npm run build', step: 1 } });
+ev.emit({ type: 'shell.output', agent: 'backend_engineer', job: e, payload: { session: 's', stream: 'stdout', text: '> astro build\n✓ 3 pages built in 412ms' } });
 ev.emit({ type: 'agent.spoke', agent: 'ceo', job: null, payload: { to: 'owner', text: 'I proposed the name WeekPlate — approve it in 00 Inbox/.' } });
 createProposal(d.vault, { kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Name the company: WeekPlate', body: 'x' }, 'ceo');
 await page.waitForTimeout(6000);
@@ -50,8 +50,8 @@ await page.screenshot({ path: path.join(out, '2-working.png') });
 console.log('agents:', JSON.stringify(await page.evaluate(() => (window as unknown as { __cubicle: { agents: () => unknown } }).__cubicle.agents())));
 console.log('billboard anchor:', JSON.stringify(await page.evaluate(() => (window as unknown as { __cubicle: { anchors: () => Record<string, unknown> } }).__cubicle.anchors().billboard)));
 ev.emit({ type: 'meeting.opened', agent: 'ceo', job: null, payload: { id: 'm1', room: 'board', participants: ['ceo', 'cto', 'coo'], agenda: 'Two jobs failed' } });
-ev.emit({ type: 'job.failed', agent: 'head_of_growth', job: g, payload: { reason: 'step_limit' } });
-ev.emit({ type: 'role.hired', agent: 'daemon', job: null, payload: { role: 'support', display: 'Support', desk: 'cubicle_8', sprite: 'support' } });
+ev.emit({ type: 'job.failed', agent: 'cmo', job: g, payload: { reason: 'step_limit' } });
+ev.emit({ type: 'role.hired', agent: 'daemon', job: null, payload: { role: 'sales_rep', display: 'Sales rep', desk: 'sales_1', sprite: 'sales_rep' } });
 await page.waitForTimeout(4500);
 ev.emit({ type: 'meeting.turn', agent: 'cto', job: null, payload: { id: 'm1', round: 1, text: 'Let us cut the queue to one job per role.' } });
 await page.waitForTimeout(1500);

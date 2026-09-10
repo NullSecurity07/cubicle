@@ -23,8 +23,8 @@ describe.skipIf(!live)('live local model', () => {
       const env = { ...process.env, GEMINI_API_KEY: '', GROQ_API_KEY: '', OPENROUTER_API_KEY: '' } as NodeJS.ProcessEnv;
       const router = new Router(cfg, new QuotaTracker(vault.db), { env, events: vault.events });
       const memory = new MemoryIndex(vault, (t) => embedTexts(cfg, t));
-      vault.writeText('Skills/deploy-site.md', '---\nname: Deploy site\n---\n# Deploy site\n\nBuild Site/, then run `wrangler pages deploy Site/dist` to publish to Cloudflare Pages.\n', 'engineer');
-      vault.writeText('Skills/cold-email.md', '---\nname: Cold email\n---\n# Cold email\n\nShort subject line, one clear ask, unsubscribe footer, respect the suppression list.\n', 'growth');
+      vault.writeText('Skills/deploy-site.md', '---\nname: Deploy site\n---\n# Deploy site\n\nBuild Site/, then run `wrangler pages deploy Site/dist` to publish to Cloudflare Pages.\n', 'backend_engineer');
+      vault.writeText('Skills/cold-email.md', '---\nname: Cold email\n---\n# Cold email\n\nShort subject line, one clear ask, unsubscribe footer, respect the suppression list.\n', 'cmo');
       await memory.indexAll();
       const hits = await memory.search('how do I deploy the website', 2, ['Skills']);
       expect(hits[0].path).toBe('Skills/deploy-site.md');

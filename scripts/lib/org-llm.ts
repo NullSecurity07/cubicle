@@ -1,12 +1,12 @@
 /**
- * Scripted model for the org-shaped planning cycle (spec §3): the CEO writes the plan; the Critic returns once
- * then passes; leads enqueue one job each; everyone else finishes. Shared by `packages/daemon/test/planning.test.ts`
+ * Scripted model for the org-shaped planning cycle (spec §3): the CEO writes the plan; the Skeptic returns once
+ * then passes; managers enqueue one job each; everyone else finishes. Shared by `packages/daemon/test/planning.test.ts`
  * and `scripts/test-kill9.ts` (planning fan-out scenario) so both exercise the exact same scripted behaviour.
  */
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
 
-export const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Scaffold the site from Brand/\n\n### growth\n- Find the first organic channel\n';
+export const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n\n### revenue\n- Find the first organic channel\n';
 
 export function orgLlm(opts: { vetoes?: number; plan?: string } = {}): Llm & { calls: Record<string, number> } {
   let vetoes = opts.vetoes ?? 1;
@@ -30,7 +30,7 @@ export function orgLlm(opts: { vetoes?: number; plan?: string } = {}): Llm & { c
       if (/^(Build|Announce|Outreach|Measure launch):? /.test(jobTitle) || jobTitle === 'Measure launch') return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Plans/plan.md' } }] };
       if (jobType === 'company.plan') return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content: plan } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
       if (jobType === 'critic.premortem') { const v = vetoes-- > 0; return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: v ? 'too vague' : 'fine', verdict: v ? 'return' : 'pass', findings: v ? ['growth objective has no metric'] : [] } }] }; }
-      if (jobType === 'team.plan') { const member = role === 'cto' ? 'engineer' : role === 'head_of_growth' ? 'research_analyst' : null; return { ...base, parsedToolCalls: [n === 0 && member ? { name: 'scheduler.request', args: { type: member === 'engineer' ? 'engineer.ship' : 'research', title: `Do ${role}`, assigned: member, goal: 'g', done_when: 'd', for: member === 'research_analyst' ? role : undefined } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] }; }
+      if (jobType === 'team.plan') { const member = role === 'dev_manager' ? 'backend_engineer' : role === 'cfo' ? 'research_manager' : null; return { ...base, parsedToolCalls: [n === 0 && member ? { name: 'scheduler.request', args: { type: member === 'backend_engineer' ? 'engineer.ship' : 'research', title: `Do ${role}`, assigned: member, goal: 'g', done_when: 'd', for: member === 'research_manager' ? role : undefined } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] }; }
       return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: `${role} done`, verdict: 'pass' } }] };
     },
     promptBudget: () => 6000,

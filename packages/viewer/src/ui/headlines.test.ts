@@ -3,7 +3,7 @@ import { emptyState, applyEvent, type State, type CubicleEvent } from '../state.
 import { headlineFor } from './surfaces.js';
 import { tintFor, NIGHT_ALPHA } from './time.js';
 
-const ev = (type: string, payload: Record<string, unknown>): CubicleEvent => ({ ts: '2026-09-03T12:00:00.000Z', type, agent: 'engineer', job: null, payload });
+const ev = (type: string, payload: Record<string, unknown>): CubicleEvent => ({ ts: '2026-09-03T12:00:00.000Z', type, agent: 'backend_engineer', job: null, payload });
 const withTerminal = (lines: string[]): State => lines.reduce((s, text) => applyEvent(s, ev('shell.output', { text })), emptyState());
 
 describe('in-world previews', () => {

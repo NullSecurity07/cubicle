@@ -2,7 +2,7 @@ import {
   type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
   loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
-  resolveRole, teamOf,
+  resolveRole, teamOf, researchLead,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -114,9 +114,9 @@ export function planningGate(opts: { plan: string; now: Date; maxAgeDays: number
  * `scheduler.request` on itself every cycle, which the org guards refuse; say instead how such a lead gets work
  * onto the queue — through the CEO, or as research.
  */
-export function teamPlanGoal(t: TeamFrontmatter, objectives: string, lastNextAction: string): string {
+export function teamPlanGoal(t: TeamFrontmatter, objectives: string, lastNextAction: string, researchTo = 'research_manager'): string {
   const alone = t.members.length === 0;
-  return `Your team's objectives this cycle:\n${objectives}\n\nNext action from the last brief: ${lastNextAction}\n\nDo: (1) vault.read Plans/plan.md and vault.list Jobs to see open work; (2) enqueue at most 4 jobs with scheduler.request for your members (${t.members.join(', ') || 'none'}), each finishable in one sitting, each with done_when; research needs go to research_analyst with for: ${t.lead}; (3) vault.append the job ids under your "### ${t.id}" section in Plans/plan.md; (4) finish with a one-paragraph summary.${alone ? ' Your team has no members: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from research_analyst; do not call scheduler.request for yourself.' : ''}`;
+  return `Your team's objectives this cycle:\n${objectives}\n\nNext action from the last brief: ${lastNextAction}\n\nDo: (1) vault.read Plans/plan.md and vault.list Jobs to see open work; (2) enqueue at most 4 jobs with scheduler.request for your members (${t.members.join(', ') || 'none'}), each finishable in one sitting, each with done_when; research needs go to ${researchTo} with for: ${t.lead}; (3) vault.append the job ids under your "### ${t.id}" section in Plans/plan.md; (4) finish with a one-paragraph summary.${alone ? ` Your team has no members: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from ${researchTo}; do not call scheduler.request for yourself.` : ''}`;
 }
 
 /**
@@ -178,6 +178,7 @@ export function firstOpenJob(ids: string[], statusOf: (id: string) => string | u
  * failure modes it foresaw, which is what makes the note worth reading a cycle later.
  */
 export function writePremortemDecision(vault: Vault, hbId: string, criticJobId: string, result: JobResult | null, now: Date): string {
+  const critic = resolveRole(loadOrg(vault), 'critic');
   const verdict = result?.verdict ?? 'pass';
   const findings = result?.findings ?? [];
   const risks = findings.length
@@ -185,7 +186,7 @@ export function writePremortemDecision(vault: Vault, hbId: string, criticJobId: 
     : '- The Critic found nothing in this plan likely to sink the cycle.';
   const review = new Date(now.getTime() + 7 * 24 * 3600_000).toISOString().slice(0, 10);
   return writeDecision(vault, `premortem-${hbId}`, {
-    decided_by: 'critic', cycle: hbId, status: verdict === 'pass' ? 'adopted' : 'proposed', inputs: ['[[Plans/plan]]'],
+    decided_by: critic, cycle: hbId, status: verdict === 'pass' ? 'adopted' : 'proposed', inputs: ['[[Plans/plan]]'],
   }, {
     context: `Pre-mortem for heartbeat ${hbId}: the Critic read this cycle's \`Plans/plan.md\` and imagined the cycle had already failed. Its own working is in [[${criticJobId}]].`,
     options: '- Run the plan as the CEO wrote it\n- Return it to the CEO to rewrite before any team plans against it',
@@ -193,7 +194,7 @@ export function writePremortemDecision(vault: Vault, hbId: string, criticJobId: 
     why: result?.summary?.trim() || (verdict === 'pass' ? 'The plan survived the pre-mortem.' : 'The Critic found failure modes the plan does not answer.'),
     expected_effect: `Most likely ways this cycle fails, and what would prevent each:\n\n${risks}`,
     review_date: review,
-  }, 'critic');
+  }, critic);
 }
 
 /** Create the `ceo.heartbeat` job note (the heartbeat is a job so R9/R10/R12 apply). */
@@ -513,7 +514,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         state = { ...state, processedCritic: state.criticJob }; saveState(state);
         if (result?.verdict === 'return') {
           const vetoes = (state.vetoes ?? 0) + 1;
-          vault.events.emit({ type: 'plan.vetoed', agent: 'critic', job: jobId, payload: { findings: result.findings, vetoes } });
+          vault.events.emit({ type: 'plan.vetoed', agent: resolveRole(org, 'critic'), job: jobId, payload: { findings: result.findings, vetoes } });
           if (vetoes === 1) {
             state = { ...state, vetoes, criticFindings: result.findings, companyPlanJob: undefined, criticJob: undefined }; saveState(state);
             updateJob(vault, jobId, { status: 'queued', checkpoint_step: i - 1, blocked_on: undefined }, 'ceo', `- step ${i + 1} critic: returned; rewriting the plan`);
@@ -550,7 +551,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
             if (t.lead === 'ceo') continue;
             ids.push(createJob(vault, {
               type: 'team.plan', title: `Plan ${t.name}`, assigned: t.lead, priority: 1, parent: jobId, team: t.id, owner_role: t.lead,
-              goal: teamPlanGoal(t, s.text, lastNextAction(t.id)),
+              goal: teamPlanGoal(t, s.text, lastNextAction(t.id), researchLead(org) ?? 'research_manager'),
             }, 'ceo'));
           }
           state = { ...state, teamPlanJobs: ids }; saveState(state);

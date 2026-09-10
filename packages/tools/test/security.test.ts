@@ -26,10 +26,10 @@ function ctxFor(roleId: string, jobId: string | null): ToolContext {
 
 describe('agent write restrictions', () => {
   it('cannot forge approvals, other jobs, or messages; can edit own job body only', async () => {
-    const id = createJob(vault, { type: 'custom', title: 'mine', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const id = createJob(vault, { type: 'custom', title: 'mine', assigned: 'cmo', goal: 'g' }, 'cto');
     const other = createJob(vault, { type: 'custom', title: 'theirs', assigned: 'coo', goal: 'g' }, 'cto');
     const reg = new ToolRegistry().registerAll(phase3Tools());
-    const client = await createRoleToolClient(reg.forRole(role('head_of_growth'), cfg), ctxFor('head_of_growth', id));
+    const client = await createRoleToolClient(reg.forRole(role('cmo'), cfg), ctxFor('cmo', id));
     try {
       const forge = await client.call('vault.write', { path: '00 Inbox/forged.md', content: '---\nkind: spend\napproved: true\n---\n' });
       expect(forge.ok).toBe(false);
@@ -77,7 +77,7 @@ describe('http.fetch SSRF', () => {
   });
   it('blocks loopback, IPv6 loopback, and redirects into private space', async () => {
     const reg = new ToolRegistry().registerAll(phase3Tools());
-    const client = await createRoleToolClient(reg.forRole(role('head_of_growth'), cfg), ctxFor('head_of_growth', 'job_h'));
+    const client = await createRoleToolClient(reg.forRole(role('cmo'), cfg), ctxFor('cmo', 'job_h'));
     try {
       for (const url of [`http://127.0.0.1:${port}/secret`, `http://[::1]:${port}/secret`, `http://localhost:${port}/secret`, `http://172.16.0.1:${port}/x`]) {
         const r = await client.call('http.fetch', { url });

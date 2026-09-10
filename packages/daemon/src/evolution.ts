@@ -4,7 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
-  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead,
+  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, resolveRole,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -18,10 +18,18 @@ export function activeRoles(vault: Vault): RoleFrontmatter[] {
   return vault.list('Roles', { ext: '.md' }).filter((r) => !r.includes('/archive/')).flatMap((rel) => { const n = vault.readNoteOrNull(rel); const p = n && RoleFrontmatter.safeParse(n.data); return p && p.success ? [p.data] : []; });
 }
 
-/** A member desk no active role holds, in desks.yaml order. B10 narrows this to the hiring team's room. */
-export function freeDesk(vault: Vault): string | null {
+/**
+ * The desk a hire into `team` gets: a member desk in that team's room that no active role holds, preferring the
+ * one named after the role (so re-hiring a fired specialist puts them back where they sat). No team, or a team
+ * without a room, means no desk: the CEO's proposal must say which room the hire joins.
+ */
+export function freeDesk(vault: Vault, team?: string, roleId?: string): string | null {
+  if (!team) return null;
+  const room = loadOrg(vault).teams[team]?.room;
+  if (!room) return null;
   const used = new Set(activeRoles(vault).filter((r) => r.active).map((r) => r.desk));
-  return loadDesks().find((d) => d.slot === 'member' && !used.has(d.id))?.id ?? null;
+  const free = loadDesks().filter((d) => d.slot === 'member' && d.room === room && !used.has(d.id));
+  return free.find((d) => d.id === roleId)?.id ?? free[0]?.id ?? null;
 }
 
 // ---------- hire / fire (spec §9.5) ----------
@@ -105,23 +113,23 @@ export async function applyHire(vault: Vault, note: { path: string; data: InboxF
   if (justified.length < 2) return `hire needs links to at least 2 distinct blocked, failed or retried jobs (found ${justified.length} of ${linked.length} linked)`;
   const active = activeRoles(vault).filter((r) => r.active).length;
   if (active >= c.max_roles) return `max_roles (${c.max_roles}) reached`;
-  const desk = freeDesk(vault);
-  if (!desk) return 'no free desk';
   // F2: a charter naming a team joins it — otherwise reportsOf(lead) never sees the hire and the lead can't
-  // schedule it. Refuse the hire outright rather than silently exceeding max_team_size.
+  // schedule it. Refuse the hire outright rather than silently exceeding max_team_size. B10: the team is also
+  // what picks the desk, so a teamless charter has nowhere to sit and is refused before the desk lookup.
   const org = loadOrg(vault);
-  const team = role.team ? org.teams[role.team] : undefined;
-  if (role.team && !team) return `unknown team ${role.team} (create it as Teams/${role.team}.md first)`;
-  if (team && team.members.length + 2 > c.max_team_size) return `team ${role.team} would exceed max_team_size (${c.max_team_size})`;
-  const reports_to = role.reports_to ?? team?.lead;
+  if (!role.team) return 'a hire must name a team (team: <id>) so it gets a desk in that room';
+  const team = org.teams[role.team];
+  if (!team) return `unknown team ${role.team} (create it as Teams/${role.team}.md first)`;
+  const desk = freeDesk(vault, role.team, role.role);
+  if (!desk) return `no free desk in the ${role.team} room`;
+  if (team.members.length + 2 > c.max_team_size) return `team ${role.team} would exceed max_team_size (${c.max_team_size})`;
+  const reports_to = role.reports_to ?? team.lead;
   const data = { ...role, active: true, hired: nowIso(), desk, sprite: role.sprite || role.role, ...(reports_to ? { reports_to } : {}) };
   vault.writeText(`Roles/${role.role}.md`, stringifyNote(data, parseNote(charter).body), 'daemon', { job: note.data.job ?? null });
-  if (team) {
-    const teamNote = vault.readNoteOrNull(`Teams/${role.team!}.md`)!;
-    const members = [...new Set([...(teamNote.data.members as string[] ?? []), role.role])];
-    vault.writeText(`Teams/${role.team!}.md`, stringifyNote({ ...teamNote.data, members }, teamNote.body), 'daemon', { job: note.data.job ?? null });
-    vault.events.emit({ type: 'org.changed', agent: 'daemon', job: note.data.job ?? null, payload: { reason: 'hire', role: role.role, team: role.team } });
-  }
+  const teamNote = vault.readNoteOrNull(`Teams/${role.team}.md`)!;
+  const members = [...new Set([...(teamNote.data.members as string[] ?? []), role.role])];
+  vault.writeText(`Teams/${role.team}.md`, stringifyNote({ ...teamNote.data, members }, teamNote.body), 'daemon', { job: note.data.job ?? null });
+  vault.events.emit({ type: 'org.changed', agent: 'daemon', job: note.data.job ?? null, payload: { reason: 'hire', role: role.role, team: role.team } });
   if (!vault.exists(`Messages/${role.role}.md`)) vault.writeText(`Messages/${role.role}.md`, `# Messages for ${role.role}\n\nColleagues append sections here; the harness includes unread ones in context.\n`, 'daemon');
   vault.events.emit({ type: 'role.hired', agent: 'daemon', job: note.data.job ?? null, payload: { role: role.role, display: role.display, desk, sprite: data.sprite, proposal: note.data.id } });
   onHired?.(role.role);
@@ -422,7 +430,8 @@ export function collectOwnerFeedback(vault: Vault, since?: string): OwnerFeedbac
     if (!comments.length) continue;
     const d = parseNote(text).data as Record<string, unknown>;
     const byName = rel.match(/^(?:Roles|Messages)\/([a-z0-9_-]+)\.md$/)?.[1];
-    const role = String(byName ?? d.assigned ?? d.decided_by ?? d.from ?? d.by ?? d.author ?? d.owner ?? (rel.startsWith('Site/') ? 'engineer' : rel.startsWith('Customers/') || rel.startsWith('Experiments/') ? 'head_of_growth' : rel.startsWith('Plans/') ? 'cto' : 'ceo'));
+    const byArea = rel.startsWith('Site/') ? 'engineer' : rel.startsWith('Customers/') || rel.startsWith('Experiments/') ? 'head_of_growth' : rel.startsWith('Plans/') ? 'cto' : 'ceo';
+    const role = resolveRole(loadOrg(vault), String(byName ?? d.assigned ?? d.decided_by ?? d.from ?? d.by ?? d.author ?? d.owner ?? byArea));
     for (const c of comments) out.push({ role, source: rel, text: c, kind: 'comment' });
   }
   const alreadyDelivered = deliveredFeedbackShas(vault);

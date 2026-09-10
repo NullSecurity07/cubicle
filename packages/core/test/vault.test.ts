@@ -100,7 +100,7 @@ describe('Vault writes', () => {
   });
   it('rescan records out-of-band writes', () => {
     writeFileSync(path.join(dir, 'Site/built.html'), '<p>from shell</p>');
-    const changed = vault.rescan('Site', 'engineer/shell');
+    const changed = vault.rescan('Site', 'backend_engineer/shell');
     expect(changed).toContain('Site/built.html');
     expect(vault.isOwnerChanged('Site/built.html')).toBe(false);
   });

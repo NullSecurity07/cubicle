@@ -19,7 +19,7 @@ describe('gates (spec §3)', () => {
     expect(gatesFor(t, 'made.up')).toEqual(['coo.verify']);
     expect(criteriaFor(t, 'engineer.ship')).toBe('ok');
     expect(gateAssignee('qa.review', {})).toBe('qa'); expect(gateAssignee('coo.verify', {})).toBe('coo');
-    expect(gateAssignee('requester.review', { for: 'cto' })).toBe('cto'); expect(gateAssignee('requester.review', { owner_role: 'head_of_growth' })).toBe('head_of_growth');
+    expect(gateAssignee('requester.review', { for: 'cto' })).toBe('cto'); expect(gateAssignee('requester.review', { owner_role: 'cfo' })).toBe('cfo');
     expect(gatesFor(loadGates(), 'research')).toEqual(['requester.review']);
   });
   it('requester.review and ceo.heartbeat have explicit (empty) gate entries in config/gates.yaml, not the custom fallback (F7)', () => {

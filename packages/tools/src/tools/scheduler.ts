@@ -12,11 +12,12 @@ const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan'
 export function cannotScheduleText(org: Org, roleId: string, assigned: string): string {
   const allowed = [...new Set([...(teamOf(org, roleId)?.members ?? []), ...Object.keys(org.roles)])].filter((r) => can(org, roleId, 'schedule', r)); // own team first, in charter order
   const self = assigned === roleId ? ' Nobody schedules themselves: do the work in this job.' : '';
-  const fallback = 'Otherwise do the work in this job yourself, request research (type: research, assigned: research_analyst), or tell your lead (the ceo, for a lead) with colleague.message.';
+  const research = researchLead(org) ?? 'research_manager';   // the research team's lead, not the v1 analyst id
+  const fallback = `Otherwise do the work in this job yourself, request research (type: research, assigned: ${research}), or tell your lead (the ceo, for a lead) with colleague.message.`;
   if (allowed.length) return `${roleId} may not schedule ${assigned}.${self} You may schedule: ${allowed.join(', ')} (leads schedule their own team's members, members hand off to a teammate, the CEO anyone). ${fallback}`;
   const team = isLead(org, roleId) ? teamOf(org, roleId) : null;
   const why = team ? `${roleId} leads ${team.id}, and ${team.id} has no members, so there is nobody to schedule.` : `${roleId} may not schedule ${assigned}, and has no teammate to hand off to.`;
-  return `${why}${self} Do the work in this job yourself, request research (type: research, assigned: research_analyst), or ask the ceo with colleague.message.`;
+  return `${why}${self} Do the work in this job yourself, request research (type: research, assigned: ${research}), or ask the ceo with colleague.message.`;
 }
 
 /**

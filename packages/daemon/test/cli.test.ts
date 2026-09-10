@@ -78,8 +78,8 @@ describe('cubicle job cancel (M3)', () => {
   /** A vault with one job in `status`, and the ids needed to inspect it afterwards. */
   async function vaultWithJob(status: 'queued' | 'running'): Promise<{ id: string }> {
     const { vault } = await scaffoldVault(dir);
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
-    if (status === 'running') updateJob(vault, id, { status, checkpoint_step: 2 }, 'head_of_growth');
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'cmo', goal: 'g' }, 'cto');
+    if (status === 'running') updateJob(vault, id, { status, checkpoint_step: 2 }, 'cmo');
     vault.close();
     return { id };
   }

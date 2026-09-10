@@ -10,8 +10,8 @@ beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-turn-'))
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
 async function ctx(observations: Observation[]) {
-  const id = createJob(vault, { type: 'engineer.ship', title: 'Build', assigned: 'engineer', goal: 'g', team: 'engineering', owner_role: 'cto' }, 'cto');
-  const role = readRole(vault, 'engineer')!;
+  const id = createJob(vault, { type: 'engineer.ship', title: 'Build', assigned: 'backend_engineer', goal: 'g', team: 'dev', owner_role: 'cto' }, 'cto');
+  const role = readRole(vault, 'backend_engineer')!;
   return assembleContext({ vault, role: role.data, roleBody: role.body, job: readJob(vault, id)!.data, jobBody: readJob(vault, id)!.body, observations, maxPromptTokens: 6000, org: loadOrg(vault), gates: loadGates(), maxSteps: 25 });
 }
 

@@ -32,14 +32,14 @@ describe('approval resolution', () => {
   });
   it('filters tools per role with wildcards and role restrictions', () => {
     const reg = new ToolRegistry().registerAll(phase3Tools({ includeMock: true }));
-    const names = reg.forRole(role('head_of_growth'), cfg).map((t) => t.name);
+    const names = reg.forRole(role('cmo'), cfg).map((t) => t.name);
     expect(names).toContain('vault.read');
     expect(names).toContain('http.fetch');
     expect(names).not.toContain('mock.outbound');
-    const eng = { ...role('engineer'), tools: ['shell.run', 'vault.*'] } as RoleFrontmatter;
+    const eng = { ...role('backend_engineer'), tools: ['shell.run', 'vault.*'] } as RoleFrontmatter;
     expect(reg.forRole(eng, cfg).map((t) => t.name)).toEqual(expect.arrayContaining(['vault.read', 'vault.write']));
-    const growthShell = { ...role('head_of_growth'), tools: ['shell.run'] } as RoleFrontmatter;
-    expect(reg.forRole(growthShell, cfg)).toEqual([]); // shell.run restricted to engineer (and not registered in phase 3 anyway)
+    const growthShell = { ...role('cmo'), tools: ['shell.run'] } as RoleFrontmatter;
+    expect(reg.forRole(growthShell, cfg)).toEqual([]); // shell.run is restricted to the roles that shell; the CMO is not one (and it is not registered in phase 3 anyway)
   });
 });
 
@@ -73,31 +73,31 @@ describe('MCP tools', () => {
 
   it('colleague.message writes Messages/, blocks on questions, hands off as jobs; answers are found', async () => {
     const reg = new ToolRegistry().registerAll(phase3Tools());
-    const client = await createRoleToolClient(reg.forRole(role('engineer'), cfg), ctxFor('engineer'));
+    const client = await createRoleToolClient(reg.forRole(role('backend_engineer'), cfg), ctxFor('backend_engineer'));
     try {
       const q = await client.call('colleague.message', { to: 'cto', body: 'Which framework?', kind: 'question' });
       expect(q.block).toMatchObject({ kind: 'message' });
       const unread = unreadMessages(vault, 'cto');
       expect(unread.length).toBe(1);
-      expect(unread[0].from).toBe('engineer');
+      expect(unread[0].from).toBe('backend_engineer');
       expect(unreadMessages(vault, 'cto', true).length).toBe(1);
       expect(unreadMessages(vault, 'cto').length).toBe(0); // marked read
       const qid = (q.data as { id: string }).id;
       // CTO answers
       const cto = await createRoleToolClient(reg.forRole(role('cto'), cfg), ctxFor('cto'));
-      await cto.call('colleague.message', { to: 'engineer', body: `re:${qid} Use Astro.`, kind: 'fyi' });
+      await cto.call('colleague.message', { to: 'backend_engineer', body: `re:${qid} Use Astro.`, kind: 'fyi' });
       await cto.close();
-      expect(findAnswer(vault, 'engineer', qid)?.body).toContain('Use Astro');
-      const h = await client.call('colleague.message', { to: 'qa', body: 'please verify', kind: 'handoff' });
+      expect(findAnswer(vault, 'backend_engineer', qid)?.body).toContain('Use Astro');
+      const h = await client.call('colleague.message', { to: 'frontend_engineer', body: 'please verify', kind: 'handoff' });
       expect(h.ok).toBe(true);
-      expect(listJobs(vault, { assigned: 'qa' }).length).toBe(1);
+      expect(listJobs(vault, { assigned: 'frontend_engineer' }).length).toBe(1);
       expect(vault.events.count('agent.spoke')).toBeGreaterThanOrEqual(3);
     } finally { await client.close(); }
   });
 
   it('skills save/load/search fall back to text search without embeddings', async () => {
     const reg = new ToolRegistry().registerAll(phase3Tools());
-    const client = await createRoleToolClient(reg.forRole(role('engineer'), cfg), ctxFor('engineer'));
+    const client = await createRoleToolClient(reg.forRole(role('backend_engineer'), cfg), ctxFor('backend_engineer'));
     try {
       await client.call('skills.save', { name: 'Deploy to Cloudflare Pages', when_to_use: 'when publishing Site/', steps: ['build', 'wrangler pages deploy'] });
       const s = await client.call('skills.search', { query: 'deploy cloudflare' });

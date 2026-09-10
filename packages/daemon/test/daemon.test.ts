@@ -15,8 +15,8 @@ let dir: string;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-daemon-')); const { vault } = await scaffoldVault(dir); vault.close(); });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-/** The CEO's objectives for the cycle: only the engineering team has work, so only the CTO gets a team.plan. */
-const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### engineering\n- Scaffold the site from Brand/\n';
+/** The CEO's objectives for the cycle: only the Dev room has work, so only the dev manager gets a team.plan. */
+const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n';
 
 /**
  * Role-aware scripted LLM for the two-level planning cycle: the CEO writes the company plan, the Critic always
@@ -53,8 +53,8 @@ function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: stri
       if (jobType === 'critic.premortem') {
         return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'fine', verdict: 'pass', findings: [] } }] };
       }
-      if (jobType === 'team.plan' && req.roleId === 'cto') {
-        return { ...base, parsedToolCalls: [n === 0 ? { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.' } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
+      if (jobType === 'team.plan' && req.roleId === 'dev_manager') {
+        return { ...base, parsedToolCalls: [n === 0 ? { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'backend_engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.' } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
       }
       // Gate jobs (qa.review, coo.verify, requester.review) need an explicit verdict to advance the parent's gate chain.
       const isGate = /\.(review|verify)$/.test(jobType);
@@ -128,9 +128,9 @@ describe('heartbeat as a resumable job', () => {
     expect(existsSync(path.join(dir, 'Decisions'))).toBe(true);
     expect(requeueUnblocked(vault)).toBe(1);
     expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
-    // finish the CTO's team.plan → it enqueues the scaffold job
+    // finish the dev manager's team.plan → it enqueues the scaffold job
     const teamPlan = listJobs(vault).find((j) => j.type === 'team.plan')!;
-    expect(teamPlan.assigned).toBe('cto');
+    expect(teamPlan.assigned).toBe('dev_manager');
     expect((await runJob(harnessDeps, teamPlan.id)).status).toBe('done');
     expect(listJobs(vault).some((j) => j.type === 'engineer.ship')).toBe(true);
     expect(requeueUnblocked(vault)).toBe(1);
@@ -311,7 +311,7 @@ describe('brand reconcile (acceptance test 3, heartbeat half)', () => {
     await runHeartbeat({ vault, llm }, hb);
     const rec = listJobs(vault).filter((j) => /reconcile site with brand/i.test(j.title));
     expect(rec.length).toBe(1);
-    expect(rec[0].assigned).toBe('engineer');
+    expect(rec[0].assigned).toBe('dev_manager');   // resolveRole maps the v1 `engineer` to the dev manager, who splits it in the room
     expect(rec[0].type).toBe('engineer.ship');
     // a second heartbeat while it is still open does not duplicate it
     const hb2 = createHeartbeatJob(vault, 'again');
@@ -326,7 +326,7 @@ describe('snapshot for the office', () => {
   it('carries the brand and the pending proposals (title, kind, path), never plain messages', () => {
     const vault = Vault.open(dir);
     writeFileSync(path.join(dir, 'Brand/name.md'), '---\nname: "PlateReady"\ntagline: "Meal plans for busy parents"\nurl: "https://plateready.pages.dev"\n---\n# PlateReady\n');
-    createProposal(vault, { kind: 'spend', from: 'engineer', title: 'Deploy the site', body: 'x' }, 'engineer');
+    createProposal(vault, { kind: 'spend', from: 'backend_engineer', title: 'Deploy the site', body: 'x' }, 'backend_engineer');
     createProposal(vault, { kind: 'message', from: 'cto', to: 'owner', title: 'Q', body: 'Which colour?' }, 'cto');
     const snap = buildSnapshot(vault);
     expect(snap.brand).toEqual({ name: 'PlateReady', tagline: 'Meal plans for busy parents', url: 'https://plateready.pages.dev' });
@@ -335,7 +335,7 @@ describe('snapshot for the office', () => {
     expect(snap.pendingProposals).toBe(1);
     writeFileSync(path.join(dir, '00 Inbox/idea.md'), '---\nid: msg_idea\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-03T04:37:00.000Z\nanswered: true\n---\nA meal-planning site.\n\n## CEO\n\nGot it. I proposed **PlateReady**.\n');
     expect(buildSnapshot(vault).chat).toEqual([{ ts: '2026-09-03T04:37:00.000Z', from: 'you', text: 'A meal-planning site.' }, { ts: '2026-09-03T04:37:00.000Z', from: 'ceo', text: 'Got it. I proposed **PlateReady**.' }]);
-    expect(snap.teams.map((t) => t.id).sort()).toEqual(['engineering', 'growth', 'operations', 'research', 'strategy']);
+    expect(snap.teams.map((t) => t.id).sort()).toEqual(['board', 'dev', 'executive', 'operations', 'qa', 'research', 'revenue', 'sales', 'security', 'technology']);
     vault.close();
   });
 });
@@ -433,7 +433,7 @@ describe('daemon lifecycle', () => {
     const offer = jobs.find((j) => j.title === 'Define the offer and price point')!;
     expect(offer).toBeTruthy();
     expect(offer.type).toBe('research');
-    expect(offer.for).toBe('head_of_growth');
+    expect(offer.for).toBe('cmo');
     expect(readJob(d.vault, offer.id)!.body).toContain('## Done when');
     const channel = jobs.find((j) => j.title === 'Research the first organic channel')!;
     expect(channel).toBeTruthy();
@@ -467,7 +467,7 @@ describe('daemon lifecycle', () => {
       expect(titles).toContain('Research the first organic channel');
       const site = listJobs(v).find((j) => j.title === 'Scaffold Site/ from Brand/ (first cut)')!;
       expect(site.type).toBe('engineer.ship');
-      expect(site.assigned).toBe('engineer');
+      expect(site.assigned).toBe('dev_manager');
       for (const id of first) expect(readJob(v, id)!.body).toContain('## Done when');
       // Idempotent within the first cycle, and silent once a heartbeat has completed.
       expect(seedFirstJobs(v, loadOrg(v))).toEqual([]);
@@ -482,12 +482,12 @@ describe('daemon lifecycle', () => {
     try {
       createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
       // Same first three words, different wording → the lead already planned it.
-      createJob(v, { type: 'engineer.ship', title: 'Scaffold Site/ from Brand/ (v2)', assigned: 'engineer', goal: 'g' }, 'cto');
+      createJob(v, { type: 'engineer.ship', title: 'Scaffold Site/ from Brand/ (v2)', assigned: 'backend_engineer', goal: 'g' }, 'cto');
       // Shorter than three words → not enough to claim the work; must not suppress anything.
-      createJob(v, { type: 'research', title: 'Research', assigned: 'research_analyst', goal: 'g' }, 'cto');
-      createJob(v, { type: 'research', title: 'Define the', assigned: 'research_analyst', goal: 'g' }, 'cto');
+      createJob(v, { type: 'research', title: 'Research', assigned: 'research_manager', goal: 'g' }, 'cto');
+      createJob(v, { type: 'research', title: 'Define the', assigned: 'research_manager', goal: 'g' }, 'cto');
       // A job nobody will ever run cannot stand in for a seed.
-      const dead = createJob(v, { type: 'growth.seo', title: 'Research the first organic channel', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+      const dead = createJob(v, { type: 'growth.seo', title: 'Research the first organic channel', assigned: 'cmo', goal: 'g' }, 'cto');
       updateJob(v, dead, { status: 'cancelled' }, 'daemon');
 
       const seeded = seedFirstJobs(v, loadOrg(v)).map((id) => readJob(v, id)!.data.title);
@@ -501,7 +501,7 @@ describe('daemon lifecycle', () => {
     const v = Vault.open(dir);
     try {
       createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
-      const dead = createJob(v, { type: 'engineer.ship', title: 'Scaffold Site/ from Brand/ (first cut)', assigned: 'engineer', goal: 'g' }, 'cto');
+      const dead = createJob(v, { type: 'engineer.ship', title: 'Scaffold Site/ from Brand/ (first cut)', assigned: 'backend_engineer', goal: 'g' }, 'cto');
       updateJob(v, dead, { status: 'failed' }, 'daemon');
       expect(seedFirstJobs(v, loadOrg(v)).map((id) => readJob(v, id)!.data.title)).toContain(FIRST_JOB_TITLES[0]);
     } finally { v.close(); }
@@ -531,9 +531,9 @@ describe('daemon lifecycle', () => {
     const deps = { vault, registry: new ToolRegistry().registerAll(phase3Tools()), toolsConfig: cfg, scheduler: vaultScheduler(vault), env: {} };
     const fc = createProposal(vault, { kind: 'file_change', from: 'cto', target: 'Memory/owner_preferences.md', title: 'x', body: '## Proposed content\n\n```\n# Owner preferences\n\nchanged by proposal\n```\n', call: { tool: 'vault.write', args: { path: 'Memory/owner_preferences.md', content: '# Owner preferences\n\nchanged by proposal\n' }, idempotency_key: 'job_x:1:1', role: 'cto' } }, 'cto');
     // an agent-authored brand_change pointing at the constitution must never be applied, even when approved
-    const evil = createProposal(vault, { kind: 'brand_change', from: 'growth', target: 'Memory/constitution.md', title: 'Tagline tweak', body: '## Proposed content\n\n```\nmax_emails_per_day: 99999\n```\n' }, 'growth');
+    const evil = createProposal(vault, { kind: 'brand_change', from: 'cmo', target: 'Memory/constitution.md', title: 'Tagline tweak', body: '## Proposed content\n\n```\nmax_emails_per_day: 99999\n```\n' }, 'cmo');
     const bc = createProposal(vault, { kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'ideas', body: '1. Bright Ledger — bookkeeping for tiny shops.\n2. Porch Pantry — veg box.\n3. Quiet Desk — timer.' }, 'ceo');
-    const q = createProposal(vault, { kind: 'message', from: 'engineer', to: 'owner', title: 'q', body: 'Which colour?', job: 'job_x' }, 'engineer');
+    const q = createProposal(vault, { kind: 'message', from: 'backend_engineer', to: 'owner', title: 'q', body: 'Which colour?', job: 'job_x' }, 'backend_engineer');
     expect(await dispatchProposals(deps)).toBe(0);
     // The owner edits in Obsidian = a raw file write the vault API never saw (sha differs from written_sha).
     const ownerEdit = (rel: string, f: (t: string) => string) => writeFileSync(path.join(dir, rel), f(readFileSync(path.join(dir, rel), 'utf8')));
@@ -548,7 +548,7 @@ describe('daemon lifecycle', () => {
     expect(findInboxById(vault, evil.id)!.body).toContain('Not applied');
     expect(vault.readText('Brand/name.md')).toContain('name: Porch Pantry');
     expect(listJobs(vault).some((j) => /reconcile site with brand/i.test(j.title))).toBe(true);
-    expect(vault.readText('Messages/engineer.md')).toContain(`re:${q.id} Blue.`);
+    expect(vault.readText('Messages/backend_engineer.md')).toContain(`re:${q.id} Blue.`);
     expect(findInboxById(vault, fc.id)!.data.resolved_at).toBeTruthy();
     expect(vault.events.count('proposal.resolved')).toBe(3);
     expect(await dispatchProposals(deps)).toBe(0); // idempotent
@@ -568,8 +568,8 @@ describe('daemon lifecycle', () => {
     const deps = { vault, registry: new ToolRegistry().registerAll([...phase3Tools(), ...phase6Tools()]), toolsConfig: cfg, scheduler: vaultScheduler(vault), env: {} };
     const { mkdirSync } = await import('node:fs');
     mkdirSync(path.join(dir, 'Site/dist'), { recursive: true }); writeFileSync(path.join(dir, 'Site/dist/index.html'), '<h1>v1</h1>');
-    const job = createJob(vault, { type: 'engineer.ship', title: 'ship', assigned: 'engineer', goal: 'x' }, 'cto');
-    const p = createProposal(vault, { kind: 'spend', from: 'engineer', job, title: 'deploy', body: 'x', call: { tool: 'deploy.site', args: {}, idempotency_key: `${job}:1:3`, job, role: 'engineer' } }, 'engineer');
+    const job = createJob(vault, { type: 'engineer.ship', title: 'ship', assigned: 'backend_engineer', goal: 'x' }, 'cto');
+    const p = createProposal(vault, { kind: 'spend', from: 'backend_engineer', job, title: 'deploy', body: 'x', call: { tool: 'deploy.site', args: {}, idempotency_key: `${job}:1:3`, job, role: 'backend_engineer' } }, 'backend_engineer');
     writeFileSync(path.join(dir, p.path), readFileSync(path.join(dir, p.path), 'utf8').replace('approved: null', 'approved: true'));
     expect(await dispatchProposals(deps)).toBe(1);
     expect(vault.events.count('deploy.done')).toBe(1);
@@ -583,9 +583,9 @@ describe('daemon lifecycle', () => {
 
   it('ask-mode call: owner approves → dispatcher requeues → worker executes the stored call exactly once (B1)', async () => {
     const vault = Vault.open(dir);
-    vault.updateNote('Roles/head_of_growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
+    vault.updateNote('Roles/cmo.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
     vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } });
-    const id = createJob(vault, { type: 'growth.outreach', title: 'ask', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const id = createJob(vault, { type: 'growth.outreach', title: 'ask', assigned: 'cmo', goal: 'g' }, 'cto');
     vault.close();
     const askCfg = readFileSync(path.join(root, 'config/tools.yaml'), 'utf8').replace('mock.outbound:         { mode: auto', 'mock.outbound:         { mode: ask');
     const cfgPath = path.join(dir, '.cubicle', 'tools-ask.yaml');
@@ -595,7 +595,7 @@ describe('daemon lifecycle', () => {
       async chat(req, chat) {
         const base = { content: 'ok', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'strong' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
         if (!chat.tools) return base;
-        if (req.roleId !== 'head_of_growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
+        if (req.roleId !== 'cmo') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
         calls++;
         const j = readJob(d.vault, id)!.data;
         if (j.side_effects_done.length >= 1) return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'sent' } }] };
@@ -620,7 +620,7 @@ describe('daemon lifecycle', () => {
 
   it('owner cancels a running job → worker stops within one step (acceptance test 2)', async () => {
     const vault = Vault.open(dir);
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'owner');
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'cmo', goal: 'g' }, 'owner');
     vault.close();
     // The owner cancels the way Obsidian does: by editing `status:` in the job note on disk, from outside the
     // daemon, while the worker is mid-step. Nothing in the test touches the daemon's own job API.
@@ -633,7 +633,7 @@ describe('daemon lifecycle', () => {
       async chat(req, chat) {
         const base = { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'strong' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
         if (!chat.tools) return { ...base, content: 'ok' };
-        if (req.roleId !== 'head_of_growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
+        if (req.roleId !== 'cmo') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
         if (!paused) { paused = true; announceMidStep(); await edited; }
         return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Plans/plan.md' } }] };
       },
@@ -670,7 +670,8 @@ describe('daemon lifecycle', () => {
     await new Promise((r) => ws.once('open', r));
     await waitFor(() => msgs.some((m) => m.op === 'snapshot'));
     const snap = msgs.find((m) => m.op === 'snapshot') as ReturnType<typeof buildSnapshot>;
-    expect(snap.roles.map((r) => r.role)).toEqual(expect.arrayContaining(['ceo', 'cto', 'engineer', 'head_of_growth', 'coo']));
+    expect(snap.roles.map((r) => r.role)).toEqual(expect.arrayContaining(['ceo', 'cto', 'backend_engineer', 'cmo', 'coo']));
+    expect(snap.roles).toHaveLength(38);   // 33 active seats + the five inactive sales placeholders
     ws.send(JSON.stringify({ op: 'chat', text: 'Bookkeeping for tiny shops' }));
     await waitFor(() => msgs.some((m) => m.op === 'chat.ack'));
     expect(listInbox(d.vault).some((n) => n.data.kind === 'message' && n.data.from === 'owner')).toBe(true);
@@ -687,18 +688,18 @@ describe('daemon lifecycle', () => {
     rmSync(path.join(dir, 'Teams'), { recursive: true, force: true });
     const d = daemonFor(fakeLlm());
     await d.start();
-    try { expect(existsSync(path.join(dir, 'Teams/engineering.md'))).toBe(true); expect(d.vault.events.count('org.changed')).toBe(1); } finally { await d.stop(); }
+    try { expect(existsSync(path.join(dir, 'Teams/dev.md'))).toBe(true); expect(d.vault.events.count('org.changed')).toBe(1); } finally { await d.stop(); }
   });
 });
 
 describe('an approved call the wrapper vetoes', () => {
   it('reports the block on re-approval instead of "already executed" (C1)', async () => {
     const vault = Vault.open(dir);
-    vault.updateNote('Roles/head_of_growth.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
+    vault.updateNote('Roles/cmo.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
     const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
-    const job = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'head_of_growth', goal: 'send' }, 'cto');
+    const job = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'cmo', goal: 'send' }, 'cto');
     const key = `${job}:1:1`;
-    const p = createProposal(vault, { kind: 'outbound_batch', from: 'head_of_growth', job, title: 'send one', body: 'x', call: { tool: 'mock.outbound', args: { to: 'a@x', body: 'hi' }, idempotency_key: key, job, role: 'head_of_growth' } }, 'head_of_growth');
+    const p = createProposal(vault, { kind: 'outbound_batch', from: 'cmo', job, title: 'send one', body: 'x', call: { tool: 'mock.outbound', args: { to: 'a@x', body: 'hi' }, idempotency_key: key, job, role: 'cmo' } }, 'cmo');
     // The pre-check clears the call; the wrapper, evaluating a moment later, refuses it. That is the race the
     // classifier's non-determinism used to open, and it must not silently consume the owner's approval.
     let seen = 0;
@@ -725,7 +726,7 @@ describe('local-tier summariser (D1)', () => {
     const vault = Vault.open(dir);
     vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } }); // recent → no startup heartbeat
     vault.writeText('Docs/big.md', 'x'.repeat(2000), 'daemon');
-    const id = createJob(vault, { type: 'research', title: 'read a lot', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const id = createJob(vault, { type: 'research', title: 'read a lot', assigned: 'cmo', goal: 'g' }, 'cto');
     vault.close();
     const prose: { tier: string; system: string; user: string }[] = [];
     let reads = 0;
@@ -736,7 +737,7 @@ describe('local-tier summariser (D1)', () => {
           prose.push({ tier: req.tier, system: String(chat.messages[0]?.content ?? ''), user: String(chat.messages[1]?.content ?? '') });
           return { ...base, content: 'read Docs/big.md repeatedly' };
         }
-        if (req.roleId !== 'head_of_growth') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
+        if (req.roleId !== 'cmo') return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] };
         if (reads++ < 20) return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Docs/big.md' } }] };
         return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'read it all' } }] };
       },

@@ -23,8 +23,8 @@ const QUESTION = 'Which framework should the site use, and does the choice affec
 
 describe('colleague.message(kind: question)', () => {
   it('enqueues a colleague.answer job for the recipient, once per message id', async () => {
-    const asker = createJob(vault, { type: 'engineer.ship', title: 'site', assigned: 'engineer', goal: 'build' }, 'cto');
-    const client = await createRoleToolClient([colleagueMessage], ctxFor('engineer', asker, 'k:1:2'));
+    const asker = createJob(vault, { type: 'engineer.ship', title: 'site', assigned: 'backend_engineer', goal: 'build' }, 'cto');
+    const client = await createRoleToolClient([colleagueMessage], ctxFor('backend_engineer', asker, 'k:1:2'));
     try {
       const before = listJobs(vault).length;
       const r = await client.call('colleague.message', { to: 'cto', body: QUESTION, kind: 'question' });
@@ -37,12 +37,12 @@ describe('colleague.message(kind: question)', () => {
       expect(answer!.assigned).toBe('cto');
       expect(answer!.status).toBe('queued');
       expect(answer!.priority).toBe(2);
-      expect(answer!.title).toBe(`Answer engineer: ${QUESTION.slice(0, 60)}`);
+      expect(answer!.title).toBe(`Answer backend_engineer: ${QUESTION.slice(0, 60)}`);
       expect(answer!.links.some((l) => l.includes(asker))).toBe(true);
       expect(answer!.parent).toBe(asker); // same shape as a handoff: the question's job owns the answer
       const body = readJob(vault, answer!.id)!.body;
       expect(body).toContain('## Goal');
-      expect(body).toContain(`colleague.message(to: "engineer", body: "re:${msgId}`);
+      expect(body).toContain(`colleague.message(to: "backend_engineer", body: "re:${msgId}`);
       expect(body).toContain(QUESTION);
       expect(listJobs(vault).length).toBe(before + 1);
 
@@ -55,7 +55,7 @@ describe('colleague.message(kind: question)', () => {
   });
 
   it('an fyi message creates no job', async () => {
-    const client = await createRoleToolClient([colleagueMessage], ctxFor('engineer', null, 'k:9:9'));
+    const client = await createRoleToolClient([colleagueMessage], ctxFor('backend_engineer', null, 'k:9:9'));
     try {
       const before = listJobs(vault).length;
       const r = await client.call('colleague.message', { to: 'cto', body: 'shipped the landing page', kind: 'fyi' });

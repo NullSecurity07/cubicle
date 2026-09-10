@@ -25,7 +25,7 @@ function ctxFor(roleId: string, jobId: string | null, extra: Partial<ToolContext
 describe('shell.run', () => {
   it('runs in the sandbox (or local fallback), streams shell.output, rescans Site/', async () => {
     const reg = new ToolRegistry().registerAll(phase5Tools());
-    const client = await createRoleToolClient(reg.forRole(role('engineer'), cfg), ctxFor('engineer', 'job_sh'));
+    const client = await createRoleToolClient(reg.forRole(role('backend_engineer'), cfg), ctxFor('backend_engineer', 'job_sh'));
     try {
       const r = await client.call('shell.run', { command: 'echo hello-from-sandbox && echo "<h1>built</h1>" > index.html && ls' });
       expect(r.ok).toBe(true);
@@ -66,7 +66,7 @@ describe('browser.*', () => {
     const frames: unknown[] = [];
     const onFrame = (f: unknown) => frames.push(f);
     browserFrames.on('frame', onFrame);
-    const client = await createRoleToolClient(reg.forRole(role('head_of_growth'), cfg), ctxFor('head_of_growth', 'job_br'));
+    const client = await createRoleToolClient(reg.forRole(role('cmo'), cfg), ctxFor('cmo', 'job_br'));
     try {
       const open = await client.call('browser.open', { url: `http://127.0.0.1:${port}/start` });
       expect(open.ok).toBe(true);
@@ -98,10 +98,10 @@ describe('browser.*', () => {
 describe('constitution guardrail (acceptance test 6)', () => {
   it('blocks outbound email past max_emails_per_day and cheap banned-tactic matches', async () => {
     const g = constitutionGuardrail();
-    const ctx = ctxFor('head_of_growth', 'job_g');
+    const ctx = ctxFor('cmo', 'job_g');
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('max_emails_per_day: 20', 'max_emails_per_day: 2') }), 'owner');
     expect(await g.check('email.send', { to: 'a@x', body: 'hi' }, ctx)).toBeNull();
-    for (let i = 0; i < 2; i++) vault.events.emit({ type: 'email.sent', agent: 'head_of_growth', payload: { mock: true } });
+    for (let i = 0; i < 2; i++) vault.events.emit({ type: 'email.sent', agent: 'cmo', payload: { mock: true } });
     expect(await g.check('email.send', { to: 'a@x', body: 'hi' }, ctx)).toMatch(/max_emails_per_day/);
     expect(await g.check('email.send', { to: 'a@x', body: 'Only 2 left! Fake urgency: buy now' }, ctx)).toMatch(/max_emails_per_day|banned tactic/);
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('max_emails_per_day: 2', 'max_emails_per_day: 20').replace('banned_channels: []', 'banned_channels: [reddit]') }), 'owner');
@@ -114,7 +114,7 @@ describe('constitution guardrail (acceptance test 6)', () => {
     let calls = 0;
     const counting = { async chat(): Promise<RoutedChatResult> { calls++; return { content: '{"violates": false, "tactic": ""}', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'local', downgraded: false, parsedToolCalls: [] }; } } as unknown as Router;
     const g = constitutionGuardrail(counting);
-    const ctx = ctxFor('head_of_growth', 'job_memo');
+    const ctx = ctxFor('cmo', 'job_memo');
     // No banned tactic appears literally, so the cheap substring check misses and the model is asked.
     const body = `A perfectly ordinary note about our roadmap ${Date.now()}`;
     expect(await g.check('email.send', { to: 'a@x', body }, ctx)).toBeNull();
@@ -128,7 +128,7 @@ describe('constitution guardrail (acceptance test 6)', () => {
 
   it('classifies browser.submit field values, the tool social.post hands off to (C2)', async () => {
     const g = constitutionGuardrail();
-    const ctx = ctxFor('head_of_growth', 'job_g2');
+    const ctx = ctxFor('cmo', 'job_g2');
     expect(vault.constitution().banned_tactics).toContain('fake urgency');
     const args = { url: 'https://example.com/post', fields: { '#title': 'Launch', '#body': 'Only today! Fake urgency, act now' }, submit: '#go' };
     expect(await g.check('browser.submit', args, ctx)).toMatch(/banned tactic "fake urgency"/i);
@@ -139,7 +139,7 @@ describe('constitution guardrail (acceptance test 6)', () => {
 describe('Site/ owner-edit safety (acceptance test 3, tool half)', () => {
   it('an owner-changed Site/ file is read-only for the engineer; system files stay writable', async () => {
     const reg = new ToolRegistry().registerAll([...phase3Tools(), ...phase5Tools()]);
-    const client = await createRoleToolClient(reg.forRole(role('engineer'), cfg), ctxFor('engineer', 'job_site'));
+    const client = await createRoleToolClient(reg.forRole(role('backend_engineer'), cfg), ctxFor('backend_engineer', 'job_site'));
     try {
       const ok = await client.call('vault.write', { path: 'Site/about.html', content: '<p>agent</p>' });
       expect(ok.ok).toBe(true);
@@ -243,7 +243,7 @@ describe('tool-layer enforcement (C1)', () => {
     setCap(0);
     const blockedBefore = vault.events.count('guardrail.blocked');
     const sentBefore = vault.events.count('email.sent');
-    const client = await createRoleToolClient([mockOutbound], ctxFor('head_of_growth', 'job_c1', { guardrails: [constitutionGuardrail()] }));
+    const client = await createRoleToolClient([mockOutbound], ctxFor('cmo', 'job_c1', { guardrails: [constitutionGuardrail()] }));
     try {
       const res = await client.call('mock.outbound', { to: 'a@b.c', body: 'hi' }, { idempotencyKey: 'k1' });
       expect(res.ok).toBe(false);
@@ -272,7 +272,7 @@ describe('tool-layer enforcement (C1)', () => {
     const neverCfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8').replace('mock.outbound:         { mode: auto,', 'mock.outbound:         { mode: never,'));
     const blockedBefore = vault.events.count('guardrail.blocked');
     const sentBefore = vault.events.count('email.sent');
-    const client = await createRoleToolClient([mockOutbound], ctxFor('head_of_growth', 'job_c1b', { config: neverCfg }));
+    const client = await createRoleToolClient([mockOutbound], ctxFor('cmo', 'job_c1b', { config: neverCfg }));
     try {
       const res = await client.call('mock.outbound', { to: 'a@b.c', body: 'hi' }, { idempotencyKey: 'k2' });
       expect(res.ok).toBe(false);

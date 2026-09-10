@@ -91,7 +91,7 @@ describe('owner-created job notes (spec §11)', () => {
 
 describe('cancelJob (spec §11: a cancel is always visible)', () => {
   it('sets cancelled, logs the reason, emits job.cancelled and reports the change', () => {
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'cmo', goal: 'g' }, 'cto');
     expect(cancelJob(vault, id, 'owner', 'the owner ran cubicle job cancel')).toBe(true);
 
     const j = readJob(vault, id)!;
@@ -105,15 +105,15 @@ describe('cancelJob (spec §11: a cancel is always visible)', () => {
   });
 
   it('carries the step the job had reached, so the office knows where it stopped', () => {
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
-    updateJob(vault, id, { status: 'blocked', checkpoint_step: 3 }, 'head_of_growth');
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'cmo', goal: 'g' }, 'cto');
+    updateJob(vault, id, { status: 'blocked', checkpoint_step: 3 }, 'cmo');
     expect(cancelJob(vault, id, 'daemon', 'role left')).toBe(true);
     expect(vault.events.last('job.cancelled')!.payload.at_step).toBe(3);
   });
 
   it('sets the flag on a running job but leaves the announcement to its loop, so one stop is one event (M3)', () => {
-    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'head_of_growth', goal: 'g' }, 'cto');
-    updateJob(vault, id, { status: 'running', checkpoint_step: 3 }, 'head_of_growth');
+    const id = createJob(vault, { type: 'research', title: 'r', assigned: 'cmo', goal: 'g' }, 'cto');
+    updateJob(vault, id, { status: 'running', checkpoint_step: 3 }, 'cmo');
     expect(cancelJob(vault, id, 'owner', 'the owner ran cubicle job cancel')).toBe(true);
 
     // The flag — the thing that actually stops the work — is written, and the reason is in the checkpoint log.
@@ -126,7 +126,7 @@ describe('cancelJob (spec §11: a cancel is always visible)', () => {
 
   it('leaves a finished job alone and emits nothing', () => {
     for (const status of ['done', 'failed', 'cancelled'] as const) {
-      const id = createJob(vault, { type: 'research', title: status, assigned: 'head_of_growth', goal: 'g' }, 'cto');
+      const id = createJob(vault, { type: 'research', title: status, assigned: 'cmo', goal: 'g' }, 'cto');
       updateJob(vault, id, { status }, 'coo');
       const before = vault.events.count('job.cancelled');
       expect(cancelJob(vault, id, 'daemon', 'too late')).toBe(false);
