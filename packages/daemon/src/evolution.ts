@@ -8,18 +8,20 @@ import {
 } from '@cubicle/core';
 
 // ---------- desks ----------
-export function loadDesks(): { id: string; x: number; y: number; room?: string }[] {
-  try { return (YAML.parse(readFileSync(path.join(repoRoot(), 'config', 'world', 'desks.yaml'), 'utf8')) as { desks: { id: string; x: number; y: number; room?: string }[] }).desks; }
-  catch { return Array.from({ length: 8 }, (_, i) => ({ id: `cubicle_${i + 1}`, x: 8 + i * 6, y: 10 })); }
+export interface DeskRow { id: string; x: number; y: number; room: string; floor: number; slot: 'fixed' | 'member' }
+export function loadDesks(): DeskRow[] {
+  try { return (YAML.parse(readFileSync(path.join(repoRoot(), 'config', 'world', 'desks.yaml'), 'utf8')) as { desks: DeskRow[] }).desks; }
+  catch { return []; }
 }
 
 export function activeRoles(vault: Vault): RoleFrontmatter[] {
   return vault.list('Roles', { ext: '.md' }).filter((r) => !r.includes('/archive/')).flatMap((rel) => { const n = vault.readNoteOrNull(rel); const p = n && RoleFrontmatter.safeParse(n.data); return p && p.success ? [p.data] : []; });
 }
 
+/** A member desk no active role holds, in desks.yaml order. B10 narrows this to the hiring team's room. */
 export function freeDesk(vault: Vault): string | null {
   const used = new Set(activeRoles(vault).filter((r) => r.active).map((r) => r.desk));
-  return loadDesks().find((d) => !d.room && !used.has(d.id))?.id ?? null;
+  return loadDesks().find((d) => d.slot === 'member' && !used.has(d.id))?.id ?? null;
 }
 
 // ---------- hire / fire (spec §9.5) ----------

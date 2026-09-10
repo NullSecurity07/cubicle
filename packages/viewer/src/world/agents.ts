@@ -77,7 +77,7 @@ export class AgentSprite {
   }
 
   homeTile(): { tx: number; ty: number } {
-    return this.world.desks[this.view.desk] ?? this.world.standTile('door') ?? { tx: 24, ty: 32 };
+    return this.world.desks[this.view.desk] ?? this.world.standTile('door') ?? { tx: 47, ty: 55 };
   }
 
   private tile(): { tx: number; ty: number } {

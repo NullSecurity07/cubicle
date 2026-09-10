@@ -7,7 +7,7 @@ import { scaffoldVault, Vault, createJob, createProposal, findInboxById, updateJ
 import { parseToolsConfig, ToolRegistry, phase3Tools, createRoleToolClient, type ToolContext } from '@cubicle/tools';
 import { vaultScheduler, MemoryIndex, hashEmbed } from '@cubicle/harness';
 import { RoleFrontmatter, parseNote } from '@cubicle/core';
-import { dispatchProposals, applyFire, collectOwnerFeedback, StaticServer } from '../src/index.js';
+import { dispatchProposals, applyFire, collectOwnerFeedback, StaticServer, loadDesks } from '../src/index.js';
 
 const root = path.resolve(__dirname, '../../..');
 const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
@@ -68,7 +68,8 @@ describe('hire with a minimal CEO charter; failures keep the approval (B2)', () 
     expect(await dispatchProposals(deps())).toBe(1); // same approval, now applied
     expect(findInboxById(vault, p.id)!.data.resolved_at).toBeTruthy();
     const r = RoleFrontmatter.parse(parseNote(vault.readText('Roles/support.md')).data);
-    expect(r.desk).toMatch(/^cubicle_/); expect(r.sprite).toBe('support'); expect(r.hired).toBeTruthy();
+    expect(loadDesks().some((d) => d.id === r.desk && d.slot === 'member')).toBe(true); // TEMP (A3): restored to a by-room expectation in B10
+    expect(r.sprite).toBe('support'); expect(r.hired).toBeTruthy();
     // duplicate links / non-justifying jobs are rejected at applyHire; and no one but the CEO may file hires via the tool
     const growthCtx: ToolContext = { vault, events: vault.events, roleId: 'head_of_growth', role: RoleFrontmatter.parse(parseNote(vault.readText('Roles/head_of_growth.md')).data), jobId: 'job_x', config: cfg, env: {}, workspace: 'x', now: () => new Date(), scheduler: vaultScheduler(vault) };
     const client = await createRoleToolClient(phase3Tools().filter((t) => t.name === 'proposal.create'), growthCtx);

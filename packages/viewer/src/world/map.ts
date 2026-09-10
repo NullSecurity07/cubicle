@@ -36,14 +36,14 @@ const WALKABLE_FURNITURE = new Set([T.CHAIR, T.CARPET]);   // furniture layer: c
 export function parseMap(json: TiledMap): MapData {
   const tile = json.tilewidth || TILE;
   const tiles = (name: string): number[] => json.layers.find((l) => l.name === name && l.type === 'tilelayer')?.data ?? [];
-  const walls = tiles('walls'), furniture = tiles('furniture');
+  const ground = tiles('ground'), walls = tiles('walls'), furniture = tiles('furniture');
   const grid: number[][] = [];
   for (let y = 0; y < json.height; y++) {
     const row: number[] = [];
     for (let x = 0; x < json.width; x++) {
       const i = y * json.width + x;
-      const w = walls[i] ?? 0, f = furniture[i] ?? 0;
-      row.push((w > 0 && !WALKABLE_WALLS.has(w)) || (f > 0 && !WALKABLE_FURNITURE.has(f)) ? 1 : 0);
+      const g = ground[i] ?? 0, w = walls[i] ?? 0, f = furniture[i] ?? 0;
+      row.push(g === T.SKY || (w > 0 && !WALKABLE_WALLS.has(w)) || (f > 0 && !WALKABLE_FURNITURE.has(f)) ? 1 : 0);
     }
     grid.push(row);
   }
