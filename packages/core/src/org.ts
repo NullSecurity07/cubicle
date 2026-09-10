@@ -35,8 +35,13 @@ export function teamOf(org: Org, role: string): TeamFrontmatter | null {
  * v1 role ids → tower roles (2026-09-11). Processes, gates, seeds and tests written against the nine-role org keep
  * working: `resolveRole` swaps an inactive legacy id for its alias when the alias is active, and leaves anything
  * else alone so an unknown id still fails loudly where it always did.
+ *
+ * Each alias keeps the position the v1 id actually held. `engineer` was the person who built, so it aliases to a
+ * worker with the tools to build (`backend_engineer`); `tech_lead` was the person who planned the room, so it
+ * aliases to `dev_manager`. Aliasing `engineer` upward would hand build jobs to a manager whose charter carries
+ * no `deploy.site`, `git.*` or `browser.*`.
  */
-export const LEGACY_ROLES: Record<string, string> = { critic: 'advisor_skeptic', research_analyst: 'research_manager', engineer: 'dev_manager', tech_lead: 'dev_manager', qa: 'qa_lead', head_of_growth: 'cmo', growth: 'cmo' };
+export const LEGACY_ROLES: Record<string, string> = { critic: 'advisor_skeptic', research_analyst: 'research_manager', engineer: 'backend_engineer', tech_lead: 'dev_manager', qa: 'qa_lead', head_of_growth: 'cmo', growth: 'cmo' };
 export function resolveRole(org: Org, id: string): string {
   if (org.roles[id]) return id;
   const alias = LEGACY_ROLES[id];

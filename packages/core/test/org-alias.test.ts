@@ -24,8 +24,8 @@ describe('legacy role aliasing', () => {
   it('maps the six legacy ids (and growth) to tower roles only when the legacy id is not itself active', () => {
     expect(Object.keys(LEGACY_ROLES).sort()).toEqual(['critic', 'engineer', 'growth', 'head_of_growth', 'qa', 'research_analyst', 'tech_lead']);
     expect(resolveRole(tower, 'critic')).toBe('advisor_skeptic');
-    expect(resolveRole(tower, 'engineer')).toBe('dev_manager');
-    expect(resolveRole(tower, 'tech_lead')).toBe('dev_manager');
+    expect(resolveRole(tower, 'engineer')).toBe('backend_engineer');   // a worker alias: `engineer` built, so it lands on a role with the build tools
+    expect(resolveRole(tower, 'tech_lead')).toBe('dev_manager');       // a lead alias: `tech_lead` planned the room
     expect(resolveRole(tower, 'qa')).toBe('qa_lead');
     expect(resolveRole(tower, 'research_analyst')).toBe('research_analyst'); // active member in the tower: no aliasing
     expect(resolveRole(tower, 'head_of_growth')).toBe('head_of_growth');      // alias cmo is not active in this fixture → unchanged

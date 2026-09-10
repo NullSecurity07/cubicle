@@ -15,12 +15,13 @@ function makeTemplate(): string {
   writeFileSync(path.join(tpl, 'Roles/cto.md'), charter('cto', 'technology', 'ceo'));
   writeFileSync(path.join(tpl, 'Roles/coo.md'), charter('coo', 'operations', 'ceo'));
   writeFileSync(path.join(tpl, 'Roles/dev_manager.md'), charter('dev_manager', 'dev', 'cto'));
+  writeFileSync(path.join(tpl, 'Roles/backend_engineer.md'), charter('backend_engineer', 'dev', 'dev_manager'));   // the v1 `engineer`'s successor: open build work lands on a worker, not the manager
   writeFileSync(path.join(tpl, 'Roles/advisor_skeptic.md'), charter('advisor_skeptic', 'board', 'ceo'));
   writeFileSync(path.join(tpl, 'Roles/research_manager.md'), charter('research_manager', 'research', 'coo'));
   writeFileSync(path.join(tpl, 'Teams/executive.md'), teamNote('executive', 'ceo', [], 'floor: 1\n'));
   writeFileSync(path.join(tpl, 'Teams/technology.md'), teamNote('technology', 'cto', ['dev_manager'], 'floor: 4\n'));
   writeFileSync(path.join(tpl, 'Teams/operations.md'), teamNote('operations', 'coo', ['research_manager'], 'floor: 4\n'));
-  writeFileSync(path.join(tpl, 'Teams/dev.md'), teamNote('dev', 'dev_manager', [], 'floor: 2\nparent: technology\n'));
+  writeFileSync(path.join(tpl, 'Teams/dev.md'), teamNote('dev', 'dev_manager', ['backend_engineer'], 'floor: 2\nparent: technology\n'));
   writeFileSync(path.join(tpl, 'Teams/board.md'), teamNote('board', 'advisor_skeptic', [], 'floor: 1\n'));
   writeFileSync(path.join(tpl, 'Teams/research.md'), teamNote('research', 'research_manager', [], 'floor: 2\nparent: operations\n'));
   writeFileSync(path.join(tpl, 'Processes/feature.md'), '---\nname: feature\nsteps:\n  - { role: dev_manager, type: custom, title: "Build: {objective}" }\n---\nTower feature process.\n');
@@ -36,7 +37,7 @@ describe('migrateOrg: tower roster step', () => {
       const r = migrateOrg(vault, tpl);
       expect(r.changed).toContain('Roles/engineer.md');
       const org = loadOrg(vault);
-      expect(Object.keys(org.roles).sort()).toEqual(['advisor_skeptic', 'ceo', 'coo', 'cto', 'dev_manager', 'research_manager']);
+      expect(Object.keys(org.roles).sort()).toEqual(['advisor_skeptic', 'backend_engineer', 'ceo', 'coo', 'cto', 'dev_manager', 'research_manager']);
       expect(Object.keys(org.teams).sort()).toEqual(['board', 'dev', 'executive', 'operations', 'research', 'technology']);
       const archived = readdirSync(path.join(dir, 'Roles/archive'));
       for (const id of ['engineer', 'head_of_growth', 'qa', 'tech_lead', 'research_analyst', 'critic']) expect(archived.some((f) => f.startsWith(`${id}-`)), id).toBe(true);
@@ -47,7 +48,7 @@ describe('migrateOrg: tower roster step', () => {
       expect(org.teams.research.lead).toBe('research_manager');
       expect(org.teams.dev.parent).toBe('technology');
       const jobs = listJobs(vault);
-      expect(jobs.find((j) => j.id === open)!.assigned).toBe('dev_manager');
+      expect(jobs.find((j) => j.id === open)!.assigned).toBe('backend_engineer');   // the v1 engineer's open build work goes to a worker with the build tools
       expect(jobs.find((j) => j.id === done)!.assigned).toBe('critic');   // finished work keeps its history
       expect(vault.readText('Processes/feature.md')).toContain('dev_manager');
       expect(vault.constitution()).toMatchObject({ max_roles: 40, max_team_size: 8 });

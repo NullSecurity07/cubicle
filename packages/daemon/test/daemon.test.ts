@@ -311,7 +311,7 @@ describe('brand reconcile (acceptance test 3, heartbeat half)', () => {
     await runHeartbeat({ vault, llm }, hb);
     const rec = listJobs(vault).filter((j) => /reconcile site with brand/i.test(j.title));
     expect(rec.length).toBe(1);
-    expect(rec[0].assigned).toBe('dev_manager');   // resolveRole maps the v1 `engineer` to the dev manager, who splits it in the room
+    expect(rec[0].assigned).toBe('backend_engineer');   // resolveRole maps the v1 `engineer` to a worker that carries the build tools
     expect(rec[0].type).toBe('engineer.ship');
     // a second heartbeat while it is still open does not duplicate it
     const hb2 = createHeartbeatJob(vault, 'again');
@@ -467,7 +467,7 @@ describe('daemon lifecycle', () => {
       expect(titles).toContain('Research the first organic channel');
       const site = listJobs(v).find((j) => j.title === 'Scaffold Site/ from Brand/ (first cut)')!;
       expect(site.type).toBe('engineer.ship');
-      expect(site.assigned).toBe('dev_manager');
+      expect(site.assigned).toBe('backend_engineer');
       for (const id of first) expect(readJob(v, id)!.body).toContain('## Done when');
       // Idempotent within the first cycle, and silent once a heartbeat has completed.
       expect(seedFirstJobs(v, loadOrg(v))).toEqual([]);
