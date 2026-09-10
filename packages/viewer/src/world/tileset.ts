@@ -1,16 +1,14 @@
 import Phaser from 'phaser';
 import type { Mood, Emote } from '../state.js';
-import { TILE } from './map.js';
+import { TILES, T, COLUMNS, TILE, tilesetMeta } from './tiles.js';
 
-/** Tile ids must match scripts/gen-world.ts `T`. Drawn procedurally: CC0-by-construction placeholder art. */
-export { TILE };
-export const TILES = ['EMPTY', 'GRASS', 'PATH', 'FLOOR', 'WALL', 'WALL_TOP', 'DOOR', 'DESK', 'CHAIR', 'TABLE', 'WHITEBOARD', 'PLANT', 'KITCHEN', 'NOTICE', 'CARPET', 'WINDOW', 'TREE', 'BENCH', 'SIGN'] as const;
-export const COLUMNS = 6;
+/** Tile ids come from tiles.ts (shared with scripts/world/tower.ts). Drawn procedurally: CC0-by-construction placeholder art. */
+export { TILES, T, COLUMNS, TILE, tilesetMeta };
 
 function px(g: CanvasRenderingContext2D, x: number, y: number, c: string, w = 1, h = 1) { g.fillStyle = c; g.fillRect(x, y, w, h); }
 function noise(g: CanvasRenderingContext2D, ox: number, oy: number, colors: string[], n: number, seed: number) { let s = seed; for (let i = 0; i < n; i++) { s = (s * 9301 + 49297) % 233280; const x = s % TILE; s = (s * 9301 + 49297) % 233280; const y = s % TILE; px(g, ox + x, oy + y, colors[i % colors.length]); } }
 
-/** Draws the 18-tile tileset (6 columns × 3 rows, 16 px) into a canvas texture named `office`. */
+/** Draws the tileset (6 columns, one row per 6 ids, 16 px) into a canvas texture named `office`. */
 export function makeTileset(scene: Phaser.Scene): void {
   if (scene.textures.exists('office')) return;
   const rows = Math.ceil((TILES.length - 1) / COLUMNS);
@@ -35,6 +33,16 @@ export function makeTileset(scene: Phaser.Scene): void {
   draw(16, (x, y) => { px(g, x, y, '#4f8a3b', TILE, TILE); px(g, x + 7, y + 10, '#6b4423', 3, 6); px(g, x + 2, y + 2, '#2e6b2a', 12, 10); px(g, x + 4, y + 0, '#3b8a35', 8, 4); px(g, x + 3, y + 5, '#4caf50', 3, 3); });
   draw(17, (x, y) => { px(g, x, y, '#a89f91', TILE, TILE); px(g, x + 1, y + 6, '#7a4f25', 14, 4); px(g, x + 2, y + 10, '#5a3a1a', 2, 4); px(g, x + 12, y + 10, '#5a3a1a', 2, 4); });
   draw(18, (x, y) => { px(g, x, y, '#4f8a3b', TILE, TILE); px(g, x + 7, y + 6, '#6b4423', 2, 10); px(g, x + 2, y + 2, '#f2d16b', 12, 6); px(g, x + 3, y + 3, '#2b2f3a', 10, 1); px(g, x + 3, y + 5, '#2b2f3a', 7, 1); });
+  // Tower tiles (placeholders until world/tiles-draw.ts replaces this whole function)
+  draw(T.SKY, (x, y) => { px(g, x, y, '#9fc8ea', TILE, TILE); px(g, x + 3, y + 4, '#c9e2f5', 6, 2); });
+  draw(T.CARPET_BLUE, (x, y) => { px(g, x, y, '#3b5a8a', TILE, TILE); noise(g, x, y, ['#42639a', '#34507a'], 20, 13); });
+  draw(T.CARPET_GREEN, (x, y) => { px(g, x, y, '#3f7a55', TILE, TILE); noise(g, x, y, ['#478660', '#376a4a'], 20, 17); });
+  draw(T.CARPET_ORANGE, (x, y) => { px(g, x, y, '#a86a3a', TILE, TILE); noise(g, x, y, ['#b57543', '#955d31'], 20, 19); });
+  draw(T.SCREEN, (x, y) => { px(g, x, y, '#5b6170', TILE, TILE); px(g, x + 1, y + 1, '#1b1f2a', 14, 14); px(g, x + 2, y + 2, '#2a3142', 12, 12); });
+  draw(T.SHAFT, (x, y) => { px(g, x, y, '#2a2e37', TILE, TILE); px(g, x + 2, y, '#343a48', 1, TILE); px(g, x + 13, y, '#343a48', 1, TILE); });
+  draw(T.ELEVATOR_DOOR, (x, y) => { px(g, x, y, '#8a94a8', TILE, TILE); px(g, x + 7, y + 1, '#5b6170', 2, 14); px(g, x + 1, y + 1, '#a3adc2', 5, 14); px(g, x + 10, y + 1, '#a3adc2', 5, 14); });
+  draw(T.COUNTER, (x, y) => { px(g, x, y, '#dcd4c5', TILE, TILE); px(g, x, y + 5, '#8a5a2b', TILE, 10); px(g, x, y + 5, '#c9a56e', TILE, 2); });
+  draw(T.SLAB, (x, y) => { px(g, x, y, '#6b7282', TILE, TILE); px(g, x, y, '#8a92a3', TILE, 2); px(g, x, y + 14, '#4a505c', TILE, 2); });
   tex.refresh();
 }
 

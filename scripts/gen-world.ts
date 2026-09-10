@@ -11,8 +11,7 @@ import YAML from 'yaml';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const desks = (YAML.parse(readFileSync(path.join(root, 'config/world/desks.yaml'), 'utf8')) as { desks: { id: string; x: number; y: number; room?: string }[] }).desks;
 
-// Tile ids (1-based in Tiled; 0 = empty). Keep in sync with tileset.ts TILES.
-export const T = { EMPTY: 0, GRASS: 1, PATH: 2, FLOOR: 3, WALL: 4, WALL_TOP: 5, DOOR: 6, DESK: 7, CHAIR: 8, TABLE: 9, WHITEBOARD: 10, PLANT: 11, KITCHEN: 12, NOTICE: 13, CARPET: 14, WINDOW: 15, TREE: 16, BENCH: 17, SIGN: 18 } as const;
+import { T, tilesetMeta } from '../packages/viewer/src/world/tiles.js';
 
 const W = 72, H = 44;
 const ground: number[] = new Array(W * H).fill(T.GRASS);
@@ -79,7 +78,7 @@ for (const [room, list] of Object.entries(seats)) list.forEach(([x, y], i) => ob
 const layer = (name: string, data: number[], visible = true) => ({ id: 0, name, type: 'tilelayer', width: W, height: H, x: 0, y: 0, opacity: 1, visible, data });
 const map = {
   type: 'map', version: '1.10', tiledversion: 'cubicle-gen', orientation: 'orthogonal', renderorder: 'right-down', width: W, height: H, tilewidth: 16, tileheight: 16, infinite: false, nextlayerid: 5, nextobjectid: oid,
-  tilesets: [{ firstgid: 1, name: 'office', tilewidth: 16, tileheight: 16, tilecount: 18, columns: 6, image: 'runtime:office', imagewidth: 96, imageheight: 48, margin: 0, spacing: 0 }],
+  tilesets: [tilesetMeta()],
   layers: [
     { ...layer('ground', ground), id: 1 },
     { ...layer('walls', walls), id: 2, properties: [{ name: 'collides', type: 'bool', value: true }] },

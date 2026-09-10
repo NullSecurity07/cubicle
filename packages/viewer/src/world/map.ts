@@ -1,8 +1,8 @@
 import type Phaser from 'phaser';
 import EasyStar from 'easystarjs';
 
-/** Tile size in pixels. The generated map uses 16 (scripts/gen-world.ts). */
-export const TILE = 16;
+import { TILE } from './tiles.js';
+export { TILE };
 
 export interface Tile { tx: number; ty: number }
 export interface Anchor { name: string; type: string; tx: number; ty: number; tw: number; th: number; props: Record<string, string | number> }
