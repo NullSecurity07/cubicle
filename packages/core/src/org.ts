@@ -87,7 +87,6 @@ export function reportsOf(org: Org, role: string): string[] {
 export function defaultPermissions(org: Org, role: string): Permission[] {
   if (!org.roles[role]) return [];
   if (role === 'ceo') return ['schedule', 'plan', 'review', 'hire', 'fire', 'research_request', 'reprioritize', 'meeting'];
-  if (role === 'critic') return ['review', 'veto'];
   if (role === 'research_analyst' && researchLead(org) === role) return [];   // v1: the analyst led a team of one and was reached only through research_request
   if (isLead(org, role)) return ['plan', 'schedule', 'review', 'research_request', 'meeting', 'reprioritize'];
   return ['schedule'];

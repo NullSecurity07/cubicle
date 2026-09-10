@@ -19,7 +19,7 @@ const org: Org = {
   roles: Object.fromEntries(Object.keys(TEAM_OF).map((r) => [r, role(r, { team: TEAM_OF[r], reports_to: REPORTS_TO[r], ...(r.startsWith('advisor_') ? { permissions: ['review', 'veto'] } : {}) })])),
 };
 
-/** A v1 (nine-role) org: `defaultPermissions` still has the critic and lone-analyst branches for un-migrated vaults. */
+/** A v1 (nine-role) org: `defaultPermissions` still has the lone-analyst branch for un-migrated vaults. */
 const v1Org: Org = {
   teams: { strategy: team('strategy', 'ceo', ['critic']), research: team('research', 'research_analyst', []) },
   roles: Object.fromEntries([['ceo', 'strategy'], ['critic', 'strategy'], ['research_analyst', 'research']].map(([r, t]) => [r, role(r, { team: t, reports_to: r === 'ceo' ? 'owner' : 'ceo' })])),
@@ -47,8 +47,9 @@ describe('org resolver (spec §2)', () => {
     expect(defaultPermissions(org, 'advisor_investor')).toEqual(['schedule']);
     expect(defaultPermissions(org, 'research_manager').sort()).toEqual(LEAD_SET);
     expect(defaultPermissions(org, 'research_analyst')).toEqual(['schedule']);
-    // an un-migrated v1 vault keeps the old positions
-    expect(defaultPermissions(v1Org, 'critic').sort()).toEqual(['review', 'veto']);
+    // an un-migrated v1 vault keeps the lone-analyst position; the critic's review+veto is no longer a name-based
+    // default (that special case is gone) — a v1 critic charter carries them as explicit `permissions` instead
+    expect(defaultPermissions(v1Org, 'critic')).toEqual(['schedule']);
     expect(defaultPermissions(v1Org, 'research_analyst')).toEqual([]);
   });
   it('schedule: CEO anyone; lead own members; member only a teammate, never self; the research lead nobody', () => {
