@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, type Org } from '@cubicle/core';
+import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, type Org } from '@cubicle/core';
 
 const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'] };
 
@@ -64,7 +64,8 @@ export const schedulerRequest = defineTool({
     const isResearch = type === 'research';
     let forRole: string | undefined;
     if (isResearch) {
-      if (args.assigned !== 'research_analyst') return { ok: false, text: 'research jobs are done by research_analyst (set assigned: research_analyst and for: <your role>)' };
+      const lead = researchLead(org) ?? 'research_analyst';
+      if (args.assigned !== lead) return { ok: false, text: `research jobs are done by ${lead} (set assigned: ${lead} and for: <your role>)` };
       if (!can(org, ctx.roleId, 'research_request')) return { ok: false, text: `${ctx.roleId} may not request research; ask your lead` };
       forRole = args.for ?? ctx.roleId;
       if (!org.roles[forRole]) return { ok: false, text: 'for must be an active role id' };

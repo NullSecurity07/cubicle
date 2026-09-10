@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path';
-import { scaffoldVault, Vault, VaultWatcher, openMemoryDb, EventLog, repoRoot, type ModelTier } from '@cubicle/core';
+import { scaffoldVault, Vault, VaultWatcher, openMemoryDb, EventLog, repoRoot, type ModelTier, loadOrg, resolveRole } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, providersTest, providersRefresh, formatTestRows, embedTexts } from '@cubicle/router';
 import { MemoryIndex } from '@cubicle/harness';
 import { Daemon, readDaemonInfo, isPidAlive } from './daemon.js';
@@ -196,8 +196,8 @@ const commands: Record<string, Handler> = {
     try {
       if (sub === 'add') {
         const title = args.slice(1).join(' ');
-        if (!title) throw new Error('usage: cubicle job add "<title>" --role engineer --type custom --goal "..." [--priority 3] --vault <path>');
-        const id = createJob(vault, { type: String(flags.type ?? 'custom'), title, assigned: String(flags.role ?? 'engineer'), goal: String(flags.goal ?? title), priority: flags.priority ? Number(flags.priority) : 3 }, 'owner');
+        if (!title) throw new Error('usage: cubicle job add "<title>" --role <role id> --type custom --goal "..." [--priority 3] --vault <path>');
+        const id = createJob(vault, { type: String(flags.type ?? 'custom'), title, assigned: String(flags.role ?? resolveRole(loadOrg(vault), 'engineer')), goal: String(flags.goal ?? title), priority: flags.priority ? Number(flags.priority) : 3 }, 'owner');
         writeQueueMd(vault);
         console.log(`queued ${id}`);
       } else if (sub === 'cancel') {

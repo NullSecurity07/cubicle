@@ -4,7 +4,7 @@ import {
   type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
   readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
   loadGates, gatesFor, criteriaFor, gateAssignee, type GateTable,
-  loadOrg, isLead, teamOf, leadOf,
+  loadOrg, isLead, teamOf, leadOf, resolveRole,
 } from '@cubicle/core';
 import { NoModelAvailableError, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -219,7 +219,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
 
   /** Create the review job for one gate of `parent`. */
   const enqueueGate = (gate: string, parent: JobFrontmatter, result: JobResult): void => {
-    let assignee = gateAssignee(gate, parent);
+    let assignee = resolveRole(org, gateAssignee(gate, parent));
     // The named assignee may have no active worker (role fired/deactivated, or a `for`/owner_role naming an
     // unknown role): fall back to its lead so the parent never sits in_review forever (F1).
     if (!org.roles[assignee]) {

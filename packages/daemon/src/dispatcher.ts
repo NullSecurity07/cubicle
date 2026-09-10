@@ -1,5 +1,6 @@
 import {
   type Vault, listInbox, readJob, updateJob, cancelJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
+  loadOrg, resolveRole,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath } from '@cubicle/tools';
@@ -232,7 +233,7 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             outcome = `applied to ${target}`;
             if (target.startsWith('Brand/')) {
               const open = listJobs(vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'engineer.ship' && /reconcile site with brand/i.test(j.title));
-              if (!open) createJob(vault, { type: 'engineer.ship', title: 'Reconcile site with brand', assigned: 'engineer', priority: 2, goal: `${target} changed (owner approved a proposal). Read Brand/ and update Site/ to match. Never revert owner edits under Site/.` }, 'daemon');
+              if (!open) createJob(vault, { type: 'engineer.ship', title: 'Reconcile site with brand', assigned: resolveRole(loadOrg(vault), 'engineer'), priority: 2, goal: `${target} changed (owner approved a proposal). Read Brand/ and update Site/ to match. Never revert owner edits under Site/.` }, 'daemon');
             }
             break;
           }

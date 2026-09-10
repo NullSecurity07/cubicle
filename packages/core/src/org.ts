@@ -32,6 +32,24 @@ export function teamOf(org: Org, role: string): TeamFrontmatter | null {
 }
 
 /**
+ * v1 role ids → tower roles (2026-09-11). Processes, gates, seeds and tests written against the nine-role org keep
+ * working: `resolveRole` swaps an inactive legacy id for its alias when the alias is active, and leaves anything
+ * else alone so an unknown id still fails loudly where it always did.
+ */
+export const LEGACY_ROLES: Record<string, string> = { critic: 'advisor_skeptic', research_analyst: 'research_manager', engineer: 'dev_manager', tech_lead: 'dev_manager', qa: 'qa_lead', head_of_growth: 'cmo', growth: 'cmo' };
+export function resolveRole(org: Org, id: string): string {
+  if (org.roles[id]) return id;
+  const alias = LEGACY_ROLES[id];
+  return alias && org.roles[alias] ? alias : id;
+}
+/** Who receives `research` jobs: the research team's lead (v1: the analyst, who led a team of one). */
+export function researchLead(org: Org): string | null {
+  const lead = org.teams.research?.lead;
+  if (lead && org.roles[lead]) return lead;
+  return org.roles.research_analyst ? 'research_analyst' : null;
+}
+
+/**
  * Resolve a `### <header>` section header (from Plans/plan.md) to a team id, matching case-insensitively
  * against either the team's id or its display name, and tolerating a trailing "team" (`### Growth team`) — the
  * plan is CEO-written prose, not a machine key (F4). Returns null when nothing matches.
@@ -64,7 +82,7 @@ export function defaultPermissions(org: Org, role: string): Permission[] {
   if (!org.roles[role]) return [];
   if (role === 'ceo') return ['schedule', 'plan', 'review', 'hire', 'fire', 'research_request', 'reprioritize', 'meeting'];
   if (role === 'critic') return ['review', 'veto'];
-  if (role === 'research_analyst') return [];
+  if (role === 'research_analyst' && researchLead(org) === role) return [];   // v1: the analyst led a team of one and was reached only through research_request
   if (isLead(org, role)) return ['plan', 'schedule', 'review', 'research_request', 'meeting', 'reprioritize'];
   return ['schedule'];
 }
@@ -88,7 +106,7 @@ export function can(org: Org, role: string, action: Action, target?: string): bo
       if (!target || !org.roles[target]) return false;
       if (target === role) return false; // explicit guard: no role schedules itself
       if (role === 'ceo') return true;
-      if (target === 'research_analyst') return false;
+      if (target === researchLead(org)) return false;   // research is requested, never scheduled directly
       if (isLead(org, role)) return reportsOf(org, role).includes(target);
       const mine = teamOf(org, role);
       return !!mine && mine.members.includes(target);

@@ -4,7 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
-  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS,
+  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -205,7 +205,7 @@ export function maybeEnqueuePostmortem(vault: Vault): string | null {
     const title = `Postmortem: ${type} failed ${jobs.length}× this cycle`;
     if (listJobs(vault).some((j) => j.type === 'research' && j.title.startsWith(`Postmortem: ${type}`) && j.status !== 'cancelled' && (!since || j.created >= since))) continue;
     return createJob(vault, {
-      type: 'research', title, assigned: 'research_analyst', priority: 2, team: 'research', owner_role: 'cto', for: 'cto',
+      type: 'research', title, assigned: researchLead(loadOrg(vault)) ?? 'research_analyst', priority: 2, team: 'research', owner_role: 'cto', for: 'cto',
       done_when: `Docs/postmortems/<date>-${type}.md exists with a root cause and one proposed change`,
       goal: `Root-cause ${jobs.length} failures of ${type}: ${jobs.map((j) => `[[${j}]]`).join(', ')}.\n\nDo: (1) vault.read each job note (Result, Checkpoint log, Review findings) and Memory/lessons.md; (2) if shell output is involved read the latest .cubicle/jobs observations via vault.read of the job note only (no shell); (3) vault.write Docs/postmortems/${nowIso().slice(0, 10)}-${type.replace(/\W/g, '_')}.md with: what happened, root cause, evidence, one proposed change (a charter line, a skill, or a gate criterion); (4) finish with a two-line summary.`,
     }, 'daemon');

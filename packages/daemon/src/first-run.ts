@@ -1,4 +1,4 @@
-import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, parseNote } from '@cubicle/core';
+import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, parseNote, resolveRole, researchLead, leadOf } from '@cubicle/core';
 
 /**
  * The three jobs a company must leave its first heartbeat with (spec §12): something on the web, something to
@@ -39,14 +39,14 @@ function covers(existing: string, seed: string): boolean {
 }
 
 function specs(org: Org): NewJob[] {
-  const pick = (preferred: string, team: string, fallback = 'ceo') => (org.roles[preferred] ? preferred : org.teams[team]?.lead ?? fallback);
-  const engineer = pick('engineer', 'engineering');
-  const growthLead = pick('head_of_growth', 'growth');
-  const analyst = org.roles.research_analyst ? 'research_analyst' : growthLead;
+  const engineer = resolveRole(org, 'engineer');
+  const growthLead = resolveRole(org, 'head_of_growth');
+  const analyst = researchLead(org) ?? growthLead;
+  const engineeringOwner = leadOf(org, engineer) ?? 'ceo';
   return [
     {
       type: 'engineer.ship', title: FIRST_JOB_TITLES[0], assigned: engineer, priority: 2,
-      team: org.roles[engineer]?.team, owner_role: org.teams.engineering?.lead ?? 'ceo',
+      team: org.roles[engineer]?.team, owner_role: engineeringOwner === 'owner' ? 'ceo' : engineeringOwner,
       goal: 'The company has no site yet. Read Brand/name.md, Brand/palette.md and Brand/voice.md, then build the first cut of Site/: one page that says what the company does, who it is for, and how to get in touch. Keep it static and boring — no framework, no build step the owner has to learn. Do not invent claims the brand notes do not support.',
       done_when: 'Site/index.html exists, uses the name, palette and voice from Brand/, has no broken links, and says what the company sells and to whom.',
     },

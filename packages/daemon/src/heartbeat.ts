@@ -2,6 +2,7 @@ import {
   type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
   loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
+  resolveRole, teamOf,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -379,7 +380,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         if (touched.length) {
           const open = listJobs(vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'engineer.ship' && /reconcile site with brand/i.test(j.title));
           if (!open) {
-            const id = createJob(vault, { type: 'engineer.ship', title: 'Reconcile site with brand', assigned: 'engineer', priority: 2, goal: `The owner edited ${touched.join(', ')}. Read every file in Brand/ and update Site/ so it matches the brand kit. Never revert owner edits under Site/. Finish with the list of files you changed.` }, 'ceo');
+            const id = createJob(vault, { type: 'engineer.ship', title: 'Reconcile site with brand', assigned: resolveRole(loadOrg(vault), 'engineer'), priority: 2, goal: `The owner edited ${touched.join(', ')}. Read every file in Brand/ and update Site/ so it matches the brand kit. Never revert owner edits under Site/. Finish with the list of files you changed.` }, 'ceo');
             done(i, `owner edited ${touched.join(', ')} → queued ${id}`);
           } else done(i, 'reconcile job already open');
         } else done(i, 'no brand edits');
@@ -448,7 +449,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           const teams = Object.values(org.teams).filter((t) => t.lead !== 'ceo' || t.members.length).map((t) => `${t.id} (lead ${t.lead}: ${t.mission})`).join('; ');
           const findings = state.criticFindings?.length ? `\n\nThe Critic returned the previous draft with these findings; address each one:\n${state.criticFindings.map((f) => `- ${f}`).join('\n')}` : '';
           const id = createJob(vault, {
-            type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the Critic' : 'Write the company plan', assigned: 'ceo', priority: 1, parent: jobId, team: 'strategy', owner_role: 'ceo',
+            type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the Critic' : 'Write the company plan', assigned: 'ceo', priority: 1, parent: jobId, team: teamOf(org, 'ceo')?.id ?? 'executive', owner_role: 'ceo',
             goal: `Write this cycle's objectives per team, not jobs.\n\nSituation:\n${situationSummary()}\n\nTeams: ${teams}.\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <team id>" subsection per team that has work this cycle (a bullet per objective; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); teams with nothing to do get no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
           }, 'ceo');
           state = { ...state, companyPlanJob: id }; saveState(state);
@@ -467,11 +468,12 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
       case 'critic': {
         if (state.planSkipped) { done(i, 'critic skipped — the plan was not rewritten'); break; }
         const org = loadOrg(vault);
+        const critic = resolveRole(org, 'critic');
         const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
-        if (!org.roles.critic || !planIsSubstantive(plan)) { done(i, 'critic skipped'); break; }
+        if (!org.roles[critic] || !planIsSubstantive(plan)) { done(i, 'critic skipped'); break; }
         if (!state.criticJob) {
           const id = createJob(vault, {
-            type: 'critic.premortem', title: `Pre-mortem for ${hbId}`, assigned: 'critic', priority: 1, parent: jobId, team: 'strategy', owner_role: 'ceo',
+            type: 'critic.premortem', title: `Pre-mortem for ${hbId}`, assigned: critic, priority: 1, parent: jobId, team: teamOf(org, critic)?.id ?? 'board', owner_role: 'ceo',
             goal: `Read Plans/plan.md. Imagine this cycle has already failed: work out the three most likely reasons and one concrete fix for each. Then finish with verdict pass if the plan survives, or verdict return with findings (one line each, concrete) — put the reasons and fixes in your finish summary and findings. The heartbeat records them as the pre-mortem decision note for you; do not write one yourself. You may return at most once; you cannot delay.`,
           }, 'ceo');
           state = { ...state, criticJob: id }; saveState(state);
