@@ -77,6 +77,18 @@ function parseRetryAfter(headers: Headers | Record<string, string> | undefined):
 }
 
 /** One chat completion against one provider+model. Throws RateLimitedError / ProviderError; never retries. */
+/**
+ * Reasoning models that expose their scratchpad as text (Gemma 4 on the Gemini API writes `<thought>…</thought>`,
+ * qwen writes `<think>…</think>`) would otherwise hand that scratchpad to the harness as the answer, where it ends
+ * up in job notes, colleague messages and the brief. Closed blocks go; an unterminated one (cut by max_tokens) goes
+ * only when it is the whole reply, so a real answer that merely mentions a tag is untouched.
+ */
+export function stripThinking(content: string): string {
+  const closed = content.replace(/<(thought|think)>[\s\S]*?<\/\1>/g, '');
+  const open = closed.match(/^\s*<(thought|think)>/);
+  return (open ? '' : closed).trim();
+}
+
 export async function chatOnce(p: ProviderConfig, modelId: string, req: ChatRequest, env: NodeJS.ProcessEnv = process.env): Promise<ChatResult> {
   const client = makeClient(p, env);
   const body: Record<string, unknown> = {
@@ -107,7 +119,7 @@ export async function chatOnce(p: ProviderConfig, modelId: string, req: ChatRequ
         if (ch?.finish_reason) finish = ch.finish_reason;
         if (chunk.usage) usage = { prompt_tokens: chunk.usage.prompt_tokens ?? 0, completion_tokens: chunk.usage.completion_tokens ?? 0 };
       }
-      return { content, toolCalls: [...calls.values()], finishReason: finish, usage };
+      return { content: stripThinking(content), toolCalls: [...calls.values()], finishReason: finish, usage };
     }
     const res = await client.chat.completions.create(body as never, { signal: req.signal });
     const choice = res.choices?.[0];
@@ -116,7 +128,7 @@ export async function chatOnce(p: ProviderConfig, modelId: string, req: ChatRequ
       return fn ? [{ id: tc.id, name: fn.name, arguments: fn.arguments ?? '{}' }] : [];
     });
     return {
-      content: choice?.message?.content ?? '',
+      content: stripThinking(choice?.message?.content ?? ''),
       toolCalls,
       finishReason: choice?.finish_reason ?? null,
       usage: { prompt_tokens: res.usage?.prompt_tokens ?? 0, completion_tokens: res.usage?.completion_tokens ?? 0 },
