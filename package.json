@@ -10,7 +10,7 @@
   "scripts": {
     "build": "pnpm -r --filter './packages/**' run build",
     "test": "pnpm -r --filter './packages/**' run test",
-    "typecheck": "pnpm -r --filter './packages/**' --filter '!@cubicle/app' exec tsc --noEmit -p .",
+    "typecheck": "pnpm -r --filter './packages/**' --filter '!@cubicle/app' exec tsc --noEmit -p . && tsc --noEmit -p scripts/tsconfig.json",
     "cubicle": "node --import tsx/esm --conditions=development packages/daemon/src/cli.ts",
     "launch": "bash scripts/run.sh",
     "test:acceptance": "vitest run --config vitest.acceptance.config.ts",
