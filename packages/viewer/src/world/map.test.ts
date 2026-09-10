@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { parseMap, nearestWalkable, standTile, toPx, TILE, type TiledMap } from './map.js';
+import { parseMap, nearestWalkable, standTile, toPx, TILE, floorAt, floorOf, portalFor, type TiledMap } from './map.js';
 import { DESK_IDS, ROOM_IDS, SURFACE_IDS } from './tower.fixture.js';
 
 const root = path.resolve(__dirname, '../../../..');
@@ -82,4 +82,41 @@ describe('parseMap (no Phaser)', () => {
     expect(standTile(m, 'nowhere')).toBeNull();
   });
   it('toPx centres a tile', () => { expect(toPx({ tx: 2, ty: 3 })).toEqual({ x: 2 * TILE + TILE / 2, y: 3 * TILE + TILE / 2 }); });
+});
+
+describe('floors (no Phaser)', () => {
+  const m = parseMap(served as unknown as TiledMap);
+  it('four floors sorted by n with y0 = 41, 28, 15, 2 and a walkable portal each', () => {
+    expect(m.floors.map((f) => f.n)).toEqual([1, 2, 3, 4]);
+    expect(m.floors.map((f) => f.y0)).toEqual([41, 28, 15, 2]);
+    expect(m.floors.map((f) => f.label)).toEqual(['Executive', 'Teams', 'Assurance', 'Chiefs']);
+    for (const f of m.floors) { expect(m.portals[f.n]).toEqual(f.portal); expect(f.portal).toEqual({ tx: 50, ty: f.y0 + 11 }); expect(m.grid[f.portal.ty][f.portal.tx]).toBe(0); }
+    expect(portalFor(m, 3)).toEqual({ tx: 50, ty: 26 });
+    expect(() => portalFor(m, 9)).toThrow(/floor 9/);
+  });
+  it('floorAt maps every desk to its floor prop, the street to 1 and the sky to 4', () => {
+    for (const [id, d] of Object.entries(m.deskInfo)) { expect(floorAt(m, d.tile.ty), id).toBe(d.floor); expect(floorOf(m, m.desks[id]), id).toBe(d.floor); }
+    expect(floorAt(m, 60)).toBe(1); expect(floorAt(m, 0)).toBe(4);
+    expect(floorAt(m, 41)).toBe(1); expect(floorAt(m, 40)).toBe(2);
+  });
+  it('rooms, reserved seats, desk info, decor and signs are exposed', () => {
+    expect(Object.keys(m.rooms).sort()).toEqual([...ROOM_IDS].sort());
+    expect(m.rooms.dev.props.floor).toBe(2);
+    expect(m.reserved.owner).toEqual({ tx: 32, ty: 48 });
+    expect(m.deskInfo.backend_engineer).toEqual({ tile: { tx: 28, ty: 35 }, room: 'dev', floor: 2 });
+    expect(m.deskInfo.ceo.room).toBe('ceo_office');
+    expect(m.decor.some((d) => d.kind === 'coffee' && d.floor === 1)).toBe(true);
+    expect(m.signs.qa).toMatchObject({ room: 'qa', label: 'QA', floor: 3 });
+    expect(m.anchors.owner_chair).toBeDefined();
+  });
+  it('nearestWalkable with a same-floor predicate never snaps through the slab', () => {
+    // (30, 41) is F1's slab row; without the predicate the nearest walkable tile is on F2 (row 40), with it it is F1 (row 42)
+    const slab = { tx: 30, ty: 41 };
+    expect(m.grid[41][30]).toBe(1);
+    const plain = nearestWalkable(m.grid, slab)!;
+    expect(floorAt(m, plain.ty)).toBe(2);
+    const same = nearestWalkable(m.grid, slab, 4, (t) => floorAt(m, t.ty) === 1)!;
+    expect(floorAt(m, same.ty)).toBe(1);
+    expect(nearestWalkable(m.grid, slab, 4, () => false)).toBeNull();
+  });
 });
