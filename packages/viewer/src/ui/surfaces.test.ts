@@ -19,8 +19,7 @@ describe('surface registry', () => {
     const anchors = namesOfType('surface');
     expect(anchors.size).toBeGreaterThan(0);
     for (const a of anchors) expect(SURFACES[a], a).toBeDefined();
-    const placeable = new Set([...anchors, ...namesOfType('room')]);
-    for (const k of REGISTERED) expect(placeable.has(k), k).toBe(true);
+    for (const k of REGISTERED) { expect(anchors.has(k), `${k} is a surface object`).toBe(true); expect('anchorAdjust' in SURFACES[k], `${k} has no anchorAdjust`).toBe(false); }
   });
 
   it('registering a new surface needs no other change', () => {

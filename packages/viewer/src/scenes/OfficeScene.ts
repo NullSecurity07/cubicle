@@ -61,7 +61,7 @@ export class OfficeScene extends Phaser.Scene {
     for (const def of Object.values(SURFACES)) {
       const a = this.world.anchors[def.kind];
       if (!a) { console.warn(`[office] surface "${def.kind}" has no anchor in the map; not placed`); continue; }
-      this.surfaces.set(def.kind, new Surface(this, def, def.anchorAdjust ? { ...a, ...def.anchorAdjust(a) } : a, (k) => this.hooks.onSurfaceClick(k)));
+      this.surfaces.set(def.kind, new Surface(this, def, a, (k) => this.hooks.onSurfaceClick(k)));
     }
     this.elev = initialElevator(this.world.floors, 1);
     this.car = (this.hooks.makeCar?.(this) ?? this.defaultCar()).setDepth(3);

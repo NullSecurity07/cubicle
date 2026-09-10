@@ -36,8 +36,6 @@ export interface SurfaceDef {
   view: (s: State, ctx: Ctx) => View;
   /** what a `chart` surface draws: its own rows, so the drawing code never reaches into a state field of its own choosing */
   bars?: (s: State) => Bar[];
-  /** where the in-world box sits, when it is not the anchor rectangle itself (a wall inside a room) */
-  anchorAdjust?: (a: SurfaceBox) => SurfaceBox;
 }
 
 export const SURFACES: Record<string, SurfaceDef> = {};
@@ -67,7 +65,6 @@ const browserStream = (s: State): string => Object.values(s.surfaces).filter((x)
 for (const def of [
   {
     kind: 'whiteboard', streamKind: 'markdown', streamId: () => 'Plans/plan.md',
-    anchorAdjust: (a) => ({ ...a, ty: a.ty - 2, th: 1 }),   // hangs on the corridor wall above the board room
     headline: (s) => { const p = planBits(s.plan); return p.objective || p.items.length ? { head: cut(p.objective || 'This cycle', 44), lines: p.items.slice(0, 3).map((i) => '• ' + cut(i, 40)) } : { head: 'No plan yet', lines: ['The CTO writes it on heartbeat #1'] }; },
     view: (s, ctx) => ({ mode: 'doc', title: 'Plan', sub: 'Plans/plan.md', html: s.plan ? md(s.plan) : `<p class="muted">No plan yet. The CTO writes the first one during heartbeat #1.</p>`, copy: s.plan, link: obsidianUrl(ctx.vaultName, 'Plans/plan.md') }),
   },
@@ -144,7 +141,6 @@ for (const def of [
   },
   {
     kind: 'cabin', streamKind: 'markdown', streamId: () => 'chat:ceo',
-    anchorAdjust: (a) => ({ ...a, ty: a.ty + a.th - 3, th: 3 }),   // the wall across the bottom of the room
     // The brief is pinned on the cabin wall (spec §10); before there is one, the wall asks the first-run question (§12 e).
     headline: (s) => (s.latestRun ? SURFACES.newsstand.headline(s) : { head: 'What company will you start today?', lines: ['Click to tell the CEO, or say “surprise me”'] }),
     view: (s) => ({ mode: 'chat', title: s.agents.ceo?.display ?? 'CEO', sub: s.brand.name ? `${s.brand.name}${s.brand.tagline ? ` · ${s.brand.tagline}` : ''}` : 'Tell the CEO what to build, or say "surprise me"', html: chatHtml(s) }),
