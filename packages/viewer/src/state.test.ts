@@ -116,6 +116,10 @@ describe('viewer state machine (spec §10)', () => {
     expect(targetFor('shell.run')).toBe('terminal');
     expect(targetFor('vault.read')).toBeNull();
   });
+  it('snapshot teams keep room, floor and parent', () => {
+    const s = applySnapshot(emptyState(), { ...snap, teams: [{ id: 'dev', name: 'Dev', lead: 'dev_manager', members: [], mission: '', room: 'dev', floor: 2, parent: 'technology' }] });
+    expect(s.teams[0]).toMatchObject({ room: 'dev', floor: 2, parent: 'technology' });
+  });
 });
 
 describe('critique 7-9 reducer fixes', () => {

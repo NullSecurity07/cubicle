@@ -91,6 +91,8 @@ export const TeamFrontmatter = z.looseObject({
   members: z.array(z.string()).default([]),
   mission: z.string().default(''),
   room: z.string().optional(),
+  floor: z.number().int().optional(),
+  parent: z.string().optional(),       // the division this team belongs to (dev → technology); planning happens at the division
   processes: z.array(z.string()).default([]),
 });
 export type TeamFrontmatter = z.infer<typeof TeamFrontmatter>;

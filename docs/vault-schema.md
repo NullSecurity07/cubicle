@@ -94,6 +94,8 @@ Body: `# Charter` (system prompt), `# Standing rules`, `# What good looks like`.
 | `members` | string[] = `[]` | role ids who report to the lead through this team |
 | `mission` | string = `""` |  |
 | `room` | string (optional) | office room id the team's desks sit in |
+| `floor` | number (optional) | which office floor the team's room is on |
+| `parent` | string (optional) | the division this team belongs to (dev → technology); planning happens at the division |
 | `processes` | string[] = `[]` | `Processes/<name>.md` ids this team can run |
 
 Body: freeform notes on how the team works, read into role prompts.

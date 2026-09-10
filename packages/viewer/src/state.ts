@@ -7,7 +7,7 @@ export type BubbleKind = 'speech' | 'thought' | 'action';
 export interface Bubble { text: string; until: number; kind: BubbleKind }
 export interface AgentView { role: string; display: string; sprite: string; desk: string; active: boolean; state: AgentState; tool: ToolIcon; job: string | null; bubble: Bubble | null; target: string | null; badge: 'error' | 'blocked' | null; /** face drawn on the sprite; `moodUntil` null = until the next change */ mood: Mood; moodUntil: number | null; /** pixel icon above the head */ emote: { kind: Emote; until: number } | null; /** when the agent last did anything (drives the asleep mood) */ idleSince: number | null; /** persona job title from the role charter, e.g. "Chief Technology Officer" */ title?: string }
 export interface JobView { id: string; type: string; title: string; assigned: string; status: string; priority: number; checkpoint_step: number; updated: string; team?: string }
-export interface TeamView { id: string; name: string; lead: string; members: string[]; mission: string }
+export interface TeamView { id: string; name: string; lead: string; members: string[]; mission: string; room?: string; floor?: number; parent?: string }
 export interface SurfaceView { streamKind: 'browser' | 'terminal' | 'markdown' | 'chart' | 'iframe'; streamId: string; lastFrame?: string; active: boolean; text?: string }
 export interface QuotaView { provider: string; model: string; rpm_used: number; rpd_used: number; tpm_used: number; cooling_until: string | null; limits: { rpm: number; rpd: number; tpm: number } }
 export interface CubicleEvent { id?: number; ts: string; type: string; agent: string | null; job: string | null; payload: Record<string, unknown> }

@@ -32,7 +32,7 @@ export interface Snapshot {
   /** Owner ↔ CEO conversation from 00 Inbox/ message notes (oldest first) — the cabin thread. */
   chat: { ts: string; from: 'you' | 'ceo'; text: string }[];
   /** Teams/*.md — the org chart in the Org drawer. */
-  teams: { id: string; name: string; lead: string; members: string[]; mission: string }[];
+  teams: { id: string; name: string; lead: string; members: string[]; mission: string; room?: string; floor?: number; parent?: string }[];
 }
 
 export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
@@ -57,7 +57,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
   const brandNote = parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data as Record<string, unknown>;
   const brand = { name: String(brandNote.name ?? ''), tagline: String(brandNote.tagline ?? ''), url: String(brandNote.url ?? '') };
   const org = loadOrg(vault);
-  const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission }));
+  const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission, room: t.room, floor: t.floor, parent: t.parent }));
   return {
     op: 'snapshot', at: nowIso(), roles, jobs: listJobs(vault),
     surfaces: sessions.map((s) => ({ streamKind: 'browser', streamId: s.session_id, lastFrame: s.path, active: activeSessions.has(s.session_id) })),

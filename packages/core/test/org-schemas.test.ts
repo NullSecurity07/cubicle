@@ -7,6 +7,12 @@ describe('org schemas', () => {
     expect(t.processes).toEqual([]); expect(t.room).toBeUndefined();
     expect(() => TeamFrontmatter.parse({ id: 'x', name: 'X', members: [] })).toThrow();
   });
+  it('a team note may carry its room, floor and parent division', () => {
+    const t = TeamFrontmatter.parse({ id: 'dev', name: 'Dev', lead: 'dev_manager', room: 'dev', floor: 2, parent: 'technology' });
+    expect(t).toMatchObject({ room: 'dev', floor: 2, parent: 'technology' });
+    expect(TeamFrontmatter.parse({ id: 'x', name: 'X', lead: 'ceo' }).floor).toBeUndefined();
+    expect(() => TeamFrontmatter.parse({ id: 'x', name: 'X', lead: 'ceo', floor: 'two' })).toThrow();
+  });
   it('role charters accept org fields with defaults and validate permissions', () => {
     const r = RoleFrontmatter.parse({ role: 'qa', display: 'QA', hired: 'now', sprite: 'qa', desk: 'cubicle_5', team: 'engineering', reports_to: 'cto', title: 'QA Engineer', persona: 'James Bach.' });
     expect(r.permissions).toEqual([]);
