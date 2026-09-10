@@ -1,24 +1,32 @@
+// packages/viewer/src/world/agents.ts
 import Phaser from 'phaser';
-import type { World } from './map.js';
+import type { World, Tile } from './map.js';
 import { TILE, makeSprite, makeFaces, makeEmotes, roleColor, POSE, SPRITE_H, EMOTE_H } from './tileset.js';
-import { toPx } from './map.js';
+import { toPx, portalFor } from './map.js';
+import { planRoute, type Leg } from './route.js';
+import type { ElevatorPort, ElevatorEvent } from './elevator.js';
 import type { AgentView, ToolIcon, Bubble } from '../state.js';
 import { BLINK_MS, GESTURE_MS, nextBlinkDelay, nextGestureDelay, pickGesture, walkBob, typingFrame, emoteBob, faceToward, thinkingDots, type Gesture } from './expressions.js';
 
 // Drawn glyphs (no emoji: headless/minimal systems lack emoji fonts). letter + colour per tool family.
 const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = { browser: { t: 'W', c: '#2a6fdb' }, terminal: { t: '>_', c: '#2b2f3a' }, envelope: { t: 'M', c: '#c0392b' }, doc: { t: 'D', c: '#7a5c2e' }, chart: { t: '%', c: '#2e7d32' }, chat: { t: '…', c: '#6a3fb0' } };
 const SPEED = 70; // px/s
-const COFFEE_STOP_MS = 2500;
 const RES = 3; // bubble text rasterised at 3× for crisp glyphs under zoom
+const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
+
+/** The pantry: a coffee after a finished job, and now and then after a long quiet spell at the desk. */
+export const PANTRY_AFTER_MS = 90_000;
+export const PANTRY_ROLL = 0.3;
+export const PANTRY_STAY_MS = 6_000;
 
 export interface SpriteContext { /** the sprite currently speaking in a meeting, for the others to glance at */ speaker: { x: number; y: number; role: string } | null }
-
-const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
+/** What the scene lends a sprite: the elevator, a way to take a seat in a room, and a die for the pantry roll. */
+export interface SpriteDeps { elevator?: ElevatorPort; seatFor?: (role: string, room: string) => Tile | null; roll?: () => number }
 
 /**
  * One sprite per role; its pose and position follow the reducer state (never local persistence).
- * The sprite adds only what the state cannot know: blinks, idle gestures, the walking bob, a coffee stop after a
- * finished job, and where a seated agent looks during a meeting.
+ * The sprite adds only what the state cannot know: blinks, idle gestures, the walking bob, the route (walk legs and
+ * elevator rides between floors), a coffee in the pantry, and where a seated agent looks during a meeting.
  */
 export class AgentSprite {
   readonly container: Phaser.GameObjects.Container;
@@ -35,8 +43,12 @@ export class AgentSprite {
   private bubbleBg: Phaser.GameObjects.Graphics;
   private lastBubble = '';
   private path: { x: number; y: number }[] = [];
+  private legs: Leg[] = [];
   private currentTarget: string | null = null;
   private walkingTo: string | null = null;
+  private waitingRide: { from: number; to: number } | null = null;
+  private riding: { x: number; y: number } | null = null;
+  private pendingTarget: string | null = null;
   private frameTimer = 0;
   private dir = 0;
   private step = 0;
@@ -47,12 +59,14 @@ export class AgentSprite {
   private gestureIn = nextGestureDelay();
   private gesture: Gesture = 'none';
   private gestureLeft = 0;
-  private detour: 'kitchen' | 'coffee' | null = null;
-  private coffeeLeft = 0;
-  seat: { tx: number; ty: number } | null = null;
+  private detour: 'pantry' | 'sit' | null = null;
+  private sitLeft = 0;
+  private pantryIdle = 0;
+  private pantrySeat: Tile | null = null;
+  seat: Tile | null = null;
   private gone = false;
 
-  constructor(private scene: Phaser.Scene, private world: World, public view: AgentView, private onClick: (role: string) => void) {
+  constructor(private scene: Phaser.Scene, private world: World, public view: AgentView, private onClick: (role: string) => void, private deps: SpriteDeps = {}) {
     const key = makeSprite(scene, view.sprite || view.role);
     makeFaces(scene); makeEmotes(scene);
     this.body = scene.add.sprite(0, 0, key, '0').setOrigin(0.5, 1);
@@ -70,43 +84,115 @@ export class AgentSprite {
     this.container.addAt(ring, 0);
     this.dot = scene.add.rectangle(0, 0, DOT, DOT, roleColor(view.role), 1).setDepth(9);
     const home = this.homeTile();
-    const p = toPx(view.state === 'entering' ? this.world.standTile('door') ?? home : home);
-    this.container.setPosition(p.x, p.y + 6);
-    this.dot.setPosition(p.x, p.y + 6);
+    this.place(view.state === 'entering' ? this.world.standTile('door') ?? home : home);
+    this.dot.setPosition(this.container.x, this.container.y);
     if (view.state === 'entering') this.goTo('home');
   }
 
-  homeTile(): { tx: number; ty: number } {
+  /** The chair of this role's desk; a role with no desk (a hire on a full floor) stands at the entrance. */
+  homeTile(): Tile {
     return this.world.desks[this.view.desk] ?? this.world.standTile('door') ?? { tx: 47, ty: 55 };
   }
 
-  private tile(): { tx: number; ty: number } {
+  tile(): Tile {
     return { tx: Math.floor(this.container.x / TILE), ty: Math.floor((this.container.y - 6) / TILE) };
   }
 
-  /** Walk to a named place: 'home', 'door', an anchor name, 'desk:<role>' or a room (seat assigned by caller). */
-  async goTo(target: string): Promise<void> {
+  private place(t: Tile): void { const p = toPx(t); this.container.setPosition(p.x, p.y + 6); }
+
+  /** Where a target name is on the map; a room that is the sprite's own room means its desk. */
+  private resolve(target: string): Tile | null {
+    if (target === 'home') return this.homeTile();
+    if (target === 'seat' && this.seat) return this.seat;
+    if (target === 'pantry' && this.pantrySeat) return this.pantrySeat;
+    if (this.world.rooms[target] && this.world.deskInfo[this.view.desk]?.room === target) return this.homeTile();
+    return this.world.standTile(target);
+  }
+
+  /**
+   * Walk (and ride) to a named place: 'home', 'door', 'seat', 'pantry', an anchor name, 'desk:<desk id>' or a room.
+   * A new target while waiting for the car cancels the call; while riding it is applied on arrival.
+   */
+  goTo(target: string): void {
+    if (this.riding) { this.pendingTarget = target; return; }
     if (this.walkingTo === target) return;
+    if (this.waitingRide) { this.deps.elevator?.cancel(this.view.role); this.waitingRide = null; }
     this.walkingTo = target;
-    const dest = target === 'home' ? this.homeTile() : target === 'seat' && this.seat ? this.seat : this.world.standTile(target);
-    if (!dest) { this.walkingTo = null; return; }
-    let path: { tx: number; ty: number }[] | null = null;
-    try { path = await this.world.findPath(this.tile(), dest); } catch (err) { console.warn('[agent] findPath failed', this.view.role, target, err); }
-    if (!path) console.warn('[agent] no path', this.view.role, target, this.tile(), dest);
-    if (this.walkingTo !== target) return; // superseded
-    this.path = (path ?? [dest]).map((t) => { const p = toPx(t); return { x: p.x, y: p.y + 6 }; });
+    const dest = this.resolve(target);
+    if (!dest) { this.walkingTo = null; this.legs = []; this.path = []; return; }
+    this.legs = planRoute(this.world, this.tile(), dest);
+    void this.startLeg(target);
+  }
+
+  private async startLeg(target: string): Promise<void> {
+    const leg = this.legs[0];
+    if (!leg) return;
+    if (leg.kind === 'ride') {
+      if (!this.deps.elevator) { this.legs.shift(); this.place(portalFor(this.world, leg.to)); void this.startLeg(target); return; }   // no elevator wired (a headless scene): step across
+      this.waitingRide = { from: leg.from, to: leg.to };
+      this.path = []; this.dir = 2;   // wait at the door, facing it
+      this.deps.elevator.request({ id: this.view.role, from: leg.from, to: leg.to });
+      return;
+    }
+    let path: Tile[] | null = null;
+    try { path = await this.world.findPath(this.tile(), leg.to); } catch (err) { console.warn('[agent] findPath failed', this.view.role, target, err); }
+    if (!path) console.warn('[agent] no path', this.view.role, target, this.tile(), leg.to);
+    if (this.walkingTo !== target || this.legs[0] !== leg) return; // superseded while the path was computed
+    this.path = (path ?? [leg.to]).map((t) => { const p = toPx(t); return { x: p.x, y: p.y + 6 }; });
     if (this.path.length && Phaser.Math.Distance.Between(this.path[0].x, this.path[0].y, this.container.x, this.container.y) < 4) this.path.shift();
   }
+
+  /** A walk leg ended: start the next leg, or finish the journey. */
+  private walkFinished(view: AgentView): void {
+    this.legs.shift();
+    if (this.legs.length && this.walkingTo) { void this.startLeg(this.walkingTo); return; }
+    if (view.state === 'leaving') { this.gone = true; this.container.setVisible(false); }
+    if (this.detour === 'pantry') { this.detour = 'sit'; this.sitLeft = PANTRY_STAY_MS; }
+  }
+
+  /** In the car: hidden, following it (the minimap dot keeps moving). */
+  attachTo(car: { x: number; y: number }): void { this.riding = car; this.waitingRide = null; this.path = []; this.container.setVisible(false); }
+  /** Out of the car at a floor's elevator door. */
+  detach(at: Tile): void { this.riding = null; this.place(at); this.container.setVisible(this.view.state !== 'offline' && !this.gone); }
+
+  onElevator(ev: ElevatorEvent, car: { x: number; y: number }): void {
+    if (ev.kind === 'boarded' && ev.id === this.view.role) this.attachTo(car);
+    if (ev.kind === 'arrived' && ev.id === this.view.role) {
+      this.detach(portalFor(this.world, ev.floor));
+      if (this.legs[0]?.kind === 'ride') this.legs.shift();
+      const pending = this.pendingTarget; this.pendingTarget = null;
+      if (pending) { this.walkingTo = null; this.goTo(pending); }
+      else if (this.walkingTo) void this.startLeg(this.walkingTo);
+    }
+  }
+
+  private startPantry(): void {
+    const seat = this.deps.seatFor?.(this.view.role, 'pantry') ?? null;
+    if (!seat) return;
+    this.pantrySeat = seat; this.detour = 'pantry'; this.currentTarget = 'home';
+    this.goTo('pantry');
+  }
+  private endDetour(): void { this.detour = null; this.sitLeft = 0; this.pantrySeat = null; this.currentTarget = null; }
 
   update(view: AgentView, dt: number, nowMs: number, ctx: SpriteContext = { speaker: null }): void {
     const prev = this.view;
     this.view = view;
-    // A finished job earns a coffee: detour past the kitchen on the way home (only when nothing else is asked).
-    if (prev.job && !view.job && view.state === 'walking' && !view.target && !this.detour && this.world.standTile('kitchen')) { this.detour = 'kitchen'; this.currentTarget = 'home'; void this.goTo('kitchen'); }
-    if (this.detour && (view.target || (view.state !== 'walking' && view.state !== 'idle_at_desk'))) { this.detour = null; this.coffeeLeft = 0; }
+    // A finished job earns a coffee; so, sometimes, does a long quiet spell at the desk (only when nothing else is asked).
+    if (prev.job && !view.job && view.state === 'walking' && !view.target && !this.detour) this.startPantry();
+    if (this.detour && (view.target || (view.state !== 'walking' && view.state !== 'idle_at_desk'))) this.endDetour();
+    if (!this.detour && view.state === 'idle_at_desk' && !view.job && !this.path.length && !this.riding) {
+      this.pantryIdle += dt * 1000;
+      if (this.pantryIdle >= PANTRY_AFTER_MS) { this.pantryIdle = 0; if ((this.deps.roll ?? Math.random)() < PANTRY_ROLL) this.startPantry(); }
+    } else if (view.state !== 'idle_at_desk') this.pantryIdle = 0;
     // target changes drive walking
     const want = view.state === 'leaving' ? 'door' : view.state === 'entering' ? 'home' : view.target ?? (view.state === 'walking' && !view.target ? 'home' : this.currentTarget ?? 'home');
-    if (want !== this.currentTarget && !this.detour) { this.currentTarget = want; void this.goTo(want === 'boardroom' || want === 'meetingroom' ? (this.seat ? 'seat' : want) : want); }
+    if (want !== this.currentTarget && !this.detour) { this.currentTarget = want; this.goTo(this.world.seats[want] ? (this.seat ? 'seat' : want) : want); }
+    if (this.riding) {
+      // in the car: follow it, draw nothing but the minimap dot
+      this.container.setPosition(this.riding.x, this.riding.y + TILE);
+      this.dot.setPosition(this.container.x, this.container.y).setVisible(view.state !== 'offline');
+      return;
+    }
     // move along the path
     if (this.path.length) {
       const next = this.path[0];
@@ -121,36 +207,38 @@ export class AgentSprite {
       if (this.frameTimer > 0.12) { this.frameTimer = 0; this.step = (this.step + 1) % 3; }
       this.body.setFrame(String(this.dir * 3 + (this.step === 0 ? 1 : this.step === 1 ? 2 : 0)));
       this.body.y = walkBob(this.walked);
-      if (!this.path.length && view.state === 'leaving') { this.gone = true; this.container.setVisible(false); }
-      if (!this.path.length && this.detour === 'kitchen') { this.detour = 'coffee'; this.coffeeLeft = COFFEE_STOP_MS; }
+      if (!this.path.length) this.walkFinished(view);
       this.gesture = 'none';
+    } else if (this.waitingRide) {
+      // at the elevator door: stand facing it until the car opens
+      this.step = 0; this.body.y = 0; this.dir = 2;
+      this.body.setFrame(String(this.dir * 3));
     } else {
       this.step = 0;
       this.body.y = 0;
-      if (this.detour === 'coffee') {
-        this.coffeeLeft -= dt * 1000;
+      if (this.detour === 'sit') {
+        this.sitLeft -= dt * 1000;
         this.body.setFrame(String(POSE.COFFEE)); this.dir = 0;
-        if (this.coffeeLeft <= 0) { this.detour = null; this.currentTarget = null; }
+        if (this.sitLeft <= 0) this.endDetour();
       } else if (view.emote?.kind === 'wave') { this.body.setFrame(String(POSE.WAVE)); this.dir = 0; }
       else if (this.currentTarget === 'home' && view.state !== 'walking') {
         // at the desk: seated, facing the viewer; typing while working; the odd stretch or glance when idle
         this.dir = 0;
         this.idleLife(dt, nowMs, view);
-        if (this.gesture === 'stretch') this.body.setFrame(String(POSE.STRETCH));
-        else if (this.gesture === 'yawn') this.body.setFrame(String(POSE.STRETCH));
+        if (this.gesture === 'stretch' || this.gesture === 'yawn') this.body.setFrame(String(POSE.STRETCH));
         else if (view.state === 'working' || view.mood === 'thinking') this.body.setFrame(String(typingFrame(nowMs) ? POSE.TYPING : POSE.SEATED));
         else this.body.setFrame(String(POSE.SEATED));
         if (this.gesture === 'look_left') this.dir = 1; else if (this.gesture === 'look_right') this.dir = 2;
       } else {
         // standing somewhere (a surface, a meeting seat): face the speaker if there is one, else keep the walking direction
-        if (ctx.speaker && ctx.speaker.role !== view.role && (view.target === 'boardroom' || view.target === 'meetingroom')) this.dir = faceToward({ x: this.container.x, y: this.container.y }, ctx.speaker);
+        if (ctx.speaker && ctx.speaker.role !== view.role && view.target && this.world.seats[view.target]) this.dir = faceToward({ x: this.container.x, y: this.container.y }, ctx.speaker);
         this.body.setFrame(String(this.dir * 3));
       }
     }
     this.updateFace(dt, view);
     if (view.tool) { const ic = ICON[view.tool]; this.icon.setText(ic.t).setStyle({ backgroundColor: ic.c }).setVisible(true); } else this.icon.setVisible(false);
     // emote icon above the head (a wave is a pose, not an icon; a coffee stop shows the cup)
-    const emoteKind = this.detour === 'coffee' ? 'coffee' : view.emote && view.emote.kind !== 'wave' ? view.emote.kind : null;
+    const emoteKind = this.detour === 'sit' ? 'coffee' : view.emote && view.emote.kind !== 'wave' ? view.emote.kind : null;
     // the persistent badge (! failed, ? blocked) yields while an emote says the same thing more expressively
     if (view.badge && !emoteKind) { this.badge.setText(view.badge === 'error' ? '!' : '?').setStyle({ backgroundColor: view.badge === 'error' ? '#c0392b' : '#e0a030' }).setVisible(true); } else this.badge.setVisible(false);
     if (emoteKind) { this.emote.setFrame(emoteKind).setVisible(true); this.emote.y = -SPRITE_H - 6 + emoteBob(nowMs); } else this.emote.setVisible(false);
@@ -207,7 +295,7 @@ export class AgentSprite {
     this.bubble.setVisible(true);
   }
 
-  debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, tile: this.tile(), seat: this.seat, desk: this.view.desk, home: this.homeTile() }; }
+  debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, legs: this.legs, waitingRide: this.waitingRide, riding: !!this.riding, pendingTarget: this.pendingTarget, tile: this.tile(), seat: this.seat, desk: this.view.desk, home: this.homeTile() }; }
 
-  destroy(): void { this.container.destroy(); this.dot.destroy(); }
+  destroy(): void { if (this.waitingRide) this.deps.elevator?.cancel(this.view.role); this.container.destroy(); this.dot.destroy(); }
 }
