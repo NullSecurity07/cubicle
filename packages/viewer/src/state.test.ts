@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, SLEEP_AFTER_MS, type Snapshot } from './state.js';
+import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, type Snapshot } from './state.js';
 
-const snap: Snapshot = { op: 'snapshot', at: 'now', roles: [{ role: 'ceo', display: 'CEO', sprite: 'ceo', desk: 'ceo', active: true }, { role: 'cmo', display: 'CMO', sprite: 'cmo', desk: 'cmo', active: true }, { role: 'coo', display: 'COO', sprite: 'coo', desk: 'coo', active: true }], jobs: [{ id: 'job_1', type: 'research', title: 'r', assigned: 'cmo', status: 'running', priority: 3, checkpoint_step: 2, updated: 'now' }], surfaces: [], quota: [], latestRun: null, plan: '# Plan', pendingProposals: 1 };
+const snap: Snapshot = { op: 'snapshot', at: 'now', roles: [{ role: 'ceo', display: 'CEO', sprite: 'ceo', desk: 'ceo', active: true }, { role: 'cmo', display: 'CMO', sprite: 'cmo', desk: 'sales_2', active: true, team: 'revenue' }, { role: 'coo', display: 'COO', sprite: 'coo', desk: 'coo', active: true }], jobs: [{ id: 'job_1', type: 'research', title: 'r', assigned: 'cmo', status: 'running', priority: 3, checkpoint_step: 2, updated: 'now' }], surfaces: [], quota: [], latestRun: null, plan: '# Plan', pendingProposals: 1, teams: [{ id: 'revenue', name: 'Revenue', lead: 'cfo', members: ['cmo'], mission: '', room: 'cfo_office', floor: 4 }, { id: 'technology', name: 'Technology', lead: 'cto', members: ['dev_manager'], mission: '' }, { id: 'dev', name: 'Dev', lead: 'dev_manager', members: ['backend_engineer'], mission: '', parent: 'technology' }] };
 const ev = (type: string, agent: string | null, payload: Record<string, unknown> = {}, job: string | null = 'job_1') => ({ ts: '2026-09-02T00:00:00.000Z', type, agent, job, payload });
 
 describe('viewer state machine (spec §10)', () => {
@@ -45,7 +45,7 @@ describe('viewer state machine (spec §10)', () => {
     let s = applySnapshot(emptyState(), snap);
     s = applyEvent(s, ev('job.failed', 'cmo', { reason: 'x' }));
     expect(s.agents.cmo.badge).toBe('error');
-    expect(s.agents.coo.target).toBe('desk:cmo');
+    expect(s.agents.coo.target).toBe('desk:sales_2');
     s = applyEvent(s, ev('job.blocked', 'cmo', { reason: 'approval' }));
     expect(s.agents.cmo.badge).toBe('blocked');
     expect(s.agents.cmo.bubble?.kind).toBe('thought');
@@ -120,6 +120,26 @@ describe('viewer state machine (spec §10)', () => {
     const s = applySnapshot(emptyState(), { ...snap, teams: [{ id: 'dev', name: 'Dev', lead: 'dev_manager', members: [], mission: '', room: 'dev', floor: 2, parent: 'technology' }] });
     expect(s.teams[0]).toMatchObject({ room: 'dev', floor: 2, parent: 'technology' });
   });
+  it('agents know their team, line of report and division (division root); the COO walks to the failing desk by desk id', () => {
+    const s = applySnapshot(emptyState(), { ...snap, roles: [...snap.roles, { role: 'backend_engineer', display: 'BE', sprite: 'backend_engineer', desk: 'backend_engineer', active: true, team: 'dev', reports_to: 'dev_manager' }] });
+    expect(s.agents.cmo).toMatchObject({ team: 'revenue', division: 'revenue' });
+    expect(s.agents.backend_engineer).toMatchObject({ team: 'dev', reportsTo: 'dev_manager', division: 'technology' });
+    expect(s.agents.ceo.division).toBe('other');   // no team in this fixture
+    expect(divisionOf('board', [{ id: 'board', name: 'Board', lead: 'advisor_skeptic', members: [], mission: '' }])).toBe('board');
+    expect(divisionOf(undefined, [])).toBe('other');
+    const failed = applyEvent(s, ev('job.failed', 'backend_engineer', { reason: 'x' }));
+    expect(failed.agents.coo.target).toBe('desk:backend_engineer');
+    expect(OVERSEER).toBe('coo'); expect(VETO_ROLE).toBe('advisor_skeptic');
+  });
+  it('plan.vetoed animates the agent that vetoed, falling back to the board skeptic', () => {
+    let s = applySnapshot(emptyState(), { ...snap, roles: [...snap.roles, { role: 'advisor_skeptic', display: 'Skeptic', sprite: 'advisor_skeptic', desk: 'advisor_skeptic', active: true }] });
+    s = applyEvent(s, ev('plan.vetoed', null, { findings: ['x'] }, null), 1000);
+    expect(s.agents.advisor_skeptic.emote?.kind).toBe('!');
+    s = applyEvent(s, ev('plan.vetoed', 'cmo', { findings: ['y'] }, null), 2000);
+    expect(s.agents.cmo.emote?.kind).toBe('!');
+    const hired = applyEvent(s, ev('role.hired', 'daemon', { role: 'sales_rep', display: 'Rep', desk: 'sales_1', sprite: 'sales_rep', team: 'sales' }, null));
+    expect(hired.agents.sales_rep).toMatchObject({ desk: 'sales_1', team: 'sales', state: 'entering' });
+  });
 });
 
 describe('critique 7-9 reducer fixes', () => {
@@ -170,7 +190,7 @@ describe('critique 7-9 reducer fixes', () => {
       s = applyEvent(s, ev('job.started', 'cmo', {}), 3000);
       s = applyEvent(s, ev('job.failed', 'cmo', { reason: 'x' }), 4000);
       expect(s.agents.cmo.mood).toBe('worried'); expect(s.agents.cmo.emote?.kind).toBe('sweat');
-      expect(s.agents.coo.emote?.kind).toBe('clipboard'); expect(s.agents.coo.target).toBe('desk:cmo');
+      expect(s.agents.coo.emote?.kind).toBe('clipboard'); expect(s.agents.coo.target).toBe('desk:sales_2');
     });
     it('blocked → puzzled face, ? emote and a thought bubble with the reason', () => {
       const s = applyEvent(base(), ev('job.blocked', 'cmo', { reason: 'need a key' }), 1000);

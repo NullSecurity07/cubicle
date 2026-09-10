@@ -23,7 +23,7 @@ export function obsidianUrl(vaultName: string, file: string): string {
 const KIND_LABEL: Record<string, string> = { spend: 'Spend', outbound_batch: 'Send batch', brand_change: 'Brand', charter_change: 'Charter', file_change: 'File change', hire: 'Hire', fire: 'Fire', message: 'Question' };
 export const kindLabel = (k: string): string => KIND_LABEL[k] ?? k.replace(/_/g, ' ');
 
-const DISPLAY: Record<string, string> = { ceo: 'CEO', cto: 'CTO', coo: 'COO', engineer: 'Engineer', growth: 'Growth', head_of_growth: 'Head of Growth', tech_lead: 'Tech Lead', qa: 'QA', critic: 'Critic', research_analyst: 'Research' };
+const DISPLAY: Record<string, string> = { ceo: 'CEO', cto: 'CTO', coo: 'COO', cfo: 'CFO / CRO', cmo: 'CMO', cgo: 'CGO', cso: 'CSO', chro: 'CHRO', clo: 'CLO / CCO', ciso: 'CISO', advisor_skeptic: 'The Skeptic', advisor_investor: 'The Investor', advisor_customer: 'The Customer', dev_manager: 'Dev Manager', qa_lead: 'QA Lead', research_manager: 'Head of Research', engineer: 'Engineer', growth: 'Growth', head_of_growth: 'Head of Growth', tech_lead: 'Tech Lead', qa: 'QA', critic: 'Critic', research_analyst: 'Research Analyst' };
 export const who = (s: State, role: string): string => s.agents[role]?.display ?? DISPLAY[role] ?? role;
 const roleTitle = (s: State, role: string): string => s.agents[role]?.title || role;
 const teamName = (s: State, id?: string): string => (id ? s.teams.find((t) => t.id === id)?.name ?? id : 'Unassigned');

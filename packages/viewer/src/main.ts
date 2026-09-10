@@ -6,6 +6,7 @@ import { Ui } from './ui/panel.js';
 import { esc, obsidianUrl, chip, type Ctx } from './ui/content.js';
 import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
+import { TILE } from './world/tileset.js';
 
 let state: State = emptyState();
 let liveState: State | null = null;   // saved while replaying
@@ -66,7 +67,7 @@ scene.hooks = {
   hour: () => time.hour(new Date()),
   clock: () => (state.mode === 'replay' ? replayClockAt(time.index) : Date.now()),
   onSurfaceClick(kind) { open(kind); },
-  onAgentClick(role) { open(`agent:${role}`); scene.focusOn(`desk:${role}`); },
+  onAgentClick(role) { open(`agent:${role}`); scene.focusOn(`agent:${role}`); },
 };
 
 function agentView(role: string): { title: string; sub?: string; html: string; mode: 'drawer' } {
@@ -157,7 +158,12 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
   }));
 }
 
-(window as unknown as { __cubicle: unknown }).__cubicle = { get state() { return state; }, agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), desks: () => scene.debugDesks(), stand: (name: string) => scene.debugStand(name), surfaces: () => debugSurfaces(), open, zoom: (z: number) => scene.cameras.main.setZoom(z), center: (tx: number, ty: number) => scene.cameras.main.centerOn(tx * 16, ty * 16) };
+(window as unknown as { __cubicle: unknown }).__cubicle = {
+  get state() { return state; },
+  agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), desks: () => scene.debugDesks(), stand: (name: string) => scene.debugStand(name), surfaces: () => debugSurfaces(), open,
+  zoom: (z: number) => scene.cameras.main.setZoom(z), center: (tx: number, ty: number) => scene.cameras.main.centerOn(tx * TILE, ty * TILE),
+  floor: (n: number) => scene.focusFloor(n), currentFloor: () => scene.currentFloor(), elevator: () => scene.elevator.state(), route: (role: string, target: string) => scene.debugRoute(role, target),
+};
 
 let last = performance.now();
 function loop(now: number): void {
