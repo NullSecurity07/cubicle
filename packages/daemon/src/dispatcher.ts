@@ -6,6 +6,7 @@ import { findAnswer, messagePath } from '@cubicle/tools';
 import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
 import { applyHire, applyFire, applyReorg, charterDiffSection } from './evolution.js';
 import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
+import { appendObservation } from '@cubicle/harness';
 
 /** kind → allowed targets. Everything else leaves the note unresolved with a warning (an approval must mean what its title says). */
 export function validateTarget(kind: string, target: string, hasCall: boolean): string | null {
@@ -38,6 +39,8 @@ export interface DispatcherDeps {
   onRoleFired?: (role: string) => void;
   /** How long a question may go unanswered before it escalates to the CEO; defaults to two heartbeat intervals. */
   questionWaitMs?: number;
+  /** When this daemon process started; a question's wait is only counted while the daemon was up. */
+  startedAt?: number;
   guardrails?: { check(tool: string, args: Record<string, unknown>, ctx: ToolContext): Promise<string | null> | string | null }[];
 }
 
@@ -254,13 +257,15 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     vault.events.emit({ type: 'proposal.resolved', agent: 'owner', job: d.job ?? null, payload: { id: d.id, kind: d.kind, approved: d.approved, outcome } });
     n++;
   }
-  n += requeueUnblocked(vault, deps.questionWaitMs);
+  n += requeueUnblocked(vault, deps.questionWaitMs, { sinceFloor: deps.startedAt ?? DAEMON_STARTED_AT });
   if (n) deps.wake?.();
   return n;
 }
 
 /** Two heartbeat intervals (spec §8: 6 h) — the same default `defaultConfig` computes. */
 export const DEFAULT_QUESTION_WAIT_MS = 12 * 3600_000;
+/** Process start: the dispatcher tick's floor for question waits (see requeueUnblocked). */
+const DAEMON_STARTED_AT = Date.now();
 
 /** The colleague question `id` as it was written into some role's `Messages/` note: who asked, who owes an answer, and what was asked. */
 export function findQuestion(vault: Vault, id: string): { to: string; from: string; body: string } | null {
@@ -314,11 +319,21 @@ function escalateQuestionToCeo(vault: Vault, job: JobFrontmatter, id: string): v
         : `${recipient} has no open job for it.`;
     vault.appendText(messagePath('ceo'), `\n## ${nowIso()} from daemon (handoff) <!-- id:msg_${answerJob} job:${job.id} -->\n\n${job.assigned} asked ${recipient} a question on job [[${job.id}]] and ${recipient} has not answered it. The question (${id}):\n\n> ${question.split('\n').join('\n> ')}\n\n${handover} Answer it yourself or reassign it; ${job.assigned} has been requeued in the meantime.\n`, 'daemon', { job: job.id });
   }
+  // The asker is requeued without an answer. Its transcript ends with "this job is now blocked until they answer",
+  // and resumed on that alone, two live jobs (2026-09-09/10) simply called finish(blocked) and stranded themselves
+  // on the owner. Tell it, in the transcript it resumes from, what happened and that it must not wait.
+  appendObservation(vault, job.id, { step: job.checkpoint_step, kind: 'system', ts: nowIso(), text: `Your question ${id} to ${recipient} was not answered in time, so the daemon handed it to the ceo (job ${answerJob}) and requeued you. Do not wait for it: continue on a stated assumption (say which in your summary), hand the work to a teammate, or finish. If the answer arrives later it will show up in your messages.` });
   vault.events.emit({ type: 'daemon.warning', agent: 'daemon', job: job.id, payload: { where: 'question_timeout', message: `${recipient} never answered ${job.assigned}'s question ${id}; escalated to ceo as ${answerJob}`, id, escalated_to: 'ceo' } });
 }
 
-/** Requeue blocked jobs whose wait condition (answered message, finished sub-job, resolved proposal) is satisfied. */
-export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION_WAIT_MS): number {
+/**
+ * Requeue blocked jobs whose wait condition (answered message, finished sub-job, resolved proposal) is satisfied.
+ * `sinceFloor` is the earliest moment a question wait may count from (the dispatcher tick passes the daemon's start):
+ * a colleague cannot answer while the daemon is down, and the first tick after a 14 h outage (2026-09-10) otherwise
+ * escalated a question whose answer job had never had a chance to run. Without it the wait is pure wall-clock.
+ */
+export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION_WAIT_MS, opts: { sinceFloor?: number } = {}): number {
+  const floor = opts.sinceFloor ?? 0;
   let n = 0;
   for (const j of listJobs(vault, { status: 'blocked' })) {
     const b = j.blocked_on;
@@ -333,7 +348,7 @@ export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION
       ready = (!!sub && ['done', 'failed', 'cancelled'].includes(sub.data.status)) || Date.now() - Date.parse(b.since) > PLAN_WAIT_BUDGET_MS;
     } else if (b.kind === 'message') {
       ready = !!findAnswer(vault, j.assigned, b.id) || !!listInbox(vault).find((x) => x.data.id === b.id && x.data.answered);
-      if (!ready && Date.now() - Date.parse(b.since) > questionWaitMs) {
+      if (!ready && Date.now() - Math.max(Date.parse(b.since), floor) > questionWaitMs) {
         escalateQuestionToCeo(vault, j, b.id);
         updateJob(vault, j.id, { status: 'queued', blocked_on: undefined }, 'daemon', `- ${nowIso()}: unanswered question ${b.id} escalated to ceo`);
         n++;

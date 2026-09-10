@@ -232,6 +232,10 @@ cmd_status() {
   local q r d b f; q=0; r=0; d=0; b=0
   shopt -s nullglob; for f in "$VAULT"/Jobs/*.md; do case "$(basename "$f")" in _*|queue.md) continue;; esac; case "$(grep -m1 -E '^status:' "$f" | awk '{print $2}')" in queued) q=$((q+1));; running|in_review) r=$((r+1));; done) d=$((d+1));; blocked) b=$((b+1));; esac; done; shopt -u nullglob
   info "jobs: $q queued, $r running, $b blocked, $d done"
+  # Jobs a role finished as blocked wait for the owner and nothing else requeues them (the brief lists them under
+  # "What needs you"); "nothing to approve" above only speaks for the inbox, so say it here.
+  local o=0; shopt -s nullglob; for f in "$VAULT"/Jobs/*.md; do case "$(basename "$f")" in _*|queue.md) continue;; esac; grep -qE '^status:[[:space:]]*blocked' "$f" && grep -qE '^[[:space:]]+kind:[[:space:]]*owner' "$f" && o=$((o+1)); done; shopt -u nullglob
+  [[ "$o" -gt 0 ]] && warn "$o job(s) stopped and wait for you — see 'What needs you' in the last brief; set status: queued or status: cancelled in the job note"
   local c; c="$(grep -m1 -E '^name:' "$VAULT/Brand/name.md" 2>/dev/null | sed -E 's/^name:[[:space:]]*"?([^"]*)"?/\1/')"; [[ -n "$c" ]] && ok "company: $c" || info "company: unnamed — type an idea in the cabin"
 }
 

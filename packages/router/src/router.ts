@@ -1,7 +1,7 @@
 import type { EventLog, ModelTier } from '@cubicle/core';
 import { TIER_RANK, type ModelConfig, type ProviderConfig, type ProvidersFile } from './config.js';
 import { QuotaTracker, estimateTokens } from './quota.js';
-import { chatOnce, apiKeyFor, RateLimitedError, ProviderError, type ChatRequest, type ChatResult } from './client.js';
+import { chatOnce, apiKeyFor, RateLimitedError, ProviderError, type ChatRequest, type ChatResult, type ChatMessage } from './client.js';
 import { buildJsonToolInstruction, parseJsonToolReply, type ToolSchema } from './jsontools.js';
 
 export interface RouteRequest {
@@ -130,17 +130,32 @@ export class Router {
    * Run a chat completion through the cascade. `tools` are given as neutral schemas; for `native` models they
    * become OpenAI tools, for `json` models they are injected into the prompt and the reply is parsed.
    */
-  async chat(req: RouteRequest, chat: Omit<ChatRequest, 'tools'> & { tools?: ToolSchema[] }): Promise<RoutedChatResult> {
+  /** Rough prompt size (chars/4) including the tool schemas, which the provider counts too: without them a live
+   *  prompt estimated at 4362 tokens was billed at 7318 by Gemini, past a 7000-token cap the estimate said it cleared. */
+  estimatePrompt(chat: { messages: ChatMessage[]; tools?: ToolSchema[] }): number {
     const promptText = chat.messages.map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''))).join('\n');
-    const est = estimateTokens(promptText) + (chat.maxTokens ?? 1024);
+    return estimateTokens(promptText) + (chat.tools?.length ? estimateTokens(JSON.stringify(chat.tools)) : 0);
+  }
+
+  async chat(req: RouteRequest, chat: Omit<ChatRequest, 'tools'> & { tools?: ToolSchema[] }): Promise<RoutedChatResult> {
+    const est = this.estimatePrompt(chat) + (chat.maxTokens ?? 1024);
     const tried: string[] = [];
     const cands = this.candidates(req);
     if (cands.length === 0) throw new NoModelAvailableError(tried);
     const wantRank = TIER_RANK[req.tier];
     let downgradedLogged = false;
+    const promptTokens = est - (chat.maxTokens ?? 1024);
+    /** Providers that answered 400 to this request: the request shape is wrong for them, so their other models would say the same. */
+    const rejectedShape = new Set<string>();
+    /** The last reply that had neither content nor a tool call; returned only if no candidate does better. */
+    let lastEmpty: RoutedChatResult | null = null;
 
     for (const c of cands) {
       const key = `${c.provider.id}/${c.model.id}`;
+      if (rejectedShape.has(c.provider.id)) { tried.push(`${key} (provider 400)`); continue; }
+      // A prompt over the model's declared cap only buys a 413 (Groq: "Request too large … ITPM limit 7000") that
+      // still counts as a call. Skip it here; the estimate is coarse, so the cap in providers.yaml should be conservative.
+      if (promptTokens > c.model.max_prompt_tokens) { tried.push(`${key} (too big: ~${promptTokens} > ${c.model.max_prompt_tokens})`); continue; }
       const head = this.quota.hasHeadroom(c.provider.id, c.model, est, c.provider);
       if (!head.ok) { tried.push(`${key} (${head.reason})`); continue; }
       const isDowngrade = TIER_RANK[c.model.tier] < wantRank;
@@ -167,7 +182,7 @@ export class Router {
         const res = await chatOnce(c.provider, c.model.id, { ...chat, messages, tools: nativeTools, maxTokens, responseFormatJson: useJsonTools && chat.responseFormatJson !== false ? false : chat.responseFormatJson }, this.env);
         this.quota.record(c.provider.id, c.model.id, res.usage.prompt_tokens, res.usage.completion_tokens, true);
         this.attemptCounts.delete(key);
-        this.events?.emit({ type: 'router.call', agent: req.roleId ?? null, payload: { provider: c.provider.id, model: c.model.id, tier: c.model.tier, tokens: res.usage, tools: c.model.tools, downgraded: isDowngrade } });
+        this.events?.emit({ type: 'router.call', agent: req.roleId ?? null, payload: { provider: c.provider.id, model: c.model.id, tier: c.model.tier, tokens: res.usage, tools: c.model.tools, downgraded: isDowngrade, finish_reason: res.finishReason, empty: !res.content && res.toolCalls.length === 0 } });
         this.emitQuotaUpdated(c);
         const parsed: RoutedChatResult['parsedToolCalls'] = [];
         let jsonParseError: string | undefined;
@@ -183,7 +198,18 @@ export class Router {
           else if (r.kind === 'final') { res.content = r.text; finalAnswer = true; }
           else jsonParseError = r.reason;
         }
-        return { ...res, provider: c.provider.id, model: c.model.id, tier: c.model.tier, downgraded: isDowngrade, parsedToolCalls: parsed, jsonParseError, finalAnswer };
+        const out: RoutedChatResult = { ...res, provider: c.provider.id, model: c.model.id, tier: c.model.tier, downgraded: isDowngrade, parsedToolCalls: parsed, jsonParseError, finalAnswer };
+        if (!res.content && res.toolCalls.length === 0 && parsed.length === 0 && !jsonParseError) {
+          // Nothing came back (2026-09-10: twelve of these, in runs at one step, in the same minutes Gemini was
+          // answering 503 "high demand"; the rebuilt prompts reproduce none of them). Retrying the same model with
+          // the same prompt is what cost jobs their attempts, so try the next candidate; the warning keeps the
+          // provider's finish reason so a repeat can be diagnosed from the event log.
+          this.events?.emit({ type: 'daemon.warning', agent: req.roleId ?? null, payload: { where: 'empty_reply', provider: c.provider.id, model: c.model.id, finish_reason: res.finishReason, usage: res.usage, raw: JSON.stringify(res.raw ?? null).slice(0, 400) } });
+          tried.push(`${key} (empty)`);
+          lastEmpty = out;
+          continue;
+        }
+        return out;
       } catch (err) {
         if (err instanceof RateLimitedError) {
           const n = (this.attemptCounts.get(key) ?? 0) + 1;
@@ -203,6 +229,14 @@ export class Router {
             tried.push(`${key} (401)`);
             continue;
           }
+          if (err.status === 400) {
+            // The provider rejected the request itself (Gemini: "Requests ending with a model turn are not
+            // supported"). Its sibling models run the same validation, so trying them only spends their quota:
+            // 2026-09-10 paid three 400s per call that way. Cascade to the next provider instead.
+            rejectedShape.add(c.provider.id);
+            tried.push(`${key} (400)`);
+            continue;
+          }
           if (err.status === 503 || err.status === 502 || err.status === 529) {
             // "High demand" lasts minutes, not one request: without a cooling mark every call re-pays the failed
             // round-trip before cascading (a live day showed 162 downgrades in 244 calls). Same backoff ladder as
@@ -219,6 +253,7 @@ export class Router {
         throw err;
       }
     }
+    if (lastEmpty) return lastEmpty;
     throw new NoModelAvailableError(tried);
   }
 

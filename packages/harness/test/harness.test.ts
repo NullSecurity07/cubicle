@@ -275,3 +275,27 @@ describe('MemoryIndex', () => {
     expect(mem.count()).toBeGreaterThan(0);
   });
 });
+
+describe('finish(blocked) means "waiting on the owner", not "a tool refused me" (live-run 2026-09-10)', () => {
+  // Two live jobs sat in the brief's "needs you" list because the model answered a refused scheduler.request with
+  // finish(status: blocked). Nothing the owner can decide unblocks "cto may not schedule cto"; the model just gave up.
+  it('the first finish(blocked) with nothing pending is refused with guidance; a second one is accepted', async () => {
+    const id = createJob(vault, { type: 'engineer.ship', title: 'ship', assigned: 'engineer', goal: 'g' }, 'cto');
+    const llm = scripted([
+      { tool: 'finish', args: { status: 'blocked', summary: 'Cannot schedule self.', blockers: ['cto may not schedule cto'] } },
+      { tool: 'finish', args: { status: 'blocked', summary: 'Still blocked: I need the owner to pick a palette.', blockers: ['no palette chosen'] } },
+    ]);
+    const out = await runJob(deps(llm), id);
+    expect(llm.calls).toBe(2);
+    expect(out.status).toBe('blocked');
+    const j = readJob(vault, id)!;
+    expect(j.data.status).toBe('blocked');
+    expect(j.data.blocked_on?.kind).toBe('owner');
+    const refusal = loadObservations(vault, id).find((o) => o.kind === 'tool' && o.tool === 'finish' && o.ok === false);
+    expect(refusal).toBeTruthy();
+    expect(refusal!.result).toMatch(/owner/);
+    expect(refusal!.result).toMatch(/failed|another way/i);
+    // The second call's prompt showed the refusal.
+    expect(JSON.stringify(llm.prompts[1])).toContain('another way');
+  });
+});

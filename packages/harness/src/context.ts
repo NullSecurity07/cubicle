@@ -164,8 +164,13 @@ function renderObservations(obs: Observation[]): ChatMessage[] {
     out.push({ role: 'user', content: `Earlier steps (summarised):\n${older.map((o) => o.kind === 'tool' ? `- step ${o.step}: ${o.tool}(${JSON.stringify(o.args ?? {}).slice(0, 80)}) → ${o.ok === false ? 'FAILED: ' : ''}${(o.result ?? '').slice(0, 100).replace(/\n/g, ' ')}` : `- step ${o.step}: ${(o.text ?? '').slice(0, 100).replace(/\n/g, ' ')}`).join('\n')}` });
   }
   for (const o of recent) {
-    if (o.kind === 'assistant') out.push({ role: 'assistant', content: o.text ?? '' });
-    else if (o.kind === 'tool') {
+    if (o.kind === 'assistant') {
+      out.push({ role: 'assistant', content: o.text ?? '' });
+      // A text-only or empty reply is the model's turn; the prompt must not end there (Gemini's OpenAI endpoint
+      // rejects "requests ending with a model turn" with a 400 — 22 of them on 2026-09-10) and two model turns in a
+      // row read as one. The user turn after it is also the nudge the model needs: it replied without acting.
+      out.push({ role: 'user', content: '[no tool was called] Reply with a tool call, or call finish.' });
+    } else if (o.kind === 'tool') {
       out.push({ role: 'assistant', content: `[called ${o.tool} with ${JSON.stringify(o.args ?? {})}]` });
       out.push({ role: 'user', content: `[${o.tool} result${o.ok === false ? ' (error)' : ''}]\n${clip(o.result ?? '', 6000)}` });
     } else out.push({ role: 'user', content: o.text ?? '' });

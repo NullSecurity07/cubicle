@@ -83,7 +83,8 @@ function archiveObservations(vault: Vault, jobId: string, attempt: number): void
   if (existsSync(p)) renameSync(p, p.replace(/\.jsonl$/, `.attempt${attempt}.jsonl`));
 }
 
-function appendObservation(vault: Vault, jobId: string, o: Observation): void {
+/** Append one transcript entry. The daemon uses it too, to tell a job something happened while it sat blocked. */
+export function appendObservation(vault: Vault, jobId: string, o: Observation): void {
   const p = observationsPath(vault, jobId);
   mkdirSync(path.dirname(p), { recursive: true });
   appendFileSync(p, JSON.stringify(o) + '\n');
@@ -360,6 +361,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   const stepLimit = (job.budget_from ?? 0) + maxSteps;
   let noToolStreak = 0;
   let jsonRetries = 0;
+  let blockedPushedBack = false;
 
   let ownerEditCache: { at: number; list: ReturnType<typeof events.query> } | null = null;
   while (step < stepLimit) {
@@ -484,6 +486,19 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
         refresh();
       }
       const res: ToolResult = await client.call(toolName, args, { idempotencyKey: key });
+      // finish(blocked) parks the job in the brief's "needs you" list until the owner edits its status. Live runs
+      // (2026-09-03 → 09-10) showed models reaching for it after a refused tool call ("cto may not schedule cto",
+      // "Cannot schedule self") — nothing the owner can decide unblocks that, so the job just rots. Push back once
+      // with what blocked actually means; a second finish(blocked) is taken at its word.
+      if (res.finished && !blockedPushedBack && (res.data as { status?: string } | undefined)?.status === 'blocked') {
+        blockedPushedBack = true;
+        const text = 'finish(blocked) refused: "blocked" means the job waits on the owner for something only they can give (a key, an approval, a decision), and nothing here does. A refused tool call or a colleague who has not answered is not an owner decision. Do the work another way (hand off to a teammate, proceed on a stated assumption), or finish with status failed and say why. If you truly need the owner, call finish(blocked) again and name exactly what you need in blockers.';
+        record({ step, kind: 'tool', tool: toolName, args, result: text, ok: false });
+        events.emit({ type: 'agent.tool_result', agent: roleId, job: jobId, payload: { tool: toolName, ok: false, step, summary: text.slice(0, 200) } });
+        updateJob(vault, jobId, { checkpoint_step: step }, roleId, `- step ${step}: finish(blocked) pushed back once (nothing waits on the owner)`);
+        refresh();
+        continue;
+      }
       const sideEffects = !policy.outbound && res.sideEffectKey ? [...job.side_effects_done, res.sideEffectKey] : job.side_effects_done;
       record({ step, kind: 'tool', tool: toolName, args, result: res.text, ok: res.ok });
       events.emit({ type: 'agent.tool_result', agent: roleId, job: jobId, payload: { tool: toolName, ok: res.ok, step, summary: res.text.slice(0, 200) } });

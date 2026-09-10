@@ -137,3 +137,39 @@ describe('an approved call whose mode changed to never (D3)', () => {
     expect(String(blocked[0].payload.reason)).toMatch(/never/);
   });
 });
+
+describe('question timeouts count time the daemon was actually running (live-run 2026-09-10)', () => {
+  // The daemon was stopped from 13:59 to 04:00 the next day. The first tick after start found a 14 h old question
+  // whose answer job had never had a chance to run and escalated it: the CEO answered a question the COO was about
+  // to answer, and the asker — requeued before any answer existed — finished itself as blocked on the owner.
+  it('a question older than the wait but asked before the daemon started is not escalated yet', () => {
+    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'engineer', goal: 'g' }, 'cto');
+    const msgId = 'msg_downtime';
+    askQuestion('cto', 'engineer', msgId, asker, 'Which palette?');
+    answerJob('cto', 'engineer', msgId, asker, 'Which palette?');
+    updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(14) } }, 'engineer');
+
+    expect(requeueUnblocked(vault, 12 * 3600_000, { sinceFloor: Date.now() - 3600_000 })).toBe(0);
+    expect(readJob(vault, asker)!.data.status).toBe('blocked');
+    expect(listJobs(vault).filter((x) => x.type === 'colleague.answer' && x.assigned === 'ceo')).toHaveLength(0);
+
+    // Once the daemon has been up for the whole wait, it escalates as before.
+    expect(requeueUnblocked(vault, 12 * 3600_000, { sinceFloor: Date.now() - 13 * 3600_000 })).toBe(1);
+    expect(readJob(vault, asker)!.data.status).toBe('queued');
+  });
+
+  it('the escalation tells the asker, in its own transcript, to go on without the answer', () => {
+    const asker = createJob(vault, { type: 'engineer.ship', title: 'ship it', assigned: 'engineer', goal: 'g' }, 'cto');
+    const msgId = 'msg_goon';
+    askQuestion('cto', 'engineer', msgId, asker, 'Which palette?');
+    answerJob('cto', 'engineer', msgId, asker, 'Which palette?');
+    updateJob(vault, asker, { status: 'blocked', checkpoint_step: 3, blocked_on: { kind: 'message', id: msgId, since: hoursAgo(13) } }, 'engineer');
+    expect(requeueUnblocked(vault)).toBe(1);
+    const transcript = readFileSync(path.join(dir, '.cubicle/jobs', `${asker}.jsonl`), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const note = transcript.find((o) => o.kind === 'system' && o.text.includes(msgId));
+    expect(note).toBeTruthy();
+    expect(note.step).toBe(3);
+    expect(note.text).toMatch(/ceo/);
+    expect(note.text).toMatch(/without|assum|do not wait/i);
+  });
+});

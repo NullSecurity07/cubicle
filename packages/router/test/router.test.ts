@@ -265,3 +265,75 @@ describe('overloaded models are skipped for a while (503 high demand)', () => {
     expect(hits.slice(before).some((h) => h.includes('alpha-strong'))).toBe(false);
   });
 });
+
+describe('requests that cannot fit or cannot be parsed do not burn the cascade', () => {
+  it('skips a model whose max_prompt_tokens is below the prompt instead of paying for a 413', async () => {
+    behaviours.clear(); hits.length = 0;
+    const cfg = config(`
+  - id: tiny
+    base_url: ${base}/tiny/v1
+    api_key_env: ALPHA_KEY
+    models:
+      - { id: tiny-strong, tier: strong, tools: native, context: 100000, max_prompt_tokens: 300, limits: { rpm: 100 } }`);
+    // Put tiny first in the cascade so it would be tried before alpha if size were ignored.
+    cfg.cascade = ['tiny', 'alpha', 'beta', 'local'];
+    const { router } = mk(cfg);
+    const big = 'x'.repeat(4000); // ~1000 tokens, over tiny's 300-token cap but under alpha's 8000
+    const res = await router.chat({ tier: 'strong', privacy: 'cloud' }, { messages: [{ role: 'user', content: big }] });
+    expect(res.model).toBe('alpha-strong');
+    expect(hits.some((h) => h.includes('tiny-strong'))).toBe(false);
+  });
+
+  it('a 400 (the provider rejected the request shape) skips the rest of that provider, not just that model', async () => {
+    behaviours.clear(); hits.length = 0;
+    behaviours.set('alpha-strong', { status: 400 });
+    const { router, events } = mk(config(), { ALPHA_KEY: 'a' }); // beta has no key, so alpha-cheap is next in line
+    const res = await router.chat({ tier: 'strong', privacy: 'cloud' }, { messages: [{ role: 'user', content: 'hi' }] });
+    expect(res.model).toBe('local-small');
+    expect(hits.filter((h) => h.includes('alpha-cheap'))).toHaveLength(0);
+    expect(events.last('router.downgraded')!.payload.tried).toContain('alpha/alpha-cheap (provider 400)');
+  });
+
+  it('router.call events carry the finish reason so empty replies can be diagnosed from the event log', async () => {
+    behaviours.clear(); hits.length = 0;
+    behaviours.set('alpha-strong', { content: '' , toolCall: false });
+    const { router, events } = mk();
+    await router.chat({ tier: 'strong', privacy: 'cloud' }, { messages: [{ role: 'user', content: 'hi' }] });
+    const ev = events.last('router.call')!;
+    expect(ev.payload.finish_reason).toBe('stop');
+  });
+});
+
+describe('empty replies cascade instead of being retried on the same model', () => {
+  // 2026-09-10: twelve replies with no content and no tool call, in runs of two or three at one step, each run
+  // costing the job an attempt. Rebuilding those prompts reproduced nothing, so treat an empty reply as a failed
+  // call: warn with the finish reason, move to the next candidate, and only return empty when every model did.
+  it('an empty reply moves on to the next model and warns with the finish reason', async () => {
+    behaviours.clear(); hits.length = 0;
+    behaviours.set('alpha-strong', { content: '', toolCall: false });
+    const { router, events } = mk();
+    const res = await router.chat({ tier: 'strong', privacy: 'cloud' }, { messages: [{ role: 'user', content: 'hi' }], tools: [{ name: 'ping', description: 'p', parameters: { type: 'object', properties: {} } }] });
+    expect(res.model).toBe('beta-strong');
+    const warn = events.query({ types: ['daemon.warning'] }).find((e) => e.payload.where === 'empty_reply')!;
+    expect(warn).toBeTruthy();
+    expect(warn.payload.model).toBe('alpha-strong');
+    expect(warn.payload.finish_reason).toBe('stop');
+    expect(hits.map((h) => h.split('|')[1])).toEqual(['alpha-strong', 'beta-strong']); // one try each, no same-model retry
+  });
+
+  it('when every model replies empty the last empty reply is returned rather than NoModelAvailable', async () => {
+    behaviours.clear(); hits.length = 0;
+    for (const m of ['alpha-strong', 'beta-strong', 'alpha-cheap', 'local-small']) behaviours.set(m, { content: '', toolCall: false });
+    const { router } = mk();
+    const res = await router.chat({ tier: 'strong', privacy: 'cloud' }, { messages: [{ role: 'user', content: 'hi' }] });
+    expect(res.content).toBe('');
+    expect(res.parsedToolCalls).toHaveLength(0);
+  });
+
+  it('the token estimate counts the tool schemas, which are part of the prompt the provider bills', () => {
+    const { router } = mk();
+    const tools = [{ name: 'big', description: 'x'.repeat(4000), parameters: { type: 'object', properties: {} } }];
+    expect(router.estimatePrompt({ messages: [{ role: 'user', content: 'hi' }], tools })).toBeGreaterThan(1000);
+    expect(router.estimatePrompt({ messages: [{ role: 'user', content: 'hi' }] })).toBeLessThan(10);
+  });
+});
