@@ -1,7 +1,7 @@
 ---
 name: launch
 steps:
-  - { role: dev_manager, type: engineer.ship, title: "Build: {objective}" }
+  - { role: backend_engineer, type: engineer.ship, title: "Build: {objective}" }
   - { role: cmo, type: growth.post, title: "Announce: {objective}" }
   - { role: cso, type: growth.outreach, title: "Outreach: {objective}" }
   - { role: coo, type: custom, title: "Measure launch" }
