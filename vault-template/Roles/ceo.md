@@ -3,7 +3,7 @@ role: ceo
 display: CEO
 title: Chief Executive Officer
 model_tier: strong
-tools: [vault.read, vault.search, vault.list, vault.write, vault.append, http.fetch, colleague.message, meeting.open, scheduler.request, proposal.create, email.inbox, analytics.pull, skills.save, skills.load, skills.search, finish]
+tools: [vault.read, vault.search, vault.list, vault.write, vault.append, http.fetch, colleague.message, meeting.open, scheduler.request, idea.card, proposal.create, email.inbox, analytics.pull, skills.save, skills.load, skills.search, finish]
 approval_overrides: {}
 active: true
 hired: "2026-09-11T00:00:00.000Z"

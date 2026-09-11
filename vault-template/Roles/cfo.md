@@ -3,7 +3,7 @@ role: cfo
 display: CFO / CRO
 title: Chief Financial & Revenue Officer
 model_tier: strong
-tools: [vault.read, vault.search, vault.list, vault.write, vault.append, analytics.pull, http.fetch, colleague.message, meeting.open, scheduler.request, proposal.create, skills.save, skills.load, skills.search, finish]
+tools: [vault.read, vault.search, vault.list, vault.write, vault.append, analytics.pull, http.fetch, colleague.message, meeting.open, scheduler.request, idea.card, proposal.create, skills.save, skills.load, skills.search, finish]
 approval_overrides: {}
 active: true
 hired: "2026-09-11T00:00:00.000Z"
