@@ -188,8 +188,9 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
     }
     towerMigrated = true;
   }
-  // 3. teams, processes, docs, hireable charters that are simply missing
+  // 3. teams, processes, docs, the research area and hireable charters that are simply missing
   copyDir('Teams'); copyDir('Processes'); copyDir('Docs'); copyDir('Roles/_hireable');
+  copyDir('Research'); copyDir('Ideas'); copyMissing('Metrics/research.md');
   // 4. org fields on every active charter, from the template's charter of the same role
   for (const rel of vault.list('Roles', { ext: '.md' })) {
     if (rel.includes('/archive/') || rel.includes('/_hireable/')) continue;
