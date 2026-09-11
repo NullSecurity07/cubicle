@@ -60,6 +60,8 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | `returns` | record<string, number> = `{}` | gate job type → how many times that gate has returned this job (once-per-gate: a second return from the same gate fails the job instead of looping forever) |
 | `gate_index` | number (optional) | how far through its `config/gates.yaml` gate list the job has passed |
 | `budget_from` | number (optional) | the checkpoint_step a gate return resumed from; the step loop runs until budget_from + maxSteps, so a return gets a fresh budget instead of the remainder of the attempt |
+| `research` | object (optional) |  |
+| `research_slug` | string (optional) |  |
 
 Body sections: `## Goal`, `## Plan`, `## Checkpoint log`, `## Result` (JSON block `{status, artifacts, metrics, blockers, lessons, summary}`).
 

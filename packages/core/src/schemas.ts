@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { nowIso } from './fs.js';
+import { ResearchRequest } from './research.js';
 
 // ---------- Jobs ----------
 export const JobStatus = z.enum(['queued', 'running', 'blocked', 'in_review', 'done', 'failed', 'cancelled']);
@@ -51,6 +52,8 @@ export const JobFrontmatter = z.looseObject({
   returns: z.record(z.string(), z.number().int()).default({}),
   gate_index: z.number().int().optional(),
   budget_from: z.number().int().optional(),
+  research: ResearchRequest.optional(),
+  research_slug: z.string().optional(),
 });
 export type JobFrontmatter = z.infer<typeof JobFrontmatter>;
 

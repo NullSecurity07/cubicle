@@ -17,3 +17,4 @@ export * from './decisions.js';
 export * from './org.js';
 export * from './gates.js';
 export * from './processes.js';
+export * from './research.js';
