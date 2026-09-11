@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import { createHash } from 'node:crypto';
 import { defineTool } from '../registry.js';
 
 const lastHit = new Map<string, number>();
@@ -95,11 +96,42 @@ async function readCapped(res: Response, max: number): Promise<{ body: Buffer; t
   return { body: Buffer.concat(chunks).subarray(0, max), truncated };
 }
 
+/** `Research/archive/<date>-<host>-<hash8>.md` — dated so the same page fetched again next week is a new snapshot. */
+export function archivePath(url: string, today: string): string {
+  let host = 'source';
+  try { host = new URL(url).host.replace(/^www\./, '').replace(/[^a-z0-9.-]/gi, '').toLowerCase() || 'source'; } catch { /* not a url */ }
+  return `Research/archive/${today}-${host}-${createHash('sha1').update(url).digest('hex').slice(0, 8)}.md`;
+}
+
+/** The snapshot note: provenance in frontmatter, the extracted text below it. This is the evidence, not the citation. */
+export function archiveNote(meta: { url: string; fetched: string; status: number; contentType: string; title: string }, text: string): string {
+  const yaml = [
+    '---',
+    `url: ${meta.url}`,
+    `fetched: ${meta.fetched}`,
+    `status: ${meta.status}`,
+    `content_type: ${meta.contentType.replace(/\n/g, ' ')}`,
+    `title: ${meta.title.replace(/\n/g, ' ')}`,
+    '---',
+  ].join('\n');
+  return `${yaml}\n\n${text}\n`;
+}
+
+/** The `<title>` of an HTML document, or the empty string. */
+export function htmlTitle(html: string): string {
+  const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  return m ? htmlToText(m[1]).slice(0, 200) : '';
+}
+
 export const httpFetch = defineTool({
   name: 'http.fetch',
-  description: 'Fetch a public URL and return its text (HTML converted to plain text). Respects robots.txt and per-host rate limits; never reaches private networks.',
-  schema: { url: z.string().url(), raw: z.boolean().default(false).describe('return raw body instead of extracted text') },
-  async handler({ url, raw }, ctx) {
+  description: 'Fetch a public URL and return its text (HTML converted to plain text). Respects robots.txt and per-host rate limits; never reaches private networks. Pass archive: true to also save a dated snapshot under Research/archive/ and get its path back — do that for anything you will cite, because the page will change.',
+  schema: {
+    url: z.string().url(),
+    raw: z.boolean().default(false).describe('return raw body instead of extracted text'),
+    archive: z.boolean().default(false).describe('save a dated snapshot of the page under Research/archive/ and return its path'),
+  },
+  async handler({ url, raw, archive }, ctx) {
     const cfg = ctx.config.http_fetch;
     let u: URL;
     try { u = new URL(url); } catch { return { ok: false, text: 'invalid URL' }; }
@@ -124,8 +156,19 @@ export const httpFetch = defineTool({
         const { body: buf, truncated } = await readCapped(res, cfg.max_bytes);
         const body = buf.toString('utf8');
         const type = res.headers.get('content-type') ?? '';
-        const text = raw || !/html/i.test(type) ? body : htmlToText(body);
-        return { ok: res.ok, text: `HTTP ${res.status} ${type}${current.href !== u.href ? ` (redirected to ${current.href})` : ''}\n\n${text}${truncated ? `\n…[truncated at ${cfg.max_bytes} bytes]` : ''}`, data: { status: res.status, contentType: type, length: buf.length, url: current.href } };
+        const isHtml = /html/i.test(type);
+        const text = raw || !isHtml ? body : htmlToText(body);
+        // Only a successful fetch is worth archiving: a 500 body is not evidence, and writing one would leave a
+        // snapshot in Research/archive/ that a later citation would quietly trust.
+        let archived: string | undefined;
+        if (archive && res.ok) {
+          const rel = archivePath(current.href, ctx.now().toISOString().slice(0, 10));
+          if (!ctx.vault.exists(rel)) {
+            ctx.vault.writeText(rel, archiveNote({ url: current.href, fetched: ctx.now().toISOString(), status: res.status, contentType: type, title: isHtml ? htmlTitle(body) : '' }, raw || !isHtml ? htmlToText(body) : text), ctx.roleId, { job: ctx.jobId });
+          }
+          archived = rel;
+        }
+        return { ok: res.ok, text: `HTTP ${res.status} ${type}${current.href !== u.href ? ` (redirected to ${current.href})` : ''}${archived ? `\narchived at ${archived} — pass it to sources.cite as \`archive\`` : ''}\n\n${text}${truncated ? `\n…[truncated at ${cfg.max_bytes} bytes]` : ''}`, data: { status: res.status, contentType: type, length: buf.length, url: current.href, archive: archived } };
       }
       return { ok: false, text: 'too many redirects' };
     } catch (err) {
