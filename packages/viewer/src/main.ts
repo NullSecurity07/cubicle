@@ -13,6 +13,7 @@ import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
 import { withMotion, reducedMotion } from './world/motion.js';
 import { ElevatorView, toViewState } from './world/elevator-view.js';
+import { announce, announcementFor, coachMark, toast } from './ui/notify.js';
 
 applyTheme(themeFromQuery(location.search));   // before the first paint: no white flash on load or theme switch
 const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
@@ -81,6 +82,7 @@ function viewOf(kind: string): ReturnType<typeof viewFor> {
   return viewFor(kind, state, ctx);
 }
 const panel = new Panel({ viewOf, onOpen: (kind) => open(kind), onLocate: (target) => scene.focusOn(target), onEmpty: () => scene.restoreZoom(), onChat: (text) => sendChat(text) });
+coachMark('Drag to pan, scroll to zoom, click anything in the office. Press ? for shortcuts.');
 
 scene.hooks = {
   getState: () => state,
@@ -145,6 +147,10 @@ const net = new Net(url, token, {
   onEvent(e) {
     if (state.mode === 'replay') { if (liveState) liveState = applyEvent(liveState, e); return; }
     state = applyEvent(state, e);
+    const said = announcementFor(e);
+    if (said) announce(said);
+    if (e.type === 'proposal.created' && e.payload.kind !== 'message') toast(said!, { action: { label: 'Open', open: 'postoffice' } });
+    if (e.type === 'deploy.done') toast(said!, { action: { label: 'See it', open: 'workshop' } });
     if (e.type === 'browser.frame' && !frames[String(e.payload.session)]) frames[String(e.payload.session)] = `/screens/${String(e.payload.path).replace('.cubicle/screens/', '')}${ctx.tokenQuery}`;
     if (state.staleSnapshot) { state = { ...state, staleSnapshot: false }; net.snapshot(); } // plan / brief / inbox changed on disk → refresh text
     refresh();
