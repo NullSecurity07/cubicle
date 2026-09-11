@@ -33,7 +33,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `ci.completed` | stream, green, record (the `Workspace/<stream>/.cubicle-ci/*.json` path), steps [{name, ok, code}] |
 | `email.sent` | to, subject, key, mode (mock|live) |
 | `email.received` | from, subject, id, unsubscribe |
-| `deploy.done` | url, project, mode, key |
+| `deploy.done` | url, project, mode (mock|live), key, stage (preview|canary|live), canary_percent (mock; null off canary), metrics (what the deployer said it would watch), rolled_back, snapshot (.cubicle/deploys/… path a rollback republishes), stream |
 | `proposal.created` | id, kind, path, title, to |
 | `proposal.resolved` | id, kind, approved, outcome |
 | `role.hired` | role, display, desk, sprite |
