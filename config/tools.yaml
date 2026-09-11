@@ -12,6 +12,7 @@ tools:
   vault.write:           { mode: auto, owner_owned_mode: propose, proposal_kind: file_change }
   vault.append:          { mode: auto, owner_owned_mode: propose, proposal_kind: file_change }
   shell.run:             { mode: auto, roles: [dev_manager, backend_engineer, frontend_engineer, fullstack_engineer, platform_engineer, sre, qa_lead, qa_automation, qa_performance, qa_security, qa_release, research_engineer, data_scientist, ciso, engineer, engineer_2, devops] }
+  ci.run:                { mode: auto, roles: [dev_manager, backend_engineer, frontend_engineer, fullstack_engineer, platform_engineer, sre, qa_lead, qa_automation, qa_exploratory, qa_performance, qa_security, qa_release] }
   git.log:               { mode: auto }
   git.diff:              { mode: auto }
   git.commit:            { mode: auto }

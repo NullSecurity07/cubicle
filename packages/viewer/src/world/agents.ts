@@ -166,10 +166,17 @@ export class AgentSprite {
     if (this.detour === 'pantry') { this.detour = 'sit'; this.sitLeft = PANTRY_STAY_MS; }
   }
 
-  /** In the car: hidden, following it (the minimap dot keeps moving). */
-  attachTo(car: { x: number; y: number }): void { this.car = car; this.waitingRide = null; this.path = []; this.container.setVisible(false); }
+  /** In the car: seen inside it, masked to the shaft, standing on the car floor, facing the viewer. */
+  attachTo(car: { x: number; y: number }): void {
+    this.car = car; this.waitingRide = null; this.path = [];
+    this.container.setVisible(true);
+    const m = (car as Phaser.GameObjects.Container).mask;
+    if (m) this.container.setMask(m as Phaser.Display.Masks.GeometryMask);
+    this.container.setPosition(car.x, car.y + 3 * TILE - 2);
+    this.setRiding(true); this.dir = 0;
+  }
   /** Out of the car at a floor's elevator door. */
-  detach(at: Tile): void { this.car = null; this.place(at); this.container.setVisible(this.view.state !== 'offline' && !this.gone); }
+  detach(at: Tile): void { this.car = null; this.container.clearMask(); this.setRiding(false); this.place(at); this.container.setVisible(this.view.state !== 'offline' && !this.gone); }
 
   onElevator(ev: ElevatorEvent, car: { x: number; y: number }): void {
     if (ev.kind === 'boarded' && ev.id === this.view.role) this.attachTo(car);
@@ -204,8 +211,11 @@ export class AgentSprite {
     const want = view.state === 'leaving' ? 'door' : view.state === 'entering' ? 'home' : view.target ?? (view.state === 'walking' && !view.target ? 'home' : this.currentTarget ?? 'home');
     if (want !== this.currentTarget && !this.detour) { this.currentTarget = want; this.goTo(this.world.seats[want] ? (this.seat ? 'seat' : want) : want); }
     if (this.car) {
-      // in the car: follow it, draw nothing but the minimap dot
-      this.container.setPosition(this.car.x, this.car.y + TILE);
+      // in the car: visible, masked to the shaft, standing on the car floor, riding (pose:ride), facing the viewer
+      this.container.setPosition(this.car.x, this.car.y + 3 * TILE - 2);
+      this.step = 0; this.body.y = 0; this.dir = 0;
+      this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0, pose: 'ride' }));
+      this.updateFace(dt, nowMs, view);
       this.dot.setPosition(this.container.x, this.container.y).setVisible(view.state !== 'offline');
       return;
     }

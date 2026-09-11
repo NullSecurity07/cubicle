@@ -30,6 +30,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `browser.frame` | session, seq, path (.cubicle/screens/…; bytes travel only on the WS frame op) |
 | `browser.session_ended` | session, frames |
 | `shell.output` | session, stream (cmd|stdout|stderr|info), text |
+| `ci.completed` | stream, green, record (the `Workspace/<stream>/.cubicle-ci/*.json` path), steps [{name, ok, code}] |
 | `email.sent` | to, subject, key, mode (mock|live) |
 | `email.received` | from, subject, id, unsubscribe |
 | `deploy.done` | url, project, mode, key |

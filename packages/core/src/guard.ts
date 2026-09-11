@@ -65,10 +65,18 @@ export function isOwnerOwned(rel: string, extraNeverModify: string[] = []): bool
   return false;
 }
 
+/**
+ * A stream's build output, dependencies and CI records: `Workspace/<slug>/{node_modules,dist,.venv,.cubicle-ci}`,
+ * exactly what `vault-template/.gitignore` declares as generated. Without this the recursive vault scan would walk
+ * a stream's `node_modules`, and `vault.write` would let an agent forge a CI record under `.cubicle-ci/`
+ * (`writeCiRecord` goes around the vault write API precisely so only `ci.run` can put one there).
+ */
+const WORKSPACE_GENERATED_RE = /^Workspace\/[^/]+\/(node_modules|dist|\.venv|\.cubicle-ci)(\/|$)/;
+
 export function isCachePath(rel: string): boolean {
   let p: string;
   try { p = normalizeRel(rel); } catch { return true; }
-  return CACHE_PREFIXES.some((pre) => p.startsWith(pre) || p === pre.slice(0, -1)) || p.startsWith('Site/dist/') || p === 'Site/dist' || p.startsWith('Site/node_modules/') || p === 'Site/node_modules';
+  return CACHE_PREFIXES.some((pre) => p.startsWith(pre) || p === pre.slice(0, -1)) || p.startsWith('Site/dist/') || p === 'Site/dist' || p.startsWith('Site/node_modules/') || p === 'Site/node_modules' || WORKSPACE_GENERATED_RE.test(p);
 }
 
 export function isPrivilegedActor(by: string): boolean {
