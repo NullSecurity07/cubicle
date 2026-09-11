@@ -38,7 +38,7 @@ page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') 
 page.on('pageerror', (e) => console.log('[page exception]', String(e).slice(0, 200)));
 await page.goto(`http://127.0.0.1:7512/?token=${token}`, { waitUntil: 'load' });
 await page.waitForTimeout(2500);
-type Cub = { __cubicle: { agents: () => unknown; anchors: () => Record<string, unknown>; floor: (n: number) => void; elevator: () => unknown; setHour: (h: number | null) => void; fps: () => number; open: (k: string) => void } };
+type Cub = { __cubicle: { agents: () => unknown; anchors: () => Record<string, unknown>; floor: (n: number) => void; elevator: () => unknown; setHour: (h: number | null) => void; fps: () => number; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void } };
 /** Run `fn` inside the page against `window.__cubicle`. `fn` crosses over as source text, so it can close over
  *  nothing from this script: whatever it needs (a floor number, an hour) is passed as `arg` and arrives as its
  *  second parameter. */
@@ -82,9 +82,18 @@ ev.emit({ type: 'job.failed', agent: 'backend_engineer', job: e, payload: { reas
 // `moving` specifically, not merely `waiting`: this shot is the one that proves the doors stay shut while the car
 // travels, and a car still parked with the COO queued three floors up proves nothing.
 await page.waitForFunction(() => ((window as unknown as Cub).__cubicle.elevator() as { status: string }).status === 'moving', undefined, { timeout: 30000, polling: 50 });
-await cub((c) => c.floor(3));
-console.log('elevator:', JSON.stringify(await cub((c) => c.elevator())));
-await shot('07-elevator', 300);
+const car = await cub((c) => c.elevator()) as { row: number };
+console.log('elevator:', JSON.stringify(car));
+// A floor fit is zoom 1, at which the car is 48 px tall and its doors are a smear. This shot is the one that has to
+// prove the doors stay shut in transit, so frame the shaft itself; `row` is where the car was a moment ago, and it
+// keeps climbing, so centre one tile ahead of it and settle briefly. `zoom`/`center` set the camera outright while
+// `floor(n)` tweens it, so they cannot be combined: a `floor(n)` here would tween straight back over them.
+await cub((c) => c.zoom(3));
+// The car covers about nine tiles a second, so a row read even a fraction of a second early frames it off-centre:
+// zoom first, then read the row and centre on it in the same step as the shot. It hangs three tiles below `row`,
+// and the shaft is centred on 52.5.
+await cub((c) => { const r = (c.elevator() as { row: number }).row; c.center(52.5, r + 1.5); });
+await shot('07-elevator', 0);
 // 08: a board meeting on F1 with the owner in the chair
 ev.emit({ type: 'meeting.opened', agent: 'ceo', job: null, payload: { id: 'm1', room: 'board', participants: ['ceo', 'advisor_skeptic', 'advisor_investor', 'advisor_customer'], agenda: 'Two jobs failed' } });
 await page.waitForTimeout(4500);
@@ -92,6 +101,12 @@ ev.emit({ type: 'meeting.turn', agent: 'advisor_skeptic', job: null, payload: { 
 await cub((c) => c.floor(1));
 await shot('08-board', 1500);
 // 09: the same office at night: lamps only where someone works
+// Lamps light a room that holds an agent in `working` or `talking` state, and scene 07's failure sent the only
+// worker on F2 idle. Put a frontend engineer on a job — queued and started, with no tool call, so she stays at her
+// desk in the Dev room instead of walking off to the terminal — and the Dev room is lit while Sales beside it is not.
+const w = 'job_demo_night';
+ev.emit({ type: 'job.queued', agent: 'dev_manager', job: w, payload: { type: 'engineer.ship', title: 'Fix the build', assigned: 'frontend_engineer' } });
+ev.emit({ type: 'job.started', agent: 'frontend_engineer', job: w, payload: { type: 'engineer.ship', title: 'Fix the build' } });
 await cub((c) => c.setHour(22));
 await cub((c) => c.floor(2));
 await shot('09-night', 1200);
