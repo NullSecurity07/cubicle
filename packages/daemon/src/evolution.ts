@@ -914,6 +914,9 @@ export function researchMetrics(vault: Vault): ResearchMetrics {
     const note = e.job ? readJob(vault, e.job) : null; if (!note) continue;
     delivered++;
     const ms = Date.parse(e.ts) - Date.parse(note.data.created);
+    // Defensive: a clock skew, a hand-edited note, or a replayed event log can put `created` after the
+    // delivery `ts`. That interval is nonsense, not merely small, so it is dropped rather than counted as
+    // (or floored to) zero hours to answer.
     if (Number.isFinite(ms) && ms >= 0) hours.push(ms / 3600_000);
     const own = note.data.research_slug ? new RegExp(`Research/${note.data.research_slug}/`, 'i') : null;
     const cited = note.body.split('\n').filter((l) => CITES_A_PROJECT.test(l) && !(own && own.test(l)));
