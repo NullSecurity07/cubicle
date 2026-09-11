@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, listJobs, listInbox, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict } from '../src/index.js';
+import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
+import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
 
@@ -29,6 +30,25 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const daemonFor = (llm: Llm) => new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 300, maxConcurrentJobs: 3, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
 async function waitFor(pred: () => boolean, ms = 30000): Promise<void> { const t0 = Date.now(); while (!pred()) { if (Date.now() - t0 > ms) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 100)); } }
+
+// A plan good enough to exercise runBoardSession directly, without going through a whole heartbeat.
+const PLAN_TEXT = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n';
+
+/** Scripted `chat()` that records which tier and roleId each call used, so a test can check what `askAs` sent
+ * to the router without parsing a real model response. */
+function tierRecordingLlm(): Llm & { calls: { roleId: string; tier: string; prompt: string }[] } {
+  const calls: { roleId: string; tier: string; prompt: string }[] = [];
+  return {
+    calls,
+    async chat(req: RouteRequest, chat: { messages: ChatMessage[]; tools?: ToolSchema[] }) {
+      const last = String(chat.messages.at(-1)?.content ?? '');
+      calls.push({ roleId: req.roleId ?? '?', tier: String(req.tier), prompt: last });
+      const content = /VERDICT: pass/.test(last) ? 'VERDICT: pass\n- none' : '- a failure mode';
+      return { content, toolCalls: [], finishReason: 'stop' as const, usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] };
+    },
+    promptBudget: () => 6000,
+  } satisfies Llm & { calls: typeof calls };
+}
 
 describe('mergeBoardVerdict', () => {
   it('reads the chair\'s verdict line and its bullets, and fails open to pass', () => {
@@ -234,6 +254,106 @@ describe('board pre-mortems are validated decision notes (D7)', () => {
       const note = v.readNoteOrNull(`Decisions/premortem-${hb.id}.md`)!;
       expect(DecisionFrontmatter.parse(note.data).status).toBe('proposed');
       expect(note.body).toContain('growth objective has no metric');
+    } finally { v.close(); await d.stop(); }
+  });
+});
+
+describe('board advisors each speak at their own charter\'s model_tier (Task 4 review finding 1)', () => {
+  it('asks advisor_investor and advisor_customer at their charter\'s medium tier, never upgraded to the lead\'s strong (the charter is a ceiling, never a floor)', async () => {
+    const llm = tierRecordingLlm();
+    const vault = Vault.open(dir);
+    try {
+      const org = loadOrg(vault);
+      expect(org.roles.advisor_investor.model_tier).toBe('medium');
+      expect(org.roles.advisor_customer.model_tier).toBe('medium');
+      expect(org.roles.advisor_skeptic.model_tier).toBe('strong');
+      await runBoardSession({ vault, llm }, org, PLAN_TEXT);
+      const advisorCalls = llm.calls.filter((c) => /Imagine the cycle has already failed/.test(c.prompt));
+      const tierOf = (roleId: string) => advisorCalls.find((c) => c.roleId === roleId)?.tier;
+      expect(tierOf('advisor_investor')).toBe('medium');
+      expect(tierOf('advisor_customer')).toBe('medium');
+      expect(tierOf('advisor_skeptic')).toBe('strong');
+      // The chair's merge call is also the lead's own tier ('strong'), not some other default.
+      const chairCall = llm.calls.find((c) => /VERDICT: pass/.test(c.prompt));
+      expect(chairCall?.roleId).toBe('advisor_skeptic');
+      expect(chairCall?.tier).toBe('strong');
+    } finally { vault.close(); }
+  });
+
+  it('falls back to the board lead\'s tier, then medium, when an advisor\'s own model_tier is missing (Task 4 review finding 1)', async () => {
+    const llm = tierRecordingLlm();
+    const vault = Vault.open(dir);
+    try {
+      const org = loadOrg(vault);
+      // Simulate a role note with no model_tier of its own — org.roles is a plain in-memory object here, not
+      // backed by the file, so this does not touch the vault.
+      const { model_tier: _drop, ...withoutTier } = org.roles.advisor_investor;
+      org.roles.advisor_investor = withoutTier as typeof org.roles.advisor_investor;
+      await runBoardSession({ vault, llm }, org, PLAN_TEXT);
+      const advisorCalls = llm.calls.filter((c) => /Imagine the cycle has already failed/.test(c.prompt));
+      // advisor_investor has no tier of its own, so it falls back to the lead's ('strong'), not to a bare default.
+      expect(advisorCalls.find((c) => c.roleId === 'advisor_investor')?.tier).toBe('strong');
+    } finally { vault.close(); }
+  });
+});
+
+describe('board advisors are de-duplicated (Task 4 review MINOR 4)', () => {
+  it('asks a lead listed among the board members only once', async () => {
+    const llm = tierRecordingLlm();
+    const vault = Vault.open(dir);
+    try {
+      const org = loadOrg(vault);
+      org.teams.board = { ...org.teams.board, members: [org.teams.board.lead, ...org.teams.board.members] };
+      const session = await runBoardSession({ vault, llm }, org, PLAN_TEXT);
+      expect(session.advisors).toEqual(['advisor_skeptic', 'advisor_investor', 'advisor_customer']);
+      const advisorAsksOf = (roleId: string) => llm.calls.filter((c) => c.roleId === roleId && /Imagine the cycle has already failed/.test(c.prompt)).length;
+      expect(advisorAsksOf('advisor_skeptic')).toBe(1);
+    } finally { vault.close(); }
+  });
+});
+
+describe('a board where every model call fails does not read as a clean pre-mortem (Task 4 review finding 2)', () => {
+  const throwingLlm: Llm = {
+    async chat() { throw new Error('no model available'); },
+    promptBudget: () => 6000,
+  };
+
+  it('runBoardSession reports zero advisors answered, and fails open to pass', async () => {
+    const vault = Vault.open(dir);
+    try {
+      const org = loadOrg(vault);
+      const session = await runBoardSession({ vault, llm: throwingLlm }, org, PLAN_TEXT);
+      expect(session.answered).toBe(0);
+      expect(session.verdict).toBe('pass');
+    } finally { vault.close(); }
+  });
+
+  it('writeBoardPremortemDecision writes "no advisor answered" rather than "the plan survived the pre-mortem" when answered is 0', async () => {
+    const vault = Vault.open(dir);
+    try {
+      const org = loadOrg(vault);
+      const session = await runBoardSession({ vault, llm: throwingLlm }, org, PLAN_TEXT);
+      writeBoardPremortemDecision(vault, 'job_hb1', 'job_board1', session.verdict, session.findings, org.teams.board.lead, new Date(), session.answered);
+      const note = vault.readNoteOrNull('Decisions/premortem-job_hb1.md')!;
+      expect(note.body).toContain(BOARD_UNREVIEWED_NOTE);
+      expect(note.body).not.toContain('The plan survived the pre-mortem.');
+      expect(note.body).not.toContain('The board found nothing in this plan likely to sink the cycle.');
+    } finally { vault.close(); }
+  });
+
+  it('the heartbeat emits daemon.warning { where: "board_premortem" } when no advisor answered', async () => {
+    const llm = orgLlm({ vetoes: 0, boardSilent: true });
+    const d = daemonFor(llm);
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      const warnings = v.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'board_premortem');
+      expect(warnings.some((e) => e.payload.reason === BOARD_UNREVIEWED_NOTE)).toBe(true);
+      const hb = listJobs(v).find((j) => j.type === 'ceo.heartbeat')!;
+      const note = v.readNoteOrNull(`Decisions/premortem-${hb.id}.md`)!;
+      expect(note.body).toContain(BOARD_UNREVIEWED_NOTE);
+      expect(note.body).not.toContain('The plan survived the pre-mortem.');
     } finally { v.close(); await d.stop(); }
   });
 });

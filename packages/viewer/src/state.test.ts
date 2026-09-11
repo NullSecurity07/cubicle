@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, type Snapshot } from './state.js';
+import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, overseerRole, vetoRole, type Snapshot } from './state.js';
 
 const role = (o: Partial<Snapshot['roles'][number]> & { role: string }) => ({ display: o.role, sprite: o.role, desk: o.role, active: true, ...o });
 
@@ -132,6 +132,11 @@ describe('viewer state machine (spec §10)', () => {
     const failed = applyEvent(s, ev('job.failed', 'backend_engineer', { reason: 'x' }));
     expect(failed.agents.coo.target).toBe('desk:backend_engineer');
     expect(OVERSEER).toBe('coo'); expect(VETO_ROLE).toBe('advisor_skeptic');
+    const withOffices = applySnapshot(emptyState(), { ...snap, offices: { chief_executive: 'ceo', operations: 'chief_of_staff' }, teams: [...(snap.teams ?? []), { id: 'board', name: 'Board', lead: 'advisor_customer', members: [], mission: '' }] });
+    expect(overseerRole(withOffices)).toBe('chief_of_staff');
+    expect(vetoRole(withOffices)).toBe('advisor_customer');
+    expect(overseerRole(emptyState())).toBe('coo');          // no snapshot yet: the shipped roster
+    expect(vetoRole(emptyState())).toBe('advisor_skeptic');
   });
   it('plan.vetoed animates the agent that vetoed, falling back to the board skeptic', () => {
     let s = applySnapshot(emptyState(), { ...snap, roles: [...snap.roles, { role: 'advisor_skeptic', display: 'Skeptic', sprite: 'advisor_skeptic', desk: 'advisor_skeptic', active: true }] });
