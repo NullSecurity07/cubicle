@@ -4,6 +4,22 @@ import { QuotaTracker, estimateTokens } from './quota.js';
 import { chatOnce, apiKeyFor, RateLimitedError, ProviderError, type ChatRequest, type ChatResult, type ChatMessage } from './client.js';
 import { buildJsonToolInstruction, parseJsonToolReply, type ToolSchema } from './jsontools.js';
 
+/**
+ * What a division has left of its model quota for the day. The CFO allocates it; the router spends it down.
+ * A `quota` of 0 means "not budgeted" — never "stopped".
+ */
+export interface ModelBudget { used: number; quota: number }
+
+/**
+ * The tier a request actually routes at, once its division's budget is taken into account. Past its quota a
+ * `strong` or `medium` request becomes `cheap`; a request already at `cheap` or `local` is left alone. The
+ * cheap tier is the floor, so a division past its quota gets worse models and **never stops**.
+ */
+export function budgetedTier(tier: ModelTier, budget?: ModelBudget | null): ModelTier {
+  if (!budget || budget.quota <= 0 || budget.used < budget.quota) return tier;
+  return TIER_RANK[tier] > TIER_RANK.cheap ? 'cheap' : tier;
+}
+
 export interface RouteRequest {
   tier: ModelTier;
   needsTools: boolean;
@@ -12,6 +28,8 @@ export interface RouteRequest {
   privacy?: 'cloud' | 'local';
   /** Providers to skip (already failed this call). */
   exclude?: string[];
+  /** The division budget this call is charged against; set once per job by the harness. */
+  budget?: ModelBudget | null;
 }
 
 export interface Candidate {
@@ -90,7 +108,7 @@ export class Router {
 
   /** Candidate list for a request: same-or-higher tier first (closest tier first), then lower tiers. */
   candidates(req: RouteRequest): Candidate[] {
-    const want = TIER_RANK[req.tier];
+    const want = TIER_RANK[budgetedTier(req.tier, req.budget)];
     const all: Candidate[] = [];
     for (const provider of this.availableProviders()) {
       if (req.exclude?.includes(provider.id)) continue;
@@ -112,7 +130,7 @@ export class Router {
   promptBudget(req: RouteRequest): number {
     const cands = this.candidates(req);
     if (cands.length === 0) return 6000;
-    const want = TIER_RANK[req.tier];
+    const want = TIER_RANK[budgetedTier(req.tier, req.budget)];
     const top = cands.filter((c) => TIER_RANK[c.model.tier] >= want);
     const pool = (top.length ? top : cands).slice(0, 3);
     return Math.min(...pool.map((c) => c.model.max_prompt_tokens));
@@ -142,7 +160,9 @@ export class Router {
     const tried: string[] = [];
     const cands = this.candidates(req);
     if (cands.length === 0) throw new NoModelAvailableError(tried);
+    // The *asked-for* tier, so a budget demotion shows up as a downgrade the office and the brief can explain.
     const wantRank = TIER_RANK[req.tier];
+    const overBudget = budgetedTier(req.tier, req.budget) !== req.tier;
     let downgradedLogged = false;
     const promptTokens = est - (chat.maxTokens ?? 1024);
     /** Providers that answered 400 to this request: the request shape is wrong for them, so their other models would say the same. */
@@ -160,7 +180,7 @@ export class Router {
       if (!head.ok) { tried.push(`${key} (${head.reason})`); continue; }
       const isDowngrade = TIER_RANK[c.model.tier] < wantRank;
       if (isDowngrade && !downgradedLogged) {
-        this.events?.emit({ type: 'router.downgraded', agent: req.roleId ?? null, payload: { requested_tier: req.tier, chosen_tier: c.model.tier, provider: c.provider.id, model: c.model.id, tried } });
+        this.events?.emit({ type: 'router.downgraded', agent: req.roleId ?? null, payload: { requested_tier: req.tier, chosen_tier: c.model.tier, provider: c.provider.id, model: c.model.id, tried, reason: overBudget ? 'division budget' : 'cascade' } });
         downgradedLogged = true;
       }
       // Build the provider-specific request
