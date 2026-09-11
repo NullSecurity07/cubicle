@@ -11,6 +11,7 @@
 import type { State } from '../state.js';
 import type { Headline } from './headlines.js';
 import { cut, planBits, briefBits } from './headlines.js';
+import { boardHeadline } from './board.js';
 import type { Ctx, View } from './content.js';
 import { agentView, bankView, browserStream, browserViewerView, briefTitle, byUpdated, callsToday, chatHtml, emptyHtml, esc, feedHtml, isOpen, isRoom, jobView, kindLabel, obsidianUrl, orgView, postOfficeView, queueView, roomView, section, teamJobs, terminalViewerView, who } from './content.js';
 import { md } from './markdown.js';
@@ -65,8 +66,17 @@ export function viewFor(kind: string, s: State, ctx: Ctx): View {
 for (const def of [
   {
     kind: 'whiteboard', streamKind: 'markdown', streamId: () => 'Plans/plan.md',
-    headline: (s) => { const p = planBits(s.plan); return p.objective || p.items.length ? { head: cut(p.objective || 'This cycle', 44), lines: p.items.slice(0, 3).map((i) => '• ' + cut(i, 40)) } : { head: 'No plan yet', lines: ['The CTO writes it on heartbeat #1'] }; },
-    view: (s, ctx) => ({ mode: 'doc', title: 'Plan', sub: 'Plans/plan.md', html: s.plan ? md(s.plan) : `<p class="muted">No plan yet. The CTO writes the first one during heartbeat #1.</p>`, copy: s.plan, link: obsidianUrl(ctx.vaultName, 'Plans/plan.md') }),
+    headline: (s) => {
+      const b = boardHeadline(s.board, s.now);
+      if (b) return b;
+      const p = planBits(s.plan);
+      return p.objective || p.items.length ? { head: cut(p.objective || 'This cycle', 44), lines: p.items.slice(0, 3).map((i) => '• ' + cut(i, 40)) } : { head: 'No plan yet', lines: ['The CEO writes it on heartbeat #1'] };
+    },
+    view: (s, ctx) => {
+      const b = boardHeadline(s.board, s.now);
+      const board = b ? section('The board', `<p>${esc(b.head)}</p>${b.lines.length ? `<ul>${b.lines.map((l) => `<li>${esc(l.replace(/^• /, ''))}</li>`).join('')}</ul>` : ''}`) : '';
+      return { mode: 'doc', title: 'Plan', sub: 'Plans/plan.md', html: board + (s.plan ? md(s.plan) : `<p class="muted">No plan yet. The CEO writes the first one during heartbeat #1.</p>`), copy: s.plan, link: obsidianUrl(ctx.vaultName, 'Plans/plan.md') };
+    },
   },
   {
     kind: 'newsstand', streamKind: 'markdown', streamId: (s) => s.latestRun?.path ?? 'Runs/',

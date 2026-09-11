@@ -68,6 +68,16 @@ describe('viewer state machine (spec §10)', () => {
     s = applyEvent(s, ev('role.fired', 'daemon', { role: 'cmo' }, null));
     expect(s.agents.cmo.state).toBe('leaving');
   });
+  it('a board session walks the advisors to the table and lights the whiteboard', () => {
+    let s = emptyState();
+    s = applyEvent(s, { ts: '2026-09-11T10:00:00.000Z', type: 'meeting.opened', agent: 'advisor_skeptic', job: null, payload: { id: 'm1', room: 'board', participants: ['advisor_skeptic', 'advisor_investor'], subject: 'idea', title: 'Meal kits' } });
+    expect(s.board).toMatchObject({ subject: 'idea', title: 'Meal kits', verdict: null });
+    expect(s.meetings.m1.open).toBe(true);          // the owner's chair still reads this, unchanged
+    expect(s.agents.advisor_skeptic?.target ?? 'boardroom').toBe('boardroom');
+    s = applyEvent(s, { ts: '2026-09-11T10:01:00.000Z', type: 'meeting.closed', agent: 'advisor_skeptic', job: null, payload: { id: 'm1', verdict: 'return', findings: ['delivery is unpriced'] } });
+    expect(s.board).toMatchObject({ verdict: 'return', findings: ['delivery is unpriced'] });
+    expect(s.meetings.m1.open).toBe(false);
+  });
   it('surfaces track browser sessions, frames, mail, terminal, proposals, deploys', () => {
     let s = applySnapshot(emptyState(), snap);
     s = applyEvent(s, ev('browser.session_started', 'cmo', { session: 's1' }));
