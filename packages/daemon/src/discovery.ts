@@ -1,9 +1,14 @@
 import {
-  type Vault, type Org, type InterviewPhase, type ResearchRequest,
-  createJob, createProposal, findInboxById, listInbox, jobPath, idFromKey, officeHolder, teamOf, listIdeas,
+  type Vault, type Org, type InterviewPhase, type ResearchRequest, type DiscoveryInput,
+  createJob, createProposal, findInboxById, listInbox, listJobs, jobPath, idFromKey, officeHolder, teamOf, listIdeas,
   DISCOVERY_INBOX, FOUNDER_BRIEF, INTERVIEW_PATH, discoveryDigest, hasFounderBrief, founderBriefTemplate,
   interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, listDiscoveryInputs, isLongPrompt,
+  ownerSaid, ideaPath, IDEA_SCORE_MAX,
 } from '@cubicle/core';
+
+// `ownerSaid` moved to core so the `discovery.inputs` tool cuts a cabin note the same way this module does
+// (whole-branch review, minor 2). Re-exported here because it was part of this module's surface first.
+export { ownerSaid };
 
 /**
  * The discovery step: what the company reads before it plans anything, who is asked when there is nothing to
@@ -25,33 +30,79 @@ export interface DiscoveryStatus {
 }
 
 /**
- * Whether this cycle runs discovery, asks the interview, or does neither.
+ * Material the company has **not read yet**: what arrived after the newest `discovery` job, or everything at
+ * all when discovery has never run.
  *
- * The order matters and is the whole rule: a brief already waiting for the owner stops everything (asking twice
- * for the same decision is how an inbox becomes noise); material the owner gave us beats an unanswered
- * interview (they wrote a document, do not make them answer a questionnaire too); and an empty vault with no
- * interview yet gets the questions, because there is genuinely nothing else to plan from.
+ * The distinction is the whole of C2. `ownerPrompt` used to concatenate every cabin message the inbox had ever
+ * held, and the digest — which is the discovery job's id — moved every time anyone typed anything. "Thanks" to
+ * the CEO therefore bought a full research lifecycle, a `requester.review` gate and a founder-brief edit
+ * proposal, and the heartbeat blocked on it: five chats in a day were five research projects.
+ */
+export interface UnreadMaterial {
+  /** A `Discovery/inbox/` file written since discovery last ran (any of them, the first time). */
+  newInput: boolean;
+  /** The founder interview was answered since discovery last ran. */
+  newInterview: boolean;
+  /** Unread owner words that are themselves a document (`isLongPrompt`) — a brief typed into the cabin. */
+  longPrompt: boolean;
+  /** Any unread owner words at all, one line included: the single-prompt path (spec §1.3, §5.5). */
+  anyPrompt: boolean;
+}
+
+/** A re-run has to be worth a research job. A short reply is not; these three are. */
+function isSubstantive(u: UnreadMaterial): boolean {
+  return u.newInput || u.newInterview || u.longPrompt;
+}
+
+/**
+ * Whether this cycle runs discovery, asks the interview, or does neither. **Both can be true**: asking costs no
+ * model call and writes two notes, so an owner who types one line gets the name proposal, the six questions and
+ * a discovery job on the same cycle — which is what §1.3, §1.8 and §5.5 all describe ("the owner types one
+ * line, the CEO proposes a name, and discovery still runs over that line"). Treating them as alternatives left
+ * the single-prompt company waiting for an interview answer for ever, and it is the one path the spec calls out
+ * as having to work.
+ *
+ * `ask` is about the *vault* being thin — no files, no typed document, no brief, nobody asked yet. `run` is
+ * about there being something unread to read, and about that something being worth a research job the second
+ * time onwards: the first run takes anything, a re-run needs a substantive increment and is floored at one a
+ * calendar day, the same backstop `intelligenceDue` uses.
  */
 export function discoveryStatus(o: {
   hasBrief: boolean;
   briefProposalOpen: boolean;
+  /** How many files sit in `Discovery/inbox/` at all — what "the vault is thin" means, read or not. */
   inputs: number;
   interview: InterviewPhase;
-  longPrompt: boolean;
+  unread: UnreadMaterial;
+  /** Discovery has run at least once before (there is a `discovery` job in the log). */
+  everRun: boolean;
   /** A discovery job for exactly this material already exists (see `discoveryDigest`). */
   alreadyRun: boolean;
+  /** One of those jobs was queued today: the once-a-day floor on re-runs. */
+  ranToday: boolean;
 }): DiscoveryStatus {
   if (o.briefProposalOpen) return { run: false, ask: false, why: 'a founder brief is already waiting for your verdict' };
-  const material = o.inputs > 0 || o.longPrompt || o.interview === 'answered';
-  if (!material && !o.hasBrief) {
-    if (o.interview === 'none') return { run: false, ask: true, why: 'nothing to read yet: asking the founder interview' };
-    if (o.interview === 'asked') return { run: false, ask: false, why: 'the founder interview is waiting for an answer' };
-    // skipped: the owner does not want to be interviewed, so work from whatever the vault already holds.
-    return { run: !o.alreadyRun, ask: false, why: o.alreadyRun ? 'discovery has already read what there is' : 'the owner skipped the interview; reading the vault instead' };
+  // Thin: nothing written down and nothing typed at length. One line does not make a vault thick — the owner
+  // who typed it is exactly the owner the six questions are for — so it does not hold the interview back.
+  const ask = !o.hasBrief && o.interview === 'none' && o.inputs === 0 && !o.unread.longPrompt;
+  const status = (run: boolean, why: string): DiscoveryStatus => ({ run, ask, why });
+  if (o.alreadyRun) return status(false, 'discovery has already read this material');
+
+  if (!o.everRun) {
+    // The first read takes whatever there is, one line included, and an empty vault whose owner skipped the
+    // interview still gets one: §1.8 — the company must be able to start from a single line, or from nothing.
+    const anything = isSubstantive(o.unread) || o.unread.anyPrompt || o.inputs > 0 || o.interview === 'answered' || o.interview === 'skipped';
+    if (anything) return status(true, ask ? 'reading the line the owner typed, and asking the interview as well' : 'first discovery over the owner\'s material');
+    if (ask) return status(false, 'nothing to read yet: asking the founder interview');
+    if (o.interview === 'asked') return status(false, 'the founder interview is waiting for an answer');
+    return status(false, 'nothing to read yet');
   }
-  if (!material && o.hasBrief) return { run: false, ask: false, why: 'the founder brief covers everything the owner has given us' };
-  if (o.alreadyRun) return { run: false, ask: false, why: 'discovery has already read this material' };
-  return { run: true, ask: false, why: o.hasBrief ? 'new material since the founder brief' : 'first discovery over the owner\'s material' };
+  if (!isSubstantive(o.unread)) {
+    if (o.unread.anyPrompt) return status(false, 'nothing new to read: a reply to the CEO is not material for a second discovery job');
+    return status(false, o.hasBrief ? 'the founder brief covers everything the owner has given us' : 'nothing new since discovery last read the vault');
+  }
+  if (o.ranToday) return status(false, 'discovery already read new material today; the rest is read on the next day\'s first cycle');
+  return status(true, o.hasBrief ? 'new material since the founder brief' : 'new material since the last discovery');
 }
 
 /** How many `finance.estimate` jobs one cycle may queue: the free tier pays for these, and the board only sits once. */
@@ -108,30 +159,54 @@ export function estimateGoal(idea: { id: string; title: string }): string {
 }
 
 /**
- * What the owner actually typed, out of a cabin note's body.
+ * What the owner has typed in the cabin and the company has not read yet, oldest first — the "long prompt"
+ * input, and the part of the digest that moves.
  *
- * Two things are cut: the `# title` line, anchored to the first line of the body so a `# …` further down is the
- * owner's own writing and survives; and everything from `## CEO` on, which is the CEO's reply appended to the
- * same note. Letting the reply through would feed discovery the company's own words back and, worse, move
- * `discoveryDigest` every time anyone answered, re-queueing discovery for ever.
- *
- * Every reader of an owner message goes through this one function, because the cabin's note body is never what
- * the owner typed: `ws.ts` sends `title: text.slice(0, 60), body: text` and `createProposal` renders the note as
- * `# <title>\n\n<body>`, so an owner who types `skip` produces `# skip\n\nskip`. `isSkip` is anchored to the
- * whole string, so the raw body would be recorded as *answering* the six questions with the word "skip" — and
- * `discoveryStatus` reads an answered interview as material, which is the opposite of what they asked for.
+ * `since` is the newest discovery job's creation time: messages older than that were read by that job, and
+ * feeding them back would keep the digest — and so the job id — moving for ever on material nobody added.
+ * Omitted, it is everything, which is what the first run wants.
  */
-export function ownerSaid(body: string): string {
-  return body.split(/^## CEO\s*$/m)[0].replace(/^#\s[^\n]*\r?\n?/, '').trim();
-}
-
-/** Everything the owner has typed in the cabin, oldest first — the "long prompt" input, and part of the digest. */
-export function ownerPrompt(vault: Vault): string {
+export function ownerPrompt(vault: Vault, since: string | null = null): string {
   return listInbox(vault)
-    .filter((n) => n.data.kind === 'message' && n.data.from === 'owner')
+    .filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && (!since || String(n.data.created ?? '') > since))
     .map((n) => ownerSaid(n.body))
     .filter(Boolean)
     .join('\n\n');
+}
+
+/** Terminal job statuses: a job in one of these is no longer being worked on. */
+const CLOSED = ['done', 'failed', 'cancelled'];
+
+/** Every `discovery` job in the log, oldest first. */
+export function discoveryJobs(vault: Vault): { id: string; created: string; status: string }[] {
+  return listJobs(vault).filter((j) => j.type === 'discovery').map((j) => ({ id: j.id, created: j.created, status: j.status }))
+    .sort((a, b) => a.created.localeCompare(b.created));
+}
+
+/** When discovery last read the vault, or null if it never has. The line between read and unread material. */
+export function lastDiscoveryAt(vault: Vault): string | null {
+  const jobs = discoveryJobs(vault);
+  return jobs.length ? jobs[jobs.length - 1].created : null;
+}
+
+/** A discovery job that is still being worked on — the company is reading right now, so nothing plans past it. */
+export function openDiscoveryJob(vault: Vault): string | null {
+  return discoveryJobs(vault).find((j) => !CLOSED.includes(j.status))?.id ?? null;
+}
+
+/**
+ * When each of `paths` was last written, from **one** pass over the log rather than one query per path
+ * (`vault.wrote` is the most common event there is, so a query inside a loop reads the whole log again for
+ * every file). A path nobody wrote is absent from the map.
+ */
+export function lastWriteTimes(vault: Vault, paths: string[]): Map<string, string> {
+  const want = new Set(paths);
+  const out = new Map<string, string>();
+  for (const e of vault.events.query({ types: ['owner.edited', 'vault.wrote'] })) {
+    const p = String((e.payload as { path?: string }).path ?? '');
+    if (want.has(p) && (out.get(p) ?? '') < e.ts) out.set(p, e.ts);
+  }
+  return out;
 }
 
 /**
@@ -159,7 +234,7 @@ export function askInterview(vault: Vault, ceo: string, now: Date): string | nul
   const resumed = findInboxById(vault, id) !== null;
   createProposal(vault, {
     id, kind: 'message', from: ceo, to: 'owner',
-    title: 'Six questions before I plan anything', body: renderInterviewAsk(),
+    title: 'Six questions, while I get started', body: renderInterviewAsk(),
   }, ceo);
   vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString()), 'daemon');
   return resumed ? null : id;
@@ -184,20 +259,39 @@ export function briefProposalOpen(vault: Vault): boolean {
 /** One job per set of material: the id is the digest, so the same inputs can never queue a second one. */
 export function discoveryJobId(digest: string): string { return idFromKey('job', `discovery-${digest}`); }
 
-/** The status of discovery right now, read entirely from the vault. */
-export function currentDiscoveryStatus(vault: Vault): DiscoveryStatus & { digest: string } {
-  const prompt = ownerPrompt(vault);
-  const digest = discoveryDigest(vault, prompt);
+/**
+ * The status of discovery right now, read entirely from the vault. Everything it needs from the inbox is read
+ * once: the file list carries its own shas, the digest is handed that list, and the event log is walked once
+ * for every path at issue.
+ */
+export function currentDiscoveryStatus(vault: Vault, now = new Date()): DiscoveryStatus & { digest: string; inputs: DiscoveryInput[] } {
+  const since = lastDiscoveryAt(vault);
+  const prompt = ownerPrompt(vault, since);
+  const inputs = listDiscoveryInputs(vault);
+  const interview = interviewPhase(vault.readTextOrNull(INTERVIEW_PATH));
+  const written = lastWriteTimes(vault, [...inputs.map((f) => f.path), INTERVIEW_PATH]);
+  // No discovery job yet means nothing has been read, so everything counts as new; after one, a file is new
+  // when it was written after that job was queued.
+  const unread = (p: string): boolean => !since || (written.get(p) ?? '') > since;
+  const digest = discoveryDigest(vault, prompt, inputs);
   return {
     ...discoveryStatus({
       hasBrief: hasFounderBrief(vault),
       briefProposalOpen: briefProposalOpen(vault),
-      inputs: listDiscoveryInputs(vault).length,
-      interview: interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)),
-      longPrompt: isLongPrompt(prompt),
+      inputs: inputs.length,
+      interview,
+      unread: {
+        newInput: inputs.some((f) => unread(f.path)),
+        newInterview: interview === 'answered' && unread(INTERVIEW_PATH),
+        longPrompt: isLongPrompt(prompt),
+        anyPrompt: prompt.trim().length > 0,
+      },
+      everRun: since !== null,
       alreadyRun: vault.exists(jobPath(discoveryJobId(digest))),
+      ranToday: since !== null && since.slice(0, 10) === now.toISOString().slice(0, 10),
     }),
     digest,
+    inputs,
   };
 }
 
@@ -239,8 +333,10 @@ export function discoveryRequest(opts: { ceo: string; hasBrief: boolean; deadlin
  * Assigned by office: the research office owns the investigation, the chief executive owns the decision, which
  * is what `for:` means and what `requester.review` in `config/gates.yaml` reads.
  */
-export function enqueueDiscovery(vault: Vault, org: Org): string | null {
-  const status = currentDiscoveryStatus(vault);
+export function enqueueDiscovery(vault: Vault, org: Org, precomputed?: DiscoveryStatus & { digest: string }): string | null {
+  // The caller has almost always just asked the same question; reading (and hashing) the whole inbox a second
+  // time to get the same answer is the cost this parameter removes.
+  const status = precomputed ?? currentDiscoveryStatus(vault);
   if (!status.run) return null;
   const research = officeHolder(org, 'research');
   const ceo = officeHolder(org, 'chief_executive');
@@ -278,5 +374,79 @@ export function enqueueEstimates(vault: Vault, org: Org): string[] {
     assigned: finance, owner_role: finance, team,
     goal: estimateGoal(idea),
     done_when: `Ideas/${idea.id}.md carries an estimate in words, a value and an effort, each with the assumption behind it.`,
+  }, 'daemon'));
+}
+
+/**
+ * The other half of the score. `nextIdeaForBoard` needs all four inputs, and until now only `finance.estimate`
+ * had a producer: the research half was written by the `discovery` job, when it chose to, and by nothing else
+ * ever. Every card the daily intelligence sweep files — and every `owner`- or `pantry`-sourced card — was
+ * therefore unscorable for ever: it could never reach the board, never be kept, parked or scrapped, and nothing
+ * anywhere reported it. §2.5 names the mechanism ("`discovery`, **or a follow-up `research` job**"); this is it.
+ */
+export function ideasNeedingResearch<T extends { id: string; decision: string; score_inputs: { evidence?: number; fit?: number; value?: number } }>(ideas: T[], max = MAX_ESTIMATES_PER_CYCLE): T[] {
+  return ideas
+    .filter((i) => i.decision === 'undecided' && (i.score_inputs.evidence === undefined || i.score_inputs.fit === undefined))
+    // Best-priced first, for the reason estimates go best-evidenced first: when the cap bites, spend the cycle
+    // on the card the other office already thinks is worth something.
+    .sort((a, b) => (b.score_inputs.value ?? 0) - (a.score_inputs.value ?? 0) || a.id.localeCompare(b.id))
+    .slice(0, max);
+}
+
+/** Job id per idea, so a replayed cycle re-finds the investigation it already asked for. */
+export function researchJobId(slug: string): string { return idFromKey('job', `research-${slug}`); }
+
+/** The research office's brief for one card: the two numbers it owns, the report behind them, and its confidence. */
+export function researchHalfGoal(idea: { id: string; title: string }): string {
+  return [
+    `Answer the research half of [[${ideaPath(idea.id).replace(/\.md$/, '')}]] — "${idea.title}" — so the board can read a score on it.`,
+    '',
+    `Do: (1) \`vault.read\` the card; (2) \`research.start\` and follow \`Processes/research_lifecycle.md\` — \`memory.search\` and \`vault.search\` before the web, \`http.fetch { archive: true }\` + \`sources.cite\` for every page you lean on; (3) \`idea.card\` with \`slug: "${idea.id}"\` and a \`research\` block carrying the report path, its confidence, what you found, and \`evidence\` and \`fit\`.`,
+    '',
+    '`evidence` is 1–5: how well the research supports the demand — 5 is customers already paying someone for it. `fit` is 1–5: how much this uses what the company already has. Say the assumption each number rests on, in one line.',
+    '',
+    `Do not price it and do not score it: \`value\` and \`effort\` are the finance office's, and the score itself is arithmetic over all four (out of ${IDEA_SCORE_MAX}). A card you cannot support is worth a low \`evidence\`, not a missing one.`,
+  ].join('\n');
+}
+
+/** The request a `research` job needs before anyone may work on it (`missingRequestFields`), built per card. */
+export function researchHalfRequest(idea: { id: string; title: string }, opts: { owner: string; deadline: string }): ResearchRequest {
+  return {
+    decision: `whether the company keeps, parks or scraps "${idea.title}"`,
+    decision_owner: opts.owner,
+    question: `Is there real demand for "${idea.title}", and how much of what this company already has would it use?`,
+    hypothesis: '',
+    exploration: 'The card names a candidate; whether anyone wants it, and how well it fits, is unknown until it is looked into.',
+    known_evidence: `Whatever [[${ideaPath(idea.id).replace(/\.md$/, '')}]] already carries under ## Evidence and ## What changed.`,
+    unknowns: 'Who would pay for this, what they use instead today, and which of our existing assets it leans on.',
+    constraints: '',
+    deadline: opts.deadline,
+    required_confidence: 'medium',
+    potential_decisions: ['the evidence supports building it', 'the evidence does not support building it yet'],
+    portfolio: 'exploratory',
+    impact: 4,
+    uncertainty: 4,
+    cost_of_being_wrong: 3,
+  };
+}
+
+/**
+ * Ask the research office to fill `evidence` and `fit` on the cards that have neither. Shaped exactly like
+ * `enqueueEstimates` — same cap, one job per card ever (the id is the slug), jobs dropped before the cap so
+ * three stalled ones cannot starve a fourth card — so that the board's readiness rule has a producer on both
+ * sides of it rather than only one.
+ */
+export function enqueueResearchHalf(vault: Vault, org: Org): string[] {
+  const research = officeHolder(org, 'research');
+  const team = teamOf(org, research)?.id;
+  const owner = officeHolder(org, 'chief_executive');
+  const deadline = new Date(Date.now() + DISCOVERY_DEADLINE_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const pending = listIdeas(vault).filter((i) => !vault.exists(jobPath(researchJobId(i.id))));
+  return ideasNeedingResearch(pending).map((idea) => createJob(vault, {
+    id: researchJobId(idea.id), type: 'research', title: `Is "${idea.title}" worth trying?`, priority: 2,
+    assigned: research, for: owner, owner_role: owner, team,
+    goal: researchHalfGoal(idea),
+    research: researchHalfRequest(idea, { owner, deadline }),
+    done_when: `Ideas/${idea.id}.md carries a research report link, its confidence, and an evidence and a fit score, each with the assumption behind it.`,
   }, 'daemon'));
 }

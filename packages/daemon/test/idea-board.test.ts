@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, loadOrg, listJobs, listInbox, readJob, updateJob, readIdea, writeIdeaCard, updateIdea, listDecisions, DecisionFrontmatter, createProposal } from '@cubicle/core';
 import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_STEPS, NON_WORK_TYPES, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob } from '../src/index.js';
+import { estimateJobId, researchJobId } from '../src/discovery.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide } from './helpers/board-switch.js';
 
@@ -210,7 +211,9 @@ describe('the ideas_board step (spec §3.3/§3.5)', () => {
 
   it('stays parked on the step when it gives up on an estimate, so a kill during the session resumes at the board', async () => {
     scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
-    writeIdeaCard(vault, { title: 'Something nobody has priced', source: 'discovery' }, 'daemon');
+    // Researched but unpriced: this one is worth waiting for, because a price is all it needs to be scored.
+    const unpriced = writeIdeaCard(vault, { title: 'Something nobody has priced', source: 'discovery' }, 'daemon');
+    updateIdea(vault, unpriced, { score_inputs: { evidence: 4, fit: 4 } }, 'research_manager');
     const hb = createHeartbeatJob(vault, 'test');
     const inner = orgLlm({ ideaVerdict: 'pass' });
     // What the checkpoint said each time an advisor spoke: while the board sits, the step must not yet be past.
@@ -235,6 +238,21 @@ describe('the ideas_board step (spec §3.3/§3.5)', () => {
     expect(readJob(vault, hb)!.body).toContain('the board chooses from what is priced');
   }, 30000);
 
+  // I2, the other side of it: a card with no research half cannot be scored however fast the finance office
+  // answers, so the cycle must not spend an hour of its plan latency waiting for its price.
+  it('does not hold the cycle for the price of a card whose research half is missing', async () => {
+    scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
+    const bare = writeIdeaCard(vault, { title: 'Something nobody has looked into', source: 'intelligence:competitive' }, 'daemon');
+    const hb = createHeartbeatJob(vault, 'test');
+    await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'pass' }) }, hb);
+    // Both jobs are queued — the estimate and the research half — and neither was waited on.
+    expect(listJobs(vault).filter((j) => j.type === 'finance.estimate').map((j) => j.id)).toContain(estimateJobId(bare));
+    expect(listJobs(vault).filter((j) => j.type === 'research').map((j) => j.id)).toContain(researchJobId(bare));
+    // The board still sat this cycle, on the card that was ready.
+    expect(listJobs(vault).filter((j) => j.type === 'board.session').length).toBe(1);
+    expect(readJob(vault, hb)!.body).not.toContain('estimate(s) still open');
+  }, 30000);
+
   it('says the idea passed unreviewed when no advisor could answer', async () => {
     const slug = scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
     await runHeartbeat({ vault, llm: orgLlm({ boardSilent: true }) }, createHeartbeatJob(vault, 'test'));
@@ -249,6 +267,8 @@ describe('the ideas_board step (spec §3.3/§3.5)', () => {
 
   it('waits for the finance office to price a new card, then reads it', async () => {
     const slug = writeIdeaCard(vault, { title: 'Meal kits for nurseries', source: 'discovery', evidence: ['the owner asked for it'] }, 'daemon');
+    // The research office has answered; only the price is missing, so this estimate is worth waiting for.
+    updateIdea(vault, slug, { score_inputs: { evidence: 4, fit: 5 } }, 'research_manager');
     const org = loadOrg(vault);
     const hb = createHeartbeatJob(vault, 'test');
     const out = await runHeartbeat({ vault, llm: orgLlm() }, hb);
@@ -261,7 +281,7 @@ describe('the ideas_board step (spec §3.3/§3.5)', () => {
     expect(org.roles[estimates[0].assigned]).toBeTruthy();
 
     // The finance office answers; the heartbeat resumes and the board sits.
-    updateIdea(vault, slug, { score_inputs: { value: 5, evidence: 4, effort: 4, fit: 5 }, estimate: 'Two weeks of one engineer.' }, 'daemon');
+    updateIdea(vault, slug, { score_inputs: { value: 5, effort: 4 }, estimate: 'Two weeks of one engineer.' }, 'cfo');
     updateJob(vault, estimates[0].id, { status: 'done' }, 'daemon');
     await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'pass' }) }, hb);
     expect(listJobs(vault).filter((j) => j.type === 'board.session').length).toBe(1);

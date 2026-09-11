@@ -96,16 +96,26 @@ const EPOCH = new Date(0).toISOString();
 export function ideaAt(vault: Vault): string | null {
   const stamps: string[] = [];
   const name = parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data.name;
-  if (typeof name === 'string' && name.trim()) stamps.push(vault.events.query({ types: ['vault.wrote'] }).find((e) => e.payload.path === 'Brand/name.md')?.ts ?? EPOCH);
+  const named = typeof name === 'string' && name.trim() !== '';
+  const inputs = listDiscoveryInputs(vault);
+  // One pass over the log, indexed by path, rather than one query per file: `vault.wrote` is the most common
+  // event there is, and the query inside the loop re-read the whole log for every dropped file.
+  const firstWrite = new Map<string, string>();
+  if (named || inputs.length) {
+    const want = new Set([...(named ? ['Brand/name.md'] : []), ...inputs.map((f) => f.path)]);
+    for (const e of vault.events.query({ types: ['owner.edited', 'vault.wrote'] })) {
+      const p = String((e.payload as { path?: string }).path ?? '');
+      if (want.has(p) && !firstWrite.has(p)) firstWrite.set(p, e.ts);
+    }
+  }
+  if (named) stamps.push(firstWrite.get('Brand/name.md') ?? EPOCH);
   for (const n of listInbox(vault)) {
     if (n.data.kind === 'brand_change' || (n.data.kind === 'message' && n.data.from === 'owner')) stamps.push(String(n.data.created ?? EPOCH));
   }
   // A file the owner dropped in Discovery/inbox/ is an idea in its own right: it is how an owner with an
   // existing startup starts, and without this the company would sit idle waiting to be typed at. The README
   // the template ships is not one, which is why `listDiscoveryInputs` skips it.
-  for (const f of listDiscoveryInputs(vault)) {
-    stamps.push(vault.events.query({ types: ['owner.edited', 'vault.wrote'] }).find((e) => e.payload.path === f.path)?.ts ?? EPOCH);
-  }
+  for (const f of inputs) stamps.push(firstWrite.get(f.path) ?? EPOCH);
   return stamps.length ? stamps.sort()[0] : null;
 }
 

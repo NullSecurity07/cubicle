@@ -11,8 +11,8 @@ import { sha256, nowIso } from './fs.js';
  */
 
 export const DISCOVERY_DIR = 'Discovery';
-export const DISCOVERY_INBOX = 'Discovery/inbox';
-export const INTERVIEW_PATH = 'Discovery/interview.md';
+export const DISCOVERY_INBOX = `${DISCOVERY_DIR}/inbox`;
+export const INTERVIEW_PATH = `${DISCOVERY_DIR}/interview.md`;
 export const FOUNDER_BRIEF = 'Memory/founder-brief.md';
 
 /**
@@ -35,13 +35,20 @@ export function isLongPrompt(text: string): boolean {
 /** Extensions discovery can actually read. Anything else is listed for the owner and skipped, never guessed at. */
 export const DISCOVERY_TEXT_EXT = ['.md', '.txt', '.csv', '.json', '.yaml', '.yml'] as const;
 
-export interface DiscoveryInput { path: string; readable: boolean; chars: number }
+/**
+ * One file the owner dropped in. `sha` is carried on the record rather than re-read by every caller: a cycle
+ * lists the inbox, digests it and bundles it for the agent, and reading every file three times to answer three
+ * questions about the same bytes is the kind of cost that only shows up in a vault with real material in it.
+ */
+export interface DiscoveryInput { path: string; readable: boolean; chars: number; sha: string }
 
 export function listDiscoveryInputs(vault: Vault): DiscoveryInput[] {
   return vault.list(DISCOVERY_INBOX, { recursive: true }).filter((p) => !p.endsWith('/README.md')).map((path) => {
     const readable = DISCOVERY_TEXT_EXT.some((e) => path.toLowerCase().endsWith(e));
     const text = readable ? vault.readTextOrNull(path) : null;
-    return { path, readable: readable && text !== null, chars: text?.length ?? 0 };
+    // A file discovery cannot read still has to move the digest when the owner replaces it, so it is hashed
+    // from disk; a readable one is hashed from the text this call already read.
+    return { path, readable: readable && text !== null, chars: text?.length ?? 0, sha: text === null ? vault.currentSha(path) ?? '' : sha256(text) };
   }).sort((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -49,12 +56,38 @@ export function listDiscoveryInputs(vault: Vault): DiscoveryInput[] {
  * A fingerprint of everything discovery would read: every inbox file's sha, the interview transcript's sha, and
  * the owner's prompt. The discovery job's id is derived from it, so the same material never queues a second job
  * and new material queues exactly one more.
+ *
+ * `inputs` is a parameter so a caller that has already listed the inbox does not pay for a second full read of
+ * every file in it; omitted, it lists them itself.
  */
-export function discoveryDigest(vault: Vault, prompt = ''): string {
-  const parts = listDiscoveryInputs(vault).map((f) => `${f.path}:${vault.currentSha(f.path) ?? ''}`);
+export function discoveryDigest(vault: Vault, prompt = '', inputs: DiscoveryInput[] = listDiscoveryInputs(vault)): string {
+  const parts = inputs.map((f) => `${f.path}:${f.sha}`);
   parts.push(`interview:${vault.currentSha(INTERVIEW_PATH) ?? ''}`);
   parts.push(`prompt:${sha256(prompt.trim())}`);
   return sha256(parts.sort().join('\n')).slice(0, 12);
+}
+
+/**
+ * What the owner actually typed, out of a cabin note's body.
+ *
+ * Two things are cut: the `# title` line, anchored to the first line of the body so a `# …` further down is the
+ * owner's own writing and survives; and everything from `## CEO` on, which is the CEO's reply appended to the
+ * same note. Letting the reply through would feed discovery the company's own words back and, worse, move
+ * `discoveryDigest` every time anyone answered, re-queueing discovery for ever.
+ *
+ * Every reader of an owner message goes through this one function, because the cabin's note body is never what
+ * the owner typed: `ws.ts` sends `title: text.slice(0, 60), body: text` and `createProposal` renders the note as
+ * `# <title>\n\n<body>`, so an owner who types `skip` produces `# skip\n\nskip`. `isSkip` is anchored to the
+ * whole string, so the raw body would be recorded as *answering* the six questions with the word "skip" — and
+ * `discoveryStatus` reads an answered interview as material, which is the opposite of what they asked for.
+ *
+ * It lives in core rather than in the daemon because the `discovery.inputs` tool has to cut exactly the same
+ * two things: a second inlined regex there (with an `m` flag) deleted the first heading *anywhere* in the body,
+ * so a message that did not start with the cabin's title line lost a line of the owner's own writing from the
+ * material the founder brief was written against.
+ */
+export function ownerSaid(body: string): string {
+  return body.split(/^## CEO\s*$/m)[0].replace(/^#\s[^\n]*\r?\n?/, '').trim();
 }
 
 /** True once the owner has approved a founder brief. Discovery never writes a second one unasked. */
@@ -75,14 +108,21 @@ export const INTERVIEW_QUESTIONS = [
   'What is off the table — anything you do not want this company to do?',
 ] as const;
 
-/** The one message the CEO sends. Six numbered questions, answered in any depth, or skipped outright. */
+/**
+ * The one message the CEO sends. Six numbered questions, answered in any depth, or skipped outright.
+ *
+ * It does not say "before I plan anything", because that is not true and the owner would catch it: the company
+ * starts from whatever it already has in the same cycle these questions go out (spec §5.5 — one line in the
+ * cabin is enough to plan from). What the answers buy is a better brief and a better *next* plan, so that is
+ * what the message promises.
+ */
 export function renderInterviewAsk(questions: readonly string[] = INTERVIEW_QUESTIONS): string {
   return [
-    'Before I plan anything, six questions. Answer the ones you want to, in any order, in your own words — one line each is plenty.',
+    'I am starting from what you have already given me. Six questions, to make sure I start from the right thing — answer the ones you want to, in any order, in your own words; one line each is plenty.',
     '',
     ...questions.slice(0, 6).map((q, i) => `${i + 1}. ${q}`),
     '',
-    'Reply "skip" and I will work from what is already in the vault instead.',
+    'Whatever you say next closes this, and goes into the founder brief the next plan is written against. Reply "skip" and I will work from what is already in the vault instead.',
   ].join('\n');
 }
 
@@ -165,7 +205,13 @@ export function founderBriefTemplate(): string {
  * What the owner reads in `00 Inbox/` when the brief is ready. The brief itself goes in a fenced block under
  * `## Proposed content` so the dispatcher writes exactly what was proposed — the same contract `file_change`
  * and `brand_change` already use.
+ *
+ * The fence is four backticks, not three: a brief that quotes the owner's code or a config file carries a ```
+ * fence of its own, and a three-backtick wrapper ends at the first of them — the dispatcher would then write a
+ * truncated brief, or refuse it for "missing ## Constraints" when the real cause was a fence.
  */
+export const PROPOSED_CONTENT_FENCE = '````';
+
 export function founderBriefProposalBody(brief: string, sources: string[]): string {
   const src = sources.length ? sources.map((s) => `- ${s}`).join('\n') : '- (nothing but this conversation)';
   return [
@@ -176,9 +222,9 @@ export function founderBriefProposalBody(brief: string, sources: string[]): stri
     '',
     '## Proposed content',
     '',
-    '```',
+    PROPOSED_CONTENT_FENCE,
     brief.trim(),
-    '```',
+    PROPOSED_CONTENT_FENCE,
     '',
     'Set `approved: true` to adopt it, or edit the block first. Set `approved: false` and I will ask again next cycle.',
   ].join('\n');

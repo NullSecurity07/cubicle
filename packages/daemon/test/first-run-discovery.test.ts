@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  scaffoldVault, Vault, listJobs, listInbox, updateJob, createProposal, loadOrg, officeHolder,
+  scaffoldVault, Vault, listJobs, listInbox, readJob, readIdea, updateJob, createProposal, loadOrg, officeHolder,
   DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF, interviewPhase,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
@@ -38,11 +38,24 @@ function recordingLlm(answer = 'Noted.'): Llm & { prompts: string[] } {
   };
 }
 
-/** Run one heartbeat from `gather`, exactly as the daemon does, and hand back the heartbeat's id. */
-async function cycle(v: Vault, llm: Llm): Promise<string> {
+/**
+ * Poll the vault until `pred` holds. The two cases below drive a live `Daemon` on 300 ms ticks, and the ledger
+ * already records a real-timer file failing when it ran beside two others at load 20 — so the budget is
+ * generous on purpose: it is a ceiling for a stuck run, not a wait a healthy one spends.
+ */
+async function until(v: Vault, pred: () => boolean, ms: number, what: string): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!pred()) {
+    if (Date.now() > deadline) throw new Error(`${what}: ${listJobs(v).map((j) => `${j.type}=${j.status}`).join(', ')}`);
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
+/** Run one heartbeat from `gather`, exactly as the daemon does, and hand back its id and its outcome. */
+async function cycle(v: Vault, llm: Llm): Promise<{ hb: string; out: Awaited<ReturnType<typeof runHeartbeat>> }> {
   const hbId = createHeartbeatJob(v, 'test');
-  await runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hbId);
-  return hbId;
+  const out = await runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hbId);
+  return { hb: hbId, out };
 }
 
 describe('a dropped file is an idea (spec §5)', () => {
@@ -69,7 +82,7 @@ describe('a dropped file is an idea (spec §5)', () => {
       v.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell meal kits to nurseries.', 'owner');
       expect(d.requestHeartbeat('the owner dropped a file')).not.toBeNull();
     } finally { v.close(); await d.stop(); }
-  }, 60_000);
+  }, 120_000);
 });
 
 describe('the discovery step asks before it reads (spec §5.1)', () => {
@@ -231,14 +244,25 @@ describe('what the owner types next closes the interview (spec §1.4)', () => {
     } finally { v.close(); }
   });
 
-  it('a one-line idea still gets the name-the-company reply', async () => {
+  // The spec's headline requirement, in one cycle (§1.3, §5.5): "the owner types one line, the CEO proposes a
+  // name, and discovery still runs over that line". All three, or the single-prompt company never plans at all.
+  it('a one-line idea gets the name-the-company reply, the six questions AND a discovery job', async () => {
     const v = Vault.open(dir);
     try {
       createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'The idea', body: 'Meal kits for nurseries.' }, 'owner');
       const llm = recordingLlm('NAME: PlateReady\nTAGLINE: Lunch, solved.');
-      await cycle(v, llm);
+      const out = await cycle(v, llm);
       expect(listInbox(v).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md')).toBe(true);
-      // A short line is not material discovery can plan from, so the interview goes out as well.
+      // Asking costs no model call, and the vault is still thin, so the six questions go out too.
+      expect(interviewPhase(v.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
+      // And the line itself is read: one discovery job, blocked on before anything is planned against it.
+      const disc = listJobs(v).filter((j) => j.type === 'discovery');
+      expect(disc).toHaveLength(1);
+      expect(readJob(v, out.hb)!.data.blocked_on?.id).toBe(disc[0].id);
+      expect(listJobs(v).some((j) => j.type === 'company.plan')).toBe(false);
+      // A second cycle with nothing new does not queue a second one, and does not ask again.
+      await cycle(v, recordingLlm());
+      expect(listJobs(v).filter((j) => j.type === 'discovery')).toHaveLength(1);
       expect(interviewPhase(v.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
     } finally { v.close(); }
   });
@@ -253,11 +277,10 @@ describe('the first cycle reads, then judges, then plans (spec §5.1)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      const deadline = Date.now() + 90_000;
-      while (!listJobs(v).some((j) => j.type === 'company.plan')) {
-        if (Date.now() > deadline) throw new Error(`no company.plan: ${listJobs(v).map((j) => `${j.type}=${j.status}`).join(', ')}`);
-        await new Promise((r) => setTimeout(r, 200));
-      }
+      // 180 s, not 90: this drives a live daemon on 300 ms polls, and the ledger already records a real-timer
+      // file failing under load beside two others. The budget is a ceiling, not a wait — a healthy run reaches
+      // the plan in a few seconds.
+      await until(v, () => listJobs(v).some((j) => j.type === 'company.plan'), 180_000, 'no company.plan');
       const disc = listJobs(v).find((j) => j.type === 'discovery')!;
       const plan = listJobs(v).find((j) => j.type === 'company.plan')!;
       expect(disc).toBeTruthy();
@@ -272,5 +295,49 @@ describe('the first cycle reads, then judges, then plans (spec §5.1)', () => {
       expect(cards.length).toBeGreaterThan(0);
       expect(v.readNoteOrNull(cards[0])!.data.source).toBe('discovery');
     } finally { v.close(); await d.stop(); }
-  }, 120_000);
+  }, 240_000);
+
+  // The spec's own last acceptance test — "a first run that goes discovery → board → plan in one cycle" — and
+  // the single claim the whole step ordering exists for. Every earlier test proves one link of it; this one
+  // drives the live daemon end to end on the scripted model: discovery files a card with its research half,
+  // the finance office prices it, the score completes, the board sits, the owner is asked, and only then is
+  // the plan written.
+  it('goes discovery → card → estimate → board → verdict → plan, in one cycle', async () => {
+    vault.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell meal kits to nurseries. Two already pay us.', 'owner');
+    letTheBoardDecide(vault);
+    vault.close();
+    const d = new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 300, maxConcurrentJobs: 3, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm: orgLlm({ vetoes: 0, ideaVerdict: 'pass' }), disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await until(v, () => listJobs(v).some((j) => j.type === 'company.plan'), 180_000, 'no company.plan');
+      const jobs = listJobs(v);
+      const disc = jobs.find((j) => j.type === 'discovery')!;
+      const estimate = jobs.find((j) => j.type === 'finance.estimate')!;
+      const session = jobs.find((j) => j.type === 'board.session')!;
+      const plan = jobs.find((j) => j.type === 'company.plan')!;
+      expect(disc.status).toBe('done');
+      expect(estimate).toBeTruthy();
+      expect(session).toBeTruthy();
+      // In order, and all of it before the plan: read, price, judge, ask, then plan.
+      expect(disc.created < estimate.created).toBe(true);
+      expect(estimate.created <= session.created).toBe(true);
+      expect(session.created <= plan.created).toBe(true);
+
+      // The card carries both halves and a score, and the board's verdict is on it.
+      const cards = v.list('Ideas', { ext: '.md' }).filter((p) => !p.endsWith('_template.md'));
+      expect(cards).toHaveLength(1);
+      const slug = cards[0].slice(cards[0].lastIndexOf('/') + 1).replace(/\.md$/, '');
+      const card = readIdea(v, slug)!;
+      expect(card.data.score).toBe(48);                     // 4×4 + 3×4 + 3×4 + 2×4
+      expect(card.data.board_verdict).toBe('pass');
+      expect(card.data.research).toBeTruthy();
+      expect(card.data.estimate).toBeTruthy();
+      // And the owner is the one who rules: an idea_verdict note, filed by the board session, recommending keep.
+      const verdict = listInbox(v).find((n) => n.data.kind === 'idea_verdict' && n.data.target === `Ideas/${slug}.md`)!;
+      expect(verdict).toBeTruthy();
+      expect((verdict.data as { band?: string }).band).toBe('keep');
+      expect(verdict.data.job).toBeTruthy();
+    } finally { v.close(); await d.stop(); }
+  }, 240_000);
 });

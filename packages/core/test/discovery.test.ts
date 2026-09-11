@@ -68,7 +68,10 @@ describe('the cabin interview (spec §1.4)', () => {
     const ask = renderInterviewAsk();
     expect(ask.match(/^\d+\. /gm)!.length).toBe(6);
     expect(ask).toContain('skip');
-    expect(ask.split('\n')[0]).toMatch(/six questions/);
+    expect(ask.split('\n')[0]).toMatch(/[Ss]ix questions/);
+    // T13-3: the plan is written in the same cycle these go out, so the message must not promise otherwise.
+    expect(ask).not.toMatch(/[Bb]efore I plan/);
+    expect(ask.split('\n')[0]).toMatch(/starting from what you have already given me/);
   });
 
   it('reads its own state out of the transcript, with no cache anywhere', () => {

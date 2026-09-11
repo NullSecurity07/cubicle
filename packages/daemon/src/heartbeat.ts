@@ -15,7 +15,7 @@ import { deployer, emailSender, analytics } from '@cubicle/tools';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
 import { seedFirstJobs, seedFirstStream } from './first-run.js';
-import { currentDiscoveryStatus, askInterview, enqueueDiscovery, discoveryJobId, captureInterviewAnswer, ownerSaid, enqueueEstimates } from './discovery.js';
+import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId } from './discovery.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -715,7 +715,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; researchJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -939,31 +939,32 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const org = loadOrg(vault);
         const ceo = officeHolder(org, 'chief_executive');
         if (!state.discoveryJob) {
-          const status = currentDiscoveryStatus(vault);
+          // A discovery job that is still being worked on means the company is reading right now, whatever the
+          // cache says. Checked from the vault before anything else, because a kill in the one write between
+          // `createJob` and `saveState` leaves a job that neither the state file nor `blocked_on` names — and
+          // walking past it would plan while discovery is still reading, which is what this step exists to
+          // prevent. Looking for any open job rather than for one derived id also survives the digest moving
+          // (it drops material the newest job has read, so it is not the same digest a moment later).
+          const running = openDiscoveryJob(vault);
+          if (running) {
+            state = { ...state, discoveryJob: running }; saveState(state);
+            return block(running, `waiting for discovery ${running}`);
+          }
+          // Asking and reading are independent (spec §1.3, §5.5): the interview costs no model call, so an
+          // owner who typed one line gets the questions *and* a discovery job over that line on cycle one. The
+          // status is re-read after the ask because the transcript it writes is part of the digest.
+          let status = currentDiscoveryStatus(vault, now());
+          let asked: string | null = null;
           if (status.ask) {
-            const msg = askInterview(vault, ceo, now());
-            done(i, msg ? `asked the founder interview (${msg})` : status.why);
-            break;
+            asked = askInterview(vault, ceo, now());
+            status = currentDiscoveryStatus(vault, now());
           }
-          // "Nothing new to read" and "the job I queued a moment ago is still running" are the same answer from
-          // `discoveryStatus` — `alreadyRun` is true either way — so the `!status.run` path has to look the job
-          // up before it walks on. Without this, a kill in the one write between `createJob` and `saveState`
-          // (where neither the state file nor `blocked_on` names the job) resumes into "discovery has already
-          // read this material" and plans while discovery is still reading, which is the exact ordering this
-          // step exists to prevent.
-          const open = (id: string): boolean => { const j = readJob(vault, id); return !!j && !['done', 'failed', 'cancelled'].includes(j.data.status); };
-          if (!status.run) {
-            const existing = discoveryJobId(status.digest);
-            if (open(existing)) {
-              state = { ...state, discoveryJob: existing }; saveState(state);
-              return block(existing, `waiting for discovery ${existing}`);
-            }
-            done(i, status.why); break;
-          }
-          const id = enqueueDiscovery(vault, org);
-          if (!id) { done(i, status.why); break; }
+          const askedNote = asked ? `asked the founder interview (${asked})` : '';
+          if (!status.run) { done(i, [askedNote, status.why].filter(Boolean).join('; ')); break; }
+          const id = enqueueDiscovery(vault, org, status);
+          if (!id) { done(i, [askedNote, status.why].filter(Boolean).join('; ')); break; }
           state = { ...state, discoveryJob: id }; saveState(state);
-          return block(id, `waiting for discovery ${id}`);
+          return block(id, `waiting for discovery ${id}${askedNote ? `; ${askedNote}` : ''}`);
         }
         const sub = readJob(vault, state.discoveryJob);
         if (!sub || !['done', 'failed', 'cancelled'].includes(sub.data.status)) {
@@ -984,17 +985,31 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // Cards the discovery job filed still need their price before the board can read a score. Queue the
         // estimates once, then wait for them the same way company_plan waits for its sub-job — bounded by
         // PLAN_WAIT_BUDGET_MS, so a stuck finance office costs this cycle's board session and nothing more.
+        // Only an estimate that could actually put a card in front of the board is worth waiting for: a card
+        // whose research half is missing cannot be scored however fast the finance office answers, so holding
+        // the cycle for its price spends up to an hour — and the plan's latency — on a card that cannot be
+        // judged this cycle whatever happens. The job is still queued; it is simply not waited on.
+        const waitable = (ids: string[]): string[] => {
+          const scorable = new Set(listIdeas(vault).filter((c) => c.score_inputs.evidence !== undefined && c.score_inputs.fit !== undefined).map((c) => estimateJobId(c.id)));
+          return ids.filter((id) => scorable.has(id));
+        };
         if (!state.estimateJobs) {
+          // Both halves get a producer. The research jobs are queued and not waited on: they run the full
+          // research lifecycle, so their cards reach the board next cycle rather than this one, and blocking on
+          // them would spend the cycle's plan latency on work that cannot change this cycle's board session.
+          const researchJobs = enqueueResearchHalf(vault, org);
           const ids = enqueueEstimates(vault, org);
-          state = { ...state, estimateJobs: ids }; saveState(state);
-          if (ids.length) return blockMany(ids, `waiting for ${ids.length} idea estimate(s)`);
+          state = { ...state, estimateJobs: ids, researchJobs }; saveState(state);
+          const wait = waitable(ids);
+          if (wait.length) return blockMany(wait, `waiting for ${wait.length} idea estimate(s)`);
         }
         // `estimatesPending` means this cycle already gave up on them: the `blocked_on.since` it cleared would
         // otherwise start a fresh 60-minute budget every time the step is re-entered.
         if (!state.estimatesPending && state.estimateJobs?.length) {
-          const open = state.estimateJobs.filter((id) => { const s = readJob(vault, id)?.data.status; return !s || !['done', 'failed', 'cancelled'].includes(s); });
+          const waitOn = waitable(state.estimateJobs);
+          const open = waitOn.filter((id) => { const s = readJob(vault, id)?.data.status; return !s || !['done', 'failed', 'cancelled'].includes(s); });
           if (open.length) {
-            const w = waitForEstimates(firstOpenJob(state.estimateJobs, (id) => readJob(vault, id)?.data.status), (min) => `${open.length} estimate(s) still open after ${min} min — the board chooses from what is priced`);
+            const w = waitForEstimates(firstOpenJob(waitOn, (id) => readJob(vault, id)?.data.status), (min) => `${open.length} estimate(s) still open after ${min} min — the board chooses from what is priced`);
             if (w) return w;
           } else if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
         }
@@ -1015,7 +1030,12 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const refiledNote = refiled.length ? `; re-filed ${refiled.length} stranded verdict note(s): ${refiled.join(', ')}` : '';
         // No board room means the funnel is stopped, not merely quiet: say so, because nothing else will.
         if (!idea || !board || !org.roles[board.lead]) { done(i, (idea ? `board skipped: no advisors, so no idea can be judged and the funnel is stopped (${idea.id} is waiting)` : 'no idea is ready for the board') + refiledNote); break; }
-        const card = readIdea(vault, idea.id)!;
+        // The card is re-read here, and again after the session: it is a file, and the owner can delete or
+        // break it between the two. A `TypeError` out of a non-null assertion would fail the whole cycle —
+        // every step after this one, including the plan — over one card, which is why the decision-note write
+        // beside these is already wrapped.
+        const card = readIdea(vault, idea.id);
+        if (!card) { done(i, `board skipped: Ideas/${idea.id} disappeared before the session${refiledNote}`); break; }
         const session = await runBoardSession(deps, org, { kind: 'idea', text: `# ${card.data.title}\n\n${card.body}`, title: card.data.title, slug: idea.id });
         if (cancelled()) return { status: 'cancelled' };
         // The record, closed in the same tick and depending on this heartbeat so no worker picks it up.
@@ -1046,12 +1066,18 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         });
         // The board's verdict is an input to the band (a returned idea parks), so the `## Score` section is
         // re-rendered from the card as it now stands rather than from the numbers read before the session.
-        const after = readIdea(vault, idea.id)!;
-        const value = after.data.score_inputs.value ?? 3;
-        updateIdea(vault, idea.id, {}, 'daemon', { heading: '## Score', content: renderScoreSection({ value, evidence: after.data.score_inputs.evidence ?? 3, effort: after.data.score_inputs.effort ?? 3, fit: after.data.score_inputs.fit ?? 3 }, { board: session.verdict }) });
-        const filed = fileIdeaVerdict(vault, idea.id, { from: ceo, job: jobId, findings: session.findings })!;
+        const after = readIdea(vault, idea.id);
+        if (after) {
+          const value = after.data.score_inputs.value ?? 3;
+          updateIdea(vault, idea.id, {}, 'daemon', { heading: '## Score', content: renderScoreSection({ value, evidence: after.data.score_inputs.evidence ?? 3, effort: after.data.score_inputs.effort ?? 3, fit: after.data.score_inputs.fit ?? 3 }, { board: session.verdict }) });
+        }
+        // The session happened whatever the card does next: the `board.session` job note and the `Decisions/`
+        // note above are the record. A card that vanished between the stamp and the verdict note is reported,
+        // not thrown — and the stranded-verdict sweep at the top of this step re-files the note if it comes back.
+        const filed = fileIdeaVerdict(vault, idea.id, { from: ceo, job: jobId, findings: session.findings });
         state = { ...state, ideaJudged: idea.id }; saveState(state);
-        done(i, `board ${session.verdict} on ${idea.id}; recommendation ${filed.band}, waiting for the owner${refiledNote}`);
+        if (!filed) vault.events.emit({ type: 'daemon.warning', agent: ceo, job: jobId, payload: { where: 'ideas_board', message: `the board ruled on Ideas/${idea.id} but the card could not be read back, so the owner has not been asked yet` } });
+        done(i, `board ${session.verdict} on ${idea.id}; ${filed ? `recommendation ${filed.band}, waiting for the owner` : 'the card could not be read back, so no verdict note was filed'}${refiledNote}`);
         break;
       }
       case 'meeting': {

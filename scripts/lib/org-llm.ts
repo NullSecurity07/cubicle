@@ -61,10 +61,20 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
           // Evidence points at the material the card was read from, which exists; citing the founder brief here
           // would cite a file this job has not proposed yet. `source: discovery` is not an argument — `idea.card`
           // derives provenance from the calling job's type — so the real card carries it without being told.
-          { name: 'idea.card', args: { title: 'The idea the owner described', evidence: [DISCOVERY_INBOX], what_changed: 'The owner told us what they are building.', why_it_matters: 'It is the only candidate on the table.' } },
+          // The research half rides along, as a real discovery job's does "where your research supports a view":
+          // without it the card can never be scored, so the board could never sit on it in the same cycle.
+          { name: 'idea.card', args: { title: 'The idea the owner described', evidence: [DISCOVERY_INBOX], what_changed: 'The owner told us what they are building.', why_it_matters: 'It is the only candidate on the table.', research: { report: 'Research/the-idea/report.md', confidence: 'medium', summary: 'Two comparable services charge for this today.', evidence: 4, fit: 4 } } },
           { name: 'proposal.create', args: { kind: 'founder_brief', target: FOUNDER_BRIEF, title: 'The founder brief', body: `## Proposed content\n\n\`\`\`\n${founderBriefTemplate()}\n\`\`\`\n` } },
         ];
         return { ...base, parsedToolCalls: [calls[n] ?? { name: 'finish', args: { status: 'done', summary: 'the founder brief is with the owner' } }] };
+      }
+      // Pricing one card (SP3 §5.3): the CFO reads the slug out of its own goal — `estimateGoal` writes
+      // `slug: "<id>"` — and answers the two numbers only the finance office may write. With this the scripted
+      // first run really does reach the board: discovery files a card, finance prices it, the score completes.
+      if (jobType === 'finance.estimate') {
+        const slug = jobMsg.match(/slug: "([a-z0-9-]+)"/)?.[1];
+        if (n === 0 && slug) return { ...base, parsedToolCalls: [{ name: 'idea.card', args: { title: 'The idea the owner described', slug, estimate: { text: 'Two people for three weeks, no money out of pocket.', value: 4, effort: 4 } } }] };
+        return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: slug ? `priced ${slug}` : 'no card named' } }] };
       }
       if (jobType === 'division.plan') {
         // The division leads: the CTO schedules into the Dev room, the CFO asks Research for the revenue question.

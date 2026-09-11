@@ -115,6 +115,14 @@ describe('heartbeat as a resumable job', () => {
     const deps = { vault, llm, now: () => clock };
     const first = await runHeartbeat(deps, hb);
     expect(first.status).toBe('blocked');
+    // Since the whole-branch review's C1, one short line is read as well as asked about (spec §1.3, §5.5): the
+    // cycle queues discovery over it and blocks there, before anything is planned against it. Nobody runs the
+    // job here, so it is closed by hand and the cycle walks on to the plan it was always about.
+    expect(readJob(vault, hb)!.data.checkpoint_step).toBe(HEARTBEAT_STEPS.indexOf('discovery'));
+    const disc = listJobs(vault).find((j) => j.type === 'discovery')!;
+    expect(first).toEqual({ status: 'blocked', on: { kind: 'job', id: disc.id } });
+    updateJob(vault, disc.id, { status: 'done' }, 'daemon');
+    expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
     expect(readJob(vault, hb)!.data.checkpoint_step).toBe(HEARTBEAT_STEPS.indexOf('company_plan'));
     const plan = listJobs(vault).find((j) => j.type === 'company.plan')!;
     expect(plan).toBeTruthy();

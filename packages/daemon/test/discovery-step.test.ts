@@ -3,9 +3,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, loadOrg, createJob, createProposal, listJobs, listInbox, readJob, writeIdeaCard, updateIdea, missingRequestFields, INTERVIEW_PATH, interviewPhase, DISCOVERY_INBOX } from '@cubicle/core';
-import { discoveryStatus, ideasNeedingEstimate, MAX_ESTIMATES_PER_CYCLE, discoveryGoal, estimateGoal, askInterview, captureInterviewAnswer, ownerPrompt, enqueueDiscovery, enqueueEstimates, briefProposalOpen, currentDiscoveryStatus, interviewMessageId, estimateJobId } from '../src/discovery.js';
+import { discoveryStatus, ideasNeedingEstimate, ideasNeedingResearch, MAX_ESTIMATES_PER_CYCLE, discoveryGoal, estimateGoal, askInterview, captureInterviewAnswer, ownerPrompt, enqueueDiscovery, enqueueEstimates, enqueueResearchHalf, researchJobId, briefProposalOpen, currentDiscoveryStatus, interviewMessageId, estimateJobId, lastDiscoveryAt, openDiscoveryJob } from '../src/discovery.js';
 
-const base = { hasBrief: false, briefProposalOpen: false, inputs: 0, interview: 'none' as const, longPrompt: false, alreadyRun: false };
+/** Nothing dropped in, nothing typed, nobody asked, discovery has never run. */
+const nothing = { newInput: false, newInterview: false, longPrompt: false, anyPrompt: false };
+const base = { hasBrief: false, briefProposalOpen: false, inputs: 0, interview: 'none' as const, unread: nothing, everRun: false, alreadyRun: false, ranToday: false };
+/** The vault after a discovery job has run: `everRun`, and (unless a test says otherwise) it ran today. */
+const after = { ...base, everRun: true, ranToday: true };
 const NOW = new Date('2026-09-11T10:00:00.000Z');
 
 describe('what the discovery step does this cycle (spec §1, §5)', () => {
@@ -19,9 +23,22 @@ describe('what the discovery step does this cycle (spec §1, §5)', () => {
   });
 
   it('runs on any one of the three inputs, and never asks the interview as well', () => {
-    for (const material of [{ inputs: 2 }, { longPrompt: true }, { interview: 'answered' as const }]) {
+    for (const material of [{ inputs: 2, unread: { ...nothing, newInput: true } }, { unread: { ...nothing, longPrompt: true, anyPrompt: true } }, { interview: 'answered' as const, unread: { ...nothing, newInterview: true } }]) {
       expect(discoveryStatus({ ...base, ...material })).toMatchObject({ run: true, ask: false });
     }
+  });
+
+  // The headline requirement (spec §1.3, §1.8, §5.5): "the owner types one line, the CEO proposes a name, and
+  // discovery still runs over that line". Asking costs no model call, so the two are not alternatives — and
+  // read as alternatives, a one-line company waited for an interview answer for ever and never planned at all.
+  it('asks AND reads when the owner has typed one short line', () => {
+    const oneLine = { ...base, unread: { ...nothing, anyPrompt: true } };
+    expect(discoveryStatus(oneLine)).toMatchObject({ run: true, ask: true });
+    expect(discoveryStatus(oneLine).why).toContain('asking the interview as well');
+    // A document is not interviewed about: the owner already wrote the answers down.
+    expect(discoveryStatus({ ...base, unread: { ...nothing, anyPrompt: true, longPrompt: true } })).toMatchObject({ run: true, ask: false });
+    // Nor is an owner who dropped a file.
+    expect(discoveryStatus({ ...base, inputs: 1, unread: { ...nothing, newInput: true } })).toMatchObject({ run: true, ask: false });
   });
 
   it('runs from the vault when the owner skips the interview rather than stalling for ever', () => {
@@ -35,20 +52,49 @@ describe('what the discovery step does this cycle (spec §1, §5)', () => {
   });
 
   it('stops while a brief is waiting for the owner, whatever else arrived', () => {
-    expect(discoveryStatus({ ...base, inputs: 5, longPrompt: true, briefProposalOpen: true })).toMatchObject({ run: false, ask: false });
+    expect(discoveryStatus({ ...base, inputs: 5, unread: { ...nothing, newInput: true, longPrompt: true, anyPrompt: true }, briefProposalOpen: true })).toMatchObject({ run: false, ask: false });
+  });
+
+  // C2: every owner message used to move the digest, so chatting with the CEO five times in a day bought five
+  // research lifecycles, five `requester.review` gates and five founder-brief edit proposals — each of which
+  // the heartbeat blocked on. A reply is not material.
+  it('does not buy a research job for a "thanks" typed after discovery has read the vault', () => {
+    const chat = { ...after, unread: { ...nothing, anyPrompt: true } };
+    expect(discoveryStatus(chat)).toMatchObject({ run: false });
+    expect(discoveryStatus(chat).why).toContain('a reply to the CEO is not material');
+    expect(discoveryStatus({ ...after, unread: nothing })).toMatchObject({ run: false });
+  });
+
+  it('re-runs only for a substantive increment: a new file, a newly answered interview, or a document', () => {
+    for (const inc of [{ newInput: true }, { newInterview: true }, { longPrompt: true, anyPrompt: true }]) {
+      expect(discoveryStatus({ ...after, ranToday: false, unread: { ...nothing, ...inc } })).toMatchObject({ run: true });
+    }
+  });
+
+  // The same floor `intelligenceDue` uses, and for the same reason: the first run is free, every one after it
+  // costs a research lifecycle, and a free tier cannot pay for one per drop.
+  it('floors re-runs at one a calendar day, and the first run never at all', () => {
+    const newFile = { ...nothing, newInput: true };
+    expect(discoveryStatus({ ...after, ranToday: true, unread: newFile })).toMatchObject({ run: false });
+    expect(discoveryStatus({ ...after, ranToday: true, unread: newFile }).why).toContain('already read new material today');
+    expect(discoveryStatus({ ...after, ranToday: false, unread: newFile })).toMatchObject({ run: true });
+    // The first run is not floored: a company that started this morning reads this morning.
+    expect(discoveryStatus({ ...base, ranToday: true, inputs: 1, unread: newFile })).toMatchObject({ run: true });
   });
 
   it('with a brief adopted, only new material runs discovery again', () => {
-    expect(discoveryStatus({ ...base, hasBrief: true })).toMatchObject({ run: false, ask: false });
-    expect(discoveryStatus({ ...base, hasBrief: true, interview: 'skipped' })).toMatchObject({ run: false, ask: false });
-    expect(discoveryStatus({ ...base, hasBrief: true, inputs: 1 })).toMatchObject({ run: true, ask: false });
-    expect(discoveryStatus({ ...base, hasBrief: true, inputs: 1 }).why).toContain('new material');
+    expect(discoveryStatus({ ...after, hasBrief: true })).toMatchObject({ run: false, ask: false });
+    expect(discoveryStatus({ ...after, hasBrief: true }).why).toContain('the founder brief covers everything');
+    expect(discoveryStatus({ ...after, hasBrief: true, interview: 'skipped' })).toMatchObject({ run: false, ask: false });
+    const more = { ...after, hasBrief: true, ranToday: false, inputs: 1, unread: { ...nothing, newInput: true } };
+    expect(discoveryStatus(more)).toMatchObject({ run: true, ask: false });
+    expect(discoveryStatus(more).why).toContain('new material');
   });
 });
 
 describe('who gets priced this cycle (spec §5.3)', () => {
   const idea = (id: string, over: Partial<{ decision: string; estimate: string; score_inputs: Record<string, number> }> = {}) =>
-    ({ id, decision: 'undecided', estimate: '', score_inputs: {}, ...over }) as { id: string; decision: string; estimate: string; score_inputs: { value?: number; effort?: number; evidence?: number } };
+    ({ id, decision: 'undecided', estimate: '', score_inputs: {}, ...over }) as { id: string; decision: string; estimate: string; score_inputs: { value?: number; effort?: number; evidence?: number; fit?: number } };
 
   it('prices a card whose estimate prose is filled in but whose numbers are not', () => {
     expect(ideasNeedingEstimate([idea('a', { estimate: 'a few weeks and a laptop' })]).map((i) => i.id)).toEqual(['a']);
@@ -71,6 +117,19 @@ describe('who gets priced this cycle (spec §5.3)', () => {
 
   it('a half-priced card still counts as needing the finance office', () => {
     expect(ideasNeedingEstimate([idea('a', { score_inputs: { value: 4 } })]).map((i) => i.id)).toEqual(['a']);
+  });
+
+  it('picks the cards missing the research half the same way, best-priced first', () => {
+    const ideas = [
+      idea('a', { score_inputs: { value: 2 } }),
+      idea('b', { score_inputs: { value: 5 } }),
+      idea('c', { score_inputs: { value: 4, evidence: 4 } }),                    // half-researched still counts
+      idea('d', { score_inputs: { value: 5, evidence: 4, fit: 3 } }),            // already researched
+      idea('e', { decision: 'park', score_inputs: { value: 5 } }),               // already decided
+    ];
+    expect(ideasNeedingResearch(ideas).map((i) => i.id)).toEqual(['b', 'c', 'a']);
+    expect(ideasNeedingResearch(ideas, 1).map((i) => i.id)).toEqual(['b']);
+    expect(ideasNeedingResearch([])).toEqual([]);
   });
 });
 
@@ -120,7 +179,7 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(id).not.toBeNull();
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
     const msg = listInbox(vault).find((n) => n.data.kind === 'message' && n.data.from === 'ceo');
-    expect(msg!.body).toMatch(/six questions/);
+    expect(msg!.body).toMatch(/[Ss]ix questions/);
     expect(askInterview(vault, 'ceo', NOW)).toBeNull();       // never twice
   });
 
@@ -136,7 +195,7 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     // The message is written first, so this is exactly the vault a crash in between leaves behind.
     createProposal(vault, {
       id: interviewMessageId('ceo'), kind: 'message', from: 'ceo', to: 'owner',
-      title: 'Six questions before I plan anything', body: 'Before I plan anything, six questions.',
+      title: 'Six questions, while I get started', body: 'Six questions, to make sure I start from the right thing.',
     }, 'ceo');
     expect(vault.readTextOrNull(INTERVIEW_PATH)).toBeNull();
 
@@ -181,6 +240,12 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(enqueueDiscovery(vault, loadOrg(vault))).toBeNull();
   });
 
+  /** Back-date a job note so "discovery ran today" is false — the day floor's only input. */
+  const ranYesterday = (id: string) => {
+    const at = new Date(Date.now() - 86_400_000).toISOString();
+    vault.updateNote(`Jobs/${id}.md`, (n) => ({ data: { ...n.data, created: at }, body: n.body }), 'daemon');
+  };
+
   it('queues one discovery job per set of material, never two for the same', () => {
     vault.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell meal kits.', 'owner');
     const org = loadOrg(vault);
@@ -196,8 +261,54 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(job.data.research!.decision_owner).toBe('ceo');
     expect(enqueueDiscovery(vault, org)).toBeNull();          // same digest, same id, already there
     vault.writeText(`${DISCOVERY_INBOX}/more.md`, 'And to schools.', 'owner');
+    // New material, but discovery already read today: the floor holds it to tomorrow's first cycle.
+    expect(enqueueDiscovery(vault, org)).toBeNull();
+    expect(currentDiscoveryStatus(vault).why).toContain('already read new material today');
+    ranYesterday(id);
     expect(enqueueDiscovery(vault, org)).not.toBeNull();      // new material, one more job
     expect(listJobs(vault).filter((j) => j.type === 'discovery').length).toBe(2);
+  });
+
+  // C2, against a real vault: what the digest is fed, and what a re-run costs.
+  it('reads one short line on the first cycle, and a "thanks" after that costs nothing', () => {
+    const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+    ownerSays('Meal kits for nurseries.', ago(60_000));
+    const org = loadOrg(vault);
+    const first = currentDiscoveryStatus(vault);
+    // One line: read it *and* ask the six questions (spec §5.5).
+    expect(first).toMatchObject({ run: true, ask: true });
+    const id = enqueueDiscovery(vault, org, first)!;
+    expect(id).toBeTruthy();
+
+    ownerSays('thanks!', new Date(Date.now() + 60_000).toISOString());
+    expect(currentDiscoveryStatus(vault).run).toBe(false);
+    expect(enqueueDiscovery(vault, org)).toBeNull();
+    // The line discovery has read is out of the digest; only the unread reply is in it, and a reply is not
+    // material — so nothing can re-queue a research lifecycle on it.
+    const since = lastDiscoveryAt(vault);
+    expect(ownerPrompt(vault, since)).not.toContain('Meal kits');
+    expect(ownerPrompt(vault, since)).toContain('thanks');
+    expect(listJobs(vault).filter((j) => j.type === 'discovery')).toHaveLength(1);
+    ranYesterday(id);   // so nothing below is refused merely by the day floor
+
+    // A file is material: it queues exactly one more.
+    vault.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell meal kits to nurseries. Two already pay us.', 'owner');
+    expect(currentDiscoveryStatus(vault).run).toBe(true);
+    expect(enqueueDiscovery(vault, org)).not.toBeNull();
+    expect(listJobs(vault).filter((j) => j.type === 'discovery')).toHaveLength(2);
+    // And that second job is today's, so the floor holds the next one whatever else arrives.
+    vault.writeText(`${DISCOVERY_INBOX}/more.md`, 'And to schools, from September.', 'owner');
+    expect(enqueueDiscovery(vault, org)).toBeNull();
+    expect(listJobs(vault).filter((j) => j.type === 'discovery')).toHaveLength(2);
+  });
+
+  it('a long prompt typed after the brief is material; a short one is not', () => {
+    const org = loadOrg(vault);
+    vault.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell meal kits.', 'owner');
+    ranYesterday(enqueueDiscovery(vault, org)!);
+    ownerSays(['We are also opening in schools.', 'The buyer there is the catering manager.', 'Two counties have asked.', 'We have no price for it yet.', 'What we do not know is whether the kitchens will cook it.'].join('\n'), '2026-09-11T13:00:00.000Z');
+    expect(currentDiscoveryStatus(vault)).toMatchObject({ run: true });
+    expect(currentDiscoveryStatus(vault).why).toContain('new material');
   });
 
   it('queues at most three estimates, to the finance office, once each', () => {
@@ -232,5 +343,42 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     }
     const ids = enqueueEstimates(vault, loadOrg(vault));
     expect(ids).toEqual([estimateJobId(slugs[3])]);
+  });
+
+  // I2: `nextIdeaForBoard` needs all four inputs, and until now only the finance half had a producer — every
+  // card an intelligence sweep filed was unscorable for ever, sat in `Ideas/` unreported, and still cost the
+  // cycle an estimate job and up to an hour of `ideas_board` waiting.
+  it('asks the research office for the other half, capped and assigned the same way', () => {
+    const priced = writeIdeaCard(vault, { title: 'Priced but unresearched', source: 'intelligence:competitive' }, 'intelligence_analyst');
+    updateIdea(vault, priced, { score_inputs: { value: 4, effort: 4 } }, 'cfo');
+    const bare = writeIdeaCard(vault, { title: 'A bare hunch', source: 'owner' }, 'ceo');
+    const whole = writeIdeaCard(vault, { title: 'Fully answered', source: 'discovery' }, 'research_manager');
+    updateIdea(vault, whole, { score_inputs: { value: 4, effort: 4, evidence: 4, fit: 4 } }, 'research_manager');
+
+    const org = loadOrg(vault);
+    const ids = enqueueResearchHalf(vault, org);
+    // The scored card is left alone; the two half-answered ones are asked about, best-priced first.
+    expect(ids).toEqual([researchJobId(priced), researchJobId(bare)]);
+    const job = readJob(vault, ids[0])!;
+    expect(job.data.type).toBe('research');
+    expect(job.data.assigned).toBe('research_manager');   // the research office, by office lookup
+    expect(job.data.for).toBe('ceo');
+    // It orders `research.start`, so the scheduler's own rule has to accept the request it carries.
+    expect(missingRequestFields(job.data.research)).toEqual([]);
+    expect(job.body).toContain('evidence');
+    expect(job.body).toContain('fit');
+    expect(job.body).toContain('confidence');
+    expect(job.body).toContain(`slug: "${priced}"`);
+    expect(job.body).toContain('Do not price it');
+    // One per card, ever: a replayed cycle re-finds the job it already asked for.
+    expect(enqueueResearchHalf(vault, org)).toEqual([]);
+  });
+
+  it('never lets three stalled research jobs starve the fourth card', () => {
+    const slugs = ['Alpha', 'Beta', 'Gamma', 'Delta'].map((t) => writeIdeaCard(vault, { title: t, source: 'discovery' }, 'research_manager'));
+    for (const slug of slugs.slice(0, 3)) {
+      createJob(vault, { id: researchJobId(slug), type: 'research', title: 'stalled', assigned: 'research_manager', goal: 'x' }, 'daemon');
+    }
+    expect(enqueueResearchHalf(vault, loadOrg(vault))).toEqual([researchJobId(slugs[3])]);
   });
 });
