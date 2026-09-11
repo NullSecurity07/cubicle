@@ -169,12 +169,13 @@ export function renderScoreSection(i: IdeaScoreInputs, opts: { board?: 'pass' | 
  * must not be returned for it.
  *
  * The left boundary matters as much as the slug pattern does: without it `MyIdeas/foo` or `BadIdeas/foo` reads
- * as `Ideas/foo` and a plan gets returned for an idea it never named. `[`, `(`, a space and a line start are
- * all boundaries; a letter, digit, `_` or `-` is not.
+ * as `Ideas/foo` and a plan gets returned for an idea it never named. `/` is excluded too — ideas live at the
+ * top of the vault, so `Archive/Ideas/foo` and `Docs/Ideas/foo.md` are some other folder's business. `[`, `(`,
+ * a space and a line start are all boundaries; a letter, digit, `_`, `-` or `/` is not.
  */
 export function ideasNamedIn(plan: string): string[] {
   const out = new Set<string>();
-  const re = new RegExp(`(?<![A-Za-z0-9_-])Ideas/(${IDEA_SLUG_SRC})(?:\\.md)?`, 'gi');
+  const re = new RegExp(`(?<![A-Za-z0-9_/-])Ideas/(${IDEA_SLUG_SRC})(?:\\.md)?`, 'gi');
   for (const m of plan.matchAll(re)) out.add(m[1].toLowerCase());
   return [...out];
 }

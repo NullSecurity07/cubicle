@@ -101,7 +101,10 @@ describe('a plan may draw only on kept ideas (spec §4)', () => {
     expect(ideasNamedIn('- see MyIdeas/crypto-loyalty.md')).toEqual([]);
     expect(ideasNamedIn('- BadIdeas/meal-kits is someone else\'s folder')).toEqual([]);
     expect(ideasNamedIn('- x_Ideas/meal-kits and 9Ideas/meal-kits')).toEqual([]);
+    // Ideas live at the top of the vault; another folder's `Ideas/` is not this one.
+    expect(ideasNamedIn('- Archive/Ideas/crypto-loyalty and Docs/Ideas/meal-kits.md')).toEqual([]);
     expect(unkeptIdeasNamedIn('- Ship MyIdeas/crypto-loyalty this cycle', ideas)).toEqual([]);
+    expect(unkeptIdeasNamedIn('- Ship Archive/Ideas/crypto-loyalty this cycle', ideas)).toEqual([]);
     // …and still matches the real thing wherever a plan puts it.
     expect(ideasNamedIn('(Ideas/meal-kits.md)')).toEqual(['meal-kits']);
     expect(ideasNamedIn('Ideas/meal-kits at the start of the line')).toEqual(['meal-kits']);

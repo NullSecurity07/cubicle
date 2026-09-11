@@ -514,9 +514,28 @@ export function unkeptForcesReturn(unkept: { decision: IdeaDecision }[]): boolea
   return unkept.some((i) => i.decision === 'park' || i.decision === 'scrap');
 }
 
+/** A returned plan carries at most this many findings: enough to act on, few enough for the CEO to answer all. */
+export const MAX_PLAN_FINDINGS = 6;
+/** …of which the deterministic guard takes at most this many whenever the board also spoke. */
+export const MAX_GUARD_FINDINGS = 3;
+
+/**
+ * The findings one plan return carries, from the guard's warnings and the board's own.
+ *
+ * The board's always survive. `mergeBoardVerdict` already caps them at four and they are the failure modes the
+ * CEO has to answer, whereas the guard's warnings are one sentence repeated per idea — so the guard takes what
+ * is left of the budget and never more than three, rather than a plan naming six undecided ideas crowding the
+ * board out of its own return (review T10, finding 1). With no session at all — the guard returned the plan
+ * before the board sat — the guard has the whole budget to itself.
+ */
+export function planReturnFindings(guard: string[], session: string[] = []): string[] {
+  const share = session.length ? Math.max(0, Math.min(MAX_GUARD_FINDINGS, MAX_PLAN_FINDINGS - session.length)) : MAX_PLAN_FINDINGS;
+  return [...guard.slice(0, share), ...session].slice(0, MAX_PLAN_FINDINGS);
+}
+
 /** The `## Kept ideas` block in the company.plan goal: what the plan may draw on, and nothing else. */
 export function keptIdeasGoalBlock(lines: string[]): string {
-  if (!lines.length) return 'Kept ideas: none yet. Plan from Memory/founder-brief.md; the board rules on the idea cards this cycle and the next plan draws on whatever it keeps.';
+  if (!lines.length) return `Kept ideas: none yet. Plan from ${FOUNDER_BRIEF}; the board rules on the idea cards this cycle and the next plan draws on whatever it keeps.`;
   return `Kept ideas — the only ideas this plan may draw on (spec §4; naming a parked or scrapped one gets the plan returned), each out of ${IDEA_SCORE_MAX}:\n${lines.map((l) => `- ${l}`).join('\n')}`;
 }
 
@@ -1023,6 +1042,8 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // exists to enforce. An undecided idea is carried into the session's findings instead (see below).
         const unkept = unkeptIdeasNamedIn(plan, listIdeas(vault));
         const guardFindings = unkeptIdeaFindings(unkept);
+        // Whole budget here (no board findings to make room for), the board's share below.
+        const guardOnlyFindings = planReturnFindings(guardFindings);
         if (unkeptForcesReturn(unkept)) {
           // The pre-mortem note the cycle owes, in the guard's own words: `writeBoardPremortemDecision` would
           // point the reader at a board job that does not exist and promise "the advisors' own words" nobody
@@ -1041,8 +1062,11 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
               reviewDays: 7,
             });
           } catch { /* a note is a record, never a reason to stall the cycle */ }
-          state = { ...state, boardVerdict: 'return', boardFindings: guardFindings }; saveState(state);
-          const out = returnPlan(guardFindings, 'unkept ideas');
+          // The note above keeps every offending idea — it is the durable record of what the plan named. What
+          // the CEO rewrites against and what the owner reads is the capped list, the same budget the board's
+          // own return gets: a plan naming twenty scrapped ideas must not become a twenty-bullet prompt.
+          state = { ...state, boardVerdict: 'return', boardFindings: guardOnlyFindings }; saveState(state);
+          const out = returnPlan(guardOnlyFindings, 'unkept ideas');
           if (out) return out;
           done(i, `board returned: ${unkept.length} unkept idea(s), second time`);
           break;
@@ -1077,9 +1101,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         try { writeBoardPremortemDecision(vault, hbId, boardJob, session.verdict, session.findings, board.lead, now(), session.answered); }
         catch (err) { vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'board_premortem', message: `could not write the pre-mortem decision note: ${(err as Error).message}` } }); }
         // The guard's warnings lead: an idea nobody has ruled on yet does not return the plan, but the CEO and
-        // the owner should still read that the plan leans on one. Capped with the session's own findings so the
-        // rewrite prompt stays a list a reader can hold.
-        const boardFindings = [...guardFindings, ...session.findings].slice(0, 6);
+        // the owner should still read that the plan leans on one. They take what is left of the budget after
+        // the board's own findings, never the other way round — see `planReturnFindings`.
+        const boardFindings = planReturnFindings(guardFindings, session.findings);
         state = { ...state, boardJob, boardVerdict: session.verdict, boardFindings }; saveState(state);
         if (session.verdict === 'return') {
           const out = returnPlan(boardFindings, 'board return');

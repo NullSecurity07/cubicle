@@ -648,6 +648,33 @@ describe('a plan may draw only on ideas the company kept (spec §4.2)', () => {
     } finally { v.close(); }
   });
 
+  it('a rewrite that still names the scrapped idea goes to the owner, not round again (review T10, finding 5)', async () => {
+    const v = Vault.open(dir);
+    try {
+      const slug = writeIdeaCard(v, { title: 'Crypto loyalty', source: 'discovery' }, 'research_manager');
+      updateIdea(v, slug, { score_inputs: { value: 1, evidence: 1, effort: 1, fit: 1 }, decision: 'scrap' }, 'daemon');
+      v.writeText('Plans/plan.md', planNaming(slug), 'ceo');
+
+      const llm = tierRecordingLlm();
+      const hbId = createHeartbeatJob(v, 'test');
+      updateJob(v, hbId, { checkpoint_step: HEARTBEAT_STEPS.indexOf('board_premortem') }, 'daemon');
+      expect((await runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hbId)).status).toBe('requeued');
+
+      // The CEO's one rewrite still leans on the same scrapped card, so the same heartbeat is back at the board
+      // with its veto already counted. The board may not stall the company: this one goes to the owner.
+      updateJob(v, hbId, { status: 'queued', checkpoint_step: HEARTBEAT_STEPS.indexOf('board_premortem'), blocked_on: undefined }, 'daemon');
+      await runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hbId);
+
+      expect(v.events.count('plan.vetoed')).toBe(2);
+      expect(hbState(hbId).vetoes).toBe(2);
+      expect(v.events.query({ types: ['proposal.created'] }).some((e) => e.payload.kind === 'message' && String(e.payload.title).toLowerCase().includes('veto'))).toBe(true);
+      // Still no session either time: two returns, and not one advisor was asked.
+      expect(listJobs(v).filter((j) => j.type === 'board.premortem')).toHaveLength(0);
+      // …and the cycle walks on past the board rather than requeueing for ever.
+      expect(readJob(v, hbId)!.data.checkpoint_step).toBeGreaterThan(HEARTBEAT_STEPS.indexOf('board_premortem'));
+    } finally { v.close(); }
+  });
+
   it('an undecided idea is a finding the CEO and the owner read, never a return (cycle one would deadlock)', async () => {
     const v = Vault.open(dir);
     try {
