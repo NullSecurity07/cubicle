@@ -9,8 +9,18 @@ import { nowIso } from './fs.js';
 export interface Org { teams: Record<string, TeamFrontmatter>; roles: Record<string, RoleFrontmatter> }
 export type Action = Permission;
 
-/** Teams/*.md + active Roles/*.md (never archive/ or _hireable/). Pure read; call per tick, it is cheap. */
-export function loadOrg(vault: Vault): Org {
+/**
+ * `loadOrg` re-reads and re-parses every Teams/*.md and Roles/*.md note, which used to be fine when the only
+ * caller was the once-per-heartbeat-tick planner. `nextJob`'s WIP check (§7) now calls it once per idle worker
+ * per poll — a dozen-plus roles, each polling on its own schedule — which turned "cheap, call per tick" into a
+ * few dozen synchronous file reads every few hundred milliseconds and was enough, under load, to push a busy
+ * heartbeat cycle past a 30s test timeout (never a hang: the same cycle finishes fine with more time or less
+ * contention). Cache per vault, invalidated only by a `vault.wrote` under Teams/ or Roles/ — anything else
+ * (jobs, plans, events) leaves the cached org valid.
+ */
+const orgCache = new WeakMap<Vault, { org: Org | null; dirty: boolean }>();
+
+function computeOrg(vault: Vault): Org {
   const teams: Org['teams'] = {};
   for (const rel of vault.list('Teams', { ext: '.md' })) {
     if (rel.includes('/archive/')) continue;
@@ -24,6 +34,20 @@ export function loadOrg(vault: Vault): Org {
     if (p && p.success && p.data.active) roles[p.data.role] = p.data;
   }
   return { teams, roles };
+}
+
+export function loadOrg(vault: Vault): Org {
+  let entry = orgCache.get(vault);
+  if (!entry) {
+    entry = { org: null, dirty: true };
+    orgCache.set(vault, entry);
+    vault.events.on('vault.wrote', (e) => {
+      const p = String((e.payload as { path?: string } | undefined)?.path ?? '');
+      if (p.startsWith('Teams/') || p.startsWith('Roles/')) entry!.dirty = true;
+    });
+  }
+  if (entry.dirty || !entry.org) { entry.org = computeOrg(vault); entry.dirty = false; }
+  return entry.org;
 }
 
 export function teamOf(org: Org, role: string): TeamFrontmatter | null {
