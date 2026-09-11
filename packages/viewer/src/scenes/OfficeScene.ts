@@ -89,7 +89,15 @@ export class OfficeScene extends Phaser.Scene {
     this.elev = initialElevator(this.world.floors, 1);
     // Phaser calls `scene.sys.shutdown()`, never a `shutdown()` method on the Scene itself — it emits this event on
     // `this.events`, which is only guaranteed to exist once we're inside a lifecycle callback like `create()`.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.hooks.onSceneShutdown?.());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      // Surfaces own a forever-tween and two base64 textures keyed by kind: both outlive a scene restart unless
+      // the surface disposes of them here (the sprites' own tweens go the same way).
+      for (const su of this.surfaces.values()) su.destroy();
+      this.surfaces.clear();
+      for (const ag of this.agents.values()) ag.destroy();
+      this.agents.clear();
+      this.hooks.onSceneShutdown?.();
+    });
     this.car = (this.hooks.makeCar?.(this, { shaft: this.world.anchors.shaft, floors: this.world.floors }) ?? this.defaultCar()).setDepth(3);
     this.car.setPosition(SHAFT_CENTRE_X, this.elev.row * TILE);
     makeSky(this, 'sky', skyFor(this.hour()), h);

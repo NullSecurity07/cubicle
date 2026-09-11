@@ -40,7 +40,10 @@ export const PALETTE = {
   amber: '#e6a93c', amberInk: '#2a1f08',
   marble: '#e8e4dc', marbleAlt: '#d6d1c7',
   asphalt: '#3a3d44', kerb: '#b8b3a8', pavement: '#a89f91',
-  screenBg: '#0b0d11', screenFrame: '#3a4050', screenText: '#f3f5f9', screenMuted: '#b9c2d6',
+  screenBg: '#0b0d11', screenFrame: '#3a4050', screenText: '#f3f5f9', screenMuted: '#b9c2d6', screenInk: '#000000',
+  /** status colours for meters and badges: never amber unless the meter is actually asking for attention */
+  good: '#4cae5c', warn: '#e0a030', bad: '#c0392b', barTrack: '#2a2e37',
+  wipe: '#ffffff',
   dusk: '#3b2a4a', night: '#0a1030',
   sky: { day: ['#9ec7ee', '#dfeaf5'], dusk: ['#f0a36b', '#6a4c8a'], night: ['#0b1026', '#1b2140'] },
   windowDay: '#a9d6ff', windowDusk: '#f3b884', windowNight: '#ffe08a',
