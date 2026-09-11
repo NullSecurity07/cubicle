@@ -45,8 +45,14 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
  *  gate: qa.review, security.review, requester.review, research.review, coo.verify) push the count past the
  *  threshold and the heartbeat retriggers itself. The re-planning gate uses the same list for "work still
  *  open": a queued coo.verify is bookkeeping, not work from the plan. `GATE_JOB_TYPES` lives in core so
- *  `wipLoad` (jobs.ts) excludes the identical set from a team's WIP tally — one list, not two literals to drift. */
-export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES];
+ *  `wipLoad` (jobs.ts) excludes the identical set from a team's WIP tally — one list, not two literals to drift.
+ *
+ *  The daemon's own recurring background work belongs here for the same reason: `intelligence` (four sweeps the
+ *  heartbeat itself enqueues) and `research.measure` (a follow-up the calendar enqueues) are not work anyone
+ *  planned. Counting them meant four of the five completions the next heartbeat waits for were the daemon's own
+ *  sweeps, so one real job fired the next cycle, which enqueued four more — a self-driving cadence that also ate
+ *  the free cheap-tier pool. */
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES, 'intelligence', 'research.measure'];
 
 /**
  * The outbound services whose adapters are in mock mode for this env, in the order the brief names them. Asks the

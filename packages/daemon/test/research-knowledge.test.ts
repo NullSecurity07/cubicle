@@ -36,9 +36,9 @@ function deliver(opts: { confidence?: string; method?: string } = {}): string {
 describe('research delivery capture (owner model §23, §40)', () => {
   it('adds an index row and opens a follow-up note with a due date, exactly once', () => {
     const id = deliver();
-    const written = captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'));
+    const written = captureResearchDeliveries(vault);
     expect(written).toEqual([`Research/followups/${id}.md`]);
-    expect(captureResearchDeliveries(vault, new Date('2026-09-11T10:00:00.000Z'))).toEqual([]);  // idempotent
+    expect(captureResearchDeliveries(vault)).toEqual([]);  // idempotent
 
     const index = vault.readText('Research/index.md');
     expect(index).toContain('| delivered | job | question |');
@@ -61,7 +61,7 @@ describe('research delivery capture (owner model §23, §40)', () => {
     const id = createJob(vault, { type: 'research', title: 'Thin', assigned: 'researcher', goal: 'g', for: 'cto', owner_role: 'cto', research: request }, 'cto');
     updateJob(vault, id, { status: 'done' }, 'daemon');
     vault.events.emit({ type: 'research.delivered', agent: 'researcher', job: id, payload: {}, ts: DELIVERED_AT });
-    captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'));
+    captureResearchDeliveries(vault);
     const index = vault.readText('Research/index.md');
     expect(index).toContain('unstated');
   });
@@ -69,14 +69,14 @@ describe('research delivery capture (owner model §23, §40)', () => {
   it('ignores a delivery whose job note has gone', () => {
     const id = deliver();
     vault.remove(`Jobs/${id}.md`, 'daemon');
-    expect(captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'))).toEqual([]);
+    expect(captureResearchDeliveries(vault)).toEqual([]);
   });
 });
 
 describe('the follow-up measurement job (owner model §41)', () => {
   it('waits for the due date, then queues one measurement job for the research lead', () => {
     const id = deliver();
-    captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'));
+    captureResearchDeliveries(vault);
     expect(listResearchFollowUps(vault)).toHaveLength(1);
 
     expect(enqueueResearchFollowUps(vault, new Date('2026-09-20T09:00:00.000Z'))).toEqual([]);   // not due yet
@@ -95,11 +95,25 @@ describe('the follow-up measurement job (owner model §41)', () => {
     expect(readJob(vault, ids[0])!.body).toMatch(/Research\/followups\//);
     expect(readJob(vault, ids[0])!.body).toMatch(/## Prediction vs reality/);
     expect(j.done_when).toMatch(/Research\/index\.md/);
+    // I8: the metric only counts an outcome that *begins* with one of the four phrases, so the goal has to say so.
+    const body = readJob(vault, ids[0])!.body;
+    expect(body).toMatch(/`outcome:` must BEGIN with exactly one of/);
+    for (const phrase of ['as expected', 'partly', 'not as expected', 'cannot tell yet']) expect(body).toContain(`\`${phrase}\``);
+  });
+
+  it('the sweep runs at most once a calendar day (M4)', () => {
+    deliver();
+    captureResearchDeliveries(vault);
+    // Two ticks 30 s apart on the same day: the second does no work at all, however many notes are on disk.
+    expect(enqueueResearchFollowUps(vault, new Date('2026-09-25T09:00:00.000Z'))).toHaveLength(1);
+    vault.updateNote(listResearchFollowUps(vault)[0].path, (n) => ({ data: { ...n.data, due: '2026-01-01' }, body: n.body }), 'owner');
+    expect(enqueueResearchFollowUps(vault, new Date('2026-09-25T09:00:30.000Z'))).toEqual([]);
+    expect(enqueueResearchFollowUps(vault, new Date('2026-09-26T09:00:00.000Z'))).toEqual([]);   // next day, still measured once
   });
 
   it('a follow-up already measured is never re-queued', () => {
     deliver();
-    captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'));
+    captureResearchDeliveries(vault);
     const fu = listResearchFollowUps(vault)[0];
     vault.updateNote(fu.path, (n) => ({ data: { ...n.data, status: 'measured' }, body: n.body }), 'daemon');
     expect(enqueueResearchFollowUps(vault, new Date('2026-10-01T09:00:00.000Z'))).toEqual([]);
@@ -111,7 +125,7 @@ describe('Metrics/research.md (owner model §41)', () => {
   it('counts what the vault can prove and leaves the rest null', () => {
     expect(researchMetrics(vault)).toMatchObject({ delivered: 0, medianHoursToAnswer: null, reuseRate: null, measured: 0, asExpected: 0 });
     const id = deliver();
-    captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'));
+    captureResearchDeliveries(vault);
     const m = researchMetrics(vault);
     expect(m.delivered).toBe(1);
     expect(m.measured).toBe(0);
@@ -122,13 +136,13 @@ describe('Metrics/research.md (owner model §41)', () => {
     expect(id).toBeTruthy();
     const second = deliver();
     vault.updateNote(`Jobs/${second}.md`, (n) => ({ data: n.data, body: `${n.body}\n\nBuilt on Research/earlier-project/report.md\n` }), 'daemon');
-    captureResearchDeliveries(vault, new Date('2026-09-12T09:00:00.000Z'));
+    captureResearchDeliveries(vault);
     expect(researchMetrics(vault).reuseRate).toBeCloseTo(0.5, 5);
   });
 
   it('counts a measured follow-up and its verdict', () => {
     deliver();
-    captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'));
+    captureResearchDeliveries(vault);
     const fu = listResearchFollowUps(vault)[0];
     vault.updateNote(fu.path, (n) => ({ data: { ...n.data, status: 'measured', outcome: 'as expected: signups flat' }, body: n.body }), 'daemon');
     const m = researchMetrics(vault);

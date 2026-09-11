@@ -95,12 +95,26 @@ describe('research.start', () => {
 });
 
 describe('BibTeX helpers', () => {
-  it('a cite key is stable, readable and legal BibTeX', () => {
+  it('a cite key is stable, readable and legal BibTeX, and keeps the whole host', () => {
     const k = citeKey('https://www.example.com/pricing', '2026-04-02');
-    expect(k).toMatch(/^example2026[0-9a-f]{4}$/);
+    expect(k).toMatch(/^examplecom2026[0-9a-f]{4}$/);
     expect(citeKey('https://www.example.com/pricing', '2026-04-02')).toBe(k);           // stable
     expect(citeKey('https://www.example.com/other', '2026-04-02')).not.toBe(k);         // url-specific
     expect(citeKey('not a url', '2026-04-02')).toMatch(/^source2026[0-9a-f]{4}$/);
+    // M6: the first host label alone read the same for two unrelated docs sites.
+    expect(citeKey('https://docs.python.org/3/', '2026-04-02')).toMatch(/^docspythonorg2026/);
+    expect(citeKey('https://docs.djangoproject.com/en/5.0/', '2026-04-02')).toMatch(/^docsdjangoprojectcom2026/);
+  });
+
+  it('a url carrying a brace or a backslash is neutralised and still round-trips through findCiteKey (I6)', () => {
+    const nasty = 'https://example.com/a?q=}\n  note = {injected},\n  x = {';
+    const { key, text } = bibtexEntry({ url: nasty, title: 'Nasty', date: '2026-04-02' });
+    expect(text).not.toMatch(/note\s+= \{injected\}/);          // the entry was not ended early
+    expect(text.match(/\{/g)!.length).toBe(text.match(/\}/g)!.length);   // braces balance
+    expect(findCiteKey(text, nasty)).toBe(key);                  // so dedupe still finds it
+    expect(findCiteKey(text, 'https://example.com/other')).toBeNull();
+    const slashy = bibtexEntry({ url: 'https://example.com/a', title: 'A \\bad title', date: '2026-04-02' });
+    expect(slashy.text).not.toContain('\\bad');
   });
 
   it('renders an @misc entry and neutralises braces in the values', () => {

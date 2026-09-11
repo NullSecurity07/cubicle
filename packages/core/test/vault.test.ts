@@ -174,6 +174,17 @@ describe('EventLog', () => {
     const n = EventLog.rebuildFromJsonl(db, path.join(dir, '.cubicle', 'events'));
     expect(n).toBe(vault.events.count());
   });
+
+  it('a bounded window is the NEWEST rows, still oldest-first', () => {
+    for (let i = 0; i < 6; i++) vault.events.emit({ type: 'daemon.warning', agent: 'ceo', payload: { where: 'windowing', message: `w${i}` } });
+    const all = vault.events.query({ types: ['daemon.warning'] });
+    const window = vault.events.query({ types: ['daemon.warning'], limit: 3 });
+    // Every caller that passes a limit is asking what happened lately. Reading the oldest N froze those answers
+    // at the first rows the vault ever recorded, on a log that only grows.
+    expect(window.map((e) => e.payload.message)).toEqual(all.slice(-3).map((e) => e.payload.message));
+    expect(window.map((e) => e.id)).toEqual([...window.map((e) => e.id)].sort((a, b) => a! - b!));
+    expect(vault.events.query({ types: ['daemon.warning'], limit: 1 })[0].payload.message).toBe('w5');
+  });
 });
 
 describe('VaultWatcher', () => {

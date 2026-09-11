@@ -221,15 +221,24 @@ export const researchStart = defineTool({
   },
 });
 
-/** BibTeX values may not carry unbalanced braces; the safest thing to do with an agent-supplied string is round them. */
-function bibValue(s: string): string {
-  return s.replace(/[{}]/g, (c) => (c === '{' ? '(' : ')')).replace(/\s+/g, ' ').trim();
+/**
+ * BibTeX values may not carry unbalanced braces, and a lone `\` starts a control sequence — either one ends the
+ * entry early and lets an agent-supplied string inject fields into the `.bib`. Round the braces and flatten the
+ * backslash to `/` (the only place a backslash is at all likely is a Windows-ish path or a URL, where `/` is
+ * what was meant anyway). Everything written into an entry goes through this, the URL included.
+ */
+export function bibValue(s: string): string {
+  return s.replace(/\\/g, '/').replace(/[{}]/g, (c) => (c === '{' ? '(' : ')')).replace(/\s+/g, ' ').trim();
 }
 
-/** A citation key that is readable (host + year) and unique (4 hex of the url). Legal BibTeX: letters and digits only. */
+/**
+ * A citation key that is readable (host + year) and unique (4 hex of the url). Legal BibTeX: letters and digits
+ * only. The **whole** host is kept with its dots stripped — the first label alone made `docs.python.org` and
+ * `docs.djangoproject.com` both read as `docs2026`, which is a misleading key, not a short one.
+ */
 export function citeKey(url: string, date: string): string {
   let host = 'source';
-  try { host = new URL(url).host.replace(/^www\./, '').split('.')[0].replace(/[^a-z0-9]/gi, '').slice(0, 20).toLowerCase() || 'source'; } catch { /* not a url */ }
+  try { host = new URL(url).host.replace(/^www\./, '').replace(/[^a-z0-9]/gi, '').slice(0, 24).toLowerCase() || 'source'; } catch { /* not a url */ }
   const year = /^(\d{4})/.exec(date.trim())?.[1] ?? String(new Date().getUTCFullYear());
   return `${host}${year}${createHash('sha1').update(url).digest('hex').slice(0, 4)}`;
 }
@@ -242,7 +251,7 @@ export function bibtexEntry(s: { url: string; title: string; date: string; autho
     `@misc{${key},`,
     `  title        = {${bibValue(s.title)}},`,
     ...(s.author?.trim() ? [`  author       = {${bibValue(s.author)}},`] : []),
-    `  howpublished = {\\url{${s.url}}},`,
+    `  howpublished = {\\url{${bibValue(s.url)}}},`,
     `  urldate      = {${bibValue(s.date)}},`,
     ...(note ? [`  note         = {${bibValue(note)}},`] : []),
     '}',
@@ -250,10 +259,15 @@ export function bibtexEntry(s: { url: string; title: string; date: string; autho
   return { key, text: lines.join('\n') + '\n' };
 }
 
-/** The key an entry for `url` already has in this .bib, or null. Entries are split on a line-initial `@`. */
+/**
+ * The key an entry for `url` already has in this .bib, or null. Entries are split on a line-initial `@`. The
+ * lookup uses the same `bibValue` the entry was written with, so a URL carrying a brace still matches itself and
+ * dedupe holds — before, such an entry was never found again and was appended on every call.
+ */
 export function findCiteKey(bib: string, url: string): string | null {
+  const needle = `\\url{${bibValue(url)}}`;
   for (const chunk of bib.split(/\n(?=@)/)) {
-    if (chunk.includes(`\\url{${url}}`)) return /^@\w+\{([^,]+),/.exec(chunk.trimStart())?.[1] ?? null;
+    if (chunk.includes(needle)) return /^@\w+\{([^,]+),/.exec(chunk.trimStart())?.[1] ?? null;
   }
   return null;
 }

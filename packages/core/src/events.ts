@@ -40,10 +40,10 @@ export class EventLog {
   }
 
   /**
-   * Bounded event query. `order` decides *which* end of the log a `limit` keeps, not just the row order:
-   * `'asc'` (the default, unchanged) takes the oldest `limit` rows and returns them oldest-first, while
-   * `'desc'` takes the newest `limit` rows and returns them newest-first. Any sweep that bounds itself with
-   * `limit` and no `from` wants `'desc'`, or it freezes on the first N events the vault ever wrote.
+   * Bounded event query. `limit` always keeps the **newest** N rows — every caller that passes one is asking
+   * "what has happened lately", and an oldest-first cut silently froze those answers at the first N events the
+   * vault ever wrote. `order` only decides the row order of what comes back: `'asc'` (the default) oldest-first,
+   * `'desc'` newest-first.
    */
   query(opts: { from?: string; to?: string; types?: EventType[]; job?: string; limit?: number; order?: 'asc' | 'desc' } = {}): CubicleEvent[] {
     const where: string[] = [];
@@ -52,9 +52,14 @@ export class EventLog {
     if (opts.to) { where.push('ts <= ?'); params.push(opts.to); }
     if (opts.job) { where.push('job = ?'); params.push(opts.job); }
     if (opts.types?.length) { where.push(`type IN (${opts.types.map(() => '?').join(',')})`); params.push(...opts.types); }
-    const dir = opts.order === 'desc' ? 'DESC' : 'ASC';
-    const sql = `SELECT id, ts, type, agent, job, payload_json FROM events${where.length ? ' WHERE ' + where.join(' AND ') : ''} ORDER BY id ${dir}${opts.limit ? ' LIMIT ' + Number(opts.limit) : ''}`;
+    const clause = where.length ? ' WHERE ' + where.join(' AND ') : '';
+    const sql = opts.limit
+      ? `SELECT id, ts, type, agent, job, payload_json FROM events${clause} ORDER BY id DESC LIMIT ${Number(opts.limit)}`
+      : `SELECT id, ts, type, agent, job, payload_json FROM events${clause} ORDER BY id ASC`;
     const rows = this.db.prepare(sql).all(...params) as { id: number; ts: string; type: string; agent: string | null; job: string | null; payload_json: string }[];
+    // The SQL above returns newest-first when limited and oldest-first otherwise; flip to the requested order.
+    const newestFirst = Boolean(opts.limit);
+    if (newestFirst !== (opts.order === 'desc')) rows.reverse();
     return rows.map((r) => ({ id: r.id, ts: r.ts, type: r.type as EventType, agent: r.agent, job: r.job, payload: JSON.parse(r.payload_json) }));
   }
 

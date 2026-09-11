@@ -108,11 +108,13 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
   Runs/                   one "since you were away" brief per heartbeat
   Decisions/              one note per decision (meetings, adoptions)
   Customers/              one note per lead (slug-hash), _suppression.md
-  Metrics/                daily.md, quota.md, payment_links.md
+  Metrics/                daily.md, quota.md, payment_links.md, research.md (regenerated weekly)
   Memory/                 constitution.md (agent-immutable, tool-enforced), owner_preferences.md, lessons.md
   Skills/                 reusable procedures written by agents (archive/ for pruned ones)
   Experiments/            hypothesis/metric/review_date notes (_template.md), posts/ drafts
   Ideas/                  idea cards filed by continuous intelligence and by discovery (_template.md)
+  Research/               index.md (every delivered project), <slug>/ projects, archive/ page snapshots,
+                          intelligence/<date>-c<cycle>-<kind>.md sweeps, followups/<job>.md predictions
   Jobs/                   <job-id>.md (frontmatter = state machine), queue.md (generated), _template.md
   Messages/               <role>.md colleague inboxes (agent-writable; HTML-comment read markers)
   Site/                   the website source; dist/ is the build (gitignored)
