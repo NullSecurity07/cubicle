@@ -20,10 +20,11 @@ describe('EventLog.query order (fix wave item 1 / I2)', () => {
     expect(newest.map((e) => e.payload.n)).toEqual([3, 2]);
   });
 
-  it('asc stays the default and still returns the oldest rows, oldest first', () => {
+  it('asc stays the default order, and a limit always keeps the newest rows (integration rule: a bounded query never freezes on the first N events)', () => {
     emit(1); emit(2); emit(3);
-    expect(vault.events.query({ types: ['deploy.done'], limit: 2 }).map((e) => e.payload.n)).toEqual([1, 2]);
-    expect(vault.events.query({ types: ['deploy.done'], limit: 2, order: 'asc' }).map((e) => e.payload.n)).toEqual([1, 2]);
+    expect(vault.events.query({ types: ['deploy.done'], limit: 2 }).map((e) => e.payload.n)).toEqual([2, 3]);
+    expect(vault.events.query({ types: ['deploy.done'], limit: 2, order: 'asc' }).map((e) => e.payload.n)).toEqual([2, 3]);
+    expect(vault.events.query({ types: ['deploy.done'] }).map((e) => e.payload.n)).toEqual([1, 2, 3]);
   });
 
   it('an unbounded desc query returns the whole log newest first', () => {
@@ -44,6 +45,7 @@ describe('EventLog.query order (fix wave item 1 / I2)', () => {
     expect(window[0].payload.n).toBe(599);
     expect(window.at(-1)!.payload.n).toBe(100);
     // The ascending window of the same size cannot see the recent end at all — the I2 bug.
-    expect(vault.events.query({ types: ['deploy.done'], limit: 500 }).at(-1)!.payload.n).toBe(499);
+    expect(vault.events.query({ types: ['deploy.done'], limit: 500 }).at(-1)!.payload.n).toBe(599);   // asc order, but still the newest 500
+    expect(vault.events.query({ types: ['deploy.done'], limit: 500 })[0].payload.n).toBe(100);
   });
 });
