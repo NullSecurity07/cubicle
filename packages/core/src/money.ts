@@ -303,3 +303,176 @@ export function allocateQuota(capacity: number, divisions: DivisionWeight[], opt
   out[HOUSE] = cap - ids.reduce((t, d) => t + out[d.id], 0);
   return out;
 }
+
+
+// ---------- the report ----------
+
+/** How far back burn looks. Long enough to smooth a lumpy month, short enough to notice a new subscription. */
+export const BURN_WINDOW_DAYS = 30;
+/** Below this many days of runway the brief asks the owner for a decision. */
+export const RUNWAY_WARN_DAYS = 14;
+
+const DAY_MS = 86_400_000;
+
+export interface MoneyReport {
+  currency: string;
+  /** live capital + live revenue − live cost. Can be negative; a book is allowed to tell bad news. */
+  cashCents: number;
+  burnCentsPerDay: number;
+  /** null when nothing is being spent: "not spending", never "infinite" and never a number. */
+  runwayDays: number | null;
+  inCents: number;
+  outCents: number;
+  windowOutCents: number;
+  windowDays: number;
+  mockRevenueCents: number;
+  mockCostCents: number;
+  /** The owner has put money in at least once. Without this, dormancy would fire on every fresh install. */
+  funded: boolean;
+  dormant: boolean;
+  firstAt: string | null;
+  lastAt: string | null;
+  /** When real money last moved — the mark the dormancy message is keyed on. */
+  lastLiveAt: string | null;
+  entries: number;
+  problems: LedgerProblem[];
+}
+
+/**
+ * The company's position, all in minor units.
+ *
+ * Two rules carry the weight. **Only `live` entries reach cash** — a simulated sale is reported beside the
+ * figures and never inside them, because a runway computed from money nobody paid is worse than no runway.
+ * And **dormancy needs a `capital` entry as well as an empty till**: an unfunded company has zero cash and must
+ * still run, since running free is the whole point of this system.
+ *
+ * Burn divides the window's spend by the time the company has actually existed for, capped at the window. A
+ * company one day old that spent 3.00 yesterday burns 3.00 a day, not 0.10 — the flattering answer is the one
+ * that lets a company walk off a cliff.
+ */
+export function moneyReport(ledger: Ledger, now: Date = new Date()): MoneyReport {
+  const live = ledger.entries.filter((e) => e.mode === 'live');
+  const sum = (list: LedgerEntry[], kind: EntryKind) => list.reduce((t, e) => (e.kind === kind ? t + e.cents : t), 0);
+  const mock = ledger.entries.filter((e) => e.mode === 'mock');
+  const inCents = sum(live, 'capital') + sum(live, 'revenue');
+  const outCents = sum(live, 'cost');
+  const cashCents = inCents - outCents;
+  const times = ledger.entries.map((e) => Date.parse(e.at)).filter((t) => Number.isFinite(t));
+  const firstMs = times.length ? Math.min(...times) : null;
+  const lastMs = times.length ? Math.max(...times) : null;
+  const liveTimes = live.map((e) => Date.parse(e.at)).filter((t) => Number.isFinite(t));
+  const windowFrom = now.getTime() - BURN_WINDOW_DAYS * DAY_MS;
+  const windowOutCents = live.reduce((t, e) => (e.kind === 'cost' && Date.parse(e.at) >= windowFrom ? t + e.cents : t), 0);
+  // The window's denominator is how long the company has actually been *spending real money* for — a mock
+  // row (a simulated sale, dated whenever a demo happened to be run) must never stretch it out and flatter burn.
+  const firstLiveMs = liveTimes.length ? Math.min(...liveTimes) : null;
+  const ageDays = firstLiveMs === null ? 1 : Math.ceil((now.getTime() - firstLiveMs) / DAY_MS);
+  const windowDays = Math.max(1, Math.min(BURN_WINDOW_DAYS, ageDays));
+  // A real spend never rounds down to a burn of 0 — that would report "not spending" for a company that is.
+  const burnCentsPerDay = windowOutCents > 0 ? Math.max(1, Math.round(windowOutCents / windowDays)) : 0;
+  const funded = live.some((e) => e.kind === 'capital');
+  return {
+    currency: ledger.currency,
+    cashCents, burnCentsPerDay,
+    runwayDays: burnCentsPerDay > 0 ? Math.max(0, Math.floor(cashCents / burnCentsPerDay)) : null,
+    inCents, outCents, windowOutCents, windowDays,
+    mockRevenueCents: sum(mock, 'revenue'), mockCostCents: sum(mock, 'cost'),
+    funded, dormant: funded && cashCents <= 0,
+    firstAt: firstMs === null ? null : new Date(firstMs).toISOString(),
+    lastAt: lastMs === null ? null : new Date(lastMs).toISOString(),
+    lastLiveAt: liveTimes.length ? new Date(Math.max(...liveTimes)).toISOString() : null,
+    entries: ledger.entries.length,
+    problems: ledger.problems,
+  };
+}
+
+const days = (n: number): string => `${n} day${n === 1 ? '' : 's'}`;
+
+/** The one money line the brief carries. One line, every cycle, whether or not anything happened. */
+export function moneyLine(r: MoneyReport): string {
+  const runway = r.runwayDays === null ? 'not spending (nothing has cost anything yet)' : `runway ${days(r.runwayDays)}`;
+  const mock = r.mockRevenueCents > 0 ? `; ${money(r.mockRevenueCents, r.currency)} of simulated revenue, which is not cash` : '';
+  return `Money: ${money(r.cashCents, r.currency)} cash, ${money(r.burnCentsPerDay, r.currency)} a day burn, ${runway}${mock}${r.dormant ? ' — the company is dormant' : ''}`;
+}
+
+/**
+ * The brief's "What needs you" rows, and only when something does. A money section that speaks every cycle is
+ * a money section the owner stops reading, so three things earn a row and nothing else: the company has stopped,
+ * the runway is short, or the book has a line nobody can read.
+ */
+export function moneyNeedsYou(r: MoneyReport): string[] {
+  const out: string[] = [];
+  if (r.dormant) {
+    out.push(`- The company has spent the money you put in (${money(r.cashCents, r.currency)}) and is dormant: only the heartbeat runs. Add a \`capital\` row to \`${LEDGER_PATH}\` to bring it back`);
+  } else if (r.runwayDays !== null && r.runwayDays <= RUNWAY_WARN_DAYS) {
+    out.push(`- Runway is ${days(r.runwayDays)} at ${money(r.burnCentsPerDay, r.currency)} a day — add capital in \`${LEDGER_PATH}\` or cut what is costing money`);
+  }
+  if (r.problems.length) {
+    out.push(`- ${r.problems.length} row${r.problems.length === 1 ? '' : 's'} in \`${LEDGER_PATH}\` cannot be read (line${r.problems.length === 1 ? '' : 's'} ${r.problems.map((p) => p.line).join(', ')}): ${r.problems[0].reason}`);
+  }
+  return out;
+}
+
+/** The one section of the runway note an agent contributes: the CFO's job summary, folded in by the daemon. */
+export const RUNWAY_COMMENTARY = '## What the CFO makes of it';
+
+export interface RunwayInputs {
+  /** Model calls in the window the note covers. */
+  calls: number;
+  paidCalls: number;
+  /** What those calls would have cost on the prices in `config/providers.yaml`. Never a ledger entry. */
+  shadowCents: number;
+  /** Whether any model anywhere carries a `price:` at all. */
+  priced: boolean;
+  quotas: { division: string; used: number; quota: number }[];
+  commentary?: string;
+  generatedAt?: string;
+}
+
+/**
+ * `Ledger/runway.md`. Every figure on this page is arithmetic over the book; no model writes a number here,
+ * because a hallucinated runway on the owner's bank screen is the one failure this whole sub-project exists to
+ * prevent. The CFO's opinion arrives as the `finance.runway` job's summary and is folded into one named section.
+ */
+export function runwayNote(r: MoneyReport, o: RunwayInputs): string {
+  const runway = r.runwayDays === null
+    ? '**Runway:** not spending. Nothing has cost the company anything yet, so there is nothing to run out of.'
+    : `**Runway:** ${days(r.runwayDays)} at today's burn.`;
+  const shadow = o.shadowCents > 0
+    ? `${o.paidCalls} of ${o.calls} model call${o.calls === 1 ? '' : 's'} today were on a priced model: ${money(o.shadowCents, r.currency)}.`
+    : o.priced
+      ? `All ${o.calls} model call${o.calls === 1 ? '' : 's'} today were on free tiers, so they cost nothing.`
+      : `All ${o.calls} model call${o.calls === 1 ? '' : 's'} today were on free tiers. No model in \`config/providers.yaml\` carries a \`price:\`, so there is nothing to compare against — add one to see what a paid tier would have cost.`;
+  const lines: string[] = [
+    '# Runway', '',
+    '_Generated by the daemon. Every figure here is arithmetic over `Ledger/ledger.md`; nothing was written by a model. Edit nothing — it is overwritten._', '',
+    `**Cash:** ${money(r.cashCents, r.currency)}`, '',
+    `**Burn:** ${money(r.burnCentsPerDay, r.currency)} a day (${money(r.windowOutCents, r.currency)} over ${days(r.windowDays)})`, '',
+    runway, '',
+  ];
+  if (r.dormant) lines.push(`**The company is dormant.** It has spent the capital it was given. Only the heartbeat runs until a \`capital\` row is added to \`${LEDGER_PATH}\`.`, '');
+  if (r.mockRevenueCents > 0) lines.push(`Simulated revenue so far: ${money(r.mockRevenueCents, r.currency)}. It is **not** cash and is not counted above — nobody paid it.`, '');
+  lines.push('## What a paid tier would have cost', '', shadow, '');
+  lines.push('## Model quota per division', '',
+    'Free-tier calls each division may make at the strong and medium tiers today. Past its quota a division drops to the cheapest tier; it never stops.', '',
+    ...(o.quotas.length
+      ? ['| division | calls today | quota |', '|---|---|---|', ...o.quotas.map((q) => `| ${q.division} | ${q.used} | ${q.quota} |`)]
+      : ['_Nothing allocated: no team holds a planning round yet._']),
+    '');
+  lines.push('## Rows that do not parse', '',
+    ...(r.problems.length
+      ? r.problems.map((p) => `- line ${p.line}: ${p.reason} — \`${p.text.slice(0, 120)}\``)
+      : ['_Every row in the ledger parses._']),
+    '');
+  lines.push(RUNWAY_COMMENTARY, '', (o.commentary ?? '').trim() || '_The CFO has not commented yet. The daily `finance.runway` job writes this._', '');
+  return stringifyNote({
+    generated: o.generatedAt ?? nowIso(),
+    currency: r.currency,
+    cash_cents: r.cashCents,
+    burn_cents_per_day: r.burnCentsPerDay,
+    runway_days: r.runwayDays,
+    dormant: r.dormant,
+    entries: r.entries,
+    problems: r.problems.length,
+  }, lines.join('\n'));
+}
