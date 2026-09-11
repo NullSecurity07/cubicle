@@ -187,11 +187,18 @@ export function resolveTeamSection(org: Org, header: string): string | null {
   return null;
 }
 export function isLead(org: Org, role: string): boolean { return Object.values(org.teams).some((t) => t.lead === role); }
+/**
+ * Who a role answers to. The one role that reports to the owner is whoever holds the chief executive's office,
+ * and the last-resort `reports_to` is the same holder — not the literal id `ceo` (final review M4): `leadOf`
+ * feeds `applyFire`, `enqueueGate`'s fallback and `secondPairOfEyes`, so a re-staffed seat would otherwise send
+ * escalations and reassignments to a retired charter.
+ */
 export function leadOf(org: Org, role: string): string | null {
-  if (role === 'ceo') return 'owner';
+  const chief = officeHolder(org, 'chief_executive');
+  if (role === chief) return 'owner';
   const t = teamOf(org, role);
   if (!t) return null;
-  return t.lead === role ? (org.roles[role]?.reports_to ?? 'ceo') : t.lead;
+  return t.lead === role ? (org.roles[role]?.reports_to ?? chief) : t.lead;
 }
 /** Direct reports: a lead's own members plus the leads of the rooms under its team; the CEO's are the top-level leads. */
 export function reportsOf(org: Org, role: string): string[] {

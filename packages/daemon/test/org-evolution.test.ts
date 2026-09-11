@@ -119,6 +119,35 @@ describe('firing a lead (spec §2)', () => {
   });
 });
 
+describe('firing follows the chief executive\'s office, not the id `ceo` (final review C2)', () => {
+  /** Re-staff the seat the way an owner does: one line in the constitution's `offices:` block. */
+  const restaffChiefExecutive = (holder: string) => vault.writeText('Memory/constitution.md', vault.readText('Memory/constitution.md').replace(/^(\s*)chief_executive:.*$/m, `$1chief_executive: ${holder}`), 'owner');
+  const fireProposal = (from: string, target: string) => { const { path: p } = createProposal(vault, { kind: 'fire', from, title: `Fire ${target}`, body: `role: ${target}`, target: `Roles/${target}.md` }, from); const n = vault.readNoteOrNull(p)!; return { path: p, data: n.data as never, body: n.body }; };
+
+  it('the new holder may file a fire proposal and the retired id may not', async () => {
+    restaffChiefExecutive('coo');
+    expect(loadOrg(vault).offices?.chief_executive).toBe('coo');
+    expect(await applyFire(vault, fireProposal('ceo', 'qa_automation'))).toMatch(/only the chief executive \(coo\)/);
+    expect(loadOrg(vault).roles.qa_automation).toBeTruthy();   // nothing happened
+    expect(await applyFire(vault, fireProposal('coo', 'qa_automation'))).toMatch(/^fired qa_automation/);
+    expect(loadOrg(vault).roles.qa_automation).toBeUndefined();
+  });
+
+  it('the shield moves with the office: the new holder cannot be fired, the retired id can', async () => {
+    restaffChiefExecutive('coo');
+    expect(await applyFire(vault, fireProposal('coo', 'coo'))).toMatch(/the chief executive \(coo\) cannot be fired/);
+    expect(loadOrg(vault).roles.coo).toBeTruthy();
+    expect(await applyFire(vault, fireProposal('coo', 'ceo'))).toMatch(/^fired ceo/);
+    expect(loadOrg(vault).roles.ceo).toBeUndefined();
+  });
+
+  it('unchanged on the shipped office map: the CEO files, and the CEO is not fireable', async () => {
+    expect(await applyFire(vault, fireProposal('ceo', 'ceo'))).toMatch(/the chief executive \(ceo\) cannot be fired/);
+    expect(await applyFire(vault, fireProposal('cfo', 'qa_automation'))).toMatch(/only the chief executive \(ceo\)/);
+    expect(await applyFire(vault, fireProposal('owner', 'qa_automation'))).toMatch(/^fired qa_automation/);
+  });
+});
+
 describe('postmortem and weekly review triggers (spec §3, §4)', () => {
   it('two failures of one type since the last heartbeat file one research job for the CTO', () => {
     vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'hb' } });

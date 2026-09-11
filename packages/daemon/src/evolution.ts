@@ -140,16 +140,22 @@ export async function applyHire(vault: Vault, note: { path: string; data: InboxF
 
 /** Apply an approved fire: deactivate, archive the charter, emit role.fired. Founding roles can be fired too — the owner decided. */
 export async function applyFire(vault: Vault, note: { path: string; data: InboxFrontmatter; body: string }, onFired?: (role: string) => void): Promise<string> {
-  if (note.data.from !== 'ceo' && note.data.from !== 'owner') return `only the CEO (or the owner) may file fire proposals (this one is from ${note.data.from})`;
+  // Who may file, and who may not be fired, are the chief executive's *office*, never the literal id `ceo`
+  // (spec item 1, final review C2). The permission to file one is already resolved by office
+  // (`defaultPermissions` grants `fire` to `officeHolder(org, 'chief_executive')`), so comparing against the
+  // string here meant that re-staffing the seat broke firing both ways at once: the new holder's proposal was
+  // refused ("this one is from founder") while the retired `ceo` id kept the shield the live holder needs.
+  const org = loadOrg(vault);
+  const chief = officeHolder(org, 'chief_executive');
+  if (note.data.from !== chief && note.data.from !== 'owner') return `only the chief executive (${chief}) or the owner may file fire proposals (this one is from ${note.data.from})`;
   const target = note.data.target?.match(/^Roles\/([a-z0-9_-]+)\.md$/)?.[1] ?? note.body.match(/role:\s*([a-z0-9_-]+)/)?.[1];
   if (!target || !isValidRoleId(target)) return 'fire proposal must set target: Roles/<role>.md';
   const rel = `Roles/${target}.md`;
   const n = vault.readNoteOrNull(rel);
   if (!n) return `no such role ${target}`;
-  if (target === 'ceo') return 'the CEO cannot be fired (it owns the heartbeat); edit its charter instead';
-  const org = loadOrg(vault);
-  const manager = leadOf(org, target) ?? 'ceo';
-  const managerRole = manager === 'owner' ? 'ceo' : manager;
+  if (target === chief) return `the chief executive (${chief}) cannot be fired (it owns the heartbeat); re-staff the office in Memory/constitution.md or edit its charter instead`;
+  const manager = leadOf(org, target) ?? chief;
+  const managerRole = manager === 'owner' ? chief : manager;
   vault.writeText(rel, stringifyNote({ ...n.data, active: false, fired: nowIso() }, n.body), 'daemon', { job: note.data.job ?? null });
   vault.move(rel, `Roles/archive/${target}-${nowIso().slice(0, 10)}.md`, 'daemon');
   // Gate jobs (team:qa.review/office:operations.verify/requester.review) must not be cancelled — that would strand the parent
