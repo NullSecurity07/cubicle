@@ -53,7 +53,7 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
  *  planned. Counting them meant four of the five completions the next heartbeat waits for were the daemon's own
  *  sweeps, so one real job fired the next cycle, which enqueued four more — a self-driving cadence that also ate
  *  the free cheap-tier pool. */
-export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES, 'intelligence', 'research.measure'];
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES, 'intelligence', 'research.measure', 'division.plan', 'board.premortem'];
 
 /**
  * The outbound services whose adapters are in mock mode for this env, in the order the brief names them. Asks the
