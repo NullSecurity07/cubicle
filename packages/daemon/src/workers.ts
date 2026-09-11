@@ -110,7 +110,10 @@ export class WorkerPool extends EventEmitter {
     //
     // Asked at most once per call, and only once a job is actually in hand: the check reads `Ledger/ledger.md`
     // and every worker calls `nextJob` every idle interval, so an eager read would parse the book a few times a
-    // second to answer a question about a queue that is usually empty.
+    // second to answer a question about a queue that is usually empty. The daemon's own hook then holds one
+    // reading for a second (`DORMANCY_POLL_MS`), which is what makes a tick — which wakes every worker at once —
+    // cost one parse rather than one per active role. That matters because the ledger only grows: a `cost` row
+    // a day for ever, and nothing ever removes one.
     let dormantAnswer: boolean | null = null;
     const dormant = (): boolean => {
       if (dormantAnswer === null) { try { dormantAnswer = this.opts.dormant?.() ?? false; } catch { dormantAnswer = false; } }
@@ -123,7 +126,14 @@ export class WorkerPool extends EventEmitter {
       if (j.depends_on.some((d) => byId.get(d)?.status !== 'done')) continue;
       // The heartbeat is the exception and must stay one: it is what notices the capital row that revives the
       // company, and a dormancy nothing can see its way out of is just a crash with better manners.
-      if (j.type !== 'ceo.heartbeat' && dormant()) { this.warnDormant(roleId, j.id); continue; }
+      if (j.type !== 'ceo.heartbeat') {
+        if (dormant()) { this.warnDormant(roleId, j.id); continue; }
+        // Back in funds: forget the last warning, so the next dormancy says so straight away instead of going
+        // quiet because the previous episode ended inside the window. The WIP gate clears its stamp the same
+        // way, and for the same reason. Done here, where the answer is already in hand, so an unfunded company
+        // still pays for no ledger read at all.
+        this.dormantWarned = 0;
+      }
       if (GATE_JOB_TYPES.includes(j.type)) return j.id;             // a gate is the reviewer's work, not the author team's
       const team = j.team;
       if (!team || !org.teams[team]) return j.id;                   // no team, no limit to apply
