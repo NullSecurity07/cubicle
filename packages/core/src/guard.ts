@@ -1,8 +1,10 @@
 /**
  * Paths agents may never write directly. Daemon-side dispatcher writes bypass this by construction.
- * `Ledger/` joins this list for the book (spec §7): the only sanctioned writer is `appendEntry`
- * (money.ts), reached through the `ledger.record` tool or the daemon's own accrual, and it goes around
- * this guard on purpose (see its doc comment) rather than relying on `by` being a privileged actor.
+ * `Ledger/` joins this list for the book (spec §7): the only sanctioned writer is `appendEntry` (money.ts),
+ * reached through the `ledger.record` tool or the daemon's own accrual. It writes through this same guard —
+ * as `'daemon'`, a privileged actor, regardless of who actually asked — rather than going around it, so the
+ * compare-and-write it does against `Ledger/ledger.md` and the `vault.wrote` event it emits stay the ones this
+ * guard already produces (see `appendEntry`'s doc comment for why).
  */
 export const OWNER_OWNED_PREFIXES = ['Brand/', 'Roles/', 'Teams/', 'Ledger/'];
 export const OWNER_OWNED_FILES = ['Memory/constitution.md', 'Memory/owner_preferences.md'];

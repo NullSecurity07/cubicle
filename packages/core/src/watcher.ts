@@ -11,9 +11,10 @@ export interface WatcherOptions {
 /**
  * Owner edits in these areas wake a heartbeat. `Discovery` and `Ideas` are here because dropping a file in
  * `Discovery/inbox/` or flipping a card's `decision:` by hand is the owner telling the company something, and it
- * should not wait six hours to be noticed.
+ * should not wait six hours to be noticed. `Ledger` is here for a sharper reason: a `capital` row is the only
+ * thing that brings a dormant company back, and a company that is dormant is not running cycles to notice it.
  */
-export const HEARTBEAT_WAKE_AREAS = ['Jobs', '00 Inbox', 'Brand', 'Roles', 'Teams', 'Discovery', 'Ideas'];
+export const HEARTBEAT_WAKE_AREAS = ['Jobs', '00 Inbox', 'Brand', 'Roles', 'Teams', 'Discovery', 'Ideas', 'Ledger'];
 
 /**
  * Watches the vault for owner edits. A change whose content sha equals the last `written_sha`

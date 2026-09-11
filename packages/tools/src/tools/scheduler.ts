@@ -32,6 +32,9 @@ export function systemTypes(org: Org): Record<string, string[]> {
     // chief executive can still queue one by hand (a re-run, a manual price on an idea nobody swept). Review T4
     // finding 8: the office that actually runs `finance.estimate` may hand-queue its own pass too, not only ceo.
     'discovery': [ceo], 'board.session': [ceo], 'finance.estimate': [ceo, fin],
+    // SP4: the daily runway read is the daemon's job. The finance office may still hand-queue one — a re-read
+    // after the owner adds capital — and so may the chief executive.
+    'finance.runway': [ceo, fin],
   };
 }
 

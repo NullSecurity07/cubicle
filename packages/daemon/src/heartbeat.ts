@@ -71,8 +71,11 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
  *  `board.session` joins them for the same reason `board.premortem` is here: it is the *record* of a board the
  *  heartbeat already sat, closed in the same tick it was created, not work anyone has to do. `discovery` and
  *  `finance.estimate` are deliberately absent — they are what cycle one is *for*, so they count both toward the
- *  heartbeat's completion trigger and toward their team's WIP. */
-export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES, 'intelligence', 'research.measure', 'division.plan', 'board.premortem', 'board.session'];
+ *  heartbeat's completion trigger and toward their team's WIP.
+ *
+ *  `finance.runway` joins `intelligence` for exactly its reason: it is the daemon's own once-a-day bookkeeping,
+ *  not work anyone planned, and counting it would let the company's accounts drive its own cadence. */
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES, 'intelligence', 'research.measure', 'division.plan', 'board.premortem', 'board.session', 'finance.runway'];
 
 /**
  * The outbound services whose adapters are in mock mode for this env, in the order the brief names them. Asks the

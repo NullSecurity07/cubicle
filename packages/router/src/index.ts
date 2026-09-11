@@ -3,6 +3,7 @@ export * from './quota.js';
 export * from './client.js';
 export * from './jsontools.js';
 export * from './router.js';
+export * from './price.js';
 export * from './embeddings.js';
 export * from './metrics.js';
 export * from './providers-cli.js';

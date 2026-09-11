@@ -13,6 +13,17 @@ export const ModelLimits = z.object({
   tpd: z.number().int().min(0).default(0),
 });
 
+/**
+ * What a paid model costs, in **integer cents per million tokens**. Absent means free, which is every model
+ * `config/providers.yaml` ships today. Prices are a fact the owner supplies: a remembered vendor price goes
+ * stale and would put a wrong runway in front of them.
+ */
+export const ModelPrice = z.object({
+  input_per_mtok: z.number().int().min(0),
+  output_per_mtok: z.number().int().min(0),
+});
+export type ModelPrice = z.infer<typeof ModelPrice>;
+
 export const ModelConfig = z.object({
   id: z.string(),
   tier: ModelTier,
@@ -22,6 +33,8 @@ export const ModelConfig = z.object({
   max_output_tokens: z.number().int().min(16).default(4096),
   limits: ModelLimits.default({ rpm: 0, rpd: 0, tpm: 0, tpd: 0 }),
   enabled: z.boolean().default(true),
+  /** Cents per million tokens. No `price:` means the model is free and costs 0. */
+  price: ModelPrice.optional(),
   note: z.string().optional(),
 });
 export type ModelConfig = z.infer<typeof ModelConfig>;
@@ -46,6 +59,8 @@ export type ProviderConfig = z.infer<typeof ProviderConfig>;
 
 export const ProvidersFile = z.object({
   verified: z.string().optional(),
+  /** When the `price:` blocks below were last checked against the vendors. Absent: no model carries a price. */
+  prices_verified: z.string().optional(),
   cascade: z.array(z.string()).default([]),
   providers: z.array(ProviderConfig),
 });

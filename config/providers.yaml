@@ -2,6 +2,16 @@
 # verified: 2026-09-02 (ids probed live with the owner's Gemini key; limits from vendor docs where public)
 #
 # tier: strong | medium | cheap | local      tools: native | json | none
+# price: integer CENTS PER MILLION TOKENS, on paid models only. No `price:` means the model is free and costs 0
+#        — which is every model in this file. Prices are a fact you supply, not one this file guesses: a
+#        remembered vendor price goes stale and would put a wrong runway on your bank screen. Add one like this,
+#        and set `prices_verified:` beside `verified:` above when you do:
+#
+#   - { id: some-paid-model, tier: strong, tools: native, context: 200000,
+#       price: { input_per_mtok: 300, output_per_mtok: 1500 } }   # 3.00 per MTok in, 15.00 per MTok out
+#
+#        The CFO reads prices to say what a cycle *would* have cost on a paid tier (Ledger/runway.md). A priced
+#        model is never counted as free-tier capacity when the model quota per division is allocated.
 # limits: 0 = unlimited/unknown. A 429 from the provider marks the model "cooling" regardless of these numbers.
 # Gemini free-tier RPM/RPD are only visible in AI Studio (https://aistudio.google.com/rate-limit) — paste yours below.
 verified: "2026-09-10"

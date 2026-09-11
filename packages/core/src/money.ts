@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Vault } from './vault.js';
 import { Timestamp } from './schemas.js';
 import { parseNote, stringifyNote } from './frontmatter.js';
-import { nowIso, atomicWriteSync } from './fs.js';
+import { nowIso } from './fs.js';
 
 /**
  * Money: the company's book, and the arithmetic over it.
@@ -34,8 +34,17 @@ const MONEY_RE = /^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?$/;
 /** 12 digits of major units is ~1e14 minor units, comfortably inside Number.MAX_SAFE_INTEGER. */
 const MAX_MAJOR_DIGITS = 12;
 
-export function parseMoney(text: string): number | null {
-  const t = String(text ?? '').trim().replace(/^[A-Za-z]{3}\s+/, '').replace(/^[$£€]\s*/, '').trim();
+/** Escape a string for use inside a RegExp literal. */
+const reEscape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * `currency` is the ledger's own declared code (defaulting to `DEFAULT_CURRENCY` for a standalone call) — only
+ * *that* code is stripped as a marker. Any other leading letters are left in place and fail to parse, so a
+ * garbled cell (`"abc 12.00"`) is reported as unreadable rather than silently read as money.
+ */
+export function parseMoney(text: string, currency: string = DEFAULT_CURRENCY): number | null {
+  const codeRe = new RegExp(`^${reEscape(currency)}\\s+`, 'i');
+  const t = String(text ?? '').trim().replace(codeRe, '').replace(/^[$£€]\s*/, '').trim();
   const m = MONEY_RE.exec(t);
   if (!m) return null;
   const major = m[1].replace(/,/g, '');
@@ -102,10 +111,15 @@ function cells(line: string): string[] {
 const isSeparator = (c: string[]): boolean => c.every((x) => /^:?-{3,}:?$/.test(x));
 const isHeader = (c: string[]): boolean => c[0]?.toLowerCase() === LEDGER_COLUMNS[0] && c[1]?.toLowerCase() === LEDGER_COLUMNS[1];
 
+/** A cell can hold neither a pipe nor a newline without breaking the table; both become a space-safe stand-in. */
+const cell = (s: string): string => s.replace(/\|/g, '/').replace(/\s*\r?\n\s*/g, ' ').trim();
+
 /**
  * The book as data. Rows before the header are ignored (the note is allowed to carry prose and other tables);
  * rows after it that do not parse become problems carrying their **file** line number, so the brief can point
- * the owner at the line to fix.
+ * the owner at the line to fix. A row with too few cells to be a table row at all (fewer than
+ * `LEDGER_COLUMNS.length - 1`, i.e. missing more than just the optional `ref` column) is reported rather than
+ * silently skipped — the owner-edited-it-down-to-nothing case spec §1 requires kept and complained about.
  */
 export function parseLedger(md: string): Ledger {
   const note = parseNote(md);
@@ -118,23 +132,49 @@ export function parseLedger(md: string): Ledger {
   let seenHeader = false;
   for (let i = 0; i < lines.length; i++) {
     const c = cells(lines[i]);
-    if (c.length < LEDGER_COLUMNS.length - 1) continue;
-    if (!seenHeader) { seenHeader = isHeader(c); continue; }
+    if (!seenHeader) {
+      if (c.length < LEDGER_COLUMNS.length - 1) continue; // pre-header prose or an unrelated table
+      seenHeader = isHeader(c);
+      continue;
+    }
+    if (c.length === 0) continue; // a blank line or prose below the table, not a row
     if (isSeparator(c)) continue;
     const problem = (reason: string) => problems.push({ line: offset + i + 1, text: lines[i].trim(), reason });
+    if (c.length < LEDGER_COLUMNS.length - 1) { problem(`row has ${c.length} cells, expected at least ${LEDGER_COLUMNS.length - 1}`); continue; }
     const [at, kind, amount, mode, who, why, ref = ''] = c;
-    const cents = parseMoney(amount);
+    const cents = parseMoney(amount, currency);
     if (cents === null) { problem(`"${amount}" is not an amount (positive, at most two decimal places)`); continue; }
     if (!at || !Number.isFinite(Date.parse(at))) { problem(`at: "${at}" is not a timestamp`); continue; }
-    const parsed = LedgerEntry.safeParse({ at, kind: kind.toLowerCase(), cents, mode: (mode || 'live').toLowerCase(), who, why, ref });
+    const parsed = LedgerEntry.safeParse({ at, kind: kind.toLowerCase(), cents, mode: mode.toLowerCase(), who, why, ref: cell(ref) });
     if (!parsed.success) { problem(parsed.error.issues.map((iss) => `${iss.path.join('.') || 'row'}: ${iss.message}`).join('; ')); continue; }
     entries.push(parsed.data);
   }
   return { currency, entries, problems };
 }
 
-/** A cell can hold neither a pipe nor a newline without breaking the table; both become a space-safe stand-in. */
-const cell = (s: string): string => s.replace(/\|/g, '/').replace(/\s*\r?\n\s*/g, ' ').trim();
+/**
+ * The `ref` cell of every row after the header, whether or not the row otherwise parses as an entry — so
+ * `appendEntry`'s dedup catches a duplicate hiding behind an earlier row the parser cannot read (M4/ruling 7).
+ */
+function ledgerRefCells(md: string): string[] {
+  const note = parseNote(md);
+  const lines = note.body.split('\n');
+  const refs: string[] = [];
+  let seenHeader = false;
+  for (const line of lines) {
+    const c = cells(line);
+    if (!seenHeader) {
+      if (c.length < LEDGER_COLUMNS.length - 1) continue;
+      seenHeader = isHeader(c);
+      continue;
+    }
+    if (c.length === 0) continue;
+    if (isSeparator(c)) continue;
+    if (c.length < LEDGER_COLUMNS.length - 1) continue; // too short to have any ref cell at all
+    refs.push(cell(c[LEDGER_COLUMNS.length - 1] ?? ''));
+  }
+  return refs;
+}
 
 export function ledgerRow(e: LedgerEntry): string {
   return `| ${e.at} | ${e.kind} | ${formatMoney(e.cents)} | ${e.mode} | ${cell(e.who)} | ${cell(e.why)} | ${cell(e.ref)} |`;
@@ -161,57 +201,122 @@ export function readLedger(vault: Vault): Ledger {
   return md === null ? { currency: DEFAULT_CURRENCY, entries: [], problems: [] } : parseLedger(md);
 }
 
+/** Bounded retries for the compare-and-write race in `appendEntry`; an append commutes, so a retry never loses work. */
+const MAX_APPEND_ATTEMPTS = 5;
+
 /**
  * Add one row. The only writer there is, and the reason the book can be trusted: it reads the note, splices one
  * line in after the last table row, and writes it back. Every other byte of the file — the owner's prose, their
  * own rows, their currency — is untouched.
  *
  * A non-empty `ref` is an idempotency key: the daily model-cost accrual and any job-derived entry pass one, so a
- * replayed cycle finds its own row instead of charging the company twice.
- */
-/**
- * `appendEntry` writes straight to disk with `atomicWriteSync` and does its own `recordWritten` /
- * `vault.wrote`, the same shape `writeCiRecord` (ci.ts) uses — deliberately going around
- * `vault.writeText`'s owner-owned guard rather than through it.
+ * replayed cycle finds its own row instead of charging the company twice. It is normalized through `cell()` at
+ * construction, the same transform `ledgerRow` writes it through, so the value compared against the file and the
+ * value stored in it are always the same string (a ref with a pipe or stray whitespace still dedupes correctly).
  *
- * `Ledger/` is owner-owned (`OWNER_OWNED_PREFIXES`, guard.ts), so that `vault.write`/`vault.append` refuse it
- * outright for every agent. But the book still has to accept a row from whichever role `ledger.record` ran as
- * (`cfo`, `cso`, …), and none of those are the privileged actors (`daemon`, `owner`, `system`, `init`) that
- * `assertWritable` lets through. `appendEntry` is the sanctioned exception — the *only* function, reached
- * through `ledger.record` or the daemon's own accrual, that may put a row in `Ledger/ledger.md` — exactly the
- * property `writeCiRecord` gives `.cubicle-ci/`: the general write API refuses the path, and one trusted
- * function that enforces its own rules (append-only, the idempotency key, and here the tool's cap and reason
- * check) is what is allowed to write it anyway.
+ * Compare-and-write, the same hazard `updateNote` guards against: the ledger is the most owner-edited file in the
+ * vault (the owner types `capital` rows into it directly), so a save landing between this function's read and its
+ * write must not be clobbered. `vault.currentSha` is checked immediately before the write; on a change it re-reads
+ * and re-splices on the fresh copy — an append commutes, so retrying never loses the concurrent write — bounded to
+ * `MAX_APPEND_ATTEMPTS` attempts before giving up loudly rather than silently dropping either side.
+ *
+ * `Ledger/` is owner-owned (`OWNER_OWNED_PREFIXES`, guard.ts), so `vault.write`/`vault.append` refuse it outright
+ * for every agent — but the book still has to accept a row from whichever role `ledger.record` ran as (`cfo`,
+ * `cso`, …), and none of those are the privileged actors (`daemon`, `owner`, `system`, `init`) that
+ * `assertWritable` lets through. Rather than go around `vault.writeText` (which would lose the compare-and-write
+ * above and the `vault.wrote` event other code relies on), the actual write below always goes through as
+ * `'daemon'` — the same actor the daemon's own writes use — regardless of `by`. Nothing about who really asked
+ * is lost: every caller already puts that in the entry itself (`e.who`, the row's `who` column, the record that
+ * matters for the book); `'daemon'` here is only ever the vault layer's write provenance for *this one file*.
  */
 export function appendEntry(vault: Vault, e: NewEntry, by: string): { entry: LedgerEntry; added: boolean } {
-  const entry = LedgerEntry.parse({ ...e, at: e.at ?? nowIso(), ref: e.ref ?? '' });
-  const md = vault.readTextOrNull(LEDGER_PATH) ?? ledgerTemplate();
-  if (entry.ref) {
-    const dup = parseLedger(md).entries.find((x) => x.ref === entry.ref);
-    if (dup) return { entry: dup, added: false };
+  const at = e.at !== undefined && Number.isFinite(Date.parse(e.at)) ? e.at : nowIso();
+  const entry = LedgerEntry.parse({ ...e, at, ref: cell(e.ref ?? '') });
+
+  for (let attempt = 0; attempt < MAX_APPEND_ATTEMPTS; attempt++) {
+    const before = vault.currentSha(LEDGER_PATH);
+    const md = vault.readTextOrNull(LEDGER_PATH) ?? ledgerTemplate();
+
+    if (entry.ref) {
+      const dup = parseLedger(md).entries.find((x) => x.ref === entry.ref);
+      if (dup) return { entry: dup, added: false };
+      if (ledgerRefCells(md).includes(entry.ref)) return { entry, added: false };
+    }
+
+    const lines = md.replace(/\s+$/, '').split('\n');
+    let insertAt = -1;
+    for (let i = lines.length - 1; i >= 0; i--) if (lines[i].trim().startsWith('|')) { insertAt = i; break; }
+    const row = ledgerRow(entry);
+    const next = insertAt >= 0
+      ? [...lines.slice(0, insertAt + 1), row, ...lines.slice(insertAt + 1)]
+      : [...lines, '', `| ${LEDGER_COLUMNS.join(' | ')} |`, `|${LEDGER_COLUMNS.map(() => '---').join('|')}|`, row];
+
+    if (vault.currentSha(LEDGER_PATH) !== before) {
+      vault.events.emit({ type: 'daemon.warning', payload: { path: LEDGER_PATH, reason: 'note changed during update; retrying the append on the fresh copy' } });
+      continue;
+    }
+    // Written as the privileged actor: `Ledger/` is owner-owned (see the doc comment above), and `by` — the
+    // role `ledger.record` ran as — never is. `e.who` (already in `entry`) is the row's own record of who asked.
+    vault.writeText(LEDGER_PATH, next.join('\n') + '\n', 'daemon');
+    return { entry, added: true };
   }
-  const lines = md.replace(/\s+$/, '').split('\n');
-  let at = -1;
-  for (let i = lines.length - 1; i >= 0; i--) if (lines[i].trim().startsWith('|')) { at = i; break; }
-  const row = ledgerRow(entry);
-  const next = (at >= 0
-    ? [...lines.slice(0, at + 1), row, ...lines.slice(at + 1)]
-    : [...lines, '', `| ${LEDGER_COLUMNS.join(' | ')} |`, `|${LEDGER_COLUMNS.map(() => '---').join('|')}|`, row]
-  ).join('\n') + '\n';
-  const sha = atomicWriteSync(vault.abs(LEDGER_PATH), next);
-  vault.recordWritten(LEDGER_PATH, sha, by, next);
-  vault.events.emit({ type: 'vault.wrote', agent: by, payload: { path: LEDGER_PATH, sha, by } });
-  return { entry, added: true };
+  throw new Error(`appendEntry: ${LEDGER_PATH} changed under us ${MAX_APPEND_ATTEMPTS} times in a row; giving up`);
 }
 
-// ---------- the report (Task 2 stand-in) ----------
-//
-// `moneyReport` is Task 2's (impl-M2, commit fc2b4a2 on sp4, under review as rev-M2 — not yet merged onto this
-// branch). `ledger.record` needs it to say what the company's cash position is after an entry, so this block is
-// carried here verbatim from Task 2's brief pending the merge, the same way Task 2 itself carried a stand-in
-// for Task 1's names before Task 1 merged. The coordinator should drop this whole section in favour of Task 2's
-// own (larger) version — which also adds `moneyLine`, `moneyNeedsYou`, `runwayNote` and the runway note writer —
-// when reconciling the two branches, rather than keep both.
+// ---------- the CFO's split ----------
+
+/** Where the heartbeat's own calls, the board, security and anyone with no division are charged. */
+export const HOUSE = 'house';
+/** No division is ever allocated less than this: a division that cannot hold one planning round is stopped, not budgeted. */
+export const MIN_DIVISION_CALLS = 20;
+/** Taken off the top for the house before the divisions split the rest. */
+export const HOUSE_RESERVE_PCT = 0.25;
+
+export interface DivisionWeight { id: string; people: number }
+
+/**
+ * Split a day's free calls between the divisions and the house.
+ *
+ * The house is reserved first, because the heartbeat, the gates and the board session are what keep the company
+ * coherent and must not be starved by whichever division is busiest. What is left goes by headcount, with a
+ * floor so a small division can still hold a planning round, and the remainder distributed largest-fraction
+ * first so the allocation sums to the capacity **exactly** — a split that drifts by a call a day is a gauge
+ * that slowly stops meaning anything.
+ *
+ * Deterministic: divisions are sorted by id and ties in the remainder are broken by id, so two calls with the
+ * same input always return the same object.
+ */
+export function allocateQuota(capacity: number, divisions: DivisionWeight[], opts: { reservePct?: number; floor?: number } = {}): Record<string, number> {
+  const cap = Math.max(0, Math.floor(capacity));
+  const reservePct = opts.reservePct ?? HOUSE_RESERVE_PCT;
+  const floor = opts.floor ?? MIN_DIVISION_CALLS;
+  const ids = [...divisions].sort((a, b) => a.id.localeCompare(b.id));
+  const out: Record<string, number> = { [HOUSE]: cap };
+  for (const d of ids) out[d.id] = 0;
+  if (cap === 0 || ids.length === 0) return out;
+
+  const pool = cap - Math.ceil(cap * reservePct);
+  // Too small to give every division something: the house keeps it all and every division runs on the cheap
+  // tier, which is the floor and is effectively unlimited. Nothing stops.
+  const base = pool >= floor * ids.length ? floor : 1;
+  if (pool < base * ids.length) return out;
+
+  const remaining = pool - base * ids.length;
+  const totalPeople = ids.reduce((t, d) => t + Math.max(0, d.people), 0);
+  const shares = ids.map((d) => {
+    const exact = totalPeople > 0 ? (remaining * Math.max(0, d.people)) / totalPeople : remaining / ids.length;
+    return { id: d.id, whole: Math.floor(exact), frac: exact - Math.floor(exact) };
+  });
+  let given = shares.reduce((t, s) => t + s.whole, 0);
+  const order = [...shares].sort((a, b) => b.frac - a.frac || a.id.localeCompare(b.id));
+  for (let i = 0; given < remaining; i++, given++) order[i % order.length].whole += 1;
+  for (const s of shares) out[s.id] = base + s.whole;
+  out[HOUSE] = cap - ids.reduce((t, d) => t + out[d.id], 0);
+  return out;
+}
+
+
+// ---------- the report ----------
 
 /** How far back burn looks. Long enough to smooth a lumpy month, short enough to notice a new subscription. */
 export const BURN_WINDOW_DAYS = 30;
@@ -269,9 +374,13 @@ export function moneyReport(ledger: Ledger, now: Date = new Date()): MoneyReport
   const liveTimes = live.map((e) => Date.parse(e.at)).filter((t) => Number.isFinite(t));
   const windowFrom = now.getTime() - BURN_WINDOW_DAYS * DAY_MS;
   const windowOutCents = live.reduce((t, e) => (e.kind === 'cost' && Date.parse(e.at) >= windowFrom ? t + e.cents : t), 0);
-  const ageDays = firstMs === null ? 1 : Math.ceil((now.getTime() - firstMs) / DAY_MS);
+  // The window's denominator is how long the company has actually been *spending real money* for — a mock
+  // row (a simulated sale, dated whenever a demo happened to be run) must never stretch it out and flatter burn.
+  const firstLiveMs = liveTimes.length ? Math.min(...liveTimes) : null;
+  const ageDays = firstLiveMs === null ? 1 : Math.ceil((now.getTime() - firstLiveMs) / DAY_MS);
   const windowDays = Math.max(1, Math.min(BURN_WINDOW_DAYS, ageDays));
-  const burnCentsPerDay = Math.round(windowOutCents / windowDays);
+  // A real spend never rounds down to a burn of 0 — that would report "not spending" for a company that is.
+  const burnCentsPerDay = windowOutCents > 0 ? Math.max(1, Math.round(windowOutCents / windowDays)) : 0;
   const funded = live.some((e) => e.kind === 'capital');
   return {
     currency: ledger.currency,
@@ -286,4 +395,95 @@ export function moneyReport(ledger: Ledger, now: Date = new Date()): MoneyReport
     entries: ledger.entries.length,
     problems: ledger.problems,
   };
+}
+
+const days = (n: number): string => `${n} day${n === 1 ? '' : 's'}`;
+
+/** The one money line the brief carries. One line, every cycle, whether or not anything happened. */
+export function moneyLine(r: MoneyReport): string {
+  const runway = r.runwayDays === null ? 'not spending (nothing has cost anything yet)' : `runway ${days(r.runwayDays)}`;
+  const mock = r.mockRevenueCents > 0 ? `; ${money(r.mockRevenueCents, r.currency)} of simulated revenue, which is not cash` : '';
+  return `Money: ${money(r.cashCents, r.currency)} cash, ${money(r.burnCentsPerDay, r.currency)} a day burn, ${runway}${mock}${r.dormant ? ' — the company is dormant' : ''}`;
+}
+
+/**
+ * The brief's "What needs you" rows, and only when something does. A money section that speaks every cycle is
+ * a money section the owner stops reading, so three things earn a row and nothing else: the company has stopped,
+ * the runway is short, or the book has a line nobody can read.
+ */
+export function moneyNeedsYou(r: MoneyReport): string[] {
+  const out: string[] = [];
+  if (r.dormant) {
+    out.push(`- The company has spent the money you put in (${money(r.cashCents, r.currency)}) and is dormant: only the heartbeat runs. Add a \`capital\` row to \`${LEDGER_PATH}\` to bring it back`);
+  } else if (r.runwayDays !== null && r.runwayDays <= RUNWAY_WARN_DAYS) {
+    out.push(`- Runway is ${days(r.runwayDays)} at ${money(r.burnCentsPerDay, r.currency)} a day — add capital in \`${LEDGER_PATH}\` or cut what is costing money`);
+  }
+  if (r.problems.length) {
+    out.push(`- ${r.problems.length} row${r.problems.length === 1 ? '' : 's'} in \`${LEDGER_PATH}\` cannot be read (line${r.problems.length === 1 ? '' : 's'} ${r.problems.map((p) => p.line).join(', ')}): ${r.problems[0].reason}`);
+  }
+  return out;
+}
+
+/** The one section of the runway note an agent contributes: the CFO's job summary, folded in by the daemon. */
+export const RUNWAY_COMMENTARY = '## What the CFO makes of it';
+
+export interface RunwayInputs {
+  /** Model calls in the window the note covers. */
+  calls: number;
+  paidCalls: number;
+  /** What those calls would have cost on the prices in `config/providers.yaml`. Never a ledger entry. */
+  shadowCents: number;
+  /** Whether any model anywhere carries a `price:` at all. */
+  priced: boolean;
+  quotas: { division: string; used: number; quota: number }[];
+  commentary?: string;
+  generatedAt?: string;
+}
+
+/**
+ * `Ledger/runway.md`. Every figure on this page is arithmetic over the book; no model writes a number here,
+ * because a hallucinated runway on the owner's bank screen is the one failure this whole sub-project exists to
+ * prevent. The CFO's opinion arrives as the `finance.runway` job's summary and is folded into one named section.
+ */
+export function runwayNote(r: MoneyReport, o: RunwayInputs): string {
+  const runway = r.runwayDays === null
+    ? '**Runway:** not spending. Nothing has cost the company anything yet, so there is nothing to run out of.'
+    : `**Runway:** ${days(r.runwayDays)} at today's burn.`;
+  const shadow = o.shadowCents > 0
+    ? `${o.paidCalls} of ${o.calls} model call${o.calls === 1 ? '' : 's'} today were on a priced model: ${money(o.shadowCents, r.currency)}.`
+    : o.priced
+      ? `All ${o.calls} model call${o.calls === 1 ? '' : 's'} today were on free tiers, so they cost nothing.`
+      : `All ${o.calls} model call${o.calls === 1 ? '' : 's'} today were on free tiers. No model in \`config/providers.yaml\` carries a \`price:\`, so there is nothing to compare against — add one to see what a paid tier would have cost.`;
+  const lines: string[] = [
+    '# Runway', '',
+    '_Generated by the daemon. Every figure here is arithmetic over `Ledger/ledger.md`; nothing was written by a model. Edit nothing — it is overwritten._', '',
+    `**Cash:** ${money(r.cashCents, r.currency)}`, '',
+    `**Burn:** ${money(r.burnCentsPerDay, r.currency)} a day (${money(r.windowOutCents, r.currency)} over ${days(r.windowDays)})`, '',
+    runway, '',
+  ];
+  if (r.dormant) lines.push(`**The company is dormant.** It has spent the capital it was given. Only the heartbeat runs until a \`capital\` row is added to \`${LEDGER_PATH}\`.`, '');
+  if (r.mockRevenueCents > 0) lines.push(`Simulated revenue so far: ${money(r.mockRevenueCents, r.currency)}. It is **not** cash and is not counted above — nobody paid it.`, '');
+  lines.push('## What a paid tier would have cost', '', shadow, '');
+  lines.push('## Model quota per division', '',
+    'Free-tier calls each division may make at the strong and medium tiers today. Past its quota a division drops to the cheapest tier; it never stops.', '',
+    ...(o.quotas.length
+      ? ['| division | calls today | quota |', '|---|---|---|', ...o.quotas.map((q) => `| ${q.division} | ${q.used} | ${q.quota} |`)]
+      : ['_Nothing allocated: no team holds a planning round yet._']),
+    '');
+  lines.push('## Rows that do not parse', '',
+    ...(r.problems.length
+      ? r.problems.map((p) => `- line ${p.line}: ${p.reason} — \`${p.text.slice(0, 120)}\``)
+      : ['_Every row in the ledger parses._']),
+    '');
+  lines.push(RUNWAY_COMMENTARY, '', (o.commentary ?? '').trim() || '_The CFO has not commented yet. The daily `finance.runway` job writes this._', '');
+  return stringifyNote({
+    generated: o.generatedAt ?? nowIso(),
+    currency: r.currency,
+    cash_cents: r.cashCents,
+    burn_cents_per_day: r.burnCentsPerDay,
+    runway_days: r.runwayDays,
+    dormant: r.dormant,
+    entries: r.entries,
+    problems: r.problems.length,
+  }, lines.join('\n'));
 }
