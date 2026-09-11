@@ -85,6 +85,17 @@ export function makeEmotes(scene: Phaser.Scene): string {
   return key;
 }
 
+/** 10×3 soft ellipse under every standing sprite (40 % black). One texture for all; the scene never redraws it. */
+export function makeShadow(scene: Phaser.Scene): string {
+  const key = 'shadow';
+  if (scene.textures.exists(key)) return key;
+  const tex = scene.textures.createCanvas(key, 10, 3)!;
+  const g = tex.getContext();
+  g.fillStyle = 'rgba(0,0,0,0.4)'; g.fillRect(1, 0, 8, 3); g.fillRect(0, 1, 10, 1);
+  tex.refresh();
+  return key;
+}
+
 /** Ambient decor frames (Task 13, `world/decor.ts`): 16×16 frames side by side, named `<kind>:<frame>`. Keyed `decor`. */
 export function makeDecorSheet(scene: Phaser.Scene): string {
   const key = 'decor';
