@@ -42,9 +42,13 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
 
 /** Planning and gate job types never count toward the "N jobs completed" heartbeat trigger — otherwise a single
  *  cycle's own planning/gate sub-jobs (company.plan, critic.premortem, team.plan, qa.review, coo.verify,
- *  requester.review) push the count past the threshold and the heartbeat retriggers itself. The re-planning gate
- *  uses the same list for "work still open": a queued coo.verify is bookkeeping, not work from the plan. */
-export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', 'qa.review', 'coo.verify', 'requester.review', 'security.review'];
+ *  requester.review, research.review) push the count past the threshold and the heartbeat retriggers itself. The
+ *  re-planning gate uses the same list for "work still open": a queued coo.verify is bookkeeping, not work from
+ *  the plan. `research.review` is a gate job exactly like `qa.review` (gates.yaml: research → [research.review,
+ *  requester.review]) and was missing here — a single research request's gate chain was enough, on its own, to
+ *  push a first cycle's real-work count over the default threshold (5) and fire a second heartbeat mid-assertion
+ *  in planning.test.ts's two-level-planning tests. */
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', 'qa.review', 'coo.verify', 'requester.review', 'security.review', 'research.review'];
 
 /**
  * The outbound services whose adapters are in mock mode for this env, in the order the brief names them. Asks the
