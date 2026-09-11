@@ -2,7 +2,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { defineTool } from '../registry.js';
+import { defineTool, type ToolContext } from '../registry.js';
 import { fileURLToPath } from 'node:url';
 
 export const PROXY_CONTAINER = 'cubicle-proxy';
@@ -64,7 +64,20 @@ export function proxyDenials(since = '5m'): string[] {
   try { return [...new Set(docker(['logs', '--since', since, PROXY_CONTAINER]).split('\n').filter((l) => l.includes('DENY ')).map((l) => l.split('DENY ')[1].trim()))]; } catch { return []; }
 }
 
-interface RunResult { code: number | null; output: string; timedOut: boolean; mode: 'docker' | 'local' }
+export interface RunResult { code: number | null; output: string; timedOut: boolean; mode: 'docker' | 'local' }
+
+export interface SandboxOptions {
+  command: string;
+  /** Host directories to bind into the container, in order. The first is not special; `workdir` picks the cwd. */
+  mounts: { src: string; dst: string }[];
+  workdir: string;
+  network: 'none' | 'allowlist';
+  timeoutMs: number;
+  /** Session id used for `shell.output` events, so the office can follow the run. */
+  session: string;
+  /** Where a refusal or warning says it came from. */
+  where?: string;
+}
 
 async function runProcess(cmd: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number; onOutput: (chunk: string, stream: 'stdout' | 'stderr') => void }): Promise<{ code: number | null; timedOut: boolean; output: string }> {
   return new Promise((resolve) => {
@@ -78,6 +91,75 @@ async function runProcess(cmd: string, args: string[], opts: { cwd?: string; env
     p.on('close', (code) => { clearTimeout(timer); resolve({ code, timedOut, output: output.slice(0, MAX_OUTPUT) }); });
     p.on('error', (err) => { clearTimeout(timer); resolve({ code: null, timedOut, output: `spawn failed: ${err.message}` }); });
   });
+}
+
+/**
+ * Run one command in the sandbox against an arbitrary set of vault directories. `shell.run` mounts `Site/` and a
+ * scratch dir; `ci.run` mounts one `Workspace/<stream>`. Docker with the cubicle-sandbox image when available,
+ * otherwise the opt-in bubblewrap jail, otherwise a refusal — the same three-way decision `shell.run` always
+ * made, now in one place so both callers get the same isolation and the same failure messages.
+ */
+export async function sandboxExec(ctx: ToolContext, opts: SandboxOptions): Promise<RunResult | { refused: string }> {
+  const { command, mounts, workdir, network, timeoutMs, session } = opts;
+  const where = opts.where ?? 'shell.run';
+  // Docker reads `--mount type=bind,src=…,dst=…` as a CSV key/value list, so a comma or `=` in a path injects
+  // mount options. Callers validate their own inputs; this is the backstop that makes that impossible to forget.
+  const bad = mounts.find((m) => /[,=]/.test(m.src) || /[,=]/.test(m.dst));
+  if (bad) {
+    ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: where, reason: `refusing a sandbox mount whose path contains "," or "=": ${bad.src} → ${bad.dst}` } });
+    return { refused: `blocked: a sandbox mount path may not contain "," or "=" (got ${JSON.stringify(bad.src)} → ${JSON.stringify(bad.dst)}).` };
+  }
+  for (const m of mounts) mkdirSync(m.src, { recursive: true });
+  const onOutput = (chunk: string, stream: 'stdout' | 'stderr') => ctx.events.emit({ type: 'shell.output', agent: ctx.roleId, job: ctx.jobId, payload: { session, stream, text: chunk.slice(0, 4000) } });
+
+  if (hasDocker() && hasSandboxImage()) {
+    const cname = `cubicle-${session}`.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 60);
+    const args = ['run', '--rm', '--init', '--name', cname];
+    for (const m of mounts) args.push('--mount', `type=bind,src=${m.src},dst=${m.dst}`);
+    args.push('-w', workdir,
+      '--memory', '2g', '--cpus', '2', '--pids-limit', '512', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:exec',
+      '-e', 'HOME=/work/scratch', '-e', 'CI=1', '-e', 'npm_config_update_notifier=false', '-e', 'npm_config_cache=/work/scratch/.npm');
+    // Run as the host user so files written under the mounts stay editable by the owner and the daemon.
+    if (typeof process.getuid === 'function' && typeof process.getgid === 'function') args.push('--user', `${process.getuid()}:${process.getgid()}`);
+    if (network === 'allowlist') {
+      try {
+        const { proxyUrl } = ensureProxySidecar(ctx.config.sandbox_allowlist, (m) => ctx.events.emit({ type: 'shell.output', agent: ctx.roleId, job: ctx.jobId, payload: { session, stream: 'info', text: m } }));
+        args.push('--network', INTERNAL_NETWORK, '-e', `HTTP_PROXY=${proxyUrl}`, '-e', `HTTPS_PROXY=${proxyUrl}`, '-e', `http_proxy=${proxyUrl}`, '-e', `https_proxy=${proxyUrl}`, '-e', `npm_config_proxy=${proxyUrl}`, '-e', `npm_config_https_proxy=${proxyUrl}`, '-e', 'NODE_USE_ENV_PROXY=1', '-e', 'GIT_CONFIG_COUNT=1', '-e', 'GIT_CONFIG_KEY_0=http.proxy', '-e', `GIT_CONFIG_VALUE_0=${proxyUrl}`);
+      } catch (err) {
+        ctx.events.emit({ type: 'daemon.warning', agent: ctx.roleId, job: ctx.jobId, payload: { where, message: `proxy sidecar unavailable (${(err as Error).message.slice(0, 120)}); running without network` } });
+        args.push('--network', 'none');
+      }
+    } else {
+      args.push('--network', 'none');
+    }
+    // `timeout` inside the container too: a daemon kill -9 must not leave an unbounded process running.
+    args.push(SANDBOX_IMAGE, 'timeout', '--signal=KILL', String(Math.ceil(timeoutMs / 1000)), 'bash', '-lc', command);
+    const r = await runProcess('docker', args, { timeoutMs: timeoutMs + 5000, onOutput });
+    if (r.timedOut || r.code === 137) { try { execFileSync('docker', ['rm', '-f', cname], { stdio: 'ignore' }); } catch { /* gone */ } }
+    return { ...r, timedOut: r.timedOut || r.code === 137, mode: 'docker' };
+  }
+
+  // No sandbox. The local fallback is opt-in (owner_preferences: shell_local_fallback: true) and jailed with bwrap.
+  const why = hasDocker() ? `image ${SANDBOX_IMAGE} missing (run: cubicle doctor --build-sandbox)` : 'Docker unavailable';
+  if (!ctx.vault.ownerPreferences().shell_local_fallback) {
+    ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: where, reason: `${why}; local shell fallback is disabled (set shell_local_fallback: true in Memory/owner_preferences.md to allow a bwrap-jailed local shell)` } });
+    return { refused: `blocked: ${why}. The owner can enable a jailed local shell with shell_local_fallback: true in Memory/owner_preferences.md.` };
+  }
+  ctx.events.emit({ type: 'daemon.warning', agent: ctx.roleId, job: ctx.jobId, payload: { where, message: `${why}; using the jailed local shell` } });
+  let hasBwrap = false;
+  try { execFileSync('bwrap', ['--version'], { stdio: 'ignore', timeout: 3000 }); hasBwrap = true; } catch { hasBwrap = false; }
+  if (!hasBwrap) {
+    ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: where, reason: 'bwrap (bubblewrap) is not installed; refusing an unjailed local shell' } });
+    return { refused: 'blocked: no Docker sandbox and no bubblewrap (bwrap) to jail a local shell. Install Docker or bubblewrap.' };
+  }
+  const env: NodeJS.ProcessEnv = { PATH: '/usr/bin:/bin', HOME: '/work/scratch', TMPDIR: '/tmp', CI: '1', LANG: 'C.UTF-8', CUBICLE_SANDBOX: 'local' };
+  const bw = ['--ro-bind', '/usr', '/usr', '--ro-bind', '/etc', '/etc', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/sbin', '/sbin',
+    '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp'];
+  for (const m of mounts) bw.push('--bind', m.src, m.dst);
+  bw.push('--chdir', workdir, '--unshare-all', '--die-with-parent', '--new-session', '--clearenv');
+  for (const [k, v] of Object.entries(env)) bw.push('--setenv', k, String(v));
+  const r = await runProcess('bwrap', [...bw, 'bash', '-c', command], { timeoutMs, onOutput });
+  return { ...r, mode: 'local' };
 }
 
 /**
@@ -107,61 +189,20 @@ export const shellRun = defineTool({
     mkdirSync(siteDir, { recursive: true }); mkdirSync(scratchDir, { recursive: true });
     const timeoutMs = Math.min(timeout_s * 1000, SHELL_TIMEOUT_MS);
     const sessionId = `${ctx.jobId ?? 'shell'}-${Date.now().toString(36)}`;
-    const onOutput = (chunk: string, stream: 'stdout' | 'stderr') => ctx.events.emit({ type: 'shell.output', agent: ctx.roleId, job: ctx.jobId, payload: { session: sessionId, stream, text: chunk.slice(0, 4000) } });
     ctx.events.emit({ type: 'shell.output', agent: ctx.roleId, job: ctx.jobId, payload: { session: sessionId, stream: 'cmd', text: `$ ${command}`, cwd, network } });
 
     // Owner-edited Site/ files are protected even inside the sandbox: snapshot them, restore after the run (R34, principle 4).
     const protectedFiles = new Map<string, Buffer>();
     for (const rel of ctx.vault.list('Site', { recursive: true })) if (ctx.vault.isOwnerChanged(rel)) { try { protectedFiles.set(rel, readFileSync(ctx.vault.abs(rel))); } catch { /* unreadable */ } }
-    let result: RunResult;
-    let proxied = false;
-    if (hasDocker() && hasSandboxImage()) {
-      const cname = `cubicle-${sessionId}`.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 60);
-      const args = ['run', '--rm', '--init', '--name', cname,
-        '--mount', `type=bind,src=${siteDir},dst=/work/Site`, '--mount', `type=bind,src=${scratchDir},dst=/work/scratch`, '-w', cwd === 'Site' ? '/work/Site' : '/work/scratch',
-        '--memory', '2g', '--cpus', '2', '--pids-limit', '512', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:exec',
-        '-e', 'HOME=/work/scratch', '-e', 'CI=1', '-e', 'npm_config_update_notifier=false', '-e', 'npm_config_cache=/work/scratch/.npm'];
-      // Run as the host user so files written under Site/ stay editable by the owner and the daemon.
-      if (typeof process.getuid === 'function' && typeof process.getgid === 'function') args.push('--user', `${process.getuid()}:${process.getgid()}`);
-      if (network === 'allowlist') {
-        try {
-          const { proxyUrl } = ensureProxySidecar(ctx.config.sandbox_allowlist, (m) => ctx.events.emit({ type: 'shell.output', agent: ctx.roleId, job: ctx.jobId, payload: { session: sessionId, stream: 'info', text: m } }));
-          proxied = true;
-          args.push('--network', INTERNAL_NETWORK, '-e', `HTTP_PROXY=${proxyUrl}`, '-e', `HTTPS_PROXY=${proxyUrl}`, '-e', `http_proxy=${proxyUrl}`, '-e', `https_proxy=${proxyUrl}`, '-e', `npm_config_proxy=${proxyUrl}`, '-e', `npm_config_https_proxy=${proxyUrl}`, '-e', 'NODE_USE_ENV_PROXY=1', '-e', 'GIT_CONFIG_COUNT=1', '-e', 'GIT_CONFIG_KEY_0=http.proxy', '-e', `GIT_CONFIG_VALUE_0=${proxyUrl}`);
-        } catch (err) {
-          ctx.events.emit({ type: 'daemon.warning', agent: ctx.roleId, job: ctx.jobId, payload: { where: 'shell.run', message: `proxy sidecar unavailable (${(err as Error).message.slice(0, 120)}); running without network` } });
-          args.push('--network', 'none');
-        }
-      } else {
-        args.push('--network', 'none');
-      }
-      // `timeout` inside the container too: a daemon kill -9 must not leave an unbounded process running.
-      args.push(SANDBOX_IMAGE, 'timeout', '--signal=KILL', String(Math.ceil(timeoutMs / 1000)), 'bash', '-lc', command);
-      const r = await runProcess('docker', args, { timeoutMs: timeoutMs + 5000, onOutput });
-      if (r.timedOut || r.code === 137) { try { execFileSync('docker', ['rm', '-f', cname], { stdio: 'ignore' }); } catch { /* gone */ } }
-      result = { ...r, timedOut: r.timedOut || r.code === 137, mode: 'docker' };
-    } else {
-      // No sandbox. The local fallback is opt-in (owner_preferences: shell_local_fallback: true) and jailed with bwrap when available.
-      const why = hasDocker() ? `image ${SANDBOX_IMAGE} missing (run: cubicle doctor --build-sandbox)` : 'Docker unavailable';
-      if (!ctx.vault.ownerPreferences().shell_local_fallback) {
-        ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: 'shell.run', reason: `${why}; local shell fallback is disabled (set shell_local_fallback: true in Memory/owner_preferences.md to allow a bwrap-jailed local shell)` } });
-        return { ok: false, text: `blocked: ${why}. The owner can enable a jailed local shell with shell_local_fallback: true in Memory/owner_preferences.md.` };
-      }
-      ctx.events.emit({ type: 'daemon.warning', agent: ctx.roleId, job: ctx.jobId, payload: { where: 'shell.run', message: `${why}; using the jailed local shell` } });
-      const env: NodeJS.ProcessEnv = { PATH: '/usr/bin:/bin', HOME: '/work/scratch', TMPDIR: '/tmp', CI: '1', LANG: 'C.UTF-8', CUBICLE_SANDBOX: 'local' };
-      let hasBwrap = false;
-      try { execFileSync('bwrap', ['--version'], { stdio: 'ignore', timeout: 3000 }); hasBwrap = true; } catch { hasBwrap = false; }
-      if (!hasBwrap) {
-        ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: 'shell.run', reason: 'bwrap (bubblewrap) is not installed; refusing an unjailed local shell' } });
-        return { ok: false, text: 'blocked: no Docker sandbox and no bubblewrap (bwrap) to jail a local shell. Install Docker or bubblewrap.' };
-      }
-      const bw = ['--ro-bind', '/usr', '/usr', '--ro-bind', '/etc', '/etc', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/sbin', '/sbin',
-        '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--bind', siteDir, '/work/Site', '--bind', scratchDir, '/work/scratch', '--chdir', cwd === 'Site' ? '/work/Site' : '/work/scratch',
-        '--unshare-all', '--die-with-parent', '--new-session', '--clearenv'];
-      for (const [k, v] of Object.entries(env)) bw.push('--setenv', k, String(v));
-      const r = await runProcess('bwrap', [...bw, 'bash', '-c', command], { timeoutMs, onOutput });
-      result = { ...r, mode: 'local' };
-    }
+    const exec = await sandboxExec(ctx, {
+      command,
+      mounts: [{ src: siteDir, dst: '/work/Site' }, { src: scratchDir, dst: '/work/scratch' }],
+      workdir: cwd === 'Site' ? '/work/Site' : '/work/scratch',
+      network, timeoutMs, session: sessionId,
+    });
+    if ('refused' in exec) return { ok: false, text: exec.refused };
+    const result: RunResult = exec;
+    const proxied = network === 'allowlist' && result.mode === 'docker';
     // Restore any owner-edited file the command touched, before the rescan would re-label it as an agent write.
     const clobbered: string[] = [];
     for (const [rel, before] of protectedFiles) {

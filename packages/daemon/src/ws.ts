@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'node:crypto';
-import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, type CubicleEvent } from '@cubicle/core';
+import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
 
 export interface WsDeps {
@@ -31,8 +31,12 @@ export interface Snapshot {
   inbox: { id: string; kind: string; title: string; path: string; created: string }[];
   /** Owner ↔ CEO conversation from 00 Inbox/ message notes (oldest first) — the cabin thread. */
   chat: { ts: string; from: 'you' | 'ceo'; text: string }[];
-  /** Teams/*.md — the org chart in the Org drawer. */
-  teams: { id: string; name: string; lead: string; members: string[]; mission: string; room?: string; floor?: number; parent?: string }[];
+  /**
+   * `Teams/*.md` — the org chart in the Org drawer. `wip` is what the office room sign and the queue sheet read:
+   * a lane whose `load` has reached its `limit` is a red tab on the sign, and the sheet groups jobs by the lane
+   * `stageOf` puts them in.
+   */
+  teams: { id: string; name: string; lead: string; members: string[]; mission: string; room?: string; floor?: number; parent?: string; wip: { limits: WipLimits; load: Record<WipStage, number> } }[];
 }
 
 export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
@@ -57,7 +61,9 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
   const brandNote = parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data as Record<string, unknown>;
   const brand = { name: String(brandNote.name ?? ''), tagline: String(brandNote.tagline ?? ''), url: String(brandNote.url ?? '') };
   const org = loadOrg(vault);
-  const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission, room: t.room, floor: t.floor, parent: t.parent }));
+  const gates = loadGates();
+  const chainFor = (j: JobFrontmatter) => gatesForRisk(gates, j.type, j.risk);
+  const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission, room: t.room, floor: t.floor, parent: t.parent, wip: { limits: t.wip, load: wipLoad(vault, t.id, chainFor) } }));
   return {
     op: 'snapshot', at: nowIso(), roles, jobs: listJobs(vault),
     surfaces: sessions.map((s) => ({ streamKind: 'browser', streamId: s.session_id, lastFrame: s.path, active: activeSessions.has(s.session_id) })),

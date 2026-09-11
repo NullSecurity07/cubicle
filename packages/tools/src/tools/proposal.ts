@@ -4,7 +4,7 @@ import { createProposal, ProposalKind, idFromKey, loadOrg, can } from '@cubicle/
 
 export const proposalCreate = defineTool({
   name: 'proposal.create',
-  description: 'File a proposal for the owner in 00 Inbox/ (hire, fire, brand_change, charter_change, file_change, spend) or a message to the owner (kind=message).',
+  description: 'File a proposal for the owner in 00 Inbox/ (hire, fire, brand_change, charter_change, file_change, spend, reorg, threat_model) or a message to the owner (kind=message).',
   schema: {
     kind: ProposalKind,
     title: z.string(),

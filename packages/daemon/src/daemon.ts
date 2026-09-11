@@ -2,7 +2,7 @@ import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown } from '@cubicle/router';
-import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
+import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, secretsGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter } from '@cubicle/core';
 import { MemoryIndex, vaultScheduler, type Llm, type Guardrail } from '@cubicle/harness';
 import type { DaemonConfig } from './config.js';
@@ -12,7 +12,7 @@ import { WsServer } from './ws.js';
 import { createHeartbeatJob, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
-import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview } from './evolution.js';
+import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions } from './evolution.js';
 import { hasIdea } from './first-run.js';
 import { StaticServer } from './static.js';
 import { pruneScreens } from '@cubicle/tools';
@@ -116,7 +116,7 @@ export class Daemon {
       this.memory.indexAll().then((n) => n && this.log(`memory: indexed ${n} files`)).catch((e) => this.log(`memory index unavailable: ${(e as Error).message}`));
     }
     const scheduler = vaultScheduler(this.vault, 'daemon');
-    const guardrails = [constitutionGuardrail(this.router), ...(this.overrides.guardrails ?? [])];
+    const guardrails = [constitutionGuardrail(this.router), secretsGuardrail(), ...(this.overrides.guardrails ?? [])];
     this.guardrails = guardrails;
     this.openMeeting = async (agenda: string, participants?: string[]): Promise<string | null> => {
       const ceoNote = this.vault.readNoteOrNull('Roles/ceo.md');
@@ -200,6 +200,7 @@ export class Daemon {
     if (!this.overrides.disableWs) {
       this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.runTick('chat'); } });
       const port = await this.ws.start();
+      cfg.port = port; // port 0 binds an ephemeral port; downstream config, daemon.json, and events must see the real one
       this.log(`ws listening on ws://127.0.0.1:${port}`);
       const onFrame = (f: { session: string; seq: number; jpegBase64: string }) => { if (this.ws?.clientCount()) this.ws.frame(f.session, f.seq, f.jpegBase64); };
       browserFrames.on('frame', onFrame);
@@ -288,6 +289,10 @@ export class Daemon {
       if (pm) this.log(`tick(${reason}): postmortem ${pm}`);
       const wr = await maybeEnqueueWeeklyReview(this.vault, this.openMeeting);
       if (wr.length) this.log(`tick(${reason}): weekly review expanded (${wr.length} job(s))`);
+      const inc = maybeOpenIncident(this.vault);
+      if (inc) this.log(`tick(${reason}): incident ${inc} opened`);
+      const corrective = maybeCorrectiveActions(this.vault);
+      if (corrective.length) this.log(`tick(${reason}): ${corrective.length} corrective action(s) queued`);
       const last = this.vault.events.last('heartbeat.completed');
       const since = last ? (Date.now() - Date.parse(last.ts)) / 3600_000 : Infinity;
       const hasOpen = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat');

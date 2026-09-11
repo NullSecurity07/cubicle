@@ -39,9 +39,10 @@ const llm: Llm = {
   },
   promptBudget: () => 6000,
 };
-const d = new Daemon(defaultConfig(dir, { ...process.env, CUBICLE_ALLOW_LOCAL_FETCH: '1' }, { port: 7521, tickMs: 1000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableSleepWatch: true, memory: false, log: () => undefined });
+const d = new Daemon(defaultConfig(dir, { ...process.env, CUBICLE_ALLOW_LOCAL_FETCH: '1' }, { port: 0, tickMs: 1000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableSleepWatch: true, memory: false, log: () => undefined });
 await d.start();
 const token = d.ws!.token;
+const webPort = d.config.port + 1; // port 0 binds an ephemeral port; d.config.port is the real one after start()
 // "viewer closed" — nothing connected while the job runs
 const t0 = Date.now();
 while (Date.now() - t0 < 60_000 && readJob(d.vault, jobId)!.data.status !== 'done') await new Promise((r) => setTimeout(r, 300));
@@ -53,7 +54,7 @@ const { chromium } = await import('playwright');
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 const today = new Date().toISOString().slice(0, 10);
-await page.goto(`http://127.0.0.1:7522/?token=${token}&replay=${today}`, { waitUntil: 'load' });
+await page.goto(`http://127.0.0.1:${webPort}/?token=${token}&replay=${today}`, { waitUntil: 'load' });
 await page.waitForTimeout(4000);
 type Tile = { tx: number; ty: number };
 type Dbg = {
@@ -95,8 +96,8 @@ const billboard = (await page.evaluate(() => (window as unknown as Dbg).__cubicl
 console.log('billboard surface:', JSON.stringify(billboard));
 if (!billboard || billboard.streamKind !== 'browser' || !billboard.streamId || !billboard.lastFrame || !billboard.image?.includes('/screens/')) pass = false;
 if (framePath) {
-  const res = await page.request.get(`http://127.0.0.1:7522/screens/${framePath.replace('.cubicle/screens/', '')}?token=${token}`);
-  const noTok = await fetch(`http://127.0.0.1:7522/screens/${framePath.replace('.cubicle/screens/', '')}`); // cookie-less client
+  const res = await page.request.get(`http://127.0.0.1:${webPort}/screens/${framePath.replace('.cubicle/screens/', '')}?token=${token}`);
+  const noTok = await fetch(`http://127.0.0.1:${webPort}/screens/${framePath.replace('.cubicle/screens/', '')}`); // cookie-less client
   console.log(`frame without token/cookie: HTTP ${noTok.status}`); if (noTok.status !== 403) pass = false;
   console.log(`billboard frame served: HTTP ${res.status()} ${res.headers()['content-type']}`);
   if (res.status() !== 200) pass = false;
