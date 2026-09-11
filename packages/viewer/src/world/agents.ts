@@ -1,12 +1,13 @@
 // packages/viewer/src/world/agents.ts
 import Phaser from 'phaser';
 import type { World, Tile } from './map.js';
-import { TILE, makeSprite, makeFaces, makeEmotes, roleColor, POSE, SPRITE_H, EMOTE_H } from './tileset.js';
+import { TILE, makeSprite, makeFaces, makeEmotes, roleColor, SPRITE_H, EMOTE_H } from './tileset.js';
 import { toPx, portalFor } from './map.js';
 import { planRoute, type Leg } from './route.js';
 import type { ElevatorPort, ElevatorEvent } from './elevator.js';
 import type { AgentView, ToolIcon, Bubble } from '../state.js';
-import { BLINK_MS, GESTURE_MS, nextBlinkDelay, nextGestureDelay, pickGesture, walkBob, typingFrame, emoteBob, faceToward, thinkingDots, type Gesture } from './expressions.js';
+import { BLINK_MS, GESTURE_MS, nextBlinkDelay, nextGestureDelay, pickGesture, emoteBob, faceToward, thinkingDots, type Gesture } from './expressions.js';
+import { frameFor, poseFor, faceFrame, talkOpen, WALK_FRAMES, WALK_STEP_MS, BOB, type Dir, type PoseCtx } from './frames.js';
 
 // Drawn glyphs (no emoji: headless/minimal systems lack emoji fonts). letter + colour per tool family.
 const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = { browser: { t: 'W', c: '#2a6fdb' }, terminal: { t: '>_', c: '#2b2f3a' }, envelope: { t: 'M', c: '#c0392b' }, doc: { t: 'D', c: '#7a5c2e' }, chart: { t: '%', c: '#2e7d32' }, chat: { t: '…', c: '#6a3fb0' } };
@@ -47,7 +48,7 @@ export class AgentSprite {
   private currentTarget: string | null = null;
   private walkingTo: string | null = null;
   private waitingRide: { from: number; to: number } | null = null;
-  private riding: { x: number; y: number } | null = null;
+  private car: { x: number; y: number } | null = null;
   private pendingTarget: string | null = null;
   private frameTimer = 0;
   private dir = 0;
@@ -65,11 +66,16 @@ export class AgentSprite {
   private pantrySeat: Tile | null = null;
   seat: Tile | null = null;
   private gone = false;
+  private riding = false;
+  private bubbleSince = 0;           // clock ms when the current speech bubble appeared
+  private readonly glasses: boolean;
+  setRiding(on: boolean): void { this.riding = on; }
 
   constructor(private scene: Phaser.Scene, private world: World, public view: AgentView, private onClick: (role: string) => void, private deps: SpriteDeps = {}) {
-    const key = makeSprite(scene, view.sprite || view.role);
+    this.glasses = view.family === 'advisor' || view.team === 'research';
+    const key = makeSprite(scene, { role: view.role, sprite: view.sprite, family: view.family, team: view.team });
     makeFaces(scene); makeEmotes(scene);
-    this.body = scene.add.sprite(0, 0, key, '0').setOrigin(0.5, 1);
+    this.body = scene.add.sprite(0, 0, key, 'idle:0').setOrigin(0.5, 1);
     this.face = scene.add.image(-4, -SPRITE_H + 4, 'faces', 'neutral:0').setOrigin(0, 0);
     this.label = scene.add.text(0, 2, view.display, { fontFamily: 'system-ui', fontSize: `${9 * RES}px`, color: '#fff', stroke: '#000', strokeThickness: 2 * RES }).setOrigin(0.5, 0).setScale(1 / RES);
     this.icon = scene.add.text(10, -27, '', { fontFamily: 'ui-monospace, monospace', fontSize: '8px', color: '#fff', backgroundColor: '#2a6fdb', padding: { x: 2, y: 1 } }).setOrigin(0.5);
@@ -114,7 +120,7 @@ export class AgentSprite {
    * A new target while waiting for the car cancels the call; while riding it is applied on arrival.
    */
   goTo(target: string): void {
-    if (this.riding) { this.pendingTarget = target; return; }
+    if (this.car) { this.pendingTarget = target; return; }
     if (this.walkingTo === target) return;
     if (this.waitingRide) { this.deps.elevator?.cancel(this.view.role); this.waitingRide = null; }
     this.walkingTo = target;
@@ -151,9 +157,9 @@ export class AgentSprite {
   }
 
   /** In the car: hidden, following it (the minimap dot keeps moving). */
-  attachTo(car: { x: number; y: number }): void { this.riding = car; this.waitingRide = null; this.path = []; this.container.setVisible(false); }
+  attachTo(car: { x: number; y: number }): void { this.car = car; this.waitingRide = null; this.path = []; this.container.setVisible(false); }
   /** Out of the car at a floor's elevator door. */
-  detach(at: Tile): void { this.riding = null; this.place(at); this.container.setVisible(this.view.state !== 'offline' && !this.gone); }
+  detach(at: Tile): void { this.car = null; this.place(at); this.container.setVisible(this.view.state !== 'offline' && !this.gone); }
 
   onElevator(ev: ElevatorEvent, car: { x: number; y: number }): void {
     if (ev.kind === 'boarded' && ev.id === this.view.role) this.attachTo(car);
@@ -180,16 +186,16 @@ export class AgentSprite {
     // A finished job earns a coffee; so, sometimes, does a long quiet spell at the desk (only when nothing else is asked).
     if (prev.job && !view.job && view.state === 'walking' && !view.target && !this.detour) this.startPantry();
     if (this.detour && (view.target || (view.state !== 'walking' && view.state !== 'idle_at_desk'))) this.endDetour();
-    if (!this.detour && view.state === 'idle_at_desk' && !view.job && !this.path.length && !this.riding) {
+    if (!this.detour && view.state === 'idle_at_desk' && !view.job && !this.path.length && !this.car) {
       this.pantryIdle += dt * 1000;
       if (this.pantryIdle >= PANTRY_AFTER_MS) { this.pantryIdle = 0; if ((this.deps.roll ?? Math.random)() < PANTRY_ROLL) this.startPantry(); }
     } else if (view.state !== 'idle_at_desk') this.pantryIdle = 0;
     // target changes drive walking
     const want = view.state === 'leaving' ? 'door' : view.state === 'entering' ? 'home' : view.target ?? (view.state === 'walking' && !view.target ? 'home' : this.currentTarget ?? 'home');
     if (want !== this.currentTarget && !this.detour) { this.currentTarget = want; this.goTo(this.world.seats[want] ? (this.seat ? 'seat' : want) : want); }
-    if (this.riding) {
+    if (this.car) {
       // in the car: follow it, draw nothing but the minimap dot
-      this.container.setPosition(this.riding.x, this.riding.y + TILE);
+      this.container.setPosition(this.car.x, this.car.y + TILE);
       this.dot.setPosition(this.container.x, this.container.y).setVisible(view.state !== 'offline');
       return;
     }
@@ -204,38 +210,28 @@ export class AgentSprite {
       this.walked += stepLen;
       this.dir = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 1 : 2) : dy < 0 ? 3 : 0;
       this.frameTimer += dt;
-      if (this.frameTimer > 0.12) { this.frameTimer = 0; this.step = (this.step + 1) % 3; }
-      this.body.setFrame(String(this.dir * 3 + (this.step === 0 ? 1 : this.step === 1 ? 2 : 0)));
-      this.body.y = walkBob(this.walked);
+      if (this.frameTimer * 1000 > WALK_STEP_MS) { this.frameTimer = 0; this.step = (this.step + 1) % WALK_FRAMES; }
+      this.body.setFrame(frameFor({ moving: true, dir: this.dir as Dir, step: this.step }));
+      this.body.y = BOB[this.step];
       if (!this.path.length) this.walkFinished(view);
       this.gesture = 'none';
     } else if (this.waitingRide) {
       // at the elevator door: stand facing it until the car opens
       this.step = 0; this.body.y = 0; this.dir = 2;
-      this.body.setFrame(String(this.dir * 3));
+      this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0 }));
     } else {
       this.step = 0;
       this.body.y = 0;
-      if (this.detour === 'sit') {
-        this.sitLeft -= dt * 1000;
-        this.body.setFrame(String(POSE.COFFEE)); this.dir = 0;
-        if (this.sitLeft <= 0) this.endDetour();
-      } else if (view.emote?.kind === 'wave') { this.body.setFrame(String(POSE.WAVE)); this.dir = 0; }
-      else if (this.currentTarget === 'home' && view.state !== 'walking') {
-        // at the desk: seated, facing the viewer; typing while working; the odd stretch or glance when idle
-        this.dir = 0;
-        this.idleLife(dt, nowMs, view);
-        if (this.gesture === 'stretch' || this.gesture === 'yawn') this.body.setFrame(String(POSE.STRETCH));
-        else if (view.state === 'working' || view.mood === 'thinking') this.body.setFrame(String(typingFrame(nowMs) ? POSE.TYPING : POSE.SEATED));
-        else this.body.setFrame(String(POSE.SEATED));
-        if (this.gesture === 'look_left') this.dir = 1; else if (this.gesture === 'look_right') this.dir = 2;
-      } else {
-        // standing somewhere (a surface, a meeting seat): face the speaker if there is one, else keep the walking direction
-        if (ctx.speaker && ctx.speaker.role !== view.role && view.target && this.world.seats[view.target]) this.dir = faceToward({ x: this.container.x, y: this.container.y }, ctx.speaker);
-        this.body.setFrame(String(this.dir * 3));
-      }
+      if (this.detour === 'sit') { this.sitLeft -= dt * 1000; this.dir = 0; if (this.sitLeft <= 0) this.endDetour(); }
+      const atDesk = this.currentTarget === 'home' && view.state !== 'walking' && !this.riding;
+      if (atDesk) { this.dir = 0; this.idleLife(dt, nowMs, view); if (this.gesture === 'look_left') this.dir = 1; else if (this.gesture === 'look_right') this.dir = 2; }
+      else if (ctx.speaker && ctx.speaker.role !== view.role && (view.target === 'boardroom' || view.target === 'meetingroom')) this.dir = faceToward({ x: this.container.x, y: this.container.y }, ctx.speaker);
+      const sideSeat: PoseCtx['sideSeat'] = this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 1 ? 'l' : this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 2 ? 'r' : null;
+      const pose = poseFor(view, { atDesk, riding: this.riding, sideSeat, nowMs, gesture: this.gesture, detour: this.detour });
+      if (pose) this.dir = pose === 'sit_side_l' ? 1 : pose === 'sit_side_r' ? 2 : 0;
+      this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0, pose }));
     }
-    this.updateFace(dt, view);
+    this.updateFace(dt, nowMs, view);
     if (view.tool) { const ic = ICON[view.tool]; this.icon.setText(ic.t).setStyle({ backgroundColor: ic.c }).setVisible(true); } else this.icon.setVisible(false);
     // emote icon above the head (a wave is a pose, not an icon; a coffee stop shows the cup)
     const emoteKind = this.detour === 'sit' ? 'coffee' : view.emote && view.emote.kind !== 'wave' ? view.emote.kind : null;
@@ -257,14 +253,15 @@ export class AgentSprite {
     if (this.gestureIn <= 0) { this.gestureIn = nextGestureDelay(); this.gesture = pickGesture(Math.random(), view.mood); this.gestureLeft = GESTURE_MS[this.gesture]; }
   }
 
-  private updateFace(dt: number, view: AgentView): void {
+  private updateFace(dt: number, nowMs: number, view: AgentView): void {
     if (this.dir === 3) { this.face.setVisible(false); return; }
     this.face.setVisible(true).setPosition(-4 + (this.dir === 1 ? -1 : this.dir === 2 ? 1 : 0), -SPRITE_H + 4 + this.body.y);
     if (view.mood !== 'asleep') {
       if (this.blinking > 0) this.blinking -= dt * 1000;
       else { this.blinkIn -= dt; if (this.blinkIn <= 0) { this.blinkIn = nextBlinkDelay(); this.blinking = BLINK_MS; } }
     }
-    const frame = view.mood === 'asleep' ? `asleep:${this.dir}` : this.blinking > 0 ? `blink:${this.dir}` : `${view.mood}:${this.dir}`;
+    const talk = view.bubble?.kind === 'speech' && talkOpen(nowMs, this.bubbleSince);
+    const frame = view.mood === 'asleep' ? faceFrame('asleep', this.dir as 0 | 1 | 2, { glasses: this.glasses }) : this.blinking > 0 ? faceFrame('blink', this.dir as 0 | 1 | 2, { glasses: this.glasses }) : faceFrame(view.mood, this.dir as 0 | 1 | 2, { talk, glasses: this.glasses });
     if (this.face.frame.name !== frame) this.face.setFrame(frame);
   }
 
@@ -275,6 +272,7 @@ export class AgentSprite {
     const sig = `${b.kind}|${text}`;
     this.bubble.y = y;
     if (sig === this.lastBubble && this.bubble.visible) return;
+    if (sig !== this.lastBubble && b.kind === 'speech') this.bubbleSince = nowMs;
     this.lastBubble = sig;
     const color = b.kind === 'action' ? '#e7e9ee' : b.kind === 'thought' ? '#4b5160' : '#111';
     this.bubbleText.setStyle({ color, fontStyle: b.kind === 'thought' ? 'italic' : 'normal', fontSize: `${(b.kind === 'action' ? 7 : 8) * RES}px` }).setText(text);
@@ -295,7 +293,7 @@ export class AgentSprite {
     this.bubble.setVisible(true);
   }
 
-  debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, legs: this.legs, waitingRide: this.waitingRide, riding: !!this.riding, pendingTarget: this.pendingTarget, tile: this.tile(), seat: this.seat, desk: this.view.desk, home: this.homeTile() }; }
+  debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, legs: this.legs, waitingRide: this.waitingRide, riding: !!this.car, pendingTarget: this.pendingTarget, tile: this.tile(), seat: this.seat, desk: this.view.desk, home: this.homeTile() }; }
 
   destroy(): void { if (this.waitingRide) this.deps.elevator?.cancel(this.view.role); this.container.destroy(); this.dot.destroy(); }
 }
