@@ -19,11 +19,15 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
       const base = { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 5, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
       if (!chat.tools) {
         const last = String(chat.messages.at(-1)?.content ?? '');
+        // A board chair's merge prompt, for either subject, names the exact verdict line; an advisor's does not.
+        // Since SP3 the board also sits on ideas, and both chair prompts ask for "VERDICT: pass" — so the plan's
+        // chair is identified by the phrase only its prompt carries ("this plan"; the idea's says "this idea").
+        // Without that, an idea session would spend the scripted plan veto below.
+        const planChair = /VERDICT: pass/.test(last) && /this plan/.test(last);
         // `boardSilent` simulates "no model was available" for every board call (advisors and chair alike),
         // the same way askAs's catch does when deps.llm.chat throws — used to test the zero-advisors-answered path.
-        if (opts.boardSilent && (/VERDICT: pass/.test(last) || /Imagine the cycle has already failed/.test(last))) throw new Error('no model available');
-        // The board chair's merge prompt names the exact verdict line; the advisors' prompt does not.
-        if (/VERDICT: pass/.test(last)) { const v = vetoes-- > 0; return { ...base, content: v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier' }; }
+        if (opts.boardSilent && (planChair || /Imagine the cycle has already failed/.test(last))) throw new Error('no model available');
+        if (planChair) { const v = vetoes-- > 0; return { ...base, content: v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier' }; }
         if (/Imagine the cycle has already failed/.test(last)) return { ...base, content: '- the plan names no metric — add one\n- nobody owns the deploy — name them' };
         return { ...base, content: /NAME:/.test(last) ? 'NAME: X\nTAGLINE: y' : 'ok' };
       }

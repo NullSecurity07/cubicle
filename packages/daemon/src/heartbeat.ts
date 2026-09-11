@@ -285,35 +285,101 @@ export function mergeBoardVerdict(text: string): { verdict: 'pass' | 'return'; f
   return { verdict, findings };
 }
 
+/** What the owner can rule on an idea the board has judged. */
+// SP3 Task 1 exports this from core; swap the import once merged.
+type IdeaDecision = 'keep' | 'park' | 'scrap' | 'pending';
+
+/** What one board session judges: this cycle's plan, or one idea out of the funnel. */
+export interface BoardSubject {
+  kind: 'plan' | 'idea';
+  /** What the advisors read. */
+  text: string;
+  /** One line naming what is being judged: the meeting agenda, the decision note and the whiteboard all use it. */
+  title: string;
+  /** `Ideas/<slug>` for an idea session; absent for a plan. */
+  slug?: string;
+}
+
 /**
- * The board room, in at most four model calls (spec §2/§4): each advisor reads the plan in its own voice, the
+ * A bare string is this cycle's plan — the shape `runBoardSession` had before ideas existed, kept so SP2's
+ * callers and tests read the same as they did.
+ */
+export function boardSubject(subject: string | BoardSubject): BoardSubject {
+  return typeof subject === 'string' ? { kind: 'plan', text: subject, title: "this cycle's plan" } : subject;
+}
+
+/** How much of the subject an advisor reads. A plan is long; an idea dossier is one page and goes in whole. */
+export const SUBJECT_CHARS = 4000;
+
+export function advisorPrompt(s: BoardSubject): string {
+  if (s.kind === 'plan') {
+    return `This cycle's plan:\n\n${s.text.slice(0, SUBJECT_CHARS)}\n\nImagine the cycle has already failed. Write at most three bullets: the failure mode you see and the one change that would prevent it. One line each, concrete, no preamble.`;
+  }
+  return `An idea the company is considering:\n\n${s.text.slice(0, SUBJECT_CHARS)}\n\nImagine the company spent a quarter on this and it failed. Write at most three bullets: the failure mode you see and the one change that would prevent it — or say plainly that it should not be built. One line each, concrete, no preamble.`;
+}
+
+/**
+ * The chair's merge prompt. The two subjects must stay distinguishable by their words alone: the scripted models
+ * in `scripts/lib/org-llm.ts` route the board's calls on the text of the last prompt, so an idea session that
+ * read like a plan session would steal the plan's scripted veto. Both say "this plan" / "this idea" verbatim.
+ */
+export function chairPrompt(s: BoardSubject, transcript: string): string {
+  const what = s.kind === 'plan' ? 'plan' : 'idea';
+  const returnLine = s.kind === 'plan'
+    ? 'Return the plan only if running it as written would waste the cycle; you cannot delay.'
+    : 'Return the idea only if the dossier does not answer a failure mode that would sink it; you cannot delay, and you do not decide — the owner does.';
+  return `You chair the board. Your advisors wrote:\n\n${transcript}\n\nMerge them into ONE verdict for the owner on this ${what}. First line exactly "VERDICT: pass" or "VERDICT: return". Then at most four bullets, each a failure mode this ${what} does not answer and the change that fixes it. ${returnLine}`;
+}
+
+/** The agenda line the board room shows while the session is open. */
+export function boardAgenda(s: BoardSubject): string {
+  return s.kind === 'plan' ? 'Pre-mortem: this cycle\'s plan' : `Idea review: ${s.title}`;
+}
+
+/**
+ * The board room, in at most four model calls (spec §2/§4): each advisor reads the subject in its own voice, the
  * board lead merges the three into one verdict. No sub-jobs, because three advisor jobs plus their gates cost a
  * whole cycle's quota on the free tier and the board must answer inside this heartbeat.
+ *
+ * The subject is either this cycle's plan or one idea (spec §3). A bare string is the plan, so every SP2 caller
+ * reads as it did; the plan's wording is unchanged and the idea asks its own question.
  *
  * Each advisor speaks at its own charter's `model_tier` — the charter is a ceiling on cost, never a floor, so an
  * advisor_investor/advisor_customer charter set to `medium` must not be silently upgraded to `strong`. A missing
  * tier falls back to the board lead's, then to `medium`. `answered` is how many of the (deduplicated) advisors
  * actually got a model response, so a caller can tell "the board passed" from "no model was available at all".
  */
-export async function runBoardSession(deps: HeartbeatDeps, org: Org, plan: string): Promise<{ verdict: 'pass' | 'return'; findings: string[]; advisors: string[]; transcript: string; answered: number }> {
+export async function runBoardSession(
+  deps: HeartbeatDeps, org: Org, subject: string | BoardSubject,
+): Promise<{ verdict: 'pass' | 'return'; findings: string[]; advisors: string[]; transcript: string; answered: number; subject: BoardSubject }> {
   const vault = deps.vault;
+  const s = boardSubject(subject);
   // Its one caller guards on `org.teams.board` first, but this is exported and tests call it directly: an org
   // with no board room must fail as "the board passed unreviewed", not as a TypeError inside the cycle (M5).
+  // Nothing is emitted on this path either: no advisor walked to the table, so the room must not light up.
   const board = org.teams.board;
-  if (!board) return { verdict: 'pass', findings: [], advisors: [], transcript: '', answered: 0 };
+  if (!board) return { verdict: 'pass', findings: [], advisors: [], transcript: '', answered: 0, subject: s };
   const advisors = [...new Set([board.lead, ...board.members])].filter((r) => org.roles[r]).slice(0, 3);
   const leadTier = org.roles[board.lead]?.model_tier ?? 'medium';
   const tierFor = (roleId: string): ModelTier => org.roles[roleId]?.model_tier ?? leadTier;
+  // The board room, on screen: the advisors walk to the table, the owner's chair fills, and the whiteboard says
+  // the board is sitting. Emitted here rather than in the caller so the plan pre-mortem gets it too — it never
+  // has, which is why the owner's chair has not once been used in a live run (spec §6.1).
+  const meetingId = idFromKey('meet', `board:${s.kind}:${s.slug ?? 'plan'}:${advisors.join('-')}:${nowIso()}`);
+  vault.events.emit({ type: 'meeting.opened', agent: board.lead, payload: { id: meetingId, room: 'board', participants: advisors, agenda: boardAgenda(s), subject: s.kind, title: s.title } });
   const notes: string[] = [];
   let answered = 0;
   for (const a of advisors) {
-    const text = await askAs(deps, a, advisorSystem(vault, a), `This cycle's plan:\n\n${plan.slice(0, 4000)}\n\nImagine the cycle has already failed. Write at most three bullets: the failure mode you see and the one change that would prevent it. One line each, concrete, no preamble.`, 500, tierFor(a));
+    const text = await askAs(deps, a, advisorSystem(vault, a), advisorPrompt(s), 500, tierFor(a));
     if (text) answered++;
+    vault.events.emit({ type: 'meeting.turn', agent: a, payload: { id: meetingId, round: 1, text: (text ?? '(no answer)').slice(0, 280) } });
     notes.push(`### ${advisorName(vault, a)}\n${text ?? '(no answer: no model was available)'}`);
   }
   const transcript = notes.join('\n\n');
-  const merged = await askAs(deps, board.lead, advisorSystem(vault, board.lead), `You chair the board. Your advisors wrote:\n\n${transcript}\n\nMerge them into ONE verdict for the owner. First line exactly "VERDICT: pass" or "VERDICT: return". Then at most four bullets, each a failure mode this plan does not answer and the change that fixes it. Return the plan only if running it as written would waste the cycle; you cannot delay.`, 600, leadTier);
-  return { ...mergeBoardVerdict(merged ?? ''), advisors, transcript, answered };
+  const merged = await askAs(deps, board.lead, advisorSystem(vault, board.lead), chairPrompt(s, transcript), 600, leadTier);
+  const out = { ...mergeBoardVerdict(merged ?? ''), advisors, transcript, answered, subject: s };
+  vault.events.emit({ type: 'meeting.closed', agent: board.lead, payload: { id: meetingId, room: 'board', subject: s.kind, title: s.title, verdict: out.verdict, findings: out.findings } });
+  return out;
 }
 
 /** The board note's own words for "no advisor answered" — shared by the decision note and the daemon warning. */
