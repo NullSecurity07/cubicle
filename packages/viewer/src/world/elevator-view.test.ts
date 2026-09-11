@@ -1,6 +1,6 @@
 // packages/viewer/src/world/elevator-view.test.ts
 import { describe, it, expect, afterEach } from 'vitest';
-import { doorOpenFor, toViewState } from './elevator-view.js';
+import { doorOpenFor, doorCrop, toViewState, emptyViewState } from './elevator-view.js';
 import type { ElevatorState } from './elevator.js';
 import { withMotion } from './motion.js';
 
@@ -40,5 +40,37 @@ describe('toViewState', () => {
     const c = toViewState(st({ riders: [{ id: 'coo', from: 4, to: 2 }] }));   // a genuinely different array still maps correctly
     expect(c.riders).toEqual(['coo']);
     expect(c.riders).not.toBe(a.riders);
+  });
+});
+
+describe('door leaves', () => {
+  it('parts both leaves symmetrically: equal visible widths at every opening, and a closed pair covers the tile', () => {
+    for (const open of [0, 0.25, 0.5, 0.75, 1]) {
+      const c = doorCrop(open);
+      expect(c.l.w, `open ${open}`).toBe(c.r.w);
+      expect(c.l.x).toBe(0);
+      expect(c.r.x + c.r.w).toBe(16);          // the right leaf never leaves its own tile
+      expect(c.l.w + c.r.w).toBe(16 - 2 * Math.round(6 * open));   // the gap grows from the centre, both sides
+    }
+    expect(doorCrop(0)).toEqual({ l: { x: 0, w: 8 }, r: { x: 8, w: 8 } });   // closed: the whole tile is door
+    expect(doorCrop(1)).toEqual({ l: { x: 0, w: 2 }, r: { x: 14, w: 2 } });  // open: a 12 px gap onto the recess
+  });
+  it('clamps a nonsense opening rather than inverting a leaf', () => {
+    expect(doorCrop(-1)).toEqual(doorCrop(0));
+    expect(doorCrop(9)).toEqual(doorCrop(1));
+  });
+});
+
+describe('toViewState into a reused object', () => {
+  it('fills the caller\'s object so the per-frame loop allocates nothing', () => {
+    const into = emptyViewState();
+    const a = toViewState(st({ row: 20, status: 'moving', floor: 3 }), 16, into);
+    expect(a).toBe(into);
+    expect(a).toEqual({ carY: 320, doorOpen: 0, floor: 3, moving: true, riders: [] });
+    const b = toViewState(st({ row: 51, status: 'idle', floor: 1 }), 16, into);
+    expect(b).toBe(into);
+    expect(b.floor).toBe(1);   // every field is rewritten, never left stale from the previous frame
+    expect(b.moving).toBe(false);
+    expect(b.carY).toBe(51 * 16);
   });
 });

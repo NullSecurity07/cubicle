@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PALETTE, floorPalette, familyOf, rolePalette, roleColor, hsl, hexToHsl, shade, hexToInt } from './palette.js';
 
 describe('colour maths', () => {
@@ -58,5 +61,52 @@ describe('families and role palettes', () => {
   it('roleColor keeps the three known overrides and equals the ring', () => {
     expect(roleColor('ceo')).toBe(0xf2c14e); expect(roleColor('cto')).toBe(0x4e9af2); expect(roleColor('coo')).toBe(0xb98ef2);
     expect(roleColor('qa_lead')).toBe(hexToInt(rolePalette('qa_lead', 'manager').ring));
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// One palette drives Phaser and CSS (the spec's consistency rule). This is the lint that keeps it true: no colour
+// literal may appear in `world/` or `scenes/` outside the palette itself and the two pixel drawers, which paint
+// from palettes handed to them. Three raw ambers and about thirty other hexes had drifted out of the table.
+// ---------------------------------------------------------------------------------------------------------------
+const SRC = join(dirname(fileURLToPath(import.meta.url)), '..');
+const ALLOWED = new Set(['world/palette.ts', 'world/tiles-draw.ts', 'world/sprite-draw.ts']);
+
+function walk(dir: string, rel = ''): string[] {
+  return readdirSync(join(SRC, dir, rel), { withFileTypes: true }).flatMap((e) => {
+    const r = rel ? `${rel}/${e.name}` : e.name;
+    if (e.isDirectory()) return walk(dir, r);
+    return e.name.endsWith('.ts') && !e.name.endsWith('.test.ts') ? [`${dir}/${r}`] : [];
+  });
+}
+
+describe('one palette', () => {
+  it('has no colour literal outside palette.ts and the two pixel drawers', () => {
+    const offenders: string[] = [];
+    for (const file of [...walk('world'), ...walk('scenes')]) {
+      if (ALLOWED.has(file)) continue;
+      readFileSync(join(SRC, file), 'utf8').split('\n').forEach((line, i) => {
+        if (line.includes('palette-lint: ignore')) return;
+        if (/0x[0-9a-fA-F]{6}\b/.test(line) || /#[0-9a-fA-F]{6}\b/.test(line)) offenders.push(`${file}:${i + 1}  ${line.trim()}`);
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('carries the tokens the sweep needed, and keeps amber for attention only', () => {
+    for (const k of ['screenText', 'screenInk', 'labelInk', 'labelStroke', 'barTrack', 'good', 'warn', 'bad', 'minimapBg', 'leaf', 'leafDark', 'bubbleFill', 'bubbleActionFill'] as const) {
+      expect(PALETTE[k], k).toMatch(/^#[0-9a-f]{6}$/);
+    }
+    expect(Object.values(PALETTE.tool)).toHaveLength(6);
+    for (const c of Object.values(PALETTE.tool)) expect(c, `tool ${c}`).not.toBe(PALETTE.amber);
+    expect(PALETTE.screenText).not.toBe('#ffe9a8');   // the pale amber that was on all eight screen titles
+  });
+
+  it("desaturated the street planting into the tower's range", () => {
+    // #43a047 was S 0.41 at L 0.46: the most saturated thing in the lower third of every shot, against the rule
+    // that the ground stays quiet so sprites and screens dominate.
+    expect(hexToHsl(PALETTE.leaf).s).toBeLessThan(0.4);
+    expect(hexToHsl(PALETTE.leafDark).l).toBeLessThan(hexToHsl(PALETTE.leaf).l);
+    expect(hexToHsl(PALETTE.leafLight).l).toBeGreaterThan(hexToHsl(PALETTE.leaf).l);
   });
 });

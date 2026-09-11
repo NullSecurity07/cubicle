@@ -6,7 +6,21 @@
 
 export interface Headline { head: string; lines: string[]; badge?: string; /** what a screen too narrow for a sentence shows instead (a count, a word) */ short?: string }
 
-export const cut = (s: string, n: number): string => { const t = s.replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, Math.max(0, n - 1)).trimEnd() + '…' : t; };
+/**
+ * `s` in at most `n` columns, ending on a whole word. Slicing at a character count gave "What company wil…" and
+ * "Queue…"; nothing is abbreviated where a word fits. A single word longer than the budget is still cut mid-word —
+ * there is no boundary to fall back to — and a cut that would throw away more than half the budget keeps the
+ * partial word rather than leaving a near-empty line.
+ */
+export const cut = (s: string, n: number): string => {
+  const t = s.replace(/\s+/g, ' ').trim();
+  if (t.length <= n) return t;
+  const room = Math.max(0, n - 1);                     // one column for the ellipsis
+  const head = t.slice(0, room);
+  const space = head.lastIndexOf(' ');
+  const kept = space > room / 2 ? head.slice(0, space) : head;
+  return kept.trimEnd() + '…';
+};
 
 /** Objective sentence and "This cycle" bullets from Plans/plan.md. */
 export function planBits(plan: string): { objective: string; items: string[] } {
