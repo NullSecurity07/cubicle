@@ -34,6 +34,12 @@ describe('sprite frames', () => {
     expect(p.outside(SPRITE_W * FRAMES.length, SPRITE_H)).toEqual([]);
     expect(p.rects.some((r) => r.x >= 16 * 30)).toBe(true);
   });
+  it('no family outlines with pure black (own darkest colour, never black)', () => {
+    for (const family of ['chief', 'manager', 'member', 'advisor', 'owner'] as Family[]) for (const name of FRAMES) {
+      const p = sig(name, family);
+      expect(p.rects.some((r) => r.c === '#000000'), `${family} ${name}`).toBe(false);
+    }
+  });
   it('spriteOpts: sales members get a headset, options are deterministic', () => {
     expect(spriteOpts('sales_1', 'sales').headset).toBe(true);
     expect(spriteOpts('sre', 'dev').headset).toBe(false);
