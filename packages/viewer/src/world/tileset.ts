@@ -83,3 +83,14 @@ export function makeEmotes(scene: Phaser.Scene): string {
   EMOTES.forEach((e, i) => tex.add(e, 0, i * EMOTE_W, 0, EMOTE_W, EMOTE_H));
   return key;
 }
+
+/** 10×3 soft ellipse under every standing sprite (40 % black). One texture for all; the scene never redraws it. */
+export function makeShadow(scene: Phaser.Scene): string {
+  const key = 'shadow';
+  if (scene.textures.exists(key)) return key;
+  const tex = scene.textures.createCanvas(key, 10, 3)!;
+  const g = tex.getContext();
+  g.fillStyle = 'rgba(0,0,0,0.4)'; g.fillRect(1, 0, 8, 3); g.fillRect(0, 1, 10, 1);
+  tex.refresh();
+  return key;
+}
