@@ -50,16 +50,19 @@ async function startDaemon(): Promise<{ d: Daemon; port: number }> {
 const { d, port: PORT } = await startDaemon();
 const token = d.ws!.token;
 const { chromium } = await import('playwright');
-// Same GPU flags as scripts/office-shot.ts: SwiftShader draws the office at ~10 fps, which turns every settle wait
-// below into a race. A machine without ANGLE falls back to software by itself.
-const browser = await chromium.launch({ headless: true, args: ['--use-gl=angle', '--use-angle=gl-egl', '--ignore-gpu-blocklist', '--enable-gpu-rasterization'] });
-const W = 1280, H = 800;
-const page = await browser.newPage({ viewport: { width: W, height: H } });
-// A setup step that throws (the camera cannot park the board; an element never appears) still has to read as a
-// failure and take the daemon and the browser down with it, or the run leaks a Chromium and an open port.
-const bail = (e: unknown): void => { console.log(`FAIL: the run stopped: ${String(e).split('\n')[0].slice(0, 300)}`); void (async () => { await browser.close().catch(() => undefined); await d.stop().catch(() => undefined); process.exit(1); })(); };
+// A setup step that throws (the browser will not launch; the camera cannot park the board; an element never appears)
+// still has to read as a failure and take the daemon and the browser down with it, or the run leaks a Chromium and
+// an open port. Registered *before* the launch: a launch that throws used to leave the daemon and its port behind,
+// which is exactly the case with nothing else to clean it up.
+let browser: import('playwright').Browser | null = null;
+const bail = (e: unknown): void => { console.log(`FAIL: the run stopped: ${String(e).split('\n')[0].slice(0, 300)}`); void (async () => { await browser?.close().catch(() => undefined); await d.stop().catch(() => undefined); process.exit(1); })(); };
 process.on('uncaughtException', bail);
 process.on('unhandledRejection', bail);
+// Same GPU flags as scripts/office-shot.ts: SwiftShader draws the office at ~10 fps, which turns every settle wait
+// below into a race. A machine without ANGLE falls back to software by itself.
+browser = await chromium.launch({ headless: true, args: ['--use-gl=angle', '--use-angle=gl-egl', '--ignore-gpu-blocklist', '--enable-gpu-rasterization'] });
+const W = 1280, H = 800;
+const page = await browser.newPage({ viewport: { width: W, height: H } });
 page.on('pageerror', (e) => console.log('[page exception]', String(e).slice(0, 200)));
 page.on('console', (m) => { if (m.type() === 'error') console.log('[page error]', m.text().slice(0, 200)); });
 await page.goto(`http://127.0.0.1:${PORT + 1}/?token=${token}`, { waitUntil: 'load' });
@@ -210,6 +213,25 @@ if (r4.hits.some((h) => h.ev === 'gameobjectdown')) fail('a press on the rail re
 if (r4.floor !== 3) fail(`the rail tab did not take the camera to floor 3 (currentFloor = ${r4.floor})`);
 if (r4.pres !== null) fail('a press on the rail opened a panel');
 
+// 4b. The reader: the one level-2 presentation with a scrollable document under it. A press inside its body must
+//     stay in it, exactly as the sheet's does — the sheet, the viewer and the toast were covered and this was not.
+await page.evaluate(() => (window as unknown as Win).__cubicle.open('whiteboard'));
+await page.waitForFunction(() => document.getElementById('layer')!.dataset.presentation === 'reader', undefined, { timeout: 10_000 });
+await camSettled();
+const readerBody = await boxOf('#panel-body');
+const p4b = await parkWhiteboardUnder({ x: readerBody.x + readerBody.w * 0.3, y: readerBody.y + readerBody.h / 2 }, readerBody, 'the reader body', '#panel');
+await hits();
+await page.mouse.click(p4b.x, p4b.y);
+await page.waitForTimeout(300);
+const r4b = { hits: await hits(), pres: await presentation(), title: await panelTitle() };
+console.log('click in the reader over the whiteboard →', JSON.stringify(r4b));
+if (r4b.hits.some((h) => h.ev === 'gameobjectdown')) fail('a press on the reader reached a game object beneath it');
+if (r4b.pres !== 'reader') fail(`the presentation changed to ${r4b.pres} from a click inside the reader`);
+if (r4b.title !== 'Plan') fail(`the reader changed to "${r4b.title}" from a click inside it`);
+await page.keyboard.press('Escape');
+await page.waitForTimeout(300);
+if ((await presentation()) !== null) fail('Escape did not close the reader after the isolation check');
+
 // 5. The browser viewer: opens from a pushed frame, updates the <img> in place, swallows presses, closes on Escape.
 const frameUrl = (n: number) => page.evaluate((n) => { const c = document.createElement('canvas'); c.width = 320; c.height = 200; const g = c.getContext('2d')!; g.fillStyle = n % 2 ? '#2b5fc7' : '#1f7a33'; g.fillRect(0, 0, 320, 200); g.fillStyle = '#ffffff'; g.font = '32px sans-serif'; g.fillText(`frame ${n}`, 40, 110); return c.toDataURL('image/png'); }, n);
 d.vault.events.emit({ type: 'browser.session_started', agent: 'cmo', job: null, payload: { session: 'demo' } });
@@ -266,5 +288,5 @@ if (r6.pres !== null) fail('a press on the toast text opened a panel');
 await browser.close();
 await d.stop();
 if (failures.length) { console.log(`FAIL: ${failures.length} check(s) failed`); process.exit(1); }
-console.log('PASS: presses on the sheet, rail, viewer and toast stay on the HTML layer; releases and office clicks still reach Phaser');
+console.log('PASS: presses on the sheet, reader, rail, viewer and toast stay on the HTML layer; releases and office clicks still reach Phaser');
 process.exit(0);

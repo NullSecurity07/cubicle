@@ -58,8 +58,10 @@ const shot = async (name: string, settleMs = 900): Promise<void> => { await page
 const failures: string[] = [];
 const fail = (m: string): void => { failures.push(m); console.log(`FAIL: ${m}`); };
 /** A pushable browser frame, drawn in the page. `page.evaluate` is handed source text, not a function: tsx rewrites
- *  named inner bindings to call a `__name` helper that does not exist in the page. (`cub` dodges this the same way.) */
-const frameUrl = (n: number): Promise<string> => page.evaluate(`(() => { const c = document.createElement('canvas'); c.width = 640; c.height = 400; const g = c.getContext('2d'); const grad = g.createLinearGradient(0, 0, 640, 400); grad.addColorStop(0, '#2b5fc7'); grad.addColorStop(1, '#1f7a33'); g.fillStyle = grad; g.fillRect(0, 0, 640, 400); g.fillStyle = '#ffffff'; g.font = 'bold 34px sans-serif'; g.fillText('example.com \\u00b7 frame ${n}', 40, 210); return c.toDataURL('image/png'); })()`) as Promise<string>;
+ *  named inner bindings to call a `__name` helper that does not exist in the page. (`cub` dodges this the same way.)
+ *  1024 x 700 is the browser tool's own viewport (packages/tools/src/tools/browser.ts), which is what the viewer's
+ *  box is sized for: a frame of any other shape would letterbox and make the scene a picture of the wrong thing. */
+const frameUrl = (n: number): Promise<string> => page.evaluate(`(() => { const c = document.createElement('canvas'); c.width = 1024; c.height = 700; const g = c.getContext('2d'); const grad = g.createLinearGradient(0, 0, 1024, 700); grad.addColorStop(0, '#2b5fc7'); grad.addColorStop(1, '#1f7a33'); g.fillStyle = grad; g.fillRect(0, 0, 1024, 700); g.fillStyle = '#ffffff'; g.font = 'bold 52px sans-serif'; g.fillText('example.com \\u00b7 frame ${n}', 60, 360); return c.toDataURL('image/png'); })()`) as Promise<string>;
 /** Pop the panel stack back to the office. Escape goes through the stack's own handler — nothing here edits state. */
 const closePanels = async (): Promise<void> => {
   for (let i = 0; i < 4; i++) {
