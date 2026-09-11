@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listJobs, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection } from '@cubicle/core';
+import { scaffoldVault, Vault, listJobs, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
@@ -15,6 +15,10 @@ beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-plan-'));
   const { vault } = await scaffoldVault(dir);
   vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'PlateReady' }, body: n.body }), 'owner');
+  // An engineer.ship cannot finish without a green CI record for its stream (§17), so the scripted dev plan
+  // ships against this one. Nothing lives under Workspace/site, so the record never goes stale.
+  createStream(vault, { slug: 'site', name: 'Site', problem: 'The company has no site.', customers: 'Everyone who hears about us', outcome_metric: 'a first cut exists', owner_team: 'dev' }, 'ceo');
+  writeCiRecord(vault, 'site', { stream: 'site', started: '2026-09-11T09:59:00.000Z', finished: '2026-09-11T10:00:00.000Z', green: true, commit: null, steps: [{ name: 'test', code: 0, ok: true, duration_ms: 5, output: 'ok' }] }, 'backend_engineer');
   vault.close();
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));

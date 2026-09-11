@@ -239,7 +239,7 @@ describe('approval modes in the loop', () => {
   });
 
   it('question to a colleague blocks; an answer resumes', async () => {
-    const id = createJob(vault, { type: 'engineer.ship', title: 'site', assigned: 'backend_engineer', goal: 'build' }, 'cto');
+    const id = createJob(vault, { type: 'custom', title: 'site', assigned: 'backend_engineer', goal: 'build' }, 'cto');
     const out = await runJob(deps(scripted([{ tool: 'colleague.message', args: { to: 'cto', body: 'framework?', kind: 'question' } }])), id);
     expect(out.status).toBe('blocked');
     const j = readJob(vault, id)!;

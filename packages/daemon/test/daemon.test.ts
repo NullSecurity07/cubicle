@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob, loadOrg } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob, loadOrg, createStream, writeCiRecord } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot, NON_WORK_TYPES } from '../src/index.js';
@@ -12,7 +12,15 @@ import { vaultScheduler } from '@cubicle/harness';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
-beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-daemon-')); const { vault } = await scaffoldVault(dir); vault.close(); });
+beforeEach(async () => {
+  dir = mkdtempSync(path.join(tmpdir(), 'cubicle-daemon-'));
+  const { vault } = await scaffoldVault(dir);
+  // An engineer.ship cannot finish without a green CI record for its stream (§17), so the scripted dev plan
+  // below ships against this one. No source files exist under Workspace/site, so the record never goes stale.
+  createStream(vault, { slug: 'site', name: 'Site', problem: 'The company has no site.', customers: 'Everyone who hears about us', outcome_metric: 'a first cut exists', owner_team: 'dev' }, 'ceo');
+  writeCiRecord(vault, 'site', { stream: 'site', started: '2026-09-11T09:59:00.000Z', finished: '2026-09-11T10:00:00.000Z', green: true, commit: null, steps: [{ name: 'test', code: 0, ok: true, duration_ms: 5, output: 'ok' }] }, 'backend_engineer');
+  vault.close();
+});
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 /** The CEO's objectives for the cycle: only the Dev room has work, so only the dev manager gets a team.plan. */
@@ -54,7 +62,7 @@ function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: stri
         return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'fine', verdict: 'pass', findings: [] } }] };
       }
       if (jobType === 'team.plan' && req.roleId === 'dev_manager') {
-        return { ...base, parsedToolCalls: [n === 0 ? { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'backend_engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.', risk: 'low' } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
+        return { ...base, parsedToolCalls: [n === 0 ? { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'backend_engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.', risk: 'low', stream: 'site' } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
       }
       // Gate jobs (qa.review, coo.verify, requester.review) need an explicit verdict to advance the parent's gate chain.
       const isGate = /\.(review|verify)$/.test(jobType);

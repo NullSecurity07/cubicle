@@ -1,4 +1,4 @@
-import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, parseNote, resolveRole, researchLead, leadOf } from '@cubicle/core';
+import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, parseNote, resolveRole, researchLead, leadOf, createStream, listStreams, streamSlug, type NewStream } from '@cubicle/core';
 
 /**
  * The three jobs a company must leave its first heartbeat with (spec §12): something on the web, something to
@@ -38,7 +38,7 @@ function covers(existing: string, seed: string): boolean {
   return titleKey(existing).startsWith(titleKey(seed));
 }
 
-function specs(org: Org): NewJob[] {
+function specs(org: Org, stream?: string): NewJob[] {
   const engineer = resolveRole(org, 'engineer');
   const growthLead = resolveRole(org, 'head_of_growth');
   const analyst = researchLead(org) ?? growthLead;
@@ -49,18 +49,21 @@ function specs(org: Org): NewJob[] {
       team: org.roles[engineer]?.team, owner_role: engineeringOwner === 'owner' ? 'ceo' : engineeringOwner,
       goal: 'The company has no site yet. Read Brand/name.md, Brand/palette.md and Brand/voice.md, then build the first cut of Site/: one page that says what the company does, who it is for, and how to get in touch. Keep it static and boring — no framework, no build step the owner has to learn. Do not invent claims the brand notes do not support.',
       done_when: 'Site/index.html exists, uses the name, palette and voice from Brand/, has no broken links, and says what the company sells and to whom.',
+      stream, risk: 'low',
     },
     {
       type: 'research', title: FIRST_JOB_TITLES[1], assigned: analyst, priority: 2, for: growthLead,
       team: org.roles[analyst]?.team, owner_role: growthLead,
       goal: 'Nothing can be sold until there is an offer. From Brand/ and the owner\'s notes in 00 Inbox/, work out the single thing this company sells first, who buys it, and what it costs. Compare at least two plausible price points against what comparable products charge, and link your sources. Recommend one.',
       done_when: 'Docs/offer.md names one offer, one buyer and one price, each with the evidence behind it, and ends with a next step the lead can schedule.',
+      stream,
     },
     {
       type: 'growth.seo', title: FIRST_JOB_TITLES[2], assigned: growthLead, priority: 2,
       team: org.roles[growthLead]?.team, owner_role: growthLead,
       goal: 'Find the one organic channel worth trying first — search, a community, a directory, a newsletter — for the buyer the offer names. Judge each candidate on where that buyer already is and what it costs us in time, not on how large it is. Do not propose paid acquisition and do not propose anything the constitution bans.',
       done_when: 'Docs/channels.md names one channel, why it fits this buyer, what it costs us weekly, and the first three things to publish there.',
+      stream,
     },
   ];
 }
@@ -116,13 +119,49 @@ export function seedFirstJobs(vault: Vault, org: Org): string[] {
   const since = ideaAt(vault);
   if (since === null) return [];
   if (vault.events.query({ types: ['heartbeat.completed'], from: since, limit: 1 }).length > 0) return [];
+  const stream = listStreams(vault)[0]?.slug;
   // A cancelled or failed job is not going to produce anything, so it cannot stand in for a seed.
   const titles = listJobs(vault).filter((j) => !DEAD.includes(j.status)).map((j) => j.title);
   const out: string[] = [];
-  for (const spec of specs(org)) {
+  for (const spec of specs(org, stream)) {
     if (titles.some((t) => covers(t, spec.title))) continue;
     out.push(createJob(vault, spec, 'ceo'));
     titles.push(spec.title);
   }
   return out;
+}
+
+/**
+ * The first stream, from whatever the owner actually gave us. The problem is their words — the note they typed,
+ * or the brand tagline when they typed nothing — and the two fields only a person can answer are written as
+ * questions addressed to the product manager, never as "TBD": a stream note is read by an agent, and "TBD" is
+ * an instruction to skip the field.
+ */
+export function firstStreamSpec(brand: { name?: string; tagline?: string }, ownerText: string): NewStream {
+  const name = (brand.name ?? '').trim() || 'First product';
+  const said = ownerText.trim().split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).join(' ').slice(0, 600);
+  const problem = said || `${(brand.tagline ?? '').trim() || name} — the owner has not written the problem in their own words yet. The product manager asks them, in one sentence, what goes wrong for the customer today.`;
+  return {
+    name,
+    problem,
+    customers: 'Who exactly buys this? The product manager answers in one sentence before the first objective is planned — "everyone" is not an answer (operating model §5).',
+    outcome_metric: 'Which number proves this worked, from what to what? The product manager sets it before the first objective is planned; a feature list is not an outcome (§5, §21).',
+    owner_team: 'dev',
+    error_budget: 4,
+  };
+}
+
+/**
+ * Create the company's first stream on the first cycle after the owner's idea. Once only: any existing stream
+ * means the product manager has taken over, and a second seed would compete with their work.
+ */
+export function seedFirstStream(vault: Vault): string | null {
+  if (!hasIdea(vault)) return null;
+  if (listStreams(vault).length > 0) return null;
+  const brand = parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data as { name?: string; tagline?: string };
+  const ownerNote = listInbox(vault).find((n) => n.data.kind === 'message' && n.data.from === 'owner')?.body ?? '';
+  const spec = firstStreamSpec(brand, ownerNote.replace(/^#.*$/m, ''));
+  const slug = createStream(vault, { ...spec, slug: streamSlug(spec.name) }, 'ceo');
+  vault.events.emit({ type: 'vault.wrote', agent: 'ceo', payload: { path: `Streams/${slug}.md`, by: 'ceo', reason: 'first stream from the owner\'s idea' } });
+  return slug;
 }

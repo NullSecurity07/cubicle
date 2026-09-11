@@ -2,7 +2,7 @@ import {
   type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
   loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
-  resolveRole, teamOf, researchLead,
+  resolveRole, teamOf, researchLead, listStreams,
   budgetLines,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
@@ -10,7 +10,7 @@ import { renderQuotaMarkdown, type Router } from '@cubicle/router';
 import { deployer, emailSender, analytics } from '@cubicle/tools';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
-import { seedFirstJobs } from './first-run.js';
+import { seedFirstJobs, seedFirstStream } from './first-run.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -450,10 +450,11 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           archivePlan();
           const org = loadOrg(vault);
           const teams = Object.values(org.teams).filter((t) => t.lead !== 'ceo' || t.members.length).map((t) => `${t.id} (lead ${t.lead}: ${t.mission})`).join('; ');
+          const streams = listStreams(vault).filter((s) => s.status === 'active').map((s) => `${s.slug} (${s.outcome_metric}, owned by ${s.owner_team})`).join('; ') || 'none yet — the product manager writes Streams/<slug>.md before the first objective';
           const findings = state.criticFindings?.length ? `\n\nThe Critic returned the previous draft with these findings; address each one:\n${state.criticFindings.map((f) => `- ${f}`).join('\n')}` : '';
           const id = createJob(vault, {
             type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the Critic' : 'Write the company plan', assigned: 'ceo', priority: 1, parent: jobId, team: teamOf(org, 'ceo')?.id ?? 'executive', owner_role: 'ceo',
-            goal: `Write this cycle's objectives per team, not jobs.\n\nSituation:\n${situationSummary()}\n\nTeams: ${teams}.\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <team id>" subsection per team that has work this cycle (a bullet per objective; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); teams with nothing to do get no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
+            goal: `Write this cycle's objectives per team, not jobs.\n\nSituation:\n${situationSummary()}\n\nTeams: ${teams}.\n\nStreams: ${streams}.\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <team id>" subsection per team that has work this cycle (a bullet per objective; every objective for a product team ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); teams with nothing to do get no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
           }, 'ceo');
           state = { ...state, companyPlanJob: id }; saveState(state);
           return block(id, `waiting for company.plan ${id}`);
@@ -588,6 +589,8 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // D8: heartbeat #1 must leave the company with a site, an offer and a channel to work on, whatever the
         // plan turned out to say. Runs after team_plans (every exit path of it, including the give-up one) so a
         // lead's own scheduling wins and only what nobody covered is seeded; later cycles seed nothing.
+        const firstStream = seedFirstStream(vault);
+        if (firstStream) updateJob(vault, jobId, {}, 'ceo', `- step ${i + 1} ${step}: created the first stream Streams/${firstStream}.md from the owner's idea`);
         const seeded = seedFirstJobs(vault, loadOrg(vault));
         if (seeded.length) updateJob(vault, jobId, {}, 'ceo', `- step ${i + 1} ${step}: seeded ${seeded.length} first job(s)`);
         const runRel = state.runPath ?? `Runs/${stampForFilename(now())}.md`;
