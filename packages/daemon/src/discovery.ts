@@ -1,6 +1,7 @@
 import {
-  type Vault, type Org, type InterviewPhase, createJob, createProposal, listInbox, listJobs, jobPath, idFromKey, officeHolder,
-  listIdeas, FOUNDER_BRIEF, INTERVIEW_PATH, discoveryDigest, hasFounderBrief, founderBriefTemplate,
+  type Vault, type Org, type InterviewPhase, type ResearchRequest,
+  createJob, createProposal, findInboxById, listInbox, jobPath, idFromKey, officeHolder, teamOf, listIdeas,
+  DISCOVERY_INBOX, FOUNDER_BRIEF, INTERVIEW_PATH, discoveryDigest, hasFounderBrief, founderBriefTemplate,
   interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, listDiscoveryInputs, isLongPrompt,
 } from '@cubicle/core';
 
@@ -56,8 +57,14 @@ export function discoveryStatus(o: {
 /** How many `finance.estimate` jobs one cycle may queue: the free tier pays for these, and the board only sits once. */
 export const MAX_ESTIMATES_PER_CYCLE = 3;
 
-/** The ideas this cycle asks the finance office to price: unpriced, undecided, best-evidenced first. */
-export function ideasNeedingEstimate<T extends { id: string; decision: string; estimate: string; score_inputs: { value?: number; effort?: number; evidence?: number } }>(ideas: T[], max = MAX_ESTIMATES_PER_CYCLE): T[] {
+/**
+ * The ideas this cycle asks the finance office to price: unpriced, undecided, best-evidenced first.
+ *
+ * "Unpriced" is read off the two numbers the finance office owns, never off the `estimate` prose: a card whose
+ * estimate says "a few weeks" and carries no `value` still needs the finance office, and a card whose numbers
+ * are in has been priced whatever its prose says.
+ */
+export function ideasNeedingEstimate<T extends { id: string; decision: string; score_inputs: { value?: number; effort?: number; evidence?: number } }>(ideas: T[], max = MAX_ESTIMATES_PER_CYCLE): T[] {
   return ideas
     .filter((i) => i.decision === 'undecided' && (i.score_inputs.value === undefined || i.score_inputs.effort === undefined))
     .sort((a, b) => (b.score_inputs.evidence ?? 0) - (a.score_inputs.evidence ?? 0) || a.id.localeCompare(b.id))
@@ -100,28 +107,51 @@ export function estimateGoal(idea: { id: string; title: string }): string {
   ].join('\n');
 }
 
-/** Everything the owner has typed in the cabin, oldest first — the "long prompt" input, and part of the digest. */
+/**
+ * Everything the owner has typed in the cabin, oldest first — the "long prompt" input, and part of the digest.
+ *
+ * Two things are cut out of each note: the `# title` line, anchored to the first line of the body so a `# …`
+ * further down is the owner's own writing and survives; and everything from `## CEO` on, which is the CEO's
+ * reply appended to the same note. Letting the reply through would feed discovery the company's own words back
+ * and, worse, move `discoveryDigest` every time anyone answered, re-queueing discovery for ever.
+ */
 export function ownerPrompt(vault: Vault): string {
   return listInbox(vault)
     .filter((n) => n.data.kind === 'message' && n.data.from === 'owner')
-    .map((n) => n.body.split(/^## CEO\s*$/m)[0].replace(/^#\s.*$/m, '').trim())
+    .map((n) => n.body.split(/^## CEO\s*$/m)[0].replace(/^#\s[^\n]*\r?\n?/, '').trim())
     .filter(Boolean)
     .join('\n\n');
 }
 
 /**
- * Ask the six questions, once. Writes the transcript (which is the only state there is) and sends the owner one
- * cabin message from the chief executive. Returns the message id, or null when an interview has already been
- * asked — a second ask would look like the company forgot.
+ * The id of the one cabin message an interview is ever sent as. Keyed by the asking role rather than by the
+ * material, because the digest moves the moment the transcript is written and this id has to be the same on
+ * both sides of that write.
+ */
+export function interviewMessageId(ceo: string): string { return idFromKey('msg', `interview:${ceo}`); }
+
+/**
+ * Ask the six questions, once: one cabin message from the chief executive, then the transcript that records it.
+ *
+ * The message goes **first**, and "the message exists" is what counts as asked. Written the other way round, a
+ * kill between the two writes leaves a transcript reading `asked` with nothing in the owner's inbox — and since
+ * `discoveryStatus` then answers "waiting for an answer" for ever, on an empty vault the company would be
+ * silently dead. In this order a kill resumes into the transcript write: `createProposal` is idempotent on the
+ * deterministic id, so the owner is never asked twice.
+ *
+ * Returns the message id when this call is what sent it, and null when the interview had already been asked —
+ * including the resume, where the transcript is written but no new message goes out.
  */
 export function askInterview(vault: Vault, ceo: string, now: Date): string | null {
   if (interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)) !== 'none') return null;
-  vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString()), 'daemon');
-  const { id } = createProposal(vault, {
-    id: idFromKey('msg', 'founder-interview'), kind: 'message', from: ceo, to: 'owner',
+  const id = interviewMessageId(ceo);
+  const resumed = findInboxById(vault, id) !== null;
+  createProposal(vault, {
+    id, kind: 'message', from: ceo, to: 'owner',
     title: 'Six questions before I plan anything', body: renderInterviewAsk(),
   }, ceo);
-  return id;
+  vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString()), 'daemon');
+  return resumed ? null : id;
 }
 
 /**
@@ -160,6 +190,39 @@ export function currentDiscoveryStatus(vault: Vault): DiscoveryStatus & { digest
   };
 }
 
+/** How long the owner is asked to wait for the brief. The deadline the research request is written against. */
+export const DISCOVERY_DEADLINE_DAYS = 7;
+
+/**
+ * The research request the discovery job carries, complete in the sense `missingRequestFields` means it.
+ *
+ * `discoveryGoal` orders `research.start`, and `research.start` scaffolds the project directory out of
+ * `job.data.research`: with no request it writes a README saying the project was opened ad hoc and a
+ * `question.md` with no question, no known evidence and no unknowns. The company's first and most consequential
+ * piece of research is not the one to run without a request behind it, and the daemon already knows every field.
+ */
+export function discoveryRequest(opts: { ceo: string; hasBrief: boolean; deadline: string }): ResearchRequest {
+  return {
+    decision: 'what this company is for, and what it does first',
+    decision_owner: opts.ceo,
+    question: 'What is the owner building, who is it for, and which candidate is worth trying first?',
+    hypothesis: '',
+    exploration: opts.hasBrief
+      ? 'The founder brief exists; what the new material changes about it is unknown until it is read.'
+      : 'The company has no brief yet; everything is unknown until the owner\'s material is read.',
+    known_evidence: `Everything the owner has given us: ${DISCOVERY_INBOX}/, the cabin messages, and ${INTERVIEW_PATH}. ${opts.hasBrief ? `${FOUNDER_BRIEF} is adopted and is the baseline.` : `${FOUNDER_BRIEF} does not exist yet.`}`,
+    unknowns: 'What the company is, who buys it, what already exists, and what success looks like.',
+    constraints: '',
+    deadline: opts.deadline,
+    required_confidence: 'medium',
+    potential_decisions: ['adopt the brief as written', 'adopt it with edits', 'ask the owner for more material'],
+    portfolio: 'exploratory',
+    impact: 5,
+    uncertainty: 5,
+    cost_of_being_wrong: 4,
+  };
+}
+
 /**
  * Queue the discovery job for whatever the owner has given us, or null when this cycle has nothing new to read.
  * Assigned by office: the research office owns the investigation, the chief executive owns the decision, which
@@ -170,11 +233,14 @@ export function enqueueDiscovery(vault: Vault, org: Org): string | null {
   if (!status.run) return null;
   const research = officeHolder(org, 'research');
   const ceo = officeHolder(org, 'chief_executive');
+  const hasBrief = hasFounderBrief(vault);
+  const deadline = new Date(Date.now() + DISCOVERY_DEADLINE_DAYS * 86_400_000).toISOString().slice(0, 10);
   return createJob(vault, {
     id: discoveryJobId(status.digest), type: 'discovery', priority: 1,
-    title: hasFounderBrief(vault) ? 'Read the new material and revise the founder brief' : 'Read what the owner gave us and write the founder brief',
-    assigned: research, for: ceo, owner_role: ceo, team: org.roles[research]?.team,
-    goal: discoveryGoal({ founderBrief: FOUNDER_BRIEF, briefTemplate: founderBriefTemplate(), hasBrief: hasFounderBrief(vault), research: ceo }),
+    title: hasBrief ? 'Read the new material and revise the founder brief' : 'Read what the owner gave us and write the founder brief',
+    assigned: research, for: ceo, owner_role: ceo, team: teamOf(org, research)?.id,
+    goal: discoveryGoal({ founderBrief: FOUNDER_BRIEF, briefTemplate: founderBriefTemplate(), hasBrief, research: ceo }),
+    research: discoveryRequest({ ceo, hasBrief, deadline }),
     done_when: `${FOUNDER_BRIEF} is filed as a founder_brief proposal with all seven sections, and every candidate idea it names is its own Ideas/<slug>.md card with evidence.`,
   }, 'daemon');
 }
@@ -186,20 +252,20 @@ export function estimateJobId(slug: string): string { return idFromKey('job', `e
  * Ask the finance office to price the cards the board will read. At most `MAX_ESTIMATES_PER_CYCLE`, best
  * evidence first, one per card ever — the id is the slug, so a card whose estimate job exists is skipped
  * whatever its state.
+ *
+ * The cards that already have a job are dropped **before** the cap, not after. Sliced first, three estimate jobs
+ * that never finished — failed, cancelled by the fire path, abandoned — would fill all three slots every cycle
+ * for ever, and the fourth card would never be priced or reach the board. The cap is there to protect the free
+ * tier from new work, not to hold a queue open for stalled work.
  */
 export function enqueueEstimates(vault: Vault, org: Org): string[] {
   const finance = officeHolder(org, 'finance');
-  const open = new Set(listJobs(vault).filter((j) => j.type === 'finance.estimate').map((j) => j.id));
-  const out: string[] = [];
-  for (const idea of ideasNeedingEstimate(listIdeas(vault))) {
-    const id = estimateJobId(idea.id);
-    if (open.has(id) || vault.exists(jobPath(id))) continue;
-    out.push(createJob(vault, {
-      id, type: 'finance.estimate', title: `What would "${idea.title}" cost?`, priority: 2,
-      assigned: finance, owner_role: finance, team: org.roles[finance]?.team,
-      goal: estimateGoal(idea),
-      done_when: `Ideas/${idea.id}.md carries an estimate in words, a value and an effort, each with the assumption behind it.`,
-    }, 'daemon'));
-  }
-  return out;
+  const team = teamOf(org, finance)?.id;
+  const pending = listIdeas(vault).filter((i) => !vault.exists(jobPath(estimateJobId(i.id))));
+  return ideasNeedingEstimate(pending).map((idea) => createJob(vault, {
+    id: estimateJobId(idea.id), type: 'finance.estimate', title: `What would "${idea.title}" cost?`, priority: 2,
+    assigned: finance, owner_role: finance, team,
+    goal: estimateGoal(idea),
+    done_when: `Ideas/${idea.id}.md carries an estimate in words, a value and an effort, each with the assumption behind it.`,
+  }, 'daemon'));
 }

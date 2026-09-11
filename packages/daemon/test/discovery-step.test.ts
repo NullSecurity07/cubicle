@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, loadOrg, listJobs, listInbox, readJob, writeIdeaCard, updateIdea, INTERVIEW_PATH, interviewPhase, DISCOVERY_INBOX } from '@cubicle/core';
-import { discoveryStatus, ideasNeedingEstimate, MAX_ESTIMATES_PER_CYCLE, discoveryGoal, estimateGoal, askInterview, captureInterviewAnswer, ownerPrompt, enqueueDiscovery, enqueueEstimates } from '../src/discovery.js';
+import { scaffoldVault, Vault, loadOrg, createJob, createProposal, listJobs, listInbox, readJob, writeIdeaCard, updateIdea, missingRequestFields, INTERVIEW_PATH, interviewPhase, DISCOVERY_INBOX } from '@cubicle/core';
+import { discoveryStatus, ideasNeedingEstimate, MAX_ESTIMATES_PER_CYCLE, discoveryGoal, estimateGoal, askInterview, captureInterviewAnswer, ownerPrompt, enqueueDiscovery, enqueueEstimates, briefProposalOpen, currentDiscoveryStatus, interviewMessageId, estimateJobId } from '../src/discovery.js';
 
 const base = { hasBrief: false, briefProposalOpen: false, inputs: 0, interview: 'none' as const, longPrompt: false, alreadyRun: false };
 const NOW = new Date('2026-09-11T10:00:00.000Z');
@@ -49,6 +49,10 @@ describe('what the discovery step does this cycle (spec §1, §5)', () => {
 describe('who gets priced this cycle (spec §5.3)', () => {
   const idea = (id: string, over: Partial<{ decision: string; estimate: string; score_inputs: Record<string, number> }> = {}) =>
     ({ id, decision: 'undecided', estimate: '', score_inputs: {}, ...over }) as { id: string; decision: string; estimate: string; score_inputs: { value?: number; effort?: number; evidence?: number } };
+
+  it('prices a card whose estimate prose is filled in but whose numbers are not', () => {
+    expect(ideasNeedingEstimate([idea('a', { estimate: 'a few weeks and a laptop' })]).map((i) => i.id)).toEqual(['a']);
+  });
 
   it('asks for at most three, best-evidenced first, and skips what is already priced or decided', () => {
     const ideas = [
@@ -128,6 +132,19 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(captureInterviewAnswer(vault, 'and another thing', NOW)).toBe(false);   // already closed
   });
 
+  it('resumes a kill between the message and the transcript without asking twice', () => {
+    // The message is written first, so this is exactly the vault a crash in between leaves behind.
+    createProposal(vault, {
+      id: interviewMessageId('ceo'), kind: 'message', from: 'ceo', to: 'owner',
+      title: 'Six questions before I plan anything', body: 'Before I plan anything, six questions.',
+    }, 'ceo');
+    expect(vault.readTextOrNull(INTERVIEW_PATH)).toBeNull();
+
+    expect(askInterview(vault, 'ceo', NOW)).toBeNull();                         // no second message
+    expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('asked'); // the transcript is finished
+    expect(listInbox(vault).filter((n) => n.data.id === interviewMessageId('ceo')).length).toBe(1);
+  });
+
   it('records a skip as a skip', () => {
     askInterview(vault, 'ceo', NOW);
     captureInterviewAnswer(vault, 'skip', NOW);
@@ -141,6 +158,29 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(ownerPrompt(vault).indexOf('First')).toBeLessThan(ownerPrompt(vault).indexOf('Second'));
   });
 
+  it('reads the owner\'s half of a message, never the CEO\'s reply', () => {
+    vault.writeText('00 Inbox/2026-09-11-msg-aa.md', `---\nid: msg_aa\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-11T08:00:00.000Z\n---\n# x\n\nMeal kits.\n\n## CEO\n\nGot it, I proposed PlateReady.\n`, 'owner');
+    expect(ownerPrompt(vault)).toBe('Meal kits.');
+  });
+
+  it('strips only the title line, so an owner\'s own heading survives', () => {
+    vault.writeText('00 Inbox/2026-09-11-msg-bb.md', `---\nid: msg_bb\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-11T08:00:00.000Z\n---\n# x\n\nMeal kits.\n\n# The plan\n\nSchools next.\n`, 'owner');
+    expect(ownerPrompt(vault)).toContain('# The plan');
+    expect(ownerPrompt(vault).startsWith('Meal kits.')).toBe(true);
+  });
+
+  it('stops while a founder brief is waiting for the owner', () => {
+    vault.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell meal kits.', 'owner');
+    expect(briefProposalOpen(vault)).toBe(false);
+    expect(currentDiscoveryStatus(vault).run).toBe(true);
+
+    createProposal(vault, { kind: 'founder_brief', from: 'research_manager', title: 'The brief', body: 'x' }, 'research_manager');
+    expect(briefProposalOpen(vault)).toBe(true);
+    expect(currentDiscoveryStatus(vault).run).toBe(false);
+    expect(currentDiscoveryStatus(vault).why).toContain('waiting for your verdict');
+    expect(enqueueDiscovery(vault, loadOrg(vault))).toBeNull();
+  });
+
   it('queues one discovery job per set of material, never two for the same', () => {
     vault.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell meal kits.', 'owner');
     const org = loadOrg(vault);
@@ -151,6 +191,9 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(job.data.assigned).toBe('research_manager');   // the research office, by office lookup
     expect(job.data.for).toBe('ceo');
     expect(job.data.priority).toBe(1);
+    // It orders `research.start`, so it has to carry the request that tool scaffolds the project from.
+    expect(missingRequestFields(job.data.research)).toEqual([]);
+    expect(job.data.research!.decision_owner).toBe('ceo');
     expect(enqueueDiscovery(vault, org)).toBeNull();          // same digest, same id, already there
     vault.writeText(`${DISCOVERY_INBOX}/more.md`, 'And to schools.', 'owner');
     expect(enqueueDiscovery(vault, org)).not.toBeNull();      // new material, one more job
@@ -158,15 +201,36 @@ describe('the interview and the two fan-outs, against a real vault', () => {
   });
 
   it('queues at most three estimates, to the finance office, once each', () => {
-    for (const t of ['Alpha', 'Beta', 'Gamma', 'Delta']) {
+    const slugs = ['Alpha', 'Beta', 'Gamma', 'Delta'].map((t) => {
       const slug = writeIdeaCard(vault, { title: t, source: 'discovery' }, 'research_manager');
       updateIdea(vault, slug, { score_inputs: { evidence: 4, fit: 3 } }, 'research_manager');
-    }
+      return slug;
+    });
     const org = loadOrg(vault);
     const ids = enqueueEstimates(vault, org);
-    expect(ids.length).toBe(3);
+    expect(ids.length).toBe(MAX_ESTIMATES_PER_CYCLE);
     expect(readJob(vault, ids[0])!.data.assigned).toBe('cfo');
     expect(readJob(vault, ids[0])!.data.type).toBe('finance.estimate');
-    expect(enqueueEstimates(vault, org)).toEqual([]);         // the open jobs cover those cards
+    // The cap holds back new work for one cycle, it does not retire a card: the fourth is queued next cycle,
+    // and no card is ever asked for twice.
+    const rest = slugs.map(estimateJobId).filter((id) => !ids.includes(id));
+    expect(enqueueEstimates(vault, org)).toEqual(rest);
+    expect(enqueueEstimates(vault, org)).toEqual([]);
+    expect(listJobs(vault).filter((j) => j.type === 'finance.estimate').length).toBe(slugs.length);
+  });
+
+  it('never lets three stalled estimate jobs starve the fourth card', () => {
+    const slugs = ['Alpha', 'Beta', 'Gamma', 'Delta'].map((t) => {
+      const slug = writeIdeaCard(vault, { title: t, source: 'discovery' }, 'research_manager');
+      updateIdea(vault, slug, { score_inputs: { evidence: 4, fit: 3 } }, 'research_manager');
+      return slug;
+    });
+    // Three cards already have an estimate job that will never finish. Capping before this check would
+    // hand them all three slots every cycle, for ever, and the fourth would never be priced.
+    for (const slug of slugs.slice(0, 3)) {
+      createJob(vault, { id: estimateJobId(slug), type: 'finance.estimate', title: 'stalled', assigned: 'cfo', goal: 'x' }, 'daemon');
+    }
+    const ids = enqueueEstimates(vault, loadOrg(vault));
+    expect(ids).toEqual([estimateJobId(slugs[3])]);
   });
 });
