@@ -46,6 +46,12 @@ describe('generated docs', () => {
     expect(events).toMatch(/`job\.cancelled` \| at_step, reason/);
     expect(events).toMatch(/`guardrail\.blocked` \| tool, reason —.*add step and approved: true/);
     expect(schema).toMatch(/the filename is authoritative: `Jobs\/<id>\.md`/);
+    // M1: the whole Research department was missing from the vault tree — the one place a reader learns where
+    // a delivered project, a page snapshot, a sweep and a follow-up live.
+    expect(schema).toMatch(/^  Research\/ +index\.md/m);
+    expect(schema).toMatch(/intelligence\/<date>-c<cycle>-<kind>\.md/);
+    expect(schema).toMatch(/followups\/<job>\.md/);
+    expect(schema).toMatch(/research\.md \(regenerated weekly\)/);
     expect(schema).toMatch(/^\| `created` \| string \|/m);   // a zod pipe, not the word "pipe"
   });
 });
