@@ -1,6 +1,6 @@
 import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO, officeHolder, loadOrg } from '@cubicle/core';
+import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO, officeHolder, loadOrg, moneyReport, readLedger } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown } from '@cubicle/router';
 import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, secretsGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter } from '@cubicle/core';
@@ -8,6 +8,7 @@ import { MemoryIndex, vaultScheduler, type Llm, type Guardrail } from '@cubicle/
 import type { DaemonConfig } from './config.js';
 import { WorkerPool } from './workers.js';
 import { dispatchProposals } from './dispatcher.js';
+import { budgetForRole } from './money.js';
 import { WsServer } from './ws.js';
 import { createHeartbeatJob, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
@@ -78,6 +79,25 @@ export class Daemon {
   private lastPrune = 0;
   private guardrails: import('@cubicle/harness').Guardrail[] = [];
   private openMeeting: (agenda: string, participants?: string[]) => Promise<string | null> = async () => null;
+
+  /**
+   * Money can make the company cheaper; it must never make it silent. Both of these swallow their own errors —
+   * an unreadable ledger reads as "plenty of money and not dormant", which keeps the company working while the
+   * brief and `cubicle doctor` complain about the file.
+   *
+   * `modelBudget` is a division's day quota and what it has spent of it; the harness reads it once per job and
+   * the router demotes that job's tier when it is past quota (never stops it). `isDormant` is derived from the
+   * ledger on every call, never from the heartbeat's state file, so the owner's next `capital` row revives the
+   * company on the next poll with nothing to invalidate.
+   */
+  private modelBudget = (roleId: string) => {
+    try { return budgetForRole(this.vault, loadOrg(this.vault), this.router.config, roleId, new Date()); }
+    catch { return null; }
+  };
+  private isDormant = (): boolean => {
+    try { return moneyReport(readLedger(this.vault), new Date()).dormant; }
+    catch { return false; }
+  };
 
   constructor(public readonly config: DaemonConfig, private overrides: DaemonOverrides = {}) {
     this.log = overrides.log ?? ((m) => console.log(`[cubicle] ${m}`));
@@ -161,9 +181,10 @@ export class Daemon {
       } catch { return ''; }
     };
     this.workers = new WorkerPool(this.vault, {
-      harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback, summarize },
-      heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, env: cfg.env, noCloudKeys, planMaxAgeDays: cfg.planMaxAgeDays, log: this.log, ...this.overrides.heartbeatHooks },
+      harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback, summarize, modelBudget: this.modelBudget },
+      heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, env: cfg.env, noCloudKeys, planMaxAgeDays: cfg.planMaxAgeDays, log: this.log, modelBudget: this.modelBudget, ...this.overrides.heartbeatHooks },
       maxConcurrent: cfg.maxConcurrentJobs,
+      dormant: this.isDormant,
     });
     this.workers.on('outcome', ({ jobId, outcome }: { jobId: string; outcome: { status: string } }) => {
       if (this.stopping) return;
@@ -310,7 +331,7 @@ export class Daemon {
     if (this.stopping || this.ticking) return;
     this.ticking = true;
     try {
-      const n = await this.sweep(reason, 'proposals', () => dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake(), guardrails: this.guardrails, questionWaitMs: this.config.questionWaitMs }));
+      const n = await this.sweep(reason, 'proposals', () => dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake(), guardrails: this.guardrails, questionWaitMs: this.config.questionWaitMs, dormant: this.isDormant }));
       await this.sweep(reason, 'prune-screens', () => { if (Date.now() - this.lastPrune > 3600_000) { this.lastPrune = Date.now(); const pruned = pruneScreens(this.vault); if (pruned) this.log(`pruned ${pruned} old screencast frames`); } });
       if (n) this.log(`tick(${reason}): ${n} proposal/unblock action(s)`);
       const reviews = await this.sweep(reason, 'experiment-reviews', () => enqueueExperimentReviews(this.vault));
