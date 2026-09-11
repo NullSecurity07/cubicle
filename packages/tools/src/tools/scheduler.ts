@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, type Org } from '@cubicle/core';
+import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, missingRequestFields, incompleteRequestText, ResearchRequest, priorityScore, jobPriorityFor, type Org } from '@cubicle/core';
 
-const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'] };
+const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'], 'research.review': ['ceo', 'coo'] };
 
 /**
  * A refusal the model can act on. The old one-liner ("leads schedule their own team…") left a lead whose team has no
@@ -37,7 +37,7 @@ const normTitle = (t: string) => t.trim().toLowerCase().replace(/\s+/g, ' ');
 
 export const schedulerRequest = defineTool({
   name: 'scheduler.request',
-  description: `Enqueue a job for a role. Leads schedule their own team's members, members hand off to a teammate, the CEO anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). CEO/CTO may also set priority on existing jobs via reprioritize.`,
+  description: `Enqueue a job for a role. Leads schedule their own team's members, members hand off to a teammate, the CEO anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). A type: research job must carry the full \`research\` request (decision, decision owner, question, hypothesis or exploration, known evidence, unknowns, deadline, required confidence, potential decisions, portfolio, impact, uncertainty, cost of being wrong) — its priority comes from impact × uncertainty × cost of being wrong, not from \`priority\`. CEO/CTO may also set priority on existing jobs via reprioritize.`,
   schema: {
     type: z.string().default('custom'),
     title: z.string(),
@@ -49,6 +49,23 @@ export const schedulerRequest = defineTool({
     reprioritize: z.object({ job: z.string(), priority: z.number().int().min(1).max(5) }).optional(),
     for: z.string().optional().describe('research: the lead the report is for'),
     done_when: z.string().optional().describe('one testable sentence; required for leads'),
+    research: z.object({
+      decision: z.string().optional(),
+      decision_owner: z.string().optional().describe('role id; defaults to `for`'),
+      question: z.string().optional(),
+      hypothesis: z.string().optional(),
+      exploration: z.string().optional().describe('use instead of hypothesis when you do not yet know what is happening'),
+      known_evidence: z.string().optional(),
+      unknowns: z.string().optional(),
+      constraints: z.string().optional(),
+      deadline: z.string().optional().describe('YYYY-MM-DD'),
+      required_confidence: z.enum(['high', 'medium', 'low']).optional(),
+      potential_decisions: z.array(z.string()).optional().describe('at least two'),
+      portfolio: z.enum(['incremental', 'adjacent', 'exploratory']).optional(),
+      impact: z.number().int().min(1).max(5).optional(),
+      uncertainty: z.number().int().min(1).max(5).optional(),
+      cost_of_being_wrong: z.number().int().min(1).max(5).optional(),
+    }).optional().describe('required for type: research — the universal research request. Every field must be filled or the job is refused.'),
   },
   async handler(args, ctx) {
     const org = loadOrg(ctx.vault);
@@ -64,12 +81,21 @@ export const schedulerRequest = defineTool({
     const type = args.type ?? 'custom';
     const isResearch = type === 'research';
     let forRole: string | undefined;
+    let request: ResearchRequest | undefined;
     if (isResearch) {
       const lead = researchLead(org) ?? 'research_analyst';
       if (args.assigned !== lead) return { ok: false, text: `research jobs are done by ${lead} (set assigned: ${lead} and for: <your role>)` };
       if (!can(org, ctx.roleId, 'research_request')) return { ok: false, text: `${ctx.roleId} may not request research; ask your lead` };
       forRole = args.for ?? ctx.roleId;
       if (!org.roles[forRole]) return { ok: false, text: 'for must be an active role id' };
+      // §33: the request is the contract between the requester and Research. Refuse an incomplete one by name
+      // rather than queueing work nobody can scope — a job with no decision behind it is the failure the
+      // research_manager's charter is told to refuse, and it is cheaper to refuse it here.
+      const draft = { ...(args.research ?? {}) } as Record<string, unknown>;
+      if (typeof draft.decision_owner !== 'string' || !draft.decision_owner.trim()) draft.decision_owner = forRole;
+      const missing = missingRequestFields(draft);
+      if (missing.length) return { ok: false, text: incompleteRequestText(missing) };
+      request = ResearchRequest.parse(draft);
     } else if (!can(org, ctx.roleId, 'schedule', args.assigned)) {
       return { ok: false, text: cannotScheduleText(org, ctx.roleId, args.assigned) };
     }
@@ -88,7 +114,10 @@ export const schedulerRequest = defineTool({
       const dup = listJobs(ctx.vault, { status: [...OPEN_STATUSES], assigned: args.assigned }).find((j) => j.id !== wantedId && normTitle(j.title) === title);
       if (dup) return { ok: false, text: `a job with this title is already open for ${args.assigned}: ${dup.id} (${dup.status}). Wait for it, or give the new job a different title if it really is different work` };
     }
-    const id = ctx.scheduler.enqueue({ id: wantedId, type, title: args.title, assigned: args.assigned, goal: args.goal, priority: args.priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: forRole, done_when: args.done_when });
-    return { ok: true, text: `queued ${id} for ${args.assigned}: ${args.title}`, data: { id } };
+    // §29: a research job's place in the queue is its score, not whatever number the requester typed. The
+    // project slug is left unset here — `research.start` derives it from the real job id and stores it.
+    const priority = request ? jobPriorityFor(priorityScore(request)) : args.priority;
+    const id = ctx.scheduler.enqueue({ id: wantedId, type, title: args.title, assigned: args.assigned, goal: args.goal, priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: forRole, done_when: args.done_when, research: request });
+    return { ok: true, text: `queued ${id} for ${args.assigned}: ${args.title}${request ? ` (priority ${priority} from a score of ${priorityScore(request)})` : ''}`, data: { id } };
   },
 });

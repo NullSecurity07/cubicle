@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { repoRoot } from './template.js';
+import type { Org } from './org.js';
 
 export interface GateSpec { gates: string[]; criteria: string }
 export type GateTable = Record<string, GateSpec>;
@@ -39,8 +40,14 @@ export function criteriaFor(t: GateTable, jobType: string): string {
   return (t[jobType] ?? t.custom ?? { criteria: '' }).criteria;
 }
 
-/** Who runs a gate: `<role>.review|verify` names the role; `requester.review` goes to the job's requester. */
-export function gateAssignee(gate: string, job: { for?: string; owner_role?: string }): string {
+/**
+ * Who runs a gate. `requester.review` goes to the job's requester. Otherwise the prefix names either a role
+ * (`coo.verify` → `coo`) or a **team** (`research.review` → the research team's lead, `qa.review` → `qa_lead`).
+ * The team form is what lets a gate follow the org chart instead of hard-coding whoever leads a room today;
+ * without `org` the old prefix-is-a-role rule applies, which keeps the pure-parsing tests and callers working.
+ */
+export function gateAssignee(gate: string, job: { for?: string; owner_role?: string }, org?: Org): string {
   if (gate === 'requester.review') return job.for ?? job.owner_role ?? 'ceo';
-  return gate.split('.')[0];
+  const who = gate.split('.')[0];
+  return org?.teams[who]?.lead || who;
 }
