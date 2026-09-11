@@ -26,8 +26,11 @@ export const proposalCreate = defineTool({
       const active = ctx.vault.list('Roles', { ext: '.md' }).filter((r) => !r.includes('/archive/')).length;
       if (active >= ctx.vault.constitution().max_roles) return { ok: false, text: `constitution max_roles (${ctx.vault.constitution().max_roles}) is already reached` };
     }
+    // A threat model covers one change (§27), and `approvedThreatModel` matches it to the job that filed it.
+    if (kind === 'threat_model' && !ctx.jobId) return { ok: false, text: 'a threat_model belongs to a job; file it from the job whose change it covers' };
     const { id, path } = createProposal(ctx.vault, { id: ctx.idempotencyKey ? idFromKey(kind === 'message' ? 'msg' : 'prop', ctx.idempotencyKey) : undefined, kind, from: ctx.roleId, to: 'owner', title, body, target, job: ctx.jobId ?? undefined }, ctx.roleId);
     if (kind === 'message') return { ok: true, text: `message ${id} sent to the owner at ${path}; this job is blocked until they answer`, data: { id, path }, block: { kind: 'message', id } };
+    if (kind === 'threat_model') return { ok: true, text: `threat model ${id} filed at ${path}; this job is blocked until the owner approves it`, data: { id, path }, block: { kind: 'proposal', id } };
     return { ok: true, text: `proposal ${id} filed at ${path}; the owner decides`, data: { id, path } };
   },
 });

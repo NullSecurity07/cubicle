@@ -20,7 +20,7 @@ describe('deploy.site first-time semantics (R17)', () => {
     try {
       mkdirSync(path.join(dir, 'Site/dist'), { recursive: true }); writeFileSync(path.join(dir, 'Site/dist/index.html'), '<h1>v1</h1>');
       const deps = { vault, llm: scripted([{ tool: 'deploy.site', args: {} }, { tool: 'finish', args: { status: 'done', summary: 'x' } }]), toolsConfig: cfg, registry: new ToolRegistry().registerAll([...phase3Tools(), ...phase6Tools()]), scheduler: vaultScheduler(vault), env: {} };
-      const j1 = createJob(vault, { type: 'engineer.ship', title: 'ship', assigned: 'backend_engineer', goal: 'deploy' }, 'cto');
+      const j1 = createJob(vault, { type: 'custom', title: 'ship', assigned: 'backend_engineer', goal: 'deploy' }, 'cto');
       expect((await runJob(deps, j1)).status).toBe('done');
       const spend = listInbox(vault).filter((n) => n.data.kind === 'spend');
       expect(spend.length).toBe(1);
@@ -28,7 +28,7 @@ describe('deploy.site first-time semantics (R17)', () => {
       expect(vault.events.count('deploy.done')).toBe(0);
       // simulate the dispatcher having executed it once
       vault.events.emit({ type: 'deploy.done', agent: 'daemon', payload: { url: 'https://x.pages.dev', mode: 'mock' } });
-      const j2 = createJob(vault, { type: 'engineer.ship', title: 'ship again', assigned: 'backend_engineer', goal: 'deploy' }, 'cto');
+      const j2 = createJob(vault, { type: 'custom', title: 'ship again', assigned: 'backend_engineer', goal: 'deploy' }, 'cto');
       expect((await runJob({ ...deps, llm: scripted([{ tool: 'deploy.site', args: {} }, { tool: 'finish', args: { status: 'done', summary: 'x' } }]) }, j2)).status).toBe('done');
       expect(listInbox(vault).filter((n) => n.data.kind === 'spend').length).toBe(1); // no second proposal
       expect(vault.events.count('deploy.done')).toBe(2);
