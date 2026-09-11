@@ -49,5 +49,5 @@ export function criteriaFor(t: GateTable, jobType: string): string {
 export function gateAssignee(gate: string, job: { for?: string; owner_role?: string }, org?: Org): string {
   if (gate === 'requester.review') return job.for ?? job.owner_role ?? 'ceo';
   const who = gate.split('.')[0];
-  return org?.teams[who]?.lead ?? who;
+  return org?.teams[who]?.lead || who;
 }
