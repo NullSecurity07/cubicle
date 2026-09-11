@@ -34,7 +34,6 @@ const ctx: Ctx = { frames, tokenQuery: token ? `?token=${encodeURIComponent(toke
 
 const scene = new OfficeScene();
 const game = new Phaser.Game({ type: Phaser.AUTO, parent: 'game', backgroundColor: THEMES[currentTheme()].colors.bg, pixelArt: true, roundPixels: true, scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' }, scene: [scene] });
-void game;
 // Click isolation (see scripts/test-overlay-clicks.ts): a press that starts on any HTML element — bar, rail, panel,
 // scrim, time bar, minimap chrome, toast, first-run card, quick open — never reaches Phaser's window listeners.
 // Releases still reach Phaser, so a drag let go over the HTML layer ends cleanly (the pointer's `isDown` clears).
@@ -218,7 +217,12 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
   floor: (n: number) => scene.focusFloor(n), currentFloor: () => scene.currentFloor(), elevator: () => scene.elevator.state(), route: (role: string, target: string) => scene.debugRoute(role, target),
   theme: (mode: 'dark' | 'light' | 'system') => applyTheme(mode),
   stack: () => panel.stack.entries(),
-  pushFrame: (id: string, dataUrl: string) => onFrameData(id, dataUrl),
+  // Visual-check hooks (screenshot script, spec F35): freeze the clock and read the loop's frame rate.
+  setHour: (h: number | null) => scene.setHourOverride(h),
+  fps: () => Math.round(game.loop.actualFps),
+  // A pushed frame can belong to a stream the daemon never announced (the screenshot script injects one), and a frame
+  // with no surface behind it has nothing bound to draw it. Register the surface first, then let the frame land.
+  pushFrame: (id: string, dataUrl: string) => { if (!state.surfaces[id]) { state = applyEvent(state, { ts: new Date().toISOString(), type: 'browser.session_started', agent: null, job: null, payload: { session: id } }); refresh(); } onFrameData(id, dataUrl); },
 };
 
 let last = performance.now();
