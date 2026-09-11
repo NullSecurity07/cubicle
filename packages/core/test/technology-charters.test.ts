@@ -53,6 +53,17 @@ describe('the fourteen Technology charters', () => {
     expect(org.roles.qa_lead.tools).not.toContain('adr.create');
   });
 
+  // Every role a dev_manager's team.plan can assign an engineer.ship to (the whole dev team, minus the manager
+  // and the product pair, who plan and design rather than ship) must hold proposal.create: a high-risk ship is
+  // refused by the harness until its author files a threat_model proposal (§27), and a role without the tool
+  // gets "unknown tool" instead — burning its step budget on a gate it can never clear.
+  it('every role that can be assigned an engineer.ship can file the threat_model a high-risk ship needs', () => {
+    const org = loadOrg(vault);
+    for (const r of ['backend_engineer', 'frontend_engineer', 'fullstack_engineer', 'platform_engineer', 'sre']) {
+      expect(org.roles[r].tools, r).toContain('proposal.create');
+    }
+  });
+
   it('model tiers follow the design, and the two QA exceptions say why', () => {
     const org = loadOrg(vault);
     for (const r of ['dev_manager', 'product_manager', 'product_designer', 'backend_engineer', 'frontend_engineer', 'fullstack_engineer', 'platform_engineer', 'sre', 'qa_lead', 'qa_security']) {

@@ -6,7 +6,7 @@
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scaffoldVault } from '@cubicle/core';
+import { scaffoldVault, createStream, writeCiRecord } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig } from '@cubicle/daemon';
@@ -20,6 +20,9 @@ async function main() {
     const { vault } = await scaffoldVault(vaultPath);
     // The startup heartbeat only fires once the company has an idea (spec §12); naming the brand is the inert way.
     vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'PlateReady' }, body: n.body }), 'owner');
+    // The scripted dev plan queues an engineer.ship, which cannot finish without a green CI record (§17).
+    createStream(vault, { slug: 'site', name: 'Site', problem: 'The company has no site.', customers: 'Everyone who hears about us', outcome_metric: 'a first cut exists', owner_team: 'dev' }, 'ceo');
+    writeCiRecord(vault, 'site', { stream: 'site', started: '2026-09-11T09:59:00.000Z', finished: '2026-09-11T10:00:00.000Z', green: true, commit: null, steps: [{ name: 'test', code: 0, ok: true, duration_ms: 5, output: 'ok' }] }, 'backend_engineer');
     vault.close();
     return;
   }

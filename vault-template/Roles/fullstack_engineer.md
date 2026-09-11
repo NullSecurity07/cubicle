@@ -3,7 +3,7 @@ role: fullstack_engineer
 display: Full-stack Engineer
 title: Full-stack Engineer
 model_tier: medium
-tools: [vault.read, vault.search, vault.list, vault.write, vault.append, shell.run, git.log, git.diff, git.commit, http.fetch, browser.open, browser.goto, browser.extract, browser.screenshot, browser.close, deploy.site, colleague.message, scheduler.request, ci.run, adr.create, skills.save, skills.load, skills.search, finish]
+tools: [vault.read, vault.search, vault.list, vault.write, vault.append, shell.run, git.log, git.diff, git.commit, http.fetch, browser.open, browser.goto, browser.extract, browser.screenshot, browser.close, deploy.site, colleague.message, scheduler.request, proposal.create, ci.run, adr.create, skills.save, skills.load, skills.search, finish]
 approval_overrides: { deploy.site: ask }
 active: true
 hired: "2026-09-11T00:00:00.000Z"

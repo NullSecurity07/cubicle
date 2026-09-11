@@ -3,7 +3,7 @@ role: platform_engineer
 display: Platform Engineer
 title: Platform / DevOps Engineer
 model_tier: medium
-tools: [vault.read, vault.search, vault.list, vault.write, vault.append, shell.run, git.log, git.diff, git.commit, git.revert, deploy.site, http.fetch, colleague.message, scheduler.request, ci.run, adr.create, skills.save, skills.load, skills.search, finish]
+tools: [vault.read, vault.search, vault.list, vault.write, vault.append, shell.run, git.log, git.diff, git.commit, git.revert, deploy.site, http.fetch, colleague.message, scheduler.request, proposal.create, ci.run, adr.create, skills.save, skills.load, skills.search, finish]
 approval_overrides: {}
 active: true
 hired: "2026-09-11T00:00:00.000Z"

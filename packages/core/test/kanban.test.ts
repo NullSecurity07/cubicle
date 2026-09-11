@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault } from '../src/template.js';
 import { Vault } from '../src/vault.js';
 import { TeamFrontmatter } from '../src/schemas.js';
-import { createJob, updateJob, stageOf, stageMap, wipLoad, KANBAN_STAGES, WIP_STAGES } from '../src/jobs.js';
+import { createJob, updateJob, stageOf, stageMap, wipLoad, KANBAN_STAGES, WIP_STAGES, GATE_JOB_TYPES } from '../src/jobs.js';
 import { loadOrg } from '../src/org.js';
 
 let dir: string; let vault: Vault;
@@ -55,6 +55,19 @@ describe('stageMap and wipLoad', () => {
     expect(wipLoad(vault, 'qa', chainFor)).toEqual({ in_progress: 1, review: 0, testing: 0 });
   });
 
+  it('a running gate job does not inflate its parent\'s team WIP on top of the parent (fix round 1)', () => {
+    const chainFor = () => SHIP;
+    const parent = createJob(vault, { type: 'engineer.ship', title: 'A', assigned: 'backend_engineer', goal: 'g', team: 'dev' }, 'dev_manager');
+    updateJob(vault, parent, { status: 'in_review', gate_index: 0 }, 'daemon'); // testing: qa.review outstanding
+    // The gate job itself: type qa.review, inherits the parent's team, and is running (someone is doing the review).
+    const gateJob = createJob(vault, { type: 'qa.review', title: 'Review A', assigned: 'qa_automation', goal: 'g', team: 'dev', parent }, 'daemon');
+    updateJob(vault, gateJob, { status: 'running' }, 'daemon');
+
+    expect(GATE_JOB_TYPES).toContain('qa.review');
+    // The parent counts once, in testing; the running gate job (also team: dev) must not add a second in_progress.
+    expect(wipLoad(vault, 'dev', chainFor)).toEqual({ in_progress: 0, review: 0, testing: 1 });
+  });
+
   it('an unmet dependency keeps a queued job in backlog, not ready', () => {
     const first = createJob(vault, { type: 'custom', title: 'First', assigned: 'backend_engineer', goal: 'g', team: 'dev' }, 'dev_manager');
     const second = createJob(vault, { type: 'custom', title: 'Second', assigned: 'backend_engineer', goal: 'g', team: 'dev', depends_on: [first] }, 'dev_manager');
@@ -65,10 +78,13 @@ describe('stageMap and wipLoad', () => {
 });
 
 describe('Teams/<id>.md wip limits', () => {
-  it('defaults to 3/2/2 and is read off the shipped dev and qa notes', () => {
-    expect(TeamFrontmatter.parse({ id: 't', name: 'T', lead: 'ceo' }).wip).toEqual({ in_progress: 3, review: 2, testing: 2 });
+  it('is undefined (unlimited) with no wip: on the note, and is read off the shipped dev and qa notes when set (fix round 1)', () => {
+    expect(TeamFrontmatter.parse({ id: 't', name: 'T', lead: 'ceo' }).wip).toBeUndefined();
     const org = loadOrg(vault);
     expect(org.teams.dev.wip).toEqual({ in_progress: 3, review: 2, testing: 2 });
-    expect(org.teams.qa.wip.testing).toBeGreaterThanOrEqual(1);
+    expect(org.teams.qa.wip?.testing).toBeGreaterThanOrEqual(1);
+    // Most teams ship with no wip: at all (technology, executive, sales, security, research, board, revenue,
+    // operations) — they are not on Kanban limits, so the dispatcher must never refuse them for being "full".
+    expect(org.teams.technology.wip).toBeUndefined();
   });
 });
