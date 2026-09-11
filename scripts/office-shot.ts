@@ -7,11 +7,11 @@
  * screenshot a claim about last night's code.
  *
  * The scenes, in the checklist's own order and under its own names:
- *   01-first-run  02-lobby  03-f1  04-f2  05-f3  06-f4  07-elevator  08-board
- *   09-night  10-browser-live  11-terminal  12-light-theme  13-stack
+ *   01-first-run  02-lobby  03-f1  04-f2  05-f3  06-f4  07-elevator  08-board  09-night
+ *   09a-tower-day  09b-tower-night  10-browser-live  11-terminal  12-light-theme  13-stack
  * Order is not free. `01-first-run` has to come before the Escape that dismisses the card, because the card is shown
  * once per session and never returns; `09-night` has to come before the shell burst that scene 11 needs, because that
- * burst walks the one lit engineer out of her room. The frame-rate reading sits between 09 and 10, on the bare office
+ * burst walks the one lit engineer out of her room. The frame-rate reading sits between 09b and 10, on the bare office
  * with no panel over it, so the number is the cost of drawing the tower rather than of compositing an HTML sheet.
  */
 import path from 'node:path';
@@ -200,6 +200,20 @@ try {
   await gotoFloor(2, '09');
   await shot('09-night', 1200);
   await cub((c) => c.setHour(null));
+
+  // 09a/09b: the whole tower at once, day and night. This is the only framing that shows all four floors, the lobby
+  // and the surround outside the building together, so it is where the floor tints are compared against each other
+  // rather than remembered between shots, and where the night tint has to cover the surround and the minimap too.
+  // Reached through the `0` key rather than a camera call, because the fit is a key path the owner has and a zoom set
+  // from the script would not prove `fitTower` still works.
+  await page.keyboard.press('0');
+  await shot('09a-tower-day', 1200);
+  await cub((c) => c.setHour(23));
+  await shot('09b-tower-night', 1200);
+  await cub((c) => c.setHour(null));
+  // Back to a floor fit before the frame rate is read: the tower fit draws the whole map and is a different, heavier
+  // subject, and changing what the gate measures is not this scene's business.
+  await gotoFloor(2, '09b');
 
   // The frame rate, measured here rather than at the end: every scene from 10 on has an HTML sheet over the canvas,
   // and `actualFps` is a rolling average, so a reading taken there would be about compositing, not about the office.
