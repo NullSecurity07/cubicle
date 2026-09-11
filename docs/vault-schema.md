@@ -60,8 +60,9 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | `returns` | record<string, number> = `{}` | gate job type → how many times that gate has returned this job (once-per-gate: a second return from the same gate fails the job instead of looping forever) |
 | `gate_index` | number (optional) | how far through its `config/gates.yaml` gate list the job has passed |
 | `budget_from` | number (optional) | the checkpoint_step a gate return resumed from; the step loop runs until budget_from + maxSteps, so a return gets a fresh budget instead of the remainder of the attempt |
-| `research` | object (optional) |  |
-| `research_slug` | string (optional) |  |
+| `research` | object (optional) | the universal research request this job carries (decision, question, evidence, confidence, portfolio, score) |
+| `research_slug` | string (optional) | the Research/<slug>/ project directory for this job |
+| `model_tier` | `strong` \| `medium` \| `cheap` \| `local` (optional) | pins a cheaper tier than the assigned role's charter asks for; never routes above it, and never above the `privacy` rule |
 
 Body sections: `## Goal`, `## Plan`, `## Checkpoint log`, `## Result` (JSON block `{status, artifacts, metrics, blockers, lessons, summary}`).
 
