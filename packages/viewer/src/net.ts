@@ -23,6 +23,8 @@ export class Net {
   private ws: WebSocket | null = null;
   private closed = false;
   private backoff = 1000;
+  /** A replay asked for before the socket was open (the `?replay=` deep link, a reconnect); sent once it opens. */
+  private pendingReplay: Record<string, unknown> | null = null;
   constructor(private url: string, private token: string | null, private h: NetHandlers) {}
 
   connect(): void {
@@ -31,7 +33,7 @@ export class Net {
     let ws: WebSocket;
     try { ws = new WebSocket(full); } catch (err) { this.h.onStatus(false, String(err)); this.retry(); return; }
     this.ws = ws;
-    ws.onopen = () => { this.backoff = 1000; this.h.onStatus(true, 'connected'); ws.send(JSON.stringify({ op: 'snapshot' })); };
+    ws.onopen = () => { this.backoff = 1000; this.h.onStatus(true, 'connected'); ws.send(JSON.stringify({ op: 'snapshot' })); const q = this.pendingReplay; this.pendingReplay = null; if (q) this.send(q); };
     ws.onmessage = (m) => {
       let msg: Record<string, unknown>;
       try { msg = JSON.parse(String(m.data)); } catch { return; }
@@ -57,7 +59,13 @@ export class Net {
   }
 
   chat(text: string): boolean { return this.send({ op: 'chat', text }); }
-  replay(from: string, to?: string, cursor = 0): boolean { return this.send({ op: 'replay', from, to, cursor }); }
+  /** Ask for a day's events. Queued (never dropped) when the socket is still connecting, else the deep link is lost. */
+  replay(from: string, to?: string, cursor = 0): boolean {
+    const msg = { op: 'replay', from, to, cursor };
+    if (this.send(msg)) return true;
+    this.pendingReplay = msg;
+    return false;
+  }
   snapshot(): boolean { return this.send({ op: 'snapshot' }); }
-  close(): void { this.closed = true; this.ws?.close(); }
+  close(): void { this.closed = true; this.pendingReplay = null; this.ws?.close(); }
 }
