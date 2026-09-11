@@ -30,7 +30,7 @@ export class MinimapChrome {
   constructor(private deps: MinimapDeps) {
     // The click surface is a pointer shortcut only, never a tab stop: the keyboard reaches every floor through the
     // rail (1–4 / L), so a focusable pan target with no meaningful "activate" would only add a dead stop.
-    this.el.innerHTML = `<div class="ticks" aria-hidden="true"></div><div class="click" aria-hidden="true"></div><button class="toggle" aria-label="Hide minimap (M)">M</button>`;
+    this.el.innerHTML = `<div class="ticks" aria-hidden="true"></div><div class="click" aria-hidden="true"></div><button class="toggle glass" aria-label="Hide minimap (M)">M</button>`;
     this.el.querySelector('.toggle')!.addEventListener('click', () => this.toggle());
     this.el.querySelector<HTMLElement>('.click')!.addEventListener('click', (e) => {
       const cam = this.deps.camera(); if (!cam) return;

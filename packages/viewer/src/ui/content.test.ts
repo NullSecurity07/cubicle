@@ -217,6 +217,10 @@ describe('tower views (plan 3)', () => {
     expect(ended.html).toContain('class="badge ended"'); expect(ended.html).toContain('Session ended'); expect(ended.html).not.toContain('class="badge live"');
     expect(ended.html).toContain('/screens/demo/412.jpg');                         // last frame from the daemon's store
     expect(browserViewerView(emptyState(), ctx).html).toContain('<svg');
+    // The stylesheet sizes the two viewers differently (a fixed 16:10 panel pillarboxed the stream); the view says
+    // which one it is, empty state included, so an empty billboard is not sized like a terminal.
+    expect(live.viewer).toBe('browser');
+    expect(browserViewerView(emptyState(), ctx).viewer).toBe('browser');
   });
   it('the terminal viewer colours prompt lines and shows a caret only while a shell job runs', () => {
     let st = applyEvent(tower, { ts: '2026-09-11T09:00:00.000Z', type: 'shell.output', agent: 'backend_engineer', job: 'j_open', payload: { text: '$ npm run build\n> astro build\ndone in 412ms' } });
@@ -228,6 +232,8 @@ describe('tower views (plan 3)', () => {
     st = applyEvent(st, { ts: '2026-09-11T09:00:01.000Z', type: 'job.started', agent: 'backend_engineer', job: 'j_open', payload: { type: 'engineer.ship', title: 'Build site' } });
     expect(terminalViewerView(st).html).toContain('class="caret"');
     expect(terminalViewerView(emptyState()).html).toContain('<svg');
+    expect(idle.viewer).toBe('terminal');
+    expect(terminalViewerView(emptyState()).viewer).toBe('terminal');
   });
   it('rooms without a surface open a roster sheet; the CEO office is the cabin', () => {
     const v = viewFor('dev', tower, ctx);

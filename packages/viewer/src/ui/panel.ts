@@ -1,7 +1,7 @@
 /**
  * The HTML layer's one container (visual notes §5): a stack of views, one visible at a time, in one of three
- * presentations — `sheet` (right, glass, level 1), `reader` (centred document, level 2), `viewer` (centred 16:10,
- * level 2). Push shows a trail with a back chevron, Escape pops, the last pop closes. Re-renders morph only the
+ * presentations — `sheet` (right, glass, level 1), `reader` (centred document, level 2), `viewer` (centred, sized
+ * by what it shows — see `View.viewer` — level 2). Push shows a trail with a back chevron, Escape pops, the last pop closes. Re-renders morph only the
  * nodes that changed, so a live frame or a growing terminal never flickers or loses its scroll position.
  */
 import { esc, type View, type ViewMode } from './content.js';
@@ -105,6 +105,10 @@ export class Panel {
     const wasHidden = this.layer.hidden;
     const presChanged = this.layer.dataset.presentation !== pres;
     this.layer.dataset.presentation = pres;
+    // Which viewer is up (ui/content.ts `View.viewer`): the browser box and the terminal box are sized differently.
+    if (v.viewer) this.layer.dataset.viewer = v.viewer; else delete this.layer.dataset.viewer;
+    // The sheet is the one glass presentation; .glass carries the @supports fallback for no backdrop-filter.
+    this.panel.classList.toggle('glass', pres === 'sheet');
     this.layer.hidden = false;
     this.scrim.hidden = pres === 'sheet';
     this.panel.setAttribute('role', pres === 'sheet' ? 'complementary' : 'dialog');

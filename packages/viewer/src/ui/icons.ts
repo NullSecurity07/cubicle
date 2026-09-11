@@ -4,12 +4,13 @@
  * principles). A run is [x, y, w, h, colour]; UI glyphs use `currentColor` so they follow the text colour.
  */
 import type { Emote } from '../state.js';
+import { PALETTE } from '../world/palette.js';
 
 export type GlyphName = Emote | 'envelope' | 'doc' | 'chart' | 'chat' | 'close' | 'play' | 'pause' | 'sun' | 'moon' | 'chevron';
 export type Px = [x: number, y: number, w: number, h: number, colour: string];
 
 const C = 'currentColor';
-const A = '#e6a93c', Z = '#9db8ff', B = '#7cc4ff', H = '#f26b6b', Y = '#ffd166', S = '#f1c9a5';
+const A = PALETTE.amber, Z = '#9db8ff', B = '#7cc4ff', H = '#f26b6b', Y = '#ffd166', S = '#f1c9a5';
 /** A "z" of size s with its top-left at (x, y): top bar, diagonal, bottom bar. */
 const zee = (x: number, y: number, s: number): Px[] => [[x, y, s, 1, Z], ...Array.from({ length: s }, (_, i): Px => [x + s - 1 - i, y + 1 + i, 1, 1, Z]), [x, y + s, s, 1, Z]];
 

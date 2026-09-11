@@ -20,7 +20,7 @@
       <div class="brand"><span class="mark" aria-hidden="true"></span><strong id="brand-name">Your company</strong><span id="brand-tagline">No name yet. Tell the CEO your idea.</span></div>
       <nav aria-label="Company">
         <span class="status" id="conn"><i class="dot"></i><span id="conn-text">connecting</span></span>
-        <button class="pill attn" id="pending" data-open="postoffice" data-count="0" title="proposals waiting for you">0 to approve</button>
+        <button class="pill attn" id="pending" data-open="postoffice" data-count="0" title="proposals waiting for you" hidden>0 to approve</button>
         <button class="txt" data-open="newsstand">Brief</button>
         <button class="txt" data-open="whiteboard">Plan</button>
         <button class="txt" data-open="noticeboard">Queue</button>
@@ -29,7 +29,7 @@
       </nav>
     </header>
     <nav id="rail" class="glass" aria-label="Floors"></nav>
-    <div id="coach" class="footnote" hidden></div>
+    <div id="coach" class="footnote glass" hidden></div>
     <div id="scrim" hidden></div>
     <div id="layer" hidden>
       <section id="panel" tabindex="-1" aria-labelledby="panel-title">
@@ -54,7 +54,7 @@
       <span id="clock" class="footnote"></span>
     </div>
     <div id="minimap-chrome" hidden></div>
-    <div id="toast" role="status" hidden></div>
+    <div id="toast" hidden></div>
     <div id="announcer" aria-live="polite" class="sr-only"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

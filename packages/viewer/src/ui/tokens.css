@@ -15,13 +15,30 @@
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
   /* radius */
   --r-s: 6px; --r: 10px; --r-l: 14px; --r-pill: 999px;
-  /* motion */
+  /* motion — the same four numbers as world/motion.ts DUR (micro/open/sheet/reader), plus the two loops the
+     stylesheet owns; tokens.test.ts asserts the shared ones against DUR so the two tables cannot drift. */
   --d-micro: 120ms; --d-open: 200ms; --d-sheet: 280ms; --d-reader: 360ms;
+  --d-frame: 80ms;        /* DUR.crossfade: one live frame fading into the next */
+  --d-pulse: 1000ms;      /* DUR.livePulse: the LIVE badge */
+  --d-caret: 530ms;       /* the terminal caret's blink; CSS-only, no Phaser twin */
   --ease-out: cubic-bezier(.2,.8,.2,1); --ease-in: cubic-bezier(.4,0,1,1); --ease-spring: cubic-bezier(.34,1.56,.64,1);
+  /* dwell times: how long a piece of feedback stays up. Not motion — reduced motion leaves them alone. */
+  --t-copy: 1500ms; --t-toast: 5000ms;
   /* layout */
   --bar-h: 52px; --rail-w: 44px; --hit: 32px; --blur: blur(20px) saturate(140%);
+  /* The time bar's own height (32 px of control + 2 × --s1 of padding) plus the --s3 it is inset by and an --s3 gap.
+     #layer stops here, so no presentation can ever be laid over the Live/Replay control. */
+  --time-h: 64px;
+  /* What the minimap chrome reserves at the bottom right: 12 px inset + a 160 px camera + the M toggle above it.
+     The sheet stops here (app.css), so an open sheet never buries the map. Mirrors OfficeScene's `mmH`/12. */
+  --minimap-h: 212px;
+  /* One row of viewer chrome (.vbar / .vfoot): --s2 twice plus a footnote line. */
+  --vbar-h: 33px;
+  /* The browser tool's own viewport (packages/tools/src/tools/browser.ts), so the viewer's box is the frame's
+     shape and not a guess: anything wider is dead black beside a live stream. */
+  --vframe-w: 1024; --vframe-h: 700;
 }
-@media (prefers-reduced-motion: reduce) { :root { --d-micro: 1ms; --d-open: 1ms; --d-sheet: 1ms; --d-reader: 1ms; } }
+@media (prefers-reduced-motion: reduce) { :root { --d-micro: 1ms; --d-open: 1ms; --d-sheet: 1ms; --d-reader: 1ms; --d-frame: 1ms; } }
 
 .caption  { font-size: var(--fs-caption);  line-height: var(--lh-caption);  font-weight: var(--fw-caption); }
 .footnote { font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-footnote); }
