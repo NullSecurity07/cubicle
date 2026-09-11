@@ -3,8 +3,9 @@ import path from 'node:path';
 import {
   type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
   readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
-  loadGates, gatesFor, criteriaFor, gateAssignee, type GateTable,
+  loadGates, gatesForRisk, criteriaFor, gateAssignee, type GateTable,
   loadOrg, isLead, teamOf, leadOf, resolveRole, type ModelTier,
+  ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES,
 } from '@cubicle/core';
 import { NoModelAvailableError, TIER_RANK, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -108,6 +109,36 @@ function summarizeArgs(args: Record<string, unknown>): string {
   return s.length > 120 ? s.slice(0, 117) + '…' : s;
 }
 
+/** True when the owner has approved a `threat_model` proposal filed for this job. */
+export function approvedThreatModel(vault: Vault, jobId: string): boolean {
+  return listInbox(vault).some((n) => n.data.kind === 'threat_model' && n.data.job === jobId && n.data.approved === true);
+}
+
+/**
+ * Why an engineering job may not report success yet, or null when it may.
+ *
+ * Two rules, both from the owner's operating model. §17: a change is not shipped until the pipeline has
+ * validated it, so an `engineer.ship` needs a green CI record newer than every source file in its stream. §27:
+ * the higher the risk, the stronger the human governance, so a `high` risk change also needs a threat model the
+ * owner has approved — a decision no role can be assigned, which is why it is a proposal rather than a gate.
+ *
+ * Failed and blocked results are never refused: a job that could not build must be able to say so.
+ */
+export function shipRefusal(vault: Vault, job: JobFrontmatter, result: JobResult): string | null {
+  if (result.status !== 'done') return null;
+  if (!(ENGINEERING_JOB_TYPES as readonly string[]).includes(job.type)) return null;
+  if (!job.stream) {
+    const known = listStreams(vault).map((s) => s.slug);
+    return `this ${job.type} has no stream, so CI cannot be checked. Set the job's stream to one of: ${known.join(', ') || 'none yet — the product manager creates Streams/<slug>.md first'}. Ask your lead to re-queue it with the right stream, or finish with status failed and say the stream is missing.`;
+  }
+  const ci = ciStatus(vault, job.stream);
+  if (!ci.ok) return `not shipped: ${ci.reason} (operating model §17 — a change is validated by the pipeline, not by looking at it).`;
+  if (job.risk === 'high' && !approvedThreatModel(vault, job.id)) {
+    return `this is a high-risk change (${job.risk}: auth, money, destructive migrations, core infrastructure), so it needs a threat model the owner approves before it can finish (§27). Call proposal.create({ kind: "threat_model", title: "Threat model: <what changes>", body: "<assets, entry points, what an attacker would try, what stops them, what you are accepting>" }) and wait for the answer.`;
+  }
+  return null;
+}
+
 /**
  * Run (or resume) one job to completion, a block, or the step limit. Every tool call is a checkpoint:
  * `checkpoint_step`, the Checkpoint log, and `side_effects_done` are written to the job note before the
@@ -177,7 +208,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
 
   const finishWith = async (result: JobResult, step: number): Promise<JobOutcome> => {
     const isGateJob = /\.(review|verify)$/.test(job.type) && !!job.parent;
-    const chain = gatesFor(gates, job.type);
+    const chain = gatesForRisk(gates, job.type, job.risk);
     const gateIndex = Number(job.gate_index ?? 0);
     const nextGate = result.status === 'done' && !isGateJob ? chain[gateIndex] : undefined;
     const finalStatus: JobStatus = result.status === 'done' ? (nextGate ? 'in_review' : 'done') : result.status === 'blocked' ? 'blocked' : 'failed';
@@ -247,14 +278,19 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     deps.scheduler.enqueue({
       type: gate, title: `${gate === 'coo.verify' ? 'Verify' : 'Review'}: ${parent.title}`, assigned: assignee, priority: 4, parent: parent.id, links: [`[[${parent.id}]]`], privacy: parent.privacy,
       team: parent.team, owner_role: parent.owner_role, for: parent.for,
-      goal: `Review job [[${parent.id}]] (${parent.type}) as the ${gate} gate. What good looks like: ${criteria}${gateCriteria ? `\nAs the ${gate} reviewer, check: ${gateCriteria}` : ''}\nDone when (author's): ${parent.done_when ?? 'not stated'}\nAuthor's summary: ${result.summary}\nRead its Result block and artifacts, check with evidence, then finish with status done and verdict pass, or verdict return with findings that name a file or an output line${gate === 'coo.verify' ? ', plus exactly one lesson in finish.lessons' : ''}. A job may be returned once per gate; a second return fails it.`,
+      // The reviewer needs the change's stream — where the CI records and the code are — or a qa.review cannot
+      // tell a fresh green run from a stale one. The parent's *risk* is passed in the goal below rather than
+      // set on the gate job: a gate type's own chain is empty, and `gatesForRisk` would read a carried-over
+      // `high` as "this review is itself reviewed by security.review".
+      stream: parent.stream,
+      goal: `Review job [[${parent.id}]] (${parent.type}) as the ${gate} gate. What good looks like: ${criteria}${gateCriteria ? `\nAs the ${gate} reviewer, check: ${gateCriteria}` : ''}\nDone when (author's): ${parent.done_when ?? 'not stated'}\nAuthor's summary: ${result.summary}${gate === 'qa.review' && parent.stream ? `\nThe CI record for stream "${parent.stream}" is at Workspace/${parent.stream}/.cubicle-ci/ — read the newest one; a green record older than the change is not a pass. If this change altered the architecture (a new dependency, a new service, a new data store, a changed boundary) there must be an ADR in Docs/adr/; return it if there is not.` : ''}${gate === 'security.review' ? `\nThis change is ${parent.risk} risk. Name the data, credentials and permissions it touches and judge each one.` : ''}\nRead its Result block and artifacts, check with evidence, then finish with status done and verdict pass, or verdict return with findings that name a file or an output line${gate === 'coo.verify' ? ', plus exactly one lesson in finish.lessons' : ''}. A job may be returned once per gate; a second return fails it.`,
     });
   };
 
   /** A gate job finished: advance or return the parent. */
   const applyVerdict = (parentId: string, gate: string, result: JobResult): void => {
     const p = readJob(vault, parentId); if (!p || p.data.status !== 'in_review') return;
-    const chain = gatesFor(gates, p.data.type);
+    const chain = gatesForRisk(gates, p.data.type, p.data.risk);
     const idx = Number(p.data.gate_index ?? 0);
     if (result.verdict !== 'return') {
       events.emit({ type: 'review.passed', agent: roleId, job: parentId, payload: { gate, findings: result.findings } });
@@ -312,7 +348,12 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     if (b.kind === 'proposal') {
       const prop = findInboxById(vault, b.id);
       const call = prop?.data.call;
-      if (prop && prop.data.approved === true && call) {
+      if (prop && prop.data.approved === true && !call) {
+        // A proposal the owner approves that carries no stored call (threat_model, a plain decision): there is
+        // nothing to execute, so the answer itself is the unblock. Without this the job sat blocked forever.
+        record({ step: job.checkpoint_step, kind: 'system', text: `The owner approved ${prop.data.kind} ${b.id}. You may continue.` });
+        updateJob(vault, jobId, { status: 'running', approval: 'approved', blocked_on: undefined }, roleId, `- ${nowIso()}: ${prop.data.kind} ${b.id} approved by the owner`);
+      } else if (prop && prop.data.approved === true && call) {
         const step = job.checkpoint_step; // the pending call owns this step
         const key = call.idempotency_key;
         // The approval is older than the config: the tool's mode may have moved to `never` — in tools.yaml, in
@@ -529,7 +570,19 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       refresh();
       if (res.finished) {
         const parsed = JobResult.safeParse(res.data);
-        return finishWith(parsed.success ? parsed.data : JobResult.parse({ status: 'done', summary: res.text }), step);
+        const result = parsed.success ? parsed.data : JobResult.parse({ status: 'done', summary: res.text });
+        // The refusal repeats on every attempt to finish rather than being pushed back once, because unlike
+        // finish(blocked) there is a concrete action that clears it — run CI, or file the threat model — and the
+        // step budget already bounds the loop.
+        const refusal = shipRefusal(vault, job, result);
+        if (refusal) {
+          record({ step, kind: 'tool', tool: toolName, args, result: `finish refused: ${refusal}`, ok: false });
+          events.emit({ type: 'agent.tool_result', agent: roleId, job: jobId, payload: { tool: toolName, ok: false, step, summary: refusal.slice(0, 200) } });
+          updateJob(vault, jobId, { checkpoint_step: step }, roleId, `- step ${step}: finish refused (${refusal.slice(0, 120)})`);
+          refresh();
+          continue;
+        }
+        return finishWith(result, step);
       }
       if (res.block) {
         events.emit({ type: 'job.blocked', agent: roleId, job: jobId, payload: { reason: res.block.kind, id: res.block.id } });

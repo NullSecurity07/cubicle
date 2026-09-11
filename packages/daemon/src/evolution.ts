@@ -4,8 +4,9 @@ import path from 'node:path';
 import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
-  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, resolveRole,
-  readStream, budgetLines,
+  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, resolveRole, jobPath,
+  RESEARCH_INDEX, upsertIndexRow, resultBlock, researchSlug, type ResearchRequest, type DeliveredResearch,
+  readStream, budgetLines, listStreams, readFlags, expiredFlags,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -230,6 +231,9 @@ export const WEEKLY_REVIEW_EVERY = 7;
 export async function maybeEnqueueWeeklyReview(vault: Vault, openMeeting?: (agenda: string, participants: string[]) => Promise<string | null>): Promise<string[]> {
   const n = vault.events.count('heartbeat.completed');
   if (n === 0 || n % WEEKLY_REVIEW_EVERY !== 0) return [];
+  // §41 is computed, not written by an agent, so it is refreshed on the cadence rather than asked for in a job.
+  // It sits before the marker check on purpose: the numbers should be current even on a repeat tick.
+  try { vault.writeText('Metrics/research.md', renderResearchMetrics(researchMetrics(vault), new Date()), 'daemon', { generated: true }); } catch { /* a metrics page is never worth failing the review over */ }
   const marker = `weekly-${n}`;
   if (listJobs(vault).some((j) => j.links.includes(`[[${marker}]]`))) return [];
   const dora = writeEngineeringMetrics(vault);
@@ -363,6 +367,204 @@ export function maybeEnqueueCharterCompression(vault: Vault): string | null {
     id, type: 'cto.compress_charters', title: `Compress charters after ${heartbeats} heartbeats`, assigned: 'cto', priority: 3,
     goal: `Every ${CHARTER_COMPRESSION_EVERY} heartbeats the CTO tightens the role charters from what the company learned.\n\nDo: (1) vault.read Memory/lessons.md and every Roles/<role>.md for ${roles.join(', ')}; (2) for each role whose charter should change, file ONE proposal.create with kind=charter_change, target=Roles/<role>.md, a title naming the role, and a body that contains "## Proposed content" followed by the COMPLETE new charter note (frontmatter + body) inside a \`\`\`markdown fence — keep the frontmatter identical except tools/approval_overrides if a lesson justifies it, and make the body shorter, not longer; (3) skip roles with nothing to change; (4) finish with a one-paragraph summary listing the proposals.`,
   }, 'daemon');
+}
+
+// ---------- continuous intelligence (owner model §14–17) ----------
+
+/** The four standing intelligence beats. One job each, every heartbeat cycle. */
+export const INTELLIGENCE_KINDS = ['competitive', 'market', 'technology', 'security'] as const;
+export type IntelligenceKind = typeof INTELLIGENCE_KINDS[number];
+
+const INTELLIGENCE_SCOPE: Record<IntelligenceKind, string> = {
+  competitive: 'competitors, their products, pricing, technology, positioning, hiring, partnerships and public announcements (§14)',
+  market: 'market size and growth, customer segments, pricing norms, demand, new entrants and economic conditions (§15)',
+  technology: 'emerging technologies, open-source projects, standards, architecture patterns, infrastructure, AI/ML, developer tooling and technical maturity (§16)',
+  security: 'the threat landscape, vulnerabilities affecting what we run, architecture risks, defensive technology and adversary behaviour (§17)',
+};
+
+const INTELLIGENCE_TEST: Record<IntelligenceKind, string> = {
+  competitive: 'a competitor changed price, shipped or killed a product, changed who they sell to, or said something about direction',
+  market: 'demand, a segment, a pricing norm or a regulation moved enough to change what the company should build or charge',
+  technology: 'something we might use crossed from interesting into technically mature, or something we already use is being abandoned',
+  security: 'a vulnerability or threat touches software we actually run, or a control we rely on stopped being sufficient',
+};
+
+/** The whole brief for one sweep. Exported so its wording is testable without running a job. */
+export function intelligenceGoal(kind: IntelligenceKind, date: string, previous: string | null): string {
+  const out = `Research/intelligence/${date}-${kind}.md`;
+  return [
+    `Standing ${kind} intelligence sweep for this cycle. Scope: ${INTELLIGENCE_SCOPE[kind]}.`,
+    '',
+    `The rule for this job is "Detect meaningful change, not collect everything" (§14). A meaningful change is one where ${INTELLIGENCE_TEST[kind]}. Everything else is noise, and noise is the enemy of intelligence.`,
+    '',
+    'Do:',
+    `1. Read ${previous ? `the previous sweep, ${previous}, so you report what changed since it` : `Research/index.md and Docs/tech-radar.md for context — there is no previous ${kind} file, so this first sweep sets the baseline`}.`,
+    '2. Gather with `http.fetch { archive: true }` so every page you rely on is snapshotted under `Research/archive/`. Use `memory.search` and `vault.search` before fetching: evidence the company already has is cheaper and often better.',
+    `3. \`vault.write ${out}\` with four sections, in this order:`,
+    '   - `## Observations` — one line each, every line dated and carrying its archive path or URL. Say what you saw, not what you think it means.',
+    '   - `## Changes since last time` — only what actually moved. If nothing did, write "nothing meaningful changed" and say what you checked.',
+    '   - `## Alerts` — anything someone needs to know now. One line each, naming who and why.',
+    '   - `## Noise ignored` — one line per thing you deliberately did not escalate. This section is how the next sweep knows you looked.',
+    `4. For each meaningful change that suggests something the company could **do**, \`vault.write Ideas/<slug>.md\` using the shape of \`Ideas/_template.md\`: \`id\` (the slug), \`title\`, \`source: intelligence:${kind}\`, \`status: new\`, \`evidence\` (the archive paths), and the three body sections. One card per change, never a digest.`,
+    `5. For each alert, \`colleague.message\` the research_manager with the one line and the path to ${out}.`,
+    '',
+    'Never invent an observation, a number or a date. A sweep that found nothing is a good sweep honestly reported; a sweep that invented something is worse than no sweep at all.',
+  ].join('\n');
+}
+
+/**
+ * One sweep per kind, once per heartbeat cycle. Idempotent the way charter compression is: the job id is
+ * derived from the cycle number, so a second call in the same cycle finds the note already there. `cheap`
+ * tier because this is bounded, repetitive reading — exactly the work §38 says to automate cheaply.
+ */
+export function maybeEnqueueIntelligence(vault: Vault, now = new Date()): string[] {
+  const cycle = vault.events.count('heartbeat.completed');
+  if (cycle === 0) return [];
+  const org = loadOrg(vault);
+  const assigned = org.roles.intelligence_analyst ? 'intelligence_analyst' : (researchLead(org) ?? 'research_manager');
+  if (!org.roles[assigned]) return [];
+  const date = now.toISOString().slice(0, 10);
+  const out: string[] = [];
+  for (const kind of INTELLIGENCE_KINDS) {
+    const id = idFromKey('job', `intel-${cycle}-${kind}`);
+    if (vault.exists(jobPath(id))) continue;
+    const previous = vault.list('Research/intelligence', { ext: '.md' }).filter((r) => r.endsWith(`-${kind}.md`)).sort().at(-1) ?? null;
+    out.push(createJob(vault, {
+      id, type: 'intelligence', title: `${kind[0].toUpperCase()}${kind.slice(1)} intelligence: cycle ${cycle}`,
+      assigned, priority: 4, team: 'research', owner_role: 'research_manager', for: 'research_manager', model_tier: 'cheap',
+      done_when: `Research/intelligence/${date}-${kind}.md exists with observations, changes, alerts and noise ignored; every meaningful change is either an Ideas/ card or a line under ## Alerts`,
+      goal: intelligenceGoal(kind, date, previous),
+    }, 'daemon'));
+  }
+  return out;
+}
+
+// ---------- research knowledge (owner model §23, §40) ----------
+
+/** How long after delivery the company checks whether the recommendation was right. */
+export const FOLLOW_UP_DAYS = 14;
+
+const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86400_000).toISOString().slice(0, 10);
+
+/**
+ * Every research project that passed its gates gets a row in `Research/index.md` and a follow-up note with a
+ * due date. Both are keyed on the job id and written once — the follow-up note's existence is the marker, so
+ * this survives a restart and a replayed event log without duplicating anything.
+ *
+ * Nothing here asks a model for anything: the row is assembled from the request the requester already wrote
+ * and the Result block the author already finished with. Where the author stated no confidence or method,
+ * the row says `unstated` rather than guessing, because a fabricated confidence is worse than a missing one.
+ */
+export function captureResearchDeliveries(vault: Vault, now = new Date()): string[] {
+  const written: string[] = [];
+  for (const e of vault.events.query({ types: ['research.delivered'] })) {
+    const jobId = e.job; if (!jobId) continue;
+    const rel = `Research/followups/${jobId}.md`;
+    if (vault.exists(rel)) continue;
+    const note = readJob(vault, jobId); if (!note) continue;
+    const req: ResearchRequest | undefined = note.data.research;
+    const result = resultBlock(note.body);
+    const metrics = (result.metrics ?? {}) as Record<string, unknown>;
+    const slug = note.data.research_slug ?? researchSlug(req?.question ?? note.data.title, jobId);
+    const delivered = e.ts.slice(0, 10);
+    const row: DeliveredResearch = {
+      job: jobId, delivered,
+      question: req?.question ?? note.data.title,
+      decision: req?.decision ?? 'not stated on the request',
+      decision_owner: req?.decision_owner ?? note.data.for ?? note.data.owner_role ?? 'unstated',
+      method: String(metrics.method ?? 'unstated'),
+      confidence: String(metrics.confidence ?? 'unstated'),
+      report: `Research/${slug}/report.md`,
+    };
+    vault.writeText(RESEARCH_INDEX, upsertIndexRow(vault.readTextOrNull(RESEARCH_INDEX), row), 'daemon', { job: jobId });
+    const prediction = String(result.summary ?? '').trim() || 'the report recorded no summary';
+    vault.writeText(rel, [
+      '---',
+      `id: ${jobId}`,
+      `research: ${jobId}`,
+      `slug: ${slug}`,
+      `decision_owner: ${row.decision_owner}`,
+      `delivered: ${delivered}`,
+      `due: ${addDays(new Date(e.ts), FOLLOW_UP_DAYS)}`,
+      'status: pending',
+      `prediction: ${JSON.stringify(prediction)}`,
+      'outcome: ""',
+      '---',
+      `# Follow-up: ${row.question}`,
+      '',
+      '## What we predicted',
+      '',
+      prediction,
+      '',
+      `Required confidence was ${req?.required_confidence ?? 'unstated'}; the report claimed ${row.confidence}.`,
+      '',
+      '## What actually happened',
+      '',
+      `_Filled in by the research.measure job on or after ${addDays(new Date(e.ts), FOLLOW_UP_DAYS)}._`,
+      '',
+    ].join('\n'), 'daemon', { job: jobId });
+    written.push(rel);
+  }
+  return written;
+}
+
+export interface FollowUpNote { path: string; id: string; research: string; slug: string; decision_owner: string; due: string; status: string; prediction: string }
+
+/** Every `Research/followups/*.md`, parsed loosely — an owner may edit one by hand. */
+export function listResearchFollowUps(vault: Vault): FollowUpNote[] {
+  return vault.list('Research/followups', { ext: '.md' }).flatMap((rel) => {
+    const n = vault.readNoteOrNull(rel); if (!n) return [];
+    const d = n.data as Record<string, unknown>;
+    const research = String(d.research ?? d.id ?? '');
+    if (!research) return [];
+    return [{
+      path: rel, id: String(d.id ?? research), research, slug: String(d.slug ?? ''),
+      decision_owner: String(d.decision_owner ?? 'ceo'), due: String(d.due ?? ''),
+      status: String(d.status ?? 'pending'), prediction: String(d.prediction ?? ''),
+    }];
+  });
+}
+
+/**
+ * A pending follow-up whose due date has arrived becomes one `research.measure` job. Idempotent by job id, and
+ * gated by the note's own `status`, so an owner who writes `status: measured` by hand stops the loop the same
+ * way the measurement job does. §40: a recommendation nobody measures is an opinion with a bibliography.
+ */
+export function enqueueResearchFollowUps(vault: Vault, now = new Date()): string[] {
+  const today = now.toISOString().slice(0, 10);
+  const org = loadOrg(vault);
+  const lead = researchLead(org) ?? 'research_manager';
+  if (!org.roles[lead]) return [];
+  const out: string[] = [];
+  for (const f of listResearchFollowUps(vault)) {
+    if (f.status !== 'pending' || !f.due || f.due > today) continue;
+    const id = idFromKey('job', `measure:${f.research}`);
+    if (vault.exists(jobPath(id))) continue;
+    const report = `Research/${f.slug}/report.md`;
+    const owner = org.roles[f.decision_owner] ? f.decision_owner : lead;
+    out.push(createJob(vault, {
+      id, type: 'research.measure', title: `Measure: did [[${f.research}]] turn out right?`,
+      assigned: lead, priority: 3, team: 'research', owner_role: 'research_manager', for: owner,
+      links: [`[[${f.research}]]`], model_tier: 'cheap',
+      done_when: `${report} ends with a ## Prediction vs reality section, ${f.path} has status: measured with an outcome, and the job's row in Research/index.md carries that outcome`,
+      goal: [
+        `${FOLLOW_UP_DAYS} days ago this company acted on research [[${f.research}]]. Find out whether it was right.`,
+        '',
+        'What was predicted:',
+        '',
+        `> ${f.prediction.replace(/\n/g, ' ')}`,
+        '',
+        'Do:',
+        `1. \`vault.read ${f.path}\` and \`vault.read ${report}\` for the recommendation and the confidence it claimed.`,
+        `2. Look for what actually happened: \`vault.read Metrics/daily.md\`, the Decisions/ note if one was written, and the jobs that followed [[${f.research}]]. Use \`vault.search\` rather than guessing where the evidence is.`,
+        `3. \`vault.append ${report}\` with a \`## Prediction vs reality\` section: what was predicted, what happened, and which of "as expected", "partly", "not as expected" or "cannot tell yet" it was. If the honest answer is "cannot tell yet", say so and say what would settle it — an invented outcome poisons every future confidence estimate the company makes.`,
+        `4. \`vault.write ${f.path}\` with \`status: measured\` and \`outcome:\` set to that one-line verdict, keeping every other field.`,
+        `5. \`vault.write Research/index.md\` replacing this job's row's last column with the same verdict. Change nothing else in that file.`,
+        `6. Tell ${owner} with \`colleague.message\`, one line, and finish with the verdict as your summary.`,
+      ].join('\n'),
+    }, 'daemon'));
+  }
+  return out;
 }
 
 /**
@@ -654,4 +856,110 @@ function markCorrectiveDone(vault: Vault, incidentId: string, marker: string): v
   const cur = readJob(vault, incidentId);
   if (!cur) return;
   updateJob(vault, incidentId, { links: [...cur.data.links, `[[${marker}]]`] }, 'daemon', `- ${nowIso()}: corrective actions expanded (none found)`);
+}
+
+// ---------- feature flags (owner's operating model §21) ----------
+
+/**
+ * A flag past its removal date is debt, and debt nobody names is debt nobody pays. One lesson line per flag,
+ * written once — `Memory/lessons.md` is what the charter-compression pass and every role's context already
+ * read, so the flag's owner meets it where they already look.
+ */
+export function maybeFlagLessons(vault: Vault, now = new Date()): string[] {
+  const today = now.toISOString().slice(0, 10);
+  const existing = vault.readTextOrNull('Memory/lessons.md') ?? '# Lessons\n';
+  const made: string[] = [];
+  const lines: string[] = [];
+  for (const s of listStreams(vault)) {
+    const expired = expiredFlags(readFlags(vault, s.slug), today);
+    if (!expired.length) continue;
+    const fresh = expired.filter((f) => !existing.includes(`flag "${f.key}"`));
+    if (!fresh.length) continue;
+    for (const f of fresh) {
+      lines.push(`- [${today}] flag "${f.key}" in ${s.slug} passed its removal date ${f.remove_by} and is still there; ${f.owner} removes the flag and the dead branch, or sets a new date and says why (§21) #team:${s.owner_team}`);
+      made.push(f.key);
+    }
+    vault.events.emit({ type: 'daemon.warning', payload: { where: 'flags', stream: s.slug, flags: fresh.map((f) => f.key), message: `${fresh.length} flag(s) past their removal date in ${s.slug}: ${fresh.map((f) => `${f.key} (${f.owner}, due ${f.remove_by})`).join(', ')}` } });
+  }
+  if (lines.length) vault.appendText('Memory/lessons.md', lines.join('\n') + '\n', 'daemon');
+  return made;
+}
+
+// ---------- research metrics (owner model §41) ----------
+
+export interface ResearchMetrics {
+  delivered: number;
+  open: number;
+  /** Median hours from a research job being created to being delivered. `null` below one delivery. */
+  medianHoursToAnswer: number | null;
+  reused: number;
+  /** Share of delivered projects that built on an earlier one. `null` when nothing has been delivered. */
+  reuseRate: number | null;
+  measured: number;
+  asExpected: number;
+}
+
+/** Any `Research/<project>/` path that is not one of the four reserved subdirectories. */
+const CITES_A_PROJECT = /Research\/(?!archive\/|intelligence\/|followups\/|index\b)[a-z0-9][a-z0-9-]*\//i;
+
+/**
+ * §41, computed rather than estimated. Everything here comes from files and events the company already wrote:
+ * no model is asked how well research is going, because the answer to that question is exactly the one a model
+ * would be tempted to flatter.
+ */
+export function researchMetrics(vault: Vault): ResearchMetrics {
+  const hours: number[] = [];
+  let delivered = 0; let reused = 0;
+  for (const e of vault.events.query({ types: ['research.delivered'] })) {
+    const note = e.job ? readJob(vault, e.job) : null; if (!note) continue;
+    delivered++;
+    const ms = Date.parse(e.ts) - Date.parse(note.data.created);
+    // Defensive: a clock skew, a hand-edited note, or a replayed event log can put `created` after the
+    // delivery `ts`. That interval is nonsense, not merely small, so it is dropped rather than counted as
+    // (or floored to) zero hours to answer.
+    if (Number.isFinite(ms) && ms >= 0) hours.push(ms / 3600_000);
+    const own = note.data.research_slug ? new RegExp(`Research/${note.data.research_slug}/`, 'i') : null;
+    const cited = note.body.split('\n').filter((l) => CITES_A_PROJECT.test(l) && !(own && own.test(l)));
+    if (cited.length) reused++;
+  }
+  const sorted = [...hours].sort((a, b) => a - b);
+  const median = sorted.length === 0 ? null
+    : sorted.length % 2 ? sorted[(sorted.length - 1) / 2]
+    : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+  const followUps = listResearchFollowUps(vault);
+  const measuredNotes = followUps.filter((f) => f.status === 'measured');
+  const asExpected = measuredNotes.filter((f) => {
+    const n = vault.readNoteOrNull(f.path);
+    return /^as expected/i.test(String((n?.data as Record<string, unknown> | undefined)?.outcome ?? ''));
+  }).length;
+  return {
+    delivered, open: listJobs(vault, { status: ['queued', 'running', 'blocked', 'in_review'] }).filter((j) => j.type === 'research').length,
+    medianHoursToAnswer: median, reused, reuseRate: delivered ? reused / delivered : null,
+    measured: measuredNotes.length, asExpected,
+  };
+}
+
+export function renderResearchMetrics(m: ResearchMetrics, now: Date): string {
+  const pct = (n: number | null) => (n === null ? 'not enough delivered research to say' : `${Math.round(n * 100)}%`);
+  const hrs = (n: number | null) => (n === null ? 'not enough delivered research to say' : n < 48 ? `${n.toFixed(1)} h` : `${(n / 24).toFixed(1)} days`);
+  return [
+    '# Research metrics',
+    '',
+    `_Generated ${now.toISOString()} by the daemon on the weekly cadence. Edit nothing here; it is overwritten._`,
+    '',
+    '| measure | value | what it means |',
+    '|---|---|---|',
+    `| Delivered | ${m.delivered} | research projects that passed both gates |`,
+    `| Open | ${m.open} | research jobs still in flight |`,
+    `| Time to answer (median) | ${hrs(m.medianHoursToAnswer)} | request queued → delivered |`,
+    `| Reuse rate | ${pct(m.reuseRate)} | delivered projects that built on an earlier one (${m.reused} of ${m.delivered}) |`,
+    `| Measured | ${m.measured} | follow-ups where the company checked what actually happened |`,
+    `| Decisions as expected | ${m.measured ? `${m.asExpected} of ${m.measured}` : 'nothing measured yet'} | the only outcome measure that matters (§41) |`,
+    '',
+    'Number of reports is deliberately not a metric: measuring it encourages useless output.',
+    '',
+    'Reuse rate low and time to answer high together mean the index is not being searched before work starts.',
+    'Measured far below delivered means recommendations are being acted on without anyone checking them.',
+    '',
+  ].join('\n');
 }
