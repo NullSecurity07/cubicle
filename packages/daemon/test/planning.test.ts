@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault, Vault, listJobs, listInbox, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord, createProposal } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
-import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE, runHeartbeat, createHeartbeatJob, planVerdictId } from '../src/index.js';
+import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE, runHeartbeat, createHeartbeatJob, planVerdictId, boardSubject, advisorPrompt, chairPrompt, boardAgenda } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
 
@@ -516,5 +516,86 @@ describe('the chief executive is an office, not the id `ceo` (final review I1/I2
       expect(prompts[0].system).toContain('# Your charter (COO)');
       expect(prompts[0].system).toContain(readFileSync(path.join(dir, 'Roles/coo.md'), 'utf8').split('---').slice(2).join('---').trim().split('\n')[0]);
     } finally { v.close(); }
+  });
+});
+
+const IDEA_SUBJECT = { kind: 'idea' as const, text: '# Meal kits\n\n## Score\n\n46 of 60', title: 'Meal kits for nurseries', slug: 'meal-kits' };
+
+describe('one board session, two subjects (spec §3)', () => {
+  it("reads a bare string as this cycle's plan, so SP2's callers are unchanged", () => {
+    expect(boardSubject(PLAN_TEXT)).toEqual({ kind: 'plan', text: PLAN_TEXT, title: "this cycle's plan" });
+    expect(boardSubject(IDEA_SUBJECT)).toBe(IDEA_SUBJECT);
+  });
+
+  it('keeps the pre-mortem wording the plan path already has', () => {
+    expect(advisorPrompt(boardSubject(PLAN_TEXT))).toContain('Imagine the cycle has already failed');
+    expect(advisorPrompt(boardSubject(PLAN_TEXT))).toContain(PLAN_TEXT);
+    expect(chairPrompt(boardSubject(PLAN_TEXT), 't')).toContain('VERDICT: pass');
+    expect(chairPrompt(boardSubject(PLAN_TEXT), 't')).toContain('would waste the cycle');
+  });
+
+  it('asks a different question of an idea, and says who decides', () => {
+    expect(advisorPrompt(IDEA_SUBJECT)).toContain('spent a quarter on this and it failed');
+    expect(advisorPrompt(IDEA_SUBJECT)).not.toContain('Imagine the cycle has already failed');
+    expect(chairPrompt(IDEA_SUBJECT, 'advisors said things')).toContain('the owner does');
+    expect(boardAgenda(IDEA_SUBJECT)).toBe('Idea review: Meal kits for nurseries');
+    expect(boardAgenda(boardSubject(PLAN_TEXT))).toContain('Pre-mortem');
+  });
+
+  // The scripted models in scripts/lib/org-llm.ts route the board's calls on the words of the last prompt, and
+  // both chairs ask for the same verdict line — so the only thing keeping an idea session from spending the
+  // plan's scripted veto is that each chair prompt names its own subject. Assert the phrases, not the routing.
+  it('names its own subject in the chair prompt, so a scripted board can tell the two apart', () => {
+    expect(chairPrompt(boardSubject(PLAN_TEXT), 't')).toContain('this plan');
+    expect(chairPrompt(boardSubject(PLAN_TEXT), 't')).not.toContain('this idea');
+    expect(chairPrompt(IDEA_SUBJECT, 't')).toContain('this idea');
+    expect(chairPrompt(IDEA_SUBJECT, 't')).not.toContain('this plan');
+  });
+
+  it('truncates a very long subject rather than blowing the prompt budget', () => {
+    const huge = { kind: 'idea' as const, text: 'x'.repeat(9000), title: 'Huge', slug: 'huge' };
+    expect(advisorPrompt(huge).length).toBeLessThan(5000);
+  });
+
+  it('lights the board room for the plan pre-mortem as well as for an idea (spec §6.1)', async () => {
+    const llm = tierRecordingLlm();
+    const vault = Vault.open(dir);
+    try {
+      const org = loadOrg(vault);
+      await runBoardSession({ vault, llm }, org, PLAN_TEXT);
+      const opened = vault.events.query({ types: ['meeting.opened'] }).at(-1)!;
+      expect(opened.payload.room).toBe('board');
+      expect(opened.payload.subject).toBe('plan');
+      expect(opened.payload.participants).toEqual(['advisor_skeptic', 'advisor_investor', 'advisor_customer']);
+      expect(vault.events.query({ types: ['meeting.turn'] }).length).toBe(3);
+      const closed = vault.events.query({ types: ['meeting.closed'] }).at(-1)!;
+      expect(closed.payload.id).toBe(opened.payload.id);
+      expect(closed.payload.verdict).toBe('pass');
+      // A board session is not a unit of work: the job note is the record, and the viewer keys the board room
+      // on the event, so neither end of the meeting carries a job (spec §6.2).
+      expect(opened.job).toBe(null);
+      expect(closed.job).toBe(null);
+
+      await runBoardSession({ vault, llm }, org, IDEA_SUBJECT);
+      const idea = vault.events.query({ types: ['meeting.opened'] }).at(-1)!;
+      expect(idea.payload.subject).toBe('idea');
+      expect(idea.payload.title).toBe('Meal kits for nurseries');
+      expect(idea.payload.agenda).toContain('Idea review');
+      // Two sessions, two ids — the viewer must never close the wrong meeting.
+      expect(idea.payload.id).not.toBe(opened.payload.id);
+    } finally { vault.close(); }
+  });
+
+  // The no-board path returns before any advisor is asked, so the room must stay dark rather than showing a
+  // meeting that never opens a chair (M5).
+  it('emits nothing when there is no board room to sit in', async () => {
+    const vault = Vault.open(dir);
+    try {
+      const org = loadOrg(vault);
+      const noBoard = { ...org, teams: Object.fromEntries(Object.entries(org.teams).filter(([id]) => id !== 'board')) };
+      const session = await runBoardSession({ vault, llm: tierRecordingLlm() }, noBoard, IDEA_SUBJECT);
+      expect(session.subject).toBe(IDEA_SUBJECT);
+      expect(vault.events.query({ types: ['meeting.opened'] }).length).toBe(0);
+    } finally { vault.close(); }
   });
 });
