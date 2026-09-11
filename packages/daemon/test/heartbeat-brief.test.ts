@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, listJobs, createJob, updateJob, createProposal, loadOrg, createStream, writeCiRecord } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, mockedServices, mockedServicesRow, modelUseRows, planningGate, divisionPlanGoal } from '../src/index.js';
+import { Daemon, defaultConfig, mockedServices, mockedServicesRow, modelUseRows, isKeyProblemDowngrade, planningGate, divisionPlanGoal } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
 
@@ -108,6 +108,30 @@ describe('degraded-mode row (the team ran on the local model)', () => {
       expect(facts).toContain('Model use: 10 calls, 1 downgraded to local');
       expect(facts).not.toContain('ran mostly on the local model');
     } finally { v2.close(); await d2.stop(); }
+  }, TEST_MS);
+
+  it('isKeyProblemDowngrade: a division-budget demotion is not a keys problem, only a cascade downgrade is', () => {
+    expect(isKeyProblemDowngrade({ downgraded: true, reason: 'division budget' })).toBe(false);
+    expect(isKeyProblemDowngrade({ downgraded: true, reason: 'cascade' })).toBe(true);
+    expect(isKeyProblemDowngrade({ downgraded: true })).toBe(true);   // no reason at all still counts (the pre-budget shape)
+    expect(isKeyProblemDowngrade({ downgraded: false, reason: 'division budget' })).toBe(false);
+  });
+
+  it('a window entirely demoted by division budget never trips "check your API keys" — that would blame the wrong thing', async () => {
+    const seed = Vault.open(dir);
+    for (let i = 0; i < 6; i++) {
+      seed.events.emit({ type: 'router.call', agent: 'ceo', payload: { provider: 'gemini', model: 'gemini-3.5-flash', tier: 'cheap', tokens: { prompt_tokens: 1, completion_tokens: 1 }, tools: 'native', downgraded: true, reason: 'division budget' } });
+    }
+    seed.close();
+    const d = daemonFor(orgLlm({ vetoes: 0 }), { ...NO_KEYS, GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q', OPENROUTER_API_KEY: 'o' });
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      const facts = factsOf(lastBrief(v));
+      expect(facts).toContain('Model use: 6 calls, 0 downgraded to local');
+      expect(facts).not.toContain('ran mostly on the local model');
+    } finally { v.close(); await d.stop(); }
   }, TEST_MS);
 });
 
