@@ -205,7 +205,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   // below still force local routing regardless of tier.
   const tier = effectiveTier(job.model_tier, role.model_tier);
   const routeReq: RouteRequest = { tier, needsTools: true, privacy, roleId };
-  const isLeadOrCeo = isLead(org, roleId) || roleId === 'ceo';
+  const isLeadOrCeo = isLead(org, roleId) || roleId === officeHolder(org, 'chief_executive');
   const maxSteps = privacy === 'local' || tier === 'local' ? (deps.localMaxSteps ?? DEFAULT_LOCAL_MAX_STEPS) : (deps.maxSteps ?? (isLeadOrCeo ? DEFAULT_MAX_STEPS : DEFAULT_MEMBER_MAX_STEPS));
   const promptBudget = deps.llm.promptBudget?.(routeReq) ?? 6000;
 
@@ -326,7 +326,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
    */
   const secondPairOfEyes = (gate: string, assignee: string, author: string): string | null => {
     const team = org.teams[gateRoom(gate)] ?? teamOf(org, assignee);
-    const candidates = [...(team?.members ?? []), team?.lead ?? '', leadOf(org, assignee) ?? '', 'ceo'];
+    const candidates = [...(team?.members ?? []), team?.lead ?? '', leadOf(org, assignee) ?? '', officeHolder(org, 'chief_executive')];
     return candidates.find((c) => c && c !== author && org.roles[c]) ?? null;
   };
 
