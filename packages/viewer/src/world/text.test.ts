@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RES, FONT, MONO, NAME_LABEL_ZOOM, NAME_LABEL_PX, DESK_PITCH_PX, nameLabelView, nameLabelScale, nameLabelChars, nameLabelStyle, signLabelStyle } from './text.js';
+import { RES, FONT, MONO, NAME_LABEL_ZOOM, NAME_LABEL_PX, DESK_PITCH_PX, nameLabelView, nameLabelScale, nameLabelChars, nameLabelText, nameLabelStyle, signLabelStyle } from './text.js';
 import { PALETTE } from './palette.js';
 import { cut } from '../ui/headlines.js';
 
@@ -76,5 +76,42 @@ describe('how much of a name is shown', () => {
       expect(cut(name, budget).length * NAME_LABEL_PX * 0.55, name).toBeLessThanOrEqual(DESK_PITCH_PX * 2);
     }
     expect(cut('Sales 1', budget)).toBe('Sales 1');   // a short name is never touched
+  });
+});
+
+/**
+ * I9: the QA room is six desks whose names all begin "QA ", and at zoom 2 — the zoom labels appear at — three of
+ * the six ran out of room and ended in an ellipsis, so the room read as a column of "QA …". The group is what the
+ * room sign above the desks already says; the word after it is what tells the six apart.
+ */
+describe('what a desk label says when the name will not fit', () => {
+  const QA = ['QA Lead', 'QA Automation', 'QA Exploratory', 'QA Performance', 'QA Security', 'QA Release'];
+  it('shows every QA desk whole and distinct at the zoom the labels appear at', () => {
+    const chars = nameLabelChars(NAME_LABEL_ZOOM);
+    const shown = QA.map((n) => nameLabelText(n, chars));
+    expect(new Set(shown).size).toBe(QA.length);
+    for (const s of shown) { expect(s.length).toBeLessThanOrEqual(chars); expect(s, s).not.toContain('…'); }
+  });
+  it('was not true of a plain cut, which is the bug: half the room trailed off', () => {
+    const chars = nameLabelChars(NAME_LABEL_ZOOM);
+    expect(QA.map((n) => cut(n, chars)).filter((s) => s.includes('…')).length).toBe(3);
+  });
+  it('leaves a name that fits exactly as it is', () => {
+    expect(nameLabelText('QA Lead', 12)).toBe('QA Lead');
+    expect(nameLabelText('CTO', 12)).toBe('CTO');
+    expect(nameLabelText('QA Automation', null)).toBe('QA Automation');
+  });
+  it('drops only a short group tag, never a real first word', () => {
+    expect(nameLabelText('QA Automation', 7)).toBe(cut('Automation', 7));
+    expect(nameLabelText('Head of Growth', 7)).toBe(cut('Head of Growth', 7));   // "Head" is the name, not a tag
+  });
+  it('leaves the rest of the roster alone at the zoom labels appear at', () => {
+    const chars = nameLabelChars(NAME_LABEL_ZOOM);
+    // Names that fit are untouched whatever they start with, so "Dev Manager" does not become "Manager" and
+    // "CFO / CRO" does not become "/ CRO".
+    for (const n of ['Dev Manager', 'CFO / CRO', 'The Skeptic', 'CTO', 'SRE', 'Sales 1']) expect(nameLabelText(n, chars), n).toBe(n);
+  });
+  it('falls back to a plain cut for a single long word', () => {
+    expect(nameLabelText('Administrator', 7)).toBe(cut('Administrator', 7));
   });
 });

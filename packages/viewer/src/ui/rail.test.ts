@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { railHtml, deepen, floorDeep, type FloorInfo } from './rail.js';
+import { railHtml, deepen, floorDeep, deepChanges, type FloorInfo } from './rail.js';
 import { contrastRatio } from './tokens.js';
 import { floorPalette } from '../world/palette.js';
 
@@ -46,5 +46,24 @@ describe('the current tab reads on every floor colour', () => {
   it('the raw tints it replaces would not have passed', () => {
     expect(contrastRatio('#ffffff', floorPalette(4).tab)).toBeLessThan(4.5);
     expect(floorDeep(4)).toBe(deepen(floorPalette(4).tab));
+  });
+});
+
+/** M10: `update()` runs twice a second off the rAF loop and wrote four custom properties every beat regardless. */
+describe('the rail writes a floor fill only when it moves', () => {
+  it('reports every floor the first time and nothing on an unchanged beat', () => {
+    const first = deepChanges({}, summary);
+    expect(Object.keys(first).map(Number).sort()).toEqual([1, 2, 3, 4]);
+    expect(first[4]).toBe(deepen('#d9863a'));
+    expect(deepChanges(first, summary)).toEqual({});
+  });
+  it('reports just the floor whose tint changed', () => {
+    const prev = deepChanges({}, summary);
+    const repainted = summary.map((f) => (f.floor === 3 ? { ...f, color: '#123456' } : f));
+    expect(deepChanges(prev, repainted)).toEqual({ 3: deepen('#123456') });
+  });
+  it('reports a floor it has never seen, so a fifth floor is not left unpainted', () => {
+    const prev = deepChanges({}, summary);
+    expect(deepChanges(prev, [...summary, { floor: 5, color: '#654321' }])).toEqual({ 5: deepen('#654321') });
   });
 });

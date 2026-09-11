@@ -1,7 +1,7 @@
 import type { Router } from '@cubicle/router';
 import type { ToolContext } from './registry.js';
 import { QuotaTracker } from '@cubicle/router';
-import { existsSync, readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { existsSync, readdirSync, lstatSync, realpathSync, openSync, readSync, closeSync } from 'node:fs';
 import path from 'node:path';
 
 export interface Guardrail {
@@ -182,17 +182,42 @@ function readHead(abs: string, size: number): string {
 }
 
 /**
+ * True when `abs` is not confined under `vaultRootReal` — either `abs` itself is a symlink (so it must never be
+ * handed to `readdirSync`/read, which would silently follow it), or its resolved real path lands outside the
+ * vault (a symlink higher up the chain, or a bind mount, having the same effect). Checked before a directory is
+ * pushed onto the walk stack — the walk root included — and before a file is read.
+ */
+function escapesVault(abs: string, vaultRootReal: string): boolean {
+  let lst;
+  try { lst = lstatSync(abs); } catch { return true; }
+  if (lst.isSymbolicLink()) return true;
+  let real: string;
+  try { real = realpathSync(abs); } catch { return true; }
+  return real !== vaultRootReal && !real.startsWith(vaultRootReal + path.sep);
+}
+
+/**
  * Same scan, walking the real filesystem under `root` instead of `Vault#list`. A deploy directory such as
  * `Site/dist` is a cache path (guard.ts `isCachePath`) so the vault API — deliberately — never lists or writes
  * it; a scan that publishes those very bytes has to look anyway.
  *
- * Skips `node_modules`/`.git`/`.cubicle`, never follows symlinks, and stops after `MAX_SCAN_FILES` files —
- * returning `{ capped: true }` rather than silently reporting the directory clean, so the caller refuses the
- * deploy instead of vouching for content it never actually looked at.
+ * Skips `node_modules`/`.git`/`.cubicle`, never follows symlinks — including a symlink AT the walk root itself:
+ * `readdirSync(path.join(root, dirRel))` transparently follows a symlinked `dirRel`, so `ln -s /outside
+ * Site/dist` used to let a `deploy.site { dir: "Site/dist" }` walk read outside the vault entirely and report
+ * it back under the `Site/dist/...` name (review-T7 fix round 2 CRITICAL) — so every directory is lstat'd and
+ * realpath-confined *before* it is pushed onto the stack, the root included, and every file is lstat'd before
+ * its contents are read. A symlink anywhere in the tree is itself a finding: the walk refuses rather than
+ * silently skipping it (silently skipping would let an agent hide a secret behind a symlink and have the
+ * deploy sail through clean). Also stops after `MAX_SCAN_FILES` files — returning `{ capped: true }` rather
+ * than silently reporting the directory clean, so the caller refuses the deploy instead of vouching for
+ * content it never actually looked at.
  */
-function scanDirRaw(root: string, dirRel: string): { file: string; hits: string[] } | { capped: true } | null {
+function scanDirRaw(root: string, dirRel: string): { file: string; hits: string[] } | { capped: true } | { symlink: string } | null {
   const abs = path.join(root, dirRel);
   if (!existsSync(abs)) return null;
+  let vaultRootReal: string;
+  try { vaultRootReal = realpathSync(root); } catch { return null; }
+  if (escapesVault(abs, vaultRootReal)) return { symlink: `symlink in ${dirRel}: ${dirRel}` };
   const stack = [abs];
   let scanned = 0;
   while (stack.length) {
@@ -200,20 +225,23 @@ function scanDirRaw(root: string, dirRel: string): { file: string; hits: string[
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
     for (const e of entries) {
-      if (e.isSymbolicLink()) continue; // never follow links (a sandbox could plant one)
-      if (e.isDirectory()) {
+      const abs2 = path.join(dir, e.name);
+      const rel = path.relative(root, abs2).split(path.sep).join('/');
+      let lst;
+      try { lst = lstatSync(abs2); } catch { continue; }
+      if (lst.isSymbolicLink()) return { symlink: `symlink in ${dirRel}: ${rel}` };
+      if (lst.isDirectory()) {
         if (SKIP_DIRS.has(e.name)) continue;
-        stack.push(path.join(dir, e.name));
+        if (escapesVault(abs2, vaultRootReal)) return { symlink: `symlink in ${dirRel}: ${rel}` };
+        stack.push(abs2);
         continue;
       }
       if (scanned >= MAX_SCAN_FILES) return { capped: true };
       scanned++;
-      const abs2 = path.join(dir, e.name);
-      const rel = path.relative(root, abs2).split(path.sep).join('/');
       if (!SCANNABLE.test(rel)) continue;
       let text: string;
       try {
-        text = readHead(abs2, statSync(abs2).size);
+        text = readHead(abs2, lst.size);
       } catch { continue; }
       const hits = scanForSecrets(text);
       if (hits.length) return { file: rel, hits };
@@ -229,26 +257,139 @@ function scanDirRaw(root: string, dirRel: string): { file: string; hits: string[
  */
 const GIT_VALUE_FLAGS = new Set(['-C', '-c']);
 
+/** True when `t` names `git`, allowing for a path-qualified invocation such as `/usr/bin/git`. */
+function isGitToken(t: string): boolean {
+  return /(^|\/)git$/.test(t);
+}
+
+/** The final path component, so `/bin/bash` and `bash` are recognised the same way. */
+function basename(t: string): string {
+  const i = t.lastIndexOf('/');
+  return i < 0 ? t : t.slice(i + 1);
+}
+
+/**
+ * Splits a command line into `&&`/`||`/`;`/`|`/newline-separated segments, but only on occurrences of those
+ * operators outside a quoted string — `bash -lc "git commit -m x; echo done"` must stay one segment for the
+ * shell it hands to `-c`, even though it contains a literal `;`.
+ */
+function splitTopLevel(command: string): string[] {
+  const segments: string[] = [];
+  let cur = '';
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (quote) {
+      cur += c;
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { quote = c; cur += c; continue; }
+    if (c === '\n' || c === ';' || c === '|') {
+      // `&&`/`||` share their first character with a bare `&`/`|`; only split on the doubled form.
+      if ((c === '|') && command[i + 1] === '|') { segments.push(cur); cur = ''; i++; continue; }
+      segments.push(cur); cur = '';
+      continue;
+    }
+    if (c === '&' && command[i + 1] === '&') { segments.push(cur); cur = ''; i++; continue; }
+    cur += c;
+  }
+  segments.push(cur);
+  return segments;
+}
+
+/**
+ * Splits one segment into shell-style tokens: whitespace separates tokens outside quotes, and a quoted span
+ * (its surrounding `'`/`"` stripped) is part of the token it appears in even when it contains embedded
+ * whitespace — so `sh -c "git push"` and `bash -lc "git commit -m x"` tokenise to a single trailing token
+ * (`git push`, `git commit -m x`) that can itself be recursed into, rather than being split apart on the
+ * spaces inside the quotes and losing the leading `"git` token that the old plain `split(/\s+/)` produced.
+ */
+function tokenize(segment: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  const n = segment.length;
+  while (i < n) {
+    while (i < n && /\s/.test(segment[i])) i++;
+    if (i >= n) break;
+    let tok = '';
+    while (i < n && !/\s/.test(segment[i])) {
+      const c = segment[i];
+      if (c === '"' || c === "'") {
+        const q = c;
+        i++;
+        const start = i;
+        while (i < n && segment[i] !== q) i++;
+        tok += segment.slice(start, i);
+        if (i < n) i++; // skip the closing quote
+      } else {
+        tok += c;
+        i++;
+      }
+    }
+    tokens.push(tok);
+  }
+  return tokens;
+}
+
+/**
+ * True when `tokens` (one already-tokenised segment) directly invokes `git commit` or `git push`: walks past
+ * `git`'s global flags (skipping a flag's value token where one applies, e.g. `-C dir`, `-c k=v`) to the first
+ * non-flag word — git's subcommand.
+ */
+function segmentPublishes(tokens: string[]): boolean {
+  const gitIdx = tokens.findIndex(isGitToken);
+  if (gitIdx < 0) return false;
+  let i = gitIdx + 1;
+  while (i < tokens.length) {
+    const t = tokens[i];
+    if (t.startsWith('-')) { i += GIT_VALUE_FLAGS.has(t) ? 2 : 1; continue; }
+    if (t === 'commit' || t === 'push') return true;
+    break; // some other subcommand (status, log, add, ...): not a publish
+  }
+  return false;
+}
+
+/**
+ * When a segment invokes `sh`/`bash`/`zsh`/`dash` with a `-c` (bare or combined into a short-flag cluster like
+ * `-lc`, `-eic`) command-string argument, returns that argument so the caller can recurse into it as its own
+ * command line. Returns null when the segment doesn't shape up that way (no such shell, or a script path
+ * rather than a `-c` string).
+ */
+function extractShellDashC(tokens: string[]): string | null {
+  const shIdx = tokens.findIndex((t) => /^(sh|bash|zsh|dash)$/.test(basename(t)));
+  if (shIdx < 0) return null;
+  let cSeen = false;
+  for (let i = shIdx + 1; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.startsWith('-') && !t.startsWith('--')) {
+      if (t.includes('c')) cSeen = true;
+      continue;
+    }
+    return cSeen ? t : null;
+  }
+  return null;
+}
+
 /**
  * True when a shell command line actually commits or pushes, rather than merely mentioning git. Tokenises each
- * `&&`/`||`/`;`/`|`-separated segment and walks past `git`'s global flags (skipping a flag's value token where
- * one applies, e.g. `-C dir`, `-c k=v`) to the first non-flag word — git's subcommand. A bare regex match on
- * "git ... commit" missed `git -C dir push` and `git -c k=v commit`, since a flag's own value token (`dir`,
- * `k=v`) does not start with `-` and broke the old flags-only lookahead.
+ * `&&`/`||`/`;`/`|`-separated segment (quote-aware, so a quoted argument's own operators and spaces don't
+ * break the split) and checks it directly for `git commit`/`git push`; a segment that instead hands a command
+ * string to `sh -c`/`bash -lc`/`zsh -c`/`dash -c` recurses into that string the same way.
+ *
+ * Fix round 2 (review-T7 fix round 1 IMPORTANT): an exact-token `tokens.indexOf('git')` on a plain
+ * `split(/\s+/)` missed `/usr/bin/git push` (the token is `/usr/bin/git`, not `git`) and any quoted `-c`
+ * command string (`sh -c "git push"` tokenised to a broken leading `"git` token, so no token equalled `git`
+ * at all). `isGitToken` matches on the basename instead of exact equality, and `tokenize`/`extractShellDashC`
+ * recover the quoted command string so it can be checked as its own command line.
  */
 export function commandPublishes(command: string): boolean {
-  const segments = command.split(/&&|\|\||;|\||\n/);
-  for (const seg of segments) {
-    const tokens = seg.trim().split(/\s+/).filter(Boolean);
-    const gitIdx = tokens.indexOf('git');
-    if (gitIdx < 0) continue;
-    let i = gitIdx + 1;
-    while (i < tokens.length) {
-      const t = tokens[i];
-      if (t.startsWith('-')) { i += GIT_VALUE_FLAGS.has(t) ? 2 : 1; continue; }
-      if (t === 'commit' || t === 'push') return true;
-      break; // some other subcommand (status, log, add, ...): not a publish
-    }
+  for (const seg of splitTopLevel(command)) {
+    const tokens = tokenize(seg);
+    if (tokens.length === 0) continue;
+    if (segmentPublishes(tokens)) return true;
+    const sub = extractShellDashC(tokens);
+    if (sub !== null && commandPublishes(sub)) return true;
   }
   return false;
 }
@@ -294,6 +435,7 @@ export function secretsGuardrail(): Guardrail {
         if (dir === null) return null;
         const hit = scanDirRaw(ctx.vault.root, dir);
         if (hit && 'capped' in hit) return `secret scan: ${dir} has more than ${MAX_SCAN_FILES} files; refusing to deploy a directory this large without finishing the scan. Trim the build output, or ask the CISO to review it directly.`;
+        if (hit && 'symlink' in hit) return `secret scan: ${hit.symlink} — refusing to deploy a directory that contains a symlink. A symlinked deploy path can point outside the vault; replace it with a real file or directory and try again.`;
         return hit ? `secret scan: ${hit.hits.join(', ')} found in ${hit.file}, which deploy.site would publish. ${SECRET_ADVICE}` : null;
       }
       if (tool !== 'git.commit' && !(tool === 'shell.run' && typeof args.command === 'string' && commandPublishes(args.command))) return null;

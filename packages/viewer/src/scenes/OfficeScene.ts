@@ -5,7 +5,7 @@ import { T } from '../world/tiles.js';
 import { AgentSprite } from '../world/agents.js';
 import { Surface } from '../world/surfaces.js';
 import { SURFACES } from '../ui/surfaces.js';
-import { DecorLayer, RoomSigns } from '../world/decor.js';
+import { DecorLayer, RoomSigns, RAIL_PX } from '../world/decor.js';
 import { initialElevator, request, cancel, step, type ElevatorState, type ElevatorEvent, type Rider } from '../world/elevator.js';
 import { ZOOM_STEPS, zoomSnap, fitZoom, floorZoom } from '../world/camera.js';
 import { skyRect, nightRect, backdropColour } from '../world/backdrop.js';
@@ -88,7 +88,7 @@ export class OfficeScene extends Phaser.Scene {
     }
     makeDecorSheet(this);
     this.decor = new DecorLayer(this, this.world.decor);
-    this.signs = new RoomSigns(this, this.world.signs);
+    this.signs = new RoomSigns(this, this.world.signs, this.world.rooms);
     this.elev = initialElevator(this.world.floors, 1);
     // Phaser calls `scene.sys.shutdown()`, never a `shutdown()` method on the Scene itself — it emits this event on
     // `this.events`, which is only guaranteed to exist once we're inside a lifecycle callback like `create()`.
@@ -235,6 +235,8 @@ export class OfficeScene extends Phaser.Scene {
     // the viewport rectangle on the minimap
     const wv = cam.worldView;
     this.viewRect.setPosition(wv.x, wv.y).setSize(wv.width, wv.height);
+    // Room signs slide right along their own wall rather than disappearing under the floor rail.
+    this.signs.update(wv.x + RAIL_PX / cam.zoom);
     // day / night
     const hour = this.hour();
     this.night.setFillStyle(nightColourFor(hour), tintFor(hour));

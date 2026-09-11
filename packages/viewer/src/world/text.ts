@@ -5,6 +5,7 @@
  * font stacks were in use. Pure — no Phaser, no DOM — so the zoom rule below is a unit test rather than a shot.
  */
 import { PALETTE } from './palette.js';
+import { cut } from '../ui/headlines.js';
 
 /** Text is rasterised at 3× the size it is drawn at, then scaled back down, so it stays crisp under camera zoom. */
 export const RES = 3;
@@ -56,6 +57,27 @@ export const LABEL_CHAR_W = 0.55;
  * into its neighbours and the row is no more readable than the smear it replaced.
  */
 export function nameLabelChars(zoom: number): number { return Math.max(4, Math.floor((DESK_PITCH_PX * zoom) / (NAME_LABEL_PX * LABEL_CHAR_W))); }
+
+/**
+ * What a desk label actually says at `chars` columns.
+ *
+ * Sibling roles share a head — QA Lead, QA Automation, QA Performance, QA Security, QA Release all start "QA " —
+ * and a plain cut turned five desks in the QA room into five copies of the same truncated prefix. When the whole
+ * name will not fit and the leading word is a short group tag, the group is what a glance already knows from the
+ * room it is standing in; the word after it is the one that tells the five apart, so that is what survives.
+ * A name that fits is never touched, so "QA Lead" stays "QA Lead".
+ */
+export const GROUP_TAG_MAX = 3;
+export function nameLabelText(display: string, chars: number | null): string {
+  const name = display.trim();
+  if (chars === null || name.length <= chars) return name;
+  const gap = name.indexOf(' ');
+  if (gap > 0 && gap <= GROUP_TAG_MAX) {
+    const rest = name.slice(gap + 1).trim();
+    if (rest) return cut(rest, chars);
+  }
+  return cut(name, chars);
+}
 
 /** `chars: null` means no limit — the one sprite the pointer is on, or the one the panel is open for, shows its whole name. */
 export interface LabelView { visible: boolean; scale: number; chars: number | null }
