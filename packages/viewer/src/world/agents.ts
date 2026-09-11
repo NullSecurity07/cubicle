@@ -211,59 +211,62 @@ export class AgentSprite {
     const want = view.state === 'leaving' ? 'door' : view.state === 'entering' ? 'home' : view.target ?? (view.state === 'walking' && !view.target ? 'home' : this.currentTarget ?? 'home');
     if (want !== this.currentTarget && !this.detour) { this.currentTarget = want; this.goTo(this.world.seats[want] ? (this.seat ? 'seat' : want) : want); }
     if (this.car) {
-      // in the car: visible, masked to the shaft, standing on the car floor, riding (pose:ride), facing the viewer
+      // in the car: visible, masked to the shaft, standing on the car floor, riding (pose:ride), facing the viewer;
+      // no shadow (there is no floor light to cast one onto), and any walk-settle squash in flight is cut short
       this.container.setPosition(this.car.x, this.car.y + 3 * TILE - 2);
       this.step = 0; this.body.y = 0; this.dir = 0;
+      this.scene.tweens.killTweensOf(this.body); this.body.setScale(1, 1); this.wasMoving = false;
       this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0, pose: 'ride' }));
-      this.updateFace(dt, nowMs, view);
-      this.dot.setPosition(this.container.x, this.container.y).setVisible(view.state !== 'offline');
-      return;
-    }
-    // a sprite is never seated in a chair while walking or waiting for the car; only the standing branch below can hide it
-    this.shadow.setVisible(true);
-    // move along the path
-    if (this.path.length) {
-      const next = this.path[0];
-      const dx = next.x - this.container.x, dy = next.y - this.container.y;
-      const d = Math.hypot(dx, dy);
-      const ease = this.departing > 0 ? 1 - (this.departing / (DUR.depart / 1000)) * 0.6 : 1;   // 100 ms ease-in from 40 % speed
-      this.departing = Math.max(0, this.departing - dt);
-      const stepLen = SPEED * dt * ease;
-      if (d <= stepLen) { this.container.setPosition(next.x, next.y); this.path.shift(); }
-      else { this.container.x += (dx / d) * stepLen; this.container.y += (dy / d) * stepLen; }
-      this.walked += stepLen;
-      this.dir = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 1 : 2) : dy < 0 ? 3 : 0;
-      this.frameTimer += dt;
-      if (this.frameTimer * 1000 > WALK_STEP_MS) { this.frameTimer = 0; this.step = (this.step + 1) % WALK_FRAMES; }
-      this.body.setFrame(frameFor({ moving: true, dir: this.dir as Dir, step: this.step }));
-      this.body.y = BOB[this.step];
-      this.shadow.setScale(BOB[this.step] ? 0.9 : 1, 1); this.wasMoving = true;
-      if (!this.path.length) this.walkFinished(view);
-      this.gesture = 'none';
-    } else if (this.waitingRide) {
-      // at the elevator door: stand facing it until the car opens
-      this.step = 0; this.body.y = 0; this.dir = 2;
-      this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0 }));
+      this.shadow.setVisible(false);
     } else {
-      if (this.wasMoving) {   // settle: a short squash, then spring back
-        this.wasMoving = false;
-        this.scene.tweens.killTweensOf(this.body);   // a multi-leg route can re-enter this branch before the previous settle finished
-        this.body.setScale(1.06, 0.92);
-        this.scene.tweens.add({ targets: this.body, scaleX: 1, scaleY: 1, duration: dur(DUR.settle), ease: EASE.spring });
+      // a sprite is never seated in a chair while walking or waiting for the car; only the standing branch below can hide it
+      this.shadow.setVisible(true);
+      // move along the path
+      if (this.path.length) {
+        const next = this.path[0];
+        const dx = next.x - this.container.x, dy = next.y - this.container.y;
+        const d = Math.hypot(dx, dy);
+        const ease = this.departing > 0 ? 1 - (this.departing / (DUR.depart / 1000)) * 0.6 : 1;   // 100 ms ease-in from 40 % speed
+        this.departing = Math.max(0, this.departing - dt);
+        const stepLen = SPEED * dt * ease;
+        if (d <= stepLen) { this.container.setPosition(next.x, next.y); this.path.shift(); }
+        else { this.container.x += (dx / d) * stepLen; this.container.y += (dy / d) * stepLen; }
+        this.walked += stepLen;
+        this.dir = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 1 : 2) : dy < 0 ? 3 : 0;
+        this.frameTimer += dt;
+        if (this.frameTimer * 1000 > WALK_STEP_MS) { this.frameTimer = 0; this.step = (this.step + 1) % WALK_FRAMES; }
+        this.body.setFrame(frameFor({ moving: true, dir: this.dir as Dir, step: this.step }));
+        this.body.y = BOB[this.step];
+        this.shadow.setScale(BOB[this.step] ? 0.9 : 1, 1); this.wasMoving = true;
+        if (!this.path.length) this.walkFinished(view);
+        this.gesture = 'none';
+      } else if (this.waitingRide) {
+        // at the elevator door: stand facing it until the car opens
+        this.step = 0; this.body.y = 0; this.dir = 2;
+        this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0 }));
+      } else {
+        if (this.wasMoving) {   // settle: a short squash, then spring back
+          this.wasMoving = false;
+          this.scene.tweens.killTweensOf(this.body);   // a multi-leg route can re-enter this branch before the previous settle finished
+          this.body.setScale(1.06, 0.92);
+          this.scene.tweens.add({ targets: this.body, scaleX: 1, scaleY: 1, duration: dur(DUR.settle), ease: EASE.spring });
+        }
+        this.shadow.setScale(1, 1);
+        this.step = 0;
+        this.body.y = 0;
+        if (this.detour === 'sit') { this.sitLeft -= dt * 1000; this.dir = 0; if (this.sitLeft <= 0) this.endDetour(); }
+        const atDesk = this.currentTarget === 'home' && view.state !== 'walking' && !this.riding;
+        if (atDesk) { this.dir = 0; this.idleLife(dt, nowMs, view); if (this.gesture === 'look_left') this.dir = 1; else if (this.gesture === 'look_right') this.dir = 2; }
+        else if (ctx.speaker && ctx.speaker.role !== view.role && (view.target === 'boardroom' || view.target === 'meetingroom')) this.dir = faceToward({ x: this.container.x, y: this.container.y }, ctx.speaker);
+        const sideSeat: PoseCtx['sideSeat'] = this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 1 ? 'l' : this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 2 ? 'r' : null;
+        const pose = poseFor(view, { atDesk, riding: this.riding, sideSeat, nowMs, gesture: this.gesture, detour: this.detour });
+        this.shadow.setVisible(!this.riding && !isSeatedPose(pose));
+        if (pose) this.dir = pose === 'sit_side_l' ? 1 : pose === 'sit_side_r' ? 2 : 0;
+        this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0, pose }));
       }
-      this.shadow.setScale(1, 1);
-      this.step = 0;
-      this.body.y = 0;
-      if (this.detour === 'sit') { this.sitLeft -= dt * 1000; this.dir = 0; if (this.sitLeft <= 0) this.endDetour(); }
-      const atDesk = this.currentTarget === 'home' && view.state !== 'walking' && !this.riding;
-      if (atDesk) { this.dir = 0; this.idleLife(dt, nowMs, view); if (this.gesture === 'look_left') this.dir = 1; else if (this.gesture === 'look_right') this.dir = 2; }
-      else if (ctx.speaker && ctx.speaker.role !== view.role && (view.target === 'boardroom' || view.target === 'meetingroom')) this.dir = faceToward({ x: this.container.x, y: this.container.y }, ctx.speaker);
-      const sideSeat: PoseCtx['sideSeat'] = this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 1 ? 'l' : this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 2 ? 'r' : null;
-      const pose = poseFor(view, { atDesk, riding: this.riding, sideSeat, nowMs, gesture: this.gesture, detour: this.detour });
-      this.shadow.setVisible(!this.riding && !isSeatedPose(pose));
-      if (pose) this.dir = pose === 'sit_side_l' ? 1 : pose === 'sit_side_r' ? 2 : 0;
-      this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0, pose }));
     }
+    // the rest runs every frame — including while riding — so a bubble/icon/badge/emote frozen at boarding still
+    // expires, and the offline alpha / minimap dot stay correct
     this.updateFace(dt, nowMs, view);
     if (view.tool) { const ic = ICON[view.tool]; this.icon.setText(ic.t).setStyle({ backgroundColor: ic.c }).setVisible(true); } else this.icon.setVisible(false);
     // emote icon above the head (a wave is a pose, not an icon; a coffee stop shows the cup)

@@ -28,7 +28,7 @@
         <button class="txt primary" data-open="cabin">Talk to the CEO</button>
       </nav>
     </header>
-    <nav id="rail" class="glass" aria-label="Floors" hidden></nav>
+    <nav id="rail" class="glass" aria-label="Floors"></nav>
     <div id="coach" class="footnote" hidden></div>
     <div id="scrim" hidden></div>
     <div id="layer" hidden>
@@ -46,9 +46,9 @@
       </section>
     </div>
     <div id="time" class="glass">
-      <button id="live" class="btn">Live</button>
+      <div class="segmented" role="tablist" aria-label="Live or replay"><button id="live" class="seg" role="tab" aria-selected="true"><i class="dot ok"></i>Live</button><button id="replay-load" class="seg" role="tab" aria-selected="false">Replay</button></div>
       <input type="date" id="replay-date" aria-label="Replay date" />
-      <button id="replay-load" class="btn">Replay</button>
+      <span id="sunmoon"></span>
       <input type="range" id="scrub" min="0" max="1000" value="0" disabled aria-label="Replay position" />
       <select id="speed" aria-label="Replay speed"><option>1</option><option>5</option><option>10</option><option selected>25</option><option>50</option></select>
       <span id="clock" class="footnote"></span>
