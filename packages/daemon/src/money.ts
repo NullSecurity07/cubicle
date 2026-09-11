@@ -4,6 +4,7 @@ import {
   HOUSE, LEDGER_PATH, RUNWAY_PATH,
   createJob, readJob, listJobs, listInbox, jobPath, idFromKey,
   officeHolder, teamOf, divisionOf, divisionTeams, subtreeRoles, createProposal, findInboxById, resultBlock,
+  LedgerVetoedError,
 } from '@cubicle/core';
 import { shadowCost, hasPrices, type ModelBudget, type ProvidersFile, type RecordedCall } from '@cubicle/router';
 
@@ -306,6 +307,12 @@ function firstAccrualDay(vault: Vault, cfg: ProvidersFile, now: Date): string {
   return stamp > lookback ? stamp : lookback;
 }
 
+/**
+ * The owner's `never_modify` veto on the book, told apart from a real write failure. Matched by name as well
+ * as by `instanceof`, so a duplicated module instance cannot turn their policy into a crash.
+ */
+const isVeto = (err: unknown): boolean => err instanceof LedgerVetoedError || (err as Error | null)?.name === 'LedgerVetoedError';
+
 /** The date every `model-<date>` accrual row in the book is for, oldest first. */
 function accruedDays(vault: Vault): string[] {
   return readLedger(vault).entries
@@ -331,6 +338,9 @@ function accruedDays(vault: Vault): string[] {
  * On free tiers this writes **nothing** — a row of 0.00 every day would be noise dressed up as bookkeeping, and
  * the runway note already says in words that everything was free. A providers file with no `price:` anywhere
  * cannot produce a charge at all, so it returns before touching the log.
+ *
+ * And if the owner has put the book on their own `never_modify` list, this degrades to one warning rather than
+ * throwing into the heartbeat: an owner who has locked their ledger has not asked the company to stop.
  */
 export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = new Date()): LedgerEntry[] {
   if (!hasPrices(cfg)) return [];
@@ -344,11 +354,27 @@ export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = n
     const to = `${day}T23:59:59.999Z`;
     const cost = shadowCost(cfg, recordedCalls(vault, `${day}T00:00:00.000Z`, to));
     if (cost.cents <= 0) continue;
-    const r = appendEntry(vault, {
-      at: to, kind: 'cost', cents: cost.cents, mode: 'live', who: 'daemon',
-      why: `${cost.paidCalls} model call${cost.paidCalls === 1 ? '' : 's'} on priced models, ${day}`,
-      ref: `model-${day}`,
-    }, 'daemon');
+    let r: { entry: LedgerEntry; added: boolean };
+    try {
+      r = appendEntry(vault, {
+        at: to, kind: 'cost', cents: cost.cents, mode: 'live', who: 'daemon',
+        why: `${cost.paidCalls} model call${cost.paidCalls === 1 ? '' : 's'} on priced models, ${day}`,
+        ref: `model-${day}`,
+      }, 'daemon');
+    } catch (err) {
+      // The owner's own veto (Task 7): they have named the book in `never_modify`, and `appendEntry` refuses
+      // even the privileged `daemon` actor. That is their decision to make, and it is not an error the company
+      // should stop for — the walk gives up for this cycle, says so once on the event log, and the heartbeat
+      // carries on with a book it simply may not add to. Anything else still throws: a disk that will not take
+      // a write is a real failure and must not be swallowed as policy.
+      if (!isVeto(err)) throw err;
+      vault.events.emit({ type: 'daemon.warning', payload: {
+        where: 'money.accrual',
+        path: LEDGER_PATH,
+        reason: `${LEDGER_PATH} is on the owner's never_modify list, so model cost from ${day} onwards was not recorded; nothing else is affected and the company keeps running`,
+      } });
+      break;
+    }
     if (r.added) out.push(r.entry);
   }
   return out;

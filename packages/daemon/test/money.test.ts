@@ -310,6 +310,24 @@ describe('what the models cost (spec §3)', () => {
     expect(String((warned[0].payload as { reason?: string }).reason)).toContain('2027-09-11');
   });
 
+  it('gives up with one warning when the owner has locked the book, and never throws into the cycle', () => {
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    for (const day of ['2026-09-09', '2026-09-10', '2026-09-11']) {
+      vault.events.emit({ type: 'router.call', agent: 'ceo', ts: `${day}T10:00:00.000Z`, payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
+    }
+    // The owner's veto is their decision, not a failure: the walk stops, the book stays untouched, and the
+    // heartbeat's money step carries on rather than dying three days deep in an arithmetic loop.
+    expect(accrueModelCosts(vault, PRICED, NOW)).toEqual([]);
+    expect(accrueModelCost(vault, PRICED, NOW)).toBeNull();
+    expect(readLedger(vault).entries).toEqual([]);
+    // Once per call, not once per day of the walk.
+    const warned = vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === 'money.accrual');
+    expect(warned).toHaveLength(2);                    // one per call above, three days each
+    expect(String((warned[0].payload as { reason?: string }).reason)).toContain('Ledger/ledger.md');
+    expect(String((warned[0].payload as { reason?: string }).reason)).toContain('never_modify');
+  });
+
   it('still reaches back thirty days when the file says nothing about when its prices appeared', () => {
     for (const day of ['2026-09-01', '2026-09-11']) {
       vault.events.emit({ type: 'router.call', agent: 'ceo', ts: `${day}T10:00:00.000Z`, payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
