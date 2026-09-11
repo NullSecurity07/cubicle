@@ -30,7 +30,25 @@ export function orgLlm(opts: { vetoes?: number; plan?: string } = {}): Llm & { c
       if (/^(Build|Announce|Outreach|Measure launch):? /.test(jobTitle) || jobTitle === 'Measure launch') return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Plans/plan.md' } }] };
       if (jobType === 'company.plan') return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content: plan } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
       if (jobType === 'critic.premortem') { const v = vetoes-- > 0; return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: v ? 'too vague' : 'fine', verdict: v ? 'return' : 'pass', findings: v ? ['growth objective has no metric'] : [] } }] }; }
-      if (jobType === 'team.plan') { const member = role === 'dev_manager' ? 'backend_engineer' : role === 'cfo' ? 'research_manager' : null; return { ...base, parsedToolCalls: [n === 0 && member ? { name: 'scheduler.request', args: { type: member === 'backend_engineer' ? 'engineer.ship' : 'research', title: `Do ${role}`, assigned: member, goal: 'g', done_when: 'd', for: member === 'research_manager' ? role : undefined } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] }; }
+      if (jobType === 'team.plan') {
+        const member = role === 'dev_manager' ? 'backend_engineer' : role === 'cfo' ? 'research_manager' : null;
+        const isResearch = member === 'research_manager';
+        const research = isResearch ? {
+          decision: 'Ship the pricing page or keep the waitlist',
+          decision_owner: role,
+          question: 'Does a public price reduce signups?',
+          hypothesis: 'A public price cuts signups by more than 20%',
+          known_evidence: 'Two competitors publish prices',
+          unknowns: 'Whether our visitors are price-sensitive',
+          constraints: 'No paid tooling',
+          deadline: '2026-09-25',
+          required_confidence: 'medium',
+          potential_decisions: ['Publish the price', 'Keep the waitlist'],
+          portfolio: 'incremental',
+          impact: 4, uncertainty: 4, cost_of_being_wrong: 4,
+        } : undefined;
+        return { ...base, parsedToolCalls: [n === 0 && member ? { name: 'scheduler.request', args: { type: isResearch ? 'research' : 'engineer.ship', title: `Do ${role}`, assigned: member, goal: 'g', done_when: 'd', for: isResearch ? role : undefined, research } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
+      }
       return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: `${role} done`, verdict: 'pass' } }] };
     },
     promptBudget: () => 6000,
