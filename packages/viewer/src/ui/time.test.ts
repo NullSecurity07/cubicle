@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hourBucket, skyFor, nightColourFor, lampAlphaFor, tintFor } from './time.js';
+import { hourBucket, skyFor, nightColourFor, lampAlphaFor, tintFor, sunOrMoon } from './time.js';
 import { PALETTE, hexToInt } from '../world/palette.js';
 
 describe('hour buckets', () => {
@@ -28,5 +28,12 @@ describe('night colour and lamps', () => {
     expect(lampAlphaFor(21)).toBe(1);
     expect(lampAlphaFor(19.5)).toBeGreaterThan(0); expect(lampAlphaFor(19.5)).toBeLessThan(1);
     expect(lampAlphaFor(19.5)).toBeCloseTo(tintFor(19.5) / tintFor(23));
+  });
+});
+
+describe('time bar icon', () => {
+  it('shows the sun through the working day and the moon otherwise', () => {
+    expect(sunOrMoon(12)).toBe('sun'); expect(sunOrMoon(6)).toBe('sun'); expect(sunOrMoon(17.9)).toBe('sun');
+    expect(sunOrMoon(18)).toBe('moon'); expect(sunOrMoon(2)).toBe('moon'); expect(sunOrMoon(23.5)).toBe('moon');
   });
 });
