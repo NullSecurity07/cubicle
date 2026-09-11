@@ -5,6 +5,7 @@
  */
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
+import { FOUNDER_BRIEF, founderBriefTemplate } from '@cubicle/core';
 
 export const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n\n### revenue\n- Find the first organic channel\n';
 
@@ -49,6 +50,19 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
       // titles, so this is a no-op everywhere else.
       if (/^(Build|Announce|Outreach|Measure launch):? /.test(jobTitle) || jobTitle === 'Measure launch') return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Plans/plan.md' } }] };
       if (jobType === 'company.plan') return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content: plan } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
+      // Discovery (SP3): read everything once, file one candidate card, propose the founder brief, finish. The
+      // real job also runs `research.start`; the scripted one skips it so a test does not need a project
+      // directory, but it leaves behind exactly what the heartbeat's next two steps read — an `Ideas/<slug>.md`
+      // card for `ideas_board` to price and sit on, and one open `founder_brief` proposal, which is what stops
+      // the next cycle asking the owner the same thing again.
+      if (jobType === 'discovery') {
+        const calls = [
+          { name: 'discovery.inputs', args: { max_chars: 6000 } },
+          { name: 'idea.card', args: { title: 'The idea the owner described', evidence: [`${FOUNDER_BRIEF}`], what_changed: 'The owner told us what they are building.', why_it_matters: 'It is the only candidate on the table.' } },
+          { name: 'proposal.create', args: { kind: 'founder_brief', target: FOUNDER_BRIEF, title: 'The founder brief', body: `## Proposed content\n\n\`\`\`\n${founderBriefTemplate()}\n\`\`\`\n` } },
+        ];
+        return { ...base, parsedToolCalls: [calls[n] ?? { name: 'finish', args: { status: 'done', summary: 'the founder brief is with the owner' } }] };
+      }
       if (jobType === 'division.plan') {
         // The division leads: the CTO schedules into the Dev room, the CFO asks Research for the revenue question.
         const member = role === 'cto' ? 'backend_engineer' : role === 'cfo' ? 'research_manager' : null;
