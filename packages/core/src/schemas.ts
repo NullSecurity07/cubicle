@@ -134,7 +134,10 @@ export const TeamFrontmatter = z.looseObject({
   floor: z.number().int().optional(),
   parent: z.string().optional(),       // the division this team belongs to (dev → technology); planning happens at the division
   processes: z.array(z.string()).default([]),
-  wip: WipLimits.default({ in_progress: 3, review: 2, testing: 2 }),
+  // No default: a team's note that never sets `wip:` is not opting into Kanban limits at all — the dispatcher
+  // (nextJob, workers.ts) and the WS snapshot (ws.ts) both treat a `wip` of `undefined` as unlimited, never
+  // refused. Only Dev and QA ship with an explicit `wip:` today.
+  wip: WipLimits.optional(),
 });
 export type TeamFrontmatter = z.infer<typeof TeamFrontmatter>;
 

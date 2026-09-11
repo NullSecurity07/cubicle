@@ -34,9 +34,10 @@ export interface Snapshot {
   /**
    * `Teams/*.md` — the org chart in the Org drawer. `wip` is what the office room sign and the queue sheet read:
    * a lane whose `load` has reached its `limit` is a red tab on the sign, and the sheet groups jobs by the lane
-   * `stageOf` puts them in.
+   * `stageOf` puts them in. `limits` is `null` for a team whose note never sets `wip:` — it is not on Kanban
+   * limits at all, so the sign shows its lanes but never turns one red.
    */
-  teams: { id: string; name: string; lead: string; members: string[]; mission: string; room?: string; floor?: number; parent?: string; wip: { limits: WipLimits; load: Record<WipStage, number> } }[];
+  teams: { id: string; name: string; lead: string; members: string[]; mission: string; room?: string; floor?: number; parent?: string; wip: { limits: WipLimits | null; load: Record<WipStage, number> } }[];
 }
 
 export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
@@ -63,7 +64,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
   const org = loadOrg(vault);
   const gates = loadGates();
   const chainFor = (j: JobFrontmatter) => gatesForRisk(gates, j.type, j.risk);
-  const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission, room: t.room, floor: t.floor, parent: t.parent, wip: { limits: t.wip, load: wipLoad(vault, t.id, chainFor) } }));
+  const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission, room: t.room, floor: t.floor, parent: t.parent, wip: { limits: t.wip ?? null, load: wipLoad(vault, t.id, chainFor) } }));
   return {
     op: 'snapshot', at: nowIso(), roles, jobs: listJobs(vault),
     surfaces: sessions.map((s) => ({ streamKind: 'browser', streamId: s.session_id, lastFrame: s.path, active: activeSessions.has(s.session_id) })),

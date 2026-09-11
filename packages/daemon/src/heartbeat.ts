@@ -3,7 +3,7 @@ import {
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
   loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
   resolveRole, teamOf, researchLead, listStreams,
-  budgetLines,
+  budgetLines, GATE_JOB_TYPES,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -41,10 +41,12 @@ export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'me
 export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
 
 /** Planning and gate job types never count toward the "N jobs completed" heartbeat trigger — otherwise a single
- *  cycle's own planning/gate sub-jobs (company.plan, critic.premortem, team.plan, qa.review, coo.verify,
- *  requester.review) push the count past the threshold and the heartbeat retriggers itself. The re-planning gate
- *  uses the same list for "work still open": a queued coo.verify is bookkeeping, not work from the plan. */
-export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', 'qa.review', 'coo.verify', 'requester.review', 'security.review'];
+ *  cycle's own planning/gate sub-jobs (company.plan, critic.premortem, team.plan, plus every `GATE_JOB_TYPES`
+ *  gate: qa.review, security.review, requester.review, research.review, coo.verify) push the count past the
+ *  threshold and the heartbeat retriggers itself. The re-planning gate uses the same list for "work still
+ *  open": a queued coo.verify is bookkeeping, not work from the plan. `GATE_JOB_TYPES` lives in core so
+ *  `wipLoad` (jobs.ts) excludes the identical set from a team's WIP tally — one list, not two literals to drift. */
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES];
 
 /**
  * The outbound services whose adapters are in mock mode for this env, in the order the brief names them. Asks the
