@@ -53,17 +53,21 @@ export function bindKeys(handlers: Record<Action, () => void>, blocked: () => bo
 
 /** What a Tab may land on inside a modal element. */
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-export interface Focusable { focus(): void }
+/** A tab stop. `hidden`/`offsetParent` are the panel's: its header buttons and chat composer come and go. */
+export interface Focusable { focus(): void; hidden?: boolean; offsetParent?: unknown }
 
 /**
- * Keep Tab inside `root` — the first-run card and the quick-open palette are `aria-modal`, and the panel's own
- * window-level trap would otherwise pull Shift+Tab back into the sheet underneath. Returns true when it handled
- * the event (it always stops propagation then, so the panel never sees it).
+ * Keep Tab inside `root` — the first-run card, the quick-open palette and the reader/viewer presentations are all
+ * `aria-modal`. Returns true when it handled the event (it always stops propagation then, so a window-level
+ * listener under it never sees the Tab).
+ *
+ * Elements that are `hidden` or laid out nowhere are skipped: the panel's back chevron, Obsidian link, Copy button
+ * and chat composer all come and go, and a cycle that stops on one of them looks to the owner like a dead Tab.
  */
 export function trapTab(root: { querySelectorAll(sel: string): ArrayLike<Focusable> }, e: { key: string; shiftKey?: boolean; preventDefault(): void; stopPropagation(): void }, active: Focusable | null): boolean {
   if (e.key !== 'Tab') return false;
   e.preventDefault(); e.stopPropagation();
-  const items = Array.from(root.querySelectorAll(FOCUSABLE));
+  const items = Array.from(root.querySelectorAll(FOCUSABLE)).filter((el) => !el.hidden && el.offsetParent !== null);
   if (!items.length) return true;
   const at = active ? items.indexOf(active) : -1;
   items[(((at < 0 ? 0 : at + (e.shiftKey ? -1 : 1)) % items.length) + items.length) % items.length].focus();

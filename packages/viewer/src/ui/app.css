@@ -215,6 +215,10 @@ details.pinned .prose { padding: 0 var(--s4) var(--s3); }
 #time input[type=date], #time select { min-height: var(--hit); padding: 0 var(--s2); font-size: var(--fs-subhead); }
 #time #sunmoon { display: inline-flex; color: var(--text-2); }
 #time #clock { color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Live mode has no date to pick, no position to scrub and no speed to choose; the replay transport appears with the
+   Replay segment. The keyboard hint lives beside the transport it is about, not inside the clock's own label. */
+#time:not([data-mode="replay"]) .replay-only { display: none; }
+#time #replay-hint { white-space: nowrap; }
 
 /* ---- minimap chrome ---- */
 #minimap-chrome { position: absolute; z-index: 9; pointer-events: none; border: 1px solid var(--hairline-2); border-radius: var(--r-s); box-shadow: var(--shadow-1); }

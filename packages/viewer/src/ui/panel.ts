@@ -8,6 +8,7 @@ import { esc, type View, type ViewMode } from './content.js';
 import { PanelStack, type Presentation } from './stack.js';
 import { morph } from './morph.js';
 import { pixelIcon } from './icons.js';
+import { trapTab } from './keys.js';
 
 /** What the "Surprise me" button sends; the daemon matches this to draft three company ideas. */
 export const SURPRISE_ME = 'surprise me';
@@ -16,7 +17,6 @@ export interface Origin { x: number; y: number; w: number; h: number }
 export interface PanelDeps { viewOf(kind: string): View; onChat(text: string): void; onOpen(kind: string): void; onLocate(target: string): void; /** the stack emptied: the app restores the camera */ onEmpty(): void }
 
 export const presentationOf = (mode: ViewMode): Presentation => (mode === 'doc' ? 'reader' : mode === 'viewer' ? 'viewer' : 'sheet');
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 /** A duration token in ms (1 under reduced motion). */
 export const durMs = (token: string): number => { const v = getComputedStyle(document.documentElement).getPropertyValue(token).trim(); return v.endsWith('ms') ? parseFloat(v) : v.endsWith('s') ? parseFloat(v) * 1000 : 200; };
 
@@ -37,6 +37,7 @@ export class Panel {
   private input = document.getElementById('chat-text') as HTMLInputElement;
   private view: View | null = null;
   private copyText = '';
+  private copyTimer = 0;
   private returnTo: HTMLElement | null = null;
   private segChoice = new Map<string, string>();
 
@@ -53,7 +54,8 @@ export class Panel {
     // Escape goes back one level (visual notes: "Forgiveness"). Other keys live in ui/keys.ts.
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.stack.depth) { e.preventDefault(); this.back(); return; }
-      if (e.key === 'Tab' && this.isModal()) this.trapTab(e);
+      // One Tab trap for the whole app (ui/keys.ts): the panel used to carry a second, near-identical copy.
+      if (e.key === 'Tab' && this.isModal()) trapTab(this.panel, e, document.activeElement as HTMLElement | null);
     });
     document.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
@@ -95,6 +97,7 @@ export class Panel {
   }
   private hide(): void {
     this.layer.hidden = true; this.scrim.hidden = true; this.view = null; this.panel.classList.remove('chat', 'flip');
+    clearTimeout(this.copyTimer); this.copyBtn.textContent = 'Copy';
     this.body.innerHTML = '';
     this.deps.onEmpty();
     this.returnTo?.focus?.(); this.returnTo = null;
@@ -133,7 +136,9 @@ export class Panel {
     else if (fresh) this.body.scrollTop = 0;
     this.jump.hidden = !(v.live && !this.atBottom());
     if (fresh) {
-      if (v.mode === 'chat') this.input.focus(); else (this.body.querySelector<HTMLElement>(FOCUSABLE) ?? this.panel).focus?.({ preventScroll: true });
+      // Land on the panel, which suppresses its own ring, and let Tab move in. Focusing the first control inside the
+      // body instead painted an accent ring on the first segment of a fresh sheet: it read as pre-activated.
+      if (v.mode === 'chat') this.input.focus(); else this.panel.focus?.({ preventScroll: true });
       if ((wasHidden || presChanged) && origin && pres !== 'sheet') this.flipFrom(origin);
       else this.panel.classList.remove('flip');
     }
@@ -158,19 +163,14 @@ export class Panel {
     for (const pane of this.body.querySelectorAll<HTMLElement>('[data-pane]')) pane.hidden = pane.dataset.pane !== want;
   }
 
-  private trapTab(e: KeyboardEvent): void {
-    const items = [...this.panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => !el.hidden && el.offsetParent !== null);
-    if (!items.length) return;
-    const first = items[0], last = items[items.length - 1], active = document.activeElement;
-    if (e.shiftKey && (active === first || !this.panel.contains(active))) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
-  }
-
   /** After a chat send: a one-line acknowledgement under the thread. */
   note(text: string): void { if (this.current === 'cabin') { const p = document.createElement('div'); p.className = 'day'; p.textContent = text; this.body.appendChild(p); this.body.scrollTop = this.body.scrollHeight; } }
 
+  /** "Copied" reverts after `--t-copy`. The timer is cleared first, so two copies in a row do not race, and again
+   *  on close, so a reverted label never lands on a panel that has since opened something else. */
   private async copy(): Promise<void> {
     try { await navigator.clipboard.writeText(this.copyText || this.body.innerText); this.copyBtn.textContent = 'Copied'; } catch { this.copyBtn.textContent = 'Copy failed'; }
-    setTimeout(() => { this.copyBtn.textContent = 'Copy'; }, 1500);
+    clearTimeout(this.copyTimer);
+    this.copyTimer = window.setTimeout(() => { this.copyBtn.textContent = 'Copy'; }, durMs('--t-copy'));
   }
 }

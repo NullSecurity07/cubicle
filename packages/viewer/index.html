@@ -45,13 +45,17 @@
         <form id="chat" hidden><input id="chat-text" type="text" placeholder="Message your CEO" autocomplete="off" aria-label="Message your CEO" /><button type="submit" class="btn primary">Send</button></form>
       </section>
     </div>
-    <div id="time" class="glass">
+    <!-- `data-mode` is written by ui/time.ts: in live mode the date, the transport and the speed are not controls the
+         owner has any use for, so they are not on the screen. The sun/moon and the clock belong to both modes. -->
+    <div id="time" class="glass" data-mode="live">
       <div class="segmented" role="tablist" aria-label="Live or replay"><button id="live" class="seg" role="tab" aria-selected="true"><i class="dot ok"></i>Live</button><button id="replay-load" class="seg" role="tab" aria-selected="false">Replay</button></div>
-      <input type="date" id="replay-date" aria-label="Replay date" />
+      <input type="date" id="replay-date" class="replay-only" aria-label="Replay date" />
       <span id="sunmoon"></span>
-      <input type="range" id="scrub" min="0" max="1000" value="0" disabled aria-label="Replay position" />
-      <select id="speed" aria-label="Replay speed"><option>1</option><option>5</option><option>10</option><option selected>25</option><option>50</option></select>
+      <button id="playpause" class="icon replay-only" aria-label="Pause the replay (Space)"></button>
+      <input type="range" id="scrub" class="replay-only" min="0" max="1000" value="0" disabled aria-label="Replay position" />
+      <select id="speed" class="replay-only" aria-label="Replay speed"><option>1</option><option>5</option><option>10</option><option selected>25</option><option>50</option></select>
       <span id="clock" class="footnote"></span>
+      <span id="replay-hint" class="caption dim replay-only">Space plays · arrows step</span>
     </div>
     <div id="minimap-chrome" hidden></div>
     <div id="toast" hidden></div>

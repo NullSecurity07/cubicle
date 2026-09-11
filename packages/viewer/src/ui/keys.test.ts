@@ -78,6 +78,30 @@ describe('Space and the focus ring', () => {
   });
 });
 
+/**
+ * M4: the panel carried a second, near-identical Tab trap. It is gone, and this one took over its job — including
+ * the filter the panel's copy had: the header's back chevron, Obsidian link and Copy button and the chat composer
+ * are hidden most of the time, and a cycle that stops on one of them is a Tab that does nothing.
+ */
+describe('Tab trap: what it will not land on', () => {
+  it('skips hidden elements and elements laid out nowhere', () => {
+    const focused: string[] = [];
+    const stop = (name: string, extra: Record<string, unknown> = {}): { focus(): void } => ({ focus: () => focused.push(name), ...extra });
+    const items = [stop('close'), stop('back', { hidden: true }), stop('copy', { offsetParent: null }), stop('send')];
+    const root = { querySelectorAll: () => items };
+    trapTab(root, ev('Tab', null), items[0]);
+    expect(focused).toEqual(['send']);            // straight past the hidden back chevron and the unlaid-out Copy
+    trapTab(root, ev('Tab', null), items[3]);
+    expect(focused).toEqual(['send', 'close']);   // and it still wraps
+  });
+  it('handles the event even when every stop is hidden, so the Tab never escapes the modal', () => {
+    const root = { querySelectorAll: () => [{ focus: () => undefined, hidden: true }] };
+    const e = ev('Tab', null);
+    expect(trapTab(root, e, null)).toBe(true);
+    expect(e.stopped).toBe(true);
+  });
+});
+
 describe('modal Tab trap', () => {
   it('cycles inside the element and never lets the panel see the event', () => {
     const focused: number[] = [];
