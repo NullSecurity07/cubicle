@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob } from '@cubicle/core';
@@ -71,6 +71,40 @@ describe('commandPublishes', () => {
     expect(commandPublishes('git log --oneline -5')).toBe(false);
     expect(commandPublishes('git -C dir status')).toBe(false);
     expect(commandPublishes('npm run build')).toBe(false);
+  });
+
+  // Fix round 2 (review-T7 fix round 1 IMPORTANT): the exact-token `indexOf('git')` on an unquoted
+  // `split(/\s+/)` regressed two forms the old bare regex caught. `isGitToken` matches on the basename, and
+  // `tokenize`/`extractShellDashC` recover a `-c` command string as its own line to check.
+  it('recognises a path-qualified git invocation', () => {
+    expect(commandPublishes('/usr/bin/git push')).toBe(true);
+  });
+
+  it('recurses into an sh/bash -c command string', () => {
+    expect(commandPublishes('sh -c "git push"')).toBe(true);
+    expect(commandPublishes("sh -c 'git push'")).toBe(true);
+    expect(commandPublishes('bash -lc "git commit -m x"')).toBe(true);
+  });
+
+  it('keeps every previously-passing positive form', () => {
+    expect(commandPublishes('git -C dir push')).toBe(true);
+    expect(commandPublishes('git -c user.name=x commit -m y')).toBe(true);
+    expect(commandPublishes('cd x && git push')).toBe(true);
+    expect(commandPublishes('git push; echo done')).toBe(true);
+    expect(commandPublishes('git --no-pager push')).toBe(true);
+    expect(commandPublishes('GIT_DIR=/repo git push')).toBe(true);
+  });
+
+  it('keeps every previously-passing negative form, and does not fire on a git subcommand or shell wrapper it merely mentions "push" or "commit" in', () => {
+    expect(commandPublishes('git log')).toBe(false);
+    expect(commandPublishes('git status')).toBe(false);
+    expect(commandPublishes('git -C dir status')).toBe(false);
+    expect(commandPublishes('git log --grep=push')).toBe(false);
+    // Text that merely mentions "push"/"commit" is not a git invocation at all — guards against a
+    // substring-scanning regression (the pre-tokenised regex this replaced matched "push" anywhere on the
+    // line, including inside a message like this one).
+    expect(commandPublishes('echo "remember to write a commit message mentioning push before EOD"')).toBe(false);
+    expect(commandPublishes('sh -c "git log --grep=push"')).toBe(false);
   });
 });
 
@@ -145,6 +179,51 @@ describe('secretsGuardrail', () => {
     for (let i = 0; i < 5001; i++) writeFileSync(path.join(big, `f${i}.txt`), 'x');
     const reason = await g.check('deploy.site', { dir: 'Site/dist' }, ctxFor());
     expect(reason).toMatch(/more than 5000 files/);
+  });
+
+  // Fix round 2 (review-T7 fix round 1 CRITICAL): a symlink AT the walk root used to be followed transparently
+  // by `readdirSync`, so `ln -s /outside Site/dist` made `deploy.site { dir: "Site/dist" }` read outside the
+  // vault and report the finding back under the `Site/dist/...` name — an out-of-vault read and disclosure
+  // oracle. Each case plants a real secret outside the vault, symlinks it into the deploy tree at a different
+  // depth, and confirms the guardrail refuses (naming the symlink) without ever surfacing the outside content.
+  describe('refuses every symlink in the deploy tree instead of following it', () => {
+    let outside: string;
+    beforeEach(() => { outside = mkdtempSync(path.join(tmpdir(), 'cubicle-outside-')); });
+    afterEach(() => { rmSync(outside, { recursive: true, force: true }); });
+
+    it('refuses a symlink AT the walk root', async () => {
+      writeFileSync(path.join(outside, 'creds.conf'), `AWS_KEY=${AWS}\n`);
+      mkdirSync(path.join(dir, 'Site'), { recursive: true });
+      symlinkSync(outside, path.join(dir, 'Site/dist'));
+      const reason = await g.check('deploy.site', { dir: 'Site/dist' }, ctxFor());
+      expect(reason).toMatch(/symlink/);
+      expect(reason).toMatch(/Site\/dist/);
+      expect(reason).not.toMatch(new RegExp(AWS));
+      expect(reason).not.toMatch(/creds\.conf/);
+    });
+
+    it('refuses a symlinked subdirectory inside the deploy tree', async () => {
+      writeFileSync(path.join(outside, 'creds.conf'), `AWS_KEY=${AWS}\n`);
+      mkdirSync(path.join(dir, 'Site/dist'), { recursive: true });
+      writeFileSync(path.join(dir, 'Site/dist/app.js'), 'console.log("hello");\n');
+      symlinkSync(outside, path.join(dir, 'Site/dist/sub'));
+      const reason = await g.check('deploy.site', { dir: 'Site/dist' }, ctxFor());
+      expect(reason).toMatch(/symlink/);
+      expect(reason).toMatch(/Site\/dist\/sub/);
+      expect(reason).not.toMatch(new RegExp(AWS));
+      expect(reason).not.toMatch(/creds\.conf/);
+    });
+
+    it('refuses a symlinked file inside the deploy tree', async () => {
+      writeFileSync(path.join(outside, 'creds.conf'), `AWS_KEY=${AWS}\n`);
+      mkdirSync(path.join(dir, 'Site/dist'), { recursive: true });
+      writeFileSync(path.join(dir, 'Site/dist/app.js'), 'console.log("hello");\n');
+      symlinkSync(path.join(outside, 'creds.conf'), path.join(dir, 'Site/dist/creds.conf'));
+      const reason = await g.check('deploy.site', { dir: 'Site/dist' }, ctxFor());
+      expect(reason).toMatch(/symlink/);
+      expect(reason).toMatch(/Site\/dist\/creds\.conf/);
+      expect(reason).not.toMatch(new RegExp(AWS));
+    });
   });
 
   // review-T7 MINOR: exercise the no-git-repo fallback (scanVaultDir over Site/Workspace) directly.
