@@ -27,7 +27,7 @@ describe('cubicle doctor reads the office map (spec item 5)', () => {
   });
 
   it('Teams edits wake the heartbeat', () => {
-    expect(HEARTBEAT_WAKE_AREAS).toEqual(['Jobs', '00 Inbox', 'Brand', 'Roles', 'Teams']);
+    expect(HEARTBEAT_WAKE_AREAS).toEqual(['Jobs', '00 Inbox', 'Brand', 'Roles', 'Teams', 'Discovery', 'Ideas']);
   });
 
   // Two mapping gaps the per-office rows cannot see: a key that is not an office at all (merged into the map at

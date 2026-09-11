@@ -8,7 +8,12 @@ export interface WatcherOptions {
   debounceMs?: number;
 }
 
-export const HEARTBEAT_WAKE_AREAS = ['Jobs', '00 Inbox', 'Brand', 'Roles', 'Teams'];
+/**
+ * Owner edits in these areas wake a heartbeat. `Discovery` and `Ideas` are here because dropping a file in
+ * `Discovery/inbox/` or flipping a card's `decision:` by hand is the owner telling the company something, and it
+ * should not wait six hours to be noticed.
+ */
+export const HEARTBEAT_WAKE_AREAS = ['Jobs', '00 Inbox', 'Brand', 'Roles', 'Teams', 'Discovery', 'Ideas'];
 
 /**
  * Watches the vault for owner edits. A change whose content sha equals the last `written_sha`
