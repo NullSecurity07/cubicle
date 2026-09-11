@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Vault } from './vault.js';
 import { Timestamp } from './schemas.js';
 import { parseNote, stringifyNote } from './frontmatter.js';
-import { nowIso } from './fs.js';
+import { nowIso, atomicWriteSync } from './fs.js';
 
 /**
  * Money: the company's book, and the arithmetic over it.
@@ -169,6 +169,20 @@ export function readLedger(vault: Vault): Ledger {
  * A non-empty `ref` is an idempotency key: the daily model-cost accrual and any job-derived entry pass one, so a
  * replayed cycle finds its own row instead of charging the company twice.
  */
+/**
+ * `appendEntry` writes straight to disk with `atomicWriteSync` and does its own `recordWritten` /
+ * `vault.wrote`, the same shape `writeCiRecord` (ci.ts) uses — deliberately going around
+ * `vault.writeText`'s owner-owned guard rather than through it.
+ *
+ * `Ledger/` is owner-owned (`OWNER_OWNED_PREFIXES`, guard.ts), so that `vault.write`/`vault.append` refuse it
+ * outright for every agent. But the book still has to accept a row from whichever role `ledger.record` ran as
+ * (`cfo`, `cso`, …), and none of those are the privileged actors (`daemon`, `owner`, `system`, `init`) that
+ * `assertWritable` lets through. `appendEntry` is the sanctioned exception — the *only* function, reached
+ * through `ledger.record` or the daemon's own accrual, that may put a row in `Ledger/ledger.md` — exactly the
+ * property `writeCiRecord` gives `.cubicle-ci/`: the general write API refuses the path, and one trusted
+ * function that enforces its own rules (append-only, the idempotency key, and here the tool's cap and reason
+ * check) is what is allowed to write it anyway.
+ */
 export function appendEntry(vault: Vault, e: NewEntry, by: string): { entry: LedgerEntry; added: boolean } {
   const entry = LedgerEntry.parse({ ...e, at: e.at ?? nowIso(), ref: e.ref ?? '' });
   const md = vault.readTextOrNull(LEDGER_PATH) ?? ledgerTemplate();
@@ -180,9 +194,96 @@ export function appendEntry(vault: Vault, e: NewEntry, by: string): { entry: Led
   let at = -1;
   for (let i = lines.length - 1; i >= 0; i--) if (lines[i].trim().startsWith('|')) { at = i; break; }
   const row = ledgerRow(entry);
-  const next = at >= 0
+  const next = (at >= 0
     ? [...lines.slice(0, at + 1), row, ...lines.slice(at + 1)]
-    : [...lines, '', `| ${LEDGER_COLUMNS.join(' | ')} |`, `|${LEDGER_COLUMNS.map(() => '---').join('|')}|`, row];
-  vault.writeText(LEDGER_PATH, next.join('\n') + '\n', by);
+    : [...lines, '', `| ${LEDGER_COLUMNS.join(' | ')} |`, `|${LEDGER_COLUMNS.map(() => '---').join('|')}|`, row]
+  ).join('\n') + '\n';
+  const sha = atomicWriteSync(vault.abs(LEDGER_PATH), next);
+  vault.recordWritten(LEDGER_PATH, sha, by, next);
+  vault.events.emit({ type: 'vault.wrote', agent: by, payload: { path: LEDGER_PATH, sha, by } });
   return { entry, added: true };
+}
+
+// ---------- the report (Task 2 stand-in) ----------
+//
+// `moneyReport` is Task 2's (impl-M2, commit fc2b4a2 on sp4, under review as rev-M2 — not yet merged onto this
+// branch). `ledger.record` needs it to say what the company's cash position is after an entry, so this block is
+// carried here verbatim from Task 2's brief pending the merge, the same way Task 2 itself carried a stand-in
+// for Task 1's names before Task 1 merged. The coordinator should drop this whole section in favour of Task 2's
+// own (larger) version — which also adds `moneyLine`, `moneyNeedsYou`, `runwayNote` and the runway note writer —
+// when reconciling the two branches, rather than keep both.
+
+/** How far back burn looks. Long enough to smooth a lumpy month, short enough to notice a new subscription. */
+export const BURN_WINDOW_DAYS = 30;
+/** Below this many days of runway the brief asks the owner for a decision. */
+export const RUNWAY_WARN_DAYS = 14;
+
+const DAY_MS = 86_400_000;
+
+export interface MoneyReport {
+  currency: string;
+  /** live capital + live revenue − live cost. Can be negative; a book is allowed to tell bad news. */
+  cashCents: number;
+  burnCentsPerDay: number;
+  /** null when nothing is being spent: "not spending", never "infinite" and never a number. */
+  runwayDays: number | null;
+  inCents: number;
+  outCents: number;
+  windowOutCents: number;
+  windowDays: number;
+  mockRevenueCents: number;
+  mockCostCents: number;
+  /** The owner has put money in at least once. Without this, dormancy would fire on every fresh install. */
+  funded: boolean;
+  dormant: boolean;
+  firstAt: string | null;
+  lastAt: string | null;
+  /** When real money last moved — the mark the dormancy message is keyed on. */
+  lastLiveAt: string | null;
+  entries: number;
+  problems: LedgerProblem[];
+}
+
+/**
+ * The company's position, all in minor units.
+ *
+ * Two rules carry the weight. **Only `live` entries reach cash** — a simulated sale is reported beside the
+ * figures and never inside them, because a runway computed from money nobody paid is worse than no runway.
+ * And **dormancy needs a `capital` entry as well as an empty till**: an unfunded company has zero cash and must
+ * still run, since running free is the whole point of this system.
+ *
+ * Burn divides the window's spend by the time the company has actually existed for, capped at the window. A
+ * company one day old that spent 3.00 yesterday burns 3.00 a day, not 0.10 — the flattering answer is the one
+ * that lets a company walk off a cliff.
+ */
+export function moneyReport(ledger: Ledger, now: Date = new Date()): MoneyReport {
+  const live = ledger.entries.filter((e) => e.mode === 'live');
+  const sum = (list: LedgerEntry[], kind: EntryKind) => list.reduce((t, e) => (e.kind === kind ? t + e.cents : t), 0);
+  const mock = ledger.entries.filter((e) => e.mode === 'mock');
+  const inCents = sum(live, 'capital') + sum(live, 'revenue');
+  const outCents = sum(live, 'cost');
+  const cashCents = inCents - outCents;
+  const times = ledger.entries.map((e) => Date.parse(e.at)).filter((t) => Number.isFinite(t));
+  const firstMs = times.length ? Math.min(...times) : null;
+  const lastMs = times.length ? Math.max(...times) : null;
+  const liveTimes = live.map((e) => Date.parse(e.at)).filter((t) => Number.isFinite(t));
+  const windowFrom = now.getTime() - BURN_WINDOW_DAYS * DAY_MS;
+  const windowOutCents = live.reduce((t, e) => (e.kind === 'cost' && Date.parse(e.at) >= windowFrom ? t + e.cents : t), 0);
+  const ageDays = firstMs === null ? 1 : Math.ceil((now.getTime() - firstMs) / DAY_MS);
+  const windowDays = Math.max(1, Math.min(BURN_WINDOW_DAYS, ageDays));
+  const burnCentsPerDay = Math.round(windowOutCents / windowDays);
+  const funded = live.some((e) => e.kind === 'capital');
+  return {
+    currency: ledger.currency,
+    cashCents, burnCentsPerDay,
+    runwayDays: burnCentsPerDay > 0 ? Math.max(0, Math.floor(cashCents / burnCentsPerDay)) : null,
+    inCents, outCents, windowOutCents, windowDays,
+    mockRevenueCents: sum(mock, 'revenue'), mockCostCents: sum(mock, 'cost'),
+    funded, dormant: funded && cashCents <= 0,
+    firstAt: firstMs === null ? null : new Date(firstMs).toISOString(),
+    lastAt: lastMs === null ? null : new Date(lastMs).toISOString(),
+    lastLiveAt: liveTimes.length ? new Date(Math.max(...liveTimes)).toISOString() : null,
+    entries: ledger.entries.length,
+    problems: ledger.problems,
+  };
 }

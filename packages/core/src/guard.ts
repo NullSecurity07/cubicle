@@ -1,5 +1,10 @@
-/** Paths agents may never write directly. Daemon-side dispatcher writes bypass this by construction. */
-export const OWNER_OWNED_PREFIXES = ['Brand/', 'Roles/', 'Teams/'];
+/**
+ * Paths agents may never write directly. Daemon-side dispatcher writes bypass this by construction.
+ * `Ledger/` joins this list for the book (spec §7): the only sanctioned writer is `appendEntry`
+ * (money.ts), reached through the `ledger.record` tool or the daemon's own accrual, and it goes around
+ * this guard on purpose (see its doc comment) rather than relying on `by` being a privileged actor.
+ */
+export const OWNER_OWNED_PREFIXES = ['Brand/', 'Roles/', 'Teams/', 'Ledger/'];
 export const OWNER_OWNED_FILES = ['Memory/constitution.md', 'Memory/owner_preferences.md'];
 export const CACHE_PREFIXES = ['.cubicle/', '.obsidian/', '.git/'];
 
