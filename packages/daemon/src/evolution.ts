@@ -400,6 +400,65 @@ export function captureResearchDeliveries(vault: Vault, now = new Date()): strin
   return written;
 }
 
+export interface FollowUpNote { path: string; id: string; research: string; slug: string; decision_owner: string; due: string; status: string; prediction: string }
+
+/** Every `Research/followups/*.md`, parsed loosely — an owner may edit one by hand. */
+export function listResearchFollowUps(vault: Vault): FollowUpNote[] {
+  return vault.list('Research/followups', { ext: '.md' }).flatMap((rel) => {
+    const n = vault.readNoteOrNull(rel); if (!n) return [];
+    const d = n.data as Record<string, unknown>;
+    const research = String(d.research ?? d.id ?? '');
+    if (!research) return [];
+    return [{
+      path: rel, id: String(d.id ?? research), research, slug: String(d.slug ?? ''),
+      decision_owner: String(d.decision_owner ?? 'ceo'), due: String(d.due ?? ''),
+      status: String(d.status ?? 'pending'), prediction: String(d.prediction ?? ''),
+    }];
+  });
+}
+
+/**
+ * A pending follow-up whose due date has arrived becomes one `research.measure` job. Idempotent by job id, and
+ * gated by the note's own `status`, so an owner who writes `status: measured` by hand stops the loop the same
+ * way the measurement job does. §40: a recommendation nobody measures is an opinion with a bibliography.
+ */
+export function enqueueResearchFollowUps(vault: Vault, now = new Date()): string[] {
+  const today = now.toISOString().slice(0, 10);
+  const org = loadOrg(vault);
+  const lead = researchLead(org) ?? 'research_manager';
+  if (!org.roles[lead]) return [];
+  const out: string[] = [];
+  for (const f of listResearchFollowUps(vault)) {
+    if (f.status !== 'pending' || !f.due || f.due > today) continue;
+    const id = idFromKey('job', `measure:${f.research}`);
+    if (vault.exists(jobPath(id))) continue;
+    const report = `Research/${f.slug}/report.md`;
+    const owner = org.roles[f.decision_owner] ? f.decision_owner : lead;
+    out.push(createJob(vault, {
+      id, type: 'research.measure', title: `Measure: did [[${f.research}]] turn out right?`,
+      assigned: lead, priority: 3, team: 'research', owner_role: 'research_manager', for: owner,
+      links: [`[[${f.research}]]`], model_tier: 'cheap',
+      done_when: `${report} ends with a ## Prediction vs reality section, ${f.path} has status: measured with an outcome, and the job's row in Research/index.md carries that outcome`,
+      goal: [
+        `${FOLLOW_UP_DAYS} days ago this company acted on research [[${f.research}]]. Find out whether it was right.`,
+        '',
+        'What was predicted:',
+        '',
+        `> ${f.prediction.replace(/\n/g, ' ')}`,
+        '',
+        'Do:',
+        `1. \`vault.read ${f.path}\` and \`vault.read ${report}\` for the recommendation and the confidence it claimed.`,
+        `2. Look for what actually happened: \`vault.read Metrics/daily.md\`, the Decisions/ note if one was written, and the jobs that followed [[${f.research}]]. Use \`vault.search\` rather than guessing where the evidence is.`,
+        `3. \`vault.append ${report}\` with a \`## Prediction vs reality\` section: what was predicted, what happened, and which of "as expected", "partly", "not as expected" or "cannot tell yet" it was. If the honest answer is "cannot tell yet", say so and say what would settle it — an invented outcome poisons every future confidence estimate the company makes.`,
+        `4. \`vault.write ${f.path}\` with \`status: measured\` and \`outcome:\` set to that one-line verdict, keeping every other field.`,
+        `5. \`vault.write Research/index.md\` replacing this job's row's last column with the same verdict. Change nothing else in that file.`,
+        `6. Tell ${owner} with \`colleague.message\`, one line, and finish with the verdict as your summary.`,
+      ].join('\n'),
+    }, 'daemon'));
+  }
+  return out;
+}
+
 /**
  * The `## Diff` block a `charter_change` proposal owes the owner: what its "## Proposed content" would actually
  * change in the charter on disk, as a unified diff of the two bodies (frontmatter is carried over by the

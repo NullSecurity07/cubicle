@@ -12,7 +12,7 @@ import { WsServer } from './ws.js';
 import { createHeartbeatJob, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
-import { captureResearchDeliveries, enqueueExperimentReviews, maybeEnqueueCharterCompression, maybeEnqueueIntelligence, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions } from './evolution.js';
+import { captureResearchDeliveries, enqueueResearchFollowUps, enqueueExperimentReviews, maybeEnqueueCharterCompression, maybeEnqueueIntelligence, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions } from './evolution.js';
 import { hasIdea } from './first-run.js';
 import { StaticServer } from './static.js';
 import { pruneScreens } from '@cubicle/tools';
@@ -288,6 +288,8 @@ export class Daemon {
       if (reviews.length) this.log(`tick(${reason}): ${reviews.length} experiment review(s) queued`);
       const captured = captureResearchDeliveries(this.vault);
       if (captured.length) this.log(`tick(${reason}): indexed ${captured.length} delivered research project(s)`);
+      const followUps = enqueueResearchFollowUps(this.vault);
+      if (followUps.length) this.log(`tick(${reason}): ${followUps.length} research follow-up measurement(s) queued`);
       const pm = maybeEnqueuePostmortem(this.vault);
       if (pm) this.log(`tick(${reason}): postmortem ${pm}`);
       const wr = await maybeEnqueueWeeklyReview(this.vault, this.openMeeting);
