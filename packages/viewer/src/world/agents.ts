@@ -1,13 +1,14 @@
 // packages/viewer/src/world/agents.ts
 import Phaser from 'phaser';
 import type { World, Tile } from './map.js';
-import { TILE, makeSprite, makeFaces, makeEmotes, roleColor, SPRITE_H, EMOTE_H } from './tileset.js';
+import { TILE, makeSprite, makeFaces, makeEmotes, makeShadow, roleColor, SPRITE_H, EMOTE_H } from './tileset.js';
 import { toPx, portalFor } from './map.js';
 import { planRoute, type Leg } from './route.js';
 import type { ElevatorPort, ElevatorEvent } from './elevator.js';
 import type { AgentView, ToolIcon, Bubble } from '../state.js';
 import { BLINK_MS, GESTURE_MS, nextBlinkDelay, nextGestureDelay, pickGesture, emoteBob, faceToward, thinkingDots, type Gesture } from './expressions.js';
-import { frameFor, poseFor, faceFrame, talkOpen, WALK_FRAMES, WALK_STEP_MS, BOB, type Dir, type PoseCtx } from './frames.js';
+import { frameFor, poseFor, faceFrame, talkOpen, isSeatedPose, WALK_FRAMES, WALK_STEP_MS, BOB, type Dir, type PoseCtx } from './frames.js';
+import { DUR, EASE, dur } from './motion.js';
 
 // Drawn glyphs (no emoji: headless/minimal systems lack emoji fonts). letter + colour per tool family.
 const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = { browser: { t: 'W', c: '#2a6fdb' }, terminal: { t: '>_', c: '#2b2f3a' }, envelope: { t: 'M', c: '#c0392b' }, doc: { t: 'D', c: '#7a5c2e' }, chart: { t: '%', c: '#2e7d32' }, chat: { t: '…', c: '#6a3fb0' } };
@@ -33,6 +34,7 @@ export class AgentSprite {
   readonly container: Phaser.GameObjects.Container;
   /** Position marker the minimap renders instead of the sprite (the main camera ignores it). */
   readonly dot: Phaser.GameObjects.Rectangle;
+  readonly shadow: Phaser.GameObjects.Image;
   private body: Phaser.GameObjects.Sprite;
   private face: Phaser.GameObjects.Image;
   private label: Phaser.GameObjects.Text;
@@ -43,6 +45,7 @@ export class AgentSprite {
   private bubbleText: Phaser.GameObjects.Text;
   private bubbleBg: Phaser.GameObjects.Graphics;
   private lastBubble = '';
+  private lastBubbleText = '';
   private path: { x: number; y: number }[] = [];
   private legs: Leg[] = [];
   private currentTarget: string | null = null;
@@ -54,6 +57,9 @@ export class AgentSprite {
   private dir = 0;
   private step = 0;
   private walked = 0;
+  private departing = 0;   // seconds left of the departure ease
+  private wasMoving = false;
+  private hiding = false;
   // small life
   private blinkIn = nextBlinkDelay();
   private blinking = 0;
@@ -75,6 +81,9 @@ export class AgentSprite {
     this.glasses = view.family === 'advisor' || view.team === 'research';
     const key = makeSprite(scene, { role: view.role, sprite: view.sprite, family: view.family, team: view.team });
     makeFaces(scene); makeEmotes(scene);
+    makeShadow(scene);
+    this.shadow = scene.add.image(0, 0, 'shadow').setOrigin(0.5, 0.5).setAlpha(1);
+    this.shadow.setPosition(0, -1);
     this.body = scene.add.sprite(0, 0, key, 'idle:0').setOrigin(0.5, 1);
     this.face = scene.add.image(-4, -SPRITE_H + 4, 'faces', 'neutral:0').setOrigin(0, 0);
     this.label = scene.add.text(0, 2, view.display, { fontFamily: 'system-ui', fontSize: `${9 * RES}px`, color: '#fff', stroke: '#000', strokeThickness: 2 * RES }).setOrigin(0.5, 0).setScale(1 / RES);
@@ -84,7 +93,7 @@ export class AgentSprite {
     this.bubbleBg = scene.add.graphics();
     this.bubbleText = scene.add.text(0, 0, '', { fontFamily: 'system-ui', fontSize: `${8 * RES}px`, color: '#111', wordWrap: { width: 130 * RES }, align: 'left' }).setOrigin(0.5, 1).setScale(1 / RES);
     this.bubble = scene.add.container(0, -SPRITE_H - 6, [this.bubbleBg, this.bubbleText]).setVisible(false);
-    this.container = scene.add.container(0, 0, [this.body, this.face, this.label, this.icon, this.badge, this.emote, this.bubble]).setDepth(10);
+    this.container = scene.add.container(0, 0, [this.shadow, this.body, this.face, this.label, this.icon, this.badge, this.emote, this.bubble]).setDepth(10);
     this.body.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.onClick(view.role));
     const ring = scene.add.circle(0, -2, 5, roleColor(view.role), 0.9).setStrokeStyle(1, 0x000000, 0.6);
     this.container.addAt(ring, 0);
@@ -127,6 +136,7 @@ export class AgentSprite {
     const dest = this.resolve(target);
     if (!dest) { this.walkingTo = null; this.legs = []; this.path = []; return; }
     this.legs = planRoute(this.world, this.tile(), dest);
+    this.departing = DUR.depart / 1000;
     void this.startLeg(target);
   }
 
@@ -209,12 +219,16 @@ export class AgentSprite {
       this.dot.setPosition(this.container.x, this.container.y).setVisible(view.state !== 'offline');
       return;
     }
+    // a sprite is never seated in a chair while walking or waiting for the car; only the standing branch below can hide it
+    this.shadow.setVisible(true);
     // move along the path
     if (this.path.length) {
       const next = this.path[0];
       const dx = next.x - this.container.x, dy = next.y - this.container.y;
       const d = Math.hypot(dx, dy);
-      const stepLen = SPEED * dt;
+      const ease = this.departing > 0 ? 1 - (this.departing / (DUR.depart / 1000)) * 0.6 : 1;   // 100 ms ease-in from 40 % speed
+      this.departing = Math.max(0, this.departing - dt);
+      const stepLen = SPEED * dt * ease;
       if (d <= stepLen) { this.container.setPosition(next.x, next.y); this.path.shift(); }
       else { this.container.x += (dx / d) * stepLen; this.container.y += (dy / d) * stepLen; }
       this.walked += stepLen;
@@ -223,6 +237,7 @@ export class AgentSprite {
       if (this.frameTimer * 1000 > WALK_STEP_MS) { this.frameTimer = 0; this.step = (this.step + 1) % WALK_FRAMES; }
       this.body.setFrame(frameFor({ moving: true, dir: this.dir as Dir, step: this.step }));
       this.body.y = BOB[this.step];
+      this.shadow.setScale(BOB[this.step] ? 0.9 : 1, 1); this.wasMoving = true;
       if (!this.path.length) this.walkFinished(view);
       this.gesture = 'none';
     } else if (this.waitingRide) {
@@ -230,6 +245,13 @@ export class AgentSprite {
       this.step = 0; this.body.y = 0; this.dir = 2;
       this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0 }));
     } else {
+      if (this.wasMoving) {   // settle: a short squash, then spring back
+        this.wasMoving = false;
+        this.scene.tweens.killTweensOf(this.body);   // a multi-leg route can re-enter this branch before the previous settle finished
+        this.body.setScale(1.06, 0.92);
+        this.scene.tweens.add({ targets: this.body, scaleX: 1, scaleY: 1, duration: dur(DUR.settle), ease: EASE.spring });
+      }
+      this.shadow.setScale(1, 1);
       this.step = 0;
       this.body.y = 0;
       if (this.detour === 'sit') { this.sitLeft -= dt * 1000; this.dir = 0; if (this.sitLeft <= 0) this.endDetour(); }
@@ -238,6 +260,7 @@ export class AgentSprite {
       else if (ctx.speaker && ctx.speaker.role !== view.role && (view.target === 'boardroom' || view.target === 'meetingroom')) this.dir = faceToward({ x: this.container.x, y: this.container.y }, ctx.speaker);
       const sideSeat: PoseCtx['sideSeat'] = this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 1 ? 'l' : this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 2 ? 'r' : null;
       const pose = poseFor(view, { atDesk, riding: this.riding, sideSeat, nowMs, gesture: this.gesture, detour: this.detour });
+      this.shadow.setVisible(!this.riding && !isSeatedPose(pose));
       if (pose) this.dir = pose === 'sit_side_l' ? 1 : pose === 'sit_side_r' ? 2 : 0;
       this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0, pose }));
     }
@@ -277,16 +300,29 @@ export class AgentSprite {
 
   /** Speech (white, tail, role-coloured border), thought (cloud, grey, animated dots) or action (dark strip with the verb). */
   private updateBubble(b: Bubble | null, nowMs: number, y: number): void {
-    if (!b) { this.bubble.setVisible(false); this.lastBubble = ''; return; }
+    if (!b) {
+      if (this.bubble.visible && !this.hiding) {
+        this.hiding = true;
+        this.scene.tweens.add({ targets: this.bubble, alpha: 0, duration: dur(DUR.bubbleOut), onComplete: () => { this.bubble.setVisible(false).setAlpha(1); this.hiding = false; } });
+      }
+      this.lastBubble = '';
+      return;
+    }
     const text = b.kind === 'thought' && !b.text ? thinkingDots(nowMs) : b.kind === 'thought' ? `${b.text} ${thinkingDots(nowMs)}` : b.text;
-    const sig = `${b.kind}|${text}`;
+    // identity only: a thought's animated dots must redraw the text on change without re-triggering the pop-in tween
+    const sig = `${b.kind}|${b.text}|${b.until}`;
     this.bubble.y = y;
-    if (sig === this.lastBubble && this.bubble.visible) return;
-    if (sig !== this.lastBubble && b.kind === 'speech') this.bubbleSince = nowMs;
+    const isNew = sig !== this.lastBubble;
+    const textChanged = text !== this.lastBubbleText;
+    if (!isNew && !textChanged && this.bubble.visible) return;
+    if (isNew && b.kind === 'speech') this.bubbleSince = nowMs;
     this.lastBubble = sig;
+    this.lastBubbleText = text;
     const color = b.kind === 'action' ? '#e7e9ee' : b.kind === 'thought' ? '#4b5160' : '#111';
     this.bubbleText.setStyle({ color, fontStyle: b.kind === 'thought' ? 'italic' : 'normal', fontSize: `${(b.kind === 'action' ? 7 : 8) * RES}px` }).setText(text);
     const w = this.bubbleText.width / RES, h = this.bubbleText.height / RES;
+    const worldX = this.container.x; const half = w / 2 + 6;
+    this.bubble.x = worldX - half < 0 ? half : worldX + half > this.world.width * TILE ? -half : 0;
     const g = this.bubbleBg.clear();
     if (b.kind === 'speech') {
       const tint = roleColor(this.view.role);
@@ -299,6 +335,16 @@ export class AgentSprite {
       g.fillCircle(-2, 5, 2).strokeCircle(-2, 5, 2).fillCircle(-5, 9, 1.2).strokeCircle(-5, 9, 1.2); // trailing thought circles
     } else {
       g.fillStyle(0x1b1f2a, 0.94).lineStyle(1, 0x343a48, 1).fillRoundedRect(-w / 2 - 4, -h - 3, w + 8, h + 5, 3).strokeRoundedRect(-w / 2 - 4, -h - 3, w + 8, h + 5, 3);
+    }
+    if (isNew) {
+      this.hiding = false;
+      if (b.kind === 'speech' || b.kind === 'thought') {
+        this.bubble.setScale(0.85);
+        this.scene.tweens.add({ targets: this.bubble, scaleX: 1, scaleY: 1, duration: dur(DUR.bubbleIn), ease: EASE.spring });
+      } else {
+        this.bubble.y = y + 4;
+        this.scene.tweens.add({ targets: this.bubble, y, duration: dur(DUR.bubbleIn), ease: EASE.out });
+      }
     }
     this.bubble.setVisible(true);
   }

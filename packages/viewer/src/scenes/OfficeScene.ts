@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { makeTileset, makeDecorSheet, makeLampGlow, makeSky, TILE, roleColor } from '../world/tileset.js';
+import { makeTileset, makeDecorSheet, makeLampGlow, makeSky, makeOwnerSprite, TILE, roleColor } from '../world/tileset.js';
 import { buildWorld, floorAt, type World, type Tile, type Anchor, type FloorInfo } from '../world/map.js';
 import { T } from '../world/tiles.js';
 import { AgentSprite } from '../world/agents.js';
@@ -14,6 +14,7 @@ import { tintFor, nightColourFor, skyFor, lampAlphaFor, hourBucket, type HourBuc
 import { litRooms, roomContaining } from '../world/lights.js';
 import { floorPalette, hexToInt } from '../world/palette.js';
 import { DUR, EASE, dur } from '../world/motion.js';
+import { OwnerAvatar, boardSessionOpen } from '../world/owner.js';
 
 export interface FloorSummary { floor: number; label: string; color: string; agents: { role: string; color: number; state: string }[]; meetings: number }
 export interface SceneHooks {
@@ -52,6 +53,7 @@ export class OfficeScene extends Phaser.Scene {
   private lastFloor = 0;
   private decor!: DecorLayer;
   private signs!: RoomSigns;
+  private owner: OwnerAvatar | null = null;
   hooks!: SceneHooks;
   /** The elevator: sprites call and cancel, the overlay reads the state. */
   readonly elevator = {
@@ -111,6 +113,9 @@ export class OfficeScene extends Phaser.Scene {
     this.cameras.main.ignore(this.viewRect);
     this.minimap.ignore([this.night, this.sky, ...this.lamps.map((l) => l.img), ...this.decor.images(), ...this.signs.texts]);
     this.scale.on('resize', (g: Phaser.Structs.Size) => this.minimap.setPosition(g.width - mmW - 12, g.height - mmH - 12));
+    // the owner's avatar: seated in the owner chair, shown only while a board meeting is open
+    const ownerTile = this.world.reserved.owner;
+    if (ownerTile) { this.owner = new OwnerAvatar(this, ownerTile, makeOwnerSprite(this)); this.minimap.ignore(this.owner.container); }
     this.focusFloor(this.pendingFloor ?? 1, this.pendingFloor === null ? 2 : undefined);   // default zoom 2, opened on F1
     this.pendingFloor = null;
     if (this.pendingFocus) { const f = this.pendingFocus; this.pendingFocus = null; this.focusOn(f); }
@@ -170,6 +175,7 @@ export class OfficeScene extends Phaser.Scene {
       ag.update(view, dt, this.hooks.clock(), ctx);
     }
     for (const [role, ag] of this.agents) if (!s.agents[role]) { ag.destroy(); this.agents.delete(role); }
+    this.owner?.setVisible(boardSessionOpen(s.meetings));
     // each role's current tile, shared by the decor layer's occupancy checks and the lamp block's lit-rooms check
     const tiles: Record<string, Tile> = {};
     for (const [role, ag] of this.agents) tiles[role] = ag.tile();
