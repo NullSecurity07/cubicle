@@ -4,9 +4,9 @@ import {
   type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
   readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
   loadGates, gatesFor, criteriaFor, gateAssignee, type GateTable,
-  loadOrg, isLead, teamOf, leadOf, resolveRole,
+  loadOrg, isLead, teamOf, leadOf, resolveRole, type ModelTier,
 } from '@cubicle/core';
-import { NoModelAvailableError, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
+import { NoModelAvailableError, TIER_RANK, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
 import {
   ToolRegistry, createRoleToolClient, resolveMode, policyFor, proposalKindFor, findAnswer, unreadMessages, renderMessages,
@@ -94,6 +94,15 @@ export function idempotencyKey(job: JobFrontmatter, step: number): string {
   return `${job.id}:${job.attempt}:${step}`;
 }
 
+/**
+ * A job may ask for a cheaper tier than its charter (the four intelligence sweeps do): a recurring, bounded
+ * job should not spend the analyst's medium-tier budget every cycle. It may only route at or below the
+ * charter's tier — never above it, since the charter is the ceiling the coordinator approved for that role.
+ */
+export function effectiveTier(jobTier: ModelTier | undefined, roleTier: ModelTier): ModelTier {
+  return jobTier && TIER_RANK[jobTier] <= TIER_RANK[roleTier] ? jobTier : roleTier;
+}
+
 function summarizeArgs(args: Record<string, unknown>): string {
   const s = JSON.stringify(args);
   return s.length > 120 ? s.slice(0, 117) + '…' : s;
@@ -129,10 +138,9 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
 
   const constitution = vault.constitution();
   const privacy: 'cloud' | 'local' = constitution.pii_local_only && (job.type === 'growth.outreach' || /Customers\//.test(jobNote.body) || role.tools.some((t) => t.startsWith('email.'))) ? 'local' : job.privacy;
-  // A job may ask for a cheaper tier than its charter (the four intelligence sweeps do): a recurring, bounded
-  // job should not spend the analyst's medium-tier budget every cycle. It may only be read alongside the
-  // charter, never above the privacy rule below, which still forces local routing.
-  const tier = job.model_tier ?? role.model_tier;
+  // A job may only route at or below its charter's tier, never above (see effectiveTier); privacy rules
+  // below still force local routing regardless of tier.
+  const tier = effectiveTier(job.model_tier, role.model_tier);
   const routeReq: RouteRequest = { tier, needsTools: true, privacy, roleId };
   const isLeadOrCeo = isLead(org, roleId) || roleId === 'ceo';
   const maxSteps = privacy === 'local' || tier === 'local' ? (deps.localMaxSteps ?? DEFAULT_LOCAL_MAX_STEPS) : (deps.maxSteps ?? (isLeadOrCeo ? DEFAULT_MAX_STEPS : DEFAULT_MEMBER_MAX_STEPS));

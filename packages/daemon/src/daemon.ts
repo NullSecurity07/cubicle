@@ -2,7 +2,7 @@ import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown } from '@cubicle/router';
-import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
+import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, secretsGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter } from '@cubicle/core';
 import { MemoryIndex, vaultScheduler, type Llm, type Guardrail } from '@cubicle/harness';
 import type { DaemonConfig } from './config.js';
@@ -116,7 +116,7 @@ export class Daemon {
       this.memory.indexAll().then((n) => n && this.log(`memory: indexed ${n} files`)).catch((e) => this.log(`memory index unavailable: ${(e as Error).message}`));
     }
     const scheduler = vaultScheduler(this.vault, 'daemon');
-    const guardrails = [constitutionGuardrail(this.router), ...(this.overrides.guardrails ?? [])];
+    const guardrails = [constitutionGuardrail(this.router), secretsGuardrail(), ...(this.overrides.guardrails ?? [])];
     this.guardrails = guardrails;
     this.openMeeting = async (agenda: string, participants?: string[]): Promise<string | null> => {
       const ceoNote = this.vault.readNoteOrNull('Roles/ceo.md');
