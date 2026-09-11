@@ -1,7 +1,8 @@
-import { JobFrontmatter, type JobStatus, type RiskLevel } from './schemas.js';
+import { JobFrontmatter, type JobStatus, type ModelTier, type RiskLevel } from './schemas.js';
 import { makeId, nowIso } from './fs.js';
 import type { Vault } from './vault.js';
 import { stringifyNote } from './frontmatter.js';
+import { renderResearchRequest, type ResearchRequest } from './research.js';
 
 export interface NewJob {
   type: string;
@@ -20,6 +21,9 @@ export interface NewJob {
   owner_role?: string;
   for?: string;
   done_when?: string;
+  research?: ResearchRequest;
+  research_slug?: string;
+  model_tier?: ModelTier;
   risk?: RiskLevel;
   stream?: string;
 }
@@ -44,10 +48,12 @@ export function createJob(vault: Vault, job: NewJob, by: string): string {
     approval: 'none', checkpoint_step: 0, side_effects_done: [], links: job.links ?? [],
     privacy: job.privacy ?? 'cloud', runs_on: job.runs_on ?? 'laptop', parent: job.parent,
     team: job.team, owner_role: job.owner_role, for: job.for, done_when: job.done_when,
+    research: job.research, research_slug: job.research_slug, model_tier: job.model_tier,
     risk: job.risk ?? 'low',
     stream: job.stream,
   });
   let body = `## Goal\n\n${job.goal.trim()}\n\n`;
+  if (job.research) body += `${renderResearchRequest(job.research)}\n`;
   if (job.done_when) body += `## Done when\n\n${job.done_when}\n\n`;
   body += `## Plan\n\n## Checkpoint log\n\n## Result\n`;
   vault.writeText(jobPath(id), stringifyNote(data as Record<string, unknown>, body), by, { job: id });

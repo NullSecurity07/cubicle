@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { nowIso } from './fs.js';
+import { ResearchRequest } from './research.js';
 
 // ---------- Jobs ----------
 export const JobStatus = z.enum(['queued', 'running', 'blocked', 'in_review', 'done', 'failed', 'cancelled']);
@@ -9,6 +10,7 @@ export const KNOWN_JOB_TYPES = [
   'engineer.ship', 'growth.outreach', 'growth.post', 'growth.seo', 'coo.verify',
   'cto.plan', 'cto.compress_charters', 'ceo.heartbeat', 'research', 'custom',
   'team.plan', 'critic.premortem', 'qa.review', 'company.plan', 'colleague.answer',
+  'research.review', 'research.measure', 'intelligence',
 ] as const;
 
 /**
@@ -35,6 +37,9 @@ export const ENGINEERING_JOB_TYPES = ['engineer.ship'] as const;
  * so blank (or missing) reads as "now" rather than failing the whole note's validation.
  */
 export const Timestamp = z.preprocess((v) => (typeof v === 'string' && v.trim() !== '' ? v : nowIso()), z.string());
+
+export const ModelTier = z.enum(['strong', 'medium', 'cheap', 'local']);
+export type ModelTier = z.infer<typeof ModelTier>;
 
 export const BlockedOn = z.object({
   kind: z.enum(['message', 'job', 'proposal', 'quota', 'owner']),
@@ -72,13 +77,13 @@ export const JobFrontmatter = z.looseObject({
   returns: z.record(z.string(), z.number().int()).default({}),
   gate_index: z.number().int().optional(),
   budget_from: z.number().int().optional(),
+  research: ResearchRequest.optional(),
+  research_slug: z.string().optional(),
+  model_tier: ModelTier.optional(),
 });
 export type JobFrontmatter = z.infer<typeof JobFrontmatter>;
 
 // ---------- Roles ----------
-export const ModelTier = z.enum(['strong', 'medium', 'cheap', 'local']);
-export type ModelTier = z.infer<typeof ModelTier>;
-
 export const ApprovalMode = z.enum(['auto', 'propose', 'ask', 'never']);
 export type ApprovalMode = z.infer<typeof ApprovalMode>;
 
@@ -146,7 +151,7 @@ export type DecisionFrontmatter = z.infer<typeof DecisionFrontmatter>;
 
 // ---------- Inbox notes: proposals and messages ----------
 export const ProposalKind = z.enum([
-  'message', 'hire', 'fire', 'brand_change', 'charter_change', 'file_change', 'spend', 'outbound_batch', 'reorg',
+  'message', 'hire', 'fire', 'brand_change', 'charter_change', 'file_change', 'spend', 'outbound_batch', 'reorg', 'threat_model',
 ]);
 export type ProposalKind = z.infer<typeof ProposalKind>;
 

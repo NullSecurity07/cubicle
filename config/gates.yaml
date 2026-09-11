@@ -3,7 +3,10 @@
 # as "What good looks like".
 gates:
   engineer.ship: [qa.review, coo.verify]
-  research: [requester.review]
+  research: [research.review, requester.review]
+  research.review: []
+  research.measure: [requester.review]
+  intelligence: []
   growth.outreach: [coo.verify]
   growth.post: [coo.verify]
   growth.seo: [coo.verify]
@@ -11,6 +14,7 @@ gates:
   team.plan: []
   critic.premortem: []
   qa.review: []
+  security.review: []
   coo.verify: []
   requester.review: []
   company.plan: []
@@ -29,6 +33,10 @@ criteria:
   team.plan: "At most 4 jobs, each finishable in one sitting with a Done when; the plan section names them."
   critic.premortem: "Concrete failure modes with a fix each; pass or return, never delay."
   qa.review: "Findings cite files or output; verdict pass or return."
+  security.review: "Say what data, credentials and permissions the change touches, and judge each: secrets never in the diff, input validated at the boundary, authorisation checked on the server, nothing sensitive logged. A finding cites the file and the line. Verdict pass or return."
   coo.verify: "Evidence-based; exactly one lesson."
   company.plan: "One objective section per team."
   colleague.answer: "The question is answered with colleague.message(re:<id>)"
+  research.review: "Evidence sufficiency: enough evidence, from more than one independent source, to support the decision at the required confidence. Bias: the method could have disproved the favoured answer. Contradictory evidence is named, not buried. Every finding states its confidence, assumptions and limitations. Verdict pass or return."
+  research.measure: "Prediction and outcome are both stated with dates; the report's `## Prediction vs reality` section is appended; Research/index.md carries the outcome."
+  intelligence: "Dated observations with a source link each; meaningful change separated from noise; every meaningful change is either an idea card or an alert; nothing invented."
