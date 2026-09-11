@@ -110,8 +110,10 @@ returned once; a second return from the same gate fails the job.
 
 ## Continuous intelligence (§13–§17)
 
-Four standing sweeps run every heartbeat cycle — competitive, market, technology, security — and land in
-`Research/intelligence/<date>-<kind>.md`. The rule is **detect meaningful change, not collect everything**. A
+Four standing sweeps run at most once a calendar day — competitive, market, technology, security — and land in
+`Research/intelligence/<date>-c<cycle>-<kind>.md`, e.g. `2026-09-11-c004-competitive.md`. The cycle is in the
+name because two heartbeats can land on the same day and neither sweep may overwrite the other; the job's goal
+always names the exact file to write. The rule is **detect meaningful change, not collect everything**. A
 meaningful change is one that changes what the company should do. Everything else goes under
 `## Noise ignored` in one line, which is how the next sweep knows you looked.
 
