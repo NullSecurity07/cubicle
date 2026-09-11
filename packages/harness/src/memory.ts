@@ -3,7 +3,8 @@ import { cosine } from '@cubicle/router';
 
 export type EmbedFn = (texts: string[]) => Promise<number[][]>;
 
-export const MEMORY_DIRS = ['Memory', 'Skills', 'Decisions', 'Docs'];
+/** `Research` is here so "existing evidence first" (§9) can actually find what the company already answered. */
+export const MEMORY_DIRS = ['Memory', 'Skills', 'Decisions', 'Docs', 'Research'];
 
 /** Split markdown into ~`size`-char chunks on paragraph boundaries. */
 export function chunkText(text: string, size = 900): string[] {

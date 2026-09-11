@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, updateJob } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { parseToolsConfig, ToolRegistry, phase3Tools, constitutionGuardrail } from '@cubicle/tools';
-import { runJob, vaultScheduler, MemoryIndex, hashEmbed, loadObservations, type Llm } from '../src/index.js';
+import { runJob, vaultScheduler, MemoryIndex, hashEmbed, loadObservations, MEMORY_DIRS, type Llm } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 let dir: string; let vault: Vault;
@@ -297,5 +297,12 @@ describe('finish(blocked) means "waiting on the owner", not "a tool refused me" 
     expect(refusal!.result).toMatch(/failed|another way/i);
     // The second call's prompt showed the refusal.
     expect(JSON.stringify(llm.prompts[1])).toContain('another way');
+  });
+});
+
+describe('memory covers prior research', () => {
+  it('Research is indexed, so "existing evidence first" can actually find it', () => {
+    expect(MEMORY_DIRS).toContain('Research');
+    expect(MEMORY_DIRS).toContain('Docs');
   });
 });
