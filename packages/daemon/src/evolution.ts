@@ -231,6 +231,9 @@ export const WEEKLY_REVIEW_EVERY = 7;
 export async function maybeEnqueueWeeklyReview(vault: Vault, openMeeting?: (agenda: string, participants: string[]) => Promise<string | null>): Promise<string[]> {
   const n = vault.events.count('heartbeat.completed');
   if (n === 0 || n % WEEKLY_REVIEW_EVERY !== 0) return [];
+  // §41 is computed, not written by an agent, so it is refreshed on the cadence rather than asked for in a job.
+  // It sits before the marker check on purpose: the numbers should be current even on a repeat tick.
+  try { vault.writeText('Metrics/research.md', renderResearchMetrics(researchMetrics(vault), new Date()), 'daemon', { generated: true }); } catch { /* a metrics page is never worth failing the review over */ }
   const marker = `weekly-${n}`;
   if (listJobs(vault).some((j) => j.links.includes(`[[${marker}]]`))) return [];
   // `marker` is not a job id, so it must not be passed as `parent` (F9) — expandProcess threads it through
@@ -748,4 +751,80 @@ function markCorrectiveDone(vault: Vault, incidentId: string, marker: string): v
   const cur = readJob(vault, incidentId);
   if (!cur) return;
   updateJob(vault, incidentId, { links: [...cur.data.links, `[[${marker}]]`] }, 'daemon', `- ${nowIso()}: corrective actions expanded (none found)`);
+}
+
+// ---------- research metrics (owner model §41) ----------
+
+export interface ResearchMetrics {
+  delivered: number;
+  open: number;
+  /** Median hours from a research job being created to being delivered. `null` below one delivery. */
+  medianHoursToAnswer: number | null;
+  reused: number;
+  /** Share of delivered projects that built on an earlier one. `null` when nothing has been delivered. */
+  reuseRate: number | null;
+  measured: number;
+  asExpected: number;
+}
+
+/** Any `Research/<project>/` path that is not one of the four reserved subdirectories. */
+const CITES_A_PROJECT = /Research\/(?!archive\/|intelligence\/|followups\/|index\b)[a-z0-9][a-z0-9-]*\//i;
+
+/**
+ * §41, computed rather than estimated. Everything here comes from files and events the company already wrote:
+ * no model is asked how well research is going, because the answer to that question is exactly the one a model
+ * would be tempted to flatter.
+ */
+export function researchMetrics(vault: Vault): ResearchMetrics {
+  const hours: number[] = [];
+  let delivered = 0; let reused = 0;
+  for (const e of vault.events.query({ types: ['research.delivered'] })) {
+    const note = e.job ? readJob(vault, e.job) : null; if (!note) continue;
+    delivered++;
+    const ms = Date.parse(e.ts) - Date.parse(note.data.created);
+    if (Number.isFinite(ms) && ms >= 0) hours.push(ms / 3600_000);
+    const own = note.data.research_slug ? new RegExp(`Research/${note.data.research_slug}/`, 'i') : null;
+    const cited = note.body.split('\n').filter((l) => CITES_A_PROJECT.test(l) && !(own && own.test(l)));
+    if (cited.length) reused++;
+  }
+  const sorted = [...hours].sort((a, b) => a - b);
+  const median = sorted.length === 0 ? null
+    : sorted.length % 2 ? sorted[(sorted.length - 1) / 2]
+    : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+  const followUps = listResearchFollowUps(vault);
+  const measuredNotes = followUps.filter((f) => f.status === 'measured');
+  const asExpected = measuredNotes.filter((f) => {
+    const n = vault.readNoteOrNull(f.path);
+    return /^as expected/i.test(String((n?.data as Record<string, unknown> | undefined)?.outcome ?? ''));
+  }).length;
+  return {
+    delivered, open: listJobs(vault, { status: ['queued', 'running', 'blocked', 'in_review'] }).filter((j) => j.type === 'research').length,
+    medianHoursToAnswer: median, reused, reuseRate: delivered ? reused / delivered : null,
+    measured: measuredNotes.length, asExpected,
+  };
+}
+
+export function renderResearchMetrics(m: ResearchMetrics, now: Date): string {
+  const pct = (n: number | null) => (n === null ? 'not enough delivered research to say' : `${Math.round(n * 100)}%`);
+  const hrs = (n: number | null) => (n === null ? 'not enough delivered research to say' : n < 48 ? `${n.toFixed(1)} h` : `${(n / 24).toFixed(1)} days`);
+  return [
+    '# Research metrics',
+    '',
+    `_Generated ${now.toISOString()} by the daemon on the weekly cadence. Edit nothing here; it is overwritten._`,
+    '',
+    '| measure | value | what it means |',
+    '|---|---|---|',
+    `| Delivered | ${m.delivered} | research projects that passed both gates |`,
+    `| Open | ${m.open} | research jobs still in flight |`,
+    `| Time to answer (median) | ${hrs(m.medianHoursToAnswer)} | request queued → delivered |`,
+    `| Reuse rate | ${pct(m.reuseRate)} | delivered projects that built on an earlier one (${m.reused} of ${m.delivered}) |`,
+    `| Measured | ${m.measured} | follow-ups where the company checked what actually happened |`,
+    `| Decisions as expected | ${m.measured ? `${m.asExpected} of ${m.measured}` : 'nothing measured yet'} | the only outcome measure that matters (§41) |`,
+    '',
+    'Number of reports is deliberately not a metric: measuring it encourages useless output.',
+    '',
+    'Reuse rate low and time to answer high together mean the index is not being searched before work starts.',
+    'Measured far below delivered means recommendations are being acted on without anyone checking them.',
+    '',
+  ].join('\n');
 }
