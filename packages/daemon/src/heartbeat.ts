@@ -485,14 +485,34 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     const prevArchive = vault.list('Plans/archive', { ext: '.md' }).sort().pop();
     if (planCur.trim() && (!prevArchive || vault.readText(prevArchive) !== planCur)) vault.writeText(`Plans/archive/${stampForFilename(now())}-${hbId.slice(-4)}.md`, planCur, 'ceo', { job: jobId });
   };
-  // What the last brief told a team to do next, so this cycle's plan can build on it instead of starting cold.
+  /**
+   * What the last brief told a team to do next, so this cycle's plan can build on it instead of starting cold.
+   *
+   * The brief's `## Next action per team` lines are keyed on the team a queued job *carries*, and every job a
+   * division lead schedules carries the room's id (`dev`, `qa`, `sales`, `research`) — never the division's. So
+   * asking for a division's own line got "nothing queued" almost every cycle and the continuity this promises
+   * the division lead was structurally blank (Task 6 review, finding 3). Fall back to the division's rooms,
+   * naming the room the action came from; "none recorded" only when nothing anywhere is queued.
+   */
   const lastNextAction = (teamId: string): string => {
     const last = vault.list('Runs', { ext: '.md' }).sort().at(-1);
     if (!last) return 'none recorded';
     const section = (vault.readTextOrNull(last) ?? '').split('## Next action per team')[1];
     if (!section) return 'none recorded';
-    const line = section.split('\n').find((l) => l.trim().startsWith(`- ${teamId}:`));
-    return line ? line.trim().slice(`- ${teamId}:`.length).trim() : 'none recorded';
+    const lines = section.split('\n');
+    const actionFor = (id: string): string | null => {
+      const line = lines.find((l) => l.trim().startsWith(`- ${id}:`));
+      if (!line) return null;
+      const value = line.trim().slice(`- ${id}:`.length).trim();
+      return value && value !== 'nothing queued' ? value : null;
+    };
+    const own = actionFor(teamId);
+    if (own) return own;
+    for (const room of childTeams(loadOrg(vault), teamId)) {
+      const value = actionFor(room.id);
+      if (value) return `${value} (${room.id})`;
+    }
+    return 'none recorded';
   };
 
   if (job.checkpoint_step > 0 && !state.finished) {
@@ -630,8 +650,6 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
             break;
           }
           archivePlan();
-          // This cycle is the rewrite that rejection asked for: spend the note so the next one does not rewrite again.
-          if (rejected) vault.updateNote(rejected.path, (n) => ({ data: { ...n.data, fanned_out: hbId }, body: n.body }), 'daemon');
           const org = loadOrg(vault);
           const teams = divisionTeams(org).map((t) => `${t.id} (lead ${t.lead}: ${t.mission})`).join('; ');
           const streams = listStreams(vault).filter((s) => s.status === 'active').map((s) => `${s.slug} (${s.outcome_metric}, owned by ${s.owner_team})`).join('; ') || 'none yet — the product manager writes Streams/<slug>.md before the first objective';
@@ -644,6 +662,11 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
             type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the board' : 'Write the company plan', assigned: chief, priority: 1, parent: jobId, team: teamOf(org, chief)?.id, owner_role: chief,
             goal: `Write this cycle's objectives per division, not jobs.\n\nSituation:\n${situationSummary()}\n\nDivisions: ${teams}.\n\nStreams: ${streams}.\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <division id>" subsection per division that has work this cycle (a bullet per objective; every objective for a product division ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); a division with nothing to do gets no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
           }, 'ceo');
+          // This cycle is the rewrite that rejection asked for, so spend the note — but only now that the
+          // rewrite exists (Task 6 review, minor 5). Stamped before `createJob`, a kill in between left the
+          // rejection spent with no rewrite queued, and the resumed step (no rejection on file, a fresh plan,
+          // open work) could let the gate stand the old plan down: the owner's "no" would have vanished.
+          if (rejected) vault.updateNote(rejected.path, (n) => ({ data: { ...n.data, fanned_out: hbId }, body: n.body }), 'daemon');
           state = { ...state, companyPlanJob: id }; saveState(state);
           return block(id, `waiting for company.plan ${id}`);
         }
@@ -759,6 +782,15 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
       case 'division_plans': {
         // The leads already planned against this plan last cycle and their jobs are the open work the gate saw.
         if (state.planSkipped && !state.divisionPlanJobs) { done(i, 'division plans skipped — no new plan to fan out'); break; }
+        // A plan with no real objective files no verdict (see owner_verdict) — and the remedy for that must stop
+        // at "do not file one", not "proceed as if approved" (Task 6 review, finding 1). `planIsSubstantive` is
+        // false for an empty page but also for any plan whose every bullet starts with verify/reconcile, which
+        // is a plausible Operations-only cycle: without this the fan-out queued a division.plan for the COO, who
+        // may then schedule up to four jobs of its own choosing, with nobody having ruled on any of it.
+        if (!state.verdictProposal && !state.divisionPlanJobs && !planIsSubstantive(vault.readTextOrNull('Plans/plan.md') ?? '')) {
+          done(i, 'nothing to fan out: the plan has no objective');
+          break;
+        }
         // "Approved work continues, new work waits": a plan still waiting for the owner fans out nothing, while
         // the jobs an earlier approved plan already put on the queue keep running. `planWaiting` deliberately
         // does NOT skip this step — a plan the owner approved between two heartbeats is exactly the plan this
@@ -887,7 +919,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           // A plan can be waiting for the owner (`planWaiting`, filed by an earlier cycle) and still be ruled on
           // by this one, so the "paused" line only stands while the verdict has not come through.
           ...(state.planWaiting && state.verdict !== 'approved' ? [`Planning: paused — a plan is waiting for your verdict (${state.planWaiting})`] : []),
-          ...(state.verdict === 'pending' ? ['Planning: this cycle\'s plan is waiting for your verdict; work already approved keeps running'] : []),
+          // The line above already says this for a plan an earlier cycle filed, and both were printed on the
+          // same brief (Task 6 review, minor 4). This one is for the plan *this* cycle wrote.
+          ...(state.verdict === 'pending' && !state.planWaiting ? ['Planning: this cycle\'s plan is waiting for your verdict; work already approved keeps running'] : []),
           ...(state.verdict === 'rejected' ? ['Planning: the plan was rejected; the CEO rewrites it next cycle and no new work was queued'] : []),
           modelUse.fact,
           ...(deps.env ? [`Outbound services: ${(['deploy', 'email', 'analytics'] as const).map((s) => `${s} ${mocked.includes(s) ? 'mock' : 'live'}`).join(', ')}`] : []),

@@ -399,7 +399,9 @@ describe('division planning (spec item 3)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await planUntilFannedOut(d, v, 3);
+      // Three divisions is the tightest case in the suite — several heartbeat round trips before the fan-out —
+      // and it timed out at 54 s against the helper's 60 s default under load (Task 6 review, finding 2).
+      await planUntilFannedOut(d, v, 3, 120000);
       const plans = listJobs(v).filter((j) => j.type === 'division.plan');
       expect(plans.map((j) => j.assigned).sort()).toEqual(['cfo', 'coo', 'cto']);
       expect(listJobs(v).filter((j) => j.type === 'board.premortem')).toHaveLength(1);
@@ -408,7 +410,9 @@ describe('division planning (spec item 3)', () => {
       expect(goal).toContain('Dev (lead dev_manager');
       expect(goal).toContain('backend_engineer');
     } finally { v.close(); await d.stop(); }
-  });
+    // The per-case timeout is raised past the helper's budget on purpose: whichever gives up first should be
+    // the helper, whose message says how many division plans it actually saw.
+  }, 150000);
 
   it('with the switch off — the shipped default — the plan waits for the owner, and no new work starts', async () => {
     const seed = Vault.open(dir);
