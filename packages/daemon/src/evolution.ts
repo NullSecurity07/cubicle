@@ -434,7 +434,7 @@ export function intelligenceGoal(kind: IntelligenceKind, out: string, previous: 
     '   - `## Changes since last time` — only what actually moved. If nothing did, write "nothing meaningful changed" and say what you checked.',
     '   - `## Alerts` — anything someone needs to know now. One line each, naming who and why.',
     '   - `## Noise ignored` — one line per thing you deliberately did not escalate. This section is how the next sweep knows you looked.',
-    `4. For each meaningful change that suggests something the company could **do**, \`vault.write Ideas/<slug>.md\` using the shape of \`Ideas/_template.md\`: \`id\` (the slug), \`title\`, \`source: intelligence:${kind}\`, \`status: new\`, \`evidence\` (the archive paths), and the three body sections. One card per change, never a digest.`,
+    `4. For each meaningful change that suggests something the company could **do**, file it with \`idea.card\` as Ideas/<slug>.md, using the shape of \`Ideas/_template.md\`: \`id\` (the slug), \`title\`, \`source: intelligence:${kind}\`, \`status: new\`, \`evidence\` (the archive paths), and the three body sections. One card per change, never a digest.`,
     `5. For each alert, \`colleague.message\` the research_manager with the one line and the path to ${out}.`,
     '',
     'Never invent an observation, a number or a date. A sweep that found nothing is a good sweep honestly reported; a sweep that invented something is worse than no sweep at all.',
