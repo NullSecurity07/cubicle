@@ -463,3 +463,42 @@ describe('the fan-out is crash-idempotent (final review C1)', () => {
     } finally { v.close(); }
   });
 });
+
+describe('the chief executive is an office, not the id `ceo` (final review I1/I2)', () => {
+  /** Re-staff the seat the way an owner does: one line in the constitution's `offices:` block. */
+  const restaff = (v: Vault, holder: string) => v.writeText('Memory/constitution.md', v.readText('Memory/constitution.md').replace(/^(\s*)chief_executive:.*$/m, `$1chief_executive: ${holder}`), 'owner');
+
+  it('the company.plan job is stamped with the new holder and the new holder\'s team, not `ceo`/`executive`', async () => {
+    const v = Vault.open(dir);
+    try {
+      restaff(v, 'coo');
+      const hbId = createHeartbeatJob(v, 'test');
+      updateJob(v, hbId, { checkpoint_step: HEARTBEAT_STEPS.indexOf('company_plan') }, 'daemon');
+      const out = await runHeartbeat({ vault: v, llm: { async chat() { throw new Error('no model'); }, promptBudget: () => 6000 }, env: {}, now: () => new Date() }, hbId);
+      expect(out.status).toBe('blocked');
+      const plan = listJobs(v).find((j) => j.type === 'company.plan')!;
+      expect(plan.assigned).toBe('coo');
+      expect(plan.owner_role).toBe('coo');
+      expect(plan.team).toBe('operations');   // the COO's own room, not the hard-coded `executive`
+    } finally { v.close(); }
+  });
+
+  it('the chief executive speaks from the office holder\'s charter, not from Roles/ceo.md', async () => {
+    const v = Vault.open(dir);
+    try {
+      restaff(v, 'coo');
+      // The old holder's charter is archived, exactly as `applyFire`/a re-staff leaves it: reading it by name
+      // would hand the new holder an empty charter.
+      v.move('Roles/ceo.md', 'Roles/archive/ceo-2026-09-11.md', 'owner');
+      const prompts: { roleId: string; system: string }[] = [];
+      const llm: Llm = { async chat(req: RouteRequest, chat: { messages: ChatMessage[] }) { prompts.push({ roleId: req.roleId ?? '?', system: String(chat.messages[0]?.content ?? '') }); throw new Error('no model'); }, promptBudget: () => 6000 };
+      const hbId = createHeartbeatJob(v, 'test');
+      updateJob(v, hbId, { checkpoint_step: HEARTBEAT_STEPS.indexOf('brief') }, 'daemon');
+      await runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hbId);
+      expect(prompts.length).toBeGreaterThan(0);
+      expect(prompts.every((p) => p.roleId === 'coo')).toBe(true);
+      expect(prompts[0].system).toContain('# Your charter (COO)');
+      expect(prompts[0].system).toContain(readFileSync(path.join(dir, 'Roles/coo.md'), 'utf8').split('---').slice(2).join('---').trim().split('\n')[0]);
+    } finally { v.close(); }
+  });
+});

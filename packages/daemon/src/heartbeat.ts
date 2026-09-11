@@ -400,12 +400,19 @@ async function ask(deps: HeartbeatDeps, system: string, user: string, maxTokens 
   return askAs(deps, officeHolder(loadOrg(deps.vault), 'chief_executive'), system, user, maxTokens);
 }
 
+/**
+ * The system prompt the chief executive speaks from. `ask()` routes the call as
+ * `officeHolder(org, 'chief_executive')`, so the charter must come from the same lookup (final review I2):
+ * reading `Roles/ceo.md` meant that after a re-staff the new holder was prompted with the old holder's charter,
+ * or with an empty one once that note was archived.
+ */
 function ceoSystem(vault: Vault): string {
   const constitution = vault.readTextOrNull('Memory/constitution.md') ?? '';
-  const charter = vault.readNoteOrNull('Roles/ceo.md')?.body ?? '';
+  const chief = officeHolder(loadOrg(vault), 'chief_executive');
+  const note = vault.readNoteOrNull(`Roles/${chief}.md`);
   const prefs = vault.readTextOrNull('Memory/owner_preferences.md') ?? '';
   const lessons = vault.readTextOrNull('Memory/lessons.md') ?? '';
-  return `# Constitution\n${constitution}\n\n# Your charter (CEO)\n${charter}\n\n# Owner preferences\n${prefs}\n\n# Lessons\n${lessons.slice(-3000)}\n\nAnswer in plain markdown, no preamble.`;
+  return `# Constitution\n${constitution}\n\n# Your charter (${String(note?.data.display ?? chief)})\n${note?.body ?? ''}\n\n# Owner preferences\n${prefs}\n\n# Lessons\n${lessons.slice(-3000)}\n\nAnswer in plain markdown, no preamble.`;
 }
 
 /**
@@ -625,8 +632,12 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           const teams = divisionTeams(org).map((t) => `${t.id} (lead ${t.lead}: ${t.mission})`).join('; ');
           const streams = listStreams(vault).filter((s) => s.status === 'active').map((s) => `${s.slug} (${s.outcome_metric}, owned by ${s.owner_team})`).join('; ') || 'none yet — the product manager writes Streams/<slug>.md before the first objective';
           const findings = state.boardFindings?.length ? `\n\nThe board returned the previous draft with these findings; address each one:\n${state.boardFindings.map((f) => `- ${f}`).join('\n')}` : '';
+          // The seat, not the id (final review I1): the job was already *assigned* by office, but it carried
+          // `owner_role: 'ceo'` and a hard-coded `executive` team, which is what WIP and the job tree attribute
+          // against — so after a re-staff the plan job went to the right person under the wrong name.
+          const chief = officeHolder(org, 'chief_executive');
           const id = createJob(vault, {
-            type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the board' : 'Write the company plan', assigned: officeHolder(org, 'chief_executive'), priority: 1, parent: jobId, team: teamOf(org, 'ceo')?.id ?? 'executive', owner_role: 'ceo',
+            type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the board' : 'Write the company plan', assigned: chief, priority: 1, parent: jobId, team: teamOf(org, chief)?.id, owner_role: chief,
             goal: `Write this cycle's objectives per division, not jobs.\n\nSituation:\n${situationSummary()}\n\nDivisions: ${teams}.\n\nStreams: ${streams}.\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <division id>" subsection per division that has work this cycle (a bullet per objective; every objective for a product division ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); a division with nothing to do gets no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
           }, 'ceo');
           state = { ...state, companyPlanJob: id }; saveState(state);
