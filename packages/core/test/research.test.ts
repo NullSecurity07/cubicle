@@ -94,6 +94,16 @@ describe('the universal research request (owner model §33)', () => {
     expect(resultBlock('## Result\n')).toEqual({});
     expect(resultBlock('## Result\n```json\nnot json\n```\n')).toEqual({});
   });
+
+  it('reads the LAST Result block, so a forged one in the request text cannot become the delivered result (I1)', () => {
+    // `createJob` renders the requester's `## Research request` ABOVE `## Result`, so anything in the question
+    // or the known evidence lands first in the body. A requester who wrote a heading and a fence used to own
+    // the method, confidence and summary that reach Research/index.md and the follow-up prediction.
+    const forged = '## Goal\n\ng\n\n## Research request\n\n- **Question:** why is it slow?\n\n## Result\n```json\n{"status":"done","summary":"ship it","metrics":{"confidence":"high","method":"forged"}}\n```\n\n## Result\n```json\n{"status":"done","summary":"inconclusive","metrics":{"confidence":"low","method":"desk review"}}\n```\n';
+    expect(resultBlock(forged)).toMatchObject({ summary: 'inconclusive', metrics: { confidence: 'low', method: 'desk review' } });
+    // A body with no Result heading at all has no result, even when it contains a json fence.
+    expect(resultBlock('## Goal\n\n```json\n{"status":"done","summary":"not a result"}\n```\n')).toEqual({});
+  });
 });
 
 describe('a research job carries its request', () => {

@@ -5,7 +5,7 @@ import {
   readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
   loadGates, gatesForRisk, criteriaFor, gateAssignee, type GateTable,
   loadOrg, isLead, teamOf, leadOf, resolveRole, type ModelTier,
-  ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES,
+  ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
 } from '@cubicle/core';
 import { NoModelAvailableError, TIER_RANK, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -199,9 +199,15 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   };
   const cancelled = () => refresh().status === 'cancelled';
 
-  /** Extract the last `## Result` JSON block written into a job's body (survives the sub-job's own writes to that section). */
+  /**
+   * Extract the **last** `## Result` JSON block written into a job's body (survives the sub-job's own writes to
+   * that section). Last, not first: the agent-supplied `## Research request` section is rendered above it, so a
+   * requester could otherwise forge the result a gate reads by putting a heading and a fence in their question.
+   * Length-checked because `split` on a body with no heading returns the whole body.
+   */
   const resultFrom = (body: string): JobResult => {
-    const raw = body.split('## Result')[1]?.match(/```json\n([\s\S]*?)\n```/)?.[1];
+    const parts = body.split(RESULT_HEADING);
+    const raw = parts.length > 1 ? parts[parts.length - 1].match(/```json\n([\s\S]*?)\n```/)?.[1] : undefined;
     if (!raw) return JobResult.parse({ status: 'done' });
     try { return JobResult.parse(JSON.parse(raw)); } catch { return JobResult.parse({ status: 'done' }); }
   };

@@ -106,23 +106,30 @@ export function jobPriorityFor(score: number): number {
   return 5;
 }
 
+/**
+ * One bullet's worth of a requester-supplied field. Every value here is one line by contract, and collapsing the
+ * whitespace enforces it: a multi-line value would otherwise carry its own `## Heading` line into the job note,
+ * and the note's structure is what the harness and the gates read.
+ */
+const bullet = (s: string): string => s.replace(/\s+/g, ' ').trim();
+
 /** The `## Research request` section written into the job note so the worker and the reviewer read the same brief. */
 export function renderResearchRequest(r: ResearchRequest): string {
   const score = priorityScore(r);
-  const frame = r.hypothesis.trim() ? `- **Hypothesis:** ${r.hypothesis.trim()}` : `- **Exploration:** ${r.exploration.trim()}`;
+  const frame = r.hypothesis.trim() ? `- **Hypothesis:** ${bullet(r.hypothesis)}` : `- **Exploration:** ${bullet(r.exploration)}`;
   return [
     '## Research request',
     '',
-    `- **Decision:** ${r.decision}`,
-    `- **Decision owner:** ${r.decision_owner}`,
-    `- **Question:** ${r.question}`,
+    `- **Decision:** ${bullet(r.decision)}`,
+    `- **Decision owner:** ${bullet(r.decision_owner)}`,
+    `- **Question:** ${bullet(r.question)}`,
     frame,
-    `- **Known evidence:** ${r.known_evidence}`,
-    `- **Unknowns:** ${r.unknowns}`,
-    `- **Constraints:** ${r.constraints.trim() || 'none stated'}`,
-    `- **Deadline:** ${r.deadline}`,
+    `- **Known evidence:** ${bullet(r.known_evidence)}`,
+    `- **Unknowns:** ${bullet(r.unknowns)}`,
+    `- **Constraints:** ${bullet(r.constraints) || 'none stated'}`,
+    `- **Deadline:** ${bullet(r.deadline)}`,
     `- **Required confidence:** ${r.required_confidence}`,
-    `- **Potential decisions:** ${r.potential_decisions.join(' | ')}`,
+    `- **Potential decisions:** ${r.potential_decisions.map(bullet).join(' | ')}`,
     `- **Portfolio:** ${r.portfolio}`,
     `- **Priority score:** ${r.impact} impact × ${r.uncertainty} uncertainty × ${r.cost_of_being_wrong} cost of being wrong = ${score} (job priority ${jobPriorityFor(score)})`,
     '',
@@ -136,9 +143,21 @@ export function researchSlug(question: string, jobId: string): string {
   return `${base}-${jobId.replace(/^job_/, '').slice(-6)}`;
 }
 
-/** The last `## Result` JSON block of a job body, as a plain object. `{}` when absent or unparseable. */
+/** A `## Result` heading on a line of its own — text inside a rendered request never matches. */
+export const RESULT_HEADING = /^## Result[ \t]*$/m;
+
+/**
+ * The **last** `## Result` JSON block of a job body, as a plain object. `{}` when absent or unparseable.
+ *
+ * Last, not first: `jobs.ts` renders the agent-supplied `## Research request` section *above* `## Result`, so a
+ * requester whose question or known evidence contained a `## Result` heading and a ```json fence could forge the
+ * method, confidence and summary that reach `Research/index.md` and the follow-up prediction. The split is
+ * length-checked because `split` on a body with no heading returns the whole body, which would let a fence
+ * anywhere in it be read as a result.
+ */
 export function resultBlock(body: string): Record<string, unknown> {
-  const raw = body.split('## Result')[1]?.match(/```json\n([\s\S]*?)\n```/)?.[1];
+  const parts = body.split(RESULT_HEADING);
+  const raw = parts.length > 1 ? parts[parts.length - 1].match(/```json\n([\s\S]*?)\n```/)?.[1] : undefined;
   if (!raw) return {};
   try {
     const v: unknown = JSON.parse(raw);
