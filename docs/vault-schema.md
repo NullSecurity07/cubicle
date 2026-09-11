@@ -179,6 +179,7 @@ Body sections: Context / Options considered / Chosen / Why / Expected effect / R
 | `summary` | string = `""` |  |
 | `verdict` | `pass` \| `return` (optional) |  |
 | `findings` | string[] = `[]` |  |
+| `architecture_change` | boolean (optional) | set true when the change added a dependency, a service, a data store, or a changed boundary (toolchain §8); an `engineer.ship` that sets it is refused until an ADR in Docs/adr/ is dated on or after the job's creation |
 
 ### Constitution (fenced `yaml` block in Memory/constitution.md)
 

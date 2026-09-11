@@ -264,5 +264,10 @@ export const JobResult = z.object({
   summary: z.string().default(''),
   verdict: z.enum(['pass', 'return']).optional(),
   findings: z.array(z.string()).default([]),
+  /** Set true when the change added a dependency, a service, a data store, or a changed boundary (toolchain
+   * §8). An `engineer.ship` that sets this is refused until an ADR exists in Docs/adr/ dated on or after the
+   * job's creation — the qa.review gate also checks for one, but a ship must not need a human to catch a
+   * missing decision record before it can even finish. */
+  architecture_change: z.boolean().optional(),
 });
 export type JobResult = z.infer<typeof JobResult>;

@@ -13,6 +13,7 @@ export const finish = defineTool({
     lessons: z.array(z.string()).default([]),
     verdict: z.enum(['pass', 'return']).optional().describe('review gates only'),
     findings: z.array(z.string()).default([]),
+    architecture_change: z.boolean().optional().describe('set true when this change added a dependency, a service, a data store, or a changed boundary (toolchain §8) — an engineer.ship that sets this needs an ADR in Docs/adr/ before it can finish'),
   },
   async handler(args) {
     // Gate reviewers kept calling finish({status: 'return'}) (20 opaque "Invalid option" rejections in one live run):

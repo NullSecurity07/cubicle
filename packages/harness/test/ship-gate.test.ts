@@ -4,9 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   scaffoldVault, Vault, createJob, readJob, updateJob, createProposal, findInboxById, createStream,
-  writeCiRecord, ciConfigPath, JobResult, loadGates, gatesForRisk, type JobFrontmatter,
+  writeCiRecord, ciConfigPath, JobResult, loadGates, gatesForRisk, stringifyNote, type JobFrontmatter,
 } from '@cubicle/core';
-import { shipRefusal, approvedThreatModel } from '../src/loop.js';
+import { parseToolsConfig, ToolRegistry, phase3Tools, adrPath } from '@cubicle/tools';
+import { readFileSync } from 'node:fs';
+import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
+import { shipRefusal, approvedThreatModel, rejectedThreatModel, runJob, vaultScheduler, type Llm } from '../src/loop.js';
 
 const root = path.resolve(__dirname, '../../..');
 const gates = loadGates(path.join(root, 'config/gates.yaml'));
@@ -102,5 +105,113 @@ describe('shipRefusal — the high-risk threat model (§27)', () => {
     green();
     expect(shipRefusal(vault, ship({ risk: 'medium' }), done)).toBeNull();
     expect(gatesForRisk(gates, 'engineer.ship', 'medium')).toEqual(['security.review', 'qa.review', 'coo.verify']);
+  });
+
+  // Fix round 1 / Important 3 & Minor 6: once the owner has answered "no", repeating "call proposal.create"
+  // is a lie — the job already asked and was told no. The refusal after a rejection must say that instead.
+  it('a rejected threat model refuses ship permanently, and stops telling the author to ask again', () => {
+    green();
+    const j = ship({ risk: 'high' });
+    const { id } = createProposal(vault, { kind: 'threat_model', from: 'backend_engineer', title: 'Threat model', body: 'b', job: j.id }, 'backend_engineer');
+    vault.updateNote(findInboxById(vault, id)!.path, (n) => ({ data: { ...n.data, approved: false }, body: n.body }), 'owner');
+    expect(rejectedThreatModel(vault, j.id)).toBe(true);
+    expect(approvedThreatModel(vault, j.id)).toBe(false);
+    const r = shipRefusal(vault, j, done);
+    expect(r).toMatch(/rejected/i);
+    expect(r).not.toMatch(/proposal\.create/);
+  });
+});
+
+describe('shipRefusal — the architecture ADR (toolchain §8)', () => {
+  it('a ship that changed the architecture is refused without an ADR dated on or after its creation', () => {
+    green();
+    const j = ship();
+    const withArch = JobResult.parse({ status: 'done', summary: 'shipped', architecture_change: true });
+    const r = shipRefusal(vault, j, withArch);
+    expect(r).toMatch(/adr\.create/);
+  });
+
+  it('an ADR dated before the job was created does not count', () => {
+    green();
+    const j = ship();
+    const rel = adrPath(1, 'Use a queue');
+    vault.writeText(rel, stringifyNote({ id: 'ADR-0001', title: 'Use a queue', status: 'accepted', date: '2026-09-10' }, '# ADR-0001: Use a queue\n'), 'backend_engineer');
+    const withArch = JobResult.parse({ status: 'done', summary: 'shipped', architecture_change: true });
+    expect(shipRefusal(vault, j, withArch)).toMatch(/adr\.create/);
+  });
+
+  it('an ADR dated on or after the job was created clears it', () => {
+    green();
+    const j = ship();
+    const rel = adrPath(1, 'Use a queue');
+    vault.writeText(rel, stringifyNote({ id: 'ADR-0001', title: 'Use a queue', status: 'accepted', date: j.created.slice(0, 10) }, '# ADR-0001: Use a queue\n'), 'backend_engineer');
+    const withArch = JobResult.parse({ status: 'done', summary: 'shipped', architecture_change: true });
+    expect(shipRefusal(vault, j, withArch)).toBeNull();
+  });
+
+  it('a ship that did not touch the architecture needs no ADR', () => {
+    green();
+    expect(shipRefusal(vault, ship(), done)).toBeNull(); // `done` sets no architecture_change
+  });
+});
+
+describe('the ship gate end to end, through runJob', () => {
+  const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
+  type Step = { tool: string; args: Record<string, unknown> };
+  function scripted(steps: Step[]): Llm {
+    let i = 0;
+    return {
+      async chat(_r: RouteRequest, _c: { messages: ChatMessage[]; tools?: ToolSchema[] }): Promise<RoutedChatResult> {
+        const s = steps[Math.min(i++, steps.length - 1)];
+        return { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium', downgraded: false, parsedToolCalls: [{ name: s.tool, args: s.args }] };
+      },
+      promptBudget: () => 6000,
+    };
+  }
+  function base() {
+    return { vault, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} };
+  }
+
+  it('refuse -> proposal.create(threat_model) -> owner approves -> resume -> finish done', async () => {
+    green();
+    const j = ship({ risk: 'high' });
+    const blocked = await runJob({ ...base(), llm: scripted([
+      { tool: 'finish', args: { status: 'done', summary: 'shipped it' } },
+      { tool: 'proposal.create', args: { kind: 'threat_model', title: 'Threat model: card form', body: 'Assets, entry points, what an attacker would try, what stops them, what we accept.' } },
+    ]) }, j.id);
+    expect(blocked.status).toBe('blocked');
+    expect(readJob(vault, j.id)!.data.status).toBe('blocked');
+    // The refusal was announced, not just recorded in the job's own transcript (docs/events.md's
+    // guardrail.blocked contract: "every refused call, never silent").
+    expect(vault.events.query({ types: ['guardrail.blocked'] }).some((e) => /threat_model/.test(String((e.payload as { reason?: string }).reason)))).toBe(true);
+
+    const propId = (blocked as { on?: { id: string } }).on!.id;
+    vault.updateNote(findInboxById(vault, propId)!.path, (n) => ({ data: { ...n.data, approved: true }, body: n.body }), 'owner');
+
+    const finished = await runJob({ ...base(), llm: scripted([{ tool: 'finish', args: { status: 'done', summary: 'shipped it' } }]) }, j.id);
+    expect(finished.status).toBe('done');
+    expect(readJob(vault, j.id)!.data.status).not.toBe('blocked');
+  });
+
+  it('refuse -> proposal.create(threat_model) -> owner rejects -> the job ends failed, refusing to ask again', async () => {
+    green();
+    const j = ship({ risk: 'high' });
+    const blocked = await runJob({ ...base(), llm: scripted([
+      { tool: 'finish', args: { status: 'done', summary: 'shipped it' } },
+      { tool: 'proposal.create', args: { kind: 'threat_model', title: 'Threat model: card form', body: 'Assets, entry points, what an attacker would try, what stops them, what we accept.' } },
+    ]) }, j.id);
+    expect(blocked.status).toBe('blocked');
+    const propId = (blocked as { on?: { id: string } }).on!.id;
+    vault.updateNote(findInboxById(vault, propId)!.path, (n) => ({ data: { ...n.data, approved: false }, body: n.body }), 'owner');
+
+    // On resume the author sees the refusal names the rejection, and gives up rather than asking again.
+    const done2 = await runJob({ ...base(), llm: scripted([
+      { tool: 'finish', args: { status: 'done', summary: 'shipped it' } },
+      { tool: 'finish', args: { status: 'failed', summary: 'cannot ship: the owner rejected the threat model and this change cannot be reduced to a lower risk' } },
+    ]) }, j.id);
+    expect(done2.status).toBe('failed');
+    const reasons = vault.events.query({ types: ['guardrail.blocked'] }).map((e) => String((e.payload as { reason?: string }).reason));
+    expect(reasons.some((r) => /rejected/i.test(r))).toBe(true);
+    expect(reasons.some((r) => /rejected/i.test(r) && /proposal\.create/.test(r))).toBe(false);
   });
 });
