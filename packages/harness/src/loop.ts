@@ -4,7 +4,7 @@ import {
   type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
   readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
   loadGates, gatesForRisk, criteriaFor, gateAssignee, type GateTable,
-  loadOrg, isLead, teamOf, leadOf, resolveRole, type ModelTier,
+  loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
 } from '@cubicle/core';
 import { NoModelAvailableError, TIER_RANK, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
@@ -141,7 +141,7 @@ function hasArchitectureAdrSince(vault: Vault, jobCreated: string): boolean {
  * Three rules, all from the owner's operating model. §17: a change is not shipped until the pipeline has
  * validated it, so an `engineer.ship` needs a green CI record newer than every source file in its stream. §8: a
  * change that alters the architecture needs an ADR recorded, or the decision is lost the moment the job's
- * context is — the qa.review gate also checks for one, but a ship must not need a human reviewer to catch a
+ * context is — the team:qa.review gate also checks for one, but a ship must not need a human reviewer to catch a
  * missing decision record before it can even finish. §27: the higher the risk, the stronger the human
  * governance, so a `high` risk change also needs a threat model the owner has approved — a decision no role
  * can be assigned, which is why it is a proposal rather than a gate.
@@ -299,6 +299,25 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   };
 
   /**
+   * The room a gate's name points at, with the `office:`/`team:` prefix stripped. Gates are named by office
+   * (`office:operations.verify`) or by room (`team:qa.review`); the pre-office names (`qa.review`) carry the
+   * room id bare. Everything downstream of the assignee — the second-pair-of-eyes search, above all — wants
+   * that bare id, not the prefixed one.
+   */
+  const gateRoom = (gate: string): string => {
+    const dot = gate.lastIndexOf('.');
+    const head = dot === -1 ? gate : gate.slice(0, dot);
+    return head.replace(/^(?:office|team):/, '');
+  };
+
+  /** True when `gate` is the QA review, under its office-era name or the pre-office one. */
+  const isQaGate = (gate: string) => gate === 'team:qa.review' || gate === 'qa.review';
+  /** True when `gate` is the security review, under either name. */
+  const isSecurityGate = (gate: string) => gate === 'office:security.review' || gate === 'security.review';
+  /** True when `gate` is the operations verification (`office:operations.verify` / `coo.verify`). */
+  const isVerifyGate = (gate: string) => gate.endsWith('.verify');
+
+  /**
    * A gate is a second pair of eyes (spec §4), so nobody reviews their own work. When the resolved assignee is
    * the job's own author — the shape `research.review` has by default, since both the `research` job and its
    * gate resolve to the research team's lead — hand the gate to someone else, in the brief's order: an active
@@ -306,7 +325,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
    * COO for Research), then the CEO. Returns null when the author is genuinely the only person who could look.
    */
   const secondPairOfEyes = (gate: string, assignee: string, author: string): string | null => {
-    const team = org.teams[gate.split('.')[0]] ?? teamOf(org, assignee);
+    const team = org.teams[gateRoom(gate)] ?? teamOf(org, assignee);
     const candidates = [...(team?.members ?? []), team?.lead ?? '', leadOf(org, assignee) ?? '', 'ceo'];
     return candidates.find((c) => c && c !== author && org.roles[c]) ?? null;
   };
@@ -317,7 +336,8 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     // The named assignee may have no active worker (role fired/deactivated, or a `for`/owner_role naming an
     // unknown role): fall back to its lead so the parent never sits in_review forever (F1).
     if (!org.roles[assignee]) {
-      const fallback = leadOf(org, assignee) ?? (gate === 'requester.review' ? (leadOf(org, parent.owner_role ?? '') ?? 'ceo') : 'ceo');
+      const chief = officeHolder(org, 'chief_executive');
+      const fallback = leadOf(org, assignee) ?? (gate === 'requester.review' ? (leadOf(org, parent.owner_role ?? '') ?? chief) : chief);
       events.emit({ type: 'daemon.warning', agent: roleId, job: parent.id, payload: { where: 'enqueueGate', message: `gate ${gate} assignee "${assignee}" has no active worker; reassigned to ${fallback}` } });
       assignee = fallback;
     }
@@ -333,19 +353,19 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       }
     }
     const criteria = criteriaFor(gates, parent.type);
-    // The gate's *own* criteria, when it has one (research.review's §35 checklist, qa.review's "cite a file").
+    // The gate's *own* criteria, when it has one (research.review's §35 checklist, team:qa.review's "cite a file").
     // `gates[gate]` is read directly rather than through criteriaFor so a gate with no entry stays silent
     // instead of inheriting the `custom` fallback meant for the job under review.
     const gateCriteria = gates[gate]?.criteria ?? '';
     deps.scheduler.enqueue({
-      type: gate, title: `${gate === 'coo.verify' ? 'Verify' : 'Review'}: ${parent.title}`, assigned: assignee, priority: 4, parent: parent.id, links: [`[[${parent.id}]]`], privacy: parent.privacy,
+      type: gate, title: `${isVerifyGate(gate) ? 'Verify' : 'Review'}: ${parent.title}`, assigned: assignee, priority: 4, parent: parent.id, links: [`[[${parent.id}]]`], privacy: parent.privacy,
       team: parent.team, owner_role: parent.owner_role, for: parent.for,
-      // The reviewer needs the change's stream — where the CI records and the code are — or a qa.review cannot
+      // The reviewer needs the change's stream — where the CI records and the code are — or a team:qa.review cannot
       // tell a fresh green run from a stale one. The parent's *risk* is passed in the goal below rather than
       // set on the gate job: a gate type's own chain is empty, and `gatesForRisk` would read a carried-over
-      // `high` as "this review is itself reviewed by security.review".
+      // `high` as "this review is itself reviewed by office:security.review".
       stream: parent.stream,
-      goal: `Review job [[${parent.id}]] (${parent.type}) as the ${gate} gate. What good looks like: ${criteria}${gateCriteria ? `\nAs the ${gate} reviewer, check: ${gateCriteria}` : ''}\nDone when (author's): ${parent.done_when ?? 'not stated'}\nAuthor's summary: ${result.summary}${gate === 'qa.review' && parent.stream ? `\nThe CI record for stream "${parent.stream}" is at Workspace/${parent.stream}/.cubicle-ci/ — read the newest one; a green record older than the change is not a pass. If this change altered the architecture (a new dependency, a new service, a new data store, a changed boundary) there must be an ADR in Docs/adr/; return it if there is not.` : ''}${gate === 'security.review' ? `\nThis change is ${parent.risk} risk. Name the data, credentials and permissions it touches and judge each one.` : ''}${gate === 'research.review' ? `\nThe requester asked for ${parent.research?.required_confidence ?? 'an unstated'} confidence on a ${parent.research?.portfolio ?? 'an unstated'} bet: judge the evidence against that bar, not against your own. Under-confidence stated honestly passes; confidence the evidence does not carry does not.` : ''}\nRead its Result block and artifacts, check with evidence, then finish with status done and verdict pass, or verdict return with findings that name a file or an output line${gate === 'coo.verify' ? ', plus exactly one lesson in finish.lessons' : ''}. A job may be returned once per gate; a second return fails it.`,
+      goal: `Review job [[${parent.id}]] (${parent.type}) as the ${gate} gate. What good looks like: ${criteria}${gateCriteria ? `\nAs the ${gate} reviewer, check: ${gateCriteria}` : ''}\nDone when (author's): ${parent.done_when ?? 'not stated'}\nAuthor's summary: ${result.summary}${isQaGate(gate) && parent.stream ? `\nThe CI record for stream "${parent.stream}" is at Workspace/${parent.stream}/.cubicle-ci/ — read the newest one; a green record older than the change is not a pass. If this change altered the architecture (a new dependency, a new service, a new data store, a changed boundary) there must be an ADR in Docs/adr/; return it if there is not.` : ''}${isSecurityGate(gate) ? `\nThis change is ${parent.risk} risk. Name the data, credentials and permissions it touches and judge each one.` : ''}${gate === 'research.review' ? `\nThe requester asked for ${parent.research?.required_confidence ?? 'an unstated'} confidence on a ${parent.research?.portfolio ?? 'an unstated'} bet: judge the evidence against that bar, not against your own. Under-confidence stated honestly passes; confidence the evidence does not carry does not.` : ''}\nRead its Result block and artifacts, check with evidence, then finish with status done and verdict pass, or verdict return with findings that name a file or an output line${isVerifyGate(gate) ? ', plus exactly one lesson in finish.lessons' : ''}. A job may be returned once per gate; a second return fails it.`,
     });
   };
 

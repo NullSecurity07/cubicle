@@ -54,6 +54,11 @@ describe('tower teams', () => {
     expect(reportsOf(org, 'cto').sort()).toEqual(['dev_manager', 'qa_lead']);
     expect(reportsOf(org, 'cfo').sort()).toEqual(['cgo', 'cmo', 'cso']);
     expect(reportsOf(org, 'coo').sort()).toEqual(['chro', 'clo', 'research_manager']);
+    // A division note lists only the people who sit in the division office; the leads of the rooms under it are
+    // reports through `parent`, not members (the stopgap that listed them twice is gone).
+    expect(org.teams.technology.members).toEqual([]);
+    expect(org.teams.revenue.members).toEqual(['cmo', 'cgo']);
+    expect(org.teams.operations.members).toEqual(['chro', 'clo']);
     expect(leadOf(org, 'dev_manager')).toBe('cto'); expect(leadOf(org, 'backend_engineer')).toBe('dev_manager'); expect(leadOf(org, 'advisor_investor')).toBe('advisor_skeptic');
     for (const r of Object.values(org.roles)) if (r.role !== 'ceo') expect(Object.values(org.teams).some((t) => t.lead === r.role || t.members.includes(r.role)), `${r.role} in some team`).toBe(true);
     expect(isOwnerOwned('Teams/dev.md')).toBe(true);
@@ -70,7 +75,7 @@ describe('processes, gates and constitution', () => {
     }
     expect(readFileSync(path.join(dir, 'Processes/feature.md'), 'utf8')).toMatch(/role: research_manager.*\n.*role: cto.*\n.*role: backend_engineer.*\n.*role: cmo/);
     for (const d of ['Docs/adr', 'Docs/research', 'Docs/postmortems', 'Docs/tech-radar.md', 'Research/index.md', 'Research/intelligence', 'Ideas/_template.md', 'Metrics/research.md']) expect(existsSync(path.join(dir, d)), d).toBe(true);
-    expect(readFileSync(path.resolve(__dirname, '../../../config/gates.yaml'), 'utf8')).toMatch(/engineer\.ship:\s*\[qa\.review, coo\.verify\]/);
+    expect(readFileSync(path.resolve(__dirname, '../../../config/gates.yaml'), 'utf8')).toMatch(/engineer\.ship:\s*\[team:qa\.review, office:operations\.verify\]/);
     expect(vault.constitution()).toMatchObject({ max_team_size: 8, auto_approve_reorg: false, max_roles: 40 });
   });
 });

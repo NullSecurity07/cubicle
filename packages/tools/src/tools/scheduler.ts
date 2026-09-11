@@ -1,14 +1,32 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { KNOWN_JOB_TYPES, isValidRoleId, isValidStreamSlug, listStreams, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, ENGINEERING_JOB_TYPES, RISK_GUIDANCE, RISK_LEVELS, missingRequestFields, incompleteRequestText, ResearchRequest, priorityScore, jobPriorityFor, type Org } from '@cubicle/core';
+import { KNOWN_JOB_TYPES, officeHolder, isValidRoleId, isValidStreamSlug, listStreams, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, ENGINEERING_JOB_TYPES, RISK_GUIDANCE, RISK_LEVELS, missingRequestFields, incompleteRequestText, ResearchRequest, priorityScore, jobPriorityFor, type Org } from '@cubicle/core';
 
 /**
  * Job types an ordinary role may not schedule, and who may. Must cover every type `wipLoad` skips and every type
  * the heartbeat's open-work count ignores: a type that is invisible to the WIP limit and to the re-planning gate,
  * but schedulable by anyone, is a way for an agent to park work where nothing counts it — and it is exempt from
  * the duplicate-title check below too. `requester.review`, `research.review` and `incident` were that gap.
+ *
+ * The people named are looked up by *office*, not written as role ids: re-staffing a seat in the constitution
+ * must not hand the whole planning machinery to the wrong desk. The pre-office gate names keep their entries so
+ * a job queued before the rename is still refused to everyone but the same two offices.
  */
-const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'], 'security.review': ['ceo', 'cto', 'ciso'], 'requester.review': [], 'research.review': [], 'incident': [], 'research.measure': [], 'intelligence': [] };
+export function systemTypes(org: Org): Record<string, string[]> {
+  const ceo = officeHolder(org, 'chief_executive');
+  const ops = officeHolder(org, 'operations');
+  const eng = officeHolder(org, 'engineering');
+  const sec = officeHolder(org, 'security');
+  return {
+    'ceo.heartbeat': [], 'company.plan': [],
+    'board.premortem': [ceo], 'division.plan': [ceo], 'team.plan': [ceo], 'critic.premortem': [ceo],
+    'office:operations.verify': [ceo, ops], 'coo.verify': [ceo, ops],
+    'team:qa.review': [ceo, eng], 'qa.review': [ceo, eng],
+    'office:security.review': [ceo, sec], 'security.review': [ceo, eng, sec],
+    'cto.plan': [ceo], 'cto.compress_charters': [ceo, eng],
+    'requester.review': [], 'research.review': [], 'incident': [], 'research.measure': [], 'intelligence': [],
+  };
+}
 
 /**
  * A refusal the model can act on. The old one-liner ("leads schedule their own team…") left a lead whose team has no
@@ -123,7 +141,7 @@ export const schedulerRequest = defineTool({
       const known = listStreams(ctx.vault).map((s) => s.slug);
       return { ok: false, text: `${JSON.stringify(args.stream)} is not a stream slug. Use the slug from the Streams/<slug>.md note — lower-case letters, digits and hyphens only, starting with a letter or digit, at most 48 characters. ${known.length ? `Known streams: ${known.join(', ')}.` : 'No streams exist yet; the product manager creates Streams/<slug>.md first.'} Omit stream if this job serves none.` };
     }
-    const allowed = SYSTEM_TYPES[type];
+    const allowed = systemTypes(org)[type];
     if (allowed && !allowed.includes(ctx.roleId)) return { ok: false, text: `job type ${type} is reserved for the daemon${allowed.length ? ` / ${allowed.join(', ')}` : ''}` };
     const lead = ctx.roleId === 'ceo' || isLead(org, ctx.roleId);
     if (lead && !args.done_when?.trim()) return { ok: false, text: 'leads must give done_when: one sentence a stranger could check' };

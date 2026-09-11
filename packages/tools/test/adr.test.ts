@@ -74,10 +74,12 @@ describe('adr.create (toolchain document §8)', () => {
 });
 
 describe('the QA gate knows about ADRs', () => {
-  it('qa.review criteria requires an ADR for an architecture change', () => {
-    const c = criteriaFor(loadGates(path.join(root, 'config/gates.yaml')), 'qa.review');
-    expect(c).toMatch(/ADR/);
-    expect(c).toMatch(/Docs\/adr/);
+  it('team:qa.review criteria requires an ADR for an architecture change, under either name', () => {
+    for (const gate of ['team:qa.review', 'qa.review']) {
+      const c = criteriaFor(loadGates(path.join(root, 'config/gates.yaml')), gate);
+      expect(c, gate).toMatch(/ADR/);
+      expect(c, gate).toMatch(/Docs\/adr/);
+    }
   });
 });
 

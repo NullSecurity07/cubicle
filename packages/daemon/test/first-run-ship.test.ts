@@ -114,9 +114,9 @@ describe('a fresh vault\'s first seeded job can finish (fix wave item 10 / I3)',
     expect(rec!.record.green).toBe(true);
     expect(ciStatus(vault, slug).ok).toBe(true);
 
-    // A finished ship hands off to its gate chain, so the job parks in in_review with a qa.review queued.
+    // A finished ship hands off to its gate chain, so the job parks in in_review with a team:qa.review queued.
     expect(readJob(vault, ship.id)!.data.status).toBe('in_review');
-    const gate = listJobs(vault).find((j) => j.type === 'qa.review' && j.parent === ship.id)!;
+    const gate = listJobs(vault).find((j) => j.type === 'team:qa.review' && j.parent === ship.id)!;
     expect(gate).toBeDefined();
     // And that gate dispatches: it carries the author's team (dev), which used to sit behind dev's WIP limit.
     const pool = new WorkerPool(vault, { harness: {} as never, heartbeat: {} as never, maxConcurrent: 8 });

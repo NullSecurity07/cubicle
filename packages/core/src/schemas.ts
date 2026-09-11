@@ -6,14 +6,20 @@ import { ResearchRequest } from './research.js';
 export const JobStatus = z.enum(['queued', 'running', 'blocked', 'in_review', 'done', 'failed', 'cancelled']);
 export type JobStatus = z.infer<typeof JobStatus>;
 
+/**
+ * Every job type the daemon or an agent may create. Gates are named by the office that runs them
+ * (`office:<office>.<verb>`) or by the room whose lead runs them (`team:<team>.<verb>`) — never by a role id.
+ * `qa.review`, `coo.verify` and `security.review` are the pre-office names, kept listed (and kept in
+ * `config/gates.yaml`) so a job queued before the rename still validates and still finds its gate table entry.
+ */
 export const KNOWN_JOB_TYPES = [
-  'engineer.ship', 'growth.outreach', 'growth.post', 'growth.seo', 'coo.verify',
+  'engineer.ship', 'growth.outreach', 'growth.post', 'growth.seo', 'office:operations.verify',
   'cto.plan', 'cto.compress_charters', 'ceo.heartbeat', 'research', 'custom',
-  'team.plan', 'critic.premortem', 'qa.review', 'company.plan', 'colleague.answer',
-  'board.premortem',
+  'company.plan', 'division.plan', 'board.premortem', 'team.plan', 'critic.premortem',
+  'team:qa.review', 'office:security.review', 'colleague.answer',
   'research.review', 'research.measure', 'intelligence',
-  'security.review',
   'incident',
+  'qa.review', 'coo.verify', 'security.review',
 ] as const;
 
 /**
@@ -307,7 +313,7 @@ export const JobResult = z.object({
   findings: z.array(z.string()).default([]),
   /** Set true when the change added a dependency, a service, a data store, or a changed boundary (toolchain
    * §8). An `engineer.ship` that sets this is refused until an ADR exists in Docs/adr/ dated on or after the
-   * job's creation — the qa.review gate also checks for one, but a ship must not need a human to catch a
+   * job's creation — the team:qa.review gate also checks for one, but a ship must not need a human to catch a
    * missing decision record before it can even finish. */
   architecture_change: z.boolean().optional(),
 });

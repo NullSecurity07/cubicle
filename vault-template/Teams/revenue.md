@@ -2,7 +2,7 @@
 id: revenue
 name: Revenue
 lead: cfo
-members: [cmo, cgo, cso]
+members: [cmo, cgo]
 mission: Find the first customers, price the offer, and prove it with a metric that moved.
 room: cfo_office
 floor: 4

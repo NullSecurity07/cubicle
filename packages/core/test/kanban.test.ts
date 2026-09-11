@@ -12,7 +12,7 @@ let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-kanban-')); vault = (await scaffoldVault(dir)).vault; });
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
-const SHIP = ['qa.review', 'coo.verify'];
+const SHIP = ['team:qa.review', 'office:operations.verify'];
 const job = (over: Partial<{ status: string; gate_index: number; depends_on: string[] }>) =>
   ({ status: 'queued', gate_index: 0, depends_on: [], ...over } as Parameters<typeof stageOf>[0]);
 
@@ -22,9 +22,9 @@ describe('stageOf (owner operating model §7)', () => {
     expect(stageOf(job({ status: 'queued' }), SHIP, true)).toBe('ready');
     expect(stageOf(job({ status: 'running' }), SHIP)).toBe('in_progress');
     expect(stageOf(job({ status: 'blocked' }), SHIP)).toBe('in_progress');
-    expect(stageOf(job({ status: 'in_review', gate_index: 0 }), SHIP)).toBe('testing');        // qa.review outstanding
-    expect(stageOf(job({ status: 'in_review', gate_index: 1 }), SHIP)).toBe('ready_for_release'); // coo.verify outstanding
-    expect(stageOf(job({ status: 'in_review', gate_index: 0 }), ['security.review', ...SHIP])).toBe('review');
+    expect(stageOf(job({ status: 'in_review', gate_index: 0 }), SHIP)).toBe('testing');        // team:qa.review outstanding
+    expect(stageOf(job({ status: 'in_review', gate_index: 1 }), SHIP)).toBe('ready_for_release'); // office:operations.verify outstanding
+    expect(stageOf(job({ status: 'in_review', gate_index: 0 }), ['office:security.review', ...SHIP])).toBe('review');
     expect(stageOf(job({ status: 'done' }), SHIP)).toBe('done');
     expect(stageOf(job({ status: 'failed' }), SHIP)).toBe('done');       // off the board
     expect(stageOf(job({ status: 'cancelled' }), SHIP)).toBe('done');
@@ -58,12 +58,13 @@ describe('stageMap and wipLoad', () => {
   it('a running gate job does not inflate its parent\'s team WIP on top of the parent (fix round 1)', () => {
     const chainFor = () => SHIP;
     const parent = createJob(vault, { type: 'engineer.ship', title: 'A', assigned: 'backend_engineer', goal: 'g', team: 'dev' }, 'dev_manager');
-    updateJob(vault, parent, { status: 'in_review', gate_index: 0 }, 'daemon'); // testing: qa.review outstanding
-    // The gate job itself: type qa.review, inherits the parent's team, and is running (someone is doing the review).
-    const gateJob = createJob(vault, { type: 'qa.review', title: 'Review A', assigned: 'qa_automation', goal: 'g', team: 'dev', parent }, 'daemon');
+    updateJob(vault, parent, { status: 'in_review', gate_index: 0 }, 'daemon'); // testing: team:qa.review outstanding
+    // The gate job itself: type team:qa.review, inherits the parent's team, and is running (someone is doing the review).
+    const gateJob = createJob(vault, { type: 'team:qa.review', title: 'Review A', assigned: 'qa_automation', goal: 'g', team: 'dev', parent }, 'daemon');
     updateJob(vault, gateJob, { status: 'running' }, 'daemon');
 
-    expect(GATE_JOB_TYPES).toContain('qa.review');
+    expect(GATE_JOB_TYPES).toContain('team:qa.review');
+    expect(GATE_JOB_TYPES).toContain('qa.review');   // and the pre-office name, so an old gate job stays exempt
     // The parent counts once, in testing; the running gate job (also team: dev) must not add a second in_progress.
     expect(wipLoad(vault, 'dev', chainFor)).toEqual({ in_progress: 0, review: 0, testing: 1 });
   });

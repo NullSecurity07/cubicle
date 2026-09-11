@@ -227,9 +227,13 @@ export type WipStage = (typeof WIP_STAGES)[number];
 
 /** Which lane an outstanding gate parks its parent in. An unknown gate reads as `review`. */
 const GATE_STAGE: Record<string, KanbanStage> = {
+  'team:qa.review': 'testing',
+  'office:security.review': 'review',
+  'requester.review': 'review',
+  'office:operations.verify': 'ready_for_release',
+  // Pre-office names, for jobs queued before the rename.
   'qa.review': 'testing',
   'security.review': 'review',
-  'requester.review': 'review',
   'coo.verify': 'ready_for_release',
 };
 
@@ -240,7 +244,12 @@ const GATE_STAGE: Record<string, KanbanStage> = {
  * inflate the author's team WIP on top of the parent, which already occupies the matching lane. The daemon
  * heartbeat's `NON_WORK_TYPES` reuses this same list for its own "not real work" filters.
  */
-export const GATE_JOB_TYPES: readonly string[] = ['qa.review', 'security.review', 'requester.review', 'research.review', 'coo.verify'];
+export const GATE_JOB_TYPES: readonly string[] = [
+  'team:qa.review', 'office:security.review', 'requester.review', 'research.review', 'office:operations.verify',
+  // Pre-office names: a gate job queued before the rename must stay exempt from WIP and from the heartbeat's
+  // work count for the rest of its life, or renaming the gates would retroactively make old reviews "work".
+  'qa.review', 'security.review', 'coo.verify',
+];
 
 /** `chain` is the job's gate list (`gatesForRisk(table, job.type, job.risk)`); `depsDone` separates backlog from ready. */
 export function stageOf(job: Pick<JobFrontmatter, 'status' | 'gate_index' | 'depends_on'>, chain: string[], depsDone = true): KanbanStage {

@@ -107,7 +107,7 @@ describe('shipRefusal — the high-risk threat model (§27)', () => {
   it('medium risk needs no threat model — the security gate is the control there', () => {
     green();
     expect(shipRefusal(vault, ship({ risk: 'medium' }), done)).toBeNull();
-    expect(gatesForRisk(gates, 'engineer.ship', 'medium')).toEqual(['security.review', 'qa.review', 'coo.verify']);
+    expect(gatesForRisk(gates, 'engineer.ship', 'medium')).toEqual(['office:security.review', 'team:qa.review', 'office:operations.verify']);
   });
 
   // Fix round 1 / Important 3 & Minor 6: once the owner has answered "no", repeating "call proposal.create"

@@ -31,6 +31,15 @@ describe('scheduler.request through the org (spec §2)', () => {
   it('cto.plan is reserved for the daemon (via ceo), not schedulable through the tool', async () => {
     expect((await call('scheduler.request', 'cto', { type: 'cto.plan', title: 'x', assigned: 'dev_manager', goal: 'g', done_when: 'd' })).ok).toBe(false);
   });
+  it('the office and room gate types are reserved too, and so are the planning rounds', async () => {
+    for (const type of ['team:qa.review', 'office:operations.verify', 'office:security.review', 'division.plan', 'board.premortem', 'requester.review']) {
+      const r = await call('scheduler.request', 'dev_manager', { type, title: `sneak ${type}`, assigned: 'backend_engineer', goal: 'g', done_when: 'd' });
+      expect(r.ok, type).toBe(false);
+      expect(r.text, type).toMatch(/reserved for the daemon/);
+    }
+    // …and the offices that do run them are named by office, not by role id: the CTO may hand-queue a QA review.
+    expect((await call('scheduler.request', 'cto', { type: 'team:qa.review', title: 'QA this', assigned: 'qa_lead', goal: 'g', done_when: 'd' })).ok).toBe(true);
+  });
   it('the daemon\'s standing research sweeps are reserved too: nobody hand-queues intelligence or research.measure', async () => {
     for (const roleId of ['ceo', 'research_manager']) {   // both may schedule intelligence_analyst, so only the type can refuse them
       for (const type of ['intelligence', 'research.measure']) {
@@ -124,7 +133,11 @@ describe('scheduler.request refusals tell the caller what it may do instead', ()
     const r = await call('scheduler.request', 'cto', { type: 'growth.outreach', title: 'B', assigned: 'cto', goal: 'g', done_when: 'x' });
     expect(r.ok).toBe(false);
     expect(r.text).toMatch(/may not schedule cto/);
-    expect(r.text).toMatch(/dev_manager, qa_lead/);
+    // A lead now reaches its whole subtree (org.ts `can`): the CTO's list is the Dev and QA rooms under
+    // Technology, not just their two leads.
+    expect(r.text).toMatch(/dev_manager/);
+    expect(r.text).toMatch(/qa_lead/);
+    expect(r.text).toMatch(/backend_engineer/);
     expect(r.text).toMatch(/yourself/i);
   });
   it('a lead whose team has no members is told there is nobody to schedule and what to do instead', async () => {

@@ -52,7 +52,7 @@ const fourStep: Step[] = [
 ];
 
 describe('runJob checkpointing and resume', () => {
-  it('runs a 4-step job, records idempotency keys, writes the Result, enqueues coo.verify (review gate)', async () => {
+  it('runs a 4-step job, records idempotency keys, writes the Result, enqueues office:operations.verify (review gate)', async () => {
     growthWithMock();
     const id = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'cmo', goal: 'send' }, 'cto');
     const out = await runJob(deps(scripted(fourStep)), id);
@@ -66,7 +66,7 @@ describe('runJob checkpointing and resume', () => {
     const keys = readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).key);
     expect(keys).toEqual([`${id}:1:2`, `${id}:1:3`]);
     const coo = listJobs(vault, { assigned: 'coo' });
-    expect(coo.map((x) => x.type)).toEqual(['coo.verify']);
+    expect(coo.map((x) => x.type)).toEqual(['office:operations.verify']);
     expect(vault.events.count('agent.tool_call')).toBe(4);
     await runJob(deps(scripted([{ tool: 'finish', args: { status: 'done', summary: 'verified', verdict: 'pass', lessons: ['ok'] } }])), coo[0].id);
     expect(readJob(vault, id)!.data.status).toBe('done');

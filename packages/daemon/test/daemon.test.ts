@@ -35,7 +35,7 @@ function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: stri
   const perJob = new Map<string, number>();
   // The scaffold objective is only real work once; a second cycle (e.g. auto-triggered by jobsCompletedN once the
   // planning jobs push the count over the threshold) sees nothing left to do and writes an empty plan, so the
-  // company.plan → board_premortem → division_plans → engineer.ship → qa.review → coo.verify chain does not run forever.
+  // company.plan → board_premortem → division_plans → engineer.ship → team:qa.review → office:operations.verify chain does not run forever.
   let companyPlanCycles = 0;
   const llm = {
     calls: [] as { role?: string; tools: boolean }[],
@@ -61,7 +61,7 @@ function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: stri
       if (jobType === 'team.plan' && req.roleId === 'dev_manager') {
         return { ...base, parsedToolCalls: [n === 0 ? { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'backend_engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.', risk: 'low', stream: 'site' } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
       }
-      // Gate jobs (qa.review, coo.verify, requester.review) need an explicit verdict to advance the parent's gate chain.
+      // Gate jobs (team:qa.review, office:operations.verify, requester.review) need an explicit verdict to advance the parent's gate chain.
       const isGate = /\.(review|verify)$/.test(jobType);
       return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: `${req.roleId} done`, ...(isGate ? { verdict: 'pass' } : {}) } }] };
     },
@@ -416,12 +416,12 @@ describe('daemon lifecycle', () => {
     const d = daemonFor(fakeLlm());
     await d.start();
     await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
-    // engineer.ship (scaffold) runs and finishes; its coo.verify runs; then nothing else is enqueued
-    await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'coo.verify' && j.status === 'done').length >= 1, 20000);
+    // engineer.ship (scaffold) runs and finishes; its office:operations.verify runs; then nothing else is enqueued
+    await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'office:operations.verify' && j.status === 'done').length >= 1, 20000);
     await waitForStable(() => listJobs(d.vault).filter((j) => ['queued', 'running'].includes(j.status)).length === 0);
     const jobs = listJobs(d.vault);
     // No verify-of-verify chain: a gate job never itself sits under another gate job.
-    const gateTypes = ['qa.review', 'coo.verify', 'requester.review'];
+    const gateTypes = ['team:qa.review', 'office:operations.verify', 'requester.review'];
     const byId = new Map(jobs.map((j) => [j.id, j]));
     expect(jobs.filter((j) => gateTypes.includes(j.type)).every((j) => !gateTypes.includes(byId.get(j.parent ?? '')?.type ?? ''))).toBe(true);
     expect(jobs.filter((j) => ['queued', 'running'].includes(j.status)).length).toBe(0);
@@ -508,16 +508,16 @@ describe('daemon lifecycle', () => {
     } finally { v.close(); }
   });
 
-  it('planning and gate sub-jobs (company.plan, critic.premortem, team.plan, qa.review, coo.verify) never retrigger a second heartbeat on their own (Task 11)', async () => {
+  it('planning and gate sub-jobs (company.plan, critic.premortem, team.plan, team:qa.review, office:operations.verify) never retrigger a second heartbeat on their own (Task 11)', async () => {
     const vault = Vault.open(dir);
     createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
     vault.close();
     const d = daemonFor(fakeLlm());
     await d.start();
     await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
-    // the first heartbeat's own cycle produces company.plan, critic.premortem, team.plan, engineer.ship, qa.review, coo.verify —
+    // the first heartbeat's own cycle produces company.plan, critic.premortem, team.plan, engineer.ship, team:qa.review, office:operations.verify —
     // five of those six are planning/gate jobs; if they counted toward jobsCompletedN (5) a second heartbeat would fire.
-    await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'coo.verify' && j.status === 'done').length >= 1, 20000);
+    await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'office:operations.verify' && j.status === 'done').length >= 1, 20000);
     await new Promise((r) => setTimeout(r, 1500)); // let the tick settle
     const heartbeats = listJobs(d.vault).filter((j) => j.type === 'ceo.heartbeat');
     expect(heartbeats).toHaveLength(1);
@@ -527,7 +527,7 @@ describe('daemon lifecycle', () => {
   });
   it('research.review is a gate job, not work: it belongs in NON_WORK_TYPES alongside the other review/verify gates', () => {
     expect(NON_WORK_TYPES).toContain('research.review');
-    expect(NON_WORK_TYPES).toEqual(expect.arrayContaining(['qa.review', 'coo.verify', 'requester.review', 'research.review']));
+    expect(NON_WORK_TYPES).toEqual(expect.arrayContaining(['team:qa.review', 'office:operations.verify', 'requester.review', 'research.review']));
   });
 
   it('the daemon\'s own recurring sweeps never move the heartbeat trigger: four completed intelligence jobs count as zero work', () => {
