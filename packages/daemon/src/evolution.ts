@@ -4,7 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
-  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, resolveRole, jobPath,
+  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, officeHolder, roleWithTool, jobPath,
   RESEARCH_INDEX, upsertIndexRow, resultBlock, researchSlug, type ResearchRequest, type DeliveredResearch,
   readStream, budgetLines, listStreams, readFlags, expiredFlags,
 } from '@cubicle/core';
@@ -210,12 +210,14 @@ export function maybeEnqueuePostmortem(vault: Vault): string | null {
   const failed = vault.events.query({ types: ['job.failed'], from: since }).filter((e) => e.job && !e.payload.requeued);
   const byType = new Map<string, string[]>();
   for (const e of failed) { const t = readJob(vault, e.job!)?.data.type; if (t) byType.set(t, [...(byType.get(t) ?? []), e.job!]); }
+  const org = loadOrg(vault);
+  const eng = officeHolder(org, 'engineering');
   for (const [type, jobs] of byType) {
     if (jobs.length < 2) continue;
     const title = `Postmortem: ${type} failed ${jobs.length}× this cycle`;
     if (listJobs(vault).some((j) => j.type === 'research' && j.title.startsWith(`Postmortem: ${type}`) && j.status !== 'cancelled' && (!since || j.created >= since))) continue;
     return createJob(vault, {
-      type: 'research', title, assigned: researchLead(loadOrg(vault)) ?? 'research_analyst', priority: 2, team: 'research', owner_role: 'cto', for: 'cto',
+      type: 'research', title, assigned: researchLead(org) ?? eng, priority: 2, team: teamOf(org, researchLead(org) ?? eng)?.id, owner_role: eng, for: eng,
       done_when: `Docs/postmortems/<date>-${type}.md exists with a root cause and one proposed change`,
       goal: `Root-cause ${jobs.length} failures of ${type}: ${jobs.map((j) => `[[${j}]]`).join(', ')}.\n\nDo: (1) vault.read each job note (Result, Checkpoint log, Review findings) and Memory/lessons.md; (2) if shell output is involved read the latest .cubicle/jobs observations via vault.read of the job note only (no shell); (3) vault.write Docs/postmortems/${nowIso().slice(0, 10)}-${type.replace(/\W/g, '_')}.md with: what happened, root cause, evidence, one proposed change (a charter line, a skill, or a gate criterion); (4) finish with a two-line summary.`,
     }, 'daemon');
@@ -239,9 +241,10 @@ export async function maybeEnqueueWeeklyReview(vault: Vault, openMeeting?: (agen
   const dora = writeEngineeringMetrics(vault);
   // `marker` is not a job id, so it must not be passed as `parent` (F9) — expandProcess threads it through
   // `links` instead, which is all this idempotency check reads.
-  const ids = expandProcess(vault, 'weekly_review', `week ${n / WEEKLY_REVIEW_EVERY}`, { by: 'daemon', owner_role: 'ceo', marker });
   const org = loadOrg(vault);
-  const leads = Object.values(org.teams).map((t) => t.lead).filter((l) => l !== 'ceo');
+  const ceo = officeHolder(org, 'chief_executive');
+  const ids = expandProcess(vault, 'weekly_review', `week ${n / WEEKLY_REVIEW_EVERY}`, { by: 'daemon', owner_role: ceo, marker });
+  const leads = Object.values(org.teams).map((t) => t.lead).filter((l) => l !== ceo);
   if (openMeeting) await openMeeting(`Weekly review ${n / WEEKLY_REVIEW_EVERY}: what shipped, what failed, what each team does next; the COO proposes which team skills go company-wide. Engineering flow this week: ${dora.deploys} deploys, change failure rate ${dora.change_failure_rate === null ? 'n/a' : `${(dora.change_failure_rate * 100).toFixed(0)} %`} (Metrics/engineering.md).`, leads).catch(() => null);
   return ids;
 }
@@ -364,7 +367,7 @@ export function maybeEnqueueCharterCompression(vault: Vault): string | null {
   if (listJobs(vault).some((j) => j.id === id)) return null;
   const roles = activeRoles(vault).filter((r) => r.active).map((r) => r.role);
   return createJob(vault, {
-    id, type: 'cto.compress_charters', title: `Compress charters after ${heartbeats} heartbeats`, assigned: 'cto', priority: 3,
+    id, type: 'cto.compress_charters', title: `Compress charters after ${heartbeats} heartbeats`, assigned: officeHolder(loadOrg(vault), 'engineering'), priority: 3,
     goal: `Every ${CHARTER_COMPRESSION_EVERY} heartbeats the CTO tightens the role charters from what the company learned.\n\nDo: (1) vault.read Memory/lessons.md and every Roles/<role>.md for ${roles.join(', ')}; (2) for each role whose charter should change, file ONE proposal.create with kind=charter_change, target=Roles/<role>.md, a title naming the role, and a body that contains "## Proposed content" followed by the COMPLETE new charter note (frontmatter + body) inside a \`\`\`markdown fence — keep the frontmatter identical except tools/approval_overrides if a lesson justifies it, and make the body shorter, not longer; (3) skip roles with nothing to change; (4) finish with a one-paragraph summary listing the proposals.`,
   }, 'daemon');
 }
@@ -634,6 +637,7 @@ export function listExperiments(vault: Vault): ExperimentNote[] {
 /** On each tick: running experiments past their review date get a COO judgement job (once). */
 export function enqueueExperimentReviews(vault: Vault, now = new Date()): string[] {
   const out: string[] = [];
+  const ops = officeHolder(loadOrg(vault), 'operations');
   for (const e of listExperiments(vault)) {
     if (e.status !== 'running' || !e.review_date) continue;
     if (Date.parse(e.review_date) > now.getTime()) continue;
@@ -641,7 +645,7 @@ export function enqueueExperimentReviews(vault: Vault, now = new Date()): string
     const prior = listJobs(vault).filter((j) => (j.type === 'office:operations.verify' || j.type === 'coo.verify') && (j.links ?? []).includes(`[[${e.path.replace(/\.md$/, '')}]]`));
     if (prior.some((j) => ['queued', 'running', 'blocked'].includes(j.status))) continue;
     const id = idFromKey('job', `judge:${e.path}:${prior.length}`); // a failed/cancelled judgement gets a fresh one
-    createJob(vault, { id, type: 'office:operations.verify', title: `Judge experiment: ${e.title ?? e.id}`, assigned: 'coo', priority: 2, goal: `Experiment [[${e.path.replace(/\.md$/, '')}]] reached its review date (${e.review_date}). Read it and Metrics/daily.md, decide won | lost | inconclusive from the evidence, then vault.write the experiment note with status set accordingly, the result filled in, and a short ## Verdict. Append one lesson via finish.lessons. Do not invent numbers.`, links: [`[[${e.path.replace(/\.md$/, '')}]]`] }, 'daemon');
+    createJob(vault, { id, type: 'office:operations.verify', title: `Judge experiment: ${e.title ?? e.id}`, assigned: ops, priority: 2, goal: `Experiment [[${e.path.replace(/\.md$/, '')}]] reached its review date (${e.review_date}). Read it and Metrics/daily.md, decide won | lost | inconclusive from the evidence, then vault.write the experiment note with status set accordingly, the result filled in, and a short ## Verdict. Append one lesson via finish.lessons. Do not invent numbers.`, links: [`[[${e.path.replace(/\.md$/, '')}]]`] }, 'daemon');
     out.push(id);
   }
   return out;
@@ -761,6 +765,12 @@ export function collectOfflineOwnerComments(vault: Vault): string[] {
 export function collectOwnerFeedback(vault: Vault, since?: string): OwnerFeedback[] {
   const out: OwnerFeedback[] = [];
   const seen = new Set<string>();
+  const org = loadOrg(vault);
+  const ceo = officeHolder(org, 'chief_executive');
+  const revOffice = officeHolder(org, 'finance');
+  // Growth/customers work has no office of its own: the first active charter in the revenue division that
+  // carries email.send, same as the first-run seeds (first-run.ts) — falling back to the revenue office itself.
+  const growthLead = roleWithTool(org, teamOf(org, revOffice)?.id, 'email.send') ?? revOffice;
   for (const e of vault.events.query({ types: ['owner.edited'], from: since, limit: 500 })) {
     const rel = String(e.payload.path);
     if (seen.has(rel) || e.payload.deleted) continue;
@@ -772,8 +782,12 @@ export function collectOwnerFeedback(vault: Vault, since?: string): OwnerFeedbac
     if (!comments.length) continue;
     const d = parseNote(text).data as Record<string, unknown>;
     const byName = rel.match(/^(?:Roles|Messages)\/([a-z0-9_-]+)\.md$/)?.[1];
-    const byArea = rel.startsWith('Site/') ? 'engineer' : rel.startsWith('Customers/') || rel.startsWith('Experiments/') ? 'head_of_growth' : rel.startsWith('Plans/') ? 'cto' : 'ceo';
-    const role = resolveRole(loadOrg(vault), String(byName ?? d.assigned ?? d.decided_by ?? d.from ?? d.by ?? d.author ?? d.owner ?? byArea));
+    const byArea = rel.startsWith('Site/') ? officeHolder(org, 'engineering')
+      : rel.startsWith('Customers/') || rel.startsWith('Experiments/') ? growthLead
+      : rel.startsWith('Plans/') ? officeHolder(org, 'engineering')
+      : ceo;
+    const named = String(byName ?? d.assigned ?? d.decided_by ?? d.from ?? d.by ?? d.author ?? d.owner ?? '');
+    const role = org.roles[named] ? named : byArea;
     for (const c of comments) out.push({ role, source: rel, text: c, kind: 'comment' });
   }
   const alreadyDelivered = deliveredFeedbackShas(vault);
@@ -781,12 +795,12 @@ export function collectOwnerFeedback(vault: Vault, since?: string): OwnerFeedbac
     // An entry the owner typed once must not be repeated to the CEO every cycle for the rest of the company's
     // life; `owner.feedback_delivered` is the marker, and it lives in the event log so `cubicle rebuild` keeps it.
     if (alreadyDelivered.has(feedbackSha(f))) continue;
-    out.push({ role: 'ceo', source: OWNER_PREFERENCES, text: f, kind: 'preference' });
+    out.push({ role: ceo, source: OWNER_PREFERENCES, text: f, kind: 'preference' });
   }
   for (const rel of vault.list('Decisions', { ext: '.md' })) {
     const d = vault.readNoteOrNull(rel)?.data as { owner_rating?: string; decided_by?: string; rating_seen?: string } | undefined;
     if (d?.owner_rating === 'down' && !d.rating_seen) {
-      out.push({ role: String(d.decided_by ?? 'ceo'), source: rel, text: `the owner rated this decision down`, kind: 'rating' });
+      out.push({ role: String(d.decided_by ?? ceo), source: rel, text: `the owner rated this decision down`, kind: 'rating' });
       try { vault.updateNote(rel, (n) => ({ data: { ...n.data, rating_seen: nowIso() }, body: n.body }), 'daemon'); } catch { /* keep going */ }
     }
   }
@@ -799,8 +813,11 @@ function gitHead(vault: Vault, rel: string): string | null {
 import * as cp from 'node:child_process';
 function require_cp() { return cp; }
 
-export function feedbackFor(all: OwnerFeedback[], role: string): OwnerFeedback[] {
-  return all.filter((f) => f.role === role || (role === 'ceo' && f.source === 'Memory/owner_preferences.md'));
+/** `ceo` is whoever the chief_executive office resolves to when the caller doesn't say — preference feedback is
+ * always addressed to that office (see {@link collectOwnerFeedback}), and a caller that already resolved it should
+ * pass it through so a re-staffed office still matches. */
+export function feedbackFor(all: OwnerFeedback[], role: string, ceo = 'ceo'): OwnerFeedback[] {
+  return all.filter((f) => f.role === role || (role === ceo && f.source === 'Memory/owner_preferences.md'));
 }
 
 // ---------- incidents (owner's operating model §33) ----------

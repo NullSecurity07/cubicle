@@ -2,7 +2,7 @@ import {
   type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
   loadOrg, expandProcess, childrenOf, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
-  resolveRole, teamOf, researchLead, listStreams, officeHolder, type Org,
+  officeHolder, roleWithTool, teamOf, researchLead, listStreams, type Org,
   budgetLines, GATE_JOB_TYPES,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
@@ -255,8 +255,9 @@ export function writeBoardPremortemDecision(vault: Vault, hbId: string, boardJob
 
 /** Create the `ceo.heartbeat` job note (the heartbeat is a job so R9/R10/R12 apply). */
 export function createHeartbeatJob(vault: Vault, trigger: string): string {
+  const org = loadOrg(vault);
   return createJob(vault, {
-    type: 'ceo.heartbeat', title: `Heartbeat (${trigger})`, assigned: 'ceo', priority: 1,
+    type: 'ceo.heartbeat', title: `Heartbeat (${trigger})`, assigned: officeHolder(org, 'chief_executive'), priority: 1,
     goal: `Company heartbeat triggered by: ${trigger}. Steps: ${HEARTBEAT_STEPS.join(' → ')}.`,
   }, 'daemon');
 }
@@ -436,7 +437,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         if (touched.length) {
           const open = listJobs(vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'engineer.ship' && /reconcile site with brand/i.test(j.title));
           if (!open) {
-            const id = createJob(vault, { type: 'engineer.ship', title: 'Reconcile site with brand', assigned: resolveRole(loadOrg(vault), 'engineer'), priority: 2, goal: `The owner edited ${touched.join(', ')}. Read every file in Brand/ and update Site/ so it matches the brand kit. Never revert owner edits under Site/. Finish with the list of files you changed.` }, 'ceo');
+            const org = loadOrg(vault);
+            const engOffice = officeHolder(org, 'engineering');
+            const id = createJob(vault, { type: 'engineer.ship', title: 'Reconcile site with brand', assigned: roleWithTool(org, teamOf(org, engOffice)?.id, 'deploy.site') ?? engOffice, priority: 2, goal: `The owner edited ${touched.join(', ')}. Read every file in Brand/ and update Site/ so it matches the brand kit. Never revert owner edits under Site/. Finish with the list of files you changed.` }, 'ceo');
             done(i, `owner edited ${touched.join(', ')} → queued ${id}`);
           } else done(i, 'reconcile job already open');
         } else done(i, 'no brand edits');
@@ -506,7 +509,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           const streams = listStreams(vault).filter((s) => s.status === 'active').map((s) => `${s.slug} (${s.outcome_metric}, owned by ${s.owner_team})`).join('; ') || 'none yet — the product manager writes Streams/<slug>.md before the first objective';
           const findings = state.boardFindings?.length ? `\n\nThe board returned the previous draft with these findings; address each one:\n${state.boardFindings.map((f) => `- ${f}`).join('\n')}` : '';
           const id = createJob(vault, {
-            type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the board' : 'Write the company plan', assigned: 'ceo', priority: 1, parent: jobId, team: teamOf(org, 'ceo')?.id ?? 'executive', owner_role: 'ceo',
+            type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the board' : 'Write the company plan', assigned: officeHolder(org, 'chief_executive'), priority: 1, parent: jobId, team: teamOf(org, 'ceo')?.id ?? 'executive', owner_role: 'ceo',
             goal: `Write this cycle's objectives per team, not jobs.\n\nSituation:\n${situationSummary()}\n\nTeams: ${teams}.\n\nStreams: ${streams}.\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <team id>" subsection per team that has work this cycle (a bullet per objective; every objective for a product team ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); teams with nothing to do get no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
           }, 'ceo');
           state = { ...state, companyPlanJob: id }; saveState(state);
