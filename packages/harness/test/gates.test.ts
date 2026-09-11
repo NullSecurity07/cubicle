@@ -57,10 +57,18 @@ describe('review gates (spec §3)', () => {
     await runJob(deps(finishing({ status: 'done', summary: 'still no', verdict: 'return', findings: ['still no title'] })), qa.id);
     expect(readJob(vault, id)!.data.status).toBe('failed');
   });
-  it('research goes to the requester; ungated types finish directly; blocked/failed skip gates', async () => {
-    const r = createJob(vault, { type: 'research', title: 'R', assigned: 'research_manager', goal: 'g', for: 'cfo', owner_role: 'cfo' }, 'cfo');
+  it('research passes research.review before the requester; ungated types finish directly; blocked/failed skip gates', async () => {
+    const r = createJob(vault, { type: 'research', title: 'R', assigned: 'researcher', goal: 'g', for: 'cfo', owner_role: 'cfo' }, 'cfo');
     await runJob(deps(finishing({ status: 'done', summary: 'report' })), r);
+    const quality = listJobs(vault).find((j) => j.type === 'research.review')!;
+    expect(quality.assigned).toBe('research_manager');
+    // `goal` lives in the job note's body (under "## Goal"), not in frontmatter — this is the gate's own criteria
+    // (§35: evidence sufficiency) appended to the goal enqueueGate hands the reviewer.
+    expect(readJob(vault, quality.id)!.body).toMatch(/evidence sufficiency/i);
+    expect(listJobs(vault).some((j) => j.type === 'requester.review')).toBe(false); // not yet: one gate at a time
+    await runJob(deps(finishing({ status: 'done', summary: 'sound', verdict: 'pass' })), quality.id);
     expect(listJobs(vault).find((j) => j.type === 'requester.review')!.assigned).toBe('cfo');
+
     const t = createJob(vault, { type: 'team.plan', title: 'P', assigned: 'cto', goal: 'g' }, 'ceo');
     await runJob(deps(finishing({ status: 'done', summary: 'planned' })), t);
     expect(readJob(vault, t)!.data.status).toBe('done');
