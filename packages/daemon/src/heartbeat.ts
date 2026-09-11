@@ -833,7 +833,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
               // every step's `links`, so a resumed cycle sees its own work and skips it.
               const marker = idFromKey('job', `proc:${hbId}:${teamId}:${m[1]}`);
               if (expanded.has(`[[${marker}]]`)) continue;
-              try { expandProcess(vault, m[1], s.text.split('\n')[0].replace(/^- /, ''), { parent: jobId, by: officeHolder(org, 'chief_executive'), team: t.id, owner_role: t.lead, marker }); }
+              // Mark it expanded in this run too, so two plan sections that resolve to the same team and name the
+              // same process expand it once (re-review of the fix wave, minor 2).
+              try { expandProcess(vault, m[1], s.text.split('\n')[0].replace(/^- /, ''), { parent: jobId, by: officeHolder(org, 'chief_executive'), team: t.id, owner_role: t.lead, marker }); expanded.add(`[[${marker}]]`); }
               catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'division_plans', message: String((err as Error).message) } }); }
             }
             const div = divisionOf(org, teamId);
