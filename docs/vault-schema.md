@@ -104,7 +104,7 @@ Body: `# Charter` (system prompt), `# Standing rules`, `# What good looks like`.
 | `floor` | number (optional) | which office floor the team's room is on |
 | `parent` | string (optional) | the division this team belongs to (dev → technology); planning happens at the division |
 | `processes` | string[] = `[]` | `Processes/<name>.md` ids this team can run |
-| `wip` | object = `{"in_progress":3,"review":2,"testing":2}` | work-in-progress limits per Kanban lane; `nextJob` refuses to start work past `in_progress` and the office shows a full lane as a red tab on the room sign |
+| `wip` | object (optional) | work-in-progress limits per Kanban lane; `nextJob` refuses to start work past `in_progress` and the office shows a full lane as a red tab on the room sign. No `wip:` at all (most teams today) means unlimited — never refused |
 
 Body: freeform notes on how the team works, read into role prompts.
 

@@ -224,6 +224,15 @@ const GATE_STAGE: Record<string, KanbanStage> = {
   'coo.verify': 'ready_for_release',
 };
 
+/**
+ * Job types that are gate-chain mechanics (`config/gates.yaml`'s review steps), never a team's own work. A gate
+ * job is created with `type: <gate>` and inherits its *parent's* `team` (`enqueueGate` in harness/loop.ts), so
+ * while it runs it reads as ordinary team work unless excluded: `wipLoad` skips it so a review in flight does not
+ * inflate the author's team WIP on top of the parent, which already occupies the matching lane. The daemon
+ * heartbeat's `NON_WORK_TYPES` reuses this same list for its own "not real work" filters.
+ */
+export const GATE_JOB_TYPES: readonly string[] = ['qa.review', 'security.review', 'requester.review', 'research.review', 'coo.verify'];
+
 /** `chain` is the job's gate list (`gatesForRisk(table, job.type, job.risk)`); `depsDone` separates backlog from ready. */
 export function stageOf(job: Pick<JobFrontmatter, 'status' | 'gate_index' | 'depends_on'>, chain: string[], depsDone = true): KanbanStage {
   switch (job.status) {
@@ -244,13 +253,17 @@ export function stageMap(vault: Vault, chainFor: (job: JobFrontmatter) => string
   return out;
 }
 
-/** How many of one team's jobs sit in each WIP-limited lane right now. */
+/**
+ * How many of one team's jobs sit in each WIP-limited lane right now. A gate job (`GATE_JOB_TYPES`) is skipped:
+ * it inherits its parent's team, and the parent already occupies the lane the gate parks it in, so counting the
+ * gate job too would double the load a review in flight puts on the author's team.
+ */
 export function wipLoad(vault: Vault, team: string, chainFor: (job: JobFrontmatter) => string[]): Record<WipStage, number> {
   const load: Record<WipStage, number> = { in_progress: 0, review: 0, testing: 0 };
   const all = listJobs(vault);
   const byId = new Map(all.map((j) => [j.id, j]));
   for (const j of all) {
-    if (j.team !== team) continue;
+    if (j.team !== team || GATE_JOB_TYPES.includes(j.type)) continue;
     const s = stageOf(j, chainFor(j), j.depends_on.every((d) => byId.get(d)?.status === 'done'));
     if (s === 'in_progress' || s === 'review' || s === 'testing') load[s]++;
   }
