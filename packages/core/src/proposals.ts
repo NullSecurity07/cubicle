@@ -1,5 +1,5 @@
 import { InboxFrontmatter, type ProposalKind, type StoredCall } from './schemas.js';
-import { makeId, nowIso, stampForFilename, idFromKey } from './fs.js';
+import { makeId, nowIso, stampForFilename, idFromKey, sha256 } from './fs.js';
 import { statSync } from 'node:fs';
 import type { Vault } from './vault.js';
 import { stringifyNote } from './frontmatter.js';
@@ -18,6 +18,26 @@ export interface NewProposal {
 
 export const INBOX = '00 Inbox';
 
+/**
+ * The readable tail of a proposal's filename, from its id.
+ *
+ * It used to be the last eight characters of the id's last underscore-segment, which on a deterministic id
+ * cuts a word in half: `prop_idea_verdict_meal_kits_for_nurseries` filed as `…-idea_verdict-urseries.md`. That
+ * is unreadable in a file list, and worse, two ideas whose slugs end the same way produce the same filename
+ * within the same minute — and the second write would land on the first note. The id's own words are kept
+ * instead, minus what the name already says (the kind, and the date the stamp carries), and a long one is cut
+ * at an underscore boundary with a short hash of the whole id so it stays unique.
+ */
+export function filenameTail(id: string, kind: string, max = 40): string {
+  let body = id.replace(/^(prop|msg)_/, '').replace(/^\d{8}_/, '');
+  const k = kind.replace(/[^A-Za-z0-9]+/g, '_');
+  if (body === k) body = '';
+  else if (body.startsWith(`${k}_`)) body = body.slice(k.length + 1);
+  if (!body) return sha256(id).slice(0, 8);
+  if (body.length <= max) return body;
+  return `${body.slice(-max).replace(/^[^_]*_/, '')}-${sha256(id).slice(0, 6)}`;
+}
+
 /** Write a proposal/message note into `00 Inbox/` and emit proposal.created. Returns the relative path. */
 export function createProposal(vault: Vault, p: NewProposal, by: string): { id: string; path: string } {
   let id = p.id ?? makeId(p.kind === 'message' ? 'msg' : 'prop');
@@ -27,7 +47,7 @@ export function createProposal(vault: Vault, p: NewProposal, by: string): { id: 
   } else {
     while (findInboxById(vault, id)) id = makeId(p.kind === 'message' ? 'msg' : 'prop');
   }
-  const rel = `${INBOX}/${stampForFilename()}-${p.kind}-${id.split('_').slice(-1)[0].slice(-8)}.md`;
+  const rel = `${INBOX}/${stampForFilename()}-${p.kind}-${filenameTail(id, p.kind)}.md`;
   const data = InboxFrontmatter.parse({ id, kind: p.kind, created: nowIso(), from: p.from, to: p.to ?? 'owner', call: p.call, target: p.target, job: p.job });
   const body = `# ${p.title.trim()}\n\n${p.body.trim()}\n`;
   vault.writeText(rel, stringifyNote(data as Record<string, unknown>, body), by, { job: p.job ?? null });

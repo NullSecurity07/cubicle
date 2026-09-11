@@ -53,7 +53,12 @@ let pass = frames >= 1;
 const { chromium } = await import('playwright');
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-const today = new Date().toISOString().slice(0, 10);
+// The viewer builds a replay window from **local** midnight (`onReplayRequest`: `new Date(`${date}T00:00:00`)`),
+// so the date asked for has to be the local one. Read as a UTC date, this test asked for the wrong day whenever
+// the two disagree — east of UTC, every run between local midnight and the UTC rollover requested a window that
+// ended before the events it had just produced, and replayed nothing at all (T13-8; fails identically on sp2).
+const now = new Date();
+const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 await page.goto(`http://127.0.0.1:${webPort}/?token=${token}&replay=${today}`, { waitUntil: 'load' });
 await page.waitForTimeout(4000);
 type Tile = { tx: number; ty: number };

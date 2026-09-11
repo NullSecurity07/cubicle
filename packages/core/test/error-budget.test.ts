@@ -9,14 +9,22 @@ import { createJob, updateJob } from '../src/jobs.js';
 import { KNOWN_JOB_TYPES } from '../src/schemas.js';
 
 let dir: string; let vault: Vault;
+/**
+ * One reading of the clock for the whole case. `ago()` used to call `Date.now()` afresh for every event, so the
+ * gap between an incident's `opened` and `recovered` stamps was the duration *plus* however long the two calls
+ * were apart — and `toBeCloseTo(2, 5)` allows 18 ms of that. On a loaded machine two statements are easily 18 ms
+ * apart, which is a test that fails for the machine's reasons rather than the code's (T13-1).
+ */
+let T0: number;
 beforeEach(async () => {
+  T0 = Date.now();
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-budget-')); vault = (await scaffoldVault(dir)).vault;
   createStream(vault, { name: 'Checkout', problem: 'p', customers: 'c', outcome_metric: 'm', owner_team: 'dev', error_budget: 4 }, 'product_manager');
   createStream(vault, { name: 'Docs site', problem: 'p', customers: 'c', outcome_metric: 'm', owner_team: 'dev', error_budget: 8 }, 'product_manager');
 });
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
-const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+const ago = (h: number) => new Date(T0 - h * 3600_000).toISOString();
 
 function incident(stream: string, openedHoursAgo: number, durationHours: number | null): string {
   const id = createJob(vault, { type: 'incident', title: `Outage on ${stream}`, assigned: 'sre', goal: 'g', team: 'dev', stream, risk: 'high' }, 'daemon');

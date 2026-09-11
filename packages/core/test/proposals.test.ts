@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault } from '../src/template.js';
 import { Vault } from '../src/vault.js';
-import { listInbox, createProposal } from '../src/proposals.js';
+import { listInbox, createProposal, filenameTail } from '../src/proposals.js';
+import { idFromKey } from '../src/fs.js';
 
 let dir: string;
 let vault: Vault;
@@ -74,5 +75,36 @@ describe('listInbox — owner-typed approval values', () => {
     expect(listInbox(vault).find((x) => x.data.id === 'prop_q3')).toBeUndefined();
     const w = vault.events.query({ types: ['daemon.warning'] }).find((e) => e.payload.path === '00 Inbox/maybe.md');
     expect(String(w?.payload.reason)).toMatch(/approved/);
+  });
+});
+
+// T13-7: the filename used to be the last eight characters of the id's last underscore-segment, which cuts a
+// word in half on a deterministic id — `prop_idea_verdict_meal_kits_for_nurseries` filed as `…-urseries.md` —
+// and, worse, two ideas whose slugs end alike produce the same name inside the same minute, so the second
+// write lands on the first note.
+describe('what a proposal is called on disk', () => {
+  it('carries the whole slug, not the tail of a word', () => {
+    const id = idFromKey('prop', 'idea-verdict:meal-kits-for-nurseries');
+    expect(filenameTail(id, 'idea_verdict')).toBe('meal_kits_for_nurseries');
+    // Two ideas that used to collide now do not.
+    expect(filenameTail(idFromKey('prop', 'idea-verdict:lunch-for-nurseries'), 'idea_verdict')).toBe('lunch_for_nurseries');
+    // A random id keeps the short tail it always had (the date is already in the stamp).
+    expect(filenameTail('prop_20260911_a1b2c3', 'file_change')).toBe('a1b2c3');
+    // An id that is nothing but its kind still gets a name.
+    expect(filenameTail(idFromKey('prop', 'founder_brief'), 'founder_brief')).toHaveLength(8);
+  });
+
+  it('files two verdicts on alike-ending slugs as two different notes', async () => {
+    const dir2 = mkdtempSync(path.join(tmpdir(), 'cubicle-prop-names-'));
+    const { vault: v } = await scaffoldVault(dir2);
+    try {
+      const a = createProposal(v, { id: idFromKey('prop', 'idea-verdict:meal-kits-for-nurseries'), kind: 'idea_verdict', from: 'ceo', target: 'Ideas/meal-kits-for-nurseries.md', title: 'Keep, park or scrap: meal kits', body: 'x' }, 'ceo');
+      const b = createProposal(v, { id: idFromKey('prop', 'idea-verdict:lunch-for-nurseries'), kind: 'idea_verdict', from: 'ceo', target: 'Ideas/lunch-for-nurseries.md', title: 'Keep, park or scrap: lunch', body: 'y' }, 'ceo');
+      expect(a.path).not.toBe(b.path);
+      expect(a.path).toContain('meal_kits_for_nurseries');
+      expect(v.readText(a.path)).toContain('meal kits');
+      expect(v.readText(b.path)).toContain('lunch');
+      expect(listInbox(v).filter((n) => n.data.kind === 'idea_verdict')).toHaveLength(2);
+    } finally { v.close(); rmSync(dir2, { recursive: true, force: true }); }
   });
 });
