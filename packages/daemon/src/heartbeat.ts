@@ -10,7 +10,7 @@ import {
   isLongPrompt, isSkip,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
-import { renderQuotaMarkdown, type Router } from '@cubicle/router';
+import { renderQuotaMarkdown, type ModelBudget, type Router } from '@cubicle/router';
 import { deployer, emailSender, analytics } from '@cubicle/tools';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
@@ -37,6 +37,28 @@ export interface HeartbeatDeps {
   /** See DaemonConfig.planMaxAgeDays; undefined disables the re-planning gate. */
   planMaxAgeDays?: number;
   log?: (msg: string) => void;
+  /**
+   * The house budget the chief executive's own asks run against (SP4 §4). `runHeartbeat` memoises it per cycle
+   * (see `withCycleBudget`), so one cycle reads a role's budget once however many times it speaks.
+   */
+  modelBudget?: (roleId: string) => ModelBudget | null | undefined;
+}
+
+/**
+ * One budget read per role per cycle. The rule is the harness's (SP4 §4): a budget is read at the start of a
+ * piece of work and every call it makes runs against that reading, because a cycle whose advisors silently
+ * change tier halfway through a board session produces a transcript nobody can account for. `askAs` speaks as
+ * several roles, so the memo is keyed by role; a `deps` object is built fresh for each heartbeat job by the
+ * worker pool, so the memo lives exactly as long as the cycle does.
+ *
+ * Exported for its own test: what it guarantees (one read per role per cycle) is a rule about calls that did
+ * *not* happen, which is far more legible asserted here than inferred from a scripted cycle.
+ */
+export function withCycleBudget(deps: HeartbeatDeps): HeartbeatDeps {
+  const read = deps.modelBudget;
+  if (!read) return deps;
+  const seen = new Map<string, ModelBudget | null | undefined>();
+  return { ...deps, modelBudget: (roleId: string) => { if (!seen.has(roleId)) seen.set(roleId, read(roleId)); return seen.get(roleId); } };
 }
 
 export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { kind: 'job'; id: string } } | { status: 'cancelled' } | { status: 'requeued'; attempt: number };
@@ -692,7 +714,7 @@ function gather(vault: Vault, now: Date, mail: string[], analytics: string | nul
  */
 async function askAs(deps: HeartbeatDeps, roleId: string, system: string, user: string, maxTokens = 800, tier: ModelTier = 'strong'): Promise<string | null> {
   try {
-    const r = await deps.llm.chat({ tier, needsTools: false, roleId }, { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], maxTokens });
+    const r = await deps.llm.chat({ tier, needsTools: false, roleId, budget: deps.modelBudget?.(roleId) ?? undefined }, { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], maxTokens });
     return r.content.trim() || null;
   } catch {
     return null;
@@ -724,7 +746,8 @@ function ceoSystem(vault: Vault): string {
  * the last completed step + 1). Waiting for `cto.plan` uses `blocked_on: {kind: job}` so a kill during
  * planning resumes at the wait (R33).
  */
-export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<HeartbeatOutcome> {
+export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promise<HeartbeatOutcome> {
+  const deps = withCycleBudget(rawDeps);
   const vault = deps.vault;
   const now = deps.now ?? (() => new Date());
   const read = () => readJob(vault, jobId)!;

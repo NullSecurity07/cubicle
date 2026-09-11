@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { type Vault, listJobs, readJob, updateJob, RoleFrontmatter, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, GATE_JOB_TYPES, type JobFrontmatter } from '@cubicle/core';
+import { type Vault, listJobs, readJob, updateJob, RoleFrontmatter, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, GATE_JOB_TYPES, LEDGER_PATH, type JobFrontmatter } from '@cubicle/core';
 import { runJob, type HarnessDeps, type JobOutcome } from '@cubicle/harness';
 import { runHeartbeat, type HeartbeatDeps, type HeartbeatOutcome } from './heartbeat.js';
 
@@ -8,6 +8,11 @@ export interface WorkerPoolOptions {
   heartbeat: Omit<HeartbeatDeps, 'vault'>;
   maxConcurrent: number;
   idleMs?: number;
+  /**
+   * True when the company has spent the capital the owner put in (SP4 §5). Absent means never dormant, which is
+   * what every test and every unfunded company wants.
+   */
+  dormant?: () => boolean;
 }
 
 /** One WIP warning per team per window: a worker loops every idle interval and would otherwise flood the log. */
@@ -25,6 +30,7 @@ export class WorkerPool extends EventEmitter {
   private stopped = false;
   private wakeResolvers: (() => void)[] = [];
   private wipWarned = new Map<string, number>();
+  private dormantWarned = 0;
 
   constructor(private vault: Vault, private opts: WorkerPoolOptions) { super(); }
 
@@ -88,17 +94,36 @@ export class WorkerPool extends EventEmitter {
    * starting, while QA's own lanes sat empty. Work then piles up in `in_review` and the room never drains —
    * the opposite of what a WIP limit is for. `wipLoad` already skips these jobs when counting; this is the other
    * half of that rule.
+   *
+   * A dormant company (SP4 §5: it has spent the capital the owner put in) starts nothing here except its own
+   * `ceo.heartbeat` — gate jobs included, since a gate is a model call like any other. The heartbeat is what
+   * sees the owner's next `capital` row arrive, so it is the one job dormancy may never hold back.
    */
   nextJob(roleId: string): string | null {
     const all = listJobs(this.vault);
     const byId = new Map(all.map((j) => [j.id, j]));
     const org = loadOrg(this.vault);
     const gates = loadGates();
+    // A company that has spent the money the owner gave it starts nothing but its own heartbeat. Reading the
+    // ledger must never be able to stop work, so a check that throws is read as "not dormant": the failure mode
+    // of this feature has to be a company that keeps working, never one that silently stops.
+    //
+    // Asked at most once per call, and only once a job is actually in hand: the check reads `Ledger/ledger.md`
+    // and every worker calls `nextJob` every idle interval, so an eager read would parse the book a few times a
+    // second to answer a question about a queue that is usually empty.
+    let dormantAnswer: boolean | null = null;
+    const dormant = (): boolean => {
+      if (dormantAnswer === null) { try { dormantAnswer = this.opts.dormant?.() ?? false; } catch { dormantAnswer = false; } }
+      return dormantAnswer;
+    };
     const chainFor = (j: JobFrontmatter) => gatesForRisk(gates, j.type, j.risk);
     const loads = new Map<string, ReturnType<typeof wipLoad>>();
     for (const j of all) {
       if (j.assigned !== roleId || j.status !== 'queued' || this.active.has(j.id)) continue;
       if (j.depends_on.some((d) => byId.get(d)?.status !== 'done')) continue;
+      // The heartbeat is the exception and must stay one: it is what notices the capital row that revives the
+      // company, and a dormancy nothing can see its way out of is just a crash with better manners.
+      if (j.type !== 'ceo.heartbeat' && dormant()) { this.warnDormant(roleId, j.id); continue; }
       if (GATE_JOB_TYPES.includes(j.type)) return j.id;             // a gate is the reviewer's work, not the author team's
       const team = j.team;
       if (!team || !org.teams[team]) return j.id;                   // no team, no limit to apply
@@ -115,6 +140,13 @@ export class WorkerPool extends EventEmitter {
       }
     }
     return null;
+  }
+
+  /** One dormancy warning per window: every idle worker would otherwise repeat it every poll, for ever. */
+  private warnDormant(roleId: string, jobId: string): void {
+    if (Date.now() - this.dormantWarned < WIP_WARN_MS) return;
+    this.dormantWarned = Date.now();
+    this.vault.events.emit({ type: 'daemon.warning', agent: roleId, job: jobId, payload: { where: 'dormant', message: `The company is out of money, so ${jobId} waits and only the heartbeat runs. Add a \`capital\` row to ${LEDGER_PATH} to start it again.` } });
   }
 
   private roleActive(roleId: string): boolean {

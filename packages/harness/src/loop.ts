@@ -7,7 +7,7 @@ import {
   loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
 } from '@cubicle/core';
-import { NoModelAvailableError, TIER_RANK, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
+import { NoModelAvailableError, TIER_RANK, type ModelBudget, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
 import {
   ToolRegistry, createRoleToolClient, resolveMode, policyFor, proposalKindFor, findAnswer, unreadMessages, renderMessages, listAdrs,
@@ -47,6 +47,12 @@ export interface HarnessDeps {
   localMaxSteps?: number;
   /** Owner feedback lines addressed to a role (inline %%cubicle: …%% comments, preferences feedback, decision ratings). */
   ownerFeedback?: (roleId: string) => string[];
+  /**
+   * The division budget this job's calls run against (SP4 §4). Read **once, at job start**, not per call:
+   * changing a job's tier halfway through a piece of work makes the output incoherent and the event log
+   * unreadable. A division that crosses its quota mid-job finishes at its tier, and the next job drops.
+   */
+  modelBudget?: (roleId: string) => ModelBudget | null | undefined;
 }
 
 export type JobOutcome =
@@ -204,7 +210,11 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   // A job may only route at or below its charter's tier, never above (see effectiveTier); privacy rules
   // below still force local routing regardless of tier.
   const tier = effectiveTier(job.model_tier, role.model_tier);
-  const routeReq: RouteRequest = { tier, needsTools: true, privacy, roleId };
+  // Read once, here, and reused by every call this job makes: `routeReq` is built before the step loop and
+  // handed to the router unchanged each step, so a division that crosses its quota mid-job finishes the job at
+  // the tier it started on and only its *next* job drops. A budget re-read per call would swap models halfway
+  // through a piece of work, which makes the output incoherent and the event log unreadable.
+  const routeReq: RouteRequest = { tier, needsTools: true, privacy, roleId, budget: deps.modelBudget?.(roleId) ?? undefined };
   const isLeadOrCeo = isLead(org, roleId) || roleId === officeHolder(org, 'chief_executive');
   const maxSteps = privacy === 'local' || tier === 'local' ? (deps.localMaxSteps ?? DEFAULT_LOCAL_MAX_STEPS) : (deps.maxSteps ?? (isLeadOrCeo ? DEFAULT_MAX_STEPS : DEFAULT_MEMBER_MAX_STEPS));
   const promptBudget = deps.llm.promptBudget?.(routeReq) ?? 6000;

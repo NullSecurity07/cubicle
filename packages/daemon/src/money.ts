@@ -5,7 +5,7 @@ import {
   createJob, readJob, listJobs, listInbox, jobPath, idFromKey,
   officeHolder, teamOf, divisionOf, divisionTeams, subtreeRoles, createProposal, findInboxById, resultBlock,
 } from '@cubicle/core';
-import { shadowCost, hasPrices, type ProvidersFile, type RecordedCall } from '@cubicle/router';
+import { shadowCost, hasPrices, type ModelBudget, type ProvidersFile, type RecordedCall } from '@cubicle/router';
 
 /**
  * The daemon's side of the money: everything deterministic, and not one model call anywhere in this file.
@@ -105,11 +105,9 @@ export function budgetRows(vault: Vault, org: Org, cfg: ProvidersFile, now: Date
  * The budget one role's calls run against. Read once per job by the harness, not per call: demoting a job's
  * tier halfway through a piece of work makes the output incoherent and the event log unreadable.
  *
- * The return shape is the router's `ModelBudget` (`{ used, quota }`). It is written out structurally rather
- * than imported because Task 5, which adds that type, is not on this branch yet; the two are identical, so the
- * import can replace this annotation the moment it lands.
+ * The return shape is the router's `ModelBudget` (`{ used, quota }`), which is what `budgetedTier` reads.
  */
-export function budgetForRole(vault: Vault, org: Org, cfg: ProvidersFile, role: string, now: Date): { used: number; quota: number } {
+export function budgetForRole(vault: Vault, org: Org, cfg: ProvidersFile, role: string, now: Date): ModelBudget {
   const quotas = divisionQuotas(cfg, org);
   const known = new Set(Object.keys(quotas).filter((k) => k !== HOUSE));
   const key = divisionOfRole(org, role, known);
