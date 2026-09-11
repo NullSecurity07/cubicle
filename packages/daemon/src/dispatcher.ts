@@ -247,6 +247,10 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             // The blocked job executes the stored call itself on resume (R30); just wake it.
             outcome = 'approved; the waiting job resumes';
             break;
+          case 'threat_model':
+            // Nothing to execute: the approval is the decision (§27). The blocked job resumes on the next tick.
+            outcome = d.approved ? 'threat model accepted; the job may finish' : 'threat model rejected';
+            break;
         }
       }
     } catch (err) {
