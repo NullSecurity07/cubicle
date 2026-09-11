@@ -38,6 +38,8 @@ export interface Snapshot {
    * limits at all, so the sign shows its lanes but never turns one red.
    */
   teams: { id: string; name: string; lead: string; members: string[]; mission: string; room?: string; floor?: number; parent?: string; wip: { limits: WipLimits | null; load: Record<WipStage, number> } }[];
+  /** The constitution's office → role map, so the viewer animates the right desks. */
+  offices: Record<string, string>;
 }
 
 export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
@@ -77,7 +79,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
     latestRun: latest ? { path: latest, body: vault.readTextOrNull(latest) ?? '' } : null,
     plan: vault.readTextOrNull('Plans/plan.md') ?? '',
     pendingProposals: inbox.length,
-    brand, inbox, chat, teams,
+    brand, inbox, chat, teams, offices: org.offices ?? {},
   };
 }
 

@@ -8,7 +8,7 @@ export type BubbleKind = 'speech' | 'thought' | 'action';
 export interface Bubble { text: string; until: number; kind: BubbleKind }
 export type Division = 'executive' | 'board' | 'technology' | 'revenue' | 'operations' | 'security' | 'other';
 const FAMILIES: Division[] = ['executive', 'board', 'technology', 'revenue', 'operations', 'security'];
-/** Who walks over when a job fails, and who is animated when the plan is returned with no agent named. */
+/** Fallbacks for a state that has not seen a snapshot yet: the shipped roster's own answers. */
 export const OVERSEER = 'coo';
 export const VETO_ROLE = 'advisor_skeptic';
 export interface AgentView { role: string; display: string; sprite: string; desk: string; active: boolean; state: AgentState; tool: ToolIcon; job: string | null; bubble: Bubble | null; target: string | null; badge: 'error' | 'blocked' | null; /** face drawn on the sprite; `moodUntil` null = until the next change */ mood: Mood; moodUntil: number | null; /** pixel icon above the head */ emote: { kind: Emote; until: number } | null; /** when the agent last did anything (drives the asleep mood) */ idleSince: number | null; /** persona job title from the role charter, e.g. "Chief Technology Officer" */ title?: string; team?: string; reportsTo?: string; /** division root, for the palette */ division: Division; /** sprite silhouette: chief blazer, advisor cardigan, manager lanyard, member hoodie */ family: Family }
@@ -20,7 +20,7 @@ export interface CubicleEvent { id?: number; ts: string; type: string; agent: st
 export interface ChatMsg { ts: string; from: 'ceo' | 'you'; text: string }
 export interface BrandView { name: string; tagline: string; url: string }
 export interface InboxRow { id: string; kind: string; title: string; path: string; created: string }
-export interface Snapshot { op: 'snapshot'; at: string; roles: { role: string; display: string; sprite: string; desk: string; active: boolean; title?: string; team?: string; reports_to?: string }[]; jobs: JobView[]; surfaces: { streamKind: string; streamId: string; lastFrame?: string; active: boolean }[]; quota: QuotaView[]; latestRun: { path: string; body: string } | null; plan: string; pendingProposals: number; brand?: BrandView; inbox?: InboxRow[]; chat?: ChatMsg[]; teams?: TeamView[] }
+export interface Snapshot { op: 'snapshot'; at: string; roles: { role: string; display: string; sprite: string; desk: string; active: boolean; title?: string; team?: string; reports_to?: string }[]; jobs: JobView[]; surfaces: { streamKind: string; streamId: string; lastFrame?: string; active: boolean }[]; quota: QuotaView[]; latestRun: { path: string; body: string } | null; plan: string; pendingProposals: number; brand?: BrandView; inbox?: InboxRow[]; chat?: ChatMsg[]; teams?: TeamView[]; offices?: Record<string, string> }
 
 export interface State {
   connected: boolean;
@@ -35,6 +35,7 @@ export interface State {
   pendingProposals: number;
   brand: BrandView;
   teams: TeamView[];               // Teams/*.md — the org chart
+  offices: Record<string, string>; // the constitution's office → role map
   inbox: InboxRow[];              // proposals awaiting the owner (from the snapshot)
   chat: ChatMsg[];                // the CEO cabin thread (snapshot history + live events)
   terminal: string[];              // last shell output lines
@@ -61,7 +62,12 @@ export function withFrameSeq(s: State, id: string, seq?: number): State {
   return { ...s, frames: { ...s.frames, [id]: { ...cur, seq: seq ?? cur.seq + 1 } } };
 }
 
-export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, frames: {}, lastEventTs: null, deploys: [], firstRun: false });
+export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], offices: {}, inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, frames: {}, lastEventTs: null, deploys: [], firstRun: false });
+
+/** Who walks over when a job fails: the operations office. */
+export function overseerRole(st: Pick<State, 'offices'>): string { return st.offices?.operations ?? OVERSEER; }
+/** Who is animated when the plan is returned with no agent named: the board's chair. */
+export function vetoRole(st: Pick<State, 'offices' | 'teams'>): string { return st.teams?.find((t) => t.id === 'board')?.lead ?? VETO_ROLE; }
 
 /** The division a team belongs to: follow `parent` to the root team; a root that is not a division is 'other'. */
 export function divisionOf(teamId: string | undefined, teams: TeamView[]): Division {
@@ -130,7 +136,7 @@ export function applySnapshot(s: State, snap: Snapshot): State {
   for (const su of Array.isArray(snap.surfaces) ? snap.surfaces : []) surfaces[su.streamId] = { streamKind: su.streamKind as SurfaceView['streamKind'], streamId: su.streamId, lastFrame: su.lastFrame, active: su.active };
   const frames: State['frames'] = {};
   for (const id of Object.keys(surfaces)) if (s.frames[id]) frames[id] = s.frames[id];
-  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, teams: snap.teams ?? [], inbox: snap.inbox ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, firstRun, staleSnapshot: false };
+  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, teams: snap.teams ?? [], offices: snap.offices ?? {}, inbox: snap.inbox ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, firstRun, staleSnapshot: false };
 }
 
 const BUBBLE_MS = 6000;
@@ -191,13 +197,13 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'job.checkpoint': { if (p.in_review) { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'in_review', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.job = null; ag.tool = null; ag.target = null; feel(ag, 'neutral', null); } } break; }
     case 'review.returned': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'queued', updated: e.ts }; const author = a(j?.assigned); if (author) { feel(author, 'worried', 8000); emote(author, 'sweat', 4000); } const rev = a(e.agent); if (rev) { rev.bubble = { kind: 'speech', text: `→ ${j?.assigned ?? 'author'}: ${String((p.findings as string[] | undefined)?.[0] ?? 'please fix')}`.slice(0, 140), until: nowMs + BUBBLE_MS }; if (rev.state !== 'walking') rev.state = 'talking'; } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${String(p.gate)} returned ${String(e.job)}` }]; break; }
     case 'review.passed': { const rev = a(e.agent); if (rev) feel(rev, 'happy', 3000); break; }
-    case 'plan.vetoed': { const c = a(e.agent) ?? a(VETO_ROLE); if (c) { emote(c, '!', 6000); feel(c, 'puzzled', 6000); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `the board returned the plan: ${String((p.findings as string[] | undefined)?.[0] ?? '')}` }]; break; }
+    case 'plan.vetoed': { const c = a(e.agent) ?? a(vetoRole(st)); if (c) { emote(c, '!', 6000); feel(c, 'puzzled', 6000); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `the board returned the plan: ${String((p.findings as string[] | undefined)?.[0] ?? '')}` }]; break; }
     case 'research.delivered': { const r = a(e.agent); if (r) { emote(r, 'idea', 5000); feel(r, 'happy'); } break; }
     case 'team.planned': { const l = a(e.agent); if (l) feel(l, 'happy', 3000); st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${String(p.team)} planned ${(p.jobs as string[] | undefined)?.length ?? 0} job(s)` }]; break; }
     case 'org.changed': st.staleSnapshot = true; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `org changed (${String(p.reason)})` }]; break;
     case 'job.blocked': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'blocked', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.badge = 'blocked'; ag.bubble = { kind: 'thought', text: String(p.reason ?? 'blocked'), until: nowMs + BUBBLE_MS * 2 }; ag.target = null; ag.tool = null; feel(ag, 'puzzled', null); emote(ag, '?', BUBBLE_MS * 2); } break; }
     case 'job.done': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'done', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'walking'; ag.target = null; ag.tool = null; ag.job = null; ag.badge = null; ag.bubble = null; feel(ag, 'happy'); emote(ag, 'cheer', 3000); } break; }
-    case 'job.failed': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: p.requeued ? 'queued' : 'failed', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.badge = 'error'; ag.target = null; ag.tool = null; ag.job = null; ag.bubble = null; feel(ag, 'worried', 10000); emote(ag, 'sweat', 6000); } const coo = a(OVERSEER); if (coo && e.agent !== OVERSEER) { const desk = e.agent ? st.agents[e.agent]?.desk : ''; if (desk) { coo.target = `desk:${desk}`; coo.state = 'walking'; } emote(coo, 'clipboard', 20000); } break; }
+    case 'job.failed': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: p.requeued ? 'queued' : 'failed', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.badge = 'error'; ag.target = null; ag.tool = null; ag.job = null; ag.bubble = null; feel(ag, 'worried', 10000); emote(ag, 'sweat', 6000); } const overseer = overseerRole(st); const coo = a(overseer); if (coo && e.agent !== overseer) { const desk = e.agent ? st.agents[e.agent]?.desk : ''; if (desk) { coo.target = `desk:${desk}`; coo.state = 'walking'; } emote(coo, 'clipboard', 20000); } break; }
     case 'job.cancelled': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'cancelled', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.job = null; ag.tool = null; ag.target = null; ag.bubble = null; feel(ag, 'neutral', null); } break; }
     case 'job.interrupted': { const ag = a(e.agent); if (ag) ag.badge = 'blocked'; break; }
     case 'meeting.opened': { const id = String(p.id); const parts = (p.participants as string[]) ?? []; const room = String(p.room ?? 'meeting'); st.meetings[id] = { room, participants: parts, open: true }; for (const r of parts) { const ag = a(r); if (ag) { ag.target = room === 'board' ? 'boardroom' : 'meetingroom'; ag.state = 'walking'; } } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${room} meeting opened: ${String(p.agenda ?? '')}` }]; break; }
