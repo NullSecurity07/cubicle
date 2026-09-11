@@ -3,7 +3,7 @@ import './ui/app.css';
 import Phaser from 'phaser';
 import { OfficeScene } from './scenes/OfficeScene.js';
 import { Net, resolveWs } from './net.js';
-import { emptyState, applyEvent, applySnapshot, tick, type State, type CubicleEvent, type Snapshot } from './state.js';
+import { emptyState, applyEvent, applySnapshot, tick, withFrameSeq, type State, type CubicleEvent, type Snapshot } from './state.js';
 import { Panel, SURPRISE_ME, type Origin } from './ui/panel.js';
 import { TopBar } from './ui/bar.js';
 import { applyTheme, currentTheme, themeFromQuery, THEMES } from './ui/tokens.js';
@@ -91,7 +91,9 @@ function viewOf(kind: string): ReturnType<typeof viewFor> {
   return viewFor(kind, state, ctx);
 }
 const panel = new Panel({ viewOf, onOpen: (kind) => open(kind), onLocate: (target) => scene.focusOn(target), onEmpty: () => scene.restoreZoom(), onChat: (text) => sendChat(text) });
-coachMark('Drag to pan, scroll to zoom, click anything in the office. Press ? for shortcuts.');
+// Built, not shown. The first-run card is the other first-contact message; the mark waits until the first snapshot
+// says the card is not coming, or until the card has gone (ui/firstrun.ts `onDismissed`).
+const coach = coachMark('Drag to pan, scroll to zoom, click anything in the office. Press ? for shortcuts.');
 
 scene.hooks = {
   getState: () => state,
@@ -163,6 +165,7 @@ function sendChat(text: string): void {
 const firstRun = new FirstRun({
   onStart: (text) => { sendChat(text); void firstRun.collapse().then(() => open('cabin', undefined, { zoom: false })); },
   onSurprise: () => { sendChat(SURPRISE_ME); void firstRun.collapse().then(() => open('cabin', undefined, { zoom: false })); },
+  onDismissed: () => coach.show(),   // the office hint takes its turn only once the card has gone
 });
 const quick = new QuickOpen({ items: () => quickItems(state), onPick: (kind) => open(kind) });
 /** `__cubicle.setHour` mirrored: the scene tints by it, and the time bar's sun/moon must read the same hour. */
@@ -181,11 +184,16 @@ bindKeys({
   minimap: () => minimapHook.toggle(), help: () => open('keys'), quickopen: () => quick.open(),
 });
 
-/** A live frame arrived (from the daemon or `__cubicle.pushFrame`): remember it, measure the rate, refresh a viewer at most 5×/s. */
+/**
+ * A live frame arrived (from the daemon or `__cubicle.pushFrame`): remember it, count it, measure the rate, refresh
+ * a viewer at most 5×/s. The count is the one the viewer's title bar prints; `seq` is the daemon's own counter when
+ * the socket carried one, and a locally pushed frame just advances it (state.ts `withFrameSeq`).
+ */
 const frameTimes: Record<string, number[]> = {};
 let liveRefresh = 0;
-function onFrameData(streamId: string, dataUrl: string): void {
+function onFrameData(streamId: string, dataUrl: string, seq?: number): void {
   frames[streamId] = dataUrl;
+  state = withFrameSeq(state, streamId, seq);
   const t = (frameTimes[streamId] ??= []); t.push(performance.now()); if (t.length > 10) t.shift();
   fps[streamId] = t.length > 1 ? ((t.length - 1) * 1000) / (t[t.length - 1] - t[0]) : 0;
   if (panel.current === 'billboard' && !liveRefresh) liveRefresh = window.setTimeout(() => { liveRefresh = 0; refresh(); }, 200);
@@ -205,6 +213,7 @@ const net = new Net(url, token, {
     // Spec §12 d/e: an empty company asks the first-run question once per session. The app opened the card, not the
     // owner, so nothing zooms the camera; Escape just hides it and the cabin keeps asking until the company has a name.
     if (state.firstRun && !firstRunOpened) { firstRunOpened = true; firstRun.show(); }
+    else coach.show();   // no card coming: the office hint is the only first-contact message
   },
   onEvent(e) {
     if (state.mode === 'replay') { if (liveState) liveState = applyEvent(liveState, e); return; }
@@ -217,7 +226,7 @@ const net = new Net(url, token, {
     if (state.staleSnapshot) { state = { ...state, staleSnapshot: false }; net.snapshot(); } // plan / brief / inbox changed on disk → refresh text
     refresh();
   },
-  onFrame(f) { onFrameData(f.streamId, `data:image/jpeg;base64,${f.jpegBase64}`); },
+  onFrame(f) { onFrameData(f.streamId, `data:image/jpeg;base64,${f.jpegBase64}`, f.seq); },
   onReplay(r) {
     replayBuffer = replayBuffer.concat(r.events);
     if (!r.done) { net.replay(r.from, r.to, r.cursor); return; }
