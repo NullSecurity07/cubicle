@@ -26,8 +26,8 @@ park at 26, scrap below. `effort` is inverted on purpose — 5 means cheap (a we
 quarter) — so every input reads "higher is better" and the arithmetic needs no sign rules.
 
 Worked example: an idea worth trying (`value` 4), decently evidenced (`evidence` 4), cheap to test (`effort` 4,
-i.e. about a week), and a reasonable fit (`fit` 3) scores `4×4 + 3×4 + 3×4 + 2×3 = 16 + 12 + 12 + 6 = 56` —
-comfortably above 44, so it is kept. The number is derived from the four inputs and is never written by hand;
+i.e. about a week), and a reasonable fit (`fit` 3) scores `4×4 + 3×4 + 3×4 + 2×3 = 16 + 12 + 12 + 6 = 46` —
+just above 44, so it is kept. The number is derived from the four inputs and is never written by hand;
 a card with a `score` nobody can reconstruct from its `score_inputs` is not trustworthy.
 
 ## Who fills what
@@ -43,14 +43,15 @@ A dossier where only one office wrote is a dossier that is half done.
 
 ## The board
 
-The board sits on the best-scoring card, the same three advisors as a plan pre-mortem, in one `ideas_board`
-session — pass or return, with the failure modes named. The board advises; it does not decide.
+The board sits on the best-scoring card, the same three advisors as a plan pre-mortem, in one session (the
+heartbeat's `ideas_board` step, recorded as a `board.session` job) — pass or return, with the failure modes named. The board advises; it does not decide.
 
 ## The owner's verdict
 
 After the board, the owner rules: `keep`, `park` or `scrap`, recorded under `Decision` with `decided_by` and
-`decided_at`. If the owner has not ruled after the configured hours, the board's own verdict stands in as
-`chosen:` so the company is never stuck waiting on a card forever.
+`decided_at`. If the owner has not ruled after the configured hours and `board_decides_after_hours` is on, the verdict
+resolves as approved and the card takes the band its score recommends, so the company is never stuck waiting
+on a card forever.
 
 ## What a plan may draw on
 
