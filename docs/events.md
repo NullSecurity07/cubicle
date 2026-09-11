@@ -34,6 +34,8 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `email.sent` | to, subject, key, mode (mock|live) |
 | `email.received` | from, subject, id, unsubscribe |
 | `deploy.done` | url, project, mode (mock|live), key, stage (preview|canary|live), canary_percent (mock; null off canary), metrics (what the deployer said it would watch), rolled_back, snapshot (.cubicle/deploys/… path a rollback republishes), stream |
+| `incident.opened` | stream, trigger (rollback | red_ci_live | manual) — the clock the error budget counts from |
+| `incident.recovered` | stream, hours (open → recovered), postmortem (Docs/postmortems/… path) |
 | `proposal.created` | id, kind, path, title, to |
 | `proposal.resolved` | id, kind, approved, outcome |
 | `role.hired` | role, display, desk, sprite |

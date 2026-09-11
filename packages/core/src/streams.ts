@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Vault } from './vault.js';
+import type { CubicleEvent } from './schemas.js';
 import { stringifyNote } from './frontmatter.js';
 import { nowIso } from './fs.js';
 
@@ -98,4 +99,44 @@ export function createStream(vault: Vault, s: NewStream, by: string): string {
   ].join('\n');
   vault.writeText(streamPath(slug), stringifyNote(data as Record<string, unknown>, body), by);
   return slug;
+}
+
+// ---------- error budgets (owner's operating model §23) ----------
+
+/** The default window the error budget is measured over: one weekly cycle (operating model §23). */
+export const BUDGET_WINDOW_MS = 7 * 24 * 3600_000;
+
+/**
+ * Incident-hours spent on a stream since `since`. A recovered incident contributes the time between
+ * `incident.opened` and `incident.recovered`; one still open contributes the time it has been open so far,
+ * because a budget that only moves after the fire is out tells you nothing while you are deciding.
+ */
+export function budgetSpentHours(vault: Vault, slug: string, since?: string): number {
+  const from = since ?? new Date(Date.now() - BUDGET_WINDOW_MS).toISOString();
+  const opened = vault.events.query({ types: ['incident.opened'], from, limit: 2000 }).filter((e) => e.payload.stream === slug);
+  if (!opened.length) return 0;
+  const recovered = new Map<string, CubicleEvent>();
+  for (const e of vault.events.query({ types: ['incident.recovered'], from, limit: 2000 })) if (e.job) recovered.set(e.job, e);
+  let hours = 0;
+  for (const o of opened) {
+    const end = o.job ? recovered.get(o.job) : undefined;
+    const endMs = end ? Date.parse(end.ts) : Date.now();
+    hours += Math.max(0, (endMs - Date.parse(o.ts)) / 3600_000);
+  }
+  return hours;
+}
+
+/**
+ * One line per stream for a plan goal or the brief: how much of the budget is gone and what that means. The
+ * division plan reads these, which is how "when the budget is spent the next plan is reliability work" (§23)
+ * becomes something an agent acts on rather than a principle in a document.
+ */
+export function budgetLines(vault: Vault, team?: string, since?: string): string[] {
+  return listStreams(vault)
+    .filter((s) => s.status === 'active' && (!team || s.owner_team === team))
+    .map((s) => {
+      const spent = budgetSpentHours(vault, s.slug, since);
+      const over = spent >= s.error_budget;
+      return `${s.slug}: ${spent.toFixed(1)} h of ${s.error_budget} h error budget ${over ? 'SPENT' : 'used'}${over ? ' — this plan prioritises reliability work over new features (§23)' : ''}`;
+    });
 }

@@ -5,6 +5,7 @@ import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
   loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, resolveRole,
+  readStream,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -459,4 +460,93 @@ function require_cp() { return cp; }
 
 export function feedbackFor(all: OwnerFeedback[], role: string): OwnerFeedback[] {
   return all.filter((f) => f.role === role || (role === 'ceo' && f.source === 'Memory/owner_preferences.md'));
+}
+
+// ---------- incidents (owner's operating model §33) ----------
+
+/** How many corrective-action jobs one postmortem may create. Three is the most a room can actually pick up. */
+export const CORRECTIVE_MAX = 3;
+
+/** The postmortem a finished incident produced, from its Result artifacts. */
+export function postmortemPath(vault: Vault, jobId: string): string | null {
+  const body = readJob(vault, jobId)?.body ?? '';
+  const raw = body.split('## Result')[1]?.match(/```json\s*([\s\S]*?)```/)?.[1];
+  if (!raw) return null;
+  try {
+    const r = JSON.parse(raw) as { artifacts?: unknown };
+    const arts = Array.isArray(r.artifacts) ? r.artifacts.map(String) : [];
+    return arts.find((a) => a.startsWith('Docs/postmortems/') && a.endsWith('.md') && vault.exists(a)) ?? null;
+  } catch { return null; }
+}
+
+/**
+ * Open an incident for a production failure nobody has opened one for yet. Two triggers, both things the log
+ * already records: a deploy that was rolled back, and a live deploy of a stream whose last CI run was red.
+ * Detection is the first step of §33's chain, and a company that only notices an outage when a human looks has
+ * no detection at all.
+ *
+ * Idempotent per trigger: the incident's id is derived from the event, so a second tick finds it already there.
+ */
+export function maybeOpenIncident(vault: Vault, now = new Date()): string | null {
+  const deploys = vault.events.query({ types: ['deploy.done'], limit: 200 });
+  for (const e of deploys) {
+    const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
+    if (!stream || !readStream(vault, stream)) continue;
+    const trigger = e.payload.rolled_back === true ? 'rollback' : null;
+    if (!trigger) continue;
+    const id = idFromKey('job', `incident:${trigger}:${e.ts}:${stream}`);
+    if (readJob(vault, id)) continue;
+    createJob(vault, {
+      id, type: 'incident', title: `Incident: ${stream} was rolled back`, assigned: 'sre', priority: 1,
+      team: 'dev', owner_role: 'dev_manager', stream, risk: 'high',
+      goal: `A live deploy of stream "${stream}" was rolled back at ${e.ts}. Treat it as a production incident (operating model §33): detection → triage → mitigation → recovery → root cause → corrective actions → learning.\n\nDo: (1) confirm the stream is serving again, rolling back further with deploy.site({ rollback: true }) if it is not; (2) read the deploy events, the CI records under Workspace/${stream}/.cubicle-ci/ and the job that shipped the change; (3) write the blameless postmortem to Docs/postmortems/${nowIso().slice(0, 10)}-${stream}.md from Docs/postmortems/_template.md — a timeline, the impact in hours, a root cause that is a design or a missing check rather than a person, and at least one corrective action with an owner role; (4) finish with that path in artifacts and the open→recovered hours in metrics.hours.`,
+      done_when: `The stream is serving again and Docs/postmortems/${nowIso().slice(0, 10)}-${stream}.md has a timeline, an impact in hours, a root cause and at least one corrective action.`,
+    }, 'daemon');
+    vault.events.emit({ type: 'incident.opened', agent: 'daemon', job: id, payload: { stream, trigger }, ts: e.ts });
+    void now;
+    return id;
+  }
+  return null;
+}
+
+/**
+ * Turn a finished incident's postmortem into work. §33's bargain is "no personal blame, strong ownership of
+ * corrective action": without this the postmortem is a document nobody acts on. Once per incident, at most
+ * `CORRECTIVE_MAX` jobs, each linked back so the next postmortem can see whether the last one worked.
+ */
+export function maybeCorrectiveActions(vault: Vault): string[] {
+  const out: string[] = [];
+  for (const inc of listJobs(vault).filter((j) => j.type === 'incident' && j.status === 'done')) {
+    const marker = `corrective:${inc.id}`;
+    if (listJobs(vault).some((j) => j.links.includes(`[[${marker}]]`))) continue;
+    const pm = postmortemPath(vault, inc.id);
+    const recovered = vault.events.query({ types: ['incident.recovered'], job: inc.id, limit: 1 });
+    if (!recovered.length) {
+      const opened = vault.events.query({ types: ['incident.opened'], job: inc.id, limit: 1 })[0];
+      const hours = opened ? (Date.parse(inc.updated) - Date.parse(opened.ts)) / 3600_000 : 0;
+      vault.events.emit({ type: 'incident.recovered', agent: inc.assigned, job: inc.id, payload: { stream: inc.stream ?? null, hours: Number(Math.max(0, hours).toFixed(2)), postmortem: pm } });
+    }
+    if (!pm) { markCorrectiveDone(vault, inc.id, marker); continue; }
+    const section = (vault.readTextOrNull(pm) ?? '').split('## Corrective actions')[1]?.split('\n## ')[0] ?? '';
+    const actions = section.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')).map((l) => l.slice(2).trim()).filter((l) => l.length > 8 && !l.startsWith('<')).slice(0, CORRECTIVE_MAX);
+    for (const a of actions) {
+      const title = a.replace(/\s*[—-]\s*owner:.*$/i, '').trim().slice(0, 80);
+      const owner = a.match(/owner:\s*([a-z0-9_]+)/i)?.[1] ?? 'backend_engineer';
+      out.push(createJob(vault, {
+        id: idFromKey('job', `${marker}:${title}`), type: 'custom', title: `Corrective: ${title}`, assigned: owner,
+        priority: 2, team: 'dev', owner_role: 'dev_manager', stream: inc.stream, links: [`[[${inc.id}]]`, `[[${marker}]]`],
+        goal: `Corrective action from the postmortem of incident [[${inc.id}]] ([[${pm.replace(/\.md$/, '')}]]):\n\n${a}\n\nThe incident is closed; this is the change that stops it happening again. Read the postmortem's root cause first.`,
+        done_when: `${title} is done and the postmortem's corrective action is ticked.`,
+      }, 'daemon'));
+    }
+    if (!actions.length) markCorrectiveDone(vault, inc.id, marker);
+  }
+  return out;
+}
+
+/** A marker job-free way to say "this incident's actions were expanded": a link on the incident itself. */
+function markCorrectiveDone(vault: Vault, incidentId: string, marker: string): void {
+  const cur = readJob(vault, incidentId);
+  if (!cur) return;
+  updateJob(vault, incidentId, { links: [...cur.data.links, `[[${marker}]]`] }, 'daemon', `- ${nowIso()}: corrective actions expanded (none found)`);
 }
