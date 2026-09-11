@@ -3,6 +3,7 @@ import {
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
   loadOrg, expandProcess, childrenOf, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
   officeHolder, roleWithTool, teamOf, researchLead, listStreams, type Org, type ModelTier,
+  childTeams, subtreeRoles, divisionTeams, divisionOf,
   budgetLines, GATE_JOB_TYPES,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
@@ -42,11 +43,11 @@ export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { k
  * (`state.boardVerdict`), but the owner's ruling itself is not wired yet.
  */
 export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit'] as const;
-/** How long a heartbeat waits for company.plan/team.plan before writing the brief with "planning pending" (R33). */
+/** How long a heartbeat waits for company.plan/division.plan before writing the brief with "planning pending" (R33). */
 export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
 
 /** Planning and gate job types never count toward the "N jobs completed" heartbeat trigger — otherwise a single
- *  cycle's own planning/gate sub-jobs (company.plan, board.premortem, team.plan, plus every `GATE_JOB_TYPES`
+ *  cycle's own planning/gate sub-jobs (company.plan, board.premortem, division.plan, plus every `GATE_JOB_TYPES`
  *  gate: team:qa.review, office:security.review, requester.review, research.review, office:operations.verify,
  *  and their pre-office names) push the count past the threshold and the heartbeat retriggers itself. The
  *  re-planning gate uses the same list for "work still open": a queued office:operations.verify is bookkeeping,
@@ -99,7 +100,7 @@ export function modelUseRows(use: { calls: number; downgraded: number }, noCloud
 
 /**
  * Whether this heartbeat may keep the current Plans/plan.md instead of rewriting it. Every heartbeat used to run
- * company.plan → the board pre-mortem → one team.plan per lead → gates (≈16 model calls) before any work, and on the
+ * company.plan → the board pre-mortem → one division.plan per division → gates (≈16 model calls) before any work, and on the
  * local floor one such "Plan Growth" took three days. Skip only when ALL hold: the plan's frontmatter `updated`
  * parses to a date less than `maxAgeDays` old (the template's `updated: ""` and a future or garbled stamp mean
  * "age unknown" → plan), the plan is substantive, work from it is still queued or running, nobody asked for a
@@ -133,6 +134,19 @@ export function planVerdictId(hbId: string): string { return idFromKey('prop', `
  */
 export function openPlanVerdict(vault: Vault): { path: string; data: InboxFrontmatter; body: string } | null {
   return listInbox(vault).find((n) => n.data.kind === 'plan_verdict' && n.data.approved !== false && !(n.data as { fanned_out?: string }).fanned_out) ?? null;
+}
+
+/**
+ * The newest plan the owner (or the board on a silent owner) turned down and nobody has rewritten yet. A
+ * rejection IS a rewrite request, so the re-planning gate must read it directly: relying on the `owner.edited`
+ * signal the rejection happens to leave behind meant a rejection made outside an owner edit — the board's own
+ * verdict on a timeout, an approval flag flipped by a script — reached the CEO only by accident. Stamped
+ * `fanned_out` by the cycle that acts on it, so one rejection buys one rewrite, not a rewrite every cycle.
+ */
+export function rejectedPlanVerdict(vault: Vault): { path: string; data: InboxFrontmatter; body: string } | null {
+  return listInbox(vault)
+    .filter((n) => n.data.kind === 'plan_verdict' && n.data.approved === false && !(n.data as { fanned_out?: string }).fanned_out)
+    .sort((a, b) => (a.data.created < b.data.created ? 1 : -1))[0] ?? null;
 }
 
 /** How much of Plans/plan.md the verdict note quotes: enough to rule on, short of pasting a whole cycle's plan. */
@@ -171,15 +185,24 @@ export function verdictOutcome(opts: { approved: boolean | null; created: string
 }
 
 /**
- * The goal text of a lead's `team.plan` job. A lead with no members (the shipped `operations` team is only the
- * COO) used to be told to "do the work yourself as a custom job assigned to you" and then tried
- * `scheduler.request` on itself every cycle, which the org guards refuse; say instead how such a lead gets work
- * onto the queue — through the CEO, or as research.
+ * The goal text of a division lead's `division.plan` job. A division lists no members of its own any more, so the
+ * people it may schedule are the whole subtree; the rooms are named with their leads so a lead can hand a room's
+ * work to the room instead of to a person. A division with nobody under it is told how it gets work onto the
+ * queue (through the CEO, or as research) rather than being left to call `scheduler.request` on itself, which the
+ * org guards refuse.
+ *
+ * `budgets` and the "name its stream and its risk" instruction are kept from the old per-team goal (SP6): the
+ * error budgets and stream-aligned objectives must still reach whoever actually schedules the work, and after
+ * this task that is the division lead, not a room lead.
  */
-export function teamPlanGoal(t: TeamFrontmatter, objectives: string, lastNextAction: string, researchTo = 'research_manager', budgets: string[] = []): string {
-  const alone = t.members.length === 0;
+export function divisionPlanGoal(org: Org, t: TeamFrontmatter, objectives: string, lastNextAction: string, researchTo = 'research_manager', budgets: string[] = []): string {
+  const rooms = childTeams(org, t.id);
+  const people = subtreeRoles(org, t.id).filter((r) => r !== t.lead);
   const budget = budgets.length ? `\n\nError budgets for your streams (operating model §23):\n${budgets.map((b) => `- ${b}`).join('\n')}` : '';
-  return `Your team's objectives this cycle:\n${objectives}${budget}\n\nNext action from the last brief: ${lastNextAction}\n\nDo: (1) vault.read Plans/plan.md and vault.list Jobs to see open work; (2) enqueue at most 4 jobs with scheduler.request for your members (${t.members.join(', ') || 'none'}), each finishable in one sitting, each with done_when, each naming its stream and its risk; research needs go to ${researchTo} with for: ${t.lead}; (3) vault.append the job ids under your "### ${t.id}" section in Plans/plan.md; (4) finish with a one-paragraph summary.${alone ? ` Your team has no members: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from ${researchTo}; do not call scheduler.request for yourself.` : ''}`;
+  const roomLine = rooms.length
+    ? `Your division: ${rooms.map((c) => `${c.name} (lead ${c.lead}: ${c.members.join(', ') || 'no members'})`).join('; ')}.`
+    : 'Your division has no rooms under it.';
+  return `Your division's objectives this cycle:\n${objectives}${budget}\n\nNext action from the last brief: ${lastNextAction}\n\n${roomLine}\n\nDo: (1) vault.read Plans/plan.md and vault.list Jobs to see open work; (2) enqueue at most 4 jobs with scheduler.request for anyone in your division (${people.join(', ') || 'nobody'}), each finishable in one sitting, each with done_when, each naming its stream and its risk — give a room's work to its lead when the room should decide who does it; (3) vault.append the job ids under your "### ${t.id}" section in Plans/plan.md; (4) finish with a one-paragraph summary. Research needs go to ${researchTo} with for: ${t.lead}.${people.length === 0 ? ` Your division has nobody under you: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from ${researchTo}; do not call scheduler.request for yourself.` : ''}`;
 }
 
 /**
@@ -188,13 +211,13 @@ export function teamPlanGoal(t: TeamFrontmatter, objectives: string, lastNextAct
  * `[\s\S]*?` + lookahead match (Task 9 review round 2: that lookahead was `(?=^### |\s*$)` — under the `m` flag,
  * `\s*$` matches the end of ANY line, not just a real section boundary, so the old regex silently truncated
  * every section to just its first line whenever a section had more than one line of content. This broke both
- * `planIsSubstantive` below on multi-bullet sections and the goal text `team_plans` sends a lead — a second
+ * `planIsSubstantive` below on multi-bullet sections and the goal text `division_plans` sends a lead — a second
  * objective bullet, or a `process:` line after the first bullet, was silently dropped).
  *
  * The header itself is kept as written (`Engineering`, `Growth team`, `growth`, …) rather than filtered to a
  * bare `\w+` team-id shape (F4): a CEO-written plan header is prose, not a machine key, and dropping a
  * multi-word or differently-cased header here silently lost the whole section for both `planIsSubstantive` and
- * `team_plans`. Resolving the header to an actual team id is the caller's job (`resolveTeamSection`).
+ * `division_plans`. Resolving the header to an actual team id is the caller's job (`resolveTeamSection`).
  */
 export function parseObjectiveSections(plan: string): { team: string; text: string }[] {
   return plan.split(/^### /m).slice(1).map((chunk) => {
@@ -223,11 +246,11 @@ export function planIsSubstantive(plan: string): boolean {
 }
 
 /**
- * The id `team_plans` should (re-)block on: the first of `ids` whose status is not done/failed/cancelled, or the
+ * The id `division_plans` should (re-)block on: the first of `ids` whose status is not done/failed/cancelled, or the
  * last id if every one of them already looks finished (defensive — the caller only asks for this while at least
- * one of `state.teamPlanJobs` is still open, so that shouldn't happen). Always returning `ids[0]` regardless of
- * its status (Task 9 review finding 2) meant that once the first team.plan finished, `requeueUnblocked` would see its
- * `blocked_on` target as satisfied on every dispatcher tick even while other team plans were still running,
+ * one of `state.divisionPlanJobs` is still open, so that shouldn't happen). Always returning `ids[0]` regardless of
+ * its status (Task 9 review finding 2) meant that once the first division.plan finished, `requeueUnblocked` would see its
+ * `blocked_on` target as satisfied on every dispatcher tick even while other division plans were still running,
  * busy-looping the heartbeat between `blocked` and `queued` until the slowest one finished.
  */
 export function firstOpenJob(ids: string[], statusOf: (id: string) => string | undefined): string {
@@ -397,7 +420,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -406,11 +429,11 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     const atStep = HEARTBEAT_STEPS[job.checkpoint_step];
     if (atStep === 'company_plan' && !state.companyPlanJob) state = { ...state, companyPlanJob: job.blocked_on.id };
     // `owner_verdict` counts as well as `division_plans`: a heartbeat that blocked on the fan-out before its
-    // checkpoint reached `division_plans` is still parked on team.plan jobs it already created, and a lost cache
+    // checkpoint reached `division_plans` is still parked on division.plan jobs it already created, and a lost cache
     // file must not make it create them a second time.
-    if ((atStep === 'division_plans' || atStep === 'owner_verdict') && !state.teamPlanJobs) {
-      const ids = listJobs(vault).filter((j) => j.parent === jobId && j.type === 'team.plan').map((j) => j.id);
-      if (ids.length) state = { ...state, teamPlanJobs: ids };
+    if ((atStep === 'division_plans' || atStep === 'owner_verdict') && !state.divisionPlanJobs) {
+      const ids = listJobs(vault).filter((j) => j.parent === jobId && j.type === 'division.plan').map((j) => j.id);
+      if (ids.length) state = { ...state, divisionPlanJobs: ids };
     }
   }
   // Likewise the verdict note: it is found by its heartbeat-stable id, so a cache-less resume rules on the note
@@ -468,13 +491,13 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   for (let i = job.checkpoint_step; i < HEARTBEAT_STEPS.length; i++) {
     if (cancelled()) return { status: 'cancelled' };
     const step = HEARTBEAT_STEPS[i];
-    // Block the heartbeat on a single sub-job (company.plan, team.plan): resumes when it finishes (R33).
+    // Block the heartbeat on a single sub-job (company.plan, division.plan): resumes when it finishes (R33).
     const block = (id: string, log: string): HeartbeatOutcome => {
       updateJob(vault, jobId, { status: 'blocked', blocked_on: { kind: 'job', id, since: nowIso() } }, 'ceo', `- step ${i + 1} ${step}: ${log}`);
       vault.events.emit({ type: 'job.blocked', agent: 'ceo', job: jobId, payload: { reason: 'job', id } });
       return { status: 'blocked', on: { kind: 'job', id } };
     };
-    // Block on the first of several sub-jobs (team.plan fan-out); the step re-checks the rest on each revisit.
+    // Block on the first of several sub-jobs (division.plan fan-out); the step re-checks the rest on each revisit.
     const blockMany = (ids: string[], log: string): HeartbeatOutcome => block(ids[0], log);
     // Still waiting → re-block (same start time). Budget exceeded → mark planPending, advance the step, and let
     // the caller continue with a stale plan rather than block the company forever (returns null to continue).
@@ -583,7 +606,11 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           // only quota. A board return (state.vetoes) is a rewrite request and is never skipped.
           const openJobs = listJobs(vault, { status: ['queued', 'running'] }).filter((j) => !NON_WORK_TYPES.includes(j.type)).length;
           const ownerAsked = (state.unansweredOwnerMessages?.length ?? 0) > 0 || (state.ownerEdits?.length ?? 0) > 0 || /owner|forced/i.test(job.title);
-          const gate = planningGate({ plan: vault.readTextOrNull('Plans/plan.md') ?? '', now: now(), maxAgeDays: deps.planMaxAgeDays, openJobs, ownerAsked, rewrite: (state.vetoes ?? 0) > 0 });
+          // A turned-down plan is a rewrite request in its own right, whether the owner rejected it or the board
+          // did on a silent owner — not something the gate should only notice because an owner edit happened to
+          // land in the same window.
+          const rejected = rejectedPlanVerdict(vault);
+          const gate = planningGate({ plan: vault.readTextOrNull('Plans/plan.md') ?? '', now: now(), maxAgeDays: deps.planMaxAgeDays, openJobs, ownerAsked, rewrite: (state.vetoes ?? 0) > 0 || !!rejected });
           if (gate.skip) {
             state = { ...state, planSkipped: { planDate: gate.planDate, open: openJobs } }; saveState(state);
             const note = `planning skipped — the plan from ${gate.planDate} stands and ${openJobs} job${openJobs === 1 ? ' is' : 's are'} still open`;
@@ -592,13 +619,15 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
             break;
           }
           archivePlan();
+          // This cycle is the rewrite that rejection asked for: spend the note so the next one does not rewrite again.
+          if (rejected) vault.updateNote(rejected.path, (n) => ({ data: { ...n.data, fanned_out: hbId }, body: n.body }), 'daemon');
           const org = loadOrg(vault);
-          const teams = Object.values(org.teams).filter((t) => t.lead !== 'ceo' || t.members.length).map((t) => `${t.id} (lead ${t.lead}: ${t.mission})`).join('; ');
+          const teams = divisionTeams(org).map((t) => `${t.id} (lead ${t.lead}: ${t.mission})`).join('; ');
           const streams = listStreams(vault).filter((s) => s.status === 'active').map((s) => `${s.slug} (${s.outcome_metric}, owned by ${s.owner_team})`).join('; ') || 'none yet — the product manager writes Streams/<slug>.md before the first objective';
           const findings = state.boardFindings?.length ? `\n\nThe board returned the previous draft with these findings; address each one:\n${state.boardFindings.map((f) => `- ${f}`).join('\n')}` : '';
           const id = createJob(vault, {
             type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the board' : 'Write the company plan', assigned: officeHolder(org, 'chief_executive'), priority: 1, parent: jobId, team: teamOf(org, 'ceo')?.id ?? 'executive', owner_role: 'ceo',
-            goal: `Write this cycle's objectives per team, not jobs.\n\nSituation:\n${situationSummary()}\n\nTeams: ${teams}.\n\nStreams: ${streams}.\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <team id>" subsection per team that has work this cycle (a bullet per objective; every objective for a product team ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); teams with nothing to do get no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
+            goal: `Write this cycle's objectives per division, not jobs.\n\nSituation:\n${situationSummary()}\n\nDivisions: ${teams}.\n\nStreams: ${streams}.\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <division id>" subsection per division that has work this cycle (a bullet per objective; every objective for a product division ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); a division with nothing to do gets no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
           }, 'ceo');
           state = { ...state, companyPlanJob: id }; saveState(state);
           return block(id, `waiting for company.plan ${id}`);
@@ -670,6 +699,14 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // No new plan this cycle means nothing to rule on: the plan the divisions are working from was already
         // approved, and `division_plans` skips on `planSkipped` before it ever looks at `state.verdict`.
         if (state.planSkipped) { done(i, 'no new plan to rule on'); break; }
+        // A plan with no real objective is nothing to rule on — the board already skipped it for the same reason
+        // — and asking the owner to approve an empty page would park the company behind it: with the switch off
+        // nobody would ever close that verdict, and `openPlanVerdict` would hold every later cycle's planning.
+        if (!state.verdictProposal && !planIsSubstantive(vault.readTextOrNull('Plans/plan.md') ?? '')) {
+          state = { ...state, verdict: 'approved' }; saveState(state);
+          done(i, 'nothing to rule on: the plan has no objective');
+          break;
+        }
         const org = loadOrg(vault);
         const ceo = officeHolder(org, 'chief_executive');
         const decidesAfterHours = vault.constitution().board_decides_after_hours;
@@ -688,7 +725,10 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         }
         const note = findInboxById(vault, state.verdictProposal!);
         if (!note) { state = { ...state, verdict: 'approved' }; saveState(state); done(i, 'verdict note is gone; treating the plan as approved'); break; }
-        const boardVerdict = (note.data as { board_verdict?: string }).board_verdict === 'return' ? 'return' as const : 'pass' as const;
+        // A note with no `board_verdict` is a note whose board session never got stamped — a crash between
+        // `createProposal` and the `updateNote` below. Read that as a return, never as a pass: an unstamped note
+        // must not auto-approve a plan nobody vouched for once `board_decides_after_hours` elapses.
+        const boardVerdict = (note.data as { board_verdict?: string }).board_verdict === 'pass' ? 'pass' as const : 'return' as const;
         const outcome = verdictOutcome({ approved: note.data.approved, created: note.data.created, now: now(), boardVerdict, decidesAfterHours });
         // A verdict the board made on its own is written onto the note as the decision it is — otherwise a
         // board-rejected plan would sit undecided forever and no later cycle could plan at all. Guarded on
@@ -703,69 +743,84 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
       }
       case 'division_plans': {
         // The leads already planned against this plan last cycle and their jobs are the open work the gate saw.
-        if (state.planSkipped && !state.teamPlanJobs) { done(i, 'team plans skipped — the plan was not rewritten'); break; }
+        if (state.planSkipped && !state.divisionPlanJobs) { done(i, 'division plans skipped — no new plan to fan out'); break; }
+        // "Approved work continues, new work waits": a plan still waiting for the owner fans out nothing, while
+        // the jobs an earlier approved plan already put on the queue keep running. `planWaiting` deliberately
+        // does NOT skip this step — a plan the owner approved between two heartbeats is exactly the plan this
+        // cycle must fan out, and `owner_verdict` above has just re-read that note.
+        if (state.verdict !== 'approved' && !state.divisionPlanJobs) { done(i, `no division plans: the plan is ${state.verdict ?? 'not approved'}`); break; }
         const org = loadOrg(vault);
-        if (!state.teamPlanJobs) {
+        if (!state.divisionPlanJobs) {
           const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
           const sections = parseObjectiveSections(plan).filter((s) => s.text);
-          const ids: string[] = [];
+          const divisions = new Set(divisionTeams(org).map((t) => t.id));
+          const byDivision = new Map<string, string[]>();
           for (const s of sections) {
-            // Match the section header against a team's id or name, case-insensitively and tolerant of a
-            // trailing "team" (F4) — a CEO-written plan header ("### Engineering", "### Growth team") is prose,
-            // not a machine key. An unmatched header warns instead of silently dropping the whole section.
+            // A CEO-written header is prose, not a machine key (F4): match it to a team, then roll the team up to
+            // its division, so "### dev" and "### Technology" both land on the CTO. An unmatched header warns
+            // instead of silently dropping the whole section.
             const teamId = resolveTeamSection(org, s.team);
-            const t = teamId ? org.teams[teamId] : undefined;
-            if (!t) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'team_plans', message: `no team matches section "${s.team}"` } }); continue; }
+            if (!teamId) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'division_plans', message: `no team matches section "${s.team}"` } }); continue; }
+            const t = org.teams[teamId];
             for (const m of s.text.matchAll(/^process:\s*(\w+)/gm)) {
-              // Process-expanded jobs (parent = this heartbeat, like team.plan) can run for hours across several
-              // roles, so the heartbeat must not wait on them — only on the team.plan jobs pushed below (Task 9
-              // review round 2: waiting on rollup() of every child, including these, delayed the brief for hours).
-              try { expandProcess(vault, m[1], s.text.split('\n')[0].replace(/^- /, ''), { parent: jobId, by: 'ceo', team: t.id, owner_role: t.lead }); }
-              catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'team_plans', message: String((err as Error).message) } }); }
+              // Process-expanded jobs (parent = this heartbeat, like division.plan) can run for hours across
+              // several roles, so the heartbeat must not wait on them — only on the division.plan jobs below
+              // (Task 9 review round 2: waiting on rollup() of every child delayed the brief for hours).
+              try { expandProcess(vault, m[1], s.text.split('\n')[0].replace(/^- /, ''), { parent: jobId, by: officeHolder(org, 'chief_executive'), team: t.id, owner_role: t.lead }); }
+              catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'division_plans', message: String((err as Error).message) } }); }
             }
-            if (t.lead === 'ceo') continue;
-            ids.push(createJob(vault, {
-              type: 'team.plan', title: `Plan ${t.name}`, assigned: t.lead, priority: 1, parent: jobId, team: t.id, owner_role: t.lead,
-              goal: teamPlanGoal(t, s.text, lastNextAction(t.id), researchLead(org) ?? 'research_manager', budgetLines(vault, t.id)),
-            }, 'ceo'));
+            const div = divisionOf(org, teamId);
+            if (!div || !divisions.has(div)) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'division_plans', message: `section "${s.team}" belongs to ${div ?? teamId}, which holds no planning round; give that work to a division or to a named role` } }); continue; }
+            byDivision.set(div, [...(byDivision.get(div) ?? []), s.text]);
           }
-          state = { ...state, teamPlanJobs: ids }; saveState(state);
+          const ids: string[] = [];
+          for (const [divId, texts] of byDivision) {
+            const t = org.teams[divId];
+            // Streams are owned by the rooms, not by the division, so the error budgets a division lead plans
+            // against are every room's in its subtree (SP6 §23) — not just the (usually empty) division's own.
+            const budgets = [...new Set(Object.values(org.teams).filter((x) => divisionOf(org, x.id) === divId).flatMap((x) => budgetLines(vault, x.id)))];
+            ids.push(createJob(vault, {
+              type: 'division.plan', title: `Plan ${t.name}`, assigned: t.lead, priority: 1, parent: jobId, team: t.id, owner_role: t.lead,
+              goal: divisionPlanGoal(org, t, texts.join('\n\n'), lastNextAction(t.id), researchLead(org) ?? 'research_manager', budgets),
+            }, officeHolder(org, 'chief_executive')));
+          }
+          state = { ...state, divisionPlanJobs: ids }; saveState(state);
           // The plan has now been acted on: stamp the verdict note so `openPlanVerdict` stops holding back the
           // next cycle's planning (see openPlanVerdict — the note stays open across the approval itself).
           const verdictNote = state.verdictProposal ? findInboxById(vault, state.verdictProposal) : null;
           if (verdictNote && !(verdictNote.data as { fanned_out?: string }).fanned_out) {
             vault.updateNote(verdictNote.path, (n) => ({ data: { ...n.data, fanned_out: hbId }, body: n.body }), 'daemon');
           }
-          if (!ids.length) { done(i, 'no team plans needed'); break; }
-          return blockMany(ids, `waiting for ${ids.length} team plan(s)`);
+          if (!ids.length) { done(i, 'no division plans needed'); break; }
+          return blockMany(ids, `waiting for ${ids.length} division plan(s)`);
         }
-        const emitTeamPlanned = () => {
-          for (const id of state.teamPlanJobs!) {
+        const emitPlanned = () => {
+          for (const id of state.divisionPlanJobs!) {
             const j = readJob(vault, id);
-            if (j?.data.type === 'team.plan' && j.data.status === 'done') vault.events.emit({ type: 'team.planned', agent: j.data.assigned, job: id, payload: { team: j.data.team, jobs: childrenOf(vault, id).map((c) => c.id) } });
+            if (j?.data.type === 'division.plan' && j.data.status === 'done') vault.events.emit({ type: 'team.planned', agent: j.data.assigned, job: id, payload: { team: j.data.team, jobs: childrenOf(vault, id).map((c) => c.id) } });
           }
         };
-        // Readiness comes solely from the team.plan jobs themselves, not rollup() of every heartbeat child — a
-        // process: line's expanded jobs (parent = this heartbeat too) are not among state.teamPlanJobs, so they
+        // Readiness comes solely from the division.plan jobs themselves, not rollup() of every heartbeat child — a
+        // process: line's expanded jobs (parent = this heartbeat too) are not among state.divisionPlanJobs, so they
         // never gate this step (Task 9 review round 2).
-        const openTeamPlans = state.teamPlanJobs.filter((id) => { const s = readJob(vault, id)?.data.status; return !s || !['done', 'failed', 'cancelled'].includes(s); });
-        if (openTeamPlans.length) {
+        const openPlans = state.divisionPlanJobs.filter((id) => { const s = readJob(vault, id)?.data.status; return !s || !['done', 'failed', 'cancelled'].includes(s); });
+        if (openPlans.length) {
           // Re-block on whichever job is still actually open (firstOpenJob), not always ids[0] — see its doc
           // comment for the busy-loop this fixes (Task 9 review finding 2).
-          const blockOn = firstOpenJob(state.teamPlanJobs, (id) => readJob(vault, id)?.data.status);
-          const w = waitOrGiveUp(blockOn, (min) => `${openTeamPlans.length} team plan(s) still open after ${min} min — planning pending`);
+          const blockOn = firstOpenJob(state.divisionPlanJobs, (id) => readJob(vault, id)?.data.status);
+          const w = waitOrGiveUp(blockOn, (min) => `${openPlans.length} division plan(s) still open after ${min} min — planning pending`);
           if (w) return w;
-          emitTeamPlanned(); // waitOrGiveUp already advanced the checkpoint on give-up
+          emitPlanned(); // waitOrGiveUp already advanced the checkpoint on give-up
           break;
         }
         if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
-        emitTeamPlanned();
-        done(i, `${state.teamPlanJobs.length} team plan(s) finished`);
+        emitPlanned();
+        done(i, `${state.divisionPlanJobs.length} division plan(s) finished`);
         break;
       }
       case 'brief': {
         // D8: heartbeat #1 must leave the company with a site, an offer and a channel to work on, whatever the
-        // plan turned out to say. Runs after team_plans (every exit path of it, including the give-up one) so a
+        // plan turned out to say. Runs after division_plans (every exit path of it, including the give-up one) so a
         // lead's own scheduling wins and only what nobody covered is seeded; later cycles seed nothing.
         const firstStream = seedFirstStream(vault);
         if (firstStream) updateJob(vault, jobId, {}, 'ceo', `- step ${i + 1} ${step}: created the first stream Streams/${firstStream}.md from the owner's idea`);
@@ -798,6 +853,11 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           `Elapsed: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}`,
           ...(state.planPending ? ['Planning: PENDING — the team plans have not finished this cycle; the previous plan stands.'] : []),
           ...(state.planSkipped ? [`Planning: skipped — the plan from ${state.planSkipped.planDate} stands and ${state.planSkipped.open} job${state.planSkipped.open === 1 ? ' is' : 's are'} still open`] : []),
+          // A plan can be waiting for the owner (`planWaiting`, filed by an earlier cycle) and still be ruled on
+          // by this one, so the "paused" line only stands while the verdict has not come through.
+          ...(state.planWaiting && state.verdict !== 'approved' ? [`Planning: paused — a plan is waiting for your verdict (${state.planWaiting})`] : []),
+          ...(state.verdict === 'pending' ? ['Planning: this cycle\'s plan is waiting for your verdict; work already approved keeps running'] : []),
+          ...(state.verdict === 'rejected' ? ['Planning: the plan was rejected; the CEO rewrites it next cycle and no new work was queued'] : []),
           modelUse.fact,
           ...(deps.env ? [`Outbound services: ${(['deploy', 'email', 'analytics'] as const).map((s) => `${s} ${mocked.includes(s) ? 'mock' : 'live'}`).join(', ')}`] : []),
           `Owner edits: ${state.ownerEdits?.length ? state.ownerEdits.join(', ') : 'none'}`,

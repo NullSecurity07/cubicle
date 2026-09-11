@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listInbox, listJobs, createJob, createProposal, findInboxById, updateJob } from '@cubicle/core';
+import { scaffoldVault, Vault, listInbox, listJobs, createJob, readJob, createProposal, findInboxById, updateJob } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler, type Llm } from '@cubicle/harness';
-import { verdictOutcome, openPlanVerdict, planVerdictId, planVerdictBody, dispatchProposals, runHeartbeat, createHeartbeatJob, HEARTBEAT_STEPS } from '../src/index.js';
+import { verdictOutcome, openPlanVerdict, rejectedPlanVerdict, planVerdictId, planVerdictBody, dispatchProposals, runHeartbeat, createHeartbeatJob, HEARTBEAT_STEPS } from '../src/index.js';
+import { letTheBoardDecide } from './helpers/board-switch.js';
 
 const root = path.resolve(__dirname, '../../..');
 const toolsConfig = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
@@ -121,7 +122,7 @@ describe('the owner rules on the plan (program design §4)', () => {
     const llm: Llm = { async chat() { throw new Error('the resumed steps must not call a model'); }, promptBudget: () => 6000 };
     const hbId = createHeartbeatJob(vault, 'test');
     vault.writeText('Plans/plan.md', '---\nupdated: ""\n---\n# Plan\n\n## Objectives\n\n### dev\n- Ship the first cut\n\n### revenue\n- Find ten customers\n', 'ceo');
-    const plans = ['dev', 'revenue'].map((team) => createJob(vault, { type: 'team.plan', title: `Plan ${team}`, assigned: team === 'dev' ? 'dev_manager' : 'cmo', priority: 1, parent: hbId, team, goal: 'g' }, 'ceo'));
+    const plans = ['technology', 'revenue'].map((team) => createJob(vault, { type: 'division.plan', title: `Plan ${team}`, assigned: team === 'technology' ? 'cto' : 'cfo', priority: 1, parent: hbId, team, goal: 'g' }, 'ceo'));
     const verdict = createProposal(vault, { id: planVerdictId(hbId), kind: 'plan_verdict', from: 'ceo', job: hbId, title: 'Approve this cycle\'s plan', body: 'The board passed this plan.' }, 'ceo');
     vault.updateNote(verdict.path, (n) => ({ data: { ...n.data, approved: true, board_verdict: 'pass' }, body: n.body }), 'owner');
     updateJob(vault, hbId, { status: 'blocked', checkpoint_step: HEARTBEAT_STEPS.indexOf('owner_verdict'), blocked_on: { kind: 'job', id: plans[0], since: new Date().toISOString() } }, 'daemon');
@@ -129,7 +130,91 @@ describe('the owner rules on the plan (program design §4)', () => {
 
     const out = await runHeartbeat({ vault, llm, env: {}, now: () => new Date() }, hbId);
     expect(out.status).toBe('blocked');
-    expect(listJobs(vault).filter((j) => j.type === 'team.plan').map((j) => j.id).sort()).toEqual([...plans].sort());
+    expect(listJobs(vault).filter((j) => j.type === 'division.plan').map((j) => j.id).sort()).toEqual([...plans].sort());
     expect(listInbox(vault).filter((n) => n.data.kind === 'plan_verdict')).toHaveLength(1);
+  });
+});
+
+describe('approved work continues, new work waits (Task 5 review I1/I2/M1)', () => {
+  /** No model is needed by owner_verdict, division_plans, brief (it falls back to the template) or commit. */
+  const mute: Llm = { async chat() { throw new Error('no model'); }, promptBudget: () => 6000 };
+  const parkAt = (hbId: string, step: (typeof HEARTBEAT_STEPS)[number]) => updateJob(vault, hbId, { checkpoint_step: HEARTBEAT_STEPS.indexOf(step) }, 'daemon');
+  const FRESH_PLAN = `---\nupdated: "${new Date().toISOString().slice(0, 10)}"\ncycle: 3\n---\n# Plan\n\n## Objectives\n\n### dev\n- Ship the first cut\n`;
+
+  it('a plan nobody has ruled on fans out nothing, and the work an approved plan already queued keeps running', async () => {
+    const hbId = createHeartbeatJob(vault, 'test');
+    vault.writeText('Plans/plan.md', FRESH_PLAN, 'ceo');
+    // Work the previous, approved plan already put on the queue: a pending verdict must not touch it.
+    const inFlight = createJob(vault, { type: 'engineer.ship', title: 'Scaffold the site', assigned: 'backend_engineer', priority: 3, goal: 'g', team: 'dev' }, 'cto');
+    const v = createProposal(vault, { id: planVerdictId(hbId), kind: 'plan_verdict', from: 'ceo', job: hbId, title: 'Approve this cycle\'s plan', body: 'The board passed this plan.' }, 'ceo');
+    vault.updateNote(v.path, (n) => ({ data: { ...n.data, board_verdict: 'pass' }, body: n.body }), 'daemon');
+    parkAt(hbId, 'owner_verdict');   // the switch ships off, so nothing but the owner can close this
+
+    expect((await runHeartbeat({ vault, llm: mute, env: {}, now: () => new Date() }, hbId)).status).toBe('done');
+    expect(listJobs(vault).filter((j) => j.type === 'division.plan')).toHaveLength(0);
+    expect(readJob(vault, inFlight)!.data.status).toBe('queued');
+    const note = findInboxById(vault, v.id)!;
+    expect(note.data.approved).toBeNull();
+    expect((note.data as { fanned_out?: string }).fanned_out).toBeUndefined();   // nothing was fanned out, so nothing is spent
+    expect(openPlanVerdict(vault)?.data.id).toBe(v.id);                          // still the plan the next cycle must run
+  });
+
+  it('a plan with no objective is never filed for a verdict: an empty page must not park the company for ever', async () => {
+    const hbId = createHeartbeatJob(vault, 'test');
+    vault.writeText('Plans/plan.md', '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n', 'ceo');
+    parkAt(hbId, 'owner_verdict');
+    expect((await runHeartbeat({ vault, llm: mute, env: {}, now: () => new Date() }, hbId)).status).toBe('done');
+    expect(listInbox(vault).filter((n) => n.data.kind === 'plan_verdict')).toHaveLength(0);
+    expect(openPlanVerdict(vault)).toBeNull();   // so the next cycle plans instead of waiting on nothing
+  });
+
+  it('a note whose board session never got stamped reads as a return, not a pass, when the switch elapses', async () => {
+    letTheBoardDecide(vault, 6);
+    const hbId = createHeartbeatJob(vault, 'test');
+    vault.writeText('Plans/plan.md', FRESH_PLAN, 'ceo');
+    // A crash between createProposal and the updateNote that stamps `board_verdict` leaves exactly this note.
+    const v = createProposal(vault, { id: planVerdictId(hbId), kind: 'plan_verdict', from: 'ceo', job: hbId, title: 'Approve this cycle\'s plan', body: 'The board read the plan.' }, 'ceo');
+    vault.updateNote(v.path, (n) => ({ data: { ...n.data, created: hoursAgo(10) }, body: n.body }), 'daemon');
+    parkAt(hbId, 'owner_verdict');
+
+    await runHeartbeat({ vault, llm: mute, env: {}, now: () => new Date() }, hbId);
+    const note = findInboxById(vault, v.id)!;
+    expect(note.data.approved).toBe(false);
+    expect(note.data.decided_by).toBe('board');
+    expect(listJobs(vault).filter((j) => j.type === 'division.plan')).toHaveLength(0);
+  });
+
+  it('rejectedPlanVerdict is the newest rejection nobody has acted on', () => {
+    const old = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'a', body: 'a' }, 'ceo');
+    const spent = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'b', body: 'b' }, 'ceo');
+    const open = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'c', body: 'c' }, 'ceo');
+    vault.updateNote(old.path, (n) => ({ data: { ...n.data, approved: false, created: hoursAgo(9) }, body: n.body }), 'owner');
+    vault.updateNote(spent.path, (n) => ({ data: { ...n.data, approved: false, created: hoursAgo(1), fanned_out: 'job_x' }, body: n.body }), 'owner');
+    expect(rejectedPlanVerdict(vault)?.data.id).toBe(old.id);
+    const newer = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'd', body: 'd' }, 'ceo');
+    vault.updateNote(newer.path, (n) => ({ data: { ...n.data, approved: false }, body: n.body }), 'owner');
+    expect(rejectedPlanVerdict(vault)?.data.id).toBe(newer.id);
+    expect(openPlanVerdict(vault)?.data.id).toBe(open.id);   // a pending note is not a rejection
+  });
+
+  it('a rejection is a rewrite request: the next cycle re-plans even against a fresh plan, and spends the rejection', async () => {
+    vault.writeText('Plans/plan.md', FRESH_PLAN, 'ceo');
+    createJob(vault, { type: 'engineer.ship', title: 'Open work from that plan', assigned: 'backend_engineer', priority: 3, goal: 'g', team: 'dev' }, 'cto');
+    const hb1 = createHeartbeatJob(vault, 'test');
+    parkAt(hb1, 'company_plan');
+    // Control: a fresh, substantive plan with open work and nobody complaining — the gate stands it down.
+    await runHeartbeat({ vault, llm: mute, env: {}, now: () => new Date(), planMaxAgeDays: 3 }, hb1);
+    expect(listJobs(vault).filter((j) => j.type === 'company.plan')).toHaveLength(0);
+
+    const rejected = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'Approve this cycle\'s plan', body: 'The board returned this plan.' }, 'ceo');
+    vault.updateNote(rejected.path, (n) => ({ data: { ...n.data, approved: false, resolved_at: new Date().toISOString() }, body: n.body }), 'owner');
+    const hb2 = createHeartbeatJob(vault, 'test');
+    parkAt(hb2, 'company_plan');
+    const out = await runHeartbeat({ vault, llm: mute, env: {}, now: () => new Date(), planMaxAgeDays: 3 }, hb2);
+    expect(out.status).toBe('blocked');
+    expect(listJobs(vault).filter((j) => j.type === 'company.plan')).toHaveLength(1);
+    // One rejection buys one rewrite: the note is spent, so the cycle after this one is not forced to re-plan again.
+    expect((findInboxById(vault, rejected.id)!.data as { fanned_out?: string }).fanned_out).toBe(hb2);
+    expect(rejectedPlanVerdict(vault)).toBeNull();
   });
 });

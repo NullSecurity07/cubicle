@@ -1,6 +1,6 @@
 /**
  * Scripted model for the org-shaped planning cycle (spec §3): the CEO writes the plan; the board returns it once
- * then passes; managers enqueue one job each; everyone else finishes. Shared by `packages/daemon/test/planning.test.ts`
+ * then passes; division leads enqueue one job each; everyone else finishes. Shared by `packages/daemon/test/planning.test.ts`
  * and `scripts/test-kill9.ts` (planning fan-out scenario) so both exercise the exact same scripted behaviour.
  */
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
@@ -34,12 +34,13 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
       const jobTitle = jobMsg.match(/title: ([^·\n]+)/)?.[1]?.trim() ?? '';
       // The "launch" process's step titles ("Build: ...", "Announce: ...", "Outreach: ...", "Measure launch") —
       // never finish these so they are provably still open (queued/running) when the heartbeat completes, proving
-      // team_plans does not wait on process-expanded jobs (Task 9 review round 2). No other test's jobs use these
+      // division_plans does not wait on process-expanded jobs (Task 9 review round 2). No other test's jobs use these
       // titles, so this is a no-op everywhere else.
       if (/^(Build|Announce|Outreach|Measure launch):? /.test(jobTitle) || jobTitle === 'Measure launch') return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Plans/plan.md' } }] };
       if (jobType === 'company.plan') return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content: plan } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
-      if (jobType === 'team.plan') {
-        const member = role === 'dev_manager' ? 'backend_engineer' : role === 'cfo' ? 'research_manager' : null;
+      if (jobType === 'division.plan') {
+        // The division leads: the CTO schedules into the Dev room, the CFO asks Research for the revenue question.
+        const member = role === 'cto' ? 'backend_engineer' : role === 'cfo' ? 'research_manager' : null;
         const isResearch = member === 'research_manager';
         const research = isResearch ? {
           decision: 'Ship the pricing page or keep the waitlist',

@@ -9,12 +9,16 @@ import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot, NON_WORK_TYPES } from '../src/index.js';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
+import { letTheBoardDecide } from './helpers/board-switch.js';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
 beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-daemon-'));
   const { vault } = await scaffoldVault(dir);
+  // Nobody is at the keyboard in these tests and `board_decides_after_hours` ships off, so a plan would wait for
+  // the owner for ever and no division would ever plan. Hand the board the ruling after a fraction of an hour.
+  letTheBoardDecide(vault);
   // An engineer.ship cannot finish without a green CI record for its stream (§17), so the scripted dev plan
   // below ships against this one. No source files exist under Workspace/site, so the record never goes stale.
   createStream(vault, { slug: 'site', name: 'Site', problem: 'The company has no site.', customers: 'Everyone who hears about us', outcome_metric: 'a first cut exists', owner_team: 'dev' }, 'ceo');
@@ -23,13 +27,13 @@ beforeEach(async () => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-/** The CEO's objectives for the cycle: only the Dev room has work, so only the dev manager gets a team.plan. */
+/** The CEO's objectives for the cycle: only the Dev room has work, so only the CTO's division gets a division.plan. */
 const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n';
 
 /**
  * Role-aware scripted LLM for the two-level planning cycle: the CEO writes the company plan, the board always
  * passes (its advisors answer with canned prose and the chair's merge names no VERDICT line, which reads as a
- * pass), the CTO's team.plan enqueues the scaffold job, everyone else finishes immediately.
+ * pass), the CTO's division.plan enqueues the scaffold job, everyone else finishes immediately.
  */
 function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: string; tools: boolean }[] } {
   const perJob = new Map<string, number>();
@@ -58,7 +62,7 @@ function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: stri
         const content = companyPlanCycles <= 1 ? PLAN : `---\ncycle: ${companyPlanCycles}\n---\n# Plan\n\n## Objectives\n`;
         return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
       }
-      if (jobType === 'team.plan' && req.roleId === 'dev_manager') {
+      if (jobType === 'division.plan' && req.roleId === 'cto') {
         return { ...base, parsedToolCalls: [n === 0 ? { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'backend_engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.', risk: 'low', stream: 'site' } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
       }
       // Gate jobs (team:qa.review, office:operations.verify, requester.review) need an explicit verdict to advance the parent's gate chain.
@@ -99,12 +103,16 @@ async function waitForStable(pred: () => boolean, stableMs = 1500, ms = 40000): 
 }
 
 describe('heartbeat as a resumable job', () => {
-  it('runs all steps, awaits company.plan/team.plan, writes Runs/, queue.md, commits, answers the owner, proposes a name', async () => {
+  it('runs all steps, awaits company.plan/division.plan, writes Runs/, queue.md, commits, answers the owner, proposes a name', async () => {
     const vault = Vault.open(dir);
     const llm = fakeLlm();
     createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
     const hb = createHeartbeatJob(vault, 'test');
-    const deps = { vault, llm };
+    // The owner never answers the plan_verdict this cycle files. `board_decides_after_hours` is a fraction of an
+    // hour here (beforeEach), so moving the clock on is how this test says "the owner stayed away long enough":
+    // the board's pass then stands and the same heartbeat fans the plan out.
+    let clock = new Date();
+    const deps = { vault, llm, now: () => clock };
     const first = await runHeartbeat(deps, hb);
     expect(first.status).toBe('blocked');
     expect(readJob(vault, hb)!.data.checkpoint_step).toBe(4); // company_plan
@@ -126,16 +134,17 @@ describe('heartbeat as a resumable job', () => {
     expect(vault.readText('Plans/plan.md')).toContain('Scaffold the site from Brand/');
     expect(requeueUnblocked(vault)).toBe(1);
     // The board room is four model calls inside this step, not a sub-job, so the heartbeat passes straight
-    // through board_premortem and blocks on the dev manager's team.plan instead.
+    // through board_premortem, rules on the plan, and blocks on the CTO's division.plan instead.
+    clock = new Date(clock.getTime() + 3600_000);
     expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
     const boardJob = listJobs(vault).find((j) => j.type === 'board.premortem')!;
     expect(boardJob.status).toBe('done');
     expect(readJob(vault, boardJob.id)!.body).toContain('### The Skeptic');
     expect(existsSync(path.join(dir, 'Decisions'))).toBe(true);
-    // finish the dev manager's team.plan → it enqueues the scaffold job
-    const teamPlan = listJobs(vault).find((j) => j.type === 'team.plan')!;
-    expect(teamPlan.assigned).toBe('dev_manager');
-    expect((await runJob(harnessDeps, teamPlan.id)).status).toBe('done');
+    // finish the CTO's division.plan → it enqueues the scaffold job
+    const divisionPlan = listJobs(vault).find((j) => j.type === 'division.plan')!;
+    expect(divisionPlan.assigned).toBe('cto');
+    expect((await runJob(harnessDeps, divisionPlan.id)).status).toBe('done');
     expect(listJobs(vault).some((j) => j.type === 'engineer.ship')).toBe(true);
     expect(requeueUnblocked(vault)).toBe(1);
     const done = await runHeartbeat(deps, hb);
@@ -508,14 +517,14 @@ describe('daemon lifecycle', () => {
     } finally { v.close(); }
   });
 
-  it('planning and gate sub-jobs (company.plan, critic.premortem, team.plan, team:qa.review, office:operations.verify) never retrigger a second heartbeat on their own (Task 11)', async () => {
+  it('planning and gate sub-jobs (company.plan, board.premortem, division.plan, team:qa.review, office:operations.verify) never retrigger a second heartbeat on their own (Task 11)', async () => {
     const vault = Vault.open(dir);
     createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
     vault.close();
     const d = daemonFor(fakeLlm());
     await d.start();
     await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
-    // the first heartbeat's own cycle produces company.plan, critic.premortem, team.plan, engineer.ship, team:qa.review, office:operations.verify —
+    // the first heartbeat's own cycle produces company.plan, board.premortem, the seeded first jobs, team:qa.review, office:operations.verify —
     // five of those six are planning/gate jobs; if they counted toward jobsCompletedN (5) a second heartbeat would fire.
     await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'office:operations.verify' && j.status === 'done').length >= 1, 20000);
     await new Promise((r) => setTimeout(r, 1500)); // let the tick settle

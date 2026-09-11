@@ -2,11 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listJobs, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord } from '@cubicle/core';
+import { scaffoldVault, Vault, listJobs, listInbox, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
+import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
@@ -16,6 +17,9 @@ beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-plan-'));
   const { vault } = await scaffoldVault(dir);
   vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'PlateReady' }, body: n.body }), 'owner');
+  // Nobody is at the keyboard here and `board_decides_after_hours` ships off, so a plan would wait for the owner
+  // for ever and no division would ever plan. Hand the board the ruling after a fraction of an hour instead.
+  letTheBoardDecide(vault);
   // An engineer.ship cannot finish without a green CI record for its stream (§17), so the scripted dev plan
   // ships against this one. Nothing lives under Workspace/site, so the record never goes stale.
   createStream(vault, { slug: 'site', name: 'Site', problem: 'The company has no site.', customers: 'Everyone who hears about us', outcome_metric: 'a first cut exists', owner_team: 'dev' }, 'ceo');
@@ -84,17 +88,17 @@ describe('team section header matching (F4)', () => {
       expect(resolveTeamSection(org, 'Nonexistent')).toBeNull();
     } finally { vault.close(); }
   });
-  it('a plan with differently-cased/multi-word headers still fans out to both teams; an unmatched header warns and creates no team.plan', async () => {
+  it('a plan with differently-cased/multi-word headers still fans out to both divisions; an unmatched header warns and creates no division.plan', async () => {
     const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### Dev\n- Scaffold the site from Brand/\n\n### revenue team\n- Find the first organic channel\n\n### Nonexistent\n- Should warn, not crash\n';
     const llm = orgLlm({ vetoes: 0, plan });
     const d = daemonFor(llm);
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
-      const teamPlans = listJobs(v).filter((j) => j.type === 'team.plan');
-      expect(teamPlans.map((j) => j.assigned).sort()).toEqual(['cfo', 'dev_manager']);
-      expect(v.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'team_plans' && /Nonexistent/.test(String(e.payload.message)))).toBe(true);
+      await planUntilFannedOut(d, v, 2);
+      const plans = listJobs(v).filter((j) => j.type === 'division.plan');
+      expect(plans.map((j) => j.assigned).sort()).toEqual(['cfo', 'cto']);
+      expect(v.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'division_plans' && /Nonexistent/.test(String(e.payload.message)))).toBe(true);
     } finally { v.close(); await d.stop(); }
   });
 });
@@ -125,18 +129,22 @@ describe('two-level planning (spec §3)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await planUntilFannedOut(d, v, 2);
       const jobs = listJobs(v);
       expect(jobs.filter((j) => j.type === 'company.plan')).toHaveLength(2); // one return → one rewrite
       expect(jobs.filter((j) => j.type === 'board.premortem')).toHaveLength(2);
       expect(jobs.every((j) => j.type !== 'board.premortem' || j.status === 'done')).toBe(true);
       expect(v.events.count('plan.vetoed')).toBe(1);
-      const teamPlans = jobs.filter((j) => j.type === 'team.plan');
-      expect(teamPlans.map((j) => j.assigned).sort()).toEqual(['cfo', 'dev_manager']);
-      expect(teamPlans.every((j) => j.status === 'done')).toBe(true);
-      expect(jobs.some((j) => j.type === 'engineer.ship' && j.owner_role === 'dev_manager' && j.team === 'dev')).toBe(true);
+      const divisionPlans = jobs.filter((j) => j.type === 'division.plan');
+      expect(divisionPlans.map((j) => j.assigned).sort()).toEqual(['cfo', 'cto']);   // dev -> technology, revenue -> revenue
+      expect(divisionPlans.every((j) => j.status === 'done')).toBe(true);
+      expect(jobs.some((j) => j.type === 'engineer.ship' && j.owner_role === 'cto' && j.team === 'dev')).toBe(true);
       expect(jobs.some((j) => j.type === 'research' && j.for === 'cfo')).toBe(true);
       expect(v.events.count('team.planned')).toBe(2);
+      // Only the cycle that wrote the plan holds a board session; the one that fans it out finds the verdict note
+      // open and skips straight past, so a waiting plan costs one session per plan, not one per heartbeat.
+      expect(llm.calls.advisor_investor ?? 0).toBeLessThanOrEqual(2);
+      expect(llm.calls.advisor_customer ?? 0).toBeLessThanOrEqual(2);
       // Task 9 review finding 2 (busy loop when team_plans re-blocks on an already-finished ids[0]) is covered
       // directly by the firstOpenJob unit tests above — job.blocked events are only emitted by block()/blockMany(),
       // which team_plans calls at most once regardless, so an event count here would not have caught the bug.
@@ -144,7 +152,8 @@ describe('two-level planning (spec §3)', () => {
       expect(brief).toContain('## Next action per team');
       expect(existsSync(path.join(dir, 'Decisions'))).toBe(true);
       console.log('calls per cycle:', llm.calls, '=', Object.values(llm.calls).reduce((a, b) => a + b, 0));
-      expect(Object.values(llm.calls).reduce((a, b) => a + b, 0)).toBeLessThan(60);
+      // Two heartbeats (the plan, then the fan-out once the board's verdict stands) - the ceiling covers both.
+      expect(Object.values(llm.calls).reduce((a, b) => a + b, 0)).toBeLessThan(100);
     } finally { v.close(); await d.stop(); }
   });
   it('a second veto escalates to the owner as a message and the cycle continues', async () => {
@@ -170,15 +179,16 @@ describe('two-level planning (spec §3)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await planUntilFannedOut(d, v, 2);
       const jobs = listJobs(v);
-      const hb = jobs.find((j) => j.type === 'ceo.heartbeat')!;
-      const teamPlans = jobs.filter((j) => j.type === 'team.plan');
-      expect(teamPlans.every((j) => j.status === 'done')).toBe(true);
+      // The cycle that fanned out is the one that expanded the process: line, not necessarily the first heartbeat.
+      const hb = jobs.find((j) => j.type === 'ceo.heartbeat' && jobs.some((c) => c.parent === j.id && c.type === 'division.plan'))!;
+      const divisionPlans = jobs.filter((j) => j.type === 'division.plan');
+      expect(divisionPlans.every((j) => j.status === 'done')).toBe(true);
       // Expanded jobs are direct children of the heartbeat, like team.plan/board.premortem/company.plan, but a
       // different type — the lead's own scheduler.request jobs (e.g. engineer.ship from a team.plan) are parented
       // to that team.plan job instead, so this filter only catches the process expansion.
-      const expanded = jobs.filter((j) => j.parent === hb.id && !['company.plan', 'board.premortem', 'team.plan'].includes(j.type));
+      const expanded = jobs.filter((j) => j.parent === hb.id && !['company.plan', 'board.premortem', 'division.plan'].includes(j.type));
       expect(expanded.length).toBeGreaterThan(0);
       expect(expanded.some((j) => !['done', 'failed', 'cancelled'].includes(j.status))).toBe(true);
     } finally { v.close(); await d.stop(); }
@@ -212,7 +222,9 @@ describe('board pre-mortems are validated decision notes (D7)', () => {
     const v = Vault.open(dir);
     try {
       await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
-      const hb = listJobs(v).find((j) => j.type === 'ceo.heartbeat')!;
+      // A run now holds more than one heartbeat: pick the one that actually held the board session.
+      const all = listJobs(v);
+      const hb = all.find((j) => j.type === 'ceo.heartbeat' && all.some((c) => c.parent === j.id && c.type === 'board.premortem'))!;
       const rel = `Decisions/premortem-${hb.id}.md`;
       expect(v.exists(rel)).toBe(true);
       const note = v.readNoteOrNull(rel)!;
@@ -236,7 +248,9 @@ describe('board pre-mortems are validated decision notes (D7)', () => {
     const v = Vault.open(dir);
     try {
       await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
-      const hb = listJobs(v).find((j) => j.type === 'ceo.heartbeat')!;
+      // A run now holds more than one heartbeat: pick the one that actually held the board session.
+      const all = listJobs(v);
+      const hb = all.find((j) => j.type === 'ceo.heartbeat' && all.some((c) => c.parent === j.id && c.type === 'board.premortem'))!;
       const note = v.readNoteOrNull(`Decisions/premortem-${hb.id}.md`)!;
       expect(DecisionFrontmatter.parse(note.data).status).toBe('proposed');
       expect(note.body).toContain('growth objective has no metric');
@@ -362,6 +376,52 @@ describe('brief lists jobs that stopped and wait for the owner', () => {
       expect(facts).toContain(`Decide on ${id}`);
       expect(facts).toContain('cto may not schedule cto');
       expect(facts).toContain('status: queued');
+    } finally { v.close(); await d.stop(); }
+  });
+});
+
+describe('division planning (spec item 3)', () => {
+  it('one division.plan per division named in the plan, and none for the teams that do not plan', async () => {
+    const plan = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### technology\n- Ship the first cut\n\n### revenue\n- Find the first organic channel\n\n### operations\n- Verify what shipped and write the lesson\n\n### security\n- Rotate the keys\n';
+    const d = daemonFor(orgLlm({ vetoes: 0, plan }));
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await planUntilFannedOut(d, v, 3);
+      const plans = listJobs(v).filter((j) => j.type === 'division.plan');
+      expect(plans.map((j) => j.assigned).sort()).toEqual(['cfo', 'coo', 'cto']);
+      expect(listJobs(v).filter((j) => j.type === 'board.premortem')).toHaveLength(1);
+      expect(v.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'division_plans' && /security/.test(String(e.payload.message)))).toBe(true);
+      const goal = readJob(v, plans.find((j) => j.assigned === 'cto')!.id)!.body;
+      expect(goal).toContain('Dev (lead dev_manager');
+      expect(goal).toContain('backend_engineer');
+    } finally { v.close(); await d.stop(); }
+  });
+
+  it('with the switch off — the shipped default — the plan waits for the owner, and no new work starts', async () => {
+    const seed = Vault.open(dir);
+    // Undo the beforeEach helper: this is the vault as it ships, where only the owner rules.
+    seed.writeText('Memory/constitution.md', seed.readText('Memory/constitution.md').replace(/^board_decides_after_hours:.*$/m, 'board_decides_after_hours: 0'), 'owner');
+    seed.close();
+    const d = daemonFor(orgLlm({ vetoes: 0 }));
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      // Give the daemon several more ticks: no amount of waiting decides this plan, only the owner does.
+      await new Promise((r) => setTimeout(r, 2000));
+      d.requestHeartbeat('nothing has changed');
+      await new Promise((r) => setTimeout(r, 2000));
+      expect(listJobs(v).filter((j) => j.type === 'division.plan')).toHaveLength(0);
+      const verdict = listInbox(v).find((n) => n.data.kind === 'plan_verdict')!;
+      expect(verdict.data.approved).toBeNull();
+      expect(verdict.data.resolved_at).toBeNull();
+      expect(listJobs(v).filter((j) => j.type === 'company.plan')).toHaveLength(1);  // nothing was written over it either
+      // The owner approves; the next heartbeat plans the divisions against the plan that was waiting.
+      v.updateNote(verdict.path, (n) => ({ data: { ...n.data, approved: true }, body: n.body }), 'owner');
+      d.requestHeartbeat('owner approved the plan');
+      await waitFor(() => listJobs(v).filter((j) => j.type === 'division.plan').length >= 2, 60000);
+      expect(listJobs(v).filter((j) => j.type === 'company.plan')).toHaveLength(1);
     } finally { v.close(); await d.stop(); }
   });
 });
