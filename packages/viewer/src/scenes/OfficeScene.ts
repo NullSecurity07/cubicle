@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { makeTileset, makeDecorSheet, makeLampGlow, makeSky, makeOwnerSprite, TILE, roleColor } from '../world/tileset.js';
-import { buildWorld, floorAt, type World, type Tile } from '../world/map.js';
+import { buildWorld, floorAt, type World, type Tile, type Anchor, type FloorInfo } from '../world/map.js';
 import { T } from '../world/tiles.js';
 import { AgentSprite } from '../world/agents.js';
 import { Surface } from '../world/surfaces.js';
@@ -21,7 +21,7 @@ export interface SceneHooks {
   getState(): State; frames(): Record<string, string>; onSurfaceClick(kind: string): void; onAgentClick(role: string): void; hour(): number;
   /** wall clock live, event clock in replay (bubbles expire against it) */ clock(): number;
   /** the camera's floor changed (the floor rail highlights it) */ onFloorChange?(n: number): void;
-  /** the visual layer's elevator car; a plain box when absent */ makeCar?(scene: Phaser.Scene): Phaser.GameObjects.Container;
+  /** the visual layer's elevator car; a plain box when absent */ makeCar?(scene: Phaser.Scene, geo: { shaft: Anchor; floors: FloorInfo[] }): Phaser.GameObjects.Container;
   /** every elevator event, for the indicator and sounds */ onElevator?(ev: ElevatorEvent): void;
 }
 
@@ -85,7 +85,7 @@ export class OfficeScene extends Phaser.Scene {
     this.decor = new DecorLayer(this, this.world.decor);
     this.signs = new RoomSigns(this, this.world.signs);
     this.elev = initialElevator(this.world.floors, 1);
-    this.car = (this.hooks.makeCar?.(this) ?? this.defaultCar()).setDepth(3);
+    this.car = (this.hooks.makeCar?.(this, { shaft: this.world.anchors.shaft, floors: this.world.floors }) ?? this.defaultCar()).setDepth(3);
     this.car.setPosition(SHAFT_CENTRE_X, this.elev.row * TILE);
     makeSky(this, 'sky', skyFor(this.hour()), h);
     this.sky = this.add.image(0, 0, 'sky').setOrigin(0).setDisplaySize(w, h).setDepth(-1);

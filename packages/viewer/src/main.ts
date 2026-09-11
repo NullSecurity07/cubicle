@@ -8,6 +8,7 @@ import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
 import { withMotion, reducedMotion } from './world/motion.js';
+import { ElevatorView, toViewState } from './world/elevator-view.js';
 const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
 withMotion(reducedMotion() ? 0 : 1);
 motionQuery.addEventListener('change', () => withMotion(motionQuery.matches ? 0 : 1));
@@ -65,6 +66,7 @@ function rebuildReplayTo(index: number): void {
   refresh();
 }
 
+let elevatorView: ElevatorView | null = null;
 scene.hooks = {
   getState: () => state,
   frames: () => frames,
@@ -72,6 +74,7 @@ scene.hooks = {
   clock: () => (state.mode === 'replay' ? replayClockAt(time.index) : Date.now()),
   onSurfaceClick(kind) { open(kind); },
   onAgentClick(role) { open(`agent:${role}`); scene.focusOn(`agent:${role}`, { zoom: true }); },
+  makeCar(sc, geo) { elevatorView = new ElevatorView(sc, geo.shaft, geo.floors); return elevatorView.car; },
 };
 
 function viewOf(kind: string) { return viewFor(kind, state, ctx); }
@@ -157,6 +160,7 @@ function loop(now: number): void {
   const dt = now - last; last = now;
   time.tick(dt, new Date());
   if (state.mode === 'live') state = tick(state, Date.now());
+  if (elevatorView && scene.scene.isActive()) elevatorView.setState(toViewState(scene.elevator.state()));   // doors and digits follow the engine every frame
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
