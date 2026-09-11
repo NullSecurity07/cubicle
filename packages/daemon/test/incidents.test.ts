@@ -40,6 +40,72 @@ describe('an incident opens itself when a deploy is rolled back', () => {
   });
 });
 
+describe('an incident opens itself when CI goes red on a live stream', () => {
+  const liveDeploy = () => vault.events.emit({ type: 'deploy.done', agent: 'sre', job: null, payload: { project: 'acme', stage: 'live', rolled_back: false, stream: 'checkout' } });
+  const redCi = (record: string) => vault.events.emit({ type: 'ci.completed', agent: 'backend_engineer', job: null, payload: { stream: 'checkout', green: false, record, steps: [{ name: 'test', ok: false, code: 1 }] } });
+
+  it('a red run on a stream that is serving opens one incident with trigger red_ci_live', () => {
+    liveDeploy();
+    redCi('Workspace/checkout/.cubicle-ci/2026-09-11-1200.json');
+    const id = maybeOpenIncident(vault)!;
+    const j = readJob(vault, id)!.data;
+    expect(j.type).toBe('incident');
+    expect(j.assigned).toBe('sre');
+    expect(j.risk).toBe('high');
+    expect(j.priority).toBe(1);
+    expect(j.stream).toBe('checkout');
+    const opened = vault.events.query({ types: ['incident.opened'] });
+    expect(opened).toHaveLength(1);
+    expect(opened[0].payload.trigger).toBe('red_ci_live');
+    expect(readJob(vault, id)!.body).toMatch(/Docs\/postmortems/);
+  });
+
+  it('a red run on a stream that never went live opens nothing', () => {
+    redCi('Workspace/checkout/.cubicle-ci/2026-09-11-1200.json');
+    expect(maybeOpenIncident(vault)).toBeNull();
+    expect(listJobs(vault).filter((j) => j.type === 'incident')).toHaveLength(0);
+  });
+
+  it('a preview-only deploy is not production, so a red run still opens nothing', () => {
+    vault.events.emit({ type: 'deploy.done', agent: 'sre', job: null, payload: { project: 'acme', stage: 'preview', rolled_back: false, stream: 'checkout' } });
+    redCi('Workspace/checkout/.cubicle-ci/2026-09-11-1200.json');
+    expect(maybeOpenIncident(vault)).toBeNull();
+  });
+
+  it('a green run opens nothing', () => {
+    liveDeploy();
+    vault.events.emit({ type: 'ci.completed', agent: 'backend_engineer', job: null, payload: { stream: 'checkout', green: true, record: 'Workspace/checkout/.cubicle-ci/ok.json', steps: [] } });
+    expect(maybeOpenIncident(vault)).toBeNull();
+  });
+
+  it('is idempotent per CI record, and a still-red build does not file one job a tick', () => {
+    liveDeploy();
+    redCi('Workspace/checkout/.cubicle-ci/one.json');
+    const first = maybeOpenIncident(vault)!;
+    expect(first).not.toBeNull();
+    // same record again: the derived id already exists
+    expect(maybeOpenIncident(vault)).toBeNull();
+    // a different record while the first incident is still open: the room already knows
+    redCi('Workspace/checkout/.cubicle-ci/two.json');
+    expect(maybeOpenIncident(vault)).toBeNull();
+    expect(listJobs(vault).filter((j) => j.type === 'incident')).toHaveLength(1);
+    // once the first is closed, a genuinely new red record opens a second
+    updateJob(vault, first, { status: 'done' }, 'daemon');
+    const second = maybeOpenIncident(vault)!;
+    expect(second).not.toBeNull();
+    expect(second).not.toBe(first);
+    expect(listJobs(vault).filter((j) => j.type === 'incident')).toHaveLength(2);
+  });
+
+  it('a rollback is handled before a red build when both are waiting', () => {
+    liveDeploy();
+    redCi('Workspace/checkout/.cubicle-ci/one.json');
+    vault.events.emit({ type: 'deploy.done', agent: 'sre', job: null, payload: { project: 'acme', stage: 'live', rolled_back: true, stream: 'checkout' } });
+    const id = maybeOpenIncident(vault)!;
+    expect(vault.events.query({ types: ['incident.opened'], job: id })[0].payload.trigger).toBe('rollback');
+  });
+});
+
 describe('corrective actions come out of the postmortem', () => {
   function finishedIncident(actions: string[]): string {
     const id = createJob(vault, { type: 'incident', title: 'Outage', assigned: 'sre', goal: 'g', team: 'dev', stream: 'checkout', risk: 'high' }, 'daemon');
