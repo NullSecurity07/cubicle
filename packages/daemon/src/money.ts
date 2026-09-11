@@ -4,7 +4,7 @@ import {
   HOUSE, LEDGER_PATH, RUNWAY_PATH,
   createJob, readJob, listJobs, listInbox, jobPath, idFromKey,
   officeHolder, teamOf, divisionOf, divisionTeams, subtreeRoles, createProposal, findInboxById, resultBlock,
-  LedgerVetoedError,
+  LedgerVetoedError, isNeverModifyPath,
 } from '@cubicle/core';
 import { shadowCost, hasPrices, type ModelBudget, type ProvidersFile, type RecordedCall } from '@cubicle/router';
 
@@ -247,9 +247,26 @@ export function runwayCommentary(vault: Vault): string {
   return typeof summary === 'string' ? summary.trim().split('\n').slice(0, 5).join('\n') : '';
 }
 
-/** Regenerate `Ledger/runway.md` from the book. Returns the report, so the caller does not read it twice. */
+/**
+ * Regenerate `Ledger/runway.md` from the book. Returns the report, so the caller does not read it twice.
+ *
+ * The owner's `never_modify` list covers this page too. `vault.writeText` would not stop it — `assertWritable`
+ * returns immediately for the privileged `daemon` actor and never looks at that list — so the check is made
+ * here, with core's own `isNeverModifyPath` rather than a second copy of the matching rules, and the note is
+ * left exactly as the owner left it. The figures are still computed and still returned: the caller's brief
+ * line, the dormancy check and the daily job all keep working on a company whose runway page is frozen. It is
+ * a report, not the company.
+ */
 export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Date = new Date()): MoneyReport {
   const report = moneyReport(readLedger(vault), now);
+  if (isNeverModifyPath(RUNWAY_PATH, vault.constitution().never_modify)) {
+    vault.events.emit({ type: 'daemon.warning', payload: {
+      where: 'money.runway',
+      path: RUNWAY_PATH,
+      reason: `${RUNWAY_PATH} is on the owner's never_modify list, so it was not regenerated; the figures behind it are still computed every cycle`,
+    } });
+    return report;
+  }
   const calls = recordedCalls(vault, dayStartIso(now));
   const shadow = shadowCost(cfg, calls);
   vault.writeText(RUNWAY_PATH, runwayNote(report, {

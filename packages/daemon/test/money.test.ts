@@ -258,6 +258,34 @@ describe('the daily runway job (spec §2)', () => {
   });
 });
 
+describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
+  it('leaves the runway page exactly as the owner left it, and still computes the figures', () => {
+    const org = loadOrg(vault);
+    appendEntry(vault, { at: '2026-09-11T08:00:00.000Z', kind: 'capital', cents: 25000, mode: 'live', who: 'owner', why: 'Seed' }, 'owner');
+    const before = vault.readText(RUNWAY_PATH);
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    // `vault.writeText` would not stop this — the daemon is a privileged actor — so the module asks first.
+    const r = writeRunway(vault, org, SHIPPED, NOW);
+    expect(r.cashCents).toBe(25000);                        // the figures are still computed
+    expect(vault.readText(RUNWAY_PATH)).toBe(before);       // the page is untouched
+    const warned = vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === 'money.runway');
+    expect(warned).toHaveLength(1);
+    expect(String((warned[0].payload as { reason?: string }).reason)).toContain(RUNWAY_PATH);
+    expect(String((warned[0].payload as { reason?: string }).reason)).toContain('never_modify');
+  });
+
+  it('regenerates it again as soon as the owner takes the lock off', () => {
+    const org = loadOrg(vault);
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    writeRunway(vault, org, SHIPPED, NOW);
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify: []\n```\n', 'owner');
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(vault.readText(RUNWAY_PATH)).toContain('# Runway');
+    expect(vault.readText(RUNWAY_PATH)).toContain('| technology |');
+  });
+});
+
 describe('what the models cost (spec §3)', () => {
   it('writes nothing at all while everything is free', () => {
     vault.events.emit({ type: 'router.call', agent: 'ceo', ts: '2026-09-11T10:00:00.000Z', payload: { provider: 'gemini', model: 'gemini-3.5-flash', tier: 'strong', tokens: { prompt_tokens: 5000, completion_tokens: 800 } } });
