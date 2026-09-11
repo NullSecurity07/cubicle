@@ -55,7 +55,7 @@ export const TOWER: { floors: FloorSpec[] } = {
       { id: 'cto_office', label: 'CTO', kind: 'office', x0: 4, x1: 14, desk: 'cto' },
       { id: 'cmo_office', label: 'CMO', kind: 'office', x0: 14, x1: 30, desk: 'cmo', surfaces: [{ kind: 'billboard', tx: 15, tw: 7, label: 'Billboard — live browser' }, { kind: 'newsstand', tx: 23, tw: 6, label: 'Newsstand — briefs & decisions' }] },
       { id: 'coo_office', label: 'COO', kind: 'office', x0: 30, x1: 40, desk: 'coo' },
-      { id: 'cfo_office', label: 'CFO', kind: 'office', x0: 40, x1: 50, desk: 'cfo', surfaces: [{ kind: 'bank', tx: 41, tw: 8, label: 'Bank — quota runway' }] },
+      { id: 'cfo_office', label: 'CFO', kind: 'office', x0: 40, x1: 50, desk: 'cfo', surfaces: [{ kind: 'bank', tx: 41, tw: 8, label: 'Bank — cash and runway' }] },
     ] },
   ],
 };

@@ -101,9 +101,23 @@ for (const def of [
     view: (s, ctx) => postOfficeView(s, ctx),
   },
   {
-    kind: 'bank', streamKind: 'chart', streamId: () => 'quota',
-    bars: (s) => s.quota.map((q) => ({ label: q.model, used: q.rpd_used, limit: q.limits.rpd })),
-    headline: (s) => { const list = s.quota.filter((q) => q.limits.rpd > 0).slice(0, 7); const total = callsToday(s); return { head: list.length ? `${total} calls today` : 'No limits set', short: String(total), lines: list.length ? list.map((q) => cut(q.model, 16)) : ['Set rpm/rpd in providers.yaml'] }; },
+    kind: 'bank', streamKind: 'chart', streamId: () => 'money',
+    // What the free tier actually rations is a division's calls, so that is what the wall draws. Before the
+    // daemon has sent any money — an old daemon, a book it could not read — it falls back to the per-model day
+    // limits, which is what this chart always used to be.
+    bars: (s) => (s.money?.budgets.length
+      ? s.money.budgets.map((b) => ({ label: b.division, used: b.used, limit: b.quota }))
+      : s.quota.map((q) => ({ label: q.model, used: q.rpd_used, limit: q.limits.rpd }))),
+    headline: (s) => {
+      const m = s.money;
+      if (!m) { const list = s.quota.filter((q) => q.limits.rpd > 0).slice(0, 7); const total = callsToday(s); return { head: `${total} calls today`, short: String(total), lines: list.length ? list.map((q) => cut(q.model, 16)) : ['Set rpm/rpd in providers.yaml'] }; }
+      return {
+        head: m.cash,
+        short: m.cash,
+        lines: [`Burn ${m.burn} a day`, `Runway ${m.runway}`, ...(m.dormant ? ['Dormant — add capital'] : [])].slice(0, 3),
+        badge: m.dormant ? 'STOPPED' : undefined,
+      };
+    },
     view: (s) => bankView(s),
   },
   {

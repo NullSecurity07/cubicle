@@ -21,7 +21,19 @@ export interface CubicleEvent { id?: number; ts: string; type: string; agent: st
 export interface ChatMsg { ts: string; from: 'ceo' | 'you'; text: string }
 export interface BrandView { name: string; tagline: string; url: string }
 export interface InboxRow { id: string; kind: string; title: string; path: string; created: string }
-export interface Snapshot { op: 'snapshot'; at: string; roles: { role: string; display: string; sprite: string; desk: string; active: boolean; title?: string; team?: string; reports_to?: string }[]; jobs: JobView[]; surfaces: { streamKind: string; streamId: string; lastFrame?: string; active: boolean }[]; quota: QuotaView[]; latestRun: { path: string; body: string } | null; plan: string; pendingProposals: number; brand?: BrandView; inbox?: InboxRow[]; chat?: ChatMsg[]; teams?: TeamView[]; offices?: Record<string, string> }
+/** Mirrors `MoneySnapshot` in the daemon. Every figure comes pre-formatted: the viewer never formats money. */
+export interface MoneyView {
+  currency: string;
+  cash_cents: number; cash: string;
+  burn_cents_per_day: number; burn: string;
+  runway_days: number | null; runway: string;
+  dormant: boolean;
+  mock_revenue_cents: number; mock_revenue: string;
+  problems: number;
+  budgets: { division: string; used: number; quota: number }[];
+  entries: { at: string; kind: string; amount: string; mode: string; who: string; why: string }[];
+}
+export interface Snapshot { op: 'snapshot'; at: string; roles: { role: string; display: string; sprite: string; desk: string; active: boolean; title?: string; team?: string; reports_to?: string }[]; jobs: JobView[]; surfaces: { streamKind: string; streamId: string; lastFrame?: string; active: boolean }[]; quota: QuotaView[]; latestRun: { path: string; body: string } | null; plan: string; pendingProposals: number; brand?: BrandView; inbox?: InboxRow[]; chat?: ChatMsg[]; teams?: TeamView[]; offices?: Record<string, string>; /** Optional: an older daemon omits it. */ money?: MoneyView | null }
 
 export interface State {
   connected: boolean;
@@ -31,6 +43,8 @@ export interface State {
   jobs: Record<string, JobView>;
   surfaces: Record<string, SurfaceView>;
   quota: QuotaView[];
+  /** Cash, burn, runway and the division quotas; null until a snapshot carrying them arrives. */
+  money: MoneyView | null;
   latestRun: { path: string; body: string } | null;
   plan: string;
   pendingProposals: number;
@@ -65,7 +79,7 @@ export function withFrameSeq(s: State, id: string, seq?: number): State {
   return { ...s, frames: { ...s.frames, [id]: { ...cur, seq: seq ?? cur.seq + 1 } } };
 }
 
-export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], offices: {}, inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, board: null, frames: {}, lastEventTs: null, deploys: [], firstRun: false });
+export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], money: null, latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], offices: {}, inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, board: null, frames: {}, lastEventTs: null, deploys: [], firstRun: false });
 
 /** Who walks over when a job fails: the operations office. */
 export function overseerRole(st: Pick<State, 'offices'>): string { return st.offices?.operations ?? OVERSEER; }
@@ -139,7 +153,7 @@ export function applySnapshot(s: State, snap: Snapshot): State {
   for (const su of Array.isArray(snap.surfaces) ? snap.surfaces : []) surfaces[su.streamId] = { streamKind: su.streamKind as SurfaceView['streamKind'], streamId: su.streamId, lastFrame: su.lastFrame, active: su.active };
   const frames: State['frames'] = {};
   for (const id of Object.keys(surfaces)) if (s.frames[id]) frames[id] = s.frames[id];
-  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, teams: snap.teams ?? [], offices: snap.offices ?? {}, inbox: snap.inbox ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, firstRun, staleSnapshot: false };
+  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, money: snap.money ?? null, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, teams: snap.teams ?? [], offices: snap.offices ?? {}, inbox: snap.inbox ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, firstRun, staleSnapshot: false };
 }
 
 const BUBBLE_MS = 6000;
@@ -238,7 +252,7 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'quota.updated': { if (p.provider && p.model && 'rpm_used' in p) { const q = p as unknown as QuotaView; const i = st.quota.findIndex((x) => x.provider === q.provider && x.model === q.model); st.quota = i >= 0 ? st.quota.map((x, k) => (k === i ? q : x)) : [...st.quota, q]; } break; }
     case 'guardrail.blocked': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'thought', text: `not allowed: ${String(p.reason ?? 'blocked')}`.slice(0, 120), until: nowMs + BUBBLE_MS }; feel(ag, 'worried'); emote(ag, '!', 4000); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `guardrail: ${String(p.reason ?? '')}` }]; break; }
     case 'owner.edited': st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `you edited ${String(p.path)}` }]; break;
-    case 'vault.wrote': { const pth = String(p.path ?? ''); if (pth.startsWith('Decisions/') && !p.deleted) st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `decision recorded: ${pth.replace(/^Decisions\//, '').replace(/\.md$/, '')} (${String(e.agent ?? '')})` }]; if ((pth === 'Plans/plan.md' || pth.startsWith('Runs/')) && p.generated !== true) st.staleSnapshot = true; break; }
+    case 'vault.wrote': { const pth = String(p.path ?? ''); if (pth.startsWith('Decisions/') && !p.deleted) st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `decision recorded: ${pth.replace(/^Decisions\//, '').replace(/\.md$/, '')} (${String(e.agent ?? '')})` }]; if ((pth === 'Plans/plan.md' || pth.startsWith('Runs/') || pth.startsWith('Ledger/')) && p.generated !== true) st.staleSnapshot = true; break; }
     default: break;
   }
   return st;

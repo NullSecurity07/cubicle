@@ -20,6 +20,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
   Research/               index.md (every delivered project), <slug>/ projects, archive/ page snapshots,
                           intelligence/<date>-c<cycle>-<kind>.md sweeps, followups/<job>.md predictions
   Jobs/                   <job-id>.md (frontmatter = state machine), queue.md (generated), _template.md
+  Ledger/                 ledger.md (append-only: capital, revenue, cost), runway.md (generated: cash, burn, runway)
   Messages/               <role>.md colleague inboxes (agent-writable; HTML-comment read markers)
   Site/                   the website source; dist/ is the build (gitignored)
   Streams/                one note per product stream (problem, customers, outcome metric, error budget)
@@ -134,6 +135,27 @@ Body: freeform notes on how the team works, read into role prompts.
 | `board_decision` | string = `""` | the `Decisions/board-<slug>.md` note the session wrote |
 
 Body: `## What changed`, `## Why it might matter`, `## Evidence`, `## Research`, `## What it would cost`, `## The board`, `## Score`, `## Decision`.
+
+### Ledger entry (one row in Ledger/ledger.md)
+
+| field | type | notes |
+|---|---|---|
+| `at` | string | when the money moved, not when the row was written |
+| `kind` | `capital` \| `revenue` \| `cost` | `capital` (the owner puts money in) \| `revenue` (money in) \| `cost` (money out); the kind carries the sign, so an amount is never negative |
+| `cents` | number | integer minor units. In the file this is the `amount` column, a positive decimal with at most two places — `parseMoney` reads the digits either side of the point as strings, never as a float |
+| `mode` | `live` \| `mock` | `live` — real money moved and it counts as cash. `mock` — a simulation (a mock sale, a mock charge); reported separately and never counted |
+| `who` | string | `owner`, or the role id that recorded it |
+| `why` | string | one sentence; required, because an entry nobody can explain is an entry nobody can check |
+| `ref` | string = `""` | an idempotency key (a job id, `model-<date>`) or empty; a second entry with the same non-empty ref is refused, so a replayed cycle cannot double-charge |
+
+The file is a markdown table the owner can edit in Obsidian, and it is **append-only**: `appendEntry` splices one
+row in after the last and never touches another byte. A row that does not parse is kept in the file and reported
+in the brief with its line number, never dropped. Correct a mistake with a compensating row.
+
+`Ledger/runway.md` is generated after every heartbeat and carries the figures in its frontmatter —
+`cash_cents`, `burn_cents_per_day`, `runway_days` (null when nothing is being spent), `dormant`,
+`entries`, `problems` — so nothing has to read its prose. Every figure is arithmetic over the ledger; the one
+section a person writes is "What the CFO makes of it", which is the daily `finance.runway` job's summary.
 
 ### Stream note (Streams/<slug>.md)
 

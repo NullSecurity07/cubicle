@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { EVENT_TYPES, JobFrontmatter, RoleFrontmatter, TeamFrontmatter, IdeaFrontmatter, DecisionFrontmatter, InboxFrontmatter, Constitution, OwnerPreferences, JobResult, MAX_PROCESS_STEPS, loadGates, StreamFrontmatter } from '@cubicle/core';
+import { EVENT_TYPES, JobFrontmatter, RoleFrontmatter, TeamFrontmatter, IdeaFrontmatter, DecisionFrontmatter, InboxFrontmatter, Constitution, OwnerPreferences, JobResult, MAX_PROCESS_STEPS, loadGates, StreamFrontmatter, LedgerEntry } from '@cubicle/core';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** Where the two files go. Overridable so a test can generate into a temp dir and diff against the committed pair. */
@@ -70,7 +70,7 @@ const EVENT_NOTES: Record<string, string> = {
   'incident.opened': 'stream, trigger (rollback | red_ci_live | manual) — the clock the error budget counts from',
   'incident.recovered': 'stream, hours (open → recovered), postmortem (Docs/postmortems/… path)',
   'proposal.created': 'id, kind, path, title, to', 'proposal.resolved': 'id, kind, approved, outcome', 'role.hired': 'role, display, desk, sprite', 'role.fired': 'role',
-  'router.call': 'provider, model, tier, tokens {prompt_tokens, completion_tokens}, tools, downgraded', 'router.downgraded': 'requested_tier, chosen_tier, provider, model, tried', 'quota.updated': 'provider, model, rpm_used, rpd_used, tpm_used, cooling_until, limits',
+  'router.call': 'provider, model, tier, tokens {prompt_tokens, completion_tokens}, tools, downgraded, reason (present only when downgraded: `cascade` or `division budget` — the latter is excluded from the "check your API keys" count)', 'router.downgraded': 'requested_tier, chosen_tier, provider, model, tried, reason (`cascade` — nothing at the asked-for tier had headroom; `division budget` — the division has spent its model quota for the day and drops to the cheapest tier, which never stops work)', 'quota.updated': 'provider, model, rpm_used, rpd_used, tpm_used, cooling_until, limits',
   'vault.wrote': 'path, sha, by (role | daemon | init | <role>/shell), deleted?, moved_from?, generated? (true for daemon-generated files such as `Jobs/queue.md`, `Metrics/quota.md`, `Metrics/daily.md`; the viewer ignores these for staleness)', 'owner.edited': 'path, area, deleted, wakes_heartbeat; a startup sweep of comments left while the daemon was down adds offline: true and comments (how many new %%cubicle: …%% comments the file gained)', 'owner.feedback_delivered': 'sha (sha1 of the trimmed `feedback:` line), source (`Memory/owner_preferences.md`) — emitted once per entry, at the commit of the heartbeat whose gather step collected it, so an entry added mid-cycle is deferred rather than lost, it is never re-delivered, and `cubicle rebuild` keeps the marker', 'guardrail.blocked': 'tool, reason — every refused call, never silent. The tool wrapper emits just those two; the harness loop and the dispatcher, which pre-check before spending an idempotency key, add step and approved: true; a refused stored call in a proposal note adds proposal and kind instead',
   'team.planned': 'team, jobs (ids the division.plan job scheduled)', 'review.passed': 'gate, findings', 'review.returned': 'gate, findings', 'plan.vetoed': 'findings, vetoes (count so far this cycle), reason (board return | unkept ideas)', 'research.delivered': 'emitted on the requester\'s research job', 'org.changed': 'reason (migration | reorg | fire), changed | teams | role',
 };
@@ -117,6 +117,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
   Research/               index.md (every delivered project), <slug>/ projects, archive/ page snapshots,
                           intelligence/<date>-c<cycle>-<kind>.md sweeps, followups/<job>.md predictions
   Jobs/                   <job-id>.md (frontmatter = state machine), queue.md (generated), _template.md
+  Ledger/                 ledger.md (append-only: capital, revenue, cost), runway.md (generated: cash, burn, runway)
   Messages/               <role>.md colleague inboxes (agent-writable; HTML-comment read markers)
   Site/                   the website source; dist/ is the build (gitignored)
   Streams/                one note per product stream (problem, customers, outcome metric, error budget)
@@ -144,6 +145,16 @@ Body: freeform notes on how the team works, read into role prompts.
 
 ${table('Idea card (Ideas/<slug>.md)', IdeaFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { id: 'matches the filename', source: 'where the idea came from: `discovery`, `intelligence:<kind>`, `pantry`, `owner`, or a job id', status: 'new → triaged → accepted | rejected (the card\'s lifecycle)', evidence: 'paths or URLs backing the change that prompted it — an idea with none is a hunch', decision: 'undecided → keep | park | scrap (what the company decided to do about it); only a kept idea may appear in Plans/plan.md', score: '`4 × value + 3 × evidence + 3 × effort + 2 × fit`, 12–60, derived from `score_inputs` on every write; null until both offices have answered', score_inputs: 'the research office sets `evidence` and `fit`; the finance office sets `value` and `effort` (inverted: 5 is cheapest)', research: 'the `Research/<slug>/report.md` behind the demand claim', estimate: 'the finance office\'s rough order of magnitude, in words — never a ledger entry', board_verdict: 'pass | return from the board session; a return parks a keep', board_decision: 'the `Decisions/board-<slug>.md` note the session wrote' })}
 Body: \`## What changed\`, \`## Why it might matter\`, \`## Evidence\`, \`## Research\`, \`## What it would cost\`, \`## The board\`, \`## Score\`, \`## Decision\`.
+
+${table('Ledger entry (one row in Ledger/ledger.md)', LedgerEntry as unknown as z.ZodObject<z.ZodRawShape>, { at: 'when the money moved, not when the row was written', kind: '\`capital\` (the owner puts money in) \\| \`revenue\` (money in) \\| \`cost\` (money out); the kind carries the sign, so an amount is never negative', cents: 'integer minor units. In the file this is the \`amount\` column, a positive decimal with at most two places — \`parseMoney\` reads the digits either side of the point as strings, never as a float', mode: '\`live\` — real money moved and it counts as cash. \`mock\` — a simulation (a mock sale, a mock charge); reported separately and never counted', who: '\`owner\`, or the role id that recorded it', why: 'one sentence; required, because an entry nobody can explain is an entry nobody can check', ref: 'an idempotency key (a job id, \`model-<date>\`) or empty; a second entry with the same non-empty ref is refused, so a replayed cycle cannot double-charge' })}
+The file is a markdown table the owner can edit in Obsidian, and it is **append-only**: \`appendEntry\` splices one
+row in after the last and never touches another byte. A row that does not parse is kept in the file and reported
+in the brief with its line number, never dropped. Correct a mistake with a compensating row.
+
+\`Ledger/runway.md\` is generated after every heartbeat and carries the figures in its frontmatter —
+\`cash_cents\`, \`burn_cents_per_day\`, \`runway_days\` (null when nothing is being spent), \`dormant\`,
+\`entries\`, \`problems\` — so nothing has to read its prose. Every figure is arithmetic over the ledger; the one
+section a person writes is "What the CFO makes of it", which is the daily \`finance.runway\` job's summary.
 
 ${table('Stream note (Streams/<slug>.md)', StreamFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { slug: 'matches the filename', outcome_metric: 'one number with a from and a to; never a feature list', owner_team: 'the team id accountable for the outcome', error_budget: 'incident-hours a week before the division plan must prioritise reliability (§23)', repo_path: 'where the code lives, and what `ci.run` mounts — `Workspace/<slug>` by default' })}
 Body sections: \`## Problem\`, \`## Customers\`, \`## Outcome metric\`, \`## Runbook\`, \`## Error budget\`.
