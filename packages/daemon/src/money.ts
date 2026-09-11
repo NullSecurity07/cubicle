@@ -5,7 +5,7 @@ import {
   createJob, readJob, listJobs, listInbox, jobPath, idFromKey,
   officeHolder, teamOf, divisionOf, divisionTeams, subtreeRoles, createProposal, findInboxById, resultBlock,
 } from '@cubicle/core';
-import { shadowCost, hasPrices, findModel, type ModelBudget, type ProvidersFile, type RecordedCall } from '@cubicle/router';
+import { shadowCost, hasPrices, type ModelBudget, type ProvidersFile, type RecordedCall } from '@cubicle/router';
 
 /**
  * The daemon's side of the money: everything deterministic, and not one model call anywhere in this file.
@@ -54,14 +54,17 @@ function pooledModels(p: ProvidersFile['providers'][number]): ProvidersFile['pro
 /**
  * Free calls a day at the scarce tiers, across enabled cloud providers.
  *
- * `rpd: 0` is `ModelLimits`' default and means **no declared daily limit** — `quota.ts` guards on
- * `if (L.rpd && …)` and `metrics.ts` renders `∞` — so it is never summed as zero capacity. Where the
- * provider declares an account-wide `rpd`, that account figure governs (OpenRouter's four medium models
- * declare 50 each but the account allows 50 in total, and an unlimited model still cannot exceed it). Where
- * it does not, a provider with an unlimited model contributes **nothing to this finite sum**: there is no
- * honest number to add, and inventing one would put a made-up capacity on the owner's bank screen. Its calls
- * are left out of `divisionSpend` too, so an unlimited model neither raises `used` nor `quota` — it simply is
- * not rationed.
+ * The decision is **per model**, never per provider. `rpd: 0` is `ModelLimits`' default and means *no declared
+ * daily limit* — `quota.ts` guards on `if (L.rpd && …)`, `metrics.ts` renders `∞`, and the shipped file's own
+ * header says "0 = unlimited/unknown" — so such a model is not summed as zero capacity, and it is not summed
+ * as an invented one either: it contributes nothing, and `drawsOnFreePool` leaves its calls out of the spend
+ * side to match. Its *siblings* are untouched. One model whose daily limit the owner has not looked up must
+ * not delete the capacity of the four beside it that declare one, while their calls keep raising `used` —
+ * that is the same asymmetry one level up.
+ *
+ * An account-wide `rpd` caps the sum of that provider's finite models (OpenRouter's four medium models declare
+ * 50 each but the account allows 50 in total), and is itself the capacity when the provider's only budgeted
+ * models are unlimited — there the account figure is the real ration, so those calls do draw on the pool.
  */
 export function freeCallCapacity(cfg: ProvidersFile): number {
   let total = 0;
@@ -73,7 +76,6 @@ export function freeCallCapacity(cfg: ProvidersFile): number {
     const declared = pooled.reduce((t, m) => t + m.limits.rpd, 0);
     const unlimited = pooled.some((m) => !m.limits.rpd);
     if (account) { total += unlimited ? account : Math.min(account, declared); continue; }
-    if (unlimited) continue;
     total += declared;
   }
   return total;
@@ -81,24 +83,26 @@ export function freeCallCapacity(cfg: ProvidersFile): number {
 
 /**
  * Whether one recorded call drew on the pool `freeCallCapacity` measures — the question `divisionSpend` has
- * to answer the same way, or `used` and `quota` count different things and every division demotes to the
- * cheap tier sooner than it should.
+ * to answer the same way, model for model, or `used` and `quota` count different things and every division
+ * demotes to the cheap tier sooner than it should.
  *
  * Without a providers file there is nothing to check against and the call counts, which is what this module
- * did before. With one, three facts take a call out of the pool: it was on a **priced** model (the owner
- * pays for it; it is not drawing on a free allowance), it was on a **local** provider (free and unmetered),
- * or it was on a model with **no daily limit anywhere** (the `rpd: 0` case above, which contributed no
- * capacity either). A model the file no longer describes still counts: losing a renamed model's calls would
- * understate the gauge, and understating what has been spent is the more dangerous error.
+ * did before. With one, four facts take a call out of the pool: the provider or the model is **disabled**
+ * (it raises no capacity today, so it must raise no usage today either), the provider is **local** (free and
+ * unmetered), the model is **priced** (the owner pays for it; it is not drawing on a free allowance), or the
+ * model has **no daily limit and no account cap above it** (the unlimited case, which contributed no capacity
+ * either). A provider or model the file no longer describes still counts: losing a renamed model's calls
+ * would understate the gauge, and understating what has been spent is the more dangerous error.
  */
 export function drawsOnFreePool(cfg: ProvidersFile | null | undefined, provider: string, model: string): boolean {
   if (!cfg) return true;
-  const m = findModel(cfg, provider, model);
-  if (!m) return true;
-  if (m.price) return false;
   const p = cfg.providers.find((x) => x.id === provider);
-  if (p?.privacy === 'local') return false;
-  return Boolean(m.limits.rpd || p?.limits?.rpd);
+  if (!p) return true;
+  if (!p.enabled || p.privacy === 'local') return false;
+  const m = p.models.find((x) => x.id === model);
+  if (!m) return true;
+  if (!m.enabled || m.price) return false;
+  return Boolean(m.limits.rpd || p.limits?.rpd);
 }
 
 /** A division's weight is the people actually in it: a thirteen-desk division needs more calls than a three-desk one. */
@@ -279,11 +283,27 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  * is exactly the retroactive charge an append-only book is supposed to make impossible. `prices_verified` is
  * the stamp the owner sets beside the prices (`config/providers.yaml` documents it in the header comment);
  * `verified` is the file's own stamp and stands in when the more specific one is absent.
+ *
+ * A stamp in the **future** is clamped to yesterday and complained about. Left alone it would put the start of
+ * the walk past its end, so the walk would never run, no `model-<date>` row would ever be written, and there
+ * would be nothing to continue from next cycle either — a typo'd year would silently stop paid model cost ever
+ * reaching the book. The book's rule is that an owner's typo surfaces as a complaint, never as money quietly
+ * vanishing, so it says so on the event log and carries on.
  */
-function firstAccrualDay(cfg: ProvidersFile, now: Date): string {
+function firstAccrualDay(vault: Vault, cfg: ProvidersFile, now: Date): string {
   const lookback = dayOf(now.getTime() - ACCRUAL_LOOKBACK_DAYS * DAY_MS);
+  const yesterday = dayOf(now.getTime() - DAY_MS);
   const stamp = String(cfg.prices_verified ?? cfg.verified ?? '').slice(0, 10);
-  return DATE_RE.test(stamp) && stamp > lookback ? stamp : lookback;
+  if (!DATE_RE.test(stamp)) return lookback;
+  if (stamp > yesterday) {
+    vault.events.emit({ type: 'daemon.warning', payload: {
+      where: 'money.accrual',
+      reason: `the providers file's price stamp "${stamp}" is in the future; accruing model cost from ${yesterday} instead`,
+      stamp,
+    } });
+    return yesterday;
+  }
+  return stamp > lookback ? stamp : lookback;
 }
 
 /** The date every `model-<date>` accrual row in the book is for, oldest first. */
@@ -317,7 +337,7 @@ export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = n
   const yesterday = dayOf(now.getTime() - DAY_MS);
   const floor = dayOf(now.getTime() - MAX_ACCRUAL_DAYS * DAY_MS);
   const last = accruedDays(vault).at(-1) ?? null;
-  let day = last ? nextDay(last) : firstAccrualDay(cfg, now);
+  let day = last ? nextDay(last) : firstAccrualDay(vault, cfg, now);
   if (day < floor) day = floor;
   const out: LedgerEntry[] = [];
   for (; day <= yesterday; day = nextDay(day)) {
@@ -355,38 +375,81 @@ function moneyNotes(vault: Vault, kind: 'dormant' | 'revived'): { id: string; ma
     .map((n) => ({ id: n.data.id, mark: String((n.data as { mark?: unknown }).mark ?? '') }));
 }
 
-/** Dormancies the owner has been told about and not yet been told the end of. */
-function openDormancies(vault: Vault): string[] {
-  const revived = new Set(moneyNotes(vault, 'revived').map((n) => n.mark));
-  return moneyNotes(vault, 'dormant').map((n) => n.mark).filter((m) => !revived.has(m));
-}
+/** One time the company ran out: the entry that took cash to zero, and the one that lifted it back. */
+export interface DormancyEpisode { start: string; end: string | null }
 
 /**
- * When the current dormancy **episode** began: the entry that took cash to zero or below after the owner had
- * put money in, with no later entry lifting it back above zero.
+ * Every dormancy the **book** records, oldest first, replayed in date order: `start` is the entry that took
+ * cash to zero or below with the owner's capital already in, `end` the later entry that lifted it back above
+ * zero, or null while the company is still stopped.
  *
- * This, not "when money last moved", is the episode's identity. `accrueModelCosts` books a *past-dated* `live`
- * cost row on the cycle after the day it charges, so the day the company goes dormant is charged one cycle
- * later and `lastLiveAt` moves *while nothing new is being spent* — which used to change the mark, write a
- * second "We have run out of money", and then send a second "Back to work" for it. The crossing entry cannot
- * move that way: a later row only deepens the hole, and the episode ends only when cash goes positive again.
+ * The ledger is the authority on what happened, not `00 Inbox/`. The inbox says only what the owner has
+ * already been *told*, and it is a folder they edit by hand: filing away a "Back to work" note must not be
+ * able to make a past episode look open forever and silence every dormancy after it.
  *
- * Derived from the book on every call, like every other money fact here.
+ * `mode === 'live'` and the `capital`-sets-funded rule are `moneyReport`'s own, so a mock row cannot open an
+ * episode here that `r.dormant` does not agree with, and a compensating `cost` row against capital nets out
+ * the same way on both sides.
  */
-export function dormancyMark(vault: Vault): string {
+export function dormancyEpisodes(vault: Vault): DormancyEpisode[] {
   const live = readLedger(vault).entries
     .filter((e) => e.mode === 'live')
     .sort((a, b) => a.at.localeCompare(b.at));
+  const out: DormancyEpisode[] = [];
   let cash = 0;
   let funded = false;
-  let start: string | null = null;
+  let open: DormancyEpisode | null = null;
   for (const e of live) {
     cash += e.kind === 'cost' ? -e.cents : e.cents;
     if (e.kind === 'capital') funded = true;
-    if (cash > 0) start = null;
-    else if (funded && start === null) start = e.at;
+    if (cash > 0) { if (open) { open.end = e.at; open = null; } }
+    else if (funded && !open) { open = { start: e.at, end: null }; out.push(open); }
   }
-  return start ?? 'none';
+  return out;
+}
+
+/**
+ * The open episode's start entry — the mark the dormancy message is keyed on — or `'none'` when the company
+ * is not stopped.
+ *
+ * It is the *start* of the episode rather than "when money last moved" because `accrueModelCosts` books a
+ * past-dated `live` cost row on the cycle after the day it charges: `lastLiveAt` therefore moves while nothing
+ * new is being spent, which used to write a second "We have run out of money" and then a second "Back to
+ * work". The start entry is far steadier, but it is **not** immovable: an accrual dated *before* the crossing
+ * can take cash to zero a few hours earlier and shift it backwards. That is why nothing here trusts the mark
+ * alone — `alreadyTold` compares against the episode, and the crash-repair path in `dormancyMessage` falls
+ * back to any dormancy note this module wrote whose stamp never landed.
+ */
+export function dormancyMark(vault: Vault): string {
+  const last = dormancyEpisodes(vault).at(-1);
+  return last && last.end === null ? last.start : 'none';
+}
+
+/**
+ * Whether the owner has already had a message of this kind about the episode that began at `start`.
+ *
+ * Compared as `mark >= start` rather than `mark === start`, because the start entry can shift backwards under
+ * a past-dated accrual (above) while the episode itself is unchanged. Episodes do not overlap and a previous
+ * one ended before this one began, so any stamped mark at or after this start belongs to this episode and
+ * nothing else.
+ */
+function alreadyTold(vault: Vault, kind: 'dormant' | 'revived', start: string): boolean {
+  return moneyNotes(vault, kind).some((n) => n.mark >= start);
+}
+
+/** The id prefix every note of a kind shares, so an orphan can be recognised without its stamp. */
+const messageIdPrefix = (kind: 'dormant' | 'revived'): string => `${idFromKey('prop', `money:${kind}`)}_`;
+
+/**
+ * A dormancy message this module wrote whose second write — the stamp — never landed. Recognised by the id
+ * shape alone, which is the one thing a crash between the two writes cannot take away. Without this, a mark
+ * that shifted between the crash and the next cycle would leave the orphan unfindable and a second "We have
+ * run out of money" would go to the owner.
+ */
+function orphanDormancy(vault: Vault): { path: string } | null {
+  const prefix = messageIdPrefix('dormant');
+  const n = listInbox(vault).find((x) => x.data.id.startsWith(prefix) && (x.data as { money?: unknown }).money === undefined);
+  return n ? { path: n.path } : null;
 }
 
 /**
@@ -408,17 +471,20 @@ function stamp(vault: Vault, rel: string, kind: 'dormant' | 'revived', mark: str
  * goes to zero after the owner funded the company, one "Back to work" when they answer it — and it answers the
  * two questions an owner will actually have: where did it go, and how do I start it again.
  *
- * Two guards, because one is not enough. The mark is the episode's crossing entry (`dormancyMark`), which does
- * not move while the company is stopped; and an episode the owner has already been told about suppresses the
- * message whatever the mark says, so even a crossing that shifts under a past-dated accrual cannot produce a
- * second one. Being told twice that the company has stopped is worse than being told late.
+ * Three guards, because a mark alone is not enough. The episode comes from the book (`dormancyEpisodes`), so a
+ * hand-edited inbox cannot invent or hide one. `alreadyTold` asks whether any dormancy note carries a mark at
+ * or after this episode's start, which stays true even when a past-dated accrual shifts the crossing entry
+ * backwards. And a note this module wrote whose stamp was lost to a crash is found by its id shape and
+ * repaired rather than written again. Being told twice that the company has stopped is worse than being told
+ * late.
  */
 export function dormancyMessage(vault: Vault, org: Org, r: MoneyReport, now: Date = new Date()): string | null {
   if (!r.dormant) return null;
-  if (openDormancies(vault).length) return null;
   const mark = dormancyMark(vault);
+  if (mark === 'none') return null;
+  if (alreadyTold(vault, 'dormant', mark)) return null;
   const id = moneyMessageId('dormant', mark);
-  const already = findInboxById(vault, id);
+  const already = findInboxById(vault, id) ?? orphanDormancy(vault);
   if (already) { stamp(vault, already.path, 'dormant', mark); return null; }
   const ceo = officeHolder(org, 'chief_executive');
   const { path: rel } = createProposal(vault, {
@@ -444,14 +510,20 @@ export function dormancyMessage(vault: Vault, org: Org, r: MoneyReport, now: Dat
 }
 
 /**
- * The other half: said once, when a dormancy the owner was told about has been answered with capital. Keyed on
- * the same mark, so it is the reply to *that* message rather than a fresh announcement every cycle.
+ * The other half: said once, when the dormancy the owner was told about has been answered with capital.
+ *
+ * Which dormancy is decided by the **book** — the newest episode with an `end` — and not by which inbox note
+ * still looks unanswered. Filing away or deleting a "Back to work" note therefore costs at most one repeated
+ * message about that episode; it can never make an old episode read as open and silence every dormancy after
+ * it, which is what an inbox-only guard would do to a folder the owner edits by hand.
  */
 export function revivalMessage(vault: Vault, org: Org, r: MoneyReport, now: Date = new Date()): string | null {
   if (r.dormant || r.cashCents <= 0) return null;
-  const open = openDormancies(vault);
-  if (!open.length) return null;
-  const mark = open[open.length - 1];
+  const last = dormancyEpisodes(vault).at(-1);
+  if (!last || last.end === null) return null;                   // never stopped, or still stopped
+  const mark = last.start;
+  if (!alreadyTold(vault, 'dormant', mark)) return null;         // never told them it stopped; nothing to answer
+  if (alreadyTold(vault, 'revived', mark)) return null;
   const id = moneyMessageId('revived', mark);
   const already = findInboxById(vault, id);
   if (already) { stamp(vault, already.path, 'revived', mark); return null; }

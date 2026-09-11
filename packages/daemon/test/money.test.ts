@@ -10,7 +10,7 @@ import { parseProvidersConfig } from '@cubicle/router';
 import {
   BUDGETED_TIERS, dayStartIso, freeCallCapacity, divisionWeights, divisionQuotas, divisionSpend, divisionOfRole,
   budgetRows, budgetForRole, runwayJobId, enqueueRunway, runwayCommentary, writeRunway, accrueModelCost,
-  accrueModelCosts, dormancyMark, drawsOnFreePool, moneyMessageId, dormancyMessage, revivalMessage,
+  accrueModelCosts, dormancyMark, dormancyEpisodes, drawsOnFreePool, moneyMessageId, dormancyMessage, revivalMessage,
 } from '../src/money.js';
 
 const SHIPPED = parseProvidersConfig(readFileSync(path.resolve(__dirname, '../../../config/providers.yaml'), 'utf8'));
@@ -52,6 +52,41 @@ providers:
     limits: { rpd: 120 }
     models:
       - { id: endless, tier: medium, tools: native, limits: { rpm: 5 } }
+`);
+// One unlimited model beside a finite one, no account cap: the finite one must survive on both sides (N1).
+const MIXED = parseProvidersConfig(`
+cascade: [both]
+providers:
+  - id: both
+    base_url: https://example.test/v1
+    models:
+      - { id: endless, tier: medium, tools: native, limits: { rpm: 5 } }
+      - { id: counted, tier: strong, tools: native, limits: { rpd: 700 } }
+`);
+// The same file after the owner switches one model and one whole provider off mid-day (N4).
+const DISABLED = parseProvidersConfig(`
+cascade: [both, off]
+providers:
+  - id: both
+    base_url: https://example.test/v1
+    models:
+      - { id: endless, tier: medium, tools: native, limits: { rpm: 5 } }
+      - { id: counted, enabled: false, tier: strong, tools: native, limits: { rpd: 700 } }
+  - id: off
+    enabled: false
+    base_url: https://example.test/v1
+    models:
+      - { id: shelved, tier: strong, tools: native, limits: { rpd: 900 } }
+`);
+// A stamp the owner mistyped a year into the future (N2).
+const PRICED_FUTURE = parseProvidersConfig(`
+prices_verified: "2027-09-11"
+cascade: [paid]
+providers:
+  - id: paid
+    base_url: https://example.test/v1
+    models:
+      - { id: big, tier: strong, tools: native, limits: { rpd: 100 }, price: { input_per_mtok: 300, output_per_mtok: 1500 } }
 `);
 
 const NOW = new Date('2026-09-12T12:00:00.000Z');
@@ -101,6 +136,20 @@ describe('what the free tier is worth in a day (spec §4)', () => {
     // …but where the account declares a daily cap, that cap is the real capacity.
     expect(freeCallCapacity(UNLIMITED_CAPPED)).toBe(120);
     expect(drawsOnFreePool(UNLIMITED_CAPPED, 'wide', 'endless')).toBe(true);
+  });
+
+  it('decides per model, so one unlimited model does not delete its siblings\' capacity', () => {
+    // The unlimited model contributes nothing and draws nothing; the finite one beside it keeps both.
+    expect(freeCallCapacity(MIXED)).toBe(700);
+    expect(drawsOnFreePool(MIXED, 'both', 'counted')).toBe(true);
+    expect(drawsOnFreePool(MIXED, 'both', 'endless')).toBe(false);
+  });
+
+  it('drops a model or a provider the owner switched off, on both sides at once', () => {
+    // `counted` is off and `off` is off, so neither raises capacity — and neither may raise today's usage.
+    expect(freeCallCapacity(DISABLED)).toBe(0);
+    expect(drawsOnFreePool(DISABLED, 'both', 'counted')).toBe(false);
+    expect(drawsOnFreePool(DISABLED, 'off', 'shelved')).toBe(false);
   });
 
   it('agrees with the spend side about which calls are on the free pool', () => {
@@ -250,6 +299,17 @@ describe('what the models cost (spec §3)', () => {
     expect(readLedger(vault).entries.map((x) => x.ref)).toEqual(['model-2026-09-11']);
   });
 
+  it('complains about a stamp in the future instead of never accruing again', () => {
+    vault.events.emit({ type: 'router.call', agent: 'ceo', ts: '2026-09-11T10:00:00.000Z', payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
+    // `prices_verified: 2027-09-11` would put the start of the walk past its end, so nothing would ever be
+    // booked and nothing would ever be left to continue from — paid cost would silently stop reaching the book.
+    expect(accrueModelCosts(vault, PRICED_FUTURE, NOW).map((r) => r.ref)).toEqual(['model-2026-09-11']);
+    const warned = vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === 'money.accrual');
+    expect(warned).toHaveLength(1);
+    expect(String((warned[0].payload as { reason?: string }).reason)).toContain('2027-09-11');
+  });
+
   it('still reaches back thirty days when the file says nothing about when its prices appeared', () => {
     for (const day of ['2026-09-01', '2026-09-11']) {
       vault.events.emit({ type: 'router.call', agent: 'ceo', ts: `${day}T10:00:00.000Z`, payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
@@ -334,6 +394,47 @@ describe('dormancy and revival (spec §5)', () => {
     expect(two).not.toBeNull();
     expect(two).not.toBe(one);                       // a new episode, keyed on its own crossing entry
     expect(dormancyMark(vault)).toBe('2026-09-12T09:00:00.000Z');
+  });
+
+  it('is still one note when a past-dated accrual moves the crossing entry and the stamp was lost', () => {
+    // Funded 09-10, spent to zero at 09-12T00:30 — the crossing entry, and the mark the note is keyed on.
+    appendEntry(vault, { at: '2026-09-10T08:00:00.000Z', kind: 'capital', cents: 30000, mode: 'live', who: 'owner', why: 'Seed' }, 'owner');
+    appendEntry(vault, { at: '2026-09-12T00:30:00.000Z', kind: 'cost', cents: 30000, mode: 'live', who: 'daemon', why: 'All of it' }, 'daemon');
+    const org = loadOrg(vault);
+    const before = dormancyMark(vault);
+    expect(before).toBe('2026-09-12T00:30:00.000Z');
+    const id = dormancyMessage(vault, org, moneyReport(readLedger(vault), NOW), NOW)!;
+    // The crash: the proposal landed, the write that stamps `money`/`mark` on to it did not.
+    const rel = findInboxById(vault, id)!.path;
+    vault.updateNote(rel, (n) => {
+      const { money: _m, mark: _k, ...rest } = n.data as Record<string, unknown>;
+      return { data: rest, body: n.body };
+    }, 'test');
+    // Now a past-dated accrual lands *before* the crossing and takes cash to zero a few hours earlier.
+    appendEntry(vault, { at: '2026-09-11T23:59:59.999Z', kind: 'cost', cents: 30000, mode: 'live', who: 'daemon', why: 'Yesterday\'s models', ref: 'model-2026-09-11' }, 'daemon');
+    expect(dormancyMark(vault)).toBe('2026-09-11T23:59:59.999Z');   // the crossing really did move
+    // The orphan is found by its id shape, repaired, and not written a second time.
+    expect(dormancyMessage(vault, org, moneyReport(readLedger(vault), NOW), NOW)).toBeNull();
+    const dormant = listInbox(vault).filter((n) => (n.data as { money?: string }).money === 'dormant');
+    expect(dormant).toHaveLength(1);
+    expect(dormant[0].data.id).toBe(id);
+  });
+
+  it('can still announce a later episode after the owner deletes the revival note', () => {
+    fund(); spend();
+    const org = loadOrg(vault);
+    dormancyMessage(vault, org, moneyReport(readLedger(vault), NOW), NOW);
+    appendEntry(vault, { at: '2026-09-12T08:00:00.000Z', kind: 'capital', cents: 10000, mode: 'live', who: 'owner', why: 'More' }, 'owner');
+    const revived = revivalMessage(vault, org, moneyReport(readLedger(vault), NOW), NOW)!;
+    // The owner files the "Back to work" note away. Open and closed are read off the book, not the inbox, so
+    // this costs at most one repeated message — it must never silence the next time the company runs out.
+    vault.remove(findInboxById(vault, revived)!.path, 'owner');
+    appendEntry(vault, { at: '2026-09-12T09:00:00.000Z', kind: 'cost', cents: 10000, mode: 'live', who: 'daemon', why: 'And again' }, 'daemon');
+    const episodes = dormancyEpisodes(vault);
+    expect(episodes).toHaveLength(2);
+    expect(episodes[0].end).toBe('2026-09-12T08:00:00.000Z');
+    expect(episodes[1].end).toBeNull();
+    expect(dormancyMessage(vault, org, moneyReport(readLedger(vault), NOW), NOW)).not.toBeNull();
   });
 
   it('repairs a stamp lost to a crash, so the revival is never silenced', () => {
