@@ -71,15 +71,21 @@ describe('what the discovery step does this cycle (spec §1, §5)', () => {
     }
   });
 
-  // The same floor `intelligenceDue` uses, and for the same reason: the first run is free, every one after it
-  // costs a research lifecycle, and a free tier cannot pay for one per drop.
-  it('floors re-runs at one a calendar day, and the first run never at all', () => {
-    const newFile = { ...nothing, newInput: true };
-    expect(discoveryStatus({ ...after, ranToday: true, unread: newFile })).toMatchObject({ run: false });
-    expect(discoveryStatus({ ...after, ranToday: true, unread: newFile }).why).toContain('already read new material today');
-    expect(discoveryStatus({ ...after, ranToday: false, unread: newFile })).toMatchObject({ run: true });
-    // The first run is not floored: a company that started this morning reads this morning.
-    expect(discoveryStatus({ ...base, ranToday: true, inputs: 1, unread: newFile })).toMatchObject({ run: true });
+  // The floor guards against *typing*: a long message is the one increment an owner can produce over and over
+  // in an afternoon, and each one costs a research lifecycle. A dropped file and an answered interview are not
+  // that, and holding them to tomorrow would defer the best material the company ever gets (re-review 1).
+  it('floors a second typed document a day, and nothing else', () => {
+    const typed = { ...nothing, longPrompt: true, anyPrompt: true };
+    expect(discoveryStatus({ ...after, ranToday: true, unread: typed })).toMatchObject({ run: false });
+    expect(discoveryStatus({ ...after, ranToday: true, unread: typed }).why).toContain('already read a document you typed today');
+    expect(discoveryStatus({ ...after, ranToday: false, unread: typed })).toMatchObject({ run: true });
+    // A file dropped in, and the interview answered, run the same day whatever else has been read.
+    expect(discoveryStatus({ ...after, ranToday: true, inputs: 1, unread: { ...nothing, newInput: true } })).toMatchObject({ run: true });
+    expect(discoveryStatus({ ...after, ranToday: true, interview: 'answered', unread: { ...nothing, newInterview: true } })).toMatchObject({ run: true });
+    // Even alongside a typed message that would have been floored on its own.
+    expect(discoveryStatus({ ...after, ranToday: true, interview: 'answered', unread: { ...nothing, newInterview: true, longPrompt: true, anyPrompt: true } })).toMatchObject({ run: true });
+    // The first run is not floored either: a company that started this morning reads this morning.
+    expect(discoveryStatus({ ...base, ranToday: true, unread: typed })).toMatchObject({ run: true });
   });
 
   it('with a brief adopted, only new material runs discovery again', () => {
@@ -261,12 +267,9 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(job.data.research!.decision_owner).toBe('ceo');
     expect(enqueueDiscovery(vault, org)).toBeNull();          // same digest, same id, already there
     vault.writeText(`${DISCOVERY_INBOX}/more.md`, 'And to schools.', 'owner');
-    // New material, but discovery already read today: the floor holds it to tomorrow's first cycle.
-    expect(enqueueDiscovery(vault, org)).toBeNull();
-    expect(currentDiscoveryStatus(vault).why).toContain('already read new material today');
-    ranYesterday(id);
-    expect(enqueueDiscovery(vault, org)).not.toBeNull();      // new material, one more job
+    expect(enqueueDiscovery(vault, org)).not.toBeNull();      // a file is material: one more job, today
     expect(listJobs(vault).filter((j) => j.type === 'discovery').length).toBe(2);
+    expect(enqueueDiscovery(vault, org)).toBeNull();          // and still only one per set of material
   });
 
   // C2, against a real vault: what the digest is fed, and what a re-run costs.
@@ -296,10 +299,44 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(currentDiscoveryStatus(vault).run).toBe(true);
     expect(enqueueDiscovery(vault, org)).not.toBeNull();
     expect(listJobs(vault).filter((j) => j.type === 'discovery')).toHaveLength(2);
-    // And that second job is today's, so the floor holds the next one whatever else arrives.
-    vault.writeText(`${DISCOVERY_INBOX}/more.md`, 'And to schools, from September.', 'owner');
+    // A second *typed* document the same day is what the floor is for: the one increment an owner can produce
+    // over and over in an afternoon, at a research lifecycle each.
+    ownerSays(['We are opening in schools too.', 'The buyer there is the catering manager.', 'Two counties have asked.', 'We have no price for it.', 'Nobody knows whether the kitchens will cook it.'].join('\n'), new Date(Date.now() + 120_000).toISOString());
+    expect(currentDiscoveryStatus(vault).run).toBe(false);
+    expect(currentDiscoveryStatus(vault).why).toContain('already read a document you typed today');
     expect(enqueueDiscovery(vault, org)).toBeNull();
     expect(listJobs(vault).filter((j) => j.type === 'discovery')).toHaveLength(2);
+  });
+
+  // Ruling 1, against a real vault: the day the company starts is the day it is given the most, and none of it
+  // waits for tomorrow. One line at 09:00, the interview answered at 09:30, "thanks" at 10:00, a file at 10:30.
+  it('reads the interview answer and a dropped file on the same day it read the first line', () => {
+    const org = loadOrg(vault);
+    const at = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+
+    ownerSays('Meal kits for nurseries.', at(9, 0));
+    expect(enqueueDiscovery(vault, org, currentDiscoveryStatus(vault))).toBeTruthy();
+    expect(listJobs(vault).filter((j) => j.type === 'discovery')).toHaveLength(1);
+
+    // 09:30 — the owner answers the six questions. The richest material there is, and it is read today.
+    askInterview(vault, 'ceo', NOW);
+    captureInterviewAnswer(vault, 'Nurseries, not parents. Two already pay us. Ten in three months.', new Date());
+    const answered = currentDiscoveryStatus(vault);
+    expect(answered.run).toBe(true);
+    expect(enqueueDiscovery(vault, org, answered)).toBeTruthy();
+    expect(listJobs(vault).filter((j) => j.type === 'discovery')).toHaveLength(2);
+
+    // 10:00 — "thanks" is still not material, floor or no floor.
+    ownerSays('thanks!', at(10, 0));
+    expect(currentDiscoveryStatus(vault).run).toBe(false);
+    expect(enqueueDiscovery(vault, org)).toBeNull();
+    expect(listJobs(vault).filter((j) => j.type === 'discovery')).toHaveLength(2);
+
+    // 10:30 — a file dropped in is a deliberate act, and it is read today too.
+    vault.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'The whole pitch deck, as text.', 'owner');
+    expect(currentDiscoveryStatus(vault).run).toBe(true);
+    expect(enqueueDiscovery(vault, org)).toBeTruthy();
+    expect(listJobs(vault).filter((j) => j.type === 'discovery')).toHaveLength(3);
   });
 
   it('a long prompt typed after the brief is material; a short one is not', () => {

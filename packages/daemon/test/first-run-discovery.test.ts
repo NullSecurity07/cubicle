@@ -8,9 +8,9 @@ import {
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
-import { Daemon, defaultConfig, HEARTBEAT_STEPS, runHeartbeat, createHeartbeatJob } from '../src/index.js';
+import { Daemon, defaultConfig, HEARTBEAT_STEPS, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob } from '../src/index.js';
 import { hasIdea, ideaAt } from '../src/first-run.js';   // both live in the daemon, not in core
-import { interviewMessageId } from '../src/discovery.js';
+import { interviewMessageId, openDiscoveryJob } from '../src/discovery.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide } from './helpers/board-switch.js';
 
@@ -123,6 +123,79 @@ describe('the discovery step asks before it reads (spec §5.1)', () => {
       // Discovery comes before the plan: the heartbeat stopped at `discovery` and queued nothing later.
       expect(HEARTBEAT_STEPS[v.readNoteOrNull(`Jobs/${hbId}.md`)!.data.checkpoint_step as number]).toBe('discovery');
       expect(listJobs(v).some((j) => j.type === 'company.plan')).toBe(false);
+    } finally { v.close(); }
+  });
+
+  // Re-review ruling 2: the CEO's message promises "whatever you say next … goes into the founder brief the
+  // next plan is written against". That is only true if the answer is read on the day it is given — and the
+  // day floor, as first written, deferred it up to 24 hours because cycle one had already read the owner's one
+  // line. This drives the two cycles and asserts the ordering the promise depends on: the answer's own
+  // discovery job exists, and the heartbeat is still parked at `discovery`, before any plan is written.
+  it('reads the interview answer in the cycle it arrives, before that cycle plans anything', async () => {
+    const v = Vault.open(dir);
+    try {
+      createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'The idea', body: 'Meal kits for nurseries.' }, 'owner');
+      await cycle(v, recordingLlm('NAME: PlateReady\nTAGLINE: Lunch, solved.'));
+      const first = listJobs(v).filter((j) => j.type === 'discovery');
+      expect(first).toHaveLength(1);
+      expect(interviewPhase(v.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
+      updateJob(v, first[0].id, { status: 'done' }, 'daemon');   // nobody runs jobs in this test
+
+      // An hour later, the same day, the owner answers the six questions in the cabin.
+      createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'Answers', body: 'The nursery manager buys, not the parent. Two already pay us. Ten in three months.' }, 'owner');
+      const second = await cycle(v, recordingLlm());
+
+      expect(interviewPhase(v.readTextOrNull(INTERVIEW_PATH))).toBe('answered');
+      const jobs = listJobs(v).filter((j) => j.type === 'discovery');
+      expect(jobs).toHaveLength(2);                                   // read today, not tomorrow
+      const fresh = jobs.find((j) => j.id !== first[0].id)!;
+      expect(second.out).toMatchObject({ status: 'blocked', on: { kind: 'job', id: fresh.id } });
+      expect(HEARTBEAT_STEPS[readJob(v, second.hb)!.data.checkpoint_step as number]).toBe('discovery');
+      expect(listJobs(v).some((j) => j.type === 'company.plan')).toBe(false);
+    } finally { v.close(); }
+  });
+
+  // Re-review ruling 3: the kill-window recovery blocks on a discovery job found in the vault, and that wait
+  // has to be bounded like every other one. A job that never reaches a terminal status would otherwise cost
+  // every later cycle its whole budget at this step, and the company would never read anything new again.
+  it('leaves a discovery job that never finishes behind, and gets on with the cycle', async () => {
+    const v = Vault.open(dir);
+    try {
+      v.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell meal kits to nurseries.', 'owner');
+      const hb = createHeartbeatJob(v, 'test');
+      let clock = new Date();
+      const stuck = await runHeartbeat({ vault: v, llm: recordingLlm(), env: {}, now: () => clock }, hb);
+      const disc = listJobs(v).filter((j) => j.type === 'discovery');
+      expect(disc).toHaveLength(1);
+      expect(stuck).toMatchObject({ status: 'blocked', on: { kind: 'job', id: disc[0].id } });
+
+      // Nothing ever picks it up. Past the budget this cycle gives up on it and plans from what there is.
+      clock = new Date(clock.getTime() + PLAN_WAIT_BUDGET_MS + 60_000);
+      await runHeartbeat({ vault: v, llm: recordingLlm(), env: {}, now: () => clock }, hb);
+      expect(readJob(v, hb)!.body).toContain('planning from what there is');
+      expect(HEARTBEAT_STEPS[readJob(v, hb)!.data.checkpoint_step as number]).not.toBe('discovery');
+
+      // And the next cycle does not start the whole wait again: a job nothing has touched since before the
+      // budget is stranded, not "being read", so this heartbeat reads the new material instead of parking on it.
+      v.writeText(`${DISCOVERY_INBOX}/more.md`, 'And to schools, from September.', 'owner');
+      const next = await runHeartbeat({ vault: v, llm: recordingLlm(), env: {}, now: () => clock }, createHeartbeatJob(v, 'next'));
+      const jobs = listJobs(v).filter((j) => j.type === 'discovery');
+      expect(jobs).toHaveLength(2);
+      expect(next).toMatchObject({ status: 'blocked', on: { kind: 'job', id: jobs.find((j) => j.id !== disc[0].id)!.id } });
+    } finally { v.close(); }
+  }, 30_000);
+
+  // A discovery job in review has filed its brief and its cards; it is a reviewer's problem, not a reason to
+  // hold the whole company at this step.
+  it('does not wait on a discovery job that is already in review', async () => {
+    const v = Vault.open(dir);
+    try {
+      v.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell meal kits to nurseries.', 'owner');
+      const hb = createHeartbeatJob(v, 'test');
+      await runHeartbeat({ vault: v, llm: recordingLlm(), env: {}, now: () => new Date() }, hb);
+      const disc = listJobs(v).filter((j) => j.type === 'discovery')[0];
+      updateJob(v, disc.id, { status: 'in_review' }, 'daemon');
+      expect(openDiscoveryJob(v)).toBeNull();
     } finally { v.close(); }
   });
 

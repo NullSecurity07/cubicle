@@ -101,7 +101,14 @@ export function discoveryStatus(o: {
     if (o.unread.anyPrompt) return status(false, 'nothing new to read: a reply to the CEO is not material for a second discovery job');
     return status(false, o.hasBrief ? 'the founder brief covers everything the owner has given us' : 'nothing new since discovery last read the vault');
   }
-  if (o.ranToday) return status(false, 'discovery already read new material today; the rest is read on the next day\'s first cycle');
+  // The day floor guards against *typing*: a long message is the one increment an owner can produce over and
+  // over in an afternoon, and each one costs a research lifecycle. A file dropped in the inbox and an answered
+  // interview are not that. The interview especially — it is answered once, ever, and its answers are the
+  // richest material the company will ever be given; deferring them to tomorrow because cycle one already read
+  // the owner's one line would make the CEO's own promise ("what you say next goes into the founder brief the
+  // next plan is written against") false on the day it matters most.
+  const onlyTyping = !o.unread.newInput && !o.unread.newInterview;
+  if (o.ranToday && onlyTyping) return status(false, 'discovery already read a document you typed today; the next one is read on the next day\'s first cycle');
   return status(true, o.hasBrief ? 'new material since the founder brief' : 'new material since the last discovery');
 }
 
@@ -174,12 +181,17 @@ export function ownerPrompt(vault: Vault, since: string | null = null): string {
     .join('\n\n');
 }
 
-/** Terminal job statuses: a job in one of these is no longer being worked on. */
-const CLOSED = ['done', 'failed', 'cancelled'];
+/**
+ * The statuses that mean a discovery job is still *reading*. `in_review` is deliberately not one of them: by
+ * then the job has filed its founder brief and its cards and is waiting on a reviewer, so there is nothing
+ * left for the cycle to wait for — and holding the whole company behind a gate is how one slow review costs
+ * every later cycle its wait budget.
+ */
+const STILL_READING = ['queued', 'running', 'blocked'];
 
 /** Every `discovery` job in the log, oldest first. */
-export function discoveryJobs(vault: Vault): { id: string; created: string; status: string }[] {
-  return listJobs(vault).filter((j) => j.type === 'discovery').map((j) => ({ id: j.id, created: j.created, status: j.status }))
+export function discoveryJobs(vault: Vault): { id: string; created: string; updated: string; status: string }[] {
+  return listJobs(vault).filter((j) => j.type === 'discovery').map((j) => ({ id: j.id, created: j.created, updated: j.updated, status: j.status }))
     .sort((a, b) => a.created.localeCompare(b.created));
 }
 
@@ -189,9 +201,18 @@ export function lastDiscoveryAt(vault: Vault): string | null {
   return jobs.length ? jobs[jobs.length - 1].created : null;
 }
 
-/** A discovery job that is still being worked on — the company is reading right now, so nothing plans past it. */
-export function openDiscoveryJob(vault: Vault): string | null {
-  return discoveryJobs(vault).find((j) => !CLOSED.includes(j.status))?.id ?? null;
+/**
+ * A discovery job the company is reading **right now** — so nothing plans past it.
+ *
+ * `movedSince` is the line between "still reading" and stranded. A job that has not been touched since then —
+ * a saturated research team, an assignee that stopped being claimable, a worker killed mid-job — is left
+ * behind rather than waited for: the caller's wait is bounded within a cycle, but `blocked_on.since` restarts
+ * with every heartbeat, so without this a permanently stuck job costs *every* later cycle its whole wait
+ * budget at this step and the company never reads anything new again. A job that is progressing keeps its
+ * `updated` moving and keeps being waited for, which is the distinction that matters.
+ */
+export function openDiscoveryJob(vault: Vault, movedSince?: string): string | null {
+  return discoveryJobs(vault).find((j) => STILL_READING.includes(j.status) && (!movedSince || j.updated >= movedSince))?.id ?? null;
 }
 
 /**

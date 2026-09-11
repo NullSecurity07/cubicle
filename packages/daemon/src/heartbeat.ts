@@ -614,18 +614,21 @@ export function fileIdeaVerdict(
   const id = idFromKey('prop', ideaVerdictKey(slug));
   const existing = findInboxById(vault, id);
   if (existing) return { id, path: existing.path, band, filed: false };
+  const reason = bandReason(score, { value, board });
   const { path: rel } = createProposal(vault, {
     id, kind: 'idea_verdict', from: opts.from, to: 'owner', job: opts.job,
     target: ideaPath(slug), title: `Keep, park or scrap: ${card.data.title}`,
     body: ideaVerdictBody({
-      slug, title: card.data.title, score, band, reason: bandReason(score, { value, board }), board,
+      slug, title: card.data.title, score, band, reason, board,
       findings: opts.findings, research: card.data.research, estimate: card.data.estimate,
       decidesAfterHours: vault.constitution().board_decides_after_hours,
     }),
   }, opts.from);
-  // The band and the board's verdict live on the note, not in cache state: a later heartbeat closes this
-  // verdict after a restart, and it must rule on what was recommended then — not on a recomputation.
-  vault.updateNote(rel, (n) => ({ data: { ...n.data, board_verdict: board, band }, body: n.body }), 'daemon');
+  // The band, the board's verdict and the arithmetic behind them live on the note, not in cache state: a later
+  // heartbeat closes this verdict after a restart, and it must rule on — and explain — what was recommended
+  // then, not a recomputation. `band_reason` rides along so the sentence the owner is shown when their
+  // approval is applied is the same sentence they read when they approved it.
+  vault.updateNote(rel, (n) => ({ data: { ...n.data, board_verdict: board, band, band_reason: reason }, body: n.body }), 'daemon');
   return { id, path: rel, band, filed: true };
 }
 
@@ -850,6 +853,8 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     const waitForEstimates = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'estimatesPending', giveUpNote, false);
     /** `discovery`'s wait: giving up means the cycle plans from whatever the owner's material already said. */
     const waitForDiscovery = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'discoveryPending', giveUpNote);
+    /** The same wait for a job found in the vault rather than in the cache, which then gets on with the step. */
+    const waitForStrandedDiscovery = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'discoveryPending', giveUpNote, false);
     switch (step) {
       case 'gather': {
         const mail = deps.pollInbox ? await deps.pollInbox().catch(() => []) : [];
@@ -945,10 +950,17 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           // walking past it would plan while discovery is still reading, which is what this step exists to
           // prevent. Looking for any open job rather than for one derived id also survives the digest moving
           // (it drops material the newest job has read, so it is not the same digest a moment later).
-          const running = openDiscoveryJob(vault);
+          const running = openDiscoveryJob(vault, new Date(now().getTime() - PLAN_WAIT_BUDGET_MS).toISOString());
           if (running) {
             state = { ...state, discoveryJob: running }; saveState(state);
-            return block(running, `waiting for discovery ${running}`);
+            // Bounded, like every other wait in this cycle. A discovery job that never reaches a terminal
+            // status — a saturated research team, an assignee that stopped being claimable — would otherwise
+            // cost *every* later cycle its whole wait budget at this step and stop the company ever reading
+            // anything new again. Past the budget it is left behind with the give-up note in the job log, and
+            // this cycle goes on to ask and to queue whatever the material now needs.
+            const w = waitForStrandedDiscovery(running, (min) => `discovery ${running} still open after ${min} min — reading on without it`);
+            if (w) return w;
+            state = { ...state, discoveryJob: undefined }; saveState(state);
           }
           // Asking and reading are independent (spec §1.3, §5.5): the interview costs no model call, so an
           // owner who typed one line gets the questions *and* a discovery job over that line on cycle one. The
