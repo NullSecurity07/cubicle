@@ -167,10 +167,14 @@ export function renderScoreSection(i: IdeaScoreInputs, opts: { board?: 'pass' | 
  * Every `Ideas/<slug>` a plan names, by wikilink (`[[Ideas/foo]]`) or by bare path (`Ideas/foo.md`). Titles are
  * deliberately not matched: a title is prose, and a plan that happens to use the same words as a scrapped idea
  * must not be returned for it.
+ *
+ * The left boundary matters as much as the slug pattern does: without it `MyIdeas/foo` or `BadIdeas/foo` reads
+ * as `Ideas/foo` and a plan gets returned for an idea it never named. `[`, `(`, a space and a line start are
+ * all boundaries; a letter, digit, `_` or `-` is not.
  */
 export function ideasNamedIn(plan: string): string[] {
   const out = new Set<string>();
-  const re = new RegExp(`Ideas/(${IDEA_SLUG_SRC})(?:\\.md)?`, 'gi');
+  const re = new RegExp(`(?<![A-Za-z0-9_-])Ideas/(${IDEA_SLUG_SRC})(?:\\.md)?`, 'gi');
   for (const m of plan.matchAll(re)) out.add(m[1].toLowerCase());
   return [...out];
 }

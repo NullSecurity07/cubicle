@@ -97,6 +97,16 @@ describe('a plan may draw only on kept ideas (spec §4)', () => {
     expect(ideasNamedIn('- Launch the crypto loyalty programme')).toEqual([]);
   });
 
+  it('needs a boundary on the left: MyIdeas/foo is not Ideas/foo (Task 1 review)', () => {
+    expect(ideasNamedIn('- see MyIdeas/crypto-loyalty.md')).toEqual([]);
+    expect(ideasNamedIn('- BadIdeas/meal-kits is someone else\'s folder')).toEqual([]);
+    expect(ideasNamedIn('- x_Ideas/meal-kits and 9Ideas/meal-kits')).toEqual([]);
+    expect(unkeptIdeasNamedIn('- Ship MyIdeas/crypto-loyalty this cycle', ideas)).toEqual([]);
+    // …and still matches the real thing wherever a plan puts it.
+    expect(ideasNamedIn('(Ideas/meal-kits.md)')).toEqual(['meal-kits']);
+    expect(ideasNamedIn('Ideas/meal-kits at the start of the line')).toEqual(['meal-kits']);
+  });
+
   it('returns the unkept ideas a plan names, and nothing for a clean plan', () => {
     expect(unkeptIdeasNamedIn('- Ship [[Ideas/meal-kits]]', ideas)).toEqual([]);
     expect(unkeptIdeasNamedIn('- Ship [[Ideas/crypto-loyalty]]', ideas).map((i) => i.id)).toEqual(['crypto-loyalty']);
