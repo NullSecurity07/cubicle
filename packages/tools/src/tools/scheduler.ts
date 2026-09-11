@@ -22,7 +22,9 @@ export function systemTypes(org: Org): Record<string, string[]> {
     'board.premortem': [ceo], 'division.plan': [ceo], 'team.plan': [ceo], 'critic.premortem': [ceo],
     'office:operations.verify': [ceo, ops], 'coo.verify': [ceo, ops],
     'team:qa.review': [ceo, eng], 'qa.review': [ceo, eng],
-    'office:security.review': [ceo, sec], 'security.review': [ceo, eng, sec],
+    // One gate, one access list: the pre-office name let the engineering office hand-queue a security review
+    // that the renamed `office:security.review` refused it, which is a rename artefact, not a policy (M3).
+    'office:security.review': [ceo, eng, sec], 'security.review': [ceo, eng, sec],
     'cto.plan': [ceo], 'cto.compress_charters': [ceo, eng],
     'requester.review': [], 'research.review': [], 'incident': [], 'research.measure': [], 'intelligence': [],
   };

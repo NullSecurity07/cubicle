@@ -166,6 +166,23 @@ export function resolveRole(org: Org, id: string): string {
   const alias = LEGACY_ROLES[id];
   return alias && org.roles[alias] ? alias : id;
 }
+/**
+ * Who answers a production incident, and under which room and lead — one lookup, so the two triggers
+ * (`maybeOpenIncident` in the daemon, `errors.report` in the tools) and the corrective actions that follow
+ * cannot drift, and none of them writes `assigned: 'sre', team: 'dev', owner_role: 'dev_manager'` as literals
+ * (final review M6). The SRE's charter owns incidents in the shipped org, so it is preferred by name where it
+ * exists; where it does not, the fall-back is by capability — someone in the engineering division who can roll
+ * a deploy back — and then the office itself. The room and its lead always come from the tree, so a renamed
+ * room or a re-staffed manager still routes.
+ */
+export function incidentResponder(org: Org): { role: string; team: string | undefined; lead: string } {
+  const eng = officeHolder(org, 'engineering');
+  const sre = resolveRole(org, 'sre');
+  const role = org.roles[sre] ? sre : (roleWithTool(org, teamOf(org, eng)?.id, 'deploy.site') ?? eng);
+  const team = teamOf(org, role)?.id;
+  return { role, team, lead: (team ? org.teams[team]?.lead : undefined) ?? eng };
+}
+
 /** Who receives `research` jobs: the research office, else the research team's lead, else the v1 lone analyst. */
 export function researchLead(org: Org): string | null {
   const byOffice = officeRole(org, 'research');

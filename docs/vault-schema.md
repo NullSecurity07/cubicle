@@ -61,7 +61,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | `team` | string (optional) | the team id (`Teams/<id>.md`) the job belongs to |
 | `owner_role` | string (optional) | the lead who scheduled it, for jobs a member didn't request themselves |
 | `for` | string (optional) | who a `research` job's findings are for (a lead, not a team) |
-| `done_when` | string (optional) | the "Done when" a `team.plan` job set for a job it scheduled |
+| `done_when` | string (optional) | the "Done when" a `division.plan` job set for a job it scheduled |
 | `risk` | `low` \| `medium` \| `high` = `"low"` | `low` | `medium` | `high` (owner's operating model §27). `medium` inserts an `office:security.review` gate before the rest of the chain; `high` also requires an approved `threat_model` proposal before the job may finish |
 | `stream` | string (optional) | the `Streams/<slug>.md` this job serves; `ci.run`, the ship gate and the error budget all key on it |
 | `returns` | record<string, number> = `{}` | gate job type → how many times that gate has returned this job (once-per-gate: a second return from the same gate fails the job instead of looping forever) |

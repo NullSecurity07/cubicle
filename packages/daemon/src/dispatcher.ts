@@ -154,9 +154,15 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
           : nn.body.trimEnd() + '\n\n' + section.trimEnd() + '\n',
       }), 'daemon');
     }
-    // Constitution autonomy flags: the owner pre-approved these kinds; the daemon approves agent-created notes itself.
+    // Constitution autonomy flags: the owner pre-approved these kinds; the daemon approves agent-created notes
+    // itself. Which seat each flag trusts is an office lookup, not a role id (M6): `auto_approve_hire` and
+    // `auto_approve_reorg` mean "what the chief executive files" and `auto_approve_charter_changes` means "the
+    // engineering office's compression output" (spec §9.2), so re-staffing either seat must move the trust with
+    // it rather than quietly switching the flag off for the live holder and leaving it on for a retired id.
     const c = vault.constitution();
-    const autoApproved = d.approved === null && ((d.kind === 'hire' && c.auto_approve_hire && d.from === 'ceo') || (d.kind === 'charter_change' && c.auto_approve_charter_changes && d.from === 'cto') || (d.kind === 'reorg' && c.auto_approve_reorg && d.from === 'ceo'));
+    const chiefExecutive = officeHolder(loadOrg(vault), 'chief_executive');
+    const engineering = officeHolder(loadOrg(vault), 'engineering');
+    const autoApproved = d.approved === null && ((d.kind === 'hire' && c.auto_approve_hire && d.from === chiefExecutive) || (d.kind === 'charter_change' && c.auto_approve_charter_changes && d.from === engineering) || (d.kind === 'reorg' && c.auto_approve_reorg && d.from === chiefExecutive));
     if (d.approved === null && !autoApproved) continue;
     const previouslyRefused = !!(d as { refused?: string }).refused;
     if (autoApproved) {
@@ -218,11 +224,11 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
               const parsed = RoleFrontmatter.safeParse({ ...incoming.data, role: cur.data.role, desk: cur.data.desk, hired: cur.data.hired, sprite: cur.data.sprite, active: cur.data.active, model_tier: cur.data.model_tier, display: cur.data.display });
               if (!parsed.success) { refuse('charter frontmatter does not validate'); continue; }
               if (autoApproved) {
-                // Auto-approval covers only the CTO's compression output (spec §9.2) and may not widen tools or loosen approvals.
+                // Auto-approval covers only the engineering office's compression output (spec §9.2) and may not widen tools or loosen approvals.
                 const widened = parsed.data.tools.filter((t) => !cur.data.tools.some((c) => c === t || (c.endsWith('.*') && t.startsWith(c.slice(0, -1)))));
                 const order: Record<string, number> = { auto: 0, propose: 1, ask: 2, never: 3 };
                 const loosened = Object.entries(parsed.data.approval_overrides).filter(([k, v]) => k in cur.data.approval_overrides && order[v] < order[cur.data.approval_overrides[k]]);
-                if (d.from !== 'cto') { refuse(`auto_approve_charter_changes applies to the CTO's compression proposals only (this one is from ${d.from})`); continue; }
+                if (d.from !== engineering) { refuse(`auto_approve_charter_changes applies to the engineering office's (${engineering}) compression proposals only (this one is from ${d.from})`); continue; }
                 if (widened.length) { refuse(`auto-approved charter changes may not add tools (${widened.join(', ')}); the owner must approve this one`); continue; }
                 if (loosened.length) { refuse(`auto-approved charter changes may not loosen approval overrides (${loosened.map(([k]) => k).join(', ')})`); continue; }
                 if (!incoming.body.trim() || incoming.body.length > (current!.body.length + 200)) { refuse('auto-approved compression must not lengthen the charter (or empty it)'); continue; }

@@ -38,9 +38,10 @@ export interface HeartbeatDeps {
 export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { kind: 'job'; id: string } } | { status: 'cancelled' } | { status: 'requeued'; attempt: number };
 
 /**
- * The cycle, in order. A step with no `case` in the loop below is walked through without doing anything:
- * `owner_verdict` is named here because the board pre-mortem already stores the verdict it rules on
- * (`state.boardVerdict`), but the owner's ruling itself is not wired yet.
+ * The cycle, in order. Every step has a `case` in the loop below; a step with none would be walked through
+ * without doing anything. `owner_verdict` files the `plan_verdict` note the owner rules on and reads the
+ * ruling back (Task 5): only an approved plan reaches `division_plans`, while work an earlier plan already
+ * queued keeps running throughout.
  */
 export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit'] as const;
 /** How long a heartbeat waits for company.plan/division.plan before writing the brief with "planning pending" (R33). */
@@ -296,7 +297,10 @@ export function mergeBoardVerdict(text: string): { verdict: 'pass' | 'return'; f
  */
 export async function runBoardSession(deps: HeartbeatDeps, org: Org, plan: string): Promise<{ verdict: 'pass' | 'return'; findings: string[]; advisors: string[]; transcript: string; answered: number }> {
   const vault = deps.vault;
+  // Its one caller guards on `org.teams.board` first, but this is exported and tests call it directly: an org
+  // with no board room must fail as "the board passed unreviewed", not as a TypeError inside the cycle (M5).
   const board = org.teams.board;
+  if (!board) return { verdict: 'pass', findings: [], advisors: [], transcript: '', answered: 0 };
   const advisors = [...new Set([board.lead, ...board.members])].filter((r) => org.roles[r]).slice(0, 3);
   const leadTier = org.roles[board.lead]?.model_tier ?? 'medium';
   const tierFor = (roleId: string): ModelTier => org.roles[roleId]?.model_tier ?? leadTier;

@@ -328,6 +328,18 @@ describe('a board where every model call fails does not read as a clean pre-mort
     } finally { vault.close(); }
   });
 
+  // Its one caller guards on the board room first, but it is exported and tests call it directly — an org with
+  // no board must fail open like every other board path, not with a TypeError (final review M5).
+  it('an org with no board room passes unreviewed instead of throwing', async () => {
+    const vault = Vault.open(dir);
+    try {
+      const org = loadOrg(vault);
+      const noBoard = { ...org, teams: Object.fromEntries(Object.entries(org.teams).filter(([id]) => id !== 'board')) };
+      const session = await runBoardSession({ vault, llm: throwingLlm }, noBoard, PLAN_TEXT);
+      expect(session).toMatchObject({ verdict: 'pass', findings: [], advisors: [], answered: 0 });
+    } finally { vault.close(); }
+  });
+
   it('writeBoardPremortemDecision writes "no advisor answered" rather than "the plan survived the pre-mortem" when answered is 0', async () => {
     const vault = Vault.open(dir);
     try {
