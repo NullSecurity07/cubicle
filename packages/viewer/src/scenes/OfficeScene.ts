@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
-import { makeTileset, makeLampGlow, makeSky, TILE, roleColor } from '../world/tileset.js';
+import { makeTileset, makeDecorSheet, makeLampGlow, makeSky, TILE, roleColor } from '../world/tileset.js';
 import { buildWorld, floorAt, type World, type Tile } from '../world/map.js';
 import { T } from '../world/tiles.js';
 import { AgentSprite } from '../world/agents.js';
 import { Surface } from '../world/surfaces.js';
 import { SURFACES } from '../ui/surfaces.js';
+import { DecorLayer, RoomSigns } from '../world/decor.js';
 import { initialElevator, request, cancel, step, type ElevatorState, type ElevatorEvent, type Rider } from '../world/elevator.js';
 import { ZOOM_STEPS, zoomSnap, fitZoom, floorZoom } from '../world/camera.js';
 import { planRoute, type Leg } from '../world/route.js';
@@ -49,6 +50,8 @@ export class OfficeScene extends Phaser.Scene {
   private elev!: ElevatorState;
   private car!: Phaser.GameObjects.Container;
   private lastFloor = 0;
+  private decor!: DecorLayer;
+  private signs!: RoomSigns;
   hooks!: SceneHooks;
   /** The elevator: sprites call and cancel, the overlay reads the state. */
   readonly elevator = {
@@ -76,6 +79,9 @@ export class OfficeScene extends Phaser.Scene {
       if (!a) { console.warn(`[office] surface "${def.kind}" has no anchor in the map; not placed`); continue; }
       this.surfaces.set(def.kind, new Surface(this, def, a, (k) => this.hooks.onSurfaceClick(k)));
     }
+    makeDecorSheet(this);
+    this.decor = new DecorLayer(this, this.world.decor);
+    this.signs = new RoomSigns(this, this.world.signs);
     this.elev = initialElevator(this.world.floors, 1);
     this.car = (this.hooks.makeCar?.(this) ?? this.defaultCar()).setDepth(3);
     this.car.setPosition(SHAFT_CENTRE_X, this.elev.row * TILE);
@@ -103,7 +109,7 @@ export class OfficeScene extends Phaser.Scene {
     this.minimap.centerOn((BUILDING.x0 + BUILDING.x1 + 1) / 2 * TILE, (BUILDING.y0 + BUILDING.y1 + 1) / 2 * TILE);
     this.viewRect = this.add.rectangle(0, 0, 1, 1, 0xffffff, 0).setStrokeStyle(2 / this.minimap.zoom, 0xe6a93c, 0.9).setOrigin(0).setDepth(60);
     this.cameras.main.ignore(this.viewRect);
-    this.minimap.ignore([this.night, this.sky, ...this.lamps.map((l) => l.img)]);
+    this.minimap.ignore([this.night, this.sky, ...this.lamps.map((l) => l.img), ...this.decor.images(), ...this.signs.texts]);
     this.scale.on('resize', (g: Phaser.Structs.Size) => this.minimap.setPosition(g.width - mmW - 12, g.height - mmH - 12));
     this.focusFloor(this.pendingFloor ?? 1, this.pendingFloor === null ? 2 : undefined);   // default zoom 2, opened on F1
     this.pendingFloor = null;
@@ -164,6 +170,10 @@ export class OfficeScene extends Phaser.Scene {
       ag.update(view, dt, this.hooks.clock(), ctx);
     }
     for (const [role, ag] of this.agents) if (!s.agents[role]) { ag.destroy(); this.agents.delete(role); }
+    // each role's current tile, shared by the decor layer's occupancy checks and the lamp block's lit-rooms check
+    const tiles: Record<string, Tile> = {};
+    for (const [role, ag] of this.agents) tiles[role] = ag.tile();
+    this.decor.update(this.hooks.clock(), s.agents, tiles);
     // surfaces at ~4 fps
     if (time - this.lastRender > 250) { this.lastRender = time; const fr = this.hooks.frames(); for (const su of this.surfaces.values()) su.render(s, fr, this.hooks.clock()); }
     // camera keys
@@ -193,8 +203,6 @@ export class OfficeScene extends Phaser.Scene {
     }
     const lampAlpha = lampAlphaFor(hour);
     if (lampAlpha > 0) {
-      const tiles: Record<string, { tx: number; ty: number }> = {};
-      for (const [role, ag] of this.agents) tiles[role] = ag.tile();
       const lit = litRooms(s.agents, tiles, this.world.rooms);
       for (const l of this.lamps) l.img.setAlpha(l.room && lit.has(l.room) ? lampAlpha : 0);
     } else for (const l of this.lamps) l.img.setAlpha(0);
