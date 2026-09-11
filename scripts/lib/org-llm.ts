@@ -5,7 +5,7 @@
  */
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
-import { FOUNDER_BRIEF, founderBriefTemplate } from '@cubicle/core';
+import { DISCOVERY_INBOX, FOUNDER_BRIEF, founderBriefTemplate } from '@cubicle/core';
 
 export const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n\n### revenue\n- Find the first organic channel\n';
 
@@ -58,7 +58,10 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
       if (jobType === 'discovery') {
         const calls = [
           { name: 'discovery.inputs', args: { max_chars: 6000 } },
-          { name: 'idea.card', args: { title: 'The idea the owner described', evidence: [`${FOUNDER_BRIEF}`], what_changed: 'The owner told us what they are building.', why_it_matters: 'It is the only candidate on the table.' } },
+          // Evidence points at the material the card was read from, which exists; citing the founder brief here
+          // would cite a file this job has not proposed yet. `source: discovery` is not an argument — `idea.card`
+          // derives provenance from the calling job's type — so the real card carries it without being told.
+          { name: 'idea.card', args: { title: 'The idea the owner described', evidence: [DISCOVERY_INBOX], what_changed: 'The owner told us what they are building.', why_it_matters: 'It is the only candidate on the table.' } },
           { name: 'proposal.create', args: { kind: 'founder_brief', target: FOUNDER_BRIEF, title: 'The founder brief', body: `## Proposed content\n\n\`\`\`\n${founderBriefTemplate()}\n\`\`\`\n` } },
         ];
         return { ...base, parsedToolCalls: [calls[n] ?? { name: 'finish', args: { status: 'done', summary: 'the founder brief is with the owner' } }] };

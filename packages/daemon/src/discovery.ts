@@ -108,17 +108,28 @@ export function estimateGoal(idea: { id: string; title: string }): string {
 }
 
 /**
- * Everything the owner has typed in the cabin, oldest first — the "long prompt" input, and part of the digest.
+ * What the owner actually typed, out of a cabin note's body.
  *
- * Two things are cut out of each note: the `# title` line, anchored to the first line of the body so a `# …`
- * further down is the owner's own writing and survives; and everything from `## CEO` on, which is the CEO's
- * reply appended to the same note. Letting the reply through would feed discovery the company's own words back
- * and, worse, move `discoveryDigest` every time anyone answered, re-queueing discovery for ever.
+ * Two things are cut: the `# title` line, anchored to the first line of the body so a `# …` further down is the
+ * owner's own writing and survives; and everything from `## CEO` on, which is the CEO's reply appended to the
+ * same note. Letting the reply through would feed discovery the company's own words back and, worse, move
+ * `discoveryDigest` every time anyone answered, re-queueing discovery for ever.
+ *
+ * Every reader of an owner message goes through this one function, because the cabin's note body is never what
+ * the owner typed: `ws.ts` sends `title: text.slice(0, 60), body: text` and `createProposal` renders the note as
+ * `# <title>\n\n<body>`, so an owner who types `skip` produces `# skip\n\nskip`. `isSkip` is anchored to the
+ * whole string, so the raw body would be recorded as *answering* the six questions with the word "skip" — and
+ * `discoveryStatus` reads an answered interview as material, which is the opposite of what they asked for.
  */
+export function ownerSaid(body: string): string {
+  return body.split(/^## CEO\s*$/m)[0].replace(/^#\s[^\n]*\r?\n?/, '').trim();
+}
+
+/** Everything the owner has typed in the cabin, oldest first — the "long prompt" input, and part of the digest. */
 export function ownerPrompt(vault: Vault): string {
   return listInbox(vault)
     .filter((n) => n.data.kind === 'message' && n.data.from === 'owner')
-    .map((n) => n.body.split(/^## CEO\s*$/m)[0].replace(/^#\s[^\n]*\r?\n?/, '').trim())
+    .map((n) => ownerSaid(n.body))
     .filter(Boolean)
     .join('\n\n');
 }

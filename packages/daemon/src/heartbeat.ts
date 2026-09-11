@@ -6,7 +6,7 @@ import {
   childTeams, subtreeRoles, divisionTeams, divisionOf,
   budgetLines, GATE_JOB_TYPES,
   nextIdeaForBoard, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
-  isLongPrompt,
+  isLongPrompt, isSkip,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -14,7 +14,7 @@ import { deployer, emailSender, analytics } from '@cubicle/tools';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
 import { seedFirstJobs, seedFirstStream } from './first-run.js';
-import { currentDiscoveryStatus, askInterview, enqueueDiscovery, captureInterviewAnswer, enqueueEstimates } from './discovery.js';
+import { currentDiscoveryStatus, askInterview, enqueueDiscovery, discoveryJobId, captureInterviewAnswer, ownerSaid, enqueueEstimates } from './discovery.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -620,7 +620,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; estimateJobs?: string[]; estimatesPending?: boolean; ideaVerdicts?: string[]; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; estimatesPending?: boolean; ideaVerdicts?: string[]; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -724,7 +724,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     // caller carry on rather than block the company forever (returns null to continue). The flag is a parameter
     // because what the brief must then say about the cycle depends on what was being waited for: a stuck
     // estimate is not a stuck plan, and saying "Planning: PENDING" about one would be a lie.
-    const waitBounded = (id: string, flag: 'planPending' | 'estimatesPending', giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => {
+    const waitBounded = (id: string, flag: 'planPending' | 'estimatesPending' | 'discoveryPending', giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => {
       const since = job.blocked_on?.since;
       const waitedMs = since ? now().getTime() - Date.parse(since) : 0;
       if (waitedMs < PLAN_WAIT_BUDGET_MS) {
@@ -740,6 +740,8 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     const waitOrGiveUp = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'planPending', giveUpNote);
     /** `ideas_board`'s wait: giving up means the board reads the cards that were priced in time, and no more. */
     const waitForEstimates = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'estimatesPending', giveUpNote);
+    /** `discovery`'s wait: giving up means the cycle plans from whatever the owner's material already said. */
+    const waitForDiscovery = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'discoveryPending', giveUpNote);
     switch (step) {
       case 'gather': {
         const mail = deps.pollInbox ? await deps.pollInbox().catch(() => []) : [];
@@ -781,9 +783,13 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           const body = note.body;
           const isFirstIdea = !(parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data.name as string) && !listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md');
           const surprise = /^\s*#?.*surprise me\s*$/im.test(body) || /\bsurprise me\b/i.test(body.split('\n').slice(-3).join('\n'));
+          // What the owner typed, without the `# title` line the cabin prepends. The interview has to read the
+          // stripped text: `isSkip` is anchored to the whole string, so an owner who types `skip` (note body
+          // `# skip\n\nskip`) would otherwise be recorded as having answered the six questions with "skip".
+          const said = ownerSaid(body);
           // An open interview is closed by whatever the owner says next, whatever it says (spec §1.4). This is
           // a vault write, not a model call: the interview must not cost a cycle's quota to conduct.
-          const closedInterview = captureInterviewAnswer(vault, body, now());
+          const closedInterview = captureInterviewAnswer(vault, said, now());
           // A document, not a one-line idea: discovery reads it, and the CEO does not try to squeeze a company
           // name out of its first sentence.
           const longPrompt = isLongPrompt(body);
@@ -793,7 +799,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
             const ideas = reply ?? '1. Untitled — (no model available; edit this proposal)\n2. —\n3. —';
             createProposal(vault, { id: idFromKey('prop', `${jobId}:${m.id}`), kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${ideas}\n\nSet \`chosen: 1|2|3\` and \`approved: true\`; the chosen line's name becomes the company name.`, job: jobId }, 'ceo');
             reply = `I filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n${ideas}`;
-          } else if (isFirstIdea && !longPrompt) {
+            // "skip" is a refusal to be interviewed, not a business idea: naming the company after it would be
+            // absurd, and it belongs in the general reply, which already says the interview was closed.
+          } else if (isFirstIdea && !longPrompt && !isSkip(said)) {
             const r = await ask(deps, ceoSystem(vault), `The owner's business idea:\n\n${body}\n\nReply with exactly two lines:\nNAME: <a short, brandable company name>\nTAGLINE: <one sentence>`);
             const name = r?.match(/NAME:\s*(.+)/i)?.[1]?.trim() ?? 'Untitled Co';
             const tagline = r?.match(/TAGLINE:\s*(.+)/i)?.[1]?.trim() ?? '';
@@ -829,7 +837,21 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
             done(i, msg ? `asked the founder interview (${msg})` : status.why);
             break;
           }
-          if (!status.run) { done(i, status.why); break; }
+          // "Nothing new to read" and "the job I queued a moment ago is still running" are the same answer from
+          // `discoveryStatus` — `alreadyRun` is true either way — so the `!status.run` path has to look the job
+          // up before it walks on. Without this, a kill in the one write between `createJob` and `saveState`
+          // (where neither the state file nor `blocked_on` names the job) resumes into "discovery has already
+          // read this material" and plans while discovery is still reading, which is the exact ordering this
+          // step exists to prevent.
+          const open = (id: string): boolean => { const j = readJob(vault, id); return !!j && !['done', 'failed', 'cancelled'].includes(j.data.status); };
+          if (!status.run) {
+            const existing = discoveryJobId(status.digest);
+            if (open(existing)) {
+              state = { ...state, discoveryJob: existing }; saveState(state);
+              return block(existing, `waiting for discovery ${existing}`);
+            }
+            done(i, status.why); break;
+          }
           const id = enqueueDiscovery(vault, org);
           if (!id) { done(i, status.why); break; }
           state = { ...state, discoveryJob: id }; saveState(state);
@@ -837,7 +859,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         }
         const sub = readJob(vault, state.discoveryJob);
         if (!sub || !['done', 'failed', 'cancelled'].includes(sub.data.status)) {
-          const w = waitOrGiveUp(state.discoveryJob, (min) => `discovery ${state.discoveryJob} still ${sub?.data.status ?? 'missing'} after ${min} min — planning from what there is`);
+          // Its own flag, never `planPending`: `state.planPending` is never cleared, so borrowing it here would
+          // make this cycle's brief say the team plans had not finished even after every one of them did.
+          const w = waitForDiscovery(state.discoveryJob, (min) => `discovery ${state.discoveryJob} still ${sub?.data.status ?? 'missing'} after ${min} min — planning from what there is`);
           if (w) return w;
           break;
         }
@@ -1258,6 +1282,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const facts = [
           `Elapsed: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}`,
           ...(state.planPending ? ['Planning: PENDING — the team plans have not finished this cycle; the previous plan stands.'] : []),
+          // Its own line for the same reason the estimate one is: a discovery job that ran long delayed the
+          // reading, not the planning, and the plan this cycle wrote was written without it.
+          ...(state.discoveryPending ? ['Discovery: still running — your material was not read in time, so this cycle planned without it; the founder brief will follow.'] : []),
           // Its own line, and never the planning one: an estimate the finance office has not returned delays the
           // board session, not the plan, and a brief that said "Planning: PENDING" about it would be wrong.
           ...(state.estimatesPending ? ['Ideas: an estimate is still pending — the finance office has not priced every new card, so the board read only the ones that were ready.'] : []),

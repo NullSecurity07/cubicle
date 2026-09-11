@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -113,6 +113,31 @@ describe('the discovery step asks before it reads (spec §5.1)', () => {
     } finally { v.close(); }
   });
 
+  it('a kill between the job note and the state write still blocks on the job, not past it', async () => {
+    const v = Vault.open(dir);
+    try {
+      v.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell meal kits to nurseries.', 'owner');
+      const hbId = createHeartbeatJob(v, 'test');
+      await runHeartbeat({ vault: v, llm: recordingLlm(), env: {}, now: () => new Date() }, hbId);
+      const first = listJobs(v).filter((j) => j.type === 'discovery');
+      expect(first).toHaveLength(1);
+
+      // The one-write window: the job note is on disk, but neither `state.discoveryJob` nor `blocked_on` names
+      // it. `currentDiscoveryStatus` now answers `run: false` ("already read this material"), so a step that
+      // trusted it would walk on and plan while discovery is still reading.
+      const stateRel = path.join(dir, '.cubicle/jobs', `${hbId}.heartbeat.json`);
+      const cached = JSON.parse(readFileSync(stateRel, 'utf8'));
+      delete cached.discoveryJob;
+      writeFileSync(stateRel, JSON.stringify(cached, null, 2));
+      updateJob(v, hbId, { status: 'queued', blocked_on: undefined }, 'daemon');
+
+      const again = await runHeartbeat({ vault: v, llm: recordingLlm(), env: {}, now: () => new Date() }, hbId);
+      expect(again).toMatchObject({ status: 'blocked', on: { kind: 'job', id: first[0].id } });
+      expect(listJobs(v).filter((j) => j.type === 'discovery')).toHaveLength(1);
+      expect(listJobs(v).some((j) => j.type === 'company.plan')).toBe(false);
+    } finally { v.close(); }
+  });
+
   it('a cache-less resume re-finds the discovery job from blocked_on instead of queueing a second one', async () => {
     const v = Vault.open(dir);
     try {
@@ -173,6 +198,39 @@ describe('what the owner types next closes the interview (spec §1.4)', () => {
     } finally { v.close(); }
   });
 
+  it('"skip" typed into the cabin is recorded as a skip, not as an answer', async () => {
+    const v = Vault.open(dir);
+    try {
+      await cycle(v, recordingLlm());
+      expect(interviewPhase(v.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
+
+      // What the cabin actually writes: ws.ts sends `title: text.slice(0, 60), body: text`, and createProposal
+      // renders the note as `# <title>\n\n<body>`. The raw body is `# skip\n\nskip`, which `isSkip` does not match.
+      createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'skip', body: 'skip' }, 'owner');
+      expect(listInbox(v).find((n) => n.data.from === 'owner')!.body).toContain('# skip');
+
+      await cycle(v, recordingLlm());
+      expect(interviewPhase(v.readTextOrNull(INTERVIEW_PATH))).toBe('skipped');
+      expect(v.readText(INTERVIEW_PATH)).toContain('## Skipped');
+      // A skip is not material, so the vault is read as it stands rather than the owner being told they answered.
+      expect(listJobs(v).filter((j) => j.type === 'discovery')).toHaveLength(1);
+    } finally { v.close(); }
+  });
+
+  it('"skip" never names the company', async () => {
+    const v = Vault.open(dir);
+    try {
+      await cycle(v, recordingLlm());
+      createProposal(v, { kind: 'message', from: 'owner', to: 'ceo', title: 'skip', body: 'skip' }, 'owner');
+      const llm = recordingLlm('NAME: Skip Co\nTAGLINE: nope');
+      await cycle(v, llm);
+      expect(llm.prompts.some((p) => p.includes('NAME:'))).toBe(false);
+      expect(listInbox(v).some((n) => n.data.kind === 'brand_change')).toBe(false);
+      // It falls to the general reply, which is told the interview closed.
+      expect(llm.prompts.some((p) => p.includes('Discovery/interview.md'))).toBe(true);
+    } finally { v.close(); }
+  });
+
   it('a one-line idea still gets the name-the-company reply', async () => {
     const v = Vault.open(dir);
     try {
@@ -205,10 +263,14 @@ describe('the first cycle reads, then judges, then plans (spec §5.1)', () => {
       expect(disc).toBeTruthy();
       // The whole point of the step: nothing is planned until the owner's material has been read.
       expect(disc.created < plan.created).toBe(true);
-      expect(['done', 'in_review'].includes(disc.status)).toBe(true);
-      // And what discovery leaves behind is the brief the owner rules on, plus a card for the board.
+      // The heartbeat only walks past `discovery` on done/failed/cancelled, and this one succeeded.
+      expect(disc.status).toBe('done');
+      // And what discovery leaves behind is the brief the owner rules on, plus a card for the board. The card's
+      // provenance comes from the job type, not from an argument, so `source: discovery` proves the real path.
       expect(listInbox(v).some((n) => n.data.kind === 'founder_brief' && n.data.target === FOUNDER_BRIEF)).toBe(true);
-      expect(v.list('Ideas', { ext: '.md' }).filter((p) => !p.endsWith('_template.md')).length).toBeGreaterThan(0);
+      const cards = v.list('Ideas', { ext: '.md' }).filter((p) => !p.endsWith('_template.md'));
+      expect(cards.length).toBeGreaterThan(0);
+      expect(v.readNoteOrNull(cards[0])!.data.source).toBe('discovery');
     } finally { v.close(); await d.stop(); }
   }, 120_000);
 });

@@ -119,7 +119,9 @@ describe('heartbeat as a resumable job', () => {
     const plan = listJobs(vault).find((j) => j.type === 'company.plan')!;
     expect(plan).toBeTruthy();
     // owner message answered + name proposed during step 3
-    const msgs = listInbox(vault).filter((n) => n.data.kind === 'message');
+    // `from === 'owner'`: since SP3 the same step also sends the CEO's founder-interview message, which is a
+    // `message` too, so the kind alone no longer picks out the note this test is about.
+    const msgs = listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.from === 'owner');
     expect(msgs[0].data.answered).toBe(true);
     expect(msgs[0].body).toContain('## CEO');
     expect(listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md' && n.body.includes('Bright Ledger'))).toBe(true);
