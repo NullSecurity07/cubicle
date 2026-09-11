@@ -35,6 +35,7 @@ gates:
   qa.review: []
   coo.verify: []
   security.review: []
+  finance.runway: []
 
 criteria:
   engineer.ship: "The change builds and runs; Site/ has no broken links; tests or a smoke check exist; the job's Done when holds."
@@ -63,3 +64,4 @@ criteria:
   qa.review: "Findings cite files or output; the CI record in Workspace/<stream>/.cubicle-ci/ is green and newer than the change; a ship that changed the architecture (a new dependency, a new service, a new data store, a changed boundary) has an ADR in Docs/adr/ — return it if it does not; verdict pass or return."
   security.review: "Say what data, credentials and permissions the change touches, and judge each: secrets never in the diff, input validated at the boundary, authorisation checked on the server, nothing sensitive logged. A finding cites the file and the line. Verdict pass or return."
   coo.verify: "Evidence-based; exactly one lesson."
+  finance.runway: "Five lines at most, each one about a number already in Ledger/runway.md — cash, burn, runway, what a paid tier would have cost, or a division near its model quota. Say what you would do about it. Never restate a figure as if you calculated it, never invent one, and never propose a spend the owner has not been asked for."

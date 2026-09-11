@@ -23,6 +23,9 @@ export const KNOWN_JOB_TYPES = [
   // of judging one idea (board.premortem stays the plan's); finance.estimate prices an idea for its dossier.
   'discovery', 'board.session', 'finance.estimate',
   'qa.review', 'coo.verify', 'security.review',
+  // SP4: the CFO's daily read of the book — one job a calendar day, whose commentary becomes the one
+  // agent-written section of Ledger/runway.md.
+  'finance.runway',
 ] as const;
 
 /**
