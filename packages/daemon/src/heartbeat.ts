@@ -8,6 +8,7 @@ import {
   nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
   FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
   isLongPrompt, isSkip,
+  readLedger, moneyReport, moneyLine, moneyNeedsYou, money, type MoneyReport,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -16,6 +17,7 @@ import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
 import { seedFirstJobs, seedFirstStream } from './first-run.js';
 import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId } from './discovery.js';
+import { writeRunway, accrueModelCost, enqueueRunway, dormancyMessage, revivalMessage } from './money.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -49,8 +51,15 @@ export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { k
  *
  * `discovery` and `ideas_board` sit before `company_plan` because that is the order the company thinks in: read
  * what the owner gave us, judge the best idea that came out of it, then plan against what survived.
+ *
+ * `money` is second, straight after `gather`: nothing should be planned against a company whose position
+ * nobody has read, and a company that has spent what the owner gave it stops right here rather than spending a
+ * cycle's quota deciding what to do about having no money. It is the one insertion this list has ever taken,
+ * and it is safe because a heartbeat checkpointed across the upgrade only re-runs the step it had just
+ * finished: `reconcile_brand`, `answer_owner`, `discovery` and `ideas_board` are each already guarded against
+ * running twice, which the checkpoint design requires of them anyway.
  */
-export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'discovery', 'ideas_board', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit'] as const;
+export const HEARTBEAT_STEPS = ['gather', 'money', 'reconcile_brand', 'answer_owner', 'discovery', 'ideas_board', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit'] as const;
 /** How long a heartbeat waits for company.plan/division.plan before writing the brief with "planning pending" (R33). */
 export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
 
@@ -731,7 +740,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; researchJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; researchJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; money?: { line: string; needsYou: string[]; dormant: boolean }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -885,6 +894,43 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // Persist the gathered facts in the job note so a cache wipe cannot change what later steps see.
         vault.updateNote(`Jobs/${jobId}.md`, (n) => ({ data: n.data, body: setSection(n.body, '## Plan', '```json\n' + JSON.stringify({ since: g.since, gathered_at: g.gathered_at, elapsedHours: Number.isFinite(g.elapsedHours) ? g.elapsedHours : null, ownerEdits: g.ownerEdits, finished: g.finished, mail: g.mail.length, analytics: g.analytics, owner_messages: g.unansweredOwnerMessages.map((m) => m.id) }, null, 2) + '\n```') }), 'ceo', { job: jobId });
         done(i, `elapsed ${Number.isFinite(g.elapsedHours) ? g.elapsedHours.toFixed(1) + 'h' : 'first run'}; ${g.ownerEdits.length} owner edits; ${g.finished.length} jobs finished; ${g.mail.length} mails; ${g.unansweredOwnerMessages.length} owner messages`);
+        break;
+      }
+      // The company's money, before anything is planned against it. Pure arithmetic: not one model call on
+      // either path. Yesterday's paid-model spend is accrued *first*, so the position this cycle reads — and
+      // the dormancy it may declare — includes it.
+      case 'money': {
+        const org = loadOrg(vault);
+        const cfg = deps.router?.config ?? null;
+        const accrued = cfg ? accrueModelCost(vault, cfg, now()) : null;
+        const report: MoneyReport = moneyReport(readLedger(vault), now());
+        state = { ...state, money: { line: moneyLine(report), needsYou: moneyNeedsYou(report), dormant: report.dormant } };
+        saveState(state);
+        // The runway note is a report, never the cycle: a providers file the router could not parse must not
+        // stop the company from working.
+        if (cfg) {
+          try { writeRunway(vault, org, cfg, now()); }
+          catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'money.runway', message: String((err as Error).message ?? err).slice(0, 200) } }); }
+        }
+        if (report.dormant) {
+          const msg = dormancyMessage(vault, org, report, now());
+          done(i, `dormant: ${money(report.cashCents, report.currency)} cash${msg ? `; told the owner (${msg})` : '; the owner has already been told'}`);
+          // Jump to the brief. Every step in between plans, judges or queues work, and a company with no money
+          // does none of those — least of all spend a cycle's model quota writing about having no money.
+          const briefIdx = HEARTBEAT_STEPS.indexOf('brief');
+          updateJob(vault, jobId, { checkpoint_step: briefIdx }, 'ceo', `- steps ${i + 2}–${briefIdx}: skipped — the company is dormant`);
+          job = read().data;
+          i = briefIdx - 1;
+          break;
+        }
+        const revived = revivalMessage(vault, org, report, now());
+        const runway = enqueueRunway(vault, org, now());
+        done(i, [
+          moneyLine(report),
+          revived ? `told the owner we are back (${revived})` : '',
+          accrued ? `accrued ${money(accrued.cents, report.currency)} of model cost` : '',
+          runway ? `queued ${runway}` : 'today\'s runway job is already queued',
+        ].filter(Boolean).join('; '));
         break;
       }
       case 'reconcile_brand': {
@@ -1478,9 +1524,18 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // D8: heartbeat #1 must leave the company with a site, an offer and a channel to work on, whatever the
         // plan turned out to say. Runs after division_plans (every exit path of it, including the give-up one) so a
         // lead's own scheduling wins and only what nobody covered is seeded; later cycles seed nothing.
-        const firstStream = seedFirstStream(vault);
+        // What the brief says about money is derived from the book here, not read back from the cycle's cache:
+        // the state file is a resume aid, and a crash that loses it must not be able to make the brief forget
+        // the money line or seed a stopped company with its first jobs. The `money` step's record is refreshed,
+        // never trusted — the ledger is the only thing that knows.
+        const moneyNow = moneyReport(readLedger(vault), now());
+        const moneyFacts = { line: moneyLine(moneyNow), needsYou: moneyNeedsYou(moneyNow), dormant: moneyNow.dormant };
+        state = { ...state, money: moneyFacts };
+        // D8 seeds heartbeat #1 with a stream and the first jobs — but never for a company that has no money
+        // to do them with. A dormant cycle writes its brief and nothing else.
+        const firstStream = moneyFacts.dormant ? null : seedFirstStream(vault);
         if (firstStream) updateJob(vault, jobId, {}, 'ceo', `- step ${i + 1} ${step}: created the first stream Streams/${firstStream}.md from the owner's idea`);
-        const seeded = seedFirstJobs(vault, loadOrg(vault));
+        const seeded = moneyFacts.dormant ? [] : seedFirstJobs(vault, loadOrg(vault));
         if (seeded.length) updateJob(vault, jobId, {}, 'ceo', `- step ${i + 1} ${step}: seeded ${seeded.length} first job(s)`);
         const runRel = state.runPath ?? `Runs/${stampForFilename(now())}.md`;
         if (!state.runPath) updateJob(vault, jobId, { links: [...job.links, `[[${runRel.replace(/\.md$/, '')}]]`] }, 'ceo');
@@ -1504,6 +1559,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           ...(migrated ? ['- The company was reorganised into teams — review Teams/ and the new charters'] : []),
           ...(modelUse.needsYou ? [modelUse.needsYou] : []),
           ...(mockedServicesRow(mocked) ? [mockedServicesRow(mocked)!] : []),
+          ...moneyFacts.needsYou,
         ];
         const facts = [
           `Elapsed: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}`,
@@ -1524,6 +1580,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           // same brief (Task 6 review, minor 4). This one is for the plan *this* cycle wrote.
           ...(state.verdict === 'pending' && !state.planWaiting ? ['Planning: this cycle\'s plan is waiting for your verdict; work already approved keeps running'] : []),
           ...(state.verdict === 'rejected' ? ['Planning: the plan was rejected; the CEO rewrites it next cycle and no new work was queued'] : []),
+          // One line, every cycle, whether or not anything moved. The owner should never have to open a file to
+          // find out whether the company can still pay for itself.
+          moneyFacts.line,
           modelUse.fact,
           ...(deps.env ? [`Outbound services: ${(['deploy', 'email', 'analytics'] as const).map((s) => `${s} ${mocked.includes(s) ? 'mock' : 'live'}`).join(', ')}`] : []),
           `Owner edits: ${state.ownerEdits?.length ? state.ownerEdits.join(', ') : 'none'}`,
@@ -1533,7 +1592,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           `Needs owner: ${needsYou.length ? needsYou.join(' | ') : 'nothing'}`,
           `Plan: ${(vault.readTextOrNull('Plans/plan.md') ?? '').slice(0, 1500)}`,
         ].join('\n');
-        let drafted = await ask(deps, ceoSystem(vault), `Write the owner's "since you were away" brief from these facts, under 200 words, three sections: ## What happened, ## What's next, ## What needs you. Bullet points only. Do not invent anything not in the facts.\n\n${facts}`, 1200);
+        // A dormant company spends nothing, and that includes the strong-tier call this draft costs. The
+        // template fallback below already says everything a stopped company has to say.
+        let drafted = moneyFacts.dormant ? null : await ask(deps, ceoSystem(vault), `Write the owner's "since you were away" brief from these facts, under 200 words, three sections: ## What happened, ## What's next, ## What needs you. Bullet points only. Do not invent anything not in the facts.\n\n${facts}`, 1200);
         if (drafted && !(/## What happened/.test(drafted) && /## What'?s next/.test(drafted) && /## What needs you/.test(drafted) && drafted.trim().length > 80)) drafted = null; // truncated or malformed → template
         const fallback = `## What happened\n- ${state.finished?.length ? state.finished.map((f) => `${f.title}: ${f.status}`).join('\n- ') : 'Nothing finished since the last heartbeat.'}\n\n## What's next\n- ${queued.length ? queued.map((j) => `${j.assigned}: ${j.title}`).join('\n- ') : 'Waiting on the plan.'}\n\n## What needs you\n${needsYou.length ? needsYou.join('\n') : '- Nothing right now.'}`;
         const org = loadOrg(vault);

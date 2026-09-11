@@ -123,7 +123,15 @@ describe('firstOpenJob (Task 9 review finding 2)', () => {
 
 describe('two-level planning (spec §3)', () => {
   it('steps are company_plan → board_premortem → division_plans; a return reruns the CEO once; leads fan out; brief has next actions per team (acceptance test 10)', async () => {
-    expect(HEARTBEAT_STEPS).toEqual(['gather', 'reconcile_brand', 'answer_owner', 'discovery', 'ideas_board', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit']);
+    // The order this test is about, relative and not positional: `money` was inserted at index 1 and a pinned
+    // array made that a test edit rather than a test.
+    expect(HEARTBEAT_STEPS).toEqual(expect.arrayContaining(['gather', 'reconcile_brand', 'answer_owner', 'discovery', 'ideas_board', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit']));
+    const at = (s: string) => HEARTBEAT_STEPS.indexOf(s as (typeof HEARTBEAT_STEPS)[number]);
+    expect(at('company_plan')).toBeLessThan(at('board_premortem'));
+    expect(at('board_premortem')).toBeLessThan(at('owner_verdict'));
+    expect(at('owner_verdict')).toBeLessThan(at('division_plans'));
+    expect(at('division_plans')).toBeLessThan(at('brief'));
+    expect(at('brief')).toBeLessThan(at('commit'));
     const llm = orgLlm({ vetoes: 1 });
     const d = daemonFor(llm);
     await d.start();

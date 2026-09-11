@@ -81,10 +81,16 @@ describe('the board session record (spec §3.3)', () => {
 
 describe('the cycle gains two steps (spec §5.1)', () => {
   it('puts discovery and the idea board before the plan is written', () => {
-    expect([...HEARTBEAT_STEPS]).toEqual([
+    // The order, not the indices: the list has taken an insertion since (`money` at 1), and pinning positions
+    // makes every later step's number a thing that has to be edited rather than a thing that is checked.
+    expect([...HEARTBEAT_STEPS]).toEqual(expect.arrayContaining([
       'gather', 'reconcile_brand', 'answer_owner', 'discovery', 'ideas_board', 'meeting',
       'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit',
-    ]);
+    ]));
+    const at = (s: string) => HEARTBEAT_STEPS.indexOf(s as (typeof HEARTBEAT_STEPS)[number]);
+    expect(at('gather')).toBeLessThan(at('discovery'));
+    expect(at('discovery')).toBeLessThan(at('ideas_board'));
+    expect(at('ideas_board')).toBeLessThan(at('company_plan'));
   });
 
   it('counts a board.session as bookkeeping and discovery as real work', () => {
