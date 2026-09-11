@@ -129,9 +129,13 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
 
   const constitution = vault.constitution();
   const privacy: 'cloud' | 'local' = constitution.pii_local_only && (job.type === 'growth.outreach' || /Customers\//.test(jobNote.body) || role.tools.some((t) => t.startsWith('email.'))) ? 'local' : job.privacy;
-  const routeReq: RouteRequest = { tier: role.model_tier, needsTools: true, privacy, roleId };
+  // A job may ask for a cheaper tier than its charter (the four intelligence sweeps do): a recurring, bounded
+  // job should not spend the analyst's medium-tier budget every cycle. It may only be read alongside the
+  // charter, never above the privacy rule below, which still forces local routing.
+  const tier = job.model_tier ?? role.model_tier;
+  const routeReq: RouteRequest = { tier, needsTools: true, privacy, roleId };
   const isLeadOrCeo = isLead(org, roleId) || roleId === 'ceo';
-  const maxSteps = privacy === 'local' || role.model_tier === 'local' ? (deps.localMaxSteps ?? DEFAULT_LOCAL_MAX_STEPS) : (deps.maxSteps ?? (isLeadOrCeo ? DEFAULT_MAX_STEPS : DEFAULT_MEMBER_MAX_STEPS));
+  const maxSteps = privacy === 'local' || tier === 'local' ? (deps.localMaxSteps ?? DEFAULT_LOCAL_MAX_STEPS) : (deps.maxSteps ?? (isLeadOrCeo ? DEFAULT_MAX_STEPS : DEFAULT_MEMBER_MAX_STEPS));
   const promptBudget = deps.llm.promptBudget?.(routeReq) ?? 6000;
 
   const memoryApi: MemoryApi | undefined = deps.memory ? { search: (q, k, dirs) => deps.memory!.search(q, k, dirs), indexFile: (rel) => deps.memory!.indexFile(rel).then(() => undefined) } : undefined;
