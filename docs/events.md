@@ -11,7 +11,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `daemon.warning` | where, message — never silent; a question timeout adds id (the unanswered message) and escalated_to; `where: provider_key` carries providers [{id, env}] instead of message (a cascade provider has no API key, so its models are unavailable) |
 | `heartbeat.started` | trigger |
 | `heartbeat.completed` | id, commit, run (Runs/ path), gathered_at |
-| `job.queued` | type, title, assigned, priority |
+| `job.queued` | type, title, assigned, priority, risk |
 | `job.started` | attempt, from_step, resumed |
 | `job.checkpoint` | `in_review` (the next gate job type the job now owes, or absent when it has none left), `summary` |
 | `job.blocked` | reason (approval | message | job | quota), id |
@@ -30,6 +30,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `browser.frame` | session, seq, path (.cubicle/screens/…; bytes travel only on the WS frame op) |
 | `browser.session_ended` | session, frames |
 | `shell.output` | session, stream (cmd|stdout|stderr|info), text |
+| `ci.completed` | stream, green, record (the `Workspace/<stream>/.cubicle-ci/*.json` path), steps [{name, ok, code}] |
 | `email.sent` | to, subject, key, mode (mock|live) |
 | `email.received` | from, subject, id, unsubscribe |
 | `deploy.done` | url, project, mode, key |

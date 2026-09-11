@@ -43,7 +43,7 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
  *  cycle's own planning/gate sub-jobs (company.plan, critic.premortem, team.plan, qa.review, coo.verify,
  *  requester.review) push the count past the threshold and the heartbeat retriggers itself. The re-planning gate
  *  uses the same list for "work still open": a queued coo.verify is bookkeeping, not work from the plan. */
-export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', 'qa.review', 'coo.verify', 'requester.review', 'research.review'];
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', 'qa.review', 'coo.verify', 'requester.review', 'security.review', 'research.review'];
 
 /**
  * The outbound services whose adapters are in mock mode for this env, in the order the brief names them. Asks the

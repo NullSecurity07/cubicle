@@ -47,7 +47,7 @@ export function orgLlm(opts: { vetoes?: number; plan?: string } = {}): Llm & { c
           portfolio: 'incremental',
           impact: 4, uncertainty: 4, cost_of_being_wrong: 4,
         } : undefined;
-        return { ...base, parsedToolCalls: [n === 0 && member ? { name: 'scheduler.request', args: { type: isResearch ? 'research' : 'engineer.ship', title: `Do ${role}`, assigned: member, goal: 'g', done_when: 'd', for: isResearch ? role : undefined, research } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
+        return { ...base, parsedToolCalls: [n === 0 && member ? { name: 'scheduler.request', args: { type: isResearch ? 'research' : 'engineer.ship', title: `Do ${role}`, assigned: member, goal: 'g', done_when: 'd', for: isResearch ? role : undefined, risk: isResearch ? undefined : 'low', research } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
       }
       return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: `${role} done`, verdict: 'pass' } }] };
     },

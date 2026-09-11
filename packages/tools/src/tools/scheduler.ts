@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, missingRequestFields, incompleteRequestText, ResearchRequest, priorityScore, jobPriorityFor, type Org } from '@cubicle/core';
+import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, ENGINEERING_JOB_TYPES, RISK_GUIDANCE, RISK_LEVELS, missingRequestFields, incompleteRequestText, ResearchRequest, priorityScore, jobPriorityFor, type Org } from '@cubicle/core';
 
-const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'], 'research.review': ['ceo', 'coo'] };
+const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'], 'security.review': ['ceo', 'cto', 'ciso'], 'research.review': ['ceo', 'coo'] };
 
 /**
  * A refusal the model can act on. The old one-liner ("leads schedule their own team…") left a lead whose team has no
@@ -35,9 +35,18 @@ export function unknownRoleText(org: Org, id: string, what = 'unknown or inactiv
 const OPEN_STATUSES = ['queued', 'running', 'blocked', 'in_review'] as const;
 const normTitle = (t: string) => t.trim().toLowerCase().replace(/\s+/g, ' ');
 
+/**
+ * The refusal a model gets when it schedules product work without saying how risky it is (owner's operating
+ * model §27). Naming the three levels with their examples is the whole point: a bare "risk is required" sent
+ * models round the loop guessing at the field's shape.
+ */
+export function missingRiskText(type: string): string {
+  return `${type} jobs must state a risk class. Set risk to one of: ${RISK_LEVELS.map((l) => `${l} (${RISK_GUIDANCE[l]})`).join('; ')}. Pick the highest level any part of the change touches.`;
+}
+
 export const schedulerRequest = defineTool({
   name: 'scheduler.request',
-  description: `Enqueue a job for a role. Leads schedule their own team's members, members hand off to a teammate, the CEO anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). A type: research job must carry the full \`research\` request (decision, decision owner, question, hypothesis or exploration, known evidence, unknowns, deadline, required confidence, potential decisions, portfolio, impact, uncertainty, cost of being wrong) — its priority comes from impact × uncertainty × cost of being wrong, not from \`priority\`. CEO/CTO may also set priority on existing jobs via reprioritize.`,
+  description: `Enqueue a job for a role. Leads schedule their own team's members, members hand off to a teammate, the CEO anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). A type: research job must carry the full \`research\` request (decision, decision owner, question, hypothesis or exploration, known evidence, unknowns, deadline, required confidence, potential decisions, portfolio, impact, uncertainty, cost of being wrong) — its priority comes from impact × uncertainty × cost of being wrong, not from \`priority\`. CEO/CTO may also set priority on existing jobs via reprioritize. Engineering types (${ENGINEERING_JOB_TYPES.join(', ')}) must also state risk: low (text, UI, minor fixes), medium (data, backend, new integrations), high (auth, money, destructive migrations, infrastructure).`,
   schema: {
     type: z.string().default('custom'),
     title: z.string(),
@@ -49,6 +58,8 @@ export const schedulerRequest = defineTool({
     reprioritize: z.object({ job: z.string(), priority: z.number().int().min(1).max(5) }).optional(),
     for: z.string().optional().describe('research: the lead the report is for'),
     done_when: z.string().optional().describe('one testable sentence; required for leads'),
+    risk: z.enum(RISK_LEVELS).optional().describe(`how risky the change is — ${RISK_LEVELS.map((l) => `${l}: ${RISK_GUIDANCE[l]}`).join(' | ')}`),
+    stream: z.string().optional().describe('the Streams/<slug> this job serves'),
     research: z.object({
       decision: z.string().optional(),
       decision_owner: z.string().optional().describe('role id; defaults to `for`'),
@@ -103,6 +114,7 @@ export const schedulerRequest = defineTool({
     if (allowed && !allowed.includes(ctx.roleId)) return { ok: false, text: `job type ${type} is reserved for the daemon${allowed.length ? ` / ${allowed.join(', ')}` : ''}` };
     const lead = ctx.roleId === 'ceo' || isLead(org, ctx.roleId);
     if (lead && !args.done_when?.trim()) return { ok: false, text: 'leads must give done_when: one sentence a stranger could check' };
+    if ((ENGINEERING_JOB_TYPES as readonly string[]).includes(type) && !args.risk) return { ok: false, text: missingRiskText(type) };
     const owner_role = lead ? ctx.roleId : (leadOf(org, ctx.roleId) ?? ctx.roleId);
     const team = teamOf(org, args.assigned)?.id;
     const wantedId = ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey) : undefined;
@@ -117,7 +129,7 @@ export const schedulerRequest = defineTool({
     // §29: a research job's place in the queue is its score, not whatever number the requester typed. The
     // project slug is left unset here — `research.start` derives it from the real job id and stores it.
     const priority = request ? jobPriorityFor(priorityScore(request)) : args.priority;
-    const id = ctx.scheduler.enqueue({ id: wantedId, type, title: args.title, assigned: args.assigned, goal: args.goal, priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: forRole, done_when: args.done_when, research: request });
+    const id = ctx.scheduler.enqueue({ id: wantedId, type, title: args.title, assigned: args.assigned, goal: args.goal, priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: forRole, done_when: args.done_when, risk: args.risk, stream: args.stream, research: request });
     return { ok: true, text: `queued ${id} for ${args.assigned}: ${args.title}${request ? ` (priority ${priority} from a score of ${priorityScore(request)})` : ''}`, data: { id } };
   },
 });

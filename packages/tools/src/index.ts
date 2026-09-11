@@ -9,9 +9,11 @@ export * from './tools/skills.js';
 export * from './tools/finish.js';
 export * from './tools/mock.js';
 export * from './tools/shell.js';
+export * from './tools/ci.js';
 export * from './tools/browser.js';
 export * from './tools/git.js';
 export * from './tools/meeting.js';
+export * from './tools/adr.js';
 export * from './proxy.js';
 export * from './guardrails.js';
 export * from './prune.js';
@@ -34,15 +36,17 @@ import { skillsTools } from './tools/skills.js';
 import { finish } from './tools/finish.js';
 import { mockOutbound } from './tools/mock.js';
 import { shellRun } from './tools/shell.js';
+import { ciRun } from './tools/ci.js';
 import { browserTools } from './tools/browser.js';
 import { gitTools } from './tools/git.js';
 import { meetingOpen } from './tools/meeting.js';
+import { adrCreate } from './tools/adr.js';
 import { phase6Tools as _p6 } from './tools/outbound.js';
 import { researchStart, sourcesCite } from './tools/research.js';
 
-/** Phase 5 additions: sandbox shell, browser with screencast, git, meetings. */
+/** Phase 5 additions: sandbox shell, stream CI, browser with screencast, git, meetings. */
 export function phase5Tools(): AnyTool[] {
-  return [shellRun, ...browserTools, ...gitTools, meetingOpen];
+  return [shellRun, ciRun, ...browserTools, ...gitTools, meetingOpen];
 }
 
 /** Phase 6 additions: outbound adapters (mock unless keys are present). */
@@ -52,7 +56,7 @@ export function phase6Tools(): AnyTool[] {
 
 /** Phase 3 tool set (org guards apply to scheduler/proposal/meeting/colleague; Phases 5–6 append shell/browser/git/email/deploy/stripe/analytics/social). */
 export function phase3Tools(opts: { includeMock?: boolean } = {}): AnyTool[] {
-  const t: AnyTool[] = [...vaultTools, httpFetch, colleagueMessage, proposalCreate, schedulerRequest, ...skillsTools, finish, meetingOpen, researchStart, sourcesCite];
+  const t: AnyTool[] = [...vaultTools, httpFetch, colleagueMessage, proposalCreate, schedulerRequest, ...skillsTools, finish, meetingOpen, adrCreate, researchStart, sourcesCite];
   if (opts.includeMock) t.push(mockOutbound);
   return t;
 }

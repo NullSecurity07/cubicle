@@ -15,7 +15,7 @@ const call = (tool: string, roleId: string, args: Record<string, unknown>) => re
 
 describe('scheduler.request through the org (spec §2)', () => {
   it('a lead schedules a member with done_when and the job carries team and owner_role', async () => {
-    const r = await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Build', assigned: 'backend_engineer', goal: 'g', done_when: 'it builds' });
+    const r = await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Build', assigned: 'backend_engineer', goal: 'g', done_when: 'it builds', risk: 'low' });
     expect(r.ok).toBe(true);
     const j = readJob(vault, (r.data as { id: string }).id)!.data;
     expect(j).toMatchObject({ team: 'dev', owner_role: 'dev_manager', done_when: 'it builds' });
@@ -147,25 +147,25 @@ describe('live-run failures: team ids, duplicate titles, finish aliases', () => 
     expect(u.text).toMatch(/unknown role: nobody.*active roles: .*cto/);
   });
   it('a second open job with the same assignee and (normalised) title is refused; closed jobs and system types are not', async () => {
-    const first = await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'backend_engineer', goal: 'g', done_when: 'x' });
+    const first = await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'backend_engineer', goal: 'g', done_when: 'x', risk: 'low' });
     expect(first.ok).toBe(true);
     const id = (first.data as { id: string }).id;
-    const dup = await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: '  define target   SEGMENTS ', assigned: 'backend_engineer', goal: 'other', done_when: 'x' });
+    const dup = await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: '  define target   SEGMENTS ', assigned: 'backend_engineer', goal: 'other', done_when: 'x', risk: 'low' });
     expect(dup.ok).toBe(false);
     expect(dup.text).toBe(`a job with this title is already open for backend_engineer: ${id} (queued). Wait for it, or give the new job a different title if it really is different work`);
     // same title for someone else, or a different title, is fine
-    expect((await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'frontend_engineer', goal: 'g', done_when: 'x' })).ok).toBe(true);
-    expect((await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments v2', assigned: 'backend_engineer', goal: 'g', done_when: 'x' })).ok).toBe(true);
+    expect((await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'frontend_engineer', goal: 'g', done_when: 'x', risk: 'low' })).ok).toBe(true);
+    expect((await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments v2', assigned: 'backend_engineer', goal: 'g', done_when: 'x', risk: 'low' })).ok).toBe(true);
     // once the first is closed the title is free again
     updateJob(vault, id, { status: 'done' }, 'dev_manager');
-    expect((await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'backend_engineer', goal: 'g', done_when: 'x' })).ok).toBe(true);
+    expect((await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'backend_engineer', goal: 'g', done_when: 'x', risk: 'low' })).ok).toBe(true);
     // daemon system types are exempt (the daemon schedules e.g. team.plan every cycle)
     expect((await call('scheduler.request', 'ceo', { type: 'team.plan', title: 'Plan Revenue', assigned: 'cfo', goal: 'g', done_when: 'x' })).ok).toBe(true);
     expect((await call('scheduler.request', 'ceo', { type: 'team.plan', title: 'Plan Revenue', assigned: 'cfo', goal: 'g', done_when: 'x' })).ok).toBe(true);
   });
   it('a replayed step (same idempotency key) returns the job it already queued instead of a duplicate refusal', async () => {
     const c = { ...ctx('dev_manager'), idempotencyKey: 'job_t:1:1' };
-    const args = { type: 'engineer.ship', title: 'Replayed', assigned: 'backend_engineer', goal: 'g', done_when: 'x' };
+    const args = { type: 'engineer.ship', title: 'Replayed', assigned: 'backend_engineer', goal: 'g', done_when: 'x', risk: 'low' };
     const a = await reg.get('scheduler.request')!.handler(args as never, c);
     const b = await reg.get('scheduler.request')!.handler(args as never, c);
     expect(a.ok).toBe(true); expect(b.ok).toBe(true);
