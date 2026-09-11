@@ -8,7 +8,7 @@ import type { Llm } from '@cubicle/harness';
 
 export const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n\n### revenue\n- Find the first organic channel\n';
 
-export function orgLlm(opts: { vetoes?: number; plan?: string } = {}): Llm & { calls: Record<string, number> } {
+export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boolean } = {}): Llm & { calls: Record<string, number> } {
   let vetoes = opts.vetoes ?? 1;
   const plan = opts.plan ?? PLAN;
   const per = new Map<string, number>();
@@ -19,6 +19,9 @@ export function orgLlm(opts: { vetoes?: number; plan?: string } = {}): Llm & { c
       const base = { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 5, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
       if (!chat.tools) {
         const last = String(chat.messages.at(-1)?.content ?? '');
+        // `boardSilent` simulates "no model was available" for every board call (advisors and chair alike),
+        // the same way askAs's catch does when deps.llm.chat throws — used to test the zero-advisors-answered path.
+        if (opts.boardSilent && (/VERDICT: pass/.test(last) || /Imagine the cycle has already failed/.test(last))) throw new Error('no model available');
         // The board chair's merge prompt names the exact verdict line; the advisors' prompt does not.
         if (/VERDICT: pass/.test(last)) { const v = vetoes-- > 0; return { ...base, content: v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier' }; }
         if (/Imagine the cycle has already failed/.test(last)) return { ...base, content: '- the plan names no metric — add one\n- nobody owns the deploy — name them' };

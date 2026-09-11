@@ -2,7 +2,7 @@ import {
   type Vault, type JobFrontmatter, type InboxFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, findInboxById, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
   loadOrg, expandProcess, childrenOf, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
-  officeHolder, roleWithTool, teamOf, researchLead, listStreams, type Org,
+  officeHolder, roleWithTool, teamOf, researchLead, listStreams, type Org, type ModelTier,
   budgetLines, GATE_JOB_TYPES,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
@@ -265,28 +265,46 @@ export function mergeBoardVerdict(text: string): { verdict: 'pass' | 'return'; f
  * The board room, in at most four model calls (spec §2/§4): each advisor reads the plan in its own voice, the
  * board lead merges the three into one verdict. No sub-jobs, because three advisor jobs plus their gates cost a
  * whole cycle's quota on the free tier and the board must answer inside this heartbeat.
+ *
+ * Each advisor speaks at its own charter's `model_tier` — the charter is a ceiling on cost, never a floor, so an
+ * advisor_investor/advisor_customer charter set to `medium` must not be silently upgraded to `strong`. A missing
+ * tier falls back to the board lead's, then to `medium`. `answered` is how many of the (deduplicated) advisors
+ * actually got a model response, so a caller can tell "the board passed" from "no model was available at all".
  */
-export async function runBoardSession(deps: HeartbeatDeps, org: Org, plan: string): Promise<{ verdict: 'pass' | 'return'; findings: string[]; advisors: string[]; transcript: string }> {
+export async function runBoardSession(deps: HeartbeatDeps, org: Org, plan: string): Promise<{ verdict: 'pass' | 'return'; findings: string[]; advisors: string[]; transcript: string; answered: number }> {
   const vault = deps.vault;
   const board = org.teams.board;
-  const advisors = [board.lead, ...board.members].filter((r) => org.roles[r]).slice(0, 3);
+  const advisors = [...new Set([board.lead, ...board.members])].filter((r) => org.roles[r]).slice(0, 3);
+  const leadTier = org.roles[board.lead]?.model_tier ?? 'medium';
+  const tierFor = (roleId: string): ModelTier => org.roles[roleId]?.model_tier ?? leadTier;
   const notes: string[] = [];
+  let answered = 0;
   for (const a of advisors) {
-    const text = await askAs(deps, a, advisorSystem(vault, a), `This cycle's plan:\n\n${plan.slice(0, 4000)}\n\nImagine the cycle has already failed. Write at most three bullets: the failure mode you see and the one change that would prevent it. One line each, concrete, no preamble.`, 500);
+    const text = await askAs(deps, a, advisorSystem(vault, a), `This cycle's plan:\n\n${plan.slice(0, 4000)}\n\nImagine the cycle has already failed. Write at most three bullets: the failure mode you see and the one change that would prevent it. One line each, concrete, no preamble.`, 500, tierFor(a));
+    if (text) answered++;
     notes.push(`### ${advisorName(vault, a)}\n${text ?? '(no answer: no model was available)'}`);
   }
   const transcript = notes.join('\n\n');
-  const merged = await askAs(deps, board.lead, advisorSystem(vault, board.lead), `You chair the board. Your advisors wrote:\n\n${transcript}\n\nMerge them into ONE verdict for the owner. First line exactly "VERDICT: pass" or "VERDICT: return". Then at most four bullets, each a failure mode this plan does not answer and the change that fixes it. Return the plan only if running it as written would waste the cycle; you cannot delay.`, 600);
-  return { ...mergeBoardVerdict(merged ?? ''), advisors, transcript };
+  const merged = await askAs(deps, board.lead, advisorSystem(vault, board.lead), `You chair the board. Your advisors wrote:\n\n${transcript}\n\nMerge them into ONE verdict for the owner. First line exactly "VERDICT: pass" or "VERDICT: return". Then at most four bullets, each a failure mode this plan does not answer and the change that fixes it. Return the plan only if running it as written would waste the cycle; you cannot delay.`, 600, leadTier);
+  return { ...mergeBoardVerdict(merged ?? ''), advisors, transcript, answered };
 }
+
+/** The board note's own words for "no advisor answered" — shared by the decision note and the daemon warning. */
+export const BOARD_UNREVIEWED_NOTE = 'No advisor answered (no model was available); the plan passed unreviewed.';
 
 /**
  * The board's pre-mortem as a `Decisions/premortem-<heartbeat id>.md` note: `adopted` when the plan survived,
  * `proposed` when the board returned it (the plan it judged is not the plan that will run). The findings are the
  * failure modes the board foresaw, which is what makes the note worth reading a cycle later.
+ *
+ * `answered` (default 1, so existing callers keep today's text) is how many advisors actually got a model
+ * response (see `runBoardSession`). When it is zero and the verdict still passed — the only way a session with
+ * no model at all can resolve, since `mergeBoardVerdict` fails open — the note must not read as a clean bill of
+ * health: nobody reviewed anything.
  */
-export function writeBoardPremortemDecision(vault: Vault, hbId: string, boardJobId: string, verdict: 'pass' | 'return', findings: string[], decidedBy: string, now: Date): string {
-  const risks = findings.length ? findings.map((f) => `- ${f}`).join('\n') : '- The board found nothing in this plan likely to sink the cycle.';
+export function writeBoardPremortemDecision(vault: Vault, hbId: string, boardJobId: string, verdict: 'pass' | 'return', findings: string[], decidedBy: string, now: Date, answered = 1): string {
+  const unreviewed = verdict === 'pass' && answered === 0;
+  const risks = unreviewed ? `- ${BOARD_UNREVIEWED_NOTE}` : findings.length ? findings.map((f) => `- ${f}`).join('\n') : '- The board found nothing in this plan likely to sink the cycle.';
   const review = new Date(now.getTime() + 7 * 24 * 3600_000).toISOString().slice(0, 10);
   return writeDecision(vault, `premortem-${hbId}`, {
     decided_by: decidedBy, cycle: hbId, status: verdict === 'pass' ? 'adopted' : 'proposed', inputs: ['[[Plans/plan]]'],
@@ -294,7 +312,7 @@ export function writeBoardPremortemDecision(vault: Vault, hbId: string, boardJob
     context: `Pre-mortem for heartbeat ${hbId}: the board read this cycle's \`Plans/plan.md\` and imagined the cycle had already failed. The advisors' own words are in [[${boardJobId}]].`,
     options: '- Run the plan as the CEO wrote it\n- Return it to the CEO to rewrite before the owner rules on it',
     chosen: verdict === 'pass' ? 'Run the plan as written.' : 'Return the plan to the CEO for one rewrite.',
-    why: verdict === 'pass' ? 'The plan survived the pre-mortem.' : 'The board found failure modes the plan does not answer.',
+    why: verdict === 'pass' ? (unreviewed ? BOARD_UNREVIEWED_NOTE : 'The plan survived the pre-mortem.') : 'The board found failure modes the plan does not answer.',
     expected_effect: `Most likely ways this cycle fails, and what would prevent each:\n\n${risks}`,
     review_date: review,
   }, decidedBy);
@@ -340,10 +358,14 @@ function gather(vault: Vault, now: Date, mail: string[], analytics: string | nul
   return { since, gathered_at: now.toISOString(), elapsedHours, ownerEdits, finished, mail, analytics, unansweredOwnerMessages };
 }
 
-/** One tool-less completion spoken by `roleId`. Returns null on any failure: no step blocks on a model. */
-async function askAs(deps: HeartbeatDeps, roleId: string, system: string, user: string, maxTokens = 800): Promise<string | null> {
+/**
+ * One tool-less completion spoken by `roleId`. Returns null on any failure: no step blocks on a model. `tier`
+ * defaults to `strong` for the CEO's own asks (via `ask`, below); board advisors pass their own charter's tier
+ * so a `medium`-tier charter is never silently upgraded (the charter is a cost ceiling, not a floor).
+ */
+async function askAs(deps: HeartbeatDeps, roleId: string, system: string, user: string, maxTokens = 800, tier: ModelTier = 'strong'): Promise<string | null> {
   try {
-    const r = await deps.llm.chat({ tier: 'strong', needsTools: false, roleId }, { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], maxTokens });
+    const r = await deps.llm.chat({ tier, needsTools: false, roleId }, { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], maxTokens });
     return r.content.trim() || null;
   } catch {
     return null;
@@ -616,11 +638,17 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           body: setSection(setSection(n.body, '## Advisors', session.transcript), '## Result', '```json\n' + JSON.stringify({ status: 'done', summary: `board ${session.verdict}`, verdict: session.verdict, findings: session.findings }, null, 2) + '\n```'),
         }), board.lead, { job: boardJob });
         vault.events.emit({ type: 'job.done', agent: board.lead, job: boardJob, payload: { type: 'board.premortem', summary: `board ${session.verdict}`, verdict: session.verdict } });
+        // Not one advisor answered — every model call in the session failed — is not the same thing as "the
+        // board reviewed this and found nothing"; the owner needs to see that difference, not a clean bill of
+        // health. The board still doesn't stall the cycle (it advises, the owner rules), so this stays a warning.
+        if (session.answered === 0) {
+          vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'board_premortem', reason: BOARD_UNREVIEWED_NOTE } });
+        }
         // A pre-mortem is a decision the company should be able to look back on (spec §4.1), so the heartbeat
         // writes it as a validated Decisions/ note rather than trusting the board to hand-roll the frontmatter
         // and the six sections. Written BEFORE the verdict becomes durable in the state file: a crash in the
         // other order resumes into the "already run" branch above and the cycle loses its pre-mortem for good.
-        try { writeBoardPremortemDecision(vault, hbId, boardJob, session.verdict, session.findings, board.lead, now()); }
+        try { writeBoardPremortemDecision(vault, hbId, boardJob, session.verdict, session.findings, board.lead, now(), session.answered); }
         catch (err) { vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'board_premortem', message: `could not write the pre-mortem decision note: ${(err as Error).message}` } }); }
         state = { ...state, boardJob, boardVerdict: session.verdict, boardFindings: session.findings }; saveState(state);
         if (session.verdict === 'return') {
