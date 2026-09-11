@@ -101,7 +101,12 @@ export function gateAssignee(
   if (head.startsWith('office:')) {
     const office = head.slice('office:'.length);
     if (org && (OFFICES as readonly string[]).includes(office)) return officeHolder(org, office as Office);
-    return lookup(office) ?? DEFAULT_OFFICES[office as Office] ?? ceo;
+    // An office head the OFFICES enum does not know falls back to a raw team lookup, which (unlike the room
+    // path below) named no active-role check — a departed lead named in `org.teams[office].lead` would still
+    // get the gate. Guard it the same way `roomLead` does, when an org is actually available to check against.
+    const lead = lookup(office);
+    if (lead && (!org || org.roles[lead])) return lead;
+    return DEFAULT_OFFICES[office as Office] ?? ceo;
   }
   if (head.startsWith('team:')) return roomLead(head.slice('team:'.length), org, lookup, ceo) ?? ceo;
   // Pre-office name: a team id if the org knows one, else the literal role the owner wrote — except

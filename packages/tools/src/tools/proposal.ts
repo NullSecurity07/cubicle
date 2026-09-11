@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { createProposal, ProposalKind, idFromKey, loadOrg, can } from '@cubicle/core';
+import { createProposal, ProposalKind, idFromKey, loadOrg, can, officeHolder } from '@cubicle/core';
 
 export const proposalCreate = defineTool({
   name: 'proposal.create',
@@ -16,7 +16,8 @@ export const proposalCreate = defineTool({
     const org = loadOrg(ctx.vault);
     if ((kind === 'hire' || kind === 'fire') && !can(org, ctx.roleId, kind)) return { ok: false, text: `${ctx.roleId} may not file ${kind} proposals` };
     if (kind === 'reorg') {
-      if (ctx.roleId !== 'ceo') return { ok: false, text: 'reorg proposals are filed by the CEO' };
+      const ceo = officeHolder(org, 'chief_executive');
+      if (ctx.roleId !== ceo) return { ok: false, text: `reorg proposals are filed by the chief executive (${ceo})` };
       if (!/```ya?ml\s*\n[\s\S]*?\bteams:\s*\n[\s\S]*?```/.test(body)) return { ok: false, text: 'a reorg proposal must contain a ```yaml fence with a teams: map ({ <team>: { lead, members } })' };
     }
     if (kind === 'hire') {

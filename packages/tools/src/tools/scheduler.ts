@@ -38,7 +38,7 @@ export function cannotScheduleText(org: Org, roleId: string, assigned: string): 
   const self = assigned === roleId ? ' Nobody schedules themselves: do the work in this job.' : '';
   const research = researchLead(org) ?? 'research_manager';   // the research team's lead, not the v1 analyst id
   const fallback = `Otherwise do the work in this job yourself, request research (type: research, assigned: ${research}), or tell your lead (the ceo, for a lead) with colleague.message.`;
-  if (allowed.length) return `${roleId} may not schedule ${assigned}.${self} You may schedule: ${allowed.join(', ')} (leads schedule their own team's members, members hand off to a teammate, the CEO anyone). ${fallback}`;
+  if (allowed.length) return `${roleId} may not schedule ${assigned}.${self} You may schedule: ${allowed.join(', ')} (leads schedule anyone in their subtree, members hand off to a teammate, the CEO anyone). ${fallback}`;
   const team = isLead(org, roleId) ? teamOf(org, roleId) : null;
   const why = team ? `${roleId} leads ${team.id}, and ${team.id} has no members, so there is nobody to schedule.` : `${roleId} may not schedule ${assigned}, and has no teammate to hand off to.`;
   return `${why}${self} Do the work in this job yourself, request research (type: research, assigned: ${research}), or ask the ceo with colleague.message.`;
@@ -70,7 +70,7 @@ export function missingRiskText(type: string): string {
 
 export const schedulerRequest = defineTool({
   name: 'scheduler.request',
-  description: `Enqueue a job for a role. Leads schedule their own team's members, members hand off to a teammate, the CEO anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). A type: research job must carry the full \`research\` request (decision, decision owner, question, hypothesis or exploration, known evidence, unknowns, deadline, required confidence, potential decisions, portfolio, impact, uncertainty, cost of being wrong) — its priority comes from impact × uncertainty × cost of being wrong, not from \`priority\`. CEO/CTO may also set priority on existing jobs via reprioritize. Engineering types (${ENGINEERING_JOB_TYPES.join(', ')}) must also state risk: low (text, UI, minor fixes), medium (data, backend, new integrations), high (auth, money, destructive migrations, infrastructure).`,
+  description: `Enqueue a job for a role. Leads schedule anyone in their subtree, members hand off to a teammate, the CEO anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). A type: research job must carry the full \`research\` request (decision, decision owner, question, hypothesis or exploration, known evidence, unknowns, deadline, required confidence, potential decisions, portfolio, impact, uncertainty, cost of being wrong) — its priority comes from impact × uncertainty × cost of being wrong, not from \`priority\`. CEO/CTO may also set priority on existing jobs via reprioritize. Engineering types (${ENGINEERING_JOB_TYPES.join(', ')}) must also state risk: low (text, UI, minor fixes), medium (data, backend, new integrations), high (auth, money, destructive migrations, infrastructure).`,
   schema: {
     type: z.string().default('custom'),
     title: z.string(),
@@ -118,7 +118,7 @@ export const schedulerRequest = defineTool({
     let forRole: string | undefined;
     let request: ResearchRequest | undefined;
     if (isResearch) {
-      const lead = researchLead(org) ?? 'research_analyst';
+      const lead = researchLead(org) ?? officeHolder(org, 'research');
       if (args.assigned !== lead) return { ok: false, text: `research jobs are done by ${lead} (set assigned: ${lead} and for: <your role>)` };
       if (!can(org, ctx.roleId, 'research_request')) return { ok: false, text: `${ctx.roleId} may not request research; ask your lead` };
       forRole = args.for ?? ctx.roleId;
@@ -143,7 +143,8 @@ export const schedulerRequest = defineTool({
     }
     const allowed = systemTypes(org)[type];
     if (allowed && !allowed.includes(ctx.roleId)) return { ok: false, text: `job type ${type} is reserved for the daemon${allowed.length ? ` / ${allowed.join(', ')}` : ''}` };
-    const lead = ctx.roleId === 'ceo' || isLead(org, ctx.roleId);
+    const ceo = officeHolder(org, 'chief_executive');
+    const lead = ctx.roleId === ceo || isLead(org, ctx.roleId);
     if (lead && !args.done_when?.trim()) return { ok: false, text: 'leads must give done_when: one sentence a stranger could check' };
     if ((ENGINEERING_JOB_TYPES as readonly string[]).includes(type) && !args.risk) return { ok: false, text: missingRiskText(type) };
     const owner_role = lead ? ctx.roleId : (leadOf(org, ctx.roleId) ?? ctx.roleId);

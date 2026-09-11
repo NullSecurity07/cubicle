@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
 import { unknownRoleText } from './scheduler.js';
-import { nowIso, makeId, idFromKey, isValidRoleId, parseNote, RoleFrontmatter, loadOrg, can, teamOf, createJob } from '@cubicle/core';
+import { nowIso, makeId, idFromKey, isValidRoleId, parseNote, RoleFrontmatter, loadOrg, can, teamOf, createJob, officeHolder } from '@cubicle/core';
 
 export const MessageKind = z.enum(['fyi', 'question', 'handoff', 'meeting_request']);
 
@@ -48,7 +48,8 @@ export const colleagueMessage = defineTool({
       return { ok: true, text: `question sent to ${to} (${id}); job ${answerJob} queued for them; this job is now blocked until they answer`, data: { id, jobId: answerJob }, block: { kind: 'message', id } };
     }
     if (kind === 'meeting_request') {
-      ctx.scheduler.enqueue({ id: ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey + ':m') : undefined, type: 'custom', title: `Meeting requested by ${ctx.roleId}`, assigned: 'ceo', goal: `${ctx.roleId} requests a meeting with ${to}:\n\n${body}\n\nDecide whether to call meeting.open.`, priority: 2 });
+      const ceo = officeHolder(loadOrg(ctx.vault), 'chief_executive');
+      ctx.scheduler.enqueue({ id: ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey + ':m') : undefined, type: 'custom', title: `Meeting requested by ${ctx.roleId}`, assigned: ceo, goal: `${ctx.roleId} requests a meeting with ${to}:\n\n${body}\n\nDecide whether to call meeting.open.`, priority: 2 });
     }
     return { ok: true, text: `message sent to ${to} (${id})`, data: { id } };
   },

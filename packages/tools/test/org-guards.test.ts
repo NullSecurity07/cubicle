@@ -2,8 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, updateJob, RoleFrontmatter, listInbox, listJobs } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, type ToolContext } from '../src/index.js';
+import { scaffoldVault, Vault, createJob, readJob, updateJob, RoleFrontmatter, listInbox, listJobs, loadOrg, GATE_JOB_TYPES } from '@cubicle/core';
+import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, systemTypes, type ToolContext } from '../src/index.js';
+// Relative, not a package dependency: @cubicle/daemon already depends on @cubicle/tools, so declaring the reverse
+// in package.json would make `pnpm -r build` a cycle. This reaches into its source only to check the invariant below.
+import { NON_WORK_TYPES } from '../../daemon/src/heartbeat.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 let dir: string; let vault: Vault; let reg: ToolRegistry;
@@ -125,6 +128,28 @@ describe('proposal.create, meeting.open, colleague.message, finish', () => {
     expect((await call('colleague.message', 'backend_engineer', { to: 'frontend_engineer', kind: 'handoff', body: 'take this' })).ok).toBe(true);
     const f = await call('finish', 'qa_lead', { status: 'done', summary: 's', verdict: 'return', findings: ['no tests'] });
     expect((f.data as { verdict: string; findings: string[] })).toMatchObject({ verdict: 'return', findings: ['no tests'] });
+  });
+});
+
+describe('tools and harness stop naming people (spec org engine)', () => {
+  it('the reorg refusal names the chief-executive office, not a hard-coded CEO', async () => {
+    const r = await call('proposal.create', 'cto', { kind: 'reorg', title: 'Move devops', body: '```yaml\nteams:\n  dev:\n    lead: dev_manager\n```' });
+    expect(r.ok).toBe(false);
+    expect(r.text).toBe('reorg proposals are filed by the chief executive (ceo)');
+  });
+
+  it('a division lead may schedule into the rooms under it, and a room member still may not cross rooms', async () => {
+    expect((await call('scheduler.request', 'cto', { title: 'Ship the first cut', assigned: 'backend_engineer', goal: 'g', done_when: 'the page is live' })).ok).toBe(true);
+    expect((await call('scheduler.request', 'cto', { title: 'Write the launch post', assigned: 'cmo', goal: 'g', done_when: 'x' })).ok).toBe(false);
+    const r = await call('scheduler.request', 'backend_engineer', { title: 'Test it', assigned: 'qa_automation', goal: 'g' });
+    expect(r.ok).toBe(false);
+    expect(r.text).toContain('You may schedule:');
+  });
+
+  it('every gate job type and every heartbeat non-work type is reserved in systemTypes, per the comment on it', () => {
+    const org = loadOrg(vault);
+    const reserved = systemTypes(org);
+    for (const type of [...GATE_JOB_TYPES, ...NON_WORK_TYPES]) expect(reserved, type).toHaveProperty(type);
   });
 });
 
