@@ -79,6 +79,29 @@ describe('migrateOrg constitution patch (never_modify append branch) (T5)', () =
   });
 });
 
+describe('migrateOrg constitution patch (offices, v2)', () => {
+  it('a constitution with no offices block gets one, plus the board switch, and is left alone on a second run', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'cubicle-offices-mig-'));
+    try {
+      const { vault } = await scaffoldVault(dir);
+      const stripped = vault.readText('Memory/constitution.md')
+        .replace(/^offices:\n(?:  \w+: \w+\n)+/m, '')
+        .replace(/^board_decides_after_hours:.*\n/m, '');
+      vault.writeText('Memory/constitution.md', stripped, 'owner');
+      migrateOrg(vault, templateDir());
+      const text = vault.readText('Memory/constitution.md');
+      expect(text).toMatch(/^offices:$/m);
+      expect(text).toMatch(/^  engineering: cto$/m);
+      expect(text).toMatch(/^board_decides_after_hours: 0$/m);
+      expect(loadOrg(vault).offices?.security).toBe('ciso');
+      const before = vault.readText('Memory/constitution.md');
+      migrateOrg(vault, templateDir());
+      expect(vault.readText('Memory/constitution.md')).toBe(before);
+      vault.close();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
 describe('migrateOrg warns about a teamless custom-hired charter with no template counterpart (F13)', () => {
   it('emits one daemon.warning naming the charter path', async () => {
     const dir3 = mkdtempSync(path.join(tmpdir(), 'cubicle-migrate-custom-'));

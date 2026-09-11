@@ -93,6 +93,19 @@ export const PERMISSIONS = ['schedule', 'plan', 'review', 'hire', 'fire', 'veto'
 export const Permission = z.enum(PERMISSIONS);
 export type Permission = z.infer<typeof Permission>;
 
+// ---------- Offices ----------
+/**
+ * The company addressed by function, not by name. The daemon, the gates and the escalation chain say "the
+ * operations office", and `Memory/constitution.md` decides which role id that is, so renaming or re-staffing a
+ * seat is an owner edit instead of a code change.
+ */
+export const OFFICES = ['chief_executive', 'finance', 'operations', 'security', 'compliance', 'people', 'research', 'engineering'] as const;
+export type Office = (typeof OFFICES)[number];
+export const DEFAULT_OFFICES: Record<Office, string> = {
+  chief_executive: 'ceo', finance: 'cfo', operations: 'coo', security: 'ciso',
+  compliance: 'clo', people: 'chro', research: 'research_manager', engineering: 'cto',
+};
+
 export const RoleFrontmatter = z.looseObject({
   role: z.string(),
   display: z.string(),
@@ -227,6 +240,13 @@ export const Constitution = z.object({
   never_modify: z.array(z.string()).default([]),
   max_team_size: z.number().int().min(1).default(6),
   auto_approve_reorg: z.boolean().default(false),
+  offices: z.record(z.string(), z.string()).default({ ...DEFAULT_OFFICES }),
+  /**
+   * Hours a plan waits for the owner's verdict before the board's own verdict stands. 0 (the default, and what an
+   * absent key means) switches that off entirely: the plan waits for the owner for as long as it takes. The board
+   * advises; only the owner rules, unless the owner says otherwise.
+   */
+  board_decides_after_hours: z.number().min(0).default(0),
 });
 export type Constitution = z.infer<typeof Constitution>;
 

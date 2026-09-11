@@ -1,12 +1,12 @@
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { TeamFrontmatter, RoleFrontmatter, type Permission, type CubicleEvent } from './schemas.js';
+import { TeamFrontmatter, RoleFrontmatter, OFFICES, DEFAULT_OFFICES, type Permission, type Office, type CubicleEvent } from './schemas.js';
 import type { Vault } from './vault.js';
 import { parseNote, stringifyNote } from './frontmatter.js';
 import { listJobs, updateJob } from './jobs.js';
 import { nowIso } from './fs.js';
 
-export interface Org { teams: Record<string, TeamFrontmatter>; roles: Record<string, RoleFrontmatter> }
+export interface Org { teams: Record<string, TeamFrontmatter>; roles: Record<string, RoleFrontmatter>; offices?: Record<string, string> }
 export type Action = Permission;
 
 /**
@@ -23,9 +23,13 @@ export type Action = Permission;
  */
 const orgCache = new WeakMap<Vault, { org: Org | null; dirty: boolean }>();
 
-/** True when a written/edited/deleted path could change what `loadOrg` returns. */
+/**
+ * True when a written/edited/deleted path could change what `loadOrg` returns. `Memory/constitution.md` counts
+ * too: the office map lives in its yaml block, so an owner who re-staffs a seat there must be followed on the
+ * next lookup rather than at the next unrelated Teams/ write.
+ */
 function isOrgPath(rel: string): boolean {
-  return rel.startsWith('Teams/') || rel.startsWith('Roles/');
+  return rel.startsWith('Teams/') || rel.startsWith('Roles/') || rel === 'Memory/constitution.md';
 }
 
 function computeOrg(vault: Vault): Org {
@@ -41,7 +45,10 @@ function computeOrg(vault: Vault): Org {
     const n = vault.readNoteOrNull(rel); const p = n && RoleFrontmatter.safeParse(n.data);
     if (p && p.success && p.data.active) roles[p.data.role] = p.data;
   }
-  return { teams, roles };
+  // A constitution that does not parse still yields the default map (Vault.constitution already warns), so a
+  // broken owner edit degrades to the shipped roster instead of leaving every office unresolved.
+  const offices = { ...DEFAULT_OFFICES, ...vault.constitution().offices };
+  return { teams, roles, offices };
 }
 
 export function loadOrg(vault: Vault): Org {
@@ -64,6 +71,60 @@ export function teamOf(org: Org, role: string): TeamFrontmatter | null {
   const byField = org.roles[role]?.team;
   if (byField && org.teams[byField]) return org.teams[byField];
   return Object.values(org.teams).find((t) => t.lead === role || t.members.includes(role)) ?? null;
+}
+
+/** The role the constitution puts in this office, when that role is active; null otherwise. */
+export function officeRole(org: Org, office: Office): string | null {
+  const id = org.offices?.[office] ?? DEFAULT_OFFICES[office];
+  return id && org.roles[id] ? id : null;
+}
+
+/**
+ * Someone who can actually answer for an office: the office's own role, else the lead of the team that role sat
+ * in, else that team's division lead, else the chief executive. A gate or an escalation must always land on a
+ * live desk — an empty office cannot mean "nobody".
+ */
+export function officeHolder(org: Org, office: Office): string {
+  const direct = officeRole(org, office);
+  if (direct) return direct;
+  const named = org.offices?.[office] ?? DEFAULT_OFFICES[office];
+  const team = named ? teamOf(org, named) : null;
+  if (team && org.roles[team.lead]) return team.lead;
+  const div = team ? divisionOf(org, team.id) : null;
+  const divLead = div && div !== team?.id ? org.teams[div]?.lead : null;
+  if (divLead && org.roles[divLead]) return divLead;
+  return officeRole(org, 'chief_executive') ?? DEFAULT_OFFICES.chief_executive;
+}
+
+/** Teams whose `parent` is this team. */
+export function childTeams(org: Org, teamId: string): TeamFrontmatter[] {
+  return Object.values(org.teams).filter((t) => t.parent === teamId);
+}
+
+/** The root of a team's `parent` chain — its division. Depth-capped so a cycle in owner-edited notes cannot hang. */
+export function divisionOf(org: Org, teamId: string | undefined): string | null {
+  // `id` is annotated rather than inferred: `TeamFrontmatter` is a loose object, so letting TS infer `id` from
+  // `parent` (which it reads off `org.teams[id]`) is circular (TS7022).
+  let id: string | undefined = teamId;
+  if (!id || !org.teams[id]) return null;
+  for (let hops = 0; hops < 8; hops++) {
+    const parent: string | undefined = org.teams[id]?.parent;
+    if (!parent || !org.teams[parent] || parent === id) break;
+    id = parent;
+  }
+  return id ?? null;
+}
+
+/** The teams that hold a planning round: top-level teams with at least one room under them. */
+export function divisionTeams(org: Org): TeamFrontmatter[] {
+  return Object.values(org.teams).filter((t) => !t.parent && childTeams(org, t.id).length > 0);
+}
+
+/** The lead of the division a role works in (a division lead's own division lead is itself). */
+export function divisionLeadOf(org: Org, role: string): string | null {
+  const div = divisionOf(org, teamOf(org, role)?.id);
+  const lead = div ? org.teams[div]?.lead : null;
+  return lead ?? null;
 }
 
 /**
@@ -253,6 +314,16 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
   }
   if (towerMigrated) {
     patched = patched.replace(/^max_roles:\s*(\d+)\s*$/m, (_m, d: string) => `max_roles: ${Math.max(40, Number(d))}`).replace(/^max_team_size:\s*(\d+)\s*$/m, (_m, d: string) => `max_team_size: ${Math.max(8, Number(d))}`);
+  }
+  // 6. offices (v2, 2026-09-11): the daemon addresses functions, not names. A vault written before this block keeps
+  //    its own values for everything else — only the missing keys are added, each on its own so a hand-edited
+  //    constitution that already names some of them is left alone.
+  if (patched && !/^offices:/m.test(patched)) {
+    const block = ['offices:', ...OFFICES.map((o) => `  ${o}: ${DEFAULT_OFFICES[o]}`)].join('\n');
+    patched = patched.replace(/^```ya?ml\s*\n/m, (m) => `${m}${block}\n`);
+  }
+  if (patched && !/^board_decides_after_hours:/m.test(patched)) {
+    patched = patched.replace(/^```ya?ml\s*\n/m, (m) => `${m}board_decides_after_hours: 0\n`);
   }
   if (patched !== c) { vault.writeText('Memory/constitution.md', patched, 'daemon'); changed.push('Memory/constitution.md'); }
   if (changed.length) vault.events.emit({ type: 'org.changed', agent: 'daemon', payload: { reason: 'migration', changed } });
