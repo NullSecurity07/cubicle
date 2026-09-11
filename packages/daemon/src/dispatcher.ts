@@ -1,6 +1,7 @@
 import {
   type Vault, listInbox, readJob, updateJob, cancelJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
   loadOrg, resolveRole, divisionLeadOf, officeHolder, type Org,
+  FOUNDER_BRIEF, missingBriefSections, readIdea, updateIdea, ideaBand, bandReason, ideaOutcome, IDEA_SLUG_SRC, type IdeaBand,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath } from '@cubicle/tools';
@@ -8,6 +9,9 @@ import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
 import { applyHire, applyFire, applyReorg, charterDiffSection } from './evolution.js';
 import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
 import { appendObservation } from '@cubicle/harness';
+
+/** `Ideas/<slug>.md`, built from core's slug pattern so this never drifts from `isValidIdeaSlug`. */
+const IDEA_TARGET_RE = new RegExp('^Ideas/' + IDEA_SLUG_SRC + '\\.md$');
 
 /** kind → allowed targets. Everything else leaves the note unresolved with a warning (an approval must mean what its title says). */
 export function validateTarget(kind: string, target: string, hasCall: boolean): string | null {
@@ -17,6 +21,10 @@ export function validateTarget(kind: string, target: string, hasCall: boolean): 
   if (isSecretPath(t) || t.startsWith('.cubicle/')) return `target ${t} is not writable by proposals`;
   if (kind === 'brand_change') return t.startsWith('Brand/') ? null : `brand_change may only target Brand/ (got ${t})`;
   if (kind === 'charter_change') { const m = t.match(/^Roles\/([^/]+)\.md$/); return m && isValidRoleId(m[1]) ? null : `charter_change may only target Roles/<role>.md (got ${t})`; }
+  // The founder brief is the one Memory/ file an agent may propose: every plan is written against it, so it is
+  // the owner's to adopt — but it is not owner-*owned*, because the dispatcher is what writes it.
+  if (kind === 'founder_brief') return t === FOUNDER_BRIEF ? null : `founder_brief may only target ${FOUNDER_BRIEF} (got ${t})`;
+  if (kind === 'idea_verdict') return IDEA_TARGET_RE.test(t) ? null : `idea_verdict may only target Ideas/<slug>.md (got ${t})`;
   if (kind === 'file_change') {
     if (t.startsWith('00 Inbox/') || t.startsWith('Jobs/') || t.startsWith('Messages/')) return `file_change may not target ${t}`;
     if ((t === 'Memory/constitution.md' || t === 'Memory/owner_preferences.md') && !hasCall) return `${t} can only be changed through a harness-generated file_change (with a stored call)`;
@@ -176,7 +184,9 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     }
     let outcome = '';
     try {
-      if (d.approved === false) {
+      // A rejected proposal is closed and nothing is executed — except an idea_verdict, where `approved: false`
+      // is itself a decision (the owner parks the idea) rather than a refusal to act.
+      if (d.approved === false && d.kind !== 'idea_verdict') {
         outcome = 'rejected';
       } else {
         switch (d.kind) {
@@ -259,6 +269,46 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             // before this switch, as a plain 'rejected' outcome common to every proposal kind.
             outcome = 'threat model accepted; the job may finish';
             break;
+          case 'founder_brief': {
+            const target = d.target ?? FOUNDER_BRIEF;
+            const invalid = validateTarget('founder_brief', target, !!d.call);
+            if (invalid) { refuseNote(vault, note, invalid, { target }); continue; }
+            const content = fenced(note.body);
+            if (!content) { outcome = 'no "## Proposed content" block found'; break; }
+            // The owner may have edited the block before approving it; a brief that lost a section on the way
+            // is refused rather than adopted, because every plan from here on is written against this file.
+            const missing = missingBriefSections(content);
+            if (missing.length) { refuseNote(vault, note, `the founder brief is missing ${missing.join(', ')}; add the section(s) and approve again`, { target }); continue; }
+            vault.writeText(target, content, 'daemon', { job: d.job ?? null });
+            outcome = `founder brief adopted at ${target}`;
+            break;
+          }
+          case 'idea_verdict': {
+            const target = d.target ?? '';
+            const invalid = validateTarget('idea_verdict', target, !!d.call);
+            if (invalid) { refuseNote(vault, note, invalid, { target }); continue; }
+            const slug = target.slice('Ideas/'.length).replace(/\.md$/, '');
+            const card = readIdea(vault, slug);
+            if (!card) { refuseNote(vault, note, `no idea card at ${target}`, { target }); continue; }
+            const band = card.data.score === null
+              ? 'park'   // unscored and ruled on anyway: park it rather than invent a recommendation
+              : ideaBand(card.data.score, { value: card.data.score_inputs.value ?? 3, board: card.data.board_verdict });
+            // ideaOutcome can also return 'pending' (approved === null), but the dispatcher never reaches this
+            // switch for that case — approved === null is skipped above unless auto-approved, which never
+            // applies to idea_verdict, so `decision` here is always a real IdeaBand.
+            const decision = ideaOutcome({ approved: d.approved, chosen: d.chosen, band }) as IdeaBand;
+            const why = d.approved === false
+              ? 'The owner turned it down. Parked, not scrapped: the research behind it survives for a later cycle.'
+              : d.chosen !== null
+                ? `The owner overruled the recommendation (${band}) with \`chosen: ${d.chosen}\`.`
+                : `The owner took the recommendation. ${card.data.score === null ? 'The card was never scored.' : bandReason(card.data.score, { value: card.data.score_inputs.value ?? 3, board: card.data.board_verdict })}`;
+            updateIdea(vault, slug, {
+              decision, decided_by: 'owner', decided_at: nowIso(),
+              status: decision === 'scrap' ? 'rejected' : decision === 'keep' ? 'accepted' : 'triaged',
+            }, 'daemon', { heading: '## Decision', content: `**${decision}** — the owner, ${nowIso().slice(0, 10)}.\n\n${why}` });
+            outcome = `idea ${slug}: ${decision}`;
+            break;
+          }
           case 'plan_verdict':
             // Stamping `resolved_at` is all the dispatcher owes this kind, and the common write below does that:
             // the heartbeat reads `approved` on its next pass, fans the plan out and stamps `fanned_out` itself
