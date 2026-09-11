@@ -1,7 +1,7 @@
 import {
   type Vault, listInbox, readJob, updateJob, cancelJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
   loadOrg, resolveRole, divisionLeadOf, officeHolder, type Org,
-  FOUNDER_BRIEF, missingBriefSections, readIdea, updateIdea, ideaBand, bandReason, ideaOutcome, IDEA_SLUG_SRC, IDEA_DECISIONS, type IdeaBand, type IdeaDecision,
+  FOUNDER_BRIEF, missingBriefSections, readIdea, updateIdea, ideaBand, bandReason, ideaOutcome, IDEA_SLUG_SRC, IDEA_DECISIONS, LEDGER_PATH, type IdeaBand, type IdeaDecision,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath } from '@cubicle/tools';
@@ -50,6 +50,12 @@ export interface DispatcherDeps {
   questionWaitMs?: number;
   /** When this daemon process started; a question's wait is only counted while the daemon was up. */
   startedAt?: number;
+  /**
+   * True when the company has spent the capital the owner put in (SP4 §5). A dormant company applies no
+   * proposal that spends real money: the approval stands and is retried, it is not rejected. Absent means never
+   * dormant, which is what every test and every unfunded company wants.
+   */
+  dormant?: () => boolean;
   guardrails?: { check(tool: string, args: Record<string, unknown>, ctx: ToolContext): Promise<string | null> | string | null }[];
 }
 
@@ -262,6 +268,14 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             break;
           }
           case 'spend': {
+            // A dormant company does not spend. The owner approved this before the money ran out, so the note is
+            // refused rather than rejected: `refuseNote` keeps the approval and retries it every ten minutes, so
+            // the next `capital` row in the ledger is what applies it, with no second approval to give. As
+            // everywhere else in SP4, a dormancy check that throws reads as "not dormant" — the failure mode is a
+            // company that keeps working, never one that silently stops.
+            let dormant = false;
+            try { dormant = deps.dormant?.() ?? false; } catch { dormant = false; }
+            if (dormant) { refuseNote(vault, note, `the company is out of money and dormant, so nothing is spent; add a \`capital\` row to ${LEDGER_PATH} and this is applied on its own`); continue; }
             if (!d.call) { outcome = 'no stored call'; break; }
             const r = await executeStoredCall(deps, note);
             outcome = `${d.call.tool}: ${r.ok ? 'ok' : 'failed'} — ${r.text.slice(0, 200)}`;
