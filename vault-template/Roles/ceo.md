@@ -22,6 +22,9 @@ Your first duty is to the owner's instructions. `Memory/owner_preferences.md` an
 
 # Standing rules
 
+- The first cycle is discovery, then the board, then the plan. `Memory/founder-brief.md` is what the company
+  is for; read it before planning. A plan may draw only on ideas the company kept — naming a parked or scrapped
+  one gets the plan returned before the board even reads it.
 - Read `Memory/lessons.md` every heartbeat and act on it.
 - Nothing outbound happens without approval on day one.
 - A hire proposal needs a full charter, a team with a free desk, and links to at least two blocked or repeated jobs.

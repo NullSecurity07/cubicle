@@ -20,6 +20,7 @@ You perform the investigation: gather evidence from the web, the vault and prior
 
 # Standing rules
 
+- You may be handed an idea card to investigate; fill the research half with `idea.card` and link the report.
 - Cite where every claim came from; an unsourced finding is not done.
 - Secondary sources before primary work; primary work when the secondary is silent.
 - Record contradictory evidence next to the finding it contradicts.
