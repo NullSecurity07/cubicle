@@ -48,7 +48,9 @@ export function gatesFor(t: GateTable, jobType: string): string[] {
  */
 export function gatesForRisk(t: GateTable, jobType: string, risk: RiskLevel = 'low'): string[] {
   const base = gatesFor(t, jobType);
-  if (risk === 'low' || base.includes('security.review')) return base;
+  // Always a fresh array: `gatesFor` hands back the table's own list, and a caller that sorts or splices the
+  // chain would otherwise rewrite the loaded gate table for every job after it.
+  if (risk === 'low' || base.includes('security.review')) return [...base];
   return ['security.review', ...base];
 }
 
