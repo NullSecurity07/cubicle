@@ -39,6 +39,12 @@ export class EventLog {
     return () => this.emitter.off(key, fn);
   }
 
+  /**
+   * Matching events, oldest first. `limit` bounds the window to the **newest** N, not the oldest: every caller
+   * that passes one is asking "what has happened lately" — the last 500 deploys, the open browser sessions, the
+   * owner's recent edits — and an oldest-first cut silently froze those answers at the first N events the vault
+   * ever recorded, on a log that only grows. The rows still come back in ascending id order.
+   */
   query(opts: { from?: string; to?: string; types?: EventType[]; job?: string; limit?: number } = {}): CubicleEvent[] {
     const where: string[] = [];
     const params: unknown[] = [];
@@ -46,8 +52,12 @@ export class EventLog {
     if (opts.to) { where.push('ts <= ?'); params.push(opts.to); }
     if (opts.job) { where.push('job = ?'); params.push(opts.job); }
     if (opts.types?.length) { where.push(`type IN (${opts.types.map(() => '?').join(',')})`); params.push(...opts.types); }
-    const sql = `SELECT id, ts, type, agent, job, payload_json FROM events${where.length ? ' WHERE ' + where.join(' AND ') : ''} ORDER BY id ASC${opts.limit ? ' LIMIT ' + Number(opts.limit) : ''}`;
+    const clause = where.length ? ' WHERE ' + where.join(' AND ') : '';
+    const sql = opts.limit
+      ? `SELECT id, ts, type, agent, job, payload_json FROM events${clause} ORDER BY id DESC LIMIT ${Number(opts.limit)}`
+      : `SELECT id, ts, type, agent, job, payload_json FROM events${clause} ORDER BY id ASC`;
     const rows = this.db.prepare(sql).all(...params) as { id: number; ts: string; type: string; agent: string | null; job: string | null; payload_json: string }[];
+    if (opts.limit) rows.reverse();
     return rows.map((r) => ({ id: r.id, ts: r.ts, type: r.type as EventType, agent: r.agent, job: r.job, payload: JSON.parse(r.payload_json) }));
   }
 
