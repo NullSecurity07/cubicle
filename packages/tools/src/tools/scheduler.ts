@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, type Org } from '@cubicle/core';
+import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, ENGINEERING_JOB_TYPES, RISK_GUIDANCE, RISK_LEVELS, type Org } from '@cubicle/core';
 
 const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'] };
 
@@ -35,9 +35,18 @@ export function unknownRoleText(org: Org, id: string, what = 'unknown or inactiv
 const OPEN_STATUSES = ['queued', 'running', 'blocked', 'in_review'] as const;
 const normTitle = (t: string) => t.trim().toLowerCase().replace(/\s+/g, ' ');
 
+/**
+ * The refusal a model gets when it schedules product work without saying how risky it is (owner's operating
+ * model §27). Naming the three levels with their examples is the whole point: a bare "risk is required" sent
+ * models round the loop guessing at the field's shape.
+ */
+export function missingRiskText(type: string): string {
+  return `${type} jobs must state a risk class. Set risk to one of: ${RISK_LEVELS.map((l) => `${l} (${RISK_GUIDANCE[l]})`).join('; ')}. Pick the highest level any part of the change touches.`;
+}
+
 export const schedulerRequest = defineTool({
   name: 'scheduler.request',
-  description: `Enqueue a job for a role. Leads schedule their own team's members, members hand off to a teammate, the CEO anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). CEO/CTO may also set priority on existing jobs via reprioritize.`,
+  description: `Enqueue a job for a role. Leads schedule their own team's members, members hand off to a teammate, the CEO anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). CEO/CTO may also set priority on existing jobs via reprioritize. Engineering types (${ENGINEERING_JOB_TYPES.join(', ')}) must also state risk: low (text, UI, minor fixes), medium (data, backend, new integrations), high (auth, money, destructive migrations, infrastructure).`,
   schema: {
     type: z.string().default('custom'),
     title: z.string(),
@@ -49,6 +58,8 @@ export const schedulerRequest = defineTool({
     reprioritize: z.object({ job: z.string(), priority: z.number().int().min(1).max(5) }).optional(),
     for: z.string().optional().describe('research: the lead the report is for'),
     done_when: z.string().optional().describe('one testable sentence; required for leads'),
+    risk: z.enum(RISK_LEVELS).optional().describe(`how risky the change is — ${RISK_LEVELS.map((l) => `${l}: ${RISK_GUIDANCE[l]}`).join(' | ')}`),
+    stream: z.string().optional().describe('the Streams/<slug> this job serves'),
   },
   async handler(args, ctx) {
     const org = loadOrg(ctx.vault);
@@ -77,6 +88,7 @@ export const schedulerRequest = defineTool({
     if (allowed && !allowed.includes(ctx.roleId)) return { ok: false, text: `job type ${type} is reserved for the daemon${allowed.length ? ` / ${allowed.join(', ')}` : ''}` };
     const lead = ctx.roleId === 'ceo' || isLead(org, ctx.roleId);
     if (lead && !args.done_when?.trim()) return { ok: false, text: 'leads must give done_when: one sentence a stranger could check' };
+    if ((ENGINEERING_JOB_TYPES as readonly string[]).includes(type) && !args.risk) return { ok: false, text: missingRiskText(type) };
     const owner_role = lead ? ctx.roleId : (leadOf(org, ctx.roleId) ?? ctx.roleId);
     const team = teamOf(org, args.assigned)?.id;
     const wantedId = ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey) : undefined;
@@ -88,7 +100,7 @@ export const schedulerRequest = defineTool({
       const dup = listJobs(ctx.vault, { status: [...OPEN_STATUSES], assigned: args.assigned }).find((j) => j.id !== wantedId && normTitle(j.title) === title);
       if (dup) return { ok: false, text: `a job with this title is already open for ${args.assigned}: ${dup.id} (${dup.status}). Wait for it, or give the new job a different title if it really is different work` };
     }
-    const id = ctx.scheduler.enqueue({ id: wantedId, type, title: args.title, assigned: args.assigned, goal: args.goal, priority: args.priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: forRole, done_when: args.done_when });
+    const id = ctx.scheduler.enqueue({ id: wantedId, type, title: args.title, assigned: args.assigned, goal: args.goal, priority: args.priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: forRole, done_when: args.done_when, risk: args.risk, stream: args.stream });
     return { ok: true, text: `queued ${id} for ${args.assigned}: ${args.title}`, data: { id } };
   },
 });
