@@ -7,6 +7,10 @@ import { esc, obsidianUrl, chip, type Ctx } from './ui/content.js';
 import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
+import { withMotion, reducedMotion } from './world/motion.js';
+const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
+withMotion(reducedMotion() ? 0 : 1);
+motionQuery.addEventListener('change', () => withMotion(motionQuery.matches ? 0 : 1));
 
 let state: State = emptyState();
 let liveState: State | null = null;   // saved while replaying
