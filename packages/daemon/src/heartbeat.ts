@@ -5,7 +5,7 @@ import {
   officeHolder, roleWithTool, teamOf, researchLead, listStreams, type Org, type ModelTier,
   childTeams, subtreeRoles, divisionTeams, divisionOf,
   budgetLines, GATE_JOB_TYPES,
-  nextIdeaForBoard, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
+  nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -535,6 +535,53 @@ export function ideaVerdictBody(f: IdeaVerdictFacts): string {
   ].join('\n');
 }
 
+/**
+ * The findings the board raised on a card, read back off its `## The board` section. The verdict note is
+ * rebuilt from the card, so what it says the board said has to come from the card and not from a cache that a
+ * kill may have taken with it. The placeholder the section carries when the board raised nothing is not a
+ * finding, so it is dropped rather than quoted back as one.
+ */
+export function cardBoardFindings(body: string): string[] {
+  const after = body.split(/^## The board[ \t]*$/m)[1] ?? '';
+  return after.split(/^## /m)[0].split('\n')
+    .map((l) => l.trim().match(/^-\s+(.+)$/)?.[1]?.trim())
+    .filter((f): f is string => !!f && f !== 'Nothing they thought would sink it.');
+}
+
+/**
+ * File the `idea_verdict` note the owner rules on, built from the card as it now stands. Separate from the step
+ * because it is called twice: once when the board sits, and once as recovery for a card a kill left stamped with
+ * a verdict and no note — `nextIdeaForBoard` skips a stamped card, so without the second call that idea could
+ * never be kept, parked or scrapped by anyone. The id is derived from the slug, so the recovery is a no-op
+ * whenever the first call landed. Returns null for a card the board has not judged.
+ */
+export function fileIdeaVerdict(
+  vault: Vault, slug: string, opts: { from: string; job?: string; findings: string[] },
+): { id: string; path: string; band: IdeaBand; filed: boolean } | null {
+  const card = readIdea(vault, slug);
+  if (!card || card.data.board_verdict === null) return null;
+  const board = card.data.board_verdict;
+  const score = card.data.score ?? 0;
+  const value = card.data.score_inputs.value ?? 3;
+  const band = ideaBand(score, { value, board });
+  const id = idFromKey('prop', ideaVerdictKey(slug));
+  const existing = findInboxById(vault, id);
+  if (existing) return { id, path: existing.path, band, filed: false };
+  const { path: rel } = createProposal(vault, {
+    id, kind: 'idea_verdict', from: opts.from, to: 'owner', job: opts.job,
+    target: ideaPath(slug), title: `Keep, park or scrap: ${card.data.title}`,
+    body: ideaVerdictBody({
+      slug, title: card.data.title, score, band, reason: bandReason(score, { value, board }), board,
+      findings: opts.findings, research: card.data.research, estimate: card.data.estimate,
+      decidesAfterHours: vault.constitution().board_decides_after_hours,
+    }),
+  }, opts.from);
+  // The band and the board's verdict live on the note, not in cache state: a later heartbeat closes this
+  // verdict after a restart, and it must rule on what was recommended then — not on a recomputation.
+  vault.updateNote(rel, (n) => ({ data: { ...n.data, board_verdict: board, band }, body: n.body }), 'daemon');
+  return { id, path: rel, band, filed: true };
+}
+
 /** Create the `ceo.heartbeat` job note (the heartbeat is a job so R9/R10/R12 apply). */
 export function createHeartbeatJob(vault: Vault, trigger: string): string {
   const org = loadOrg(vault);
@@ -621,7 +668,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; estimateJobs?: string[]; estimatesPending?: boolean; ideaVerdicts?: string[]; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; estimateJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -635,6 +682,14 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     if ((atStep === 'division_plans' || atStep === 'owner_verdict') && !state.divisionPlanJobs) {
       const ids = listJobs(vault).filter((j) => j.parent === jobId && j.type === 'division.plan').map((j) => j.id);
       if (ids.length) state = { ...state, divisionPlanJobs: ids };
+    }
+    // `ideas_board` blocks on its estimates before its own checkpoint advances — the caseless `discovery` step
+    // leaves `atStep` at `discovery` — so this one keys off the blocked job's type instead. Without it a
+    // cache-less resume calls `enqueueEstimates` again, gets `[]` back because those jobs already exist, stops
+    // waiting, finds no scored card, and loses the cycle's board session with nothing said about it.
+    if (!state.estimateJobs && readJob(vault, job.blocked_on.id)?.data.type === 'finance.estimate') {
+      const open = listJobs(vault, { status: ['queued', 'running', 'blocked'] }).filter((j) => j.type === 'finance.estimate').map((j) => j.id);
+      state = { ...state, estimateJobs: [...new Set([job.blocked_on.id, ...open])] };
     }
   }
   // Likewise the verdict note: it is found by its heartbeat-stable id, so a cache-less resume rules on the note
@@ -724,7 +779,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     // caller carry on rather than block the company forever (returns null to continue). The flag is a parameter
     // because what the brief must then say about the cycle depends on what was being waited for: a stuck
     // estimate is not a stuck plan, and saying "Planning: PENDING" about one would be a lie.
-    const waitBounded = (id: string, flag: 'planPending' | 'estimatesPending', giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => {
+    const waitBounded = (id: string, flag: 'planPending' | 'estimatesPending', giveUpNote: (waitedMin: number) => string, advance = true): HeartbeatOutcome | null => {
       const since = job.blocked_on?.since;
       const waitedMs = since ? now().getTime() - Date.parse(since) : 0;
       if (waitedMs < PLAN_WAIT_BUDGET_MS) {
@@ -733,13 +788,18 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
       }
       state = { ...state, [flag]: true }; saveState(state);
       updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
-      done(i, giveUpNote(Math.round(waitedMs / 60000)));
+      // `advance` is false for a step that gives up and then carries on doing its real work: advancing the
+      // checkpoint here would both log the step twice and, worse, resume a kill during that work at the NEXT
+      // step — silently skipping what the give-up was supposed to let the step get on with.
+      if (advance) done(i, giveUpNote(Math.round(waitedMs / 60000)));
+      else updateJob(vault, jobId, {}, 'ceo', `- step ${i + 1} ${step}: ${giveUpNote(Math.round(waitedMs / 60000))}`);
       return null;
     };
-    /** The planning steps' wait: giving up leaves the previous plan standing and the brief says so. */
+    /** The planning steps' wait: giving up leaves the previous plan standing, advances the step, and the brief says so. */
     const waitOrGiveUp = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'planPending', giveUpNote);
-    /** `ideas_board`'s wait: giving up means the board reads the cards that were priced in time, and no more. */
-    const waitForEstimates = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'estimatesPending', giveUpNote);
+    /** `ideas_board`'s wait: giving up means the board chooses from the cards that were priced in time, and the
+     *  step stays where it is so a kill during the session it then runs resumes at the board, not past it. */
+    const waitForEstimates = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'estimatesPending', giveUpNote, false);
     switch (step) {
       case 'gather': {
         const mail = deps.pollInbox ? await deps.pollInbox().catch(() => []) : [];
@@ -816,15 +876,32 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           state = { ...state, estimateJobs: ids }; saveState(state);
           if (ids.length) return blockMany(ids, `waiting for ${ids.length} idea estimate(s)`);
         }
-        if (state.estimateJobs?.length) {
+        // `estimatesPending` means this cycle already gave up on them: the `blocked_on.since` it cleared would
+        // otherwise start a fresh 60-minute budget every time the step is re-entered.
+        if (!state.estimatesPending && state.estimateJobs?.length) {
           const open = state.estimateJobs.filter((id) => { const s = readJob(vault, id)?.data.status; return !s || !['done', 'failed', 'cancelled'].includes(s); });
           if (open.length) {
-            const w = waitForEstimates(firstOpenJob(state.estimateJobs, (id) => readJob(vault, id)?.data.status), (min) => `${open.length} estimate(s) still open after ${min} min — the board reads what is ready`);
+            const w = waitForEstimates(firstOpenJob(state.estimateJobs, (id) => readJob(vault, id)?.data.status), (min) => `${open.length} estimate(s) still open after ${min} min — the board chooses from what is priced`);
             if (w) return w;
           } else if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
         }
+        // A card the board judged whose verdict note never got filed — a kill between the stamp below and
+        // `createProposal` — is stranded: `nextIdeaForBoard` skips a stamped card, so nobody would ever ask the
+        // owner about it and `keptIdeas` could never return it. Re-file it from the card before looking for a
+        // new one; the proposal id is derived from the slug, so a cycle that already filed it does nothing.
+        const refiled: string[] = [];
+        for (const c of listIdeas(vault)) {
+          if (c.board_verdict === null || c.decision !== 'undecided') continue;
+          if (findInboxById(vault, idFromKey('prop', ideaVerdictKey(c.id)))) continue;
+          const r = fileIdeaVerdict(vault, c.id, { from: ceo, job: jobId, findings: cardBoardFindings(readIdea(vault, c.id)?.body ?? '') });
+          if (!r?.filed) continue;
+          refiled.push(c.id);
+          vault.events.emit({ type: 'daemon.warning', agent: ceo, job: jobId, payload: { where: 'ideas_board', message: `re-filed the missing verdict note for Ideas/${c.id}: the board had judged it but the owner was never asked` } });
+        }
         const idea = nextIdeaForBoard(vault);
-        if (!idea || !board || !org.roles[board.lead]) { done(i, idea ? 'board skipped: no advisors' : 'no idea is ready for the board'); break; }
+        const refiledNote = refiled.length ? `; re-filed ${refiled.length} stranded verdict note(s): ${refiled.join(', ')}` : '';
+        // No board room means the funnel is stopped, not merely quiet: say so, because nothing else will.
+        if (!idea || !board || !org.roles[board.lead]) { done(i, (idea ? `board skipped: no advisors, so no idea can be judged and the funnel is stopped (${idea.id} is waiting)` : 'no idea is ready for the board') + refiledNote); break; }
         const card = readIdea(vault, idea.id)!;
         const session = await runBoardSession(deps, org, { kind: 'idea', text: `# ${card.data.title}\n\n${card.body}`, title: card.data.title, slug: idea.id });
         if (cancelled()) return { status: 'cancelled' };
@@ -857,21 +934,11 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // The board's verdict is an input to the band (a returned idea parks), so the `## Score` section is
         // re-rendered from the card as it now stands rather than from the numbers read before the session.
         const after = readIdea(vault, idea.id)!;
-        const score = after.data.score ?? 0;
         const value = after.data.score_inputs.value ?? 3;
-        const band = ideaBand(score, { value, board: session.verdict });
         updateIdea(vault, idea.id, {}, 'daemon', { heading: '## Score', content: renderScoreSection({ value, evidence: after.data.score_inputs.evidence ?? 3, effort: after.data.score_inputs.effort ?? 3, fit: after.data.score_inputs.fit ?? 3 }, { board: session.verdict }) });
-        const decidesAfterHours = vault.constitution().board_decides_after_hours;
-        const { id: propId, path: propRel } = createProposal(vault, {
-          id: idFromKey('prop', ideaVerdictKey(idea.id)), kind: 'idea_verdict', from: ceo, to: 'owner', job: jobId,
-          target: ideaPath(idea.id), title: `Keep, park or scrap: ${card.data.title}`,
-          body: ideaVerdictBody({ slug: idea.id, title: card.data.title, score, band, reason: bandReason(score, { value, board: session.verdict }), board: session.verdict, findings: session.findings, research: after.data.research, estimate: after.data.estimate, decidesAfterHours }),
-        }, ceo);
-        // The band and the board's verdict live on the note, not in cache state: a later heartbeat closes this
-        // verdict after a restart, and it must rule on what was recommended then — not on a recomputation.
-        vault.updateNote(propRel, (n) => ({ data: { ...n.data, board_verdict: session.verdict, band }, body: n.body }), 'daemon');
-        state = { ...state, ideaVerdicts: [...(state.ideaVerdicts ?? []), propId] }; saveState(state);
-        done(i, `board ${session.verdict} on ${idea.id}; recommendation ${band}, waiting for the owner`);
+        const filed = fileIdeaVerdict(vault, idea.id, { from: ceo, job: jobId, findings: session.findings })!;
+        state = { ...state, ideaJudged: idea.id }; saveState(state);
+        done(i, `board ${session.verdict} on ${idea.id}; recommendation ${filed.band}, waiting for the owner${refiledNote}`);
         break;
       }
       case 'meeting': {
@@ -1023,7 +1090,12 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // the deciding code, so it writes the decision onto the card itself and stamps `resolved_at`.
         for (const note of listInbox(vault).filter((n) => n.data.kind === 'idea_verdict' && n.data.approved === null && !n.data.resolved_at)) {
           const boardVerdict = (note.data as { board_verdict?: string }).board_verdict === 'pass' ? 'pass' as const : 'return' as const;
-          if (verdictOutcome({ approved: null, created: note.data.created, now: now(), boardVerdict, decidesAfterHours }) === 'pending') continue;
+          const outcome = verdictOutcome({ approved: null, created: note.data.created, now: now(), boardVerdict, decidesAfterHours });
+          if (outcome === 'pending') continue;
+          // The band is the decision, and it already carries the board's return (`ideaBand` parks a returned
+          // idea rather than scrapping it). `approved` records what `verdictOutcome` actually said, so a note
+          // the board returned does not read as approved to anything that later filters on that flag;
+          // `decision` is the field that says what happened to the idea, matching the card.
           const band = ((note.data as { band?: string }).band ?? 'park') as IdeaBand;
           const slug = String(note.data.target ?? '').slice('Ideas/'.length).replace(/\.md$/, '');
           if (slug && readIdea(vault, slug)) {
@@ -1032,8 +1104,8 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
               content: `**${band}** — the board, ${nowIso().slice(0, 10)}. The owner did not rule within ${decidesAfterHours} h, so the recommendation stood (\`board_decides_after_hours\`).`,
             });
           }
-          vault.updateNote(note.path, (n) => ({ data: { ...n.data, approved: true, decided_by: 'board', resolved_at: nowIso() }, body: n.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: the recommendation (${band}) stood after ${decidesAfterHours} h._\n` }), 'daemon');
-          vault.events.emit({ type: 'proposal.resolved', agent: 'daemon', job: jobId, payload: { id: note.data.id, kind: 'idea_verdict', approved: true, outcome: `the board decided: ${band}` } });
+          vault.updateNote(note.path, (n) => ({ data: { ...n.data, approved: outcome === 'approved', decision: band, decided_by: 'board', resolved_at: nowIso() }, body: n.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: the recommendation (${band}) stood after ${decidesAfterHours} h._\n` }), 'daemon');
+          vault.events.emit({ type: 'proposal.resolved', agent: 'daemon', job: jobId, payload: { id: note.data.id, kind: 'idea_verdict', approved: outcome === 'approved', decision: band, outcome: `the board decided: ${band}` } });
         }
         // No new plan this cycle means nothing to rule on: the plan the divisions are working from was already
         // approved, and `division_plans` skips on `planSkipped` before it ever looks at `state.verdict`.
@@ -1218,8 +1290,10 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           `Elapsed: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}`,
           ...(state.planPending ? ['Planning: PENDING — the team plans have not finished this cycle; the previous plan stands.'] : []),
           // Its own line, and never the planning one: an estimate the finance office has not returned delays the
-          // board session, not the plan, and a brief that said "Planning: PENDING" about it would be wrong.
-          ...(state.estimatesPending ? ['Ideas: an estimate is still pending — the finance office has not priced every new card, so the board read only the ones that were ready.'] : []),
+          // board session, not the plan, and a brief that said "Planning: PENDING" about it would be wrong. The
+          // board reads at most one card a cycle and on this path may have read none, so the line names the card
+          // it sat on rather than implying it got through the ready ones.
+          ...(state.estimatesPending ? [`Ideas: an estimate is still pending — the finance office has not priced every new card, so the board ${state.ideaJudged ? `chose from the ones that were priced in time and sat on ${state.ideaJudged}` : 'had no priced card to sit on and judged nothing this cycle'}.`] : []),
           ...(state.planSkipped ? [`Planning: skipped — the plan from ${state.planSkipped.planDate} stands and ${state.planSkipped.open} job${state.planSkipped.open === 1 ? ' is' : 's are'} still open`] : []),
           // A plan can be waiting for the owner (`planWaiting`, filed by an earlier cycle) and still be ruled on
           // by this one, so the "paused" line only stands while the verdict has not come through.

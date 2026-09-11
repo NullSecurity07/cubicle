@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, loadOrg, listJobs, listInbox, readJob, updateJob, readIdea, writeIdeaCard, updateIdea, listDecisions, DecisionFrontmatter, createProposal } from '@cubicle/core';
-import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_STEPS, NON_WORK_TYPES, runHeartbeat, createHeartbeatJob } from '../src/index.js';
+import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_STEPS, NON_WORK_TYPES, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide } from './helpers/board-switch.js';
 
@@ -140,17 +140,111 @@ describe('the ideas_board step (spec §3.3/§3.5)', () => {
     expect(DecisionFrontmatter.parse(vault.readNoteOrNull(`Decisions/board-${slug}.md`)!.data).status).toBe('proposed');
   }, 30000);
 
-  it('files one note per idea however often the step is replayed', async () => {
+  it('files one job, one decision note and one verdict note when the same cycle re-enters the step', async () => {
     const slug = scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
     const hb = createHeartbeatJob(vault, 'test');
     await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'pass' }) }, hb);
     const first = listInbox(vault).filter((n) => n.data.kind === 'idea_verdict').map((n) => n.data.id);
-    // Rewind to the step and run it again: the board's verdict is on the card, so nextIdeaForBoard skips it.
-    const hb2 = createHeartbeatJob(vault, 'test again');
-    await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'pass' }) }, hb2);
+    expect(first.length).toBe(1);
+
+    // The real replay this step's deterministic ids exist for: a kill after the session ran and before the card
+    // was stamped. Rewind the same heartbeat to `ideas_board`, undo the stamp, and run it again.
+    updateIdea(vault, slug, { board_verdict: null, board_decision: '' }, 'daemon');
+    updateJob(vault, hb, { status: 'queued', checkpoint_step: HEARTBEAT_STEPS.indexOf('ideas_board'), blocked_on: undefined }, 'daemon');
+    await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'pass' }) }, hb);
+
     expect(listInbox(vault).filter((n) => n.data.kind === 'idea_verdict').map((n) => n.data.id)).toEqual(first);
     expect(listJobs(vault).filter((j) => j.type === 'board.session').length).toBe(1);
+    expect(listDecisions(vault).filter((d) => d.data.id === `board-${slug}`).length).toBe(1);
     expect(readIdea(vault, slug)!.data.board_verdict).toBe('pass');
+
+    // And a later cycle does not sit the board on a card that already has a verdict.
+    const hb2 = createHeartbeatJob(vault, 'test again');
+    const llm = orgLlm({ ideaVerdict: 'pass' });
+    await runHeartbeat({ vault, llm }, hb2);
+    expect(listJobs(vault).filter((j) => j.type === 'board.session').length).toBe(1);
+    expect(llm.calls.advisor_skeptic).toBeUndefined();
+  }, 30000);
+
+  it('re-files a verdict note a kill lost between the card stamp and the proposal, without sitting the board again', async () => {
+    // The stranded state: the board judged the card (verdict + decision note on file) but no owner note exists.
+    const slug = scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
+    updateIdea(vault, slug, { board_verdict: 'pass', board_decision: `Decisions/board-${slug}.md` }, 'daemon', {
+      heading: '## The board',
+      content: '**Passed** — 3 advisors, 2026-09-11.\n\n- nobody has priced delivery',
+    });
+    expect(listInbox(vault).filter((n) => n.data.kind === 'idea_verdict').length).toBe(0);
+
+    const llm = orgLlm({ ideaVerdict: 'pass' });
+    const hb = createHeartbeatJob(vault, 'test');
+    await runHeartbeat({ vault, llm }, hb);
+
+    const notes = listInbox(vault).filter((n) => n.data.kind === 'idea_verdict');
+    expect(notes.length).toBe(1);
+    expect(notes[0].data.target).toBe(`Ideas/${slug}.md`);
+    expect(notes[0].data.band).toBe('keep');
+    expect(notes[0].data.board_verdict).toBe('pass');
+    // The findings come off the card, because the cache the kill took is exactly what is not available.
+    expect(notes[0].body).toContain('- nobody has priced delivery');
+    // The board did not sit again: no session job, no advisor call, no second decision note.
+    expect(listJobs(vault).filter((j) => j.type === 'board.session').length).toBe(0);
+    expect(llm.calls.advisor_skeptic).toBeUndefined();
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'ideas_board' && /re-filed the missing verdict note/.test(String(e.payload.message)))).toBe(true);
+
+    // Idempotent: a second cycle finds the note and does nothing.
+    await runHeartbeat({ vault, llm: orgLlm() }, createHeartbeatJob(vault, 'again'));
+    expect(listInbox(vault).filter((n) => n.data.kind === 'idea_verdict').map((n) => n.data.id)).toEqual(notes.map((n) => n.data.id));
+  }, 30000);
+
+  it('spends at most four model calls on the board: one turn per advisor and one chair merge', async () => {
+    scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
+    scoredCard(vault, 'A newsletter about spoons', { value: 4, evidence: 4, effort: 4, fit: 4 });
+    const llm = orgLlm({ ideaVerdict: 'pass' });
+    await runHeartbeat({ vault, llm }, createHeartbeatJob(vault, 'test'));
+    const org = loadOrg(vault);
+    const advisors = [...new Set([org.teams.board!.lead, ...org.teams.board!.members])].filter((r) => org.roles[r]).slice(0, 3);
+    // Each advisor speaks once; the board lead also chairs the merge, so it is called one extra time.
+    for (const a of advisors) expect(llm.calls[a]).toBe(a === org.teams.board!.lead ? 2 : 1);
+    expect(advisors.reduce((n, a) => n + llm.calls[a], 0)).toBeLessThanOrEqual(4);
+  }, 30000);
+
+  it('stays parked on the step when it gives up on an estimate, so a kill during the session resumes at the board', async () => {
+    scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
+    writeIdeaCard(vault, { title: 'Something nobody has priced', source: 'discovery' }, 'daemon');
+    const hb = createHeartbeatJob(vault, 'test');
+    const inner = orgLlm({ ideaVerdict: 'pass' });
+    // What the checkpoint said each time an advisor spoke: while the board sits, the step must not yet be past.
+    const stepWhileSitting: number[] = [];
+    const llm = {
+      ...inner,
+      async chat(req: Parameters<typeof inner.chat>[0], chat: Parameters<typeof inner.chat>[1]) {
+        if (/this idea|quarter on this/.test(String(chat.messages.at(-1)?.content ?? ''))) stepWhileSitting.push(readJob(vault, hb)!.data.checkpoint_step);
+        return inner.chat(req, chat);
+      },
+    };
+    let clock = new Date();
+    expect((await runHeartbeat({ vault, llm, now: () => clock }, hb)).status).toBe('blocked');
+    expect(listJobs(vault).filter((j) => j.type === 'finance.estimate').length).toBe(1);
+
+    // Nobody prices it. Past the budget, the step gives up and sits the board on what it has.
+    clock = new Date(clock.getTime() + PLAN_WAIT_BUDGET_MS + 60_000);
+    await runHeartbeat({ vault, llm, now: () => clock }, hb);
+    expect(listJobs(vault).filter((j) => j.type === 'board.session').length).toBe(1);
+    expect(stepWhileSitting.length).toBeGreaterThan(0);
+    expect(Math.max(...stepWhileSitting)).toBeLessThanOrEqual(HEARTBEAT_STEPS.indexOf('ideas_board'));
+    expect(readJob(vault, hb)!.body).toContain('the board chooses from what is priced');
+  }, 30000);
+
+  it('says the idea passed unreviewed when no advisor could answer', async () => {
+    const slug = scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
+    await runHeartbeat({ vault, llm: orgLlm({ boardSilent: true }) }, createHeartbeatJob(vault, 'test'));
+
+    expect(readIdea(vault, slug)!.data.board_verdict).toBe('pass');   // mergeBoardVerdict fails open; it must not stall
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'ideas_board' && /No advisor answered/.test(String(e.payload.reason)))).toBe(true);
+    const note = vault.readNoteOrNull(`Decisions/board-${slug}.md`)!;
+    expect(note.body).toContain('the idea passed unreviewed');
+    expect(note.body).not.toContain('the plan passed unreviewed');
+    expect(note.body).not.toContain('likely to sink a quarter');      // not a clean bill of health
   }, 30000);
 
   it('waits for the finance office to price a new card, then reads it', async () => {
