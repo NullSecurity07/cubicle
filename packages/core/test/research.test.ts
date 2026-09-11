@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   ResearchRequest, REQUEST_FIELDS, missingRequestFields, incompleteRequestText,
   priorityScore, jobPriorityFor, renderResearchRequest, researchSlug, resultBlock,
+  RESEARCH_INDEX, INDEX_HEADER, indexRow, upsertIndexRow,
 } from '../src/research.js';
 import { scaffoldVault } from '../src/template.js';
 import { Vault } from '../src/vault.js';
@@ -110,5 +111,50 @@ describe('a research job carries its request', () => {
       expect(note.body.indexOf('## Research request')).toBeGreaterThan(note.body.indexOf('## Goal'));
       expect(note.body.indexOf('## Research request')).toBeLessThan(note.body.indexOf('## Plan'));
     } finally { vault.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+const delivered = {
+  job: 'job_abc123', delivered: '2026-09-11', question: 'Does a public price reduce signups?',
+  decision: 'Ship the pricing page', decision_owner: 'cfo', method: 'secondary + interviews',
+  confidence: 'medium', report: 'Research/pricing-abc123/report.md',
+};
+
+describe('Research/index.md (owner model §23)', () => {
+  it('a row carries question, decision, owner, method, confidence and where the report is', () => {
+    const row = indexRow(delivered);
+    expect(row.startsWith('| 2026-09-11 | [[job_abc123]] |')).toBe(true);
+    expect(row).toContain('Does a public price reduce signups?');
+    expect(row).toContain('cfo');
+    expect(row).toContain('medium');
+    expect(row).toContain('[[Research/pricing-abc123/report]]');
+    expect(row.endsWith('| pending |')).toBe(true);
+    expect(row.split('|')).toHaveLength(INDEX_HEADER.split('\n')[1].split('|').length);
+  });
+
+  it('creates the table when there is none, appends once, and updates the outcome in place', () => {
+    const first = upsertIndexRow(null, delivered);
+    expect(first).toContain(INDEX_HEADER);
+    expect(first.match(/\[\[job_abc123\]\]/g)).toHaveLength(1);
+
+    const second = upsertIndexRow(first, delivered);
+    expect(second.match(/\[\[job_abc123\]\]/g)).toHaveLength(1);   // never duplicated
+
+    const measured = upsertIndexRow(second, delivered, 'as expected: signups flat after two weeks');
+    expect(measured.match(/\[\[job_abc123\]\]/g)).toHaveLength(1);
+    expect(measured).toContain('as expected: signups flat after two weeks');
+    expect(measured).not.toContain('| pending |');
+
+    const other = upsertIndexRow(measured, { ...delivered, job: 'job_zzz999' });
+    expect(other).toContain('[[job_abc123]]');
+    expect(other).toContain('[[job_zzz999]]');
+  });
+
+  it('escapes a pipe in agent-written text so one row cannot break the table', () => {
+    expect(indexRow({ ...delivered, question: 'A | B?' })).toContain('A / B?');
+  });
+
+  it('names the index path once, so nothing hardcodes it', () => {
+    expect(RESEARCH_INDEX).toBe('Research/index.md');
   });
 });
