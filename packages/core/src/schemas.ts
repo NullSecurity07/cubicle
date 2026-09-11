@@ -14,6 +14,25 @@ export const KNOWN_JOB_TYPES = [
 ] as const;
 
 /**
+ * Change risk, classified by the author (owner's operating model §27). Low is guardrails only; medium adds a
+ * security review; high adds a threat model the owner approves. The higher the risk, the stronger the human
+ * governance — a copy tweak must not carry the process a destructive migration needs.
+ */
+export const RISK_LEVELS = ['low', 'medium', 'high'] as const;
+export const RiskLevel = z.enum(RISK_LEVELS);
+export type RiskLevel = z.infer<typeof RiskLevel>;
+
+/** The examples from §27, worded for an agent choosing a level. Reused in tool descriptions and refusals. */
+export const RISK_GUIDANCE: Record<RiskLevel, string> = {
+  low: 'text changes, UI adjustments, minor bug fixes — automated guardrails only',
+  medium: 'database changes, significant backend changes, new external integrations — adds a security review gate',
+  high: 'authentication architecture, money, destructive migrations, core infrastructure — adds a threat model the owner approves',
+};
+
+/** Job types that change the product and must therefore state a risk class before the scheduler accepts them. */
+export const ENGINEERING_JOB_TYPES = ['engineer.ship'] as const;
+
+/**
  * A note timestamp. An owner who copies `Jobs/_template.md` verbatim leaves `created`/`updated` blank,
  * so blank (or missing) reads as "now" rather than failing the whole note's validation.
  */
@@ -53,6 +72,8 @@ export const JobFrontmatter = z.looseObject({
   owner_role: z.string().optional(),
   for: z.string().optional(),
   done_when: z.string().optional(),
+  risk: RiskLevel.default('low'),
+  stream: z.string().optional(),
   returns: z.record(z.string(), z.number().int()).default({}),
   gate_index: z.number().int().optional(),
   budget_from: z.number().int().optional(),
@@ -89,6 +110,18 @@ export const RoleFrontmatter = z.looseObject({
 export type RoleFrontmatter = z.infer<typeof RoleFrontmatter>;
 
 // ---------- Teams ----------
+/**
+ * Work-in-progress limits per lane (owner's operating model §7: "In Progress: maximum 3 items / Review: maximum 2 /
+ * Testing: maximum 2"). The point is not to keep everyone busy, it is to keep valuable work flowing, so the
+ * dispatcher refuses to *start* new work past the limit rather than reassigning it.
+ */
+export const WipLimits = z.object({
+  in_progress: z.number().int().min(1).default(3),
+  review: z.number().int().min(1).default(2),
+  testing: z.number().int().min(1).default(2),
+});
+export type WipLimits = z.infer<typeof WipLimits>;
+
 export const TeamFrontmatter = z.looseObject({
   id: z.string(),
   name: z.string(),
@@ -99,6 +132,7 @@ export const TeamFrontmatter = z.looseObject({
   floor: z.number().int().optional(),
   parent: z.string().optional(),       // the division this team belongs to (dev → technology); planning happens at the division
   processes: z.array(z.string()).default([]),
+  wip: WipLimits.default({ in_progress: 3, review: 2, testing: 2 }),
 });
 export type TeamFrontmatter = z.infer<typeof TeamFrontmatter>;
 
