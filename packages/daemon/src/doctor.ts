@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { repoRoot, loadOrg, officeRole, OFFICES, Vault, divisionTeams, type Org, DEFAULT_OFFICES } from '@cubicle/core';
-import { loadProvidersConfig, apiKeyFor } from '@cubicle/router';
+import { loadProvidersConfig, apiKeyFor, hasPrices } from '@cubicle/router';
 import { hasDocker, hasSandboxImage, SANDBOX_IMAGE } from '@cubicle/tools';
 
 export interface DoctorRow { area: string; item: string; ok: boolean | null; detail: string; fix?: string }
@@ -58,6 +58,13 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
   // The floor needs one local chat model (the first enabled one) and the embeddings model; other local models are optional.
   const firstLocal = ollamaCfg?.models.find((m) => m.enabled)?.id;
   const REQUIRED_OLLAMA = [...(firstLocal ? [firstLocal] : []), ...(ollamaCfg?.embeddings ? [ollamaCfg.embeddings.id] : [])];
+
+  const priced = hasPrices(cfg);
+  rows.push({
+    area: 'money', item: 'model prices', ok: null,
+    detail: priced ? 'at least one model carries a price; Ledger/runway.md can say what a paid tier costs' : 'no model carries a price, so the shadow cost in Ledger/runway.md is 0 — which is correct while everything is free',
+    fix: 'add `price: { input_per_mtok, output_per_mtok }` (cents per million tokens) to a paid model in config/providers.yaml',
+  });
 
   // Ollama
   const tags = await get('http://localhost:11434/api/tags');
