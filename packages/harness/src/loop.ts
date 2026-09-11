@@ -223,7 +223,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
 
   /** Create the review job for one gate of `parent`. */
   const enqueueGate = (gate: string, parent: JobFrontmatter, result: JobResult): void => {
-    let assignee = resolveRole(org, gateAssignee(gate, parent));
+    let assignee = resolveRole(org, gateAssignee(gate, parent, org));
     // The named assignee may have no active worker (role fired/deactivated, or a `for`/owner_role naming an
     // unknown role): fall back to its lead so the parent never sits in_review forever (F1).
     if (!org.roles[assignee]) {
@@ -232,10 +232,14 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       assignee = fallback;
     }
     const criteria = criteriaFor(gates, parent.type);
+    // The gate's *own* criteria, when it has one (research.review's §35 checklist, qa.review's "cite a file").
+    // `gates[gate]` is read directly rather than through criteriaFor so a gate with no entry stays silent
+    // instead of inheriting the `custom` fallback meant for the job under review.
+    const gateCriteria = gates[gate]?.criteria ?? '';
     deps.scheduler.enqueue({
       type: gate, title: `${gate === 'coo.verify' ? 'Verify' : 'Review'}: ${parent.title}`, assigned: assignee, priority: 4, parent: parent.id, links: [`[[${parent.id}]]`], privacy: parent.privacy,
       team: parent.team, owner_role: parent.owner_role, for: parent.for,
-      goal: `Review job [[${parent.id}]] (${parent.type}) as the ${gate} gate. What good looks like: ${criteria}\nDone when (author's): ${parent.done_when ?? 'not stated'}\nAuthor's summary: ${result.summary}\nRead its Result block and artifacts, check with evidence, then finish with status done and verdict pass, or verdict return with findings that name a file or an output line${gate === 'coo.verify' ? ', plus exactly one lesson in finish.lessons' : ''}. A job may be returned once per gate; a second return fails it.`,
+      goal: `Review job [[${parent.id}]] (${parent.type}) as the ${gate} gate. What good looks like: ${criteria}${gateCriteria ? `\nAs the ${gate} reviewer, check: ${gateCriteria}` : ''}\nDone when (author's): ${parent.done_when ?? 'not stated'}\nAuthor's summary: ${result.summary}\nRead its Result block and artifacts, check with evidence, then finish with status done and verdict pass, or verdict return with findings that name a file or an output line${gate === 'coo.verify' ? ', plus exactly one lesson in finish.lessons' : ''}. A job may be returned once per gate; a second return fails it.`,
     });
   };
 

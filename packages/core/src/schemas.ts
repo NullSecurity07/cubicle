@@ -10,6 +10,7 @@ export const KNOWN_JOB_TYPES = [
   'engineer.ship', 'growth.outreach', 'growth.post', 'growth.seo', 'coo.verify',
   'cto.plan', 'cto.compress_charters', 'ceo.heartbeat', 'research', 'custom',
   'team.plan', 'critic.premortem', 'qa.review', 'company.plan', 'colleague.answer',
+  'research.review', 'research.measure', 'intelligence',
 ] as const;
 
 /**
