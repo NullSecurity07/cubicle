@@ -58,7 +58,7 @@ describe('nextJob respects the team WIP limit (operating model §7)', () => {
   it('another team is unaffected, and a job with no team is never blocked', () => {
     setWip('dev', { in_progress: 1, review: 2, testing: 2 });
     updateJob(vault, devJob('A'), { status: 'running' }, 'daemon');
-    const q = createJob(vault, { type: 'qa.review', title: 'Review A', assigned: 'qa_lead', goal: 'g', team: 'qa' }, 'daemon');
+    const q = createJob(vault, { type: 'team:qa.review', title: 'Review A', assigned: 'qa_lead', goal: 'g', team: 'qa' }, 'daemon');
     expect(pool.nextJob('qa_lead')).toBe(q);
     const loose = createJob(vault, { type: 'custom', title: 'Loose', assigned: 'coo', goal: 'g' }, 'ceo');
     expect(pool.nextJob('coo')).toBe(loose);
@@ -74,8 +74,8 @@ describe('nextJob respects the team WIP limit (operating model §7)', () => {
   it('a running gate job does not inflate its parent\'s team WIP: the parent already occupies the lane (fix round 1)', () => {
     setWip('dev', { in_progress: 1, review: 2, testing: 2 });
     const a = devJob('A');
-    updateJob(vault, a, { status: 'in_review', gate_index: 0 }, 'daemon'); // testing: qa.review outstanding, not in_progress
-    const gateJob = createJob(vault, { type: 'qa.review', title: 'Review A', assigned: 'qa_automation', goal: 'g', team: 'dev', parent: a }, 'daemon');
+    updateJob(vault, a, { status: 'in_review', gate_index: 0 }, 'daemon'); // testing: team:qa.review outstanding, not in_progress
+    const gateJob = createJob(vault, { type: 'team:qa.review', title: 'Review A', assigned: 'qa_automation', goal: 'g', team: 'dev', parent: a }, 'daemon');
     updateJob(vault, gateJob, { status: 'running' }, 'daemon'); // would read as in_progress if not excluded
     const b = devJob('B');
     // dev's in_progress limit is 1, but the only "in_progress"-shaped job is the gate job (excluded); dev has 0 real in_progress jobs.
@@ -135,20 +135,20 @@ describe('a gate job is exempt from the author team\'s WIP limit (fix wave item 
   const gate = (type: string, title: string, assigned: string, parent: string) =>
     createJob(vault, { type, title, assigned, goal: 'g', team: 'dev', parent }, 'daemon');
 
-  it('a qa.review carrying team: dev dispatches while Dev is at its in_progress limit', () => {
+  it('a team:qa.review carrying team: dev dispatches while Dev is at its in_progress limit', () => {
     setWip('dev', { in_progress: 1, review: 2, testing: 2 });
     const a = devJob('A');
     updateJob(vault, a, { status: 'running' }, 'daemon');   // Dev is full
     expect(pool.nextJob('backend_engineer')).toBeNull();
-    const review = gate('qa.review', 'Review A', 'qa_lead', a);
+    const review = gate('team:qa.review', 'Review A', 'qa_lead', a);
     expect(pool.nextJob('qa_lead')).toBe(review);
   });
 
-  it('security.review dispatches even though Teams/security.md has no members', () => {
+  it('office:security.review dispatches even though Teams/security.md has no members', () => {
     setWip('dev', { in_progress: 1, review: 2, testing: 2 });
     const a = devJob('A');
     updateJob(vault, a, { status: 'running' }, 'daemon');
-    const sec = gate('security.review', 'Security review of A', 'ciso', a);
+    const sec = gate('office:security.review', 'Security review of A', 'ciso', a);
     expect(pool.nextJob('ciso')).toBe(sec);
   });
 
@@ -157,11 +157,11 @@ describe('a gate job is exempt from the author team\'s WIP limit (fix wave item 
     const a = devJob('A');
     updateJob(vault, a, { status: 'running' }, 'daemon');
     const ids = [
-      gate('qa.review', 'QA A', 'qa_lead', a),
-      gate('security.review', 'Sec A', 'ciso', a),
+      gate('team:qa.review', 'QA A', 'qa_lead', a),
+      gate('office:security.review', 'Sec A', 'ciso', a),
       gate('requester.review', 'Requester A', 'product_manager', a),
       gate('research.review', 'Research A', 'research_manager', a),
-      gate('coo.verify', 'Verify A', 'coo', a),
+      gate('office:operations.verify', 'Verify A', 'coo', a),
     ];
     const roles = ['qa_lead', 'ciso', 'product_manager', 'research_manager', 'coo'];
     roles.forEach((r, i) => expect(pool.nextJob(r), r).toBe(ids[i]));
@@ -172,7 +172,7 @@ describe('a gate job is exempt from the author team\'s WIP limit (fix wave item 
     setWip('dev', { in_progress: 1, review: 2, testing: 2 });
     const a = devJob('A');
     updateJob(vault, a, { status: 'running' }, 'daemon');
-    gate('qa.review', 'Review A', 'qa_lead', a);
+    gate('team:qa.review', 'Review A', 'qa_lead', a);
     devJob('B');
     expect(pool.nextJob('backend_engineer')).toBeNull();
   });
@@ -180,7 +180,7 @@ describe('a gate job is exempt from the author team\'s WIP limit (fix wave item 
   it('a gate job still waits for its dependencies', () => {
     const a = devJob('A');
     const blocker = devJob('Blocker');
-    const review = createJob(vault, { type: 'qa.review', title: 'Review A', assigned: 'qa_lead', goal: 'g', team: 'dev', parent: a, depends_on: [blocker] }, 'daemon');
+    const review = createJob(vault, { type: 'team:qa.review', title: 'Review A', assigned: 'qa_lead', goal: 'g', team: 'dev', parent: a, depends_on: [blocker] }, 'daemon');
     expect(pool.nextJob('qa_lead')).toBeNull();
     updateJob(vault, blocker, { status: 'done' }, 'daemon');
     expect(pool.nextJob('qa_lead')).toBe(review);

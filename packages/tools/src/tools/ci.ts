@@ -88,7 +88,7 @@ export function headOf(absWorkspace: string): string | null {
 
 export const ciRun = defineTool({
   name: 'ci.run',
-  description: 'Run a stream\'s pipeline from Workspace/<stream>/cubicle-ci.yaml inside the sandbox (build, lint, test, security-scan — whatever the file lists), and write the result to Workspace/<stream>/.cubicle-ci/<ts>.json. An engineer.ship job cannot finish without a green record newer than every source file, and qa.review reads the same record. Use `only` to re-run named steps while you iterate.',
+  description: 'Run a stream\'s pipeline from Workspace/<stream>/cubicle-ci.yaml inside the sandbox (build, lint, test, security-scan — whatever the file lists), and write the result to Workspace/<stream>/.cubicle-ci/<ts>.json. An engineer.ship job cannot finish without a green record newer than every source file, and the team:qa.review gate reads the same record. Use `only` to re-run named steps while you iterate.',
   schema: {
     stream: z.string().describe('the Streams/<slug> whose Workspace/<slug> to run'),
     only: z.array(z.string()).default([]).describe('step names to run; empty runs them all in order'),

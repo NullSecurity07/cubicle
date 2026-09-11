@@ -31,6 +31,15 @@ describe('scheduler.request through the org (spec §2)', () => {
   it('cto.plan is reserved for the daemon (via ceo), not schedulable through the tool', async () => {
     expect((await call('scheduler.request', 'cto', { type: 'cto.plan', title: 'x', assigned: 'dev_manager', goal: 'g', done_when: 'd' })).ok).toBe(false);
   });
+  it('the office and room gate types are reserved too, and so are the planning rounds', async () => {
+    for (const type of ['team:qa.review', 'office:operations.verify', 'office:security.review', 'division.plan', 'board.premortem', 'requester.review']) {
+      const r = await call('scheduler.request', 'dev_manager', { type, title: `sneak ${type}`, assigned: 'backend_engineer', goal: 'g', done_when: 'd' });
+      expect(r.ok, type).toBe(false);
+      expect(r.text, type).toMatch(/reserved for the daemon/);
+    }
+    // …and the offices that do run them are named by office, not by role id: the CTO may hand-queue a QA review.
+    expect((await call('scheduler.request', 'cto', { type: 'team:qa.review', title: 'QA this', assigned: 'qa_lead', goal: 'g', done_when: 'd' })).ok).toBe(true);
+  });
   it('the daemon\'s standing research sweeps are reserved too: nobody hand-queues intelligence or research.measure', async () => {
     for (const roleId of ['ceo', 'research_manager']) {   // both may schedule intelligence_analyst, so only the type can refuse them
       for (const type of ['intelligence', 'research.measure']) {

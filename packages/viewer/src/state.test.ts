@@ -227,13 +227,13 @@ describe('critique 7-9 reducer fixes', () => {
 
     it('review, veto, research and team.planned events drive expressions', () => {
       let s = applySnapshot(emptyState(), { ...snap, roles: [...snap.roles, { role: 'qa_lead', display: 'QA Lead', sprite: 'qa_lead', desk: 'qa_lead', active: true }, { role: 'advisor_skeptic', display: 'The Skeptic', sprite: 'advisor_skeptic', desk: 'advisor_skeptic', active: true }, { role: 'research_manager', display: 'Head of Research', sprite: 'research_manager', desk: 'research_manager', active: true }] });
-      s = applyEvent(s, ev('review.returned', 'qa_lead', { gate: 'qa.review', findings: ['no title'] }), 1000);
+      s = applyEvent(s, ev('review.returned', 'qa_lead', { gate: 'team:qa.review', findings: ['no title'] }), 1000);
       expect(s.agents.cmo.mood).toBe('worried'); expect(s.agents.qa_lead.bubble).toMatchObject({ kind: 'speech', text: expect.stringContaining('no title') });
       s = applyEvent(s, ev('plan.vetoed', 'advisor_skeptic', { findings: ['x'] }, null), 1000);
       expect(s.agents.advisor_skeptic.emote?.kind).toBe('!');
       s = applyEvent(s, ev('research.delivered', 'research_manager', {}, 'job_1'), 1000);
       expect(s.agents.research_manager.emote?.kind).toBe('idea');
-      s = applyEvent(s, ev('job.checkpoint', 'cmo', { in_review: 'qa.review' }), 1000);
+      s = applyEvent(s, ev('job.checkpoint', 'cmo', { in_review: 'team:qa.review' }), 1000);
       expect(s.jobs.job_1.status).toBe('in_review');
     });
   });

@@ -152,7 +152,7 @@ export async function applyFire(vault: Vault, note: { path: string; data: InboxF
   const managerRole = manager === 'owner' ? 'ceo' : manager;
   vault.writeText(rel, stringifyNote({ ...n.data, active: false, fired: nowIso() }, n.body), 'daemon', { job: note.data.job ?? null });
   vault.move(rel, `Roles/archive/${target}-${nowIso().slice(0, 10)}.md`, 'daemon');
-  // Gate jobs (qa.review/coo.verify/requester.review) must not be cancelled — that would strand the parent
+  // Gate jobs (team:qa.review/office:operations.verify/requester.review) must not be cancelled — that would strand the parent
   // in_review forever (F1) — so they always go to the manager. A work job cannot go to the manager blindly: a
   // lead/manager's charter rarely carries the tools (shell.run, git.*, deploy.*, …) a specialist's work needs, so
   // a reassigned engineer.ship would just fail or exhaust its budget and strand its dependents again. Instead try
@@ -637,10 +637,11 @@ export function enqueueExperimentReviews(vault: Vault, now = new Date()): string
   for (const e of listExperiments(vault)) {
     if (e.status !== 'running' || !e.review_date) continue;
     if (Date.parse(e.review_date) > now.getTime()) continue;
-    const prior = listJobs(vault).filter((j) => j.type === 'coo.verify' && (j.links ?? []).includes(`[[${e.path.replace(/\.md$/, '')}]]`));
+    // Either name: a verdict queued before the gate rename still counts as already asked for.
+    const prior = listJobs(vault).filter((j) => (j.type === 'office:operations.verify' || j.type === 'coo.verify') && (j.links ?? []).includes(`[[${e.path.replace(/\.md$/, '')}]]`));
     if (prior.some((j) => ['queued', 'running', 'blocked'].includes(j.status))) continue;
     const id = idFromKey('job', `judge:${e.path}:${prior.length}`); // a failed/cancelled judgement gets a fresh one
-    createJob(vault, { id, type: 'coo.verify', title: `Judge experiment: ${e.title ?? e.id}`, assigned: 'coo', priority: 2, goal: `Experiment [[${e.path.replace(/\.md$/, '')}]] reached its review date (${e.review_date}). Read it and Metrics/daily.md, decide won | lost | inconclusive from the evidence, then vault.write the experiment note with status set accordingly, the result filled in, and a short ## Verdict. Append one lesson via finish.lessons. Do not invent numbers.`, links: [`[[${e.path.replace(/\.md$/, '')}]]`] }, 'daemon');
+    createJob(vault, { id, type: 'office:operations.verify', title: `Judge experiment: ${e.title ?? e.id}`, assigned: 'coo', priority: 2, goal: `Experiment [[${e.path.replace(/\.md$/, '')}]] reached its review date (${e.review_date}). Read it and Metrics/daily.md, decide won | lost | inconclusive from the evidence, then vault.write the experiment note with status set accordingly, the result filled in, and a short ## Verdict. Append one lesson via finish.lessons. Do not invent numbers.`, links: [`[[${e.path.replace(/\.md$/, '')}]]`] }, 'daemon');
     out.push(id);
   }
   return out;

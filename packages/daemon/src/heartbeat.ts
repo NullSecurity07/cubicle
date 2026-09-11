@@ -42,9 +42,10 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
 
 /** Planning and gate job types never count toward the "N jobs completed" heartbeat trigger — otherwise a single
  *  cycle's own planning/gate sub-jobs (company.plan, critic.premortem, team.plan, plus every `GATE_JOB_TYPES`
- *  gate: qa.review, security.review, requester.review, research.review, coo.verify) push the count past the
- *  threshold and the heartbeat retriggers itself. The re-planning gate uses the same list for "work still
- *  open": a queued coo.verify is bookkeeping, not work from the plan. `GATE_JOB_TYPES` lives in core so
+ *  gate: team:qa.review, office:security.review, requester.review, research.review, office:operations.verify,
+ *  and their pre-office names) push the count past the threshold and the heartbeat retriggers itself. The
+ *  re-planning gate uses the same list for "work still open": a queued office:operations.verify is bookkeeping,
+ *  not work from the plan. `GATE_JOB_TYPES` lives in core so
  *  `wipLoad` (jobs.ts) excludes the identical set from a team's WIP tally — one list, not two literals to drift.
  *
  *  The daemon's own recurring background work belongs here for the same reason: `intelligence` (four sweeps the

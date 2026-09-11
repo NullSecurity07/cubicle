@@ -35,15 +35,15 @@ const stepsThenFinish = (n: number, args: Record<string, unknown>): Llm => {
 };
 
 describe('review gates (spec §3)', () => {
-  it('engineer.ship → in_review with a qa.review job; pass → coo.verify; pass → done', async () => {
+  it('engineer.ship → in_review with a team:qa.review job; pass → office:operations.verify; pass → done', async () => {
     const id = createJob(vault, { type: 'engineer.ship', stream: 'checkout', title: 'Build', assigned: 'backend_engineer', goal: 'g', team: 'dev', owner_role: 'dev_manager' }, 'dev_manager');
     await runJob(deps(finishing({ status: 'done', summary: 'built' })), id);
     expect(readJob(vault, id)!.data.status).toBe('in_review');
-    const qa = listJobs(vault).find((j) => j.type === 'qa.review')!;
+    const qa = listJobs(vault).find((j) => j.type === 'team:qa.review')!;
     expect(qa).toMatchObject({ assigned: 'qa_lead', parent: id, team: 'dev', owner_role: 'dev_manager' });
     await runJob(deps(finishing({ status: 'done', summary: 'looks good', verdict: 'pass' })), qa.id);
     expect(readJob(vault, id)!.data.status).toBe('in_review');
-    const coo = listJobs(vault).find((j) => j.type === 'coo.verify' && j.parent === id)!;
+    const coo = listJobs(vault).find((j) => j.type === 'office:operations.verify' && j.parent === id)!;
     expect(coo.assigned).toBe('coo');
     await runJob(deps(finishing({ status: 'done', summary: 'verified', verdict: 'pass', lessons: ['ok'] })), coo.id);
     expect(readJob(vault, id)!.data.status).toBe('done');
@@ -53,14 +53,14 @@ describe('review gates (spec §3)', () => {
   it('return sends the job back once with findings; a second return fails it', async () => {
     const id = createJob(vault, { type: 'engineer.ship', stream: 'checkout', title: 'Build', assigned: 'backend_engineer', goal: 'g', team: 'dev', owner_role: 'dev_manager' }, 'dev_manager');
     await runJob(deps(finishing({ status: 'done', summary: 'built' })), id);
-    let qa = listJobs(vault).find((j) => j.type === 'qa.review')!;
+    let qa = listJobs(vault).find((j) => j.type === 'team:qa.review')!;
     await runJob(deps(finishing({ status: 'done', summary: 'nope', verdict: 'return', findings: ['index.html has no title'] })), qa.id);
     const back = readJob(vault, id)!;
-    expect(back.data.status).toBe('queued'); expect(back.data.attempt).toBe(2); expect(back.data.returns).toEqual({ 'qa.review': 1 });
+    expect(back.data.status).toBe('queued'); expect(back.data.attempt).toBe(2); expect(back.data.returns).toEqual({ 'team:qa.review': 1 });
     expect(back.body).toContain('## Review findings'); expect(back.body).toContain('index.html has no title');
     expect(vault.events.count('review.returned')).toBe(1);
     await runJob(deps(finishing({ status: 'done', summary: 'built again' })), id);
-    qa = listJobs(vault).filter((j) => j.type === 'qa.review').sort((a, b) => a.created.localeCompare(b.created)).at(-1)!;
+    qa = listJobs(vault).filter((j) => j.type === 'team:qa.review').sort((a, b) => a.created.localeCompare(b.created)).at(-1)!;
     await runJob(deps(finishing({ status: 'done', summary: 'still no', verdict: 'return', findings: ['still no title'] })), qa.id);
     expect(readJob(vault, id)!.data.status).toBe('failed');
   });
@@ -118,34 +118,34 @@ describe('review gates (spec §3)', () => {
   it('a failed gate job returns the parent (not stranded); a second gate failure fails the parent', async () => {
     const id = createJob(vault, { type: 'engineer.ship', stream: 'checkout', title: 'Build', assigned: 'backend_engineer', goal: 'g', team: 'dev', owner_role: 'dev_manager' }, 'dev_manager');
     await runJob(deps(finishing({ status: 'done', summary: 'built' })), id);
-    let qa = listJobs(vault).find((j) => j.type === 'qa.review')!;
+    let qa = listJobs(vault).find((j) => j.type === 'team:qa.review')!;
     await runJob(deps(finishing({ status: 'failed', summary: 'could not run the build', blockers: ['docker down'] })), qa.id);
     const back = readJob(vault, id)!;
-    expect(back.data.status).toBe('queued'); expect(back.data.attempt).toBe(2); expect(back.data.returns).toEqual({ 'qa.review': 1 });
+    expect(back.data.status).toBe('queued'); expect(back.data.attempt).toBe(2); expect(back.data.returns).toEqual({ 'team:qa.review': 1 });
     expect(back.body).toContain('## Review findings'); expect(back.body).toContain('docker down');
     expect(vault.events.count('review.returned')).toBe(1);
     await runJob(deps(finishing({ status: 'done', summary: 'built again' })), id);
-    qa = listJobs(vault).filter((j) => j.type === 'qa.review').sort((a, b) => a.created.localeCompare(b.created)).at(-1)!;
+    qa = listJobs(vault).filter((j) => j.type === 'team:qa.review').sort((a, b) => a.created.localeCompare(b.created)).at(-1)!;
     await runJob(deps(finishing({ status: 'failed', summary: 'could not run the build again', blockers: ['docker down'] })), qa.id);
     expect(readJob(vault, id)!.data.status).toBe('failed');
   });
-  it('a gate assignee with no active worker falls back to its lead, with a warning (F1)', async () => {
+  it('a room gate whose lead is inactive goes up to the division lead, not to the CEO (F1)', async () => {
     const id = createJob(vault, { type: 'engineer.ship', stream: 'checkout', title: 'Build', assigned: 'backend_engineer', goal: 'g', team: 'dev', owner_role: 'dev_manager' }, 'dev_manager');
-    // Deactivate the QA lead's charter directly (still a Teams/qa.md lead, unlike a fire) so the qa.review gate
-    // about to be enqueued names a role with no active worker. `resolveRole` then leaves the gate's `qa` alone
-    // (its alias qa_lead is gone too) and the QA room has no active lead left, so the fallback is the CEO.
-    // Sub-project 2's escalation to the division lead will make this the CTO again.
+    // Deactivate the QA lead's charter directly (still a Teams/qa.md lead, unlike a fire) so the room the
+    // `team:qa.review` gate names has no active lead. `gateAssignee` itself now walks up the team tree, so the
+    // gate lands on the division lead (Technology's CTO) rather than on the CEO — and enqueueGate has nothing
+    // left to warn about, because the assignee it was handed is a live desk.
     vault.updateNote('Roles/qa_lead.md', (n) => ({ data: { ...n.data, active: false }, body: n.body }), 'daemon');
     await runJob(deps(finishing({ status: 'done', summary: 'built' })), id);
-    const qa = listJobs(vault).find((j) => j.type === 'qa.review')!;
-    expect(qa.assigned).toBe('ceo'); // the qa room's only lead is gone
-    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => /qa\.review/.test(String(e.payload.message)) && /ceo/.test(String(e.payload.message)))).toBe(true);
+    const qa = listJobs(vault).find((j) => j.type === 'team:qa.review')!;
+    expect(qa.assigned).toBe('cto'); // the QA room's lead is inactive: the gate goes up to the division lead
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => /team:qa\.review/.test(String(e.payload.message)))).toBe(false);
   });
   it('a job returned at a high checkpoint step still gets a fresh maxSteps budget, not the remainder (F3)', async () => {
     const maxSteps = 5;
     const id = createJob(vault, { type: 'engineer.ship', stream: 'checkout', title: 'Build', assigned: 'backend_engineer', goal: 'g', team: 'dev', owner_role: 'dev_manager' }, 'dev_manager');
     await runJob(deps(finishing({ status: 'done', summary: 'built' }), { maxSteps }), id);
-    const qa = listJobs(vault).find((j) => j.type === 'qa.review')!;
+    const qa = listJobs(vault).find((j) => j.type === 'team:qa.review')!;
     // Simulate the job having already used most of its budget by the time it reached the gate.
     vault.updateNote(`Jobs/${id}.md`, (n) => ({ data: { ...n.data, checkpoint_step: maxSteps - 1 }, body: n.body }), 'daemon');
     await runJob(deps(finishing({ status: 'done', summary: 'nope', verdict: 'return', findings: ['needs work'] })), qa.id);
