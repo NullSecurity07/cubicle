@@ -36,12 +36,13 @@ export function systemTypes(org: Org): Record<string, string[]> {
 export function cannotScheduleText(org: Org, roleId: string, assigned: string): string {
   const allowed = [...new Set([...(teamOf(org, roleId)?.members ?? []), ...Object.keys(org.roles)])].filter((r) => can(org, roleId, 'schedule', r)); // own team first, in charter order
   const self = assigned === roleId ? ' Nobody schedules themselves: do the work in this job.' : '';
-  const research = researchLead(org) ?? 'research_manager';   // the research team's lead, not the v1 analyst id
-  const fallback = `Otherwise do the work in this job yourself, request research (type: research, assigned: ${research}), or tell your lead (the ceo, for a lead) with colleague.message.`;
-  if (allowed.length) return `${roleId} may not schedule ${assigned}.${self} You may schedule: ${allowed.join(', ')} (leads schedule anyone in their subtree, members hand off to a teammate, the CEO anyone). ${fallback}`;
+  const research = researchLead(org) ?? officeHolder(org, 'research');   // the research team's lead, resolved through the org
+  const chief = officeHolder(org, 'chief_executive');
+  const fallback = `Otherwise do the work in this job yourself, request research (type: research, assigned: ${research}), or tell your lead (${chief}, for a lead) with colleague.message.`;
+  if (allowed.length) return `${roleId} may not schedule ${assigned}.${self} You may schedule: ${allowed.join(', ')} (leads schedule anyone in their subtree, members hand off to a teammate, ${chief} anyone). ${fallback}`;
   const team = isLead(org, roleId) ? teamOf(org, roleId) : null;
   const why = team ? `${roleId} leads ${team.id}, and ${team.id} has no members, so there is nobody to schedule.` : `${roleId} may not schedule ${assigned}, and has no teammate to hand off to.`;
-  return `${why}${self} Do the work in this job yourself, request research (type: research, assigned: ${research}), or ask the ceo with colleague.message.`;
+  return `${why}${self} Do the work in this job yourself, request research (type: research, assigned: ${research}), or ask ${chief} with colleague.message.`;
 }
 
 /**
@@ -70,7 +71,7 @@ export function missingRiskText(type: string): string {
 
 export const schedulerRequest = defineTool({
   name: 'scheduler.request',
-  description: `Enqueue a job for a role. Leads schedule anyone in their subtree, members hand off to a teammate, the CEO anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). A type: research job must carry the full \`research\` request (decision, decision owner, question, hypothesis or exploration, known evidence, unknowns, deadline, required confidence, potential decisions, portfolio, impact, uncertainty, cost of being wrong) — its priority comes from impact × uncertainty × cost of being wrong, not from \`priority\`. CEO/CTO may also set priority on existing jobs via reprioritize. Engineering types (${ENGINEERING_JOB_TYPES.join(', ')}) must also state risk: low (text, UI, minor fixes), medium (data, backend, new integrations), high (auth, money, destructive migrations, infrastructure).`,
+  description: `Enqueue a job for a role. Leads schedule anyone in their subtree, members hand off to a teammate, the chief executive anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). A type: research job must carry the full \`research\` request (decision, decision owner, question, hypothesis or exploration, known evidence, unknowns, deadline, required confidence, potential decisions, portfolio, impact, uncertainty, cost of being wrong) — its priority comes from impact × uncertainty × cost of being wrong, not from \`priority\`. CEO/CTO may also set priority on existing jobs via reprioritize. Engineering types (${ENGINEERING_JOB_TYPES.join(', ')}) must also state risk: low (text, UI, minor fixes), medium (data, backend, new integrations), high (auth, money, destructive migrations, infrastructure).`,
   schema: {
     type: z.string().default('custom'),
     title: z.string(),
