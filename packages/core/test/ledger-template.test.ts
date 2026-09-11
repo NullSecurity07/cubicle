@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault } from '../src/template.js';
 import type { Vault } from '../src/vault.js';
 import { HEARTBEAT_WAKE_AREAS } from '../src/watcher.js';
 import { KNOWN_JOB_TYPES } from '../src/schemas.js';
+import { ledgerTemplate } from '../src/money.js';
 
 // NOTE: `packages/core/src/money.ts` (Task 1) is built in parallel on a different branch and is not present
 // here, so this test checks the vault-template files and the list edits directly rather than through
@@ -38,5 +39,15 @@ describe('a new vault comes with a book (spec §1)', () => {
 
   it('the daily runway job is a known type', () => {
     expect(KNOWN_JOB_TYPES).toContain('finance.runway');
+  });
+});
+
+describe('the shipped ledger is the template the code writes (pre-flight P15)', () => {
+  it('vault-template/Ledger/ledger.md is byte-identical to ledgerTemplate() for its own frontmatter', () => {
+    const shipped = readFileSync(path.resolve(__dirname, '../../../vault-template/Ledger/ledger.md'), 'utf8');
+    const opened = /^opened: "?([^"\n]+)"?$/m.exec(shipped)?.[1];
+    const currency = /^currency: (\S+)$/m.exec(shipped)?.[1];
+    expect(opened && currency).toBeTruthy();
+    expect(shipped).toBe(ledgerTemplate(currency!, opened!));
   });
 });
