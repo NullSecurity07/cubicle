@@ -626,7 +626,17 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           const waiting = openPlanVerdict(vault);
           if (waiting && waiting.data.id !== planVerdictId(hbId)) {
             state = { ...state, planWaiting: waiting.path, verdictProposal: waiting.data.id }; saveState(state);
-            const note = `planning paused — the plan from ${waiting.data.created.slice(0, 10)} is waiting for your verdict (${waiting.path})`;
+            // A `plan_verdict` note stays open across the approval itself — until a cycle fans it out and stamps
+            // `fanned_out` (see openPlanVerdict) — so `waiting` is just as likely to be a plan the owner has
+            // ALREADY approved as one still waiting. Both pause the rewrite for the same reason (do not write a
+            // new plan over the plan the divisions are about to plan against), but they are not the same news:
+            // a fresh-vault run reported "planning paused — the plan is waiting for your verdict" in the same
+            // startup in which the owner's approval had just been read and three division plans fanned out. The
+            // note's own flag picks the words.
+            const approved = waiting.data.approved === true;
+            const note = approved
+              ? `planning paused — the plan from ${waiting.data.created.slice(0, 10)} was approved; the divisions plan against it this cycle (${waiting.path})`
+              : `planning paused — the plan from ${waiting.data.created.slice(0, 10)} is waiting for your verdict (${waiting.path})`;
             deps.log?.(`heartbeat ${hbId}: ${note}`);
             done(i, note);
             break;

@@ -221,6 +221,32 @@ describe('approved work continues, new work waits (Task 5 review I1/I2/M1)', () 
     expect(readJob(vault, divisionPlan.id)!.body).toContain('Next action from the last brief: Scaffold the site from Brand/ (dev)');
   });
 
+  // Live run, fresh vault: the owner approved the `plan_verdict` note while the daemon was down. On the restart
+  // the dispatch resolved it and three division.plan jobs fanned out correctly — but a heartbeat that started in
+  // the same startup logged "planning paused — the plan is waiting for your verdict" about the note that had
+  // just been approved. The ordering is not the dispatch: `openPlanVerdict` matches on
+  // `approved !== false && !fanned_out`, so it keeps returning an approved note until a cycle fans it out, and
+  // this heartbeat read it before that stamp. Pausing is right; calling a verdict the owner has given "waiting"
+  // is not.
+  it('a plan the owner already approved is never reported as waiting for their verdict', async () => {
+    const approved = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'Approve this cycle\'s plan', body: 'The board passed this plan.' }, 'ceo');
+    vault.updateNote(approved.path, (n) => ({ data: { ...n.data, approved: true, board_verdict: 'pass', resolved_at: new Date().toISOString() }, body: n.body }), 'owner');
+    vault.writeText('Plans/plan.md', '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### technology\n- Ship the first cut\n\n### revenue\n- Find ten customers\n', 'ceo');
+    const hbId = createHeartbeatJob(vault, 'test');
+    parkAt(hbId, 'company_plan');
+
+    // Blocked on the fan-out: this cycle is the one that acts on that approval.
+    expect((await runHeartbeat({ vault, llm: mute, env: {}, now: () => new Date() }, hbId)).status).toBe('blocked');
+    const log = readJob(vault, hbId)!.body;
+    expect(log).toContain('planning paused');
+    expect(log).toContain('was approved; the divisions plan against it this cycle');
+    expect(log).not.toContain('is waiting for your verdict');
+    expect(listJobs(vault).filter((j) => j.type === 'division.plan')).toHaveLength(2);
+    // And the note is spent, so the next cycle plans afresh instead of pausing on it again.
+    expect((findInboxById(vault, approved.id)!.data as { fanned_out?: string }).fanned_out).toBe(hbId);
+    expect(openPlanVerdict(vault)).toBeNull();
+  });
+
   // Two facts lines said the same thing on a cycle that both inherited a waiting plan and left it waiting
   // (Task 6 review, minor 4).
   it('the brief says "waiting for your verdict" once, not twice', async () => {
