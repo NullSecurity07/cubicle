@@ -168,7 +168,13 @@ export class Daemon {
         if (j && !NON_WORK_TYPES.includes(j.type)) {
           // Counted from the event log, so a restart does not forget completed work.
           const since = this.vault.events.last('heartbeat.completed')?.ts;
-          const done = this.vault.events.query({ types: ['job.done', 'job.failed'], from: since }).filter((e) => e.job && !NON_WORK_TYPES.includes(readJob(this.vault, e.job)?.data.type ?? '')).length;
+          // `job.failed` is also emitted for a *requeued* attempt (step limit, bad JSON, a refused finish), and one
+          // job that retries three times is one piece of work, not three. Counting those fired spurious heartbeats
+          // as soon as any job needed a retry — which the ship gate makes ordinary, since a ship whose CI is not
+          // green is refused and burns its attempt.
+          const done = this.vault.events.query({ types: ['job.done', 'job.failed'], from: since })
+            .filter((e) => (e.payload as { requeued?: boolean } | undefined)?.requeued !== true)
+            .filter((e) => e.job && !NON_WORK_TYPES.includes(readJob(this.vault, e.job)?.data.type ?? '')).length;
           if (done >= cfg.heartbeat.jobsCompletedN) this.requestHeartbeat(`${done} jobs completed`);
         }
       }
