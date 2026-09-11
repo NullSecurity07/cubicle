@@ -76,7 +76,9 @@ export class RoomSigns {
     for (const sg of Object.values(signs)) {
       const color = floorPalette(sg.floor).skirting;
       const label = (sg.label || sg.room).slice(0, 44);
-      this.texts.push(scene.add.text(sg.tile.tx * TILE + 2, sg.tile.ty * TILE + 1, label, { fontFamily: 'system-ui, sans-serif', fontSize: `${7 * RES}px`, fontStyle: '600', color: '#ffffff', backgroundColor: color, padding: { x: 2 * RES, y: RES } }).setOrigin(0, 0).setScale(1 / RES).setDepth(4));
+      // Depth 5.5, above the wall Surfaces at 5: a screen hung on the same wall band used to clip "Board room" to
+      // "Boar…". The 2 px of extra left padding is the clear band that keeps the first glyph off the screen frame.
+      this.texts.push(scene.add.text(sg.tile.tx * TILE + 4, sg.tile.ty * TILE + 1, label, { fontFamily: 'system-ui, sans-serif', fontSize: `${7 * RES}px`, fontStyle: '600', color: '#ffffff', backgroundColor: color, padding: { x: 2 * RES, y: RES } }).setOrigin(0, 0).setScale(1 / RES).setDepth(5.5));
     }
   }
 }

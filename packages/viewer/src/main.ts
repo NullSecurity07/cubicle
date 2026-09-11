@@ -12,7 +12,7 @@ import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
 import { withMotion, reducedMotion } from './world/motion.js';
-import { ElevatorView, toViewState } from './world/elevator-view.js';
+import { ElevatorView, toViewState, emptyViewState } from './world/elevator-view.js';
 import { announce, announcementFor, coachMark, toast } from './ui/notify.js';
 import { FirstRun } from './ui/firstrun.js';
 import { QuickOpen, quickItems } from './ui/quickopen.js';
@@ -83,6 +83,8 @@ function rebuildReplayTo(index: number): void {
 }
 
 let elevatorView: ElevatorView | null = null;
+/** The one view-state object the rAF loop fills and hands to the elevator view (see `toViewState`). */
+const elevatorViewState = emptyViewState();
 function viewOf(kind: string): ReturnType<typeof viewFor> {
   if (kind === 'keys') return keysView();              // the shortcut sheet is the one kind with no data behind it
   try { ctx.floorLabels ??= Object.fromEntries(scene.floorSummary().map((f) => [f.floor, f.label])); } catch { /* the scene has not created its world yet */ }
@@ -166,19 +168,14 @@ const quick = new QuickOpen({ items: () => quickItems(state), onPick: (kind) => 
 /** `__cubicle.setHour` mirrored: the scene tints by it, and the time bar's sun/moon must read the same hour. */
 let hourOverride: number | null = null;
 
-/** `0` fits the whole tower: the camera bounds are the map plus a margin; fractional zoom is allowed only here. */
-function fitTower(): void {
-  const cam = scene.cameras.main; const b = cam.getBounds();
-  if (!b.width || !b.height) return;   // the scene has not built its world yet: nothing to fit, and a 0 would be Infinity
-  cam.setZoom(Math.min(cam.width / b.width, cam.height / b.height)).centerOn(b.centerX, b.centerY);
-}
-
 /** `M` goes to the chrome above, which owns both the HTML frame and the Phaser minimap camera's visibility. */
 const minimapHook: { toggle(): void } = { toggle: () => minimap.toggle() };
 
 bindKeys({
   floor1: () => scene.focusFloor(1), floor2: () => scene.focusFloor(2), floor3: () => scene.focusFloor(3), floor4: () => scene.focusFloor(4),
-  lobby: () => scene.focusOn('noticeboard'), fit: fitTower,
+  // `0` fits the whole tower. One implementation, in the scene: this used to be a second, instant one here,
+  // and the scene's own `keys.ZERO` fired on the same keypress, so the two fights over the camera were visible.
+  lobby: () => scene.focusOn('noticeboard'), fit: () => scene.fitTower(),
   talk: () => open('cabin'), queue: () => open('noticeboard'), brief: () => open('newsstand'), plan: () => open('whiteboard'), org: () => open('org'),
   pause: () => time.togglePlay(), prev: () => time.step(-1), next: () => time.step(1),
   minimap: () => minimapHook.toggle(), help: () => open('keys'), quickopen: () => quick.open(),
@@ -269,7 +266,9 @@ function loop(now: number): void {
   if (now - lastLayout > 500) { lastLayout = now; minimap.layout(); rail.update(); }
   time.tick(dt, new Date(), hourOverride);
   if (state.mode === 'live') state = tick(state, Date.now());
-  if (elevatorView && scene.scene.isActive()) elevatorView.setState(toViewState(scene.elevator.state()));   // doors and digits follow the engine every frame
+  // doors and digits follow the engine every frame; `toViewState` writes into one reused object so the loop
+  // allocates nothing per frame (its riders array is already reference-cached inside elevator-view.ts)
+  if (elevatorView && scene.scene.isActive()) elevatorView.setState(toViewState(scene.elevator.state(), TILE, elevatorViewState));
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

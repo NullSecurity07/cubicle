@@ -44,6 +44,7 @@ export const PALETTE = {
   /** status colours for meters and badges: never amber unless the meter is actually asking for attention */
   good: '#4cae5c', warn: '#e0a030', bad: '#c0392b', barTrack: '#2a2e37',
   wipe: '#ffffff',
+  glassLit: '#5ad1ff', minimapBg: '#0e1014',
   dusk: '#3b2a4a', night: '#0a1030',
   sky: { day: ['#9ec7ee', '#dfeaf5'], dusk: ['#f0a36b', '#6a4c8a'], night: ['#0b1026', '#1b2140'] },
   windowDay: '#a9d6ff', windowDusk: '#f3b884', windowNight: '#ffe08a',
