@@ -1,0 +1,39 @@
+/* packages/viewer/src/ui/tokens.css — structure tokens. Colours are written by ui/tokens.ts (applyTheme). */
+:root {
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Cantarell, "DejaVu Sans", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, "JetBrains Mono", "Fira Code", "DejaVu Sans Mono", monospace;
+  /* type scale: size / line-height / weight */
+  --fs-caption: 11px;  --lh-caption: 1.35; --fw-caption: 500;
+  --fs-footnote: 12px; --lh-footnote: 1.4; --fw-footnote: 400;
+  --fs-subhead: 13px;  --lh-subhead: 1.4;  --fw-subhead: 500;
+  --fs-body: 14px;     --lh-body: 1.5;     --fw-body: 400;
+  --fs-headline: 15px; --lh-headline: 1.3; --fw-headline: 600;
+  --fs-title3: 17px;   --lh-title3: 1.3;   --fw-title3: 600;
+  --fs-title2: 20px;   --lh-title2: 1.25;  --fw-title2: 650;
+  --fs-title1: 24px;   --lh-title1: 1.2;   --fw-title1: 700;
+  /* 4-pt spacing */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
+  /* radius */
+  --r-s: 6px; --r: 10px; --r-l: 14px; --r-pill: 999px;
+  /* motion */
+  --d-micro: 120ms; --d-open: 200ms; --d-sheet: 280ms; --d-reader: 360ms;
+  --ease-out: cubic-bezier(.2,.8,.2,1); --ease-in: cubic-bezier(.4,0,1,1); --ease-spring: cubic-bezier(.34,1.56,.64,1);
+  /* layout */
+  --bar-h: 52px; --rail-w: 44px; --hit: 32px; --blur: blur(20px) saturate(140%);
+}
+@media (prefers-reduced-motion: reduce) { :root { --d-micro: 1ms; --d-open: 1ms; --d-sheet: 1ms; --d-reader: 1ms; } }
+
+.caption  { font-size: var(--fs-caption);  line-height: var(--lh-caption);  font-weight: var(--fw-caption); }
+.footnote { font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-footnote); }
+.subhead  { font-size: var(--fs-subhead);  line-height: var(--lh-subhead);  font-weight: var(--fw-subhead); }
+.body     { font-size: var(--fs-body);     line-height: var(--lh-body);     font-weight: var(--fw-body); }
+.headline { font-size: var(--fs-headline); line-height: var(--lh-headline); font-weight: var(--fw-headline); letter-spacing: -0.01em; }
+.title-3  { font-size: var(--fs-title3);   line-height: var(--lh-title3);   font-weight: var(--fw-title3);   letter-spacing: -0.01em; }
+.title-2  { font-size: var(--fs-title2);   line-height: var(--lh-title2);   font-weight: var(--fw-title2);   letter-spacing: -0.01em; }
+.title-1  { font-size: var(--fs-title1);   line-height: var(--lh-title1);   font-weight: var(--fw-title1);   letter-spacing: -0.01em; }
+.num { font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* materials */
+.glass { background: var(--glass); backdrop-filter: var(--blur); border: 1px solid var(--hairline); }
+@supports not (backdrop-filter: blur(1px)) { .glass { background: color-mix(in srgb, var(--surface-1) 96%, transparent); } }
