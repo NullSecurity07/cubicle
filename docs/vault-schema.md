@@ -156,7 +156,7 @@ Body: freeform notes, appended to every expanded step's job goal.
 | field | type | notes |
 |---|---|---|
 | `id` | string |  |
-| `kind` | `message` \| `hire` \| `fire` \| `brand_change` \| `charter_change` \| `file_change` \| `spend` \| `outbound_batch` \| `reorg` \| `threat_model` | `message` is a conversation; the rest are proposals |
+| `kind` | `message` \| `hire` \| `fire` \| `brand_change` \| `charter_change` \| `file_change` \| `spend` \| `outbound_batch` \| `reorg` \| `threat_model` \| `plan_verdict` | `message` is a conversation; the rest are proposals |
 | `created` | string |  |
 | `from` | string |  |
 | `to` | string = `"owner"` |  |

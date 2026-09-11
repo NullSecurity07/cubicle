@@ -1,5 +1,5 @@
 import {
-  type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
+  type Vault, type JobFrontmatter, type InboxFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, findInboxById, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
   loadOrg, expandProcess, childrenOf, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
   officeHolder, roleWithTool, teamOf, researchLead, listStreams, type Org,
@@ -121,6 +121,53 @@ export function planningGate(opts: { plan: string; now: Date; maxAgeDays: number
   if (ageDays < 0) return { skip: false, reason: 'plan stamp is in the future' };
   if (ageDays >= maxAgeDays) return { skip: false, reason: `plan is ${ageDays.toFixed(1)} days old` };
   return { skip: true, planDate: new Date(t).toISOString().slice(0, 10) };
+}
+
+/** The plan_verdict note for one heartbeat: a stable id, so a resumed cycle finds its own proposal. */
+export function planVerdictId(hbId: string): string { return idFromKey('prop', `verdict:${hbId}`); }
+
+/**
+ * The plan the company has not acted on yet: a `plan_verdict` note that was not rejected and whose plan no
+ * division has planned against (`fanned_out`). It stays open across the approval itself on purpose — an owner who
+ * approves between two heartbeats must get their plan executed, not overwritten by a fresh one.
+ */
+export function openPlanVerdict(vault: Vault): { path: string; data: InboxFrontmatter; body: string } | null {
+  return listInbox(vault).find((n) => n.data.kind === 'plan_verdict' && n.data.approved !== false && !(n.data as { fanned_out?: string }).fanned_out) ?? null;
+}
+
+/** How much of Plans/plan.md the verdict note quotes: enough to rule on, short of pasting a whole cycle's plan. */
+const PLAN_EXCERPT_CHARS = 3000;
+
+/**
+ * What the owner actually reads when a plan lands in their inbox: the board's verdict in words, every finding the
+ * board raised as its own bullet, and the plan itself. The findings are on the note rather than only in the
+ * pre-mortem decision note because this is the one place the owner is being asked to rule, and a verdict asked
+ * for without the case against it is not a decision.
+ */
+export function planVerdictBody(opts: { board: 'pass' | 'return'; findings: string[]; plan: string; decidesAfterHours: number }): string {
+  const findings = opts.findings.length
+    ? opts.findings.map((f) => `- ${f}`).join('\n')
+    : '- The board raised nothing that would sink the cycle.';
+  const deadline = opts.decidesAfterHours > 0
+    ? `; after ${opts.decidesAfterHours} h the board's verdict stands (\`board_decides_after_hours\` in Memory/constitution.md)`
+    : '';
+  return `The board ${opts.board === 'pass' ? 'passed' : 'returned'} this plan.\n\n${findings}\n\n## The plan\n\n${opts.plan.slice(0, PLAN_EXCERPT_CHARS)}\n\nSet \`approved: true\` to let the divisions plan against it, or \`approved: false\` to send it back. Work already approved keeps running while you decide${deadline}.`;
+}
+
+/**
+ * Who decided, and what. The owner's flag always wins. Until it arrives the plan is pending — and with
+ * `board_decides_after_hours` at 0, which is the default, it stays pending for as long as the owner takes: the
+ * board advises, only the owner rules. An owner who sets a positive number is handing the board that ruling after
+ * that long, which is what an unattended night wants. Work from the previously approved plan runs throughout
+ * either way; a pending plan stops only new work.
+ */
+export function verdictOutcome(opts: { approved: boolean | null; created: string; now: Date; boardVerdict: 'pass' | 'return'; decidesAfterHours: number }): 'approved' | 'rejected' | 'pending' {
+  if (opts.approved === true) return 'approved';
+  if (opts.approved === false) return 'rejected';
+  if (!(opts.decidesAfterHours > 0)) return 'pending';   // off: the owner rules, however long that takes
+  const hours = (opts.now.getTime() - Date.parse(opts.created)) / 3600_000;
+  if (!Number.isFinite(hours) || hours < opts.decidesAfterHours) return 'pending';
+  return opts.boardVerdict === 'pass' ? 'approved' : 'rejected';
 }
 
 /**
@@ -328,7 +375,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -336,10 +383,18 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   if (job.blocked_on?.kind === 'job') {
     const atStep = HEARTBEAT_STEPS[job.checkpoint_step];
     if (atStep === 'company_plan' && !state.companyPlanJob) state = { ...state, companyPlanJob: job.blocked_on.id };
-    if (atStep === 'division_plans' && !state.teamPlanJobs) {
+    // `owner_verdict` counts as well as `division_plans`: a heartbeat that blocked on the fan-out before its
+    // checkpoint reached `division_plans` is still parked on team.plan jobs it already created, and a lost cache
+    // file must not make it create them a second time.
+    if ((atStep === 'division_plans' || atStep === 'owner_verdict') && !state.teamPlanJobs) {
       const ids = listJobs(vault).filter((j) => j.parent === jobId && j.type === 'team.plan').map((j) => j.id);
       if (ids.length) state = { ...state, teamPlanJobs: ids };
     }
+  }
+  // Likewise the verdict note: it is found by its heartbeat-stable id, so a cache-less resume rules on the note
+  // the cycle already filed instead of filing a second one (openPlanVerdict would then see two open plans).
+  if (!state.verdictProposal && ['owner_verdict', 'division_plans', 'brief', 'commit'].includes(HEARTBEAT_STEPS[job.checkpoint_step] ?? '') && findInboxById(vault, planVerdictId(hbId))) {
+    state = { ...state, verdictProposal: planVerdictId(hbId) };
   }
   if (!state.runPath) {
     const fromLinks = job.links.find((l) => l.startsWith('[[Runs/'))?.replace(/^\[\[|\]\]$/g, '');
@@ -489,6 +544,17 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
       case 'company_plan': {
         // Await company.plan as a sub-job. First visit: create it and block. Second visit: it finished.
         if (!state.companyPlanJob) {
+          // A plan already waiting for the owner blocks NEW work only (program design §4): do not write another
+          // plan over it, and let this cycle's owner_verdict step re-read that same note — an approval that
+          // arrived since the last heartbeat makes the divisions plan today.
+          const waiting = openPlanVerdict(vault);
+          if (waiting && waiting.data.id !== planVerdictId(hbId)) {
+            state = { ...state, planWaiting: waiting.path, verdictProposal: waiting.data.id }; saveState(state);
+            const note = `planning paused — the plan from ${waiting.data.created.slice(0, 10)} is waiting for your verdict (${waiting.path})`;
+            deps.log?.(`heartbeat ${hbId}: ${note}`);
+            done(i, note);
+            break;
+          }
           // Re-planning gate: a fresh, substantive plan with work still open stands (see planningGate). "Owner
           // asked" is read broadly — an unanswered message, any owner edit, or an owner-/forced-triggered
           // heartbeat — because skipping wrongly costs a cycle of stale direction while planning wrongly costs
@@ -572,6 +638,41 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         done(i, `board ${session.verdict}`);
         break;
       }
+      case 'owner_verdict': {
+        // No new plan this cycle means nothing to rule on: the plan the divisions are working from was already
+        // approved, and `division_plans` skips on `planSkipped` before it ever looks at `state.verdict`.
+        if (state.planSkipped) { done(i, 'no new plan to rule on'); break; }
+        const org = loadOrg(vault);
+        const ceo = officeHolder(org, 'chief_executive');
+        const decidesAfterHours = vault.constitution().board_decides_after_hours;
+        if (!state.verdictProposal) {
+          const board = state.boardVerdict ?? 'pass';
+          const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
+          const { id, path: rel } = createProposal(vault, {
+            id: planVerdictId(hbId), kind: 'plan_verdict', from: ceo, to: 'owner', job: jobId,
+            title: `Approve this cycle's plan`,
+            body: planVerdictBody({ board, findings: state.boardFindings ?? [], plan, decidesAfterHours }),
+          }, ceo);
+          // The board's verdict lives on the note, not in cache state: a later heartbeat rules on this plan after
+          // a restart, and it must know what the board actually said.
+          vault.updateNote(rel, (n) => ({ data: { ...n.data, board_verdict: board }, body: n.body }), 'daemon');
+          state = { ...state, verdictProposal: id }; saveState(state);
+        }
+        const note = findInboxById(vault, state.verdictProposal!);
+        if (!note) { state = { ...state, verdict: 'approved' }; saveState(state); done(i, 'verdict note is gone; treating the plan as approved'); break; }
+        const boardVerdict = (note.data as { board_verdict?: string }).board_verdict === 'return' ? 'return' as const : 'pass' as const;
+        const outcome = verdictOutcome({ approved: note.data.approved, created: note.data.created, now: now(), boardVerdict, decidesAfterHours });
+        // A verdict the board made on its own is written onto the note as the decision it is — otherwise a
+        // board-rejected plan would sit undecided forever and no later cycle could plan at all. Guarded on
+        // `approved === null` so a replay of this step stamps the note once, not once per resume.
+        if (outcome !== 'pending' && note.data.approved === null) {
+          vault.updateNote(note.path, (n) => ({ data: { ...n.data, approved: outcome === 'approved', decided_by: 'board', resolved_at: nowIso() }, body: n.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: the board's verdict (${boardVerdict}) stood after ${decidesAfterHours} h._\n` }), 'daemon');
+          vault.events.emit({ type: 'proposal.resolved', agent: 'daemon', job: jobId, payload: { id: note.data.id, kind: 'plan_verdict', approved: outcome === 'approved', outcome: 'the board decided' } });
+        }
+        state = { ...state, verdict: outcome }; saveState(state);
+        done(i, `plan verdict: ${outcome}`);
+        break;
+      }
       case 'division_plans': {
         // The leads already planned against this plan last cycle and their jobs are the open work the gate saw.
         if (state.planSkipped && !state.teamPlanJobs) { done(i, 'team plans skipped — the plan was not rewritten'); break; }
@@ -601,6 +702,12 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
             }, 'ceo'));
           }
           state = { ...state, teamPlanJobs: ids }; saveState(state);
+          // The plan has now been acted on: stamp the verdict note so `openPlanVerdict` stops holding back the
+          // next cycle's planning (see openPlanVerdict — the note stays open across the approval itself).
+          const verdictNote = state.verdictProposal ? findInboxById(vault, state.verdictProposal) : null;
+          if (verdictNote && !(verdictNote.data as { fanned_out?: string }).fanned_out) {
+            vault.updateNote(verdictNote.path, (n) => ({ data: { ...n.data, fanned_out: hbId }, body: n.body }), 'daemon');
+          }
           if (!ids.length) { done(i, 'no team plans needed'); break; }
           return blockMany(ids, `waiting for ${ids.length} team plan(s)`);
         }

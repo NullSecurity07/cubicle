@@ -12,7 +12,10 @@ export const proposalCreate = defineTool({
     target: z.string().optional().describe('vault path the proposal changes, if any'),
   },
   async handler({ kind, title, body, target }, ctx) {
+    // Two kinds belong to the system, not to an agent. A hand-written `plan_verdict` would be read by the next
+    // heartbeat as a plan waiting for the owner (see openPlanVerdict) and would hold back the company's planning.
     if (kind === 'outbound_batch') return { ok: false, text: 'outbound_batch proposals are created by the tool layer, not directly' };
+    if (kind === 'plan_verdict') return { ok: false, text: 'plan_verdict proposals are filed by the heartbeat when the board has read the plan, not directly' };
     const org = loadOrg(ctx.vault);
     if ((kind === 'hire' || kind === 'fire') && !can(org, ctx.roleId, kind)) return { ok: false, text: `${ctx.roleId} may not file ${kind} proposals` };
     if (kind === 'reorg') {

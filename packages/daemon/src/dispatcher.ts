@@ -253,6 +253,13 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             // before this switch, as a plain 'rejected' outcome common to every proposal kind.
             outcome = 'threat model accepted; the job may finish';
             break;
+          case 'plan_verdict':
+            // Stamping `resolved_at` is all the dispatcher owes this kind, and the common write below does that:
+            // the heartbeat reads `approved` on its next pass, fans the plan out and stamps `fanned_out` itself
+            // (see openPlanVerdict). `d.approved` is always true here — a rejection took the 'rejected' branch
+            // above — and a rejected note needs nothing further: unfanned and rejected is already closed.
+            outcome = 'plan approved: the divisions plan against it';
+            break;
         }
       }
     } catch (err) {
