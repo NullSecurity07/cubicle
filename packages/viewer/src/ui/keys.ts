@@ -31,10 +31,37 @@ export function shortcutFor(e: { key: string; ctrlKey?: boolean; metaKey?: boole
 
 const isTyping = (t: EventTarget | null): boolean => { const el = t as HTMLElement | null; return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable); };
 
+/** A focused button, tab or link owns Space and Enter: the replay toggle must not swallow the activation. */
+export const isControl = (t: { closest?(sel: string): unknown } | null): boolean => !!t?.closest?.('button, a, [role="button"], [role="tab"]');
+
 export function bindKeys(handlers: Record<Action, () => void>): () => void {
-  const on = (e: KeyboardEvent): void => { const a = shortcutFor(e, isTyping(e.target)); if (!a) return; e.preventDefault(); handlers[a](); };
+  const on = (e: KeyboardEvent): void => {
+    const a = shortcutFor(e, isTyping(e.target));
+    if (!a) return;
+    if (a === 'pause' && isControl(e.target as HTMLElement | null)) return;   // Space activates the control under the focus ring
+    e.preventDefault(); handlers[a]();
+  };
   window.addEventListener('keydown', on);
   return () => window.removeEventListener('keydown', on);
+}
+
+/** What a Tab may land on inside a modal element. */
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+export interface Focusable { focus(): void }
+
+/**
+ * Keep Tab inside `root` — the first-run card and the quick-open palette are `aria-modal`, and the panel's own
+ * window-level trap would otherwise pull Shift+Tab back into the sheet underneath. Returns true when it handled
+ * the event (it always stops propagation then, so the panel never sees it).
+ */
+export function trapTab(root: { querySelectorAll(sel: string): ArrayLike<Focusable> }, e: { key: string; shiftKey?: boolean; preventDefault(): void; stopPropagation(): void }, active: Focusable | null): boolean {
+  if (e.key !== 'Tab') return false;
+  e.preventDefault(); e.stopPropagation();
+  const items = Array.from(root.querySelectorAll(FOCUSABLE));
+  if (!items.length) return true;
+  const at = active ? items.indexOf(active) : -1;
+  items[(((at < 0 ? 0 : at + (e.shiftKey ? -1 : 1)) % items.length) + items.length) % items.length].focus();
+  return true;
 }
 
 export function keysView(): View {
