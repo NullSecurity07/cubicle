@@ -17,7 +17,7 @@
     "test:kill9": "node --import tsx/esm --conditions=development scripts/test-kill9.ts",
     "test:sleep": "node --import tsx/esm --conditions=development scripts/test-sleep.ts",
     "test:replay": "node --import tsx/esm --conditions=development scripts/test-replay.ts",
-    "test:overlay": "node --import tsx/esm --conditions=development scripts/test-overlay-clicks.ts",
+    "test:overlay": "pnpm --filter @cubicle/viewer build && node --import tsx/esm --conditions=development scripts/test-overlay-clicks.ts",
     "office:shot": "pnpm --filter @cubicle/viewer build && node --import tsx/esm --conditions=development scripts/office-shot.ts"
   },
   "devDependencies": {
