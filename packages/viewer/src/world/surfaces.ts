@@ -10,6 +10,8 @@ import { PALETTE, hexToInt } from './palette.js';
 import { RES, FONT } from './text.js';
 
 const PAD = 6;
+/** How far the bezel stands proud of the glass on every side, and how far the wall shadow falls below it. */
+const BEZEL = 2, SEAT = 2;
 const HEAD_PX = 10, LINE_PX = 8, LINE_H = 10, HEAD_H = 14;
 const CHAR_W = 0.62; // generous glyph width as a fraction of the font size, so a cut line never reaches the box edge
 const NARROW = 40; // inner width below which a screen shows only its short form (a count or a word)
@@ -22,6 +24,9 @@ const NARROW = 40; // inner width below which a screen shows only its short form
 export class Surface {
   readonly container: Phaser.GameObjects.Container;
   private bg: Phaser.GameObjects.Rectangle;
+  private bezel: Phaser.GameObjects.Rectangle;
+  private seat: Phaser.GameObjects.Rectangle;
+  private lit: Phaser.GameObjects.Rectangle;
   private head: Phaser.GameObjects.Text;
   private text: Phaser.GameObjects.Text;
   private image: Phaser.GameObjects.Image | null = null;
@@ -45,7 +50,14 @@ export class Surface {
     this.inset = anchor.type === 'surface' && anchor.th > 1 ? 4 : 0;
     this.innerW = w - this.inset * 2 - PAD * 2;
     this.innerH = h - this.inset - PAD;
-    this.bg = scene.add.rectangle(w / 2, h / 2 + this.inset, w - this.inset * 2, h - this.inset, hexToInt(PALETTE.screenBg), 0.98).setStrokeStyle(1, hexToInt(PALETTE.screenFrame), 1);
+    // A screen is a mounted object. The glass sits inside a bezel, a lit line runs along the bezel's top edge, and a
+    // shadow falls below it onto the wall — without them a wall screen is a pure-black slab floating free of the room
+    // (harshest in the light theme, where the wall behind it is pale).
+    const gw = w - this.inset * 2, gh = h - this.inset, gx = w / 2, gy = h / 2 + this.inset;
+    this.seat = scene.add.rectangle(gx, gy + BEZEL + SEAT / 2, gw + BEZEL * 2, gh + BEZEL * 2, hexToInt(PALETTE.screenBezelEdge), 0.45);
+    this.bezel = scene.add.rectangle(gx, gy, gw + BEZEL * 2, gh + BEZEL * 2, hexToInt(PALETTE.screenBezel), 1).setStrokeStyle(1, hexToInt(PALETTE.screenBezelEdge), 1);
+    this.lit = scene.add.rectangle(gx, gy - gh / 2 - BEZEL + 0.5, gw + BEZEL * 2 - 2, 1, hexToInt(PALETTE.screenBezelLit), 0.9);
+    this.bg = scene.add.rectangle(gx, gy, gw, gh, hexToInt(PALETTE.screenBg), 0.98).setStrokeStyle(1, hexToInt(PALETTE.screenFrame), 1);
     // Crisp text under camera zoom: rasterise at RES× the size and scale the object down by 1/RES.
     this.head = scene.add.text(this.inset + PAD, this.inset + 4, '', { fontFamily: FONT, fontSize: `${HEAD_PX * RES}px`, fontStyle: 'bold', color: PALETTE.screenText }).setOrigin(0, 0).setScale(1 / RES);
     this.text = scene.add.text(this.inset + PAD, this.inset + 4 + HEAD_H, '', { fontFamily: FONT, fontSize: `${LINE_PX * RES}px`, color: PALETTE.screenMuted, lineSpacing: (LINE_H - LINE_PX - 2) * RES }).setOrigin(0, 0).setScale(1 / RES);
@@ -59,7 +71,7 @@ export class Surface {
     if (motionOff()) this.live.setAlpha(1);
     else this.liveTween = scene.tweens.add({ targets: this.live, alpha: 0.6, duration: dur(DUR.livePulse), yoyo: true, repeat: -1, ease: EASE.sine });
     const title = scene.add.text(w / 2, -9, String(anchor.props.label ?? def.kind).split('—')[0].trim(), { fontFamily: FONT, fontSize: `${8 * RES}px`, color: PALETTE.screenText, stroke: PALETTE.screenInk, strokeThickness: 2 * RES }).setOrigin(0.5, 1).setScale(1 / RES);
-    this.container = scene.add.container(x, y, [this.bg, this.head, this.text, this.bars, this.badge, this.wipe, this.live, this.caret, title]).setDepth(5);
+    this.container = scene.add.container(x, y, [this.seat, this.bezel, this.lit, this.bg, this.head, this.text, this.bars, this.badge, this.wipe, this.live, this.caret, title]).setDepth(5);
     this.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => onClick(def.kind));
   }
 
@@ -78,7 +90,9 @@ export class Surface {
       // swap reads as a hard cut instead of a cross-fade. head/text/bars/badge/wipe/live/caret/title all stay
       // above both images (they're hidden instead, below, when an image is showing).
       const old = this.image;
-      const oldIndex = old ? this.container.getIndex(old) : 0;
+      // Above the glass, never above index 0 — the bezel and its shadow are below the glass, and an image dropped
+      // there would be painted over by the still-opaque glass rectangle.
+      const oldIndex = this.container.getIndex(old ?? this.bg);
       this.container.addAt(img, oldIndex + 1);
       this.image = img;
       this.scene.tweens.add({ targets: img, alpha: 1, duration: dur(DUR.crossfade), onComplete: () => { old?.destroy(); } });

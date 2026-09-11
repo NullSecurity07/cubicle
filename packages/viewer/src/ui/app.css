@@ -84,7 +84,7 @@ input::placeholder { color: var(--text-3); }
 /* A fixed 16:10 panel pillarboxed every real stream and left two thirds of the terminal modal empty. Each viewer is
    now sized by what it shows: the browser box is capped by the height it has left times the frame's own aspect, so
    the frame fills it; the terminal grows with its output and stops at the panel's max-height. */
-#layer[data-viewer="browser"] #panel { width: min(1120px, 100%, calc((100vh - var(--bar-h) - var(--time-h) - var(--s6) * 2 - var(--vbar-h) * 2) * var(--vframe-w) / var(--vframe-h))); }
+#layer[data-viewer="browser"] #panel { width: min(1120px, 100%, calc((100vh - var(--bar-h) - var(--time-h) - var(--s6) * 2 - var(--phead-h) - var(--vbar-h)) * var(--vframe-w) / var(--vframe-h))); }
 #layer[data-viewer="terminal"] #panel { width: min(880px, 100%); }
 #layer[data-viewer="terminal"] pre.term { flex: 0 1 auto; }
 #panel.flip { animation: none; }

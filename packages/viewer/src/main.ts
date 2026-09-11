@@ -215,7 +215,9 @@ const net = new Net(url, token, {
     // Spec §12 d/e: an empty company asks the first-run question once per session. The app opened the card, not the
     // owner, so nothing zooms the camera; Escape just hides it and the cabin keeps asking until the company has a name.
     if (state.firstRun && !firstRunOpened) { firstRunOpened = true; firstRun.show(); }
-    else coach.show();   // no card coming: the office hint is the only first-contact message
+    // Snapshots keep arriving while the card is up, and `firstRun` stays true until the company has a name: the
+    // hint may only take its turn once the card is off the screen (or was never coming).
+    else if (!firstRun.visible) coach.show();
   },
   onEvent(e) {
     if (state.mode === 'replay') { if (liveState) liveState = applyEvent(liveState, e); return; }

@@ -96,16 +96,53 @@ export class DecorLayer {
   images(): Phaser.GameObjects.Image[] { return this.items.map((i) => i.img); }
 }
 
+/** The floor rail's width in CSS pixels (`--rail-w` in ui/tokens.css; decor.test.ts holds the two together). */
+export const RAIL_PX = 44;
+
+/**
+ * Where a room sign is drawn, in world pixels. Normally its own anchor; when the camera has panned far enough right
+ * that the anchor would sit under the floor rail, the label slides along its own wall to stay whole — `13-stack.png`
+ * read "oom" and `05-f3.png` read "O" where "Board room" and "CTO" should have been. It never slides past the room
+ * it names (`roomRight` already has the label's own width taken off), so a sign is always over its own room.
+ */
+export function signX(anchorX: number, roomRight: number, clearFrom: number): number {
+  return Math.max(anchorX, Math.min(Math.max(anchorX, roomRight), clearFrom));
+}
+
+/**
+ * Whether that position actually cleared the rail. It does not when the room itself has almost left the screen —
+ * and a room label may not slide past the room it names, or it would label its neighbour. A label that cannot be
+ * shown whole is not shown at all: half a word under the rail reads as a rendering bug, and it comes straight back
+ * on the next pan.
+ */
+export function signVisible(x: number, clearFrom: number): boolean { return x >= clearFrom - 0.5; }
+
 /** Room labels on the sign tiles (RES 3 text in the floor's skirting colour; head ≤ 44 chars). */
 export class RoomSigns {
   readonly texts: Phaser.GameObjects.Text[] = [];
-  constructor(scene: Phaser.Scene, signs: Record<string, SignSource>) {
+  private items: { text: Phaser.GameObjects.Text; anchorX: number; roomRight: number }[] = [];
+  constructor(scene: Phaser.Scene, signs: Record<string, SignSource>, rooms: Record<string, { tx: number; tw: number }> = {}) {
     for (const sg of Object.values(signs)) {
       const color = floorPalette(sg.floor).skirting;
       const label = (sg.label || sg.room).slice(0, 44);
       // Depth 5.5, above the wall Surfaces at 5: a screen hung on the same wall band used to clip "Board room" to
       // "Boar…". The 2 px of extra left padding is the clear band that keeps the first glyph off the screen frame.
-      this.texts.push(scene.add.text(sg.tile.tx * TILE + 4, sg.tile.ty * TILE + 1, label, signLabelStyle(color)).setOrigin(0, 0).setScale(1 / RES).setDepth(5.5));
+      const anchorX = sg.tile.tx * TILE + 4;
+      const text = scene.add.text(anchorX, sg.tile.ty * TILE + 1, label, signLabelStyle(color)).setOrigin(0, 0).setScale(1 / RES).setDepth(5.5);
+      const room = rooms[sg.room];
+      // How far right the label may slide and still sit over its own room, with its own width taken off.
+      const roomRight = room ? (room.tx + room.tw) * TILE - 4 - text.width / RES : anchorX;
+      this.texts.push(text);
+      this.items.push({ text, anchorX, roomRight });
+    }
+  }
+  /** `worldLeft` is the world x of the first column the floor rail does not cover. Cheap: one clamp per sign. */
+  update(worldLeft: number): void {
+    for (const it of this.items) {
+      const x = signX(it.anchorX, it.roomRight, worldLeft);
+      if (it.text.x !== x) it.text.setX(x);
+      const on = signVisible(x, worldLeft);
+      if (it.text.visible !== on) it.text.setVisible(on);
     }
   }
 }

@@ -34,6 +34,8 @@
   --minimap-h: 212px;
   /* One row of viewer chrome (.vbar / .vfoot): --s2 twice plus a footnote line. */
   --vbar-h: 33px;
+  /* The panel's own header (.phead): --s3 twice around a --hit control, plus its hairline. */
+  --phead-h: 57px;
   /* The browser tool's own viewport (packages/tools/src/tools/browser.ts), so the viewer's box is the frame's
      shape and not a guess: anything wider is dead black beside a live stream. */
   --vframe-w: 1024; --vframe-h: 700;
