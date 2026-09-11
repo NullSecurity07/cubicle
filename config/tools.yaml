@@ -41,6 +41,8 @@ tools:
   scheduler.request:     { mode: auto }
   research.start:        { mode: auto }
   sources.cite:          { mode: auto }
+  discovery.inputs:      { mode: auto }
+  idea.card:             { mode: auto }
   proposal.create:       { mode: auto }
   finish:                { mode: auto }
   mock.outbound:         { mode: auto, outbound: true, proposal_kind: outbound_batch }

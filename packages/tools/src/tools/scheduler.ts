@@ -27,6 +27,9 @@ export function systemTypes(org: Org): Record<string, string[]> {
     'office:security.review': [ceo, eng, sec], 'security.review': [ceo, eng, sec],
     'cto.plan': [ceo], 'cto.compress_charters': [ceo, eng],
     'requester.review': [], 'research.review': [], 'incident': [], 'research.measure': [], 'intelligence': [],
+    // SP3: discovery, the board's own session and the finance office's pricing pass are the daemon's jobs; the
+    // chief executive can still queue one by hand (a re-run, a manual price on an idea nobody swept).
+    'discovery': [ceo], 'board.session': [ceo], 'finance.estimate': [ceo],
   };
 }
 
