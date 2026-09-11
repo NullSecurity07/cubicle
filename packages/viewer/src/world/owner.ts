@@ -24,6 +24,6 @@ export class OwnerAvatar {
   setZoom(zoom: number): void {
     if (!this.labelLatch.changed(zoom)) return;
     const v = nameLabelView(zoom);
-    this.label.setVisible(v.visible).setScale(v.scale);
+    this.label.setVisible(v.visible).setScale(v.scale);   // "You" fits any budget
   }
 }

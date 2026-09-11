@@ -10,6 +10,7 @@ import { BLINK_MS, GESTURE_MS, nextBlinkDelay, nextGestureDelay, pickGesture, em
 import { frameFor, poseFor, faceFrame, talkOpen, isSeatedPose, WALK_FRAMES, WALK_STEP_MS, BOB, type Dir, type PoseCtx } from './frames.js';
 import { DUR, EASE, dur } from './motion.js';
 import { RES, FONT, MONO, nameLabelStyle, nameLabelView } from './text.js';
+import { cut } from '../ui/headlines.js';
 import { PALETTE, hexToInt } from './palette.js';
 import { Latch } from './latch.js';
 
@@ -388,7 +389,7 @@ export class AgentSprite {
     const zoom = this.scene.cameras?.main?.zoom ?? 1;
     if (!this.labelLatch.changed(`${zoom}|${this.hovered}|${this.selected}`)) return;
     const v = nameLabelView(zoom, { hover: this.hovered, selected: this.selected });
-    this.label.setVisible(v.visible).setScale(v.scale);
+    this.label.setVisible(v.visible).setScale(v.scale).setText(v.chars === null ? this.view.display : cut(this.view.display, v.chars));
   }
 
   debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, legs: this.legs, waitingRide: this.waitingRide, riding: !!this.car, pendingTarget: this.pendingTarget, tile: this.tile(), seat: this.seat, desk: this.view.desk, home: this.homeTile() }; }

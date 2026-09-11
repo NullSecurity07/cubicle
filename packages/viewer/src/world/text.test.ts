@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { RES, FONT, MONO, NAME_LABEL_ZOOM, NAME_LABEL_PX, nameLabelView, nameLabelScale, nameLabelStyle, signLabelStyle } from './text.js';
+import { RES, FONT, MONO, NAME_LABEL_ZOOM, NAME_LABEL_PX, DESK_PITCH_PX, nameLabelView, nameLabelScale, nameLabelChars, nameLabelStyle, signLabelStyle } from './text.js';
 import { PALETTE } from './palette.js';
+import { cut } from '../ui/headlines.js';
 
 describe('name labels (ruling F1)', () => {
   it('is hidden below zoom 2 — at zoom 1 a row of names is a smear across the desks', () => {
@@ -49,5 +50,31 @@ describe('one set of in-world text constants', () => {
     expect(sign.backgroundColor).toBe('#334455');
     expect(sign.fontFamily).toBe(FONT);
     expect(sign.color).toBe(PALETTE.labelInk);
+  });
+});
+
+describe('how much of a name is shown', () => {
+  it('claims at most the gap to the next desk, and reveals more as you zoom in', () => {
+    expect(DESK_PITCH_PX).toBe(32);
+    expect(nameLabelChars(2)).toBe(12);
+    expect(nameLabelChars(3)).toBe(19);
+    expect(nameLabelChars(4)).toBe(25);
+    // monotonic: zooming in never shows less of a name
+    for (let z = 2; z < 4; z += 0.25) expect(nameLabelChars(z + 0.25)).toBeGreaterThanOrEqual(nameLabelChars(z));
+    expect(nameLabelChars(0.1)).toBeGreaterThanOrEqual(4);   // never a budget of nothing
+  });
+  it('shows the whole name, unbudgeted, for the one sprite under the pointer or open in the panel', () => {
+    expect(nameLabelView(2).chars).toBe(12);
+    expect(nameLabelView(2, { hover: true }).chars).toBeNull();
+    expect(nameLabelView(4, { selected: true }).chars).toBeNull();
+  });
+  it('keeps a full row of long names inside its desk pitch at zoom 2', () => {
+    // "Intelligence Analyst" beside "Data Scientist" beside "Research Analyst" was the row that ran together.
+    const budget = nameLabelChars(2);
+    for (const name of ['Intelligence Analyst', 'Data Scientist', 'Research Analyst', 'Backend Engineer']) {
+      expect(cut(name, budget).length, name).toBeLessThanOrEqual(budget);
+      expect(cut(name, budget).length * NAME_LABEL_PX * 0.55, name).toBeLessThanOrEqual(DESK_PITCH_PX * 2);
+    }
+    expect(cut('Sales 1', budget)).toBe('Sales 1');   // a short name is never touched
   });
 });

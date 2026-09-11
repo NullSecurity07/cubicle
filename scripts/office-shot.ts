@@ -100,6 +100,16 @@ await page.waitForTimeout(4500);
 ev.emit({ type: 'meeting.turn', agent: 'advisor_skeptic', job: null, payload: { id: 'm1', round: 1, text: 'Let us cut the queue to one job per role.' } });
 await cub((c) => c.floor(1));
 await shot('08-board', 1500);
+// 09a/09b: the whole tower at "fit" zoom. This is the only framing where the canvas surround is visible either
+// side of the building, and so the only one that can catch the background failing to follow the hour: the tower
+// used to go to #0d1124 at night while a third of the screen stayed #f4f5f8. The floor shots now fill the
+// viewport with a floor (ruling F2), so without this scene nothing would look at the surround again.
+await cub((c) => c.zoom(0.9));
+await cub((c) => c.center(29.5, 28.5));
+await shot('09a-tower-day');
+await cub((c) => c.setHour(23));
+await shot('09b-tower-night');
+await cub((c) => c.setHour(null));
 // 09: the same office at night: lamps only where someone works
 // Lamps light a room that holds an agent in `working` or `talking` state, and scene 07's failure sent the only
 // worker on F2 idle. Put a frontend engineer on a job — queued and started, with no tool call, so she stays at her

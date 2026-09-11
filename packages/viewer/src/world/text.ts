@@ -44,13 +44,27 @@ export function signLabelStyle(background: string, px = 7): TextStyle {
  */
 export function nameLabelScale(zoom: number): number { return 1 / (RES * Math.max(1e-6, zoom)); }
 
-export interface LabelView { visible: boolean; scale: number }
+/** Two tiles: the horizontal pitch between neighbouring desks, and so the width one name may claim. */
+export const DESK_PITCH_PX = 32;
+/** Average glyph advance as a fraction of the font size — generous, so a name never quite reaches its neighbour. */
+export const LABEL_CHAR_W = 0.55;
+
+/**
+ * How many characters of a name fit between two neighbouring desks at this zoom. The label is screen-space
+ * constant while the desks are not, so zooming in genuinely reveals more of the name: 12 characters at
+ * zoom 2, 19 at zoom 3, 25 at zoom 4. Without this, a row of "Intelligence Analyst"-length names at zoom 2 runs
+ * into its neighbours and the row is no more readable than the smear it replaced.
+ */
+export function nameLabelChars(zoom: number): number { return Math.max(4, Math.floor((DESK_PITCH_PX * zoom) / (NAME_LABEL_PX * LABEL_CHAR_W))); }
+
+/** `chars: null` means no limit — the one sprite the pointer is on, or the one the panel is open for, shows its whole name. */
+export interface LabelView { visible: boolean; scale: number; chars: number | null }
 
 /**
  * Ruling F1: a name label is hidden below zoom 2, and drawn screen-space constant at zoom ≥ 2 or whenever the
  * sprite is hovered or selected — pointing at someone is how you ask who they are, at any zoom.
  */
 export function nameLabelView(zoom: number, o: { hover?: boolean; selected?: boolean } = {}): LabelView {
-  const visible = !!o.hover || !!o.selected || zoom >= NAME_LABEL_ZOOM;
-  return { visible, scale: nameLabelScale(zoom) };
+  const singled = !!o.hover || !!o.selected;
+  return { visible: singled || zoom >= NAME_LABEL_ZOOM, scale: nameLabelScale(zoom), chars: singled ? null : nameLabelChars(zoom) };
 }
