@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, listJobs, updateJob, createProposal, findInboxById, idFromKey, nowIso } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, listJobs, updateJob, createProposal, findInboxById, idFromKey, nowIso, loadOrg } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
-import { requeueUnblocked, executeStoredCall, defaultConfig } from '../src/index.js';
+import { requeueUnblocked, executeStoredCall, defaultConfig, escalationTarget } from '../src/index.js';
 
 const root = path.resolve(__dirname, '../../..');
 
@@ -111,6 +111,29 @@ describe('unanswered questions time out and escalate to the CEO (D2)', () => {
     expect(readJob(vault, asker)!.data.status).toBe('blocked');
     expect(vault.readTextOrNull('Messages/ceo.md') ?? '').not.toContain('(handoff)');
     expect(listJobs(vault).filter((x) => x.type === 'colleague.answer')).toHaveLength(0);
+  });
+
+  it('escalationTarget prefers the asker\'s division lead and falls through to the CEO', async () => {
+    const org = loadOrg(vault);
+    expect(escalationTarget(org, 'product_manager', 'frontend_engineer')).toBe('cto');
+    expect(escalationTarget(org, 'backend_engineer', 'cto')).toBe('ceo');   // the division lead is the one who did not answer
+    expect(escalationTarget(org, 'cto', 'cfo')).toBe('ceo');                // a division lead's own lead is the CEO
+    expect(escalationTarget(org, 'ciso', 'coo')).toBe('ceo');               // security holds no division
+  });
+
+  it('a question inside a division goes to the division lead, not to the CEO', () => {
+    const asker = createJob(vault, { type: 'custom', title: 'design it', assigned: 'product_manager', goal: 'g' }, 'dev_manager');
+    const msgId = 'msg_div1';
+    askQuestion('frontend_engineer', 'product_manager', msgId, asker, 'Which breakpoint do we design for?');
+    answerJob('frontend_engineer', 'product_manager', msgId, asker, 'Which breakpoint do we design for?');
+    updateJob(vault, asker, { status: 'blocked', blocked_on: { kind: 'message', id: msgId, since: hoursAgo(13) } }, 'product_manager');
+
+    expect(requeueUnblocked(vault)).toBe(1);
+
+    expect(readJob(vault, asker)!.body).toContain(`unanswered question ${msgId} escalated to cto`);
+    expect(vault.readText('Messages/cto.md')).toContain('Which breakpoint do we design for?');
+    expect(listJobs(vault).filter((x) => x.type === 'colleague.answer' && x.assigned === 'cto')).toHaveLength(1);
+    expect(vault.readTextOrNull('Messages/ceo.md') ?? '').not.toContain('Which breakpoint');
   });
 });
 

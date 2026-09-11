@@ -1,6 +1,6 @@
 import {
   type Vault, listInbox, readJob, updateJob, cancelJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
-  loadOrg, resolveRole,
+  loadOrg, resolveRole, divisionLeadOf, officeHolder, type Org,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath } from '@cubicle/tools';
@@ -289,13 +289,29 @@ export function findQuestion(vault: Vault, id: string): { to: string; from: stri
 }
 
 /**
- * A colleague who has not answered across two whole heartbeat intervals is not going to. Rather than leave the
- * asker blocked forever (the only other exit is the owner), hand the question to the CEO: the asker is requeued so
- * it can proceed or re-ask, the CEO gets the question in `Messages/ceo.md` and a `colleague.answer` job for it.
+ * Who a stale question goes to: the asker's own division lead first, because they own the work and usually know
+ * the answer, and the CEO when there is no usable one — the asker is itself the division lead, the division lead
+ * is the colleague who never answered, or the asker sits in a team that holds no division (executive, board,
+ * security).
  */
-function escalateQuestionToCeo(vault: Vault, job: JobFrontmatter, id: string): void {
+export function escalationTarget(org: Org, asker: string, recipient: string): string {
+  const lead = divisionLeadOf(org, asker);
+  const ceo = officeHolder(org, 'chief_executive');
+  if (lead && lead !== asker && lead !== recipient && lead !== ceo && org.roles[lead]) return lead;
+  return ceo;
+}
+
+/**
+ * A colleague who has not answered across two whole heartbeat intervals is not going to. Rather than leave the
+ * asker blocked forever (the only other exit is the owner), hand the question to the asker's division lead — or
+ * the CEO when there is no usable one (see `escalationTarget`): the asker is requeued so it can proceed or
+ * re-ask, the target gets the question in `Messages/<target>.md` and a `colleague.answer` job for it.
+ */
+function escalateQuestion(vault: Vault, job: JobFrontmatter, id: string): string {
+  const org = loadOrg(vault);
   const q = findQuestion(vault, id);
   const recipient = q?.to ?? 'unknown';
+  const target = escalationTarget(org, job.assigned, recipient);
   const question = q?.body ?? '(the question text is no longer in Messages/)';
   const answerJob = idFromKey('job', `escalate:${id}`);
   const already = !!readJob(vault, answerJob);
@@ -307,30 +323,31 @@ function escalateQuestionToCeo(vault: Vault, job: JobFrontmatter, id: string): v
     const owed = idFromKey('job', `answer:${id}`);
     const recipientJob = readJob(vault, owed);
     const superseded = !!recipientJob && ['queued', 'blocked'].includes(recipientJob.data.status);
-    // The CEO's job is the re-entry guard for this whole escalation, so it is created first (M2). Written after
+    // The target's job is the re-entry guard for this whole escalation, so it is created first (M2). Written after
     // the handoff, a kill in between re-ran everything on the next tick: the handoff was appended a second time,
-    // and because the recipient's job had by then been cancelled, that second copy told the CEO the recipient
+    // and because the recipient's job had by then been cancelled, that second copy told the target the recipient
     // "is still working on" a job nothing was working on. Creating it first makes a repeat a no-op instead.
     createJob(vault, {
-      id: answerJob, type: 'colleague.answer', assigned: 'ceo', priority: 2,
+      id: answerJob, type: 'colleague.answer', assigned: target, priority: 2,
       title: `Answer ${job.assigned} (escalated): ${question.slice(0, 60)}`,
       parent: job.id, links: [`[[${job.id}]]`],
       goal: `${job.assigned} asked ${recipient} this question ${Math.round((Date.now() - Date.parse(job.blocked_on?.since ?? nowIso())) / 3600_000)} h ago and got no answer, so it is yours now:\n\n> ${question.split('\n').join('\n> ')}\n\nAnswer with colleague.message(to: "${job.assigned}", body: "re:${id} <your answer>"). The "re:${id}" prefix is what unblocks their job, so keep it exactly.`,
       done_when: `${job.assigned} has an answer to ${id} in Messages/${job.assigned}.md.`,
     }, 'daemon');
-    if (superseded) cancelJob(vault, owed, 'daemon', `${job.assigned}'s question ${id} went unanswered and was escalated to ceo as ${answerJob}`);
+    if (superseded) cancelJob(vault, owed, 'daemon', `${job.assigned}'s question ${id} went unanswered and was escalated to ${target} as ${answerJob}`);
     const handover = superseded
       ? `${recipient}'s own answer job [[${owed}]] has been cancelled, so this question is yours alone.`
       : recipientJob
         ? `${recipient} is still working on [[${owed}]], so check there before answering — you would both be replying to the same question.`
         : `${recipient} has no open job for it.`;
-    vault.appendText(messagePath('ceo'), `\n## ${nowIso()} from daemon (handoff) <!-- id:msg_${answerJob} job:${job.id} -->\n\n${job.assigned} asked ${recipient} a question on job [[${job.id}]] and ${recipient} has not answered it. The question (${id}):\n\n> ${question.split('\n').join('\n> ')}\n\n${handover} Answer it yourself or reassign it; ${job.assigned} has been requeued in the meantime.\n`, 'daemon', { job: job.id });
+    vault.appendText(messagePath(target), `\n## ${nowIso()} from daemon (handoff) <!-- id:msg_${answerJob} job:${job.id} -->\n\n${job.assigned} asked ${recipient} a question on job [[${job.id}]] and ${recipient} has not answered it. The question (${id}):\n\n> ${question.split('\n').join('\n> ')}\n\n${handover} Answer it yourself or reassign it; ${job.assigned} has been requeued in the meantime.\n`, 'daemon', { job: job.id });
   }
   // The asker is requeued without an answer. Its transcript ends with "this job is now blocked until they answer",
   // and resumed on that alone, two live jobs (2026-09-09/10) simply called finish(blocked) and stranded themselves
   // on the owner. Tell it, in the transcript it resumes from, what happened and that it must not wait.
-  appendObservation(vault, job.id, { step: job.checkpoint_step, kind: 'system', ts: nowIso(), text: `Your question ${id} to ${recipient} was not answered in time, so the daemon handed it to the ceo (job ${answerJob}) and requeued you. Do not wait for it: continue on a stated assumption (say which in your summary), hand the work to a teammate, or finish. If the answer arrives later it will show up in your messages.` });
-  vault.events.emit({ type: 'daemon.warning', agent: 'daemon', job: job.id, payload: { where: 'question_timeout', message: `${recipient} never answered ${job.assigned}'s question ${id}; escalated to ceo as ${answerJob}`, id, escalated_to: 'ceo' } });
+  appendObservation(vault, job.id, { step: job.checkpoint_step, kind: 'system', ts: nowIso(), text: `Your question ${id} to ${recipient} was not answered in time, so the daemon handed it to ${target} (job ${answerJob}) and requeued you. Do not wait for it: continue on a stated assumption (say which in your summary), hand the work to a teammate, or finish. If the answer arrives later it will show up in your messages.` });
+  vault.events.emit({ type: 'daemon.warning', agent: 'daemon', job: job.id, payload: { where: 'question_timeout', message: `${recipient} never answered ${job.assigned}'s question ${id}; escalated to ${target} as ${answerJob}`, id, escalated_to: target } });
+  return target;
 }
 
 /**
@@ -356,8 +373,8 @@ export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION
     } else if (b.kind === 'message') {
       ready = !!findAnswer(vault, j.assigned, b.id) || !!listInbox(vault).find((x) => x.data.id === b.id && x.data.answered);
       if (!ready && Date.now() - Math.max(Date.parse(b.since), floor) > questionWaitMs) {
-        escalateQuestionToCeo(vault, j, b.id);
-        updateJob(vault, j.id, { status: 'queued', blocked_on: undefined }, 'daemon', `- ${nowIso()}: unanswered question ${b.id} escalated to ceo`);
+        const target = escalateQuestion(vault, j, b.id);
+        updateJob(vault, j.id, { status: 'queued', blocked_on: undefined }, 'daemon', `- ${nowIso()}: unanswered question ${b.id} escalated to ${target}`);
         n++;
         continue;
       }
