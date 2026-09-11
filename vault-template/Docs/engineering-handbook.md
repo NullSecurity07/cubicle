@@ -15,7 +15,7 @@ The Dev room is a stream-aligned team: it owns one product end to end, from the 
 room is the quality system, not a gate you throw work over. Small and stable beats large and reshuffled. Nobody
 is "the frontend person" for a job the team owns.
 
-## Streams (§5, §21)
+## Streams (§5)
 
 Every product is a stream: `Streams/<slug>.md` — the problem in the customer's words, who exactly buys it, the
 outcome metric with a from and a to, the owning team, the error budget, the runbook, the repo path. Its code

@@ -3,6 +3,7 @@ import {
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
   loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
   resolveRole, teamOf, researchLead,
+  budgetLines,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -114,9 +115,10 @@ export function planningGate(opts: { plan: string; now: Date; maxAgeDays: number
  * `scheduler.request` on itself every cycle, which the org guards refuse; say instead how such a lead gets work
  * onto the queue — through the CEO, or as research.
  */
-export function teamPlanGoal(t: TeamFrontmatter, objectives: string, lastNextAction: string, researchTo = 'research_manager'): string {
+export function teamPlanGoal(t: TeamFrontmatter, objectives: string, lastNextAction: string, researchTo = 'research_manager', budgets: string[] = []): string {
   const alone = t.members.length === 0;
-  return `Your team's objectives this cycle:\n${objectives}\n\nNext action from the last brief: ${lastNextAction}\n\nDo: (1) vault.read Plans/plan.md and vault.list Jobs to see open work; (2) enqueue at most 4 jobs with scheduler.request for your members (${t.members.join(', ') || 'none'}), each finishable in one sitting, each with done_when; research needs go to ${researchTo} with for: ${t.lead}; (3) vault.append the job ids under your "### ${t.id}" section in Plans/plan.md; (4) finish with a one-paragraph summary.${alone ? ` Your team has no members: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from ${researchTo}; do not call scheduler.request for yourself.` : ''}`;
+  const budget = budgets.length ? `\n\nError budgets for your streams (operating model §23):\n${budgets.map((b) => `- ${b}`).join('\n')}` : '';
+  return `Your team's objectives this cycle:\n${objectives}${budget}\n\nNext action from the last brief: ${lastNextAction}\n\nDo: (1) vault.read Plans/plan.md and vault.list Jobs to see open work; (2) enqueue at most 4 jobs with scheduler.request for your members (${t.members.join(', ') || 'none'}), each finishable in one sitting, each with done_when, each naming its stream and its risk; research needs go to ${researchTo} with for: ${t.lead}; (3) vault.append the job ids under your "### ${t.id}" section in Plans/plan.md; (4) finish with a one-paragraph summary.${alone ? ` Your team has no members: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from ${researchTo}; do not call scheduler.request for yourself.` : ''}`;
 }
 
 /**
@@ -551,7 +553,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
             if (t.lead === 'ceo') continue;
             ids.push(createJob(vault, {
               type: 'team.plan', title: `Plan ${t.name}`, assigned: t.lead, priority: 1, parent: jobId, team: t.id, owner_role: t.lead,
-              goal: teamPlanGoal(t, s.text, lastNextAction(t.id), researchLead(org) ?? 'research_manager'),
+              goal: teamPlanGoal(t, s.text, lastNextAction(t.id), researchLead(org) ?? 'research_manager', budgetLines(vault, t.id)),
             }, 'ceo'));
           }
           state = { ...state, teamPlanJobs: ids }; saveState(state);

@@ -22,6 +22,7 @@ gates:
   cto.compress_charters: []
   ceo.heartbeat: []
   colleague.answer: []
+  incident: [coo.verify]
 
 criteria:
   engineer.ship: "The change builds and runs; Site/ has no broken links; tests or a smoke check exist; the job's Done when holds."
@@ -40,3 +41,4 @@ criteria:
   research.review: "Evidence sufficiency: enough evidence, from more than one independent source, to support the decision at the required confidence. Bias: the method could have disproved the favoured answer. Contradictory evidence is named, not buried. Every finding states its confidence, assumptions and limitations. Verdict pass or return."
   research.measure: "Prediction and outcome are both stated with dates; the report's `## Prediction vs reality` section is appended; Research/index.md carries the outcome."
   intelligence: "Dated observations with a source link each; meaningful change separated from noise; every meaningful change is either an idea card or an alert; nothing invented."
+  incident: "The stream is serving again and the rollback or fix is named; Docs/postmortems/<date>-<slug>.md exists with a timeline, an impact in hours, a root cause that is a design or a missing check rather than a person, and at least one corrective action with an owner. No names anywhere in the postmortem."
