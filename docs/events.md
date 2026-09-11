@@ -23,9 +23,9 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `agent.tool_call` | tool, summary (≤120 chars of args), step |
 | `agent.tool_result` | tool, ok, step, summary |
 | `agent.spoke` | to, text, kind — rendered as a speech bubble |
-| `meeting.opened` | id, room, participants, agenda, path |
+| `meeting.opened` | id, room, participants, agenda, subject, title (the `meeting.open` tool sends path instead of subject/title) |
 | `meeting.turn` | id, round, text |
-| `meeting.closed` | id, path, decision, turns |
+| `meeting.closed` | id, room, subject, title, verdict, findings, decision (the `meeting.close` tool sends id, path, decision, turns) |
 | `browser.session_started` | session |
 | `browser.frame` | session, seq, path (.cubicle/screens/…; bytes travel only on the WS frame op) |
 | `browser.session_ended` | session, frames |

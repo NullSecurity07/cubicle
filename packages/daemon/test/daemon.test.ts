@@ -6,7 +6,7 @@ import WebSocket from 'ws';
 import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob, loadOrg, createStream, writeCiRecord } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot, NON_WORK_TYPES } from '../src/index.js';
+import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot, NON_WORK_TYPES, HEARTBEAT_STEPS } from '../src/index.js';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { letTheBoardDecide } from './helpers/board-switch.js';
@@ -115,7 +115,7 @@ describe('heartbeat as a resumable job', () => {
     const deps = { vault, llm, now: () => clock };
     const first = await runHeartbeat(deps, hb);
     expect(first.status).toBe('blocked');
-    expect(readJob(vault, hb)!.data.checkpoint_step).toBe(4); // company_plan
+    expect(readJob(vault, hb)!.data.checkpoint_step).toBe(HEARTBEAT_STEPS.indexOf('company_plan'));
     const plan = listJobs(vault).find((j) => j.type === 'company.plan')!;
     expect(plan).toBeTruthy();
     // owner message answered + name proposed during step 3
