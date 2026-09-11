@@ -1,4 +1,5 @@
 import type { CubicleEvent } from '../state.js';
+import { PALETTE, hexToInt, hexToHsl, hsl } from '../world/palette.js';
 
 /** How dark the night overlay gets at its deepest. */
 export const NIGHT_ALPHA = 0.55;
@@ -14,6 +15,31 @@ export function tintFor(hour: number): number {
   if (hour < 21) return NIGHT_ALPHA * (hour - 18) / 3;
   return NIGHT_ALPHA;
 }
+
+export type HourBucket = 'day' | 'dusk' | 'night';
+/** Night before 6 and from 21; dusk on the two ramps (6–8, 18–21); day between. Drives window tiles and the sky. */
+export function hourBucket(hour: number): HourBucket { if (hour < 6 || hour >= 21) return 'night'; if (hour < 8 || hour >= 18) return 'dusk'; return 'day'; }
+
+const mix = (a: string, b: string, t: number): string => { const x = hexToHsl(a), y = hexToHsl(b); const dh = ((y.h - x.h + 540) % 360) - 180; return hsl(x.h + dh * t, x.s + (y.s - x.s) * t, x.l + (y.l - x.l) * t); };
+
+/** Sky gradient stops (top, bottom) for the hour: day, dusk and night stops, blended across the ramps. */
+export function skyFor(hour: number): [string, string] {
+  const S = PALETTE.sky;
+  const blend = (from: readonly [string, string], to: readonly [string, string], t: number): [string, string] => [mix(from[0], to[0], t), mix(from[1], to[1], t)];
+  if (hour < 5) return [S.night[0], S.night[1]];
+  if (hour < 6.5) return blend(S.night, S.dusk, (hour - 5) / 1.5);
+  if (hour < 8) return blend(S.dusk, S.day, (hour - 6.5) / 1.5);
+  if (hour < 18) return [S.day[0], S.day[1]];
+  if (hour < 19.5) return blend(S.day, S.dusk, (hour - 18) / 1.5);
+  if (hour < 21) return blend(S.dusk, S.night, (hour - 19.5) / 1.5);
+  return [S.night[0], S.night[1]];
+}
+
+/** Colour of the night overlay: dusk purple on the ramps, deep blue at full night. */
+export function nightColourFor(hour: number): number { return hourBucket(hour) === 'night' ? hexToInt(PALETTE.night) : hexToInt(PALETTE.dusk); }
+
+/** Lamp glow alpha: 0 by day, following the tint ramp, 1 at full night. */
+export function lampAlphaFor(hour: number): number { return tintFor(hour) / NIGHT_ALPHA; }
 
 export interface TimeHandlers { onLive(): void; onReplayRequest(date: string): void; onScrub(index: number): void; }
 
