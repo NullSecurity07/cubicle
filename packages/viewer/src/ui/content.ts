@@ -198,15 +198,49 @@ export function postOfficeView(s: State, ctx: Ctx): View {
   return { mode: 'drawer', title: 'Post office', sub: s.inbox.length ? `${s.inbox.length} to approve` : 'nothing to approve', html: segmented([{ id: 'needs', label: 'Needs you', count: s.inbox.length, html: needs }, { id: 'mail', label: 'Mail', html: mail }]), icon: 'envelope' };
 }
 
-/** Bank: stat tiles, then one tile per model with its runway meter and cooling time. */
+/**
+ * The bank: the company's money first, the free tier underneath.
+ *
+ * Before SP4 this screen showed free-tier call counts and called them runway, which was the only "money" the
+ * company had. Now cash, burn and runway are real figures out of `Ledger/ledger.md`, the per-division model
+ * quota is the thing the free tier actually rations, and the last few ledger rows are there so a number on this
+ * page can always be traced to a row somebody wrote. Every string here is formatted by the daemon.
+ */
 export function bankView(s: State): View {
+  const m = s.money;
   const cooling = s.quota.filter((q) => q.cooling_until).length;
-  const head = stats([stat('calls today', `${callsToday(s)}`), stat('providers', `${new Set(s.quota.map((q) => q.provider)).size}`), stat('cooling', `${cooling}`)]);
-  const tiles = s.quota.length ? `<div class="tiles">${s.quota.map((q) => {
+  const head = m
+    ? stats([stat('cash', m.cash), stat('burn a day', m.burn), stat('runway', m.runway)])
+    : stats([stat('calls today', `${callsToday(s)}`), stat('providers', `${new Set(s.quota.map((q) => q.provider)).size}`), stat('cooling', `${cooling}`)]);
+  const notes = [
+    m?.dormant ? `<p class="hintline">${chip('blocked', 'dormant')} The company has spent the capital it was given. Only the heartbeat is running — add a <code>capital</code> row to <code>Ledger/ledger.md</code> to start it again.</p>` : '',
+    m && m.problems > 0 ? `<p class="hintline">${chip('blocked', String(m.problems))} row(s) in <code>Ledger/ledger.md</code> cannot be read. Open the file and fix them; nothing was thrown away.</p>` : '',
+    m && m.mock_revenue_cents > 0 ? `<p class="hintline">${esc(m.mock_revenue)} of simulated revenue, which is not cash — nobody paid it, and it is not counted above.</p>` : '',
+  ].join('');
+  const budgets = m && m.budgets.length
+    ? `<div class="tiles">${m.budgets.map((b) => {
+        const past = b.quota > 0 && b.used >= b.quota;
+        return `<div class="tile" data-key="budget-${esc(b.division)}"><div class="tile-head"><b>${esc(b.division)}</b><span class="muted">model quota</span></div><div class="tile-num">${b.used}${b.quota ? ` / ${b.quota}` : ''}<small>calls today</small></div>${meterHtml(b.quota ? b.used / b.quota : 0)}<div class="tile-foot">${past ? `${chip('blocked', 'cheapest tier')} past its quota, still working` : chip('done', 'ok')}</div></div>`;
+      }).join('')}</div>`
+    : emptyHtml('chart', 'Nothing allocated yet', 'The CFO splits the day\'s free calls between the divisions each cycle.');
+  const models = s.quota.length ? `<div class="tiles">${s.quota.map((q) => {
     const pct = q.limits.rpd ? q.rpd_used / q.limits.rpd : 0;
     return `<div class="tile" data-key="model-${esc(q.provider)}-${esc(q.model)}"><div class="tile-head"><b>${esc(q.model)}</b><span class="muted">${esc(q.provider)}</span></div><div class="tile-num">${q.rpd_used}${q.limits.rpd ? ` / ${q.limits.rpd}` : ''}<small>today</small></div>${meterHtml(pct)}<div class="tile-foot">${q.cooling_until ? `${chip('blocked', 'cooling')} cooling until ${esc(fmtTime(q.cooling_until))}` : chip('done', 'ok')}</div></div>`;
   }).join('')}</div>` : emptyHtml('chart', 'No providers reported yet', 'Limits live in config/providers.yaml.');
-  return { mode: 'drawer', title: 'Bank', sub: 'free-tier runway per model', html: head + section(`${callsToday(s)} calls today`, tiles) + `<p class="hintline">Free calls are the runway. Limits live in config/providers.yaml.</p>`, icon: 'chart' };
+  const ledger = m && m.entries.length
+    ? rows(m.entries.map((e) => row({ left: chip(e.mode === 'mock' ? 'blocked' : 'done', e.mode), title: `${e.kind} ${e.amount}`, small: `${e.who}: ${e.why}`, right: esc(fmtTime(e.at)) })))
+    : emptyHtml('doc', 'Nothing in the ledger yet', 'Add a capital row to Ledger/ledger.md to fund the company.');
+  const hint = m
+    ? `<p class="hintline">Cash, burn and runway are arithmetic over Ledger/ledger.md. Free-tier limits live in config/providers.yaml.</p>`
+    : `<p class="hintline">Money has not been recorded yet. Free-tier limits live in config/providers.yaml.</p>`;
+  return {
+    mode: 'drawer', title: 'Bank', sub: m ? `${m.cash} cash` : 'free-tier runway per model', icon: 'chart',
+    html: head + notes
+      + (m ? section('Model quota per division', budgets, m.budgets.length) : '')
+      + section(`Free tier — ${callsToday(s)} calls today`, models)
+      + (m ? section('Ledger', ledger, m.entries.length) : '')
+      + hint,
+  };
 }
 
 const hostOf = (url?: string): string => { try { return url ? new URL(url).host : ''; } catch { return ''; } };
