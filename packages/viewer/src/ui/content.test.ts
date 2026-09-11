@@ -177,8 +177,15 @@ describe('tower views (plan 3)', () => {
     expect(feedKind('decision recorded: pricing (ceo)')).toBe('info');
     expect(feedKind('hired sales_1')).toBe('ok');
     expect(feedKind('spend rejected: too much')).toBe('bad');
-    expect(dayLabel('2026-09-03T12:00:00.000Z', new Date('2026-09-03T20:00:00.000Z'))).toBe('Today');
-    expect(dayLabel('2026-09-02T12:00:00.000Z', new Date('2026-09-03T20:00:00.000Z'))).toBe('Yesterday');
+    // dayLabel compares calendar days in the viewer's own local timezone (as a real viewer sees "Today"), so the
+    // fixtures below are built from local-time components (`new Date(y, m, d, h)`), not UTC 'Z' strings: a fixed
+    // instant's local calendar day shifts with the host's timezone, which made this test flaky depending on where
+    // it ran. Constructing both `ts` and `now` from the same local wall-clock keeps the "Today"/"Yesterday" math
+    // correct in every zone (round-tripping through `toISOString()` preserves the instant, not the wall-clock).
+    const localNoon = (day: number): string => new Date(2026, 8, day, 12).toISOString();
+    const localNow = new Date(2026, 8, 3, 20);
+    expect(dayLabel(localNoon(3), localNow)).toBe('Today');
+    expect(dayLabel(localNoon(2), localNow)).toBe('Yesterday');
   });
   it('the org sheet groups by division (floor), then team, with a Locate button per role', () => {
     const v = viewFor('org', tower, tctx);
