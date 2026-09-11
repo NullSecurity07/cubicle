@@ -1,5 +1,6 @@
 import type { CubicleEvent } from '../state.js';
 import { PALETTE, hexToInt, hexToHsl, hsl } from '../world/palette.js';
+import { pixelIcon } from './icons.js';
 
 /** How dark the night overlay gets at its deepest. */
 export const NIGHT_ALPHA = 0.55;
@@ -41,6 +42,9 @@ export function nightColourFor(hour: number): number { return hourBucket(hour) =
 /** Lamp glow alpha: 0 by day, following the tint ramp, 1 at full night. */
 export function lampAlphaFor(hour: number): number { return tintFor(hour) / NIGHT_ALPHA; }
 
+/** Sun from 6:00 until 18:00, moon otherwise (matches the window tiles' day bucket). */
+export const sunOrMoon = (hour: number): 'sun' | 'moon' => (hour >= 6 && hour < 18 ? 'sun' : 'moon');
+
 export interface TimeHandlers { onLive(): void; onReplayRequest(date: string): void; onScrub(index: number): void; }
 
 /** Live/replay controls: date picker loads a day's events; the slider scrubs through them at 1×–50×. */
@@ -51,6 +55,8 @@ export class TimeControls {
   private scrub = document.getElementById('scrub') as HTMLInputElement;
   private speed = document.getElementById('speed') as HTMLSelectElement;
   private clock = document.getElementById('clock')!;
+  private sunmoon = document.getElementById('sunmoon')!;
+  private lastIcon = '';
   events: CubicleEvent[] = [];
   index = 0;
   playing = false;
@@ -61,16 +67,24 @@ export class TimeControls {
     this.date.value = new Date().toISOString().slice(0, 10);
     const q = new URLSearchParams(location.search);
     if (q.get('replay')) { this.date.value = q.get('replay')!; setTimeout(() => this.load.click(), 500); }
-    this.live.addEventListener('click', () => { this.mode = 'live'; this.playing = false; this.scrub.disabled = true; this.live.textContent = '● live'; h.onLive(); });
+    this.live.addEventListener('click', () => { this.playing = false; this.scrub.disabled = true; this.setMode('live'); h.onLive(); });
     this.load.addEventListener('click', () => { if (this.date.value) h.onReplayRequest(this.date.value); });
     this.scrub.addEventListener('input', () => { this.playing = false; this.seek(Math.round((Number(this.scrub.value) / 1000) * this.events.length)); });
     this.scrub.addEventListener('dblclick', () => { this.playing = !this.playing; });
+    this.setMode('live');
   }
 
+  /** Live and Replay are one segmented control: the selected segment is the only amber thing on the time bar. */
+  private setMode(mode: 'live' | 'replay'): void { this.mode = mode; this.live.setAttribute('aria-selected', String(mode === 'live')); this.load.setAttribute('aria-selected', String(mode === 'replay')); }
+  togglePlay(): void { if (this.mode === 'replay' && this.events.length) this.playing = !this.playing; }
+  /** Move the replay by `n` events (negative = back). */
+  step(n: number): void { if (this.mode === 'replay' && this.events.length) { this.playing = false; this.seek(this.index + n); } }
+
   setReplay(events: CubicleEvent[]): void {
-    this.events = events; this.index = 0; this.mode = 'replay'; this.playing = events.length > 0;
-    this.scrub.disabled = events.length === 0; this.scrub.value = '0'; this.live.textContent = '○ live';
-    this.clock.textContent = events.length ? `${events.length} events · ${events[0].ts.slice(11, 19)}–${events[events.length - 1].ts.slice(11, 19)} (dbl-click slider to pause/play)` : 'no events that day';
+    this.events = events; this.index = 0; this.playing = events.length > 0;
+    this.setMode('replay');
+    this.scrub.disabled = events.length === 0; this.scrub.value = '0';
+    this.clock.textContent = events.length ? `${events.length} events · ${events[0].ts.slice(11, 19)}–${events[events.length - 1].ts.slice(11, 19)} (Space pauses, arrows step)` : 'no events that day';
   }
 
   /** No day loaded yet (the request is still in flight): a stray scrub must not rebuild the office from nothing. */
@@ -78,6 +92,8 @@ export class TimeControls {
 
   /** Advance replay: events are spaced by their real timestamps divided by the speed factor. */
   tick(dtMs: number, nowLive: Date): void {
+    const icon = sunOrMoon(this.hour(nowLive));
+    if (icon !== this.lastIcon) { this.lastIcon = icon; this.sunmoon.innerHTML = pixelIcon(icon, { label: icon === 'sun' ? 'Daytime' : 'Night' }); }
     if (this.mode === 'live') { this.clock.textContent = nowLive.toLocaleTimeString(); return; }
     if (!this.playing || this.index >= this.events.length) return;
     this.acc += dtMs * Number(this.speed.value);

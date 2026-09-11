@@ -4,7 +4,7 @@ import Phaser from 'phaser';
 import { OfficeScene } from './scenes/OfficeScene.js';
 import { Net, resolveWs } from './net.js';
 import { emptyState, applyEvent, applySnapshot, tick, type State, type CubicleEvent, type Snapshot } from './state.js';
-import { Panel, type Origin } from './ui/panel.js';
+import { Panel, SURPRISE_ME, type Origin } from './ui/panel.js';
 import { TopBar } from './ui/bar.js';
 import { applyTheme, currentTheme, themeFromQuery, THEMES } from './ui/tokens.js';
 import type { Ctx } from './ui/content.js';
@@ -13,6 +13,9 @@ import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
 import { withMotion, reducedMotion } from './world/motion.js';
 import { ElevatorView, toViewState } from './world/elevator-view.js';
+import { FirstRun } from './ui/firstrun.js';
+import { QuickOpen, quickItems } from './ui/quickopen.js';
+import { bindKeys, keysView } from './ui/keys.js';
 
 applyTheme(themeFromQuery(location.search));   // before the first paint: no white flash on load or theme switch
 const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
@@ -77,6 +80,7 @@ function rebuildReplayTo(index: number): void {
 
 let elevatorView: ElevatorView | null = null;
 function viewOf(kind: string): ReturnType<typeof viewFor> {
+  if (kind === 'keys') return keysView();              // the shortcut sheet is the one kind with no data behind it
   try { ctx.floorLabels ??= Object.fromEntries(scene.floorSummary().map((f) => [f.floor, f.label])); } catch { /* the scene has not created its world yet */ }
   return viewFor(kind, state, ctx);
 }
@@ -101,7 +105,7 @@ function open(kind: string, origin?: Origin, opts: { zoom?: boolean } = {}): voi
   const zoom = opts.zoom ?? true;
   panel.show(kind, viewOf(kind), origin ?? undefined);
   if (kind.startsWith('agent:')) scene.focusOn(kind, { zoom });
-  else if (!kind.includes(':') && kind !== 'org') scene.focusOn(kind, { zoom });
+  else if (!kind.includes(':') && kind !== 'org' && kind !== 'keys') scene.focusOn(kind, { zoom });
 }
 
 function refresh(): void {
@@ -116,6 +120,29 @@ function sendChat(text: string): void {
   refresh();
   panel.note('Sent. The CEO answers on the next heartbeat, usually within a minute.');
 }
+
+// ---- first run, quick open, keyboard, time bar (overlay task 9) ----
+// The first-run card asks the one question; Start and "Surprise me" both go down the composer's chat path, then the
+// card collapses into the cabin sheet. The app opened the card, so the sheet it hands over to never zooms the camera.
+const firstRun = new FirstRun({
+  onStart: (text) => { sendChat(text); void firstRun.collapse().then(() => open('cabin', undefined, { zoom: false })); },
+  onSurprise: () => { sendChat(SURPRISE_ME); void firstRun.collapse().then(() => open('cabin', undefined, { zoom: false })); },
+});
+const quick = new QuickOpen({ items: () => quickItems(state), onPick: (kind) => open(kind) });
+
+/** `0` fits the whole tower: the camera bounds are the map plus a margin; fractional zoom is allowed only here. */
+function fitTower(): void { const cam = scene.cameras.main; const b = cam.getBounds(); cam.setZoom(Math.min(cam.width / b.width, cam.height / b.height)).centerOn(b.centerX, b.centerY); }
+
+/** The minimap belongs to the rail task; until its wiring lands `M` is a no-op — set `minimapHook.toggle` there. */
+const minimapHook: { toggle(): void } = { toggle: () => {} };
+
+bindKeys({
+  floor1: () => scene.focusFloor(1), floor2: () => scene.focusFloor(2), floor3: () => scene.focusFloor(3), floor4: () => scene.focusFloor(4),
+  lobby: () => scene.focusOn('noticeboard'), fit: fitTower,
+  talk: () => open('cabin'), queue: () => open('noticeboard'), brief: () => open('newsstand'), plan: () => open('whiteboard'), org: () => open('org'),
+  pause: () => time.togglePlay(), prev: () => time.step(-1), next: () => time.step(1),
+  minimap: () => minimapHook.toggle(), help: () => open('keys'), quickopen: () => quick.open(),
+});
 
 /** A live frame arrived (from the daemon or `__cubicle.pushFrame`): remember it, measure the rate, refresh a viewer at most 5×/s. */
 const frameTimes: Record<string, number[]> = {};
@@ -138,9 +165,9 @@ const net = new Net(url, token, {
     state = applySnapshot(state, snap);
     seedFrames(snap);
     refresh();
-    // Spec §12 d/e: an empty company opens on the cabin with the first-run question, once per session. The app
-    // opened it, not the owner, so it never zooms the camera.
-    if (state.firstRun && !firstRunOpened) { firstRunOpened = true; open('cabin', undefined, { zoom: false }); }
+    // Spec §12 d/e: an empty company asks the first-run question once per session. The app opened the card, not the
+    // owner, so nothing zooms the camera; Escape just hides it and the cabin keeps asking until the company has a name.
+    if (state.firstRun && !firstRunOpened) { firstRunOpened = true; firstRun.show(); }
   },
   onEvent(e) {
     if (state.mode === 'replay') { if (liveState) liveState = applyEvent(liveState, e); return; }
