@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 import { defineTool } from '../registry.js';
-import { readJob, updateJob, researchSlug, renderResearchRequest, type ResearchRequest } from '@cubicle/core';
+import { readJob, updateJob, researchSlug, type ResearchRequest } from '@cubicle/core';
 
 /**
  * A directory-safe slug: lowercase, hyphenated, no leading or trailing hyphen.
@@ -217,5 +218,68 @@ export const researchStart = defineTool({
       ? `opened ${dir}/ (${created.length} files). Write ${dir}/protocol.md before you collect anything — method, sources and the stopping criterion — then ${dir}/report.md as you go. Cite every source with sources.cite(slug: "${chosen}").`
       : `${dir}/ already exists; nothing was overwritten. Continue in ${dir}/protocol.md and ${dir}/report.md.`;
     return { ok: true, text, data: { slug: chosen, dir, created } };
+  },
+});
+
+/** BibTeX values may not carry unbalanced braces; the safest thing to do with an agent-supplied string is round them. */
+function bibValue(s: string): string {
+  return s.replace(/[{}]/g, (c) => (c === '{' ? '(' : ')')).replace(/\s+/g, ' ').trim();
+}
+
+/** A citation key that is readable (host + year) and unique (4 hex of the url). Legal BibTeX: letters and digits only. */
+export function citeKey(url: string, date: string): string {
+  let host = 'source';
+  try { host = new URL(url).host.replace(/^www\./, '').split('.')[0].replace(/[^a-z0-9]/gi, '').slice(0, 20).toLowerCase() || 'source'; } catch { /* not a url */ }
+  const year = /^(\d{4})/.exec(date.trim())?.[1] ?? String(new Date().getUTCFullYear());
+  return `${host}${year}${createHash('sha1').update(url).digest('hex').slice(0, 4)}`;
+}
+
+/** One `@misc` entry. `note` carries the archive path when the page was snapshotted, so evidence stays traceable (§41). */
+export function bibtexEntry(s: { url: string; title: string; date: string; author?: string; note?: string; archive?: string }): { key: string; text: string } {
+  const key = citeKey(s.url, s.date);
+  const note = [s.note?.trim(), s.archive?.trim() ? `archived at ${s.archive.trim()}` : ''].filter(Boolean).join('; ');
+  const lines = [
+    `@misc{${key},`,
+    `  title        = {${bibValue(s.title)}},`,
+    ...(s.author?.trim() ? [`  author       = {${bibValue(s.author)}},`] : []),
+    `  howpublished = {\\url{${s.url}}},`,
+    `  urldate      = {${bibValue(s.date)}},`,
+    ...(note ? [`  note         = {${bibValue(note)}},`] : []),
+    '}',
+  ];
+  return { key, text: lines.join('\n') + '\n' };
+}
+
+/** The key an entry for `url` already has in this .bib, or null. Entries are split on a line-initial `@`. */
+export function findCiteKey(bib: string, url: string): string | null {
+  for (const chunk of bib.split(/\n(?=@)/)) {
+    if (chunk.includes(`\\url{${url}}`)) return /^@\w+\{([^,]+),/.exec(chunk.trimStart())?.[1] ?? null;
+  }
+  return null;
+}
+
+export const sourcesCite = defineTool({
+  name: 'sources.cite',
+  description: 'Record a source in a research project\'s sources.bib and get its citation key back. Deduplicates by URL, so calling it twice on the same page is free. Cite the key in report.md so every claim is traceable to where it came from.',
+  schema: {
+    slug: z.string().describe('the research project directory name returned by research.start'),
+    url: z.string().describe('where the source lives'),
+    title: z.string().describe('the source\'s own title, not your summary of it'),
+    date: z.string().optional().describe('the date you read it, YYYY-MM-DD; defaults to today'),
+    author: z.string().optional().describe('author or publishing organisation'),
+    note: z.string().optional().describe('one line on why this source matters'),
+    archive: z.string().optional().describe('the Research/archive/ path from http.fetch { archive: true }, when you have one'),
+  },
+  async handler({ slug, url, title, date, author, note, archive }, ctx) {
+    const clean = slugifyPath(slug);
+    const rel = `Research/${clean}/sources.bib`;
+    const existing = ctx.vault.readTextOrNull(rel);
+    if (existing === null) return { ok: false, text: `no research project at Research/${clean}/ — call research.start first, then cite into the slug it returns` };
+    const already = findCiteKey(existing, url);
+    if (already) return { ok: true, text: `${url} is already source \\cite{${already}} in ${rel}; nothing appended`, data: { key: already, path: rel, added: false } };
+    const when = (date ?? '').trim() || ctx.now().toISOString().slice(0, 10);
+    const { key, text } = bibtexEntry({ url, title, date: when, author, note, archive });
+    ctx.vault.appendText(rel, (existing.endsWith('\n') ? '' : '\n') + '\n' + text, ctx.roleId, { job: ctx.jobId });
+    return { ok: true, text: `added ${url} to ${rel}; cite it as \\cite{${key}}`, data: { key, path: rel, added: true } };
   },
 });

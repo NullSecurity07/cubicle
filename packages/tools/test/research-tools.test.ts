@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, createJob, readJob, RoleFrontmatter, ResearchRequest } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, phase3Tools, researchProjectFiles, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ToolRegistry, phase3Tools, researchProjectFiles, citeKey, bibtexEntry, findCiteKey, type ToolContext } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 let dir: string; let vault: Vault; let reg: ToolRegistry;
@@ -91,5 +91,58 @@ describe('research.start', () => {
     expect(r.ok).toBe(true);
     expect((r.data as { slug: string }).slug).toBe('ad-hoc-look');
     expect(vault.exists('Research/ad-hoc-look/question.md')).toBe(true);
+  });
+});
+
+describe('BibTeX helpers', () => {
+  it('a cite key is stable, readable and legal BibTeX', () => {
+    const k = citeKey('https://www.example.com/pricing', '2026-04-02');
+    expect(k).toMatch(/^example2026[0-9a-f]{4}$/);
+    expect(citeKey('https://www.example.com/pricing', '2026-04-02')).toBe(k);           // stable
+    expect(citeKey('https://www.example.com/other', '2026-04-02')).not.toBe(k);         // url-specific
+    expect(citeKey('not a url', '2026-04-02')).toMatch(/^source2026[0-9a-f]{4}$/);
+  });
+
+  it('renders an @misc entry and neutralises braces in the values', () => {
+    const { key, text } = bibtexEntry({ url: 'https://example.com/a', title: 'A {curly} title', date: '2026-04-02', author: 'Example Inc', note: 'pricing page', archive: 'Research/archive/2026-09-11-example.com-abcd1234.md' });
+    expect(text).toMatch(new RegExp(`^@misc\\{${key},$`, 'm'));
+    expect(text).toMatch(/title\s+= \{A \(curly\) title\}/);
+    expect(text).toMatch(/author\s+= \{Example Inc\}/);
+    expect(text).toMatch(/howpublished = \{\\url\{https:\/\/example\.com\/a\}\}/);
+    expect(text).toMatch(/urldate\s+= \{2026-04-02\}/);
+    expect(text).toMatch(/note\s+= \{pricing page; archived at Research\/archive\//);
+    expect(bibtexEntry({ url: 'https://example.com/a', title: 'T', date: '2026-04-02' }).text).not.toMatch(/author/);
+  });
+
+  it('finds an existing key by url without matching across entries', () => {
+    const bib = `${bibtexEntry({ url: 'https://a.com/1', title: 'One', date: '2026-01-01' }).text}\n${bibtexEntry({ url: 'https://b.com/2', title: 'Two', date: '2026-01-02' }).text}\n`;
+    expect(findCiteKey(bib, 'https://b.com/2')).toBe(citeKey('https://b.com/2', '2026-01-02'));
+    expect(findCiteKey(bib, 'https://c.com/3')).toBeNull();
+  });
+});
+
+describe('sources.cite', () => {
+  it('appends to the project sources.bib and returns the key; a second call on the same url is a no-op', async () => {
+    const id = createJob(vault, { type: 'research', title: 'Pricing', assigned: 'research_manager', goal: 'g', for: 'cfo', research: request }, 'cfo');
+    const slug = ((await call('research.start', 'research_manager', id, {})).data as { slug: string }).slug;
+
+    const first = await call('sources.cite', 'research_manager', id, { slug, url: 'https://example.com/pricing', title: 'Example pricing', date: '2026-04-02' });
+    expect(first.ok).toBe(true);
+    const key = (first.data as { key: string }).key;
+    expect(first.text).toMatch(new RegExp(`cite it as \\\\cite\\{${key}\\}`));
+    const bib = vault.readText(`Research/${slug}/sources.bib`);
+    expect(bib).toMatch(new RegExp(`@misc\\{${key},`));
+
+    const second = await call('sources.cite', 'research_manager', id, { slug, url: 'https://example.com/pricing', title: 'Example pricing again', date: '2026-05-01' });
+    expect(second.ok).toBe(true);
+    expect((second.data as { added: boolean }).added).toBe(false);
+    expect((second.data as { key: string }).key).toBe(key);
+    expect(vault.readText(`Research/${slug}/sources.bib`).match(/@misc\{/g)).toHaveLength(1);
+  });
+
+  it('refuses a project that does not exist, naming what to do', async () => {
+    const r = await call('sources.cite', 'research_manager', 'job_x', { slug: 'no-such-project', url: 'https://example.com/a', title: 'A' });
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/research\.start/);
   });
 });
