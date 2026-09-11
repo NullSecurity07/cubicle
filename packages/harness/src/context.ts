@@ -1,6 +1,6 @@
 import {
   parseNote, RoleFrontmatter as RoleSchema, type Vault, type RoleFrontmatter, type JobFrontmatter, type CubicleEvent,
-  loadOrg, teamOf, leadOf, isLead, reportsOf, can, researchLead, listJobs, loadGates, gatesForRisk, criteriaFor, type Org, type GateTable,
+  loadOrg, teamOf, leadOf, isLead, reportsOf, can, researchLead, officeHolder, listJobs, loadGates, gatesForRisk, criteriaFor, type Org, type GateTable,
 } from '@cubicle/core';
 import { estimateTokens, type ChatMessage } from '@cubicle/router';
 import type { MemoryIndex } from './memory.js';
@@ -87,10 +87,11 @@ export async function assembleContext(inp: ContextInput): Promise<ChatMessage[]>
   }
 
   const lead = leadOf(org, role.role);
-  const isLeadRole = isLead(org, role.role) || role.role === 'ceo';
+  const ceo = officeHolder(org, 'chief_executive');
+  const isLeadRole = isLead(org, role.role) || role.role === ceo;
   const teammates = team ? [team.lead, ...team.members].filter((r) => r !== role.role) : [];
   const disp = (r: string) => org.roles[r]?.display ?? r;
-  const teamBlock = team ? `# Your team\n${team.name} — ${team.mission}\nLead: ${lead === 'owner' ? 'the owner' : disp(lead ?? '')}. Teammates: ${teammates.map(disp).join(', ') || 'none'}.\n${isLeadRole ? `Your reports: ${reportsOf(org, role.role).map(disp).join(', ') || 'none'} — schedule work for them with scheduler.request (done_when required).` : `Ask ${disp(lead ?? 'ceo')} for anything outside the team; hand off only to a teammate.`}\nResearch: ${can(org, role.role, 'research_request') ? `request it with scheduler.request(type: research, assigned: ${researchLead(org) ?? 'research_manager'}, for: your role)` : 'ask your lead to request it'}.` : '';
+  const teamBlock = team ? `# Your team\n${team.name} — ${team.mission}\nLead: ${lead === 'owner' ? 'the owner' : disp(lead ?? '')}. Teammates: ${teammates.map(disp).join(', ') || 'none'}.\n${isLeadRole ? `Your reports: ${reportsOf(org, role.role).map(disp).join(', ') || 'none'} — schedule work for them with scheduler.request (done_when required).` : `Ask ${disp(lead ?? ceo)} for anything outside the team; hand off only to a teammate.`}\nResearch: ${can(org, role.role, 'research_request') ? `request it with scheduler.request(type: research, assigned: ${researchLead(org) ?? 'research_manager'}, for: your role)` : 'ask your lead to request it'}.` : '';
   const openWork = listJobs(v, { assigned: role.role, status: ['queued', 'blocked', 'in_review'] }).filter((j) => j.id !== inp.job.id).slice(0, 8);
   const openBlock = openWork.length ? `# Your open work\n${openWork.map((j) => `- ${j.status} ${j.id}: ${j.title}`).join('\n')}\nDo not re-plan these; finish the current job.` : '';
   const criteria = criteriaFor(gates, inp.job.type);

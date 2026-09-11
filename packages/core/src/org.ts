@@ -244,7 +244,7 @@ export function can(org: Org, role: string, action: Action, target?: string): bo
       const mine = teamOf(org, role);
       return !!mine && mine.members.includes(target);
     }
-    case 'reprioritize': return role === 'ceo' || !target || teamOf(org, role)?.id === target;
+    case 'reprioritize': return role === officeHolder(org, 'chief_executive') || !target || teamOf(org, role)?.id === target;
     default: return true;
   }
 }

@@ -50,6 +50,11 @@ describe('gates (spec §3)', () => {
     // an office with no org to resolve against still lands on the office's default seat, never on a made-up role
     expect(gateAssignee('office:security.review', {})).toBe('ciso');
     expect(gateAssignee('office:operations.verify', {})).toBe('coo');
+    // an `office:` head the OFFICES enum does not know falls back to a raw team lookup (org.teams[x].lead) —
+    // that lead must still be checked for being an active role, same as the room path just above, or a
+    // departed lead named only in Teams/revenue.md would keep being handed the gate.
+    const withRevenue = { ...org, teams: { ...org.teams, revenue: { id: 'revenue', name: 'revenue', lead: 'cfo', members: [], mission: '', processes: [] } } } as Org;
+    expect(gateAssignee('office:revenue.review', {}, withRevenue)).toBe('ceo'); // cfo is not an active role here
   });
   it('requester.review and ceo.heartbeat have explicit (empty) gate entries in config/gates.yaml, not the custom fallback (F7)', () => {
     const t = loadGates();
