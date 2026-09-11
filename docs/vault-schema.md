@@ -213,6 +213,8 @@ Body sections: Context / Options considered / Chosen / Why / Expected effect / R
 | `never_modify` | string[] = `[]` | extra owner-owned paths |
 | `max_team_size` | number = `6` |  |
 | `auto_approve_reorg` | boolean = `false` |  |
+| `offices` | record<string, string> = `{"chief_executive":"ceo","finance":"cfo","operations":"coo","security":"ciso","compliance":"clo","people":"chro","research":"research_manager","engineering":"cto"}` | office → role id, for the eight offices (`chief_executive, finance, operations, security, compliance, people, research, engineering`); gates, escalation and planning ask for the office, so re-staffing a seat is an edit here rather than a code change |
+| `board_decides_after_hours` | number = `0` | hours a plan waits for the owner's verdict before the board's own verdict stands; `0` (the default, and an absent key) means it waits indefinitely — the board advises, only the owner rules |
 
 ### Owner preferences (fenced `yaml` block in Memory/owner_preferences.md)
 
