@@ -595,12 +595,17 @@ const OPEN_JOB_STATUSES = ['queued', 'running', 'blocked', 'in_review'] as const
  * The failure is recorded as a `daemon.warning` naming the event, so a thing that keeps throwing is visible
  * rather than silent.
  */
-function perEvent<T>(vault: Vault, where: string, e: { id?: number; type: string; ts: string }, fn: () => T | null): T | null {
+function perItem<T>(vault: Vault, where: string, detail: Record<string, unknown>, fn: () => T | null): T | null {
   try { return fn(); }
   catch (err) {
-    vault.events.emit({ type: 'daemon.warning', payload: { where, event: e.id ?? null, event_type: e.type, event_ts: e.ts, message: String((err as Error).message ?? err).slice(0, 300) } });
+    vault.events.emit({ type: 'daemon.warning', payload: { where, ...detail, message: String((err as Error).message ?? err).slice(0, 300) } });
     return null;
   }
+}
+
+/** {@link perItem} for one event of a log sweep. */
+function perEvent<T>(vault: Vault, where: string, e: { id?: number; type: string; ts: string }, fn: () => T | null): T | null {
+  return perItem(vault, where, { event: e.id ?? null, event_type: e.type, event_ts: e.ts }, fn);
 }
 
 /** True while `stream` has an incident nobody has closed yet. */
@@ -748,16 +753,25 @@ export function maybeFlagLessons(vault: Vault, now = new Date()): string[] {
   const existing = vault.readTextOrNull('Memory/lessons.md') ?? '# Lessons\n';
   const made: string[] = [];
   const lines: string[] = [];
+  // The dedup marker carries the stream, not just the key. Flag keys are a stream's own namespace, so two
+  // streams can both run a flag called `new-checkout`: on a bare `flag "<key>"` marker the second stream's
+  // expired flag was silently swallowed by the first stream's lesson. `lines` is checked alongside the file
+  // because the append happens once at the end, so within a tick the file cannot yet show what this pass added.
+  const marker = (key: string, slug: string) => `flag "${key}" in ${slug}`;
   for (const s of listStreams(vault)) {
-    const expired = expiredFlags(readFlags(vault, s.slug), today);
-    if (!expired.length) continue;
-    const fresh = expired.filter((f) => !existing.includes(`flag "${f.key}"`));
-    if (!fresh.length) continue;
-    for (const f of fresh) {
-      lines.push(`- [${today}] flag "${f.key}" in ${s.slug} passed its removal date ${f.remove_by} and is still there; ${f.owner} removes the flag and the dead branch, or sets a new date and says why (§21) #team:${s.owner_team}`);
-      made.push(f.key);
-    }
-    vault.events.emit({ type: 'daemon.warning', payload: { where: 'flags', stream: s.slug, flags: fresh.map((f) => f.key), message: `${fresh.length} flag(s) past their removal date in ${s.slug}: ${fresh.map((f) => `${f.key} (${f.owner}, due ${f.remove_by})`).join(', ')}` } });
+    const opened = perItem(vault, 'maybeFlagLessons', { stream: s.slug }, () => {
+      const expired = expiredFlags(readFlags(vault, s.slug), today);
+      if (!expired.length) return null;
+      const fresh = expired.filter((f) => !existing.includes(marker(f.key, s.slug)) && !lines.some((l) => l.includes(marker(f.key, s.slug))));
+      if (!fresh.length) return null;
+      for (const f of fresh) {
+        lines.push(`- [${today}] ${marker(f.key, s.slug)} passed its removal date ${f.remove_by} and is still there; ${f.owner} removes the flag and the dead branch, or sets a new date and says why (§21) #team:${s.owner_team}`);
+        made.push(f.key);
+      }
+      vault.events.emit({ type: 'daemon.warning', payload: { where: 'flags', stream: s.slug, flags: fresh.map((f) => f.key), message: `${fresh.length} flag(s) past their removal date in ${s.slug}: ${fresh.map((f) => `${f.key} (${f.owner}, due ${f.remove_by})`).join(', ')}` } });
+      return null;
+    });
+    void opened;
   }
   if (lines.length) vault.appendText('Memory/lessons.md', lines.join('\n') + '\n', 'daemon');
   return made;
