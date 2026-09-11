@@ -193,3 +193,56 @@ export function rollup(vault: Vault, id: string): 'done' | 'failed' | 'open' | '
 export function openSubtree(vault: Vault, role: string): JobFrontmatter[] {
   return listJobs(vault, { status: OPEN }).filter((j) => j.owner_role === role);
 }
+
+/**
+ * The Kanban lanes from the owner's operating model §7. A job's lane is *derived*, never stored: it falls out of
+ * `status`, whether its dependencies are met, and which gate from `config/gates.yaml` it still owes. A job that
+ * failed or was cancelled has left the board and reads as `done`.
+ */
+export const KANBAN_STAGES = ['backlog', 'ready', 'in_progress', 'review', 'testing', 'ready_for_release', 'done'] as const;
+export type KanbanStage = (typeof KANBAN_STAGES)[number];
+
+/** The three lanes a team's `wip` limits apply to (§7). Backlog and Ready are queues, not work. */
+export const WIP_STAGES = ['in_progress', 'review', 'testing'] as const;
+export type WipStage = (typeof WIP_STAGES)[number];
+
+/** Which lane an outstanding gate parks its parent in. An unknown gate reads as `review`. */
+const GATE_STAGE: Record<string, KanbanStage> = {
+  'qa.review': 'testing',
+  'security.review': 'review',
+  'requester.review': 'review',
+  'coo.verify': 'ready_for_release',
+};
+
+/** `chain` is the job's gate list (`gatesForRisk(table, job.type, job.risk)`); `depsDone` separates backlog from ready. */
+export function stageOf(job: Pick<JobFrontmatter, 'status' | 'gate_index' | 'depends_on'>, chain: string[], depsDone = true): KanbanStage {
+  switch (job.status) {
+    case 'queued': return depsDone ? 'ready' : 'backlog';
+    case 'running':
+    case 'blocked': return 'in_progress';
+    case 'in_review': return GATE_STAGE[chain[Number(job.gate_index ?? 0)] ?? ''] ?? 'review';
+    default: return 'done';
+  }
+}
+
+/** Every job's lane, keyed by id. `chainFor` maps a job to its gate chain; callers pass `gatesForRisk`. */
+export function stageMap(vault: Vault, chainFor: (job: JobFrontmatter) => string[]): Map<string, KanbanStage> {
+  const all = listJobs(vault);
+  const byId = new Map(all.map((j) => [j.id, j]));
+  const out = new Map<string, KanbanStage>();
+  for (const j of all) out.set(j.id, stageOf(j, chainFor(j), j.depends_on.every((d) => byId.get(d)?.status === 'done')));
+  return out;
+}
+
+/** How many of one team's jobs sit in each WIP-limited lane right now. */
+export function wipLoad(vault: Vault, team: string, chainFor: (job: JobFrontmatter) => string[]): Record<WipStage, number> {
+  const load: Record<WipStage, number> = { in_progress: 0, review: 0, testing: 0 };
+  const all = listJobs(vault);
+  const byId = new Map(all.map((j) => [j.id, j]));
+  for (const j of all) {
+    if (j.team !== team) continue;
+    const s = stageOf(j, chainFor(j), j.depends_on.every((d) => byId.get(d)?.status === 'done'));
+    if (s === 'in_progress' || s === 'review' || s === 'testing') load[s]++;
+  }
+  return load;
+}
