@@ -1,7 +1,7 @@
 // packages/viewer/src/world/map.ts
 import type Phaser from 'phaser';
 import EasyStar from 'easystarjs';
-import { T, TILE } from './tiles.js';
+import { T, TILE, TILES } from './tiles.js';
 
 export { TILE };
 
@@ -9,7 +9,7 @@ export interface Tile { tx: number; ty: number }
 export interface Anchor { name: string; type: string; tx: number; ty: number; tw: number; th: number; props: Record<string, string | number> }
 export interface FloorInfo { n: number; y0: number; y1: number; label: string; color: string; portal: Tile }
 export interface DeskInfo { tile: Tile; room: string; floor: number }
-export interface DecorItem { kind: string; tile: Tile; floor: number }
+export interface DecorItem { kind: string; tile: Tile; floor: number; desk?: string }
 export interface SignInfo { tile: Tile; room: string; label: string; floor: number }
 
 /** The Tiled JSON scripts/gen-world.ts writes, as far as the viewer reads it. */
@@ -41,8 +41,13 @@ export interface World extends MapData {
   standTile(name: string): Tile | null;
 }
 
-export const WALKABLE_WALLS = new Set([T.DOOR, T.ELEVATOR_DOOR]);          // walls layer: doors are walkable
-export const WALKABLE_FURNITURE = new Set([T.CHAIR, T.CARPET]);             // furniture layer: chairs (and v1 carpet) are walkable
+const WALK_WALL = /^(DOOR|DOOR_INT|GLASS_DOOR|ELEVATOR_DOOR|ELEV_DOOR_L|ELEV_DOOR_R)$/;
+const WALK_FURNITURE = /^(CHAIR|CHAIR_TASK|CHAIR_EXEC|OWNER_CHAIR|STOOL|CARPET|CARPET_BLUE|CARPET_GREEN|CARPET_ORANGE|CARPET_F[1-4]|CORRIDOR|LOBBY_FLOOR|LOBBY_FLOOR_ALT|FLOOR|FLOOR_F[1-4]|FLOOR_ALT_F[1-4]|PATH|PAVEMENT|STREET|KERB)$/;
+/** A wall-layer tile a sprite may cross (doors of every kind). */
+export const walkableWall = (id: number): boolean => WALK_WALL.test(TILES[id] ?? '');
+/** A furniture-layer tile a sprite may stand on (seats and floor coverings; everything else is a thing). */
+export const walkableFurniture = (id: number): boolean => WALK_FURNITURE.test(TILES[id] ?? '');
+export const WALKABLE_WALLS = new Set(TILES.map((_, i) => i).filter(walkableWall));
 export const BLOCKED_GROUND = new Set([T.SKY]);                             // ground layer: nobody walks on the sky
 
 /** Tiled JSON → office geometry: the collision grid, the object anchors, the desks, the seats, the floors. */
@@ -56,7 +61,7 @@ export function parseMap(json: TiledMap): MapData {
     for (let x = 0; x < json.width; x++) {
       const i = y * json.width + x;
       const g = ground[i] ?? 0, w = walls[i] ?? 0, f = furniture[i] ?? 0;
-      row.push(BLOCKED_GROUND.has(g) || (w > 0 && !WALKABLE_WALLS.has(w)) || (f > 0 && !WALKABLE_FURNITURE.has(f)) ? 1 : 0);
+      row.push(BLOCKED_GROUND.has(g) || (w > 0 && !walkableWall(w)) || (f > 0 && !walkableFurniture(f)) ? 1 : 0);
     }
     grid.push(row);
   }
@@ -83,7 +88,7 @@ export function parseMap(json: TiledMap): MapData {
       case 'room': rooms[o.name] = a; break;
       case 'floor': floors.push({ n: floor, y0: a.ty, y1: a.ty + a.th - 1, label: String(props.label ?? `F${floor}`), color: String(props.color ?? '#888'), portal: { tx: Number(props.portal_x), ty: Number(props.portal_y) } }); break;
       case 'portal': portals[floor] = at; break;
-      case 'decor': decor.push({ kind: String(props.kind ?? ''), tile: at, floor }); break;
+      case 'decor': decor.push({ kind: String(props.kind ?? ''), tile: at, floor, ...(props.desk !== undefined ? { desk: String(props.desk) } : {}) }); break;
       case 'sign': signs[String(props.room)] = { tile: at, room: String(props.room), label: String(props.label ?? ''), floor }; break;
       default: break;
     }

@@ -69,7 +69,7 @@ describe('buildTower', () => {
   it('decor and sign layers exist with a sign per room', () => {
     expect(named('sign').sort()).toEqual(ROOM_IDS.map((r) => `sign_${r}`).sort());
     expect(named('decor').length).toBeGreaterThan(10);
-    expect(new Set(objs.filter((o) => o.type === 'decor').map((o) => prop(o, 'kind')))).toEqual(new Set(['plant', 'lamp', 'coffee', 'cooler']));
+    expect(new Set(objs.filter((o) => o.type === 'decor').map((o) => prop(o, 'kind')))).toEqual(new Set(['plant', 'lamp', 'coffee', 'cooler', 'monitor']));
     expect(built.map.tilesets[0].tilecount).toBeGreaterThanOrEqual(27);
   });
 });

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseMap, nearestWalkable, standTile, toPx, TILE, floorAt, floorOf, portalFor, type TiledMap } from './map.js';
 import { DESK_IDS, ROOM_IDS, SURFACE_IDS } from './tower.fixture.js';
+import { T } from './tiles.js';
 
 const root = path.resolve(__dirname, '../../../..');
 const read = (p: string): string => readFileSync(path.join(root, p), 'utf8');
@@ -82,6 +83,13 @@ describe('parseMap (no Phaser)', () => {
     expect(standTile(m, 'nowhere')).toBeNull();
   });
   it('toPx centres a tile', () => { expect(toPx({ tx: 2, ty: 3 })).toEqual({ x: 2 * TILE + TILE / 2, y: 3 * TILE + TILE / 2 }); });
+  it('walkability follows tile names: floors, carpets, corridor, lobby, chairs and doors walk; glass, screens, desks, tables, counters, racks block', () => {
+    const mk = (walls: number, furniture: number): TiledMap => ({ width: 1, height: 1, tilewidth: 16, layers: [{ name: 'walls', type: 'tilelayer', data: [walls] }, { name: 'furniture', type: 'tilelayer', data: [furniture] }] });
+    for (const f of ['CHAIR', 'CHAIR_TASK', 'CHAIR_EXEC', 'OWNER_CHAIR', 'STOOL', 'CARPET', 'CARPET_F2', 'CARPET_BLUE', 'CORRIDOR', 'LOBBY_FLOOR', 'FLOOR_F4', 'FLOOR_ALT_F1'] as const) expect(parseMap(mk(0, T[f])).grid[0][0], f).toBe(0);
+    for (const w of ['DOOR', 'DOOR_INT', 'GLASS_DOOR', 'ELEVATOR_DOOR', 'ELEV_DOOR_L', 'ELEV_DOOR_R'] as const) expect(parseMap(mk(T[w], 0)).grid[0][0], w).toBe(0);
+    for (const w of ['WALL', 'WALL_F1', 'GLASS_V', 'GLASS_H', 'GLASS_CORNER', 'SLAB', 'SHAFT', 'ELEV_SHAFT', 'WINDOW_DAY'] as const) expect(parseMap(mk(T[w], 0)).grid[0][0], w).toBe(1);
+    for (const f of ['SCREEN', 'SCREEN_BEZEL', 'DESK', 'DESK_L', 'DESK_EXEC_R', 'TABLE', 'BT_TM', 'COUNTER', 'COUNTER_L', 'COFFEE_MACHINE', 'RACK_T', 'FRIDGE', 'PLANT_TALL_B'] as const) expect(parseMap(mk(0, T[f])).grid[0][0], f).toBe(1);
+  });
 });
 
 describe('floors (no Phaser)', () => {
