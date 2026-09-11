@@ -67,3 +67,29 @@ describe('Docs/tech-radar.md', () => {
     expect(r).toContain('config/integrations.yaml');
   });
 });
+
+describe('Docs/money-handbook.md', () => {
+  it('covers every rule an agent can get wrong about money', () => {
+    const h = read('Docs/money-handbook.md');
+    for (const topic of ['append-only', 'mock', 'capital', 'ledger.record', 'runway', 'model quota', 'cheapest tier', 'dormant']) {
+      expect(h, topic).toContain(topic);
+    }
+  });
+
+  it('says plainly that an unfunded company is not a broken one', () => {
+    // The single most likely misreading, and the one that would have an agent filing alarmed proposals about a
+    // company that is working exactly as designed.
+    const h = read('Docs/money-handbook.md');
+    expect(h).toContain('not** dormant');
+    expect(h).toContain('normal state');
+  });
+
+  it('tells the CFO never to calculate a figure, in the charter as well as the handbook', () => {
+    const c = read('Roles/cfo.md');
+    expect(c).toContain('Never calculate cash, burn or runway');
+    // The new clause added beside the pre-existing willingness-to-pay rule, not in place of it: this checks the
+    // standing-rule sentence itself, not just that `ledger.record` appears somewhere (it also appears in `tools:`).
+    expect(c).toContain('Record money with `ledger.record`');
+    expect(c).toContain('Ask Research for a willingness-to-pay read before changing a price.');
+  });
+});
