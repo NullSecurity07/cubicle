@@ -171,3 +171,37 @@ export function ciStatus(vault: Vault, slug: string): { ok: boolean; reason: str
   }
   return { ok: true, reason: null, record, path: rel };
 }
+
+/**
+ * Feature flags separate deployment from release (operating model §21). Every flag has an owner and a removal
+ * date, because "feature flags create technical debt if abandoned flags are never removed" is the tradeoff the
+ * document names, and a date nobody checks is not a plan.
+ */
+export const FeatureFlag = z.object({
+  key: z.string().min(1),
+  owner: z.string().min(1),
+  state: z.enum(['on', 'off', 'percent']).default('off'),
+  percent: z.number().int().min(0).max(100).optional(),
+  created: z.string().min(4),
+  remove_by: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'remove_by must be a YYYY-MM-DD date'),
+});
+export type FeatureFlag = z.infer<typeof FeatureFlag>;
+
+export const FlagsFile = z.object({ flags: z.array(FeatureFlag).default([]) });
+
+export function flagsPath(slug: string): string { return `${workspacePath(slug)}/flags.json`; }
+
+/** Every well-formed flag in a stream. A missing, unparsable or malformed file reads as none. */
+export function readFlags(vault: Vault, slug: string): FeatureFlag[] {
+  const text = vault.readTextOrNull(flagsPath(slug));
+  if (text === null) return [];
+  try {
+    const raw = JSON.parse(text) as { flags?: unknown[] };
+    const list = Array.isArray(raw.flags) ? raw.flags : [];
+    return list.flatMap((f) => { const p = FeatureFlag.safeParse(f); return p.success ? [p.data] : []; });
+  } catch { return []; }
+}
+
+export function expiredFlags(flags: FeatureFlag[], today: string): FeatureFlag[] {
+  return flags.filter((f) => f.remove_by < today);
+}
