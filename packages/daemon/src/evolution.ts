@@ -4,7 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
-  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, resolveRole,
+  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, resolveRole, jobPath,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -257,6 +257,76 @@ export function maybeEnqueueCharterCompression(vault: Vault): string | null {
     id, type: 'cto.compress_charters', title: `Compress charters after ${heartbeats} heartbeats`, assigned: 'cto', priority: 3,
     goal: `Every ${CHARTER_COMPRESSION_EVERY} heartbeats the CTO tightens the role charters from what the company learned.\n\nDo: (1) vault.read Memory/lessons.md and every Roles/<role>.md for ${roles.join(', ')}; (2) for each role whose charter should change, file ONE proposal.create with kind=charter_change, target=Roles/<role>.md, a title naming the role, and a body that contains "## Proposed content" followed by the COMPLETE new charter note (frontmatter + body) inside a \`\`\`markdown fence — keep the frontmatter identical except tools/approval_overrides if a lesson justifies it, and make the body shorter, not longer; (3) skip roles with nothing to change; (4) finish with a one-paragraph summary listing the proposals.`,
   }, 'daemon');
+}
+
+// ---------- continuous intelligence (owner model §14–17) ----------
+
+/** The four standing intelligence beats. One job each, every heartbeat cycle. */
+export const INTELLIGENCE_KINDS = ['competitive', 'market', 'technology', 'security'] as const;
+export type IntelligenceKind = typeof INTELLIGENCE_KINDS[number];
+
+const INTELLIGENCE_SCOPE: Record<IntelligenceKind, string> = {
+  competitive: 'competitors, their products, pricing, technology, positioning, hiring, partnerships and public announcements (§14)',
+  market: 'market size and growth, customer segments, pricing norms, demand, new entrants and economic conditions (§15)',
+  technology: 'emerging technologies, open-source projects, standards, architecture patterns, infrastructure, AI/ML, developer tooling and technical maturity (§16)',
+  security: 'the threat landscape, vulnerabilities affecting what we run, architecture risks, defensive technology and adversary behaviour (§17)',
+};
+
+const INTELLIGENCE_TEST: Record<IntelligenceKind, string> = {
+  competitive: 'a competitor changed price, shipped or killed a product, changed who they sell to, or said something about direction',
+  market: 'demand, a segment, a pricing norm or a regulation moved enough to change what the company should build or charge',
+  technology: 'something we might use crossed from interesting into technically mature, or something we already use is being abandoned',
+  security: 'a vulnerability or threat touches software we actually run, or a control we rely on stopped being sufficient',
+};
+
+/** The whole brief for one sweep. Exported so its wording is testable without running a job. */
+export function intelligenceGoal(kind: IntelligenceKind, date: string, previous: string | null): string {
+  const out = `Research/intelligence/${date}-${kind}.md`;
+  return [
+    `Standing ${kind} intelligence sweep for this cycle. Scope: ${INTELLIGENCE_SCOPE[kind]}.`,
+    '',
+    `The rule for this job is "Detect meaningful change, not collect everything" (§14). A meaningful change is one where ${INTELLIGENCE_TEST[kind]}. Everything else is noise, and noise is the enemy of intelligence.`,
+    '',
+    'Do:',
+    `1. Read ${previous ? `the previous sweep, ${previous}, so you report what changed since it` : `Research/index.md and Docs/tech-radar.md for context — there is no previous ${kind} file, so this first sweep sets the baseline`}.`,
+    '2. Gather with `http.fetch { archive: true }` so every page you rely on is snapshotted under `Research/archive/`. Use `memory.search` and `vault.search` before fetching: evidence the company already has is cheaper and often better.',
+    `3. \`vault.write ${out}\` with four sections, in this order:`,
+    '   - `## Observations` — one line each, every line dated and carrying its archive path or URL. Say what you saw, not what you think it means.',
+    '   - `## Changes since last time` — only what actually moved. If nothing did, write "nothing meaningful changed" and say what you checked.',
+    '   - `## Alerts` — anything someone needs to know now. One line each, naming who and why.',
+    '   - `## Noise ignored` — one line per thing you deliberately did not escalate. This section is how the next sweep knows you looked.',
+    `4. For each meaningful change that suggests something the company could **do**, \`vault.write Ideas/<slug>.md\` using the shape of \`Ideas/_template.md\`: \`id\` (the slug), \`title\`, \`source: intelligence:${kind}\`, \`status: new\`, \`evidence\` (the archive paths), and the three body sections. One card per change, never a digest.`,
+    `5. For each alert, \`colleague.message\` the research_manager with the one line and the path to ${out}.`,
+    '',
+    'Never invent an observation, a number or a date. A sweep that found nothing is a good sweep honestly reported; a sweep that invented something is worse than no sweep at all.',
+  ].join('\n');
+}
+
+/**
+ * One sweep per kind, once per heartbeat cycle. Idempotent the way charter compression is: the job id is
+ * derived from the cycle number, so a second call in the same cycle finds the note already there. `cheap`
+ * tier because this is bounded, repetitive reading — exactly the work §38 says to automate cheaply.
+ */
+export function maybeEnqueueIntelligence(vault: Vault, now = new Date()): string[] {
+  const cycle = vault.events.count('heartbeat.completed');
+  if (cycle === 0) return [];
+  const org = loadOrg(vault);
+  const assigned = org.roles.intelligence_analyst ? 'intelligence_analyst' : (researchLead(org) ?? 'research_manager');
+  if (!org.roles[assigned]) return [];
+  const date = now.toISOString().slice(0, 10);
+  const out: string[] = [];
+  for (const kind of INTELLIGENCE_KINDS) {
+    const id = idFromKey('job', `intel-${cycle}-${kind}`);
+    if (vault.exists(jobPath(id))) continue;
+    const previous = vault.list('Research/intelligence', { ext: '.md' }).filter((r) => r.endsWith(`-${kind}.md`)).sort().at(-1) ?? null;
+    out.push(createJob(vault, {
+      id, type: 'intelligence', title: `${kind[0].toUpperCase()}${kind.slice(1)} intelligence: cycle ${cycle}`,
+      assigned, priority: 4, team: 'research', owner_role: 'research_manager', for: 'research_manager', model_tier: 'cheap',
+      done_when: `Research/intelligence/${date}-${kind}.md exists with observations, changes, alerts and noise ignored; every meaningful change is either an Ideas/ card or a line under ## Alerts`,
+      goal: intelligenceGoal(kind, date, previous),
+    }, 'daemon'));
+  }
+  return out;
 }
 
 /**
