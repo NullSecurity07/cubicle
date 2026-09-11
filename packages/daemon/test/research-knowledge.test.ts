@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, createJob, updateJob, ResearchRequest, parseNote, readJob, listJobs } from '@cubicle/core';
-import { captureResearchDeliveries, FOLLOW_UP_DAYS, enqueueResearchFollowUps, listResearchFollowUps } from '../src/evolution.js';
+import { captureResearchDeliveries, FOLLOW_UP_DAYS, enqueueResearchFollowUps, listResearchFollowUps, researchMetrics, renderResearchMetrics, maybeEnqueueWeeklyReview, WEEKLY_REVIEW_EVERY } from '../src/evolution.js';
 
 /** A fixed delivery clock: the event's own ts drives `delivered` and `due`, so it must not be the wall clock. */
 const DELIVERED_AT = '2026-09-11T09:00:00.000Z';
@@ -99,5 +99,50 @@ describe('the follow-up measurement job (owner model §41)', () => {
     vault.updateNote(fu.path, (n) => ({ data: { ...n.data, status: 'measured' }, body: n.body }), 'daemon');
     expect(enqueueResearchFollowUps(vault, new Date('2026-10-01T09:00:00.000Z'))).toEqual([]);
     expect(listJobs(vault).some((j) => j.type === 'research.measure')).toBe(false);
+  });
+});
+
+describe('Metrics/research.md (owner model §41)', () => {
+  it('counts what the vault can prove and leaves the rest null', () => {
+    expect(researchMetrics(vault)).toMatchObject({ delivered: 0, medianHoursToAnswer: null, reuseRate: null, measured: 0, asExpected: 0 });
+    const id = deliver();
+    captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'));
+    const m = researchMetrics(vault);
+    expect(m.delivered).toBe(1);
+    expect(m.measured).toBe(0);
+    expect(m.medianHoursToAnswer).not.toBeNull();
+    expect(m.reuseRate).toBe(0);                                     // this job cited no earlier project
+
+    // a second project that cites an earlier one is reuse
+    expect(id).toBeTruthy();
+    const second = deliver();
+    vault.updateNote(`Jobs/${second}.md`, (n) => ({ data: n.data, body: `${n.body}\n\nBuilt on Research/earlier-project/report.md\n` }), 'daemon');
+    captureResearchDeliveries(vault, new Date('2026-09-12T09:00:00.000Z'));
+    expect(researchMetrics(vault).reuseRate).toBeCloseTo(0.5, 5);
+  });
+
+  it('counts a measured follow-up and its verdict', () => {
+    deliver();
+    captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'));
+    const fu = listResearchFollowUps(vault)[0];
+    vault.updateNote(fu.path, (n) => ({ data: { ...n.data, status: 'measured', outcome: 'as expected: signups flat' }, body: n.body }), 'daemon');
+    const m = researchMetrics(vault);
+    expect(m.measured).toBe(1);
+    expect(m.asExpected).toBe(1);
+  });
+
+  it('renders a page that says what it does not know', () => {
+    const text = renderResearchMetrics({ delivered: 0, open: 2, medianHoursToAnswer: null, reused: 0, reuseRate: null, measured: 0, asExpected: 0 }, new Date('2026-09-11T09:00:00.000Z'));
+    expect(text).toMatch(/^# Research metrics$/m);
+    expect(text).toMatch(/not enough delivered research to say/i);
+    expect(text).toMatch(/Number of reports is deliberately not a metric/i);
+  });
+
+  it('the weekly review writes the file on its cadence', async () => {
+    for (let i = 0; i < WEEKLY_REVIEW_EVERY; i++) vault.events.emit({ type: 'heartbeat.completed', payload: {} });
+    expect(vault.exists('Metrics/research.md')).toBe(true);          // shipped by the template
+    await maybeEnqueueWeeklyReview(vault);
+    expect(vault.readText('Metrics/research.md')).toMatch(/# Research metrics/);
+    expect(vault.readText('Metrics/research.md')).toMatch(/Generated .*by the daemon/);
   });
 });
