@@ -1,0 +1,147 @@
+import { z } from 'zod';
+
+/**
+ * The owner's Research & Intelligence operating model, as code.
+ *
+ * Every exported function here is pure: the tool layer, the daemon and the tests all share one definition of
+ * what a research request is, what it is worth, and how it reads on the page. Section numbers in the comments
+ * refer to `docs/owner/research-operating-model.md`.
+ */
+
+export const ResearchConfidence = z.enum(['high', 'medium', 'low']);
+export type ResearchConfidence = z.infer<typeof ResearchConfidence>;
+
+/** §21: incremental (present) / adjacent (near future) / exploratory (long future). */
+export const PortfolioTag = z.enum(['incremental', 'adjacent', 'exploratory']);
+export type PortfolioTag = z.infer<typeof PortfolioTag>;
+
+/**
+ * §33 universal research request, plus the §21 portfolio tag and the three §29 prioritisation inputs.
+ *
+ * `hypothesis` and `exploration` are both optional *here* because §3 allows either: the "exactly one of them"
+ * rule lives in `missingRequestFields`, which is what refuses a request, so the schema itself stays a plain
+ * shape that `JobFrontmatter` can embed and `gen-docs` can describe.
+ */
+export const ResearchRequest = z.object({
+  decision: z.string().trim().min(1),
+  decision_owner: z.string().trim().min(1),
+  question: z.string().trim().min(1),
+  hypothesis: z.string().default(''),
+  exploration: z.string().default(''),
+  known_evidence: z.string().trim().min(1),
+  unknowns: z.string().trim().min(1),
+  constraints: z.string().default(''),
+  deadline: z.string().trim().min(1),
+  required_confidence: ResearchConfidence,
+  potential_decisions: z.array(z.string().trim().min(1)).min(2),
+  portfolio: PortfolioTag,
+  impact: z.number().int().min(1).max(5),
+  uncertainty: z.number().int().min(1).max(5),
+  cost_of_being_wrong: z.number().int().min(1).max(5),
+});
+export type ResearchRequest = z.infer<typeof ResearchRequest>;
+
+/**
+ * The fields a request must carry, in the order a refusal lists them. `constraints` is absent on purpose:
+ * §33 accepts "none". `hypothesis or exploration` is one entry because either satisfies it.
+ */
+export const REQUEST_FIELDS = [
+  'decision', 'decision_owner', 'question', 'hypothesis or exploration', 'known_evidence', 'unknowns',
+  'deadline', 'required_confidence', 'potential_decisions', 'portfolio', 'impact', 'uncertainty', 'cost_of_being_wrong',
+] as const;
+
+/** One line per field, shown in the refusal so the next attempt can be right without reading the handbook. */
+export const REQUEST_FIELD_HELP: Record<string, string> = {
+  decision: 'the decision this research informs, in one sentence ("ship the pricing page or keep the waitlist")',
+  decision_owner: 'the role id who will make that decision and who receives the report',
+  question: 'the single question the research answers, sharp enough that evidence could settle it',
+  'hypothesis or exploration': 'a testable hypothesis ("a public price cuts signups by >20%"), or, when you genuinely do not know what is happening, one line of exploration instead',
+  known_evidence: 'what the company already knows or believes, and where that came from',
+  unknowns: 'what is missing — the gap the research has to close',
+  deadline: 'the date the decision has to be made by (YYYY-MM-DD)',
+  required_confidence: 'high, medium or low — how sure the decision owner needs to be',
+  potential_decisions: 'at least two options the report could recommend (proceed, modify, delay, stop, investigate further)',
+  portfolio: 'incremental (improves what exists), adjacent (a nearby market or technology) or exploratory (uncertain, long-term)',
+  impact: '1–5: how much the decision matters to the company',
+  uncertainty: '1–5: how unsure the company is today',
+  cost_of_being_wrong: '1–5: what it costs if the decision goes the wrong way',
+};
+
+/** Which required fields are absent or invalid, in `REQUEST_FIELDS` order. Empty means the request is complete. */
+export function missingRequestFields(input: unknown): string[] {
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const bad = new Set<string>();
+  const parsed = ResearchRequest.safeParse(o);
+  if (!parsed.success) for (const i of parsed.error.issues) { const k = String(i.path[0] ?? ''); if (k) bad.add(k); }
+  const filled = (k: string) => typeof o[k] === 'string' && (o[k] as string).trim() !== '';
+  if (!filled('hypothesis') && !filled('exploration')) bad.add('hypothesis or exploration');
+  return REQUEST_FIELDS.filter((f) => bad.has(f));
+}
+
+/**
+ * The refusal a model can act on. Naming the missing fields *and* what each one means is the difference between
+ * one corrected retry and four blind ones — the same lesson `cannotScheduleText` learned in the scheduler.
+ */
+export function incompleteRequestText(missing: string[]): string {
+  const lines = missing.map((f) => `- ${f}: ${REQUEST_FIELD_HELP[f] ?? 'required'}`);
+  return [
+    `A research job needs the full research request before anyone can work on it (Research operating model §33).`,
+    `Missing: ${missing.join(', ')}.`,
+    ...lines,
+    `Call scheduler.request again with a \`research\` object carrying every field. Nothing was queued.`,
+  ].join('\n');
+}
+
+/** §29: priority rises with impact and uncertainty, and most of all with the cost of being wrong. 1–125. */
+export function priorityScore(r: Pick<ResearchRequest, 'impact' | 'uncertainty' | 'cost_of_being_wrong'>): number {
+  return r.impact * r.uncertainty * r.cost_of_being_wrong;
+}
+
+/** Score → job priority (1 runs first, 5 last). Depth scales with the score; so does what runs next. */
+export function jobPriorityFor(score: number): number {
+  if (score >= 60) return 1;
+  if (score >= 30) return 2;
+  if (score >= 12) return 3;
+  if (score >= 4) return 4;
+  return 5;
+}
+
+/** The `## Research request` section written into the job note so the worker and the reviewer read the same brief. */
+export function renderResearchRequest(r: ResearchRequest): string {
+  const score = priorityScore(r);
+  const frame = r.hypothesis.trim() ? `- **Hypothesis:** ${r.hypothesis.trim()}` : `- **Exploration:** ${r.exploration.trim()}`;
+  return [
+    '## Research request',
+    '',
+    `- **Decision:** ${r.decision}`,
+    `- **Decision owner:** ${r.decision_owner}`,
+    `- **Question:** ${r.question}`,
+    frame,
+    `- **Known evidence:** ${r.known_evidence}`,
+    `- **Unknowns:** ${r.unknowns}`,
+    `- **Constraints:** ${r.constraints.trim() || 'none stated'}`,
+    `- **Deadline:** ${r.deadline}`,
+    `- **Required confidence:** ${r.required_confidence}`,
+    `- **Potential decisions:** ${r.potential_decisions.join(' | ')}`,
+    `- **Portfolio:** ${r.portfolio}`,
+    `- **Priority score:** ${r.impact} impact × ${r.uncertainty} uncertainty × ${r.cost_of_being_wrong} cost of being wrong = ${score} (job priority ${jobPriorityFor(score)})`,
+    '',
+  ].join('\n');
+}
+
+/** Directory name for a research project: readable from the question, unique from the job id. */
+export function researchSlug(question: string, jobId: string): string {
+  const words = question.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean).slice(0, 5);
+  const base = words.join('-') || 'research';
+  return `${base}-${jobId.replace(/^job_/, '').slice(-6)}`;
+}
+
+/** The last `## Result` JSON block of a job body, as a plain object. `{}` when absent or unparseable. */
+export function resultBlock(body: string): Record<string, unknown> {
+  const raw = body.split('## Result')[1]?.match(/```json\n([\s\S]*?)\n```/)?.[1];
+  if (!raw) return {};
+  try {
+    const v: unknown = JSON.parse(raw);
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch { return {}; }
+}

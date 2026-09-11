@@ -7,6 +7,7 @@ import { Vault } from '../src/vault.js';
 import { parseGates, loadGates, gatesFor, criteriaFor, gateAssignee } from '../src/gates.js';
 import { readProcess, expandProcess, MAX_PROCESS_STEPS } from '../src/processes.js';
 import { readJob } from '../src/jobs.js';
+import { loadOrg } from '../src/org.js';
 
 let dir: string; let vault: Vault;
 beforeAll(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-gates-')); vault = (await scaffoldVault(dir)).vault; });
@@ -20,7 +21,15 @@ describe('gates (spec §3)', () => {
     expect(criteriaFor(t, 'engineer.ship')).toBe('ok');
     expect(gateAssignee('qa.review', {})).toBe('qa'); expect(gateAssignee('coo.verify', {})).toBe('coo');
     expect(gateAssignee('requester.review', { for: 'cto' })).toBe('cto'); expect(gateAssignee('requester.review', { owner_role: 'cfo' })).toBe('cfo');
-    expect(gatesFor(loadGates(), 'research')).toEqual(['requester.review']);
+    expect(gatesFor(loadGates(), 'research')).toEqual(['research.review', 'requester.review']);
+  });
+  it('a gate named after a team goes to that team\'s lead, not to a role that does not exist', () => {
+    const org = loadOrg(vault);
+    expect(gateAssignee('research.review', {}, org)).toBe('research_manager');
+    expect(gateAssignee('qa.review', {}, org)).toBe('qa_lead');          // `qa` is a team now, and its lead runs the gate
+    expect(gateAssignee('coo.verify', {}, org)).toBe('coo');             // `coo` is a role, not a team: unchanged
+    expect(gateAssignee('requester.review', { for: 'cfo' }, org)).toBe('cfo');
+    expect(gateAssignee('research.review', {})).toBe('research');        // no org: the old prefix rule, unchanged
   });
   it('requester.review and ceo.heartbeat have explicit (empty) gate entries in config/gates.yaml, not the custom fallback (F7)', () => {
     const t = loadGates();
