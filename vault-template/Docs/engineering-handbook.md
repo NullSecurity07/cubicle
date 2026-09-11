@@ -78,7 +78,7 @@ Every job that changes the product states a `risk`, set by whoever schedules it 
 | risk | what it covers | what it adds |
 |---|---|---|
 | `low` | text, UI, minor bug fixes | automated guardrails only |
-| `medium` | data, significant backend, new external integrations | a `security.review` gate before QA |
+| `medium` | data, significant backend, new external integrations | an `office:security.review` gate before QA |
 | `high` | auth, money, destructive migrations, core infrastructure | a `threat_model` proposal the owner approves |
 
 Pick the highest level any part of the change touches. Guardrails run on every level and never ask: secrets

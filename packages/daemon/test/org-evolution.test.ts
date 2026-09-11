@@ -80,7 +80,7 @@ describe('firing a lead (spec §2)', () => {
   it('reassigns a fired role\'s queued gate jobs to its manager instead of cancelling them, stranding the parent (F1)', async () => {
     const parent = createJob(vault, { type: 'engineer.ship', title: 'Ship it', assigned: 'backend_engineer', goal: 'g', team: 'dev', owner_role: 'dev_manager' }, 'dev_manager');
     vault.updateNote(`Jobs/${parent}.md`, (n) => ({ data: { ...n.data, status: 'in_review' }, body: n.body }), 'daemon');
-    const gate = createJob(vault, { type: 'qa.review', title: 'Review: Ship it', assigned: 'qa_lead', goal: 'g', team: 'dev', owner_role: 'dev_manager', parent }, 'daemon');
+    const gate = createJob(vault, { type: 'team:qa.review', title: 'Review: Ship it', assigned: 'qa_lead', goal: 'g', team: 'dev', owner_role: 'dev_manager', parent }, 'daemon');
     const { path: p } = createProposal(vault, { kind: 'fire', from: 'ceo', title: 'Fire the QA lead', body: 'role: qa_lead', target: 'Roles/qa_lead.md' }, 'ceo');
     const n = vault.readNoteOrNull(p)!;
     expect(await applyFire(vault, { path: p, data: n.data as never, body: n.body })).toMatch(/^fired/);

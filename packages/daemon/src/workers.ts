@@ -83,7 +83,7 @@ export class WorkerPool extends EventEmitter {
    * queue is not moving.
    *
    * Gate jobs are exempt from the limit entirely, not merely left out of the tally. `enqueueGate` gives the gate
-   * job the *author's* team so the chain stays attributable, so a `qa.review` assigned to `qa_lead` carries
+   * job the *author's* team so the chain stays attributable, so a `team:qa.review` assigned to `qa_lead` carries
    * `team: dev`: applying Dev's limit to it meant three Dev jobs in progress could stop every QA review from
    * starting, while QA's own lanes sat empty. Work then piles up in `in_review` and the room never drains —
    * the opposite of what a WIP limit is for. `wipLoad` already skips these jobs when counting; this is the other

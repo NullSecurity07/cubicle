@@ -17,7 +17,7 @@ steps:
 ```
 
 `ci.run` writes one record per run to `Workspace/<slug>/.cubicle-ci/<timestamp>.json`. An `engineer.ship` job
-cannot finish without a green record newer than every source file in the stream, and `qa.review` reads it.
+cannot finish without a green record newer than every source file in the stream, and `team:qa.review` reads it.
 
 `flags.json` lives beside `cubicle-ci.yaml`:
 

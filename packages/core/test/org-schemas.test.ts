@@ -26,7 +26,8 @@ describe('org schemas', () => {
   it('new kinds, types, events, constitution fields and finish verdicts exist', () => {
     expect(ProposalKind.options).toContain('reorg');
     expect(Constitution.parse({})).toMatchObject({ max_team_size: 6, auto_approve_reorg: false });
-    for (const t of ['team.plan', 'critic.premortem', 'qa.review', 'company.plan']) expect(KNOWN_JOB_TYPES).toContain(t);
+    for (const t of ['team.plan', 'division.plan', 'critic.premortem', 'board.premortem', 'team:qa.review', 'office:operations.verify', 'office:security.review', 'company.plan']) expect(KNOWN_JOB_TYPES).toContain(t);
+    for (const t of ['qa.review', 'coo.verify', 'security.review']) expect(KNOWN_JOB_TYPES).toContain(t);   // pre-office names stay valid for jobs queued before the rename
     for (const e of ['team.planned', 'review.passed', 'review.returned', 'plan.vetoed', 'research.delivered', 'org.changed']) expect(EVENT_TYPES).toContain(e);
     expect(JobResult.parse({ status: 'done', verdict: 'return', findings: ['no tests'] }).findings).toEqual(['no tests']);
   });

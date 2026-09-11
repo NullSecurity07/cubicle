@@ -7,7 +7,7 @@ import { Vault } from '../src/vault.js';
 import { parseGates, loadGates, gatesFor, criteriaFor, gateAssignee } from '../src/gates.js';
 import { readProcess, expandProcess, MAX_PROCESS_STEPS } from '../src/processes.js';
 import { readJob } from '../src/jobs.js';
-import { loadOrg } from '../src/org.js';
+import { loadOrg, type Org } from '../src/org.js';
 
 let dir: string; let vault: Vault;
 beforeAll(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-gates-')); vault = (await scaffoldVault(dir)).vault; });
@@ -30,6 +30,26 @@ describe('gates (spec §3)', () => {
     expect(gateAssignee('coo.verify', {}, org)).toBe('coo');             // `coo` is a role, not a team: unchanged
     expect(gateAssignee('requester.review', { for: 'cfo' }, org)).toBe('cfo');
     expect(gateAssignee('research.review', {})).toBe('research');        // no org: the old prefix rule, unchanged
+  });
+  it('gates named by office and by room resolve through the org (SP2 §2)', () => {
+    const role = (r: string) => [r, { role: r, display: r, model_tier: 'medium' as const, tools: [], approval_overrides: {}, active: true, hired: 'x', sprite: r, desk: r, permissions: [] }] as const;
+    const team = (id: string, lead: string, parent?: string) => [id, { id, name: id, lead, members: [], mission: '', processes: [], ...(parent ? { parent } : {}) }] as const;
+    const org = {
+      teams: Object.fromEntries([team('executive', 'ceo'), team('technology', 'cto'), team('qa', 'qa_lead', 'technology'), team('operations', 'coo')]),
+      roles: Object.fromEntries(['ceo', 'cto', 'qa_lead', 'coo', 'ciso'].map(role)),
+    } as unknown as Org;
+    expect(gateAssignee('team:qa.review', {}, org)).toBe('qa_lead');
+    expect(gateAssignee('office:operations.verify', {}, org)).toBe('coo');
+    expect(gateAssignee('office:security.review', {}, org)).toBe('ciso');
+    // the room's lead is gone: the gate goes up the tree to the division lead, not to the CEO
+    const noQa = { ...org, roles: Object.fromEntries(Object.entries(org.roles).filter(([r]) => r !== 'qa_lead')) } as Org;
+    expect(gateAssignee('team:qa.review', {}, noQa)).toBe('cto');
+    expect(gateAssignee('requester.review', { for: 'cto' }, org)).toBe('cto');
+    expect(gateAssignee('requester.review', { owner_role: 'cfo' }, org)).toBe('cfo');
+    expect(gateAssignee('requester.review', {}, org)).toBe('ceo');
+    // an office with no org to resolve against still lands on the office's default seat, never on a made-up role
+    expect(gateAssignee('office:security.review', {})).toBe('ciso');
+    expect(gateAssignee('office:operations.verify', {})).toBe('coo');
   });
   it('requester.review and ceo.heartbeat have explicit (empty) gate entries in config/gates.yaml, not the custom fallback (F7)', () => {
     const t = loadGates();

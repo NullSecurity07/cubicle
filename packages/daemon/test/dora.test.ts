@@ -53,7 +53,7 @@ describe('computeDora (operating model §31)', () => {
     shipped(30, 26);
     shipped(50, 40, true);           // rolled back
     const id = createJob(vault, { type: 'engineer.ship', title: 'Returned', assigned: 'backend_engineer', goal: 'g', team: 'dev', stream: 'checkout', risk: 'low' }, 'dev_manager');
-    vault.events.emit({ type: 'review.returned', agent: 'qa_lead', job: id, payload: { gate: 'qa.review', findings: ['x'] }, ts: at(20) });
+    vault.events.emit({ type: 'review.returned', agent: 'qa_lead', job: id, payload: { gate: 'team:qa.review', findings: ['x'] }, ts: at(20) });
     const d = computeDora(vault, SINCE, UNTIL);
     expect(d.deploys).toBe(2);
     expect(d.failures).toBe(2);

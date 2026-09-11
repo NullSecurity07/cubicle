@@ -75,7 +75,7 @@ describe('processes, gates and constitution', () => {
     }
     expect(readFileSync(path.join(dir, 'Processes/feature.md'), 'utf8')).toMatch(/role: research_manager.*\n.*role: cto.*\n.*role: backend_engineer.*\n.*role: cmo/);
     for (const d of ['Docs/adr', 'Docs/research', 'Docs/postmortems', 'Docs/tech-radar.md', 'Research/index.md', 'Research/intelligence', 'Ideas/_template.md', 'Metrics/research.md']) expect(existsSync(path.join(dir, d)), d).toBe(true);
-    expect(readFileSync(path.resolve(__dirname, '../../../config/gates.yaml'), 'utf8')).toMatch(/engineer\.ship:\s*\[qa\.review, coo\.verify\]/);
+    expect(readFileSync(path.resolve(__dirname, '../../../config/gates.yaml'), 'utf8')).toMatch(/engineer\.ship:\s*\[team:qa\.review, office:operations\.verify\]/);
     expect(vault.constitution()).toMatchObject({ max_team_size: 8, auto_approve_reorg: false, max_roles: 40 });
   });
 });
