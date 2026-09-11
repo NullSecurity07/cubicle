@@ -1,10 +1,18 @@
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { scaffoldVault } from '../src/template.js';
+import type { Vault } from '../src/vault.js';
+import { loadOrg, type Org } from '../src/org.js';
 import { loadGates, gatesFor, gatesForRisk, criteriaFor, gateAssignee } from '../src/gates.js';
 import { ProposalKind } from '../src/schemas.js';
 
 const table = loadGates(path.resolve(__dirname, '../../../config/gates.yaml'));
+
+let dir: string; let vault: Vault;
+beforeAll(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-gates-risk-')); vault = (await scaffoldVault(dir)).vault; });
+afterAll(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
 describe('risk-based gate chains (owner operating model §26–27)', () => {
   it('low risk is the base chain, unchanged', () => {
@@ -44,6 +52,16 @@ describe('gateAssignee', () => {
     expect(gateAssignee('security.review', job, () => null)).toBe('ciso');
     expect(gateAssignee('security.review', job)).toBe('ciso');
     expect(gateAssignee('security.review', job, (t) => (t === 'security' ? 'qa_security' : null))).toBe('qa_security');
+  });
+  it('resolves security.review through a loaded Org the same way SP7 resolves research.review', () => {
+    const org = loadOrg(vault);
+    expect(org.teams.security?.lead).toBe('ciso');           // the fixture's own answer, not a hard-coded one
+    expect(gateAssignee('security.review', job, org)).toBe('ciso');
+  });
+  it('the org chart wins over the CISO fallback when the security team has a different lead', () => {
+    const org = loadOrg(vault);
+    const reorged: Org = { ...org, teams: { ...org.teams, security: { ...org.teams.security, lead: 'appsec_lead' } } };
+    expect(gateAssignee('security.review', job, reorged)).toBe('appsec_lead');
   });
 });
 
