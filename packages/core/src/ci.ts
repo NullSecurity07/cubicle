@@ -4,7 +4,7 @@ import YAML from 'yaml';
 import { z } from 'zod';
 import type { Vault } from './vault.js';
 import { atomicWriteSync } from './fs.js';
-import { workspacePath } from './streams.js';
+import { workspacePath, isValidStreamSlug } from './streams.js';
 
 /**
  * A stream's pipeline, declared in `Workspace/<slug>/cubicle-ci.yaml` and executed by the `ci.run` tool inside
@@ -49,13 +49,10 @@ export const CiRecord = z.object({
 export type CiRecord = z.infer<typeof CiRecord>;
 
 /**
- * What a stream slug may contain — exactly what `streamSlug()` produces. Worth pinning as a shape rather than
- * trusting the caller, because the slug becomes a workspace directory that `ci.run` binds into the sandbox, and
- * Docker parses `--mount type=bind,src=…,dst=…` as a CSV key/value list: a slug with a comma in it would inject
- * mount options. Validate before a model-supplied slug reaches a path or a mount.
+ * The stream-slug shape lives in `streams.ts` (this module imports that one, so it cannot be the other way
+ * round) and is re-exported here, where every caller already looks for it.
  */
-export const STREAM_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
-export function isValidStreamSlug(slug: string): boolean { return STREAM_SLUG_RE.test(slug); }
+export { STREAM_SLUG_RE, isValidStreamSlug } from './streams.js';
 
 export function ciConfigPath(slug: string): string { return `${workspacePath(slug)}/cubicle-ci.yaml`; }
 export function ciRecordDir(slug: string): string { return `${workspacePath(slug)}/.cubicle-ci`; }
@@ -194,6 +191,11 @@ export function newestSourceFile(vault: Vault, slug: string): string | null {
  * that wants the stronger guarantee should freeze its workspace for the run.
  */
 export function ciStatus(vault: Vault, slug: string): { ok: boolean; reason: string | null; record: CiRecord | null; path: string | null } {
+  // A model writes `stream` onto a job, and this is reached from `shipRefusal` on the finish path: an invalid
+  // slug must come back as a refusal the agent can act on, not as an UnsafePathError stack trace from vault.abs.
+  if (!isValidStreamSlug(slug)) {
+    return { ok: false, reason: `"${slug}" is not a stream slug, so there is no CI record to check. Use the slug from the Streams/<slug>.md note: lower-case letters, digits and hyphens only, starting with a letter or digit, at most 48 characters.`, record: null, path: null };
+  }
   const { latest, unattested } = scanCiRecords(vault, slug);
   if (!latest) {
     const ignored = unattested.length

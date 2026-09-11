@@ -281,32 +281,52 @@ export class Daemon {
     return id;
   }
 
+  /**
+   * Run one tick sweep in isolation.
+   *
+   * Every sweep works from the event log and from notes a model wrote, so a bad value in either must cost that
+   * sweep and nothing else. Before this the whole tick sat in one `try`: a single malformed `stream` on a
+   * `deploy.done` payload threw out of `maybeOpenIncident` and skipped `maybeCorrectiveActions`,
+   * `maybeFlagLessons` and — the part that matters — the heartbeat trigger, on every tick from then on, for
+   * ever, because the event stays in the log. No model-controlled value may stop the tick.
+   */
+  private async sweep<T>(reason: string, where: string, fn: () => T | Promise<T>): Promise<T | undefined> {
+    try { return await fn(); }
+    catch (err) {
+      this.vault.events.emit({ type: 'daemon.warning', payload: { where: `tick:${where}`, message: String((err as Error).stack ?? err).slice(0, 500) } });
+      this.log(`tick(${reason}): ${where} failed — ${String((err as Error).message ?? err).slice(0, 200)}`);
+      return undefined;
+    }
+  }
+
   private ticking = false;
   async runTick(reason: string): Promise<void> {
     if (this.stopping || this.ticking) return;
     this.ticking = true;
     try {
-      const n = await dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake(), guardrails: this.guardrails, questionWaitMs: this.config.questionWaitMs });
-      if (Date.now() - this.lastPrune > 3600_000) { this.lastPrune = Date.now(); const pruned = pruneScreens(this.vault); if (pruned) this.log(`pruned ${pruned} old screencast frames`); }
+      const n = await this.sweep(reason, 'proposals', () => dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake(), guardrails: this.guardrails, questionWaitMs: this.config.questionWaitMs }));
+      await this.sweep(reason, 'prune-screens', () => { if (Date.now() - this.lastPrune > 3600_000) { this.lastPrune = Date.now(); const pruned = pruneScreens(this.vault); if (pruned) this.log(`pruned ${pruned} old screencast frames`); } });
       if (n) this.log(`tick(${reason}): ${n} proposal/unblock action(s)`);
-      const reviews = enqueueExperimentReviews(this.vault);
-      if (reviews.length) this.log(`tick(${reason}): ${reviews.length} experiment review(s) queued`);
-      const pm = maybeEnqueuePostmortem(this.vault);
+      const reviews = await this.sweep(reason, 'experiment-reviews', () => enqueueExperimentReviews(this.vault));
+      if (reviews?.length) this.log(`tick(${reason}): ${reviews.length} experiment review(s) queued`);
+      const pm = await this.sweep(reason, 'postmortem', () => maybeEnqueuePostmortem(this.vault));
       if (pm) this.log(`tick(${reason}): postmortem ${pm}`);
-      const wr = await maybeEnqueueWeeklyReview(this.vault, this.openMeeting);
-      if (wr.length) this.log(`tick(${reason}): weekly review expanded (${wr.length} job(s))`);
-      const inc = maybeOpenIncident(this.vault);
+      const wr = await this.sweep(reason, 'weekly-review', () => maybeEnqueueWeeklyReview(this.vault, this.openMeeting));
+      if (wr?.length) this.log(`tick(${reason}): weekly review expanded (${wr.length} job(s))`);
+      const inc = await this.sweep(reason, 'incidents', () => maybeOpenIncident(this.vault));
       if (inc) this.log(`tick(${reason}): incident ${inc} opened`);
-      const corrective = maybeCorrectiveActions(this.vault);
-      if (corrective.length) this.log(`tick(${reason}): ${corrective.length} corrective action(s) queued`);
-      const flags = maybeFlagLessons(this.vault);
-      if (flags.length) this.log(`tick(${reason}): ${flags.length} expired flag(s) recorded as lessons`);
-      const last = this.vault.events.last('heartbeat.completed');
-      const since = last ? (Date.now() - Date.parse(last.ts)) / 3600_000 : Infinity;
-      const hasOpen = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat');
-      // An owner note nobody has answered (typed while the daemon was down, or missed by an older build) is a heartbeat trigger too.
-      const unanswered = hasOpen ? undefined : listInbox(this.vault).find((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && !n.data.answered);
-      if (!hasOpen && (since >= this.config.heartbeat.maxElapsedHours || this.heartbeatRequested || unanswered)) this.requestHeartbeat(this.heartbeatRequested ?? (unanswered ? `unanswered owner message ${unanswered.data.id}` : `${since.toFixed(1)} h elapsed`));
+      const corrective = await this.sweep(reason, 'corrective-actions', () => maybeCorrectiveActions(this.vault));
+      if (corrective?.length) this.log(`tick(${reason}): ${corrective.length} corrective action(s) queued`);
+      const flags = await this.sweep(reason, 'flag-lessons', () => maybeFlagLessons(this.vault));
+      if (flags?.length) this.log(`tick(${reason}): ${flags.length} expired flag(s) recorded as lessons`);
+      await this.sweep(reason, 'heartbeat-trigger', () => {
+        const last = this.vault.events.last('heartbeat.completed');
+        const since = last ? (Date.now() - Date.parse(last.ts)) / 3600_000 : Infinity;
+        const hasOpen = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat');
+        // An owner note nobody has answered (typed while the daemon was down, or missed by an older build) is a heartbeat trigger too.
+        const unanswered = hasOpen ? undefined : listInbox(this.vault).find((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && !n.data.answered);
+        if (!hasOpen && (since >= this.config.heartbeat.maxElapsedHours || this.heartbeatRequested || unanswered)) this.requestHeartbeat(this.heartbeatRequested ?? (unanswered ? `unanswered owner message ${unanswered.data.id}` : `${since.toFixed(1)} h elapsed`));
+      });
       this.workers.wake();
     } catch (err) {
       this.vault.events.emit({ type: 'daemon.warning', payload: { where: 'tick', message: String((err as Error).stack ?? err).slice(0, 500) } });

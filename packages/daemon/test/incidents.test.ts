@@ -166,3 +166,32 @@ describe('the division plan reads the budgets', () => {
     expect(goal).not.toMatch(/error budget/);
   });
 });
+
+describe('a model-supplied stream cannot stop the sweep (fix wave item 4 / C2)', () => {
+  // Every one of these used to reach `vault.abs` through `readStream` and throw UnsafePathError out of
+  // `maybeOpenIncident`, which the tick's single try/catch turned into a permanent heartbeat stall: the event
+  // stays in the log, so every later tick threw at the same place.
+  const HOSTILE = ['../../etc', '..', 'a/../../b', 'check,out', ''];
+
+  it('a rolled-back deploy carrying a hostile stream is skipped, not thrown on', () => {
+    for (const bad of HOSTILE) vault.events.emit({ type: 'deploy.done', agent: 'sre', job: null, payload: { project: 'acme', stage: 'live', rolled_back: true, stream: bad } });
+    expect(() => maybeOpenIncident(vault)).not.toThrow();
+    expect(maybeOpenIncident(vault)).toBeNull();
+    expect(listJobs(vault).filter((j) => j.type === 'incident')).toHaveLength(0);
+  });
+
+  it('a red CI run carrying a hostile stream is skipped, not thrown on', () => {
+    vault.events.emit({ type: 'deploy.done', agent: 'sre', job: null, payload: { project: 'acme', stage: 'live', rolled_back: false, stream: 'checkout' } });
+    for (const bad of HOSTILE) vault.events.emit({ type: 'ci.completed', agent: 'backend_engineer', job: null, payload: { stream: bad, green: false, record: `Workspace/${bad}/.cubicle-ci/x.json` } });
+    expect(() => maybeOpenIncident(vault)).not.toThrow();
+    expect(maybeOpenIncident(vault)).toBeNull();
+  });
+
+  it('a poisoned event does not hide the good one behind it', () => {
+    vault.events.emit({ type: 'deploy.done', agent: 'sre', job: null, payload: { project: 'acme', stage: 'live', rolled_back: true, stream: 'checkout' } });
+    for (const bad of HOSTILE) vault.events.emit({ type: 'deploy.done', agent: 'sre', job: null, payload: { project: 'acme', stage: 'live', rolled_back: true, stream: bad } });
+    const id = maybeOpenIncident(vault);
+    expect(id).not.toBeNull();
+    expect(readJob(vault, id!)!.data.stream).toBe('checkout');
+  });
+});

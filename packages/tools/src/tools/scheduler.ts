@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { KNOWN_JOB_TYPES, isValidRoleId, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, ENGINEERING_JOB_TYPES, RISK_GUIDANCE, RISK_LEVELS, type Org } from '@cubicle/core';
+import { KNOWN_JOB_TYPES, isValidRoleId, isValidStreamSlug, listStreams, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, ENGINEERING_JOB_TYPES, RISK_GUIDANCE, RISK_LEVELS, type Org } from '@cubicle/core';
 
 const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'], 'security.review': ['ceo', 'cto', 'ciso'] };
 
@@ -83,6 +83,13 @@ export const schedulerRequest = defineTool({
       if (!org.roles[forRole]) return { ok: false, text: 'for must be an active role id' };
     } else if (!can(org, ctx.roleId, 'schedule', args.assigned)) {
       return { ok: false, text: cannotScheduleText(org, ctx.roleId, args.assigned) };
+    }
+    // `stream` becomes a path segment and a Docker mount source downstream (ci.run, deploy.site, the daemon's
+    // incident sweeps). Catch it here, at the one place a model can put an arbitrary value on a job, rather
+    // than leaving every reader to defend itself.
+    if (args.stream !== undefined && !isValidStreamSlug(args.stream)) {
+      const known = listStreams(ctx.vault).map((s) => s.slug);
+      return { ok: false, text: `${JSON.stringify(args.stream)} is not a stream slug. Use the slug from the Streams/<slug>.md note — lower-case letters, digits and hyphens only, starting with a letter or digit, at most 48 characters. ${known.length ? `Known streams: ${known.join(', ')}.` : 'No streams exist yet; the product manager creates Streams/<slug>.md first.'} Omit stream if this job serves none.` };
     }
     const allowed = SYSTEM_TYPES[type];
     if (allowed && !allowed.includes(ctx.roleId)) return { ok: false, text: `job type ${type} is reserved for the daemon${allowed.length ? ` / ${allowed.join(', ')}` : ''}` };

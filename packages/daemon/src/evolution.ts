@@ -587,6 +587,22 @@ export function postmortemPath(vault: Vault, jobId: string): string | null {
 /** A job that is still somebody's problem. An incident in one of these states means the room already knows. */
 const OPEN_JOB_STATUSES = ['queued', 'running', 'blocked', 'in_review'] as const;
 
+/**
+ * Run one item of a sweep, and let a bad item cost only that item.
+ *
+ * Every payload these sweeps read was written by a model — `stream` reaches `scheduler.request` and
+ * `deploy.site` as a free-text argument — so one malformed value must not end the sweep, let alone the tick.
+ * The failure is recorded as a `daemon.warning` naming the event, so a thing that keeps throwing is visible
+ * rather than silent.
+ */
+function perEvent<T>(vault: Vault, where: string, e: { id?: number; type: string; ts: string }, fn: () => T | null): T | null {
+  try { return fn(); }
+  catch (err) {
+    vault.events.emit({ type: 'daemon.warning', payload: { where, event: e.id ?? null, event_type: e.type, event_ts: e.ts, message: String((err as Error).message ?? err).slice(0, 300) } });
+    return null;
+  }
+}
+
 /** True while `stream` has an incident nobody has closed yet. */
 function hasOpenIncident(vault: Vault, stream: string): boolean {
   return listJobs(vault, { status: [...OPEN_JOB_STATUSES] }).some((j) => j.type === 'incident' && j.stream === stream);
@@ -631,30 +647,36 @@ function openIncident(vault: Vault, o: { id: string; stream: string; trigger: st
 export function maybeOpenIncident(vault: Vault, now = new Date()): string | null {
   const today = now.toISOString().slice(0, 10);
   for (const e of vault.events.query({ types: ['deploy.done'], limit: 200, order: 'desc' })) {
-    const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
-    if (!stream || !readStream(vault, stream)) continue;
-    if (e.payload.rolled_back !== true) continue;
-    const id = idFromKey('job', `incident:rollback:${e.ts}:${stream}`);
-    if (readJob(vault, id)) continue;
-    return openIncident(vault, {
-      id, stream, trigger: 'rollback', today, ts: e.ts,
-      title: `Incident: ${stream} was rolled back`,
-      what: `A live deploy of stream "${stream}" was rolled back at ${e.ts}.`,
+    const opened = perEvent(vault, 'maybeOpenIncident:rollback', e, () => {
+      const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
+      if (!stream || !readStream(vault, stream)) return null;
+      if (e.payload.rolled_back !== true) return null;
+      const id = idFromKey('job', `incident:rollback:${e.ts}:${stream}`);
+      if (readJob(vault, id)) return null;
+      return openIncident(vault, {
+        id, stream, trigger: 'rollback', today, ts: e.ts,
+        title: `Incident: ${stream} was rolled back`,
+        what: `A live deploy of stream "${stream}" was rolled back at ${e.ts}.`,
+      });
     });
+    if (opened) return opened;
   }
   const live = liveStreams(vault);
   for (const e of vault.events.query({ types: ['ci.completed'], limit: 200, order: 'desc' })) {
-    const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
-    if (!stream || e.payload.green !== false || !readStream(vault, stream)) continue;
-    if (!live.has(stream)) continue;   // not in production: a red build is ordinary engineering, not an incident
-    const record = typeof e.payload.record === 'string' ? e.payload.record : e.ts;
-    const id = idFromKey('job', `incident:red_ci_live:${record}`);
-    if (readJob(vault, id) || hasOpenIncident(vault, stream)) continue;
-    return openIncident(vault, {
-      id, stream, trigger: 'red_ci_live', today, ts: e.ts,
-      title: `Incident: CI is red on live stream ${stream}`,
-      what: `CI went red on stream "${stream}" at ${e.ts} (record ${record}) while that stream is serving in production, so what is live is no longer known-good.`,
+    const opened = perEvent(vault, 'maybeOpenIncident:red_ci_live', e, () => {
+      const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
+      if (!stream || e.payload.green !== false || !readStream(vault, stream)) return null;
+      if (!live.has(stream)) return null;   // not in production: a red build is ordinary engineering, not an incident
+      const record = typeof e.payload.record === 'string' ? e.payload.record : e.ts;
+      const id = idFromKey('job', `incident:red_ci_live:${record}`);
+      if (readJob(vault, id) || hasOpenIncident(vault, stream)) return null;
+      return openIncident(vault, {
+        id, stream, trigger: 'red_ci_live', today, ts: e.ts,
+        title: `Incident: CI is red on live stream ${stream}`,
+        what: `CI went red on stream "${stream}" at ${e.ts} (record ${record}) while that stream is serving in production, so what is live is no longer known-good.`,
+      });
     });
+    if (opened) return opened;
   }
   return null;
 }
