@@ -12,7 +12,7 @@ import { WsServer } from './ws.js';
 import { createHeartbeatJob, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
-import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions } from './evolution.js';
+import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions, maybeFlagLessons } from './evolution.js';
 import { hasIdea } from './first-run.js';
 import { StaticServer } from './static.js';
 import { pruneScreens } from '@cubicle/tools';
@@ -168,7 +168,13 @@ export class Daemon {
         if (j && !NON_WORK_TYPES.includes(j.type)) {
           // Counted from the event log, so a restart does not forget completed work.
           const since = this.vault.events.last('heartbeat.completed')?.ts;
-          const done = this.vault.events.query({ types: ['job.done', 'job.failed'], from: since }).filter((e) => e.job && !NON_WORK_TYPES.includes(readJob(this.vault, e.job)?.data.type ?? '')).length;
+          // `job.failed` is also emitted for a *requeued* attempt (step limit, bad JSON, a refused finish), and one
+          // job that retries three times is one piece of work, not three. Counting those fired spurious heartbeats
+          // as soon as any job needed a retry — which the ship gate makes ordinary, since a ship whose CI is not
+          // green is refused and burns its attempt.
+          const done = this.vault.events.query({ types: ['job.done', 'job.failed'], from: since })
+            .filter((e) => (e.payload as { requeued?: boolean } | undefined)?.requeued !== true)
+            .filter((e) => e.job && !NON_WORK_TYPES.includes(readJob(this.vault, e.job)?.data.type ?? '')).length;
           if (done >= cfg.heartbeat.jobsCompletedN) this.requestHeartbeat(`${done} jobs completed`);
         }
       }
@@ -293,6 +299,8 @@ export class Daemon {
       if (inc) this.log(`tick(${reason}): incident ${inc} opened`);
       const corrective = maybeCorrectiveActions(this.vault);
       if (corrective.length) this.log(`tick(${reason}): ${corrective.length} corrective action(s) queued`);
+      const flags = maybeFlagLessons(this.vault);
+      if (flags.length) this.log(`tick(${reason}): ${flags.length} expired flag(s) recorded as lessons`);
       const last = this.vault.events.last('heartbeat.completed');
       const since = last ? (Date.now() - Date.parse(last.ts)) / 3600_000 : Infinity;
       const hasOpen = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat');

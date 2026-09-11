@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, createJob, listInbox } from '@cubicle/core';
+import { scaffoldVault, createJob, listInbox, createStream, writeCiRecord } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { parseToolsConfig, ToolRegistry, phase3Tools, phase6Tools } from '@cubicle/tools';
 import { runJob, vaultScheduler, type Llm } from '../src/index.js';
@@ -25,11 +25,16 @@ describe('deploy.site first-time approval counts live deploys only', () => {
     try {
       mkdirSync(path.join(dir, 'Site/dist'), { recursive: true });
       writeFileSync(path.join(dir, 'Site/dist/index.html'), '<h1>v1</h1>');
+      // An engineer.ship cannot finish without a green CI record for its stream (§17); this test is about
+      // deploy.site's first-time approval, not CI, so give every ship the same evergreen "site" stream. No
+      // source files exist under Workspace/site, so the record never goes stale.
+      createStream(vault, { slug: 'site', name: 'Site', problem: 'The company has no site.', customers: 'Everyone who hears about us', outcome_metric: 'a first cut exists', owner_team: 'dev' }, 'ceo');
+      writeCiRecord(vault, 'site', { stream: 'site', started: '2026-09-11T09:59:00.000Z', finished: '2026-09-11T10:00:00.000Z', green: true, commit: null, steps: [{ name: 'test', code: 0, ok: true, duration_ms: 5, output: 'ok' }] }, 'backend_engineer');
       const base = { vault, toolsConfig: cfg, registry: new ToolRegistry().registerAll([...phase3Tools(), ...phase6Tools()]), scheduler: vaultScheduler(vault), env: {} };
       const spends = () => listInbox(vault).filter((n) => n.data.kind === 'spend');
 
       // A preview is proposed like any first deploy; the owner approves it out of band.
-      const j1 = createJob(vault, { type: 'engineer.ship', title: 'preview', assigned: 'platform_engineer', goal: 'deploy' }, 'cto');
+      const j1 = createJob(vault, { type: 'engineer.ship', title: 'preview', assigned: 'platform_engineer', goal: 'deploy', stream: 'site' }, 'cto');
       await runJob({ ...base, llm: scripted([{ tool: 'deploy.site', args: { stage: 'preview' } }, finishStep]) }, j1);
       expect(spends().length).toBe(1);
       expect(vault.events.count('deploy.done')).toBe(0);
@@ -39,14 +44,14 @@ describe('deploy.site first-time approval counts live deploys only', () => {
       vault.events.emit({ type: 'deploy.done', agent: 'daemon', payload: { url: 'https://canary.acme.pages.dev', project: 'acme', mode: 'mock', stage: 'canary' } });
 
       // The first *live* deploy is still owner business: two non-live deploys bought it nothing.
-      const j2 = createJob(vault, { type: 'engineer.ship', title: 'go live', assigned: 'platform_engineer', goal: 'deploy' }, 'cto');
+      const j2 = createJob(vault, { type: 'engineer.ship', title: 'go live', assigned: 'platform_engineer', goal: 'deploy', stream: 'site' }, 'cto');
       await runJob({ ...base, llm: scripted([{ tool: 'deploy.site', args: { stage: 'live', metrics: ['error rate'] } }, finishStep]) }, j2);
       expect(spends().length).toBe(2);
       expect(vault.events.count('deploy.done')).toBe(2); // still only the two we recorded by hand
 
       // Once a live deploy is on the record, later deploys run without asking again.
       vault.events.emit({ type: 'deploy.done', agent: 'daemon', payload: { url: 'https://acme.pages.dev', project: 'acme', mode: 'mock', stage: 'live' } });
-      const j3 = createJob(vault, { type: 'engineer.ship', title: 'again', assigned: 'platform_engineer', goal: 'deploy' }, 'cto');
+      const j3 = createJob(vault, { type: 'engineer.ship', title: 'again', assigned: 'platform_engineer', goal: 'deploy', stream: 'site' }, 'cto');
       expect((await runJob({ ...base, llm: scripted([{ tool: 'deploy.site', args: { stage: 'preview' } }, finishStep]) }, j3)).status).toBe('done');
       expect(spends().length).toBe(2); // no third proposal
       expect(vault.events.count('deploy.done')).toBe(4);

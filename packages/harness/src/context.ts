@@ -1,6 +1,6 @@
 import {
   parseNote, RoleFrontmatter as RoleSchema, type Vault, type RoleFrontmatter, type JobFrontmatter, type CubicleEvent,
-  loadOrg, teamOf, leadOf, isLead, reportsOf, can, researchLead, listJobs, loadGates, gatesFor, criteriaFor, type Org, type GateTable,
+  loadOrg, teamOf, leadOf, isLead, reportsOf, can, researchLead, listJobs, loadGates, gatesForRisk, criteriaFor, type Org, type GateTable,
 } from '@cubicle/core';
 import { estimateTokens, type ChatMessage } from '@cubicle/router';
 import type { MemoryIndex } from './memory.js';
@@ -94,7 +94,7 @@ export async function assembleContext(inp: ContextInput): Promise<ChatMessage[]>
   const openWork = listJobs(v, { assigned: role.role, status: ['queued', 'blocked', 'in_review'] }).filter((j) => j.id !== inp.job.id).slice(0, 8);
   const openBlock = openWork.length ? `# Your open work\n${openWork.map((j) => `- ${j.status} ${j.id}: ${j.title}`).join('\n')}\nDo not re-plan these; finish the current job.` : '';
   const criteria = criteriaFor(gates, inp.job.type);
-  const criteriaBlock = criteria || inp.job.done_when ? `# What good looks like\n${criteria}${inp.job.done_when ? `\nDone when: ${inp.job.done_when}` : ''}${gatesFor(gates, inp.job.type).length ? `\nThis job is reviewed by: ${gatesFor(gates, inp.job.type).join(' then ')}.` : ''}` : '';
+  const criteriaBlock = criteria || inp.job.done_when ? `# What good looks like\n${criteria}${inp.job.done_when ? `\nDone when: ${inp.job.done_when}` : ''}${gatesForRisk(gates, inp.job.type, inp.job.risk).length ? `\nThis job is reviewed by: ${gatesForRisk(gates, inp.job.type, inp.job.risk).join(' then ')}.` : ''}` : '';
   const findings = inp.jobBody.split('## Review findings')[1]?.split(/\n## /)[0]?.trim();
   const findingsBlock = findings ? `The reviewer returned this job; address every finding before finishing again:\n${findings}` : '';
   const personaBlock = role.persona ? `# Who you are\n${role.persona}` : '';

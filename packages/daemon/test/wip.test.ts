@@ -70,6 +70,45 @@ describe('nextJob respects the team WIP limit (operating model §7)', () => {
     const b = devJob('B');
     expect(pool.nextJob('backend_engineer')).toBe(b);
   });
+
+  it('a running gate job does not inflate its parent\'s team WIP: the parent already occupies the lane (fix round 1)', () => {
+    setWip('dev', { in_progress: 1, review: 2, testing: 2 });
+    const a = devJob('A');
+    updateJob(vault, a, { status: 'in_review', gate_index: 0 }, 'daemon'); // testing: qa.review outstanding, not in_progress
+    const gateJob = createJob(vault, { type: 'qa.review', title: 'Review A', assigned: 'qa_automation', goal: 'g', team: 'dev', parent: a }, 'daemon');
+    updateJob(vault, gateJob, { status: 'running' }, 'daemon'); // would read as in_progress if not excluded
+    const b = devJob('B');
+    // dev's in_progress limit is 1, but the only "in_progress"-shaped job is the gate job (excluded); dev has 0 real in_progress jobs.
+    expect(pool.nextJob('backend_engineer')).toBe(b);
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'wip')).toBe(false);
+  });
+
+  it('a team whose note never sets wip: is never refused, however much work is running (fix round 1)', () => {
+    // Teams/technology.md ships with no `wip:` at all.
+    const techJob = (title: string) => createJob(vault, { type: 'custom', title, assigned: 'cto', goal: 'g', team: 'technology' }, 'ceo');
+    const a = techJob('A'); const b = techJob('B'); const c = techJob('C'); const d = techJob('D');
+    for (const id of [a, b, c]) updateJob(vault, id, { status: 'running' }, 'daemon');
+    expect(pool.nextJob('cto')).toBe(d);
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'wip' && e.payload.team === 'technology')).toBe(false);
+  });
+
+  it('clears the warned team once its load drops under the limit, so the next full episode warns again promptly', () => {
+    setWip('dev', { in_progress: 1, review: 2, testing: 2 });
+    const a = devJob('A');
+    updateJob(vault, a, { status: 'running' }, 'daemon');
+    const b = devJob('B');
+    expect(pool.nextJob('backend_engineer')).toBeNull(); // warns once, dev is full
+    expect(vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'wip')).toHaveLength(1);
+
+    updateJob(vault, a, { status: 'done' }, 'daemon'); // dev drops under the limit
+    expect(pool.nextJob('backend_engineer')).toBe(b);
+
+    updateJob(vault, b, { status: 'running' }, 'daemon'); // dev fills up again, immediately
+    const c = devJob('C');
+    pool.nextJob('backend_engineer'); // should warn again despite being well inside WIP_WARN_MS of the first warning
+    expect(vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'wip')).toHaveLength(2);
+    void c;
+  });
 });
 
 describe('the snapshot carries the lane load', () => {
@@ -82,5 +121,11 @@ describe('the snapshot carries the lane load', () => {
     expect(dev.wip.load).toEqual({ in_progress: 1, review: 0, testing: 1 });
     const qa = buildSnapshot(vault).teams.find((t) => t.id === 'qa')!;
     expect(qa.wip.load).toEqual({ in_progress: 0, review: 0, testing: 0 });
+  });
+
+  it('a team with no wip: field reports null limits, never a fabricated default (fix round 1)', () => {
+    const tech = buildSnapshot(vault).teams.find((t) => t.id === 'technology')!;
+    expect(tech.wip.limits).toBeNull();
+    expect(tech.wip.load).toEqual({ in_progress: 0, review: 0, testing: 0 });
   });
 });

@@ -5,7 +5,7 @@ import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
   loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, resolveRole,
-  readStream,
+  readStream, budgetLines, listStreams, readFlags, expiredFlags,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -232,13 +232,118 @@ export async function maybeEnqueueWeeklyReview(vault: Vault, openMeeting?: (agen
   if (n === 0 || n % WEEKLY_REVIEW_EVERY !== 0) return [];
   const marker = `weekly-${n}`;
   if (listJobs(vault).some((j) => j.links.includes(`[[${marker}]]`))) return [];
+  const dora = writeEngineeringMetrics(vault);
   // `marker` is not a job id, so it must not be passed as `parent` (F9) — expandProcess threads it through
   // `links` instead, which is all this idempotency check reads.
   const ids = expandProcess(vault, 'weekly_review', `week ${n / WEEKLY_REVIEW_EVERY}`, { by: 'daemon', owner_role: 'ceo', marker });
   const org = loadOrg(vault);
   const leads = Object.values(org.teams).map((t) => t.lead).filter((l) => l !== 'ceo');
-  if (openMeeting) await openMeeting(`Weekly review ${n / WEEKLY_REVIEW_EVERY}: what shipped, what failed, what each team does next; the COO proposes which team skills go company-wide.`, leads).catch(() => null);
+  if (openMeeting) await openMeeting(`Weekly review ${n / WEEKLY_REVIEW_EVERY}: what shipped, what failed, what each team does next; the COO proposes which team skills go company-wide. Engineering flow this week: ${dora.deploys} deploys, change failure rate ${dora.change_failure_rate === null ? 'n/a' : `${(dora.change_failure_rate * 100).toFixed(0)} %`} (Metrics/engineering.md).`, leads).catch(() => null);
   return ids;
+}
+
+// ---------- engineering metrics (owner's operating model §31) ----------
+
+export interface Dora {
+  lead_time_h: number | null;
+  deploys_per_week: number;
+  change_failure_rate: number | null;
+  time_to_restore_h: number | null;
+  deploys: number;
+  failures: number;
+  incidents: number;
+  window_days: number;
+}
+
+function median(xs: number[]): number | null {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/**
+ * The four flow measures §31 asks for, computed from the event log — never from anything a role could inflate.
+ * Lead time is `job.queued` → the `deploy.done` of that same job; deployment frequency counts live deploys;
+ * change failure rate counts rollbacks and returned ships against deploys; time to restore is the incident
+ * clock. A measure with no data in the window is null, not zero: "we deployed nothing" and "we restore
+ * instantly" must not look the same.
+ */
+export function computeDora(vault: Vault, since: string, until = nowIso()): Dora {
+  const deploys = vault.events.query({ types: ['deploy.done'], from: since, to: until, limit: 5000 }).filter((e) => (e.payload.stage ?? 'live') === 'live');
+  const queued = new Map<string, string>();
+  for (const e of vault.events.query({ types: ['job.queued'], from: since, to: until, limit: 5000 })) if (e.job) queued.set(e.job, e.ts);
+
+  const leadTimes: number[] = [];
+  for (const d of deploys) {
+    if (d.payload.rolled_back === true || !d.job) continue;
+    const q = queued.get(d.job);
+    if (!q) continue;
+    leadTimes.push((Date.parse(d.ts) - Date.parse(q)) / 3600_000);
+  }
+
+  const rollbacks = deploys.filter((e) => e.payload.rolled_back === true).length;
+  const returned = vault.events.query({ types: ['review.returned'], from: since, to: until, limit: 5000 })
+    .filter((e) => e.job && readJob(vault, e.job)?.data.type === 'engineer.ship').length;
+
+  const opened = vault.events.query({ types: ['incident.opened'], from: since, to: until, limit: 2000 });
+  const recovered = new Map<string, string>();
+  for (const e of vault.events.query({ types: ['incident.recovered'], from: since, to: until, limit: 2000 })) if (e.job) recovered.set(e.job, e.ts);
+  const restores = opened.flatMap((o) => { const r = o.job ? recovered.get(o.job) : undefined; return r ? [(Date.parse(r) - Date.parse(o.ts)) / 3600_000] : []; });
+
+  const windowDays = Math.max(0.25, (Date.parse(until) - Date.parse(since)) / 86_400_000);
+  const failures = rollbacks + returned;
+  return {
+    lead_time_h: median(leadTimes),
+    deploys_per_week: Number(((deploys.length / windowDays) * 7).toFixed(2)),
+    change_failure_rate: deploys.length ? Number((failures / deploys.length).toFixed(3)) : null,
+    time_to_restore_h: median(restores),
+    deploys: deploys.length,
+    failures,
+    incidents: opened.length,
+    window_days: Number(windowDays.toFixed(2)),
+  };
+}
+
+const NA = 'not enough data';
+const hrs = (v: number | null) => (v === null ? NA : `${v.toFixed(1)} h`);
+const pct = (v: number | null) => (v === null ? NA : `${(v * 100).toFixed(0)} %`);
+
+export function renderEngineering(d: Dora, at: string, budgets: string[]): string {
+  return `# Engineering metrics
+
+_Computed by the weekly review from the event log at ${at}, over the last ${d.window_days} days. Never edit by hand._
+
+| measure | value | how it is computed |
+|---|---|---|
+| Lead time | ${hrs(d.lead_time_h)} | median \`job.queued\` → the live \`deploy.done\` of the same job |
+| Deployment frequency | ${d.deploys_per_week.toFixed(2)} / week | ${d.deploys} live deploys over ${d.window_days} days |
+| Change failure rate | ${pct(d.change_failure_rate)} | ${d.failures} failures (rollbacks + returned ships) over ${d.deploys} deploys |
+| Time to restore | ${hrs(d.time_to_restore_h)} | median \`incident.opened\` → \`incident.recovered\`, over ${d.incidents} incident(s) |
+
+## Error budgets
+
+${budgets.length ? budgets.map((b) => `- ${b}`).join('\n') : '- No active streams yet.'}
+
+## What these are for
+
+These four describe the delivery system, not the people in it (§31). A measure reading "${NA}" means the window
+held nothing to measure — that is information, not a zero.
+
+## What is never measured here
+
+Lines of code. Number of tickets closed. Story points completed. §31: they are trivially gamed and they
+encourage the wrong behaviour. If someone asks for one of these, the answer is one of the four above.
+`;
+}
+
+/** Compute and write `Metrics/engineering.md` for the cycle that just ended. */
+export function writeEngineeringMetrics(vault: Vault, now = new Date()): Dora {
+  const until = now.toISOString();
+  const since = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+  const d = computeDora(vault, since, until);
+  vault.writeText('Metrics/engineering.md', renderEngineering(d, until, budgetLines(vault, undefined, since)), 'daemon', { generated: true });
+  return d;
 }
 
 // ---------- lessons (spec §9.1): appended by the harness from finish.lessons[] (packages/harness/src/loop.ts) ----------
@@ -479,32 +584,77 @@ export function postmortemPath(vault: Vault, jobId: string): string | null {
   } catch { return null; }
 }
 
+/** A job that is still somebody's problem. An incident in one of these states means the room already knows. */
+const OPEN_JOB_STATUSES = ['queued', 'running', 'blocked', 'in_review'] as const;
+
+/** True while `stream` has an incident nobody has closed yet. */
+function hasOpenIncident(vault: Vault, stream: string): boolean {
+  return listJobs(vault, { status: [...OPEN_JOB_STATUSES] }).some((j) => j.type === 'incident' && j.stream === stream);
+}
+
+/** The streams that have actually reached production: a `deploy.done` at the `live` stage. */
+function liveStreams(vault: Vault): Set<string> {
+  const out = new Set<string>();
+  for (const e of vault.events.query({ types: ['deploy.done'], limit: 500 })) {
+    // A deploy.done from before stages existed always went to the production branch, so a missing stage counts as live.
+    if ((e.payload.stage ?? 'live') === 'live' && typeof e.payload.stream === 'string') out.add(e.payload.stream);
+  }
+  return out;
+}
+
+/**
+ * Create the incident note and start its clock. Shared by both triggers so the job shape — SRE, priority 1,
+ * high risk, a postmortem path in the goal — cannot drift between them.
+ */
+function openIncident(vault: Vault, o: { id: string; stream: string; trigger: string; title: string; what: string; ts: string; today: string }): string {
+  createJob(vault, {
+    id: o.id, type: 'incident', title: o.title, assigned: 'sre', priority: 1,
+    team: 'dev', owner_role: 'dev_manager', stream: o.stream, risk: 'high',
+    goal: `${o.what} Treat it as a production incident (operating model §33): detection → triage → mitigation → recovery → root cause → corrective actions → learning.\n\nDo: (1) confirm the stream is serving again, rolling back with deploy.site({ rollback: true }) if it is not; (2) read the deploy events, the CI records under Workspace/${o.stream}/.cubicle-ci/ and the job that shipped the change; (3) write the blameless postmortem to Docs/postmortems/${o.today}-${o.stream}.md from Docs/postmortems/_template.md — a timeline, the impact in hours, a root cause that is a design or a missing check rather than a person, and at least one corrective action with an owner role; (4) finish with that path in artifacts and the open→recovered hours in metrics.hours.`,
+    done_when: `The stream is serving again and Docs/postmortems/${o.today}-${o.stream}.md has a timeline, an impact in hours, a root cause and at least one corrective action.`,
+  }, 'daemon');
+  vault.events.emit({ type: 'incident.opened', agent: 'daemon', job: o.id, payload: { stream: o.stream, trigger: o.trigger }, ts: o.ts });
+  return o.id;
+}
+
 /**
  * Open an incident for a production failure nobody has opened one for yet. Two triggers, both things the log
- * already records: a deploy that was rolled back, and a live deploy of a stream whose last CI run was red.
- * Detection is the first step of §33's chain, and a company that only notices an outage when a human looks has
- * no detection at all.
+ * already records: a deploy that was rolled back, and a red CI run on a stream that is already live. Detection
+ * is the first step of §33's chain, and a company that only notices an outage when a human looks has no
+ * detection at all.
  *
- * Idempotent per trigger: the incident's id is derived from the event, so a second tick finds it already there.
+ * Idempotent per trigger: the incident's id is derived from the event (the CI record path for a red run), so a
+ * second tick finds it already there. A rollback is a definite production event and gets its own incident every
+ * time; a red CI is a weaker, repeating signal, so it is additionally suppressed while that stream still has an
+ * open incident — the room already knows, and a build that stays red would otherwise file one job a tick.
  */
 export function maybeOpenIncident(vault: Vault, now = new Date()): string | null {
-  const deploys = vault.events.query({ types: ['deploy.done'], limit: 200 });
-  for (const e of deploys) {
+  const today = now.toISOString().slice(0, 10);
+  for (const e of vault.events.query({ types: ['deploy.done'], limit: 200 })) {
     const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
     if (!stream || !readStream(vault, stream)) continue;
-    const trigger = e.payload.rolled_back === true ? 'rollback' : null;
-    if (!trigger) continue;
-    const id = idFromKey('job', `incident:${trigger}:${e.ts}:${stream}`);
+    if (e.payload.rolled_back !== true) continue;
+    const id = idFromKey('job', `incident:rollback:${e.ts}:${stream}`);
     if (readJob(vault, id)) continue;
-    createJob(vault, {
-      id, type: 'incident', title: `Incident: ${stream} was rolled back`, assigned: 'sre', priority: 1,
-      team: 'dev', owner_role: 'dev_manager', stream, risk: 'high',
-      goal: `A live deploy of stream "${stream}" was rolled back at ${e.ts}. Treat it as a production incident (operating model §33): detection → triage → mitigation → recovery → root cause → corrective actions → learning.\n\nDo: (1) confirm the stream is serving again, rolling back further with deploy.site({ rollback: true }) if it is not; (2) read the deploy events, the CI records under Workspace/${stream}/.cubicle-ci/ and the job that shipped the change; (3) write the blameless postmortem to Docs/postmortems/${nowIso().slice(0, 10)}-${stream}.md from Docs/postmortems/_template.md — a timeline, the impact in hours, a root cause that is a design or a missing check rather than a person, and at least one corrective action with an owner role; (4) finish with that path in artifacts and the open→recovered hours in metrics.hours.`,
-      done_when: `The stream is serving again and Docs/postmortems/${nowIso().slice(0, 10)}-${stream}.md has a timeline, an impact in hours, a root cause and at least one corrective action.`,
-    }, 'daemon');
-    vault.events.emit({ type: 'incident.opened', agent: 'daemon', job: id, payload: { stream, trigger }, ts: e.ts });
-    void now;
-    return id;
+    return openIncident(vault, {
+      id, stream, trigger: 'rollback', today, ts: e.ts,
+      title: `Incident: ${stream} was rolled back`,
+      what: `A live deploy of stream "${stream}" was rolled back at ${e.ts}.`,
+    });
+  }
+  const live = liveStreams(vault);
+  for (const e of vault.events.query({ types: ['ci.completed'], limit: 200 })) {
+    const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
+    if (!stream || e.payload.green !== false || !readStream(vault, stream)) continue;
+    if (!live.has(stream)) continue;   // not in production: a red build is ordinary engineering, not an incident
+    const record = typeof e.payload.record === 'string' ? e.payload.record : e.ts;
+    const id = idFromKey('job', `incident:red_ci_live:${record}`);
+    if (readJob(vault, id) || hasOpenIncident(vault, stream)) continue;
+    return openIncident(vault, {
+      id, stream, trigger: 'red_ci_live', today, ts: e.ts,
+      title: `Incident: CI is red on live stream ${stream}`,
+      what: `CI went red on stream "${stream}" at ${e.ts} (record ${record}) while that stream is serving in production, so what is live is no longer known-good.`,
+    });
   }
   return null;
 }
@@ -549,4 +699,31 @@ function markCorrectiveDone(vault: Vault, incidentId: string, marker: string): v
   const cur = readJob(vault, incidentId);
   if (!cur) return;
   updateJob(vault, incidentId, { links: [...cur.data.links, `[[${marker}]]`] }, 'daemon', `- ${nowIso()}: corrective actions expanded (none found)`);
+}
+
+// ---------- feature flags (owner's operating model §21) ----------
+
+/**
+ * A flag past its removal date is debt, and debt nobody names is debt nobody pays. One lesson line per flag,
+ * written once — `Memory/lessons.md` is what the charter-compression pass and every role's context already
+ * read, so the flag's owner meets it where they already look.
+ */
+export function maybeFlagLessons(vault: Vault, now = new Date()): string[] {
+  const today = now.toISOString().slice(0, 10);
+  const existing = vault.readTextOrNull('Memory/lessons.md') ?? '# Lessons\n';
+  const made: string[] = [];
+  const lines: string[] = [];
+  for (const s of listStreams(vault)) {
+    const expired = expiredFlags(readFlags(vault, s.slug), today);
+    if (!expired.length) continue;
+    const fresh = expired.filter((f) => !existing.includes(`flag "${f.key}"`));
+    if (!fresh.length) continue;
+    for (const f of fresh) {
+      lines.push(`- [${today}] flag "${f.key}" in ${s.slug} passed its removal date ${f.remove_by} and is still there; ${f.owner} removes the flag and the dead branch, or sets a new date and says why (§21) #team:${s.owner_team}`);
+      made.push(f.key);
+    }
+    vault.events.emit({ type: 'daemon.warning', payload: { where: 'flags', stream: s.slug, flags: fresh.map((f) => f.key), message: `${fresh.length} flag(s) past their removal date in ${s.slug}: ${fresh.map((f) => `${f.key} (${f.owner}, due ${f.remove_by})`).join(', ')}` } });
+  }
+  if (lines.length) vault.appendText('Memory/lessons.md', lines.join('\n') + '\n', 'daemon');
+  return made;
 }

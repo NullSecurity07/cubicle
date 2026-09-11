@@ -73,7 +73,9 @@ export class WorkerPool extends EventEmitter {
   /**
    * Next runnable job for a role: only `queued` jobs (interrupted `running` ones are re-queued by the daemon at
    * startup; `blocked` ones by the dispatcher), dependencies done, priority then age — and only while the job's
-   * team is under its `in_progress` WIP limit.
+   * team is under its `in_progress` WIP limit. A team whose note never sets `wip:` (most teams outside Dev/QA
+   * today) is not opting into Kanban limits at all: `org.teams[team].wip` is `undefined` and the team is
+   * unlimited, never refused.
    *
    * Only the in_progress lane gates *starting* work (operating model §7): review and testing are full because
    * someone else has to act, and refusing to start anything until a reviewer catches up would idle the room
@@ -92,10 +94,12 @@ export class WorkerPool extends EventEmitter {
       if (j.depends_on.some((d) => byId.get(d)?.status !== 'done')) continue;
       const team = j.team;
       if (!team || !org.teams[team]) return j.id;                   // no team, no limit to apply
-      const limit = org.teams[team].wip.in_progress;
+      const teamWip = org.teams[team].wip;
+      if (!teamWip) { this.wipWarned.delete(team); return j.id; }   // no `wip:` on the team note: unlimited
+      const limit = teamWip.in_progress;
       if (!loads.has(team)) loads.set(team, wipLoad(this.vault, team, chainFor));
       const load = loads.get(team)!;
-      if (load.in_progress < limit) return j.id;
+      if (load.in_progress < limit) { this.wipWarned.delete(team); return j.id; } // back under the limit: the next full episode should warn again promptly
       const last = this.wipWarned.get(team) ?? 0;
       if (Date.now() - last >= WIP_WARN_MS) {
         this.wipWarned.set(team, Date.now());

@@ -67,8 +67,9 @@ describe('vault-native adapters', () => {
 
   it('metrics appends a row to a Metrics/ table', async () => {
     const a = vaultNativeAdapters({ vault, env: {} });
-    await a.metrics.record('engineering', { lead_time_h: 4, deploys: 3 });
-    expect(vault.readText('Metrics/engineering.md')).toMatch(/lead_time_h/);
+    // 'engineering' is owned by the weekly review (Task 15 ships its template), so the adapter smoke test uses its own sheet
+    await a.metrics.record('adapter-smoke', { lead_time_h: 4, deploys: 3 });
+    expect(vault.readText('Metrics/adapter-smoke.md')).toMatch(/lead_time_h/);
   });
 
   it('errors opens an incident job', async () => {

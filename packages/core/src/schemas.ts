@@ -134,7 +134,10 @@ export const TeamFrontmatter = z.looseObject({
   floor: z.number().int().optional(),
   parent: z.string().optional(),       // the division this team belongs to (dev → technology); planning happens at the division
   processes: z.array(z.string()).default([]),
-  wip: WipLimits.default({ in_progress: 3, review: 2, testing: 2 }),
+  // No default: a team's note that never sets `wip:` is not opting into Kanban limits at all — the dispatcher
+  // (nextJob, workers.ts) and the WS snapshot (ws.ts) both treat a `wip` of `undefined` as unlimited, never
+  // refused. Only Dev and QA ship with an explicit `wip:` today.
+  wip: WipLimits.optional(),
 });
 export type TeamFrontmatter = z.infer<typeof TeamFrontmatter>;
 
@@ -264,5 +267,10 @@ export const JobResult = z.object({
   summary: z.string().default(''),
   verdict: z.enum(['pass', 'return']).optional(),
   findings: z.array(z.string()).default([]),
+  /** Set true when the change added a dependency, a service, a data store, or a changed boundary (toolchain
+   * §8). An `engineer.ship` that sets this is refused until an ADR exists in Docs/adr/ dated on or after the
+   * job's creation — the qa.review gate also checks for one, but a ship must not need a human to catch a
+   * missing decision record before it can even finish. */
+  architecture_change: z.boolean().optional(),
 });
 export type JobResult = z.infer<typeof JobResult>;
