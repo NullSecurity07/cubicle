@@ -99,7 +99,7 @@ async function readCapped(res: Response, max: number): Promise<{ body: Buffer; t
 /** `Research/archive/<date>-<host>-<hash8>.md` — dated so the same page fetched again next week is a new snapshot. */
 export function archivePath(url: string, today: string): string {
   let host = 'source';
-  try { host = new URL(url).host.replace(/^www\./, '').replace(/[^a-z0-9.-]/gi, '').toLowerCase() || 'source'; } catch { /* not a url */ }
+  try { host = new URL(url).host.replace(/:\d+$/, '').replace(/^www\./, '').replace(/[^a-z0-9.-]/gi, '').toLowerCase() || 'source'; } catch { /* not a url */ }
   return `Research/archive/${today}-${host}-${createHash('sha1').update(url).digest('hex').slice(0, 8)}.md`;
 }
 
@@ -161,14 +161,21 @@ export const httpFetch = defineTool({
         // Only a successful fetch is worth archiving: a 500 body is not evidence, and writing one would leave a
         // snapshot in Research/archive/ that a later citation would quietly trust.
         let archived: string | undefined;
+        let archiveError: string | undefined;
         if (archive && res.ok) {
           const rel = archivePath(current.href, ctx.now().toISOString().slice(0, 10));
-          if (!ctx.vault.exists(rel)) {
-            ctx.vault.writeText(rel, archiveNote({ url: current.href, fetched: ctx.now().toISOString(), status: res.status, contentType: type, title: isHtml ? htmlTitle(body) : '' }, raw || !isHtml ? htmlToText(body) : text), ctx.roleId, { job: ctx.jobId });
+          // The write is sandboxed in its own try/catch: a disk-full or lock error here must not turn a
+          // successful fetch into a reported failure — the caller still gets their text, just no archive path.
+          try {
+            if (!ctx.vault.exists(rel)) {
+              ctx.vault.writeText(rel, archiveNote({ url: current.href, fetched: ctx.now().toISOString(), status: res.status, contentType: type, title: isHtml ? htmlTitle(body) : '' }, raw || !isHtml ? htmlToText(body) : text), ctx.roleId, { job: ctx.jobId });
+            }
+            archived = rel;
+          } catch (err) {
+            archiveError = (err as Error).message;
           }
-          archived = rel;
         }
-        return { ok: res.ok, text: `HTTP ${res.status} ${type}${current.href !== u.href ? ` (redirected to ${current.href})` : ''}${archived ? `\narchived at ${archived} — pass it to sources.cite as \`archive\`` : ''}\n\n${text}${truncated ? `\n…[truncated at ${cfg.max_bytes} bytes]` : ''}`, data: { status: res.status, contentType: type, length: buf.length, url: current.href, archive: archived } };
+        return { ok: res.ok, text: `HTTP ${res.status} ${type}${current.href !== u.href ? ` (redirected to ${current.href})` : ''}${archived ? `\narchived at ${archived} — pass it to sources.cite as \`archive\`` : ''}${archiveError ? `\narchive failed: ${archiveError}` : ''}\n\n${text}${truncated ? `\n…[truncated at ${cfg.max_bytes} bytes]` : ''}`, data: { status: res.status, contentType: type, length: buf.length, url: current.href, archive: archived } };
       }
       return { ok: false, text: 'too many redirects' };
     } catch (err) {

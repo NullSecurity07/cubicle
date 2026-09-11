@@ -20,6 +20,10 @@ describe('archive path and note', () => {
     expect(archivePath('https://www.example.com/pricing?x=1', '2026-09-11')).toBe(p);
     expect(archivePath('https://www.example.com/other', '2026-09-11')).not.toBe(p);
   });
+  it('strips the port from the host', () => {
+    const p = archivePath('https://example.com:8443/pricing', '2026-09-11');
+    expect(p).toMatch(/^Research\/archive\/2026-09-11-example\.com-[0-9a-f]{8}\.md$/);
+  });
   it('the note carries the provenance a citation needs', () => {
     const n = archiveNote({ url: 'https://example.com/a', fetched: '2026-09-11T09:00:00.000Z', status: 200, contentType: 'text/html', title: 'Example pricing' }, 'body text');
     expect(n).toMatch(/^url: https:\/\/example\.com\/a$/m);
@@ -58,5 +62,20 @@ describe('http.fetch { archive: true }', () => {
     expect(failed.ok).toBe(false);
     expect((failed.data as { archive?: string }).archive).toBeUndefined();
     expect(vault.list('Research/archive', { ext: '.md' })).toEqual([]);
+  });
+
+  it('a successful fetch is still returned when the archive write fails', async () => {
+    vi.stubGlobal('fetch', async (input: string | URL) => {
+      const u = String(input);
+      if (u.endsWith('/robots.txt')) return new Response('', { status: 404 });
+      return new Response('<html><head><title>Example pricing</title></head><body><p>Ten dollars</p></body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+    });
+    const spy = vi.spyOn(vault, 'writeText').mockImplementation(() => { throw new Error('disk full'); });
+    const r = await reg.get('http.fetch')!.handler({ url: 'https://example.com/pricing', archive: true } as never, ctx());
+    expect(r.ok).toBe(true);
+    expect(r.text).toMatch(/Ten dollars/);
+    expect(r.text).toMatch(/archive failed: disk full/);
+    expect((r.data as { archive?: string }).archive).toBeUndefined();
+    spy.mockRestore();
   });
 });
