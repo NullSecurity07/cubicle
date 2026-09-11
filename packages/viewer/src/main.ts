@@ -13,6 +13,10 @@ import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
 import { withMotion, reducedMotion } from './world/motion.js';
 import { ElevatorView, toViewState } from './world/elevator-view.js';
+import { Rail, LOBBY_ROW } from './ui/rail.js';
+import { MinimapChrome } from './ui/minimap.js';
+import { floorPalette } from './world/palette.js';
+import { DUR, EASE, dur } from './world/motion.js';
 
 applyTheme(themeFromQuery(location.search));   // before the first paint: no white flash on load or theme switch
 const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
@@ -92,6 +96,29 @@ scene.hooks = {
   makeCar(sc, geo) { elevatorView = new ElevatorView(sc, geo.shaft, geo.floors); return elevatorView.car; },
 };
 
+// ---- floor rail and minimap chrome ----------------------------------------------------------------------------
+// The rail reads the scene every refresh (cheap: it morphs). The chrome is HTML laid over the Phaser minimap camera,
+// which only exists after `create`, so `layout()` also runs on a slow beat in the loop until the camera turns up.
+const rail = new Rail({
+  summary: () => scene.floorSummary(),
+  currentFloor: () => scene.currentFloor(),
+  inLobby: () => scene.currentFloor() === 1 && (scene.cameras?.main?.midPoint.y ?? 0) / TILE >= LOBBY_ROW,
+  divisions: () => { const d: Record<number, string[]> = {}; for (const t of state.teams) if (t.floor && !t.parent) (d[t.floor] ??= []).push(t.name); return d; },
+  onFloor: (n) => scene.focusFloor(n),
+  onLobby: () => scene.focusOn('noticeboard'),
+});
+const minimap = new MinimapChrome({
+  // `scrollX/scrollY` here is the camera's top-left *in world space*, which on a zoomed camera is `worldView`, not
+  // the raw scroll (Phaser keeps scroll unzoomed: worldView.x = scrollX + width/2 - width/zoom/2).
+  camera: () => { const c = scene.cameras?.getCamera('minimap'); return c ? { x: c.x, y: c.y, width: c.width, height: c.height, scrollX: c.worldView.x, scrollY: c.worldView.y, zoom: c.zoom } : null; },
+  colours: () => ({ 1: floorPalette(1).tab, 2: floorPalette(2).tab, 3: floorPalette(3).tab, 4: floorPalette(4).tab }),
+  onPan: (wx, wy) => scene.cameras.main.pan(wx, wy, dur(DUR.minimapPan), EASE.sine),
+  onToggle: (visible) => scene.cameras.getCamera('minimap')?.setVisible(visible),
+});
+scene.hooks.onFloorChange = () => rail.update();
+window.addEventListener('resize', () => minimap.layout());
+// ---------------------------------------------------------------------------------------------------------------
+
 /**
  * The single entry for opening anything: a surface, a room, `agent:<role>`, `job:<id>`, `org`. Pushes onto the
  * stack and focuses the camera. Only a user's own click zooms (`zoom: false` for anything the app opens by itself).
@@ -106,6 +133,7 @@ function open(kind: string, origin?: Origin, opts: { zoom?: boolean } = {}): voi
 
 function refresh(): void {
   if (panel.current) panel.update(panel.current, viewOf(panel.current));
+  rail.update();
   bar.setPending(state.pendingProposals);
   bar.setBrand(state.brand.name, state.brand.tagline);
 }
@@ -186,8 +214,11 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
 };
 
 let last = performance.now();
+let lastLayout = 0;
 function loop(now: number): void {
   const dt = now - last; last = now;
+  // The minimap camera moves with the window; the rail's lobby tab follows a drag inside F1, which fires no floor change.
+  if (now - lastLayout > 500) { lastLayout = now; minimap.layout(); rail.update(); }
   time.tick(dt, new Date());
   if (state.mode === 'live') state = tick(state, Date.now());
   if (elevatorView && scene.scene.isActive()) elevatorView.setState(toViewState(scene.elevator.state()));   // doors and digits follow the engine every frame
