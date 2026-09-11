@@ -1,11 +1,27 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { repoRoot } from '@cubicle/core';
+import { repoRoot, loadOrg, officeRole, OFFICES, Vault, type Org } from '@cubicle/core';
 import { loadProvidersConfig, apiKeyFor } from '@cubicle/router';
 import { hasDocker, hasSandboxImage, SANDBOX_IMAGE } from '@cubicle/tools';
 
 export interface DoctorRow { area: string; item: string; ok: boolean | null; detail: string; fix?: string }
+
+/**
+ * One row per office: the mapping is what gates, escalation and planning resolve through, so an office pointing
+ * at a role that was fired or deactivated is a silent company-wide failure — everything lands on the CEO instead.
+ */
+export function officeRows(org: Org): DoctorRow[] {
+  return OFFICES.map((office) => {
+    const named = org.offices?.[office] ?? '(unset)';
+    const ok = officeRole(org, office) !== null;
+    return {
+      area: 'org', item: `office ${office}`, ok,
+      detail: ok ? named : `${named} is missing or inactive — this office falls back to the team lead`,
+      fix: `set a live role for \`${office}\` under \`offices:\` in Memory/constitution.md, or re-activate Roles/${named}.md`,
+    };
+  });
+}
 
 
 async function get(url: string, headers: Record<string, string> = {}, timeoutMs = 8000): Promise<{ status: number; text: string }> {
@@ -13,7 +29,7 @@ async function get(url: string, headers: Record<string, string> = {}, timeoutMs 
   catch (err) { return { status: 0, text: (err as Error).message }; }
 }
 
-export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; buildSandbox?: boolean; providersPath?: string } = {}): Promise<DoctorRow[]> {
+export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; buildSandbox?: boolean; providersPath?: string; vaultPath?: string } = {}): Promise<DoctorRow[]> {
   const rows: DoctorRow[] = [];
   const setup = 'see SETUP.md';
   const cfg = loadProvidersConfig(opts.providersPath ?? path.join(repoRoot(), 'config', 'providers.yaml'));
@@ -89,6 +105,16 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
     else rows.push({ area: 'services', item: s.item, ok: true, detail: 'keys set (run with --live to verify)' });
   }
   if (!existsSync(path.join(repoRoot(), '.env'))) rows.push({ area: 'services', item: '.env', ok: null, detail: 'no .env at the repo root; keys come from the environment only', fix: 'cp .env.example .env' });
+
+  // Org: only when a vault was given — `cubicle doctor` is also run before any vault exists.
+  if (opts.vaultPath) {
+    try {
+      const vault = Vault.open(opts.vaultPath);
+      try { rows.push(...officeRows(loadOrg(vault))); } finally { vault.close(); }
+    } catch (err) {
+      rows.push({ area: 'org', item: 'offices', ok: null, detail: `could not read ${opts.vaultPath}: ${String((err as Error).message).slice(0, 80)}` });
+    }
+  } else rows.push({ area: 'org', item: 'offices', ok: null, detail: 'no vault given (pass --vault <path> or set CUBICLE_VAULT to check the office map)' });
   return rows;
 }
 

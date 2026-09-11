@@ -228,8 +228,11 @@ const commands: Record<string, Handler> = {
     const r = await rebuildCache(root, { memory: async (v) => new MemoryIndex(v, (t) => embedTexts(cfg, t)).rebuild().catch(() => 0) });
     console.log(`rebuilt .cubicle cache: ${r.events} events, ${r.writtenSha} written_sha rows, ${r.jobs} jobs indexed, ${r.memoryFiles} memory files`);
   },
-  async doctor(_args, flags) {
-    const rows = await runDoctor(process.env, { live: flags.live === true, buildSandbox: flags['build-sandbox'] === true, providersPath: providersConfigPath(flags) });
+  async doctor(args, flags) {
+    // The vault is optional here: doctor also runs before `cubicle init`.
+    let vaultPath: string | undefined;
+    try { vaultPath = resolveVaultPath(flags, args[0]); } catch { vaultPath = undefined; }
+    const rows = await runDoctor(process.env, { live: flags.live === true, buildSandbox: flags['build-sandbox'] === true, providersPath: providersConfigPath(flags), vaultPath });
     console.log(formatDoctor(rows));
     const missing = rows.filter((r) => r.ok === false && r.area === 'services');
     if (missing.length) console.log(`\nMissing service keys run in mock mode. See SETUP.md (${path.join(repoRoot(), 'SETUP.md')}) sections: ${missing.map((m) => m.item.split(' (')[0]).join(', ')}`);
@@ -254,7 +257,7 @@ const commands: Record<string, Handler> = {
   providers test|refresh    ping every model | refresh the OpenRouter :free list
   job add|cancel|list       job queue
   replay <date>             per-hour event summary for a day
-  doctor [--live] [--build-sandbox]   environment + keys check; --live pings each key
+  doctor [<vault>] [--live] [--build-sandbox]   environment + keys + office map; --live pings each key
   rebuild                   rebuild the .cubicle cache from the vault
   memory rebuild|index|search <vault> [query]   embedding index over Memory/ Skills/ Decisions/
   chat [--tier t] [--local] <prompt>            one completion through the cascade (debug)
