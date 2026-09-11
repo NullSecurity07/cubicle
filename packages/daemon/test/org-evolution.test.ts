@@ -48,6 +48,15 @@ describe('reorg (spec §2)', () => {
     expect(loadOrg(vault).teams).toEqual(before.teams);
     expect(vault.events.count('org.changed')).toBe(0);
   });
+  it('a room lead answers to the lead of the division above it, and the chief executive is found by office, not by id', async () => {
+    // Re-seat the chief executive's office on a fresh charter: the reorg must exempt the holder (not `ceo`) from
+    // the no-team check and must point a room's lead at its division chief, never at the literal id `ceo`.
+    vault.writeText('Memory/constitution.md', vault.readText('Memory/constitution.md').replace(/^(\s*)chief_executive:.*$/m, '$1chief_executive: cto'), 'owner');
+    expect(await applyReorg(vault, reorg('teams:\n  qa: { lead: qa_lead, members: [qa_automation, qa_exploratory, qa_performance, qa_security, qa_release] }\n  technology: { lead: cto, members: [] }\n'))).toMatch(/^applied/);
+    const org = loadOrg(vault);
+    expect(org.roles.qa_lead.reports_to).toBe('cto');
+    expect(org.roles.cto.reports_to).toBe('owner');
+  });
 });
 
 describe('hiring joins a team (spec §9.5, F2)', () => {

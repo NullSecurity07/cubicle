@@ -74,8 +74,9 @@ export async function applyReorg(vault: Vault, note: { path: string; data: Inbox
   // F6: a reorg must not leave an active, non-CEO role belonging to no team at all — computed against every
   // team's final membership (listed and derived-unlisted) before anything is written.
   const placed = new Set(Object.values(nextByTeam).flatMap((t) => [t.lead, ...t.members]));
+  const chief = officeHolder(org, 'chief_executive');
   for (const r of Object.keys(org.roles)) {
-    if (r === 'ceo' || placed.has(r)) continue;
+    if (r === chief || placed.has(r)) continue;
     return `role ${r} would belong to no team`;
   }
   for (const [id, next] of Object.entries(nextByTeam)) {
@@ -83,7 +84,11 @@ export async function applyReorg(vault: Vault, note: { path: string; data: Inbox
     vault.writeText(`Teams/${id}.md`, stringifyNote({ ...n.data, ...next }, n.body), 'daemon', { job: note.data.job ?? null });
     for (const r of [next.lead, ...next.members]) {
       const rn = vault.readNoteOrNull(`Roles/${r}.md`); if (!rn) continue;
-      const reports_to = r === next.lead ? (r === 'ceo' ? 'owner' : 'ceo') : next.lead;
+      // A lead answers to the lead of the room above it (a division chief), else to the chief executive's holder;
+      // the holder answers to the owner. Never the literal id `ceo` (re-review of the fix wave).
+      const parent = org.teams[id]?.parent;
+      const above = parent ? (nextByTeam[parent]?.lead ?? org.teams[parent]?.lead ?? chief) : chief;
+      const reports_to = r === next.lead ? (r === chief ? 'owner' : above) : next.lead;
       if (rn.data.team !== id || rn.data.reports_to !== reports_to) vault.writeText(`Roles/${r}.md`, stringifyNote({ ...rn.data, team: id, reports_to }, rn.body), 'daemon', { job: note.data.job ?? null });
     }
   }
