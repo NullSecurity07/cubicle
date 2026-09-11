@@ -71,7 +71,7 @@ scene.hooks = {
   hour: () => time.hour(new Date()),
   clock: () => (state.mode === 'replay' ? replayClockAt(time.index) : Date.now()),
   onSurfaceClick(kind) { open(kind); },
-  onAgentClick(role) { open(`agent:${role}`); scene.focusOn(`agent:${role}`); },
+  onAgentClick(role) { open(`agent:${role}`); scene.focusOn(`agent:${role}`, { zoom: true }); },
 };
 
 function agentView(role: string): { title: string; sub?: string; html: string; mode: 'drawer' } {
@@ -97,7 +97,7 @@ function viewOf(kind: string) { return kind.startsWith('agent:') ? agentView(kin
 /** Open anything by kind: a surface, `agent:<role>`, or `job:<id>`. */
 function open(kind: string): void {
   ui.show(kind, viewOf(kind));
-  if (!kind.includes(':')) scene.focusOn(kind === 'cabin' ? 'cabin' : kind);
+  if (!kind.includes(':')) scene.focusOn(kind, { zoom: true });
 }
 
 function refresh(): void {
@@ -108,6 +108,7 @@ function refresh(): void {
 }
 
 ui.onOpen = (kind) => open(kind);
+ui.onClose = () => scene.restoreZoom();
 ui.onChat = (text) => {
   if (!net.chat(text)) return;
   state = { ...state, chat: [...state.chat, { ts: new Date().toISOString(), from: 'you', text }] };
