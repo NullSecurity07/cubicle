@@ -3,7 +3,7 @@
  * semantic token as a CSS custom property on <html>; Phaser code reads the same hex strings through `THEMES` and
  * `hexNum`. Floor colours come from world/palette.ts so carpet, sign, floor tab and minimap tick share one hue.
  */
-import { floorPalette } from '../world/palette.js';
+import { floorPalette, PALETTE } from '../world/palette.js';
 
 export type ThemeMode = 'dark' | 'light';
 
@@ -25,11 +25,11 @@ export interface Theme { colors: ThemeColors; materials: ThemeMaterials }
 
 export const THEMES: Record<ThemeMode, Theme> = {
   dark: {
-    colors: { bg: '#0e1014', surface1: '#151820', surface2: '#1b1f2a', surface3: '#232838', text: '#e7e9ee', text2: '#a3a9ba', text3: '#8f95a5', accent: '#e6a93c', accentInk: '#2a1f08', accentText: '#e6a93c', ok: '#5cbf6c', warn: '#e6a93c', bad: '#f0655a', info: '#7aa2f7', termBg: '#0b0d11', termText: '#d4dae8', termPrompt: '#e6a93c' },
+    colors: { bg: '#0e1014', surface1: '#151820', surface2: '#1b1f2a', surface3: '#232838', text: '#e7e9ee', text2: '#a3a9ba', text3: '#8f95a5', accent: PALETTE.amber, accentInk: PALETTE.amberInk, accentText: PALETTE.amber, ok: '#5cbf6c', warn: PALETTE.amber, bad: '#f0655a', info: '#7aa2f7', termBg: '#0b0d11', termText: '#d4dae8', termPrompt: PALETTE.amber },
     materials: { hairline: 'rgba(255,255,255,.08)', hairline2: 'rgba(255,255,255,.14)', glass: 'rgba(21,24,32,.72)', scrim: 'rgba(6,8,12,.4)', shadow1: '0 8px 24px rgba(0,0,0,.28)', shadow2: '0 24px 64px rgba(0,0,0,.5)' },
   },
   light: {
-    colors: { bg: '#f4f5f8', surface1: '#ffffff', surface2: '#f2f3f6', surface3: '#e9ebf0', text: '#1b1e26', text2: '#4d5361', text3: '#5f6573', accent: '#e6a93c', accentInk: '#2a1f08', accentText: '#8a5a00', ok: '#1f7a33', warn: '#8a5a00', bad: '#b3261e', info: '#2b5fc7', termBg: '#0b0d11', termText: '#d4dae8', termPrompt: '#e6a93c' },
+    colors: { bg: '#f4f5f8', surface1: '#ffffff', surface2: '#f2f3f6', surface3: '#e9ebf0', text: '#1b1e26', text2: '#4d5361', text3: '#5f6573', accent: PALETTE.amber, accentInk: PALETTE.amberInk, accentText: '#8a5a00', ok: '#1f7a33', warn: '#8a5a00', bad: '#b3261e', info: '#2b5fc7', termBg: '#0b0d11', termText: '#d4dae8', termPrompt: PALETTE.amber },
     materials: { hairline: 'rgba(0,0,0,.08)', hairline2: 'rgba(0,0,0,.14)', glass: 'rgba(255,255,255,.72)', scrim: 'rgba(20,24,32,.25)', shadow1: '0 8px 24px rgba(0,0,0,.12)', shadow2: '0 24px 64px rgba(0,0,0,.22)' },
   },
 };
