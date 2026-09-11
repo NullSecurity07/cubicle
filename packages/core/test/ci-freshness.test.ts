@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync, symlinkSync, lutimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault } from '../src/template.js';
 import { Vault } from '../src/vault.js';
-import { readCiConfig, writeCiRecord, latestCiRecord, ciStatus, ciConfigPath, ciRecordDir, newestSourceMtime, type CiRecord } from '../src/ci.js';
+import { readCiConfig, writeCiRecord, latestCiRecord, ciStatus, ciConfigPath, ciRecordDir, newestSourceMtime, isValidStreamSlug, type CiRecord } from '../src/ci.js';
+import { streamSlug } from '../src/streams.js';
 
 let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-ci-')); vault = (await scaffoldVault(dir)).vault; });
@@ -39,6 +40,13 @@ describe('cubicle-ci.yaml', () => {
   it('paths follow the stream slug', () => {
     expect(ciConfigPath('checkout')).toBe('Workspace/checkout/cubicle-ci.yaml');
     expect(ciRecordDir('checkout')).toBe('Workspace/checkout/.cubicle-ci');
+  });
+
+  it('accepts exactly what streamSlug produces, and nothing that could reach a mount or a parent directory', () => {
+    for (const name of ['Checkout v2!', 'Growth  &  Retention', 'a'.repeat(80)]) expect(isValidStreamSlug(streamSlug(name)), name).toBe(true);
+    for (const bad of ['x,src=/etc', '../../Memory', 'x/../y', 'check out', 'Checkout', '', '-lead', 'x=y', 'a'.repeat(49)]) {
+      expect(isValidStreamSlug(bad), bad).toBe(false);
+    }
   });
 
   it('parses steps, defaults network to none and allow_failure to false', () => {
@@ -124,5 +132,29 @@ describe('CI records and freshness', () => {
     // …and a record written now does not make the very run that wrote it look stale.
     writeCiRecord(vault, 'checkout', record(), 'backend_engineer');
     expect(newestSourceMtime(vault, 'checkout')).toBe(before);
+  });
+
+  it('a symlink is not followed, but re-pointing one is a source change', () => {
+    seed();
+    const link = path.join(dir, 'Workspace/checkout/src/vendor');
+    symlinkSync('/etc', link);                       // a link out of the workspace: its target must not be walked
+    const linked = new Date('2026-09-11T11:00:00.000Z');
+    lutimesSync(link, linked, linked);
+    writeCiRecord(vault, 'checkout', record(), 'backend_engineer');   // finished 10:01
+
+    const s = ciStatus(vault, 'checkout');
+    expect(s.ok).toBe(false);                        // 11:00 > 10:01
+    expect(s.reason).toMatch(/src\/vendor/);
+    // /etc has thousands of files; had the walk followed the link, the newest would come from there.
+    expect(newestSourceMtime(vault, 'checkout')).toBe(linked.getTime());
+  });
+
+  it('a symlinked node_modules is still ignored', () => {
+    seed();
+    const link = path.join(dir, 'Workspace/checkout/node_modules');
+    symlinkSync('/tmp', link);
+    const future = new Date(Date.now() + 60_000);
+    lutimesSync(link, future, future);
+    expect(newestSourceMtime(vault, 'checkout')).toBe(SEEDED.getTime());
   });
 });
