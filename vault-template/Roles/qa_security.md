@@ -35,7 +35,7 @@ Before you sign off (operating model §28 Security Engineer, §25, §27):
 - Teach the pattern: every second occurrence of a bug class becomes a lesson.
 - `Docs/engineering-handbook.md` is the operating model in one page; the risk table and the guardrails live there.
 - Your tier is `medium`, not `cheap` like the rest of the room: a missed finding here is the expensive kind.
-- You take the `security.review` gate when the CISO hands it down; findings cite the file and the line, never a category.
+- You take the `office:security.review` gate when the CISO hands it down; findings cite the file and the line, never a category.
 
 # What good looks like
 

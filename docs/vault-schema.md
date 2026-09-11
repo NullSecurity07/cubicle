@@ -40,7 +40,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | field | type | notes |
 |---|---|---|
 | `id` | string | the filename is authoritative: `Jobs/<id>.md` — if a note's `id` field disagrees with its filename (e.g. you copied `_template.md` by hand), the daemon rewrites `id` to match the filename and logs one `daemon.warning` |
-| `type` | string | known types: `engineer.ship`, `research`, `research.review`, `research.measure`, `intelligence`, `growth.outreach`, `growth.post`, `growth.seo`, `custom`, `team.plan`, `critic.premortem`, `qa.review`, `security.review`, `coo.verify`, `requester.review`, `company.plan`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`), `incident`; each has a `config/gates.yaml` entry |
+| `type` | string | known types: `engineer.ship`, `research`, `research.review`, `research.measure`, `intelligence`, `growth.outreach`, `growth.post`, `growth.seo`, `custom`, `company.plan`, `division.plan`, `board.premortem`, `team.plan`, `critic.premortem`, `team:qa.review`, `office:operations.verify`, `office:security.review`, `requester.review`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`), `incident`, `qa.review`, `coo.verify`, `security.review`; each has a `config/gates.yaml` entry |
 | `title` | string |  |
 | `assigned` | string |  |
 | `status` | `queued` \| `running` \| `blocked` \| `in_review` \| `done` \| `failed` \| `cancelled` = `"queued"` | you may set `cancelled`; `blocked` without `blocked_on` = paused by you; `in_review` = the job's own work is done but it still owes a gate from `config/gates.yaml` |
@@ -62,7 +62,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | `owner_role` | string (optional) | the lead who scheduled it, for jobs a member didn't request themselves |
 | `for` | string (optional) | who a `research` job's findings are for (a lead, not a team) |
 | `done_when` | string (optional) | the "Done when" a `team.plan` job set for a job it scheduled |
-| `risk` | `low` \| `medium` \| `high` = `"low"` | `low` | `medium` | `high` (owner's operating model §27). `medium` inserts a `security.review` gate before the rest of the chain; `high` also requires an approved `threat_model` proposal before the job may finish |
+| `risk` | `low` \| `medium` \| `high` = `"low"` | `low` | `medium` | `high` (owner's operating model §27). `medium` inserts an `office:security.review` gate before the rest of the chain; `high` also requires an approved `threat_model` proposal before the job may finish |
 | `stream` | string (optional) | the `Streams/<slug>.md` this job serves; `ci.run`, the ship gate and the error budget all key on it |
 | `returns` | record<string, number> = `{}` | gate job type → how many times that gate has returned this job (once-per-gate: a second return from the same gate fails the job instead of looping forever) |
 | `gate_index` | number (optional) | how far through its `config/gates.yaml` gate list the job has passed |
