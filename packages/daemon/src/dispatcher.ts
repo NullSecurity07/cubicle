@@ -248,8 +248,10 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             outcome = 'approved; the waiting job resumes';
             break;
           case 'threat_model':
-            // Nothing to execute: the approval is the decision (§27). The blocked job resumes on the next tick.
-            outcome = d.approved ? 'threat model accepted; the job may finish' : 'threat model rejected';
+            // Nothing to execute: the approval is the decision (§27). The blocked job resumes on the next tick
+            // either way — `d.approved` is always true here, since `d.approved === false` was handled above,
+            // before this switch, as a plain 'rejected' outcome common to every proposal kind.
+            outcome = 'threat model accepted; the job may finish';
             break;
         }
       }

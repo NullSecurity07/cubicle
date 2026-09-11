@@ -154,7 +154,7 @@ ${table('Inbox note (00 Inbox/*.md)', InboxFrontmatter as unknown as z.ZodObject
 ${table('Decision note (Decisions/*.md)', DecisionFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { owner_rating: 'set `up`/`down`; `down` reaches the author as feedback', rating_seen: 'set to the delivery time once a `down` `owner_rating` has been delivered to the author as feedback, so it reaches them exactly once', review_date: 'optional date the author records for a second look, mirroring the `## Review date` body section; nothing schedules it — only `Experiments/` review dates are acted on' }, { rating_seen: 'ISO timestamp' })}
 Body sections: Context / Options considered / Chosen / Why / Expected effect / Review date.
 
-${table('Finish contract (job Result block)', JobResult as unknown as z.ZodObject<z.ZodRawShape>)}
+${table('Finish contract (job Result block)', JobResult as unknown as z.ZodObject<z.ZodRawShape>, { architecture_change: 'set true when the change added a dependency, a service, a data store, or a changed boundary (toolchain §8); an `engineer.ship` that sets it is refused until an ADR in Docs/adr/ is dated on or after the job\'s creation' })}
 ### Constitution (fenced \`yaml\` block in Memory/constitution.md)
 
 ${table('constitution', Constitution as unknown as z.ZodObject<z.ZodRawShape>, { max_emails_per_day: 'enforced inside email.send', banned_tactics: 'substring match, then the local model as a classifier', pii_local_only: 'customer/email jobs run only on Ollama', never_modify: 'extra owner-owned paths' })}
