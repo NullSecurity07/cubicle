@@ -63,13 +63,13 @@ describe('tower teams', () => {
 describe('processes, gates and constitution', () => {
   it('every process step names an active role; gates.yaml unchanged; caps raised', () => {
     const org = loadOrg(vault);
-    for (const p of ['new_product', 'feature', 'launch', 'pricing', 'weekly_review', 'opportunity']) {
+    for (const p of ['new_product', 'feature', 'launch', 'pricing', 'weekly_review', 'opportunity', 'research_lifecycle']) {
       const text = readFileSync(path.join(dir, 'Processes', `${p}.md`), 'utf8');
       for (const m of text.matchAll(/role:\s*([a-z_0-9]+)/g)) expect(org.roles[m[1]], `${p}: ${m[1]}`).toBeDefined();
       for (const m of text.matchAll(/for:\s*([a-z_0-9]+)/g)) expect(org.roles[m[1]], `${p} for: ${m[1]}`).toBeDefined();
     }
     expect(readFileSync(path.join(dir, 'Processes/feature.md'), 'utf8')).toMatch(/role: research_manager.*\n.*role: cto.*\n.*role: backend_engineer.*\n.*role: cmo/);
-    for (const d of ['Docs/adr', 'Docs/research', 'Docs/postmortems', 'Docs/tech-radar.md']) expect(existsSync(path.join(dir, d)), d).toBe(true);
+    for (const d of ['Docs/adr', 'Docs/research', 'Docs/postmortems', 'Docs/tech-radar.md', 'Research/index.md', 'Research/intelligence', 'Ideas/_template.md', 'Metrics/research.md']) expect(existsSync(path.join(dir, d)), d).toBe(true);
     expect(readFileSync(path.resolve(__dirname, '../../../config/gates.yaml'), 'utf8')).toMatch(/engineer\.ship:\s*\[qa\.review, coo\.verify\]/);
     expect(vault.constitution()).toMatchObject({ max_team_size: 8, auto_approve_reorg: false, max_roles: 40 });
   });
