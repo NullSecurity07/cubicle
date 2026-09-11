@@ -3,7 +3,7 @@ import { OfficeScene } from './scenes/OfficeScene.js';
 import { Net, resolveWs } from './net.js';
 import { emptyState, applyEvent, applySnapshot, tick, type State, type CubicleEvent, type Snapshot } from './state.js';
 import { Ui } from './ui/panel.js';
-import { esc, obsidianUrl, chip, type Ctx } from './ui/content.js';
+import type { Ctx } from './ui/content.js';
 import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
@@ -74,25 +74,7 @@ scene.hooks = {
   onAgentClick(role) { open(`agent:${role}`); scene.focusOn(`agent:${role}`, { zoom: true }); },
 };
 
-function agentView(role: string): { title: string; sub?: string; html: string; mode: 'drawer' } {
-  const ag = state.agents[role];
-  const job = ag?.job ? state.jobs[ag.job] : null;
-  const charter = obsidianUrl(vaultName, `Roles/${role}.md`);
-  const jobHtml = job
-    ? `<div class="rows"><button class="row click" data-open="job:${esc(job.id)}">${chip(job.status)}<span class="t">${esc(job.title)}<small>${esc(job.type)} · step ${job.checkpoint_step}</small></span><span class="when">open</span></button></div>`
-    : `<div class="empty">Not on a job right now.</div>`;
-  const stateLine = `${esc(ag?.state.replace(/_/g, ' ') ?? 'offline')}${ag?.tool ? ` · using ${esc(ag.tool)}` : ''}`;
-  const team = state.teams.find((t) => t.lead === role || t.members.includes(role)) ?? null;
-  const leadRole = team ? (team.lead === role ? (role === 'ceo' ? null : 'ceo') : team.lead) : null;
-  const leadDisplay = leadRole ? state.agents[leadRole]?.display ?? leadRole.toUpperCase() : null;
-  const subParts = [stateLine, esc(ag?.title ?? ag?.display ?? role)];
-  if (team) subParts.push(esc(team.name));
-  if (leadDisplay) subParts.push(`reports to ${esc(leadDisplay)}`);
-  const sub = subParts.filter(Boolean).join(' · ');
-  return { mode: 'drawer', title: ag?.display ?? role, sub, html: `<div class="section"><h3>Current job</h3>${jobHtml}</div><div class="section"><h3>Charter</h3><div class="card">${charter ? `<a href="${esc(charter)}">Edit Roles/${esc(role)}.md in Obsidian</a>` : `Edit <code>Roles/${esc(role)}.md</code> in Obsidian.`}<div class="hintline">Desk: ${esc(ag?.desk ?? '—')}. Charters can only tighten what a role may do.</div></div></div>` };
-}
-
-function viewOf(kind: string) { return kind.startsWith('agent:') ? agentView(kind.slice(6)) : viewFor(kind, state, ctx); }
+function viewOf(kind: string) { return viewFor(kind, state, ctx); }
 
 /** Open anything by kind: a surface, `agent:<role>`, or `job:<id>`. */
 function open(kind: string): void {
