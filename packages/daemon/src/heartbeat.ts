@@ -5,6 +5,7 @@ import {
   officeHolder, roleWithTool, teamOf, researchLead, listStreams, type Org, type ModelTier,
   childTeams, subtreeRoles, divisionTeams, divisionOf,
   budgetLines, GATE_JOB_TYPES,
+  nextIdeaForBoard, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -12,6 +13,7 @@ import { deployer, emailSender, analytics } from '@cubicle/tools';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
 import { seedFirstJobs, seedFirstStream } from './first-run.js';
+import { enqueueEstimates } from './discovery.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -42,8 +44,13 @@ export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { k
  * without doing anything. `owner_verdict` files the `plan_verdict` note the owner rules on and reads the
  * ruling back (Task 5): only an approved plan reaches `division_plans`, while work an earlier plan already
  * queued keeps running throughout.
+ *
+ * `discovery` and `ideas_board` sit before `company_plan` because that is the order the company thinks in: read
+ * what the owner gave us, judge the best idea that came out of it, then plan against what survived. `discovery`
+ * has no `case` yet — a step with none is walked through doing nothing, which is the documented behaviour of
+ * this array — and is wired up separately.
  */
-export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit'] as const;
+export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'discovery', 'ideas_board', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit'] as const;
 /** How long a heartbeat waits for company.plan/division.plan before writing the brief with "planning pending" (R33). */
 export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
 
@@ -59,8 +66,13 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
  *  heartbeat itself enqueues) and `research.measure` (a follow-up the calendar enqueues) are not work anyone
  *  planned. Counting them meant four of the five completions the next heartbeat waits for were the daemon's own
  *  sweeps, so one real job fired the next cycle, which enqueued four more — a self-driving cadence that also ate
- *  the free cheap-tier pool. */
-export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES, 'intelligence', 'research.measure', 'division.plan', 'board.premortem'];
+ *  the free cheap-tier pool.
+ *
+ *  `board.session` joins them for the same reason `board.premortem` is here: it is the *record* of a board the
+ *  heartbeat already sat, closed in the same tick it was created, not work anyone has to do. `discovery` and
+ *  `finance.estimate` are deliberately absent — they are what cycle one is *for*, so they count both toward the
+ *  heartbeat's completion trigger and toward their team's WIP. */
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES, 'intelligence', 'research.measure', 'division.plan', 'board.premortem', 'board.session'];
 
 /**
  * The outbound services whose adapters are in mock mode for this env, in the order the brief names them. Asks the
@@ -285,8 +297,6 @@ export function mergeBoardVerdict(text: string): { verdict: 'pass' | 'return'; f
   return { verdict, findings };
 }
 
-/** What the owner can rule on an idea the board has judged. */
-
 /** What one board session judges: this cycle's plan, or one idea out of the funnel. */
 export interface BoardSubject {
   kind: 'plan' | 'idea';
@@ -396,19 +406,133 @@ export const BOARD_UNREVIEWED_NOTE = 'No advisor answered (no model was availabl
  * health: nobody reviewed anything.
  */
 export function writeBoardPremortemDecision(vault: Vault, hbId: string, boardJobId: string, verdict: 'pass' | 'return', findings: string[], decidedBy: string, now: Date, answered = 1): string {
-  const unreviewed = verdict === 'pass' && answered === 0;
-  const risks = unreviewed ? `- ${BOARD_UNREVIEWED_NOTE}` : findings.length ? findings.map((f) => `- ${f}`).join('\n') : '- The board found nothing in this plan likely to sink the cycle.';
-  const review = new Date(now.getTime() + 7 * 24 * 3600_000).toISOString().slice(0, 10);
-  return writeDecision(vault, `premortem-${hbId}`, {
-    decided_by: decidedBy, cycle: hbId, status: verdict === 'pass' ? 'adopted' : 'proposed', inputs: ['[[Plans/plan]]'],
-  }, {
+  return writeBoardDecision(vault, `premortem-${hbId}`, {
+    verdict, findings, decidedBy, now, answered, cycle: hbId, inputs: ['[[Plans/plan]]'],
+    unreviewedNote: BOARD_UNREVIEWED_NOTE,
+    noFindingsNote: 'The board found nothing in this plan likely to sink the cycle.',
     context: `Pre-mortem for heartbeat ${hbId}: the board read this cycle's \`Plans/plan.md\` and imagined the cycle had already failed. The advisors' own words are in [[${boardJobId}]].`,
     options: '- Run the plan as the CEO wrote it\n- Return it to the CEO to rewrite before the owner rules on it',
     chosen: verdict === 'pass' ? 'Run the plan as written.' : 'Return the plan to the CEO for one rewrite.',
-    why: verdict === 'pass' ? (unreviewed ? BOARD_UNREVIEWED_NOTE : 'The plan survived the pre-mortem.') : 'The board found failure modes the plan does not answer.',
-    expected_effect: `Most likely ways this cycle fails, and what would prevent each:\n\n${risks}`,
-    review_date: review,
-  }, decidedBy);
+    why: verdict === 'pass' ? 'The plan survived the pre-mortem.' : 'The board found failure modes the plan does not answer.',
+    risksHeading: 'Most likely ways this cycle fails, and what would prevent each:',
+    reviewDays: 7,
+  });
+}
+
+/** Everything one board decision note needs beyond the four paragraphs every board session writes the same way. */
+export interface BoardDecisionOpts {
+  verdict: 'pass' | 'return';
+  findings: string[];
+  decidedBy: string;
+  now: Date;
+  /** How many advisors actually got a model response; 0 with a `pass` is "nobody reviewed this". */
+  answered: number;
+  /** The `cycle` field: the heartbeat for a pre-mortem, the board.session job for an idea. */
+  cycle: string;
+  inputs: string[];
+  /** The note's own words for "no advisor answered", with the right subject in them. */
+  unreviewedNote: string;
+  /** What the risks section says when the board passed and raised nothing. */
+  noFindingsNote: string;
+  context: string;
+  options: string;
+  chosen: string;
+  /** Why, for a reviewed session; the unreviewed note replaces it when `answered` is 0 on a pass. */
+  why: string;
+  /** The line above the risk bullets. */
+  risksHeading: string;
+  /** How many days out the note asks to be reviewed. */
+  reviewDays: number;
+  /** A closing line under the risks, when the note needs one. */
+  epilogue?: string;
+}
+
+/**
+ * One board session as a `Decisions/` note. The plan's pre-mortem and an idea's session differ only in their
+ * words — the six sections, the `adopted`/`proposed` rule (the board passed it, or it returned it and the thing
+ * it judged is not the thing that will be built) and the "no advisor answered" honesty are the same decision
+ * written twice, so they are written once here.
+ */
+export function writeBoardDecision(vault: Vault, id: string, o: BoardDecisionOpts): string {
+  const unreviewed = o.verdict === 'pass' && o.answered === 0;
+  const risks = unreviewed ? `- ${o.unreviewedNote}` : o.findings.length ? o.findings.map((f) => `- ${f}`).join('\n') : `- ${o.noFindingsNote}`;
+  return writeDecision(vault, id, {
+    decided_by: o.decidedBy, cycle: o.cycle, status: o.verdict === 'pass' ? 'adopted' : 'proposed', inputs: o.inputs,
+  }, {
+    context: o.context,
+    options: o.options,
+    chosen: o.chosen,
+    why: unreviewed ? o.unreviewedNote : o.why,
+    expected_effect: `${o.risksHeading}\n\n${risks}${o.epilogue ? `\n\n${o.epilogue}` : ''}`,
+    review_date: new Date(o.now.getTime() + o.reviewDays * 24 * 3600_000).toISOString().slice(0, 10),
+  }, o.decidedBy);
+}
+
+/**
+ * The board's verdict on one idea as `Decisions/board-<slug>.md`: `adopted` when the board passed it,
+ * `proposed` when it returned it (the idea it judged is not the idea that will be built). Keyed on the slug so
+ * a resumed cycle rewrites the same note instead of filing a second one.
+ */
+export function writeBoardSessionDecision(
+  vault: Vault, slug: string, title: string, boardJobId: string,
+  verdict: 'pass' | 'return', findings: string[], decidedBy: string, now: Date, answered = 1,
+): string {
+  return writeBoardDecision(vault, `board-${slug}`, {
+    verdict, findings, decidedBy, now, answered, cycle: boardJobId, inputs: [`[[Ideas/${slug}]]`],
+    unreviewedNote: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the idea passed'),
+    noFindingsNote: 'The board found nothing in this idea likely to sink a quarter.',
+    context: `The board read the dossier for "${title}" ([[Ideas/${slug}]]) and imagined the company had already spent a quarter on it and failed. The advisors' own words are in [[${boardJobId}]].`,
+    options: '- Keep it: the company plans against it\n- Park it: the failure modes are real but answerable later\n- Scrap it: it should not be built',
+    chosen: verdict === 'pass' ? 'The board saw nothing that would sink it; the recommendation stands.' : 'The board returned it; the recommendation drops to park until its findings are answered.',
+    why: verdict === 'pass' ? 'The dossier answered the failure modes the board could name.' : 'The dossier does not answer failure modes the board could name.',
+    risksHeading: 'Most likely ways this idea fails, and what would prevent each:',
+    epilogue: 'The owner rules; the board advises.',
+    reviewDays: 30,
+  });
+}
+
+/** Stable per idea, so a resumed cycle rules on the note it already filed. */
+export function ideaVerdictKey(slug: string): string { return `idea-verdict:${slug}`; }
+
+/** What the owner is being asked to rule on, and everything the ruling should be made from. */
+export interface IdeaVerdictFacts {
+  slug: string;
+  title: string;
+  score: number;
+  band: IdeaBand;
+  reason: string;
+  board: 'pass' | 'return';
+  findings: string[];
+  research: string;
+  estimate: string;
+  decidesAfterHours: number;
+}
+
+/**
+ * What the owner reads when an idea lands in their inbox: the recommendation and the arithmetic behind it, the
+ * board's findings, and the two numbers anyone would ask for. `chosen:` is how they overrule it, so the owner
+ * can keep something the score parked without editing the card by hand.
+ */
+export function ideaVerdictBody(f: IdeaVerdictFacts): string {
+  const findings = f.findings.length ? f.findings.map((x) => `- ${x}`).join('\n') : '- The board raised nothing that would sink this.';
+  const deadline = f.decidesAfterHours > 0
+    ? `; after ${f.decidesAfterHours} h the recommendation stands (\`board_decides_after_hours\` in Memory/constitution.md)`
+    : '';
+  return [
+    `**${f.title}** — [[Ideas/${f.slug}]]`,
+    '',
+    `Recommendation: **${f.band}**. ${f.reason}`,
+    '',
+    `- Research: ${f.research || 'none linked'}`,
+    `- Cost: ${f.estimate || 'not estimated'}`,
+    `- Board: ${f.board === 'pass' ? 'passed' : 'returned'}`,
+    '',
+    '## What the board said',
+    '',
+    findings,
+    '',
+    `Set \`approved: true\` to take the recommendation (**${f.band}**), or \`approved: false\` to park it and tell me why. To overrule the recommendation, set \`chosen: 1\` for keep, \`2\` for park or \`3\` for scrap and \`approved: true\`${deadline}.`,
+  ].join('\n');
 }
 
 /** Create the `ceo.heartbeat` job note (the heartbeat is a job so R9/R10/R12 apply). */
@@ -497,7 +621,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; estimateJobs?: string[]; estimatesPending?: boolean; ideaVerdicts?: string[]; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -596,20 +720,26 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     };
     // Block on the first of several sub-jobs (division.plan fan-out); the step re-checks the rest on each revisit.
     const blockMany = (ids: string[], log: string): HeartbeatOutcome => block(ids[0], log);
-    // Still waiting → re-block (same start time). Budget exceeded → mark planPending, advance the step, and let
-    // the caller continue with a stale plan rather than block the company forever (returns null to continue).
-    const waitOrGiveUp = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => {
+    // Still waiting → re-block (same start time). Budget exceeded → raise `flag`, advance the step, and let the
+    // caller carry on rather than block the company forever (returns null to continue). The flag is a parameter
+    // because what the brief must then say about the cycle depends on what was being waited for: a stuck
+    // estimate is not a stuck plan, and saying "Planning: PENDING" about one would be a lie.
+    const waitBounded = (id: string, flag: 'planPending' | 'estimatesPending', giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => {
       const since = job.blocked_on?.since;
       const waitedMs = since ? now().getTime() - Date.parse(since) : 0;
       if (waitedMs < PLAN_WAIT_BUDGET_MS) {
         updateJob(vault, jobId, { status: 'blocked', blocked_on: { kind: 'job', id, since: since ?? nowIso() } }, 'ceo');
         return { status: 'blocked', on: { kind: 'job', id } };
       }
-      state = { ...state, planPending: true }; saveState(state);
+      state = { ...state, [flag]: true }; saveState(state);
       updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
       done(i, giveUpNote(Math.round(waitedMs / 60000)));
       return null;
     };
+    /** The planning steps' wait: giving up leaves the previous plan standing and the brief says so. */
+    const waitOrGiveUp = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'planPending', giveUpNote);
+    /** `ideas_board`'s wait: giving up means the board reads the cards that were priced in time, and no more. */
+    const waitForEstimates = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'estimatesPending', giveUpNote);
     switch (step) {
       case 'gather': {
         const mail = deps.pollInbox ? await deps.pollInbox().catch(() => []) : [];
@@ -672,6 +802,76 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           answered++;
         }
         done(i, `${answered} owner message(s) answered`);
+        break;
+      }
+      case 'ideas_board': {
+        const org = loadOrg(vault);
+        const board = org.teams.board;
+        const ceo = officeHolder(org, 'chief_executive');
+        // Cards the discovery job filed still need their price before the board can read a score. Queue the
+        // estimates once, then wait for them the same way company_plan waits for its sub-job — bounded by
+        // PLAN_WAIT_BUDGET_MS, so a stuck finance office costs this cycle's board session and nothing more.
+        if (!state.estimateJobs) {
+          const ids = enqueueEstimates(vault, org);
+          state = { ...state, estimateJobs: ids }; saveState(state);
+          if (ids.length) return blockMany(ids, `waiting for ${ids.length} idea estimate(s)`);
+        }
+        if (state.estimateJobs?.length) {
+          const open = state.estimateJobs.filter((id) => { const s = readJob(vault, id)?.data.status; return !s || !['done', 'failed', 'cancelled'].includes(s); });
+          if (open.length) {
+            const w = waitForEstimates(firstOpenJob(state.estimateJobs, (id) => readJob(vault, id)?.data.status), (min) => `${open.length} estimate(s) still open after ${min} min — the board reads what is ready`);
+            if (w) return w;
+          } else if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
+        }
+        const idea = nextIdeaForBoard(vault);
+        if (!idea || !board || !org.roles[board.lead]) { done(i, idea ? 'board skipped: no advisors' : 'no idea is ready for the board'); break; }
+        const card = readIdea(vault, idea.id)!;
+        const session = await runBoardSession(deps, org, { kind: 'idea', text: `# ${card.data.title}\n\n${card.body}`, title: card.data.title, slug: idea.id });
+        if (cancelled()) return { status: 'cancelled' };
+        // The record, closed in the same tick and depending on this heartbeat so no worker picks it up.
+        const boardJob = createJob(vault, {
+          id: idFromKey('job', `board-idea:${idea.id}`), type: 'board.session', title: `Board: ${card.data.title}`,
+          assigned: board.lead, priority: 1, parent: jobId, team: board.id, owner_role: ceo,
+          depends_on: [jobId], links: [`[[${jobId}]]`, `[[${ideaPath(idea.id).replace(/\.md$/, '')}]]`],
+          goal: `The board read [[Ideas/${idea.id}]] and merged ${session.advisors.length} pre-mortems into one verdict.`,
+        }, ceo);
+        vault.updateNote(`Jobs/${boardJob}.md`, (n) => ({
+          data: { ...n.data, status: 'done', checkpoint_step: 1, updated: nowIso() },
+          body: setSection(setSection(n.body, '## Advisors', session.transcript), '## Result', '```json\n' + JSON.stringify({ status: 'done', summary: `board ${session.verdict} on ${idea.id}`, verdict: session.verdict, findings: session.findings }, null, 2) + '\n```'),
+        }), board.lead, { job: boardJob });
+        vault.events.emit({ type: 'job.done', agent: board.lead, job: boardJob, payload: { type: 'board.session', summary: `board ${session.verdict}`, verdict: session.verdict, idea: idea.id } });
+        // Nobody answered is not "the board reviewed this and found nothing"; the same warning the plan's
+        // pre-mortem raises, for the same reason — the decision note says so too, but the owner reads events.
+        if (session.answered === 0) {
+          vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'ideas_board', reason: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the idea passed') } });
+        }
+        let decisionRel = '';
+        try { decisionRel = writeBoardSessionDecision(vault, idea.id, card.data.title, boardJob, session.verdict, session.findings, board.lead, now(), session.answered); }
+        catch (err) { vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'ideas_board', message: `could not write the board decision note: ${(err as Error).message}` } }); }
+        // The verdict goes on the card before the proposal is filed: a crash between the two must leave the
+        // dossier true, not leave the owner ruling on a card that never heard from the board.
+        updateIdea(vault, idea.id, { board_verdict: session.verdict, board_decision: decisionRel }, 'daemon', {
+          heading: '## The board',
+          content: `**${session.verdict === 'pass' ? 'Passed' : 'Returned'}** — ${session.advisors.length} advisors, ${now().toISOString().slice(0, 10)}. ${decisionRel ? `See [[${decisionRel.replace(/\.md$/, '')}]].` : ''}\n\n${session.findings.map((f) => `- ${f}`).join('\n') || '- Nothing they thought would sink it.'}`,
+        });
+        // The board's verdict is an input to the band (a returned idea parks), so the `## Score` section is
+        // re-rendered from the card as it now stands rather than from the numbers read before the session.
+        const after = readIdea(vault, idea.id)!;
+        const score = after.data.score ?? 0;
+        const value = after.data.score_inputs.value ?? 3;
+        const band = ideaBand(score, { value, board: session.verdict });
+        updateIdea(vault, idea.id, {}, 'daemon', { heading: '## Score', content: renderScoreSection({ value, evidence: after.data.score_inputs.evidence ?? 3, effort: after.data.score_inputs.effort ?? 3, fit: after.data.score_inputs.fit ?? 3 }, { board: session.verdict }) });
+        const decidesAfterHours = vault.constitution().board_decides_after_hours;
+        const { id: propId, path: propRel } = createProposal(vault, {
+          id: idFromKey('prop', ideaVerdictKey(idea.id)), kind: 'idea_verdict', from: ceo, to: 'owner', job: jobId,
+          target: ideaPath(idea.id), title: `Keep, park or scrap: ${card.data.title}`,
+          body: ideaVerdictBody({ slug: idea.id, title: card.data.title, score, band, reason: bandReason(score, { value, board: session.verdict }), board: session.verdict, findings: session.findings, research: after.data.research, estimate: after.data.estimate, decidesAfterHours }),
+        }, ceo);
+        // The band and the board's verdict live on the note, not in cache state: a later heartbeat closes this
+        // verdict after a restart, and it must rule on what was recommended then — not on a recomputation.
+        vault.updateNote(propRel, (n) => ({ data: { ...n.data, board_verdict: session.verdict, band }, body: n.body }), 'daemon');
+        state = { ...state, ideaVerdicts: [...(state.ideaVerdicts ?? []), propId] }; saveState(state);
+        done(i, `board ${session.verdict} on ${idea.id}; recommendation ${band}, waiting for the owner`);
         break;
       }
       case 'meeting': {
@@ -810,6 +1010,31 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         break;
       }
       case 'owner_verdict': {
+        const decidesAfterHours = vault.constitution().board_decides_after_hours;
+        // `board_decides_after_hours` governs idea verdicts too (spec §3.5). The recommendation stamped on the
+        // note is what stands when it elapses — never a fresh recomputation, because the card may have changed
+        // since the board read it.
+        //
+        // This runs before every early exit below, not after the plan verdict: a cycle whose plan was skipped or
+        // had nothing to rule on still has to close the idea notes it filed, or an unattended night would leave
+        // them open for ever. The decision is written here rather than left to the dispatcher on purpose:
+        // `dispatchProposals` acts on an approval flag only when `vault.isOwnerChanged` says the *owner* set it,
+        // so a daemon write of `approved: true` would be refused as a forged approval — correctly. This loop is
+        // the deciding code, so it writes the decision onto the card itself and stamps `resolved_at`.
+        for (const note of listInbox(vault).filter((n) => n.data.kind === 'idea_verdict' && n.data.approved === null && !n.data.resolved_at)) {
+          const boardVerdict = (note.data as { board_verdict?: string }).board_verdict === 'pass' ? 'pass' as const : 'return' as const;
+          if (verdictOutcome({ approved: null, created: note.data.created, now: now(), boardVerdict, decidesAfterHours }) === 'pending') continue;
+          const band = ((note.data as { band?: string }).band ?? 'park') as IdeaBand;
+          const slug = String(note.data.target ?? '').slice('Ideas/'.length).replace(/\.md$/, '');
+          if (slug && readIdea(vault, slug)) {
+            updateIdea(vault, slug, { decision: band, decided_by: 'board', decided_at: nowIso(), status: band === 'scrap' ? 'rejected' : band === 'keep' ? 'accepted' : 'triaged' }, 'daemon', {
+              heading: '## Decision',
+              content: `**${band}** — the board, ${nowIso().slice(0, 10)}. The owner did not rule within ${decidesAfterHours} h, so the recommendation stood (\`board_decides_after_hours\`).`,
+            });
+          }
+          vault.updateNote(note.path, (n) => ({ data: { ...n.data, approved: true, decided_by: 'board', resolved_at: nowIso() }, body: n.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: the recommendation (${band}) stood after ${decidesAfterHours} h._\n` }), 'daemon');
+          vault.events.emit({ type: 'proposal.resolved', agent: 'daemon', job: jobId, payload: { id: note.data.id, kind: 'idea_verdict', approved: true, outcome: `the board decided: ${band}` } });
+        }
         // No new plan this cycle means nothing to rule on: the plan the divisions are working from was already
         // approved, and `division_plans` skips on `planSkipped` before it ever looks at `state.verdict`.
         if (state.planSkipped) { done(i, 'no new plan to rule on'); break; }
@@ -823,7 +1048,6 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         }
         const org = loadOrg(vault);
         const ceo = officeHolder(org, 'chief_executive');
-        const decidesAfterHours = vault.constitution().board_decides_after_hours;
         if (!state.verdictProposal) {
           const board = state.boardVerdict ?? 'pass';
           const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
@@ -993,6 +1217,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const facts = [
           `Elapsed: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}`,
           ...(state.planPending ? ['Planning: PENDING — the team plans have not finished this cycle; the previous plan stands.'] : []),
+          // Its own line, and never the planning one: an estimate the finance office has not returned delays the
+          // board session, not the plan, and a brief that said "Planning: PENDING" about it would be wrong.
+          ...(state.estimatesPending ? ['Ideas: an estimate is still pending — the finance office has not priced every new card, so the board read only the ones that were ready.'] : []),
           ...(state.planSkipped ? [`Planning: skipped — the plan from ${state.planSkipped.planDate} stands and ${state.planSkipped.open} job${state.planSkipped.open === 1 ? ' is' : 's are'} still open`] : []),
           // A plan can be waiting for the owner (`planWaiting`, filed by an earlier cycle) and still be ruled on
           // by this one, so the "paused" line only stands while the verdict has not come through.

@@ -123,7 +123,7 @@ describe('firstOpenJob (Task 9 review finding 2)', () => {
 
 describe('two-level planning (spec §3)', () => {
   it('steps are company_plan → board_premortem → division_plans; a return reruns the CEO once; leads fan out; brief has next actions per team (acceptance test 10)', async () => {
-    expect(HEARTBEAT_STEPS).toEqual(['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit']);
+    expect(HEARTBEAT_STEPS).toEqual(['gather', 'reconcile_brand', 'answer_owner', 'discovery', 'ideas_board', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit']);
     const llm = orgLlm({ vetoes: 1 });
     const d = daemonFor(llm);
     await d.start();

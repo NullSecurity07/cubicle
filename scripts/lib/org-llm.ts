@@ -8,7 +8,7 @@ import type { Llm } from '@cubicle/harness';
 
 export const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n\n### revenue\n- Find the first organic channel\n';
 
-export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boolean } = {}): Llm & { calls: Record<string, number> } {
+export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boolean; ideaVerdict?: 'pass' | 'return' } = {}): Llm & { calls: Record<string, number> } {
   let vetoes = opts.vetoes ?? 1;
   const plan = opts.plan ?? PLAN;
   const per = new Map<string, number>();
@@ -26,9 +26,16 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
         const planChair = /VERDICT: pass/.test(last) && /this plan/.test(last);
         // `boardSilent` simulates "no model was available" for every board call (advisors and chair alike),
         // the same way askAs's catch does when deps.llm.chat throws — used to test the zero-advisors-answered path.
-        if (opts.boardSilent && (planChair || /Imagine the cycle has already failed/.test(last))) throw new Error('no model available');
+        if (opts.boardSilent && (/VERDICT: pass/.test(last) || /Imagine the (cycle has already failed|company spent a quarter on this and it failed)/.test(last))) throw new Error('no model available');
         if (planChair) { const v = vetoes-- > 0; return { ...base, content: v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier' }; }
         if (/Imagine the cycle has already failed/.test(last)) return { ...base, content: '- the plan names no metric — add one\n- nobody owns the deploy — name them' };
+        // The board sitting on an idea (SP3): the chair's merge prompt says "this idea" where the plan's says
+        // "this plan", and the advisors are asked about a quarter rather than a cycle. `ideaVerdict` drives both
+        // outcomes — a pass leaves the score's recommendation standing, a return parks the card.
+        if (/VERDICT: pass/.test(last) && /this idea/.test(last)) {
+          return { ...base, content: opts.ideaVerdict === 'return' ? 'VERDICT: return\n- nobody has priced delivery' : 'VERDICT: pass\n- watch the free tier' };
+        }
+        if (/Imagine the company spent a quarter on this and it failed/.test(last)) return { ...base, content: '- nobody has priced delivery — get a quote first' };
         return { ...base, content: /NAME:/.test(last) ? 'NAME: X\nTAGLINE: y' : 'ok' };
       }
       const jobMsg = String(chat.messages[1]?.content ?? '');
