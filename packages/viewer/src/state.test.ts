@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, type Snapshot } from './state.js';
 
+const role = (o: Partial<Snapshot['roles'][number]> & { role: string }) => ({ display: o.role, sprite: o.role, desk: o.role, active: true, ...o });
+
 const snap: Snapshot = { op: 'snapshot', at: 'now', roles: [{ role: 'ceo', display: 'CEO', sprite: 'ceo', desk: 'ceo', active: true }, { role: 'cmo', display: 'CMO', sprite: 'cmo', desk: 'sales_2', active: true, team: 'revenue' }, { role: 'coo', display: 'COO', sprite: 'coo', desk: 'coo', active: true }], jobs: [{ id: 'job_1', type: 'research', title: 'r', assigned: 'cmo', status: 'running', priority: 3, checkpoint_step: 2, updated: 'now' }], surfaces: [], quota: [], latestRun: null, plan: '# Plan', pendingProposals: 1, teams: [{ id: 'revenue', name: 'Revenue', lead: 'cfo', members: ['cmo'], mission: '', room: 'cfo_office', floor: 4 }, { id: 'technology', name: 'Technology', lead: 'cto', members: ['dev_manager'], mission: '' }, { id: 'dev', name: 'Dev', lead: 'dev_manager', members: ['backend_engineer'], mission: '', parent: 'technology' }] };
 const ev = (type: string, agent: string | null, payload: Record<string, unknown> = {}, job: string | null = 'job_1') => ({ ts: '2026-09-02T00:00:00.000Z', type, agent, job, payload });
 
@@ -234,5 +236,12 @@ describe('critique 7-9 reducer fixes', () => {
       s = applyEvent(s, ev('job.checkpoint', 'cmo', { in_review: 'qa.review' }), 1000);
       expect(s.jobs.job_1.status).toBe('in_review');
     });
+  });
+});
+
+describe('sprite families', () => {
+  it('derives the family from title, board membership and team leadership', () => {
+    const s = applySnapshot(emptyState(), { op: 'snapshot', at: '2026-09-11T10:00:00.000Z', roles: [role({ role: 'ceo', title: 'Chief Executive Officer' }), role({ role: 'advisor_investor', team: 'board' }), role({ role: 'dev_manager', team: 'dev' }), role({ role: 'sre', team: 'dev' })], jobs: [], surfaces: [], quota: [], latestRun: null, plan: '', pendingProposals: 0, teams: [{ id: 'dev', name: 'Dev', lead: 'dev_manager', members: ['sre'], mission: '' }] });
+    expect([s.agents.ceo.family, s.agents.advisor_investor.family, s.agents.dev_manager.family, s.agents.sre.family]).toEqual(['chief', 'advisor', 'manager', 'member']);
   });
 });

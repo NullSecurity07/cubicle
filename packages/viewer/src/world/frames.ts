@@ -5,6 +5,7 @@
  */
 import type { AgentView, Mood } from '../state.js';
 import { typingFrame } from './expressions.js';
+import { DUR } from './motion.js';
 
 export type Dir = 0 | 1 | 2 | 3;
 export const POSES = ['seated', 'typing_a', 'typing_b', 'read', 'phone', 'coffee', 'wave', 'stretch', 'ride', 'sit_side_l', 'sit_side_r'] as const;
@@ -14,8 +15,8 @@ export const WALK_STEP_MS = 110;
 /** Vertical bob per walk step: contact, pass, contact, pass. */
 export const BOB = [0, -1, 0, -1] as const;
 /** How long a speech bubble keeps the mouth animating, and how often it toggles (ms). */
-const TALK_FOR_MS = 2500;
-const TALK_TOGGLE_MS = 140;
+const TALK_FOR_MS = DUR.talkFor;
+const TALK_TOGGLE_MS = DUR.talkToggle;
 
 export const FRAMES: readonly string[] = [
   ...[0, 1, 2, 3].map((d) => `idle:${d}`),

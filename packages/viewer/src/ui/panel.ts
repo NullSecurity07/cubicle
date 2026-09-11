@@ -31,6 +31,8 @@ export class Ui {
   onChat: ((text: string) => void) | null = null;
   /** any `[data-open]` click (top bar, rows) asks the app to open that kind */
   onOpen: ((kind: string) => void) | null = null;
+  /** the drawer or the modal just closed (restores the camera zoom a focus zoomed in for) */
+  onClose: (() => void) | null = null;
 
   constructor() {
     document.getElementById('panel-close')!.addEventListener('click', () => this.closeDrawer());
@@ -76,7 +78,7 @@ export class Ui {
     if (v.mode === 'chat' && (fresh || atBottom)) this.dBody.scrollTop = this.dBody.scrollHeight;
     else if (fresh) this.dBody.scrollTop = 0;
   }
-  closeDrawer(): void { this.current = null; this.drawer.classList.remove('open', 'chat'); }
+  closeDrawer(): void { this.current = null; this.drawer.classList.remove('open', 'chat'); this.onClose?.(); }
 
   private openDoc(kind: string, v: View): void { this.currentDoc = kind; this.fillDoc(v); this.modal.classList.add('open'); this.mBody.scrollTop = 0; }
   private fillDoc(v: View): void {
@@ -86,7 +88,7 @@ export class Ui {
     this.mLink.hidden = !v.link;
     if (v.link) this.mLink.href = v.link;
   }
-  closeDoc(): void { this.currentDoc = null; this.modal.classList.remove('open'); }
+  closeDoc(): void { this.currentDoc = null; this.modal.classList.remove('open'); this.onClose?.(); }
 
   /** After a chat send: a one-line acknowledgement under the thread. */
   note(text: string): void { if (this.current?.endsWith('cabin')) { const p = document.createElement('div'); p.className = 'day'; p.textContent = text; this.dBody.appendChild(p); this.dBody.scrollTop = this.dBody.scrollHeight; } }
