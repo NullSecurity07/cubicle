@@ -31,7 +31,6 @@ export class Surface {
   private live: Phaser.GameObjects.Text;
   private caret: Phaser.GameObjects.Rectangle;
   private lastSig = '';
-  private nextImage: Phaser.GameObjects.Image | null = null;
   private frameSeq = 0;
   private lastKey = '';
   private readonly innerW: number;
@@ -54,7 +53,7 @@ export class Surface {
     this.wipe = scene.add.rectangle(this.inset, this.inset, 3, h - this.inset, 0xffffff, 0.35).setOrigin(0).setVisible(false);
     this.live = scene.add.text(this.inset + 3, this.inset + 3, 'LIVE', { fontFamily: 'system-ui, sans-serif', fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 2 * RES, y: RES } }).setOrigin(0, 0).setScale(1 / RES).setVisible(false);
     this.caret = scene.add.rectangle(0, 0, 4, LINE_PX, 0xe6a93c, 1).setOrigin(0, 0).setVisible(false);
-    scene.tweens.add({ targets: this.live, alpha: 0.6, duration: 1000, yoyo: true, repeat: -1, ease: EASE.sine });
+    scene.tweens.add({ targets: this.live, alpha: 0.6, duration: dur(1000), yoyo: true, repeat: -1, ease: EASE.sine });
     const title = scene.add.text(w / 2, -9, String(anchor.props.label ?? def.kind).split('—')[0].trim(), { fontFamily: 'system-ui, sans-serif', fontSize: `${8 * RES}px`, color: '#ffe9a8', stroke: '#000', strokeThickness: 2 * RES }).setOrigin(0.5, 1).setScale(1 / RES);
     this.container = scene.add.container(x, y, [this.bg, this.head, this.text, this.bars, this.badge, this.wipe, this.live, this.caret, title]).setDepth(5);
     this.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => onClick(def.kind));
@@ -70,8 +69,14 @@ export class Surface {
     const w = this.bg.width - 4, h = this.bg.height - 4;
     const apply = () => {
       const img = this.scene.add.image(this.bg.x, this.bg.y, key).setDepth(6).setDisplaySize(w, h).setAlpha(0);
-      this.container.addAt(img, 1);
-      const old = this.image; this.image = img;
+      // Render order in the container is list order (later index = on top). The new frame must sit directly
+      // above the old one — never below it — or the still-opaque old frame paints over the fade-in and the
+      // swap reads as a hard cut instead of a cross-fade. head/text/bars/badge/wipe/live/caret/title all stay
+      // above both images (they're hidden instead, below, when an image is showing).
+      const old = this.image;
+      const oldIndex = old ? this.container.getIndex(old) : 0;
+      this.container.addAt(img, oldIndex + 1);
+      this.image = img;
       this.scene.tweens.add({ targets: img, alpha: 1, duration: dur(DUR.crossfade), onComplete: () => { old?.destroy(); } });
       this.text.setVisible(false); this.head.setVisible(false);
       this.wipeOnChange(`i|${key}|${this.lastKey}`);
