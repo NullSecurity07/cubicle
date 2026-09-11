@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { repoRoot, loadOrg, officeRole, OFFICES, Vault, type Org } from '@cubicle/core';
+import { repoRoot, loadOrg, officeRole, OFFICES, Vault, type Org, DEFAULT_OFFICES } from '@cubicle/core';
 import { loadProvidersConfig, apiKeyFor } from '@cubicle/router';
 import { hasDocker, hasSandboxImage, SANDBOX_IMAGE } from '@cubicle/tools';
 
@@ -13,7 +13,7 @@ export interface DoctorRow { area: string; item: string; ok: boolean | null; det
  */
 export function officeRows(org: Org): DoctorRow[] {
   return OFFICES.map((office) => {
-    const named = org.offices?.[office] ?? '(unset)';
+    const named = org.offices?.[office] ?? DEFAULT_OFFICES[office];
     const ok = officeRole(org, office) !== null;
     return {
       area: 'org', item: `office ${office}`, ok,

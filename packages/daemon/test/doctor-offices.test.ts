@@ -29,4 +29,13 @@ describe('cubicle doctor reads the office map (spec item 5)', () => {
   it('Teams edits wake the heartbeat', () => {
     expect(HEARTBEAT_WAKE_AREAS).toEqual(['Jobs', '00 Inbox', 'Brand', 'Roles', 'Teams']);
   });
+
+  it('an office absent from the map resolves through the default and the row names the real role', () => {
+    const c = vault.readText('Memory/constitution.md');
+    vault.writeText('Memory/constitution.md', c.replace(/^  engineering: \w+\n/m, ''), 'owner');
+    const eng = officeRows(loadOrg(vault)).find((r) => r.item === 'office engineering')!;
+    expect(eng.ok).toBe(true);
+    expect(eng.detail).not.toMatch(/unset/);
+    expect(eng.detail).toMatch(/cto/);
+  });
 });
