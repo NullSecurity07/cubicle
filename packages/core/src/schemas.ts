@@ -221,6 +221,7 @@ export const EVENT_TYPES = [
   'meeting.opened', 'meeting.turn', 'meeting.closed',
   'browser.session_started', 'browser.frame', 'browser.session_ended',
   'shell.output',
+  'ci.completed',
   'email.sent', 'email.received',
   'deploy.done',
   'proposal.created', 'proposal.resolved',

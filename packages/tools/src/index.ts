@@ -9,6 +9,7 @@ export * from './tools/skills.js';
 export * from './tools/finish.js';
 export * from './tools/mock.js';
 export * from './tools/shell.js';
+export * from './tools/ci.js';
 export * from './tools/browser.js';
 export * from './tools/git.js';
 export * from './tools/meeting.js';
@@ -33,14 +34,15 @@ import { skillsTools } from './tools/skills.js';
 import { finish } from './tools/finish.js';
 import { mockOutbound } from './tools/mock.js';
 import { shellRun } from './tools/shell.js';
+import { ciRun } from './tools/ci.js';
 import { browserTools } from './tools/browser.js';
 import { gitTools } from './tools/git.js';
 import { meetingOpen } from './tools/meeting.js';
 import { phase6Tools as _p6 } from './tools/outbound.js';
 
-/** Phase 5 additions: sandbox shell, browser with screencast, git, meetings. */
+/** Phase 5 additions: sandbox shell, stream CI, browser with screencast, git, meetings. */
 export function phase5Tools(): AnyTool[] {
-  return [shellRun, ...browserTools, ...gitTools, meetingOpen];
+  return [shellRun, ciRun, ...browserTools, ...gitTools, meetingOpen];
 }
 
 /** Phase 6 additions: outbound adapters (mock unless keys are present). */
