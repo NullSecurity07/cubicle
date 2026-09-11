@@ -80,10 +80,13 @@ describe('deploy.site / stripe / analytics (mock)', () => {
       expect(nodist.ok).toBe(false);
       mkdirSync(path.join(dir, 'Site/dist'), { recursive: true });
       writeFileSync(path.join(dir, 'Site/dist/index.html'), '<h1>hi</h1>');
+      // Progressive delivery: preview → canary → live. Only the live deploy proposes the production URL.
       const r = await client.call('deploy.site', {}, { idempotencyKey: 'job_d:1:2' });
       expect(r.ok).toBe(true);
-      expect(vault.events.count('deploy.done')).toBe(1);
-      expect(mockLines('deploy').length).toBe(1);
+      expect((await client.call('deploy.site', { stage: 'canary', metrics: ['error rate'] }, { idempotencyKey: 'job_d:1:2b' })).ok).toBe(true);
+      expect((await client.call('deploy.site', { stage: 'live', metrics: ['error rate'] }, { idempotencyKey: 'job_d:1:2c' })).ok).toBe(true);
+      expect(vault.events.count('deploy.done')).toBe(3);
+      expect(mockLines('deploy').length).toBe(3);
       const prop = listInbox(vault).find((n) => n.data.kind === 'brand_change' && /Record site URL/.test(n.body));
       expect(prop).toBeTruthy();
       expect(prop!.data.call?.args.content).toContain('url: https://');

@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, updateJob, ResearchRequest, parseNote } from '@cubicle/core';
-import { captureResearchDeliveries, FOLLOW_UP_DAYS } from '../src/evolution.js';
+import { scaffoldVault, Vault, createJob, updateJob, ResearchRequest, parseNote, readJob, listJobs } from '@cubicle/core';
+import { captureResearchDeliveries, FOLLOW_UP_DAYS, enqueueResearchFollowUps, listResearchFollowUps } from '../src/evolution.js';
 
 /** A fixed delivery clock: the event's own ts drives `delivered` and `due`, so it must not be the wall clock. */
 const DELIVERED_AT = '2026-09-11T09:00:00.000Z';
@@ -65,5 +65,39 @@ describe('research delivery capture (owner model §23, §40)', () => {
     const id = deliver();
     vault.remove(`Jobs/${id}.md`, 'daemon');
     expect(captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'))).toEqual([]);
+  });
+});
+
+describe('the follow-up measurement job (owner model §41)', () => {
+  it('waits for the due date, then queues one measurement job for the research lead', () => {
+    const id = deliver();
+    captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'));
+    expect(listResearchFollowUps(vault)).toHaveLength(1);
+
+    expect(enqueueResearchFollowUps(vault, new Date('2026-09-20T09:00:00.000Z'))).toEqual([]);   // not due yet
+
+    const ids = enqueueResearchFollowUps(vault, new Date('2026-09-25T09:00:00.000Z'));
+    expect(ids).toHaveLength(1);
+    expect(enqueueResearchFollowUps(vault, new Date('2026-09-26T09:00:00.000Z'))).toEqual([]);   // once
+
+    const j = readJob(vault, ids[0])!.data;
+    expect(j.type).toBe('research.measure');
+    expect(j.assigned).toBe('research_manager');
+    expect(j.for).toBe('cfo');
+    expect(j.team).toBe('research');
+    expect(j.links).toContain(`[[${id}]]`);
+    expect(readJob(vault, ids[0])!.body).toMatch(/signups are unlikely to move/);
+    expect(readJob(vault, ids[0])!.body).toMatch(/Research\/followups\//);
+    expect(readJob(vault, ids[0])!.body).toMatch(/## Prediction vs reality/);
+    expect(j.done_when).toMatch(/Research\/index\.md/);
+  });
+
+  it('a follow-up already measured is never re-queued', () => {
+    deliver();
+    captureResearchDeliveries(vault, new Date('2026-09-11T09:00:00.000Z'));
+    const fu = listResearchFollowUps(vault)[0];
+    vault.updateNote(fu.path, (n) => ({ data: { ...n.data, status: 'measured' }, body: n.body }), 'daemon');
+    expect(enqueueResearchFollowUps(vault, new Date('2026-10-01T09:00:00.000Z'))).toEqual([]);
+    expect(listJobs(vault).some((j) => j.type === 'research.measure')).toBe(false);
   });
 });

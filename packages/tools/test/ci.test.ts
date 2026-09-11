@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, ciConfigPath, latestCiRecord } from '@cubicle/core';
-import { parseToolsConfig, ciRun, ToolRegistry, phase5Tools, phase3Tools, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ciRun, ToolRegistry, phase5Tools, phase3Tools, hasDocker, hasSandboxImage, type ToolContext } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 let dir: string; let vault: Vault;
@@ -19,10 +19,24 @@ function ctxFor(roleId = 'backend_engineer'): ToolContext {
   };
 }
 
+/**
+ * Whether a real sandbox exists here. Without one `sandboxExec` refuses (the scaffolded vault leaves
+ * `shell_local_fallback: false`), so the cases below assert the refusal shape instead of a pipeline result —
+ * the same branch phase5.test.ts and critique56.test.ts take.
+ */
+const SANDBOXED = hasDocker() && hasSandboxImage();
+
 /** `true` and `false` exist in every sandbox mode, so these steps run identically under Docker and bwrap. */
 const GREEN = 'steps:\n  - { name: build, run: "true" }\n  - { name: test, run: "true" }\n';
 const RED = 'steps:\n  - { name: build, run: "true" }\n  - { name: test, run: "false" }\n';
 const ADVISORY = 'steps:\n  - { name: test, run: "true" }\n  - { name: security-scan, run: "false", allow_failure: true }\n';
+
+/** No Docker image and no opted-in local shell: sandboxExec refuses before the first step runs, and says so. */
+function expectNoSandbox(r: { ok: boolean; text: string }): void {
+  expect(r.ok).toBe(false);
+  expect(r.text).toMatch(/blocked:/);
+  expect(r.text).toMatch(/never ran/);
+}
 
 describe('ci.run', () => {
   it('refuses a stream with no cubicle-ci.yaml and says where to put one', async () => {
@@ -34,6 +48,7 @@ describe('ci.run', () => {
   it('runs every step, writes a green record and emits ci.completed', async () => {
     vault.writeText(ciConfigPath('checkout'), GREEN, 'daemon');
     const r = await ciRun.handler({ stream: 'checkout', only: [] }, ctxFor());
+    if (!SANDBOXED) return expectNoSandbox(r);
     expect(r.ok).toBe(true);
     const rec = latestCiRecord(vault, 'checkout')!;
     expect(rec.record.green).toBe(true);
@@ -47,6 +62,7 @@ describe('ci.run', () => {
   it('stops at the first blocking failure and records it red', async () => {
     vault.writeText(ciConfigPath('checkout'), RED, 'daemon');
     const r = await ciRun.handler({ stream: 'checkout', only: [] }, ctxFor());
+    if (!SANDBOXED) return expectNoSandbox(r);
     expect(r.ok).toBe(false);
     expect(r.text).toMatch(/test/);
     const rec = latestCiRecord(vault, 'checkout')!.record;
@@ -57,6 +73,7 @@ describe('ci.run', () => {
   it('allow_failure keeps the run green and still records the failure', async () => {
     vault.writeText(ciConfigPath('checkout'), ADVISORY, 'daemon');
     const r = await ciRun.handler({ stream: 'checkout', only: [] }, ctxFor());
+    if (!SANDBOXED) return expectNoSandbox(r);
     expect(r.ok).toBe(true);
     const rec = latestCiRecord(vault, 'checkout')!.record;
     expect(rec.green).toBe(true);
@@ -67,6 +84,7 @@ describe('ci.run', () => {
   it('`only` runs the named steps and nothing else', async () => {
     vault.writeText(ciConfigPath('checkout'), RED, 'daemon');
     const r = await ciRun.handler({ stream: 'checkout', only: ['build'] }, ctxFor());
+    if (!SANDBOXED) return expectNoSandbox(r);
     expect(r.ok).toBe(true);
     expect(latestCiRecord(vault, 'checkout')!.record.steps.map((s) => s.name)).toEqual(['build']);
   }, 120_000);
@@ -86,6 +104,18 @@ describe('ci.run', () => {
     expect(reg.forRole({ ...role, tools: ['ci.run'] }, cfg).map((t) => t.name)).toEqual(['ci.run']);
     const cmo = RoleFrontmatter.parse(parseNote(vault.readText('Roles/cmo.md')).data);
     expect(reg.forRole({ ...cmo, tools: ['ci.run'] }, cfg)).toEqual([]);   // tools.yaml restricts ci.run to the engineering roster
+  });
+
+  it('refuses a slug that is not a slug, before it can become a path or a mount', async () => {
+    // `Workspace/x,src=/etc` is a directory an agent can create with vault.write, and Docker parses
+    // `--mount type=bind,src=…,dst=…` as CSV, so a comma in the slug would inject mount keys.
+    for (const bad of ['x,src=/etc', '../../Memory', 'check out', 'Checkout', '', 'a'.repeat(49), '-lead', 'x/../y']) {
+      const r = await ciRun.handler({ stream: bad, only: [] }, ctxFor());
+      expect(r.ok, bad).toBe(false);
+      expect(r.text, bad).toContain('is not a stream slug');
+      expect(r.text, bad).not.toContain('Unsafe vault path');   // a refusal a model can act on, not a thrown path error
+    }
+    expect(vault.events.query({ types: ['ci.completed'] })).toHaveLength(0);
   });
 
   it('a CI record cannot be forged through the vault write API', () => {

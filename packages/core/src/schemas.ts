@@ -12,6 +12,7 @@ export const KNOWN_JOB_TYPES = [
   'team.plan', 'critic.premortem', 'qa.review', 'company.plan', 'colleague.answer',
   'research.review', 'research.measure', 'intelligence',
   'security.review',
+  'incident',
 ] as const;
 
 /**
@@ -247,6 +248,7 @@ export const EVENT_TYPES = [
   'ci.completed',
   'email.sent', 'email.received',
   'deploy.done',
+  'incident.opened', 'incident.recovered',
   'proposal.created', 'proposal.resolved',
   'role.hired', 'role.fired',
   'router.call', 'router.downgraded',

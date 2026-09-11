@@ -456,9 +456,14 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       // R17: tools marked first_time_only (deploy.site) need approval once; after a recorded completion they run automatically
       // unless the owner pinned a stricter mode in owner_preferences.
       if (mode === 'propose' && policy.first_time_only && !prefs.approvals[toolName]) {
-        const liveDone = events.query({ types: ['deploy.done'], limit: 500 }).some((e) => e.payload.mode === 'live');
+        // Only a *live* deploy spends the first-time approval: since progressive delivery landed, the first
+        // deploy.site call is a preview, and a preview must not buy the production deploy its approval.
+        // A deploy.done from before stages existed always went to the production branch, so it counts as live.
+        const isLive = (e: { payload: Record<string, unknown> }) => (e.payload.stage ?? 'live') === 'live';
+        const deploys = events.query({ types: ['deploy.done'], limit: 500 });
+        const liveDone = deploys.some((e) => e.payload.mode === 'live' && isLive(e));
         const brandUrl = /^url:\s*["']?https?:\/\//m.test(vault.readTextOrNull('Brand/name.md') ?? '');
-        const anyDone = events.count('deploy.done') > 0;
+        const anyDone = deploys.some(isLive);
         // Mock deploys do not count once live keys exist: the first *live* deploy still needs approval.
         const live = !!(env.CLOUDFLARE_API_TOKEN && env.CLOUDFLARE_ACCOUNT_ID);
         if ((live ? liveDone || brandUrl : anyDone)) mode = 'auto';
