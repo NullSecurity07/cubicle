@@ -58,10 +58,14 @@ export function isSecretPath(rel: string): boolean {
   return false;
 }
 
-export function isOwnerOwned(rel: string, extraNeverModify: string[] = []): boolean {
+/**
+ * Whether `rel` matches one of the owner's own `never_modify` entries — the constitution's list, never the
+ * structural `OWNER_OWNED_PREFIXES`/`OWNER_OWNED_FILES` above. Split out from `isOwnerOwned` so a caller that
+ * needs to know specifically "did the owner veto *this*" can ask, without a path that is owner-owned for a
+ * structural reason (e.g. `Ledger/`) always answering yes regardless of what `never_modify` actually contains.
+ */
+export function isNeverModifyPath(rel: string, extraNeverModify: string[] = []): boolean {
   const p = normalizeRel(rel);
-  if (OWNER_OWNED_FILES.includes(p)) return true;
-  if (OWNER_OWNED_PREFIXES.some((pre) => p.startsWith(pre))) return true;
   for (const nm of extraNeverModify) {
     let n: string;
     try { n = normalizeRel(nm); } catch { continue; }
@@ -70,6 +74,13 @@ export function isOwnerOwned(rel: string, extraNeverModify: string[] = []): bool
     if (isDir ? (p === n || p.startsWith(n + '/')) : p === n) return true;
   }
   return false;
+}
+
+export function isOwnerOwned(rel: string, extraNeverModify: string[] = []): boolean {
+  const p = normalizeRel(rel);
+  if (OWNER_OWNED_FILES.includes(p)) return true;
+  if (OWNER_OWNED_PREFIXES.some((pre) => p.startsWith(pre))) return true;
+  return isNeverModifyPath(p, extraNeverModify);
 }
 
 /**

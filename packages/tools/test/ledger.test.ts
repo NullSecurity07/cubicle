@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, readLedger, moneyReport, loadOrg, officeHolder, RoleFrontmatter, type Vault } from '@cubicle/core';
+import {
+  scaffoldVault, readLedger, moneyReport, loadOrg, officeHolder, formatMoney, LEDGER_PATH, ledgerTemplate,
+  RoleFrontmatter, type Vault, type CubicleEvent,
+} from '@cubicle/core';
 import { parseToolsConfig, vaultWrite, type ToolContext } from '../src/index.js';
 import { ledgerRecord, MAX_AGENT_ENTRY_CENTS } from '../src/tools/ledger.js';
 
@@ -40,7 +43,18 @@ describe('ledger.record (spec §1, §7)', () => {
     const entry = readLedger(vault).entries[0];
     expect(entry).toMatchObject({ kind: 'revenue', cents: 4000, mode: 'mock', who: 'cso' });
     expect(entry.why).toContain('Nursery order');
-    expect(moneyReport(readLedger(vault), new Date()).cashCents).toBe(0);   // mock is not cash
+    const afterMock = moneyReport(readLedger(vault), new Date());
+    expect(afterMock.cashCents).toBe(0);   // mock is not cash
+
+    // A live entry actually moves cash, is never called "simulated", and lands with mode: 'live' in the row —
+    // a handler that hardcoded 'mock' regardless of the argument would still pass every other test in this file.
+    const live = await ledgerRecord.handler({ kind: 'cost', amount: '5.00', mode: 'live', why: 'A real card charge for hosting', ref: '' }, ctxFor('cfo'));
+    expect(live.ok).toBe(true);
+    expect(live.text).not.toContain('simulated');
+    const liveEntry = readLedger(vault).entries[1];
+    expect(liveEntry).toMatchObject({ kind: 'cost', cents: 500, mode: 'live', who: 'cfo' });
+    const afterLive = moneyReport(readLedger(vault), new Date());
+    expect(afterLive.cashCents).toBe(afterMock.cashCents - 500);
   });
 
   it('refuses capital by name, and says who may add it', async () => {
@@ -52,15 +66,42 @@ describe('ledger.record (spec §1, §7)', () => {
     expect(readLedger(vault).entries).toHaveLength(0);
   });
 
-  it('refuses an amount it cannot represent, and an amount big enough to matter', async () => {
+  it('refuses an amount it cannot represent, a zero amount, and an amount big enough to matter', async () => {
     const bad = await ledgerRecord.handler({ kind: 'cost', amount: '12.345', mode: 'live', why: 'x', ref: '' }, ctxFor('cfo'));
     expect(bad.ok).toBe(false);
     expect(bad.text).toContain('two decimal places');
+
+    // A zero row is one nobody can act on — refused the same way an unparseable amount is.
+    const zero = await ledgerRecord.handler({ kind: 'cost', amount: '0.00', mode: 'live', why: 'Nothing at all really happened here', ref: '' }, ctxFor('cfo'));
+    expect(zero.ok).toBe(false);
+    expect(zero.text).toContain('not an amount');
+
     const huge = await ledgerRecord.handler({ kind: 'cost', amount: '5000.00', mode: 'live', why: 'A year of hosting', ref: '' }, ctxFor('cfo'));
     expect(huge.ok).toBe(false);
     expect(huge.text).toContain('proposal.create');
     expect(MAX_AGENT_ENTRY_CENTS).toBe(100_000);
     expect(readLedger(vault).entries).toHaveLength(0);
+  });
+
+  it('accepts exactly the cap, and refuses one cent over it', async () => {
+    const atCap = await ledgerRecord.handler({ kind: 'cost', amount: formatMoney(MAX_AGENT_ENTRY_CENTS), mode: 'live', why: 'Exactly at the one-entry cap for an agent', ref: '' }, ctxFor('cfo'));
+    expect(atCap.ok).toBe(true);
+    expect(readLedger(vault).entries).toHaveLength(1);
+
+    const overCap = await ledgerRecord.handler({ kind: 'cost', amount: formatMoney(MAX_AGENT_ENTRY_CENTS + 1), mode: 'live', why: 'One cent over the one-entry cap', ref: '' }, ctxFor('cfo'));
+    expect(overCap.ok).toBe(false);
+    expect(overCap.text).toContain('proposal.create');
+    expect(readLedger(vault).entries).toHaveLength(1);   // the over-cap attempt recorded nothing
+  });
+
+  it('reads an amount against the book\'s own currency, not a hardcoded default', async () => {
+    vault.writeText(LEDGER_PATH, ledgerTemplate('GBP'), 'owner');
+    // The tool's own schema tells the model "the currency is the ledger's own" — so in a GBP book, a model that
+    // does as it is told and writes "GBP 5.00" must be accepted, not refused as if it had typed junk.
+    const r = await ledgerRecord.handler({ kind: 'cost', amount: 'GBP 5.00', mode: 'live', why: 'A real card charge in the book\'s own currency', ref: '' }, ctxFor('cfo'));
+    expect(r.ok).toBe(true);
+    expect(r.text).toContain('GBP 5.00');
+    expect(readLedger(vault).entries[0]).toMatchObject({ cents: 500, mode: 'live' });
   });
 
   it('refuses a `why` that explains nothing', async () => {
@@ -91,5 +132,31 @@ describe('Ledger/ is owner-owned for agent vault writes (spec §7)', () => {
     const r = await ledgerRecord.handler({ kind: 'cost', amount: '2.00', mode: 'live', why: 'One coffee for the office', ref: '' }, ctx('cfo', 'job_test'));
     expect(r.ok).toBe(true);
     expect(readLedger(vault).entries).toHaveLength(1);
+  });
+
+  it('writing as the privileged actor still produces exactly one vault.wrote, and never reads back as an owner edit', async () => {
+    const seen: CubicleEvent[] = [];
+    const off = vault.events.on('vault.wrote', (e) => { if ((e.payload as { path?: string }).path === LEDGER_PATH) seen.push(e); });
+    const r = await ledgerRecord.handler({ kind: 'cost', amount: '4.00', mode: 'live', why: 'One round of mock analytics for the team', ref: '' }, ctx('cfo', 'job_test'));
+    off();
+    expect(r.ok).toBe(true);
+    // Exactly one vault.wrote for the book: the compare-and-write loop in appendEntry does not double-emit on
+    // its happy path, and the daemon-actor write is not a raw fs write that would skip the event entirely (the
+    // Ledger wake area in HEARTBEAT_WAKE_AREAS depends on this event existing at all, if it is ever added there).
+    expect(seen).toHaveLength(1);
+    expect(seen[0].payload).toMatchObject({ path: LEDGER_PATH, by: 'daemon' });
+    // And the append does not read back as an owner edit — the watcher would otherwise wake the heartbeat on
+    // the company's own bookkeeping.
+    expect(vault.isOwnerChanged(LEDGER_PATH)).toBe(false);
+  });
+});
+
+describe('the owner\'s never_modify veto still holds for the book (spec §7)', () => {
+  it('refuses to record when the owner has named the ledger in never_modify, even though appendEntry writes as the privileged daemon actor', async () => {
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/ledger.md\n```\n', 'owner');
+    const r = await ledgerRecord.handler({ kind: 'cost', amount: '2.00', mode: 'live', why: 'A charge nobody should be able to book right now', ref: '' }, ctxFor('cfo'));
+    expect(r.ok).toBe(false);
+    expect(r.text).toContain('never_modify');
+    expect(readLedger(vault).entries).toHaveLength(0);
   });
 });

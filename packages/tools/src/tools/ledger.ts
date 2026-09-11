@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { appendEntry, readLedger, moneyReport, parseMoney, money, LEDGER_PATH } from '@cubicle/core';
+import { appendEntry, readLedger, moneyReport, parseMoney, money, LEDGER_PATH, LedgerVetoedError } from '@cubicle/core';
 
 /**
  * `ledger.record`: how the company writes in its own book.
@@ -37,18 +37,24 @@ export const ledgerRecord = defineTool({
     if (kind === 'capital') {
       return { ok: false, text: `ledger.record cannot record capital: only the owner puts money into the company, by adding a row to ${LEDGER_PATH} themselves. If the company needs money, say so with proposal.create and let them decide.` };
     }
-    const cents = parseMoney(amount);
-    if (cents === null) {
-      return { ok: false, text: `"${amount}" is not an amount. Give a positive number with at most two decimal places, e.g. "40.00" — the kind carries the sign, so never write a negative.` };
+    const before = readLedger(ctx.vault);
+    const cents = parseMoney(amount, before.currency);
+    if (cents === null || cents <= 0) {
+      return { ok: false, text: `"${amount}" is not an amount. Give a positive number with at most two decimal places, e.g. "40.00" — the kind carries the sign, so never write a negative, and never write zero.` };
     }
     if (cents > MAX_AGENT_ENTRY_CENTS) {
-      return { ok: false, text: `${money(cents, readLedger(ctx.vault).currency)} is more than one entry may record (${money(MAX_AGENT_ENTRY_CENTS, readLedger(ctx.vault).currency)}). The book is append-only, so a wrong row this size cannot be quietly fixed: file it with proposal.create as a spend for the owner to approve instead.` };
+      return { ok: false, text: `${money(cents, before.currency)} is more than one entry may record (${money(MAX_AGENT_ENTRY_CENTS, before.currency)}). The book is append-only, so a wrong row this size cannot be quietly fixed: file it with proposal.create as a spend for the owner to approve instead.` };
     }
     if (why.trim().length < MIN_WHY_CHARS) {
       return { ok: false, text: `\`why\` has to be one sentence someone could check later — what this was and what it was for. "${why.trim()}" is not.` };
     }
-    const before = readLedger(ctx.vault);
-    const r = appendEntry(ctx.vault, { kind, cents, mode, who: ctx.roleId, why: why.trim(), ref: ref.trim() }, ctx.roleId);
+    let r;
+    try {
+      r = appendEntry(ctx.vault, { kind, cents, mode, who: ctx.roleId, why: why.trim(), ref: ref.trim() }, ctx.roleId);
+    } catch (err) {
+      if (err instanceof LedgerVetoedError) return { ok: false, text: err.message };
+      throw err;
+    }
     const after = moneyReport(readLedger(ctx.vault), ctx.now());
     if (!r.added) {
       return { ok: true, text: `already in the book: ${r.entry.kind} ${money(r.entry.cents, before.currency)} on ${r.entry.at.slice(0, 10)} (ref ${r.entry.ref}). Nothing was recorded twice.`, data: { added: false, cash_cents: after.cashCents } };
