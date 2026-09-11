@@ -1,5 +1,5 @@
 /** The one duration / easing table (visual notes §1 "Motion", §4). Phaser tweens read `dur(DUR.x)` so reduced motion scales everything at once. */
-export const DUR = { micro: 120, open: 200, sheet: 280, reader: 360, zoom: 120, pan: 420, depart: 100, settle: 90, bubbleIn: 160, bubbleOut: 120, wipe: 120, crossfade: 80, minimapPan: 300, talkToggle: 140, talkFor: 2500 } as const;
+export const DUR = { micro: 120, open: 200, sheet: 280, reader: 360, zoom: 120, pan: 420, depart: 100, settle: 90, bubbleIn: 160, bubbleOut: 120, wipe: 120, crossfade: 80, minimapPan: 300, talkToggle: 140, talkFor: 2500, doorSlide: 150 } as const;
 export const EASE = { out: 'Cubic.easeOut', in: 'Cubic.easeIn', inOut: 'Cubic.easeInOut', spring: 'Back.easeOut', sine: 'Sine.easeInOut' } as const;
 /** `scale` 1 = full motion, 0 = reduced motion (every tween becomes 1 ms; walking and the elevator still move, they are state, not decoration). */
 export const MOTION = { scale: 1 };

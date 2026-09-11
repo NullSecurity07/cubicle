@@ -92,6 +92,9 @@ scene.hooks = {
   onSurfaceClick(kind) { open(kind, lastPress ?? undefined); },
   onAgentClick(role) { open(role === 'ceo' ? 'cabin' : `agent:${role}`, lastPress ?? undefined); },   // the CEO sprite is the owner's channel
   makeCar(sc, geo) { elevatorView = new ElevatorView(sc, geo.shaft, geo.floors); return elevatorView.car; },
+  elevatorIgnorables: () => elevatorView?.ignorables() ?? [],
+  // a scene restart (or the game shutting down) must not leave a destroyed car's frame loop still polling it
+  onSceneShutdown() { elevatorView?.destroy(); elevatorView = null; },
 };
 
 /**
