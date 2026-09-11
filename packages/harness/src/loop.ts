@@ -129,9 +129,13 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
 
   const constitution = vault.constitution();
   const privacy: 'cloud' | 'local' = constitution.pii_local_only && (job.type === 'growth.outreach' || /Customers\//.test(jobNote.body) || role.tools.some((t) => t.startsWith('email.'))) ? 'local' : job.privacy;
-  const routeReq: RouteRequest = { tier: role.model_tier, needsTools: true, privacy, roleId };
+  // A job may ask for a cheaper tier than its charter (the four intelligence sweeps do): a recurring, bounded
+  // job should not spend the analyst's medium-tier budget every cycle. It may only be read alongside the
+  // charter, never above the privacy rule below, which still forces local routing.
+  const tier = job.model_tier ?? role.model_tier;
+  const routeReq: RouteRequest = { tier, needsTools: true, privacy, roleId };
   const isLeadOrCeo = isLead(org, roleId) || roleId === 'ceo';
-  const maxSteps = privacy === 'local' || role.model_tier === 'local' ? (deps.localMaxSteps ?? DEFAULT_LOCAL_MAX_STEPS) : (deps.maxSteps ?? (isLeadOrCeo ? DEFAULT_MAX_STEPS : DEFAULT_MEMBER_MAX_STEPS));
+  const maxSteps = privacy === 'local' || tier === 'local' ? (deps.localMaxSteps ?? DEFAULT_LOCAL_MAX_STEPS) : (deps.maxSteps ?? (isLeadOrCeo ? DEFAULT_MAX_STEPS : DEFAULT_MEMBER_MAX_STEPS));
   const promptBudget = deps.llm.promptBudget?.(routeReq) ?? 6000;
 
   const memoryApi: MemoryApi | undefined = deps.memory ? { search: (q, k, dirs) => deps.memory!.search(q, k, dirs), indexFile: (rel) => deps.memory!.indexFile(rel).then(() => undefined) } : undefined;
@@ -219,7 +223,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
 
   /** Create the review job for one gate of `parent`. */
   const enqueueGate = (gate: string, parent: JobFrontmatter, result: JobResult): void => {
-    let assignee = resolveRole(org, gateAssignee(gate, parent));
+    let assignee = resolveRole(org, gateAssignee(gate, parent, org));
     // The named assignee may have no active worker (role fired/deactivated, or a `for`/owner_role naming an
     // unknown role): fall back to its lead so the parent never sits in_review forever (F1).
     if (!org.roles[assignee]) {
@@ -228,10 +232,14 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       assignee = fallback;
     }
     const criteria = criteriaFor(gates, parent.type);
+    // The gate's *own* criteria, when it has one (research.review's §35 checklist, qa.review's "cite a file").
+    // `gates[gate]` is read directly rather than through criteriaFor so a gate with no entry stays silent
+    // instead of inheriting the `custom` fallback meant for the job under review.
+    const gateCriteria = gates[gate]?.criteria ?? '';
     deps.scheduler.enqueue({
       type: gate, title: `${gate === 'coo.verify' ? 'Verify' : 'Review'}: ${parent.title}`, assigned: assignee, priority: 4, parent: parent.id, links: [`[[${parent.id}]]`], privacy: parent.privacy,
       team: parent.team, owner_role: parent.owner_role, for: parent.for,
-      goal: `Review job [[${parent.id}]] (${parent.type}) as the ${gate} gate. What good looks like: ${criteria}\nDone when (author's): ${parent.done_when ?? 'not stated'}\nAuthor's summary: ${result.summary}\nRead its Result block and artifacts, check with evidence, then finish with status done and verdict pass, or verdict return with findings that name a file or an output line${gate === 'coo.verify' ? ', plus exactly one lesson in finish.lessons' : ''}. A job may be returned once per gate; a second return fails it.`,
+      goal: `Review job [[${parent.id}]] (${parent.type}) as the ${gate} gate. What good looks like: ${criteria}${gateCriteria ? `\nAs the ${gate} reviewer, check: ${gateCriteria}` : ''}\nDone when (author's): ${parent.done_when ?? 'not stated'}\nAuthor's summary: ${result.summary}\nRead its Result block and artifacts, check with evidence, then finish with status done and verdict pass, or verdict return with findings that name a file or an output line${gate === 'coo.verify' ? ', plus exactly one lesson in finish.lessons' : ''}. A job may be returned once per gate; a second return fails it.`,
     });
   };
 
