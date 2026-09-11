@@ -71,10 +71,19 @@ export function row(o: { left?: string; title: string; small?: string; right?: s
 }
 export const locate = (role: string): string => `<button class="mini" data-locate="agent:${esc(role)}">Locate</button>`;
 
-/** Segmented control: first segment selected; the panel keeps the choice across re-renders. */
+/** The ids that tie a segmented control's tabs to its panes; only one such control is ever in the panel body. */
+export const segTabId = (id: string): string => `seg-${id}`;
+export const segPaneId = (id: string): string => `pane-${id}`;
+
+/**
+ * Segmented control: first segment selected; the panel keeps the choice across re-renders.
+ *
+ * The tabs carry `role="tab"`, so the panes have to carry `role="tabpanel"` and the two have to name each other —
+ * without `aria-controls`/`aria-labelledby` the tablist announced itself as controlling nothing at all.
+ */
 export function segmented(segs: { id: string; label: string; count?: number; html: string }[]): string {
-  const tabs = segs.map((g, i) => `<button role="tab" class="seg" data-seg="${esc(g.id)}" aria-selected="${i === 0}">${esc(g.label)}${g.count ? `<span class="n">${g.count}</span>` : ''}</button>`).join('');
-  const panes = segs.map((g, i) => `<div class="pane" data-key="pane-${esc(g.id)}" data-pane="${esc(g.id)}"${i === 0 ? '' : ' hidden'}>${g.html}</div>`).join('');
+  const tabs = segs.map((g, i) => `<button role="tab" class="seg" id="${esc(segTabId(g.id))}" aria-controls="${esc(segPaneId(g.id))}" data-seg="${esc(g.id)}" aria-selected="${i === 0}">${esc(g.label)}${g.count ? `<span class="n">${g.count}</span>` : ''}</button>`).join('');
+  const panes = segs.map((g, i) => `<div class="pane" role="tabpanel" id="${esc(segPaneId(g.id))}" aria-labelledby="${esc(segTabId(g.id))}" tabindex="0" data-key="pane-${esc(g.id)}" data-pane="${esc(g.id)}"${i === 0 ? '' : ' hidden'}>${g.html}</div>`).join('');
   return `<div class="segmented" role="tablist" data-key="segs">${tabs}</div>${panes}`;
 }
 
@@ -215,7 +224,9 @@ export function browserViewerView(s: State, ctx: Ctx): View {
   const bar = `<div class="vbar" data-key="vbar">${cur.active ? '<span class="badge live">LIVE</span>' : '<span class="badge ended">Ended</span>'}<span class="vmeta">${esc(meta)}</span><span class="vstats">seq ${seq}${cur.active && fps !== undefined ? ` · ${fps.toFixed(1)} fps` : ''}</span></div>`;
   const frame = src ? `<div class="vframe" data-key="vframe"><img data-key="frame" class="frame" src="${esc(src)}" alt="Browser session" /></div>` : emptyHtml('doc', 'Waiting for the first frame');
   const foot = cur.active ? '' : `<div class="vfoot" data-key="vfoot">Session ended${cur.endedAt ? ` ${esc(fmtTime(cur.endedAt))}` : ''} · showing the last frame</div>`;
-  return { mode: 'viewer', viewer: 'browser', title: 'Billboard', sub: meta, html: bar + frame + foot, live: true };
+  // One metadata row, the spec's wireframe: the .vbar carries LIVE, the agent, the host, the seq and the rate.
+  // It used to be handed to the panel header as `sub` as well, so the viewer wore two header bars.
+  return { mode: 'viewer', viewer: 'browser', title: 'Billboard', html: bar + frame + foot, live: true };
 }
 
 /** A shell job is running when an agent on a job is using the terminal tool (it may still be walking to the Dev room). */

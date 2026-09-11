@@ -34,8 +34,14 @@ const isTyping = (t: EventTarget | null): boolean => { const el = t as HTMLEleme
 /** A focused button, tab or link owns Space and Enter: the replay toggle must not swallow the activation. */
 export const isControl = (t: { closest?(sel: string): unknown } | null): boolean => !!t?.closest?.('button, a, [role="button"], [role="tab"]');
 
-export function bindKeys(handlers: Record<Action, () => void>): () => void {
+/**
+ * `blocked()` is the app's modals: the first-run card and the quick-open palette, both `aria-modal`. Focus starts in
+ * a text field in each, so `isTyping` covered the common case — but one Tab moves focus onto "Surprise me" or a
+ * quick-open result, and `T` then opened the cabin sheet *under* the card while `1`-`4` flew the camera.
+ */
+export function bindKeys(handlers: Record<Action, () => void>, blocked: () => boolean = () => false): () => void {
   const on = (e: KeyboardEvent): void => {
+    if (blocked()) return;
     const a = shortcutFor(e, isTyping(e.target));
     if (!a) return;
     if (a === 'pause' && isControl(e.target as HTMLElement | null)) return;   // Space activates the control under the focus ring

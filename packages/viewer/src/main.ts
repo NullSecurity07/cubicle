@@ -182,7 +182,9 @@ bindKeys({
   talk: () => open('cabin'), queue: () => open('noticeboard'), brief: () => open('newsstand'), plan: () => open('whiteboard'), org: () => open('org'),
   pause: () => time.togglePlay(), prev: () => time.step(-1), next: () => time.step(1),
   minimap: () => minimapHook.toggle(), help: () => open('keys'), quickopen: () => quick.open(),
-});
+// The two aria-modal cards own the keyboard while they are up: one Tab out of their text field used to leave `T`
+// opening the cabin sheet underneath and `1`-`4` flying the camera behind them.
+}, () => firstRun.visible || quick.visible);
 
 /**
  * A live frame arrived (from the daemon or `__cubicle.pushFrame`): remember it, count it, measure the rate, refresh

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { emptyState, applySnapshot, applyEvent, type Snapshot, type State } from '../state.js';
-import { briefTitle, kindLabel, chatHtml, emptyHtml, segmented, feedKind, dayLabel, browserViewerView, terminalViewerView, roomView, agentView, type Ctx } from './content.js';
+import { briefTitle, kindLabel, chatHtml, emptyHtml, segmented, segTabId, segPaneId, feedKind, dayLabel, browserViewerView, terminalViewerView, roomView, agentView, type Ctx } from './content.js';
 import { headlineFor, viewFor } from './surfaces.js';
 import { planBits, briefBits, cut } from './headlines.js';
 
@@ -153,6 +153,20 @@ describe('tower views (plan 3)', () => {
     expect(h).toContain('data-pane="mail" hidden');
     expect(h).not.toContain('data-pane="needs" hidden');
   });
+  /**
+   * I7b: the tabs declared `role="tab"` over panes that carried no role, no id and no relationship, so the tablist
+   * announced itself as controlling nothing. Each tab names its pane and each pane names its tab.
+   */
+  it('segmented controls: every tab controls a tabpanel, and every panel is labelled by its tab', () => {
+    const h = segmented([{ id: 'needs', label: 'Needs you', count: 2, html: '<p>a</p>' }, { id: 'mail', label: 'Mail', html: '<p>b</p>' }]);
+    for (const id of ['needs', 'mail']) {
+      expect(h, id).toContain(`id="${segTabId(id)}" aria-controls="${segPaneId(id)}"`);
+      expect(h, id).toContain(`role="tabpanel" id="${segPaneId(id)}" aria-labelledby="${segTabId(id)}"`);
+    }
+    expect(segTabId('needs')).not.toBe(segPaneId('needs'));
+    // A pane holds a scrollable list; without a tab stop a keyboard user can reach the tabs but not their content.
+    expect((h.match(/tabindex="0"/g) ?? []).length).toBe(2);
+  });
   it('the post office splits Needs you from Mail and keeps the Obsidian link', () => {
     const v = viewFor('postoffice', s, ctx);
     expect(v.html).toContain('data-seg="needs"'); expect(v.html).toContain('data-seg="mail"');
@@ -220,6 +234,10 @@ describe('tower views (plan 3)', () => {
     // The stylesheet sizes the two viewers differently (a fixed 16:10 panel pillarboxed the stream); the view says
     // which one it is, empty state included, so an empty billboard is not sized like a terminal.
     expect(live.viewer).toBe('browser');
+    // I6: the agent and the host were printed in the .vbar *and* handed to the panel header as `sub`, so the viewer
+    // wore two header bars. One metadata row, the spec's wireframe.
+    expect(live.sub).toBeUndefined();
+    expect((live.html.match(/class="vmeta"/g) ?? []).length).toBe(1);
     expect(browserViewerView(emptyState(), ctx).viewer).toBe('browser');
   });
   it('the terminal viewer colours prompt lines and shows a caret only while a shell job runs', () => {

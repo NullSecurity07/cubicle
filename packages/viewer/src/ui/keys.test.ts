@@ -97,3 +97,46 @@ describe('modal Tab trap', () => {
     expect(focused).toEqual([1, 2, 0, 0]);
   });
 });
+
+/**
+ * I1: the shortcuts listened on `window` with no modal guard. Focus starts in a text field in both aria-modal
+ * cards, so `isTyping` covered the common case — but one Tab moves focus onto "Surprise me" or a quick-open
+ * result, and `T` then opened the cabin sheet *under* the card while `1`-`4` flew the camera behind it.
+ */
+describe('shortcuts behind a modal', () => {
+  const bound = (blocked: () => boolean): { fired: Action[]; fire(e: unknown): void; off(): void } => {
+    const fired: Action[] = [];
+    const listeners: ((e: unknown) => void)[] = [];
+    (globalThis as { window?: unknown }).window = { addEventListener: (_t: string, fn: (e: unknown) => void) => listeners.push(fn), removeEventListener: () => {} };
+    const actions: Action[] = ['floor1', 'floor2', 'floor3', 'floor4', 'lobby', 'fit', 'talk', 'queue', 'brief', 'plan', 'org', 'pause', 'prev', 'next', 'minimap', 'help', 'quickopen'];
+    const handlers = Object.fromEntries(actions.map((a) => [a, (): void => { fired.push(a); }])) as unknown as Record<Action, () => void>;
+    const off = bindKeys(handlers, blocked);
+    return { fired, fire: (e) => listeners[0](e), off };
+  };
+  it('fires nothing while a modal is up, even from a button inside it', () => {
+    const k = bound(() => true);
+    const pressed = ev('t', el('BUTTON', true));
+    k.fire(pressed);
+    k.fire(ev('1', el('DIV', false)));
+    k.fire(ev('/', el('DIV', false)));
+    expect(k.fired).toEqual([]);
+    expect(pressed.prevented).toBe(false);   // untouched: the card's own handlers still see it
+    k.off();
+  });
+  it('fires again the moment the modal closes', () => {
+    let up = true;
+    const k = bound(() => up);
+    k.fire(ev('t', el('DIV', false)));
+    expect(k.fired).toEqual([]);
+    up = false;
+    k.fire(ev('t', el('DIV', false)));
+    expect(k.fired).toEqual(['talk']);
+    k.off();
+  });
+  it('defaults to unblocked, so a caller that passes no predicate keeps the old behaviour', () => {
+    const k = bound(undefined as unknown as () => boolean);
+    k.fire(ev('q', el('DIV', false)));
+    expect(k.fired).toEqual(['queue']);
+    k.off();
+  });
+});
