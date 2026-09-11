@@ -85,6 +85,18 @@ export const IDEA_SCORE_OWNER: Record<keyof IdeaScoreInputs, 'research' | 'finan
   value: 'finance', evidence: 'research', effort: 'finance', fit: 'research',
 };
 
+/**
+ * What a card is still waiting for, and from whom — the `## Score` section of an unscored card, and the tail of
+ * `idea.card`'s reply. "Still waiting on value, effort" leaves the reader to work out whose desk that is; the
+ * office is the only part of the answer anyone can act on.
+ */
+export function missingScoreNote(missing: (keyof IdeaScoreInputs)[]): string {
+  if (!missing.length) return '';
+  const byOffice = new Map<'research' | 'finance', string[]>();
+  for (const k of missing) byOffice.set(IDEA_SCORE_OWNER[k], [...(byOffice.get(IDEA_SCORE_OWNER[k]) ?? []), k]);
+  return [...byOffice].map(([office, keys]) => `${keys.join(' and ')} from the ${office} office`).join(', ');
+}
+
 export const IDEA_SCORE_MIN = 12;
 export const IDEA_SCORE_MAX = 60;
 /** At or above this the recommendation is `keep`; at or above `PARK_AT` it is `park`; below it is `scrap`. */
@@ -265,6 +277,22 @@ export interface NewIdea {
 }
 
 /**
+ * Two titles that name the same idea. Compared on the same terms `ideaSlug` uses — case, punctuation and runs
+ * of whitespace all collapse — because a trailing full stop is not a second idea: "Meal kits for nurseries" and
+ * "Meal kits for nurseries." slugify identically, and comparing the raw strings gave them two dossiers, each
+ * scored, judged and decided on its own.
+ */
+export function sameIdeaTitle(a: string, b: string): boolean {
+  const norm = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return norm(a) === norm(b);
+}
+
+/** The `## Evidence` body of a card, from whatever evidence it now carries. */
+export function renderEvidenceSection(evidence: string[]): string {
+  return evidence.length ? evidence.map((e) => `- ${e}`).join('\n') : '_None yet. An idea with no evidence is a hunch; say so rather than dressing it up._';
+}
+
+/**
  * Create `Ideas/<slug>.md` with the eight sections every dossier carries, or return the slug of the card that
  * already covers it. Written through one function rather than by each agent with `vault.write`, for the reason
  * `writeDecision` exists: a note whose shape the daemon reads is not something to leave to a prompt.
@@ -273,7 +301,7 @@ export function writeIdeaCard(vault: Vault, idea: NewIdea, by: string): string {
   let slug = idea.slug ? ideaSlug(idea.slug) : ideaSlug(idea.title);
   if (vault.exists(ideaPath(slug))) {
     const existing = readIdea(vault, slug);
-    if (existing && existing.data.title.trim().toLowerCase() === idea.title.trim().toLowerCase()) return slug;
+    if (existing && sameIdeaTitle(existing.data.title, idea.title)) return slug;
     const base = slug.slice(0, 44).replace(/-+$/, '') || 'idea';
     let n = 2;
     while (vault.exists(ideaPath(`${base}-${n}`))) n++;
@@ -284,11 +312,11 @@ export function writeIdeaCard(vault: Vault, idea: NewIdea, by: string): string {
     `# ${idea.title}`, '',
     '## What changed', '', (idea.what_changed ?? '').trim() || '_Not stated._', '',
     '## Why it might matter', '', (idea.why_it_matters ?? '').trim() || '_Not stated._', '',
-    '## Evidence', '', (idea.evidence ?? []).map((e) => `- ${e}`).join('\n') || '_None yet. An idea with no evidence is a hunch; say so rather than dressing it up._', '',
+    '## Evidence', '', renderEvidenceSection(idea.evidence ?? []), '',
     '## Research', '', '_Waiting on the research office._', '',
     '## What it would cost', '', '_Waiting on the finance office._', '',
     '## The board', '', '_The board has not sat on this yet._', '',
-    '## Score', '', '_Not scored: both offices have to answer first._', '',
+    '## Score', '', `_Not scored: still waiting on ${missingScoreNote(Object.keys(IDEA_SCORE_WEIGHTS) as (keyof IdeaScoreInputs)[])}._`, '',
     '## Decision', '', '_Undecided._', '',
   ].join('\n');
   vault.writeText(ideaPath(slug), stringifyNote(data as Record<string, unknown>, body), by);

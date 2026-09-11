@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { IdeaFrontmatter, writeIdeaCard, readIdea, listIdeas, keptIdeas, updateIdea, nextIdeaForBoard, keptIdeaLines, missingScoreInputs, IDEA_SECTIONS } from '../src/ideas.js';
+import { IdeaFrontmatter, writeIdeaCard, readIdea, listIdeas, keptIdeas, updateIdea, nextIdeaForBoard, keptIdeaLines, missingScoreInputs, missingScoreNote, sameIdeaTitle, IDEA_SECTIONS } from '../src/ideas.js';
 import { scaffoldVault } from '../src/template.js';
 import { parseNote } from '../src/frontmatter.js';
 
@@ -53,7 +53,21 @@ describe('the card on disk (spec §2.3, §2.5)', () => {
     const a = writeIdeaCard(vault, { title: 'Meal kits', source: 'discovery' }, 'x');
     expect(writeIdeaCard(vault, { title: 'meal kits', source: 'discovery' }, 'x')).toBe(a);
     expect(writeIdeaCard(vault, { title: 'Meal kits', source: 'pantry', slug: 'meal-kits' }, 'x')).toBe(a);
-    expect(writeIdeaCard(vault, { title: 'Meal Kits!', source: 'pantry', slug: 'meal-kits' }, 'x')).toBe('meal-kits-2');
+    // Punctuation is not a second idea: these all slugify to `meal-kits`, and comparing the raw strings gave
+    // one idea two dossiers, each scored, judged and decided on its own (whole-branch review, minor 8).
+    expect(writeIdeaCard(vault, { title: 'Meal Kits!', source: 'pantry', slug: 'meal-kits' }, 'x')).toBe(a);
+    expect(writeIdeaCard(vault, { title: 'Meal kits.', source: 'pantry' }, 'x')).toBe(a);
+    expect(sameIdeaTitle('Meal kits for nurseries', 'meal  kits — for nurseries.')).toBe(true);
+    expect(sameIdeaTitle('Meal kits', 'Meal kits for schools')).toBe(false);
+    // Different words on a slug that is already taken is still a genuinely different idea, and gets its own card.
+    expect(writeIdeaCard(vault, { title: 'Nursery meal kits', source: 'pantry', slug: 'meal-kits' }, 'x')).toBe('meal-kits-2');
+  });
+
+  it('says what an unscored card is waiting for, and whose desk it is on', () => {
+    const slug = writeIdeaCard(vault, { title: 'Nursery lunches', source: 'discovery' }, 'x');
+    expect(readIdea(vault, slug)!.body).toContain('value and effort from the finance office, evidence and fit from the research office');
+    expect(missingScoreNote(['evidence'])).toBe('evidence from the research office');
+    expect(missingScoreNote([])).toBe('');
   });
 
   it('derives the score from the inputs and never from the caller', () => {

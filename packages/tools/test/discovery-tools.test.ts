@@ -112,12 +112,31 @@ describe('idea.card (spec §2.5)', () => {
   it('lets the research office fill its half and nobody else', async () => {
     const org = loadOrg(vault);
     expect(inOffice(org, 'researcher', 'research')).toBe(true);
-    expect(inOffice(org, 'ceo', 'research')).toBe(true);
     expect(inOffice(org, 'backend_engineer', 'research')).toBe(false);
     const refused = await ideaCard.handler({ title: 'Meal kits', evidence: [], research: { report: 'Research/x/report.md', confidence: 'medium', summary: 's', evidence: 4, fit: 3 } }, ctx('backend_engineer'));
     expect(refused.ok).toBe(false);
     expect(refused.text).toContain('research_manager');
     expect(vault.exists('Ideas/meal-kits.md')).toBe(false);        // a refused call writes nothing
+  });
+
+  // Whole-branch review I5: the chief executive held a blanket exemption from both halves — and it is the one
+  // role that also writes `company.plan`, whose only permitted subject is kept ideas. It could set all four
+  // numbers and score a card into `keep` on its own, which is the exact thing §2.5's split exists to prevent.
+  it('does not let the chief executive answer for either desk', async () => {
+    const org = loadOrg(vault);
+    expect(inOffice(org, 'ceo', 'research')).toBe(false);
+    expect(inOffice(org, 'ceo', 'finance')).toBe(false);
+    const research = await ideaCard.handler({ title: 'Meal kits', evidence: [], research: { report: 'Research/x/report.md', confidence: 'medium', summary: 's', evidence: 5, fit: 5 } }, ctx('ceo'));
+    expect(research.ok).toBe(false);
+    expect(research.text).toContain('research_manager');
+    const estimate = await ideaCard.handler({ title: 'Meal kits', evidence: [], estimate: { text: 'a week', value: 5, effort: 5 } }, ctx('ceo'));
+    expect(estimate.ok).toBe(false);
+    expect(estimate.text).toContain('cfo');
+    expect(vault.exists('Ideas/meal-kits.md')).toBe(false);
+    // It may still file a card — it just cannot score one.
+    const bare = await ideaCard.handler({ title: 'Meal kits', evidence: [] }, ctx('ceo'));
+    expect(bare.ok).toBe(true);
+    expect(readIdea(vault, 'meal-kits')!.data.score).toBeNull();
   });
 
   it('lets the finance office fill its half and nobody else', async () => {
@@ -135,7 +154,8 @@ describe('idea.card (spec §2.5)', () => {
       research: { report: 'Research/meal-kits/report.md', confidence: 'medium', summary: 'Two nurseries already pay a competitor.', evidence: 4, fit: 3 },
     }, ctx('research_manager'));
     expect(first.ok).toBe(true);
-    expect(first.text).toContain('Still waiting on value, effort');
+    expect(first.text).toContain('Still waiting on value and effort from the finance office');
+    expect(readIdea(vault, (first.data as { slug: string }).slug)!.body).toContain('value and effort from the finance office');
     const slug = (first.data as { slug: string }).slug;
     expect(slug).toBe('meal-kits-for-nurseries');
     expect(readIdea(vault, slug)!.data.score).toBeNull();
@@ -156,6 +176,33 @@ describe('idea.card (spec §2.5)', () => {
     expect(card.body).toContain('Two weeks of one engineer');
   });
 
+  // T13-5: an office asked to fill in its half of `Ideas/<slug>` knows the slug, not the title — and a required
+  // `title` meant the pure half-fill each office's own job goal asks for was refused for a field it may not set.
+  it('lets each office fill its half by slug alone, with no title', async () => {
+    const filed = await ideaCard.handler({ title: 'Meal kits for nurseries', evidence: [] }, ctx('intelligence_analyst'));
+    const slug = (filed.data as { slug: string }).slug;
+
+    const research = await ideaCard.handler({ slug, evidence: [], research: { report: 'Research/meal-kits/report.md', confidence: 'high', summary: 'Two nurseries already pay a competitor.', evidence: 4, fit: 3 } }, ctx('research_manager'));
+    expect(research.ok).toBe(true);
+    const finance = await ideaCard.handler({ slug, evidence: [], estimate: { text: 'Two weeks of one engineer.', value: 4, effort: 4 } }, ctx('cfo'));
+    expect(finance.ok).toBe(true);
+
+    const card = readIdea(vault, slug)!;
+    expect(card.data.title).toBe('Meal kits for nurseries');     // never retitled by a half-fill
+    expect(card.data.score).toBe(46);
+    expect(vault.list('Ideas', { ext: '.md' }).filter((r) => !r.endsWith('_template.md'))).toHaveLength(1);
+  });
+
+  it('says so plainly when there is neither a title nor a card to fill in', async () => {
+    const nothing = await ideaCard.handler({ evidence: [] }, ctx('research_manager'));
+    expect(nothing.ok).toBe(false);
+    expect(nothing.text).toContain('needs a title');
+    const missing = await ideaCard.handler({ slug: 'no-such-card', evidence: [], estimate: { text: 'a week', value: 3, effort: 3 } }, ctx('cfo'));
+    expect(missing.ok).toBe(false);
+    expect(missing.text).toContain('Ideas/no-such-card.md');
+    expect(vault.exists('Ideas/no-such-card.md')).toBe(false);
+  });
+
   it('files a bare card with no office half at all', async () => {
     const r = await ideaCard.handler({ title: 'A hunch', evidence: [], why_it_matters: 'It might be nothing.' }, ctx('intelligence_analyst'));
     expect(r.ok).toBe(true);
@@ -166,19 +213,34 @@ describe('idea.card (spec §2.5)', () => {
   // Review T4 finding 1 / coordinator ruling 1: a slug collision from a genuinely different idea must never
   // merge into the first card — `writeIdeaCard`'s own `-2` suffix is what resolves it.
   it('a slug collision from a different title never merges — the second idea gets its own card', async () => {
-    const first = await ideaCard.handler({ title: 'Meal kits', evidence: [] }, ctx('research_manager'));
+    // Two different ideas whose titles only diverge past the 48-character slug cut, so they collide.
+    const weekly = 'Weekly meal kits for nurseries in the south of the county';
+    const daily = 'Weekly meal kits for nurseries in the south of the city';
+    const first = await ideaCard.handler({ title: weekly, evidence: [] }, ctx('research_manager'));
     expect(first.ok).toBe(true);
     const firstSlug = (first.data as { slug: string }).slug;
-    expect(firstSlug).toBe('meal-kits');
 
-    // "Meal Kits!" slugifies to the same 'meal-kits' as "Meal kits", but it is a different idea.
-    const second = await ideaCard.handler({ title: 'Meal Kits!', evidence: [], why_it_matters: 'A different idea entirely.' }, ctx('intelligence_analyst'));
+    const second = await ideaCard.handler({ title: daily, evidence: [], why_it_matters: 'A different idea entirely.' }, ctx('intelligence_analyst'));
     expect(second.ok).toBe(true);
     const secondSlug = (second.data as { slug: string }).slug;
-    expect(secondSlug).toBe('meal-kits-2');
-    expect(readIdea(vault, firstSlug)!.data.title).toBe('Meal kits');           // the first card is untouched
+    expect(secondSlug).not.toBe(firstSlug);
+    expect(secondSlug).toMatch(/-2$/);
+    expect(readIdea(vault, firstSlug)!.data.title).toBe(weekly);                // the first card is untouched
     expect(readIdea(vault, firstSlug)!.body).not.toContain('A different idea entirely.');
     expect(readIdea(vault, secondSlug)!.body).toContain('A different idea entirely.');
+  });
+
+  // Minor 8, the other half: the same idea typed with different punctuation is one idea, not two dossiers each
+  // scored, judged and decided on its own. And `slug: ""` is not naming a card.
+  it('folds a punctuation variant into the card that already covers it', async () => {
+    const first = await ideaCard.handler({ title: 'Meal kits', evidence: [] }, ctx('research_manager'));
+    const firstSlug = (first.data as { slug: string }).slug;
+    expect(firstSlug).toBe('meal-kits');
+    const again = await ideaCard.handler({ title: 'Meal Kits!', evidence: [] }, ctx('intelligence_analyst'));
+    expect((again.data as { slug: string }).slug).toBe(firstSlug);
+    const empty = await ideaCard.handler({ title: 'Meal kits.', slug: '', evidence: [] }, ctx('intelligence_analyst'));
+    expect((empty.data as { slug: string }).slug).toBe(firstSlug);
+    expect(vault.list('Ideas', { ext: '.md' }).filter((r) => !r.endsWith('_template.md'))).toHaveLength(1);
   });
 
   // Review T4 finding 2 / coordinator ruling 2: an update by explicit slug merges new evidence and text rather

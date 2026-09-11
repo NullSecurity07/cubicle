@@ -2,8 +2,9 @@ import { z } from 'zod';
 import { defineTool } from '../registry.js';
 import {
   loadOrg, listInbox, officeHolder, teamOf, subtreeRoles, readJob, type Office, type Org, type Vault,
-  DISCOVERY_INBOX, INTERVIEW_PATH, listDiscoveryInputs, interviewPhase, interviewAnswer, isLongPrompt,
+  DISCOVERY_INBOX, INTERVIEW_PATH, listDiscoveryInputs, interviewPhase, interviewAnswer, isLongPrompt, ownerSaid,
   IdeaScoreInputs, missingScoreInputs, readIdea, updateIdea, writeIdeaCard, ideaSlug, ideaPath, renderScoreSection,
+  renderEvidenceSection, sameIdeaTitle, missingScoreNote,
 } from '@cubicle/core';
 
 /**
@@ -60,7 +61,10 @@ export const discoveryInputs = defineTool({
     // the order given here, so the owner's most recent words are the ones that keep their full share.
     const ownerMessages = listInbox(vault)
       .filter((n) => n.data.kind === 'message' && n.data.from === 'owner')
-      .map((n) => ({ at: n.data.created, path: n.path, text: n.body.split(/^## CEO\s*$/m)[0].replace(/^#\s.*$/m, '').trim() }))
+      // `ownerSaid` and not an inlined regex: the inlined one carried an `m` flag, so it deleted the first
+      // heading *anywhere* in the body — on a message that did not start with the cabin's title line, that was
+      // a line of the owner's own writing, silently missing from the material the founder brief is written from.
+      .map((n) => ({ at: n.data.created, path: n.path, text: ownerSaid(n.body) }))
       .filter((m) => m.text)
       .sort((a, b) => b.at.localeCompare(a.at));
     const messageParts = ownerMessages.map((m) => ({ path: `${m.path} (${m.at.slice(0, 10)})`, text: m.text }));
@@ -105,17 +109,20 @@ export const discoveryInputs = defineTool({
 /** The two offices that may fill score inputs, and what each of them owns (spec §2.5). */
 const FILLERS = { research: ['evidence', 'fit'], finance: ['value', 'effort'] } as const;
 
-/** True when `role` holds an office or sits anywhere under the team that office's holder leads. */
+/**
+ * True when `role` holds an office or sits anywhere under the team that office's holder leads.
+ *
+ * There is no exemption, and deliberately not one for the chief executive. §2.5's stated purpose is "two inputs
+ * each, **so no single agent can talk an idea up on its own**" — and the chief executive is the one role that
+ * also writes `company.plan`, whose only permitted subject is kept ideas. A blanket exemption let that role set
+ * all four numbers and score a card into `keep` alone, which is precisely the thing the split exists to stop.
+ * An override for the owner exists and is owner-facing (`chosen:` on the verdict note); an agent-facing one is
+ * not the same thing.
+ */
 export function inOffice(org: Org, role: string, office: Office): boolean {
   if (role === officeHolder(org, office)) return true;
-  if (role === officeHolder(org, 'chief_executive')) return true;   // the chief executive answers for any desk
   const t = teamOf(org, officeHolder(org, office));
   return !!t && subtreeRoles(org, t.id).includes(role);
-}
-
-/** The `## Evidence` body, exactly as `writeIdeaCard` renders it — kept as one function so the two never drift. */
-function renderEvidenceSection(evidence: string[]): string {
-  return evidence.length ? evidence.map((e) => `- ${e}`).join('\n') : '_None yet. An idea with no evidence is a hunch; say so rather than dressing it up._';
 }
 
 /**
@@ -148,7 +155,7 @@ export const ideaCard = defineTool({
   name: 'idea.card',
   description: 'File a new idea card at Ideas/<slug>.md, or fill in the part of an existing one your office owns. The research office sets the research link, its confidence, and the evidence and fit scores; the finance office sets the estimate and the value and effort scores. The score itself is arithmetic and is never written by hand. One card per idea, never a digest of several. Provenance is set from who is calling this, not from an argument.',
   schema: {
-    title: z.string().describe('one line naming the opening, not the observation'),
+    title: z.string().optional().describe('one line naming the opening, not the observation; required for a new card, and optional when `slug` names one that exists'),
     slug: z.string().optional().describe('the existing card to update; omit to derive one from the title'),
     what_changed: z.string().optional(),
     why_it_matters: z.string().optional(),
@@ -168,6 +175,17 @@ export const ideaCard = defineTool({
   },
   async handler(args, ctx) {
     const org = loadOrg(ctx.vault);
+    // Filling in the half your office owns is not re-titling the idea: an office asked to price or research
+    // `Ideas/<slug>` knows the slug and nothing else, and making it restate the title meant a pure half-fill
+    // (`{ slug, estimate }`) was refused outright for a field it had no business setting (T13-5).
+    const named = !!args.slug;
+    const onDisk = named ? readIdea(ctx.vault, ideaSlug(args.slug!)) : null;
+    const title = (args.title ?? onDisk?.data.title ?? '').trim();
+    if (!title) {
+      return { ok: false, text: named
+        ? `no idea card at ${ideaPath(ideaSlug(args.slug!))} to fill in. Pass a title to file it as a new card, or check the slug.`
+        : 'an idea card needs a title (or the slug of one that already exists).' };
+    }
     if (args.research && !inOffice(org, ctx.roleId, 'research')) {
       return { ok: false, text: `the research half of a card (research, confidence, evidence, fit) is filled by the research office — ${officeHolder(org, 'research')} or someone in that room. File the card without it and say what you need looked into.` };
     }
@@ -180,14 +198,17 @@ export const ideaCard = defineTool({
     // A different title on a slug that is already taken is `writeIdeaCard`'s own collision to resolve (the
     // `-2` suffix); reaching that card here first would silently fold two different ideas into one (review T4
     // finding 1 / coordinator ruling 1).
-    const wanted = args.slug ? ideaSlug(args.slug) : ideaSlug(args.title);
-    const found = readIdea(ctx.vault, wanted);
-    const existing = found && (args.slug !== undefined || found.data.title.trim().toLowerCase() === args.title.trim().toLowerCase()) ? found : null;
+    // `named` is read the same way everywhere: `slug: ""` is not naming a card, so it must not turn a
+    // title-derived card into an update. And titles are compared on `sameIdeaTitle`'s terms, so a trailing full
+    // stop does not open a second dossier for one idea.
+    const wanted = named ? ideaSlug(args.slug!) : ideaSlug(title);
+    const found = named ? onDisk : readIdea(ctx.vault, wanted);
+    const existing = found && (named || sameIdeaTitle(found.data.title, title)) ? found : null;
     const source = provenanceFor(ctx.vault, ctx.jobId);
     const slug = existing
       ? wanted
       : writeIdeaCard(ctx.vault, {
-        slug: args.slug, title: args.title, source,
+        slug: args.slug, title, source,
         evidence: args.evidence, what_changed: args.what_changed, why_it_matters: args.why_it_matters,
       }, ctx.roleId);
 
@@ -219,9 +240,13 @@ export const ideaCard = defineTool({
     }
     const card = readIdea(ctx.vault, slug)!;
     const complete = IdeaScoreInputs.safeParse(card.data.score_inputs);
-    if (complete.success) updateIdea(ctx.vault, slug, {}, ctx.roleId, { heading: '## Score', content: renderScoreSection(complete.data, { board: card.data.board_verdict }) });
     const missing = missingScoreInputs(card.data.score_inputs);
-    const waiting = missing.length ? ` Still waiting on ${missing.join(', ')}.` : ` Score ${card.data.score}; the board reads it next cycle.`;
+    // Either way the `## Score` section says where the card stands: the arithmetic once both offices have
+    // answered, and otherwise what it is still waiting for **and from whom** — the office is the only part of
+    // "still waiting on value, effort" that anyone can act on.
+    if (complete.success) updateIdea(ctx.vault, slug, {}, ctx.roleId, { heading: '## Score', content: renderScoreSection(complete.data, { board: card.data.board_verdict }) });
+    else updateIdea(ctx.vault, slug, {}, ctx.roleId, { heading: '## Score', content: `_Not scored: still waiting on ${missingScoreNote(missing)}._` });
+    const waiting = missing.length ? ` Still waiting on ${missingScoreNote(missing)}.` : ` Score ${card.data.score}; the board reads it next cycle.`;
     const verb = !existing ? 'filed' : changed ? 'updated' : 'left unchanged — nothing new in this call';
     return {
       ok: true,
