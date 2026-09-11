@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { EVENT_TYPES, JobFrontmatter, RoleFrontmatter, TeamFrontmatter, DecisionFrontmatter, InboxFrontmatter, Constitution, OwnerPreferences, JobResult, MAX_PROCESS_STEPS, loadGates } from '@cubicle/core';
+import { EVENT_TYPES, JobFrontmatter, RoleFrontmatter, TeamFrontmatter, IdeaFrontmatter, DecisionFrontmatter, InboxFrontmatter, Constitution, OwnerPreferences, JobResult, MAX_PROCESS_STEPS, loadGates } from '@cubicle/core';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** Where the two files go. Overridable so a test can generate into a temp dir and diff against the committed pair. */
@@ -108,6 +108,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
   Memory/                 constitution.md (agent-immutable, tool-enforced), owner_preferences.md, lessons.md
   Skills/                 reusable procedures written by agents (archive/ for pruned ones)
   Experiments/            hypothesis/metric/review_date notes (_template.md), posts/ drafts
+  Ideas/                  idea cards filed by continuous intelligence and by discovery (_template.md)
   Jobs/                   <job-id>.md (frontmatter = state machine), queue.md (generated), _template.md
   Messages/               <role>.md colleague inboxes (agent-writable; HTML-comment read markers)
   Site/                   the website source; dist/ is the build (gitignored)
@@ -131,6 +132,9 @@ Body: \`# Charter\` (system prompt), \`# Standing rules\`, \`# What good looks l
 
 ${table('Team note (Teams/<id>.md)', TeamFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { id: 'matches the filename', lead: 'role id; the resolver treats this role as the team\'s lead', members: 'role ids who report to the lead through this team', room: 'office room id the team\'s desks sit in', floor: 'which office floor the team\'s room is on', parent: 'the division this team belongs to (dev → technology); planning happens at the division', processes: '`Processes/<name>.md` ids this team can run' })}
 Body: freeform notes on how the team works, read into role prompts.
+
+${table('Idea card (Ideas/<slug>.md)', IdeaFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { id: 'matches the filename', source: 'where the idea came from: `intelligence:<kind>`, `owner`, or a job id', status: 'new → triaged → accepted | rejected; sub-project 3 owns the triage', evidence: 'paths or URLs backing the change that prompted it — an idea with none is a hunch' })}
+Body: \`## What changed\`, \`## Why it might matter\`, \`## Evidence\`.
 
 ### Process note (Processes/<name>.md)
 
