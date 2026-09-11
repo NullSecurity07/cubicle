@@ -78,6 +78,18 @@ describe('idea_verdict (spec §3.5)', () => {
     expect(after.body).toContain('keep');
   });
 
+  it('prints the reason stamped on the note, not a recomputed one (fix wave round 2)', async () => {
+    const slug = card();
+    const { path: rel } = createProposal(vault, { kind: 'idea_verdict', from: 'ceo', target: `Ideas/${slug}.md`, title: 'Keep or scrap: Meal kits', body: 'Recommendation: **keep**.' }, 'ceo');
+    // The heartbeat stamps the band and the sentence the owner was shown; a card re-filed since would score differently.
+    ownerEdit(rel, (t) => t.replace(/^approved: .*$/m, (line) => `band: keep\nband_reason: The sentence the owner saw.\n${line}`));
+    approve(rel, { approved: 'true' });
+    await dispatchProposals(deps());
+    const after = readIdea(vault, slug)!;
+    expect(after.data.decision).toBe('keep');
+    expect(after.body).toContain('The sentence the owner saw.');
+  });
+
   it('lets chosen: overrule the recommendation, and reads a refusal as park', async () => {
     const slug = card();
     const { path: rel } = createProposal(vault, { kind: 'idea_verdict', from: 'ceo', target: `Ideas/${slug}.md`, title: 'x', body: 'y' }, 'ceo');
