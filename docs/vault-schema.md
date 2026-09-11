@@ -35,7 +35,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | field | type | notes |
 |---|---|---|
 | `id` | string | the filename is authoritative: `Jobs/<id>.md` — if a note's `id` field disagrees with its filename (e.g. you copied `_template.md` by hand), the daemon rewrites `id` to match the filename and logs one `daemon.warning` |
-| `type` | string | known types: `engineer.ship`, `research`, `growth.outreach`, `growth.post`, `growth.seo`, `custom`, `team.plan`, `critic.premortem`, `qa.review`, `coo.verify`, `requester.review`, `company.plan`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`); each has a `config/gates.yaml` entry |
+| `type` | string | known types: `engineer.ship`, `research`, `research.review`, `research.measure`, `intelligence`, `growth.outreach`, `growth.post`, `growth.seo`, `custom`, `team.plan`, `critic.premortem`, `qa.review`, `coo.verify`, `requester.review`, `company.plan`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`); each has a `config/gates.yaml` entry |
 | `title` | string |  |
 | `assigned` | string |  |
 | `status` | `queued` \| `running` \| `blocked` \| `in_review` \| `done` \| `failed` \| `cancelled` = `"queued"` | you may set `cancelled`; `blocked` without `blocked_on` = paused by you; `in_review` = the job's own work is done but it still owes a gate from `config/gates.yaml` |
@@ -60,6 +60,9 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | `returns` | record<string, number> = `{}` | gate job type → how many times that gate has returned this job (once-per-gate: a second return from the same gate fails the job instead of looping forever) |
 | `gate_index` | number (optional) | how far through its `config/gates.yaml` gate list the job has passed |
 | `budget_from` | number (optional) | the checkpoint_step a gate return resumed from; the step loop runs until budget_from + maxSteps, so a return gets a fresh budget instead of the remainder of the attempt |
+| `research` | object (optional) | the universal research request this job carries (decision, question, evidence, confidence, portfolio, score) |
+| `research_slug` | string (optional) | the Research/<slug>/ project directory for this job |
+| `model_tier` | `strong` \| `medium` \| `cheap` \| `local` (optional) | pins a cheaper tier than the assigned role's charter asks for; never routes above it, and never above the `privacy` rule |
 
 Body sections: `## Goal`, `## Plan`, `## Checkpoint log`, `## Result` (JSON block `{status, artifacts, metrics, blockers, lessons, summary}`).
 

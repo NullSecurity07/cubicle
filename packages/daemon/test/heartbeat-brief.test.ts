@@ -15,10 +15,36 @@ beforeEach(async () => {
   vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'PlateReady' }, body: n.body }), 'owner');
   vault.close();
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+const daemons: Daemon[] = [];
+// Stop every daemon this test started before the vault it writes to is removed. A test body that vitest has
+// already given up on (see TEST_MS) never reaches its own `finally`, so without this the daemon outlives the
+// directory: its tick, its watcher and its workers keep writing to a path that is gone, which throws ENOENT
+// storms attributed to whichever test is running next and starves that test of CPU until it times out too —
+// one slow test used to take the rest of the file down with it.
+afterEach(async () => {
+  for (const d of daemons.splice(0)) await d.stop().catch(() => undefined);
+  rmSync(dir, { recursive: true, force: true });
+});
 
 const NO_KEYS = { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv;
-const daemonFor = (llm: Llm, env: NodeJS.ProcessEnv = NO_KEYS) => new Daemon(defaultConfig(dir, env, { port: 0, tickMs: 300, maxConcurrentJobs: 3, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+// A whole heartbeat cycle is ~16 model calls and a few dozen jobs; on a loaded machine that can pass 30 s. The
+// budget has to leave room for `waitFor`'s own 60 s to expire first, so a stuck test fails inside its `try` and
+// still runs the `finally` that stops the daemon.
+const TEST_MS = 120_000;
+// Every assertion below reads the vault while the daemon is still running, and describes the vault after exactly
+// the heartbeat(s) the test asked for. The `jobsCompletedN` trigger (spec §8) breaks that: the first heartbeat's
+// own cycle queues real work jobs, and once five of them finish — ~300 ms after `heartbeat.completed`, i.e. inside
+// `waitFor`'s 100 ms poll gap — the daemon queues a second heartbeat, which writes a second brief and a second
+// company.plan. Whether a test saw one or two was a coin flip decided by machine load, which is why a different
+// test failed on every run. The cadence rule itself is correct and is covered by daemon.test.ts ("planning and gate
+// sub-jobs ... never retrigger a second heartbeat on their own"); here we disable it so the heartbeat count is the
+// test's to control: one on startup, plus any explicit `requestHeartbeat`.
+const ONE_HEARTBEAT_AT_A_TIME = { maxElapsedHours: 6, jobsCompletedN: Number.MAX_SAFE_INTEGER, startupAwayHours: 1 };
+const daemonFor = (llm: Llm, env: NodeJS.ProcessEnv = NO_KEYS) => {
+  const d = new Daemon(defaultConfig(dir, env, { port: 0, tickMs: 300, maxConcurrentJobs: 3, heartbeat: ONE_HEARTBEAT_AT_A_TIME, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+  daemons.push(d);
+  return d;
+};
 async function waitFor(pred: () => boolean, ms = 30000): Promise<void> { const t0 = Date.now(); while (!pred()) { if (Date.now() - t0 > ms) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 100)); } }
 const lastBrief = (v: Vault) => readFileSync(path.join(dir, v.list('Runs', { ext: '.md' }).sort().at(-1)!), 'utf8');
 const factsOf = (brief: string) => brief.split('_Facts used:_')[1] ?? '';
@@ -51,7 +77,7 @@ describe('degraded-mode row (the team ran on the local model)', () => {
       expect(facts).toContain('Model use: 6 calls, 5 downgraded to local');
       expect(facts).toContain('(5 of 6 calls downgraded): no cloud provider has an API key');
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 
   it('with cloud keys present the same pattern is blamed on rate limits / cooling; a mostly-cloud window adds no row', async () => {
     const seed = Vault.open(dir); seedRouterCalls(seed, 3, 3); seed.close();
@@ -74,7 +100,7 @@ describe('degraded-mode row (the team ran on the local model)', () => {
       expect(facts).toContain('Model use: 10 calls, 1 downgraded to local');
       expect(facts).not.toContain('ran mostly on the local model');
     } finally { v2.close(); await d2.stop(); }
-  });
+  }, TEST_MS);
 });
 
 describe('mock-mode stamp (simulated deploy/email/analytics)', () => {
@@ -100,7 +126,7 @@ describe('mock-mode stamp (simulated deploy/email/analytics)', () => {
       expect(facts).toContain('Outbound services: deploy live, email mock, analytics mock');
       expect(facts).toContain('- Email and analytics are simulated (no BREVO_*/GOATCOUNTER_* keys)');
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 });
 
 describe('re-planning gate', () => {
@@ -142,7 +168,7 @@ describe('re-planning gate', () => {
       expect(v.readText('Plans/plan.md')).toBe(planOn(today));
       expect(v.list('Plans/archive', { ext: '.md' })).toEqual([]); // nothing was archived because nothing was rewritten
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 
   it('an unanswered owner message re-plans even against a fresh plan with open work; so does a stale plan', async () => {
     const seed = Vault.open(dir);
@@ -169,7 +195,7 @@ describe('re-planning gate', () => {
       await waitFor(() => v2.events.count('heartbeat.completed') >= 2, 60000);
       expect(listJobs(v2).filter((j) => j.type === 'company.plan')).toHaveLength(2);
     } finally { v2.close(); await d2.stop(); }
-  });
+  }, TEST_MS);
 });
 
 describe('member-less team planning', () => {
@@ -199,5 +225,5 @@ describe('member-less team planning', () => {
       expect(goal('ciso')).toContain('Your team has no members');
       expect(goal('dev_manager')).not.toContain('Your team has no members');
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 });
