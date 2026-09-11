@@ -27,15 +27,15 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n';
 
 /**
- * Role-aware scripted LLM for the two-level planning cycle: the CEO writes the company plan, the Critic always
- * passes, the CTO's team.plan enqueues the scaffold job, everyone else finishes immediately; CEO prose calls get
- * canned text.
+ * Role-aware scripted LLM for the two-level planning cycle: the CEO writes the company plan, the board always
+ * passes (its advisors answer with canned prose and the chair's merge names no VERDICT line, which reads as a
+ * pass), the CTO's team.plan enqueues the scaffold job, everyone else finishes immediately.
  */
 function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: string; tools: boolean }[] } {
   const perJob = new Map<string, number>();
   // The scaffold objective is only real work once; a second cycle (e.g. auto-triggered by jobsCompletedN once the
   // planning jobs push the count over the threshold) sees nothing left to do and writes an empty plan, so the
-  // company.plan → critic → team_plans → engineer.ship → qa.review → coo.verify chain does not run forever.
+  // company.plan → board_premortem → division_plans → engineer.ship → qa.review → coo.verify chain does not run forever.
   let companyPlanCycles = 0;
   const llm = {
     calls: [] as { role?: string; tools: boolean }[],
@@ -57,9 +57,6 @@ function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: stri
         if (n === 0) companyPlanCycles++;
         const content = companyPlanCycles <= 1 ? PLAN : `---\ncycle: ${companyPlanCycles}\n---\n# Plan\n\n## Objectives\n`;
         return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
-      }
-      if (jobType === 'critic.premortem') {
-        return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'fine', verdict: 'pass', findings: [] } }] };
       }
       if (jobType === 'team.plan' && req.roleId === 'dev_manager') {
         return { ...base, parsedToolCalls: [n === 0 ? { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'backend_engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.', risk: 'low', stream: 'site' } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
@@ -102,7 +99,7 @@ async function waitForStable(pred: () => boolean, stableMs = 1500, ms = 40000): 
 }
 
 describe('heartbeat as a resumable job', () => {
-  it('runs all steps, awaits company.plan/critic/team.plan, writes Runs/, queue.md, commits, answers the owner, proposes a name', async () => {
+  it('runs all steps, awaits company.plan/team.plan, writes Runs/, queue.md, commits, answers the owner, proposes a name', async () => {
     const vault = Vault.open(dir);
     const llm = fakeLlm();
     createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
@@ -120,7 +117,7 @@ describe('heartbeat as a resumable job', () => {
     expect(listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md' && n.body.includes('Bright Ledger'))).toBe(true);
     // second visit while company.plan still running → still blocked
     expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
-    // finish company.plan via the harness → heartbeat resumes into critic and blocks on the pre-mortem
+    // finish company.plan via the harness → heartbeat resumes into the board room
     const { runJob } = await import('@cubicle/harness');
     const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
     const harnessDeps = { vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} };
@@ -128,14 +125,13 @@ describe('heartbeat as a resumable job', () => {
     expect(planOut.status).toBe('done');
     expect(vault.readText('Plans/plan.md')).toContain('Scaffold the site from Brand/');
     expect(requeueUnblocked(vault)).toBe(1);
+    // The board room is four model calls inside this step, not a sub-job, so the heartbeat passes straight
+    // through board_premortem and blocks on the dev manager's team.plan instead.
     expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
-    // finish critic.premortem → heartbeat resumes into team_plans and blocks on the CTO's team.plan
-    const critic = listJobs(vault).find((j) => j.type === 'critic.premortem')!;
-    expect(critic).toBeTruthy();
-    expect((await runJob(harnessDeps, critic.id)).status).toBe('done');
+    const boardJob = listJobs(vault).find((j) => j.type === 'board.premortem')!;
+    expect(boardJob.status).toBe('done');
+    expect(readJob(vault, boardJob.id)!.body).toContain('### The Skeptic');
     expect(existsSync(path.join(dir, 'Decisions'))).toBe(true);
-    expect(requeueUnblocked(vault)).toBe(1);
-    expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
     // finish the dev manager's team.plan → it enqueues the scaffold job
     const teamPlan = listJobs(vault).find((j) => j.type === 'team.plan')!;
     expect(teamPlan.assigned).toBe('dev_manager');
@@ -181,11 +177,11 @@ describe('heartbeat as a resumable job', () => {
     v2.close();
   });
 
-  it('a critic job with no parseable ## Result fails open to pass, but with a daemon.warning (T9)', async () => {
+  it('a board room with no model still passes the plan and says so in its own record (T9)', async () => {
     const vault = Vault.open(dir);
     const llm = fakeLlm();
-    const hb = createHeartbeatJob(vault, 'test');
     const deps = { vault, llm };
+    const hb = createHeartbeatJob(vault, 'test');
     await runHeartbeat(deps, hb); // blocked on company.plan
     const plan = listJobs(vault).find((j) => j.type === 'company.plan')!;
     const { runJob } = await import('@cubicle/harness');
@@ -193,14 +189,14 @@ describe('heartbeat as a resumable job', () => {
     const harnessDeps = { vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(vault), env: {} };
     await runJob(harnessDeps, plan.id);
     expect(requeueUnblocked(vault)).toBe(1);
-    await runHeartbeat(deps, hb); // blocked on critic
-    const critic = listJobs(vault).find((j) => j.type === 'critic.premortem')!;
-    // Simulate a critic job that reached done/failed/cancelled without ever writing a parseable ## Result block
-    // (a corrupted note, or a crash before finish wrote it) — the critic step must not silently fail open.
-    vault.updateNote(`Jobs/${critic.id}.md`, (n) => ({ data: { ...n.data, status: 'done' }, body: n.body }), 'daemon');
-    expect(requeueUnblocked(vault)).toBe(1);
+    // Every model call fails from here on (no provider key, no Ollama): the board advises, so a board that
+    // cannot speak must fail open to pass rather than stall the cycle — and the record must say it was silent.
+    llm.chat = (async () => { throw new Error('no provider'); }) as typeof llm.chat;
     await runHeartbeat(deps, hb);
-    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'critic' && String(e.payload.message).includes(critic.id))).toBe(true);
+    const board = listJobs(vault).find((j) => j.type === 'board.premortem')!;
+    expect(board.status).toBe('done');
+    expect(readJob(vault, board.id)!.body).toContain('(no answer: no model was available)');
+    expect(vault.readNoteOrNull(`Decisions/premortem-${hb}.md`)!.data.status).toBe('adopted');
     vault.close();
   });
 });
@@ -257,8 +253,8 @@ describe('only the local floor is up', () => {
   }, 60000);
 });
 
-describe('the pre-mortem note survives a crash mid-critic-step (D7)', () => {
-  it('is written before processedCritic is saved, so a resume can never skip it', async () => {
+describe('the pre-mortem note survives a crash mid-board-step (D7)', () => {
+  it('is written before the board verdict is saved, so a resume can never skip it', async () => {
     const vault = Vault.open(dir);
     const llm = fakeLlm();
     const deps = { vault, llm };
@@ -270,13 +266,9 @@ describe('the pre-mortem note survives a crash mid-critic-step (D7)', () => {
     await runHeartbeat(deps, hb); // blocked on company.plan
     await runJob(harnessDeps, listJobs(vault).find((j) => j.type === 'company.plan')!.id);
     requeueUnblocked(vault);
-    await runHeartbeat(deps, hb); // blocked on critic.premortem
-    const critic = listJobs(vault).find((j) => j.type === 'critic.premortem')!;
-    await runJob(harnessDeps, critic.id);
-    requeueUnblocked(vault);
 
-    // The checkpoint that says "this critic's verdict was handled" must not become durable before the note it
-    // is supposed to have produced: a crash in that window resumes into the already-processed branch and the
+    // The state key that says "the board has already ruled this cycle" must not become durable before the note
+    // it is supposed to have produced: a crash in that window resumes into the already-run branch and the
     // pre-mortem is lost for the cycle. Sample the on-disk state at the instant the note is written.
     const statePath = path.join(dir, '.cubicle', 'jobs', `${hb}.heartbeat.json`);
     let stateAtWrite: string | null = null;
@@ -286,23 +278,24 @@ describe('the pre-mortem note survives a crash mid-critic-step (D7)', () => {
     try { await runHeartbeat(deps, hb); } finally { off(); }
 
     expect(stateAtWrite).toBeTruthy();
-    expect(JSON.parse(stateAtWrite!).processedCritic).toBeUndefined();
+    expect(JSON.parse(stateAtWrite!).boardVerdict).toBeUndefined();
     expect(vault.exists(`Decisions/premortem-${hb}.md`)).toBe(true);
-    expect(JSON.parse(readFileSync(statePath, 'utf8')).processedCritic).toBe(critic.id);
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).boardVerdict).toBe('pass');
     vault.close();
   });
 
-  it('writePremortemDecision overwrites the same note, so a resume rewrites rather than duplicates', async () => {
+  it('writeBoardPremortemDecision overwrites the same note, so a resume rewrites rather than duplicates', async () => {
     const vault = Vault.open(dir);
-    const { writePremortemDecision } = await import('../src/index.js');
+    const { writeBoardPremortemDecision } = await import('../src/index.js');
     const now = new Date();
-    const first = writePremortemDecision(vault, 'job_hb1', 'job_critic1', { status: 'done', artifacts: [], metrics: {}, blockers: [], lessons: [], summary: 'too vague', verdict: 'return', findings: ['no metric'] }, now);
-    const second = writePremortemDecision(vault, 'job_hb1', 'job_critic1', { status: 'done', artifacts: [], metrics: {}, blockers: [], lessons: [], summary: 'fine now', verdict: 'pass', findings: [] }, now);
+    const first = writeBoardPremortemDecision(vault, 'job_hb1', 'job_board1', 'return', ['no metric'], 'advisor_skeptic', now);
+    const second = writeBoardPremortemDecision(vault, 'job_hb1', 'job_board2', 'pass', [], 'advisor_skeptic', now);
     expect(second).toBe(first);
     expect(vault.list('Decisions', { ext: '.md' }).filter((r) => r.includes('premortem'))).toHaveLength(1);
     const note = vault.readNoteOrNull(first)!;
     expect(note.data.status).toBe('adopted'); // the verdict the cycle actually ran with
-    expect(note.body).toContain('fine now');
+    expect(note.data.decided_by).toBe('advisor_skeptic');
+    expect(note.body).toContain('The plan survived the pre-mortem.');
     vault.close();
   });
 });

@@ -1,5 +1,5 @@
 /**
- * Scripted model for the org-shaped planning cycle (spec §3): the CEO writes the plan; the Skeptic returns once
+ * Scripted model for the org-shaped planning cycle (spec §3): the CEO writes the plan; the board returns it once
  * then passes; managers enqueue one job each; everyone else finishes. Shared by `packages/daemon/test/planning.test.ts`
  * and `scripts/test-kill9.ts` (planning fan-out scenario) so both exercise the exact same scripted behaviour.
  */
@@ -17,7 +17,13 @@ export function orgLlm(opts: { vetoes?: number; plan?: string } = {}): Llm & { c
     async chat(req: RouteRequest, chat: { messages: ChatMessage[]; tools?: ToolSchema[] }): Promise<RoutedChatResult> {
       const role = req.roleId ?? '?'; llm.calls[role] = (llm.calls[role] ?? 0) + 1;
       const base = { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 5, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
-      if (!chat.tools) return { ...base, content: /NAME:/.test(String(chat.messages.at(-1)?.content)) ? 'NAME: X\nTAGLINE: y' : 'ok' };
+      if (!chat.tools) {
+        const last = String(chat.messages.at(-1)?.content ?? '');
+        // The board chair's merge prompt names the exact verdict line; the advisors' prompt does not.
+        if (/VERDICT: pass/.test(last)) { const v = vetoes-- > 0; return { ...base, content: v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier' }; }
+        if (/Imagine the cycle has already failed/.test(last)) return { ...base, content: '- the plan names no metric — add one\n- nobody owns the deploy — name them' };
+        return { ...base, content: /NAME:/.test(last) ? 'NAME: X\nTAGLINE: y' : 'ok' };
+      }
       const jobMsg = String(chat.messages[1]?.content ?? '');
       const jobId = jobMsg.match(/Jobs\/(job_\w+)\.md/)?.[1] ?? 'x';
       const n = per.get(jobId) ?? 0; per.set(jobId, n + 1);
@@ -29,7 +35,6 @@ export function orgLlm(opts: { vetoes?: number; plan?: string } = {}): Llm & { c
       // titles, so this is a no-op everywhere else.
       if (/^(Build|Announce|Outreach|Measure launch):? /.test(jobTitle) || jobTitle === 'Measure launch') return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Plans/plan.md' } }] };
       if (jobType === 'company.plan') return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content: plan } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
-      if (jobType === 'critic.premortem') { const v = vetoes-- > 0; return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: v ? 'too vague' : 'fine', verdict: v ? 'return' : 'pass', findings: v ? ['growth objective has no metric'] : [] } }] }; }
       if (jobType === 'team.plan') {
         const member = role === 'dev_manager' ? 'backend_engineer' : role === 'cfo' ? 'research_manager' : null;
         const isResearch = member === 'research_manager';

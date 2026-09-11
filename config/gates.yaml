@@ -12,6 +12,7 @@ gates:
   growth.seo: [coo.verify]
   custom: [coo.verify]
   team.plan: []
+  board.premortem: []
   critic.premortem: []
   qa.review: []
   security.review: []
@@ -32,6 +33,7 @@ criteria:
   growth.seo: "Pages have titles, descriptions and internal links; nothing fabricated."
   custom: "The job's Done when holds and the evidence is in the Result."
   team.plan: "At most 4 jobs, each finishable in one sitting with a Done when; the plan section names them."
+  board.premortem: "Three advisors, one joint verdict: concrete failure modes with a fix each; pass or return, never delay."
   critic.premortem: "Concrete failure modes with a fix each; pass or return, never delay."
   qa.review: "Findings cite files or output; the CI record in Workspace/<stream>/.cubicle-ci/ is green and newer than the change; a ship that changed the architecture (a new dependency, a new service, a new data store, a changed boundary) has an ADR in Docs/adr/ — return it if it does not; verdict pass or return."
   security.review: "Say what data, credentials and permissions the change touches, and judge each: secrets never in the diff, input validated at the boundary, authorisation checked on the server, nothing sensitive logged. A finding cites the file and the line. Verdict pass or return."

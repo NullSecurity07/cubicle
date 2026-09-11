@@ -1,8 +1,8 @@
 import {
   type Vault, type JobFrontmatter, readJob, updateJob, createJob, listJobs, listInbox, nowIso, stampForFilename,
   autoCommit, parseNote, stringifyNote, setSection, createProposal, idFromKey, type CubicleEvent,
-  loadOrg, expandProcess, childrenOf, JobResult, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
-  resolveRole, teamOf, researchLead, listStreams,
+  loadOrg, expandProcess, childrenOf, resolveTeamSection, writeDecision, repoRoot, type TeamFrontmatter,
+  resolveRole, teamOf, researchLead, listStreams, officeHolder, type Org,
   budgetLines, GATE_JOB_TYPES,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
@@ -36,12 +36,17 @@ export interface HeartbeatDeps {
 
 export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { kind: 'job'; id: string } } | { status: 'cancelled' } | { status: 'requeued'; attempt: number };
 
-export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'company_plan', 'critic', 'team_plans', 'brief', 'commit'] as const;
-/** How long a heartbeat waits for company.plan/critic.premortem/team.plan before writing the brief with "planning pending" (R33). */
+/**
+ * The cycle, in order. A step with no `case` in the loop below is walked through without doing anything:
+ * `owner_verdict` is named here because the board pre-mortem already stores the verdict it rules on
+ * (`state.boardVerdict`), but the owner's ruling itself is not wired yet.
+ */
+export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit'] as const;
+/** How long a heartbeat waits for company.plan/team.plan before writing the brief with "planning pending" (R33). */
 export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
 
 /** Planning and gate job types never count toward the "N jobs completed" heartbeat trigger — otherwise a single
- *  cycle's own planning/gate sub-jobs (company.plan, critic.premortem, team.plan, plus every `GATE_JOB_TYPES`
+ *  cycle's own planning/gate sub-jobs (company.plan, board.premortem, team.plan, plus every `GATE_JOB_TYPES`
  *  gate: qa.review, security.review, requester.review, research.review, coo.verify) push the count past the
  *  threshold and the heartbeat retriggers itself. The re-planning gate uses the same list for "work still
  *  open": a queued coo.verify is bookkeeping, not work from the plan. `GATE_JOB_TYPES` lives in core so
@@ -52,7 +57,7 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
  *  planned. Counting them meant four of the five completions the next heartbeat waits for were the daemon's own
  *  sweeps, so one real job fired the next cycle, which enqueued four more — a self-driving cadence that also ate
  *  the free cheap-tier pool. */
-export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES, 'intelligence', 'research.measure'];
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'board.premortem', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES, 'intelligence', 'research.measure'];
 
 /**
  * The outbound services whose adapters are in mock mode for this env, in the order the brief names them. Asks the
@@ -93,16 +98,16 @@ export function modelUseRows(use: { calls: number; downgraded: number }, noCloud
 
 /**
  * Whether this heartbeat may keep the current Plans/plan.md instead of rewriting it. Every heartbeat used to run
- * company.plan → critic.premortem → one team.plan per lead → gates (≈16 model calls) before any work, and on the
+ * company.plan → the board pre-mortem → one team.plan per lead → gates (≈16 model calls) before any work, and on the
  * local floor one such "Plan Growth" took three days. Skip only when ALL hold: the plan's frontmatter `updated`
  * parses to a date less than `maxAgeDays` old (the template's `updated: ""` and a future or garbled stamp mean
  * "age unknown" → plan), the plan is substantive, work from it is still queued or running, nobody asked for a
- * change (owner message, owner edit, owner-triggered heartbeat), and this is not the Critic's requested rewrite.
+ * change (owner message, owner edit, owner-triggered heartbeat), and this is not the board's requested rewrite.
  */
 export function planningGate(opts: { plan: string; now: Date; maxAgeDays: number | undefined; openJobs: number; ownerAsked: boolean; rewrite: boolean }): { skip: true; planDate: string } | { skip: false; reason: string } {
   const { plan, now, maxAgeDays, openJobs, ownerAsked, rewrite } = opts;
   if (maxAgeDays === undefined || !(maxAgeDays > 0)) return { skip: false, reason: 'gate disabled' };
-  if (rewrite) return { skip: false, reason: 'the Critic returned the plan' };
+  if (rewrite) return { skip: false, reason: 'the board returned the plan' };
   if (ownerAsked) return { skip: false, reason: 'the owner asked for something' };
   if (openJobs === 0) return { skip: false, reason: 'no work from the plan is open' };
   if (!planIsSubstantive(plan)) return { skip: false, reason: 'the plan has no real objective' };
@@ -153,10 +158,10 @@ export function parseObjectiveSections(plan: string): { team: string; text: stri
 }
 
 /**
- * True iff `Plans/plan.md` has at least one real objective, so the Critic step is worth running. A plan with no
+ * True iff `Plans/plan.md` has at least one real objective, so the board pre-mortem is worth running. A plan with no
  * `### <team>` sections at all is not substantive. Within each section, a bullet counts as real work unless it is
  * pure busywork ("Verify ..." / "Reconcile ..."); the plan is substantive iff ANY bullet in ANY section is real
- * work — a single verify-only section next to a real objective in another section must still run the Critic
+ * work — a single verify-only section next to a real objective in another section must still run the board
  * (Task 9 review finding 1: the previous regex used `.test()` with `m` and matched per-line, so it wrongly
  * short-circuited to "skip" on the first verify/reconcile-only section it found).
  */
@@ -182,29 +187,69 @@ export function firstOpenJob(ids: string[], statusOf: (id: string) => string | u
   return open ?? ids[ids.length - 1];
 }
 
+/** The system prompt an advisor speaks from: the hard rules plus its own charter and persona. */
+function advisorSystem(vault: Vault, role: string): string {
+  const constitution = vault.readTextOrNull('Memory/constitution.md') ?? '';
+  const note = vault.readNoteOrNull(`Roles/${role}.md`);
+  return `# Constitution\n${constitution}\n\n# Your charter (${String(note?.data.display ?? role)})\n${note?.body ?? ''}\n\nAnswer in plain markdown, no preamble.`;
+}
+
+/** What the board calls an advisor by: the display name on its role note, else its id. */
+function advisorName(vault: Vault, role: string): string {
+  return String(vault.readNoteOrNull(`Roles/${role}.md`)?.data.display ?? role);
+}
+
 /**
- * The Critic's pre-mortem as a `Decisions/premortem-<heartbeat id>.md` note: `adopted` when the plan survived,
- * `proposed` when the Critic returned it (the plan it judged is not the plan that will run). The findings are the
- * failure modes it foresaw, which is what makes the note worth reading a cycle later.
+ * The chair's merged answer, read strictly enough to be trusted and loosely enough never to block the cycle: a
+ * `VERDICT: return` line returns the plan, anything else (including a missing line, or no model at all) passes
+ * it. The board advises; it may not stall the company by answering badly.
  */
-export function writePremortemDecision(vault: Vault, hbId: string, criticJobId: string, result: JobResult | null, now: Date): string {
-  const critic = resolveRole(loadOrg(vault), 'critic');
-  const verdict = result?.verdict ?? 'pass';
-  const findings = result?.findings ?? [];
-  const risks = findings.length
-    ? findings.map((f) => `- ${f}`).join('\n')
-    : '- The Critic found nothing in this plan likely to sink the cycle.';
+export function mergeBoardVerdict(text: string): { verdict: 'pass' | 'return'; findings: string[] } {
+  const verdict = /^\s*verdict:\s*return\b/im.test(text) ? 'return' : 'pass';
+  const findings = text.split('\n')
+    .map((l) => l.trim().match(/^[-*]\s+(.+)$/)?.[1]?.trim())
+    .filter((f): f is string => !!f && f.length > 3)
+    .slice(0, 4);
+  return { verdict, findings };
+}
+
+/**
+ * The board room, in at most four model calls (spec §2/§4): each advisor reads the plan in its own voice, the
+ * board lead merges the three into one verdict. No sub-jobs, because three advisor jobs plus their gates cost a
+ * whole cycle's quota on the free tier and the board must answer inside this heartbeat.
+ */
+export async function runBoardSession(deps: HeartbeatDeps, org: Org, plan: string): Promise<{ verdict: 'pass' | 'return'; findings: string[]; advisors: string[]; transcript: string }> {
+  const vault = deps.vault;
+  const board = org.teams.board;
+  const advisors = [board.lead, ...board.members].filter((r) => org.roles[r]).slice(0, 3);
+  const notes: string[] = [];
+  for (const a of advisors) {
+    const text = await askAs(deps, a, advisorSystem(vault, a), `This cycle's plan:\n\n${plan.slice(0, 4000)}\n\nImagine the cycle has already failed. Write at most three bullets: the failure mode you see and the one change that would prevent it. One line each, concrete, no preamble.`, 500);
+    notes.push(`### ${advisorName(vault, a)}\n${text ?? '(no answer: no model was available)'}`);
+  }
+  const transcript = notes.join('\n\n');
+  const merged = await askAs(deps, board.lead, advisorSystem(vault, board.lead), `You chair the board. Your advisors wrote:\n\n${transcript}\n\nMerge them into ONE verdict for the owner. First line exactly "VERDICT: pass" or "VERDICT: return". Then at most four bullets, each a failure mode this plan does not answer and the change that fixes it. Return the plan only if running it as written would waste the cycle; you cannot delay.`, 600);
+  return { ...mergeBoardVerdict(merged ?? ''), advisors, transcript };
+}
+
+/**
+ * The board's pre-mortem as a `Decisions/premortem-<heartbeat id>.md` note: `adopted` when the plan survived,
+ * `proposed` when the board returned it (the plan it judged is not the plan that will run). The findings are the
+ * failure modes the board foresaw, which is what makes the note worth reading a cycle later.
+ */
+export function writeBoardPremortemDecision(vault: Vault, hbId: string, boardJobId: string, verdict: 'pass' | 'return', findings: string[], decidedBy: string, now: Date): string {
+  const risks = findings.length ? findings.map((f) => `- ${f}`).join('\n') : '- The board found nothing in this plan likely to sink the cycle.';
   const review = new Date(now.getTime() + 7 * 24 * 3600_000).toISOString().slice(0, 10);
   return writeDecision(vault, `premortem-${hbId}`, {
-    decided_by: critic, cycle: hbId, status: verdict === 'pass' ? 'adopted' : 'proposed', inputs: ['[[Plans/plan]]'],
+    decided_by: decidedBy, cycle: hbId, status: verdict === 'pass' ? 'adopted' : 'proposed', inputs: ['[[Plans/plan]]'],
   }, {
-    context: `Pre-mortem for heartbeat ${hbId}: the Critic read this cycle's \`Plans/plan.md\` and imagined the cycle had already failed. Its own working is in [[${criticJobId}]].`,
-    options: '- Run the plan as the CEO wrote it\n- Return it to the CEO to rewrite before any team plans against it',
+    context: `Pre-mortem for heartbeat ${hbId}: the board read this cycle's \`Plans/plan.md\` and imagined the cycle had already failed. The advisors' own words are in [[${boardJobId}]].`,
+    options: '- Run the plan as the CEO wrote it\n- Return it to the CEO to rewrite before the owner rules on it',
     chosen: verdict === 'pass' ? 'Run the plan as written.' : 'Return the plan to the CEO for one rewrite.',
-    why: result?.summary?.trim() || (verdict === 'pass' ? 'The plan survived the pre-mortem.' : 'The Critic found failure modes the plan does not answer.'),
+    why: verdict === 'pass' ? 'The plan survived the pre-mortem.' : 'The board found failure modes the plan does not answer.',
     expected_effect: `Most likely ways this cycle fails, and what would prevent each:\n\n${risks}`,
     review_date: review,
-  }, critic);
+  }, decidedBy);
 }
 
 /** Create the `ceo.heartbeat` job note (the heartbeat is a job so R9/R10/R12 apply). */
@@ -246,13 +291,19 @@ function gather(vault: Vault, now: Date, mail: string[], analytics: string | nul
   return { since, gathered_at: now.toISOString(), elapsedHours, ownerEdits, finished, mail, analytics, unansweredOwnerMessages };
 }
 
-async function ask(deps: HeartbeatDeps, system: string, user: string, maxTokens = 800): Promise<string | null> {
+/** One tool-less completion spoken by `roleId`. Returns null on any failure: no step blocks on a model. */
+async function askAs(deps: HeartbeatDeps, roleId: string, system: string, user: string, maxTokens = 800): Promise<string | null> {
   try {
-    const r = await deps.llm.chat({ tier: 'strong', needsTools: false, roleId: 'ceo' }, { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], maxTokens });
+    const r = await deps.llm.chat({ tier: 'strong', needsTools: false, roleId }, { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], maxTokens });
     return r.content.trim() || null;
   } catch {
     return null;
   }
+}
+
+/** The same, spoken by whoever holds the chief executive's office. */
+async function ask(deps: HeartbeatDeps, system: string, user: string, maxTokens = 800): Promise<string | null> {
+  return askAs(deps, officeHolder(loadOrg(deps.vault), 'chief_executive'), system, user, maxTokens);
 }
 
 function ceoSystem(vault: Vault): string {
@@ -275,7 +326,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { companyPlanJob?: string; criticJob?: string; processedCritic?: string; vetoes?: number; criticFindings?: string[]; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; teamPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -283,8 +334,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   if (job.blocked_on?.kind === 'job') {
     const atStep = HEARTBEAT_STEPS[job.checkpoint_step];
     if (atStep === 'company_plan' && !state.companyPlanJob) state = { ...state, companyPlanJob: job.blocked_on.id };
-    if (atStep === 'critic' && !state.criticJob) state = { ...state, criticJob: job.blocked_on.id };
-    if (atStep === 'team_plans' && !state.teamPlanJobs) {
+    if (atStep === 'division_plans' && !state.teamPlanJobs) {
       const ids = listJobs(vault).filter((j) => j.parent === jobId && j.type === 'team.plan').map((j) => j.id);
       if (ids.length) state = { ...state, teamPlanJobs: ids };
     }
@@ -322,12 +372,6 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     const prevArchive = vault.list('Plans/archive', { ext: '.md' }).sort().pop();
     if (planCur.trim() && (!prevArchive || vault.readText(prevArchive) !== planCur)) vault.writeText(`Plans/archive/${stampForFilename(now())}-${hbId.slice(-4)}.md`, planCur, 'ceo', { job: jobId });
   };
-  // Extract the last `## Result` JSON block a sub-job finished with (verdict/findings for gates and the Critic).
-  const parseResult = (body: string): JobResult | null => {
-    const raw = body.split('## Result')[1]?.match(/```json\n([\s\S]*?)\n```/)?.[1];
-    if (!raw) return null;
-    try { return JobResult.parse(JSON.parse(raw)); } catch { return null; }
-  };
   // What the last brief told a team to do next, so this cycle's plan can build on it instead of starting cold.
   const lastNextAction = (teamId: string): string => {
     const last = vault.list('Runs', { ext: '.md' }).sort().at(-1);
@@ -345,7 +389,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   for (let i = job.checkpoint_step; i < HEARTBEAT_STEPS.length; i++) {
     if (cancelled()) return { status: 'cancelled' };
     const step = HEARTBEAT_STEPS[i];
-    // Block the heartbeat on a single sub-job (company.plan, critic.premortem): resumes when it finishes (R33).
+    // Block the heartbeat on a single sub-job (company.plan, team.plan): resumes when it finishes (R33).
     const block = (id: string, log: string): HeartbeatOutcome => {
       updateJob(vault, jobId, { status: 'blocked', blocked_on: { kind: 'job', id, since: nowIso() } }, 'ceo', `- step ${i + 1} ${step}: ${log}`);
       vault.events.emit({ type: 'job.blocked', agent: 'ceo', job: jobId, payload: { reason: 'job', id } });
@@ -444,7 +488,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           // Re-planning gate: a fresh, substantive plan with work still open stands (see planningGate). "Owner
           // asked" is read broadly — an unanswered message, any owner edit, or an owner-/forced-triggered
           // heartbeat — because skipping wrongly costs a cycle of stale direction while planning wrongly costs
-          // only quota. A Critic return (state.vetoes) is a rewrite request and is never skipped.
+          // only quota. A board return (state.vetoes) is a rewrite request and is never skipped.
           const openJobs = listJobs(vault, { status: ['queued', 'running'] }).filter((j) => !NON_WORK_TYPES.includes(j.type)).length;
           const ownerAsked = (state.unansweredOwnerMessages?.length ?? 0) > 0 || (state.ownerEdits?.length ?? 0) > 0 || /owner|forced/i.test(job.title);
           const gate = planningGate({ plan: vault.readTextOrNull('Plans/plan.md') ?? '', now: now(), maxAgeDays: deps.planMaxAgeDays, openJobs, ownerAsked, rewrite: (state.vetoes ?? 0) > 0 });
@@ -459,9 +503,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           const org = loadOrg(vault);
           const teams = Object.values(org.teams).filter((t) => t.lead !== 'ceo' || t.members.length).map((t) => `${t.id} (lead ${t.lead}: ${t.mission})`).join('; ');
           const streams = listStreams(vault).filter((s) => s.status === 'active').map((s) => `${s.slug} (${s.outcome_metric}, owned by ${s.owner_team})`).join('; ') || 'none yet — the product manager writes Streams/<slug>.md before the first objective';
-          const findings = state.criticFindings?.length ? `\n\nThe Critic returned the previous draft with these findings; address each one:\n${state.criticFindings.map((f) => `- ${f}`).join('\n')}` : '';
+          const findings = state.boardFindings?.length ? `\n\nThe board returned the previous draft with these findings; address each one:\n${state.boardFindings.map((f) => `- ${f}`).join('\n')}` : '';
           const id = createJob(vault, {
-            type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the Critic' : 'Write the company plan', assigned: 'ceo', priority: 1, parent: jobId, team: teamOf(org, 'ceo')?.id ?? 'executive', owner_role: 'ceo',
+            type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the board' : 'Write the company plan', assigned: 'ceo', priority: 1, parent: jobId, team: teamOf(org, 'ceo')?.id ?? 'executive', owner_role: 'ceo',
             goal: `Write this cycle's objectives per team, not jobs.\n\nSituation:\n${situationSummary()}\n\nTeams: ${teams}.\n\nStreams: ${streams}.\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <team id>" subsection per team that has work this cycle (a bullet per objective; every objective for a product team ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); teams with nothing to do get no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
           }, 'ceo');
           state = { ...state, companyPlanJob: id }; saveState(state);
@@ -477,67 +521,54 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         done(i, `company.plan ${sub.data.status}`);
         break;
       }
-      case 'critic': {
-        if (state.planSkipped) { done(i, 'critic skipped — the plan was not rewritten'); break; }
+      case 'board_premortem': {
+        if (state.planSkipped || state.planWaiting) { done(i, 'board skipped — the plan was not rewritten'); break; }
+        if (state.boardVerdict) { done(i, `board ${state.boardVerdict} (already run)`); break; }
         const org = loadOrg(vault);
-        const critic = resolveRole(org, 'critic');
+        const board = org.teams.board;
         const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
-        if (!org.roles[critic] || !planIsSubstantive(plan)) { done(i, 'critic skipped'); break; }
-        if (!state.criticJob) {
-          const id = createJob(vault, {
-            type: 'critic.premortem', title: `Pre-mortem for ${hbId}`, assigned: critic, priority: 1, parent: jobId, team: teamOf(org, critic)?.id ?? 'board', owner_role: 'ceo',
-            goal: `Read Plans/plan.md. Imagine this cycle has already failed: work out the three most likely reasons and one concrete fix for each. Then finish with verdict pass if the plan survives, or verdict return with findings (one line each, concrete) — put the reasons and fixes in your finish summary and findings. The heartbeat records them as the pre-mortem decision note for you; do not write one yourself. You may return at most once; you cannot delay.`,
-          }, 'ceo');
-          state = { ...state, criticJob: id }; saveState(state);
-          return block(id, `waiting for critic ${id}`);
-        }
-        const sub = readJob(vault, state.criticJob);
-        if (!sub || !['done', 'failed', 'cancelled'].includes(sub.data.status)) {
-          const w = waitOrGiveUp(state.criticJob, (min) => `critic ${state.criticJob} still ${sub?.data.status ?? 'missing'} after ${min} min — planning pending`);
-          if (w) return w;
-          break;
-        }
-        if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
-        if (state.processedCritic === state.criticJob) {
-          // Crash-recovery re-entry (Task 9 review finding 3): the verdict for this critic job was already
-          // counted/acted on — the crash window is between saving processedCritic below and the vetoes===1
-          // requeue's own updateJob (checkpoint_step/status/blocked_on). Re-running the verdict branch here would
-          // double-count the veto (or re-open a resolved owner-escalation), so just advance past the step.
-          done(i, `critic ${state.criticJob} already processed`);
-          break;
-        }
-        const result = parseResult(sub.body);
-        // A critic job with no parseable ## Result block fails open to "pass" below (never blocking the cycle
-        // on a malformed Result), but that must not happen silently (T9).
-        if (!result) vault.events.emit({ type: 'daemon.warning', agent: 'ceo', job: jobId, payload: { where: 'critic', message: `critic ${state.criticJob} has no parseable Result; treated as pass` } });
+        if (!board || !org.roles[board.lead] || !planIsSubstantive(plan)) { done(i, 'board skipped'); break; }
+        const ceo = officeHolder(org, 'chief_executive');
+        const session = await runBoardSession(deps, org, plan);
+        if (cancelled()) return { status: 'cancelled' };
+        // The job note is the record of the session, not a unit of work: it is created with `depends_on` on this
+        // heartbeat (so no worker can pick it up while the heartbeat runs) and closed in the same tick. Its id is
+        // keyed on the round (`vetoes`), so a crash-resume rewrites the same note while the one allowed rewrite
+        // gets a second one — two sessions, two records.
+        const boardJob = createJob(vault, {
+          id: idFromKey('job', `board:${hbId}:${state.vetoes ?? 0}`), type: 'board.premortem', title: `Board pre-mortem for ${hbId}`,
+          assigned: board.lead, priority: 1, parent: jobId, team: board.id, owner_role: ceo,
+          depends_on: [jobId], links: [`[[${jobId}]]`],
+          goal: `The board read Plans/plan.md for heartbeat ${hbId} and merged ${session.advisors.length} pre-mortems into one verdict.`,
+        }, ceo);
+        vault.updateNote(`Jobs/${boardJob}.md`, (n) => ({
+          data: { ...n.data, status: 'done', checkpoint_step: 1, updated: nowIso() },
+          body: setSection(setSection(n.body, '## Advisors', session.transcript), '## Result', '```json\n' + JSON.stringify({ status: 'done', summary: `board ${session.verdict}`, verdict: session.verdict, findings: session.findings }, null, 2) + '\n```'),
+        }), board.lead, { job: boardJob });
+        vault.events.emit({ type: 'job.done', agent: board.lead, job: boardJob, payload: { type: 'board.premortem', summary: `board ${session.verdict}`, verdict: session.verdict } });
         // A pre-mortem is a decision the company should be able to look back on (spec §4.1), so the heartbeat
-        // writes it as a validated Decisions/ note rather than trusting the Critic to hand-roll the frontmatter
-        // and the six sections.
-        //
-        // Written BEFORE processedCritic becomes durable: a crash in the other order resumes into the
-        // "already processed" branch below and the cycle loses its pre-mortem for good. `writeDecision` keys off
-        // the heartbeat id, so a resume — or the one allowed veto's second visit — rewrites the same note, which
-        // then states the verdict the cycle actually ran with.
-        try { writePremortemDecision(vault, hbId, state.criticJob!, result, now()); }
-        catch (err) { vault.events.emit({ type: 'daemon.warning', agent: 'ceo', job: jobId, payload: { where: 'critic', message: `could not write the pre-mortem decision note: ${(err as Error).message}` } }); }
-        // Durably mark this critic job's verdict as being processed BEFORE counting the veto or requeuing, so a
-        // crash after this write and before the requeue's updateJob resumes here instead of double-processing.
-        state = { ...state, processedCritic: state.criticJob }; saveState(state);
-        if (result?.verdict === 'return') {
+        // writes it as a validated Decisions/ note rather than trusting the board to hand-roll the frontmatter
+        // and the six sections. Written BEFORE the verdict becomes durable in the state file: a crash in the
+        // other order resumes into the "already run" branch above and the cycle loses its pre-mortem for good.
+        try { writeBoardPremortemDecision(vault, hbId, boardJob, session.verdict, session.findings, board.lead, now()); }
+        catch (err) { vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'board_premortem', message: `could not write the pre-mortem decision note: ${(err as Error).message}` } }); }
+        state = { ...state, boardJob, boardVerdict: session.verdict, boardFindings: session.findings }; saveState(state);
+        if (session.verdict === 'return') {
           const vetoes = (state.vetoes ?? 0) + 1;
-          vault.events.emit({ type: 'plan.vetoed', agent: resolveRole(org, 'critic'), job: jobId, payload: { findings: result.findings, vetoes } });
+          vault.events.emit({ type: 'plan.vetoed', agent: board.lead, job: jobId, payload: { findings: session.findings, vetoes } });
           if (vetoes === 1) {
-            state = { ...state, vetoes, criticFindings: result.findings, companyPlanJob: undefined, criticJob: undefined }; saveState(state);
-            updateJob(vault, jobId, { status: 'queued', checkpoint_step: i - 1, blocked_on: undefined }, 'ceo', `- step ${i + 1} critic: returned; rewriting the plan`);
+            // One rewrite, then the owner rules on whatever the CEO produced: the board cannot stall the company.
+            state = { ...state, vetoes, companyPlanJob: undefined, boardJob: undefined, boardVerdict: undefined }; saveState(state);
+            updateJob(vault, jobId, { status: 'queued', checkpoint_step: i - 1, blocked_on: undefined }, 'ceo', `- step ${i + 1} board_premortem: returned; rewriting the plan`);
             return { status: 'requeued', attempt: job.attempt };
           }
           state = { ...state, vetoes }; saveState(state);
-          createProposal(vault, { kind: 'message', from: 'ceo', to: 'owner', title: `The Critic vetoed the plan twice`, body: `Findings:\n${result.findings.map((f) => `- ${f}`).join('\n')}\n\nThe cycle continues with the current plan; reply if you want it changed.`, job: jobId }, 'ceo');
+          createProposal(vault, { kind: 'message', from: ceo, to: 'owner', title: `The board vetoed the plan twice`, body: `Findings:\n${session.findings.map((f) => `- ${f}`).join('\n')}\n\nThe cycle continues with the current plan; reply if you want it changed.`, job: jobId }, ceo);
         }
-        done(i, `critic ${result?.verdict ?? 'pass'}`);
+        done(i, `board ${session.verdict}`);
         break;
       }
-      case 'team_plans': {
+      case 'division_plans': {
         // The leads already planned against this plan last cycle and their jobs are the open work the gate saw.
         if (state.planSkipped && !state.teamPlanJobs) { done(i, 'team plans skipped — the plan was not rewritten'); break; }
         const org = loadOrg(vault);
