@@ -29,7 +29,7 @@ describe('deploy.site first-time approval counts live deploys only', () => {
       const spends = () => listInbox(vault).filter((n) => n.data.kind === 'spend');
 
       // A preview is proposed like any first deploy; the owner approves it out of band.
-      const j1 = createJob(vault, { type: 'engineer.ship', title: 'preview', assigned: 'backend_engineer', goal: 'deploy' }, 'cto');
+      const j1 = createJob(vault, { type: 'engineer.ship', title: 'preview', assigned: 'platform_engineer', goal: 'deploy' }, 'cto');
       await runJob({ ...base, llm: scripted([{ tool: 'deploy.site', args: { stage: 'preview' } }, finishStep]) }, j1);
       expect(spends().length).toBe(1);
       expect(vault.events.count('deploy.done')).toBe(0);
@@ -39,14 +39,14 @@ describe('deploy.site first-time approval counts live deploys only', () => {
       vault.events.emit({ type: 'deploy.done', agent: 'daemon', payload: { url: 'https://canary.acme.pages.dev', project: 'acme', mode: 'mock', stage: 'canary' } });
 
       // The first *live* deploy is still owner business: two non-live deploys bought it nothing.
-      const j2 = createJob(vault, { type: 'engineer.ship', title: 'go live', assigned: 'backend_engineer', goal: 'deploy' }, 'cto');
+      const j2 = createJob(vault, { type: 'engineer.ship', title: 'go live', assigned: 'platform_engineer', goal: 'deploy' }, 'cto');
       await runJob({ ...base, llm: scripted([{ tool: 'deploy.site', args: { stage: 'live', metrics: ['error rate'] } }, finishStep]) }, j2);
       expect(spends().length).toBe(2);
       expect(vault.events.count('deploy.done')).toBe(2); // still only the two we recorded by hand
 
       // Once a live deploy is on the record, later deploys run without asking again.
       vault.events.emit({ type: 'deploy.done', agent: 'daemon', payload: { url: 'https://acme.pages.dev', project: 'acme', mode: 'mock', stage: 'live' } });
-      const j3 = createJob(vault, { type: 'engineer.ship', title: 'again', assigned: 'backend_engineer', goal: 'deploy' }, 'cto');
+      const j3 = createJob(vault, { type: 'engineer.ship', title: 'again', assigned: 'platform_engineer', goal: 'deploy' }, 'cto');
       expect((await runJob({ ...base, llm: scripted([{ tool: 'deploy.site', args: { stage: 'preview' } }, finishStep]) }, j3)).status).toBe('done');
       expect(spends().length).toBe(2); // no third proposal
       expect(vault.events.count('deploy.done')).toBe(4);
