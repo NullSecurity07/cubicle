@@ -3,6 +3,7 @@ import type { Vault } from './vault.js';
 import { Timestamp } from './schemas.js';
 import { parseNote, stringifyNote } from './frontmatter.js';
 import { nowIso } from './fs.js';
+import { isNeverModifyPath } from './guard.js';
 
 /**
  * Money: the company's book, and the arithmetic over it.
@@ -263,6 +264,14 @@ export function readLedger(vault: Vault): Ledger {
 /** Bounded retries for the compare-and-write race in `appendEntry`; an append commutes, so a retry never loses work. */
 const MAX_APPEND_ATTEMPTS = 5;
 
+/** Thrown by `appendEntry` when the owner's own `never_modify` names the book — see its doc comment. */
+export class LedgerVetoedError extends Error {
+  constructor() {
+    super(`${LEDGER_PATH} is on the owner's own never_modify list; refusing to write it even as the privileged actor appendEntry otherwise always uses`);
+    this.name = 'LedgerVetoedError';
+  }
+}
+
 /**
  * Add one row. The only writer there is, and the reason the book can be trusted: it reads the note, splices one
  * line in after the last table row, and writes it back. Every other byte of the file — the owner's prose, their
@@ -279,8 +288,27 @@ const MAX_APPEND_ATTEMPTS = 5;
  * write must not be clobbered. `vault.currentSha` is checked immediately before the write; on a change it re-reads
  * and re-splices on the fresh copy — an append commutes, so retrying never loses the concurrent write — bounded to
  * `MAX_APPEND_ATTEMPTS` attempts before giving up loudly rather than silently dropping either side.
+ *
+ * `Ledger/` is owner-owned (`OWNER_OWNED_PREFIXES`, guard.ts), so `vault.write`/`vault.append` refuse it outright
+ * for every agent — but the book still has to accept a row from whichever role `ledger.record` ran as (`cfo`,
+ * `cso`, …), and none of those are the privileged actors (`daemon`, `owner`, `system`, `init`) that
+ * `assertWritable` lets through. Rather than go around `vault.writeText` (which would lose the compare-and-write
+ * above and the `vault.wrote` event other code relies on), the actual write below always goes through as
+ * `'daemon'` — the same actor the daemon's own writes use — regardless of who called `appendEntry`. Nothing
+ * about who really asked is lost: every caller already puts that in the entry itself (`e.who`, the row's `who`
+ * column, the record that matters for the book); `'daemon'` here is only ever the vault layer's write
+ * provenance for *this one file*. (The parameter this used to thread through as `by` is `_by`, kept only so
+ * every existing call site still compiles; nothing here reads it — see below for the owner's real veto.)
+ *
+ * A privileged actor makes `assertWritable` return without even looking at the owner's `never_modify` list, so
+ * fixing the actor to `'daemon'` would otherwise silently overrule an owner who lists `Ledger/ledger.md` (or a
+ * `Ledger/` entry) there on purpose. `appendEntry` checks that list itself, before ever touching the file, and
+ * throws rather than write — the one veto `'daemon'` cannot bypass, because this function asks first.
  */
-export function appendEntry(vault: Vault, e: NewEntry, by: string): { entry: LedgerEntry; added: boolean } {
+export function appendEntry(vault: Vault, e: NewEntry, _by: string): { entry: LedgerEntry; added: boolean } {
+  if (isNeverModifyPath(LEDGER_PATH, vault.constitution().never_modify)) {
+    throw new LedgerVetoedError();
+  }
   const at = e.at !== undefined && Number.isFinite(Date.parse(e.at)) ? e.at : nowIso();
   const entry = LedgerEntry.parse({ ...e, at, ref: (e.ref ?? '').trim() });
 
@@ -304,7 +332,9 @@ export function appendEntry(vault: Vault, e: NewEntry, by: string): { entry: Led
       vault.events.emit({ type: 'daemon.warning', payload: { path: LEDGER_PATH, reason: 'note changed during update; retrying the append on the fresh copy' } });
       continue;
     }
-    vault.writeText(LEDGER_PATH, next.join('\n') + '\n', by);
+    // Written as the privileged actor: `Ledger/` is owner-owned (see the doc comment above), and the role
+    // `ledger.record` ran as never is. `e.who` (already in `entry`) is the row's own record of who asked.
+    vault.writeText(LEDGER_PATH, next.join('\n') + '\n', 'daemon');
     return { entry, added: true };
   }
   throw new Error(`appendEntry: ${LEDGER_PATH} changed under us ${MAX_APPEND_ATTEMPTS} times in a row; giving up`);

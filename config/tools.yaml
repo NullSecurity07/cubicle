@@ -44,6 +44,7 @@ tools:
   discovery.inputs:      { mode: auto }
   idea.card:             { mode: auto }
   proposal.create:       { mode: auto }
+  ledger.record:         { mode: auto }
   finish:                { mode: auto }
   mock.outbound:         { mode: auto, outbound: true, proposal_kind: outbound_batch }
 

@@ -1,5 +1,12 @@
-/** Paths agents may never write directly. Daemon-side dispatcher writes bypass this by construction. */
-export const OWNER_OWNED_PREFIXES = ['Brand/', 'Roles/', 'Teams/'];
+/**
+ * Paths agents may never write directly. Daemon-side dispatcher writes bypass this by construction.
+ * `Ledger/` joins this list for the book (spec §7): the only sanctioned writer is `appendEntry` (money.ts),
+ * reached through the `ledger.record` tool or the daemon's own accrual. It writes through this same guard —
+ * as `'daemon'`, a privileged actor, regardless of who actually asked — rather than going around it, so the
+ * compare-and-write it does against `Ledger/ledger.md` and the `vault.wrote` event it emits stay the ones this
+ * guard already produces (see `appendEntry`'s doc comment for why).
+ */
+export const OWNER_OWNED_PREFIXES = ['Brand/', 'Roles/', 'Teams/', 'Ledger/'];
 export const OWNER_OWNED_FILES = ['Memory/constitution.md', 'Memory/owner_preferences.md'];
 export const CACHE_PREFIXES = ['.cubicle/', '.obsidian/', '.git/'];
 
@@ -51,10 +58,14 @@ export function isSecretPath(rel: string): boolean {
   return false;
 }
 
-export function isOwnerOwned(rel: string, extraNeverModify: string[] = []): boolean {
+/**
+ * Whether `rel` matches one of the owner's own `never_modify` entries — the constitution's list, never the
+ * structural `OWNER_OWNED_PREFIXES`/`OWNER_OWNED_FILES` above. Split out from `isOwnerOwned` so a caller that
+ * needs to know specifically "did the owner veto *this*" can ask, without a path that is owner-owned for a
+ * structural reason (e.g. `Ledger/`) always answering yes regardless of what `never_modify` actually contains.
+ */
+export function isNeverModifyPath(rel: string, extraNeverModify: string[] = []): boolean {
   const p = normalizeRel(rel);
-  if (OWNER_OWNED_FILES.includes(p)) return true;
-  if (OWNER_OWNED_PREFIXES.some((pre) => p.startsWith(pre))) return true;
   for (const nm of extraNeverModify) {
     let n: string;
     try { n = normalizeRel(nm); } catch { continue; }
@@ -63,6 +74,13 @@ export function isOwnerOwned(rel: string, extraNeverModify: string[] = []): bool
     if (isDir ? (p === n || p.startsWith(n + '/')) : p === n) return true;
   }
   return false;
+}
+
+export function isOwnerOwned(rel: string, extraNeverModify: string[] = []): boolean {
+  const p = normalizeRel(rel);
+  if (OWNER_OWNED_FILES.includes(p)) return true;
+  if (OWNER_OWNED_PREFIXES.some((pre) => p.startsWith(pre))) return true;
+  return isNeverModifyPath(p, extraNeverModify);
 }
 
 /**
