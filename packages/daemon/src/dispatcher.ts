@@ -313,11 +313,17 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             // switch for that case — approved === null is skipped above unless auto-approved, which never
             // applies to idea_verdict, so `decision` here is always a real IdeaBand.
             const decision = ideaOutcome({ approved: d.approved, chosen: d.chosen, band }) as IdeaBand;
+            // The sentence the owner was shown, stamped beside the band it explains — not a recomputation. On
+            // the very case the stamped band exists for (a card re-filed between the session and the click) a
+            // fresh `bandReason` would print arithmetic that recommends something other than the decision
+            // written directly above it.
+            const stampedReason = typeof (d as { band_reason?: unknown }).band_reason === 'string' ? String((d as { band_reason?: string }).band_reason) : '';
+            const reason = stampedReason || (card.data.score === null ? 'The card was never scored.' : bandReason(card.data.score, { value: card.data.score_inputs.value ?? 3, board: card.data.board_verdict }));
             const why = d.approved === false
               ? 'The owner turned it down. Parked, not scrapped: the research behind it survives for a later cycle.'
               : d.chosen !== null
                 ? `The owner overruled the recommendation (${band}) with \`chosen: ${d.chosen}\`.`
-                : `The owner took the recommendation. ${card.data.score === null ? 'The card was never scored.' : bandReason(card.data.score, { value: card.data.score_inputs.value ?? 3, board: card.data.board_verdict })}`;
+                : `The owner took the recommendation. ${reason}`;
             updateIdea(vault, slug, {
               decision, decided_by: 'owner', decided_at: nowIso(),
               status: decision === 'scrap' ? 'rejected' : decision === 'keep' ? 'accepted' : 'triaged',

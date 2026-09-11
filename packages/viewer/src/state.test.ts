@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { boardSessionOpen } from './world/owner.js';
+import { boardHeadline } from './ui/board.js';
 import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, overseerRole, vetoRole, type Snapshot } from './state.js';
 
 const role = (o: Partial<Snapshot['roles'][number]> & { role: string }) => ({ display: o.role, sprite: o.role, desk: o.role, active: true, ...o });
@@ -77,6 +79,30 @@ describe('viewer state machine (spec §10)', () => {
     s = applyEvent(s, { ts: '2026-09-11T10:01:00.000Z', type: 'meeting.closed', agent: 'advisor_skeptic', job: null, payload: { id: 'm1', verdict: 'return', findings: ['delivery is unpriced'] } });
     expect(s.board).toMatchObject({ verdict: 'return', findings: ['delivery is unpriced'] });
     expect(s.meetings.m1.open).toBe(false);
+  });
+
+  // Re-review finding 3: I4 gave the *wall* back after a lost `meeting.closed`, but the board room itself kept
+  // the owner in the chair and the advisors standing at the table until the next session opened. Both now age
+  // out on the same twenty-minute rule, off the event log, so a replay recovers at the same point a live
+  // office does.
+  it('lets the board room go home when the close never arrives', () => {
+    let s = emptyState();
+    s = applyEvent(s, { ts: '2026-09-11T10:00:00.000Z', type: 'meeting.opened', agent: 'advisor_skeptic', job: null, payload: { id: 'm1', room: 'board', participants: ['advisor_skeptic'], subject: 'idea', title: 'Meal kits' } });
+    expect(s.meetings.m1).toMatchObject({ open: true, at: '2026-09-11T10:00:00.000Z' });
+    expect(boardSessionOpen(s.meetings, Date.parse('2026-09-11T10:05:00.000Z'))).toBe(true);
+
+    // Nineteen minutes later the board is still sitting; twenty-one minutes later it is not.
+    const still = applyEvent(s, { ts: '2026-09-11T10:19:00.000Z', type: 'job.done', agent: 'cto', job: 'job_x', payload: {} });
+    expect(still.meetings.m1.open).toBe(true);
+    const after = applyEvent(still, { ts: '2026-09-11T10:21:00.000Z', type: 'job.done', agent: 'cto', job: 'job_x', payload: {} });
+    expect(after.meetings.m1.open).toBe(false);
+    expect(boardSessionOpen(after.meetings, Date.parse('2026-09-11T10:21:00.000Z'))).toBe(false);
+    expect(boardHeadline(after.board, Date.parse('2026-09-11T10:21:00.000Z'))).toBeNull();
+
+    // A meeting in any other room is not the board's business and is left alone.
+    const standup = applyEvent(emptyState(), { ts: '2026-09-11T10:00:00.000Z', type: 'meeting.opened', agent: 'ceo', job: null, payload: { id: 'm2', room: 'meeting', participants: ['ceo'], agenda: 'standup' } });
+    const anHourOn = applyEvent(standup, { ts: '2026-09-11T11:00:00.000Z', type: 'job.done', agent: 'cto', job: 'job_x', payload: {} });
+    expect(anHourOn.meetings.m2.open).toBe(true);
   });
   it('surfaces track browser sessions, frames, mail, terminal, proposals, deploys', () => {
     let s = applySnapshot(emptyState(), snap);

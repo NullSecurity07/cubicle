@@ -214,7 +214,7 @@ export class OfficeScene extends Phaser.Scene {
       ag.update(view, dt, this.hooks.clock(), ctx);
     }
     for (const [role, ag] of this.agents) if (!s.agents[role]) { ag.destroy(); this.agents.delete(role); }
-    this.owner?.setVisible(boardSessionOpen(s.meetings));
+    this.owner?.setVisible(boardSessionOpen(s.meetings, s.now));
     this.owner?.setZoom(this.cameras.main.zoom);
     // each role's current tile, shared by the decor layer's occupancy checks and the lamp block's lit-rooms check
     const tiles = this.tiles;

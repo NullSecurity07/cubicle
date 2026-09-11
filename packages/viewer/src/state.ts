@@ -1,6 +1,6 @@
 /** Viewer state: a pure reducer over daemon events + snapshots. No persistence — the viewer is disposable (spec §10). */
 import { familyOf, type Family } from './world/palette.js';
-import { boardOpened, boardClosed, type BoardState } from './ui/board.js';
+import { boardOpened, boardClosed, BOARD_SESSION_MAX_MS, type BoardState } from './ui/board.js';
 export type AgentState = 'idle_at_desk' | 'working' | 'walking' | 'talking' | 'error' | 'blocked' | 'entering' | 'leaving' | 'offline';
 export type ToolIcon = 'browser' | 'terminal' | 'envelope' | 'doc' | 'chart' | 'chat' | null;
 export type Mood = 'neutral' | 'happy' | 'worried' | 'puzzled' | 'asleep' | 'thinking';
@@ -42,7 +42,7 @@ export interface State {
   terminal: string[];              // last shell output lines
   mail: { ts: string; text: string }[];
   feed: { ts: string; text: string }[];   // decisions / proposals / briefs for the newsstand
-  meetings: Record<string, { room: string; participants: string[]; open: boolean }>;
+  meetings: Record<string, { room: string; participants: string[]; open: boolean; at: string }>;
   /** The board room right now, or the verdict it just reached; null when the board is not in session. See ui/board.ts. */
   board: BoardState | null;
   frames: Record<string, { seq: number; jpegBase64?: string; path?: string }>;
@@ -178,6 +178,17 @@ export function actionVerb(tool: string, summary: unknown): string {
 /** Event → state. Pure: the office is a renderer/replayer of the log (spec §1.6). */
 export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State {
   const st: State = { ...s, agents: { ...s.agents }, jobs: { ...s.jobs }, surfaces: { ...s.surfaces }, meetings: { ...s.meetings }, frames: { ...s.frames }, lastEventTs: e.ts };
+  // A board session that never closed stops counting as open, on the same twenty-minute rule the whiteboard
+  // uses (`BOARD_SESSION_MAX_MS`). `runBoardSession` emits `meeting.opened`, awaits up to four model calls and
+  // then emits `meeting.closed`; a kill in that window used to leave the owner sitting in the chair at the head
+  // of the table and three advisors standing in the board room for the rest of the day — the office claiming a
+  // meeting is in progress, which is exactly what §6.2 rules out. Timed off the event log, like the rest of
+  // this reducer, so a replay ages it out at the same point a live office does.
+  for (const [id, m] of Object.entries(st.meetings)) {
+    if (!m.open || m.room !== 'board' || Date.parse(e.ts) - Date.parse(m.at) <= BOARD_SESSION_MAX_MS) continue;
+    st.meetings[id] = { ...m, open: false };
+    for (const r of m.participants) { const ag = st.agents[r]; if (ag?.active) st.agents[r] = { ...ag, target: null, state: 'walking' }; }
+  }
   // Inactive (fired) agents no longer react to events; they only leave.
   const a = (role: string | null | undefined): AgentView | null => {
     if (!role || !st.agents[role] || !st.agents[role].active) return null;
@@ -209,7 +220,7 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'job.failed': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: p.requeued ? 'queued' : 'failed', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.badge = 'error'; ag.target = null; ag.tool = null; ag.job = null; ag.bubble = null; feel(ag, 'worried', 10000); emote(ag, 'sweat', 6000); } const overseer = overseerRole(st); const coo = a(overseer); if (coo && e.agent !== overseer) { const desk = e.agent ? st.agents[e.agent]?.desk : ''; if (desk) { coo.target = `desk:${desk}`; coo.state = 'walking'; } emote(coo, 'clipboard', 20000); } break; }
     case 'job.cancelled': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'cancelled', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.job = null; ag.tool = null; ag.target = null; ag.bubble = null; feel(ag, 'neutral', null); } break; }
     case 'job.interrupted': { const ag = a(e.agent); if (ag) ag.badge = 'blocked'; break; }
-    case 'meeting.opened': { const id = String(p.id); const parts = (p.participants as string[]) ?? []; const room = String(p.room ?? 'meeting'); st.meetings[id] = { room, participants: parts, open: true }; for (const r of parts) { const ag = a(r); if (ag) { ag.target = room === 'board' ? 'boardroom' : 'meetingroom'; ag.state = 'walking'; } } st.board = boardOpened(p, e.ts) ?? st.board; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${room} meeting opened: ${String(p.agenda ?? '')}` }]; break; }
+    case 'meeting.opened': { const id = String(p.id); const parts = (p.participants as string[]) ?? []; const room = String(p.room ?? 'meeting'); st.meetings[id] = { room, participants: parts, open: true, at: e.ts }; for (const r of parts) { const ag = a(r); if (ag) { ag.target = room === 'board' ? 'boardroom' : 'meetingroom'; ag.state = 'walking'; } } st.board = boardOpened(p, e.ts) ?? st.board; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${room} meeting opened: ${String(p.agenda ?? '')}` }]; break; }
     case 'meeting.turn': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'speech', text: String(p.text ?? '').slice(0, 140), until: nowMs + BUBBLE_MS }; ag.state = 'talking'; } break; }
     case 'meeting.closed': { const id = String(p.id); if (st.meetings[id]) { st.meetings[id] = { ...st.meetings[id], open: false }; for (const r of st.meetings[id].participants) { const ag = a(r); if (ag) { ag.target = null; ag.state = 'walking'; } } } st.board = boardClosed(st.board, p, e.ts); st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `meeting closed → ${String(p.decision ?? '')}` }]; break; }
     case 'browser.session_started': st.surfaces[String(p.session)] = { streamKind: 'browser', streamId: String(p.session), active: true, agent: e.agent ?? undefined }; break;

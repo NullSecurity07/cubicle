@@ -5,8 +5,17 @@ import { toPx, type Tile } from './map.js';
 import { frameFor } from './frames.js';
 import { RES, nameLabelStyle, nameLabelView } from './text.js';
 import { Latch } from './latch.js';
+import { BOARD_SESSION_MAX_MS } from '../ui/board.js';
 
-export function boardSessionOpen(meetings: State['meetings']): boolean { return Object.values(meetings).some((m) => m.open && m.room === 'board'); }
+/**
+ * The owner sits only while the board really is sitting. `now` is passed so a session whose `meeting.closed`
+ * was lost — a kill, a crash, a dropped socket between the open and the close — stops seating the owner after
+ * `BOARD_SESSION_MAX_MS`, instead of leaving them in the chair until the next session opens. The reducer ages
+ * the same state off the event log; this is the renderer's own clock saying the same thing.
+ */
+export function boardSessionOpen(meetings: State['meetings'], now = Date.now()): boolean {
+  return Object.values(meetings).some((m) => m.open && m.room === 'board' && now - Date.parse(m.at) <= BOARD_SESSION_MAX_MS);
+}
 
 export class OwnerAvatar {
   readonly container: Phaser.GameObjects.Container;
