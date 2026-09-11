@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, updateJob, createStream, listJobs, setSection } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, updateJob, createStream, listJobs, setSection, budgetSpentHours } from '@cubicle/core';
 import { maybeOpenIncident, maybeCorrectiveActions, CORRECTIVE_MAX, postmortemPath } from '../src/evolution.js';
 import { teamPlanGoal } from '../src/heartbeat.js';
 
@@ -193,5 +193,52 @@ describe('a model-supplied stream cannot stop the sweep (fix wave item 4 / C2)',
     const id = maybeOpenIncident(vault);
     expect(id).not.toBeNull();
     expect(readJob(vault, id!)!.data.stream).toBe('checkout');
+  });
+});
+
+describe('an incident that failed or was cancelled still recovers (fix wave item 8 / I5)', () => {
+  /** An incident opened an hour ago and then left in `status`, with no postmortem. */
+  function abandonedIncident(status: 'failed' | 'cancelled' | 'done'): string {
+    const id = createJob(vault, { type: 'incident', title: 'Outage', assigned: 'sre', goal: 'g', team: 'dev', stream: 'checkout', risk: 'high' }, 'daemon');
+    vault.events.emit({ type: 'incident.opened', agent: 'daemon', job: id, payload: { stream: 'checkout', trigger: 'rollback' }, ts: new Date(Date.now() - 3600_000).toISOString() });
+    updateJob(vault, id, { status }, 'daemon');
+    return id;
+  }
+
+  for (const status of ['failed', 'cancelled'] as const) {
+    it(`a ${status} incident emits incident.recovered with the reason, and stops charging the error budget`, () => {
+      const id = abandonedIncident(status);
+      // Before the sweep the budget is still burning: opened, never recovered.
+      expect(budgetSpentHours(vault, 'checkout')).toBeGreaterThan(0.5);
+
+      maybeCorrectiveActions(vault);
+
+      const rec = vault.events.query({ types: ['incident.recovered'], job: id });
+      expect(rec).toHaveLength(1);
+      expect(rec[0].payload.reason).toBe(status);
+      expect(Number(rec[0].payload.hours)).toBeGreaterThan(0.5);
+      expect(Number(rec[0].payload.hours)).toBeLessThan(2);
+      // The budget now reads the recorded hours, not "still burning since it opened".
+      const after = budgetSpentHours(vault, 'checkout');
+      expect(after).toBeCloseTo(Number(rec[0].payload.hours), 1);
+      // Idempotent: a second tick does not emit another.
+      maybeCorrectiveActions(vault);
+      expect(vault.events.query({ types: ['incident.recovered'], job: id })).toHaveLength(1);
+    });
+  }
+
+  it('a done incident still records reason: done', () => {
+    const id = abandonedIncident('done');
+    maybeCorrectiveActions(vault);
+    expect(vault.events.query({ types: ['incident.recovered'], job: id })[0].payload.reason).toBe('done');
+  });
+
+  it('an incident still open keeps burning: only a closed one recovers', () => {
+    const id = createJob(vault, { type: 'incident', title: 'Ongoing', assigned: 'sre', goal: 'g', team: 'dev', stream: 'checkout', risk: 'high' }, 'daemon');
+    vault.events.emit({ type: 'incident.opened', agent: 'daemon', job: id, payload: { stream: 'checkout' }, ts: new Date(Date.now() - 3600_000).toISOString() });
+    updateJob(vault, id, { status: 'running' }, 'daemon');
+    maybeCorrectiveActions(vault);
+    expect(vault.events.query({ types: ['incident.recovered'], job: id })).toHaveLength(0);
+    expect(budgetSpentHours(vault, 'checkout')).toBeGreaterThan(0.5);
   });
 });

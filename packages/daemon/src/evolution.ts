@@ -681,22 +681,35 @@ export function maybeOpenIncident(vault: Vault, now = new Date()): string | null
   return null;
 }
 
+/** An incident nobody is working on any more, whatever became of it. */
+const CLOSED_INCIDENT_STATUSES = ['done', 'failed', 'cancelled'] as const;
+
 /**
  * Turn a finished incident's postmortem into work. §33's bargain is "no personal blame, strong ownership of
  * corrective action": without this the postmortem is a document nobody acts on. Once per incident, at most
  * `CORRECTIVE_MAX` jobs, each linked back so the next postmortem can see whether the last one worked.
+ *
+ * A failed or cancelled incident closes here too, and that is the point: `incident.recovered` was emitted in
+ * this one place and only for `done`, while `budgetSpentHours` charges an opened-but-unrecovered incident
+ * `Date.now() - opened` on every call. One incident that failed therefore made its stream's error budget read
+ * as SPENT in every division plan from then on, for ever, and `computeDora`'s time-to-restore never resolved.
+ * The recovery event carries the status as its `reason`, so a reader can tell a postmortem-backed recovery from
+ * an incident that was abandoned.
  */
 export function maybeCorrectiveActions(vault: Vault): string[] {
   const out: string[] = [];
-  for (const inc of listJobs(vault).filter((j) => j.type === 'incident' && j.status === 'done')) {
+  // One listing for the sweep: the marker is keyed per incident, so no incident's own decision depends on a
+  // job created for another one in the same pass.
+  const all = listJobs(vault);
+  for (const inc of all.filter((j) => j.type === 'incident' && (CLOSED_INCIDENT_STATUSES as readonly string[]).includes(j.status))) {
     const marker = `corrective:${inc.id}`;
-    if (listJobs(vault).some((j) => j.links.includes(`[[${marker}]]`))) continue;
+    if (all.some((j) => j.links.includes(`[[${marker}]]`))) continue;
     const pm = postmortemPath(vault, inc.id);
     const recovered = vault.events.query({ types: ['incident.recovered'], job: inc.id, limit: 1 });
     if (!recovered.length) {
       const opened = vault.events.query({ types: ['incident.opened'], job: inc.id, limit: 1 })[0];
       const hours = opened ? (Date.parse(inc.updated) - Date.parse(opened.ts)) / 3600_000 : 0;
-      vault.events.emit({ type: 'incident.recovered', agent: inc.assigned, job: inc.id, payload: { stream: inc.stream ?? null, hours: Number(Math.max(0, hours).toFixed(2)), postmortem: pm } });
+      vault.events.emit({ type: 'incident.recovered', agent: inc.assigned, job: inc.id, payload: { stream: inc.stream ?? null, hours: Number(Math.max(0, hours).toFixed(2)), postmortem: pm, reason: inc.status } });
     }
     if (!pm) { markCorrectiveDone(vault, inc.id, marker); continue; }
     const section = (vault.readTextOrNull(pm) ?? '').split('## Corrective actions')[1]?.split('\n## ')[0] ?? '';

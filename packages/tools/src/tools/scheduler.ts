@@ -2,7 +2,13 @@ import { z } from 'zod';
 import { defineTool } from '../registry.js';
 import { KNOWN_JOB_TYPES, isValidRoleId, isValidStreamSlug, listStreams, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, ENGINEERING_JOB_TYPES, RISK_GUIDANCE, RISK_LEVELS, type Org } from '@cubicle/core';
 
-const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'], 'security.review': ['ceo', 'cto', 'ciso'] };
+/**
+ * Job types an ordinary role may not schedule, and who may. Must cover every type `wipLoad` skips and every type
+ * the heartbeat's open-work count ignores: a type that is invisible to the WIP limit and to the re-planning gate,
+ * but schedulable by anyone, is a way for an agent to park work where nothing counts it — and it is exempt from
+ * the duplicate-title check below too. `requester.review`, `research.review` and `incident` were that gap.
+ */
+const SYSTEM_TYPES: Record<string, string[]> = { 'ceo.heartbeat': [], 'cto.plan': ['ceo'], 'company.plan': [], 'team.plan': ['ceo'], 'critic.premortem': ['ceo'], 'coo.verify': ['ceo', 'coo'], 'qa.review': ['ceo', 'cto'], 'cto.compress_charters': ['ceo', 'cto'], 'security.review': ['ceo', 'cto', 'ciso'], 'requester.review': [], 'research.review': [], 'incident': [] };
 
 /**
  * A refusal the model can act on. The old one-liner ("leads schedule their own team…") left a lead whose team has no

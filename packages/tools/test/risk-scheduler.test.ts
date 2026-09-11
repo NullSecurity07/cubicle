@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, readJob, createStream, listJobs } from '@cubicle/core';
+import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, readJob, createStream, listJobs, GATE_JOB_TYPES } from '@cubicle/core';
 import { parseToolsConfig, schedulerRequest, missingRiskText, type ToolContext } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -81,5 +81,35 @@ describe('scheduler.request validates the stream slug (fix wave item 4 / C2)', (
     const none = await schedulerRequest.handler(ship({ risk: 'low', title: 'Another thing' }), ctxFor('dev_manager'));
     expect(none.ok).toBe(true);
     expect(readJob(vault, (none.data as { id: string }).id)?.data.stream ?? null).toBeNull();
+  });
+});
+
+describe('the reserved job types match the ones nothing counts (fix wave item 7 / I7)', () => {
+  // These three are skipped by wipLoad and ignored by the heartbeat's open-work count. An agent that could
+  // schedule them would have a lane invisible to both the WIP limit and the re-planning gate.
+  const HIDDEN = ['requester.review', 'research.review', 'incident'];
+
+  it('an engineer cannot schedule one', async () => {
+    for (const type of HIDDEN) {
+      const r = await schedulerRequest.handler(ship({ risk: 'low', type, assigned: 'backend_engineer' }), ctxFor('frontend_engineer'));
+      expect(r.ok, type).toBe(false);
+      expect(r.text, type).toMatch(/reserved for the daemon/);
+    }
+  });
+
+  it('nor can a lead, nor the CEO — these are the daemon\'s own', async () => {
+    for (const type of HIDDEN) {
+      expect((await schedulerRequest.handler(ship({ risk: 'low', type, assigned: 'backend_engineer' }), ctxFor('dev_manager'))).ok, type).toBe(false);
+      expect((await schedulerRequest.handler(ship({ risk: 'low', type, assigned: 'backend_engineer', done_when: 'x' }), ctxFor('ceo'))).ok, type).toBe(false);
+    }
+    expect(listJobs(vault).filter((j) => HIDDEN.includes(j.type))).toHaveLength(0);
+  });
+
+  it('every type wipLoad skips is reserved, so the two lists cannot drift apart', async () => {
+    for (const type of GATE_JOB_TYPES) {
+      const r = await schedulerRequest.handler(ship({ risk: 'low', type, assigned: 'backend_engineer' }), ctxFor('frontend_engineer'));
+      expect(r.ok, type).toBe(false);
+      expect(r.text, type).toMatch(/reserved for the daemon/);
+    }
   });
 });

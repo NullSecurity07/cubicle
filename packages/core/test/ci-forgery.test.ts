@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, rmSync as rmFile } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync, rmSync as rmFile } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault } from '../src/template.js';
@@ -12,9 +12,16 @@ afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); 
 
 const SLUG = 'checkout';
 
+/**
+ * Sources are back-dated so the fixed `finished` timestamps below are in their future. Without this the suite is
+ * a time bomb: real wall-clock mtimes overtake a hard-coded `finished` and every green case flips to stale.
+ */
+const SEEDED = new Date('2026-09-01T00:00:00.000Z');
+
 function seed(): void {
   vault.writeText(ciConfigPath(SLUG), 'steps:\n  - { name: test, run: "npm test" }\n', 'daemon');
   vault.writeText(`Workspace/${SLUG}/src/index.js`, 'export const x = 1;\n', 'backend_engineer');
+  for (const rel of [ciConfigPath(SLUG), `Workspace/${SLUG}/src/index.js`]) utimesSync(path.join(dir, rel), SEEDED, SEEDED);
 }
 
 const record = (over: Partial<CiRecord> = {}): CiRecord => ({
