@@ -21,6 +21,7 @@ export * from './tools/outbound.js';
 export * from './integrations/index.js';
 export * from './tools/research.js';
 export * from './tools/discovery.js';
+export * from './tools/ledger.js';
 export * from './adapters/common.js';
 export * from './adapters/email.js';
 export * from './adapters/inbox.js';
@@ -46,6 +47,7 @@ import { adrCreate } from './tools/adr.js';
 import { phase6Tools as _p6 } from './tools/outbound.js';
 import { researchStart, sourcesCite } from './tools/research.js';
 import { discoveryInputs, ideaCard } from './tools/discovery.js';
+import { ledgerRecord } from './tools/ledger.js';
 
 /** Phase 5 additions: sandbox shell, stream CI, browser with screencast, git, meetings. */
 export function phase5Tools(): AnyTool[] {
@@ -59,7 +61,7 @@ export function phase6Tools(): AnyTool[] {
 
 /** Phase 3 tool set (org guards apply to scheduler/proposal/meeting/colleague; Phases 5–6 append shell/browser/git/email/deploy/stripe/analytics/social). */
 export function phase3Tools(opts: { includeMock?: boolean } = {}): AnyTool[] {
-  const t: AnyTool[] = [...vaultTools, httpFetch, colleagueMessage, proposalCreate, schedulerRequest, ...skillsTools, finish, meetingOpen, adrCreate, researchStart, sourcesCite, discoveryInputs, ideaCard];
+  const t: AnyTool[] = [...vaultTools, httpFetch, colleagueMessage, proposalCreate, schedulerRequest, ...skillsTools, finish, meetingOpen, adrCreate, researchStart, sourcesCite, discoveryInputs, ideaCard, ledgerRecord];
   if (opts.includeMock) t.push(mockOutbound);
   return t;
 }

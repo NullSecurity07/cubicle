@@ -257,13 +257,16 @@ describe('appending to the book (spec §1)', () => {
   it('retries the append instead of losing a write that landed between its read and its write (review I1/ruling 1)', () => {
     appendEntry(vault, { at: '2026-09-12T08:00:00.000Z', kind: 'capital', cents: 1000, mode: 'live', who: 'owner', why: 'seed' }, 'owner');
     const realRead = vault.readTextOrNull.bind(vault);
+    // Counts reads of LEDGER_PATH specifically — appendEntry also reads Memory/constitution.md once, for the
+    // owner's never_modify veto (spec §7), and that read must not be mistaken for the ledger's own first read.
     let calls = 0;
     const spy = vi.spyOn(vault, 'readTextOrNull').mockImplementation((rel: string) => {
       const text = realRead(rel);
+      if (rel !== LEDGER_PATH) return text;
       calls++;
       // On the first read inside appendEntry's loop, simulate an owner save landing right after we read:
       // write a second, concurrent row directly to disk (bypassing the vault API, like an Obsidian save would).
-      if (rel === LEDGER_PATH && calls === 1 && text !== null) {
+      if (calls === 1 && text !== null) {
         writeFileSync(
           vault.abs(rel),
           text.replace(/\s+$/, '') + '\n| 2026-09-12T09:30:00.000Z | capital | 500.00 | live | owner | concurrent save |  |\n',
