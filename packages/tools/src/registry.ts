@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import YAML from 'yaml';
 import { z } from 'zod';
 import type { ZodRawShape } from 'zod';
-import { ApprovalMode, type Vault, type EventLog, type RoleFrontmatter, type ProposalKind, type OwnerPreferences } from '@cubicle/core';
+import { ApprovalMode, type Vault, type EventLog, type RoleFrontmatter, type ProposalKind, type OwnerPreferences, type ResearchRequest, type ModelTier } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
 import type { Guardrail } from './guardrails.js';
 
@@ -75,7 +75,7 @@ export interface ToolResult {
 }
 
 export interface SchedulerApi {
-  enqueue(job: { id?: string; type: string; title: string; assigned: string; goal: string; priority?: number; depends_on?: string[]; privacy?: 'cloud' | 'local'; parent?: string; links?: string[]; team?: string; owner_role?: string; for?: string; done_when?: string }): string;
+  enqueue(job: { id?: string; type: string; title: string; assigned: string; goal: string; priority?: number; depends_on?: string[]; privacy?: 'cloud' | 'local'; parent?: string; links?: string[]; team?: string; owner_role?: string; for?: string; done_when?: string; research?: ResearchRequest; research_slug?: string; model_tier?: ModelTier }): string;
   reprioritize?(jobId: string, priority: number): void;
 }
 
