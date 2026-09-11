@@ -214,4 +214,27 @@ describe('VaultWatcher', () => {
       await w.stop();
     }
   });
+
+  // Before this the only 'error' listener was the one-shot reject inside start()'s ready race, so a chokidar
+  // error after ready was an uncaught exception: a transient FS error (a file removed mid-scan, EMFILE) took
+  // the whole daemon down, and it already failed a CI run as an unhandled ENOENT during teardown.
+  it('survives a chokidar error after ready and reports it as a daemon.warning', async () => {
+    const w = new VaultWatcher(vault, { debounceMs: 100 });
+    await w.start();
+    try {
+      expect(w.fsWatcher).not.toBeNull();
+      w.fsWatcher!.emit('error', new Error('ENOENT: lstat /tmp/cubicle-gone'));
+      const warning = vault.events.query({ types: ['daemon.warning'] }).find((e) => e.payload.where === 'watcher');
+      expect(warning).toBeTruthy();
+      expect(String(warning!.payload.message)).toContain('ENOENT');
+      // Still watching: an owner edit after the error is still reported.
+      const seen: string[] = [];
+      const off = vault.events.on('owner.edited', (e) => seen.push(String(e.payload.path)));
+      try {
+        writeFileSync(path.join(dir, 'Jobs/job_after_error.md'), '---\nid: job_after_error\n---\n');
+        await new Promise((r) => setTimeout(r, 900));
+        expect(seen).toContain('Jobs/job_after_error.md');
+      } finally { off(); }
+    } finally { await w.stop(); }
+  });
 });
