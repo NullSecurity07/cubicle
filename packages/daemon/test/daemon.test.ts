@@ -656,15 +656,15 @@ describe('daemon lifecycle', () => {
 
   it('WS serves a snapshot, broadcasts events, replays, and cabin chat writes a message note', async () => {
     const d = daemonFor(fakeLlm(), 0);
-    d.config.port = 47411;
     await d.start();
+    const port = d.config.port; // port 0 binds an ephemeral port; the daemon writes the actual bound port back here
     const info = JSON.parse(readFileSync(path.join(dir, '.cubicle/daemon.json'), 'utf8')) as { token: string };
-    const bad = new WebSocket('ws://127.0.0.1:47411', { headers: { origin: 'http://evil.example' } });
+    const bad = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: 'http://evil.example' } });
     const badClosed = await new Promise<boolean>((r) => { bad.once('error', () => r(true)); bad.once('open', () => r(false)); });
     expect(badClosed).toBe(true);
-    const noToken = new WebSocket('ws://127.0.0.1:47411');
+    const noToken = new WebSocket(`ws://127.0.0.1:${port}`);
     expect(await new Promise<boolean>((r) => { noToken.once('error', () => r(true)); noToken.once('open', () => r(false)); })).toBe(true);
-    const ws = new WebSocket(`ws://127.0.0.1:47411?token=${info.token}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}?token=${info.token}`);
     const msgs: Record<string, unknown>[] = [];
     ws.on('message', (m) => msgs.push(JSON.parse(String(m))));
     await new Promise((r) => ws.once('open', r));
