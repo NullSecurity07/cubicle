@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, openSync, readSync, fstatSync, closeSync, constants as FS_CONSTANTS } from 'node:fs';
 import path from 'node:path';
 import { defineTool } from '../registry.js';
 import { readCiConfig, writeCiRecord, ciConfigPath, workspacePath, isValidStreamSlug, nowIso, type CiRecord, type CiStepResult } from '@cubicle/core';
@@ -17,30 +17,67 @@ const SHA_RE = /^[0-9a-f]{40,64}$/;
 /** A ref name git itself would accept, and nothing that could walk out of the repo. */
 const REF_RE = /^refs\/[A-Za-z0-9._\-/]+$/;
 
+/** A HEAD/ref/packed-refs file is a handful of bytes; nothing legitimate is bigger than this. */
+const MAX_GIT_PLUMBING_FILE_BYTES = 8192;
+
+/**
+ * Read a small regular file without ever blocking on it: `lstatSync` first — a symlink's own lstat never
+ * opens the link target, so a `.git/HEAD` symlinked to `/dev/zero` (or anywhere else) is caught here and
+ * never reaches `open()`. Anything that isn't a plain file under the size cap is refused before it's opened.
+ *
+ * The open itself adds `O_NONBLOCK` and the file is re-checked with `fstatSync` on the open fd: opening a
+ * FIFO for read blocks forever waiting for a writer *unless* `O_NONBLOCK` is set (POSIX open(2)), which is
+ * the gap `lstatSync` alone can't close — the path could be swapped from a regular file to a FIFO between
+ * the `lstatSync` and the `openSync` (TOCTOU). With `O_NONBLOCK` the open returns immediately either way,
+ * and the `fstatSync` catches a FIFO that slipped through the race before any read is attempted.
+ */
+function readSmallRegularFile(p: string): string | null {
+  let st;
+  try { st = lstatSync(p); } catch { return null; }
+  if (!st.isFile() || st.size > MAX_GIT_PLUMBING_FILE_BYTES) return null;
+  let fd: number;
+  try { fd = openSync(p, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NONBLOCK); } catch { return null; }
+  try {
+    if (!fstatSync(fd).isFile()) return null;
+    const buf = Buffer.alloc(MAX_GIT_PLUMBING_FILE_BYTES);
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    return buf.toString('utf8', 0, n);
+  } catch { return null; }
+  finally { closeSync(fd); }
+}
+
 /**
  * HEAD of the stream's own repo when it has one — evidence on the record, not the freshness rule.
  *
  * Read as plumbing files rather than by running git: the sandbox writes this directory, so `.git/config` is
  * attacker-authored, and `core.fsmonitor`, `core.pager`, `alias.*` and friends all make the host's git execute
- * a command of the config's choosing. Reading two files cannot.
+ * a command of the config's choosing. Reading two files cannot — but `readFileSync` on a path the sandbox
+ * fully controls is its own hole: `mkfifo .git/HEAD` (or a symlink to `/dev/zero`) makes an unbounded
+ * `readFileSync` hang the daemon synchronously and forever, which the old spawned `git rev-parse` never
+ * risked (it ran under a 5 s timeout). `readSmallRegularFile` is the bounded, non-blocking replacement.
  */
-function headOf(absWorkspace: string): string | null {
+export function headOf(absWorkspace: string): string | null {
   const gitDir = path.join(absWorkspace, '.git');
   if (!existsSync(gitDir)) return null;
   try {
-    const head = readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();   // a .git *file* (worktree/submodule) throws → null
+    const headRaw = readSmallRegularFile(path.join(gitDir, 'HEAD'));
+    if (headRaw === null) return null;                                    // a .git *file* (worktree/submodule), FIFO, symlink, or oversized file
+    const head = headRaw.trim();
     const m = head.match(/^ref:\s*(\S+)$/);
     if (!m) return SHA_RE.test(head) ? head : null;                        // detached HEAD
     const ref = m[1];
     if (!REF_RE.test(ref) || ref.split('/').includes('..')) return null;
     const loose = path.join(gitDir, ref);
     if (existsSync(loose)) {
-      const sha = readFileSync(loose, 'utf8').trim();
+      const shaRaw = readSmallRegularFile(loose);
+      if (shaRaw === null) return null;
+      const sha = shaRaw.trim();
       return SHA_RE.test(sha) ? sha : null;
     }
     const packed = path.join(gitDir, 'packed-refs');
-    if (!existsSync(packed)) return null;                                  // an unborn branch has no commit yet
-    for (const line of readFileSync(packed, 'utf8').split('\n')) {
+    const packedText = readSmallRegularFile(packed);
+    if (packedText === null) return null;                                 // an unborn branch has no commit yet (or packed-refs is unreadable/unsafe)
+    for (const line of packedText.split('\n')) {
       const p = line.match(/^([0-9a-f]{40,64})\s+(\S+)$/);
       if (p && p[2] === ref) return p[1];
     }
