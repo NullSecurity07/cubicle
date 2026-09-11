@@ -3,7 +3,7 @@ import { morph } from './morph.js';
 import { esc } from './content.js';
 import { floorPalette, shade } from '../world/palette.js';
 
-export interface FloorInfo { floor: number; label: string; color: string; agents: { role: string; color: string | number; state: string }[]; meetings: number }
+export interface FloorInfo { floor: number; label: string; color: string; agents: { role: string; color: string; state: string }[]; meetings: number }
 export interface RailDeps { summary(): FloorInfo[]; currentFloor(): number; inLobby(): boolean; divisions(): Record<number, string[]>; onFloor(n: number): void; onLobby(): void }
 
 /** F1's corridor starts at row 41 + 10 (spec §A): the camera centre at or below it means "the lobby". */
@@ -21,9 +21,6 @@ export function deepen(tint: string): string { return shade(tint, -DEEP); }
 /** The same, for a floor number, straight from the shared palette. */
 export function floorDeep(n: number): string { return deepen(floorPalette(n).tab); }
 
-/** Agent dot colours arrive as `#rrggbb` from a summary or as a Phaser int from the scene. */
-const hexOf = (c: string | number): string => (typeof c === 'number' ? `#${(c >>> 0).toString(16).padStart(6, '0')}` : c);
-
 export function railHtml(summary: FloorInfo[], current: number, lobby: boolean, divisions: Record<number, string[]>): string {
   const floors = [...summary].sort((a, b) => b.floor - a.floor);
   const tabs = floors.map((f) => {
@@ -32,7 +29,7 @@ export function railHtml(summary: FloorInfo[], current: number, lobby: boolean, 
     const title = `F${f.floor} ${f.label}${divs}`;
     const meetings = f.meetings ? `, ${f.meetings} meeting${f.meetings === 1 ? '' : 's'}` : '';
     const label = `Floor ${f.floor}, ${f.label}, ${active.length} active${meetings}`;
-    return `<button class="tab" data-floor="${f.floor}" style="--floor:${esc(f.color)}" aria-current="${current === f.floor && !lobby}" title="${esc(title)}" aria-label="${esc(label)}"><span class="n">F${f.floor}</span><span class="bar"></span><span class="dots">${active.map((a) => `<i style="background:${esc(hexOf(a.color))}"></i>`).join('')}</span></button>`;
+    return `<button class="tab" data-floor="${f.floor}" style="--floor:${esc(f.color)}" aria-current="${current === f.floor && !lobby}" title="${esc(title)}" aria-label="${esc(label)}"><span class="n">F${f.floor}</span><span class="bar"></span><span class="dots">${active.map((a) => `<i style="background:${esc(a.color)}"></i>`).join('')}</span></button>`;
   });
   tabs.push(`<button class="tab lobby" data-floor="0" aria-current="${lobby}" title="Lobby" aria-label="Lobby"><span class="n">L</span><span class="bar"></span></button>`);
   return tabs.join('');

@@ -34,10 +34,6 @@ describe('floor rail', () => {
     expect(html).toContain('data-floor="1" style="--floor:#8d6bb3" aria-current="false"');
   });
   it('escapes labels', () => { expect(railHtml([{ ...summary[0], label: '<b>' }], 1, false, {})).not.toContain('<b>'); });
-  it('takes the agent dot colour from Phaser ints as well as hex strings', () => {
-    const html = railHtml([{ floor: 1, label: 'Executive', color: '#8d6bb3', agents: [{ role: 'ceo', color: 0x0e1014, state: 'working' }], meetings: 0 }], 1, false, {});
-    expect(html).toContain('<i style="background:#0e1014"></i>');
-  });
 });
 
 // The ruling on Task 6's report: white on the raw F4 orange is ~3:1. The current tab fills with `deepen(tint)`

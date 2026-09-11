@@ -22,7 +22,9 @@ export interface SceneHooks {
   /** wall clock live, event clock in replay (bubbles expire against it) */ clock(): number;
   /** the camera's floor changed (the floor rail highlights it) */ onFloorChange?(n: number): void;
   /** the visual layer's elevator car; a plain box when absent */ makeCar?(scene: Phaser.Scene, geo: { shaft: Anchor; floors: FloorInfo[] }): Phaser.GameObjects.Container;
+  /** the car's own doors/digits (main-camera only — the minimap would otherwise show them as amber smudges) */ elevatorIgnorables?(): Phaser.GameObjects.GameObject[];
   /** every elevator event, for the indicator and sounds */ onElevator?(ev: ElevatorEvent): void;
+  /** the scene is shutting down (Phaser's own `shutdown` lifecycle) — the visual layer disposes what it created in `makeCar` */ onSceneShutdown?(): void;
 }
 
 export const BUILDING = { x0: 4, x1: 54, y0: 2, y1: 54 } as const;   // tiles, inclusive; what the minimap frames
@@ -111,7 +113,7 @@ export class OfficeScene extends Phaser.Scene {
     this.minimap.centerOn((BUILDING.x0 + BUILDING.x1 + 1) / 2 * TILE, (BUILDING.y0 + BUILDING.y1 + 1) / 2 * TILE);
     this.viewRect = this.add.rectangle(0, 0, 1, 1, 0xffffff, 0).setStrokeStyle(2 / this.minimap.zoom, 0xe6a93c, 0.9).setOrigin(0).setDepth(60);
     this.cameras.main.ignore(this.viewRect);
-    this.minimap.ignore([this.night, this.sky, ...this.lamps.map((l) => l.img), ...this.decor.images(), ...this.signs.texts]);
+    this.minimap.ignore([this.night, this.sky, ...this.lamps.map((l) => l.img), ...this.decor.images(), ...this.signs.texts, ...(this.hooks.elevatorIgnorables?.() ?? [])]);
     this.scale.on('resize', (g: Phaser.Structs.Size) => this.minimap.setPosition(g.width - mmW - 12, g.height - mmH - 12));
     // the owner's avatar: seated in the owner chair, shown only while a board meeting is open
     const ownerTile = this.world.reserved.owner;
@@ -120,6 +122,10 @@ export class OfficeScene extends Phaser.Scene {
     this.pendingFloor = null;
     if (this.pendingFocus) { const f = this.pendingFocus; this.pendingFocus = null; this.focusOn(f); }
   }
+
+  /** Phaser's own lifecycle callback — by now `this.events` and friends are long since installed, so it is the
+   *  safe place to let the visual layer dispose whatever `hooks.makeCar` created (never call this from outside Phaser). */
+  shutdown(): void { this.hooks.onSceneShutdown?.(); }
 
   /** A grey box with a strip of glass: enough to see the ride until plan 2 draws the real car. */
   private defaultCar(): Phaser.GameObjects.Container {

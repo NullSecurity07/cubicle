@@ -1,8 +1,12 @@
 /** HTML chrome around the Phaser minimap camera: a frame, floor ticks in floor colours, an M toggle, click-to-pan. */
 import { morph } from './morph.js';
 
-/** Building rows 2..54, four floors on a 13-row pitch (spec §A). The minimap camera shows exactly the building rect. */
-export const FLOOR_ROWS = 13, BUILDING_ROWS = 52;
+/**
+ * Building rows 2..54 inclusive — roof to ground — is 53 rows, not 52: the four floors span 2–15, 15–28, 28–41 and
+ * 41–54 in `office.json`, sharing a slab row each, so the pitch is 13 but the total is 4 × 13 + 1. The minimap camera
+ * (`BUILDING` in OfficeScene) frames exactly that rect, so the ticks must be 13/53 of its height, not 13/52.
+ */
+export const FLOOR_ROWS = 13, BUILDING_ROWS = 53;
 
 export function tickLayout(heightPx: number, colours: Record<number, string>): { floor: number; top: number; height: number; color: string }[] {
   const h = heightPx * FLOOR_ROWS / BUILDING_ROWS;
