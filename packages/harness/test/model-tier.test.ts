@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault, Vault, createJob } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
-import { runJob, vaultScheduler, type Llm } from '../src/index.js';
+import { runJob, vaultScheduler, effectiveTier, type Llm } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 let dir: string; let vault: Vault;
@@ -32,5 +32,27 @@ describe('a job may pin its own model tier', () => {
     const plain = createJob(vault, { type: 'custom', title: 'Plain', assigned: 'intelligence_analyst', goal: 'g' }, 'daemon');
     await runJob(deps(recording(seen)), plain);
     expect(seen.at(-1)!.tier).toBe('medium'); // intelligence_analyst's charter
+  });
+
+  it('a job may not route above its charter: strong on a medium charter clamps to medium', async () => {
+    const seen: RouteRequest[] = [];
+    const overreach = createJob(vault, { type: 'custom', title: 'Overreach', assigned: 'intelligence_analyst', goal: 'g', model_tier: 'strong' }, 'daemon');
+    await runJob(deps(recording(seen)), overreach);
+    expect(seen.at(-1)!.tier).toBe('medium'); // clamped: intelligence_analyst's charter is medium
+  });
+});
+
+describe('effectiveTier (pure)', () => {
+  it('lets a job route below its charter', () => {
+    expect(effectiveTier('cheap', 'medium')).toBe('cheap');
+  });
+  it('clamps a job that asks above its charter', () => {
+    expect(effectiveTier('strong', 'medium')).toBe('medium');
+  });
+  it('allows a job pinned to the same tier as its charter', () => {
+    expect(effectiveTier('medium', 'medium')).toBe('medium');
+  });
+  it('falls back to the charter tier when the job has none', () => {
+    expect(effectiveTier(undefined, 'medium')).toBe('medium');
   });
 });
