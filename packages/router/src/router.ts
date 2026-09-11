@@ -202,7 +202,10 @@ export class Router {
         const res = await chatOnce(c.provider, c.model.id, { ...chat, messages, tools: nativeTools, maxTokens, responseFormatJson: useJsonTools && chat.responseFormatJson !== false ? false : chat.responseFormatJson }, this.env);
         this.quota.record(c.provider.id, c.model.id, res.usage.prompt_tokens, res.usage.completion_tokens, true);
         this.attemptCounts.delete(key);
-        this.events?.emit({ type: 'router.call', agent: req.roleId ?? null, payload: { provider: c.provider.id, model: c.model.id, tier: c.model.tier, tokens: res.usage, tools: c.model.tools, downgraded: isDowngrade, finish_reason: res.finishReason, empty: !res.content && res.toolCalls.length === 0 } });
+        // `reason` rides along only on a downgraded call, so a division that spent its own budget never reads as
+        // a keys problem: `modelUseRows` (packages/daemon/src/heartbeat.ts) excludes `division budget` downgrades
+        // from the count that trips "check your API keys".
+        this.events?.emit({ type: 'router.call', agent: req.roleId ?? null, payload: { provider: c.provider.id, model: c.model.id, tier: c.model.tier, tokens: res.usage, tools: c.model.tools, downgraded: isDowngrade, reason: isDowngrade ? (overBudget ? 'division budget' : 'cascade') : undefined, finish_reason: res.finishReason, empty: !res.content && res.toolCalls.length === 0 } });
         this.emitQuotaUpdated(c);
         const parsed: RoutedChatResult['parsedToolCalls'] = [];
         let jsonParseError: string | undefined;

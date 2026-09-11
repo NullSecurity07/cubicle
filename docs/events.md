@@ -40,7 +40,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `proposal.resolved` | id, kind, approved, outcome |
 | `role.hired` | role, display, desk, sprite |
 | `role.fired` | role |
-| `router.call` | provider, model, tier, tokens {prompt_tokens, completion_tokens}, tools, downgraded |
+| `router.call` | provider, model, tier, tokens {prompt_tokens, completion_tokens}, tools, downgraded, reason (present only when downgraded: `cascade` or `division budget` — the latter is excluded from the "check your API keys" count) |
 | `router.downgraded` | requested_tier, chosen_tier, provider, model, tried, reason (`cascade` — nothing at the asked-for tier had headroom; `division budget` — the division has spent its model quota for the day and drops to the cheapest tier, which never stops work) |
 | `quota.updated` | provider, model, rpm_used, rpd_used, tpm_used, cooling_until, limits |
 | `vault.wrote` | path, sha, by (role | daemon | init | <role>/shell), deleted?, moved_from?, generated? (true for daemon-generated files such as `Jobs/queue.md`, `Metrics/quota.md`, `Metrics/daily.md`; the viewer ignores these for staleness) |

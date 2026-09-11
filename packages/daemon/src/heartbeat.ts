@@ -112,6 +112,16 @@ export function modelUseRows(use: { calls: number; downgraded: number }, noCloud
 }
 
 /**
+ * Whether a `router.call` event's downgrade counts toward `modelUseRows`'s "check your API keys" row. A division
+ * that spent its own model budget (`reason: 'division budget'`) is working as designed — never stopped, just
+ * cheaper — and must not be read as a keys or quota outage. Only a `cascade` downgrade (nothing at the asked-for
+ * tier had headroom) is evidence of that.
+ */
+export function isKeyProblemDowngrade(payload: { downgraded?: unknown; reason?: unknown }): boolean {
+  return payload.downgraded === true && payload.reason !== 'division budget';
+}
+
+/**
  * Whether this heartbeat may keep the current Plans/plan.md instead of rewriting it. Every heartbeat used to run
  * company.plan → the board pre-mortem → one division.plan per division → gates (≈16 model calls) before any work, and on the
  * local floor one such "Plan Growth" took three days. Skip only when ALL hold: the plan's frontmatter `updated`
@@ -1480,7 +1490,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // Same window as the other facts (since the previous gather): how much of the cycle ran on the local floor,
         // and which outbound services only pretended. Both were invisible in a live run's briefs for three days.
         const calls = vault.events.query({ types: ['router.call'], from: state.since ?? undefined });
-        const modelUse = modelUseRows({ calls: calls.length, downgraded: calls.filter((e) => e.payload.downgraded === true).length }, deps.noCloudKeys?.() ?? false);
+        const modelUse = modelUseRows({ calls: calls.length, downgraded: calls.filter((e) => isKeyProblemDowngrade(e.payload)).length }, deps.noCloudKeys?.() ?? false);
         const mocked = deps.env ? mockedServices(deps.env) : [];
         const needsYou = [
           ...pending.map((p) => `- Approve or reject: ${p.body.split('\n')[0].replace(/^#\s*/, '')} (\`${p.path}\`)`),
