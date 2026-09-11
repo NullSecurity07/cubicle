@@ -17,6 +17,7 @@ export function systemTypes(org: Org): Record<string, string[]> {
   const ops = officeHolder(org, 'operations');
   const eng = officeHolder(org, 'engineering');
   const sec = officeHolder(org, 'security');
+  const fin = officeHolder(org, 'finance');
   return {
     'ceo.heartbeat': [], 'company.plan': [],
     'board.premortem': [ceo], 'division.plan': [ceo], 'team.plan': [ceo], 'critic.premortem': [ceo],
@@ -28,8 +29,9 @@ export function systemTypes(org: Org): Record<string, string[]> {
     'cto.plan': [ceo], 'cto.compress_charters': [ceo, eng],
     'requester.review': [], 'research.review': [], 'incident': [], 'research.measure': [], 'intelligence': [],
     // SP3: discovery, the board's own session and the finance office's pricing pass are the daemon's jobs; the
-    // chief executive can still queue one by hand (a re-run, a manual price on an idea nobody swept).
-    'discovery': [ceo], 'board.session': [ceo], 'finance.estimate': [ceo],
+    // chief executive can still queue one by hand (a re-run, a manual price on an idea nobody swept). Review T4
+    // finding 8: the office that actually runs `finance.estimate` may hand-queue its own pass too, not only ceo.
+    'discovery': [ceo], 'board.session': [ceo], 'finance.estimate': [ceo, fin],
   };
 }
 

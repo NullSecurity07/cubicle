@@ -6,7 +6,7 @@ import {
   scaffoldVault, Vault, RoleFrontmatter, readIdea, DISCOVERY_INBOX, INTERVIEW_PATH,
   renderInterviewAsked, closeInterview, loadOrg,
 } from '@cubicle/core';
-import { parseToolsConfig, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ToolRegistry, phase3Tools, type ToolContext } from '../src/index.js';
 import { discoveryInputs, ideaCard, fairShare, inOffice } from '../src/tools/discovery.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -78,6 +78,34 @@ describe('discovery.inputs (spec §1)', () => {
     const r = await discoveryInputs.handler({ max_chars: 1000 }, ctx('research_manager'));
     expect(r.text).toContain('truncated: 4000 more characters');
   });
+
+  // Review T4 finding 3: the interview and the owner's messages used to be appended whole, unbounded by
+  // max_chars, and silently clipped later by the harness — the two things a founder brief is written from were
+  // the first to disappear. Now every part shares the one budget and every cut is marked.
+  it('shares max_chars across the inbox files, the interview and every message, and marks every cut', async () => {
+    vault.writeText(`${DISCOVERY_INBOX}/a.md`, 'a'.repeat(2000), 'owner');
+    vault.writeText(INTERVIEW_PATH, closeInterview(renderInterviewAsked('2026-09-11T09:00:00.000Z'), 'i'.repeat(2000)), 'ceo');
+    for (let n = 0; n < 5; n++) {
+      vault.writeText(`00 Inbox/2026-09-11-100${n}-message-${n}.md`, `---\nid: msg_${n}\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-11T10:0${n}:00.000Z\n---\n# Update\n\n${'m'.repeat(2000)}\n`, 'owner');
+    }
+    const r = await discoveryInputs.handler({ max_chars: 1000 }, ctx('research_manager'));
+    expect(r.ok).toBe(true);
+    expect(r.text.length).toBeLessThan(4000);                       // nowhere near the ~14000 raw characters
+    expect((r.text.match(/truncated:/g) ?? []).length).toBeGreaterThan(1);   // more than one part was cut, and each cut is marked
+  });
+
+  it('keeps a multi-line owner message intact rather than breaking it out of a list (finding 9)', async () => {
+    vault.writeText('00 Inbox/2026-09-11-1000-message-ml.md', '---\nid: msg_ml\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-11T10:00:00.000Z\n---\n# Update\n\nLine one.\nLine two.\n', 'owner');
+    const r = await discoveryInputs.handler({ max_chars: 60000 }, ctx('research_manager'));
+    expect(r.text).toContain('Line one.\nLine two.');
+  });
+
+  it('says "nothing readable", not "nothing in", when something unreadable is present (finding 5)', async () => {
+    vault.writeText(`${DISCOVERY_INBOX}/deck.pdf`, '%PDF', 'owner');
+    const r = await discoveryInputs.handler({ max_chars: 60000 }, ctx('research_manager'));
+    expect(r.text).not.toContain('The owner dropped nothing in.');
+    expect(r.text).toContain('Present but unreadable');
+  });
 });
 
 describe('idea.card (spec §2.5)', () => {
@@ -133,5 +161,68 @@ describe('idea.card (spec §2.5)', () => {
     expect(r.ok).toBe(true);
     expect((r.data as { missing: string[] }).missing).toEqual(['value', 'evidence', 'effort', 'fit']);
     expect(readIdea(vault, 'a-hunch')!.data.source).toBe('job_d1');   // provenance defaults to the job that filed it
+  });
+
+  // Review T4 finding 1 / coordinator ruling 1: a slug collision from a genuinely different idea must never
+  // merge into the first card — `writeIdeaCard`'s own `-2` suffix is what resolves it.
+  it('a slug collision from a different title never merges — the second idea gets its own card', async () => {
+    const first = await ideaCard.handler({ title: 'Meal kits', evidence: [] }, ctx('research_manager'));
+    expect(first.ok).toBe(true);
+    const firstSlug = (first.data as { slug: string }).slug;
+    expect(firstSlug).toBe('meal-kits');
+
+    // "Meal Kits!" slugifies to the same 'meal-kits' as "Meal kits", but it is a different idea.
+    const second = await ideaCard.handler({ title: 'Meal Kits!', evidence: [], why_it_matters: 'A different idea entirely.' }, ctx('intelligence_analyst'));
+    expect(second.ok).toBe(true);
+    const secondSlug = (second.data as { slug: string }).slug;
+    expect(secondSlug).toBe('meal-kits-2');
+    expect(readIdea(vault, firstSlug)!.data.title).toBe('Meal kits');           // the first card is untouched
+    expect(readIdea(vault, firstSlug)!.body).not.toContain('A different idea entirely.');
+    expect(readIdea(vault, secondSlug)!.body).toContain('A different idea entirely.');
+  });
+
+  // Review T4 finding 2 / coordinator ruling 2: an update by explicit slug merges new evidence and text rather
+  // than dropping them, and re-renders `## Evidence` so the body and the frontmatter agree (finding 4).
+  it('an update by explicit slug merges new evidence and text instead of dropping them', async () => {
+    const first = await ideaCard.handler({ title: 'Meal kits', evidence: ['a.md'] }, ctx('research_manager'));
+    const slug = (first.data as { slug: string }).slug;
+    const second = await ideaCard.handler({ title: 'Meal kits', slug, evidence: ['b.md'], what_changed: 'new info' }, ctx('research_manager'));
+    expect(second.ok).toBe(true);
+    expect(second.text).toContain('updated');
+    const card = readIdea(vault, slug)!;
+    expect(card.data.evidence).toEqual(['a.md', 'b.md']);                       // appended, deduped, order kept
+    expect(card.body).toContain('- a.md');
+    expect(card.body).toContain('- b.md');
+    expect(card.body).toContain('new info');
+  });
+
+  it('says nothing changed rather than claiming an update that did not happen', async () => {
+    const first = await ideaCard.handler({ title: 'Meal kits', evidence: ['a.md'] }, ctx('research_manager'));
+    const slug = (first.data as { slug: string }).slug;
+    const second = await ideaCard.handler({ title: 'Meal kits', slug, evidence: [] }, ctx('research_manager'));
+    expect(second.ok).toBe(true);
+    expect(second.text).not.toContain('updated');
+  });
+});
+
+// Review T4 finding 7 / coordinator ruling 6: the handler tests never went through a charter or `phase3Tools`,
+// so a typo in a charter's `tools:` list, a missing `config/tools.yaml` entry, or a dropped registration would
+// have shipped green.
+describe('registration reaches the five charters (spec review finding 7)', () => {
+  it('phase3Tools carries both tools, and each charter that needs one can reach it', () => {
+    const names = phase3Tools().map((t) => t.name);
+    expect(names).toContain('discovery.inputs');
+    expect(names).toContain('idea.card');
+
+    const reg = new ToolRegistry().registerAll(phase3Tools());
+    for (const r of ['research_manager', 'researcher']) {
+      expect(reg.forRole(role(r), cfg).map((t) => t.name), r).toContain('discovery.inputs');
+    }
+    for (const r of ['research_manager', 'researcher', 'intelligence_analyst', 'cfo', 'ceo']) {
+      expect(reg.forRole(role(r), cfg).map((t) => t.name), r).toContain('idea.card');
+    }
+    const backendNames = reg.forRole(role('backend_engineer'), cfg).map((t) => t.name);
+    expect(backendNames).not.toContain('idea.card');
+    expect(backendNames).not.toContain('discovery.inputs');
   });
 });
