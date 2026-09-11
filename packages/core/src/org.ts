@@ -127,6 +127,29 @@ export function divisionLeadOf(org: Org, role: string): string | null {
   return lead ?? null;
 }
 
+/** Everyone in a team and in every team under it, lead first, in note order. Depth-capped against a parent cycle. */
+export function subtreeRoles(org: Org, teamId: string): string[] {
+  const out: string[] = []; const seen = new Set<string>();
+  const walk = (id: string, depth: number): void => {
+    const t = org.teams[id];
+    if (!t || depth > 6) return;
+    for (const r of [t.lead, ...t.members]) if (!seen.has(r)) { seen.add(r); out.push(r); }
+    for (const c of childTeams(org, id)) walk(c.id, depth + 1);
+  };
+  walk(teamId, 0);
+  return out;
+}
+
+/**
+ * The first active role in a subtree whose charter carries `tool`. The daemon seeds work by capability ("who can
+ * deploy") rather than by name, so a re-staffed room keeps working without a code change.
+ */
+export function roleWithTool(org: Org, teamId: string | undefined, tool: string): string | null {
+  if (!teamId) return null;
+  for (const r of subtreeRoles(org, teamId)) if (org.roles[r]?.tools.includes(tool)) return r;
+  return null;
+}
+
 /**
  * v1 role ids → tower roles (2026-09-11). Processes, gates, seeds and tests written against the nine-role org keep
  * working: `resolveRole` swaps an inactive legacy id for its alias when the alias is active, and leaves anything
@@ -143,8 +166,10 @@ export function resolveRole(org: Org, id: string): string {
   const alias = LEGACY_ROLES[id];
   return alias && org.roles[alias] ? alias : id;
 }
-/** Who receives `research` jobs: the research team's lead (v1: the analyst, who led a team of one). */
+/** Who receives `research` jobs: the research office, else the research team's lead, else the v1 lone analyst. */
 export function researchLead(org: Org): string | null {
+  const byOffice = officeRole(org, 'research');
+  if (byOffice) return byOffice;
   const lead = org.teams.research?.lead;
   if (lead && org.roles[lead]) return lead;
   return org.roles.research_analyst ? 'research_analyst' : null;
@@ -168,21 +193,27 @@ export function leadOf(org: Org, role: string): string | null {
   if (!t) return null;
   return t.lead === role ? (org.roles[role]?.reports_to ?? 'ceo') : t.lead;
 }
-/** Direct reports: a lead's members; the CEO's are every other lead plus their team members. */
+/** Direct reports: a lead's own members plus the leads of the rooms under its team; the CEO's are the top-level leads. */
 export function reportsOf(org: Org, role: string): string[] {
-  if (role === 'ceo') {
-    const leads = Object.values(org.teams).map((t) => t.lead).filter((l) => l !== 'ceo');
-    const members = Object.values(org.teams).find((t) => t.lead === 'ceo')?.members ?? [];
-    return [...new Set([...leads, ...members])];
+  const ceo = officeHolder(org, 'chief_executive');
+  if (role === ceo) {
+    const own = Object.values(org.teams).find((t) => t.lead === ceo);
+    const leads = Object.values(org.teams).filter((t) => !t.parent && t.lead !== ceo).map((t) => t.lead);
+    return [...new Set([...leads, ...(own?.members ?? [])])];
   }
   const t = Object.values(org.teams).find((x) => x.lead === role);
-  return t ? [...t.members] : [];
+  if (!t) return [];
+  return [...new Set([...t.members, ...childTeams(org, t.id).map((c) => c.lead)])];
 }
 
 export function defaultPermissions(org: Org, role: string): Permission[] {
   if (!org.roles[role]) return [];
-  if (role === 'ceo') return ['schedule', 'plan', 'review', 'hire', 'fire', 'research_request', 'reprioritize', 'meeting'];
-  if (role === 'research_analyst' && researchLead(org) === role) return [];   // v1: the analyst led a team of one and was reached only through research_request
+  if (role === officeHolder(org, 'chief_executive')) return ['schedule', 'plan', 'review', 'hire', 'fire', 'research_request', 'reprioritize', 'meeting'];
+  // The research lead is reached through research_request, never scheduled. When the department is only the lead
+  // (v1: the analyst led a team of one) there is nobody to schedule either, so the default set is empty. In the
+  // tower template the research room carries five members, so this same rule hands research_manager the full
+  // lead set below — accepted and deliberate (spec: Research owns the investigation; R14).
+  if (researchLead(org) === role && (teamOf(org, role)?.members.length ?? 0) === 0) return [];
   if (isLead(org, role)) return ['plan', 'schedule', 'review', 'research_request', 'meeting', 'reprioritize'];
   return ['schedule'];
 }
@@ -194,7 +225,7 @@ function granted(org: Org, role: string): Set<Permission> {
 
 /**
  * The one answer to "may this role do that". `target`: the assignee for schedule, the team id for reprioritize.
- * Members may schedule only a teammate (a handoff), never themselves; leads only their members; the CEO anyone.
+ * Members may schedule only a teammate (a handoff), never themselves; leads their whole subtree; the CEO anyone.
  * The Research Analyst is reached through `research_request`, never scheduled directly by a lead.
  */
 export function can(org: Org, role: string, action: Action, target?: string): boolean {
@@ -205,9 +236,11 @@ export function can(org: Org, role: string, action: Action, target?: string): bo
     case 'schedule': {
       if (!target || !org.roles[target]) return false;
       if (target === role) return false; // explicit guard: no role schedules itself
-      if (role === 'ceo') return true;
+      if (role === officeHolder(org, 'chief_executive')) return true;
       if (target === researchLead(org)) return false;   // research is requested, never scheduled directly
-      if (isLead(org, role)) return reportsOf(org, role).includes(target);
+      // A lead owns its whole subtree: the CTO can hand a job straight to an engineer in the Dev room, which is
+      // what "managers schedule within their division" means now that divisions list no members of their own.
+      if (isLead(org, role)) return Object.values(org.teams).filter((t) => t.lead === role).some((t) => subtreeRoles(org, t.id).includes(target));
       const mine = teamOf(org, role);
       return !!mine && mine.members.includes(target);
     }
@@ -286,6 +319,17 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
   // 3. teams, processes, docs, the research area and hireable charters that are simply missing
   copyDir('Teams'); copyDir('Processes'); copyDir('Docs'); copyDir('Roles/_hireable');
   copyDir('Research'); copyDir('Ideas'); copyMissing('Metrics/research.md');
+  // 3b. The v2 stopgap: division notes listed their rooms' leads as members so a lead could reach them before the
+  //     team tree existed. `can(schedule)` walks the tree now, and a doubly-listed lead breaks team size and
+  //     `reportsOf`, so take it out wherever a member also leads a team under this one.
+  for (const t of Object.values(loadOrg(vault).teams)) {
+    const childLeads = new Set(Object.values(loadOrg(vault).teams).filter((c) => c.parent === t.id).map((c) => c.lead));
+    const members = t.members.filter((m) => !childLeads.has(m));
+    if (members.length === t.members.length) continue;
+    const n = vault.readNoteOrNull(`Teams/${t.id}.md`); if (!n) continue;
+    vault.writeText(`Teams/${t.id}.md`, stringifyNote({ ...n.data, members }, n.body), 'daemon');
+    changed.push(`Teams/${t.id}.md`);
+  }
   // 4. org fields on every active charter, from the template's charter of the same role
   for (const rel of vault.list('Roles', { ext: '.md' })) {
     if (rel.includes('/archive/') || rel.includes('/_hireable/')) continue;

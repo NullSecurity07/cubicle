@@ -2,7 +2,7 @@
 id: operations
 name: Operations
 lead: coo
-members: [chro, clo, research_manager]
+members: [chro, clo]
 mission: Verify what shipped, write down the lesson, keep the weekly review honest, and answer every research request with evidence.
 room: coo_office
 floor: 4
