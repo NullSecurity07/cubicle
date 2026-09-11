@@ -10,6 +10,9 @@ import { DUR } from './motion.js';
 export type Dir = 0 | 1 | 2 | 3;
 export const POSES = ['seated', 'typing_a', 'typing_b', 'read', 'phone', 'coffee', 'wave', 'stretch', 'ride', 'sit_side_l', 'sit_side_r'] as const;
 export type Pose = typeof POSES[number];
+/** Poses where the body is actually seated in a chair (a desk chair or a side seat); everything else stands, so a shadow applies. */
+export const SEATED_POSES: ReadonlySet<Pose> = new Set(['seated', 'typing_a', 'typing_b', 'read', 'phone', 'sit_side_l', 'sit_side_r']);
+export function isSeatedPose(pose: Pose | null | undefined): boolean { return !!pose && SEATED_POSES.has(pose); }
 export const WALK_FRAMES = 4;
 export const WALK_STEP_MS = 110;
 /** Vertical bob per walk step: contact, pass, contact, pass. */
