@@ -5,7 +5,7 @@ import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
   loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, resolveRole,
-  readStream,
+  readStream, listStreams, readFlags, expiredFlags,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -549,4 +549,31 @@ function markCorrectiveDone(vault: Vault, incidentId: string, marker: string): v
   const cur = readJob(vault, incidentId);
   if (!cur) return;
   updateJob(vault, incidentId, { links: [...cur.data.links, `[[${marker}]]`] }, 'daemon', `- ${nowIso()}: corrective actions expanded (none found)`);
+}
+
+// ---------- feature flags (owner's operating model §21) ----------
+
+/**
+ * A flag past its removal date is debt, and debt nobody names is debt nobody pays. One lesson line per flag,
+ * written once — `Memory/lessons.md` is what the charter-compression pass and every role's context already
+ * read, so the flag's owner meets it where they already look.
+ */
+export function maybeFlagLessons(vault: Vault, now = new Date()): string[] {
+  const today = now.toISOString().slice(0, 10);
+  const existing = vault.readTextOrNull('Memory/lessons.md') ?? '# Lessons\n';
+  const made: string[] = [];
+  const lines: string[] = [];
+  for (const s of listStreams(vault)) {
+    const expired = expiredFlags(readFlags(vault, s.slug), today);
+    if (!expired.length) continue;
+    const fresh = expired.filter((f) => !existing.includes(`flag "${f.key}"`));
+    if (!fresh.length) continue;
+    for (const f of fresh) {
+      lines.push(`- [${today}] flag "${f.key}" in ${s.slug} passed its removal date ${f.remove_by} and is still there; ${f.owner} removes the flag and the dead branch, or sets a new date and says why (§21) #team:${s.owner_team}`);
+      made.push(f.key);
+    }
+    vault.events.emit({ type: 'daemon.warning', payload: { where: 'flags', stream: s.slug, flags: fresh.map((f) => f.key), message: `${fresh.length} flag(s) past their removal date in ${s.slug}: ${fresh.map((f) => `${f.key} (${f.owner}, due ${f.remove_by})`).join(', ')}` } });
+  }
+  if (lines.length) vault.appendText('Memory/lessons.md', lines.join('\n') + '\n', 'daemon');
+  return made;
 }
