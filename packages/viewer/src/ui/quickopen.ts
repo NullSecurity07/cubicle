@@ -2,6 +2,7 @@
 import type { State } from '../state.js';
 import { ROOM_LABELS, esc } from './content.js';
 import { pixelIcon } from './icons.js';
+import { trapTab } from './keys.js';
 
 export interface QuickItem { kind: string; label: string; group: 'Screens' | 'People' | 'Rooms'; hint?: string }
 export const SCREEN_LABELS: Record<string, string> = { cabin: 'Talk to the CEO', newsstand: 'Brief', whiteboard: 'Plan', noticeboard: 'Queue', postoffice: 'Post office', org: 'Org', bank: 'Bank', vault: 'Vault', terminal: 'Terminal', billboard: 'Billboard', workshop: 'Workshop' };
@@ -35,13 +36,18 @@ export function rank(items: QuickItem[], query: string, limit = 8): QuickItem[] 
   return items.map((it) => ({ it, s: Math.max(fuzzyScore(query, it.label), it.hint ? fuzzyScore(query, it.hint) * 0.8 : 0) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, limit).map((x) => x.it);
 }
 
+/** The id of the option the input points `aria-activedescendant` at while the arrows move the selection. */
+export const activeOptionId = (i: number): string => `quickopen-opt-${i}`;
+
 export class QuickOpen {
   private el: HTMLElement; private input: HTMLInputElement; private list: HTMLElement; private sel = 0; private shown: QuickItem[] = [];
   private returnTo: HTMLElement | null = null;
   visible = false;
   constructor(private deps: { items(): QuickItem[]; onPick(kind: string): void }) {
     this.el = document.createElement('div'); this.el.id = 'quickopen'; this.el.hidden = true; this.el.setAttribute('role', 'dialog'); this.el.setAttribute('aria-modal', 'true'); this.el.setAttribute('aria-label', 'Quick open');
-    this.el.innerHTML = `<input type="search" placeholder="Jump to a screen, a person, a room" aria-label="Quick open" autocomplete="off" /><div class="list" role="listbox"></div>`;
+    // The input keeps the focus while the arrows move the selection, so it has to own the listbox relationship:
+    // without aria-controls and aria-activedescendant a screen-reader user arrowing through results hears nothing.
+    this.el.innerHTML = `<input type="search" placeholder="Jump to a screen, a person, a room" aria-label="Quick open" autocomplete="off" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="quickopen-list" /><div class="list" id="quickopen-list" role="listbox" aria-label="Results"></div>`;
     document.body.appendChild(this.el);
     this.input = this.el.querySelector('input')!; this.list = this.el.querySelector('.list')!;
     this.input.addEventListener('input', () => { this.sel = 0; this.render(); });
@@ -49,20 +55,30 @@ export class QuickOpen {
       if (e.key === 'ArrowDown') { e.preventDefault(); this.sel = Math.min(this.shown.length - 1, this.sel + 1); this.render(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); this.sel = Math.max(0, this.sel - 1); this.render(); }
       else if (e.key === 'Enter') { e.preventDefault(); this.pick(this.sel); }
-      // Escape belongs to the palette while it is open: stopping it keeps the panel's window handler from popping the sheet under it.
-      else if (e.key === 'Escape') { e.stopPropagation(); this.close(); }
+    });
+    // aria-modal: Tab cycles inside the palette, and Escape closes it. Both on the container, so they catch a focused
+    // *result* too — bound to the input, Escape from a tabbed-to result reached the panel's window handler and popped
+    // the sheet underneath while the palette stayed up. Stopping it here also keeps Shift+Tab out of that sheet.
+    this.el.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); this.close(); return; }
+      trapTab(this.el, e, document.activeElement as HTMLElement | null);
     });
     this.list.addEventListener('click', (e) => { const b = (e.target as HTMLElement).closest<HTMLElement>('[data-i]'); if (b) this.pick(Number(b.dataset.i)); });
     document.addEventListener('pointerdown', (e) => { if (this.visible && !this.el.contains(e.target as Node)) this.close(); });
   }
-  open(): void { this.returnTo = document.activeElement as HTMLElement | null; this.el.hidden = false; this.visible = true; this.input.value = ''; this.sel = 0; this.render(); this.input.focus(); }
+  /** Re-opening while it is up would overwrite `returnTo` with the palette's own input. */
+  open(): void { if (this.visible) { this.input.focus(); return; } this.returnTo = document.activeElement as HTMLElement | null; this.el.hidden = false; this.visible = true; this.input.value = ''; this.sel = 0; this.render(); this.input.focus(); }
   close(): void { this.el.hidden = true; this.visible = false; this.returnTo?.focus?.(); }
   private pick(i: number): void { const it = this.shown[i]; if (!it) return; this.close(); this.deps.onPick(it.kind); }
   private render(): void {
     this.shown = rank(this.deps.items(), this.input.value.trim());
     const icon = (g: QuickItem['group']): string => pixelIcon(g === 'People' ? 'chat' : g === 'Rooms' ? 'doc' : 'chart');
     this.list.innerHTML = this.shown.length
-      ? this.shown.map((it, i) => `<button class="item" role="option" data-i="${i}" aria-selected="${i === this.sel}">${icon(it.group)}<span>${esc(it.label)}${it.hint ? ` <span class="muted">${esc(it.hint)}</span>` : ''}</span><span class="k">${it.group}</span></button>`).join('')
+      ? this.shown.map((it, i) => `<button class="item" role="option" id="${activeOptionId(i)}" data-i="${i}" aria-selected="${i === this.sel}">${icon(it.group)}<span>${esc(it.label)}${it.hint ? ` <span class="muted">${esc(it.hint)}</span>` : ''}</span><span class="k">${it.group}</span></button>`).join('')
       : `<div class="empty">${pixelIcon('doc', { size: 16 })}<b>No match</b></div>`;
+    // The selection lives on the option; the focus stays in the input. This is the line that tells a screen reader
+    // which of the two the user is on.
+    if (this.shown.length) this.input.setAttribute('aria-activedescendant', activeOptionId(this.sel));
+    else this.input.removeAttribute('aria-activedescendant');
   }
 }

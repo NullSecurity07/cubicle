@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { type Vault, listJobs, readJob, updateJob, RoleFrontmatter, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, type JobFrontmatter } from '@cubicle/core';
+import { type Vault, listJobs, readJob, updateJob, RoleFrontmatter, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, GATE_JOB_TYPES, type JobFrontmatter } from '@cubicle/core';
 import { runJob, type HarnessDeps, type JobOutcome } from '@cubicle/harness';
 import { runHeartbeat, type HeartbeatDeps, type HeartbeatOutcome } from './heartbeat.js';
 
@@ -81,6 +81,13 @@ export class WorkerPool extends EventEmitter {
    * someone else has to act, and refusing to start anything until a reviewer catches up would idle the room
    * rather than keep work flowing. A full lane is still reported, so the brief and the room sign can say why the
    * queue is not moving.
+   *
+   * Gate jobs are exempt from the limit entirely, not merely left out of the tally. `enqueueGate` gives the gate
+   * job the *author's* team so the chain stays attributable, so a `qa.review` assigned to `qa_lead` carries
+   * `team: dev`: applying Dev's limit to it meant three Dev jobs in progress could stop every QA review from
+   * starting, while QA's own lanes sat empty. Work then piles up in `in_review` and the room never drains —
+   * the opposite of what a WIP limit is for. `wipLoad` already skips these jobs when counting; this is the other
+   * half of that rule.
    */
   nextJob(roleId: string): string | null {
     const all = listJobs(this.vault);
@@ -92,12 +99,13 @@ export class WorkerPool extends EventEmitter {
     for (const j of all) {
       if (j.assigned !== roleId || j.status !== 'queued' || this.active.has(j.id)) continue;
       if (j.depends_on.some((d) => byId.get(d)?.status !== 'done')) continue;
+      if (GATE_JOB_TYPES.includes(j.type)) return j.id;             // a gate is the reviewer's work, not the author team's
       const team = j.team;
       if (!team || !org.teams[team]) return j.id;                   // no team, no limit to apply
       const teamWip = org.teams[team].wip;
       if (!teamWip) { this.wipWarned.delete(team); return j.id; }   // no `wip:` on the team note: unlimited
       const limit = teamWip.in_progress;
-      if (!loads.has(team)) loads.set(team, wipLoad(this.vault, team, chainFor));
+      if (!loads.has(team)) loads.set(team, wipLoad(this.vault, team, chainFor, all));
       const load = loads.get(team)!;
       if (load.in_progress < limit) { this.wipWarned.delete(team); return j.id; } // back under the limit: the next full episode should warn again promptly
       const last = this.wipWarned.get(team) ?? 0;

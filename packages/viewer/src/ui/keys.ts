@@ -31,10 +31,47 @@ export function shortcutFor(e: { key: string; ctrlKey?: boolean; metaKey?: boole
 
 const isTyping = (t: EventTarget | null): boolean => { const el = t as HTMLElement | null; return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable); };
 
-export function bindKeys(handlers: Record<Action, () => void>): () => void {
-  const on = (e: KeyboardEvent): void => { const a = shortcutFor(e, isTyping(e.target)); if (!a) return; e.preventDefault(); handlers[a](); };
+/** A focused button, tab or link owns Space and Enter: the replay toggle must not swallow the activation. */
+export const isControl = (t: { closest?(sel: string): unknown } | null): boolean => !!t?.closest?.('button, a, [role="button"], [role="tab"]');
+
+/**
+ * `blocked()` is the app's modals: the first-run card and the quick-open palette, both `aria-modal`. Focus starts in
+ * a text field in each, so `isTyping` covered the common case — but one Tab moves focus onto "Surprise me" or a
+ * quick-open result, and `T` then opened the cabin sheet *under* the card while `1`-`4` flew the camera.
+ */
+export function bindKeys(handlers: Record<Action, () => void>, blocked: () => boolean = () => false): () => void {
+  const on = (e: KeyboardEvent): void => {
+    if (blocked()) return;
+    const a = shortcutFor(e, isTyping(e.target));
+    if (!a) return;
+    if (a === 'pause' && isControl(e.target as HTMLElement | null)) return;   // Space activates the control under the focus ring
+    e.preventDefault(); handlers[a]();
+  };
   window.addEventListener('keydown', on);
   return () => window.removeEventListener('keydown', on);
+}
+
+/** What a Tab may land on inside a modal element. */
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+/** A tab stop. `hidden`/`offsetParent` are the panel's: its header buttons and chat composer come and go. */
+export interface Focusable { focus(): void; hidden?: boolean; offsetParent?: unknown }
+
+/**
+ * Keep Tab inside `root` — the first-run card, the quick-open palette and the reader/viewer presentations are all
+ * `aria-modal`. Returns true when it handled the event (it always stops propagation then, so a window-level
+ * listener under it never sees the Tab).
+ *
+ * Elements that are `hidden` or laid out nowhere are skipped: the panel's back chevron, Obsidian link, Copy button
+ * and chat composer all come and go, and a cycle that stops on one of them looks to the owner like a dead Tab.
+ */
+export function trapTab(root: { querySelectorAll(sel: string): ArrayLike<Focusable> }, e: { key: string; shiftKey?: boolean; preventDefault(): void; stopPropagation(): void }, active: Focusable | null): boolean {
+  if (e.key !== 'Tab') return false;
+  e.preventDefault(); e.stopPropagation();
+  const items = Array.from(root.querySelectorAll(FOCUSABLE)).filter((el) => !el.hidden && el.offsetParent !== null);
+  if (!items.length) return true;
+  const at = active ? items.indexOf(active) : -1;
+  items[(((at < 0 ? 0 : at + (e.shiftKey ? -1 : 1)) % items.length) + items.length) % items.length].focus();
+  return true;
 }
 
 export function keysView(): View {

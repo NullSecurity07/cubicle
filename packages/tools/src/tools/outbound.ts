@@ -122,10 +122,15 @@ export function buildHash(dir: string): string {
   return h.digest('hex').slice(0, 16);
 }
 
-/** Every `deploy.done` of this project, oldest first. */
+/**
+ * Every `deploy.done` of this project, oldest first — out of the newest 500 in the log. The window is taken
+ * from the *newest* end (`order: 'desc'`) and flipped back to chronological order here: an ascending window
+ * would freeze on the first 500 deploys the vault ever recorded, so a busy office would stop seeing its own
+ * previews and canaries and `stagesDone` would refuse every later live deploy.
+ */
 function deploysOf(vault: import('@cubicle/core').Vault, project: string): import('@cubicle/core').CubicleEvent[] {
   const slug = slugify(project);
-  return vault.events.query({ types: ['deploy.done'], limit: 500 }).filter((e) => e.payload.project === slug);
+  return vault.events.query({ types: ['deploy.done'], limit: 500, order: 'desc' }).reverse().filter((e) => e.payload.project === slug);
 }
 
 /** The live deploys whose snapshot a rollback could still want, newest last. */

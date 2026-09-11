@@ -20,8 +20,11 @@ beforeEach(async () => {
   createStream(vault, { name: 'Checkout', problem: 'p', customers: 'c', outcome_metric: '72 % to 82 %', owner_team: 'dev' }, 'product_manager');
   vault.writeText(ciConfigPath('checkout'), 'steps:\n  - { name: test, run: "true" }\n', 'daemon');
   vault.writeText('Workspace/checkout/src/app.js', 'export const v = 1;\n', 'backend_engineer');
+  // Every source file in the workspace is back-dated, cubicle-ci.yaml included: `newestSourceMtime` walks the
+  // whole workspace, so a file left at the wall clock overtakes the fixed `finished` below and the suite starts
+  // failing at a time of day rather than on a change.
   const early = new Date('2026-09-11T09:00:00.000Z');
-  utimesSync(path.join(dir, 'Workspace/checkout/src/app.js'), early, early);
+  for (const rel of ['Workspace/checkout/src/app.js', ciConfigPath('checkout')]) utimesSync(path.join(dir, rel), early, early);
 });
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 

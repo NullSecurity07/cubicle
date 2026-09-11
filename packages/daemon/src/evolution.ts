@@ -587,6 +587,27 @@ export function postmortemPath(vault: Vault, jobId: string): string | null {
 /** A job that is still somebody's problem. An incident in one of these states means the room already knows. */
 const OPEN_JOB_STATUSES = ['queued', 'running', 'blocked', 'in_review'] as const;
 
+/**
+ * Run one item of a sweep, and let a bad item cost only that item.
+ *
+ * Every payload these sweeps read was written by a model — `stream` reaches `scheduler.request` and
+ * `deploy.site` as a free-text argument — so one malformed value must not end the sweep, let alone the tick.
+ * The failure is recorded as a `daemon.warning` naming the event, so a thing that keeps throwing is visible
+ * rather than silent.
+ */
+function perItem<T>(vault: Vault, where: string, detail: Record<string, unknown>, fn: () => T | null): T | null {
+  try { return fn(); }
+  catch (err) {
+    vault.events.emit({ type: 'daemon.warning', payload: { where, ...detail, message: String((err as Error).message ?? err).slice(0, 300) } });
+    return null;
+  }
+}
+
+/** {@link perItem} for one event of a log sweep. */
+function perEvent<T>(vault: Vault, where: string, e: { id?: number; type: string; ts: string }, fn: () => T | null): T | null {
+  return perItem(vault, where, { event: e.id ?? null, event_type: e.type, event_ts: e.ts }, fn);
+}
+
 /** True while `stream` has an incident nobody has closed yet. */
 function hasOpenIncident(vault: Vault, stream: string): boolean {
   return listJobs(vault, { status: [...OPEN_JOB_STATUSES] }).some((j) => j.type === 'incident' && j.stream === stream);
@@ -595,7 +616,7 @@ function hasOpenIncident(vault: Vault, stream: string): boolean {
 /** The streams that have actually reached production: a `deploy.done` at the `live` stage. */
 function liveStreams(vault: Vault): Set<string> {
   const out = new Set<string>();
-  for (const e of vault.events.query({ types: ['deploy.done'], limit: 500 })) {
+  for (const e of vault.events.query({ types: ['deploy.done'], limit: 500, order: 'desc' })) {
     // A deploy.done from before stages existed always went to the production branch, so a missing stage counts as live.
     if ((e.payload.stage ?? 'live') === 'live' && typeof e.payload.stream === 'string') out.add(e.payload.stream);
   }
@@ -630,51 +651,70 @@ function openIncident(vault: Vault, o: { id: string; stream: string; trigger: st
  */
 export function maybeOpenIncident(vault: Vault, now = new Date()): string | null {
   const today = now.toISOString().slice(0, 10);
-  for (const e of vault.events.query({ types: ['deploy.done'], limit: 200 })) {
-    const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
-    if (!stream || !readStream(vault, stream)) continue;
-    if (e.payload.rolled_back !== true) continue;
-    const id = idFromKey('job', `incident:rollback:${e.ts}:${stream}`);
-    if (readJob(vault, id)) continue;
-    return openIncident(vault, {
-      id, stream, trigger: 'rollback', today, ts: e.ts,
-      title: `Incident: ${stream} was rolled back`,
-      what: `A live deploy of stream "${stream}" was rolled back at ${e.ts}.`,
+  for (const e of vault.events.query({ types: ['deploy.done'], limit: 200, order: 'desc' })) {
+    const opened = perEvent(vault, 'maybeOpenIncident:rollback', e, () => {
+      const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
+      if (!stream || !readStream(vault, stream)) return null;
+      if (e.payload.rolled_back !== true) return null;
+      const id = idFromKey('job', `incident:rollback:${e.ts}:${stream}`);
+      if (readJob(vault, id)) return null;
+      return openIncident(vault, {
+        id, stream, trigger: 'rollback', today, ts: e.ts,
+        title: `Incident: ${stream} was rolled back`,
+        what: `A live deploy of stream "${stream}" was rolled back at ${e.ts}.`,
+      });
     });
+    if (opened) return opened;
   }
   const live = liveStreams(vault);
-  for (const e of vault.events.query({ types: ['ci.completed'], limit: 200 })) {
-    const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
-    if (!stream || e.payload.green !== false || !readStream(vault, stream)) continue;
-    if (!live.has(stream)) continue;   // not in production: a red build is ordinary engineering, not an incident
-    const record = typeof e.payload.record === 'string' ? e.payload.record : e.ts;
-    const id = idFromKey('job', `incident:red_ci_live:${record}`);
-    if (readJob(vault, id) || hasOpenIncident(vault, stream)) continue;
-    return openIncident(vault, {
-      id, stream, trigger: 'red_ci_live', today, ts: e.ts,
-      title: `Incident: CI is red on live stream ${stream}`,
-      what: `CI went red on stream "${stream}" at ${e.ts} (record ${record}) while that stream is serving in production, so what is live is no longer known-good.`,
+  for (const e of vault.events.query({ types: ['ci.completed'], limit: 200, order: 'desc' })) {
+    const opened = perEvent(vault, 'maybeOpenIncident:red_ci_live', e, () => {
+      const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
+      if (!stream || e.payload.green !== false || !readStream(vault, stream)) return null;
+      if (!live.has(stream)) return null;   // not in production: a red build is ordinary engineering, not an incident
+      const record = typeof e.payload.record === 'string' ? e.payload.record : e.ts;
+      const id = idFromKey('job', `incident:red_ci_live:${record}`);
+      if (readJob(vault, id) || hasOpenIncident(vault, stream)) return null;
+      return openIncident(vault, {
+        id, stream, trigger: 'red_ci_live', today, ts: e.ts,
+        title: `Incident: CI is red on live stream ${stream}`,
+        what: `CI went red on stream "${stream}" at ${e.ts} (record ${record}) while that stream is serving in production, so what is live is no longer known-good.`,
+      });
     });
+    if (opened) return opened;
   }
   return null;
 }
+
+/** An incident nobody is working on any more, whatever became of it. */
+const CLOSED_INCIDENT_STATUSES = ['done', 'failed', 'cancelled'] as const;
 
 /**
  * Turn a finished incident's postmortem into work. §33's bargain is "no personal blame, strong ownership of
  * corrective action": without this the postmortem is a document nobody acts on. Once per incident, at most
  * `CORRECTIVE_MAX` jobs, each linked back so the next postmortem can see whether the last one worked.
+ *
+ * A failed or cancelled incident closes here too, and that is the point: `incident.recovered` was emitted in
+ * this one place and only for `done`, while `budgetSpentHours` charges an opened-but-unrecovered incident
+ * `Date.now() - opened` on every call. One incident that failed therefore made its stream's error budget read
+ * as SPENT in every division plan from then on, for ever, and `computeDora`'s time-to-restore never resolved.
+ * The recovery event carries the status as its `reason`, so a reader can tell a postmortem-backed recovery from
+ * an incident that was abandoned.
  */
 export function maybeCorrectiveActions(vault: Vault): string[] {
   const out: string[] = [];
-  for (const inc of listJobs(vault).filter((j) => j.type === 'incident' && j.status === 'done')) {
+  // One listing for the sweep: the marker is keyed per incident, so no incident's own decision depends on a
+  // job created for another one in the same pass.
+  const all = listJobs(vault);
+  for (const inc of all.filter((j) => j.type === 'incident' && (CLOSED_INCIDENT_STATUSES as readonly string[]).includes(j.status))) {
     const marker = `corrective:${inc.id}`;
-    if (listJobs(vault).some((j) => j.links.includes(`[[${marker}]]`))) continue;
+    if (all.some((j) => j.links.includes(`[[${marker}]]`))) continue;
     const pm = postmortemPath(vault, inc.id);
     const recovered = vault.events.query({ types: ['incident.recovered'], job: inc.id, limit: 1 });
     if (!recovered.length) {
       const opened = vault.events.query({ types: ['incident.opened'], job: inc.id, limit: 1 })[0];
       const hours = opened ? (Date.parse(inc.updated) - Date.parse(opened.ts)) / 3600_000 : 0;
-      vault.events.emit({ type: 'incident.recovered', agent: inc.assigned, job: inc.id, payload: { stream: inc.stream ?? null, hours: Number(Math.max(0, hours).toFixed(2)), postmortem: pm } });
+      vault.events.emit({ type: 'incident.recovered', agent: inc.assigned, job: inc.id, payload: { stream: inc.stream ?? null, hours: Number(Math.max(0, hours).toFixed(2)), postmortem: pm, reason: inc.status } });
     }
     if (!pm) { markCorrectiveDone(vault, inc.id, marker); continue; }
     const section = (vault.readTextOrNull(pm) ?? '').split('## Corrective actions')[1]?.split('\n## ')[0] ?? '';
@@ -713,16 +753,25 @@ export function maybeFlagLessons(vault: Vault, now = new Date()): string[] {
   const existing = vault.readTextOrNull('Memory/lessons.md') ?? '# Lessons\n';
   const made: string[] = [];
   const lines: string[] = [];
+  // The dedup marker carries the stream, not just the key. Flag keys are a stream's own namespace, so two
+  // streams can both run a flag called `new-checkout`: on a bare `flag "<key>"` marker the second stream's
+  // expired flag was silently swallowed by the first stream's lesson. `lines` is checked alongside the file
+  // because the append happens once at the end, so within a tick the file cannot yet show what this pass added.
+  const marker = (key: string, slug: string) => `flag "${key}" in ${slug}`;
   for (const s of listStreams(vault)) {
-    const expired = expiredFlags(readFlags(vault, s.slug), today);
-    if (!expired.length) continue;
-    const fresh = expired.filter((f) => !existing.includes(`flag "${f.key}"`));
-    if (!fresh.length) continue;
-    for (const f of fresh) {
-      lines.push(`- [${today}] flag "${f.key}" in ${s.slug} passed its removal date ${f.remove_by} and is still there; ${f.owner} removes the flag and the dead branch, or sets a new date and says why (§21) #team:${s.owner_team}`);
-      made.push(f.key);
-    }
-    vault.events.emit({ type: 'daemon.warning', payload: { where: 'flags', stream: s.slug, flags: fresh.map((f) => f.key), message: `${fresh.length} flag(s) past their removal date in ${s.slug}: ${fresh.map((f) => `${f.key} (${f.owner}, due ${f.remove_by})`).join(', ')}` } });
+    const opened = perItem(vault, 'maybeFlagLessons', { stream: s.slug }, () => {
+      const expired = expiredFlags(readFlags(vault, s.slug), today);
+      if (!expired.length) return null;
+      const fresh = expired.filter((f) => !existing.includes(marker(f.key, s.slug)) && !lines.some((l) => l.includes(marker(f.key, s.slug))));
+      if (!fresh.length) return null;
+      for (const f of fresh) {
+        lines.push(`- [${today}] ${marker(f.key, s.slug)} passed its removal date ${f.remove_by} and is still there; ${f.owner} removes the flag and the dead branch, or sets a new date and says why (§21) #team:${s.owner_team}`);
+        made.push(f.key);
+      }
+      vault.events.emit({ type: 'daemon.warning', payload: { where: 'flags', stream: s.slug, flags: fresh.map((f) => f.key), message: `${fresh.length} flag(s) past their removal date in ${s.slug}: ${fresh.map((f) => `${f.key} (${f.owner}, due ${f.remove_by})`).join(', ')}` } });
+      return null;
+    });
+    void opened;
   }
   if (lines.length) vault.appendText('Memory/lessons.md', lines.join('\n') + '\n', 'daemon');
   return made;

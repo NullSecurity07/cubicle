@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, type Snapshot } from './state.js';
+import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, type Snapshot } from './state.js';
 
 const role = (o: Partial<Snapshot['roles'][number]> & { role: string }) => ({ display: o.role, sprite: o.role, desk: o.role, active: true, ...o });
 
@@ -243,5 +243,39 @@ describe('sprite families', () => {
   it('derives the family from title, board membership and team leadership', () => {
     const s = applySnapshot(emptyState(), { op: 'snapshot', at: '2026-09-11T10:00:00.000Z', roles: [role({ role: 'ceo', title: 'Chief Executive Officer' }), role({ role: 'advisor_investor', team: 'board' }), role({ role: 'dev_manager', team: 'dev' }), role({ role: 'sre', team: 'dev' })], jobs: [], surfaces: [], quota: [], latestRun: null, plan: '', pendingProposals: 0, teams: [{ id: 'dev', name: 'Dev', lead: 'dev_manager', members: ['sre'], mission: '' }] });
     expect([s.agents.ceo.family, s.agents.advisor_investor.family, s.agents.dev_manager.family, s.agents.sre.family]).toEqual(['chief', 'advisor', 'manager', 'member']);
+  });
+});
+
+/**
+ * C1: the viewer's title bar reads `state.frames[id].seq`, and only the `browser.frame` *event* path ever wrote it.
+ * A live socket frame (`net.ts` carries its own `seq`) and `__cubicle.pushFrame` both went to a module-level record
+ * instead, so a stream that had just taken three frames advertised "seq 0" — a broken readout, not a test artefact.
+ */
+describe('withFrameSeq', () => {
+  it('takes the daemon\'s own counter when the frame carried one', () => {
+    const s = withFrameSeq(emptyState(), 'demo', 412);
+    expect(s.frames.demo.seq).toBe(412);
+    expect(withFrameSeq(s, 'demo', 413).frames.demo.seq).toBe(413);
+  });
+  it('advances by one for a frame pushed with no counter (`__cubicle.pushFrame`)', () => {
+    let s = emptyState();
+    for (let i = 0; i < 3; i++) s = withFrameSeq(s, 'demo', undefined);
+    expect(s.frames.demo.seq).toBe(3);
+  });
+  it('counts each stream on its own and leaves the others alone', () => {
+    let s = withFrameSeq(withFrameSeq(emptyState(), 'a'), 'b', 9);
+    s = withFrameSeq(s, 'a');
+    expect(s.frames.a.seq).toBe(2); expect(s.frames.b.seq).toBe(9);
+  });
+  it('keeps the stored path a browser.frame event left behind', () => {
+    let s = applyEvent(emptyState(), { ts: '2026-09-11T09:00:00.000Z', type: 'browser.frame', agent: 'cmo', job: null, payload: { session: 'demo', seq: 7, path: '.cubicle/screens/demo/7.jpg' } });
+    s = withFrameSeq(s, 'demo');
+    expect(s.frames.demo).toEqual({ seq: 8, path: '.cubicle/screens/demo/7.jpg' });
+  });
+  it('does not mutate the state it was given', () => {
+    const before = emptyState();
+    const after = withFrameSeq(before, 'demo', 1);
+    expect(before.frames).toEqual({});
+    expect(after).not.toBe(before);
   });
 });

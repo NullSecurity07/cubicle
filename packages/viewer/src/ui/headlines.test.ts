@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { emptyState, applyEvent, type State, type CubicleEvent } from '../state.js';
 import { headlineFor } from './surfaces.js';
+import { cut } from './headlines.js';
 import { tintFor, NIGHT_ALPHA } from './time.js';
 
 const ev = (type: string, payload: Record<string, unknown>): CubicleEvent => ({ ts: '2026-09-03T12:00:00.000Z', type, agent: 'backend_engineer', job: null, payload });
@@ -33,5 +34,30 @@ describe('day / night tint', () => {
     expect(tintFor(7)).toBeCloseTo(NIGHT_ALPHA / 2);
     expect(tintFor(19.5)).toBeCloseTo(NIGHT_ALPHA / 2);
     expect(tintFor(8)).toBe(0);
+  });
+});
+
+describe('cut', () => {
+  it('ends on a whole word, never mid-word, where a word boundary fits', () => {
+    expect(cut('What company will you start?', 18)).toBe('What company…');   // was 'What company wil…'
+    expect(cut('Queue of proposals waiting for you', 10)).toBe('Queue of…');
+    expect(cut('Board room', 9)).toBe('Board…');
+  });
+  it('leaves anything that already fits exactly alone, ellipsis included', () => {
+    expect(cut('Board room', 10)).toBe('Board room');
+    expect(cut('Board room', 40)).toBe('Board room');
+    expect(cut('  Board \n  room ', 40)).toBe('Board room');   // whitespace is normalised first
+  });
+  it('still cuts a single word longer than the budget — there is no boundary to fall back to', () => {
+    expect(cut('supercalifragilistic', 10)).toBe('supercali…');
+    expect(cut('supercalifragilistic', 10).length).toBe(10);
+  });
+  it('keeps a partial word rather than leaving a near-empty line', () => {
+    expect(cut('Deployment succeeded', 14)).toBe('Deployment…');            // the boundary is worth taking
+    expect(cut('a verylongwordindeed', 12)).toBe('a verylongw…');            // trimming back to "a" would say nothing
+  });
+  it('never exceeds the budget', () => {
+    const s = 'What company will you start? Tell the CEO and it begins.';
+    for (let n = 2; n < 40; n++) expect(cut(s, n).length, `n=${n}`).toBeLessThanOrEqual(n);
   });
 });

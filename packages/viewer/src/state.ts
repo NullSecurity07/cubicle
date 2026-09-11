@@ -50,6 +50,17 @@ export interface State {
   staleSnapshot?: boolean;
 }
 
+/**
+ * A live frame landed for `id`. `seq` is the daemon's own counter when the socket carried one (`net.ts` `Frame`);
+ * a frame pushed with no counter — `__cubicle.pushFrame`, which the screenshot script and the click test use —
+ * advances the local one by one. Without this the viewer's title bar read "seq 0" on a stream that had just taken
+ * three frames, because only the `browser.frame` *event* path ever wrote `state.frames[id].seq`.
+ */
+export function withFrameSeq(s: State, id: string, seq?: number): State {
+  const cur = s.frames[id] ?? { seq: 0 };
+  return { ...s, frames: { ...s.frames, [id]: { ...cur, seq: seq ?? cur.seq + 1 } } };
+}
+
 export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, frames: {}, lastEventTs: null, deploys: [], firstRun: false });
 
 /** The division a team belongs to: follow `parent` to the root team; a root that is not a division is 'other'. */

@@ -38,15 +38,31 @@ export function announce(text: string): void {
   window.setTimeout(() => { el.textContent = text; }, 30);
 }
 
-/** The hint line under the bar: fades after `ms` or on the first interaction, then is removed. */
-export function coachMark(text: string, ms = 8000): void {
+/** A coach mark that has not been shown yet. `show()` is idempotent: the app calls it from two places, and the
+ *  mark is shown once, for its own `ms`, from whichever came first. */
+export interface CoachMark { show(): void }
+
+/**
+ * The hint line under the bar: fades after `ms` or on the first interaction, then is removed.
+ *
+ * It is built, not shown: the first-run card is the other first-contact message, and two of them side by side
+ * (which `01-first-run.png` showed) is one too many. The app shows this one when it knows the card is not coming,
+ * or once the card has gone.
+ */
+export function coachMark(text: string, ms = 8000): CoachMark {
   const el = document.getElementById('coach');
-  if (!el) return;
-  el.textContent = text;
-  el.hidden = false;
-  let done = false;
-  const end = (): void => { if (done) return; done = true; el.classList.add('fade'); window.setTimeout(() => { el.hidden = true; }, dur(DUR.reader)); window.removeEventListener('pointerdown', end); window.removeEventListener('keydown', end); };
-  window.setTimeout(end, ms);
-  window.addEventListener('pointerdown', end, { once: true });
-  window.addEventListener('keydown', end, { once: true });
+  let started = false, done = false;
+  const end = (): void => { if (done || !started || !el) return; done = true; el.classList.add('fade'); window.setTimeout(() => { el.hidden = true; }, dur(DUR.reader)); window.removeEventListener('pointerdown', end); window.removeEventListener('keydown', end); };
+  return {
+    show(): void {
+      if (started || done || !el) return;
+      started = true;
+      el.textContent = text;
+      el.classList.remove('fade');
+      el.hidden = false;
+      window.setTimeout(end, ms);
+      window.addEventListener('pointerdown', end, { once: true });
+      window.addEventListener('keydown', end, { once: true });
+    },
+  };
 }

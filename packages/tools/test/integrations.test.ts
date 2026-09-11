@@ -97,3 +97,54 @@ describe('vault-native adapters', () => {
     expect(() => adapterFor(swapped, 'work', { vault, env: {} })).toThrow(/plane/i);
   });
 });
+
+describe('the vault-native adapters refuse what they cannot honestly do (fix wave item 11 / M1, M5)', () => {
+  const adapters = () => vaultNativeAdapters({ vault, env: {} });
+
+  it('metrics.record refuses a sheet another writer owns whole', async () => {
+    for (const sheet of ['engineering', 'quota']) {
+      const before = vault.readTextOrNull(`Metrics/${sheet}.md`);
+      await expect(adapters().metrics.record(sheet, { deploys: 3 })).rejects.toThrow(/written whole/);
+      expect(vault.readTextOrNull(`Metrics/${sheet}.md`)).toBe(before);   // the sheet its owner regenerates is untouched
+    }
+  });
+
+  it('metrics.record refuses a row whose columns do not match the sheet it is appending to', async () => {
+    const m = adapters().metrics;
+    await m.record('signups', { source: 'search', count: 4 });
+    await expect(m.record('signups', { revenue_cents: 900 })).rejects.toThrow(/wrong columns|different header/i);
+    // The sheet is untouched by the refused call: one header, one row.
+    const text = vault.readText('Metrics/signups.md');
+    expect(text.split('\n').filter((l) => l.trim().startsWith('|'))).toHaveLength(3); // header, separator, one row
+  });
+
+  it('the same columns keep appending, in order', async () => {
+    const m = adapters().metrics;
+    await m.record('signups', { source: 'search', count: 4 });
+    await m.record('signups', { source: 'newsletter', count: 2 });
+    const rows = vault.readText('Metrics/signups.md').split('\n').filter((l) => l.trim().startsWith('|'));
+    expect(rows).toHaveLength(4);
+    expect(rows[0]).toContain('source');
+    expect(rows.at(-1)).toContain('newsletter');
+  });
+
+  it('metrics.record refuses a row with no columns at all', async () => {
+    await expect(adapters().metrics.record('signups', {})).rejects.toThrow(/at least one column/);
+  });
+
+  it('errors.report refuses a stream that does not exist, and names the ones that do', async () => {
+    createStream(vault, { name: 'Checkout', problem: 'p', customers: 'c', outcome_metric: 'm', owner_team: 'dev' }, 'product_manager');
+    await expect(adapters().errors.report({ stream: 'nope', title: '500s', detail: 'd' })).rejects.toThrow(/no stream "nope"/);
+    await expect(adapters().errors.report({ stream: '../../etc', title: '500s', detail: 'd' })).rejects.toThrow(/no stream/);
+    expect(listJobs(vault).filter((j) => j.type === 'incident')).toHaveLength(0);
+  });
+
+  it('errors.report still opens an incident on a real stream', async () => {
+    createStream(vault, { name: 'Checkout', problem: 'p', customers: 'c', outcome_metric: 'm', owner_team: 'dev' }, 'product_manager');
+    const id = await adapters().errors.report({ stream: 'checkout', title: '500s on checkout', detail: 'the card form 500s' });
+    const job = listJobs(vault).find((j) => j.id === id)!;
+    expect(job.type).toBe('incident');
+    expect(job.stream).toBe('checkout');
+    expect(job.assigned).toBe('sre');
+  });
+});

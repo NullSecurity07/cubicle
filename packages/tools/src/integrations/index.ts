@@ -4,6 +4,7 @@ import YAML from 'yaml';
 import { z } from 'zod';
 import {
   type Vault, createJob, listJobs, nowIso, repoRoot, workspacePath, ciConfigPath, readProcess, loadOrg,
+  readStream, listStreams,
 } from '@cubicle/core';
 
 /**
@@ -13,6 +14,19 @@ import {
  * company actually uses, so a real Forgejo or Plane adapter is a day's work rather than a rewrite.
  */
 export const CAPABILITIES = ['work', 'docs', 'git', 'ci', 'chat', 'secrets', 'metrics', 'errors', 'automation'] as const;
+
+/** Metrics sheets another writer owns end to end, and who owns them. `metrics.record` refuses these. */
+const GENERATED_METRICS_SHEETS: Record<string, string> = {
+  engineering: 'the weekly review (computeDora)',
+  quota: 'the model router',
+};
+
+/** The column names of a markdown table's header row, or null when the text has no table yet. */
+function headerColumns(text: string): string[] | null {
+  const row = text.split('\n').find((l) => l.trim().startsWith('|'));
+  if (!row) return null;
+  return row.split('|').slice(1, -1).map((c) => c.trim()).filter(Boolean);
+}
 export type Capability = (typeof CAPABILITIES)[number];
 
 const IntegrationEntry = z.object({ adapter: z.string(), note: z.string(), candidate: z.string() });
@@ -115,9 +129,23 @@ export function vaultNativeAdapters({ vault, env }: AdapterDeps): Adapters {
     },
     metrics: {
       async record(sheet, row) {
+        // A sheet someone else writes whole: the weekly review regenerates Metrics/engineering.md from the
+        // event log and the router regenerates Metrics/quota.md on every quota update. A row appended to
+        // either lands under a header it does not share — and is erased by the next regeneration anyway.
+        const owner = GENERATED_METRICS_SHEETS[sheet];
+        if (owner) throw new Error(`Metrics/${sheet}.md is written whole by ${owner}, not appended to: a row added here would be misaligned and erased by the next regeneration. Record this on a sheet of your own.`);
         const rel = `Metrics/${sheet}.md`;
         const keys = Object.keys(row);
+        if (!keys.length) throw new Error(`metrics.record on "${sheet}" needs at least one column`);
         const existing = vault.readTextOrNull(rel);
+        // The general form of the same bug: this appends a row keyed on *its* fields to whatever header the
+        // file already has, so the first caller fixes the columns and every later caller with different fields
+        // writes into the wrong ones. Say so instead of silently misaligning.
+        const have = existing === null ? null : headerColumns(existing);
+        const want = ['date', ...keys];
+        if (have && have.join('|') !== want.join('|')) {
+          throw new Error(`Metrics/${sheet}.md has the columns ${have.join(', ')}; this row has ${want.join(', ')}. A row appended under a different header lands in the wrong columns — pass the same fields, or use a new sheet.`);
+        }
         const header = `| date | ${keys.join(' | ')} |\n|---|${keys.map(() => '---|').join('')}\n`;
         const line = `| ${nowIso().slice(0, 10)} | ${keys.map((k) => String(row[k])).join(' | ')} |\n`;
         vault.writeText(rel, (existing ?? `# ${sheet}\n\n${header}`).replace(/\n*$/, '\n') + line, 'daemon', { generated: true });
@@ -125,6 +153,12 @@ export function vaultNativeAdapters({ vault, env }: AdapterDeps): Adapters {
     },
     errors: {
       async report({ stream, title, detail }) {
+        // An incident against a stream that does not exist is an incident nobody can work: the SRE's first
+        // instruction is to read the stream, and `Workspace/<stream>` is where the evidence lives.
+        if (!readStream(vault, stream)) {
+          const known = listStreams(vault).map((s) => s.slug);
+          throw new Error(`no stream "${stream}" to report an error against. ${known.length ? `Known streams: ${known.join(', ')}.` : 'No streams exist yet.'}`);
+        }
         return createJob(vault, {
           type: 'incident', title, assigned: 'sre', priority: 1, team: 'dev', owner_role: 'dev_manager', stream, risk: 'high',
           goal: `Something broke in production for stream "${stream}".\n\n${detail}\n\nDetect → triage → mitigate → recover → root cause → corrective actions → learning (operating model §33). Roll back first with deploy.site({ rollback: true }) if a deploy is implicated, then write the blameless postmortem to Docs/postmortems/ using Docs/postmortems/_template.md and finish with that path in artifacts.`,

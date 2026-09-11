@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hourBucket, skyFor, nightColourFor, lampAlphaFor, tintFor, sunOrMoon } from './time.js';
+import { hourBucket, skyFor, nightColourFor, lampAlphaFor, tintFor, sunOrMoon, replayLabel, REPLAY_AUTOLOAD_MS } from './time.js';
 import { PALETTE, hexToInt } from '../world/palette.js';
 
 describe('hour buckets', () => {
@@ -35,5 +35,26 @@ describe('time bar icon', () => {
   it('shows the sun through the working day and the moon otherwise', () => {
     expect(sunOrMoon(12)).toBe('sun'); expect(sunOrMoon(6)).toBe('sun'); expect(sunOrMoon(17.9)).toBe('sun');
     expect(sunOrMoon(18)).toBe('moon'); expect(sunOrMoon(2)).toBe('moon'); expect(sunOrMoon(23.5)).toBe('moon');
+  });
+});
+
+/**
+ * M9: the clock label carried "(Space pauses, arrows step)" — a keyboard hint wedged into a readout. The hint moved
+ * beside the transport it is about (`#replay-hint`), which is itself only on the screen in replay mode.
+ */
+describe('the replay clock label', () => {
+  const ev = (ts: string): { ts: string } => ({ ts });
+  it('reads the count and the span of the day', () => {
+    expect(replayLabel([ev('2026-09-11T09:00:00.000Z'), ev('2026-09-11T17:30:12.000Z')])).toBe('2 events · 09:00:00–17:30:12');
+  });
+  it('says so when the day is empty, rather than printing an empty span', () => {
+    expect(replayLabel([])).toBe('no events that day');
+  });
+  it('carries no keyboard hint: the clock is a clock', () => {
+    const label = replayLabel([ev('2026-09-11T09:00:00.000Z')]);
+    expect(label).not.toMatch(/space|arrow/i);
+  });
+  it('gives the socket a moment before `?replay=` loads a day', () => {
+    expect(REPLAY_AUTOLOAD_MS).toBeGreaterThan(0);
   });
 });

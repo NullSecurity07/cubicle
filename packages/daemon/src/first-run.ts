@@ -1,4 +1,4 @@
-import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, parseNote, resolveRole, researchLead, leadOf, createStream, listStreams, streamSlug, type NewStream } from '@cubicle/core';
+import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, parseNote, resolveRole, researchLead, leadOf, createStream, listStreams, streamSlug, ciConfigPath, type NewStream } from '@cubicle/core';
 
 /**
  * The three jobs a company must leave its first heartbeat with (spec §12): something on the web, something to
@@ -47,8 +47,8 @@ function specs(org: Org, stream?: string): NewJob[] {
     {
       type: 'engineer.ship', title: FIRST_JOB_TITLES[0], assigned: engineer, priority: 2,
       team: org.roles[engineer]?.team, owner_role: engineeringOwner === 'owner' ? 'ceo' : engineeringOwner,
-      goal: 'The company has no site yet. Read Brand/name.md, Brand/palette.md and Brand/voice.md, then build the first cut of Site/: one page that says what the company does, who it is for, and how to get in touch. Keep it static and boring — no framework, no build step the owner has to learn. Do not invent claims the brand notes do not support.',
-      done_when: 'Site/index.html exists, uses the name, palette and voice from Brand/, has no broken links, and says what the company sells and to whom.',
+      goal: 'The company has no site yet. Read Brand/name.md, Brand/palette.md and Brand/voice.md, then build the first cut of Site/: one page that says what the company does, who it is for, and how to get in touch. Keep it static and boring — no framework, no build step the owner has to learn. Do not invent claims the brand notes do not support.\n\nBefore you finish: this is an engineer.ship, so it cannot report success without a green CI run newer than every source file in its stream (operating model §17). The stream starts with a placeholder pipeline in Workspace/<stream>/cubicle-ci.yaml; read it, replace the placeholder step with whatever actually checks this change, then call ci.run({ stream: "<the job\'s stream>" }) and finish on green.',
+      done_when: 'Site/index.html exists, uses the name, palette and voice from Brand/, has no broken links, says what the company sells and to whom, and ci.run on the job\'s stream is green.',
       stream, risk: 'low',
     },
     {
@@ -152,8 +152,38 @@ export function firstStreamSpec(brand: { name?: string; tagline?: string }, owne
 }
 
 /**
- * Create the company's first stream on the first cycle after the owner's idea. Once only: any existing stream
- * means the product manager has taken over, and a second seed would compete with their work.
+ * The pipeline a brand-new stream starts with.
+ *
+ * Green on an empty workspace on purpose. The first seeded job is an `engineer.ship`, and `shipRefusal` will
+ * not let one finish without a green CI record newer than every source file — so on day one, with nothing built
+ * yet, a stream with no `cubicle-ci.yaml` leaves its first job unable to finish at all: the engineer has to
+ * invent a pipeline for an empty directory before it can report success. That is not a first impression worth
+ * having, and it is what this file removes.
+ *
+ * It is a starting point, not a pipeline. The comment says so where the engineer will read it, and the site
+ * seed's goal says it again, because a pipeline that only ever echoes is not §17's "validated by the pipeline".
+ */
+const STARTER_CI_YAML = `# The pipeline for this stream. Every step runs in the sandbox, in this directory, on every ci.run —
+# and an engineer.ship cannot finish without a green run newer than every source file here (operating
+# model §17).
+#
+# It starts green on an empty workspace so the first job can finish before any code exists. Replace the
+# placeholder below with the real steps as soon as code lands: build, lint, test, then security-scan
+# (toolchain §45 gives the canonical order). Steps run in order and stop at the first failure unless the
+# step sets allow_failure: true. Set network: allowlist only if a step genuinely needs the proxy.
+network: none
+timeout_s: 120
+steps:
+  - name: workspace
+    run: "ls -a"
+  - name: checks
+    run: "echo 'No checks defined yet. Replace this step with the build, lint and test commands for this stream.'"
+`;
+
+/**
+ * Create the company's first stream on the first cycle after the owner's idea, with the workspace and starter
+ * pipeline its first job needs. Once only: any existing stream means the product manager has taken over, and a
+ * second seed would compete with their work.
  */
 export function seedFirstStream(vault: Vault): string | null {
   if (!hasIdea(vault)) return null;
@@ -162,6 +192,8 @@ export function seedFirstStream(vault: Vault): string | null {
   const ownerNote = listInbox(vault).find((n) => n.data.kind === 'message' && n.data.from === 'owner')?.body ?? '';
   const spec = firstStreamSpec(brand, ownerNote.replace(/^#.*$/m, ''));
   const slug = createStream(vault, { ...spec, slug: streamSlug(spec.name) }, 'ceo');
-  vault.events.emit({ type: 'vault.wrote', agent: 'ceo', payload: { path: `Streams/${slug}.md`, by: 'ceo', reason: 'first stream from the owner\'s idea' } });
+  // `createStream` already wrote `Streams/<slug>.md` through the vault, which announced it with a `vault.wrote`
+  // carrying the sha. A second, sha-less emit here said nothing new and doubled the event the office reads.
+  vault.writeText(ciConfigPath(slug), STARTER_CI_YAML, 'ceo');
   return slug;
 }

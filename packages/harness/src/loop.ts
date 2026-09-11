@@ -537,7 +537,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
         // deploy.site call is a preview, and a preview must not buy the production deploy its approval.
         // A deploy.done from before stages existed always went to the production branch, so it counts as live.
         const isLive = (e: { payload: Record<string, unknown> }) => (e.payload.stage ?? 'live') === 'live';
-        const deploys = events.query({ types: ['deploy.done'], limit: 500 });
+        const deploys = events.query({ types: ['deploy.done'], limit: 500, order: 'desc' });
         const liveDone = deploys.some((e) => e.payload.mode === 'live' && isLive(e));
         const brandUrl = /^url:\s*["']?https?:\/\//m.test(vault.readTextOrNull('Brand/name.md') ?? '');
         const anyDone = deploys.some(isLive);

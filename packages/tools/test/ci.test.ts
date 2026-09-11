@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, ciConfigPath, latestCiRecord } from '@cubicle/core';
-import { parseToolsConfig, ciRun, ToolRegistry, phase5Tools, phase3Tools, hasDocker, hasSandboxImage, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ciRun, ToolRegistry, phase5Tools, phase3Tools, hasDocker, hasSandboxImage, commandPublishes, type ToolContext } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 let dir: string; let vault: Vault;
@@ -120,5 +120,74 @@ describe('ci.run', () => {
 
   it('a CI record cannot be forged through the vault write API', () => {
     expect(() => vault.writeText('Workspace/checkout/.cubicle-ci/forged.json', '{"green":true}', 'backend_engineer')).toThrow(/cache path/);
+  });
+});
+
+describe('a CI step that publishes gets the same secret scan as shell.run (fix wave item 9 / I4)', () => {
+  const AWS = 'AKIAIOSFODNN7EXAMPLE';
+  const PUSH = 'steps:\n  - { name: build, run: "true" }\n  - { name: publish, run: "git push origin main" }\n';
+
+  const seed = (slug: string, yaml: string) => {
+    vault.writeText(ciConfigPath(slug), yaml, 'backend_engineer');
+    vault.writeText(`Workspace/${slug}/src/app.js`, 'export const v = 1;\n', 'backend_engineer');
+  };
+
+  it('refuses before the step runs when a key is in the tree, and says which step and why', async () => {
+    seed('checkout', PUSH);
+    vault.writeText('Workspace/checkout/src/keys.js', `export const k = "${AWS}";\n`, 'backend_engineer');
+    const r = await ciRun.handler({ stream: 'checkout', only: [] }, ctxFor());
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/publish/);
+    expect(r.text).toMatch(/REFUSED before it ran/);
+    expect(r.text).toMatch(/AWS access key id/);
+    expect(r.text).toMatch(/\.env/);   // the advice a model can act on
+  });
+
+  it('records the refusal as a red CI record, so the ship gate sees it', async () => {
+    seed('checkout', PUSH);
+    vault.writeText('Workspace/checkout/src/keys.js', `export const k = "${AWS}";\n`, 'backend_engineer');
+    await ciRun.handler({ stream: 'checkout', only: [] }, ctxFor());
+    const rec = latestCiRecord(vault, 'checkout')!;
+    expect(rec.record.green).toBe(false);
+    expect(rec.record.steps.at(-1)!.name).toBe('publish');
+    expect(rec.record.steps.at(-1)!.ok).toBe(false);
+    const blocked = vault.events.query({ types: ['guardrail.blocked'] });
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0].payload).toMatchObject({ tool: 'ci.run', step: 'publish' });
+  });
+
+  it('allow_failure does not make a leaking publish advisory', async () => {
+    seed('checkout', 'steps:\n  - { name: publish, run: "git push", allow_failure: true }\n');
+    vault.writeText('Workspace/checkout/src/keys.js', `export const k = "${AWS}";\n`, 'backend_engineer');
+    const r = await ciRun.handler({ stream: 'checkout', only: [] }, ctxFor());
+    expect(r.ok).toBe(false);
+    expect(latestCiRecord(vault, 'checkout')!.record.green).toBe(false);
+  });
+
+  it('a publishing step with a clean tree is not refused by the scan', async () => {
+    seed('checkout', PUSH);
+    const r = await ciRun.handler({ stream: 'checkout', only: [] }, ctxFor());
+    // Whatever the sandbox does with it, the guardrail is not what stopped it.
+    expect(r.text).not.toMatch(/REFUSED before it ran/);
+    expect(vault.events.query({ types: ['guardrail.blocked'] })).toHaveLength(0);
+  });
+
+  it('a pipeline that publishes nothing is never scanned, even with a key in the tree', async () => {
+    seed('checkout', GREEN);
+    vault.writeText('Workspace/checkout/src/keys.js', `export const k = "${AWS}";\n`, 'backend_engineer');
+    const r = await ciRun.handler({ stream: 'checkout', only: [] }, ctxFor());
+    expect(r.text).not.toMatch(/REFUSED before it ran/);
+    expect(vault.events.query({ types: ['guardrail.blocked'] })).toHaveLength(0);
+  });
+
+  it('the matcher is the same one shell.run uses — a disguised push is caught too', async () => {
+    for (const cmd of ['/usr/bin/git push', 'sh -c "git push origin main"', 'true && git push']) {
+      expect(commandPublishes(cmd), cmd).toBe(true);
+    }
+    seed('disguised', `steps:\n  - { name: publish, run: 'sh -c "git push origin main"' }\n`);
+    vault.writeText('Workspace/disguised/src/keys.js', `export const k = "${AWS}";\n`, 'backend_engineer');
+    const r = await ciRun.handler({ stream: 'disguised', only: [] }, ctxFor());
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/REFUSED before it ran/);
   });
 });

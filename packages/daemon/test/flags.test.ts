@@ -73,3 +73,57 @@ describe('an expired flag becomes a lesson (operating model §21)', () => {
     expect(vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'flags')).toEqual([]);
   });
 });
+
+describe('a flag key belongs to its stream (fix wave item 12 / M3)', () => {
+  const expiredFlag = (key: string) => ({ key, owner: 'backend_engineer', state: 'off', created: '2026-09-01', remove_by: '2026-10-01' });
+  const lessons = () => (vault.readTextOrNull('Memory/lessons.md') ?? '').split('\n').filter((l) => l.includes('passed its removal date'));
+
+  beforeEach(() => {
+    createStream(vault, { name: 'Docs site', problem: 'p', customers: 'c', outcome_metric: 'm', owner_team: 'dev' }, 'product_manager');
+  });
+
+  it('two streams sharing a flag key each get their own lesson, once', () => {
+    vault.writeText(flagsPath('checkout'), flags(expiredFlag('new_checkout')), 'backend_engineer');
+    vault.writeText(flagsPath('docs-site'), flags(expiredFlag('new_checkout')), 'backend_engineer');
+
+    expect(maybeFlagLessons(vault, NOW)).toHaveLength(2);
+    const first = lessons();
+    expect(first).toHaveLength(2);
+    expect(first.some((l) => l.includes('in checkout'))).toBe(true);
+    expect(first.some((l) => l.includes('in docs-site'))).toBe(true);
+
+    // A second tick adds nothing: the marker now identifies the stream as well as the key.
+    expect(maybeFlagLessons(vault, NOW)).toHaveLength(0);
+    expect(lessons()).toHaveLength(2);
+  });
+
+  it('a stream that expires the same key later still gets its own lesson', () => {
+    vault.writeText(flagsPath('checkout'), flags(expiredFlag('new_checkout')), 'backend_engineer');
+    expect(maybeFlagLessons(vault, NOW)).toEqual(['new_checkout']);
+    expect(lessons()).toHaveLength(1);
+
+    // The second stream's flag of the same name expires a week later — it used to be swallowed for ever.
+    vault.writeText(flagsPath('docs-site'), flags(expiredFlag('new_checkout')), 'backend_engineer');
+    expect(maybeFlagLessons(vault, new Date('2026-10-22T09:00:00.000Z'))).toEqual(['new_checkout']);
+    const all = lessons();
+    expect(all).toHaveLength(2);
+    expect(all.filter((l) => l.includes('in docs-site'))).toHaveLength(1);
+  });
+
+  it('each stream gets its own warning event, naming its own flags', () => {
+    vault.writeText(flagsPath('checkout'), flags(expiredFlag('new_checkout')), 'backend_engineer');
+    vault.writeText(flagsPath('docs-site'), flags(expiredFlag('new_checkout'), expiredFlag('dark_mode')), 'backend_engineer');
+    maybeFlagLessons(vault, NOW);
+    const warns = vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'flags');
+    expect(warns).toHaveLength(2);
+    expect(warns.map((w) => String(w.payload.stream)).sort()).toEqual(['checkout', 'docs-site']);
+    expect((warns.find((w) => w.payload.stream === 'docs-site')!.payload.flags as string[]).sort()).toEqual(['dark_mode', 'new_checkout']);
+  });
+
+  it('a stream whose flags file is unreadable costs only that stream', () => {
+    vault.writeText(flagsPath('checkout'), flags(expiredFlag('new_checkout')), 'backend_engineer');
+    vault.writeText(flagsPath('docs-site'), '{ not json', 'backend_engineer');
+    expect(() => maybeFlagLessons(vault, NOW)).not.toThrow();
+    expect(lessons()).toHaveLength(1);
+  });
+});

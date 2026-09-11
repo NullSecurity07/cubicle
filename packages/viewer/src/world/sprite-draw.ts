@@ -122,3 +122,12 @@ function drawFace(p: Px, mood: Mood | 'blink', dir: 0 | 1 | 2, talk: boolean, gl
 export function drawFaceSheet(p: Px): void {
   for (const f of FACE_FRAMES) { const [mood, d, ...rest] = f.name.split(':'); drawFace(offset(p, f.x, f.y), mood as Mood | 'blink', Number(d) as 0 | 1 | 2, rest.includes('talk'), rest.includes('g')); }
 }
+
+/**
+ * The texture key for a sprite sheet. It must name everything the sheet is drawn from — the sheet uses
+ * `rolePalette(role, family)` and `spriteOpts(role, team)`, so two roles that share a `sprite` value would
+ * otherwise collide and whichever was rasterised first would win, non-deterministically by construction order.
+ */
+export function spriteKey(v: { role: string; sprite?: string; family?: string; team?: string }): string {
+  return `sprite:${v.sprite || v.role}:${v.role}:${v.team ?? ''}:${v.family ?? 'member'}`;
+}

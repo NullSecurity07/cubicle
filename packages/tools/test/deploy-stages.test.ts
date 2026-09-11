@@ -150,3 +150,47 @@ describe('deploy.site stages (owner operating model §20)', () => {
     expect(deploySite.description).toMatch(/preview.*canary.*live/i);
   });
 });
+
+describe('the deploy history window is the newest one (fix wave item 2 / I2)', () => {
+  // 600 old deploy.done events, more than deploysOf's limit of 500. An ascending window would stop at the
+  // 500th and never see the preview/canary this build actually did, so live would be refused for ever.
+  const floodOld = (n = 600) => {
+    for (let i = 0; i < n; i++) {
+      vault.events.emit({
+        type: 'deploy.done', agent: 'sre', job: 'job_old',
+        payload: { url: 'https://old.example', project: 'acme', mode: 'mock', key: `old:${i}`, stage: 'preview', canary_percent: null, canary_enforced: false, metrics: [], rolled_back: false, snapshot: null, build_hash: 'ancientbuildhash', stream: null },
+      });
+    }
+  };
+
+  it('a preview and a canary past the 500-event mark still let the live deploy through', async () => {
+    floodOld();
+    writeFileSync(path.join(dir, 'Site/dist/index.html'), '<!doctype html><title>brand new build</title>\n');
+    expect((await deploySite.handler(args({ stage: 'preview' }), ctxFor())).ok).toBe(true);
+    expect((await deploySite.handler(args({ stage: 'canary', metrics: ['error rate'] }), ctxFor())).ok).toBe(true);
+    const live = await deploySite.handler(args({ stage: 'live', metrics: ['error rate'] }), ctxFor());
+    expect(live.ok).toBe(true);
+    expect(vault.events.query({ types: ['deploy.done'] }).at(-1)!.payload).toMatchObject({ stage: 'live' });
+  });
+
+  it('the stage order is still enforced past the 500-event mark', async () => {
+    floodOld();
+    writeFileSync(path.join(dir, 'Site/dist/index.html'), '<!doctype html><title>unvouched build</title>\n');
+    const straightToLive = await deploySite.handler(args({ stage: 'live', metrics: ['error rate'] }), ctxFor());
+    expect(straightToLive.ok).toBe(false);
+    expect(straightToLive.text).toMatch(/canary/);
+  });
+
+  it('previousLiveSnapshot still walks back exactly one live deploy past the window', async () => {
+    floodOld();
+    for (const tag of ['one', 'two']) {
+      writeFileSync(path.join(dir, 'Site/dist/index.html'), `<!doctype html><title>${tag}</title>\n`);
+      await deploySite.handler(args({ stage: 'preview' }), ctxFor());
+      await deploySite.handler(args({ stage: 'canary', metrics: ['error rate'] }), ctxFor());
+      await deploySite.handler(args({ stage: 'live', metrics: ['error rate'] }), ctxFor());
+    }
+    const prev = previousLiveSnapshot(vault, 'acme');
+    expect(prev).not.toBeNull();
+    expect(readFileSync(path.join(prev!, 'index.html'), 'utf8')).toContain('one');
+  });
+});

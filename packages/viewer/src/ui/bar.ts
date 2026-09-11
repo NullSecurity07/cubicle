@@ -10,10 +10,13 @@ export class TopBar {
     this.name.textContent = name || 'Your company';
     this.tagline.textContent = name ? tagline : 'No name yet. Tell the CEO your idea.';
   }
+  /** Nothing to approve is the absence of the pill, not a grey "0 to approve" parked beside the primary button. */
   setPending(n: number): void {
+    this.pending.hidden = n === 0;
+    if (!n) return;
     this.pending.textContent = n === 1 ? '1 to approve' : `${n} to approve`;
     this.pending.dataset.count = String(n);
-    this.pending.setAttribute('aria-label', n ? `${n} proposals need you` : 'nothing to approve');
+    this.pending.setAttribute('aria-label', `${n} proposals need you`);
   }
   setConn(ok: boolean, text: string): void { this.connText.textContent = text; this.conn.className = `status ${ok ? 'ok' : 'bad'}`; }
 }
