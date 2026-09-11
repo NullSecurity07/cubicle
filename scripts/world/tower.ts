@@ -140,9 +140,12 @@ function paintOffice(c: Canvas, r: RoomSpec, f: FloorSpec): void {
 function paintDepartment(c: Canvas, r: RoomSpec, f: FloorSpec): void {
   paintRoomBox(c, r, f);
   const cx = cxOf(r), { y0 } = f, F = c.furniture;
+  // A desk's left half is only painted when its column is strictly inside the room; a desk whose left half would
+  // land on the room's own wall column (research's and sales's first member sit one step from x0) instead paints
+  // just the DESK_R half on the chair column, so it never overwrites the wall/glass tile paintRoomBox already put there.
   const twoTile = (id: string, x: number, deskRow: number, slot: DeskRow['slot']): void => {
-    c.set(F, x - 1, deskRow, T.DESK_L); c.set(F, x, deskRow, T.DESK_R); c.set(F, x, deskRow + 1, T.CHAIR_TASK);
-    c.decorAt('monitor', x - 1, deskRow, f.n, { desk: id });
+    if (x - 1 > r.x0 && x - 1 < r.x1) { c.set(F, x - 1, deskRow, T.DESK_L); c.decorAt('monitor', x - 1, deskRow, f.n, { desk: id }); }
+    c.set(F, x, deskRow, T.DESK_R); c.set(F, x, deskRow + 1, T.CHAIR_TASK);
     c.desk(id, x, deskRow, r.id, f.n, slot);
   };
   twoTile(r.manager!, cx, y0 + 3, 'fixed');

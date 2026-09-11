@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildTower, TOWER, cxOf, W, H } from '../../../../scripts/world/tower.js';
 import { parseMap, type TiledMap } from './map.js';
 import { DESK_IDS, ROOM_IDS, SURFACE_IDS } from './tower.fixture.js';
+import { T } from './tiles.js';
 
 const built = buildTower();
 const m = parseMap(built.map as unknown as TiledMap);
@@ -65,6 +66,14 @@ describe('buildTower', () => {
     for (const list of Object.values(m.seats)) for (const s of list) expect(m.grid[s.ty][s.tx]).toBe(0);
     for (const s of [...SURFACE_IDS, ...ROOM_IDS, 'door']) { const a = m.anchors[s]; expect(m.grid[Number(a.props.stand_y)][Number(a.props.stand_x)], `stand ${s}`).toBe(0); }
     expect(cxOf(TOWER.floors[0].rooms[2])).toBe(32); // boardroom
+  });
+  it("a member desk never overwrites the room's own wall column: research's and sales's first member desk has no left half", () => {
+    const walls = built.map.layers.find((l) => l.name === 'walls')!.data!;
+    const at = (x: number, y: number) => walls[y * W + x];
+    expect(at(14, 34)).toBe(T.GLASS_V); // research.x0, shared with chro_office's glass partition — a wall column, not a desk
+    expect(at(39, 34)).toBe(T.GLASS_V); // sales.x0, shared with dev's glass partition
+    expect(m.desks.researcher).toEqual({ tx: 15, ty: 35 });
+    expect(m.desks.sales_1).toEqual({ tx: 40, ty: 35 });
   });
   it('decor and sign layers exist with a sign per room', () => {
     expect(named('sign').sort()).toEqual(ROOM_IDS.map((r) => `sign_${r}`).sort());
