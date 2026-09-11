@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listJobs, readJob, createJob, updateJob, createProposal, loadOrg, createStream, writeCiRecord } from '@cubicle/core';
+import { scaffoldVault, Vault, listJobs, createJob, updateJob, createProposal, loadOrg, createStream, writeCiRecord } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, mockedServices, mockedServicesRow, modelUseRows, planningGate, teamPlanGoal } from '../src/index.js';
+import { Daemon, defaultConfig, mockedServices, mockedServicesRow, modelUseRows, planningGate, divisionPlanGoal } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
+import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
@@ -13,6 +14,9 @@ beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-brief-'));
   const { vault } = await scaffoldVault(dir);
   vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'PlateReady' }, body: n.body }), 'owner');
+  // Nobody is at the keyboard here and `board_decides_after_hours` ships off, so a plan would wait for the owner
+  // for ever and no division would ever plan. Hand the board the ruling after a fraction of an hour instead.
+  letTheBoardDecide(vault);
   // An engineer.ship cannot finish without a green CI record for its stream (§17), so the scripted dev plan
   // ships against this one. Nothing lives under Workspace/site, so the record never goes stale.
   createStream(vault, { slug: 'site', name: 'Site', problem: 'The company has no site.', customers: 'Everyone who hears about us', outcome_metric: 'a first cut exists', owner_team: 'dev' }, 'ceo');
@@ -151,7 +155,7 @@ describe('re-planning gate', () => {
     expect(planningGate({ ...base, maxAgeDays: 0 }).skip).toBe(false);
   });
 
-  it('a fresh plan with open work: no company.plan/critic/team.plan jobs this heartbeat, the brief says so', async () => {
+  it('a fresh plan with open work: no company.plan/board/division.plan jobs this heartbeat, the brief says so', async () => {
     const seed = Vault.open(dir);
     seed.writeText('Plans/plan.md', planOn(today), 'ceo');
     // Open work from that plan: queued, but never runnable here because it depends on a job that is parked on the owner.
@@ -166,15 +170,15 @@ describe('re-planning gate', () => {
       await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
       const types = listJobs(v).map((j) => j.type);
       expect(types).not.toContain('company.plan');
-      expect(types).not.toContain('critic.premortem');
-      expect(types).not.toContain('team.plan');
+      expect(types).not.toContain('board.premortem');
+      expect(types).not.toContain('division.plan');
       expect(factsOf(lastBrief(v))).toContain(`Planning: skipped — the plan from ${today} stands and 1 job is still open`);
       expect(v.readText('Plans/plan.md')).toBe(planOn(today));
       expect(v.list('Plans/archive', { ext: '.md' })).toEqual([]); // nothing was archived because nothing was rewritten
     } finally { v.close(); await d.stop(); }
   }, TEST_MS);
 
-  it('an unanswered owner message re-plans even against a fresh plan with open work; so does a stale plan', async () => {
+  it('an unanswered owner message re-plans even against a fresh plan with open work; so does a stale plan, once the plan already written has been ruled on', async () => {
     const seed = Vault.open(dir);
     seed.writeText('Plans/plan.md', planOn(today), 'ceo');
     const parked = createJob(seed, { type: 'engineer.ship', title: 'Staging branch', assigned: 'backend_engineer', priority: 3, goal: 'g' }, 'cto');
@@ -190,44 +194,49 @@ describe('re-planning gate', () => {
       expect(listJobs(v).filter((j) => j.type === 'company.plan')).toHaveLength(1);
       expect(factsOf(lastBrief(v))).not.toContain('Planning: skipped');
     } finally { v.close(); await d.stop(); }
-    // Second heartbeat: the owner message is answered, the plan orgLlm wrote has no `updated` stamp → not fresh → re-plan.
     const d2 = daemonFor(orgLlm({ vetoes: 0 }));
     await d2.start();
     const v2 = Vault.open(dir);
     try {
+      // Second heartbeat: the plan the first one wrote is still waiting for a verdict, so this cycle rules on it
+      // and fans it out rather than writing over it (program design §4) — no second company.plan.
       d2.requestHeartbeat('test');
       await waitFor(() => v2.events.count('heartbeat.completed') >= 2, 60000);
-      expect(listJobs(v2).filter((j) => j.type === 'company.plan')).toHaveLength(2);
+      expect(listJobs(v2).filter((j) => j.type === 'company.plan')).toHaveLength(1);
+      expect(listJobs(v2).filter((j) => j.type === 'division.plan').length).toBeGreaterThan(0);
+      // Third heartbeat: nothing waits on a verdict any more and the plan orgLlm wrote has no `updated` stamp →
+      // not fresh → re-plan.
+      d2.requestHeartbeat('test');
+      await waitFor(() => listJobs(v2).filter((j) => j.type === 'company.plan').length >= 2, 60000);
     } finally { v2.close(); await d2.stop(); }
   }, TEST_MS);
 });
 
-describe('member-less team planning', () => {
-  it('teamPlanGoal tells a lead with no members to plan work for themself via the CEO, never scheduler.request for themself', () => {
-    const org = loadOrg(Vault.open(dir));
-    const sec = org.teams.security, dev = org.teams.dev;   // the CISO is alone on the security floor; the dev room is full
-    expect(sec.members).toEqual([]);
-    const secGoal = teamPlanGoal(sec, '- Verify the outreach iteration', 'none recorded');
-    const devGoal = teamPlanGoal(dev, '- Ship it', 'none recorded');
-    const sentence = 'Your team has no members: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from research_manager; do not call scheduler.request for yourself.';
-    expect(secGoal).toContain(sentence);
-    expect(secGoal).toContain('for your members (none)');
-    expect(devGoal).not.toContain(sentence);
-    expect(devGoal).toContain('for your members (product_manager, product_designer, backend_engineer, frontend_engineer, fullstack_engineer, platform_engineer, sre)');
-    expect(devGoal).not.toContain('do the work yourself as a custom job');
+describe('division planning goals', () => {
+  it('divisionPlanGoal names the rooms and everyone in the division, and tells a lead with nobody under it what to do instead', () => {
+    const v = Vault.open(dir);
+    try {
+      const org = loadOrg(v);
+      const tech = divisionPlanGoal(org, org.teams.technology, '- Ship it', 'none recorded', 'research_manager');
+      expect(tech).toContain('Dev (lead dev_manager');
+      expect(tech).toContain('QA (lead qa_lead');
+      expect(tech).toContain('backend_engineer');
+      expect(tech).not.toContain('has nobody under you');
+      const alone = divisionPlanGoal(org, { ...org.teams.security, id: 'security' }, '- Rotate the keys', 'none recorded', 'research_manager');
+      expect(alone).toContain('Your division has nobody under you');
+      expect(alone).toContain('do not call scheduler.request for yourself');
+    } finally { v.close(); }
   });
 
-  it('the CISO\'s team.plan job carries the sentence; the dev manager\'s does not', async () => {
+  it('a section for a team that does not hold a planning round warns instead of queueing a plan', async () => {
     const d = daemonFor(orgLlm({ vetoes: 0, plan: planOn('') }));
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
-      const plans = listJobs(v).filter((j) => j.type === 'team.plan');
-      const goal = (role: string) => readJob(v, plans.find((j) => j.assigned === role)!.id)!.body.split('## Goal')[1].split('## Plan')[0];
-      expect(plans.map((j) => j.assigned).sort()).toEqual(['cfo', 'ciso', 'dev_manager']);
-      expect(goal('ciso')).toContain('Your team has no members');
-      expect(goal('dev_manager')).not.toContain('Your team has no members');
+      await planUntilFannedOut(d, v, 2);
+      const plans = listJobs(v).filter((j) => j.type === 'division.plan');
+      expect(plans.map((j) => j.assigned).sort()).toEqual(['cfo', 'cto']);
+      expect(v.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'division_plans' && /security/.test(String(e.payload.message)))).toBe(true);
     } finally { v.close(); await d.stop(); }
   }, TEST_MS);
 });

@@ -2,9 +2,10 @@
  * Acceptance test 1: kill -9 the daemon mid-job after 2 completed tool steps → restart → resumes at step 3,
  * no duplicate side effects. Uses a scripted model (CUBICLE_FAKE_LLM) and the mock outbound tool.
  *
- * Acceptance test 12 (planning fan-out): kill -9 while the first `team.plan` job of a heartbeat is running →
- * restart → the heartbeat completes with exactly 2 `team.plan` jobs (one per lead) and no duplicate
- * `engineer.ship` titles — the fan-out resumes, it does not re-plan from scratch.
+ * Acceptance test 12 (planning fan-out): kill -9 while the first `division.plan` job of a heartbeat is running →
+ * restart → the heartbeat completes with exactly 2 `division.plan` jobs (one per division) and no duplicate
+ * `engineer.ship` titles — the fan-out resumes, it does not re-plan from scratch. The fan-out happens on the
+ * heartbeat after the board's verdict stands, not on the one that wrote the plan.
  *
  * Usage: pnpm test:kill9
  */
@@ -67,20 +68,20 @@ async function scenario2(): Promise<boolean> {
   const runner = path.join(here, 'lib', 'kill9-team-child.ts');
   console.log(`\nvault (planning fan-out): ${dir}`);
   await child(runner, ['init', dir]);
-  // Phase A: start a heartbeat cycle with the org-shaped scripted model; the child prints "TEAM_PLAN RUNNING" as
-  // soon as the first team.plan job's chat call starts (the job note is already status=running by then) and hangs
-  // there — detached → own process group, so SIGKILL reaches the real daemon (tsx runs it as a grandchild)
-  await runAndKill(runner, dir, { CUBICLE_HANG_TEAM_PLAN: '1' }, 'TEAM_PLAN RUNNING');
-  console.log('>>> killed -9 while team.plan running');
+  // Phase A: start a heartbeat cycle with the org-shaped scripted model; the child prints "DIVISION_PLAN RUNNING"
+  // as soon as the first division.plan job's chat call starts (the job note is already status=running by then) and
+  // hangs there — detached → own process group, so SIGKILL reaches the real daemon (tsx runs it as a grandchild)
+  await runAndKill(runner, dir, { CUBICLE_HANG_DIVISION_PLAN: '1' }, 'DIVISION_PLAN RUNNING');
+  console.log('>>> killed -9 while division.plan running');
   // Phase B: restart and let the heartbeat finish
   const b = await child(runner, ['run', dir]);
   const v = Vault.open(dir);
   const jobs = listJobs(v);
   v.close();
-  const teamPlans = jobs.filter((j) => j.type === 'team.plan');
+  const divisionPlans = jobs.filter((j) => j.type === 'division.plan');
   const shipTitles = jobs.filter((j) => j.type === 'engineer.ship').map((j) => j.title);
-  const ok = b.out.includes('HEARTBEAT COMPLETED') && teamPlans.length === 2 && new Set(shipTitles).size === shipTitles.length;
-  console.log(`\nteam.plan jobs: ${teamPlans.length}, engineer.ship titles: ${JSON.stringify(shipTitles)}`);
+  const ok = b.out.includes('HEARTBEAT COMPLETED') && divisionPlans.length === 2 && new Set(shipTitles).size === shipTitles.length;
+  console.log(`\ndivision.plan jobs: ${divisionPlans.length}, engineer.ship titles: ${JSON.stringify(shipTitles)}`);
   console.log(ok ? 'PASS: planning fan-out resumed without duplicate jobs' : 'FAIL');
   rmSync(dir, { recursive: true, force: true });
   return ok;

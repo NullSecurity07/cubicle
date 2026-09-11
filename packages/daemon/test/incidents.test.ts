@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, updateJob, createStream, listJobs, setSection, budgetSpentHours } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, updateJob, createStream, listJobs, setSection, budgetSpentHours, loadOrg } from '@cubicle/core';
 import { maybeOpenIncident, maybeCorrectiveActions, CORRECTIVE_MAX, postmortemPath } from '../src/evolution.js';
-import { teamPlanGoal } from '../src/heartbeat.js';
+import { divisionPlanGoal } from '../src/heartbeat.js';
 
 let dir: string; let vault: Vault;
 beforeEach(async () => {
@@ -156,13 +156,13 @@ describe('corrective actions come out of the postmortem', () => {
 
 describe('the division plan reads the budgets', () => {
   it('a spent budget reaches the lead in the goal text', () => {
-    const goal = teamPlanGoal({ id: 'dev', name: 'Dev', lead: 'dev_manager', members: ['backend_engineer'], mission: 'm', processes: [], wip: { in_progress: 3, review: 2, testing: 2 } }, '- Raise checkout completion', 'none', 'research_manager', ['checkout: 6.0 h of 4 h error budget SPENT — this plan prioritises reliability work over new features (§23)']);
+    const goal = divisionPlanGoal(loadOrg(vault), { id: 'technology', name: 'Technology', lead: 'cto', members: [], mission: 'm', processes: [], wip: { in_progress: 3, review: 2, testing: 2 } }, '- Raise checkout completion', 'none', 'research_manager', ['checkout: 6.0 h of 4 h error budget SPENT — this plan prioritises reliability work over new features (§23)']);
     expect(goal).toMatch(/SPENT/);
     expect(goal).toMatch(/reliability/);
   });
 
   it('no budgets means no extra noise in the goal', () => {
-    const goal = teamPlanGoal({ id: 'qa', name: 'QA', lead: 'qa_lead', members: [], mission: 'm', processes: [], wip: { in_progress: 3, review: 2, testing: 3 } }, '- Test', 'none', 'research_manager', []);
+    const goal = divisionPlanGoal(loadOrg(vault), { id: 'technology', name: 'Technology', lead: 'cto', members: [], mission: 'm', processes: [], wip: { in_progress: 3, review: 2, testing: 3 } }, '- Test', 'none', 'research_manager', []);
     expect(goal).not.toMatch(/error budget/);
   });
 });
