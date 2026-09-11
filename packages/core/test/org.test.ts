@@ -2,25 +2,26 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { can, defaultPermissions, leadOf, reportsOf, isLead, loadOrg, type Org } from '../src/org.js';
+import { can, defaultPermissions, leadOf, reportsOf, isLead, subtreeRoles, roleWithTool, loadOrg, type Org } from '../src/org.js';
 import { scaffoldVault } from '../src/template.js';
 import { Vault } from '../src/vault.js';
 import { stringifyNote, parseNote } from '../src/frontmatter.js';
 
 const role = (r: string, extra: Record<string, unknown> = {}) => ({ role: r, display: r, model_tier: 'medium' as const, tools: [], approval_overrides: {}, active: true, hired: 'x', sprite: r, desk: r, permissions: [], ...extra });
-const team = (id: string, lead: string, members: string[]) => ({ id, name: id, lead, members, mission: '', processes: [] });
+const team = (id: string, lead: string, members: string[], parent?: string) => ({ id, name: id, lead, members, mission: '', processes: [], ...(parent ? { parent } : {}) });
 
-/** The tower shape, trimmed to the roles the resolver rules are about: divisions hold managers, rooms hold members. */
+/** The tower shape: divisions hold no members of their own, the rooms under them do. */
 const MEMBERS: Record<string, string[]> = {
-  executive: [], board: ['advisor_investor'], technology: ['dev_manager', 'qa_lead'], dev: ['backend_engineer', 'frontend_engineer'],
-  qa: [], revenue: ['cmo'], operations: ['research_manager'], research: ['research_analyst'],
+  executive: [], board: ['advisor_investor'], technology: [], dev: ['backend_engineer', 'frontend_engineer'],
+  qa: [], revenue: ['cmo'], operations: [], research: ['research_analyst'],
 };
 const LEADS: Record<string, string> = { executive: 'ceo', board: 'advisor_skeptic', technology: 'cto', dev: 'dev_manager', qa: 'qa_lead', revenue: 'cfo', operations: 'coo', research: 'research_manager' };
+const PARENTS: Record<string, string | undefined> = { dev: 'technology', qa: 'technology', research: 'operations' };
 const TEAM_OF: Record<string, string> = { ceo: 'executive', advisor_skeptic: 'board', advisor_investor: 'board', cto: 'technology', dev_manager: 'dev', qa_lead: 'qa', backend_engineer: 'dev', frontend_engineer: 'dev', cfo: 'revenue', cmo: 'revenue', coo: 'operations', research_manager: 'research', research_analyst: 'research' };
 const REPORTS_TO: Record<string, string> = { ceo: 'owner', advisor_skeptic: 'ceo', advisor_investor: 'advisor_skeptic', cto: 'ceo', dev_manager: 'cto', qa_lead: 'cto', backend_engineer: 'dev_manager', frontend_engineer: 'dev_manager', cfo: 'ceo', cmo: 'cfo', coo: 'ceo', research_manager: 'coo', research_analyst: 'research_manager' };
 
 const org: Org = {
-  teams: Object.fromEntries(Object.entries(LEADS).map(([id, lead]) => [id, team(id, lead, MEMBERS[id])])),
+  teams: Object.fromEntries(Object.entries(LEADS).map(([id, lead]) => [id, team(id, lead, MEMBERS[id], PARENTS[id])])),
   // the advisors carry review+veto explicitly on their charters: the board lead's *default* set is the lead set
   roles: Object.fromEntries(Object.keys(TEAM_OF).map((r) => [r, role(r, { team: TEAM_OF[r], reports_to: REPORTS_TO[r], ...(r.startsWith('advisor_') ? { permissions: ['review', 'veto'] } : {}) })])),
 };
@@ -38,9 +39,11 @@ describe('org resolver (spec §2)', () => {
     expect(leadOf(org, 'backend_engineer')).toBe('dev_manager'); expect(leadOf(org, 'ceo')).toBe('owner');
     expect(leadOf(org, 'dev_manager')).toBe('cto'); expect(leadOf(org, 'advisor_investor')).toBe('advisor_skeptic');
     expect(isLead(org, 'cto')).toBe(true); expect(isLead(org, 'backend_engineer')).toBe(false);
+    // a division lead's reports are the leads of its rooms, even though the division note lists no members
     expect(reportsOf(org, 'cto').sort()).toEqual(['dev_manager', 'qa_lead']);
     expect(reportsOf(org, 'dev_manager').sort()).toEqual(['backend_engineer', 'frontend_engineer']);
-    expect(reportsOf(org, 'ceo').sort()).toEqual(['advisor_skeptic', 'cfo', 'coo', 'cto', 'dev_manager', 'qa_lead', 'research_manager']);
+    // the CEO's reports are the leads of the top-level teams plus its own team's members
+    expect(reportsOf(org, 'ceo').sort()).toEqual(['advisor_skeptic', 'cfo', 'coo', 'cto']);
   });
   it('default permissions by position', () => {
     expect(defaultPermissions(org, 'ceo').sort()).toEqual(['hire', 'fire', 'meeting', 'plan', 'reprioritize', 'research_request', 'review', 'schedule'].sort());
@@ -61,9 +64,11 @@ describe('org resolver (spec §2)', () => {
   it('schedule: CEO anyone; lead own members; member only a teammate, never self; the research lead nobody', () => {
     expect(can(org, 'ceo', 'schedule', 'backend_engineer')).toBe(true);
     expect(can(org, 'cto', 'schedule', 'dev_manager')).toBe(true);
-    expect(can(org, 'cto', 'schedule', 'backend_engineer')).toBe(false); // the CTO reaches the manager, who reaches the engineers
+    // a lead schedules anyone in its subtree — a division lead reaches the rooms under it
+    expect(can(org, 'cto', 'schedule', 'backend_engineer')).toBe(true);
+    expect(can(org, 'cto', 'schedule', 'qa_lead')).toBe(true);
+    expect(can(org, 'cto', 'schedule', 'cmo')).toBe(false);          // another division
     expect(can(org, 'dev_manager', 'schedule', 'backend_engineer')).toBe(true);
-    expect(can(org, 'cto', 'schedule', 'cfo')).toBe(false);
     expect(can(org, 'backend_engineer', 'schedule', 'frontend_engineer')).toBe(true);
     expect(can(org, 'backend_engineer', 'schedule', 'backend_engineer')).toBe(false);
     expect(can(org, 'backend_engineer', 'schedule', 'cmo')).toBe(false);
@@ -88,6 +93,19 @@ describe('org resolver (spec §2)', () => {
     const malformed: Org = { ...org, teams: { ...org.teams, dev: { ...org.teams.dev, members: [...MEMBERS.dev, 'dev_manager'] } } };
     expect(can(malformed, 'dev_manager', 'schedule', 'dev_manager')).toBe(false); // lead cannot schedule self even if in members
     expect(can(malformed, 'ceo', 'schedule', 'ceo')).toBe(false); // CEO cannot schedule self
+  });
+
+  it('the team tree decides who a lead may schedule, and members still only reach their own room', () => {
+    expect(subtreeRoles(org, 'technology').sort()).toEqual(['backend_engineer', 'cto', 'dev_manager', 'frontend_engineer', 'qa_lead']);
+    expect(subtreeRoles(org, 'dev').sort()).toEqual(['backend_engineer', 'dev_manager', 'frontend_engineer']);
+    expect(can(org, 'dev_manager', 'schedule', 'qa_lead')).toBe(false);     // a sibling room is not below you
+    expect(can(org, 'backend_engineer', 'schedule', 'qa_lead')).toBe(false);
+    expect(can(org, 'backend_engineer', 'schedule', 'frontend_engineer')).toBe(true);
+    expect(can(org, 'coo', 'schedule', 'research_analyst')).toBe(true);     // a member of a room in your division
+    expect(can(org, 'coo', 'schedule', 'research_manager')).toBe(false);    // …but the research lead is requested, never scheduled
+    expect(roleWithTool({ ...org, roles: { ...org.roles, backend_engineer: role('backend_engineer', { team: 'dev', tools: ['deploy.site', 'finish'] }) } }, 'technology', 'deploy.site')).toBe('backend_engineer');
+    expect(roleWithTool(org, 'technology', 'deploy.site')).toBeNull();
+    expect(roleWithTool(org, undefined, 'deploy.site')).toBeNull();
   });
 });
 

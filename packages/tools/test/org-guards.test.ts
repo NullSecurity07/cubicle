@@ -124,7 +124,11 @@ describe('scheduler.request refusals tell the caller what it may do instead', ()
     const r = await call('scheduler.request', 'cto', { type: 'growth.outreach', title: 'B', assigned: 'cto', goal: 'g', done_when: 'x' });
     expect(r.ok).toBe(false);
     expect(r.text).toMatch(/may not schedule cto/);
-    expect(r.text).toMatch(/dev_manager, qa_lead/);
+    // A lead now reaches its whole subtree (org.ts `can`): the CTO's list is the Dev and QA rooms under
+    // Technology, not just their two leads.
+    expect(r.text).toMatch(/dev_manager/);
+    expect(r.text).toMatch(/qa_lead/);
+    expect(r.text).toMatch(/backend_engineer/);
     expect(r.text).toMatch(/yourself/i);
   });
   it('a lead whose team has no members is told there is nobody to schedule and what to do instead', async () => {

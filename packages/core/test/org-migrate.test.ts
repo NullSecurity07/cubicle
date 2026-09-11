@@ -102,6 +102,20 @@ describe('migrateOrg constitution patch (offices, v2)', () => {
   });
 });
 
+describe('migrateOrg strips the division-note stopgap (v2, task 2)', () => {
+  it('migration strips a room lead that a division note still lists as a member, and leaves a real member alone', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'cubicle-stopgap-'));
+    try {
+      const { vault } = await scaffoldVault(dir);
+      vault.writeText('Teams/technology.md', vault.readText('Teams/technology.md').replace(/^members: \[\]$/m, 'members: [dev_manager, qa_lead]'), 'owner');
+      migrateOrg(vault, templateDir());
+      expect(loadOrg(vault).teams.technology.members).toEqual([]);
+      expect(loadOrg(vault).teams.revenue.members).toEqual(['cmo', 'cgo']);
+      vault.close();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
 describe('migrateOrg warns about a teamless custom-hired charter with no template counterpart (F13)', () => {
   it('emits one daemon.warning naming the charter path', async () => {
     const dir3 = mkdtempSync(path.join(tmpdir(), 'cubicle-migrate-custom-'));
