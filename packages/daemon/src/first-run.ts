@@ -1,4 +1,4 @@
-import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, parseNote, officeHolder, roleWithTool, researchLead, teamOf, leadOf, createStream, listStreams, streamSlug, ciConfigPath, type NewStream } from '@cubicle/core';
+import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, listDiscoveryInputs, parseNote, officeHolder, roleWithTool, researchLead, teamOf, leadOf, createStream, listStreams, streamSlug, ciConfigPath, type NewStream } from '@cubicle/core';
 
 /**
  * The three jobs a company must leave its first heartbeat with (spec §12): something on the web, something to
@@ -85,8 +85,9 @@ const EPOCH = new Date(0).toISOString();
  * fire before one exists — a nameless company that scaffolds a site and researches a channel is working on
  * nothing. An idea can arrive in three shapes and any one of them counts: the brand is already named (the owner
  * typed a name, or approved the CEO's proposal), a `brand_change` proposal is open (what the CEO files from an
- * idea it was given), or an owner message is sitting in `00 Inbox/` (what the cabin chat writes). Mirrors the
- * `isFirstIdea` test in heartbeat.ts, widened to any brand_change and any owner message.
+ * idea it was given), an owner message is sitting in `00 Inbox/` (what the cabin chat writes), or the owner
+ * dropped a file in `Discovery/inbox/` (SP3: an owner with a startup already written down never types a line).
+ * Mirrors the `isFirstIdea` test in heartbeat.ts, widened to any brand_change and any owner message.
  *
  * A named brand with no `vault.wrote` event behind it (the owner typed it in while the daemon was down, or the
  * log was trimmed) is dated to the epoch: the idea has been there as long as anything we can see, so every
@@ -98,6 +99,12 @@ export function ideaAt(vault: Vault): string | null {
   if (typeof name === 'string' && name.trim()) stamps.push(vault.events.query({ types: ['vault.wrote'] }).find((e) => e.payload.path === 'Brand/name.md')?.ts ?? EPOCH);
   for (const n of listInbox(vault)) {
     if (n.data.kind === 'brand_change' || (n.data.kind === 'message' && n.data.from === 'owner')) stamps.push(String(n.data.created ?? EPOCH));
+  }
+  // A file the owner dropped in Discovery/inbox/ is an idea in its own right: it is how an owner with an
+  // existing startup starts, and without this the company would sit idle waiting to be typed at. The README
+  // the template ships is not one, which is why `listDiscoveryInputs` skips it.
+  for (const f of listDiscoveryInputs(vault)) {
+    stamps.push(vault.events.query({ types: ['owner.edited', 'vault.wrote'] }).find((e) => e.payload.path === f.path)?.ts ?? EPOCH);
   }
   return stamps.length ? stamps.sort()[0] : null;
 }

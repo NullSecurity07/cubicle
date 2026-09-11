@@ -7,6 +7,7 @@ import {
   budgetLines, GATE_JOB_TYPES,
   nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
   FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
+  isLongPrompt, isSkip,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -14,7 +15,7 @@ import { deployer, emailSender, analytics } from '@cubicle/tools';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
 import { seedFirstJobs, seedFirstStream } from './first-run.js';
-import { enqueueEstimates } from './discovery.js';
+import { currentDiscoveryStatus, askInterview, enqueueDiscovery, discoveryJobId, captureInterviewAnswer, ownerSaid, enqueueEstimates } from './discovery.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -47,9 +48,7 @@ export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { k
  * queued keeps running throughout.
  *
  * `discovery` and `ideas_board` sit before `company_plan` because that is the order the company thinks in: read
- * what the owner gave us, judge the best idea that came out of it, then plan against what survived. `discovery`
- * has no `case` yet — a step with none is walked through doing nothing, which is the documented behaviour of
- * this array — and is wired up separately.
+ * what the owner gave us, judge the best idea that came out of it, then plan against what survived.
  */
 export const HEARTBEAT_STEPS = ['gather', 'reconcile_brand', 'answer_owner', 'discovery', 'ideas_board', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit'] as const;
 /** How long a heartbeat waits for company.plan/division.plan before writing the brief with "planning pending" (R33). */
@@ -716,13 +715,14 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; estimateJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
   // The vault is the source of truth: recover what the cache may have lost.
   if (job.blocked_on?.kind === 'job') {
     const atStep = HEARTBEAT_STEPS[job.checkpoint_step];
+    if (atStep === 'discovery' && !state.discoveryJob) state = { ...state, discoveryJob: job.blocked_on.id };
     if (atStep === 'company_plan' && !state.companyPlanJob) state = { ...state, companyPlanJob: job.blocked_on.id };
     // `owner_verdict` counts as well as `division_plans`: a heartbeat that blocked on the fan-out before its
     // checkpoint reached `division_plans` is still parked on division.plan jobs it already created, and a lost cache
@@ -827,7 +827,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     // caller carry on rather than block the company forever (returns null to continue). The flag is a parameter
     // because what the brief must then say about the cycle depends on what was being waited for: a stuck
     // estimate is not a stuck plan, and saying "Planning: PENDING" about one would be a lie.
-    const waitBounded = (id: string, flag: 'planPending' | 'estimatesPending', giveUpNote: (waitedMin: number) => string, advance = true): HeartbeatOutcome | null => {
+    const waitBounded = (id: string, flag: 'planPending' | 'estimatesPending' | 'discoveryPending', giveUpNote: (waitedMin: number) => string, advance = true): HeartbeatOutcome | null => {
       const since = job.blocked_on?.since;
       const waitedMs = since ? now().getTime() - Date.parse(since) : 0;
       if (waitedMs < PLAN_WAIT_BUDGET_MS) {
@@ -848,6 +848,8 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
     /** `ideas_board`'s wait: giving up means the board chooses from the cards that were priced in time, and the
      *  step stays where it is so a kill during the session it then runs resumes at the board, not past it. */
     const waitForEstimates = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'estimatesPending', giveUpNote, false);
+    /** `discovery`'s wait: giving up means the cycle plans from whatever the owner's material already said. */
+    const waitForDiscovery = (id: string, giveUpNote: (waitedMin: number) => string): HeartbeatOutcome | null => waitBounded(id, 'discoveryPending', giveUpNote);
     switch (step) {
       case 'gather': {
         const mail = deps.pollInbox ? await deps.pollInbox().catch(() => []) : [];
@@ -889,20 +891,36 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           const body = note.body;
           const isFirstIdea = !(parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data.name as string) && !listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md');
           const surprise = /^\s*#?.*surprise me\s*$/im.test(body) || /\bsurprise me\b/i.test(body.split('\n').slice(-3).join('\n'));
+          // What the owner typed, without the `# title` line the cabin prepends. The interview has to read the
+          // stripped text: `isSkip` is anchored to the whole string, so an owner who types `skip` (note body
+          // `# skip\n\nskip`) would otherwise be recorded as having answered the six questions with "skip".
+          const said = ownerSaid(body);
+          // An open interview is closed by whatever the owner says next, whatever it says (spec §1.4). This is
+          // a vault write, not a model call: the interview must not cost a cycle's quota to conduct.
+          const closedInterview = captureInterviewAnswer(vault, said, now());
+          // A document, not a one-line idea: discovery reads it, and the CEO does not try to squeeze a company
+          // name out of its first sentence.
+          const longPrompt = isLongPrompt(body);
           let reply: string | null = null;
           if (surprise) {
             reply = await ask(deps, ceoSystem(vault), `The owner wants you to surprise them. Propose exactly three one-line business ideas a two-person team can start this week with a static website and email, all free to run. Format: a numbered list "1. <name> — <one sentence>".`);
             const ideas = reply ?? '1. Untitled — (no model available; edit this proposal)\n2. —\n3. —';
             createProposal(vault, { id: idFromKey('prop', `${jobId}:${m.id}`), kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${ideas}\n\nSet \`chosen: 1|2|3\` and \`approved: true\`; the chosen line's name becomes the company name.`, job: jobId }, 'ceo');
             reply = `I filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n${ideas}`;
-          } else if (isFirstIdea) {
+            // "skip" is a refusal to be interviewed, not a business idea: naming the company after it would be
+            // absurd, and it belongs in the general reply, which already says the interview was closed.
+          } else if (isFirstIdea && !longPrompt && !isSkip(said)) {
             const r = await ask(deps, ceoSystem(vault), `The owner's business idea:\n\n${body}\n\nReply with exactly two lines:\nNAME: <a short, brandable company name>\nTAGLINE: <one sentence>`);
             const name = r?.match(/NAME:\s*(.+)/i)?.[1]?.trim() ?? 'Untitled Co';
             const tagline = r?.match(/TAGLINE:\s*(.+)/i)?.[1]?.trim() ?? '';
             createProposal(vault, { id: idFromKey('prop', `${jobId}:${m.id}`), kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: `Name the company: ${name}`, body: `## Proposed content\n\n\`\`\`\n---\nname: "${name.replace(/"/g, "'")}"\ntagline: "${tagline.replace(/"/g, "'")}"\nurl: ""\n---\n# ${name}\n\n${tagline}\n\`\`\`\n\nSet \`approved: true\` to adopt.`, job: jobId }, 'ceo');
             reply = `Got it. I proposed the name **${name}** (${tagline}) in 00 Inbox/ — approve or edit it. The CTO is planning the first jobs now.`;
           } else {
-            reply = (await ask(deps, ceoSystem(vault), `The owner wrote:\n\n${body}\n\nReply briefly and concretely. If it is an instruction, say what you will do and enqueue nothing yourself (the CTO plans). If it is a question, answer it.`)) ?? 'Noted. (No model was available to draft a fuller reply; I will act on this next cycle.)';
+            const extra = [
+              closedInterview ? 'You had asked them six questions; their reply is now in Discovery/interview.md and the research office will read it.' : '',
+              longPrompt ? 'This is a long brief rather than a one-line idea: the research office is reading it in full and will file a founder brief for them to approve. Do not try to summarise it yourself.' : '',
+            ].filter(Boolean).join(' ');
+            reply = (await ask(deps, ceoSystem(vault), `The owner wrote:\n\n${body}\n\n${extra}\n\nReply briefly and concretely. If it is an instruction, say what you will do and enqueue nothing yourself (the divisions plan). If it is a question, answer it.`)) ?? 'Noted. (No model was available to draft a fuller reply; I will act on this next cycle.)';
           }
           // Persist the defaults listInbox derived for an owner-typed note (id/created/from/to) so later ticks see a stable, complete note.
           vault.updateNote(m.path, (n) => ({ data: { ...n.data, id: m.id, created: m.created, from: 'owner', to: 'ceo', answered: true }, body: setSection(n.body, '## CEO', reply!) }), 'ceo', { job: jobId });
@@ -910,6 +928,53 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           answered++;
         }
         done(i, `${answered} owner message(s) answered`);
+        break;
+      }
+      // Read what the owner gave us before anything is planned against it. Three outcomes, and only one of them
+      // costs a model call: ask the founder interview (a proposal and a transcript, no model), queue one
+      // discovery job and block on it, or note why neither applies and move on. `currentDiscoveryStatus` derives
+      // all three from the vault, and the job's id is a digest of its material, so a replayed cycle re-finds the
+      // job it queued rather than queueing a second one.
+      case 'discovery': {
+        const org = loadOrg(vault);
+        const ceo = officeHolder(org, 'chief_executive');
+        if (!state.discoveryJob) {
+          const status = currentDiscoveryStatus(vault);
+          if (status.ask) {
+            const msg = askInterview(vault, ceo, now());
+            done(i, msg ? `asked the founder interview (${msg})` : status.why);
+            break;
+          }
+          // "Nothing new to read" and "the job I queued a moment ago is still running" are the same answer from
+          // `discoveryStatus` — `alreadyRun` is true either way — so the `!status.run` path has to look the job
+          // up before it walks on. Without this, a kill in the one write between `createJob` and `saveState`
+          // (where neither the state file nor `blocked_on` names the job) resumes into "discovery has already
+          // read this material" and plans while discovery is still reading, which is the exact ordering this
+          // step exists to prevent.
+          const open = (id: string): boolean => { const j = readJob(vault, id); return !!j && !['done', 'failed', 'cancelled'].includes(j.data.status); };
+          if (!status.run) {
+            const existing = discoveryJobId(status.digest);
+            if (open(existing)) {
+              state = { ...state, discoveryJob: existing }; saveState(state);
+              return block(existing, `waiting for discovery ${existing}`);
+            }
+            done(i, status.why); break;
+          }
+          const id = enqueueDiscovery(vault, org);
+          if (!id) { done(i, status.why); break; }
+          state = { ...state, discoveryJob: id }; saveState(state);
+          return block(id, `waiting for discovery ${id}`);
+        }
+        const sub = readJob(vault, state.discoveryJob);
+        if (!sub || !['done', 'failed', 'cancelled'].includes(sub.data.status)) {
+          // Its own flag, never `planPending`: `state.planPending` is never cleared, so borrowing it here would
+          // make this cycle's brief say the team plans had not finished even after every one of them did.
+          const w = waitForDiscovery(state.discoveryJob, (min) => `discovery ${state.discoveryJob} still ${sub?.data.status ?? 'missing'} after ${min} min — planning from what there is`);
+          if (w) return w;
+          break;
+        }
+        if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
+        done(i, `discovery ${sub.data.status}`);
         break;
       }
       case 'ideas_board': {
@@ -1392,6 +1457,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const facts = [
           `Elapsed: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}`,
           ...(state.planPending ? ['Planning: PENDING — the team plans have not finished this cycle; the previous plan stands.'] : []),
+          // Its own line for the same reason the estimate one is: a discovery job that ran long delayed the
+          // reading, not the planning, and the plan this cycle wrote was written without it.
+          ...(state.discoveryPending ? ['Discovery: still running — your material was not read in time, so this cycle planned without it; the founder brief will follow.'] : []),
           // Its own line, and never the planning one: an estimate the finance office has not returned delays the
           // board session, not the plan, and a brief that said "Planning: PENDING" about it would be wrong. The
           // board reads at most one card a cycle and on this path may have read none, so the line names the card
