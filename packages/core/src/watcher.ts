@@ -8,7 +8,7 @@ export interface WatcherOptions {
   debounceMs?: number;
 }
 
-export const HEARTBEAT_WAKE_AREAS = ['Jobs', '00 Inbox', 'Brand', 'Roles'];
+export const HEARTBEAT_WAKE_AREAS = ['Jobs', '00 Inbox', 'Brand', 'Roles', 'Teams'];
 
 /**
  * Watches the vault for owner edits. A change whose content sha equals the last `written_sha`
