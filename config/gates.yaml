@@ -1,28 +1,37 @@
 # Review gates per job type (spec §3). Each job type maps to an ordered list of gate job types that must pass
 # before the job counts as accepted; `criteria` under the matching key is shown to the author and the reviewer
 # as "What good looks like".
+#
+# A gate is named by the office that runs it (`office:<office>.<verb>`) or by the room whose lead runs it
+# (`team:<team>.<verb>`); `requester.review` goes back to whoever asked. `qa.review`, `coo.verify` and
+# `security.review` are the pre-office names, kept so a job queued before the rename still finds its table entry.
 gates:
-  engineer.ship: [qa.review, coo.verify]
+  engineer.ship: [team:qa.review, office:operations.verify]
   research: [research.review, requester.review]
   research.review: []
   research.measure: [requester.review]
   intelligence: []
-  growth.outreach: [coo.verify]
-  growth.post: [coo.verify]
-  growth.seo: [coo.verify]
-  custom: [coo.verify]
+  growth.outreach: [office:operations.verify]
+  growth.post: [office:operations.verify]
+  growth.seo: [office:operations.verify]
+  custom: [office:operations.verify]
+  company.plan: []
+  division.plan: []
+  board.premortem: []
   team.plan: []
   critic.premortem: []
-  qa.review: []
-  security.review: []
-  coo.verify: []
+  team:qa.review: []
+  office:operations.verify: []
+  office:security.review: []
   requester.review: []
-  company.plan: []
   cto.plan: []
   cto.compress_charters: []
   ceo.heartbeat: []
   colleague.answer: []
-  incident: [coo.verify]
+  incident: [office:operations.verify]
+  qa.review: []
+  coo.verify: []
+  security.review: []
 
 criteria:
   engineer.ship: "The change builds and runs; Site/ has no broken links; tests or a smoke check exist; the job's Done when holds."
@@ -31,14 +40,20 @@ criteria:
   growth.post: "On-brand, no banned tactics, one call to action."
   growth.seo: "Pages have titles, descriptions and internal links; nothing fabricated."
   custom: "The job's Done when holds and the evidence is in the Result."
+  division.plan: "At most 4 jobs, each finishable in one sitting with a Done when; the plan section names them; each job goes to the room that owns the work."
   team.plan: "At most 4 jobs, each finishable in one sitting with a Done when; the plan section names them."
+  board.premortem: "Three advisors, one joint verdict: concrete failure modes with a fix each; pass or return, never delay."
   critic.premortem: "Concrete failure modes with a fix each; pass or return, never delay."
-  qa.review: "Findings cite files or output; the CI record in Workspace/<stream>/.cubicle-ci/ is green and newer than the change; a ship that changed the architecture (a new dependency, a new service, a new data store, a changed boundary) has an ADR in Docs/adr/ — return it if it does not; verdict pass or return."
-  security.review: "Say what data, credentials and permissions the change touches, and judge each: secrets never in the diff, input validated at the boundary, authorisation checked on the server, nothing sensitive logged. A finding cites the file and the line. Verdict pass or return."
-  coo.verify: "Evidence-based; exactly one lesson."
-  company.plan: "One objective section per team."
+  team:qa.review: "Findings cite files or output; the CI record in Workspace/<stream>/.cubicle-ci/ is green and newer than the change; a ship that changed the architecture (a new dependency, a new service, a new data store, a changed boundary) has an ADR in Docs/adr/ — return it if it does not; verdict pass or return."
+  office:security.review: "Say what data, credentials and permissions the change touches, and judge each: secrets never in the diff, input validated at the boundary, authorisation checked on the server, nothing sensitive logged. A finding cites the file and the line. Verdict pass or return."
+  office:operations.verify: "Evidence-based; exactly one lesson."
+  company.plan: "One objective section per division."
   colleague.answer: "The question is answered with colleague.message(re:<id>)"
   research.review: "Evidence sufficiency: enough evidence, from more than one independent source, to support the decision at the required confidence. Bias: the method could have disproved the favoured answer. Contradictory evidence is named, not buried. Every finding states its confidence, assumptions and limitations. Verdict pass or return."
   research.measure: "Prediction and outcome are both stated with dates; the report's `## Prediction vs reality` section is appended; Research/index.md carries the outcome."
   intelligence: "Dated observations with a source link each; meaningful change separated from noise; every meaningful change is either an idea card or an alert; nothing invented."
   incident: "The stream is serving again and the rollback or fix is named; Docs/postmortems/<date>-<slug>.md exists with a timeline, an impact in hours, a root cause that is a design or a missing check rather than a person, and at least one corrective action with an owner. No names anywhere in the postmortem."
+  # Pre-office names. A job queued before the rename still reads its criteria from here.
+  qa.review: "Findings cite files or output; the CI record in Workspace/<stream>/.cubicle-ci/ is green and newer than the change; a ship that changed the architecture (a new dependency, a new service, a new data store, a changed boundary) has an ADR in Docs/adr/ — return it if it does not; verdict pass or return."
+  security.review: "Say what data, credentials and permissions the change touches, and judge each: secrets never in the diff, input validated at the boundary, authorisation checked on the server, nothing sensitive logged. A finding cites the file and the line. Verdict pass or return."
+  coo.verify: "Evidence-based; exactly one lesson."
