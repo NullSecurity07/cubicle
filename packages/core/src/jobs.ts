@@ -1,4 +1,4 @@
-import { JobFrontmatter, type JobStatus } from './schemas.js';
+import { JobFrontmatter, type JobStatus, type RiskLevel } from './schemas.js';
 import { makeId, nowIso } from './fs.js';
 import type { Vault } from './vault.js';
 import { stringifyNote } from './frontmatter.js';
@@ -20,6 +20,7 @@ export interface NewJob {
   owner_role?: string;
   for?: string;
   done_when?: string;
+  risk?: RiskLevel;
 }
 
 export function jobPath(id: string): string {
@@ -42,12 +43,13 @@ export function createJob(vault: Vault, job: NewJob, by: string): string {
     approval: 'none', checkpoint_step: 0, side_effects_done: [], links: job.links ?? [],
     privacy: job.privacy ?? 'cloud', runs_on: job.runs_on ?? 'laptop', parent: job.parent,
     team: job.team, owner_role: job.owner_role, for: job.for, done_when: job.done_when,
+    risk: job.risk ?? 'low',
   });
   let body = `## Goal\n\n${job.goal.trim()}\n\n`;
   if (job.done_when) body += `## Done when\n\n${job.done_when}\n\n`;
   body += `## Plan\n\n## Checkpoint log\n\n## Result\n`;
   vault.writeText(jobPath(id), stringifyNote(data as Record<string, unknown>, body), by, { job: id });
-  vault.events.emit({ type: 'job.queued', agent: by, job: id, payload: { type: job.type, title: job.title, assigned: job.assigned, priority: data.priority } });
+  vault.events.emit({ type: 'job.queued', agent: by, job: id, payload: { type: job.type, title: job.title, assigned: job.assigned, priority: data.priority, risk: data.risk } });
   return id;
 }
 
