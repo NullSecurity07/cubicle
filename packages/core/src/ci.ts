@@ -81,7 +81,11 @@ export function readCiConfig(vault: Vault, slug: string): { ok: true; config: Ci
  * Written through `atomicWriteSync` rather than `vault.writeText` on purpose: `.cubicle-ci/` is a cache path
  * (guard.ts), so the vault write API refuses it — which is exactly the property we want, because it means an
  * agent cannot forge a green record with `vault.write` and ship on it. Only this function, reached through
- * `ci.run`, puts records there. `recordWritten` still carries the provenance.
+ * `ci.run`, puts records there.
+ *
+ * `recordWritten` carries the provenance `ciRecordAttested` checks, and the `vault.wrote` event is what makes
+ * that provenance survive a cache rebuild: `rebuildWrittenSha()` replays the event log, so without the event
+ * every genuine record would read as unattested after a rebuild and no stream could ship until CI ran again.
  */
 export function writeCiRecord(vault: Vault, slug: string, rec: CiRecord, by: string): string {
   const base = `${ciRecordDir(slug)}/${rec.finished.replace(/[:.]/g, '-')}`;
@@ -89,20 +93,54 @@ export function writeCiRecord(vault: Vault, slug: string, rec: CiRecord, by: str
   for (let n = 2; n < 50 && existsSync(vault.abs(rel)); n++) rel = `${base}-${n}.json`;
   const sha = atomicWriteSync(vault.abs(rel), JSON.stringify(CiRecord.parse(rec), null, 2) + '\n');
   vault.recordWritten(rel, sha, by);
+  vault.events.emit({ type: 'vault.wrote', agent: by, payload: { path: rel, sha, by, generated: true } });
   return rel;
 }
 
-export function latestCiRecord(vault: Vault, slug: string): { path: string; record: CiRecord } | null {
+/**
+ * Whether the vault's own write ledger vouches for this record's exact bytes.
+ *
+ * `.cubicle-ci/` is refused by `vault.write` (it is a cache path), but it lives *inside* `Workspace/<slug>`,
+ * which `ci.run` bind-mounts read-write at `/work/stream` — and the steps that run there come from
+ * `cubicle-ci.yaml`, a file any engineer writes. So a step of `echo '{"green":true,...}' > .cubicle-ci/9999-...json`
+ * can put a green, far-future record on disk, and a check that only reads the file would accept it.
+ *
+ * The record therefore has to carry something a step cannot produce. That something is its row in
+ * `written_sha` (`.cubicle/`, outside every mount and unreachable from the sandbox), written by `writeCiRecord`
+ * and keyed on the content sha: a forged file has no row at all, and overwriting a genuine record's bytes makes
+ * the row disagree. Checking provenance beats moving the records out of the workspace — they are meant to be
+ * readable next to the code they describe, the workspace .gitignore already treats them as generated, and a
+ * relocation would still need this check the day something else is mounted.
+ */
+export function ciRecordAttested(vault: Vault, rel: string): boolean {
+  const written = vault.writtenSha(rel);
+  if (written === null) return false;
+  const current = vault.currentSha(rel);
+  return current !== null && current === written;
+}
+
+/**
+ * The newest attested, parsable record, plus the unattested files newer than it — the ones a refusal should
+ * name, so an engineer whose pipeline step wrote a record learns why it is ignored rather than reading
+ * "no CI record" and trying again.
+ */
+function scanCiRecords(vault: Vault, slug: string): { latest: { path: string; record: CiRecord } | null; unattested: string[] } {
   const files = vault.list(ciRecordDir(slug), { ext: '.json' }).sort();
+  const unattested: string[] = [];
   for (let i = files.length - 1; i >= 0; i--) {
+    if (!ciRecordAttested(vault, files[i])) { unattested.push(files[i]); continue; }
     const text = vault.readTextOrNull(files[i]);
     if (text === null) continue;
     try {
       const p = CiRecord.safeParse(JSON.parse(text));
-      if (p.success) return { path: files[i], record: p.data };
+      if (p.success) return { latest: { path: files[i], record: p.data }, unattested };
     } catch { /* a half-written record; keep looking back */ }
   }
-  return null;
+  return { latest: null, unattested };
+}
+
+export function latestCiRecord(vault: Vault, slug: string): { path: string; record: CiRecord } | null {
+  return scanCiRecords(vault, slug).latest;
 }
 
 const isIgnoredDir = (name: string): boolean => (CI_IGNORED_DIRS as readonly string[]).includes(name);
@@ -156,8 +194,13 @@ export function newestSourceFile(vault: Vault, slug: string): string | null {
  * that wants the stronger guarantee should freeze its workspace for the run.
  */
 export function ciStatus(vault: Vault, slug: string): { ok: boolean; reason: string | null; record: CiRecord | null; path: string | null } {
-  const latest = latestCiRecord(vault, slug);
-  if (!latest) return { ok: false, reason: `no CI record for stream "${slug}". Run ci.run({ stream: "${slug}" }) and ship on green.`, record: null, path: null };
+  const { latest, unattested } = scanCiRecords(vault, slug);
+  if (!latest) {
+    const ignored = unattested.length
+      ? ` (${unattested.length} file${unattested.length === 1 ? '' : 's'} under ${ciRecordDir(slug)} — ${unattested.slice(0, 3).join(', ')} — were not written by ci.run, so they are ignored: a CI record cannot be hand-written or produced by a pipeline step)`
+      : '';
+    return { ok: false, reason: `no CI record for stream "${slug}"${ignored}. Run ci.run({ stream: "${slug}" }) and ship on green.`, record: null, path: null };
+  }
   const { record, path: rel } = latest;
   if (!record.green) {
     const failed = record.steps.filter((s) => !s.ok).map((s) => s.name).join(', ') || 'unknown step';
