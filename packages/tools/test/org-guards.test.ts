@@ -31,6 +31,15 @@ describe('scheduler.request through the org (spec §2)', () => {
   it('cto.plan is reserved for the daemon (via ceo), not schedulable through the tool', async () => {
     expect((await call('scheduler.request', 'cto', { type: 'cto.plan', title: 'x', assigned: 'dev_manager', goal: 'g', done_when: 'd' })).ok).toBe(false);
   });
+  it('the daemon\'s standing research sweeps are reserved too: nobody hand-queues intelligence or research.measure', async () => {
+    for (const roleId of ['ceo', 'research_manager']) {   // both may schedule intelligence_analyst, so only the type can refuse them
+      for (const type of ['intelligence', 'research.measure']) {
+        const r = await call('scheduler.request', roleId, { type, title: `sweep ${roleId} ${type}`, assigned: 'intelligence_analyst', goal: 'g', done_when: 'd' });
+        expect(r.ok, `${roleId} / ${type}`).toBe(false);
+        expect(r.text).toMatch(/reserved for the daemon/);
+      }
+    }
+  });
   const request = {
     decision: 'Ship the pricing page or keep the waitlist',
     decision_owner: 'cfo',
@@ -66,6 +75,14 @@ describe('scheduler.request through the org (spec §2)', () => {
     expect(r.text).toMatch(/Nothing was queued/);
     expect(listJobs(vault).length).toBe(before);
     expect((await call('scheduler.request', 'cfo', { type: 'research', title: 'No brief', assigned: 'research_manager', goal: 'g', done_when: 'report', for: 'cfo' })).text).toMatch(/Missing: decision/);
+  });
+
+  it('`for` must name an active role: a report addressed to nobody is refused and nothing is queued', async () => {
+    const before = listJobs(vault).length;
+    const r = await call('scheduler.request', 'cfo', { type: 'research', title: 'For a ghost', assigned: 'research_manager', goal: 'g', done_when: 'report', for: 'chief_vibes_officer', research: request });
+    expect(r.ok).toBe(false);
+    expect(r.text).toBe('for must be an active role id');
+    expect(listJobs(vault).length).toBe(before);
   });
 
   it('the decision owner defaults to `for` when the request omits it', async () => {

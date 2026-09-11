@@ -43,8 +43,14 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
 /** Planning and gate job types never count toward the "N jobs completed" heartbeat trigger — otherwise a single
  *  cycle's own planning/gate sub-jobs (company.plan, critic.premortem, team.plan, qa.review, coo.verify,
  *  requester.review) push the count past the threshold and the heartbeat retriggers itself. The re-planning gate
- *  uses the same list for "work still open": a queued coo.verify is bookkeeping, not work from the plan. */
-export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', 'qa.review', 'coo.verify', 'requester.review', 'security.review', 'research.review'];
+ *  uses the same list for "work still open": a queued coo.verify is bookkeeping, not work from the plan.
+ *
+ *  The daemon's own recurring background work belongs here for the same reason: `intelligence` (four sweeps the
+ *  heartbeat itself enqueues) and `research.measure` (a follow-up the calendar enqueues) are not work anyone
+ *  planned. Counting them meant four of the five completions the next heartbeat waits for were the daemon's own
+ *  sweeps, so one real job fired the next cycle, which enqueued four more — a self-driving cadence that also ate
+ *  the free cheap-tier pool. */
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', 'qa.review', 'coo.verify', 'requester.review', 'security.review', 'research.review', 'intelligence', 'research.measure'];
 
 /**
  * The outbound services whose adapters are in mock mode for this env, in the order the brief names them. Asks the

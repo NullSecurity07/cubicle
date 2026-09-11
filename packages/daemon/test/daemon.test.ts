@@ -537,6 +537,14 @@ describe('daemon lifecycle', () => {
     expect(NON_WORK_TYPES).toEqual(expect.arrayContaining(['qa.review', 'coo.verify', 'requester.review', 'research.review']));
   });
 
+  it('the daemon\'s own recurring sweeps never move the heartbeat trigger: four completed intelligence jobs count as zero work', () => {
+    expect(NON_WORK_TYPES).toEqual(expect.arrayContaining(['intelligence', 'research.measure']));
+    // The counter in daemon.ts is `events of type job.done/job.failed whose job type is not in NON_WORK_TYPES`.
+    // Replay that filter over one cycle's four sweeps plus a follow-up measurement and one real job.
+    const types = ['intelligence', 'intelligence', 'intelligence', 'intelligence', 'research.measure', 'engineer.ship'];
+    expect(types.filter((t) => !NON_WORK_TYPES.includes(t))).toEqual(['engineer.ship']);
+  });
+
   it('dispatcher: file_change applies the diff; brand_change with chosen sets the name and queues reconcile; message answers route to Messages/', async () => {
     const vault = Vault.open(dir);
     const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
