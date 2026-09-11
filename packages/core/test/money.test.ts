@@ -52,6 +52,15 @@ describe('money is integer cents, parsed from strings (spec §1)', () => {
     expect(parseMoney('GBP 12.00', 'GBP')).toBe(1200);
     expect(parseMoney('USD 12.00', 'GBP')).toBeNull();    // wrong code for the declared currency
   });
+
+  it('strips only the declared currency\'s own symbol, never every symbol (review N2)', () => {
+    expect(parseMoney('$12.00')).toBe(1200);              // USD is the default, and $ is USD's own symbol
+    expect(parseMoney('£12.00', 'GBP')).toBe(1200);
+    expect(parseMoney('€12.00', 'EUR')).toBe(1200);
+    expect(parseMoney('₹12.00', 'INR')).toBe(1200);
+    expect(parseMoney('$12.00', 'GBP')).toBeNull();       // wrong symbol for a GBP ledger
+    expect(parseMoney('€12.00', 'GBP')).toBeNull();
+  });
 });
 
 describe('the ledger table (spec §1)', () => {
@@ -126,6 +135,26 @@ describe('the ledger table (spec §1)', () => {
     expect(l.problems).toHaveLength(1);
     expect(l.problems[0].reason).toContain('abc 12.00');
   });
+
+  it('only reads the first table after the header; a second table below is left alone (review N1)', () => {
+    const md = table('| 2026-09-12T08:00:00.000Z | capital | 250.00 | live | owner | Seed | |') + [
+      '## Notes', '', '| thing | value |', '|---|---|', '| rent | 500 |', '',
+    ].join('\n');
+    const l = parseLedger(md);
+    expect(l.entries).toHaveLength(1);
+    expect(l.problems).toEqual([]);   // the owner's own notes table is not the ledger and is not reported on
+  });
+
+  it('still reports a short row while it is inside the ledger table, even with a second table below it (review N1)', () => {
+    const md = table(
+      '| 2026-09-12T08:00:00.000Z | capital | 250.00 | live | owner | Seed | |',
+      '| 2026-09-12T09:00:00.000Z | cost | 5.00 |',
+    ) + '\n' + ['| thing | value |', '|---|---|', '| rent | 500 |', ''].join('\n');
+    const l = parseLedger(md);
+    expect(l.entries).toHaveLength(1);
+    expect(l.problems).toHaveLength(1);
+    expect(l.problems[0].reason).toContain('cells');
+  });
 });
 
 describe('appending to the book (spec §1)', () => {
@@ -136,6 +165,17 @@ describe('appending to the book (spec §1)', () => {
     vault = (await scaffoldVault(dir)).vault;
   });
   afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  it('appends into the ledger table itself, not a second table the owner keeps below it (review N1)', () => {
+    appendEntry(vault, { at: '2026-09-12T08:00:00.000Z', kind: 'capital', cents: 25000, mode: 'live', who: 'owner', why: 'Seed' }, 'owner');
+    vault.appendText(LEDGER_PATH, ['', '## Notes', '', '| thing | value |', '|---|---|', '| rent | 500 |', ''].join('\n'), 'owner');
+    appendEntry(vault, { at: '2026-09-12T09:00:00.000Z', kind: 'cost', cents: 500, mode: 'live', who: 'daemon', why: 'A paid call' }, 'daemon');
+    const text = vault.readText(LEDGER_PATH);
+    expect(text.indexOf('A paid call')).toBeLessThan(text.indexOf('## Notes'));   // spliced into the ledger table...
+    expect(text.indexOf('rent')).toBeGreaterThan(text.indexOf('## Notes'));       // ...leaving the owner's own table after it, untouched
+    expect(readLedger(vault).entries.map((e) => e.kind)).toEqual(['capital', 'cost']);
+    expect(readLedger(vault).problems).toEqual([]);
+  });
 
   it('creates the book on the first entry and never rewrites a row after that', () => {
     expect(readLedger(vault).entries).toEqual([]);
@@ -181,13 +221,19 @@ describe('appending to the book (spec §1)', () => {
     expect(readLedger(vault).problems).toEqual([]);
   });
 
-  it('normalizes `ref` through cell() at construction, so a pipe or stray whitespace still dedupes (review I2/ruling 2)', () => {
-    const a = appendEntry(vault, { kind: 'cost', cents: 100, mode: 'live', who: 'daemon', why: 'x', ref: ' job|1 ' }, 'daemon');
+  it('normalizes `ref` by trimming at construction, so stray whitespace still dedupes (review I2/ruling 2)', () => {
+    const a = appendEntry(vault, { kind: 'cost', cents: 100, mode: 'live', who: 'daemon', why: 'x', ref: '  job-1  ' }, 'daemon');
     expect(a.added).toBe(true);
-    expect(a.entry.ref).toBe('job/1');   // stored form: the same `cell()` transform `ledgerRow` writes it through
-    const b = appendEntry(vault, { kind: 'cost', cents: 100, mode: 'live', who: 'daemon', why: 'x', ref: 'job/1' }, 'daemon');
+    expect(a.entry.ref).toBe('job-1');   // stored form: trimmed, the same as the compared form
+    const b = appendEntry(vault, { kind: 'cost', cents: 100, mode: 'live', who: 'daemon', why: 'x', ref: 'job-1' }, 'daemon');
     expect(b.added).toBe(false);
     expect(readLedger(vault).entries).toHaveLength(1);
+  });
+
+  it('refuses a `ref` containing a pipe or a newline at construction, rather than mangling an id (review N4)', () => {
+    expect(() => appendEntry(vault, { kind: 'cost', cents: 100, mode: 'live', who: 'daemon', why: 'x', ref: 'job|1' }, 'daemon')).toThrow(/\|/);
+    expect(() => appendEntry(vault, { kind: 'cost', cents: 100, mode: 'live', who: 'daemon', why: 'x', ref: 'job\n1' }, 'daemon')).toThrow();
+    expect(readLedger(vault).entries).toEqual([]);   // refused before any read/write — nothing was ever appended
   });
 
   it('does not double-charge when the earlier same-ref row is itself unreadable (review M4/ruling 7)', () => {
@@ -197,6 +243,15 @@ describe('appending to the book (spec §1)', () => {
     const l = readLedger(vault);
     expect(l.entries).toEqual([]);        // the broken row still doesn't parse...
     expect(l.problems).toHaveLength(1);   // ...but no second row was appended behind its back
+  });
+
+  it('returns the actual stored row, not the caller\'s own new entry, when the duplicate row fails validation for a reason other than the amount (review N3)', () => {
+    vault.writeText(LEDGER_PATH, ledgerTemplate() + '| 2026-09-12T08:00:00.000Z | bribe | 5.00 | live | daemon | bad kind | dup-2 |\n', 'owner');
+    const r = appendEntry(vault, { kind: 'cost', cents: 999, mode: 'live', who: 'someone-else', why: 'a different reason', ref: 'dup-2' }, 'daemon');
+    expect(r.added).toBe(false);
+    expect(r.entry.ref).toBe('dup-2');
+    expect(r.entry.cents).toBe(500);     // the stored row's own amount (5.00), not the caller's new 999
+    expect(r.entry.who).toBe('daemon');  // the stored row's own who, not the caller's new who
   });
 
   it('retries the append instead of losing a write that landed between its read and its write (review I1/ruling 1)', () => {
