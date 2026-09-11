@@ -97,7 +97,7 @@ describe('%%cubicle%% provenance (B3), fire stops running jobs (B4)', () => {
     const running = createJob(vault, { type: 'custom', title: 'r', assigned: 'cmo', goal: 'g' }, 'cto');
     updateJob(vault, running, { status: 'running', checkpoint_step: 5 }, 'cmo');
     const bad = createProposal(vault, { kind: 'fire', from: 'cto', target: 'Roles/cmo.md', title: 'x', body: 'x' }, 'cto');
-    expect(await applyFire(vault, findInboxById(vault, bad.id)!)).toMatch(/only the CEO/);
+    expect(await applyFire(vault, findInboxById(vault, bad.id)!)).toMatch(/only the chief executive \(ceo\)/);   // by office, not the literal id (final review C2)
     const p = createProposal(vault, { kind: 'fire', from: 'ceo', target: 'Roles/cmo.md', title: 'x', body: 'x' }, 'ceo');
     expect(await applyFire(vault, findInboxById(vault, p.id)!)).toMatch(/fired cmo/);
     expect(readJob(vault, running)!.data.status).toBe('cancelled');

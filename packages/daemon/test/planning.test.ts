@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listJobs, listInbox, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord } from '@cubicle/core';
+import { scaffoldVault, Vault, listJobs, listInbox, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord, createProposal } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
-import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE } from '../src/index.js';
+import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE, runHeartbeat, createHeartbeatJob, planVerdictId } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
 
@@ -328,6 +328,18 @@ describe('a board where every model call fails does not read as a clean pre-mort
     } finally { vault.close(); }
   });
 
+  // Its one caller guards on the board room first, but it is exported and tests call it directly — an org with
+  // no board must fail open like every other board path, not with a TypeError (final review M5).
+  it('an org with no board room passes unreviewed instead of throwing', async () => {
+    const vault = Vault.open(dir);
+    try {
+      const org = loadOrg(vault);
+      const noBoard = { ...org, teams: Object.fromEntries(Object.entries(org.teams).filter(([id]) => id !== 'board')) };
+      const session = await runBoardSession({ vault, llm: throwingLlm }, noBoard, PLAN_TEXT);
+      expect(session).toMatchObject({ verdict: 'pass', findings: [], advisors: [], answered: 0 });
+    } finally { vault.close(); }
+  });
+
   it('writeBoardPremortemDecision writes "no advisor answered" rather than "the plan survived the pre-mortem" when answered is 0', async () => {
     const vault = Vault.open(dir);
     try {
@@ -387,7 +399,9 @@ describe('division planning (spec item 3)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await planUntilFannedOut(d, v, 3);
+      // Three divisions is the tightest case in the suite — several heartbeat round trips before the fan-out —
+      // and it timed out at 54 s against the helper's 60 s default under load (Task 6 review, finding 2).
+      await planUntilFannedOut(d, v, 3, 120000);
       const plans = listJobs(v).filter((j) => j.type === 'division.plan');
       expect(plans.map((j) => j.assigned).sort()).toEqual(['cfo', 'coo', 'cto']);
       expect(listJobs(v).filter((j) => j.type === 'board.premortem')).toHaveLength(1);
@@ -396,7 +410,9 @@ describe('division planning (spec item 3)', () => {
       expect(goal).toContain('Dev (lead dev_manager');
       expect(goal).toContain('backend_engineer');
     } finally { v.close(); await d.stop(); }
-  });
+    // The per-case timeout is raised past the helper's budget on purpose: whichever gives up first should be
+    // the helper, whose message says how many division plans it actually saw.
+  }, 150000);
 
   it('with the switch off — the shipped default — the plan waits for the owner, and no new work starts', async () => {
     const seed = Vault.open(dir);
@@ -423,5 +439,82 @@ describe('division planning (spec item 3)', () => {
       await waitFor(() => listJobs(v).filter((j) => j.type === 'division.plan').length >= 2, 60000);
       expect(listJobs(v).filter((j) => j.type === 'company.plan')).toHaveLength(1);
     } finally { v.close(); await d.stop(); }
+  });
+});
+
+describe('the fan-out is crash-idempotent (final review C1)', () => {
+  /** `division_plans` needs no model: the goal text is assembled from the org and the plan. */
+  const mute: Llm = { async chat() { throw new Error('the fan-out must not call a model'); }, promptBudget: () => 6000 };
+  const FAN_OUT_PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\nprocess: launch\n\n### revenue\n- Find the first organic channel\n';
+  const stateRel = (hbId: string) => path.join(dir, '.cubicle/jobs', `${hbId}.heartbeat.json`);
+  /** Every job the fan-out makes: one division.plan per division, plus the `process:` expansion (same parent). */
+  const fannedOut = (v: Vault, hbId: string) => listJobs(v).filter((j) => j.parent === hbId && j.type !== 'company.plan' && j.type !== 'board.premortem').map((j) => `${j.type}:${j.id}`).sort();
+
+  it('a kill BEFORE the state write re-creates nothing: still one division.plan per division and one process expansion', async () => {
+    const v = Vault.open(dir);
+    try {
+      v.writeText('Plans/plan.md', FAN_OUT_PLAN, 'ceo');
+      const hbId = createHeartbeatJob(v, 'test');
+      const verdict = createProposal(v, { id: planVerdictId(hbId), kind: 'plan_verdict', from: 'ceo', job: hbId, title: 'Approve this cycle\'s plan', body: 'The board passed this plan.' }, 'ceo');
+      v.updateNote(verdict.path, (n) => ({ data: { ...n.data, approved: true, board_verdict: 'pass' }, body: n.body }), 'owner');
+      updateJob(v, hbId, { checkpoint_step: HEARTBEAT_STEPS.indexOf('owner_verdict') }, 'daemon');
+
+      const out = await runHeartbeat({ vault: v, llm: mute, env: {}, now: () => new Date() }, hbId);
+      expect(out.status).toBe('blocked');
+      const first = fannedOut(v, hbId);
+      expect(first.filter((s) => s.startsWith('division.plan:'))).toHaveLength(2);   // dev → technology, revenue → revenue
+      expect(first.filter((s) => !s.startsWith('division.plan:')).length).toBeGreaterThan(0);   // the `process: launch` steps
+
+      // The kill, in the window the acceptance run never enters: every job note is on disk, but `state.divisionPlanJobs`
+      // was never written and `blockMany` never set `blocked_on`, so the resume has neither the cache nor the
+      // `blocked_on` recovery hook. Before the deterministic ids this queued the whole planning round a second time.
+      const state = JSON.parse(readFileSync(stateRel(hbId), 'utf8'));
+      delete state.divisionPlanJobs;
+      writeFileSync(stateRel(hbId), JSON.stringify(state, null, 2));
+      updateJob(v, hbId, { status: 'queued', checkpoint_step: HEARTBEAT_STEPS.indexOf('division_plans'), blocked_on: undefined }, 'daemon');
+
+      const again = await runHeartbeat({ vault: v, llm: mute, env: {}, now: () => new Date() }, hbId);
+      expect(again.status).toBe('blocked');
+      expect(fannedOut(v, hbId)).toEqual(first);
+    } finally { v.close(); }
+  });
+});
+
+describe('the chief executive is an office, not the id `ceo` (final review I1/I2)', () => {
+  /** Re-staff the seat the way an owner does: one line in the constitution's `offices:` block. */
+  const restaff = (v: Vault, holder: string) => v.writeText('Memory/constitution.md', v.readText('Memory/constitution.md').replace(/^(\s*)chief_executive:.*$/m, `$1chief_executive: ${holder}`), 'owner');
+
+  it('the company.plan job is stamped with the new holder and the new holder\'s team, not `ceo`/`executive`', async () => {
+    const v = Vault.open(dir);
+    try {
+      restaff(v, 'coo');
+      const hbId = createHeartbeatJob(v, 'test');
+      updateJob(v, hbId, { checkpoint_step: HEARTBEAT_STEPS.indexOf('company_plan') }, 'daemon');
+      const out = await runHeartbeat({ vault: v, llm: { async chat() { throw new Error('no model'); }, promptBudget: () => 6000 }, env: {}, now: () => new Date() }, hbId);
+      expect(out.status).toBe('blocked');
+      const plan = listJobs(v).find((j) => j.type === 'company.plan')!;
+      expect(plan.assigned).toBe('coo');
+      expect(plan.owner_role).toBe('coo');
+      expect(plan.team).toBe('operations');   // the COO's own room, not the hard-coded `executive`
+    } finally { v.close(); }
+  });
+
+  it('the chief executive speaks from the office holder\'s charter, not from Roles/ceo.md', async () => {
+    const v = Vault.open(dir);
+    try {
+      restaff(v, 'coo');
+      // The old holder's charter is archived, exactly as `applyFire`/a re-staff leaves it: reading it by name
+      // would hand the new holder an empty charter.
+      v.move('Roles/ceo.md', 'Roles/archive/ceo-2026-09-11.md', 'owner');
+      const prompts: { roleId: string; system: string }[] = [];
+      const llm: Llm = { async chat(req: RouteRequest, chat: { messages: ChatMessage[] }) { prompts.push({ roleId: req.roleId ?? '?', system: String(chat.messages[0]?.content ?? '') }); throw new Error('no model'); }, promptBudget: () => 6000 };
+      const hbId = createHeartbeatJob(v, 'test');
+      updateJob(v, hbId, { checkpoint_step: HEARTBEAT_STEPS.indexOf('brief') }, 'daemon');
+      await runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hbId);
+      expect(prompts.length).toBeGreaterThan(0);
+      expect(prompts.every((p) => p.roleId === 'coo')).toBe(true);
+      expect(prompts[0].system).toContain('# Your charter (COO)');
+      expect(prompts[0].system).toContain(readFileSync(path.join(dir, 'Roles/coo.md'), 'utf8').split('---').slice(2).join('---').trim().split('\n')[0]);
+    } finally { v.close(); }
   });
 });

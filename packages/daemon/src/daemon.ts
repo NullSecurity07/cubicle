@@ -118,13 +118,17 @@ export class Daemon {
     const scheduler = vaultScheduler(this.vault, 'daemon');
     const guardrails = [constitutionGuardrail(this.router), secretsGuardrail(), ...(this.overrides.guardrails ?? [])];
     this.guardrails = guardrails;
+    // Who chairs a meeting is the chief executive's *office* (final review I2). Reading `Roles/ceo.md` meant
+    // that re-staffing the seat stopped the weekly meeting dead — `openMeeting` returned null once that note was
+    // archived, silently — and ran the tool context as a role nobody holds.
     this.openMeeting = async (agenda: string, participants?: string[]): Promise<string | null> => {
-      const ceoNote = this.vault.readNoteOrNull('Roles/ceo.md');
-      if (!ceoNote) return null;
-      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId: 'ceo', role: RoleFrontmatter.parse(ceoNote.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/meeting', now: () => new Date(), guardrails };
+      const chief = officeHolder(loadOrg(this.vault), 'chief_executive');
+      const chiefNote = this.vault.readNoteOrNull(`Roles/${chief}.md`);
+      if (!chiefNote) return null;
+      const ctx: ToolContext = { vault: this.vault, events: this.vault.events, roleId: chief, role: RoleFrontmatter.parse(chiefNote.data), jobId: null, config: toolsConfig, env: cfg.env, scheduler, router: this.router, workspace: '.cubicle/workspace/meeting', now: () => new Date(), guardrails };
       const client = await createRoleToolClient([meetingOpen], ctx);
       try {
-        const attendees = participants ?? this.workers.roles().map((r) => r.role).filter((r) => r !== 'ceo');
+        const attendees = participants ?? this.workers.roles().map((r) => r.role).filter((r) => r !== chief);
         const r = await client.call('meeting.open', { room: 'board', participants: attendees, agenda, rounds: 2 });
         return r.ok ? String((r.data as { path?: string })?.path ?? 'held') : null;
       } finally { await client.close(); }

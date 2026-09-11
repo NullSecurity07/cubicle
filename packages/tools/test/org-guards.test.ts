@@ -161,6 +161,15 @@ describe('tools and harness stop naming people (spec org engine)', () => {
     const reserved = systemTypes(org);
     for (const type of [...GATE_JOB_TYPES, ...NON_WORK_TYPES]) expect(reserved, type).toHaveProperty(type);
   });
+
+  // One gate, one access list (final review M3): the engineering office could hand-queue the pre-office
+  // `security.review` but not the renamed `office:security.review` — a rename artefact, not a policy.
+  it('a gate and its pre-office name grant the same offices', () => {
+    const reserved = systemTypes(loadOrg(vault));
+    for (const [renamed, old] of [['office:security.review', 'security.review'], ['office:operations.verify', 'coo.verify'], ['team:qa.review', 'qa.review']]) {
+      expect([...reserved[renamed]].sort(), renamed).toEqual([...reserved[old]].sort());
+    }
+  });
 });
 
 describe('scheduler.request refusals tell the caller what it may do instead', () => {

@@ -51,11 +51,20 @@ export class VaultWatcher {
     this.watcher.on('add', (p) => schedule(p, false));
     this.watcher.on('change', (p) => schedule(p, false));
     this.watcher.on('unlink', (p) => schedule(p, true));
+    // chokidar is an EventEmitter, so an `error` with no listener is re-thrown as an uncaught exception — and
+    // the only listener used to be the one-shot `reject` below, which is gone the moment the watcher is ready.
+    // A transient FS error after that is ordinary (a file removed mid-scan — an `ENOENT lstat` on a temp vault
+    // being torn down failed a test run; EMFILE under load) and it must cost a warning, not the daemon. The
+    // listener goes on before the ready race so there is no window in which an error has nowhere to go.
+    this.watcher.on('error', (err) => this.vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { where: 'watcher', message: String((err as Error)?.message ?? err) } }));
     await new Promise<void>((resolve, reject) => {
       this.watcher!.once('ready', () => resolve());
       this.watcher!.once('error', reject);
     });
   }
+
+  /** The live chokidar instance, for tests that need to drive its error path. */
+  get fsWatcher(): FSWatcher | null { return this.watcher; }
 
   private fire(rel: string, deleted: boolean): void {
     const area = rel.split('/')[0];

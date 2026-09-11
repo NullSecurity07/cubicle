@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { can, defaultPermissions, leadOf, reportsOf, isLead, subtreeRoles, roleWithTool, loadOrg, type Org } from '../src/org.js';
+import { can, defaultPermissions, leadOf, reportsOf, isLead, subtreeRoles, roleWithTool, loadOrg, incidentResponder, type Org } from '../src/org.js';
 import { scaffoldVault } from '../src/template.js';
 import { Vault } from '../src/vault.js';
 import { stringifyNote, parseNote } from '../src/frontmatter.js';
@@ -168,5 +168,37 @@ describe('loadOrg caching (perf fix)', () => {
         expect(loadOrg(vault2).roles.temp_role).toBeUndefined();
       } finally { vault2.close(); }
     } finally { rmSync(dir2, { recursive: true, force: true }); }
+  });
+});
+
+// The two incident triggers (the daemon's deploy sweep, the tools' errors.report) and the corrective actions
+// that follow all used to write `assigned: 'sre', team: 'dev', owner_role: 'dev_manager'` as literals
+// (final review M6). One lookup, resolved through the tree.
+describe('incidentResponder (final review M6)', () => {
+  let dir: string; let vault: Vault;
+  beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-incident-')); vault = (await scaffoldVault(dir)).vault; });
+  afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  it('is the SRE under its own room and lead in the shipped org', () => {
+    expect(incidentResponder(loadOrg(vault))).toEqual({ role: 'sre', team: 'dev', lead: 'dev_manager' });
+  });
+
+  it('with no SRE it falls back to someone in the engineering division who can roll a deploy back', () => {
+    const org = loadOrg(vault);
+    const noSre = { ...org, roles: Object.fromEntries(Object.entries(org.roles).filter(([r]) => r !== 'sre')) };
+    const r = incidentResponder(noSre);
+    expect(r.role).not.toBe('sre');
+    expect(org.roles[r.role].tools).toContain('deploy.site');
+    expect(r.lead).toBe('dev_manager');
+  });
+
+  it('follows a re-staffed engineering office when nobody in the division can deploy', () => {
+    const org = loadOrg(vault);
+    const bare = {
+      teams: { technology: team('technology', 'cto', []), operations: team('operations', 'coo', []) },
+      roles: { cto: role('cto'), coo: role('coo') },
+      offices: { ...org.offices, engineering: 'coo' },
+    } as unknown as Org;
+    expect(incidentResponder(bare)).toEqual({ role: 'coo', team: 'operations', lead: 'coo' });
   });
 });

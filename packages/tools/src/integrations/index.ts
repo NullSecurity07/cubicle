@@ -3,7 +3,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { z } from 'zod';
 import {
-  type Vault, createJob, listJobs, nowIso, repoRoot, workspacePath, ciConfigPath, readProcess, loadOrg,
+  type Vault, createJob, listJobs, nowIso, repoRoot, workspacePath, ciConfigPath, readProcess, loadOrg, incidentResponder,
   readStream, listStreams,
 } from '@cubicle/core';
 
@@ -159,8 +159,11 @@ export function vaultNativeAdapters({ vault, env }: AdapterDeps): Adapters {
           const known = listStreams(vault).map((s) => s.slug);
           throw new Error(`no stream "${stream}" to report an error against. ${known.length ? `Known streams: ${known.join(', ')}.` : 'No streams exist yet.'}`);
         }
+        // Who answers, and under which room and lead, comes from the org — the same lookup the daemon's own
+        // incident trigger uses, so the two cannot drift and neither names a person (M6).
+        const responder = incidentResponder(loadOrg(vault));
         return createJob(vault, {
-          type: 'incident', title, assigned: 'sre', priority: 1, team: 'dev', owner_role: 'dev_manager', stream, risk: 'high',
+          type: 'incident', title, assigned: responder.role, priority: 1, team: responder.team, owner_role: responder.lead, stream, risk: 'high',
           goal: `Something broke in production for stream "${stream}".\n\n${detail}\n\nDetect → triage → mitigate → recover → root cause → corrective actions → learning (operating model §33). Roll back first with deploy.site({ rollback: true }) if a deploy is implicated, then write the blameless postmortem to Docs/postmortems/ using Docs/postmortems/_template.md and finish with that path in artifacts.`,
           done_when: 'The stream is serving again and Docs/postmortems/<date>-<slug>.md has a timeline, an impact in hours, a root cause and at least one corrective action.',
         }, 'daemon');

@@ -4,7 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
-  loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, officeHolder, roleWithTool, jobPath,
+  loadOrg, leadOf, teamOf, resolveRole, incidentResponder, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, officeHolder, roleWithTool, jobPath,
   RESEARCH_INDEX, upsertIndexRow, resultBlock, researchSlug, type ResearchRequest, type DeliveredResearch,
   readStream, budgetLines, listStreams, readFlags, expiredFlags,
 } from '@cubicle/core';
@@ -140,16 +140,22 @@ export async function applyHire(vault: Vault, note: { path: string; data: InboxF
 
 /** Apply an approved fire: deactivate, archive the charter, emit role.fired. Founding roles can be fired too — the owner decided. */
 export async function applyFire(vault: Vault, note: { path: string; data: InboxFrontmatter; body: string }, onFired?: (role: string) => void): Promise<string> {
-  if (note.data.from !== 'ceo' && note.data.from !== 'owner') return `only the CEO (or the owner) may file fire proposals (this one is from ${note.data.from})`;
+  // Who may file, and who may not be fired, are the chief executive's *office*, never the literal id `ceo`
+  // (spec item 1, final review C2). The permission to file one is already resolved by office
+  // (`defaultPermissions` grants `fire` to `officeHolder(org, 'chief_executive')`), so comparing against the
+  // string here meant that re-staffing the seat broke firing both ways at once: the new holder's proposal was
+  // refused ("this one is from founder") while the retired `ceo` id kept the shield the live holder needs.
+  const org = loadOrg(vault);
+  const chief = officeHolder(org, 'chief_executive');
+  if (note.data.from !== chief && note.data.from !== 'owner') return `only the chief executive (${chief}) or the owner may file fire proposals (this one is from ${note.data.from})`;
   const target = note.data.target?.match(/^Roles\/([a-z0-9_-]+)\.md$/)?.[1] ?? note.body.match(/role:\s*([a-z0-9_-]+)/)?.[1];
   if (!target || !isValidRoleId(target)) return 'fire proposal must set target: Roles/<role>.md';
   const rel = `Roles/${target}.md`;
   const n = vault.readNoteOrNull(rel);
   if (!n) return `no such role ${target}`;
-  if (target === 'ceo') return 'the CEO cannot be fired (it owns the heartbeat); edit its charter instead';
-  const org = loadOrg(vault);
-  const manager = leadOf(org, target) ?? 'ceo';
-  const managerRole = manager === 'owner' ? 'ceo' : manager;
+  if (target === chief) return `the chief executive (${chief}) cannot be fired (it owns the heartbeat); re-staff the office in Memory/constitution.md or edit its charter instead`;
+  const manager = leadOf(org, target) ?? chief;
+  const managerRole = manager === 'owner' ? chief : manager;
   vault.writeText(rel, stringifyNote({ ...n.data, active: false, fired: nowIso() }, n.body), 'daemon', { job: note.data.job ?? null });
   vault.move(rel, `Roles/archive/${target}-${nowIso().slice(0, 10)}.md`, 'daemon');
   // Gate jobs (team:qa.review/office:operations.verify/requester.review) must not be cancelled — that would strand the parent
@@ -446,6 +452,10 @@ export function maybeEnqueueIntelligence(vault: Vault, now = new Date()): string
   const org = loadOrg(vault);
   const assigned = org.roles.intelligence_analyst ? 'intelligence_analyst' : (researchLead(org) ?? 'research_manager');
   if (!org.roles[assigned]) return [];
+  // The room and the lead come from the tree, not from two literals (M6): a renamed research room or a
+  // re-staffed research office would otherwise stamp every sweep with a team and a lead that do not exist.
+  const lead = researchLead(org) ?? 'research_manager';
+  const researchTeam = teamOf(org, assigned)?.id;
   const date = now.toISOString().slice(0, 10);
   const open = listJobs(vault, { status: ['queued', 'running', 'blocked', 'in_review'] }).filter((j) => j.type === 'intelligence');
   const out: string[] = [];
@@ -459,7 +469,7 @@ export function maybeEnqueueIntelligence(vault: Vault, now = new Date()): string
       .sort((a, b) => intelligenceOrder(a).localeCompare(intelligenceOrder(b))).at(-1) ?? null;
     out.push(createJob(vault, {
       id, type: 'intelligence', title: `${kind[0].toUpperCase()}${kind.slice(1)} intelligence: cycle ${cycle}`,
-      assigned, priority: 4, team: 'research', owner_role: 'research_manager', for: 'research_manager', model_tier: 'cheap',
+      assigned, priority: 4, team: researchTeam, owner_role: lead, for: lead, model_tier: 'cheap',
       done_when: `${file} exists with observations, changes, alerts and noise ignored; every meaningful change is either an Ideas/ card or a line under ## Alerts`,
       goal: intelligenceGoal(kind, file, previous),
     }, 'daemon'));
@@ -580,7 +590,7 @@ export function enqueueResearchFollowUps(vault: Vault, now = new Date()): string
     const owner = org.roles[f.decision_owner] ? f.decision_owner : lead;
     out.push(createJob(vault, {
       id, type: 'research.measure', title: `Measure: did [[${f.research}]] turn out right?`,
-      assigned: lead, priority: 3, team: 'research', owner_role: 'research_manager', for: owner,
+      assigned: lead, priority: 3, team: teamOf(org, lead)?.id, owner_role: lead, for: owner,   // the room and the lead from the tree, not two literals (M6)
       links: [`[[${f.research}]]`], model_tier: 'cheap',
       done_when: `${report} ends with a ## Prediction vs reality section, ${f.path} has status: measured with an outcome, and the job's row in Research/index.md carries that outcome`,
       goal: [
@@ -877,13 +887,14 @@ function liveStreams(vault: Vault): Set<string> {
 }
 
 /**
- * Create the incident note and start its clock. Shared by both triggers so the job shape — SRE, priority 1,
- * high risk, a postmortem path in the goal — cannot drift between them.
+ * Create the incident note and start its clock. Shared by both triggers so the job shape — the incident
+ * responder, priority 1, high risk, a postmortem path in the goal — cannot drift between them.
  */
 function openIncident(vault: Vault, o: { id: string; stream: string; trigger: string; title: string; what: string; ts: string; today: string }): string {
+  const { role: responder, team, lead } = incidentResponder(loadOrg(vault));
   createJob(vault, {
-    id: o.id, type: 'incident', title: o.title, assigned: 'sre', priority: 1,
-    team: 'dev', owner_role: 'dev_manager', stream: o.stream, risk: 'high',
+    id: o.id, type: 'incident', title: o.title, assigned: responder, priority: 1,
+    team, owner_role: lead, stream: o.stream, risk: 'high',
     goal: `${o.what} Treat it as a production incident (operating model §33): detection → triage → mitigation → recovery → root cause → corrective actions → learning.\n\nDo: (1) confirm the stream is serving again, rolling back with deploy.site({ rollback: true }) if it is not; (2) read the deploy events, the CI records under Workspace/${o.stream}/.cubicle-ci/ and the job that shipped the change; (3) write the blameless postmortem to Docs/postmortems/${o.today}-${o.stream}.md from Docs/postmortems/_template.md — a timeline, the impact in hours, a root cause that is a design or a missing check rather than a person, and at least one corrective action with an owner role; (4) finish with that path in artifacts and the open→recovered hours in metrics.hours.`,
     done_when: `The stream is serving again and Docs/postmortems/${o.today}-${o.stream}.md has a timeline, an impact in hours, a root cause and at least one corrective action.`,
   }, 'daemon');
@@ -956,6 +967,8 @@ const CLOSED_INCIDENT_STATUSES = ['done', 'failed', 'cancelled'] as const;
  */
 export function maybeCorrectiveActions(vault: Vault): string[] {
   const out: string[] = [];
+  const org = loadOrg(vault);
+  const responder = incidentResponder(org);
   // One listing for the sweep: the marker is keyed per incident, so no incident's own decision depends on a
   // job created for another one in the same pass.
   const all = listJobs(vault);
@@ -974,10 +987,14 @@ export function maybeCorrectiveActions(vault: Vault): string[] {
     const actions = section.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')).map((l) => l.slice(2).trim()).filter((l) => l.length > 8 && !l.startsWith('<')).slice(0, CORRECTIVE_MAX);
     for (const a of actions) {
       const title = a.replace(/\s*[—-]\s*owner:.*$/i, '').trim().slice(0, 80);
-      const owner = a.match(/owner:\s*([a-z0-9_]+)/i)?.[1] ?? 'backend_engineer';
+      // The postmortem names an owner role; where it does not, fall back to whoever the org says answers an
+      // incident. The room and its lead follow that role through the tree, never two literals (M6).
+      const named = a.match(/owner:\s*([a-z0-9_]+)/i)?.[1];
+      const owner = named && org.roles[resolveRole(org, named)] ? resolveRole(org, named) : responder.role;
+      const ownerTeam = teamOf(org, owner)?.id;
       out.push(createJob(vault, {
         id: idFromKey('job', `${marker}:${title}`), type: 'custom', title: `Corrective: ${title}`, assigned: owner,
-        priority: 2, team: 'dev', owner_role: 'dev_manager', stream: inc.stream, links: [`[[${inc.id}]]`, `[[${marker}]]`],
+        priority: 2, team: ownerTeam, owner_role: (ownerTeam ? org.teams[ownerTeam]?.lead : undefined) ?? responder.lead, stream: inc.stream, links: [`[[${inc.id}]]`, `[[${marker}]]`],
         goal: `Corrective action from the postmortem of incident [[${inc.id}]] ([[${pm.replace(/\.md$/, '')}]]):\n\n${a}\n\nThe incident is closed; this is the change that stops it happening again. Read the postmortem's root cause first.`,
         done_when: `${title} is done and the postmortem's corrective action is ticked.`,
       }, 'daemon'));

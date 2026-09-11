@@ -168,6 +168,99 @@ describe('approved work continues, new work waits (Task 5 review I1/I2/M1)', () 
     expect(openPlanVerdict(vault)).toBeNull();   // so the next cycle plans instead of waiting on nothing
   });
 
+  // …and "file no verdict" must not become "proceed as if approved" (Task 6 review, finding 1).
+  // `planIsSubstantive` is false for an empty page but also for any plan whose every bullet starts with
+  // verify/reconcile — a plausible Operations-only cycle, and the wording the brief's own fixture uses. Left to
+  // the old behaviour the COO got a `division.plan` and could schedule up to four jobs nobody had ruled on.
+  it('a plan whose only bullets are verify/reconcile busywork files no verdict AND fans nothing out', async () => {
+    const hbId = createHeartbeatJob(vault, 'test');
+    vault.writeText('Plans/plan.md', '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### operations\n- Verify what shipped and write the lesson\n- Reconcile Site/ with Brand/\n', 'ceo');
+    parkAt(hbId, 'owner_verdict');
+    expect((await runHeartbeat({ vault, llm: mute, env: {}, now: () => new Date() }, hbId)).status).toBe('done');
+    expect(listInbox(vault).filter((n) => n.data.kind === 'plan_verdict')).toHaveLength(0);
+    expect(listJobs(vault).filter((j) => j.type === 'division.plan')).toHaveLength(0);
+    expect(readJob(vault, hbId)!.body).toContain('nothing to fan out: the plan has no objective');
+    expect(openPlanVerdict(vault)).toBeNull();   // and the next cycle still plans rather than waiting on nothing
+  });
+
+  // The rejection is the owner's "no". Spending it before the rewrite exists meant a kill in between left the
+  // note spent with no rewrite queued, and the resumed step — no rejection on file, a fresh plan, open work —
+  // could let the re-planning gate stand the old plan down (Task 6 review, minor 5).
+  it('the rejection is spent only once the rewrite\'s company.plan job exists', async () => {
+    vault.writeText('Plans/plan.md', FRESH_PLAN, 'ceo');
+    createJob(vault, { type: 'engineer.ship', title: 'Open work from that plan', assigned: 'backend_engineer', priority: 3, goal: 'g', team: 'dev' }, 'cto');
+    const rejected = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'Approve this cycle\'s plan', body: 'The board returned this plan.' }, 'ceo');
+    vault.updateNote(rejected.path, (n) => ({ data: { ...n.data, approved: false, resolved_at: new Date().toISOString() }, body: n.body }), 'owner');
+    const hbId = createHeartbeatJob(vault, 'test');
+    parkAt(hbId, 'company_plan');
+    expect((await runHeartbeat({ vault, llm: mute, env: {}, now: () => new Date(), planMaxAgeDays: 3 }, hbId)).status).toBe('blocked');
+
+    const planJob = listJobs(vault).find((j) => j.type === 'company.plan')!;
+    expect((findInboxById(vault, rejected.id)!.data as { fanned_out?: string }).fanned_out).toBe(hbId);
+    // The order the two writes actually landed in, from the event log: the rewrite's job note first, the stamp
+    // that spends the rejection second. Anything killed between them leaves a rejection still asking for a
+    // rewrite, which is the safe half of the pair to repeat.
+    const writes = vault.events.query({ types: ['vault.wrote'] }).map((e) => String(e.payload.path));
+    expect(writes).toContain(`Jobs/${planJob.id}.md`);
+    expect(writes.lastIndexOf(rejected.path)).toBeGreaterThan(writes.indexOf(`Jobs/${planJob.id}.md`));
+  });
+
+  // The brief's `## Next action per team` lines are keyed on the team a queued job carries, and every job a
+  // division lead schedules carries the *room's* id — so a division's own line reads "nothing queued" almost
+  // every cycle and the continuity the goal promises was structurally blank (Task 6 review, finding 3).
+  it('a division lead\'s "next action from the last brief" falls back to its rooms', async () => {
+    const hbId = createHeartbeatJob(vault, 'test');
+    vault.writeText('Plans/plan.md', '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### technology\n- Ship the first cut\n', 'ceo');
+    vault.writeText('Runs/2026-09-10-0900.md', '# Since you were away\n\n## Next action per team\n\n- technology: nothing queued\n- dev: Scaffold the site from Brand/\n- revenue: nothing queued\n', 'ceo');
+    const v = createProposal(vault, { id: planVerdictId(hbId), kind: 'plan_verdict', from: 'ceo', job: hbId, title: 'Approve this cycle\'s plan', body: 'The board passed this plan.' }, 'ceo');
+    vault.updateNote(v.path, (n) => ({ data: { ...n.data, approved: true, board_verdict: 'pass' }, body: n.body }), 'owner');
+    parkAt(hbId, 'owner_verdict');
+
+    expect((await runHeartbeat({ vault, llm: mute, env: {}, now: () => new Date() }, hbId)).status).toBe('blocked');
+    const divisionPlan = listJobs(vault).find((j) => j.type === 'division.plan' && j.team === 'technology')!;
+    expect(readJob(vault, divisionPlan.id)!.body).toContain('Next action from the last brief: Scaffold the site from Brand/ (dev)');
+  });
+
+  // Live run, fresh vault: the owner approved the `plan_verdict` note while the daemon was down. On the restart
+  // the dispatch resolved it and three division.plan jobs fanned out correctly — but a heartbeat that started in
+  // the same startup logged "planning paused — the plan is waiting for your verdict" about the note that had
+  // just been approved. The ordering is not the dispatch: `openPlanVerdict` matches on
+  // `approved !== false && !fanned_out`, so it keeps returning an approved note until a cycle fans it out, and
+  // this heartbeat read it before that stamp. Pausing is right; calling a verdict the owner has given "waiting"
+  // is not.
+  it('a plan the owner already approved is never reported as waiting for their verdict', async () => {
+    const approved = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'Approve this cycle\'s plan', body: 'The board passed this plan.' }, 'ceo');
+    vault.updateNote(approved.path, (n) => ({ data: { ...n.data, approved: true, board_verdict: 'pass', resolved_at: new Date().toISOString() }, body: n.body }), 'owner');
+    vault.writeText('Plans/plan.md', '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### technology\n- Ship the first cut\n\n### revenue\n- Find ten customers\n', 'ceo');
+    const hbId = createHeartbeatJob(vault, 'test');
+    parkAt(hbId, 'company_plan');
+
+    // Blocked on the fan-out: this cycle is the one that acts on that approval.
+    expect((await runHeartbeat({ vault, llm: mute, env: {}, now: () => new Date() }, hbId)).status).toBe('blocked');
+    const log = readJob(vault, hbId)!.body;
+    expect(log).toContain('planning paused');
+    expect(log).toContain('was approved; the divisions plan against it this cycle');
+    expect(log).not.toContain('is waiting for your verdict');
+    expect(listJobs(vault).filter((j) => j.type === 'division.plan')).toHaveLength(2);
+    // And the note is spent, so the next cycle plans afresh instead of pausing on it again.
+    expect((findInboxById(vault, approved.id)!.data as { fanned_out?: string }).fanned_out).toBe(hbId);
+    expect(openPlanVerdict(vault)).toBeNull();
+  });
+
+  // Two facts lines said the same thing on a cycle that both inherited a waiting plan and left it waiting
+  // (Task 6 review, minor 4).
+  it('the brief says "waiting for your verdict" once, not twice', async () => {
+    createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'Approve this cycle\'s plan', body: 'The board passed this plan.' }, 'ceo');
+    vault.writeText('Plans/plan.md', FRESH_PLAN, 'ceo');
+    const hbId = createHeartbeatJob(vault, 'test');
+    parkAt(hbId, 'company_plan');
+
+    expect((await runHeartbeat({ vault, llm: mute, env: {}, now: () => new Date() }, hbId)).status).toBe('done');
+    const facts = vault.readText(vault.list('Runs', { ext: '.md' }).sort().at(-1)!).split('_Facts used:_')[1];
+    expect(facts).toContain('Planning: paused — a plan is waiting for your verdict');
+    expect(facts.match(/waiting for your verdict/g)).toHaveLength(1);
+  });
+
   it('a note whose board session never got stamped reads as a return, not a pass, when the switch elapses', async () => {
     letTheBoardDecide(vault, 6);
     const hbId = createHeartbeatJob(vault, 'test');
