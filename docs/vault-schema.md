@@ -37,7 +37,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | field | type | notes |
 |---|---|---|
 | `id` | string | the filename is authoritative: `Jobs/<id>.md` — if a note's `id` field disagrees with its filename (e.g. you copied `_template.md` by hand), the daemon rewrites `id` to match the filename and logs one `daemon.warning` |
-| `type` | string | known types: `engineer.ship`, `research`, `research.review`, `research.measure`, `intelligence`, `growth.outreach`, `growth.post`, `growth.seo`, `custom`, `team.plan`, `critic.premortem`, `qa.review`, `coo.verify`, `requester.review`, `company.plan`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`); each has a `config/gates.yaml` entry |
+| `type` | string | known types: `engineer.ship`, `research`, `research.review`, `research.measure`, `intelligence`, `growth.outreach`, `growth.post`, `growth.seo`, `custom`, `team.plan`, `critic.premortem`, `qa.review`, `security.review`, `coo.verify`, `requester.review`, `company.plan`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`); each has a `config/gates.yaml` entry |
 | `title` | string |  |
 | `assigned` | string |  |
 | `status` | `queued` \| `running` \| `blocked` \| `in_review` \| `done` \| `failed` \| `cancelled` = `"queued"` | you may set `cancelled`; `blocked` without `blocked_on` = paused by you; `in_review` = the job's own work is done but it still owes a gate from `config/gates.yaml` |
@@ -140,7 +140,7 @@ Body: freeform notes, appended to every expanded step's job goal.
 | field | type | notes |
 |---|---|---|
 | `id` | string |  |
-| `kind` | `message` \| `hire` \| `fire` \| `brand_change` \| `charter_change` \| `file_change` \| `spend` \| `outbound_batch` \| `reorg` | `message` is a conversation; the rest are proposals |
+| `kind` | `message` \| `hire` \| `fire` \| `brand_change` \| `charter_change` \| `file_change` \| `spend` \| `outbound_batch` \| `reorg` \| `threat_model` | `message` is a conversation; the rest are proposals |
 | `created` | string |  |
 | `from` | string |  |
 | `to` | string = `"owner"` |  |
