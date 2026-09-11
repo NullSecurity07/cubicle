@@ -45,6 +45,17 @@ export const PALETTE = {
   good: '#4cae5c', warn: '#e0a030', bad: '#c0392b', barTrack: '#2a2e37',
   wipe: '#ffffff',
   glassLit: '#5ad1ff', minimapBg: '#0e1014',
+  labelInk: '#ffffff', labelStroke: '#000000',
+  /** the letter-badge behind a sprite's current tool: one colour per tool family, never amber */
+  tool: { browser: '#2a6fdb', terminal: '#2b2f3a', envelope: '#c0392b', doc: '#7a5c2e', chart: '#2e7d32', chat: '#6a3fb0' },
+  bubbleFill: '#ffffff', bubbleInk: '#111111',
+  bubbleThoughtFill: '#f4f6fa', bubbleThoughtStroke: '#9aa3b5', bubbleThoughtInk: '#4b5160',
+  bubbleActionFill: '#1b1f2a', bubbleActionStroke: '#343a48', bubbleActionInk: '#e7e9ee',
+  /** street planting: two greens desaturated into the tower's range so six planters stop shouting over the sprites */
+  leaf: '#6f9f6a', leafDark: '#4d7a4c', leafLight: '#8ab585',
+  monitorOff: '#1b1f2a', monitorOn: '#5ad1ff', monitorGlyph: '#ffffff',
+  water: '#9ad0ff', waterLight: '#e6f4ff', waterDark: '#7cb8e8',
+  steam: 'rgba(255,255,255,0.7)',
   dusk: '#3b2a4a', night: '#0a1030',
   sky: { day: ['#9ec7ee', '#dfeaf5'], dusk: ['#f0a36b', '#6a4c8a'], night: ['#0b1026', '#1b2140'] },
   windowDay: '#a9d6ff', windowDusk: '#f3b884', windowNight: '#ffe08a',

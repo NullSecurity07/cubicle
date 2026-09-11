@@ -9,9 +9,10 @@ import { T } from './tiles.js';
 import { OPEN_MS, type ElevatorState, type Rider } from './elevator.js';
 import { PALETTE, hexToInt, shade } from './palette.js';
 import { DUR, dur } from './motion.js';
+import { RES, FONT } from './text.js';
 
 export interface ElevatorViewState { carY: number; doorOpen: number; floor: number; moving: boolean; riders: string[] }
-const DOOR_SLIDE_PX = 6, HALF = 8, RES = 3;
+const DOOR_SLIDE_PX = 6, HALF = 8;
 
 /** 0 closed … 1 open. Doors slide during the first and last `DUR.doorSlide` ms of a stop (scaled by reduced motion). */
 export function doorOpenFor(status: ElevatorState['status'], openLeft: number, openMs = OPEN_MS): number {
@@ -82,7 +83,7 @@ export class ElevatorView {
     this.car = scene.add.container(x + w / 2, (floors[0]?.y0 ?? 0) * TILE, [back, rail, this.lamp]);
     // the car and its riders are clipped to the shaft interior
     this.maskShape = scene.add.graphics().setVisible(false);
-    this.maskShape.fillStyle(0xffffff).fillRect(x, shaft.ty * TILE, w, shaft.th * TILE);
+    this.maskShape.fillStyle(0xffffff).fillRect(x, shaft.ty * TILE, w, shaft.th * TILE);   // palette-lint: ignore — a geometry mask's stencil value, not a colour
     this.mask = this.maskShape.createGeometryMask();
     this.car.setMask(this.mask);
     // a door pair and an amber digit per floor, at the elevator door tile (one tile left of the shaft); a dark
@@ -92,7 +93,7 @@ export class ElevatorView {
       const recess = scene.add.rectangle(dx, dy, TILE, TILE, hexToInt(shade(PALETTE.steelDark, -0.35))).setOrigin(0).setDepth(3);
       const l = scene.add.image(dx, dy, 'office', 0).setOrigin(0).setCrop(0, 0, HALF, TILE).setDepth(4);
       const r = scene.add.image(dx, dy, 'office', 0).setOrigin(0).setCrop(HALF, 0, HALF, TILE).setDepth(4);
-      const digit = scene.add.text(dx + TILE / 2, dy - 2, String(f.n), { fontFamily: 'system-ui, sans-serif', fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amber }).setOrigin(0.5, 1).setScale(1 / RES).setDepth(4).setAlpha(0.5);
+      const digit = scene.add.text(dx + TILE / 2, dy - 2, String(f.n), { fontFamily: FONT, fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amber }).setOrigin(0.5, 1).setScale(1 / RES).setDepth(4).setAlpha(0.5);
       this.doors.push({ n: f.n, l, r, recess, digit });
     }
     this.setDoorFrames();

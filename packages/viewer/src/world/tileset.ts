@@ -5,7 +5,7 @@ import { DRAW, floorOfName, type Px, type TileName } from './tiles-draw.js';
 import { roleColor, floorPalette, rolePalette, type Family } from './palette.js';
 import { GLYPHS } from '../ui/icons.js';
 import { DECOR_DRAW, DECOR_FRAME_NAMES, type DecorKind } from './decor.js';
-import { drawSpriteSheet, drawFaceSheet, spriteOpts, FACE_FRAMES, FACE_SHEET_W, FACE_SHEET_H, SPRITE_W, SPRITE_H, FACE_W, FACE_H } from './sprite-draw.js';
+import { drawSpriteSheet, drawFaceSheet, spriteOpts, spriteKey, FACE_FRAMES, FACE_SHEET_W, FACE_SHEET_H, SPRITE_W, SPRITE_H, FACE_W, FACE_H } from './sprite-draw.js';
 import { FRAMES } from './frames.js';
 
 /** Tile ids come from tiles.ts (shared with scripts/world/tower.ts). Drawn procedurally: CC0-by-construction placeholder art. */
@@ -36,10 +36,10 @@ export function makeTileset(scene: Phaser.Scene): void {
 
 export { SPRITE_W, SPRITE_H, FACE_W, FACE_H };
 
-/** 31-frame 16×24 body sheet per role and family, frames named by `FRAMES`. Keyed `sprite:<sprite>:<family>`. */
+/** 31-frame 16×24 body sheet per role and family, frames named by `FRAMES`. Keyed by `spriteKey` (sprite-draw.ts). */
 export function makeSprite(scene: Phaser.Scene, v: { role: string; sprite?: string; family?: Family; team?: string }): string {
   const family: Family = v.family ?? 'member';
-  const key = `sprite:${v.sprite || v.role}:${family}`;
+  const key = spriteKey({ ...v, family });
   if (scene.textures.exists(key)) return key;
   const tex = scene.textures.createCanvas(key, SPRITE_W * FRAMES.length, SPRITE_H)!;
   drawSpriteSheet(canvasPx(tex.getContext(), 0, 0), rolePalette(v.role, family), family, spriteOpts(v.role, v.team));

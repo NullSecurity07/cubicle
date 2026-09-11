@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decorFrame, DECOR_FRAMES, DECOR_DRAW, DECOR_FRAME_NAMES, type DecorKind } from './decor.js';
+import { decorFrame, plantShape, DECOR_FRAMES, DECOR_DRAW, DECOR_FRAME_NAMES, type DecorKind } from './decor.js';
 import { RecordingPx } from './tiles-draw.js';
 
 const idle = { occupied: false, working: false }, busy = { occupied: true, working: true };
@@ -23,11 +23,16 @@ describe('decor sheet', () => {
       const p = new RecordingPx(); DECOR_DRAW[kind](p, f);
       expect(p.count, `${kind} ${f}`).toBeGreaterThan(0); expect(p.outside(16, 16), `${kind} ${f}`).toEqual([]);
     }
-    expect(DECOR_FRAME_NAMES.map((f) => f.name)).toEqual(['plant:0', 'plant:1', 'coffee:0', 'coffee:1', 'coffee:2', 'lamp:0', 'monitor:0', 'monitor:1', 'cooler:0', 'cooler:1']);
-    expect(DECOR_FRAME_NAMES.at(-1)!.x).toBe(16 * 9);
+    expect(DECOR_FRAME_NAMES.map((f) => f.name)).toEqual(['plant:0', 'plant:1', 'plant2:0', 'plant2:1', 'coffee:0', 'coffee:1', 'coffee:2', 'lamp:0', 'monitor:0', 'monitor:1', 'cooler:0', 'cooler:1']);
+    expect(DECOR_FRAME_NAMES.at(-1)!.x).toBe(16 * 11);
   });
   it('the two plant frames differ and the two monitor frames differ', () => {
     const s = (k: DecorKind, f: number) => { const p = new RecordingPx(); DECOR_DRAW[k](p, f); return JSON.stringify(p.rects); };
     expect(s('plant', 0)).not.toBe(s('plant', 1)); expect(s('monitor', 0)).not.toBe(s('monitor', 1));
+  });
+  it('the street alternates two planter silhouettes, so no two neighbours are the same shape', () => {
+    const s = (k: DecorKind) => { const p = new RecordingPx(); DECOR_DRAW[k](p, 0); return JSON.stringify(p.rects); };
+    expect(s('plant')).not.toBe(s('plant2'));
+    expect([10, 11, 12, 13, 14, 15].map(plantShape)).toEqual([0, 1, 0, 1, 0, 1]);
   });
 });

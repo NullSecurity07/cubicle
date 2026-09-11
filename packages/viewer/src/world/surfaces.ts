@@ -7,11 +7,11 @@ import type { SurfaceDef } from '../ui/surfaces.js';
 import { chartBars, headlineFor } from '../ui/surfaces.js';
 import { DUR, EASE, dur, motionOff } from './motion.js';
 import { PALETTE, hexToInt } from './palette.js';
+import { RES, FONT } from './text.js';
 
 const PAD = 6;
 const HEAD_PX = 10, LINE_PX = 8, LINE_H = 10, HEAD_H = 14;
 const CHAR_W = 0.62; // generous glyph width as a fraction of the font size, so a cut line never reaches the box edge
-const RES = 3; // text is rasterised at 3× so it stays crisp when the camera zooms in
 const NARROW = 40; // inner width below which a screen shows only its short form (a count or a word)
 
 /**
@@ -47,18 +47,18 @@ export class Surface {
     this.innerH = h - this.inset - PAD;
     this.bg = scene.add.rectangle(w / 2, h / 2 + this.inset, w - this.inset * 2, h - this.inset, hexToInt(PALETTE.screenBg), 0.98).setStrokeStyle(1, hexToInt(PALETTE.screenFrame), 1);
     // Crisp text under camera zoom: rasterise at RES× the size and scale the object down by 1/RES.
-    this.head = scene.add.text(this.inset + PAD, this.inset + 4, '', { fontFamily: 'system-ui, sans-serif', fontSize: `${HEAD_PX * RES}px`, fontStyle: 'bold', color: PALETTE.screenText }).setOrigin(0, 0).setScale(1 / RES);
-    this.text = scene.add.text(this.inset + PAD, this.inset + 4 + HEAD_H, '', { fontFamily: 'system-ui, sans-serif', fontSize: `${LINE_PX * RES}px`, color: PALETTE.screenMuted, lineSpacing: (LINE_H - LINE_PX - 2) * RES }).setOrigin(0, 0).setScale(1 / RES);
+    this.head = scene.add.text(this.inset + PAD, this.inset + 4, '', { fontFamily: FONT, fontSize: `${HEAD_PX * RES}px`, fontStyle: 'bold', color: PALETTE.screenText }).setOrigin(0, 0).setScale(1 / RES);
+    this.text = scene.add.text(this.inset + PAD, this.inset + 4 + HEAD_H, '', { fontFamily: FONT, fontSize: `${LINE_PX * RES}px`, color: PALETTE.screenMuted, lineSpacing: (LINE_H - LINE_PX - 2) * RES }).setOrigin(0, 0).setScale(1 / RES);
     this.bars = scene.add.graphics();
-    this.badge = scene.add.text(w - this.inset - 3, this.inset + 3, '', { fontFamily: 'system-ui, sans-serif', fontSize: `${8 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 3 * RES, y: RES } }).setOrigin(1, 0).setScale(1 / RES).setVisible(false);
+    this.badge = scene.add.text(w - this.inset - 3, this.inset + 3, '', { fontFamily: FONT, fontSize: `${8 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 3 * RES, y: RES } }).setOrigin(1, 0).setScale(1 / RES).setVisible(false);
     this.wipe = scene.add.rectangle(this.inset, this.inset, 3, h - this.inset, hexToInt(PALETTE.wipe), 0.35).setOrigin(0).setVisible(false);
-    this.live = scene.add.text(this.inset + 3, this.inset + 3, 'LIVE', { fontFamily: 'system-ui, sans-serif', fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 2 * RES, y: RES } }).setOrigin(0, 0).setScale(1 / RES).setVisible(false);
+    this.live = scene.add.text(this.inset + 3, this.inset + 3, 'LIVE', { fontFamily: FONT, fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 2 * RES, y: RES } }).setOrigin(0, 0).setScale(1 / RES).setVisible(false);
     this.caret = scene.add.rectangle(0, 0, 4, LINE_PX, hexToInt(PALETTE.amber), 1).setOrigin(0, 0).setVisible(false);
     // The LIVE badge breathes — but an endless yoyo under reduced motion would strobe at frame rate, so there the
     // badge simply sits at full alpha and no tween is created at all (nothing to leak on teardown either).
     if (motionOff()) this.live.setAlpha(1);
     else this.liveTween = scene.tweens.add({ targets: this.live, alpha: 0.6, duration: dur(DUR.livePulse), yoyo: true, repeat: -1, ease: EASE.sine });
-    const title = scene.add.text(w / 2, -9, String(anchor.props.label ?? def.kind).split('—')[0].trim(), { fontFamily: 'system-ui, sans-serif', fontSize: `${8 * RES}px`, color: PALETTE.screenText, stroke: PALETTE.screenInk, strokeThickness: 2 * RES }).setOrigin(0.5, 1).setScale(1 / RES);
+    const title = scene.add.text(w / 2, -9, String(anchor.props.label ?? def.kind).split('—')[0].trim(), { fontFamily: FONT, fontSize: `${8 * RES}px`, color: PALETTE.screenText, stroke: PALETTE.screenInk, strokeThickness: 2 * RES }).setOrigin(0.5, 1).setScale(1 / RES);
     this.container = scene.add.container(x, y, [this.bg, this.head, this.text, this.bars, this.badge, this.wipe, this.live, this.caret, title]).setDepth(5);
     this.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => onClick(def.kind));
   }

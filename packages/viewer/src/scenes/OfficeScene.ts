@@ -215,6 +215,7 @@ export class OfficeScene extends Phaser.Scene {
     }
     for (const [role, ag] of this.agents) if (!s.agents[role]) { ag.destroy(); this.agents.delete(role); }
     this.owner?.setVisible(boardSessionOpen(s.meetings));
+    this.owner?.setZoom(this.cameras.main.zoom);
     // each role's current tile, shared by the decor layer's occupancy checks and the lamp block's lit-rooms check
     const tiles = this.tiles;
     for (const k of Object.keys(tiles)) if (!this.agents.has(k)) delete tiles[k];
@@ -319,6 +320,10 @@ export class OfficeScene extends Phaser.Scene {
     if (!this.world) { this.pendingFocus = name; return; }   // the snapshot can arrive before the map has loaded
     const t = this.targetOf(name);
     if (!t) return;
+    // Focusing a sprite selects it, and a selected sprite shows its name at any zoom (ruling F1). One place owns
+    // this, so both the click path and the panel's Locate button agree on who is selected.
+    const role = name.startsWith('agent:') ? name.slice(6) : null;
+    for (const [r, ag] of this.agents) ag.selected = r === role;
     const cam = this.cameras.main;
     cam.pan(t.x, t.y, dur(DUR.pan), EASE.inOut);
     if (opts.zoom) { if (this.prevZoom === null) this.prevZoom = (ZOOM_STEPS as readonly number[]).includes(cam.zoom) ? cam.zoom : 2; cam.zoomTo(3, dur(DUR.pan), EASE.inOut); }
