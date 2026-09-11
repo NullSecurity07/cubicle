@@ -1,7 +1,7 @@
 import {
   type Vault, listInbox, readJob, updateJob, cancelJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
   loadOrg, resolveRole, divisionLeadOf, officeHolder, type Org,
-  FOUNDER_BRIEF, missingBriefSections, readIdea, updateIdea, ideaBand, bandReason, ideaOutcome, IDEA_SLUG_SRC, type IdeaBand,
+  FOUNDER_BRIEF, missingBriefSections, readIdea, updateIdea, ideaBand, bandReason, ideaOutcome, IDEA_SLUG_SRC, IDEA_DECISIONS, type IdeaBand, type IdeaDecision,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath } from '@cubicle/tools';
@@ -53,9 +53,17 @@ export interface DispatcherDeps {
   guardrails?: { check(tool: string, args: Record<string, unknown>, ctx: ToolContext): Promise<string | null> | string | null }[];
 }
 
+/**
+ * The `## Proposed content` block, closed by a fence of exactly the length it opened with. The length matters:
+ * a founder brief that quotes a config file or a snippet carries a ``` fence of its own, and a wrapper that
+ * closed at the first ``` anywhere would hand the dispatcher a truncated brief — refused, a moment later, for
+ * "missing ## Constraints", which tells the owner nothing about the real cause. `founderBriefProposalBody`
+ * opens with four backticks for exactly this reason; three-backtick blocks (file_change, brand_change) read the
+ * same way they always did.
+ */
 function fenced(body: string): string | null {
-  const m = body.match(/## Proposed content\s*\n+```[a-z]*\n([\s\S]*?)\n```/);
-  return m ? m[1] + (m[1].endsWith('\n') ? '' : '\n') : null;
+  const m = body.match(/## Proposed content\s*\n+(`{3,})[a-z]*\n([\s\S]*?)\n\1[ \t]*(?:\n|$)/);
+  return m ? m[2] + (m[2].endsWith('\n') ? '' : '\n') : null;
 }
 
 /**
@@ -290,9 +298,17 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             const slug = target.slice('Ideas/'.length).replace(/\.md$/, '');
             const card = readIdea(vault, slug);
             if (!card) { refuseNote(vault, note, `no idea card at ${target}`, { target }); continue; }
-            const band = card.data.score === null
-              ? 'park'   // unscored and ruled on anyway: park it rather than invent a recommendation
-              : ideaBand(card.data.score, { value: card.data.score_inputs.value ?? 3, board: card.data.board_verdict });
+            // The band the owner was *shown*, stamped on the note when the board filed it — not a fresh
+            // recomputation. The note's body says "Set approved: true to take the recommendation (**keep**)";
+            // if any office re-filed the card between the session and the click (a corrected value, a research
+            // re-file), a recomputation would apply `park`, or `scrap`, on the same click. The after-hours
+            // closer already rules on `note.data.band` for this reason; one rule, both closers. A note filed
+            // before the stamp existed carries none, and falls back to the card as it stands.
+            const stamped = (d as { band?: string }).band;
+            const band = (IDEA_DECISIONS.includes(stamped as IdeaDecision) && stamped !== 'undecided' ? stamped as IdeaBand : undefined)
+              ?? (card.data.score === null
+                ? 'park'   // unscored and ruled on anyway: park it rather than invent a recommendation
+                : ideaBand(card.data.score, { value: card.data.score_inputs.value ?? 3, board: card.data.board_verdict }));
             // ideaOutcome can also return 'pending' (approved === null), but the dispatcher never reaches this
             // switch for that case — approved === null is skipped above unless auto-approved, which never
             // applies to idea_verdict, so `decision` here is always a real IdeaBand.
