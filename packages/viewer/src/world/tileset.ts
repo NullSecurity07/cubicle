@@ -3,6 +3,7 @@ import type { Mood, Emote } from '../state.js';
 import { TILES, T, COLUMNS, TILE, tilesetMeta } from './tiles.js';
 import { DRAW, floorOfName, type Px, type TileName } from './tiles-draw.js';
 import { roleColor, floorPalette } from './palette.js';
+import { GLYPHS } from '../ui/icons.js';
 
 /** Tile ids come from tiles.ts (shared with scripts/world/tower.ts). Drawn procedurally: CC0-by-construction placeholder art. */
 export { TILES, T, COLUMNS, TILE, tilesetMeta };
@@ -125,19 +126,7 @@ export function makeEmotes(scene: Phaser.Scene): string {
   if (scene.textures.exists(key)) return key;
   const tex = scene.textures.createCanvas(key, EMOTE_W * EMOTES.length, EMOTE_H)!;
   const g = tex.getContext();
-  const draw: Record<Emote, (ox: number) => void> = {
-    '!': (ox) => { px(g, ox + 5, 1, '#d6493a', 2, 7); px(g, ox + 5, 9, '#d6493a', 2, 2); },
-    '?': (ox) => { px(g, ox + 3, 1, '#e6a93c', 5, 1); px(g, ox + 2, 2, '#e6a93c', 2, 2); px(g, ox + 7, 2, '#e6a93c', 2, 3); px(g, ox + 5, 5, '#e6a93c', 3, 1); px(g, ox + 5, 6, '#e6a93c', 2, 2); px(g, ox + 5, 9, '#e6a93c', 2, 2); },
-    idea: (ox) => { px(g, ox + 4, 1, '#ffe08a', 4, 1); px(g, ox + 3, 2, '#ffe08a', 6, 4); px(g, ox + 4, 6, '#ffe08a', 4, 1); px(g, ox + 4, 8, '#8d93a5', 4, 1); px(g, ox + 5, 9, '#8d93a5', 2, 1); px(g, ox + 1, 3, '#fff3c4', 1, 1); px(g, ox + 10, 3, '#fff3c4', 1, 1); px(g, ox + 5, 0, '#fff3c4', 2, 1); },
-    zzz: (ox) => { const z = (x: number, y: number, s: number) => { px(g, ox + x, y, '#9db8ff', s, 1); for (let i = 0; i < s; i++) px(g, ox + x + s - 1 - i, y + 1 + i, '#9db8ff'); px(g, ox + x, y + s, '#9db8ff', s, 1); }; z(1, 7, 3); z(5, 4, 3); z(8, 0, 3); },
-    sweat: (ox) => { px(g, ox + 5, 2, '#7cc4ff', 1, 2); px(g, ox + 4, 4, '#7cc4ff', 3, 3); px(g, ox + 3, 6, '#7cc4ff', 5, 3); px(g, ox + 4, 9, '#7cc4ff', 3, 1); px(g, ox + 4, 6, '#d8efff', 1, 2); },
-    heart: (ox) => { px(g, ox + 2, 2, '#f26b6b', 3, 2); px(g, ox + 7, 2, '#f26b6b', 3, 2); px(g, ox + 1, 4, '#f26b6b', 10, 2); px(g, ox + 2, 6, '#f26b6b', 8, 1); px(g, ox + 3, 7, '#f26b6b', 6, 1); px(g, ox + 4, 8, '#f26b6b', 4, 1); px(g, ox + 5, 9, '#f26b6b', 2, 1); px(g, ox + 3, 3, '#ffb3b3', 1, 1); },
-    cheer: (ox) => { px(g, ox + 5, 0, '#ffd166', 2, 12); px(g, ox + 0, 5, '#ffd166', 12, 2); px(g, ox + 3, 3, '#ffd166', 6, 6); px(g, ox + 2, 2, '#ffd166', 1, 1); px(g, ox + 9, 2, '#ffd166', 1, 1); px(g, ox + 2, 9, '#ffd166', 1, 1); px(g, ox + 9, 9, '#ffd166', 1, 1); px(g, ox + 5, 5, '#fff3c4', 2, 2); },
-    clipboard: (ox) => { px(g, ox + 2, 1, '#8a5a2b', 8, 10); px(g, ox + 3, 2, '#f5f5f0', 6, 8); px(g, ox + 4, 0, '#5b6170', 4, 2); px(g, ox + 4, 4, '#d6493a', 4, 1); px(g, ox + 4, 6, '#8d93a5', 4, 1); px(g, ox + 4, 8, '#8d93a5', 3, 1); },
-    coffee: (ox) => { px(g, ox + 3, 4, '#f5f5f0', 6, 6); px(g, ox + 9, 5, '#f5f5f0', 2, 3); px(g, ox + 10, 6, '#0e1014', 1, 1); px(g, ox + 4, 5, '#6b4423', 4, 1); px(g, ox + 4, 1, '#cfd6e6', 1, 2); px(g, ox + 6, 0, '#cfd6e6', 1, 3); },
-    wave: (ox) => { px(g, ox + 4, 3, '#f1c9a5', 4, 6); px(g, ox + 3, 1, '#f1c9a5', 1, 3); px(g, ox + 5, 0, '#f1c9a5', 1, 3); px(g, ox + 7, 0, '#f1c9a5', 1, 3); px(g, ox + 9, 2, '#f1c9a5', 1, 3); px(g, ox + 5, 9, '#f1c9a5', 2, 2); },
-  };
-  EMOTES.forEach((e, i) => draw[e](i * EMOTE_W));
+  EMOTES.forEach((e, i) => { for (const [x, y, w, h, c] of GLYPHS[e]) px(g, i * EMOTE_W + x, y, c, w, h); });
   tex.refresh();
   EMOTES.forEach((e, i) => tex.add(e, 0, i * EMOTE_W, 0, EMOTE_W, EMOTE_H));
   return key;
