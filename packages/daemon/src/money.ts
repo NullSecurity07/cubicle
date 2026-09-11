@@ -5,7 +5,7 @@ import {
   createJob, readJob, listJobs, listInbox, jobPath, idFromKey,
   officeHolder, teamOf, divisionOf, divisionTeams, subtreeRoles, createProposal, findInboxById, resultBlock,
 } from '@cubicle/core';
-import { shadowCost, hasPrices, type ProvidersFile, type RecordedCall } from '@cubicle/router';
+import { shadowCost, hasPrices, findModel, type ProvidersFile, type RecordedCall } from '@cubicle/router';
 
 /**
  * The daemon's side of the money: everything deterministic, and not one model call anywhere in this file.
@@ -28,7 +28,14 @@ const DAY_MS = 86_400_000;
  */
 export const BUDGETED_TIERS: readonly string[] = ['strong', 'medium'];
 
-/** Midnight UTC — the window the quota is measured in, matching the providers' own `rpd`. */
+/**
+ * Midnight **UTC** — one company-wide window, chosen deliberately *over* each provider's own `day_reset_tz`
+ * (gemini declares `America/Los_Angeles`, so its real `rpd` day and this one are about seven hours apart).
+ * A budget day that moved with whichever provider a call happened to land on would make the divisions'
+ * gauges incomparable and the runway note's table meaningless. The providers' actual resets are tracked
+ * where they matter — `router/quota.ts` counts each provider's day in its own zone — and this window only
+ * rations how much of the free pool a division may spend before it drops to the cheap tier.
+ */
 export function dayStartIso(now: Date): string {
   const d = new Date(now);
   d.setUTCHours(0, 0, 0, 0);
@@ -36,21 +43,62 @@ export function dayStartIso(now: Date): string {
 }
 
 /**
- * Free calls a day at the scarce tiers, across enabled cloud providers. A priced model contributes nothing —
- * paid capacity is not free capacity — and an account-wide `rpd` caps its own models' sum (OpenRouter's four
- * medium models declare 50 each but the account allows 50 in total).
+ * The models one provider contributes to the free pool: enabled, at a scarce tier, and unpriced. A priced
+ * model is excluded because paid capacity is not free capacity — and `drawsOnFreePool` excludes its calls
+ * from the usage side for the same reason, so the two halves of `used / quota` always agree on the pool.
+ */
+function pooledModels(p: ProvidersFile['providers'][number]): ProvidersFile['providers'][number]['models'] {
+  return p.models.filter((m) => m.enabled && BUDGETED_TIERS.includes(m.tier) && !m.price);
+}
+
+/**
+ * Free calls a day at the scarce tiers, across enabled cloud providers.
+ *
+ * `rpd: 0` is `ModelLimits`' default and means **no declared daily limit** — `quota.ts` guards on
+ * `if (L.rpd && …)` and `metrics.ts` renders `∞` — so it is never summed as zero capacity. Where the
+ * provider declares an account-wide `rpd`, that account figure governs (OpenRouter's four medium models
+ * declare 50 each but the account allows 50 in total, and an unlimited model still cannot exceed it). Where
+ * it does not, a provider with an unlimited model contributes **nothing to this finite sum**: there is no
+ * honest number to add, and inventing one would put a made-up capacity on the owner's bank screen. Its calls
+ * are left out of `divisionSpend` too, so an unlimited model neither raises `used` nor `quota` — it simply is
+ * not rationed.
  */
 export function freeCallCapacity(cfg: ProvidersFile): number {
   let total = 0;
   for (const p of cfg.providers) {
     if (!p.enabled || p.privacy === 'local') continue;
-    const perModel = p.models
-      .filter((m) => m.enabled && BUDGETED_TIERS.includes(m.tier) && !m.price)
-      .reduce((t, m) => t + m.limits.rpd, 0);
-    if (perModel === 0) continue;
-    total += p.limits?.rpd ? Math.min(p.limits.rpd, perModel) : perModel;
+    const pooled = pooledModels(p);
+    if (!pooled.length) continue;
+    const account = p.limits?.rpd ?? 0;
+    const declared = pooled.reduce((t, m) => t + m.limits.rpd, 0);
+    const unlimited = pooled.some((m) => !m.limits.rpd);
+    if (account) { total += unlimited ? account : Math.min(account, declared); continue; }
+    if (unlimited) continue;
+    total += declared;
   }
   return total;
+}
+
+/**
+ * Whether one recorded call drew on the pool `freeCallCapacity` measures — the question `divisionSpend` has
+ * to answer the same way, or `used` and `quota` count different things and every division demotes to the
+ * cheap tier sooner than it should.
+ *
+ * Without a providers file there is nothing to check against and the call counts, which is what this module
+ * did before. With one, three facts take a call out of the pool: it was on a **priced** model (the owner
+ * pays for it; it is not drawing on a free allowance), it was on a **local** provider (free and unmetered),
+ * or it was on a model with **no daily limit anywhere** (the `rpd: 0` case above, which contributed no
+ * capacity either). A model the file no longer describes still counts: losing a renamed model's calls would
+ * understate the gauge, and understating what has been spent is the more dangerous error.
+ */
+export function drawsOnFreePool(cfg: ProvidersFile | null | undefined, provider: string, model: string): boolean {
+  if (!cfg) return true;
+  const m = findModel(cfg, provider, model);
+  if (!m) return true;
+  if (m.price) return false;
+  const p = cfg.providers.find((x) => x.id === provider);
+  if (p?.privacy === 'local') return false;
+  return Boolean(m.limits.rpd || p?.limits?.rpd);
 }
 
 /** A division's weight is the people actually in it: a thirteen-desk division needs more calls than a three-desk one. */
@@ -74,16 +122,22 @@ export function divisionOfRole(org: Org, role: string | null | undefined, known:
 }
 
 /**
- * Calls at the scarce tiers since `since`, per division, read straight out of the event log. No new table and
- * no new column: `router.call` already carries the agent and the tier, and the log survives a restart, so the
- * gauge cannot drift away from what actually happened.
+ * Calls on the free pool since `since`, per division, read straight out of the event log. No new table and
+ * no new column: `router.call` already carries the agent, the tier and the model, and the log survives a
+ * restart, so the gauge cannot drift away from what actually happened.
+ *
+ * `cfg` is optional only because a caller without a providers file (a test, a daemon whose router failed to
+ * start) should still get a tier-count rather than nothing. Every caller that has one passes it, and with it
+ * the count is exactly the calls `freeCallCapacity` budgeted for.
  */
-export function divisionSpend(vault: Vault, org: Org, since: string): Record<string, number> {
+export function divisionSpend(vault: Vault, org: Org, since: string, cfg?: ProvidersFile | null): Record<string, number> {
   const known = new Set(divisionTeams(org).map((t) => t.id));
   const out: Record<string, number> = { [HOUSE]: 0 };
   for (const id of known) out[id] = 0;
   for (const e of vault.events.query({ types: ['router.call'], from: since })) {
-    if (!BUDGETED_TIERS.includes(String((e.payload as { tier?: unknown }).tier ?? ''))) continue;
+    const p = e.payload as { tier?: unknown; provider?: unknown; model?: unknown };
+    if (!BUDGETED_TIERS.includes(String(p.tier ?? ''))) continue;
+    if (!drawsOnFreePool(cfg, String(p.provider ?? ''), String(p.model ?? ''))) continue;
     const key = divisionOfRole(org, e.agent, known);
     out[key] = (out[key] ?? 0) + 1;
   }
@@ -95,7 +149,7 @@ export interface BudgetRow { division: string; used: number; quota: number }
 /** Every division's gauge for the bank screen and the runway note, divisions first and the house last. */
 export function budgetRows(vault: Vault, org: Org, cfg: ProvidersFile, now: Date): BudgetRow[] {
   const quotas = divisionQuotas(cfg, org);
-  const used = divisionSpend(vault, org, dayStartIso(now));
+  const used = divisionSpend(vault, org, dayStartIso(now), cfg);
   return Object.keys(quotas)
     .sort((a, b) => (a === HOUSE ? 1 : b === HOUSE ? -1 : a.localeCompare(b)))
     .map((division) => ({ division, used: used[division] ?? 0, quota: quotas[division] ?? 0 }));
@@ -113,7 +167,7 @@ export function budgetForRole(vault: Vault, org: Org, cfg: ProvidersFile, role: 
   const quotas = divisionQuotas(cfg, org);
   const known = new Set(Object.keys(quotas).filter((k) => k !== HOUSE));
   const key = divisionOfRole(org, role, known);
-  return { used: divisionSpend(vault, org, dayStartIso(now))[key] ?? 0, quota: quotas[key] ?? 0 };
+  return { used: divisionSpend(vault, org, dayStartIso(now), cfg)[key] ?? 0, quota: quotas[key] ?? 0 };
 }
 
 /** `router.call` events in a window, in the shape `shadowCost` prices. */
@@ -205,8 +259,9 @@ export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Dat
 // ---------- what the models cost ----------
 
 /**
- * How far back the **first** accrual looks when the book has no `model-<date>` row to continue from. A fresh
- * install has no history worth charging, and an unbounded first walk would scan the whole event log.
+ * How far back the **first** accrual looks when the book has no `model-<date>` row to continue from, and the
+ * providers file carries no stamp saying when its prices were added. A fresh install has no history worth
+ * charging, and an unbounded first walk would scan the whole event log.
  */
 export const ACCRUAL_LOOKBACK_DAYS = 30;
 /** The hard stop on a continued walk, so a book with an ancient accrual row cannot turn a cycle into a crawl. */
@@ -214,6 +269,24 @@ export const MAX_ACCRUAL_DAYS = 370;
 
 const dayOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 const nextDay = (date: string): string => dayOf(Date.parse(`${date}T00:00:00.000Z`) + DAY_MS);
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Where the **first** accrual walk starts: the day the prices appeared, never a retroactive month.
+ *
+ * A free config never leaves a `model-<date>` row behind — there is nothing to charge — so the first run
+ * after the owner adds a `price:` has nothing to continue from. Without this clamp it would walk
+ * `ACCRUAL_LOOKBACK_DAYS` back and bill the company for calls the owner made believing they were free, which
+ * is exactly the retroactive charge an append-only book is supposed to make impossible. `prices_verified` is
+ * the stamp the owner sets beside the prices (`config/providers.yaml` documents it in the header comment);
+ * `verified` is the file's own stamp and stands in when the more specific one is absent.
+ */
+function firstAccrualDay(cfg: ProvidersFile, now: Date): string {
+  const lookback = dayOf(now.getTime() - ACCRUAL_LOOKBACK_DAYS * DAY_MS);
+  const stamp = String(cfg.prices_verified ?? cfg.verified ?? '').slice(0, 10);
+  return DATE_RE.test(stamp) && stamp > lookback ? stamp : lookback;
+}
 
 /** The date every `model-<date>` accrual row in the book is for, oldest first. */
 function accruedDays(vault: Vault): string[] {
@@ -233,7 +306,9 @@ function accruedDays(vault: Vault): string[] {
  * over, and charging a part-day would make the same day's second charge a duplicate.
  *
  * Each row's `ref` is its own date, so `appendEntry` refuses a second one: a replayed cycle, an overlapping
- * walk and a rebuilt event log all find the row already there instead of charging the company twice.
+ * walk and a rebuilt event log all find the row already there instead of charging the company twice. The
+ * **first** walk starts at `firstAccrualDay` — the day the prices were stamped — so adding a price today
+ * cannot retroactively bill a month of calls the owner made believing they were free.
  *
  * On free tiers this writes **nothing** — a row of 0.00 every day would be noise dressed up as bookkeeping, and
  * the runway note already says in words that everything was free. A providers file with no `price:` anywhere
@@ -244,7 +319,7 @@ export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = n
   const yesterday = dayOf(now.getTime() - DAY_MS);
   const floor = dayOf(now.getTime() - MAX_ACCRUAL_DAYS * DAY_MS);
   const last = accruedDays(vault).at(-1) ?? null;
-  let day = last ? nextDay(last) : dayOf(now.getTime() - ACCRUAL_LOOKBACK_DAYS * DAY_MS);
+  let day = last ? nextDay(last) : firstAccrualDay(cfg, now);
   if (day < floor) day = floor;
   const out: LedgerEntry[] = [];
   for (; day <= yesterday; day = nextDay(day)) {
@@ -282,6 +357,40 @@ function moneyNotes(vault: Vault, kind: 'dormant' | 'revived'): { id: string; ma
     .map((n) => ({ id: n.data.id, mark: String((n.data as { mark?: unknown }).mark ?? '') }));
 }
 
+/** Dormancies the owner has been told about and not yet been told the end of. */
+function openDormancies(vault: Vault): string[] {
+  const revived = new Set(moneyNotes(vault, 'revived').map((n) => n.mark));
+  return moneyNotes(vault, 'dormant').map((n) => n.mark).filter((m) => !revived.has(m));
+}
+
+/**
+ * When the current dormancy **episode** began: the entry that took cash to zero or below after the owner had
+ * put money in, with no later entry lifting it back above zero.
+ *
+ * This, not "when money last moved", is the episode's identity. `accrueModelCosts` books a *past-dated* `live`
+ * cost row on the cycle after the day it charges, so the day the company goes dormant is charged one cycle
+ * later and `lastLiveAt` moves *while nothing new is being spent* — which used to change the mark, write a
+ * second "We have run out of money", and then send a second "Back to work" for it. The crossing entry cannot
+ * move that way: a later row only deepens the hole, and the episode ends only when cash goes positive again.
+ *
+ * Derived from the book on every call, like every other money fact here.
+ */
+export function dormancyMark(vault: Vault): string {
+  const live = readLedger(vault).entries
+    .filter((e) => e.mode === 'live')
+    .sort((a, b) => a.at.localeCompare(b.at));
+  let cash = 0;
+  let funded = false;
+  let start: string | null = null;
+  for (const e of live) {
+    cash += e.kind === 'cost' ? -e.cents : e.cents;
+    if (e.kind === 'capital') funded = true;
+    if (cash > 0) start = null;
+    else if (funded && start === null) start = e.at;
+  }
+  return start ?? 'none';
+}
+
 /**
  * `createProposal` builds the note from a fixed field set, so the two extra fields go on in a second write —
  * and a crash between the two must not be able to silence the revival. Every path that finds the note by its
@@ -297,13 +406,19 @@ function stamp(vault: Vault, rel: string, kind: 'dormant' | 'revived', mark: str
 }
 
 /**
- * The CEO's last message before the company stops. Written once per dormancy — keyed on when real money last
- * moved, which cannot change while nothing is being spent — and it answers the two questions an owner will
- * actually have: where did it go, and how do I start it again.
+ * The CEO's last message before the company stops. Written **once per episode** — one message when cash first
+ * goes to zero after the owner funded the company, one "Back to work" when they answer it — and it answers the
+ * two questions an owner will actually have: where did it go, and how do I start it again.
+ *
+ * Two guards, because one is not enough. The mark is the episode's crossing entry (`dormancyMark`), which does
+ * not move while the company is stopped; and an episode the owner has already been told about suppresses the
+ * message whatever the mark says, so even a crossing that shifts under a past-dated accrual cannot produce a
+ * second one. Being told twice that the company has stopped is worse than being told late.
  */
 export function dormancyMessage(vault: Vault, org: Org, r: MoneyReport, now: Date = new Date()): string | null {
   if (!r.dormant) return null;
-  const mark = r.lastLiveAt ?? 'none';
+  if (openDormancies(vault).length) return null;
+  const mark = dormancyMark(vault);
   const id = moneyMessageId('dormant', mark);
   const already = findInboxById(vault, id);
   if (already) { stamp(vault, already.path, 'dormant', mark); return null; }
@@ -336,8 +451,7 @@ export function dormancyMessage(vault: Vault, org: Org, r: MoneyReport, now: Dat
  */
 export function revivalMessage(vault: Vault, org: Org, r: MoneyReport, now: Date = new Date()): string | null {
   if (r.dormant || r.cashCents <= 0) return null;
-  const revived = new Set(moneyNotes(vault, 'revived').map((n) => n.mark));
-  const open = moneyNotes(vault, 'dormant').map((n) => n.mark).filter((m) => !revived.has(m));
+  const open = openDormancies(vault);
   if (!open.length) return null;
   const mark = open[open.length - 1];
   const id = moneyMessageId('revived', mark);
