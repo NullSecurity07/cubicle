@@ -102,6 +102,13 @@ async function runProcess(cmd: string, args: string[], opts: { cwd?: string; env
 export async function sandboxExec(ctx: ToolContext, opts: SandboxOptions): Promise<RunResult | { refused: string }> {
   const { command, mounts, workdir, network, timeoutMs, session } = opts;
   const where = opts.where ?? 'shell.run';
+  // Docker reads `--mount type=bind,src=…,dst=…` as a CSV key/value list, so a comma or `=` in a path injects
+  // mount options. Callers validate their own inputs; this is the backstop that makes that impossible to forget.
+  const bad = mounts.find((m) => /[,=]/.test(m.src) || /[,=]/.test(m.dst));
+  if (bad) {
+    ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: where, reason: `refusing a sandbox mount whose path contains "," or "=": ${bad.src} → ${bad.dst}` } });
+    return { refused: `blocked: a sandbox mount path may not contain "," or "=" (got ${JSON.stringify(bad.src)} → ${JSON.stringify(bad.dst)}).` };
+  }
   for (const m of mounts) mkdirSync(m.src, { recursive: true });
   const onOutput = (chunk: string, stream: 'stdout' | 'stderr') => ctx.events.emit({ type: 'shell.output', agent: ctx.roleId, job: ctx.jobId, payload: { session, stream, text: chunk.slice(0, 4000) } });
 

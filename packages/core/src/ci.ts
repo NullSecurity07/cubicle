@@ -1,4 +1,4 @@
-import { readdirSync, statSync, existsSync, type Dirent } from 'node:fs';
+import { readdirSync, lstatSync, existsSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { z } from 'zod';
@@ -48,6 +48,15 @@ export const CiRecord = z.object({
 });
 export type CiRecord = z.infer<typeof CiRecord>;
 
+/**
+ * What a stream slug may contain — exactly what `streamSlug()` produces. Worth pinning as a shape rather than
+ * trusting the caller, because the slug becomes a workspace directory that `ci.run` binds into the sandbox, and
+ * Docker parses `--mount type=bind,src=…,dst=…` as a CSV key/value list: a slug with a comma in it would inject
+ * mount options. Validate before a model-supplied slug reaches a path or a mount.
+ */
+export const STREAM_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
+export function isValidStreamSlug(slug: string): boolean { return STREAM_SLUG_RE.test(slug); }
+
 export function ciConfigPath(slug: string): string { return `${workspacePath(slug)}/cubicle-ci.yaml`; }
 export function ciRecordDir(slug: string): string { return `${workspacePath(slug)}/.cubicle-ci`; }
 
@@ -66,7 +75,8 @@ export function readCiConfig(vault: Vault, slug: string): { ok: true; config: Ci
 }
 
 /**
- * Records are named by their finish timestamp, so lexical order is chronological order.
+ * Records are named by their finish timestamp, so lexical order is chronological order. Two runs finishing in
+ * the same millisecond would collide, so a taken name gets a `-2`, `-3`, … before the extension.
  *
  * Written through `atomicWriteSync` rather than `vault.writeText` on purpose: `.cubicle-ci/` is a cache path
  * (guard.ts), so the vault write API refuses it — which is exactly the property we want, because it means an
@@ -74,7 +84,9 @@ export function readCiConfig(vault: Vault, slug: string): { ok: true; config: Ci
  * `ci.run`, puts records there. `recordWritten` still carries the provenance.
  */
 export function writeCiRecord(vault: Vault, slug: string, rec: CiRecord, by: string): string {
-  const rel = `${ciRecordDir(slug)}/${rec.finished.replace(/[:.]/g, '-')}.json`;
+  const base = `${ciRecordDir(slug)}/${rec.finished.replace(/[:.]/g, '-')}`;
+  let rel = `${base}.json`;
+  for (let n = 2; n < 50 && existsSync(vault.abs(rel)); n++) rel = `${base}-${n}.json`;
   const sha = atomicWriteSync(vault.abs(rel), JSON.stringify(CiRecord.parse(rec), null, 2) + '\n');
   vault.recordWritten(rel, sha, by);
   return rel;
@@ -93,7 +105,16 @@ export function latestCiRecord(vault: Vault, slug: string): { path: string; reco
   return null;
 }
 
-/** Walk a stream's workspace, skipping outputs and caches, calling `visit` for every source file. */
+const isIgnoredDir = (name: string): boolean => (CI_IGNORED_DIRS as readonly string[]).includes(name);
+
+/**
+ * Walk a stream's workspace, skipping outputs and caches, calling `visit` for every source file.
+ *
+ * Symlinks are never *followed* — a sandbox could plant one pointing out of the workspace, and a green record
+ * must not be decided by a file the stream does not own — but the link's own `lstat` mtime does count, so
+ * re-pointing a symlinked `src/` is seen as a source change rather than silently keeping CI green. (What the
+ * link points *at* changing is still invisible; a stream whose sources live behind a link should commit them.)
+ */
 function walkSource(vault: Vault, slug: string, visit: (abs: string, mtimeMs: number) => void): void {
   const root = vault.abs(workspacePath(slug));
   if (!existsSync(root)) return;
@@ -101,10 +122,10 @@ function walkSource(vault: Vault, slug: string, visit: (abs: string, mtimeMs: nu
     let entries: Dirent[];
     try { entries = readdirSync(abs, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
-      if (e.isSymbolicLink()) continue; // never follow links: a sandbox could plant one out of the workspace
       const full = path.join(abs, e.name);
-      if (e.isDirectory()) { if (!(CI_IGNORED_DIRS as readonly string[]).includes(e.name)) walk(full); continue; }
-      try { visit(full, statSync(full).mtimeMs); } catch { /* vanished mid-walk */ }
+      if (isIgnoredDir(e.name)) continue;                                  // also when it is a link named node_modules
+      if (e.isDirectory()) { walk(full); continue; }
+      try { visit(full, lstatSync(full).mtimeMs); } catch { /* vanished mid-walk */ }
     }
   };
   walk(root);
@@ -129,6 +150,10 @@ export function newestSourceFile(vault: Vault, slug: string): string | null {
  * Whether the stream has a CI result the ship gate can accept: green, and finished after every source file was
  * last touched. Timestamps rather than commits, because a workspace need not be its own git repo and "has
  * anything changed since CI ran" is the question that matters (§17: detection close to the change).
+ *
+ * The window this cannot see: a file edited *while* the run was in flight predates `record.finished` and so
+ * reads as covered. That is inherent to comparing mtimes against a finish time, not an oversight — a stream
+ * that wants the stronger guarantee should freeze its workspace for the run.
  */
 export function ciStatus(vault: Vault, slug: string): { ok: boolean; reason: string | null; record: CiRecord | null; path: string | null } {
   const latest = latestCiRecord(vault, slug);
