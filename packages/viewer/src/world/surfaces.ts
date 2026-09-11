@@ -5,6 +5,8 @@ import type { State } from '../state.js';
 import { cut } from '../ui/headlines.js';
 import type { SurfaceDef } from '../ui/surfaces.js';
 import { chartBars, headlineFor } from '../ui/surfaces.js';
+import { DUR, EASE, dur } from './motion.js';
+import { PALETTE, hexToInt } from './palette.js';
 
 const PAD = 6;
 const HEAD_PX = 10, LINE_PX = 8, LINE_H = 10, HEAD_H = 14;
@@ -25,6 +27,11 @@ export class Surface {
   private image: Phaser.GameObjects.Image | null = null;
   private bars: Phaser.GameObjects.Graphics;
   private badge: Phaser.GameObjects.Text;
+  private wipe: Phaser.GameObjects.Rectangle;
+  private live: Phaser.GameObjects.Text;
+  private caret: Phaser.GameObjects.Rectangle;
+  private lastSig = '';
+  private frameSeq = 0;
   private lastKey = '';
   private readonly innerW: number;
   private readonly innerH: number;
@@ -37,37 +44,60 @@ export class Surface {
     this.inset = anchor.type === 'surface' && anchor.th > 1 ? 4 : 0;
     this.innerW = w - this.inset * 2 - PAD * 2;
     this.innerH = h - this.inset - PAD;
-    this.bg = scene.add.rectangle(w / 2, h / 2 + this.inset, w - this.inset * 2, h - this.inset, 0x0b0d11, 0.94).setStrokeStyle(1, 0x3a4050, 1);
+    this.bg = scene.add.rectangle(w / 2, h / 2 + this.inset, w - this.inset * 2, h - this.inset, hexToInt(PALETTE.screenBg), 0.98).setStrokeStyle(1, hexToInt(PALETTE.screenFrame), 1);
     // Crisp text under camera zoom: rasterise at RES× the size and scale the object down by 1/RES.
-    this.head = scene.add.text(this.inset + PAD, this.inset + 4, '', { fontFamily: 'system-ui, sans-serif', fontSize: `${HEAD_PX * RES}px`, fontStyle: 'bold', color: '#f3f5f9' }).setOrigin(0, 0).setScale(1 / RES);
-    this.text = scene.add.text(this.inset + PAD, this.inset + 4 + HEAD_H, '', { fontFamily: 'system-ui, sans-serif', fontSize: `${LINE_PX * RES}px`, color: '#b9c2d6', lineSpacing: (LINE_H - LINE_PX - 2) * RES }).setOrigin(0, 0).setScale(1 / RES);
+    this.head = scene.add.text(this.inset + PAD, this.inset + 4, '', { fontFamily: 'system-ui, sans-serif', fontSize: `${HEAD_PX * RES}px`, fontStyle: 'bold', color: PALETTE.screenText }).setOrigin(0, 0).setScale(1 / RES);
+    this.text = scene.add.text(this.inset + PAD, this.inset + 4 + HEAD_H, '', { fontFamily: 'system-ui, sans-serif', fontSize: `${LINE_PX * RES}px`, color: PALETTE.screenMuted, lineSpacing: (LINE_H - LINE_PX - 2) * RES }).setOrigin(0, 0).setScale(1 / RES);
     this.bars = scene.add.graphics();
-    this.badge = scene.add.text(w - this.inset - 3, this.inset + 3, '', { fontFamily: 'system-ui, sans-serif', fontSize: `${8 * RES}px`, fontStyle: 'bold', color: '#2a1f08', backgroundColor: '#e6a93c', padding: { x: 3 * RES, y: RES } }).setOrigin(1, 0).setScale(1 / RES).setVisible(false);
+    this.badge = scene.add.text(w - this.inset - 3, this.inset + 3, '', { fontFamily: 'system-ui, sans-serif', fontSize: `${8 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 3 * RES, y: RES } }).setOrigin(1, 0).setScale(1 / RES).setVisible(false);
+    this.wipe = scene.add.rectangle(this.inset, this.inset, 3, h - this.inset, 0xffffff, 0.35).setOrigin(0).setVisible(false);
+    this.live = scene.add.text(this.inset + 3, this.inset + 3, 'LIVE', { fontFamily: 'system-ui, sans-serif', fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 2 * RES, y: RES } }).setOrigin(0, 0).setScale(1 / RES).setVisible(false);
+    this.caret = scene.add.rectangle(0, 0, 4, LINE_PX, 0xe6a93c, 1).setOrigin(0, 0).setVisible(false);
+    scene.tweens.add({ targets: this.live, alpha: 0.6, duration: dur(1000), yoyo: true, repeat: -1, ease: EASE.sine });
     const title = scene.add.text(w / 2, -9, String(anchor.props.label ?? def.kind).split('—')[0].trim(), { fontFamily: 'system-ui, sans-serif', fontSize: `${8 * RES}px`, color: '#ffe9a8', stroke: '#000', strokeThickness: 2 * RES }).setOrigin(0.5, 1).setScale(1 / RES);
-    this.container = scene.add.container(x, y, [this.bg, this.head, this.text, this.bars, this.badge, title]).setDepth(5);
+    this.container = scene.add.container(x, y, [this.bg, this.head, this.text, this.bars, this.badge, this.wipe, this.live, this.caret, title]).setDepth(5);
     this.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => onClick(def.kind));
   }
 
   private setImage(dataUrlOrKey: string | null): void {
     if (!dataUrlOrKey) { this.image?.setVisible(false); return; }
-    const key = `surface:${this.def.kind}`;
-    const w = this.bg.width - 4, h = this.bg.height - 4;
-    const apply = () => {
-      if (!this.image) { this.image = this.scene.add.image(this.bg.x, this.bg.y, key).setDepth(6); this.container.addAt(this.image, 1); }
-      else this.image.setTexture(key);
-      this.image.setDisplaySize(w, h).setVisible(true);
-      this.text.setVisible(false);
-      this.head.setVisible(false);
-    };
     if (dataUrlOrKey === this.lastKey) return;
     this.lastKey = dataUrlOrKey;
+    // Alternate texture keys so the old frame keeps its pixels on screen while the new one loads and cross-fades in.
+    this.frameSeq = (this.frameSeq + 1) % 2;
+    const key = `surface:${this.def.kind}:${this.frameSeq}`;
+    const w = this.bg.width - 4, h = this.bg.height - 4;
+    const apply = () => {
+      const img = this.scene.add.image(this.bg.x, this.bg.y, key).setDepth(6).setDisplaySize(w, h).setAlpha(0);
+      // Render order in the container is list order (later index = on top). The new frame must sit directly
+      // above the old one — never below it — or the still-opaque old frame paints over the fade-in and the
+      // swap reads as a hard cut instead of a cross-fade. head/text/bars/badge/wipe/live/caret/title all stay
+      // above both images (they're hidden instead, below, when an image is showing).
+      const old = this.image;
+      const oldIndex = old ? this.container.getIndex(old) : 0;
+      this.container.addAt(img, oldIndex + 1);
+      this.image = img;
+      this.scene.tweens.add({ targets: img, alpha: 1, duration: dur(DUR.crossfade), onComplete: () => { old?.destroy(); } });
+      this.text.setVisible(false); this.head.setVisible(false);
+      this.wipeOnChange(`i|${key}|${this.lastKey}`);
+    };
     if (this.scene.textures.exists(key)) this.scene.textures.remove(key);
     this.scene.textures.addBase64(key, dataUrlOrKey);
     this.scene.textures.once(`addtexture-${key}`, apply);
   }
 
+  /** 120 ms light bar sweeping left → right: the screen visibly changed. */
+  private wipeOnChange(sig: string): void {
+    if (sig === this.lastSig) return;
+    this.lastSig = sig;
+    if (this.scene.game.loop.frame < 30) return;   // no wipes while the office is still loading
+    this.wipe.setVisible(true).setX(this.inset).setAlpha(0.35);
+    this.scene.tweens.add({ targets: this.wipe, x: this.bg.width - this.inset, alpha: 0, duration: dur(DUR.wipe), ease: EASE.out, onComplete: () => this.wipe.setVisible(false) });
+  }
+
   /** Head + lines, limited to what fits: the box height decides how many lines survive, the crop guarantees the rest. */
   private setHeadline(head: string, lines: string[]): void {
+    this.wipeOnChange(`t|${head}|${lines.join('\n')}`);
     this.image?.setVisible(false);
     const maxLines = Math.max(0, Math.floor((this.innerH - HEAD_H) / LINE_H));
     const headChars = Math.floor(this.innerW / (HEAD_PX * CHAR_W)), lineChars = Math.floor(this.innerW / (LINE_PX * CHAR_W));
@@ -76,8 +106,10 @@ export class Surface {
     this.text.setVisible(true).setText(lines.slice(0, maxLines).map((l) => cut(l, lineChars)).join('\n')).setCrop(0, 0, this.innerW * RES, Math.max(0, maxLines * LINE_H + 2) * RES);
   }
 
-  render(s: State, frames: Record<string, string>): void {
+  render(s: State, frames: Record<string, string>, nowMs: number): void {
     const hl = headlineFor(this.def.kind, s);
+    const live = this.def.streamKind === 'browser' && !!s.surfaces[this.def.streamId(s)]?.active;
+    this.live.setVisible(live);
     this.badge.setText(hl.badge ?? '').setVisible(!!hl.badge);
     // How a surface draws follows its stream kind, not its name: an image stream shows its latest frame …
     if (this.def.streamKind === 'browser') {
@@ -104,5 +136,11 @@ export class Surface {
     }
     if (this.innerW < NARROW) { this.setHeadline(hl.short ?? hl.head.split(' ')[0], []); return; }
     this.setHeadline(hl.head, hl.lines);
+    const running = this.def.streamKind === 'terminal' && Object.values(s.agents).some((a) => a.tool === 'terminal');
+    this.caret.setVisible(running && Math.floor(nowMs / 530) % 2 === 0);
+    if (running) {
+      const lines = hl.lines.length;
+      this.caret.setPosition(this.inset + PAD + Math.min(this.innerW - 4, this.text.width / RES + 1), this.inset + 4 + HEAD_H + Math.max(0, lines - 1) * LINE_H + 1);
+    }
   }
 }

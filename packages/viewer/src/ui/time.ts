@@ -73,7 +73,8 @@ export class TimeControls {
     this.clock.textContent = events.length ? `${events.length} events · ${events[0].ts.slice(11, 19)}–${events[events.length - 1].ts.slice(11, 19)} (dbl-click slider to pause/play)` : 'no events that day';
   }
 
-  private seek(i: number): void { this.index = Math.max(0, Math.min(this.events.length, i)); this.h.onScrub(this.index); this.scrub.value = String(Math.round((this.index / Math.max(1, this.events.length)) * 1000)); }
+  /** No day loaded yet (the request is still in flight): a stray scrub must not rebuild the office from nothing. */
+  private seek(i: number): void { if (!this.events.length) return; this.index = Math.max(0, Math.min(this.events.length, i)); this.h.onScrub(this.index); this.scrub.value = String(Math.round((this.index / Math.max(1, this.events.length)) * 1000)); }
 
   /** Advance replay: events are spaced by their real timestamps divided by the speed factor. */
   tick(dtMs: number, nowLive: Date): void {
