@@ -1,0 +1,21 @@
+# Capability → adapter. Program design §7: vault-native adapters now, a real self-hosted stack later.
+#
+# Every capability has a working vault-native default today. `candidate` names the tool from the owner's
+# toolchain document that would replace it when there is a machine to run it on; nothing in the codebase
+# requires that tool, and swapping `adapter` to anything else fails loudly rather than silently degrading.
+#
+# Reason for the default (program design §7): the owner's machine has no sudo and a small GPU, so running the
+# reference stack costs a day before any agent benefits. The adapter boundary keeps the door open.
+integrations:
+  work:       { adapter: vault,   note: "Jobs/<id>.md and Streams/<slug>.md",                       candidate: Plane }
+  docs:       { adapter: vault,   note: "Docs/, indexed by memory search",                          candidate: BookStack }
+  git:        { adapter: local,   note: "git in the vault and in Workspace/<stream>",               candidate: Forgejo }
+  ci:         { adapter: cubicle, note: "ci.run over Workspace/<stream>/cubicle-ci.yaml",           candidate: "Woodpecker CI" }
+  chat:       { adapter: vault,   note: "Messages/<role>.md, written by colleague.message",         candidate: Mattermost }
+  secrets:    { adapter: env,     note: ".env, held by the CISO; agents never read it",             candidate: "Keycloak + OpenBao" }
+  metrics:    { adapter: vault,   note: "Metrics/*.md and the bank screen",                         candidate: "Prometheus + Grafana" }
+  errors:     { adapter: cubicle, note: "incident jobs from failed deploys and red CI",             candidate: Sentry }
+  automation: { adapter: vault,   note: "Processes/<name>.md expanded into job chains",             candidate: n8n }
+
+# Products the company *builds* use the reference stack in Docs/tech-radar.md by default. Anything new is
+# judged against the ten selection criteria there (toolchain document §53) before it goes on the radar.

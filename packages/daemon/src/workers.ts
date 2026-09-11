@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { type Vault, listJobs, readJob, updateJob, RoleFrontmatter, nowIso } from '@cubicle/core';
+import { type Vault, listJobs, readJob, updateJob, RoleFrontmatter, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, type JobFrontmatter } from '@cubicle/core';
 import { runJob, type HarnessDeps, type JobOutcome } from '@cubicle/harness';
 import { runHeartbeat, type HeartbeatDeps, type HeartbeatOutcome } from './heartbeat.js';
 
@@ -9,6 +9,9 @@ export interface WorkerPoolOptions {
   maxConcurrent: number;
   idleMs?: number;
 }
+
+/** One WIP warning per team per window: a worker loops every idle interval and would otherwise flood the log. */
+export const WIP_WARN_MS = 300_000;
 
 /**
  * One worker per active role. Each worker picks the next runnable job for its role and runs it to an
@@ -21,6 +24,7 @@ export class WorkerPool extends EventEmitter {
   private paused = false;
   private stopped = false;
   private wakeResolvers: (() => void)[] = [];
+  private wipWarned = new Map<string, number>();
 
   constructor(private vault: Vault, private opts: WorkerPoolOptions) { super(); }
 
@@ -66,14 +70,37 @@ export class WorkerPool extends EventEmitter {
     });
   }
 
-  /** Next runnable job for a role: only `queued` jobs (interrupted `running` ones are re-queued by the daemon at startup; `blocked` ones by the dispatcher), dependencies done, priority then age. */
+  /**
+   * Next runnable job for a role: only `queued` jobs (interrupted `running` ones are re-queued by the daemon at
+   * startup; `blocked` ones by the dispatcher), dependencies done, priority then age — and only while the job's
+   * team is under its `in_progress` WIP limit.
+   *
+   * Only the in_progress lane gates *starting* work (operating model §7): review and testing are full because
+   * someone else has to act, and refusing to start anything until a reviewer catches up would idle the room
+   * rather than keep work flowing. A full lane is still reported, so the brief and the room sign can say why the
+   * queue is not moving.
+   */
   nextJob(roleId: string): string | null {
     const all = listJobs(this.vault);
     const byId = new Map(all.map((j) => [j.id, j]));
+    const org = loadOrg(this.vault);
+    const gates = loadGates();
+    const chainFor = (j: JobFrontmatter) => gatesForRisk(gates, j.type, j.risk);
+    const loads = new Map<string, ReturnType<typeof wipLoad>>();
     for (const j of all) {
       if (j.assigned !== roleId || j.status !== 'queued' || this.active.has(j.id)) continue;
       if (j.depends_on.some((d) => byId.get(d)?.status !== 'done')) continue;
-      return j.id;
+      const team = j.team;
+      if (!team || !org.teams[team]) return j.id;                   // no team, no limit to apply
+      const limit = org.teams[team].wip.in_progress;
+      if (!loads.has(team)) loads.set(team, wipLoad(this.vault, team, chainFor));
+      const load = loads.get(team)!;
+      if (load.in_progress < limit) return j.id;
+      const last = this.wipWarned.get(team) ?? 0;
+      if (Date.now() - last >= WIP_WARN_MS) {
+        this.wipWarned.set(team, Date.now());
+        this.vault.events.emit({ type: 'daemon.warning', agent: roleId, job: j.id, payload: { where: 'wip', team, stage: 'in_progress', limit, load, message: `${team} is at its in_progress WIP limit (${load.in_progress}/${limit}); ${j.id} waits. Finish or return something before starting more (operating model §7).` } });
+      }
     }
     return null;
   }
