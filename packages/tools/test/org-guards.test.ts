@@ -126,6 +126,16 @@ describe('proposal.create, meeting.open, colleague.message, finish', () => {
     const f = await call('finish', 'qa_lead', { status: 'done', summary: 's', verdict: 'return', findings: ['no tests'] });
     expect((f.data as { verdict: string; findings: string[] })).toMatchObject({ verdict: 'return', findings: ['no tests'] });
   });
+  it('the two system-owned proposal kinds cannot be hand-written by an agent', async () => {
+    // A hand-written plan_verdict would be read by the next heartbeat as a plan waiting for the owner's ruling,
+    // and would hold the company's planning back until somebody noticed.
+    for (const kind of ['outbound_batch', 'plan_verdict']) {
+      const r = await call('proposal.create', 'ceo', { kind, title: 'x', body: 'y' });
+      expect(r.ok, kind).toBe(false);
+      expect(r.text).toMatch(/not directly|filed by the heartbeat/);
+    }
+    expect(listInbox(vault).some((n) => n.data.kind === 'plan_verdict' || n.data.kind === 'outbound_batch')).toBe(false);
+  });
 });
 
 describe('scheduler.request refusals tell the caller what it may do instead', () => {

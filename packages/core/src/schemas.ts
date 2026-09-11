@@ -193,7 +193,7 @@ export type DecisionFrontmatter = z.infer<typeof DecisionFrontmatter>;
 
 // ---------- Inbox notes: proposals and messages ----------
 export const ProposalKind = z.enum([
-  'message', 'hire', 'fire', 'brand_change', 'charter_change', 'file_change', 'spend', 'outbound_batch', 'reorg', 'threat_model',
+  'message', 'hire', 'fire', 'brand_change', 'charter_change', 'file_change', 'spend', 'outbound_batch', 'reorg', 'threat_model', 'plan_verdict',
 ]);
 export type ProposalKind = z.infer<typeof ProposalKind>;
 
