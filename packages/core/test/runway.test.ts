@@ -33,6 +33,33 @@ describe('cash, burn and runway (spec §2)', () => {
     expect(r.currency).toBe('GBP');
     expect(moneyLine(r)).toContain('GBP 275.00 cash');
     expect(moneyLine(r)).toContain('simulated revenue, which is not cash');
+    // Every field an owner-facing message downstream prints verbatim (task-8's dormancy/revival messages read
+    // inCents/outCents; other consumers read mockCostCents/firstAt/lastAt): pin all of them, not just cash.
+    expect(r).toMatchObject({ inCents: 29000, outCents: 1500, mockCostCents: 88888 });
+    expect(r.firstAt).toBe(day(20));
+    expect(r.lastAt).toBe(day(3));
+  });
+
+  it('a mock row older than every live row does not stretch the burn window and flatter it', () => {
+    const r = moneyReport(book(
+      { at: day(59), kind: 'revenue', cents: 500000, mode: 'mock' },
+      { at: day(1), kind: 'capital', cents: 10000 },
+      { at: day(0), kind: 'cost', cents: 300 },
+    ), NOW);
+    // Without the fix this reads windowDays 30 / burn 10 — the mock row must not be allowed to say the
+    // company has existed for 30 days when it has only been spending real money for one.
+    expect(r.windowDays).toBe(1);
+    expect(r.burnCentsPerDay).toBe(300);
+  });
+
+  it('a real spend never rounds down to a burn of 0', () => {
+    const r = moneyReport(book({ at: day(30), kind: 'capital', cents: 10000 }, { at: day(29), kind: 'cost', cents: 14 }), NOW);
+    expect(r.windowOutCents).toBe(14);
+    expect(r.windowDays).toBe(30);
+    // 14 / 30 rounds to 0 — the floor keeps it a nonzero, honest "something is costing money".
+    expect(r.burnCentsPerDay).toBe(1);
+    expect(r.runwayDays).not.toBeNull();
+    expect(moneyLine(r)).not.toContain('not spending');
   });
 
   it('burn is the window the company has actually existed for, not a flat 30 days', () => {
@@ -91,6 +118,21 @@ describe('cash, burn and runway (spec §2)', () => {
     const r = moneyReport(l, NOW);
     expect(r.problems).toHaveLength(1);
     expect(moneyNeedsYou(r).at(-1)).toContain('cannot be read');
+    expect(moneyNeedsYou(r).at(-1)).toContain('1 row in');
+    expect(moneyNeedsYou(r).at(-1)).toContain('line 15');
+    // The runway note's "Rows that do not parse" section must actually render a bad row, not only the empty case.
+    expect(runwayNote(r, { calls: 0, paidCalls: 0, shadowCents: 0, priced: false, quotas: [] })).toContain('- line 15');
+  });
+
+  it('pluralises "row"/"line" for more than one unreadable row', () => {
+    const l = parseLedger(ledgerTemplate()
+      + '| 2026-09-12T08:00:00.000Z | capital | lots | live | owner | Typo one | |\n'
+      + '| 2026-09-12T09:00:00.000Z | capital | more lots | live | owner | Typo two | |\n');
+    const r = moneyReport(l, NOW);
+    expect(r.problems).toHaveLength(2);
+    const msg = moneyNeedsYou(r).at(-1)!;
+    expect(msg).toContain('2 rows in');
+    expect(msg).toContain('lines 15, 16');
   });
 });
 

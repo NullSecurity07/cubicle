@@ -247,9 +247,13 @@ export function moneyReport(ledger: Ledger, now: Date = new Date()): MoneyReport
   const liveTimes = live.map((e) => Date.parse(e.at)).filter((t) => Number.isFinite(t));
   const windowFrom = now.getTime() - BURN_WINDOW_DAYS * DAY_MS;
   const windowOutCents = live.reduce((t, e) => (e.kind === 'cost' && Date.parse(e.at) >= windowFrom ? t + e.cents : t), 0);
-  const ageDays = firstMs === null ? 1 : Math.ceil((now.getTime() - firstMs) / DAY_MS);
+  // The window's denominator is how long the company has actually been *spending real money* for — a mock
+  // row (a simulated sale, dated whenever a demo happened to be run) must never stretch it out and flatter burn.
+  const firstLiveMs = liveTimes.length ? Math.min(...liveTimes) : null;
+  const ageDays = firstLiveMs === null ? 1 : Math.ceil((now.getTime() - firstLiveMs) / DAY_MS);
   const windowDays = Math.max(1, Math.min(BURN_WINDOW_DAYS, ageDays));
-  const burnCentsPerDay = Math.round(windowOutCents / windowDays);
+  // A real spend never rounds down to a burn of 0 — that would report "not spending" for a company that is.
+  const burnCentsPerDay = windowOutCents > 0 ? Math.max(1, Math.round(windowOutCents / windowDays)) : 0;
   const funded = live.some((e) => e.kind === 'capital');
   return {
     currency: ledger.currency,
@@ -288,7 +292,7 @@ export function moneyNeedsYou(r: MoneyReport): string[] {
     out.push(`- Runway is ${days(r.runwayDays)} at ${money(r.burnCentsPerDay, r.currency)} a day — add capital in \`${LEDGER_PATH}\` or cut what is costing money`);
   }
   if (r.problems.length) {
-    out.push(`- ${r.problems.length} row${r.problems.length === 1 ? '' : 's'} in \`${LEDGER_PATH}\` cannot be read (line ${r.problems.map((p) => p.line).join(', ')}): ${r.problems[0].reason}`);
+    out.push(`- ${r.problems.length} row${r.problems.length === 1 ? '' : 's'} in \`${LEDGER_PATH}\` cannot be read (line${r.problems.length === 1 ? '' : 's'} ${r.problems.map((p) => p.line).join(', ')}): ${r.problems[0].reason}`);
   }
   return out;
 }
