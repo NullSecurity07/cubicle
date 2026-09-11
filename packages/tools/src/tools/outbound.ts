@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { existsSync, mkdirSync, cpSync } from 'node:fs';
+import { existsSync, mkdirSync, cpSync, rmSync, readdirSync, readFileSync } from 'node:fs';
+import nodePath from 'node:path';
 import { defineTool } from '../registry.js';
 import { createProposal, createJob, idFromKey, nowIso, stringifyNote, parseNote, readJob, repoRoot, loadOrg, resolveRole } from '@cubicle/core';
 import { emailSender, suppressed, addSuppression, UNSUBSCRIBE_FOOTER } from '../adapters/email.js';
@@ -93,26 +94,67 @@ export const emailInbox = defineTool({
   },
 });
 
+/** How many deploy snapshots to keep per project; older ones are pruned, except any a rollback still needs. */
+export const DEPLOY_SNAPSHOTS_KEPT = 10;
+
 /** Where each deploy's published bytes are kept so a rollback has something real to republish. */
 export function deploySnapshotDir(vault: import('@cubicle/core').Vault, project: string, stamp: string): string {
   return vault.abs(`.cubicle/deploys/${slugify(project)}/${stamp}`);
 }
 
 /**
+ * A content hash of a build directory: relative paths plus bytes, so the same tree hashes the same and any
+ * change to it does not. This is what ties a live deploy to the preview and canary that vetted *that* build.
+ */
+export function buildHash(dir: string): string {
+  const h = createHash('sha1');
+  const walk = (d: string, prefix: string): void => {
+    const entries = readdirSync(d, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    for (const e of entries) {
+      const rel = prefix ? `${prefix}/${e.name}` : e.name;
+      if (e.isSymbolicLink()) { h.update(`L ${rel}\n`); continue; }
+      const abs = nodePath.join(d, e.name);
+      if (e.isDirectory()) { h.update(`D ${rel}\n`); walk(abs, rel); }
+      else if (e.isFile()) { h.update(`F ${rel} `); h.update(readFileSync(abs)); h.update('\n'); }
+    }
+  };
+  try { walk(dir, ''); } catch { return ''; }
+  return h.digest('hex').slice(0, 16);
+}
+
+/** Every `deploy.done` of this project, oldest first. */
+function deploysOf(vault: import('@cubicle/core').Vault, project: string): import('@cubicle/core').CubicleEvent[] {
+  const slug = slugify(project);
+  return vault.events.query({ types: ['deploy.done'], limit: 500 }).filter((e) => e.payload.project === slug);
+}
+
+/** The live deploys whose snapshot a rollback could still want, newest last. */
+function liveDeploys(vault: import('@cubicle/core').Vault, project: string): import('@cubicle/core').CubicleEvent[] {
+  return deploysOf(vault, project).filter((e) => e.payload.stage === 'live' && e.payload.rolled_back !== true && typeof e.payload.snapshot === 'string');
+}
+
+/**
  * The snapshot of the live deploy *before* the current one — what `rollback: true` republishes. Returns null
  * when fewer than two live deploys have happened, because "roll back" then has no honest meaning.
+ *
+ * This goes back exactly one step. A rollback records `rolled_back: true` and is filtered out here, so rolling
+ * back a second time returns the same snapshot rather than walking further into the past; the tool description
+ * says so. `project` is expected already validated/slugified by the caller; it is slugified again for safety.
  */
 export function previousLiveSnapshot(vault: import('@cubicle/core').Vault, project: string): string | null {
-  const lives = vault.events.query({ types: ['deploy.done'], limit: 500 })
-    .filter((e) => e.payload.project === slugify(project) && e.payload.stage === 'live' && e.payload.rolled_back !== true && typeof e.payload.snapshot === 'string');
+  const lives = liveDeploys(vault, project);
   if (lives.length < 2) return null;
   const abs = vault.abs(String(lives[lives.length - 2].payload.snapshot));
   return existsSync(abs) ? abs : null;
 }
 
-/** The stages of this project already reached, from the event log. */
-function stagesDone(vault: import('@cubicle/core').Vault, project: string): Set<string> {
-  return new Set(vault.events.query({ types: ['deploy.done'], limit: 500 }).filter((e) => e.payload.project === project).map((e) => String(e.payload.stage ?? 'live')));
+/**
+ * The stages *this exact build* has already reached. Keyed on the build's content hash, not on the project:
+ * a project that once went preview → canary → live does not thereby earn a free live deploy of the next change.
+ * A `deploy.done` from before build hashes were recorded carries none, so it vouches for no build.
+ */
+function stagesDone(vault: import('@cubicle/core').Vault, project: string, hash: string): Set<string> {
+  return new Set(deploysOf(vault, project).filter((e) => hash !== '' && e.payload.build_hash === hash).map((e) => String(e.payload.stage ?? 'live')));
 }
 
 /** A snapshot directory that does not already exist: two deploys inside the same millisecond must not share bytes. */
@@ -124,9 +166,26 @@ function uniqueStamp(vault: import('@cubicle/core').Vault, project: string): str
   return `${base}-${n}`;
 }
 
+/**
+ * Keep the last `DEPLOY_SNAPSHOTS_KEPT` snapshots of a project, plus whatever the two newest live deploys point
+ * at — otherwise a busy preview loop could prune away the very bytes `rollback: true` promises to republish.
+ */
+function pruneSnapshots(vault: import('@cubicle/core').Vault, project: string): void {
+  const root = nodePath.dirname(deploySnapshotDir(vault, project, 'x'));
+  let stamps: string[];
+  try { stamps = readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort(); } catch { return; }
+  if (stamps.length <= DEPLOY_SNAPSHOTS_KEPT) return;
+  const keep = new Set(stamps.slice(-DEPLOY_SNAPSHOTS_KEPT));
+  for (const e of liveDeploys(vault, project).slice(-2)) keep.add(nodePath.basename(String(e.payload.snapshot)));
+  for (const stamp of stamps) {
+    if (keep.has(stamp)) continue;
+    try { rmSync(nodePath.join(root, stamp), { recursive: true, force: true }); } catch { /* a snapshot we cannot delete is not worth failing a deploy over */ }
+  }
+}
+
 export const deploySite = defineTool({
   name: 'deploy.site',
-  description: 'Publish Site/dist to Cloudflare Pages (free), one stage at a time: preview → canary → live (owner\'s operating model §20). Build first (shell.run: npm run build). canary needs a preview first, live needs a canary; live must name the metrics it will watch. The canary percentage is a mock until real traffic-splitting infrastructure exists — it is recorded, not enforced. `rollback: true` republishes the previous live deploy. First deploy needs owner approval; later ones are automatic.',
+  description: 'Publish Site/dist to Cloudflare Pages (free), one stage at a time: preview → canary → live (owner\'s operating model §20). Build first (shell.run: npm run build). canary needs a preview of the same build, live needs a canary of it; live must name the metrics it will watch. The canary percentage is a mock until real traffic-splitting infrastructure exists — it is recorded, not enforced. `rollback: true` republishes the previous live deploy — one step back, not a history walk: rolling back twice lands on the same build. First live deploy needs owner approval; later ones are automatic.',
   schema: {
     project: z.string().optional().describe('Pages project name; defaults to the brand name slug'),
     dir: z.string().default('Site/dist'),
@@ -157,9 +216,9 @@ export const deploySite = defineTool({
       const { lstatSync } = await import('node:fs');
       if (lstatSync(abs).isSymbolicLink()) return { ok: false, text: `${rel} is a symlink; refusing` };
 
-      const done = stagesDone(ctx.vault, name);
-      if (stage === 'canary' && !done.has('preview')) return { ok: false, text: `deploy a preview of "${name}" first (stage: "preview"), look at it, then canary. §20: reduce the blast radius by exposing the change gradually.` };
-      if (stage === 'live' && !done.has('canary')) return { ok: false, text: `deploy a canary of "${name}" first (stage: "canary", with the metrics you will watch), then live.` };
+      const done = stagesDone(ctx.vault, name, buildHash(abs));
+      if (stage === 'canary' && !done.has('preview')) return { ok: false, text: `deploy a preview of this build of "${name}" first (stage: "preview"), look at it, then canary. §20: reduce the blast radius by exposing the change gradually. An earlier build's preview does not vouch for this one.` };
+      if (stage === 'live' && !done.has('canary')) return { ok: false, text: `deploy a canary of this build of "${name}" first (stage: "canary", with the metrics you will watch), then live. A canary of an earlier build does not vouch for this one.` };
       if (stage !== 'preview' && metrics.length === 0) return { ok: false, text: `a ${stage} deploy must name the metrics it will watch (§20: error rates, latency, business metrics, resource use). Pass metrics: ["error rate", "<the stream's outcome metric>"].` };
     }
 
@@ -171,9 +230,13 @@ export const deploySite = defineTool({
     const snapDir = deploySnapshotDir(ctx.vault, name, uniqueStamp(ctx.vault, name));
     let snapshot: string | null = null;
     try { mkdirSync(snapDir, { recursive: true }); cpSync(abs, snapDir, { recursive: true }); snapshot = ctx.vault.rel(snapDir); } catch { snapshot = null; }
-    if (rollback) { try { cpSync(abs, ctx.vault.abs('Site/dist'), { recursive: true }); ctx.vault.rescan('Site', `${ctx.roleId}/deploy`, { job: ctx.jobId }); } catch { /* the deploy itself still went out */ } }
+    // A rollback must *replace* Site/dist, not merge into it: a file the bad build added would otherwise
+    // survive and be published by the next ordinary deploy. Site/dist is a cache path, so no rescan follows —
+    // the vault does not index build output.
+    if (rollback) { try { const dist = ctx.vault.abs('Site/dist'); rmSync(dist, { recursive: true, force: true }); cpSync(abs, dist, { recursive: true }); } catch { /* the deploy itself still went out */ } }
+    pruneSnapshots(ctx.vault, name);
 
-    ctx.events.emit({ type: 'deploy.done', agent: ctx.roleId, job: ctx.jobId, payload: { url: res.url, project: name, mode: d.mode, key, stage, canary_percent: stage === 'canary' ? canary_percent : null, metrics, rolled_back: rollback, snapshot, stream: readJob(ctx.vault, ctx.jobId ?? '')?.data.stream ?? null } });
+    ctx.events.emit({ type: 'deploy.done', agent: ctx.roleId, job: ctx.jobId, payload: { url: res.url, project: name, mode: d.mode, key, stage, canary_percent: stage === 'canary' ? canary_percent : null, canary_enforced: false, metrics, rolled_back: rollback, snapshot, build_hash: buildHash(abs), stream: readJob(ctx.vault, ctx.jobId ?? '')?.data.stream ?? null } });
 
     if (stage === 'live' && res.url && brand.url !== res.url) {
       const cur = ctx.vault.readTextOrNull('Brand/name.md') ?? '';
@@ -182,7 +245,7 @@ export const deploySite = defineTool({
       createProposal(ctx.vault, { id: idFromKey('prop', `${key}:url`), kind: 'brand_change', from: ctx.roleId, target: 'Brand/name.md', title: `Record site URL ${res.url}`, body: `The site is live at ${res.url}. Approve to record it in Brand/name.md.\n\n## Proposed content\n\n\`\`\`\n${proposed}\`\`\``, call: { tool: 'vault.write', args: { path: 'Brand/name.md', content: proposed }, idempotency_key: `${key}:url`, job: ctx.jobId ?? undefined, role: ctx.roleId }, job: ctx.jobId ?? undefined }, ctx.roleId);
     }
     const watching = metrics.length ? ` Watching: ${metrics.join(', ')}.` : '';
-    return { ok: true, text: `${rollback ? 'rolled back — ' : ''}${res.detail} (${d.mode}, stage ${stage}${stage === 'canary' ? `, ${canary_percent} % mock canary` : ''}).${watching}`, sideEffectKey: key, data: { url: res.url, mode: d.mode, stage, rolled_back: rollback, snapshot } };
+    return { ok: true, text: `${rollback ? 'rolled back — ' : ''}${res.detail} (${d.mode}, stage ${stage}${stage === 'canary' ? `, ${canary_percent} % mock canary — recorded, not enforced` : ''}).${watching}`, sideEffectKey: key, data: { url: res.url, mode: d.mode, stage, rolled_back: rollback, snapshot } };
   },
 });
 
