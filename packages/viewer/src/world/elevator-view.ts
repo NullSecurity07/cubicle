@@ -9,9 +9,10 @@ import { T } from './tiles.js';
 import { OPEN_MS, type ElevatorState, type Rider } from './elevator.js';
 import { PALETTE, hexToInt, shade } from './palette.js';
 import { DUR, dur } from './motion.js';
+import { RES, FONT } from './text.js';
 
 export interface ElevatorViewState { carY: number; doorOpen: number; floor: number; moving: boolean; riders: string[] }
-const DOOR_SLIDE_PX = 6, RES = 3;
+const DOOR_SLIDE_PX = 6, HALF = 8;
 
 /** 0 closed … 1 open. Doors slide during the first and last `DUR.doorSlide` ms of a stop (scaled by reduced motion). */
 export function doorOpenFor(status: ElevatorState['status'], openLeft: number, openMs = OPEN_MS): number {
@@ -21,9 +22,23 @@ export function doorOpenFor(status: ElevatorState['status'], openLeft: number, o
   return Math.max(0, Math.min(1, elapsed / slideMs, openLeft / slideMs));
 }
 
-// toViewState is called every animation frame; the underlying `riders` array is a stable reference except on the
-// frame something actually boards or arrives (world/elevator.ts's `step` only replaces it then), so a tiny
-// reference-keyed cache avoids reallocating the id list on every frame that nothing changed.
+/**
+ * The visible slice of each door leaf at `open` (0 closed … 1 open), within the leaf's own 16 px tile.
+ *
+ * Both leaves retract into the jamb by narrowing their crop — the left one from its right edge, the right one
+ * from its left — so they part symmetrically about the centre and neither ever leaves its tile. Sliding the
+ * leaves bodily would need a pocket tile either side; the left leaf used to slide alone into the corridor and
+ * the right one never moved, which reads as a glitch rather than as a door.
+ */
+export function doorCrop(open: number): { l: { x: number; w: number }; r: { x: number; w: number } } {
+  const slide = Math.round(DOOR_SLIDE_PX * Math.max(0, Math.min(1, open)));
+  return { l: { x: 0, w: HALF - slide }, r: { x: HALF + slide, w: HALF - slide } };
+}
+
+// toViewState is called every animation frame. world/elevator.ts's `step` keeps the same `riders` array reference
+// while idle or moving (the common case, and the longest-lived one), so a tiny reference-keyed cache avoids
+// reallocating the id list on those frames; while a door is open, `serve()` rebuilds the array every step
+// regardless of whether anyone actually boards, so the cache simply misses (and repopulates) for that window.
 const ridersCache = new WeakMap<Rider[], string[]>();
 function ridersOf(riders: Rider[]): string[] {
   const cached = ridersCache.get(riders);
@@ -33,17 +48,30 @@ function ridersOf(riders: Rider[]): string[] {
   return ids;
 }
 
-export function toViewState(s: ElevatorState, tile = TILE): ElevatorViewState {
-  return { carY: s.row * tile, doorOpen: doorOpenFor(s.status, s.openLeft), floor: s.floor, moving: s.status === 'moving', riders: ridersOf(s.riders) };
+/** A fresh view state for a caller that wants to reuse one object across frames (see `toViewState`'s `into`). */
+export function emptyViewState(): ElevatorViewState { return { carY: 0, doorOpen: 0, floor: 1, moving: false, riders: [] }; }
+
+/**
+ * Map the engine state to what the view draws. Called every animation frame, so `into` lets the caller hand in
+ * the object to fill: the rAF loop keeps one and allocates nothing. Omit it and you get a fresh object.
+ */
+export function toViewState(s: ElevatorState, tile = TILE, into?: ElevatorViewState): ElevatorViewState {
+  const out = into ?? emptyViewState();
+  out.carY = s.row * tile;
+  out.doorOpen = doorOpenFor(s.status, s.openLeft);
+  out.floor = s.floor;
+  out.moving = s.status === 'moving';
+  out.riders = ridersOf(s.riders);
+  return out;
 }
 
 export class ElevatorView {
   readonly car: Phaser.GameObjects.Container;
-  private doors: { n: number; l: Phaser.GameObjects.Image; r: Phaser.GameObjects.Image; recess: Phaser.GameObjects.Rectangle; x: number; digit: Phaser.GameObjects.Text }[] = [];
+  private doors: { n: number; l: Phaser.GameObjects.Image; r: Phaser.GameObjects.Image; recess: Phaser.GameObjects.Rectangle; digit: Phaser.GameObjects.Text }[] = [];
   readonly mask: Phaser.Display.Masks.GeometryMask;
   private maskShape: Phaser.GameObjects.Graphics;
   private lamp: Phaser.GameObjects.Rectangle;
-  private last: ElevatorViewState | null = null;
+  private readonly last: { doorOpen: number; floor: number; moving: boolean } = { doorOpen: -1, floor: -1, moving: false };
 
   constructor(private scene: Phaser.Scene, shaft: { tx: number; ty: number; tw: number; th: number }, floors: { n: number; y0: number }[]) {
     const x = shaft.tx * TILE, w = shaft.tw * TILE, carH = 3 * TILE;
@@ -55,7 +83,7 @@ export class ElevatorView {
     this.car = scene.add.container(x + w / 2, (floors[0]?.y0 ?? 0) * TILE, [back, rail, this.lamp]);
     // the car and its riders are clipped to the shaft interior
     this.maskShape = scene.add.graphics().setVisible(false);
-    this.maskShape.fillStyle(0xffffff).fillRect(x, shaft.ty * TILE, w, shaft.th * TILE);
+    this.maskShape.fillStyle(0xffffff).fillRect(x, shaft.ty * TILE, w, shaft.th * TILE);   // palette-lint: ignore — a geometry mask's stencil value, not a colour
     this.mask = this.maskShape.createGeometryMask();
     this.car.setMask(this.mask);
     // a door pair and an amber digit per floor, at the elevator door tile (one tile left of the shaft); a dark
@@ -63,10 +91,10 @@ export class ElevatorView {
     for (const f of floors) {
       const dx = (shaft.tx - 1) * TILE, dy = (f.y0 + 11) * TILE;
       const recess = scene.add.rectangle(dx, dy, TILE, TILE, hexToInt(shade(PALETTE.steelDark, -0.35))).setOrigin(0).setDepth(3);
-      const l = scene.add.image(dx, dy, 'office', 0).setOrigin(0).setCrop(0, 0, 8, TILE).setDepth(4);
-      const r = scene.add.image(dx, dy, 'office', 0).setOrigin(0).setCrop(8, 0, 8, TILE).setDepth(4);
-      const digit = scene.add.text(dx + TILE / 2, dy - 2, String(f.n), { fontFamily: 'system-ui, sans-serif', fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amber }).setOrigin(0.5, 1).setScale(1 / RES).setDepth(4).setAlpha(0.5);
-      this.doors.push({ n: f.n, l, r, recess, x: dx, digit });
+      const l = scene.add.image(dx, dy, 'office', 0).setOrigin(0).setCrop(0, 0, HALF, TILE).setDepth(4);
+      const r = scene.add.image(dx, dy, 'office', 0).setOrigin(0).setCrop(HALF, 0, HALF, TILE).setDepth(4);
+      const digit = scene.add.text(dx + TILE / 2, dy - 2, String(f.n), { fontFamily: FONT, fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amber }).setOrigin(0.5, 1).setScale(1 / RES).setDepth(4).setAlpha(0.5);
+      this.doors.push({ n: f.n, l, r, recess, digit });
     }
     this.setDoorFrames();
   }
@@ -80,7 +108,7 @@ export class ElevatorView {
       const l = frame(T.ELEV_DOOR_L), r = frame(T.ELEV_DOOR_R);
       if (!tex.has('elev-door-l')) tex.add('elev-door-l', 0, l.x, l.y, TILE, TILE);
       if (!tex.has('elev-door-r')) tex.add('elev-door-r', 0, r.x, r.y, TILE, TILE);
-      d.l.setTexture('office', 'elev-door-l').setCrop(0, 0, 8, TILE); d.r.setTexture('office', 'elev-door-r').setCrop(8, 0, 8, TILE);
+      d.l.setTexture('office', 'elev-door-l').setCrop(0, 0, HALF, TILE); d.r.setTexture('office', 'elev-door-r').setCrop(HALF, 0, HALF, TILE);
     }
   }
 
@@ -90,14 +118,15 @@ export class ElevatorView {
   }
 
   setState(s: ElevatorViewState): void {
-    if (this.last && this.last.doorOpen === s.doorOpen && this.last.floor === s.floor && this.last.moving === s.moving) return;
-    this.last = s;
+    // Compare field by field, never by object identity: the caller reuses one view-state object across frames.
+    if (this.last.doorOpen === s.doorOpen && this.last.floor === s.floor && this.last.moving === s.moving) return;
+    this.last.doorOpen = s.doorOpen; this.last.floor = s.floor; this.last.moving = s.moving;
     this.lamp.setFillStyle(hexToInt(s.moving ? PALETTE.amber : PALETTE.windowNight));
     for (const d of this.doors) {
       const open = d.n === s.floor && !s.moving ? s.doorOpen : 0;   // doors are closed everywhere while the car moves
-      // the left leaf retreats into the corridor; the right leaf stays put — there is no pocket to its right, only
-      // the shaft, so letting it slide further would walk it into the car
-      d.l.x = d.x - Math.round(DOOR_SLIDE_PX * open);
+      const c = doorCrop(open);
+      d.l.setCrop(c.l.x, 0, c.l.w, TILE);
+      d.r.setCrop(c.r.x, 0, c.r.w, TILE);
       d.digit.setAlpha(d.n === s.floor ? 1 : 0.5);
     }
   }

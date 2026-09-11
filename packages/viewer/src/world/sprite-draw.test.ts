@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RecordingPx } from './tiles-draw.js';
-import { drawSpriteFrame, drawSpriteSheet, drawFaceSheet, spriteOpts, FACE_FRAMES, FACE_SHEET_W, FACE_SHEET_H, SPRITE_W, SPRITE_H, type SpriteOpts } from './sprite-draw.js';
+import { drawSpriteFrame, drawSpriteSheet, drawFaceSheet, spriteOpts, spriteKey, FACE_FRAMES, FACE_SHEET_W, FACE_SHEET_H, SPRITE_W, SPRITE_H, type SpriteOpts } from './sprite-draw.js';
 import { rolePalette, type Family } from './palette.js';
 import { FRAMES } from './frames.js';
 
@@ -66,5 +66,21 @@ describe('face sheet', () => {
     const cell = (n: string) => { const f = FACE_FRAMES.find((x) => x.name === n)!; return p.rects.filter((r) => r.x >= f.x && r.y >= f.y && r.x + r.w <= f.x + 8 && r.y + r.h <= f.y + 6).map((r) => ({ ...r, x: r.x - f.x, y: r.y - f.y })); };
     expect(JSON.stringify(cell('neutral:0:talk'))).not.toBe(JSON.stringify(cell('neutral:0')));
     expect(cell('neutral:0:g').length).toBeGreaterThan(cell('neutral:0').length);
+  });
+});
+
+describe('sprite texture key', () => {
+  it('names everything the sheet is drawn from, so two roles sharing a sprite never collide', () => {
+    // The sheet is drawn with rolePalette(role, family) and spriteOpts(role, team); a key that only carried
+    // `sprite` handed whichever role rasterised first to the other, non-deterministically by construction order.
+    expect(spriteKey({ role: 'backend_engineer', sprite: 'engineer', family: 'member' }))
+      .not.toBe(spriteKey({ role: 'frontend_engineer', sprite: 'engineer', family: 'member' }));
+    expect(spriteKey({ role: 'r', family: 'member', team: 'research' })).not.toBe(spriteKey({ role: 'r', family: 'member', team: 'growth' }));
+    expect(spriteKey({ role: 'r', family: 'chief' })).not.toBe(spriteKey({ role: 'r', family: 'member' }));
+  });
+  it('is stable for the same inputs and defaults family to member', () => {
+    expect(spriteKey({ role: 'ceo' })).toBe(spriteKey({ role: 'ceo', family: 'member' }));
+    expect(spriteKey({ role: 'ceo' })).toBe(spriteKey({ role: 'ceo' }));
+    expect(spriteKey({ role: 'ceo' })).toMatch(/^sprite:ceo:ceo::member$/);
   });
 });
