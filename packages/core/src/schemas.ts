@@ -162,21 +162,8 @@ export const TeamFrontmatter = z.looseObject({
 export type TeamFrontmatter = z.infer<typeof TeamFrontmatter>;
 
 // ---------- Ideas ----------
-/**
- * An idea card: something the company *could* do, filed by whoever noticed the opening. Deliberately minimal —
- * continuous intelligence needs somewhere to put a meaningful change, and sub-project 3 (discovery) extends
- * this schema with scoring and triage. `source` says where it came from (`intelligence:competitive`, `owner`,
- * a job id), because an idea with no provenance cannot be checked.
- */
-export const IdeaFrontmatter = z.looseObject({
-  id: z.string(),
-  title: z.string(),
-  source: z.string(),
-  status: z.enum(['new', 'triaged', 'accepted', 'rejected']).default('new'),
-  created: Timestamp,
-  evidence: z.array(z.string()).default([]),
-});
-export type IdeaFrontmatter = z.infer<typeof IdeaFrontmatter>;
+// The idea card moved to `ideas.ts` when it became a dossier (SP3): the scoring rule, the card on disk and the
+// schema belong together, and `ideas.ts` imports `Timestamp` from here, so this file must not import it back.
 
 // ---------- Decisions ----------
 export const DecisionFrontmatter = z.looseObject({

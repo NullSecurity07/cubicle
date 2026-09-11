@@ -121,6 +121,16 @@ Body: freeform notes on how the team works, read into role prompts.
 | `status` | `new` \| `triaged` \| `accepted` \| `rejected` = `"new"` | new → triaged → accepted | rejected; sub-project 3 owns the triage |
 | `created` | string |  |
 | `evidence` | string[] = `[]` | paths or URLs backing the change that prompted it — an idea with none is a hunch |
+| `decision` | `undecided` \| `keep` \| `park` \| `scrap` = `"undecided"` |  |
+| `decided_by` | string = `""` |  |
+| `decided_at` | string = `""` |  |
+| `score` | number \| null = `null` |  |
+| `score_inputs` | object = `{}` |  |
+| `research` | string = `""` |  |
+| `research_confidence` | `high` \| `medium` \| `low` \| null = `null` |  |
+| `estimate` | string = `""` |  |
+| `board_verdict` | `pass` \| `return` \| null = `null` |  |
+| `board_decision` | string = `""` |  |
 
 Body: `## What changed`, `## Why it might matter`, `## Evidence`.
 
