@@ -39,14 +39,21 @@ export class EventLog {
     return () => this.emitter.off(key, fn);
   }
 
-  query(opts: { from?: string; to?: string; types?: EventType[]; job?: string; limit?: number } = {}): CubicleEvent[] {
+  /**
+   * Bounded event query. `order` decides *which* end of the log a `limit` keeps, not just the row order:
+   * `'asc'` (the default, unchanged) takes the oldest `limit` rows and returns them oldest-first, while
+   * `'desc'` takes the newest `limit` rows and returns them newest-first. Any sweep that bounds itself with
+   * `limit` and no `from` wants `'desc'`, or it freezes on the first N events the vault ever wrote.
+   */
+  query(opts: { from?: string; to?: string; types?: EventType[]; job?: string; limit?: number; order?: 'asc' | 'desc' } = {}): CubicleEvent[] {
     const where: string[] = [];
     const params: unknown[] = [];
     if (opts.from) { where.push('ts >= ?'); params.push(opts.from); }
     if (opts.to) { where.push('ts <= ?'); params.push(opts.to); }
     if (opts.job) { where.push('job = ?'); params.push(opts.job); }
     if (opts.types?.length) { where.push(`type IN (${opts.types.map(() => '?').join(',')})`); params.push(...opts.types); }
-    const sql = `SELECT id, ts, type, agent, job, payload_json FROM events${where.length ? ' WHERE ' + where.join(' AND ') : ''} ORDER BY id ASC${opts.limit ? ' LIMIT ' + Number(opts.limit) : ''}`;
+    const dir = opts.order === 'desc' ? 'DESC' : 'ASC';
+    const sql = `SELECT id, ts, type, agent, job, payload_json FROM events${where.length ? ' WHERE ' + where.join(' AND ') : ''} ORDER BY id ${dir}${opts.limit ? ' LIMIT ' + Number(opts.limit) : ''}`;
     const rows = this.db.prepare(sql).all(...params) as { id: number; ts: string; type: string; agent: string | null; job: string | null; payload_json: string }[];
     return rows.map((r) => ({ id: r.id, ts: r.ts, type: r.type as EventType, agent: r.agent, job: r.job, payload: JSON.parse(r.payload_json) }));
   }

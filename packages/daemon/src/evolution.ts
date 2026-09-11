@@ -595,7 +595,7 @@ function hasOpenIncident(vault: Vault, stream: string): boolean {
 /** The streams that have actually reached production: a `deploy.done` at the `live` stage. */
 function liveStreams(vault: Vault): Set<string> {
   const out = new Set<string>();
-  for (const e of vault.events.query({ types: ['deploy.done'], limit: 500 })) {
+  for (const e of vault.events.query({ types: ['deploy.done'], limit: 500, order: 'desc' })) {
     // A deploy.done from before stages existed always went to the production branch, so a missing stage counts as live.
     if ((e.payload.stage ?? 'live') === 'live' && typeof e.payload.stream === 'string') out.add(e.payload.stream);
   }
@@ -630,7 +630,7 @@ function openIncident(vault: Vault, o: { id: string; stream: string; trigger: st
  */
 export function maybeOpenIncident(vault: Vault, now = new Date()): string | null {
   const today = now.toISOString().slice(0, 10);
-  for (const e of vault.events.query({ types: ['deploy.done'], limit: 200 })) {
+  for (const e of vault.events.query({ types: ['deploy.done'], limit: 200, order: 'desc' })) {
     const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
     if (!stream || !readStream(vault, stream)) continue;
     if (e.payload.rolled_back !== true) continue;
@@ -643,7 +643,7 @@ export function maybeOpenIncident(vault: Vault, now = new Date()): string | null
     });
   }
   const live = liveStreams(vault);
-  for (const e of vault.events.query({ types: ['ci.completed'], limit: 200 })) {
+  for (const e of vault.events.query({ types: ['ci.completed'], limit: 200, order: 'desc' })) {
     const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
     if (!stream || e.payload.green !== false || !readStream(vault, stream)) continue;
     if (!live.has(stream)) continue;   // not in production: a red build is ordinary engineering, not an incident
