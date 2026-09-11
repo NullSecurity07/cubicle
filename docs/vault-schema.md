@@ -10,9 +10,10 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
   Roles/                  <role>.md charters (owner-owned; agents propose), archive/
   Runs/                   one "since you were away" brief per heartbeat
   Decisions/              one note per decision (meetings, adoptions)
+  Discovery/              inbox/ (owner drops files here), interview.md (the CEO's six questions and your answer)
   Customers/              one note per lead (slug-hash), _suppression.md
   Metrics/                daily.md, quota.md, payment_links.md, research.md (regenerated weekly)
-  Memory/                 constitution.md (agent-immutable, tool-enforced), owner_preferences.md, lessons.md
+  Memory/                 constitution.md (agent-immutable, tool-enforced), owner_preferences.md, lessons.md, founder-brief.md
   Skills/                 reusable procedures written by agents (archive/ for pruned ones)
   Experiments/            hypothesis/metric/review_date notes (_template.md), posts/ drafts
   Ideas/                  idea cards filed by continuous intelligence and by discovery (_template.md)
@@ -40,7 +41,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | field | type | notes |
 |---|---|---|
 | `id` | string | the filename is authoritative: `Jobs/<id>.md` — if a note's `id` field disagrees with its filename (e.g. you copied `_template.md` by hand), the daemon rewrites `id` to match the filename and logs one `daemon.warning` |
-| `type` | string | known types: `engineer.ship`, `research`, `research.review`, `research.measure`, `intelligence`, `growth.outreach`, `growth.post`, `growth.seo`, `custom`, `company.plan`, `division.plan`, `board.premortem`, `team.plan`, `critic.premortem`, `team:qa.review`, `office:operations.verify`, `office:security.review`, `requester.review`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`), `incident`, `qa.review`, `coo.verify`, `security.review`; each has a `config/gates.yaml` entry |
+| `type` | string | known types: `engineer.ship`, `research`, `research.review`, `research.measure`, `intelligence`, `growth.outreach`, `growth.post`, `growth.seo`, `custom`, `company.plan`, `division.plan`, `board.premortem`, `team.plan`, `critic.premortem`, `team:qa.review`, `office:operations.verify`, `office:security.review`, `requester.review`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`), `incident`, `discovery`, `board.session`, `finance.estimate`, `qa.review`, `coo.verify`, `security.review`; each has a `config/gates.yaml` entry |
 | `title` | string |  |
 | `assigned` | string |  |
 | `status` | `queued` \| `running` \| `blocked` \| `in_review` \| `done` \| `failed` \| `cancelled` = `"queued"` | you may set `cancelled`; `blocked` without `blocked_on` = paused by you; `in_review` = the job's own work is done but it still owes a gate from `config/gates.yaml` |
@@ -117,22 +118,22 @@ Body: freeform notes on how the team works, read into role prompts.
 |---|---|---|
 | `id` | string | matches the filename |
 | `title` | string |  |
-| `source` | string | where the idea came from: `intelligence:<kind>`, `owner`, or a job id |
-| `status` | `new` \| `triaged` \| `accepted` \| `rejected` = `"new"` | new → triaged → accepted | rejected; sub-project 3 owns the triage |
+| `source` | string | where the idea came from: `discovery`, `intelligence:<kind>`, `pantry`, `owner`, or a job id |
+| `status` | `new` \| `triaged` \| `accepted` \| `rejected` = `"new"` | new → triaged → accepted | rejected (the card's lifecycle) |
 | `created` | string |  |
 | `evidence` | string[] = `[]` | paths or URLs backing the change that prompted it — an idea with none is a hunch |
-| `decision` | `undecided` \| `keep` \| `park` \| `scrap` = `"undecided"` |  |
+| `decision` | `undecided` \| `keep` \| `park` \| `scrap` = `"undecided"` | undecided → keep | park | scrap (what the company decided to do about it); only a kept idea may appear in Plans/plan.md |
 | `decided_by` | string = `""` |  |
 | `decided_at` | string = `""` |  |
-| `score` | number \| null = `null` |  |
-| `score_inputs` | object = `{}` |  |
-| `research` | string = `""` |  |
+| `score` | number \| null = `null` | `4 × value + 3 × evidence + 3 × effort + 2 × fit`, 12–60, derived from `score_inputs` on every write; null until both offices have answered |
+| `score_inputs` | object = `{}` | the research office sets `evidence` and `fit`; the finance office sets `value` and `effort` (inverted: 5 is cheapest) |
+| `research` | string = `""` | the `Research/<slug>/report.md` behind the demand claim |
 | `research_confidence` | `high` \| `medium` \| `low` \| null = `null` |  |
-| `estimate` | string = `""` |  |
-| `board_verdict` | `pass` \| `return` \| null = `null` |  |
-| `board_decision` | string = `""` |  |
+| `estimate` | string = `""` | the finance office's rough order of magnitude, in words — never a ledger entry |
+| `board_verdict` | `pass` \| `return` \| null = `null` | pass | return from the board session; a return parks a keep |
+| `board_decision` | string = `""` | the `Decisions/board-<slug>.md` note the session wrote |
 
-Body: `## What changed`, `## Why it might matter`, `## Evidence`.
+Body: `## What changed`, `## Why it might matter`, `## Evidence`, `## Research`, `## What it would cost`, `## The board`, `## Score`, `## Decision`.
 
 ### Stream note (Streams/<slug>.md)
 
@@ -166,7 +167,7 @@ Body: freeform notes, appended to every expanded step's job goal.
 | field | type | notes |
 |---|---|---|
 | `id` | string |  |
-| `kind` | `message` \| `hire` \| `fire` \| `brand_change` \| `charter_change` \| `file_change` \| `spend` \| `outbound_batch` \| `reorg` \| `threat_model` \| `plan_verdict` | `message` is a conversation; the rest are proposals |
+| `kind` | `message` \| `hire` \| `fire` \| `brand_change` \| `charter_change` \| `file_change` \| `spend` \| `outbound_batch` \| `reorg` \| `threat_model` \| `plan_verdict` \| `founder_brief` \| `idea_verdict` | `message` is a conversation; the rest are proposals |
 | `created` | string |  |
 | `from` | string |  |
 | `to` | string = `"owner"` |  |

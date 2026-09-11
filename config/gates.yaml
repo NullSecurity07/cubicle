@@ -29,6 +29,9 @@ gates:
   ceo.heartbeat: []
   colleague.answer: []
   incident: [office:operations.verify]
+  discovery: [requester.review]
+  board.session: []
+  finance.estimate: []
   qa.review: []
   coo.verify: []
   security.review: []
@@ -53,6 +56,9 @@ criteria:
   research.measure: "Prediction and outcome are both stated with dates; the report's `## Prediction vs reality` section is appended; Research/index.md carries the outcome."
   intelligence: "Dated observations with a source link each; meaningful change separated from noise; every meaningful change is either an idea card or an alert; nothing invented."
   incident: "The stream is serving again and the rollback or fix is named; Docs/postmortems/<date>-<slug>.md exists with a timeline, an impact in hours, a root cause that is a design or a missing check rather than a person, and at least one corrective action with an owner. No names anywhere in the postmortem."
+  discovery: "The founder brief has all seven sections and names the files it was read from; every claim about what already exists cites one of them; each candidate idea is its own Ideas/<slug>.md card with evidence, never a list inside the brief; what we do not know is not empty."
+  finance.estimate: "One rough order of magnitude in words — people, weeks, out-of-pocket cost — with the assumption behind it; value and effort set on the card with one line each saying why. No ledger entry, no revenue projection dressed as a fact."
+  board.session: "Three advisors, one joint verdict on one idea: concrete failure modes with a fix each; pass or return, never delay. The board advises; the owner decides."
   # Pre-office names. A job queued before the rename still reads its criteria from here.
   qa.review: "Findings cite files or output; the CI record in Workspace/<stream>/.cubicle-ci/ is green and newer than the change; a ship that changed the architecture (a new dependency, a new service, a new data store, a changed boundary) has an ADR in Docs/adr/ — return it if it does not; verdict pass or return."
   security.review: "Say what data, credentials and permissions the change touches, and judge each: secrets never in the diff, input validated at the boundary, authorisation checked on the server, nothing sensitive logged. A finding cites the file and the line. Verdict pass or return."

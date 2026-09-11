@@ -107,9 +107,10 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
   Roles/                  <role>.md charters (owner-owned; agents propose), archive/
   Runs/                   one "since you were away" brief per heartbeat
   Decisions/              one note per decision (meetings, adoptions)
+  Discovery/              inbox/ (owner drops files here), interview.md (the CEO's six questions and your answer)
   Customers/              one note per lead (slug-hash), _suppression.md
   Metrics/                daily.md, quota.md, payment_links.md, research.md (regenerated weekly)
-  Memory/                 constitution.md (agent-immutable, tool-enforced), owner_preferences.md, lessons.md
+  Memory/                 constitution.md (agent-immutable, tool-enforced), owner_preferences.md, lessons.md, founder-brief.md
   Skills/                 reusable procedures written by agents (archive/ for pruned ones)
   Experiments/            hypothesis/metric/review_date notes (_template.md), posts/ drafts
   Ideas/                  idea cards filed by continuous intelligence and by discovery (_template.md)
@@ -141,8 +142,8 @@ Body: \`# Charter\` (system prompt), \`# Standing rules\`, \`# What good looks l
 ${table('Team note (Teams/<id>.md)', TeamFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { id: 'matches the filename', lead: 'role id; the resolver treats this role as the team\'s lead', members: 'role ids who report to the lead through this team', room: 'office room id the team\'s desks sit in', floor: 'which office floor the team\'s room is on', parent: 'the division this team belongs to (dev → technology); planning happens at the division', processes: '`Processes/<name>.md` ids this team can run', wip: 'work-in-progress limits per Kanban lane; `nextJob` refuses to start work past `in_progress` and the office shows a full lane as a red tab on the room sign. No `wip:` at all (most teams today) means unlimited — never refused' })}
 Body: freeform notes on how the team works, read into role prompts.
 
-${table('Idea card (Ideas/<slug>.md)', IdeaFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { id: 'matches the filename', source: 'where the idea came from: `intelligence:<kind>`, `owner`, or a job id', status: 'new → triaged → accepted | rejected; sub-project 3 owns the triage', evidence: 'paths or URLs backing the change that prompted it — an idea with none is a hunch' })}
-Body: \`## What changed\`, \`## Why it might matter\`, \`## Evidence\`.
+${table('Idea card (Ideas/<slug>.md)', IdeaFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { id: 'matches the filename', source: 'where the idea came from: `discovery`, `intelligence:<kind>`, `pantry`, `owner`, or a job id', status: 'new → triaged → accepted | rejected (the card\'s lifecycle)', evidence: 'paths or URLs backing the change that prompted it — an idea with none is a hunch', decision: 'undecided → keep | park | scrap (what the company decided to do about it); only a kept idea may appear in Plans/plan.md', score: '`4 × value + 3 × evidence + 3 × effort + 2 × fit`, 12–60, derived from `score_inputs` on every write; null until both offices have answered', score_inputs: 'the research office sets `evidence` and `fit`; the finance office sets `value` and `effort` (inverted: 5 is cheapest)', research: 'the `Research/<slug>/report.md` behind the demand claim', estimate: 'the finance office\'s rough order of magnitude, in words — never a ledger entry', board_verdict: 'pass | return from the board session; a return parks a keep', board_decision: 'the `Decisions/board-<slug>.md` note the session wrote' })}
+Body: \`## What changed\`, \`## Why it might matter\`, \`## Evidence\`, \`## Research\`, \`## What it would cost\`, \`## The board\`, \`## Score\`, \`## Decision\`.
 
 ${table('Stream note (Streams/<slug>.md)', StreamFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { slug: 'matches the filename', outcome_metric: 'one number with a from and a to; never a feature list', owner_team: 'the team id accountable for the outcome', error_budget: 'incident-hours a week before the division plan must prioritise reliability (§23)', repo_path: 'where the code lives, and what `ci.run` mounts — `Workspace/<slug>` by default' })}
 Body sections: \`## Problem\`, \`## Customers\`, \`## Outcome metric\`, \`## Runbook\`, \`## Error budget\`.

@@ -19,6 +19,9 @@ export const KNOWN_JOB_TYPES = [
   'team:qa.review', 'office:security.review', 'colleague.answer',
   'research.review', 'research.measure', 'intelligence',
   'incident',
+  // SP3: discovery reads the owner's material and files the founder brief; board.session is the board's record
+  // of judging one idea (board.premortem stays the plan's); finance.estimate prices an idea for its dossier.
+  'discovery', 'board.session', 'finance.estimate',
   'qa.review', 'coo.verify', 'security.review',
 ] as const;
 
@@ -181,6 +184,8 @@ export type DecisionFrontmatter = z.infer<typeof DecisionFrontmatter>;
 // ---------- Inbox notes: proposals and messages ----------
 export const ProposalKind = z.enum([
   'message', 'hire', 'fire', 'brand_change', 'charter_change', 'file_change', 'spend', 'outbound_batch', 'reorg', 'threat_model', 'plan_verdict',
+  // SP3: the founder brief the owner adopts, and the owner's ruling on one idea card.
+  'founder_brief', 'idea_verdict',
 ]);
 export type ProposalKind = z.infer<typeof ProposalKind>;
 
