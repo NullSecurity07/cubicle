@@ -11,3 +11,4 @@ export * from './queue-md.js';
 export * from './evolution.js';
 export * from './doctor.js';
 export * from './static.js';
+export * from './discovery.js';
