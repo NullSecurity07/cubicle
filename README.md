@@ -28,7 +28,7 @@ pnpm cubicle start ~/Vaults/Cubicle                      # daemon; prints the of
 pnpm cubicle open ~/Vaults/Cubicle                       # launch the office in your browser
 ```
 
-In the office, click the CEO cabin screen — on a fresh company it asks "What company will you start today?" — and type your idea, or click "Surprise me". Or, in Obsidian, create a note in `00 Inbox/`:
+The office is one tall map: four floors stacked as a cross-section — F1 executive (CEO office, meeting room, board room, pantry), F2 departments (Research, Dev, Sales, CHRO), F3 assurance (CLO, CISO, CGO, QA), F4 leadership (CTO, CMO, COO, CFO) — an elevator on the right and the street below; a floor rail shows all four plus the lobby, click a tab or press `1`–`4` (`L` for the lobby, `0` to fit the tower). On a fresh company a card asks "What company will you start?" — type your idea or press "Surprise me" — and it goes to the CEO like any chat; afterwards the CEO office, the CEO sprite, "Talk to the CEO" and `T` all reach the same chat. Click any room screen to open it (the billboard opens a live browser viewer, the Dev terminal a live shell) or any sprite for its sheet; everything opens into one stacked panel, so `Esc` always backs out exactly one level, `Ctrl/Cmd+K` or `/` jumps anywhere, and `?` lists every shortcut. The chrome follows your OS light/dark theme (`?theme=light|dark` overrides it). `pnpm office:shot` (screenshots checked against `docs/office-visual-checklist.md`) and `pnpm test:overlay` (click isolation) are the visual gates — both build the viewer first. Or, in Obsidian, create a note in `00 Inbox/`:
 
 ```markdown
 ---
