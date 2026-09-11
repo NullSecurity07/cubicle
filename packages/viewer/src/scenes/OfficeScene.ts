@@ -143,7 +143,7 @@ export class OfficeScene extends Phaser.Scene {
     }
     for (const [role, ag] of this.agents) if (!s.agents[role]) { ag.destroy(); this.agents.delete(role); }
     // surfaces at ~4 fps
-    if (time - this.lastRender > 250) { this.lastRender = time; const fr = this.hooks.frames(); for (const su of this.surfaces.values()) su.render(s, fr); }
+    if (time - this.lastRender > 250) { this.lastRender = time; const fr = this.hooks.frames(); for (const su of this.surfaces.values()) su.render(s, fr, this.hooks.clock()); }
     // camera keys
     const cam = this.cameras.main, v = 260 * dt / cam.zoom;
     if (this.keys.A.isDown || this.keys.LEFT.isDown) cam.scrollX -= v;
