@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { repoRoot, loadOrg, officeRole, OFFICES, Vault, type Org, DEFAULT_OFFICES } from '@cubicle/core';
+import { repoRoot, loadOrg, officeRole, OFFICES, Vault, divisionTeams, type Org, DEFAULT_OFFICES } from '@cubicle/core';
 import { loadProvidersConfig, apiKeyFor } from '@cubicle/router';
 import { hasDocker, hasSandboxImage, SANDBOX_IMAGE } from '@cubicle/tools';
 
@@ -12,7 +12,7 @@ export interface DoctorRow { area: string; item: string; ok: boolean | null; det
  * at a role that was fired or deactivated is a silent company-wide failure — everything lands on the CEO instead.
  */
 export function officeRows(org: Org): DoctorRow[] {
-  return OFFICES.map((office) => {
+  const rows: DoctorRow[] = OFFICES.map((office) => {
     const named = org.offices?.[office] ?? DEFAULT_OFFICES[office];
     const ok = officeRole(org, office) !== null;
     return {
@@ -21,6 +21,26 @@ export function officeRows(org: Org): DoctorRow[] {
       fix: `set a live role for \`${office}\` under \`offices:\` in Memory/constitution.md, or re-activate Roles/${named}.md`,
     };
   });
+  // A key the OFFICES enum does not know is merged into the map (org.ts) and then never looked up, so a typo
+  // — `securty:`, `chief_exec:` — is silently inert: the office it was meant to re-staff keeps its old holder
+  // and nothing anywhere says so. Spec item 5 asks doctor for office *mapping gaps*, and this is the one gap
+  // the per-office rows above cannot see (final review M2).
+  const unknown = Object.keys(org.offices ?? {}).filter((k) => !(OFFICES as readonly string[]).includes(k));
+  rows.push({
+    area: 'org', item: 'offices: keys', ok: unknown.length === 0,
+    detail: unknown.length ? `${unknown.join(', ')} ${unknown.length === 1 ? 'is not an office' : 'are not offices'} and ${unknown.length === 1 ? 'is' : 'are'} ignored` : `all ${OFFICES.length} keys are known offices`,
+    fix: `the offices are: ${OFFICES.join(', ')} — fix or remove the extra key(s) under \`offices:\` in Memory/constitution.md`,
+  });
+  // A division is a top-level team with at least one room under it, and only divisions hold a planning round.
+  // Strip a `parent:` (or make the chain cyclic) in an owner edit and `divisionTeams` goes empty: the heartbeat
+  // then fans out zero division plans for ever, with nothing but `daemon.warning`s to show for it.
+  const divisions = divisionTeams(org);
+  rows.push({
+    area: 'org', item: 'planning rounds', ok: divisions.length > 0,
+    detail: divisions.length ? divisions.map((t) => `${t.id} (lead ${t.lead})`).join(', ') : 'no team holds a planning round — every heartbeat will fan out zero division plans',
+    fix: 'a division is a team with no `parent:` and at least one team whose `parent:` names it; check the `parent:` lines in Teams/*.md',
+  });
+  return rows;
 }
 
 
