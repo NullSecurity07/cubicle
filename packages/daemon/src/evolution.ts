@@ -5,6 +5,7 @@ import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
   loadOrg, leadOf, teamOf, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, resolveRole, jobPath,
+  RESEARCH_INDEX, upsertIndexRow, resultBlock, researchSlug, type ResearchRequest, type DeliveredResearch,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -327,6 +328,75 @@ export function maybeEnqueueIntelligence(vault: Vault, now = new Date()): string
     }, 'daemon'));
   }
   return out;
+}
+
+// ---------- research knowledge (owner model §23, §40) ----------
+
+/** How long after delivery the company checks whether the recommendation was right. */
+export const FOLLOW_UP_DAYS = 14;
+
+const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86400_000).toISOString().slice(0, 10);
+
+/**
+ * Every research project that passed its gates gets a row in `Research/index.md` and a follow-up note with a
+ * due date. Both are keyed on the job id and written once — the follow-up note's existence is the marker, so
+ * this survives a restart and a replayed event log without duplicating anything.
+ *
+ * Nothing here asks a model for anything: the row is assembled from the request the requester already wrote
+ * and the Result block the author already finished with. Where the author stated no confidence or method,
+ * the row says `unstated` rather than guessing, because a fabricated confidence is worse than a missing one.
+ */
+export function captureResearchDeliveries(vault: Vault, now = new Date()): string[] {
+  const written: string[] = [];
+  for (const e of vault.events.query({ types: ['research.delivered'] })) {
+    const jobId = e.job; if (!jobId) continue;
+    const rel = `Research/followups/${jobId}.md`;
+    if (vault.exists(rel)) continue;
+    const note = readJob(vault, jobId); if (!note) continue;
+    const req: ResearchRequest | undefined = note.data.research;
+    const result = resultBlock(note.body);
+    const metrics = (result.metrics ?? {}) as Record<string, unknown>;
+    const slug = note.data.research_slug ?? researchSlug(req?.question ?? note.data.title, jobId);
+    const delivered = e.ts.slice(0, 10);
+    const row: DeliveredResearch = {
+      job: jobId, delivered,
+      question: req?.question ?? note.data.title,
+      decision: req?.decision ?? 'not stated on the request',
+      decision_owner: req?.decision_owner ?? note.data.for ?? note.data.owner_role ?? 'unstated',
+      method: String(metrics.method ?? 'unstated'),
+      confidence: String(metrics.confidence ?? 'unstated'),
+      report: `Research/${slug}/report.md`,
+    };
+    vault.writeText(RESEARCH_INDEX, upsertIndexRow(vault.readTextOrNull(RESEARCH_INDEX), row), 'daemon', { job: jobId });
+    const prediction = String(result.summary ?? '').trim() || 'the report recorded no summary';
+    vault.writeText(rel, [
+      '---',
+      `id: ${jobId}`,
+      `research: ${jobId}`,
+      `slug: ${slug}`,
+      `decision_owner: ${row.decision_owner}`,
+      `delivered: ${delivered}`,
+      `due: ${addDays(new Date(e.ts), FOLLOW_UP_DAYS)}`,
+      'status: pending',
+      `prediction: ${JSON.stringify(prediction)}`,
+      'outcome: ""',
+      '---',
+      `# Follow-up: ${row.question}`,
+      '',
+      '## What we predicted',
+      '',
+      prediction,
+      '',
+      `Required confidence was ${req?.required_confidence ?? 'unstated'}; the report claimed ${row.confidence}.`,
+      '',
+      '## What actually happened',
+      '',
+      `_Filled in by the research.measure job on or after ${addDays(new Date(e.ts), FOLLOW_UP_DAYS)}._`,
+      '',
+    ].join('\n'), 'daemon', { job: jobId });
+    written.push(rel);
+  }
+  return written;
 }
 
 /**
