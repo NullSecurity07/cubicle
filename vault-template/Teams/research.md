@@ -7,7 +7,7 @@ mission: Answer the question a team is about to bet a cycle on, with sources, a 
 room: research
 floor: 2
 parent: operations
-processes: [opportunity]
+processes: [opportunity, research_lifecycle]
 ---
 # Research
 

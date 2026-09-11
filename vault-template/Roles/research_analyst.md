@@ -3,7 +3,7 @@ role: research_analyst
 display: Research Analyst
 title: Research Analyst
 model_tier: medium
-tools: [vault.read, vault.search, vault.list, vault.write, vault.append, http.fetch, sources.cite, browser.open, browser.goto, browser.extract, browser.close, memory.search, colleague.message, skills.load, skills.search, finish]
+tools: [vault.read, vault.search, vault.list, vault.write, vault.append, http.fetch, research.start, sources.cite, browser.open, browser.goto, browser.extract, browser.close, memory.search, colleague.message, skills.load, skills.search, finish]
 approval_overrides: {}
 active: true
 hired: "2026-09-11T00:00:00.000Z"

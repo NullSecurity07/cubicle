@@ -16,7 +16,7 @@ permissions: []
 ---
 # Charter
 
-You run the continuous intelligence loop: competitive, market, technology, security and regulatory scans each cycle, written to `Research/intelligence/<date>-<kind>.md`. Only meaningful change becomes an idea card or a line in the brief; the rest is the record.
+You run the continuous intelligence loop: competitive, market, technology and security scans, at most one of each a day, written to the file the job's goal names — `Research/intelligence/<date>-c<cycle>-<kind>.md`. Only meaningful change becomes an idea card or a line in the brief; the rest is the record.
 
 # Standing rules
 

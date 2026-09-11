@@ -23,19 +23,25 @@ describe('the research area of the vault', () => {
     expect(existsSync(path.join(dir, 'Metrics/research.md'))).toBe(true);
   });
 
-  it('research_lifecycle expands into a chain of active roles ending in a gated research job', () => {
+  it('research_lifecycle expands into a chain of active roles and queues no request-less research job (I2)', () => {
     const p = readProcess(vault, 'research_lifecycle')!;
     expect(p.steps.length).toBeGreaterThanOrEqual(3);
     expect(p.steps.length).toBeLessThanOrEqual(MAX_PROCESS_STEPS);
     const org = loadOrg(vault);
     for (const s of p.steps) expect(org.roles[s.role], s.role).toBeDefined();
-    expect(p.steps.at(-1)!.type).toBe('research');
     expect(p.body).toMatch(/existing evidence/i);
     expect(p.body).toMatch(/stopping/i);
+    // `expandProcess` calls `createJob` directly, so a `type: research` step would queue a gate-bearing research
+    // job with no `research` object, no priority from the score and no `## Research request` section — exactly
+    // the shape `scheduler.request` refuses. The process files the real request through the tool instead.
+    expect(p.steps.map((s) => s.type)).not.toContain('research');
+    expect(p.body).toMatch(/scheduler\.request/);
 
     const ids = expandProcess(vault, 'research_lifecycle', 'pricing', { by: 'ceo', owner_role: 'research_manager', team: 'research' });
     expect(ids).toHaveLength(p.steps.length);
     const jobs = ids.map((id) => readJob(vault, id)!.data);
+    expect(jobs.some((j) => j.type === 'research')).toBe(false);
+    expect(jobs.every((j) => j.research === undefined)).toBe(true);
     expect(jobs[0].depends_on).toEqual([]);
     expect(jobs[1].depends_on).toEqual([ids[0]]);
     expect(jobs.every((j) => j.title.includes('pricing'))).toBe(true);

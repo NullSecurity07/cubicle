@@ -51,7 +51,7 @@ verification → analysis → synthesis → recommendation → decision → acti
 
 Every research job runs all fifteen. A small one runs them in an hour.
 
-## Opening a project (§63)
+## Opening a project
 
 Call `research.start` first. It creates `Research/<slug>/` with `README.md`, `question.md`, `protocol.md`,
 `sources.bib`, `evidence/`, `analysis/`, `results/` and `report.md`, pre-filled from the request. Re-running
