@@ -83,3 +83,28 @@ export function makeEmotes(scene: Phaser.Scene): string {
   EMOTES.forEach((e, i) => tex.add(e, 0, i * EMOTE_W, 0, EMOTE_W, EMOTE_H));
   return key;
 }
+
+/** 64×64 radial glow (white → transparent), tinted per floor and blended ADD by the scene. */
+export function makeLampGlow(scene: Phaser.Scene): string {
+  const key = 'lamp-glow';
+  if (scene.textures.exists(key)) return key;
+  const tex = scene.textures.createCanvas(key, 64, 64)!;
+  const g = tex.getContext();
+  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,0.9)'); grad.addColorStop(0.5, 'rgba(255,255,255,0.35)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+  tex.refresh();
+  return key;
+}
+
+/** A 4×h vertical gradient the scene stretches across the map behind the tower. Redrawn when the stops change. */
+export function makeSky(scene: Phaser.Scene, key: string, stops: [string, string], h: number): string {
+  if (scene.textures.exists(key)) scene.textures.remove(key);
+  const tex = scene.textures.createCanvas(key, 4, h)!;
+  const g = tex.getContext();
+  const grad = g.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, stops[0]); grad.addColorStop(1, stops[1]);
+  g.fillStyle = grad; g.fillRect(0, 0, 4, h);
+  tex.refresh();
+  return key;
+}
