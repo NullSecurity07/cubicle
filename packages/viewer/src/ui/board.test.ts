@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { boardOpened, boardClosed, boardHeadline, BOARD_HEADLINE_MS } from './board.js';
+import { boardOpened, boardClosed, boardHeadline, BOARD_HEADLINE_MS, BOARD_SESSION_MAX_MS } from './board.js';
 
 const T0 = '2026-09-11T10:00:00.000Z';
 const now = Date.parse(T0);
@@ -33,6 +33,25 @@ describe('the board room and the whiteboard (spec §6)', () => {
     expect(h.lines).toEqual(['• nobody has priced delivery']);
     expect(boardHeadline(closed, now + BOARD_HEADLINE_MS + 1)).toBeNull();
     expect(boardHeadline(null, now)).toBeNull();
+  });
+
+  // I4: `runBoardSession` emits `meeting.opened`, awaits up to four model calls, then emits `meeting.closed`.
+  // A kill in that window left the whiteboard — the owner's main surface — claiming a meeting was in progress
+  // for ever, hiding the plan headline, which is the same failure §6.2 rules out for the snapshot.
+  it('gives the wall back when a session opens and never closes', () => {
+    const open = boardOpened({ id: 'm1', room: 'board', subject: 'idea', title: 'Meal kits' }, T0)!;
+    expect(boardHeadline(open, now + BOARD_SESSION_MAX_MS - 1)!.head).toBe('The board is sitting');
+    expect(boardHeadline(open, now + BOARD_SESSION_MAX_MS + 1)).toBeNull();
+    // Four model calls fit inside the budget with room to spare.
+    expect(BOARD_SESSION_MAX_MS).toBeGreaterThanOrEqual(10 * 60_000);
+  });
+
+  it('lets the next board meeting clear a session whose close was lost', () => {
+    const open = boardOpened({ id: 'm1', room: 'board', subject: 'idea', title: 'Meal kits' }, T0)!;
+    // A close for another session in the board room: the one on the wall demonstrably never closed.
+    expect(boardClosed(open, { id: 'm2', room: 'board', verdict: 'pass' }, T0)).toBeNull();
+    // A close in any other room still leaves the board alone.
+    expect(boardClosed(open, { id: 'm2', room: 'meeting', verdict: 'pass' }, T0)).toBe(open);
   });
 
   it('trims a long idea title to the in-world text budget', () => {
