@@ -162,9 +162,18 @@ export function cancelJob(vault: Vault, id: string, by: string, reason: string):
   return true;
 }
 
+/**
+ * Where a `## Heading` starts, counted only when it is a line of its own. A plain substring search also matched
+ * agent-supplied text that merely *contains* "## Result" — the requester's question is rendered into the job body
+ * above the real result section — which let a request aim `finish` at the wrong place in the note (I1).
+ */
+function headingIndex(body: string, heading: string): number {
+  return new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[ \t]*$`, 'm').exec(body)?.index ?? -1;
+}
+
 /** Append a line under a `## Heading` (creating it before `## Result` or at the end). */
 export function appendToSection(body: string, heading: string, line: string): string {
-  const idx = body.indexOf(heading);
+  const idx = headingIndex(body, heading);
   const entry = line.endsWith('\n') ? line : line + '\n';
   if (idx < 0) return body.trimEnd() + `\n\n${heading}\n\n${entry}`;
   const after = idx + heading.length;
@@ -175,7 +184,7 @@ export function appendToSection(body: string, heading: string, line: string): st
 }
 
 export function setSection(body: string, heading: string, content: string): string {
-  const idx = body.indexOf(heading);
+  const idx = headingIndex(body, heading);
   const block = `${heading}\n\n${content.trim()}\n`;
   if (idx < 0) return body.trimEnd() + '\n\n' + block;
   const after = idx + heading.length;

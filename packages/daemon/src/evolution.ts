@@ -389,9 +389,24 @@ const INTELLIGENCE_TEST: Record<IntelligenceKind, string> = {
   security: 'a vulnerability or threat touches software we actually run, or a control we rely on stopped being sufficient',
 };
 
-/** The whole brief for one sweep. Exported so its wording is testable without running a job. */
-export function intelligenceGoal(kind: IntelligenceKind, date: string, previous: string | null): string {
-  const out = `Research/intelligence/${date}-${kind}.md`;
+/**
+ * Where one sweep writes. The name carries the date **and** the cycle: two heartbeats land on the same calendar
+ * day often (the trigger is 6 h *or* N completions), and a date-only name meant cycle N+1 overwrote cycle N's
+ * file and then picked the file it was about to destroy as its own "previous" — "report what changed since it"
+ * read its own unwritten output. The cycle is zero-padded so the directory sorts in order.
+ */
+export function intelligencePath(kind: IntelligenceKind, date: string, cycle: number): string {
+  return `Research/intelligence/${date}-c${String(cycle).padStart(3, '0')}-${kind}.md`;
+}
+
+/** Order two intelligence filenames by date then cycle. A pre-cycle file (date-only) sorts before that day's cycles. */
+function intelligenceOrder(rel: string): string {
+  const m = /(\d{4}-\d{2}-\d{2})(?:-c(\d+))?-/.exec(rel.split('/').pop() ?? '');
+  return m ? `${m[1]}-${String(Number(m[2] ?? 0)).padStart(5, '0')}` : '';
+}
+
+/** The whole brief for one sweep. `out` is the exact file the sweep must write. Exported so its wording is testable without running a job. */
+export function intelligenceGoal(kind: IntelligenceKind, out: string, previous: string | null): string {
   return [
     `Standing ${kind} intelligence sweep for this cycle. Scope: ${INTELLIGENCE_SCOPE[kind]}.`,
     '',
@@ -413,9 +428,14 @@ export function intelligenceGoal(kind: IntelligenceKind, date: string, previous:
 }
 
 /**
- * One sweep per kind, once per heartbeat cycle. Idempotent the way charter compression is: the job id is
- * derived from the cycle number, so a second call in the same cycle finds the note already there. `cheap`
- * tier because this is bounded, repetitive reading — exactly the work §38 says to automate cheaply.
+ * One sweep per kind, **at most once per calendar day** — not once per heartbeat. The heartbeat fires every 6 h
+ * or every N completions, so a per-cycle sweep meant four cheap-tier jobs several times a day against a free
+ * pool of a few hundred requests, and standing intelligence does not move that fast anyway. The job id is
+ * derived from the date, so every later cycle that day finds the note already there. `cheap` tier because this
+ * is bounded, repetitive reading — exactly the work §38 says to automate cheaply.
+ *
+ * A kind whose earlier sweep is still open is skipped entirely (I5): an analyst three days behind would
+ * otherwise accumulate a queue of sweeps that all read the same stale "previous" and all land on the same day.
  */
 export function maybeEnqueueIntelligence(vault: Vault, now = new Date()): string[] {
   const cycle = vault.events.count('heartbeat.completed');
@@ -424,16 +444,21 @@ export function maybeEnqueueIntelligence(vault: Vault, now = new Date()): string
   const assigned = org.roles.intelligence_analyst ? 'intelligence_analyst' : (researchLead(org) ?? 'research_manager');
   if (!org.roles[assigned]) return [];
   const date = now.toISOString().slice(0, 10);
+  const open = listJobs(vault, { status: ['queued', 'running', 'blocked', 'in_review'] }).filter((j) => j.type === 'intelligence');
   const out: string[] = [];
   for (const kind of INTELLIGENCE_KINDS) {
-    const id = idFromKey('job', `intel-${cycle}-${kind}`);
+    const id = idFromKey('job', `intel-${date}-${kind}`);
     if (vault.exists(jobPath(id))) continue;
-    const previous = vault.list('Research/intelligence', { ext: '.md' }).filter((r) => r.endsWith(`-${kind}.md`)).sort().at(-1) ?? null;
+    if (open.some((j) => j.title.toLowerCase().startsWith(kind))) continue;
+    const file = intelligencePath(kind, date, cycle);
+    const previous = vault.list('Research/intelligence', { ext: '.md' })
+      .filter((r) => r.endsWith(`-${kind}.md`) && r !== file)
+      .sort((a, b) => intelligenceOrder(a).localeCompare(intelligenceOrder(b))).at(-1) ?? null;
     out.push(createJob(vault, {
       id, type: 'intelligence', title: `${kind[0].toUpperCase()}${kind.slice(1)} intelligence: cycle ${cycle}`,
       assigned, priority: 4, team: 'research', owner_role: 'research_manager', for: 'research_manager', model_tier: 'cheap',
-      done_when: `Research/intelligence/${date}-${kind}.md exists with observations, changes, alerts and noise ignored; every meaningful change is either an Ideas/ card or a line under ## Alerts`,
-      goal: intelligenceGoal(kind, date, previous),
+      done_when: `${file} exists with observations, changes, alerts and noise ignored; every meaningful change is either an Ideas/ card or a line under ## Alerts`,
+      goal: intelligenceGoal(kind, file, previous),
     }, 'daemon'));
   }
   return out;
@@ -455,7 +480,7 @@ const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86400_000).to
  * and the Result block the author already finished with. Where the author stated no confidence or method,
  * the row says `unstated` rather than guessing, because a fabricated confidence is worse than a missing one.
  */
-export function captureResearchDeliveries(vault: Vault, now = new Date()): string[] {
+export function captureResearchDeliveries(vault: Vault): string[] {
   const written: string[] = [];
   for (const e of vault.events.query({ types: ['research.delivered'] })) {
     const jobId = e.job; if (!jobId) continue;
@@ -525,16 +550,24 @@ export function listResearchFollowUps(vault: Vault): FollowUpNote[] {
   });
 }
 
+/** The last calendar day the follow-up sweep ran, per vault. Due dates have day granularity, so once is enough. */
+const followUpSweptOn = new Map<string, string>();
+
 /**
  * A pending follow-up whose due date has arrived becomes one `research.measure` job. Idempotent by job id, and
  * gated by the note's own `status`, so an owner who writes `status: measured` by hand stops the loop the same
  * way the measurement job does. §40: a recommendation nobody measures is an opinion with a bibliography.
+ *
+ * Runs at most once a calendar day (M4): the daemon ticks this every 30 s, and every tick re-read and re-parsed
+ * every follow-up note in the vault to compare a date that only changes at midnight.
  */
 export function enqueueResearchFollowUps(vault: Vault, now = new Date()): string[] {
   const today = now.toISOString().slice(0, 10);
+  if (followUpSweptOn.get(vault.root) === today) return [];
   const org = loadOrg(vault);
   const lead = researchLead(org) ?? 'research_manager';
   if (!org.roles[lead]) return [];
+  followUpSweptOn.set(vault.root, today);
   const out: string[] = [];
   for (const f of listResearchFollowUps(vault)) {
     if (f.status !== 'pending' || !f.due || f.due > today) continue;
@@ -558,7 +591,7 @@ export function enqueueResearchFollowUps(vault: Vault, now = new Date()): string
         `1. \`vault.read ${f.path}\` and \`vault.read ${report}\` for the recommendation and the confidence it claimed.`,
         `2. Look for what actually happened: \`vault.read Metrics/daily.md\`, the Decisions/ note if one was written, and the jobs that followed [[${f.research}]]. Use \`vault.search\` rather than guessing where the evidence is.`,
         `3. \`vault.append ${report}\` with a \`## Prediction vs reality\` section: what was predicted, what happened, and which of "as expected", "partly", "not as expected" or "cannot tell yet" it was. If the honest answer is "cannot tell yet", say so and say what would settle it — an invented outcome poisons every future confidence estimate the company makes.`,
-        `4. \`vault.write ${f.path}\` with \`status: measured\` and \`outcome:\` set to that one-line verdict, keeping every other field.`,
+        `4. \`vault.write ${f.path}\` with \`status: measured\` and \`outcome:\` set to that one-line verdict, keeping every other field. \`outcome:\` must BEGIN with exactly one of \`as expected\`, \`partly\`, \`not as expected\`, \`cannot tell yet\` — those four words, lower case, first — and may then continue in your own words. The company counts them; a verdict that starts any other way is read as "not as expected" however well it is argued.`,
         `5. \`vault.write Research/index.md\` replacing this job's row's last column with the same verdict. Change nothing else in that file.`,
         `6. Tell ${owner} with \`colleague.message\`, one line, and finish with the verdict as your summary.`,
       ].join('\n'),

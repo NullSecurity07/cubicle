@@ -3,7 +3,7 @@ import './ui/app.css';
 import Phaser from 'phaser';
 import { OfficeScene } from './scenes/OfficeScene.js';
 import { Net, resolveWs } from './net.js';
-import { emptyState, applyEvent, applySnapshot, tick, type State, type CubicleEvent, type Snapshot } from './state.js';
+import { emptyState, applyEvent, applySnapshot, tick, withFrameSeq, type State, type CubicleEvent, type Snapshot } from './state.js';
 import { Panel, SURPRISE_ME, type Origin } from './ui/panel.js';
 import { TopBar } from './ui/bar.js';
 import { applyTheme, currentTheme, themeFromQuery, THEMES } from './ui/tokens.js';
@@ -12,7 +12,7 @@ import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
 import { withMotion, reducedMotion } from './world/motion.js';
-import { ElevatorView, toViewState } from './world/elevator-view.js';
+import { ElevatorView, toViewState, emptyViewState } from './world/elevator-view.js';
 import { announce, announcementFor, coachMark, toast } from './ui/notify.js';
 import { FirstRun } from './ui/firstrun.js';
 import { QuickOpen, quickItems } from './ui/quickopen.js';
@@ -83,13 +83,17 @@ function rebuildReplayTo(index: number): void {
 }
 
 let elevatorView: ElevatorView | null = null;
+/** The one view-state object the rAF loop fills and hands to the elevator view (see `toViewState`). */
+const elevatorViewState = emptyViewState();
 function viewOf(kind: string): ReturnType<typeof viewFor> {
   if (kind === 'keys') return keysView();              // the shortcut sheet is the one kind with no data behind it
   try { ctx.floorLabels ??= Object.fromEntries(scene.floorSummary().map((f) => [f.floor, f.label])); } catch { /* the scene has not created its world yet */ }
   return viewFor(kind, state, ctx);
 }
 const panel = new Panel({ viewOf, onOpen: (kind) => open(kind), onLocate: (target) => scene.focusOn(target), onEmpty: () => scene.restoreZoom(), onChat: (text) => sendChat(text) });
-coachMark('Drag to pan, scroll to zoom, click anything in the office. Press ? for shortcuts.');
+// Built, not shown. The first-run card is the other first-contact message; the mark waits until the first snapshot
+// says the card is not coming, or until the card has gone (ui/firstrun.ts `onDismissed`).
+const coach = coachMark('Drag to pan, scroll to zoom, click anything in the office. Press ? for shortcuts.');
 
 scene.hooks = {
   getState: () => state,
@@ -161,34 +165,37 @@ function sendChat(text: string): void {
 const firstRun = new FirstRun({
   onStart: (text) => { sendChat(text); void firstRun.collapse().then(() => open('cabin', undefined, { zoom: false })); },
   onSurprise: () => { sendChat(SURPRISE_ME); void firstRun.collapse().then(() => open('cabin', undefined, { zoom: false })); },
+  onDismissed: () => coach.show(),   // the office hint takes its turn only once the card has gone
 });
 const quick = new QuickOpen({ items: () => quickItems(state), onPick: (kind) => open(kind) });
 /** `__cubicle.setHour` mirrored: the scene tints by it, and the time bar's sun/moon must read the same hour. */
 let hourOverride: number | null = null;
-
-/** `0` fits the whole tower: the camera bounds are the map plus a margin; fractional zoom is allowed only here. */
-function fitTower(): void {
-  const cam = scene.cameras.main; const b = cam.getBounds();
-  if (!b.width || !b.height) return;   // the scene has not built its world yet: nothing to fit, and a 0 would be Infinity
-  cam.setZoom(Math.min(cam.width / b.width, cam.height / b.height)).centerOn(b.centerX, b.centerY);
-}
 
 /** `M` goes to the chrome above, which owns both the HTML frame and the Phaser minimap camera's visibility. */
 const minimapHook: { toggle(): void } = { toggle: () => minimap.toggle() };
 
 bindKeys({
   floor1: () => scene.focusFloor(1), floor2: () => scene.focusFloor(2), floor3: () => scene.focusFloor(3), floor4: () => scene.focusFloor(4),
-  lobby: () => scene.focusOn('noticeboard'), fit: fitTower,
+  // `0` fits the whole tower. One implementation, in the scene: this used to be a second, instant one here,
+  // and the scene's own `keys.ZERO` fired on the same keypress, so the two fights over the camera were visible.
+  lobby: () => scene.focusOn('noticeboard'), fit: () => scene.fitTower(),
   talk: () => open('cabin'), queue: () => open('noticeboard'), brief: () => open('newsstand'), plan: () => open('whiteboard'), org: () => open('org'),
   pause: () => time.togglePlay(), prev: () => time.step(-1), next: () => time.step(1),
   minimap: () => minimapHook.toggle(), help: () => open('keys'), quickopen: () => quick.open(),
-});
+// The two aria-modal cards own the keyboard while they are up: one Tab out of their text field used to leave `T`
+// opening the cabin sheet underneath and `1`-`4` flying the camera behind them.
+}, () => firstRun.visible || quick.visible);
 
-/** A live frame arrived (from the daemon or `__cubicle.pushFrame`): remember it, measure the rate, refresh a viewer at most 5×/s. */
+/**
+ * A live frame arrived (from the daemon or `__cubicle.pushFrame`): remember it, count it, measure the rate, refresh
+ * a viewer at most 5×/s. The count is the one the viewer's title bar prints; `seq` is the daemon's own counter when
+ * the socket carried one, and a locally pushed frame just advances it (state.ts `withFrameSeq`).
+ */
 const frameTimes: Record<string, number[]> = {};
 let liveRefresh = 0;
-function onFrameData(streamId: string, dataUrl: string): void {
+function onFrameData(streamId: string, dataUrl: string, seq?: number): void {
   frames[streamId] = dataUrl;
+  state = withFrameSeq(state, streamId, seq);
   const t = (frameTimes[streamId] ??= []); t.push(performance.now()); if (t.length > 10) t.shift();
   fps[streamId] = t.length > 1 ? ((t.length - 1) * 1000) / (t[t.length - 1] - t[0]) : 0;
   if (panel.current === 'billboard' && !liveRefresh) liveRefresh = window.setTimeout(() => { liveRefresh = 0; refresh(); }, 200);
@@ -208,6 +215,9 @@ const net = new Net(url, token, {
     // Spec §12 d/e: an empty company asks the first-run question once per session. The app opened the card, not the
     // owner, so nothing zooms the camera; Escape just hides it and the cabin keeps asking until the company has a name.
     if (state.firstRun && !firstRunOpened) { firstRunOpened = true; firstRun.show(); }
+    // Snapshots keep arriving while the card is up, and `firstRun` stays true until the company has a name: the
+    // hint may only take its turn once the card is off the screen (or was never coming).
+    else if (!firstRun.visible) coach.show();
   },
   onEvent(e) {
     if (state.mode === 'replay') { if (liveState) liveState = applyEvent(liveState, e); return; }
@@ -220,7 +230,7 @@ const net = new Net(url, token, {
     if (state.staleSnapshot) { state = { ...state, staleSnapshot: false }; net.snapshot(); } // plan / brief / inbox changed on disk → refresh text
     refresh();
   },
-  onFrame(f) { onFrameData(f.streamId, `data:image/jpeg;base64,${f.jpegBase64}`); },
+  onFrame(f) { onFrameData(f.streamId, `data:image/jpeg;base64,${f.jpegBase64}`, f.seq); },
   onReplay(r) {
     replayBuffer = replayBuffer.concat(r.events);
     if (!r.done) { net.replay(r.from, r.to, r.cursor); return; }
@@ -269,7 +279,9 @@ function loop(now: number): void {
   if (now - lastLayout > 500) { lastLayout = now; minimap.layout(); rail.update(); }
   time.tick(dt, new Date(), hourOverride);
   if (state.mode === 'live') state = tick(state, Date.now());
-  if (elevatorView && scene.scene.isActive()) elevatorView.setState(toViewState(scene.elevator.state()));   // doors and digits follow the engine every frame
+  // doors and digits follow the engine every frame; `toViewState` writes into one reused object so the loop
+  // allocates nothing per frame (its riders array is already reference-cached inside elevator-view.ts)
+  if (elevatorView && scene.scene.isActive()) elevatorView.setState(toViewState(scene.elevator.state(), TILE, elevatorViewState));
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

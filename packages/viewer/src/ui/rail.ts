@@ -21,6 +21,17 @@ export function deepen(tint: string): string { return shade(tint, -DEEP); }
 /** The same, for a floor number, straight from the shared palette. */
 export function floorDeep(n: number): string { return deepen(floorPalette(n).tab); }
 
+/**
+ * Which floors' current-tab fills have actually moved since the last write. `update()` runs twice a second off the
+ * rAF loop and used to set four CSS custom properties every beat for values that change when a floor is repainted,
+ * which is never. Cheap either way — but four style writes a beat is noise in a frame budget that also draws a tower.
+ */
+export function deepChanges(prev: Record<number, string>, summary: { floor: number; color: string }[]): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const f of summary) { const deep = deepen(f.color); if (prev[f.floor] !== deep) out[f.floor] = deep; }
+  return out;
+}
+
 export function railHtml(summary: FloorInfo[], current: number, lobby: boolean, divisions: Record<number, string[]>): string {
   const floors = [...summary].sort((a, b) => b.floor - a.floor);
   const tabs = floors.map((f) => {
@@ -37,6 +48,8 @@ export function railHtml(summary: FloorInfo[], current: number, lobby: boolean, 
 
 export class Rail {
   private el = document.getElementById('rail')!;
+  /** The floor fills already written to the element, so a beat that changes nothing writes nothing. */
+  private deep: Record<number, string> = {};
   constructor(private deps: RailDeps) {
     this.el.hidden = false;
     this.el.addEventListener('click', (e) => {
@@ -52,7 +65,7 @@ export class Rail {
     try { summary = this.deps.summary(); } catch { return; }   // the world is not built yet
     if (!summary.length) return;
     // The fill for the current tab, one per floor, from the colour that floor actually renders with.
-    for (const f of summary) this.el.style.setProperty(`--floor-${f.floor}-deep`, deepen(f.color));
+    for (const [floor, value] of Object.entries(deepChanges(this.deep, summary))) { this.el.style.setProperty(`--floor-${floor}-deep`, value); this.deep[Number(floor)] = value; }
     morph(this.el, railHtml(summary, this.deps.currentFloor(), this.deps.inLobby(), this.deps.divisions()));
   }
 }

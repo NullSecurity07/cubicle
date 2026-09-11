@@ -18,6 +18,9 @@ export interface View {
   /** obsidian:// link for the header */ link?: string;
   /** re-rendered on every event and morphed in place; the panel offers "Jump to latest" when scrolled up */ live?: boolean;
   /** pixel icon shown in the trail header */ icon?: GlyphName;
+  /** which realtime viewer this is (`mode: 'viewer'` only). The stylesheet sizes the two differently: the browser
+   *  box is capped to the frame's own aspect so nothing is dead black beside it, the terminal grows with its output. */
+  viewer?: 'browser' | 'terminal';
 }
 export interface Ctx {
   frames: Record<string, string>; tokenQuery: string; vaultName: string;
@@ -68,10 +71,19 @@ export function row(o: { left?: string; title: string; small?: string; right?: s
 }
 export const locate = (role: string): string => `<button class="mini" data-locate="agent:${esc(role)}">Locate</button>`;
 
-/** Segmented control: first segment selected; the panel keeps the choice across re-renders. */
+/** The ids that tie a segmented control's tabs to its panes; only one such control is ever in the panel body. */
+export const segTabId = (id: string): string => `seg-${id}`;
+export const segPaneId = (id: string): string => `pane-${id}`;
+
+/**
+ * Segmented control: first segment selected; the panel keeps the choice across re-renders.
+ *
+ * The tabs carry `role="tab"`, so the panes have to carry `role="tabpanel"` and the two have to name each other —
+ * without `aria-controls`/`aria-labelledby` the tablist announced itself as controlling nothing at all.
+ */
 export function segmented(segs: { id: string; label: string; count?: number; html: string }[]): string {
-  const tabs = segs.map((g, i) => `<button role="tab" class="seg" data-seg="${esc(g.id)}" aria-selected="${i === 0}">${esc(g.label)}${g.count ? `<span class="n">${g.count}</span>` : ''}</button>`).join('');
-  const panes = segs.map((g, i) => `<div class="pane" data-key="pane-${esc(g.id)}" data-pane="${esc(g.id)}"${i === 0 ? '' : ' hidden'}>${g.html}</div>`).join('');
+  const tabs = segs.map((g, i) => `<button role="tab" class="seg" id="${esc(segTabId(g.id))}" aria-controls="${esc(segPaneId(g.id))}" data-seg="${esc(g.id)}" aria-selected="${i === 0}">${esc(g.label)}${g.count ? `<span class="n">${g.count}</span>` : ''}</button>`).join('');
+  const panes = segs.map((g, i) => `<div class="pane" role="tabpanel" id="${esc(segPaneId(g.id))}" aria-labelledby="${esc(segTabId(g.id))}" tabindex="0" data-key="pane-${esc(g.id)}" data-pane="${esc(g.id)}"${i === 0 ? '' : ' hidden'}>${g.html}</div>`).join('');
   return `<div class="segmented" role="tablist" data-key="segs">${tabs}</div>${panes}`;
 }
 
@@ -204,7 +216,7 @@ export const browserStream = (s: State): string => Object.values(s.surfaces).fil
 /** Browser realtime viewer: title bar (LIVE/ended, agent, host, seq, fps), the frame updated in place, ended footer. */
 export function browserViewerView(s: State, ctx: Ctx): View {
   const cur = s.surfaces[browserStream(s)];
-  if (!cur) return { mode: 'viewer', title: 'Billboard', html: emptyHtml('doc', 'No browser session yet', 'Whoever browses the web shows up here, live.'), live: true };
+  if (!cur) return { mode: 'viewer', viewer: 'browser', title: 'Billboard', html: emptyHtml('doc', 'No browser session yet', 'Whoever browses the web shows up here, live.'), live: true };
   const src = ctx.frames[cur.streamId] ?? (cur.lastFrame ? `/screens/${cur.lastFrame.replace('.cubicle/screens/', '')}${ctx.tokenQuery}` : '');
   const seq = s.frames[cur.streamId]?.seq ?? 0;
   const fps = ctx.fps?.[cur.streamId];
@@ -212,7 +224,9 @@ export function browserViewerView(s: State, ctx: Ctx): View {
   const bar = `<div class="vbar" data-key="vbar">${cur.active ? '<span class="badge live">LIVE</span>' : '<span class="badge ended">Ended</span>'}<span class="vmeta">${esc(meta)}</span><span class="vstats">seq ${seq}${cur.active && fps !== undefined ? ` · ${fps.toFixed(1)} fps` : ''}</span></div>`;
   const frame = src ? `<div class="vframe" data-key="vframe"><img data-key="frame" class="frame" src="${esc(src)}" alt="Browser session" /></div>` : emptyHtml('doc', 'Waiting for the first frame');
   const foot = cur.active ? '' : `<div class="vfoot" data-key="vfoot">Session ended${cur.endedAt ? ` ${esc(fmtTime(cur.endedAt))}` : ''} · showing the last frame</div>`;
-  return { mode: 'viewer', title: 'Billboard', sub: meta, html: bar + frame + foot, live: true };
+  // One metadata row, the spec's wireframe: the .vbar carries LIVE, the agent, the host, the seq and the rate.
+  // It used to be handed to the panel header as `sub` as well, so the viewer wore two header bars.
+  return { mode: 'viewer', viewer: 'browser', title: 'Billboard', html: bar + frame + foot, live: true };
 }
 
 /** A shell job is running when an agent on a job is using the terminal tool (it may still be walking to the Dev room). */
@@ -221,9 +235,9 @@ export const shellRunning = (s: State): boolean => Object.values(s.agents).some(
 /** Terminal viewer: prompt lines in the accent, a caret while a job runs; the panel offers "Jump to latest". */
 export function terminalViewerView(s: State): View {
   const lines = s.terminal.slice(-400).flatMap((l) => l.split('\n'));
-  if (!lines.length) return { mode: 'viewer', title: 'Terminal', html: emptyHtml('chevron', 'No commands run yet', 'Shell output from the Dev room streams here.'), live: true };
+  if (!lines.length) return { mode: 'viewer', viewer: 'terminal', title: 'Terminal', html: emptyHtml('chevron', 'No commands run yet', 'Shell output from the Dev room streams here.'), live: true };
   const body = lines.map((l) => `<span class="line${/^[$>#]\s/.test(l) ? ' prompt' : ''}">${esc(l)}</span>`).join('\n');
-  return { mode: 'viewer', title: 'Terminal', sub: `${lines.length} lines`, html: `<pre class="term" data-key="term">${body}${shellRunning(s) ? '<span class="caret" data-key="caret"></span>' : ''}</pre>`, live: true };
+  return { mode: 'viewer', viewer: 'terminal', title: 'Terminal', sub: `${lines.length} lines`, html: `<pre class="term" data-key="term">${body}${shellRunning(s) ? '<span class="caret" data-key="caret"></span>' : ''}</pre>`, live: true };
 }
 
 export const ROOM_LABELS: Record<string, string> = { pantry: 'Pantry', meetingroom: 'Meeting room', boardroom: 'Board room', ceo_office: 'CEO office' };

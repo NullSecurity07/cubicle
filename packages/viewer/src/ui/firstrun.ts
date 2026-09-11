@@ -15,7 +15,7 @@ export class FirstRun {
   /** One idea per card: a double-click on Start must not send twice or start a second collapse. */
   private sent = false;
   visible = false;
-  constructor(private deps: { onStart(text: string): void; onSurprise(): void }) {
+  constructor(private deps: { onStart(text: string): void; onSurprise(): void; /** the card is off the screen: another first-contact message may take its turn */ onDismissed?(): void }) {
     this.el = document.createElement('div');
     this.el.id = 'firstrun'; this.el.hidden = true;
     this.el.innerHTML = `<form class="card" role="dialog" aria-modal="true" aria-labelledby="fr-title"><h1 id="fr-title">What company will you start?</h1><input id="fr-input" type="text" placeholder="A meal-planning site for busy parents" aria-label="Your company idea" autocomplete="off" /><div class="row-actions"><button type="button" class="btn" data-fr="surprise">Surprise me</button><button type="submit" class="btn primary">Start ${pixelIcon('play')}</button></div><p class="caption">Everything stays in your Obsidian vault.</p></form>`;
@@ -31,7 +31,13 @@ export class FirstRun {
   }
   /** Re-showing while it is up would overwrite `returnTo` with the card's own input. */
   show(): void { if (this.visible) { this.input.focus(); return; } this.sent = false; this.returnTo = document.activeElement as HTMLElement | null; this.el.hidden = false; this.visible = true; this.el.classList.remove('collapse'); this.input.focus(); }
-  hide(): void { this.el.hidden = true; this.visible = false; this.returnTo?.focus?.(); }
+  /** Escape, or the end of the collapse. The office coach mark waits on this: the spec's first run is one message,
+   *  and `01-first-run.png` showed the card and the coach mark up together. */
+  hide(): void {
+    const was = this.visible;
+    this.el.hidden = true; this.visible = false; this.returnTo?.focus?.();
+    if (was) this.deps.onDismissed?.();
+  }
   /** Play the collapse towards the sheet, then hide. Resolves when the sheet may open. */
   collapse(): Promise<void> {
     return new Promise((resolve) => {

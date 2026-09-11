@@ -5,7 +5,7 @@ import {
   readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
   loadGates, gatesForRisk, criteriaFor, gateAssignee, type GateTable,
   loadOrg, isLead, teamOf, leadOf, resolveRole, type ModelTier,
-  ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES,
+  ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
 } from '@cubicle/core';
 import { NoModelAvailableError, TIER_RANK, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -199,9 +199,15 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   };
   const cancelled = () => refresh().status === 'cancelled';
 
-  /** Extract the last `## Result` JSON block written into a job's body (survives the sub-job's own writes to that section). */
+  /**
+   * Extract the **last** `## Result` JSON block written into a job's body (survives the sub-job's own writes to
+   * that section). Last, not first: the agent-supplied `## Research request` section is rendered above it, so a
+   * requester could otherwise forge the result a gate reads by putting a heading and a fence in their question.
+   * Length-checked because `split` on a body with no heading returns the whole body.
+   */
   const resultFrom = (body: string): JobResult => {
-    const raw = body.split('## Result')[1]?.match(/```json\n([\s\S]*?)\n```/)?.[1];
+    const parts = body.split(RESULT_HEADING);
+    const raw = parts.length > 1 ? parts[parts.length - 1].match(/```json\n([\s\S]*?)\n```/)?.[1] : undefined;
     if (!raw) return JobResult.parse({ status: 'done' });
     try { return JobResult.parse(JSON.parse(raw)); } catch { return JobResult.parse({ status: 'done' }); }
   };
@@ -260,6 +266,19 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     return { status: finalStatus === 'in_review' ? 'done' : finalStatus, result } as JobOutcome;
   };
 
+  /**
+   * A gate is a second pair of eyes (spec §4), so nobody reviews their own work. When the resolved assignee is
+   * the job's own author — the shape `research.review` has by default, since both the `research` job and its
+   * gate resolve to the research team's lead — hand the gate to someone else, in the brief's order: an active
+   * member of the gate's team (the research lead's team for `research.review`), then that lead's own lead (the
+   * COO for Research), then the CEO. Returns null when the author is genuinely the only person who could look.
+   */
+  const secondPairOfEyes = (gate: string, assignee: string, author: string): string | null => {
+    const team = org.teams[gate.split('.')[0]] ?? teamOf(org, assignee);
+    const candidates = [...(team?.members ?? []), team?.lead ?? '', leadOf(org, assignee) ?? '', 'ceo'];
+    return candidates.find((c) => c && c !== author && org.roles[c]) ?? null;
+  };
+
   /** Create the review job for one gate of `parent`. */
   const enqueueGate = (gate: string, parent: JobFrontmatter, result: JobResult): void => {
     let assignee = resolveRole(org, gateAssignee(gate, parent, org));
@@ -269,6 +288,17 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       const fallback = leadOf(org, assignee) ?? (gate === 'requester.review' ? (leadOf(org, parent.owner_role ?? '') ?? 'ceo') : 'ceo');
       events.emit({ type: 'daemon.warning', agent: roleId, job: parent.id, payload: { where: 'enqueueGate', message: `gate ${gate} assignee "${assignee}" has no active worker; reassigned to ${fallback}` } });
       assignee = fallback;
+    }
+    // C1/M9: the author is not their own reviewer. research_manager both authors `research` jobs and leads the
+    // team `research.review` resolves to, and `requester.review` falls back to the same lead when the decision
+    // owner went inactive — either way the gate would have been a self-review and the spec's quality gate would
+    // do nothing.
+    if (assignee === parent.assigned) {
+      const other = secondPairOfEyes(gate, assignee, parent.assigned);
+      if (other) {
+        events.emit({ type: 'daemon.warning', agent: roleId, job: parent.id, payload: { where: 'enqueueGate', message: `gate ${gate} resolved to the job's own author ${assignee}; reassigned to ${other}` } });
+        assignee = other;
+      }
     }
     const criteria = criteriaFor(gates, parent.type);
     // The gate's *own* criteria, when it has one (research.review's §35 checklist, qa.review's "cite a file").
@@ -283,7 +313,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       // set on the gate job: a gate type's own chain is empty, and `gatesForRisk` would read a carried-over
       // `high` as "this review is itself reviewed by security.review".
       stream: parent.stream,
-      goal: `Review job [[${parent.id}]] (${parent.type}) as the ${gate} gate. What good looks like: ${criteria}${gateCriteria ? `\nAs the ${gate} reviewer, check: ${gateCriteria}` : ''}\nDone when (author's): ${parent.done_when ?? 'not stated'}\nAuthor's summary: ${result.summary}${gate === 'qa.review' && parent.stream ? `\nThe CI record for stream "${parent.stream}" is at Workspace/${parent.stream}/.cubicle-ci/ — read the newest one; a green record older than the change is not a pass. If this change altered the architecture (a new dependency, a new service, a new data store, a changed boundary) there must be an ADR in Docs/adr/; return it if there is not.` : ''}${gate === 'security.review' ? `\nThis change is ${parent.risk} risk. Name the data, credentials and permissions it touches and judge each one.` : ''}\nRead its Result block and artifacts, check with evidence, then finish with status done and verdict pass, or verdict return with findings that name a file or an output line${gate === 'coo.verify' ? ', plus exactly one lesson in finish.lessons' : ''}. A job may be returned once per gate; a second return fails it.`,
+      goal: `Review job [[${parent.id}]] (${parent.type}) as the ${gate} gate. What good looks like: ${criteria}${gateCriteria ? `\nAs the ${gate} reviewer, check: ${gateCriteria}` : ''}\nDone when (author's): ${parent.done_when ?? 'not stated'}\nAuthor's summary: ${result.summary}${gate === 'qa.review' && parent.stream ? `\nThe CI record for stream "${parent.stream}" is at Workspace/${parent.stream}/.cubicle-ci/ — read the newest one; a green record older than the change is not a pass. If this change altered the architecture (a new dependency, a new service, a new data store, a changed boundary) there must be an ADR in Docs/adr/; return it if there is not.` : ''}${gate === 'security.review' ? `\nThis change is ${parent.risk} risk. Name the data, credentials and permissions it touches and judge each one.` : ''}${gate === 'research.review' ? `\nThe requester asked for ${parent.research?.required_confidence ?? 'an unstated'} confidence on a ${parent.research?.portfolio ?? 'an unstated'} bet: judge the evidence against that bar, not against your own. Under-confidence stated honestly passes; confidence the evidence does not carry does not.` : ''}\nRead its Result block and artifacts, check with evidence, then finish with status done and verdict pass, or verdict return with findings that name a file or an output line${gate === 'coo.verify' ? ', plus exactly one lesson in finish.lessons' : ''}. A job may be returned once per gate; a second return fails it.`,
     });
   };
 

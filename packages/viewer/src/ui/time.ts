@@ -47,6 +47,18 @@ export const sunOrMoon = (hour: number): 'sun' | 'moon' => (hour >= 6 && hour < 
 
 export interface TimeHandlers { onLive(): void; onReplayRequest(date: string): void; onScrub(index: number): void; }
 
+/** `?replay=YYYY-MM-DD` loads that day once the socket is up; the daemon needs a moment before it can answer. */
+export const REPLAY_AUTOLOAD_MS = 500;
+
+/**
+ * What the clock reads once a day is loaded. The "(Space pauses, arrows step)" that used to be crammed in here is a
+ * keyboard hint, not a clock: it lives beside the transport (`#replay-hint`), and the label says what it is.
+ */
+export function replayLabel(events: { ts: string }[]): string {
+  if (!events.length) return 'no events that day';
+  return `${events.length} events · ${events[0].ts.slice(11, 19)}–${events[events.length - 1].ts.slice(11, 19)}`;
+}
+
 /** Live/replay controls: date picker loads a day's events; the slider scrubs through them at 1×–50×. */
 export class TimeControls {
   private live = document.getElementById('live') as HTMLButtonElement;
@@ -56,6 +68,8 @@ export class TimeControls {
   private speed = document.getElementById('speed') as HTMLSelectElement;
   private clock = document.getElementById('clock')!;
   private sunmoon = document.getElementById('sunmoon')!;
+  private bar = document.getElementById('time')!;
+  private playBtn = document.getElementById('playpause') as HTMLButtonElement;
   private lastIcon = '';
   events: CubicleEvent[] = [];
   index = 0;
@@ -66,29 +80,49 @@ export class TimeControls {
   constructor(private h: TimeHandlers) {
     this.date.value = new Date().toISOString().slice(0, 10);
     const q = new URLSearchParams(location.search);
-    if (q.get('replay')) { this.date.value = q.get('replay')!; setTimeout(() => this.load.click(), 500); }
-    this.live.addEventListener('click', () => { this.playing = false; this.scrub.disabled = true; this.setMode('live'); h.onLive(); });
-    this.load.addEventListener('click', () => { if (this.date.value) h.onReplayRequest(this.date.value); });
-    this.scrub.addEventListener('input', () => { this.playing = false; this.seek(Math.round((Number(this.scrub.value) / 1000) * this.events.length)); });
-    this.scrub.addEventListener('dblclick', () => { this.playing = !this.playing; });
+    if (q.get('replay')) { this.date.value = q.get('replay')!; setTimeout(() => this.load.click(), REPLAY_AUTOLOAD_MS); }
+    this.live.addEventListener('click', () => { this.stopPlaying(); this.scrub.disabled = true; this.setMode('live'); h.onLive(); });
+    // Pressing Replay is what reveals the transport, so the mode flips here rather than when the day's events land.
+    this.load.addEventListener('click', () => { this.setMode('replay'); if (this.date.value) h.onReplayRequest(this.date.value); });
+    this.scrub.addEventListener('input', () => { this.stopPlaying(); this.seek(Math.round((Number(this.scrub.value) / 1000) * this.events.length)); });
+    // Play/pause is a button on the bar. It used to be a double-click on the range input: undiscoverable, and the
+    // only other way in was a Space the clock's own label had to explain.
+    this.playBtn.addEventListener('click', () => { this.togglePlay(); });
     this.setMode('live');
+    this.drawPlay();
   }
 
   /** Live and Replay are one segmented control: the selected segment is the only amber thing on the time bar. */
-  private setMode(mode: 'live' | 'replay'): void { this.mode = mode; this.live.setAttribute('aria-selected', String(mode === 'live')); this.load.setAttribute('aria-selected', String(mode === 'replay')); }
-  togglePlay(): void { if (this.mode === 'replay' && this.events.length) this.playing = !this.playing; }
+  private setMode(mode: 'live' | 'replay'): void {
+    this.mode = mode;
+    this.live.setAttribute('aria-selected', String(mode === 'live'));
+    this.load.setAttribute('aria-selected', String(mode === 'replay'));
+    this.bar.dataset.mode = mode;   // the stylesheet hides the replay transport in live mode
+  }
+  /** The transport's own face: the icon and the label say which way the button goes. */
+  private drawPlay(): void {
+    const next = this.playing ? 'pause' : 'play';
+    this.playBtn.innerHTML = pixelIcon(next);
+    this.playBtn.setAttribute('aria-label', `${this.playing ? 'Pause' : 'Play'} the replay (Space)`);
+    this.playBtn.disabled = !this.events.length;
+  }
+  togglePlay(): void { if (this.mode === 'replay' && this.events.length) { this.playing = !this.playing; this.drawPlay(); } }
   /** Move the replay by `n` events (negative = back). */
-  step(n: number): void { if (this.mode === 'replay' && this.events.length) { this.playing = false; this.seek(this.index + n); } }
+  step(n: number): void { if (this.mode === 'replay' && this.events.length) { this.playing = false; this.drawPlay(); this.seek(this.index + n); } }
 
   setReplay(events: CubicleEvent[]): void {
     this.events = events; this.index = 0; this.playing = events.length > 0;
     this.setMode('replay');
     this.scrub.disabled = events.length === 0; this.scrub.value = '0';
-    this.clock.textContent = events.length ? `${events.length} events · ${events[0].ts.slice(11, 19)}–${events[events.length - 1].ts.slice(11, 19)} (Space pauses, arrows step)` : 'no events that day';
+    this.drawPlay();
+    this.clock.textContent = replayLabel(events);
   }
 
   /** No day loaded yet (the request is still in flight): a stray scrub must not rebuild the office from nothing. */
   private seek(i: number): void { if (!this.events.length) return; this.index = Math.max(0, Math.min(this.events.length, i)); this.h.onScrub(this.index); this.scrub.value = String(Math.round((this.index / Math.max(1, this.events.length)) * 1000)); }
+
+  /** A scrub stops the playback; the button has to say so. */
+  private stopPlaying(): void { if (this.playing) { this.playing = false; this.drawPlay(); } }
 
   /**
    * Advance replay: events are spaced by their real timestamps divided by the speed factor. `hourOverride` is
@@ -98,7 +132,8 @@ export class TimeControls {
     const icon = sunOrMoon(hourOverride ?? this.hour(nowLive));
     if (icon !== this.lastIcon) { this.lastIcon = icon; this.sunmoon.innerHTML = pixelIcon(icon, { label: icon === 'sun' ? 'Daytime' : 'Night' }); }
     if (this.mode === 'live') { this.clock.textContent = nowLive.toLocaleTimeString(); return; }
-    if (!this.playing || this.index >= this.events.length) return;
+    if (this.index >= this.events.length) { this.stopPlaying(); return; }   // the day ran out: the button goes back to Play
+    if (!this.playing) return;
     this.acc += dtMs * Number(this.speed.value);
     let advanced = false;
     while (this.index < this.events.length) {

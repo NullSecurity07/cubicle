@@ -17,8 +17,11 @@ beforeEach(async () => {
   createStream(vault, { name: 'Checkout', problem: 'p', customers: 'c', outcome_metric: '72 % to 82 %', owner_team: 'dev' }, 'product_manager');
   vault.writeText(ciConfigPath('checkout'), 'steps:\n  - { name: test, run: "true" }\n', 'daemon');
   vault.writeText('Workspace/checkout/src/app.js', 'export const v = 1;\n', 'backend_engineer');
+  // Every file `newestSourceMtime` walks has to be backdated, not just app.js: `cubicle-ci.yaml` is source too,
+  // and leaving it at the wall clock made this suite pass only while the real time of day was before the
+  // hard-coded 10:00 UTC of the green record below.
   const early = new Date('2026-09-11T09:00:00.000Z');
-  utimesSync(path.join(dir, 'Workspace/checkout/src/app.js'), early, early);
+  for (const rel of ['Workspace/checkout/src/app.js', ciConfigPath('checkout')]) utimesSync(path.join(dir, rel), early, early);
 });
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 

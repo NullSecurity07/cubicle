@@ -3,7 +3,7 @@ role: research_engineer
 display: Research Engineer
 title: Research Engineer
 model_tier: medium
-tools: [vault.read, vault.search, vault.list, vault.write, vault.append, shell.run, git.log, git.diff, git.commit, http.fetch, sources.cite, colleague.message, skills.save, skills.load, skills.search, finish]
+tools: [vault.read, vault.search, vault.list, vault.write, vault.append, shell.run, git.log, git.diff, git.commit, http.fetch, research.start, sources.cite, colleague.message, skills.save, skills.load, skills.search, finish]
 approval_overrides: {}
 active: true
 hired: "2026-09-11T00:00:00.000Z"

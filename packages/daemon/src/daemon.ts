@@ -208,6 +208,7 @@ export class Daemon {
     if (!this.overrides.disableWs) {
       this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.runTick('chat'); } });
       const port = await this.ws.start();
+      cfg.port = port; // port 0 binds an ephemeral port; downstream config, daemon.json, and events must see the real one
       this.log(`ws listening on ws://127.0.0.1:${port}`);
       const onFrame = (f: { session: string; seq: number; jpegBase64: string }) => { if (this.ws?.clientCount()) this.ws.frame(f.session, f.seq, f.jpegBase64); };
       browserFrames.on('frame', onFrame);

@@ -53,8 +53,10 @@ export class StaticServer {
     this.server = server;
     try { await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(this.opts.port, '127.0.0.1', () => resolve()); }); }
     catch (err) { this.opts.log?.(`static server failed: ${(err as Error).message}`); this.server = null; return null; }
-    this.opts.log?.(`viewer at http://127.0.0.1:${this.opts.port}/${hasDist ? '' : ' (dist missing — run pnpm --filter @cubicle/viewer build)'}`);
-    return this.opts.port;
+    const addr = server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : this.opts.port; // port 0 binds an ephemeral port; report the real one
+    this.opts.log?.(`viewer at http://127.0.0.1:${port}/${hasDist ? '' : ' (dist missing — run pnpm --filter @cubicle/viewer build)'}`);
+    return port;
   }
 
   async stop(): Promise<void> {

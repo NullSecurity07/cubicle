@@ -121,9 +121,9 @@ describe('static server (B7)', () => {
     mkdirSync(path.join(dir, '.cubicle/screens/s1'), { recursive: true }); writeFileSync(path.join(dir, '.cubicle/screens/s1/00001.jpg'), 'jpg');
     mkdirSync(path.join(dir, 'Site/dist'), { recursive: true }); writeFileSync(path.join(dir, 'Site/dist/index.html'), '<h1>site</h1>');
     symlinkSync(path.join(dir, 'Memory/constitution.md'), path.join(dir, 'Site/dist/leak'));
-    const srv = new StaticServer({ port: 47599, vaultRoot: dir, dist: path.join(dir, 'nodist'), token: 'tok' });
-    await srv.start();
-    const get = (p: string, host = '127.0.0.1:47599') => new Promise<number>((r) => http.get({ host: '127.0.0.1', port: 47599, path: p, headers: { host } }, (res) => { res.resume(); r(res.statusCode ?? 0); }).on('error', () => r(0)));
+    const srv = new StaticServer({ port: 0, vaultRoot: dir, dist: path.join(dir, 'nodist'), token: 'tok' });
+    const port = await srv.start();
+    const get = (p: string, host = `127.0.0.1:${port}`) => new Promise<number>((r) => http.get({ host: '127.0.0.1', port: port!, path: p, headers: { host } }, (res) => { res.resume(); r(res.statusCode ?? 0); }).on('error', () => r(0)));
     try {
       expect(await get('/screens/s1/00001.jpg')).toBe(403);
       expect(await get('/screens/s1/00001.jpg?token=tok')).toBe(200);

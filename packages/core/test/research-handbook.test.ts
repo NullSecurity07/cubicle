@@ -56,5 +56,25 @@ describe('Docs/research-handbook.md', () => {
     expect(manager.body).toMatch(/Knowledge Manager/);
     expect(manager.data.tools as string[]).toContain('research.start');
     for (const r of members) expect(vault.readNoteOrNull(`Roles/${r}.md`)!.data.tools as string[], r).toContain('sources.cite');
+    // I3: the handbook and the lifecycle process both call research.start "the first call of any research job",
+    // and expandProcess injects the whole process body into every step's goal — so every charter that writes
+    // into a project must be allowed to make that call, not only the manager who files the request.
+    // The intelligence analyst writes sweeps, not projects; everyone else does open one.
+    for (const r of members.filter((m) => m !== 'intelligence_analyst')) expect(vault.readNoteOrNull(`Roles/${r}.md`)!.data.tools as string[], r).toContain('research.start');
+  });
+
+  it('no charter promises something the tools do not do (I7, M3, M7)', () => {
+    const ds = vault.readNoteOrNull('Roles/data_scientist.md')!.body;
+    expect(ds).toMatch(/does not mount `Research\/`/);            // shell.run mounts Site/ and scratch only
+    expect(ds).not.toMatch(/analysis\/` folder with python and sqlite through `shell.run`/);
+    const ia = vault.readNoteOrNull('Roles/intelligence_analyst.md')!.body;
+    expect(ia).not.toMatch(/regulatory/);                          // there are four kinds, not five
+    expect(ia).toContain('<date>-c<cycle>-<kind>.md');
+    expect(vault.readNoteOrNull('Teams/research.md')!.data.processes as string[]).toContain('research_lifecycle');
+  });
+
+  it('cites no section the owner document does not have', () => {
+    // docs/owner/research-operating-model.md ends at §45; research.start is this codebase's tool, not a section.
+    for (const m of handbook.match(/§\d+/g) ?? []) expect(Number(m.slice(1)), m).toBeLessThanOrEqual(45);
   });
 });

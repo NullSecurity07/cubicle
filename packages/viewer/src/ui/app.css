@@ -19,8 +19,11 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .btn.primary, .txt.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
 .btn.primary:hover, .txt.primary:hover { filter: brightness(1.04); }
 .pill { padding: 0 var(--s3); border-radius: var(--r-pill); border: 1px solid var(--hairline-2); background: var(--surface-1); font-size: var(--fs-subhead); font-weight: var(--fw-subhead); }
-.pill.attn { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.pill.attn[data-count="0"] { background: var(--surface-1); border-color: var(--hairline-2); color: var(--text-2); font-weight: var(--fw-subhead); }
+/* Tint belongs on the action, not on the state: "Talk to the CEO" keeps the amber fill, and the approvals pill —
+   eight pixels away in the same bar — yields to accent text on a surface behind an accent hairline. At zero it is
+   not a grey "0 to approve" but absent (ui/bar.ts hides it): the empty state is the absence of the pill. */
+.pill.attn { background: var(--surface-1); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.pill.attn:hover { background: var(--surface-2); }
 .mini { padding: 0 var(--s2); font-size: var(--fs-caption); font-weight: var(--fw-caption); color: var(--text-2); border: 1px solid var(--hairline-2); border-radius: var(--r-s); }
 .mini:hover { color: var(--text); background: var(--surface-3); }
 .icon { width: var(--hit); height: var(--hit); color: var(--text-2); border-radius: var(--r-s); } .icon:hover { color: var(--text); background: var(--surface-3); }
@@ -31,7 +34,7 @@ input::placeholder { color: var(--text-3); }
 .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
 .dot.ok, .status.ok .dot { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad, .status.bad .dot { background: var(--bad); } .dot.info { background: var(--info); }
 .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--r-pill); font-size: var(--fs-caption); font-weight: 700; letter-spacing: .04em; }
-.badge.live { background: var(--accent); color: var(--accent-ink); animation: pulse 1s ease-in-out infinite alternate; }
+.badge.live { background: var(--accent); color: var(--accent-ink); animation: pulse var(--d-pulse) ease-in-out infinite alternate; }
 .badge.ended { background: var(--surface-3); color: var(--text-2); }
 @keyframes pulse { from { opacity: 1; } to { opacity: .6; } }
 
@@ -42,7 +45,9 @@ input::placeholder { color: var(--text-3); }
 #bar .brand strong { font-size: var(--fs-headline); font-weight: var(--fw-headline); letter-spacing: -0.01em; white-space: nowrap; }
 #bar .brand span:not(.mark) { color: var(--text-2); font-size: var(--fs-subhead); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34vw; }
 #bar nav { margin-left: auto; display: flex; gap: var(--s1); align-items: center; }
-#coach { position: absolute; left: calc(var(--rail-w) + var(--s4)); top: calc(var(--bar-h) + var(--s3)); padding: var(--s2) var(--s3); border-radius: var(--r); background: var(--glass); backdrop-filter: var(--blur); border: 1px solid var(--hairline); color: var(--text-2); z-index: 9; pointer-events: none; transition: opacity var(--d-reader) var(--ease-in); }
+/* Glass comes from the .glass class (tokens.css), which carries the @supports fallback for browsers with no
+   backdrop-filter; setting --glass inline here meant this one floated as a 72 %-transparent slab on those. */
+#coach { position: absolute; left: calc(var(--rail-w) + var(--s4)); top: calc(var(--bar-h) + var(--s3)); padding: var(--s2) var(--s3); border-radius: var(--r); color: var(--text-2); z-index: 9; pointer-events: none; transition: opacity var(--d-reader) var(--ease-in); }
 #coach.fade { opacity: 0; }
 
 /* ---- floor rail (elevation 0) ---- */
@@ -56,8 +61,8 @@ input::placeholder { color: var(--text-3); }
 #rail .tab[data-floor="2"] { --tab-deep: var(--floor-2-deep); }
 #rail .tab[data-floor="3"] { --tab-deep: var(--floor-3-deep); }
 #rail .tab[data-floor="4"] { --tab-deep: var(--floor-4-deep); }
-#rail .tab[aria-current="true"] { background: var(--tab-deep, var(--surface-3)); color: #fff; }
-#rail .tab[aria-current="true"] .bar { background: rgba(255,255,255,.6); }
+#rail .tab[aria-current="true"] { background: var(--tab-deep, var(--surface-3)); color: var(--on-tint); }
+#rail .tab[aria-current="true"] .bar { background: color-mix(in srgb, var(--on-tint) 60%, transparent); }
 #rail .tab.lobby[aria-current="true"] { background: var(--surface-3); color: var(--text); box-shadow: inset 0 0 0 1px var(--hairline-2); }
 #rail .tab.lobby[aria-current="true"] .bar { background: var(--text-2); }
 #rail .tab .dots { display: flex; gap: 2px; height: 4px; } #rail .tab .dots i { width: 4px; height: 4px; border-radius: 50%; }
@@ -65,14 +70,23 @@ input::placeholder { color: var(--text-3); }
 
 /* ---- scrim + layer (elevations 1 and 2) ---- */
 #scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 19; animation: fade var(--d-open) var(--ease-out); }
-#layer { position: absolute; inset: var(--bar-h) 0 0 var(--rail-w); z-index: 20; display: flex; pointer-events: none; }
-#layer[data-presentation="sheet"] { justify-content: flex-end; align-items: stretch; padding: var(--s3); }
+/* The bottom inset is the time bar's: every presentation stops above the Live/Replay control instead of slicing it. */
+#layer { position: absolute; inset: var(--bar-h) 0 var(--time-h) var(--rail-w); z-index: 20; display: flex; pointer-events: none; }
+/* The sheet is right-aligned and full height, which is exactly where the minimap chrome lives; stopping above it
+   keeps two elevation-0 controls readable under an elevation-1 panel. */
+#layer[data-presentation="sheet"] { justify-content: flex-end; align-items: stretch; padding: var(--s3) var(--s3) calc(var(--minimap-h) - var(--time-h)); }
 #layer[data-presentation="reader"], #layer[data-presentation="viewer"] { justify-content: center; align-items: center; padding: var(--s6); }
 /* `position: relative` so `.jump`, which sits beside the body rather than in it, anchors to the panel and not to #layer. */
 #panel { position: relative; pointer-events: auto; display: flex; flex-direction: column; min-width: 0; overflow: hidden; border-radius: var(--r-l); transform-origin: top left; }
-#layer[data-presentation="sheet"] #panel { width: min(520px, 46vw); min-width: 400px; background: var(--glass); backdrop-filter: var(--blur); border: 1px solid var(--hairline); box-shadow: var(--shadow-1); animation: sheet-in var(--d-sheet) var(--ease-out); }
+#layer[data-presentation="sheet"] #panel { width: min(520px, 46vw); min-width: 400px; box-shadow: var(--shadow-1); animation: sheet-in var(--d-sheet) var(--ease-out); }   /* .glass is added by Panel for this presentation */
 #layer[data-presentation="reader"] #panel { width: min(760px, 92vw); max-height: 100%; background: var(--surface-1); border: 1px solid var(--hairline-2); box-shadow: var(--shadow-2); animation: reader-in var(--d-reader) var(--ease-out); }
-#layer[data-presentation="viewer"] #panel { width: min(1120px, 100%); aspect-ratio: 16 / 10; max-height: 100%; background: var(--term-bg); color: var(--term-text); border: 1px solid var(--hairline-2); box-shadow: var(--shadow-2); animation: reader-in var(--d-reader) var(--ease-out); }
+#layer[data-presentation="viewer"] #panel { width: min(1120px, 100%); max-height: 100%; background: var(--term-bg); color: var(--term-text); border: 1px solid var(--hairline-2); box-shadow: var(--shadow-2); animation: reader-in var(--d-reader) var(--ease-out); }
+/* A fixed 16:10 panel pillarboxed every real stream and left two thirds of the terminal modal empty. Each viewer is
+   now sized by what it shows: the browser box is capped by the height it has left times the frame's own aspect, so
+   the frame fills it; the terminal grows with its output and stops at the panel's max-height. */
+#layer[data-viewer="browser"] #panel { width: min(1120px, 100%, calc((100vh - var(--bar-h) - var(--time-h) - var(--s6) * 2 - var(--phead-h) - var(--vbar-h)) * var(--vframe-w) / var(--vframe-h))); }
+#layer[data-viewer="terminal"] #panel { width: min(880px, 100%); }
+#layer[data-viewer="terminal"] pre.term { flex: 0 1 auto; }
 #panel.flip { animation: none; }
 /* The panel is only a landing spot for focus (tabindex="-1"), not a control: a ring around the whole sheet reads as
    an error. Every control inside it keeps the accent ring, and Tab lands on one immediately. */
@@ -93,13 +107,15 @@ input::placeholder { color: var(--text-3); }
 .phead h2 .pi { flex: none; }
 .phead h2 span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .phead .sub { margin: 0; color: var(--text-2); font-size: var(--fs-footnote); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#layer[data-presentation="viewer"] .phead { border-color: rgba(255,255,255,.1); } #layer[data-presentation="viewer"] .phead .sub, #layer[data-presentation="viewer"] .icon { color: rgba(212,218,232,.7); }
+#layer[data-presentation="viewer"] .phead { border-color: var(--term-line); } #layer[data-presentation="viewer"] .phead .sub, #layer[data-presentation="viewer"] .icon { color: var(--term-text-2); }
 #panel .body { position: relative; flex: 1; min-height: 0; overflow: auto; padding: var(--s4); word-break: break-word; scroll-behavior: smooth; }
 #layer[data-presentation="viewer"] #panel .body { padding: 0; display: flex; flex-direction: column; }
 #panel.chat .body { display: flex; flex-direction: column; gap: var(--s3); padding: var(--s4) var(--s4) var(--s2); }
 #panel form { display: flex; gap: var(--s2); padding: var(--s3) var(--s4) var(--s4); border-top: 1px solid var(--hairline); }
 #panel form input { flex: 1; min-width: 0; }
 .jump { position: absolute; left: 50%; bottom: var(--s4); transform: translateX(-50%); padding: 0 var(--s3); background: var(--accent); color: var(--accent-ink); font-size: var(--fs-caption); font-weight: 600; border-radius: var(--r-pill); box-shadow: var(--shadow-1); z-index: 2; }
+/* An ended browser session prints a .vfoot across the bottom of the panel; "Jump to latest" clears it. */
+#layer[data-viewer="browser"] .jump { bottom: calc(var(--s4) + var(--vbar-h)); }
 .actions { display: flex; gap: var(--s2); margin-top: var(--s3); }
 
 /* ---- sections, cards, rows, chips, empty, stats, tiles, segments ---- */
@@ -139,7 +155,10 @@ input::placeholder { color: var(--text-3); }
 .segmented { display: inline-flex; padding: 2px; margin-bottom: var(--s4); background: var(--surface-2); border: 1px solid var(--hairline); border-radius: var(--r); }
 .seg { padding: 0 var(--s3); border-radius: var(--r-s); color: var(--text-2); font-size: var(--fs-subhead); font-weight: var(--fw-subhead); }
 .seg .n { margin-left: var(--s1); font-size: var(--fs-caption); font-weight: 600; font-variant-numeric: tabular-nums; opacity: .8; }
-.seg[aria-selected="true"] { background: var(--surface-1); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.18); }
+/* The spec's States row: "selected filled with floor/accent colour". The old --surface-1 fill was 1.06:1 on the
+   light track and *darker* than the track in dark, so the selection read as recessed and leaned on a literal shadow. */
+.seg[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+.seg[aria-selected="true"] .dot { background: currentColor; }   /* the Live dot is inside the fill: one accent, not two */
 .seg:hover:not([aria-selected="true"]) { color: var(--text); }
 .division { padding-left: var(--s3); border-left: 3px solid var(--division, var(--hairline-2)); margin-bottom: var(--s5); }
 .division-title { margin: 0 0 var(--s3); font-size: var(--fs-title3); font-weight: var(--fw-title3); letter-spacing: -0.01em; }
@@ -148,18 +167,19 @@ table.data th { text-align: left; color: var(--text-2); font-weight: 500; paddin
 table.data td { padding: 7px 8px; border-bottom: 1px solid var(--hairline); font-variant-numeric: tabular-nums; } table.data tr:last-child td { border-bottom: 0; }
 
 /* ---- viewers ---- */
-.vbar { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s4); font-size: var(--fs-footnote); color: rgba(212,218,232,.75); border-bottom: 1px solid rgba(255,255,255,.08); }
-.vbar .vstats { margin-left: auto; font-variant-numeric: tabular-nums; }
-.vframe { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #000; }
-.vframe img.frame { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: auto; transition: opacity 80ms linear; }
-.vfoot { padding: var(--s2) var(--s4); font-size: var(--fs-footnote); color: rgba(212,218,232,.75); border-top: 1px solid rgba(255,255,255,.08); }
+.vbar { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s4); font-size: var(--fs-footnote); color: var(--term-text-2); border-bottom: 1px solid var(--term-line); }
+.vbar .vmeta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vbar .vstats { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vframe { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: var(--term-bg); }
+.vframe img.frame { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: auto; transition: opacity var(--d-frame) linear; }
+.vfoot { padding: var(--s2) var(--s4); font-size: var(--fs-footnote); color: var(--term-text-2); border-top: 1px solid var(--term-line); }
 pre.term { margin: 0; flex: 1; min-height: 0; overflow: auto; padding: var(--s4); background: var(--term-bg); color: var(--term-text); font: 12.5px/1.55 var(--mono); white-space: pre-wrap; word-break: break-word; }
 pre.term .line.prompt { color: var(--term-prompt); font-weight: 600; }
-pre.term .caret { display: inline-block; width: 7px; height: 13px; margin-left: 2px; vertical-align: -2px; background: var(--term-prompt); animation: blink 530ms steps(1) infinite; }
+pre.term .caret { display: inline-block; width: 7px; height: 13px; margin-left: 2px; vertical-align: -2px; background: var(--term-prompt); animation: blink var(--d-caret) steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
-#layer[data-presentation="viewer"] .empty { margin: auto; border-color: rgba(255,255,255,.15); color: rgba(212,218,232,.75); } #layer[data-presentation="viewer"] .empty b { color: var(--term-text); }
+#layer[data-presentation="viewer"] .empty { margin: auto; border-color: var(--term-line-2); color: var(--term-text-2); } #layer[data-presentation="viewer"] .empty b { color: var(--term-text); }
 img.frame { display: block; width: 100%; border: 1px solid var(--hairline); border-radius: var(--r); }
-iframe.site { width: 100%; height: 62vh; border: 1px solid var(--hairline); border-radius: var(--r); background: #fff; }
+iframe.site { width: 100%; height: 62vh; border: 1px solid var(--hairline); border-radius: var(--r); background: var(--paper); }   /* a deployed site brings its own light page */
 
 /* ---- chat ---- */
 .msg { max-width: 86%; }
@@ -195,13 +215,17 @@ details.pinned .prose { padding: 0 var(--s4) var(--s3); }
 #time input[type=date], #time select { min-height: var(--hit); padding: 0 var(--s2); font-size: var(--fs-subhead); }
 #time #sunmoon { display: inline-flex; color: var(--text-2); }
 #time #clock { color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Live mode has no date to pick, no position to scrub and no speed to choose; the replay transport appears with the
+   Replay segment. The keyboard hint lives beside the transport it is about, not inside the clock's own label. */
+#time:not([data-mode="replay"]) .replay-only { display: none; }
+#time #replay-hint { white-space: nowrap; }
 
 /* ---- minimap chrome ---- */
 #minimap-chrome { position: absolute; z-index: 9; pointer-events: none; border: 1px solid var(--hairline-2); border-radius: var(--r-s); box-shadow: var(--shadow-1); }
 #minimap-chrome .ticks { position: absolute; left: -6px; top: 0; bottom: 0; width: 4px; }
 #minimap-chrome .tick { position: absolute; left: 0; width: 4px; border-radius: 2px; }
 #minimap-chrome .click { position: absolute; inset: 0; pointer-events: auto; cursor: pointer; }
-#minimap-chrome .toggle { position: absolute; right: -1px; top: -36px; pointer-events: auto; width: var(--hit); height: var(--hit); min-height: var(--hit); border-radius: var(--r-s); background: var(--glass); backdrop-filter: var(--blur); border: 1px solid var(--hairline); color: var(--text-2); font-size: var(--fs-caption); font-weight: 600; }
+#minimap-chrome .toggle { position: absolute; right: -1px; top: calc(var(--hit) * -1 - var(--s1)); pointer-events: auto; width: var(--hit); height: var(--hit); min-height: var(--hit); border-radius: var(--r-s); color: var(--text-2); font-size: var(--fs-caption); font-weight: 600; }
 #minimap-toggle-hidden { position: absolute; right: var(--s3); bottom: var(--s3); z-index: 9; }
 
 /* ---- toast, quick open, first run, shortcuts ---- */
@@ -213,7 +237,9 @@ details.pinned .prose { padding: 0 var(--s4) var(--s3); }
 #quickopen .item { display: flex; align-items: center; gap: var(--s3); width: 100%; padding: var(--s2) var(--s3); min-height: var(--hit); border-radius: var(--r-s); text-align: left; }
 #quickopen .item[aria-selected="true"], #quickopen .item:hover { background: var(--surface-3); }
 #quickopen .item .k { margin-left: auto; color: var(--text-3); font-size: var(--fs-caption); }
-#firstrun { position: absolute; inset: 0; z-index: 25; display: flex; align-items: center; justify-content: center; padding: var(--s6); }
+/* Level 2 dims the office 40 % (visual notes §1 Depth, §5 First run). #scrim sits at z-index 19, below this card,
+   so the card paints the same material itself rather than raising a scrim it would then cover. */
+#firstrun { position: absolute; inset: 0; z-index: 25; display: flex; align-items: center; justify-content: center; padding: var(--s6); background: var(--scrim); }
 #firstrun .card { width: min(520px, 100%); padding: var(--s8); display: grid; gap: var(--s4); background: var(--surface-1); border: 1px solid var(--hairline-2); border-radius: var(--r-l); box-shadow: var(--shadow-2); animation: reader-in var(--d-reader) var(--ease-out); transform-origin: top right; }
 #firstrun h1 { margin: 0; font-size: var(--fs-title1); font-weight: var(--fw-title1); line-height: var(--lh-title1); letter-spacing: -0.01em; }
 #firstrun .row-actions { display: flex; gap: var(--s2); justify-content: flex-end; }
