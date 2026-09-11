@@ -54,7 +54,7 @@ function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: stri
         return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'fine', verdict: 'pass', findings: [] } }] };
       }
       if (jobType === 'team.plan' && req.roleId === 'dev_manager') {
-        return { ...base, parsedToolCalls: [n === 0 ? { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'backend_engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.' } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
+        return { ...base, parsedToolCalls: [n === 0 ? { name: 'scheduler.request', args: { type: 'engineer.ship', title: 'Scaffold Site/', assigned: 'backend_engineer', goal: 'Create Site/index.html from Brand/.', done_when: 'Site/index.html exists and matches Brand/.', risk: 'low' } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
       }
       // Gate jobs (qa.review, coo.verify, requester.review) need an explicit verdict to advance the parent's gate chain.
       const isGate = /\.(review|verify)$/.test(jobType);
