@@ -1,13 +1,19 @@
+import './ui/tokens.css';
+import './ui/app.css';
 import Phaser from 'phaser';
 import { OfficeScene } from './scenes/OfficeScene.js';
 import { Net, resolveWs } from './net.js';
 import { emptyState, applyEvent, applySnapshot, tick, type State, type CubicleEvent, type Snapshot } from './state.js';
-import { Ui } from './ui/panel.js';
+import { Panel, type Origin } from './ui/panel.js';
+import { TopBar } from './ui/bar.js';
+import { applyTheme, currentTheme, themeFromQuery, THEMES } from './ui/tokens.js';
 import type { Ctx } from './ui/content.js';
 import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
 import { withMotion, reducedMotion } from './world/motion.js';
+
+applyTheme(themeFromQuery(location.search));   // before the first paint: no white flash on load or theme switch
 const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
 withMotion(reducedMotion() ? 0 : 1);
 motionQuery.addEventListener('change', () => withMotion(motionQuery.matches ? 0 : 1));
@@ -15,23 +21,26 @@ motionQuery.addEventListener('change', () => withMotion(motionQuery.matches ? 0 
 let state: State = emptyState();
 let liveState: State | null = null;   // saved while replaying
 const frames: Record<string, string> = {};   // streamId → data URL (live) or /screens/ URL (replay)
-const ui = new Ui();
+const fps: Record<string, number> = {};
+const bar = new TopBar();
 const { url, token } = resolveWs();
 const vaultName = new URLSearchParams(location.search).get('vault') ?? '';
-const ctx: Ctx = { frames, tokenQuery: token ? `?token=${encodeURIComponent(token)}` : '', vaultName };
+const ctx: Ctx = { frames, tokenQuery: token ? `?token=${encodeURIComponent(token)}` : '', vaultName, fps };
 
 const scene = new OfficeScene();
-const game = new Phaser.Game({ type: Phaser.AUTO, parent: 'game', backgroundColor: '#0e1014', pixelArt: true, roundPixels: true, scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' }, scene: [scene] });
+const game = new Phaser.Game({ type: Phaser.AUTO, parent: 'game', backgroundColor: THEMES[currentTheme()].colors.bg, pixelArt: true, roundPixels: true, scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' }, scene: [scene] });
 void game;
-// Phaser also listens for mousedown / touchstart on the window (`input.windowEvents`, on by default) and hit-tests
-// those against the office, so a press on the drawer, the modal, the top bar or the time bar would "click" whatever
-// surface or agent is drawn beneath it. A press that starts outside the office stays outside it. Releases still
-// reach Phaser, so a drag let go over the HTML layer ends cleanly (the pointer's `isDown` clears).
+// Click isolation (see scripts/test-overlay-clicks.ts): a press that starts on any HTML element — bar, rail, panel,
+// scrim, time bar, minimap chrome, toast, first-run card, quick open — never reaches Phaser's window listeners.
+// Releases still reach Phaser, so a drag let go over the HTML layer ends cleanly (the pointer's `isDown` clears).
 for (const type of ['mousedown', 'touchstart'] as const) document.addEventListener(type, (e) => { if (!(e.target as Element).closest?.('#game')) e.stopPropagation(); });
+// Where the last press on the office happened: a level-2 presentation grows from there ("Depth": deeper levels grow from the click).
+let lastPress: Origin | null = null;
+document.getElementById('game')!.addEventListener('pointerdown', (e) => { lastPress = { x: e.clientX - 80, y: e.clientY - 50, w: 160, h: 100 }; });
 
 const time = new TimeControls({
   onLive() { if (liveState) { state = liveState; liveState = null; } state = { ...state, mode: 'live' }; net.snapshot(); },
-  onReplayRequest(date) { replayBuffer = []; const start = new Date(`${date}T00:00:00`); const end = new Date(start.getTime() + 86400_000 - 1); net.replay(start.toISOString(), end.toISOString(), 0); ui.setConn(true, `loading ${date}…`); }, // local day → ISO
+  onReplayRequest(date) { replayBuffer = []; const start = new Date(`${date}T00:00:00`); const end = new Date(start.getTime() + 86400_000 - 1); net.replay(start.toISOString(), end.toISOString(), 0); bar.setConn(true, `loading ${date}`); }, // local day → ISO
   onScrub(index) { rebuildReplayTo(index); },
 });
 let firstRunOpened = false;
@@ -65,38 +74,55 @@ function rebuildReplayTo(index: number): void {
   refresh();
 }
 
+function viewOf(kind: string): ReturnType<typeof viewFor> {
+  try { ctx.floorLabels ??= Object.fromEntries(scene.floorSummary().map((f) => [f.floor, f.label])); } catch { /* the scene has not created its world yet */ }
+  return viewFor(kind, state, ctx);
+}
+const panel = new Panel({ viewOf, onOpen: (kind) => open(kind), onLocate: (target) => scene.focusOn(target), onEmpty: () => scene.restoreZoom(), onChat: (text) => sendChat(text) });
+
 scene.hooks = {
   getState: () => state,
   frames: () => frames,
   hour: () => time.hour(new Date()),
   clock: () => (state.mode === 'replay' ? replayClockAt(time.index) : Date.now()),
-  onSurfaceClick(kind) { open(kind); },
-  onAgentClick(role) { open(`agent:${role}`); scene.focusOn(`agent:${role}`, { zoom: true }); },
+  onSurfaceClick(kind) { open(kind, lastPress ?? undefined); },
+  onAgentClick(role) { open(role === 'ceo' ? 'cabin' : `agent:${role}`); },   // the CEO sprite is the owner's channel
 };
 
-function viewOf(kind: string) { return viewFor(kind, state, ctx); }
-
-/** Open anything by kind: a surface, `agent:<role>`, or `job:<id>`. */
-function open(kind: string): void {
-  ui.show(kind, viewOf(kind));
-  if (!kind.includes(':')) scene.focusOn(kind, { zoom: true });
+/**
+ * The single entry for opening anything: a surface, a room, `agent:<role>`, `job:<id>`, `org`. Pushes onto the
+ * stack and focuses the camera. Only a user's own click zooms (`zoom: false` for anything the app opens by itself).
+ */
+function open(kind: string, origin?: Origin, opts: { zoom?: boolean } = {}): void {
+  if (kind === 'ceo_office') kind = 'cabin';           // the CEO office is the owner's channel
+  const zoom = opts.zoom ?? true;
+  panel.show(kind, viewOf(kind), origin ?? undefined);
+  if (kind.startsWith('agent:')) scene.focusOn(kind, { zoom });
+  else if (!kind.includes(':') && kind !== 'org') scene.focusOn(kind, { zoom });
 }
 
 function refresh(): void {
-  if (ui.current) ui.update(ui.current, viewOf(ui.current));
-  if (ui.currentDoc) ui.update(ui.currentDoc, viewOf(ui.currentDoc));
-  ui.setPending(state.pendingProposals);
-  ui.setBrand(state.brand.name, state.brand.tagline);
+  if (panel.current) panel.update(panel.current, viewOf(panel.current));
+  bar.setPending(state.pendingProposals);
+  bar.setBrand(state.brand.name, state.brand.tagline);
 }
 
-ui.onOpen = (kind) => open(kind);
-ui.onClose = () => scene.restoreZoom();
-ui.onChat = (text) => {
+function sendChat(text: string): void {
   if (!net.chat(text)) return;
   state = { ...state, chat: [...state.chat, { ts: new Date().toISOString(), from: 'you', text }] };
   refresh();
-  ui.note('Sent. The CEO answers on the next heartbeat, usually within a minute.');
-};
+  panel.note('Sent. The CEO answers on the next heartbeat, usually within a minute.');
+}
+
+/** A live frame arrived (from the daemon or `__cubicle.pushFrame`): remember it, measure the rate, refresh a viewer at most 5×/s. */
+const frameTimes: Record<string, number[]> = {};
+let liveRefresh = 0;
+function onFrameData(streamId: string, dataUrl: string): void {
+  frames[streamId] = dataUrl;
+  const t = (frameTimes[streamId] ??= []); t.push(performance.now()); if (t.length > 10) t.shift();
+  fps[streamId] = t.length > 1 ? ((t.length - 1) * 1000) / (t[t.length - 1] - t[0]) : 0;
+  if (panel.current === 'billboard' && !liveRefresh) liveRefresh = window.setTimeout(() => { liveRefresh = 0; refresh(); }, 200);
+}
 
 function seedFrames(snap: Snapshot): void {
   // "otherwise last screenshot": every snapshot surface without a live frame shows its stored frame from the daemon.
@@ -109,8 +135,9 @@ const net = new Net(url, token, {
     state = applySnapshot(state, snap);
     seedFrames(snap);
     refresh();
-    // Spec §12 d/e: an empty company opens on the cabin with the first-run question, once per session.
-    if (state.firstRun && !firstRunOpened) { firstRunOpened = true; open('cabin'); }
+    // Spec §12 d/e: an empty company opens on the cabin with the first-run question, once per session. The app
+    // opened it, not the owner, so it never zooms the camera.
+    if (state.firstRun && !firstRunOpened) { firstRunOpened = true; open('cabin', undefined, { zoom: false }); }
   },
   onEvent(e) {
     if (state.mode === 'replay') { if (liveState) liveState = applyEvent(liveState, e); return; }
@@ -119,7 +146,7 @@ const net = new Net(url, token, {
     if (state.staleSnapshot) { state = { ...state, staleSnapshot: false }; net.snapshot(); } // plan / brief / inbox changed on disk → refresh text
     refresh();
   },
-  onFrame(f) { frames[f.streamId] = `data:image/jpeg;base64,${f.jpegBase64}`; },
+  onFrame(f) { onFrameData(f.streamId, `data:image/jpeg;base64,${f.jpegBase64}`); },
   onReplay(r) {
     replayBuffer = replayBuffer.concat(r.events);
     if (!r.done) { net.replay(r.from, r.to, r.cursor); return; }
@@ -130,9 +157,9 @@ const net = new Net(url, token, {
     replayCheckpoints = []; replayState = null; replayCursor = 0;
     time.setReplay(replayBuffer);
     rebuildReplayTo(0);
-    ui.setConn(true, `replay · ${replayBuffer.length} events`);
+    bar.setConn(true, `replay · ${replayBuffer.length} events`);
   },
-  onStatus(ok, detail) { state = { ...state, connected: ok }; ui.setConn(ok, ok ? 'live' : detail); },
+  onStatus(ok, detail) { state = { ...state, connected: ok }; bar.setConn(ok, ok ? 'live' : detail); },
 });
 net.connect();
 
@@ -150,6 +177,9 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
   agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), desks: () => scene.debugDesks(), stand: (name: string) => scene.debugStand(name), surfaces: () => debugSurfaces(), open,
   zoom: (z: number) => scene.cameras.main.setZoom(z), center: (tx: number, ty: number) => scene.cameras.main.centerOn(tx * TILE, ty * TILE),
   floor: (n: number) => scene.focusFloor(n), currentFloor: () => scene.currentFloor(), elevator: () => scene.elevator.state(), route: (role: string, target: string) => scene.debugRoute(role, target),
+  theme: (mode: 'dark' | 'light' | 'system') => applyTheme(mode),
+  stack: () => panel.stack.entries(),
+  pushFrame: (id: string, dataUrl: string) => onFrameData(id, dataUrl),
 };
 
 let last = performance.now();
