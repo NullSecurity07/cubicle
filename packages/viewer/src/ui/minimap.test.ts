@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tickLayout, minimapPointToWorld, BUILDING_ROWS, FLOOR_ROWS } from './minimap.js';
+import { tickLayout, minimapPointToWorld, layoutKey, BUILDING_ROWS, FLOOR_ROWS } from './minimap.js';
 
 describe('minimap chrome', () => {
   // The brief pinned 52 building rows and four 26 px ticks in a 104 px camera. The map says otherwise: BUILDING is
@@ -21,5 +21,25 @@ describe('minimap chrome', () => {
   });
   it('maps a click in the minimap to the world point under it', () => {
     expect(minimapPointToWorld(60, 65, { scrollX: 64, scrollY: 32, zoom: 0.125 })).toEqual({ x: 544, y: 552 });
+  });
+});
+
+/** M10: `layout()` wrote four inline styles and morphed four ticks every beat, hidden or not. */
+describe('the chrome lays itself out only when something moved', () => {
+  const cam = { x: 1114, y: 628, width: 154, height: 160 };
+  const colours = { 1: '#a', 2: '#b', 3: '#c', 4: '#d' };
+  it('is the same key for the same window and the same floors', () => {
+    expect(layoutKey(cam, colours)).toBe(layoutKey({ ...cam }, { ...colours }));
+  });
+  it('changes when the window moves, which is the case it exists for', () => {
+    expect(layoutKey({ ...cam, x: 1115 }, colours)).not.toBe(layoutKey(cam, colours));
+    expect(layoutKey({ ...cam, height: 161 }, colours)).not.toBe(layoutKey(cam, colours));
+  });
+  it('changes when a floor is repainted, so the ticks are not stuck on the old hue', () => {
+    expect(layoutKey(cam, { ...colours, 3: '#z' })).not.toBe(layoutKey(cam, colours));
+  });
+  it('covers all four floors, including one the scene has not reported yet', () => {
+    expect(layoutKey(cam, { 1: '#a' })).toBe(layoutKey(cam, { 1: '#a' }));
+    expect(layoutKey(cam, { 1: '#a' })).not.toBe(layoutKey(cam, colours));
   });
 });

@@ -41,6 +41,9 @@ export const PALETTE = {
   marble: '#e8e4dc', marbleAlt: '#d6d1c7',
   asphalt: '#3a3d44', kerb: '#b8b3a8', pavement: '#a89f91',
   screenBg: '#0b0d11', screenFrame: '#3a4050', screenText: '#f3f5f9', screenMuted: '#b9c2d6', screenInk: '#000000',
+  /* A wall screen is a mounted object, not a hole in the wall: a bezel around the glass, a lit top edge, and a
+     shadow under it so it seats. Without these the screens read as pure-black slabs floating free of the room. */
+  screenBezel: '#2b3040', screenBezelEdge: '#171b24', screenBezelLit: '#454c60',
   /** status colours for meters and badges: never amber unless the meter is actually asking for attention */
   good: '#4cae5c', warn: '#e0a030', bad: '#c0392b', barTrack: '#2a2e37',
   wipe: '#ffffff',

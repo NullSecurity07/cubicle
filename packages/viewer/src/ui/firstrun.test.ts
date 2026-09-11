@@ -21,12 +21,12 @@ const ev = (): { prevented: boolean; preventDefault(): void } => ({ prevented: f
 const realDoc = (globalThis as { document?: unknown }).document;
 afterEach(() => { (globalThis as { document?: unknown }).document = realDoc; });
 
-const mount = (): { card: FirstRun; el: E; started: string[]; surprises: number } => {
+const mount = (): { card: FirstRun; el: E; started: string[]; surprises: number; dismissed: number } => {
   const body = new E('body');
   (globalThis as { document?: unknown }).document = { createElement: (t: string) => new E(t), body, activeElement: null };
   const started: string[] = [];
-  const m = { started, surprises: 0, card: null as unknown as FirstRun, el: null as unknown as E };
-  m.card = new FirstRun({ onStart: (t) => started.push(t), onSurprise: () => { m.surprises++; } });
+  const m = { started, surprises: 0, dismissed: 0, card: null as unknown as FirstRun, el: null as unknown as E };
+  m.card = new FirstRun({ onStart: (t) => started.push(t), onSurprise: () => { m.surprises++; }, onDismissed: () => { m.dismissed++; } });
   m.el = body.kids[0];
   return m;
 };
@@ -74,5 +74,35 @@ describe('first-run card', () => {
     expect(m.card.visible).toBe(false);
     expect(esc.stopped).toBe(true);                  // the sheet underneath survives; the cabin keeps asking
     expect(opener.focused).toBe(1);
+  });
+});
+
+/**
+ * C3, second half: the office coach mark and the card are both first-contact messages, and `01-first-run.png` had
+ * them up side by side. The app holds the mark back and shows it on this callback instead.
+ */
+describe('the card hands first contact on when it goes', () => {
+  it('reports its dismissal once, whichever way it was dismissed', () => {
+    const m = mount();
+    m.card.show();
+    m.card.hide();
+    expect(m.dismissed).toBe(1);
+  });
+  it('says nothing when it was never up: a returning owner gets the coach mark straight away', () => {
+    const m = mount();
+    m.card.hide();
+    expect(m.dismissed).toBe(0);
+  });
+  it('does not report twice when hide() is called again', () => {
+    const m = mount();
+    m.card.show(); m.card.hide(); m.card.hide();
+    expect(m.dismissed).toBe(1);
+  });
+  it('reports it from Escape too, which is the path that leaves the office bare', () => {
+    const m = mount();
+    m.card.show();
+    m.el.fire('keydown', { key: 'Escape', stopPropagation: () => undefined });
+    expect(m.card.visible).toBe(false);
+    expect(m.dismissed).toBe(1);
   });
 });

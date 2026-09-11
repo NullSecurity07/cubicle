@@ -19,26 +19,36 @@ export interface ThemeColors {
   ok: string; warn: string; bad: string; info: string;
   /** the terminal is dark in both themes */
   termBg: string; termText: string; termPrompt: string;
+  /** the quieter text of the viewer chrome (.vbar, .vfoot, the viewer's own header) — on `termBg`, in both themes */
+  termText2: string;
+  /** text laid over a floor tint: the current rail tab, and anything else sitting on `floorPalette(n).tab` deepened */
+  onTint: string;
+  /** foreign content's own ground — a deployed site in an iframe brings its own light page, whatever our theme is */
+  paper: string;
 }
-export interface ThemeMaterials { hairline: string; hairline2: string; glass: string; scrim: string; shadow1: string; shadow2: string }
+export interface ThemeMaterials {
+  hairline: string; hairline2: string; glass: string; scrim: string; shadow1: string; shadow2: string;
+  /** hairlines inside the always-dark viewer chrome; they follow the terminal, not the theme */
+  termLine: string; termLine2: string;
+}
 export interface Theme { colors: ThemeColors; materials: ThemeMaterials }
 
 export const THEMES: Record<ThemeMode, Theme> = {
   dark: {
-    colors: { bg: '#0e1014', surface1: '#151820', surface2: '#1b1f2a', surface3: '#232838', text: '#e7e9ee', text2: '#a3a9ba', text3: '#8f95a5', accent: PALETTE.amber, accentInk: PALETTE.amberInk, accentText: PALETTE.amber, ok: '#5cbf6c', warn: PALETTE.amber, bad: '#f0655a', info: '#7aa2f7', termBg: '#0b0d11', termText: '#d4dae8', termPrompt: PALETTE.amber },
-    materials: { hairline: 'rgba(255,255,255,.08)', hairline2: 'rgba(255,255,255,.14)', glass: 'rgba(21,24,32,.72)', scrim: 'rgba(6,8,12,.4)', shadow1: '0 8px 24px rgba(0,0,0,.28)', shadow2: '0 24px 64px rgba(0,0,0,.5)' },
+    colors: { bg: '#0e1014', surface1: '#151820', surface2: '#1b1f2a', surface3: '#232838', text: '#e7e9ee', text2: '#a3a9ba', text3: '#8f95a5', accent: PALETTE.amber, accentInk: PALETTE.amberInk, accentText: PALETTE.amber, ok: '#5cbf6c', warn: PALETTE.amber, bad: '#f0655a', info: '#7aa2f7', termBg: '#0b0d11', termText: '#d4dae8', termPrompt: PALETTE.amber, termText2: '#a2a7b2', onTint: '#ffffff', paper: '#ffffff' },
+    materials: { hairline: 'rgba(255,255,255,.08)', hairline2: 'rgba(255,255,255,.14)', glass: 'rgba(21,24,32,.72)', scrim: 'rgba(6,8,12,.4)', shadow1: '0 8px 24px rgba(0,0,0,.28)', shadow2: '0 24px 64px rgba(0,0,0,.5)', termLine: 'rgba(255,255,255,.08)', termLine2: 'rgba(255,255,255,.15)' },
   },
   light: {
-    colors: { bg: '#f4f5f8', surface1: '#ffffff', surface2: '#f2f3f6', surface3: '#e9ebf0', text: '#1b1e26', text2: '#4d5361', text3: '#5f6573', accent: PALETTE.amber, accentInk: PALETTE.amberInk, accentText: '#8a5a00', ok: '#1f7a33', warn: '#8a5a00', bad: '#b3261e', info: '#2b5fc7', termBg: '#0b0d11', termText: '#d4dae8', termPrompt: PALETTE.amber },
-    materials: { hairline: 'rgba(0,0,0,.08)', hairline2: 'rgba(0,0,0,.14)', glass: 'rgba(255,255,255,.72)', scrim: 'rgba(20,24,32,.25)', shadow1: '0 8px 24px rgba(0,0,0,.12)', shadow2: '0 24px 64px rgba(0,0,0,.22)' },
+    colors: { bg: '#f4f5f8', surface1: '#ffffff', surface2: '#f2f3f6', surface3: '#e9ebf0', text: '#1b1e26', text2: '#4d5361', text3: '#5f6573', accent: PALETTE.amber, accentInk: PALETTE.amberInk, accentText: '#8a5a00', ok: '#1f7a33', warn: '#8a5a00', bad: '#b3261e', info: '#2b5fc7', termBg: '#0b0d11', termText: '#d4dae8', termPrompt: PALETTE.amber, termText2: '#a2a7b2', onTint: '#ffffff', paper: '#ffffff' },
+    materials: { hairline: 'rgba(0,0,0,.08)', hairline2: 'rgba(0,0,0,.14)', glass: 'rgba(255,255,255,.72)', scrim: 'rgba(20,24,32,.25)', shadow1: '0 8px 24px rgba(0,0,0,.12)', shadow2: '0 24px 64px rgba(0,0,0,.22)', termLine: 'rgba(255,255,255,.08)', termLine2: 'rgba(255,255,255,.15)' },
   },
 };
 
 const VAR_NAMES: Record<keyof ThemeColors | keyof ThemeMaterials, string> = {
   bg: '--bg', surface1: '--surface-1', surface2: '--surface-2', surface3: '--surface-3', text: '--text', text2: '--text-2', text3: '--text-3',
   accent: '--accent', accentInk: '--accent-ink', accentText: '--accent-text', ok: '--ok', warn: '--warn', bad: '--bad', info: '--info',
-  termBg: '--term-bg', termText: '--term-text', termPrompt: '--term-prompt',
-  hairline: '--hairline', hairline2: '--hairline-2', glass: '--glass', scrim: '--scrim', shadow1: '--shadow-1', shadow2: '--shadow-2',
+  termBg: '--term-bg', termText: '--term-text', termPrompt: '--term-prompt', termText2: '--term-text-2', onTint: '--on-tint', paper: '--paper',
+  hairline: '--hairline', hairline2: '--hairline-2', glass: '--glass', scrim: '--scrim', shadow1: '--shadow-1', shadow2: '--shadow-2', termLine: '--term-line', termLine2: '--term-line-2',
 };
 
 /** Every custom property the stylesheets read, for one theme. */

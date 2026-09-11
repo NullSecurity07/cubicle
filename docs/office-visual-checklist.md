@@ -23,3 +23,22 @@ you were looking at an older build.
 - [ ] Lamps are lit only in rooms with a working or talking agent; windows show the night tile; the sky is dark (`09-night`)
 - [ ] The owner sits in the board chair with the "You" label, and the advisors wear glasses (`08-board`)
 - [ ] The tray and the browser render identically at the same size (`02-lobby`, compared against the tray window)
+
+## The overlay against the office (added by the 2026-09-11 fix wave)
+
+Each of these lines exists because a delivered screenshot showed the opposite.
+
+- [ ] The selected segment is filled with the accent and its ink reads on it — on the time bar and inside a sheet, in both themes (`01-first-run`, `12-light-theme`)
+- [ ] The first-run card dims the office behind it, and it is the only first-contact message on the screen: no coach mark beside it (`01-first-run`)
+- [ ] No panel, sheet, reader or viewer overruns the time bar: Live and Replay are whole and legible under every presentation (`10-browser-live`, `11-terminal`, `12-light-theme`, `13-stack`)
+- [ ] No panel covers the minimap or its M toggle at 1280 × 800 — an open sheet stops above them (`12-light-theme`)
+- [ ] A live browser stream's counter moves: `seq N` is not 0 after frames have arrived, and the rate reads beside it (`10-browser-live`)
+- [ ] The browser viewer's box is the frame's own shape: no band of dead black beside or above the picture (`10-browser-live`)
+- [ ] The terminal viewer is as tall as its output, not a fixed box two thirds empty (`11-terminal`)
+- [ ] One header row per viewer: the agent, the host, the seq and the rate are printed once (`10-browser-live`)
+- [ ] "Talk to the CEO" is the only amber fill in the top bar; the approvals pill is accent text on a surface, and at zero it is absent rather than a grey "0 to approve" (`01-first-run` has none, `10-browser-live` has one)
+- [ ] A freshly opened sheet has no focus ring inside it: focus lands on the panel and Tab moves in (`12-light-theme`)
+- [ ] The replay transport — date, play/pause, scrub, speed, the Space/arrows hint — is on the screen only in replay mode (`01-first-run` and every floor shot show none)
+- [ ] Every wall screen is a mounted object: a bezel, a lit top edge and a shadow seating it on the wall, in both themes (`05-f3`, `12-light-theme`)
+- [ ] No room sign is half-eaten by the floor rail: each is whole, or absent while its room is off the screen (`03-f1`, `05-f3`, `13-stack`)
+- [ ] Sibling desks are told apart at the zoom labels appear at: the QA room is not a column of "QA …" (`05-f3`)

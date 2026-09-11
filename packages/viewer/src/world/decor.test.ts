@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { decorFrame, plantShape, DECOR_FRAMES, DECOR_DRAW, DECOR_FRAME_NAMES, type DecorKind } from './decor.js';
+import { decorFrame, plantShape, signX, signVisible, RAIL_PX, DECOR_FRAMES, DECOR_DRAW, DECOR_FRAME_NAMES, type DecorKind } from './decor.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { RecordingPx } from './tiles-draw.js';
 
 const idle = { occupied: false, working: false }, busy = { occupied: true, working: true };
@@ -34,5 +36,39 @@ describe('decor sheet', () => {
     const s = (k: DecorKind) => { const p = new RecordingPx(); DECOR_DRAW[k](p, 0); return JSON.stringify(p.rects); };
     expect(s('plant')).not.toBe(s('plant2'));
     expect([10, 11, 12, 13, 14, 15].map(plantShape)).toEqual([0, 1, 0, 1, 0, 1]);
+  });
+});
+
+/**
+ * I9: the floor rail covers the left 44 px of the viewport, and a room whose sign anchor ended up under it read
+ * "oom" (`13-stack.png`) or "O" (`05-f3.png`). The label slides right along its own wall instead, the way a map
+ * label pins itself to the visible part of the feature it names.
+ */
+describe('a room sign slides clear of the floor rail', () => {
+  // A room from tile 4 to tile 20: the anchor at 68, and the label may slide to 300 before it leaves the room.
+  const ANCHOR = 68, ROOM_RIGHT = 300;
+  it('sits on its anchor while the anchor is clear', () => {
+    expect(signX(ANCHOR, ROOM_RIGHT, 0)).toBe(ANCHOR);
+    expect(signX(ANCHOR, ROOM_RIGHT, ANCHOR)).toBe(ANCHOR);
+  });
+  it('slides exactly as far as the rail demands, and no further', () => {
+    expect(signX(ANCHOR, ROOM_RIGHT, 120)).toBe(120);
+    expect(signX(ANCHOR, ROOM_RIGHT, 299)).toBe(299);
+  });
+  it('never leaves the room it names, however far the camera pans', () => {
+    expect(signX(ANCHOR, ROOM_RIGHT, 5000)).toBe(ROOM_RIGHT);
+  });
+  it('never moves at all for a room too narrow to hold its own label', () => {
+    expect(signX(ANCHOR, ANCHOR - 40, 5000)).toBe(ANCHOR);   // roomRight behind the anchor: stay put
+  });
+  it('is shown while it cleared the rail and dropped when its room has all but left the screen', () => {
+    expect(signVisible(signX(ANCHOR, ROOM_RIGHT, 120), 120)).toBe(true);
+    expect(signVisible(signX(ANCHOR, ROOM_RIGHT, 0), 0)).toBe(true);
+    // Panned past the room: the clamp stops at ROOM_RIGHT, which is still under the rail, so the label goes.
+    expect(signVisible(signX(ANCHOR, ROOM_RIGHT, 5000), 5000)).toBe(false);
+  });
+  it('reads the rail width the stylesheet actually uses', () => {
+    const css = readFileSync(fileURLToPath(new URL('../ui/tokens.css', import.meta.url)), 'utf8');
+    expect(`--rail-w: ${RAIL_PX}px`).toBe(/--rail-w:\s*\d+px/.exec(css)?.[0]);
   });
 });
