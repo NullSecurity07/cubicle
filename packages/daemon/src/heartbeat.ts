@@ -740,7 +740,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; researchJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; money?: { line: string; needsYou: string[]; dormant: boolean }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; researchJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -904,8 +904,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const cfg = deps.router?.config ?? null;
         const accrued = cfg ? accrueModelCost(vault, cfg, now()) : null;
         const report: MoneyReport = moneyReport(readLedger(vault), now());
-        state = { ...state, money: { line: moneyLine(report), needsYou: moneyNeedsYou(report), dormant: report.dormant } };
-        saveState(state);
+        const line = moneyLine(report);
         // The runway note is a report, never the cycle: a providers file the router could not parse must not
         // stop the company from working.
         if (cfg) {
@@ -914,11 +913,16 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         }
         if (report.dormant) {
           const msg = dormancyMessage(vault, org, report, now());
-          done(i, `dormant: ${money(report.cashCents, report.currency)} cash${msg ? `; told the owner (${msg})` : '; the owner has already been told'}`);
-          // Jump to the brief. Every step in between plans, judges or queues work, and a company with no money
-          // does none of those — least of all spend a cycle's model quota writing about having no money.
+          // Jump to the brief in ONE write. Every step in between plans, judges or queues work, and a company
+          // with no money does none of those — least of all spend a cycle's model quota writing about having no
+          // money. Checkpointing the step first and correcting it afterwards left a kill window in which the
+          // job resumed at `reconcile_brand`: `money` would not run again, nothing would re-check dormancy
+          // until `brief`, and a stopped company would spend a full planning round getting there. A kill before
+          // this write resumes at `money` and re-derives dormancy from the ledger; a kill after it resumes at
+          // `brief`. Both are correct, and there is no third state.
           const briefIdx = HEARTBEAT_STEPS.indexOf('brief');
-          updateJob(vault, jobId, { checkpoint_step: briefIdx }, 'ceo', `- steps ${i + 2}–${briefIdx}: skipped — the company is dormant`);
+          updateJob(vault, jobId, { checkpoint_step: briefIdx }, 'ceo',
+            `- step ${i + 1} money: dormant: ${money(report.cashCents, report.currency)} cash${msg ? `; told the owner (${msg})` : '; the owner has already been told'}\n- steps ${i + 2}–${briefIdx}: skipped — the company is dormant`);
           job = read().data;
           i = briefIdx - 1;
           break;
@@ -926,7 +930,7 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const revived = revivalMessage(vault, org, report, now());
         const runway = enqueueRunway(vault, org, now());
         done(i, [
-          moneyLine(report),
+          line,
           revived ? `told the owner we are back (${revived})` : '',
           accrued ? `accrued ${money(accrued.cents, report.currency)} of model cost` : '',
           runway ? `queued ${runway}` : 'today\'s runway job is already queued',
@@ -1524,13 +1528,13 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // D8: heartbeat #1 must leave the company with a site, an offer and a channel to work on, whatever the
         // plan turned out to say. Runs after division_plans (every exit path of it, including the give-up one) so a
         // lead's own scheduling wins and only what nobody covered is seeded; later cycles seed nothing.
-        // What the brief says about money is derived from the book here, not read back from the cycle's cache:
-        // the state file is a resume aid, and a crash that loses it must not be able to make the brief forget
-        // the money line or seed a stopped company with its first jobs. The `money` step's record is refreshed,
-        // never trusted — the ledger is the only thing that knows.
+        // What the brief says about money is derived from the book here, not carried down from the `money`
+        // step: the state file is a resume aid, and a crash that loses it must not be able to make the brief
+        // forget the money line or seed a stopped company with its first jobs. The ledger is the only thing
+        // that knows, and it costs one read to ask it — which is why the cycle caches nothing about money at
+        // all, and why nothing here may be changed to trust a remembered figure.
         const moneyNow = moneyReport(readLedger(vault), now());
         const moneyFacts = { line: moneyLine(moneyNow), needsYou: moneyNeedsYou(moneyNow), dormant: moneyNow.dormant };
-        state = { ...state, money: moneyFacts };
         // D8 seeds heartbeat #1 with a stream and the first jobs — but never for a company that has no money
         // to do them with. A dormant cycle writes its brief and nothing else.
         const firstStream = moneyFacts.dormant ? null : seedFirstStream(vault);
