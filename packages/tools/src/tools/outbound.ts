@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, cpSync } from 'node:fs';
 import { defineTool } from '../registry.js';
-import { createProposal, createJob, idFromKey, nowIso, stringifyNote, parseNote, repoRoot, loadOrg, resolveRole } from '@cubicle/core';
+import { createProposal, createJob, idFromKey, nowIso, stringifyNote, parseNote, readJob, repoRoot, loadOrg, resolveRole } from '@cubicle/core';
 import { emailSender, suppressed, addSuppression, UNSUBSCRIBE_FOOTER } from '../adapters/email.js';
 import { inboxReader, type InboundMail } from '../adapters/inbox.js';
-import { deployer } from '../adapters/deploy.js';
+import { deployer, DEPLOY_STAGES } from '../adapters/deploy.js';
 import { paymentLinks } from '../adapters/stripe.js';
 import { analytics, upsertDailyRow } from '../adapters/analytics.js';
 import { slugify } from '../adapters/common.js';
@@ -93,35 +93,96 @@ export const emailInbox = defineTool({
   },
 });
 
+/** Where each deploy's published bytes are kept so a rollback has something real to republish. */
+export function deploySnapshotDir(vault: import('@cubicle/core').Vault, project: string, stamp: string): string {
+  return vault.abs(`.cubicle/deploys/${slugify(project)}/${stamp}`);
+}
+
+/**
+ * The snapshot of the live deploy *before* the current one — what `rollback: true` republishes. Returns null
+ * when fewer than two live deploys have happened, because "roll back" then has no honest meaning.
+ */
+export function previousLiveSnapshot(vault: import('@cubicle/core').Vault, project: string): string | null {
+  const lives = vault.events.query({ types: ['deploy.done'], limit: 500 })
+    .filter((e) => e.payload.project === slugify(project) && e.payload.stage === 'live' && e.payload.rolled_back !== true && typeof e.payload.snapshot === 'string');
+  if (lives.length < 2) return null;
+  const abs = vault.abs(String(lives[lives.length - 2].payload.snapshot));
+  return existsSync(abs) ? abs : null;
+}
+
+/** The stages of this project already reached, from the event log. */
+function stagesDone(vault: import('@cubicle/core').Vault, project: string): Set<string> {
+  return new Set(vault.events.query({ types: ['deploy.done'], limit: 500 }).filter((e) => e.payload.project === project).map((e) => String(e.payload.stage ?? 'live')));
+}
+
+/** A snapshot directory that does not already exist: two deploys inside the same millisecond must not share bytes. */
+function uniqueStamp(vault: import('@cubicle/core').Vault, project: string): string {
+  const base = nowIso().replace(/[:.]/g, '-');
+  if (!existsSync(deploySnapshotDir(vault, project, base))) return base;
+  let n = 2;
+  while (existsSync(deploySnapshotDir(vault, project, `${base}-${n}`))) n++;
+  return `${base}-${n}`;
+}
+
 export const deploySite = defineTool({
   name: 'deploy.site',
-  description: 'Publish Site/dist to Cloudflare Pages (free). Build first (shell.run: npm run build). First deploy needs owner approval; later ones are automatic.',
-  schema: { project: z.string().optional().describe('Pages project name; defaults to the brand name slug'), dir: z.string().default('Site/dist') },
-  async handler({ project, dir }, ctx) {
+  description: 'Publish Site/dist to Cloudflare Pages (free), one stage at a time: preview → canary → live (owner\'s operating model §20). Build first (shell.run: npm run build). canary needs a preview first, live needs a canary; live must name the metrics it will watch. The canary percentage is a mock until real traffic-splitting infrastructure exists — it is recorded, not enforced. `rollback: true` republishes the previous live deploy. First deploy needs owner approval; later ones are automatic.',
+  schema: {
+    project: z.string().optional().describe('Pages project name; defaults to the brand name slug'),
+    dir: z.string().default('Site/dist'),
+    stage: z.enum(DEPLOY_STAGES).default('preview'),
+    canary_percent: z.number().int().min(1).max(100).default(5).describe('recorded with the canary stage; a mock until real traffic splitting exists'),
+    metrics: z.array(z.string()).default([]).describe('what you will watch after this deploy — error rate, latency, the stream\'s outcome metric. Required for canary and live.'),
+    rollback: z.boolean().default(false).describe('republish the previous live deploy instead of Site/dist'),
+  },
+  async handler({ project, dir, stage, canary_percent, metrics, rollback }, ctx) {
     const key = requireKey(ctx);
     if (!key) return { ok: false, text: 'deploy.site requires an idempotency key (harness bug)' };
-    let rel: string;
-    try { rel = (await import('@cubicle/core')).normalizeRel(dir); } catch (err) { return { ok: false, text: (err as Error).message }; }
-    if (!/^Site\/[^/]+(\/.*)?$/.test(rel) || rel.startsWith('Site/node_modules')) return { ok: false, text: `deploy.site only publishes a build directory under Site/ (e.g. Site/dist), not "${dir}"` };
-    const abs = ctx.vault.abs(rel);
-    if (!existsSync(abs)) return { ok: false, text: `${rel} does not exist — build the site first (shell.run: npm run build)` };
-    const { lstatSync } = await import('node:fs');
-    if (lstatSync(abs).isSymbolicLink()) return { ok: false, text: `${rel} is a symlink; refusing` };
     const brand = parseNote(ctx.vault.readTextOrNull('Brand/name.md') ?? '').data as { name?: string; url?: string };
     const name = (project ?? slugify(brand.name || 'cubicle-site')).toLowerCase();
     if (!/^[a-z0-9][a-z0-9-]{0,57}$/.test(name)) return { ok: false, text: `invalid project name "${name}" (lowercase letters, digits, dashes)` };
+
+    let abs: string;
+    let rel = 'Site/dist';
+    if (rollback) {
+      const prev = previousLiveSnapshot(ctx.vault, name);
+      if (!prev) return { ok: false, text: `no previous live deploy of "${name}" to roll back to. Fix forward: build, deploy a preview, then a canary, then live.` };
+      abs = prev;
+      stage = 'live';
+    } else {
+      try { rel = (await import('@cubicle/core')).normalizeRel(dir); } catch (err) { return { ok: false, text: (err as Error).message }; }
+      if (!/^Site\/[^/]+(\/.*)?$/.test(rel) || rel.startsWith('Site/node_modules')) return { ok: false, text: `deploy.site only publishes a build directory under Site/ (e.g. Site/dist), not "${dir}"` };
+      abs = ctx.vault.abs(rel);
+      if (!existsSync(abs)) return { ok: false, text: `${rel} does not exist — build the site first (shell.run: npm run build)` };
+      const { lstatSync } = await import('node:fs');
+      if (lstatSync(abs).isSymbolicLink()) return { ok: false, text: `${rel} is a symlink; refusing` };
+
+      const done = stagesDone(ctx.vault, name);
+      if (stage === 'canary' && !done.has('preview')) return { ok: false, text: `deploy a preview of "${name}" first (stage: "preview"), look at it, then canary. §20: reduce the blast radius by exposing the change gradually.` };
+      if (stage === 'live' && !done.has('canary')) return { ok: false, text: `deploy a canary of "${name}" first (stage: "canary", with the metrics you will watch), then live.` };
+      if (stage !== 'preview' && metrics.length === 0) return { ok: false, text: `a ${stage} deploy must name the metrics it will watch (§20: error rates, latency, business metrics, resource use). Pass metrics: ["error rate", "<the stream's outcome metric>"].` };
+    }
+
     const d = deployer(ctx.env, repoRoot());
-    const res = await d.deploy(ctx.vault, { project: name, dir: abs, idempotencyKey: key });
-    void rel;
+    const res = await d.deploy(ctx.vault, { project: name, dir: abs, idempotencyKey: key, stage });
     if (!res.ok) return { ok: false, text: `deploy failed: ${res.detail}` };
-    ctx.events.emit({ type: 'deploy.done', agent: ctx.roleId, job: ctx.jobId, payload: { url: res.url, project: name, mode: d.mode, key } });
-    if (res.url && brand.url !== res.url) {
+
+    // Keep the exact bytes that went out, so a rollback republishes a real artefact rather than a rebuild.
+    const snapDir = deploySnapshotDir(ctx.vault, name, uniqueStamp(ctx.vault, name));
+    let snapshot: string | null = null;
+    try { mkdirSync(snapDir, { recursive: true }); cpSync(abs, snapDir, { recursive: true }); snapshot = ctx.vault.rel(snapDir); } catch { snapshot = null; }
+    if (rollback) { try { cpSync(abs, ctx.vault.abs('Site/dist'), { recursive: true }); ctx.vault.rescan('Site', `${ctx.roleId}/deploy`, { job: ctx.jobId }); } catch { /* the deploy itself still went out */ } }
+
+    ctx.events.emit({ type: 'deploy.done', agent: ctx.roleId, job: ctx.jobId, payload: { url: res.url, project: name, mode: d.mode, key, stage, canary_percent: stage === 'canary' ? canary_percent : null, metrics, rolled_back: rollback, snapshot, stream: readJob(ctx.vault, ctx.jobId ?? '')?.data.stream ?? null } });
+
+    if (stage === 'live' && res.url && brand.url !== res.url) {
       const cur = ctx.vault.readTextOrNull('Brand/name.md') ?? '';
       const note = parseNote(cur);
       const proposed = stringifyNote({ ...note.data, url: res.url }, note.body);
       createProposal(ctx.vault, { id: idFromKey('prop', `${key}:url`), kind: 'brand_change', from: ctx.roleId, target: 'Brand/name.md', title: `Record site URL ${res.url}`, body: `The site is live at ${res.url}. Approve to record it in Brand/name.md.\n\n## Proposed content\n\n\`\`\`\n${proposed}\`\`\``, call: { tool: 'vault.write', args: { path: 'Brand/name.md', content: proposed }, idempotency_key: `${key}:url`, job: ctx.jobId ?? undefined, role: ctx.roleId }, job: ctx.jobId ?? undefined }, ctx.roleId);
     }
-    return { ok: true, text: `${res.detail} (${d.mode})`, sideEffectKey: key, data: { url: res.url, mode: d.mode } };
+    const watching = metrics.length ? ` Watching: ${metrics.join(', ')}.` : '';
+    return { ok: true, text: `${rollback ? 'rolled back — ' : ''}${res.detail} (${d.mode}, stage ${stage}${stage === 'canary' ? `, ${canary_percent} % mock canary` : ''}).${watching}`, sideEffectKey: key, data: { url: res.url, mode: d.mode, stage, rolled_back: rollback, snapshot } };
   },
 });
 
