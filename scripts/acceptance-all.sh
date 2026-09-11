@@ -3,6 +3,8 @@
 # Usage: scripts/acceptance-all.sh [clone-dir]
 set -u
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
+# A live daemon usually holds the default port; the sweep's own daemons take a free one so the two never collide.
+export CUBICLE_PORT="${CUBICLE_PORT:-$(( 7500 + RANDOM % 400 ))}"
 DST="${1:-$(mktemp -d /tmp/cubicle-fresh-XXXX)}"
 PASS=0; FAIL=0; RESULTS=()
 step() { local name="$1"; shift; echo; echo "=== $name ==="; if "$@"; then PASS=$((PASS+1)); RESULTS+=("PASS  $name"); else FAIL=$((FAIL+1)); RESULTS+=("FAIL  $name"); fi; }
