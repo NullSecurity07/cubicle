@@ -39,6 +39,8 @@ tools:
   skills.load:           { mode: auto }
   skills.search:         { mode: auto }
   scheduler.request:     { mode: auto }
+  research.start:        { mode: auto }
+  sources.cite:          { mode: auto }
   proposal.create:       { mode: auto }
   finish:                { mode: auto }
   mock.outbound:         { mode: auto, outbound: true, proposal_kind: outbound_batch }

@@ -24,7 +24,7 @@ export interface SceneHooks {
   /** the visual layer's elevator car; a plain box when absent */ makeCar?(scene: Phaser.Scene, geo: { shaft: Anchor; floors: FloorInfo[] }): Phaser.GameObjects.Container;
   /** the car's own doors/digits (main-camera only — the minimap would otherwise show them as amber smudges) */ elevatorIgnorables?(): Phaser.GameObjects.GameObject[];
   /** every elevator event, for the indicator and sounds */ onElevator?(ev: ElevatorEvent): void;
-  /** the scene is shutting down (Phaser's own `shutdown` lifecycle) — the visual layer disposes what it created in `makeCar` */ onSceneShutdown?(): void;
+  /** the scene's `Phaser.Scenes.Events.SHUTDOWN` fired — the visual layer disposes what it created in `makeCar` */ onSceneShutdown?(): void;
 }
 
 export const BUILDING = { x0: 4, x1: 54, y0: 2, y1: 54 } as const;   // tiles, inclusive; what the minimap frames
@@ -87,6 +87,9 @@ export class OfficeScene extends Phaser.Scene {
     this.decor = new DecorLayer(this, this.world.decor);
     this.signs = new RoomSigns(this, this.world.signs);
     this.elev = initialElevator(this.world.floors, 1);
+    // Phaser calls `scene.sys.shutdown()`, never a `shutdown()` method on the Scene itself — it emits this event on
+    // `this.events`, which is only guaranteed to exist once we're inside a lifecycle callback like `create()`.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.hooks.onSceneShutdown?.());
     this.car = (this.hooks.makeCar?.(this, { shaft: this.world.anchors.shaft, floors: this.world.floors }) ?? this.defaultCar()).setDepth(3);
     this.car.setPosition(SHAFT_CENTRE_X, this.elev.row * TILE);
     makeSky(this, 'sky', skyFor(this.hour()), h);
@@ -122,10 +125,6 @@ export class OfficeScene extends Phaser.Scene {
     this.pendingFloor = null;
     if (this.pendingFocus) { const f = this.pendingFocus; this.pendingFocus = null; this.focusOn(f); }
   }
-
-  /** Phaser's own lifecycle callback — by now `this.events` and friends are long since installed, so it is the
-   *  safe place to let the visual layer dispose whatever `hooks.makeCar` created (never call this from outside Phaser). */
-  shutdown(): void { this.hooks.onSceneShutdown?.(); }
 
   /** A grey box with a strip of glass: enough to see the ride until plan 2 draws the real car. */
   private defaultCar(): Phaser.GameObjects.Container {

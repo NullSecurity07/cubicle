@@ -12,7 +12,7 @@ import { WsServer } from './ws.js';
 import { createHeartbeatJob, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
-import { enqueueExperimentReviews, maybeEnqueueCharterCompression, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions } from './evolution.js';
+import { captureResearchDeliveries, enqueueExperimentReviews, maybeEnqueueCharterCompression, maybeEnqueueIntelligence, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions } from './evolution.js';
 import { hasIdea } from './first-run.js';
 import { StaticServer } from './static.js';
 import { pruneScreens } from '@cubicle/tools';
@@ -194,6 +194,8 @@ export class Daemon {
       this.jobsDoneSinceHeartbeat = 0;
       const id = maybeEnqueueCharterCompression(this.vault);
       if (id) this.log(`charter compression queued: ${id}`);
+      const intel = maybeEnqueueIntelligence(this.vault);
+      if (intel.length) this.log(`intelligence sweeps queued: ${intel.join(', ')}`);
     }));
     this.offEvents.push(this.vault.events.on('quota.updated', () => this.writeQuotaMd()));
 
@@ -284,6 +286,8 @@ export class Daemon {
       if (n) this.log(`tick(${reason}): ${n} proposal/unblock action(s)`);
       const reviews = enqueueExperimentReviews(this.vault);
       if (reviews.length) this.log(`tick(${reason}): ${reviews.length} experiment review(s) queued`);
+      const captured = captureResearchDeliveries(this.vault);
+      if (captured.length) this.log(`tick(${reason}): indexed ${captured.length} delivered research project(s)`);
       const pm = maybeEnqueuePostmortem(this.vault);
       if (pm) this.log(`tick(${reason}): postmortem ${pm}`);
       const wr = await maybeEnqueueWeeklyReview(this.vault, this.openMeeting);
