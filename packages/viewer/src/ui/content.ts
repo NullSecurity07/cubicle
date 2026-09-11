@@ -1,17 +1,29 @@
 /**
  * What each office surface shows when opened: pure builders from State → { title, html, mode }.
- * `drawer` = right-side cards and rows; `doc` = the centered document modal; `chat` = the CEO thread.
+ * `drawer` = right-side cards and rows; `doc` = the centered document modal; `chat` = the CEO thread;
+ * `viewer` = the realtime browser/terminal panel that is morphed in place rather than re-opened.
  * No DOM here, so every builder is unit-testable.
  *
  * The builders live below the registry that calls them (`ui/surfaces.ts` imports this file, never the other
  * way round), so this module has no cycle to be careful about and can be read top to bottom.
  */
-import type { State, JobView } from '../state.js';
+import type { State, JobView, TeamView, AgentView } from '../state.js';
 import { md, inline } from './markdown.js';
+import { pixelIcon, type GlyphName } from './icons.js';
 
-export type ViewMode = 'drawer' | 'doc' | 'chat';
-export interface View { title: string; sub?: string; html: string; mode: ViewMode; /** raw text for the Copy button (docs) */ copy?: string; /** obsidian:// link for the modal header */ link?: string }
-export interface Ctx { frames: Record<string, string>; tokenQuery: string; vaultName: string }
+export type ViewMode = 'drawer' | 'doc' | 'chat' | 'viewer';
+export interface View {
+  title: string; sub?: string; html: string; mode: ViewMode;
+  /** raw text for the Copy button (docs) */ copy?: string;
+  /** obsidian:// link for the header */ link?: string;
+  /** re-rendered on every event and morphed in place; the panel offers "Jump to latest" when scrolled up */ live?: boolean;
+  /** pixel icon shown in the trail header */ icon?: GlyphName;
+}
+export interface Ctx {
+  frames: Record<string, string>; tokenQuery: string; vaultName: string;
+  /** measured frame rate per browser stream (main.ts) */ fps?: Record<string, number>;
+  /** floor number → division label from `scene.floorSummary()` */ floorLabels?: Record<number, string>;
+}
 
 export const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
@@ -42,13 +54,31 @@ export function fmtWhen(ts: string, now = new Date()): string {
 
 export const chip = (status: string, label = status): string => `<span class="chip ${esc(status)}">${esc(label)}</span>`;
 export const section = (title: string, body: string, count?: number | string): string => `<div class="section"><h3>${esc(title)}${count !== undefined ? `<span class="count">${esc(String(count))}</span>` : ''}</h3>${body}</div>`;
-export const empty = (text: string): string => `<div class="empty">${esc(text)}</div>`;
 export const rows = (items: string[]): string => `<div class="rows">${items.join('')}</div>`;
-/** A list row: [left chip] [title + optional small line] [right meta]. `open` makes it a button that opens another view. */
-export function row(o: { left?: string; title: string; small?: string; right?: string; open?: string }): string {
+
+/** Empty state with a pixel icon: what is missing and what will fill it. */
+export const emptyHtml = (icon: GlyphName, title: string, hint?: string): string => `<div class="empty">${pixelIcon(icon, { size: 16 })}<b>${esc(title)}</b>${hint ? `<span>${esc(hint)}</span>` : ''}</div>`;
+export const empty = (text: string): string => emptyHtml('doc', text);
+
+/** A list row: [left chip] [title + small line] [right meta] as one hit target, plus trailing actions outside it. */
+export function row(o: { left?: string; title: string; small?: string; right?: string; open?: string; actions?: string }): string {
   const inner = `${o.left ?? '<span></span>'}<span class="t">${esc(o.title)}${o.small ? `<small>${esc(o.small)}</small>` : ''}</span><span class="when">${o.right ?? ''}</span>`;
-  return o.open ? `<button class="row click" data-open="${esc(o.open)}">${inner}</button>` : `<div class="row">${inner}</div>`;
+  const hit = o.open ? `<button class="hit" data-open="${esc(o.open)}">${inner}</button>` : `<div class="hit">${inner}</div>`;
+  return `<div class="row">${hit}${o.actions ? `<span class="acts">${o.actions}</span>` : ''}</div>`;
 }
+export const locate = (role: string): string => `<button class="mini" data-locate="agent:${esc(role)}">Locate</button>`;
+
+/** Segmented control: first segment selected; the panel keeps the choice across re-renders. */
+export function segmented(segs: { id: string; label: string; count?: number; html: string }[]): string {
+  const tabs = segs.map((g, i) => `<button role="tab" class="seg" data-seg="${esc(g.id)}" aria-selected="${i === 0}">${esc(g.label)}${g.count ? `<span class="n">${g.count}</span>` : ''}</button>`).join('');
+  const panes = segs.map((g, i) => `<div class="pane" data-key="pane-${esc(g.id)}" data-pane="${esc(g.id)}"${i === 0 ? '' : ' hidden'}>${g.html}</div>`).join('');
+  return `<div class="segmented" role="tablist" data-key="segs">${tabs}</div>${panes}`;
+}
+
+export const stat = (label: string, value: string, sub?: string): string => `<div class="stat"><span class="v">${esc(value)}</span><span class="l">${esc(label)}</span>${sub ? `<span class="s">${esc(sub)}</span>` : ''}</div>`;
+export const stats = (tiles: string[]): string => `<div class="stats">${tiles.join('')}</div>`;
+/** Runway meter: `pct` is the share used; hot above 90 %, warm above 60 %. */
+export const meterHtml = (pct: number): string => `<div class="meter${pct > 0.9 ? ' hot' : pct > 0.6 ? ' warn' : ''}"><i style="width:${Math.round((1 - Math.min(1, Math.max(0, pct))) * 100)}%"></i></div>`;
 
 const statusChip = (status: string): string => (status === 'in_review' ? chip('in_review', 'in review') : chip(status));
 const jobRow = (j: JobView, s: State): string => row({ left: statusChip(j.status), title: j.title, small: `${who(s, j.assigned)} · ${teamName(s, j.team)} · ${j.type} · step ${j.checkpoint_step}`, right: esc(fmtWhen(j.updated)), open: `job:${j.id}` });
@@ -70,10 +100,39 @@ export function teamJobs(jobs: JobView[], s: State): string {
 /** Total free-tier calls made today, across every provider and model the daemon reported. */
 export const callsToday = (s: State): number => s.quota.reduce((n, q) => n + (q.rpd_used || 0), 0);
 
-/** The decision feed: decisions, proposals, vetoes, guardrail hits, deploys and org changes, newest first. */
+/** Colour of a feed row's dot from what the reducer wrote. */
+export function feedKind(text: string): 'ok' | 'warn' | 'bad' | 'info' {
+  if (/^guardrail:|rejected:|failed|left the company/.test(text)) return 'bad';
+  if (/^proposal:|^you edited/.test(text)) return 'warn';
+  if (/^deployed |^hired |approved:/.test(text)) return 'ok';
+  return 'info';
+}
+
+/** "Today", "Yesterday", or "3 Sep". */
+export function dayLabel(ts: string, now = new Date()): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  const day = d.toDateString();
+  if (day === now.toDateString()) return 'Today';
+  if (day === new Date(now.getTime() - 86_400_000).toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+
+/** Rows grouped by day with a `<div class="day">` heading between groups; items must already be in display order. */
+export function byDay<T extends { ts: string }>(items: T[], render: (t: T) => string): string {
+  let last = '';
+  const out: string[] = [];
+  for (const it of items) { const d = dayLabel(it.ts); if (d !== last) { last = d; out.push(`<div class="day">${esc(d)}</div>`); } out.push(render(it)); }
+  return out.join('');
+}
+
+/** The decision feed: newest first, grouped by day, a coloured dot per kind. */
 export function feedHtml(s: State): string {
   const items = s.feed.slice(-30).reverse();
-  return section('Decision feed', items.length ? rows(items.map((f) => row({ title: f.text, right: esc(fmtTime(f.ts)) }))) : empty('Nothing decided yet. Decisions, proposals and guardrail hits appear here.'), items.length || undefined);
+  const body = items.length
+    ? byDay(items, (f) => row({ left: `<i class="dot ${feedKind(f.text)}"></i>`, title: f.text, right: esc(fmtTime(f.ts)) }))
+    : emptyHtml('doc', 'Nothing decided yet', 'Decisions, proposals and guardrail hits appear here.');
+  return section('Decision feed', body, items.length || undefined);
 }
 
 /** Title of a Runs/ brief from its path (Runs/2026-09-03-1016.md → "Brief · 3 Sep 10:16"). */
@@ -82,25 +141,132 @@ export function briefTitle(path: string): string {
   return m ? `Brief · ${fmtWhen(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00`)}` : 'Latest brief';
 }
 
-/** The org chart has no place on the map: it is opened from the top bar, not by walking to a building. */
-export function orgView(s: State): View {
-  if (!s.teams.length) return { mode: 'drawer', title: 'Org', html: empty('No teams yet. Start the daemon once to create the default org.') };
-  const jobList = Object.values(s.jobs);
-  const html = s.teams.map((t) => {
-    const openCount = jobList.filter((j) => j.team === t.id && isOpen(j.status)).length;
-    const leadRow = row({ left: chip('kind', 'Lead'), title: who(s, t.lead), small: t.mission, open: `agent:${t.lead}` });
-    const memberRows = t.members.map((m) => row({ title: who(s, m), small: roleTitle(s, m), open: `agent:${m}` }));
-    return section(t.name, rows([leadRow, ...memberRows]), `${openCount} open`);
+export const isTeamOpen = (s: State, teamId: string): number => Object.values(s.jobs).filter((j) => j.team === teamId && isOpen(j.status)).length;
+
+/** Org by division (= floor, F4 down to F1), then team (parents before children), a Locate per role. */
+export function orgView(s: State, ctx: Ctx): View {
+  if (!s.teams.length) return { mode: 'drawer', title: 'Org', html: emptyHtml('chat', 'No teams yet', 'Start the daemon once to create the default org.') };
+  const floorOf = (t: TeamView): number => t.floor ?? s.teams.find((p) => p.id === t.parent)?.floor ?? 0;
+  const floors = [...new Set(s.teams.map(floorOf))].sort((a, b) => b - a);
+  const teamHtml = (t: TeamView): string => {
+    const lead = row({ left: chip('kind', 'Lead'), title: who(s, t.lead), small: t.mission, open: `agent:${t.lead}`, actions: locate(t.lead) });
+    const members = t.members.map((m) => row({ title: who(s, m), small: roleTitle(s, m), open: `agent:${m}`, actions: locate(m) }));
+    return section(t.name, rows([lead, ...members]), `${isTeamOpen(s, t.id)} open`);
+  };
+  const html = floors.map((f) => {
+    const here = s.teams.filter((t) => floorOf(t) === f);
+    const ordered = [...here.filter((t) => !t.parent || !here.some((p) => p.id === t.parent)), ...here.filter((t) => t.parent && here.some((p) => p.id === t.parent))];
+    const label = f ? ctx.floorLabels?.[f] ?? `Floor ${f}` : 'Elsewhere';
+    return `<div class="division" style="--division:var(--floor-${f || 1})"><h2 class="division-title">${esc(label)}</h2>${ordered.map(teamHtml).join('')}</div>`;
   }).join('');
   return { mode: 'drawer', title: 'Org', sub: `${s.teams.length} teams`, html };
+}
+
+/** Queue: Open / In review / Done segments, each grouped by team. */
+export function queueView(s: State): View {
+  const all = Object.values(s.jobs).sort((a, b) => a.priority - b.priority || byUpdated(a, b));
+  const open = all.filter((j) => ['queued', 'running', 'blocked'].includes(j.status));
+  const review = all.filter((j) => j.status === 'in_review');
+  const done = all.filter((j) => !isOpen(j.status)).sort(byUpdated).slice(0, 40);
+  const html = segmented([
+    { id: 'open', label: 'Open', count: open.length, html: open.length ? teamJobs(open, s) : emptyHtml('clipboard', 'Nothing queued', 'The next heartbeat plans new work.') },
+    { id: 'review', label: 'In review', count: review.length, html: review.length ? teamJobs(review, s) : emptyHtml('clipboard', 'Nothing in review') },
+    { id: 'done', label: 'Done', count: done.length, html: done.length ? teamJobs(done, s) : emptyHtml('clipboard', 'No finished jobs yet') },
+  ]);
+  return { mode: 'drawer', title: 'Queue', sub: `${open.length} open · ${review.length} in review`, html, icon: 'clipboard' };
+}
+
+/** Post office: what needs the owner, then the mail log. */
+export function postOfficeView(s: State, ctx: Ctx): View {
+  const needs = s.inbox.length
+    ? rows(s.inbox.map((n) => row({ left: chip('kind', kindLabel(n.kind)), title: n.title, small: n.path.replace(/^00 Inbox\//, ''), right: ctx.vaultName ? `<a href="${esc(obsidianUrl(ctx.vaultName, n.path))}">Open</a>` : esc(fmtWhen(n.created)) })))
+      + `<p class="hintline">Approve or reject each one in 00 Inbox/ by setting approved: true or false.</p>`
+    : emptyHtml('envelope', 'Nothing waiting for you', 'Proposals that need your approval appear here.');
+  const mail = s.mail.length ? byDay(s.mail.slice(-40).reverse(), (m) => row({ title: m.text, right: esc(fmtTime(m.ts)) })) : emptyHtml('envelope', 'No mail yet');
+  return { mode: 'drawer', title: 'Post office', sub: s.inbox.length ? `${s.inbox.length} to approve` : 'nothing to approve', html: segmented([{ id: 'needs', label: 'Needs you', count: s.inbox.length, html: needs }, { id: 'mail', label: 'Mail', html: mail }]), icon: 'envelope' };
+}
+
+/** Bank: stat tiles, then one tile per model with its runway meter and cooling time. */
+export function bankView(s: State): View {
+  const cooling = s.quota.filter((q) => q.cooling_until).length;
+  const head = stats([stat('calls today', `${callsToday(s)}`), stat('providers', `${new Set(s.quota.map((q) => q.provider)).size}`), stat('cooling', `${cooling}`)]);
+  const tiles = s.quota.length ? `<div class="tiles">${s.quota.map((q) => {
+    const pct = q.limits.rpd ? q.rpd_used / q.limits.rpd : 0;
+    return `<div class="tile" data-key="model-${esc(q.provider)}-${esc(q.model)}"><div class="tile-head"><b>${esc(q.model)}</b><span class="muted">${esc(q.provider)}</span></div><div class="tile-num">${q.rpd_used}${q.limits.rpd ? ` / ${q.limits.rpd}` : ''}<small>today</small></div>${meterHtml(pct)}<div class="tile-foot">${q.cooling_until ? `${chip('blocked', 'cooling')} cooling until ${esc(fmtTime(q.cooling_until))}` : chip('done', 'ok')}</div></div>`;
+  }).join('')}</div>` : emptyHtml('chart', 'No providers reported yet', 'Limits live in config/providers.yaml.');
+  return { mode: 'drawer', title: 'Bank', sub: 'free-tier runway per model', html: head + section(`${callsToday(s)} calls today`, tiles) + `<p class="hintline">Free calls are the runway. Limits live in config/providers.yaml.</p>`, icon: 'chart' };
+}
+
+const hostOf = (url?: string): string => { try { return url ? new URL(url).host : ''; } catch { return ''; } };
+/** The browser session a billboard-style surface shows: the live one, else the most recent. */
+export const browserStream = (s: State): string => Object.values(s.surfaces).filter((x) => x.streamKind === 'browser').sort((a, b) => Number(b.active) - Number(a.active))[0]?.streamId ?? '';
+
+/** Browser realtime viewer: title bar (LIVE/ended, agent, host, seq, fps), the frame updated in place, ended footer. */
+export function browserViewerView(s: State, ctx: Ctx): View {
+  const cur = s.surfaces[browserStream(s)];
+  if (!cur) return { mode: 'viewer', title: 'Billboard', html: emptyHtml('doc', 'No browser session yet', 'Whoever browses the web shows up here, live.'), live: true };
+  const src = ctx.frames[cur.streamId] ?? (cur.lastFrame ? `/screens/${cur.lastFrame.replace('.cubicle/screens/', '')}${ctx.tokenQuery}` : '');
+  const seq = s.frames[cur.streamId]?.seq ?? 0;
+  const fps = ctx.fps?.[cur.streamId];
+  const meta = [cur.agent ? who(s, cur.agent) : '', hostOf(cur.url)].filter(Boolean).join(' · ');
+  const bar = `<div class="vbar" data-key="vbar">${cur.active ? '<span class="badge live">LIVE</span>' : '<span class="badge ended">Ended</span>'}<span class="vmeta">${esc(meta)}</span><span class="vstats">seq ${seq}${cur.active && fps !== undefined ? ` · ${fps.toFixed(1)} fps` : ''}</span></div>`;
+  const frame = src ? `<div class="vframe" data-key="vframe"><img data-key="frame" class="frame" src="${esc(src)}" alt="Browser session" /></div>` : emptyHtml('doc', 'Waiting for the first frame');
+  const foot = cur.active ? '' : `<div class="vfoot" data-key="vfoot">Session ended${cur.endedAt ? ` ${esc(fmtTime(cur.endedAt))}` : ''} · showing the last frame</div>`;
+  return { mode: 'viewer', title: 'Billboard', sub: meta, html: bar + frame + foot, live: true };
+}
+
+/** A shell job is running when an agent on a job is using the terminal tool (it may still be walking to the Dev room). */
+export const shellRunning = (s: State): boolean => Object.values(s.agents).some((a) => a.tool === 'terminal' && !!a.job);
+
+/** Terminal viewer: prompt lines in the accent, a caret while a job runs; the panel offers "Jump to latest". */
+export function terminalViewerView(s: State): View {
+  const lines = s.terminal.slice(-400).flatMap((l) => l.split('\n'));
+  if (!lines.length) return { mode: 'viewer', title: 'Terminal', html: emptyHtml('chevron', 'No commands run yet', 'Shell output from the Dev room streams here.'), live: true };
+  const body = lines.map((l) => `<span class="line${/^[$>#]\s/.test(l) ? ' prompt' : ''}">${esc(l)}</span>`).join('\n');
+  return { mode: 'viewer', title: 'Terminal', sub: `${lines.length} lines`, html: `<pre class="term" data-key="term">${body}${shellRunning(s) ? '<span class="caret" data-key="caret"></span>' : ''}</pre>`, live: true };
+}
+
+export const ROOM_LABELS: Record<string, string> = { pantry: 'Pantry', meetingroom: 'Meeting room', boardroom: 'Board room', ceo_office: 'CEO office' };
+/** A room id the map knows: a team room, or one of the shared rooms. */
+export const isRoom = (kind: string, s: State): boolean => kind in ROOM_LABELS || s.teams.some((t) => t.room === kind);
+
+/** Who is in a room: the team seated there, plus anyone whose current target is the room. */
+export function roomView(roomId: string, s: State): View {
+  const team = s.teams.find((t) => t.room === roomId);
+  const seated = team ? [team.lead, ...team.members] : [];
+  const visiting = Object.values(s.agents).filter((a) => a.target === roomId && !seated.includes(a.role)).map((a) => a.role);
+  const people = [...seated, ...visiting].filter((r) => s.agents[r]);
+  const title = team?.name ?? ROOM_LABELS[roomId] ?? roomId;
+  const list = people.length
+    ? rows(people.map((r) => row({ left: chip(s.agents[r].state, s.agents[r].state.replace(/_/g, ' ')), title: who(s, r), small: roleTitle(s, r), open: `agent:${r}`, actions: locate(r) })))
+    : emptyHtml('chat', 'Nobody here right now');
+  return { mode: 'drawer', title, sub: team ? team.mission : undefined, html: section(team ? 'Team' : 'Here now', list, people.length || undefined) };
 }
 
 /** One job note, opened from a queue row. */
 export function jobView(id: string, s: State, ctx: Ctx): View {
   const j = s.jobs[id];
-  if (!j) return { mode: 'drawer', title: 'Job', html: empty('This job is not in the current snapshot.') };
+  if (!j) return { mode: 'drawer', title: 'Job', html: emptyHtml('clipboard', 'This job is not in the current snapshot.') };
   const body = `<p>${chip(j.status)} &nbsp;<span class="muted">${esc(who(s, j.assigned))} · ${esc(j.type)} · priority ${j.priority} · step ${j.checkpoint_step}</span></p><p class="muted">Updated ${esc(fmtWhen(j.updated))}. The full note, checkpoint log and result live in the vault.</p>`;
   return { mode: 'doc', title: j.title, sub: `Jobs/${j.id}.md`, html: body, link: obsidianUrl(ctx.vaultName, `Jobs/${j.id}.md`) };
+}
+
+/** One person: state line, current job, charter link, Locate. Pure, so main.ts has nothing to build. */
+export function agentView(role: string, s: State, ctx: Ctx): View {
+  const ag: AgentView | undefined = s.agents[role];
+  if (!ag) return { mode: 'drawer', title: role, html: emptyHtml('chat', 'Not in the current snapshot') };
+  const job = ag.job ? s.jobs[ag.job] : null;
+  const team = s.teams.find((t) => t.lead === role || t.members.includes(role)) ?? null;
+  const leadRole = ag.reportsTo ?? (team ? (team.lead === role ? (role === 'ceo' ? null : 'ceo') : team.lead) : null);
+  const subParts = [`${ag.state.replace(/_/g, ' ')}${ag.tool ? ` · using ${ag.tool}` : ''}`, ag.title ?? ag.display];
+  if (team) subParts.push(team.name);
+  if (leadRole) subParts.push(`reports to ${who(s, leadRole)}`);
+  const jobHtml = job ? rows([row({ left: chip(job.status), title: job.title, small: `${job.type} · step ${job.checkpoint_step}`, right: 'open', open: `job:${job.id}` })]) : emptyHtml('clipboard', 'Not on a job right now');
+  const charter = obsidianUrl(ctx.vaultName, `Roles/${role}.md`);
+  const html = section('Current job', jobHtml)
+    + section('Charter', `<div class="card">${charter ? `<a href="${esc(charter)}">Edit Roles/${esc(role)}.md in Obsidian</a>` : `Edit <code>Roles/${esc(role)}.md</code> in Obsidian.`}<div class="hintline">Desk: ${esc(ag.desk || 'none')}. Charters can only tighten what a role may do.</div></div>`)
+    + `<div class="actions">${locate(role)}</div>`;
+  return { mode: 'drawer', title: ag.display, sub: esc(subParts.join(' · ')), html };
 }
 
 export function chatHtml(s: State): string {
