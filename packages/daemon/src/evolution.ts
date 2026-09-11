@@ -584,32 +584,76 @@ export function postmortemPath(vault: Vault, jobId: string): string | null {
   } catch { return null; }
 }
 
+/** A job that is still somebody's problem. An incident in one of these states means the room already knows. */
+const OPEN_JOB_STATUSES = ['queued', 'running', 'blocked', 'in_review'] as const;
+
+/** True while `stream` has an incident nobody has closed yet. */
+function hasOpenIncident(vault: Vault, stream: string): boolean {
+  return listJobs(vault, { status: [...OPEN_JOB_STATUSES] }).some((j) => j.type === 'incident' && j.stream === stream);
+}
+
+/** The streams that have actually reached production: a `deploy.done` at the `live` stage. */
+function liveStreams(vault: Vault): Set<string> {
+  const out = new Set<string>();
+  for (const e of vault.events.query({ types: ['deploy.done'], limit: 500 })) {
+    if (e.payload.stage === 'live' && typeof e.payload.stream === 'string') out.add(e.payload.stream);
+  }
+  return out;
+}
+
+/**
+ * Create the incident note and start its clock. Shared by both triggers so the job shape — SRE, priority 1,
+ * high risk, a postmortem path in the goal — cannot drift between them.
+ */
+function openIncident(vault: Vault, o: { id: string; stream: string; trigger: string; title: string; what: string; ts: string; today: string }): string {
+  createJob(vault, {
+    id: o.id, type: 'incident', title: o.title, assigned: 'sre', priority: 1,
+    team: 'dev', owner_role: 'dev_manager', stream: o.stream, risk: 'high',
+    goal: `${o.what} Treat it as a production incident (operating model §33): detection → triage → mitigation → recovery → root cause → corrective actions → learning.\n\nDo: (1) confirm the stream is serving again, rolling back with deploy.site({ rollback: true }) if it is not; (2) read the deploy events, the CI records under Workspace/${o.stream}/.cubicle-ci/ and the job that shipped the change; (3) write the blameless postmortem to Docs/postmortems/${o.today}-${o.stream}.md from Docs/postmortems/_template.md — a timeline, the impact in hours, a root cause that is a design or a missing check rather than a person, and at least one corrective action with an owner role; (4) finish with that path in artifacts and the open→recovered hours in metrics.hours.`,
+    done_when: `The stream is serving again and Docs/postmortems/${o.today}-${o.stream}.md has a timeline, an impact in hours, a root cause and at least one corrective action.`,
+  }, 'daemon');
+  vault.events.emit({ type: 'incident.opened', agent: 'daemon', job: o.id, payload: { stream: o.stream, trigger: o.trigger }, ts: o.ts });
+  return o.id;
+}
+
 /**
  * Open an incident for a production failure nobody has opened one for yet. Two triggers, both things the log
- * already records: a deploy that was rolled back, and a live deploy of a stream whose last CI run was red.
- * Detection is the first step of §33's chain, and a company that only notices an outage when a human looks has
- * no detection at all.
+ * already records: a deploy that was rolled back, and a red CI run on a stream that is already live. Detection
+ * is the first step of §33's chain, and a company that only notices an outage when a human looks has no
+ * detection at all.
  *
- * Idempotent per trigger: the incident's id is derived from the event, so a second tick finds it already there.
+ * Idempotent per trigger: the incident's id is derived from the event (the CI record path for a red run), so a
+ * second tick finds it already there. A rollback is a definite production event and gets its own incident every
+ * time; a red CI is a weaker, repeating signal, so it is additionally suppressed while that stream still has an
+ * open incident — the room already knows, and a build that stays red would otherwise file one job a tick.
  */
 export function maybeOpenIncident(vault: Vault, now = new Date()): string | null {
-  const deploys = vault.events.query({ types: ['deploy.done'], limit: 200 });
-  for (const e of deploys) {
+  const today = now.toISOString().slice(0, 10);
+  for (const e of vault.events.query({ types: ['deploy.done'], limit: 200 })) {
     const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
     if (!stream || !readStream(vault, stream)) continue;
-    const trigger = e.payload.rolled_back === true ? 'rollback' : null;
-    if (!trigger) continue;
-    const id = idFromKey('job', `incident:${trigger}:${e.ts}:${stream}`);
+    if (e.payload.rolled_back !== true) continue;
+    const id = idFromKey('job', `incident:rollback:${e.ts}:${stream}`);
     if (readJob(vault, id)) continue;
-    createJob(vault, {
-      id, type: 'incident', title: `Incident: ${stream} was rolled back`, assigned: 'sre', priority: 1,
-      team: 'dev', owner_role: 'dev_manager', stream, risk: 'high',
-      goal: `A live deploy of stream "${stream}" was rolled back at ${e.ts}. Treat it as a production incident (operating model §33): detection → triage → mitigation → recovery → root cause → corrective actions → learning.\n\nDo: (1) confirm the stream is serving again, rolling back further with deploy.site({ rollback: true }) if it is not; (2) read the deploy events, the CI records under Workspace/${stream}/.cubicle-ci/ and the job that shipped the change; (3) write the blameless postmortem to Docs/postmortems/${nowIso().slice(0, 10)}-${stream}.md from Docs/postmortems/_template.md — a timeline, the impact in hours, a root cause that is a design or a missing check rather than a person, and at least one corrective action with an owner role; (4) finish with that path in artifacts and the open→recovered hours in metrics.hours.`,
-      done_when: `The stream is serving again and Docs/postmortems/${nowIso().slice(0, 10)}-${stream}.md has a timeline, an impact in hours, a root cause and at least one corrective action.`,
-    }, 'daemon');
-    vault.events.emit({ type: 'incident.opened', agent: 'daemon', job: id, payload: { stream, trigger }, ts: e.ts });
-    void now;
-    return id;
+    return openIncident(vault, {
+      id, stream, trigger: 'rollback', today, ts: e.ts,
+      title: `Incident: ${stream} was rolled back`,
+      what: `A live deploy of stream "${stream}" was rolled back at ${e.ts}.`,
+    });
+  }
+  const live = liveStreams(vault);
+  for (const e of vault.events.query({ types: ['ci.completed'], limit: 200 })) {
+    const stream = typeof e.payload.stream === 'string' ? e.payload.stream : null;
+    if (!stream || e.payload.green !== false || !readStream(vault, stream)) continue;
+    if (!live.has(stream)) continue;   // not in production: a red build is ordinary engineering, not an incident
+    const record = typeof e.payload.record === 'string' ? e.payload.record : e.ts;
+    const id = idFromKey('job', `incident:red_ci_live:${record}`);
+    if (readJob(vault, id) || hasOpenIncident(vault, stream)) continue;
+    return openIncident(vault, {
+      id, stream, trigger: 'red_ci_live', today, ts: e.ts,
+      title: `Incident: CI is red on live stream ${stream}`,
+      what: `CI went red on stream "${stream}" at ${e.ts} (record ${record}) while that stream is serving in production, so what is live is no longer known-good.`,
+    });
   }
   return null;
 }
