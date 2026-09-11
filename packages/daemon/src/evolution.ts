@@ -596,7 +596,8 @@ function hasOpenIncident(vault: Vault, stream: string): boolean {
 function liveStreams(vault: Vault): Set<string> {
   const out = new Set<string>();
   for (const e of vault.events.query({ types: ['deploy.done'], limit: 500 })) {
-    if (e.payload.stage === 'live' && typeof e.payload.stream === 'string') out.add(e.payload.stream);
+    // A deploy.done from before stages existed always went to the production branch, so a missing stage counts as live.
+    if ((e.payload.stage ?? 'live') === 'live' && typeof e.payload.stream === 'string') out.add(e.payload.stream);
   }
   return out;
 }

@@ -60,6 +60,13 @@ describe('an incident opens itself when CI goes red on a live stream', () => {
     expect(readJob(vault, id)!.body).toMatch(/Docs\/postmortems/);
   });
 
+  it('a deploy recorded before stages existed (no stage field) still counts as live', () => {
+    vault.events.emit({ type: 'deploy.done', agent: 'sre', job: null, payload: { project: 'acme', rolled_back: false, stream: 'checkout' } });
+    redCi('Workspace/checkout/.cubicle-ci/2026-09-11-1201.json');
+    expect(maybeOpenIncident(vault)).not.toBeNull();
+    expect(vault.events.query({ types: ['incident.opened'] })[0].payload.trigger).toBe('red_ci_live');
+  });
+
   it('a red run on a stream that never went live opens nothing', () => {
     redCi('Workspace/checkout/.cubicle-ci/2026-09-11-1200.json');
     expect(maybeOpenIncident(vault)).toBeNull();
