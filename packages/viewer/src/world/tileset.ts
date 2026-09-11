@@ -4,6 +4,7 @@ import { TILES, T, COLUMNS, TILE, tilesetMeta } from './tiles.js';
 import { DRAW, floorOfName, type Px, type TileName } from './tiles-draw.js';
 import { roleColor, floorPalette } from './palette.js';
 import { GLYPHS } from '../ui/icons.js';
+import { DECOR_DRAW, DECOR_FRAME_NAMES, type DecorKind } from './decor.js';
 
 /** Tile ids come from tiles.ts (shared with scripts/world/tower.ts). Drawn procedurally: CC0-by-construction placeholder art. */
 export { TILES, T, COLUMNS, TILE, tilesetMeta };
@@ -129,5 +130,17 @@ export function makeEmotes(scene: Phaser.Scene): string {
   EMOTES.forEach((e, i) => { for (const [x, y, w, h, c] of GLYPHS[e]) px(g, i * EMOTE_W + x, y, c, w, h); });
   tex.refresh();
   EMOTES.forEach((e, i) => tex.add(e, 0, i * EMOTE_W, 0, EMOTE_W, EMOTE_H));
+  return key;
+}
+
+/** Ambient decor frames (Task 13, `world/decor.ts`): 16×16 frames side by side, named `<kind>:<frame>`. Keyed `decor`. */
+export function makeDecorSheet(scene: Phaser.Scene): string {
+  const key = 'decor';
+  if (scene.textures.exists(key)) return key;
+  const tex = scene.textures.createCanvas(key, DECOR_FRAME_NAMES.length * TILE, TILE)!;
+  const g = tex.getContext();
+  for (const f of DECOR_FRAME_NAMES) { const [kind, n] = f.name.split(':'); DECOR_DRAW[kind as DecorKind](canvasPx(g, f.x, 0), Number(n)); }
+  tex.refresh();
+  for (const f of DECOR_FRAME_NAMES) tex.add(f.name, 0, f.x, 0, TILE, TILE);
   return key;
 }
