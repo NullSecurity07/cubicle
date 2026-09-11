@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listJobs, listInbox, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord } from '@cubicle/core';
+import { scaffoldVault, Vault, listJobs, listInbox, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord, createProposal } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
-import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE } from '../src/index.js';
+import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE, runHeartbeat, createHeartbeatJob, planVerdictId } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
 
@@ -423,5 +423,43 @@ describe('division planning (spec item 3)', () => {
       await waitFor(() => listJobs(v).filter((j) => j.type === 'division.plan').length >= 2, 60000);
       expect(listJobs(v).filter((j) => j.type === 'company.plan')).toHaveLength(1);
     } finally { v.close(); await d.stop(); }
+  });
+});
+
+describe('the fan-out is crash-idempotent (final review C1)', () => {
+  /** `division_plans` needs no model: the goal text is assembled from the org and the plan. */
+  const mute: Llm = { async chat() { throw new Error('the fan-out must not call a model'); }, promptBudget: () => 6000 };
+  const FAN_OUT_PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\nprocess: launch\n\n### revenue\n- Find the first organic channel\n';
+  const stateRel = (hbId: string) => path.join(dir, '.cubicle/jobs', `${hbId}.heartbeat.json`);
+  /** Every job the fan-out makes: one division.plan per division, plus the `process:` expansion (same parent). */
+  const fannedOut = (v: Vault, hbId: string) => listJobs(v).filter((j) => j.parent === hbId && j.type !== 'company.plan' && j.type !== 'board.premortem').map((j) => `${j.type}:${j.id}`).sort();
+
+  it('a kill BEFORE the state write re-creates nothing: still one division.plan per division and one process expansion', async () => {
+    const v = Vault.open(dir);
+    try {
+      v.writeText('Plans/plan.md', FAN_OUT_PLAN, 'ceo');
+      const hbId = createHeartbeatJob(v, 'test');
+      const verdict = createProposal(v, { id: planVerdictId(hbId), kind: 'plan_verdict', from: 'ceo', job: hbId, title: 'Approve this cycle\'s plan', body: 'The board passed this plan.' }, 'ceo');
+      v.updateNote(verdict.path, (n) => ({ data: { ...n.data, approved: true, board_verdict: 'pass' }, body: n.body }), 'owner');
+      updateJob(v, hbId, { checkpoint_step: HEARTBEAT_STEPS.indexOf('owner_verdict') }, 'daemon');
+
+      const out = await runHeartbeat({ vault: v, llm: mute, env: {}, now: () => new Date() }, hbId);
+      expect(out.status).toBe('blocked');
+      const first = fannedOut(v, hbId);
+      expect(first.filter((s) => s.startsWith('division.plan:'))).toHaveLength(2);   // dev → technology, revenue → revenue
+      expect(first.filter((s) => !s.startsWith('division.plan:')).length).toBeGreaterThan(0);   // the `process: launch` steps
+
+      // The kill, in the window the acceptance run never enters: every job note is on disk, but `state.divisionPlanJobs`
+      // was never written and `blockMany` never set `blocked_on`, so the resume has neither the cache nor the
+      // `blocked_on` recovery hook. Before the deterministic ids this queued the whole planning round a second time.
+      const state = JSON.parse(readFileSync(stateRel(hbId), 'utf8'));
+      delete state.divisionPlanJobs;
+      writeFileSync(stateRel(hbId), JSON.stringify(state, null, 2));
+      updateJob(v, hbId, { status: 'queued', checkpoint_step: HEARTBEAT_STEPS.indexOf('division_plans'), blocked_on: undefined }, 'daemon');
+
+      const again = await runHeartbeat({ vault: v, llm: mute, env: {}, now: () => new Date() }, hbId);
+      expect(again.status).toBe('blocked');
+      expect(fannedOut(v, hbId)).toEqual(first);
+    } finally { v.close(); }
   });
 });

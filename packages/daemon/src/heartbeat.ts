@@ -755,6 +755,9 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           const sections = parseObjectiveSections(plan).filter((s) => s.text);
           const divisions = new Set(divisionTeams(org).map((t) => t.id));
           const byDivision = new Map<string, string[]>();
+          // Every `process:` expansion this cycle already made, by its idempotency marker (F9). Read once, before
+          // the loop creates any: a kill between two expansions must resume into "already done", not a second set.
+          const expanded = new Set(listJobs(vault).flatMap((j) => j.links));
           for (const s of sections) {
             // A CEO-written header is prose, not a machine key (F4): match it to a team, then roll the team up to
             // its division, so "### dev" and "### Technology" both land on the CTO. An unmatched header warns
@@ -766,7 +769,14 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
               // Process-expanded jobs (parent = this heartbeat, like division.plan) can run for hours across
               // several roles, so the heartbeat must not wait on them — only on the division.plan jobs below
               // (Task 9 review round 2: waiting on rollup() of every child delayed the brief for hours).
-              try { expandProcess(vault, m[1], s.text.split('\n')[0].replace(/^- /, ''), { parent: jobId, by: officeHolder(org, 'chief_executive'), team: t.id, owner_role: t.lead }); }
+              //
+              // C1: `expandProcess` mints random ids, and `state.divisionPlanJobs` is not written until the whole
+              // fan-out is built, so a kill anywhere in here used to resume with no cache and run the expansion a
+              // second time. The marker is keyed on this heartbeat, this team and this process, and goes onto
+              // every step's `links`, so a resumed cycle sees its own work and skips it.
+              const marker = idFromKey('job', `proc:${hbId}:${teamId}:${m[1]}`);
+              if (expanded.has(`[[${marker}]]`)) continue;
+              try { expandProcess(vault, m[1], s.text.split('\n')[0].replace(/^- /, ''), { parent: jobId, by: officeHolder(org, 'chief_executive'), team: t.id, owner_role: t.lead, marker }); }
               catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'division_plans', message: String((err as Error).message) } }); }
             }
             const div = divisionOf(org, teamId);
@@ -780,6 +790,12 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
             // against are every room's in its subtree (SP6 §23) — not just the (usually empty) division's own.
             const budgets = [...new Set(Object.values(org.teams).filter((x) => divisionOf(org, x.id) === divId).flatMap((x) => budgetLines(vault, x.id)))];
             ids.push(createJob(vault, {
+              // C1: deterministic, like `board.premortem`'s id and the verdict note's. `state.divisionPlanJobs` is
+              // written only after the whole fan-out is built and `blockMany` sets `blocked_on` later still, so a
+              // kill in between resumes with neither — and with a random id per division that resume queued a
+              // second planning round for every division, each of which schedules up to four more jobs. With the
+              // id keyed on (heartbeat, division), `createJob` returns the existing note instead.
+              id: idFromKey('job', `divplan:${hbId}:${divId}`),
               type: 'division.plan', title: `Plan ${t.name}`, assigned: t.lead, priority: 1, parent: jobId, team: t.id, owner_role: t.lead,
               goal: divisionPlanGoal(org, t, texts.join('\n\n'), lastNextAction(t.id), researchLead(org) ?? 'research_manager', budgets),
             }, officeHolder(org, 'chief_executive')));
