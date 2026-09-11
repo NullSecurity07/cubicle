@@ -40,12 +40,16 @@ const { chromium } = await import('playwright');
 // against 61 on the GPU, same build). Ask ANGLE for the real device; a machine without one falls back to SwiftShader
 // by itself, and the logged `gl:` line says which one produced the number — the gate is skipped on that path.
 const browser = await chromium.launch({ headless: true, args: ['--use-gl=angle', '--use-angle=gl-egl', '--ignore-gpu-blocklist', '--enable-gpu-rasterization'] });
-const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+// `colorScheme` is not decoration. The viewer boots on `applyTheme(themeFromQuery(location.search))`, which with no
+// `?theme=` is `'system'`, and `'system'` resolves through `prefers-color-scheme`. Playwright's default is light, so
+// every scene taken without this line is a picture of the light theme — not of the product's dark default.
+const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' });
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log(`[page ${m.type()}]`, m.text().slice(0, 300)); });
 page.on('pageerror', (e) => console.log('[page exception]', String(e).slice(0, 200)));
 
 type Tile = { tx: number; ty: number };
-type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }> }; agents: () => unknown; floor: (n: number) => void; elevator: () => unknown; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => void; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void } };
+type Agent = { role: string; state: string; seat: unknown; tile: Tile };
+type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }> }; agents: () => Agent[]; floor: (n: number) => void; currentFloor: () => number; elevator: () => unknown; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void } };
 /** Run `fn` inside the page against `window.__cubicle`. `fn` crosses over as source text, so it can close over
  *  nothing from this script: whatever it needs (a floor number, an hour) is passed as `arg` and arrives as its
  *  second parameter. */
@@ -63,9 +67,29 @@ const closePanels = async (): Promise<void> => {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(250);
   }
+  // Four Escapes with the stack still up is a stuck panel, and every scene after this one would be taken through it.
+  fail(`a panel would not close: ${JSON.stringify(await cub((c) => c.stack().map((s) => s.kind)))} still on the stack after four Escapes`);
+};
+/** `floor(n)` claims a floor; `currentFloor()` is what the viewer thinks it is showing. A scene named `05-f3` that
+ *  frames F4 is a lie the checklist cannot catch, so the two have to agree before the shutter opens. */
+const gotoFloor = async (n: number, scene: string): Promise<void> => {
+  await cub((c, f: number) => c.floor(f), n);
+  await page.waitForTimeout(700);
+  const at = await cub((c) => c.currentFloor());
+  if (at !== n) fail(`${scene}: floor(${n}) left the viewer on floor ${at}`);
+};
+/** Poll `agents()` until `ok`, or give up. Returns whether it settled — the caller decides how loud that is. */
+const waitForAgents = async (ok: (a: Agent[]) => boolean, timeoutMs: number): Promise<boolean> => {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    if (ok(await cub((c) => c.agents()))) return true;
+    if (Date.now() > until) return false;
+    await page.waitForTimeout(400);
+  }
 };
 
 let fps = 0;
+let fpsSampled = false;
 let gl = 'unknown';
 try {
   await page.goto(`http://127.0.0.1:7512/?token=${token}`, { waitUntil: 'load' });
@@ -81,7 +105,7 @@ try {
   await closePanels();   // if the card handed over to the cabin sheet, pop it the same way a user would
 
   // 02: the lobby with the whole tower's ground floor
-  await cub((c) => c.floor(1));
+  await gotoFloor(1, '02');
   await shot('02-lobby');
   // a burst of work so every floor has something to show: CMO browses (F4), backend engineer shells (F2), CEO speaks (F1), QA lead deploys (F3)
   const ev = d.vault.events;
@@ -102,9 +126,25 @@ try {
   ev.emit({ type: 'agent.spoke', agent: 'ceo', job: null, payload: { to: 'owner', text: 'I proposed the name WeekPlate — approve it in 00 Inbox/.' } });
   createProposal(d.vault, { kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Name the company: WeekPlate', body: 'x' }, 'ceo');
   await page.waitForTimeout(5000);
-  // 03..06: one shot per floor
-  for (const n of [1, 2, 3, 4]) { await cub((c, f: number) => c.floor(f), n); await shot(`0${n + 2}-f${n}`); }
-  console.log('agents:', JSON.stringify(await cub((c) => c.agents())));
+  // 03..06: one shot per floor. 04 is also the reduced-motion scene: the checklist asks that walking and the elevator
+  // survive `prefers-reduced-motion` and only the easing go, and nothing else in the run exercises it. It is set for
+  // this scene alone and cleared straight after, so the eleven scenes around it keep the product's real motion.
+  for (const n of [1, 2, 3, 4]) {
+    const scene = `0${n + 2}-f${n}`;
+    if (n === 2) await page.emulateMedia({ reducedMotion: 'reduce' });
+    await gotoFloor(n, scene);
+    await shot(scene);
+    if (n === 2) {
+      // Prove the shot really was taken under the preference rather than trusting the call: the duration tokens are
+      // what reduced motion moves, and `--d-open` is 200 ms normally and 1 ms under it.
+      const d = await page.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--d-open').trim()`);
+      if (d !== '1ms') fail(`04: reduced motion is not in effect (--d-open is ${String(d)}), so the scene does not prove the line`);
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+    }
+  }
+  // Who is doing something, for when a scene comes out emptier than it should. The full `agents()` dump this replaces
+  // was ten kilobytes of log per run and nobody read it.
+  console.log('busy:', (await cub((c) => c.agents())).filter((a) => a.state !== 'idle_at_desk' && a.state !== 'offline').map((a) => `${a.role}:${a.state}`).join(' ') || 'nobody');
 
   // 07: a cross-floor ride: a failed job on F2 sends the COO (F4) down to the engineer's desk
   ev.emit({ type: 'job.failed', agent: 'backend_engineer', job: e, payload: { reason: 'step_limit' } });
@@ -129,10 +169,13 @@ try {
   await shot('07-elevator', 0);
 
   // 08: a board meeting on F1 with the owner in the chair
-  ev.emit({ type: 'meeting.opened', agent: 'ceo', job: null, payload: { id: 'm1', room: 'board', participants: ['ceo', 'advisor_skeptic', 'advisor_investor', 'advisor_customer'], agenda: 'Two jobs failed' } });
-  await page.waitForTimeout(4500);
-  await cub((c) => c.floor(1));
-  await page.waitForTimeout(1500);
+  const board = ['ceo', 'advisor_skeptic', 'advisor_investor', 'advisor_customer'];
+  ev.emit({ type: 'meeting.opened', agent: 'ceo', job: null, payload: { id: 'm1', room: 'board', participants: board, agenda: 'Two jobs failed' } });
+  // Wait for the four to actually take their chairs, not for a guessed 4.5 s: how long the walk to the table takes
+  // depends on the machine, and a fixed wait either shoots an empty table on a slow box or idles on a fast one.
+  if (!(await waitForAgents((ags) => board.every((r) => ags.find((a) => a.role === r)?.seat != null), 25000))) fail('08: the board never took their seats within 25 s');
+  await gotoFloor(1, '08');
+  await page.waitForTimeout(800);
   // The checklist asks this shot for the owner's "You" label, the advisors' glasses and crisp text at zoom 3, and a
   // floor fit is zoom 1: at that size a head is eight pixels and none of the three can be judged. So frame the table.
   // `zoom`/`center` set the camera outright while `floor(n)` tweens it — a `floor(n)` after them tweens straight back.
@@ -154,7 +197,7 @@ try {
   ev.emit({ type: 'job.queued', agent: 'dev_manager', job: w, payload: { type: 'engineer.ship', title: 'Fix the build', assigned: 'frontend_engineer' } });
   ev.emit({ type: 'job.started', agent: 'frontend_engineer', job: w, payload: { type: 'engineer.ship', title: 'Fix the build' } });
   await cub((c) => c.setHour(22));
-  await cub((c) => c.floor(2));
+  await gotoFloor(2, '09');
   await shot('09-night', 1200);
   await cub((c) => c.setHour(null));
 
@@ -171,14 +214,19 @@ try {
     await page.waitForTimeout(2500);
     const sample = await cub((c) => c.fps());
     console.log(`fps sample ${i + 1}: ${sample}`);
-    fps = Math.max(fps, sample);
+    fps = Math.max(fps, sample); fpsSampled = true;
     if (fps >= 30) break;
   }
   console.log(`fps: ${fps}`);
 
   // 10: the browser viewer, live. Three pushed frames give it a seq, an fps readout and the amber LIVE badge; the
   // 'demo' session opened in the burst above is still active, so nothing here has to fake the badge.
+  const seqBefore = await cub((c) => c.state.frames['demo']?.seq ?? 0);
   for (const n of [1, 2, 3]) { await cub((c, u: string) => c.pushFrame('demo', u), await frameUrl(n)); await page.waitForTimeout(240); }
+  const seqAfter = await cub((c) => c.state.frames['demo']?.seq ?? 0);
+  // The viewer's title bar reads `seq N` off this counter, so a scene of a live stream that advertises seq 0 is
+  // telling the owner nothing arrived. Three frames went in; the counter has to have moved.
+  if (seqAfter <= seqBefore) fail(`10: three pushed frames left the surface sequence at ${seqAfter} (was ${seqBefore}), so the viewer reads "seq ${seqAfter}" on a live stream`);
   await cub((c) => c.open('billboard'));
   await shot('10-browser-live', 900);
   await closePanels();
@@ -190,28 +238,62 @@ try {
   ev.emit({ type: 'shell.output', agent: 'frontend_engineer', job: w, payload: { session: 's', stream: 'stdout', text: '> vitest run\n Test Files  18 passed (18)\n      Tests  204 passed (204)' } });
   await page.waitForTimeout(1200);
   await cub((c) => c.open('terminal'));
+  // The caret blinks on a 530 ms 50 %-duty animation, so half of all shutters catch it invisible — and this is the
+  // scene the checklist leans on for it. Under `prefers-reduced-motion` the stylesheet turns that animation off and
+  // the caret stays lit (app.css: "the caret stays lit, the LIVE badge stays solid"), which is what a still wants.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await shot('11-terminal', 900);
   if (!(await page.$('.term .caret'))) fail('11: no caret in the terminal viewer, so a running shell reads as finished');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await closePanels();
 
   // 12: the light theme over an open sheet — body text, the segmented control and the row chips all have to hold
   // contrast, and the switch itself must not flash white.
-  await cub((c) => c.theme('light'));
+  // The switch is driven from the OS preference, not from `theme('light')`. Everything above is dark because the page
+  // was opened with `colorScheme: 'dark'`, so flipping the media query is the real dark→light transition a user gets
+  // when they change their desktop theme — `theme('light')` here would be light→light and would prove nothing.
   await cub((c) => c.open('noticeboard'));
+  await page.waitForTimeout(500);
+  const before = await cub((c) => c.theme('system'));
+  // "No white flash" is a claim about the frames *during* the switch, which one reading taken afterwards cannot make.
+  // So record the body's colour every frame from before the flip until well after it, then look at what it passed
+  // through. `applyTheme` writes every token synchronously inside the media-query listener, so the only two colours
+  // the body may ever hold are the dark token and the light one; a third — above all the browser's default white —
+  // is a frame painted with no theme on it, which is exactly the flash.
+  // Sampled on a timer rather than on `requestAnimationFrame`: a rAF chain installed from an `evaluate` ran exactly
+  // once here before stalling, which would have made the check pass on a single post-switch reading and prove nothing.
+  // 8 ms is finer than a 60 Hz frame, so a flash lasting one painted frame cannot slip between two samples.
+  await page.evaluate(`(() => { window.__bg = []; const id = setInterval(() => { window.__bg.push(getComputedStyle(document.body).backgroundColor); if (window.__bg.length >= 150) clearInterval(id); }, 8); })()`);
+  await page.waitForTimeout(250);   // a run of dark samples first, so the switch lands inside the window and not before it
+  await page.emulateMedia({ colorScheme: 'light' });
+  await cub((c) => c.theme('system'));
+  await page.waitForTimeout(800);
+  const bgs = await page.evaluate(`window.__bg`) as string[];
+  const seen = [...new Set(bgs)];
+  const after = await cub((c) => c.theme('system'));
+  console.log(`theme switch: ${before} -> ${after}; body over ${bgs.length} frames: ${seen.join(' | ')}`);
+  if (after !== 'light') fail(`12: the OS preference flipped to light but the page still reads ${after}`);
+  const blank = bgs.filter((b) => /^rgba?\(255,\s*255,\s*255/.test(b) || /^rgba\(0,\s*0,\s*0,\s*0\)$/.test(b));
+  if (blank.length) fail(`12: the body painted ${blank[0]} on ${blank.length} of ${bgs.length} frames across the switch — that is the white flash`);
+  else if (seen.length === 1) fail(`12: the body held one colour (${seen[0]}) across the whole sample, so the switch fell outside it and the no-flash line is unproven`);
+  else if (seen.length > 2) fail(`12: the body took ${seen.length} colours across the switch (${seen.join(', ')}); it should go straight from the dark token to the light one`);
   await shot('12-light-theme', 900);
   await closePanels();
-  await cub((c) => c.theme('dark'));
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await cub((c) => c.theme('system'));
   await page.waitForTimeout(400);
+  if ((await cub((c) => c.theme('system'))) !== 'dark') fail('12: the page did not go back to dark, so 13 is another light shot');
 
   // 13: two levels deep — Queue, then one job's reader — with the back chevron in the trail, and Tab moved onto a
   // control so its focus ring is in the picture.
   await cub((c) => c.open('noticeboard'));
   await page.waitForTimeout(500);
-  // Take the job id from the snapshot rather than from the burst above: the daemon rebuilds `jobs` from the vault's
-  // Job notes on every snapshot, and these events were injected straight onto the stream with no note behind them, so
-  // by now only the ones the daemon itself wrote survive. A hard-coded id here renders "not in the current snapshot".
-  const job = await cub((c) => Object.values(c.state.jobs)[0]?.id ?? '');
-  if (!job) fail('13: no job in the snapshot to open a reader on');
+  // Look the job up by the title this script gave it, not by position: `Object.values(jobs)[0]` is whatever the
+  // snapshot happens to list first, so the scene would quietly change subject whenever the daemon's ordering did.
+  // The id cannot be hard-coded either — the daemon rebuilds `jobs` from the vault's Job notes on every snapshot, and
+  // the burst above injected events with no note behind them, so only what the daemon itself wrote survives.
+  const job = await cub((c, t: string) => Object.values(c.state.jobs).find((j) => j.title === t)?.id ?? '', 'Fix the build');
+  if (!job) fail('13: the job "Fix the build" is not in the snapshot, so there is nothing to open a reader on');
   else await cub((c, id: string) => c.open(`job:${id}`), job);
   await page.waitForTimeout(700);
   const depth = (await cub((c) => c.stack().length));
@@ -237,7 +319,10 @@ console.log(`screenshots in ${out}`);
 // fails only under 30 — low enough to be a real regression, high enough to catch a per-frame redraw. On a software
 // rasteriser the number measures SwiftShader rather than the office (~12 fps on code that runs at 60 on a GPU), so
 // the gate is skipped there instead of lowered: a lowered bar would pass a real regression on the GPU path too.
-if (/swiftshader|llvmpipe/i.test(gl)) console.log(`fps gate skipped: ${gl} is a software rasteriser, so ${fps} fps measures it, not the office`);
+// Only when a sample was actually taken: a run that threw before scene 09 never measured anything, and reporting its
+// `fps 0` as a frame-rate regression would bury the real failure under a second, invented one.
+if (!fpsSampled) console.log('fps gate skipped: the run ended before the frame rate was measured');
+else if (/swiftshader|llvmpipe/i.test(gl)) console.log(`fps gate skipped: ${gl} is a software rasteriser, so ${fps} fps measures it, not the office`);
 else if (fps < 30) fail(`fps ${fps} is under 30`);
 if (failures.length) { console.error(`FAIL: ${failures.length} check(s) failed:\n  ${failures.join('\n  ')}`); process.exit(1); }
 process.exit(0);
