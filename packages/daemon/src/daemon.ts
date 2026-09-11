@@ -1,6 +1,6 @@
 import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO } from '@cubicle/core';
+import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO, officeHolder, loadOrg } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown } from '@cubicle/router';
 import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, secretsGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter } from '@cubicle/core';
@@ -138,9 +138,9 @@ export class Daemon {
       try { return await client.call(tool.name, args); } finally { await client.close(); }
     };
     const withTimeout = <T,>(p: Promise<T>, ms: number, what: string): Promise<T> => Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms} ms`)), ms).unref())]);
-    const pollInbox = async (): Promise<string[]> => { const r = await withTimeout(runSystemTool('coo', emailInbox, {}), 60_000, 'email.inbox'); return r?.ok ? r.text.split('\n').slice(1) : []; };
-    const pullAnalytics = async (): Promise<string | null> => { const r = await withTimeout(runSystemTool('coo', analyticsPull, {}), 60_000, 'analytics.pull'); return r?.ok ? r.text : null; };
-    const ownerFeedback = (roleId: string) => feedbackFor(collectOwnerFeedback(this.vault, this.vault.events.last('heartbeat.completed')?.ts), roleId).map((f) => `- (${f.source}) ${f.text}`);
+    const pollInbox = async (): Promise<string[]> => { const r = await withTimeout(runSystemTool(officeHolder(loadOrg(this.vault), 'operations'), emailInbox, {}), 60_000, 'email.inbox'); return r?.ok ? r.text.split('\n').slice(1) : []; };
+    const pullAnalytics = async (): Promise<string | null> => { const r = await withTimeout(runSystemTool(officeHolder(loadOrg(this.vault), 'operations'), analyticsPull, {}), 60_000, 'analytics.pull'); return r?.ok ? r.text : null; };
+    const ownerFeedback = (roleId: string) => feedbackFor(collectOwnerFeedback(this.vault, this.vault.events.last('heartbeat.completed')?.ts), roleId, officeHolder(loadOrg(this.vault), 'chief_executive')).map((f) => `- (${f.source}) ${f.text}`);
     // Context compaction (spec §6): observations the prompt budget drops, and an over-long plan, are summarised
     // by the cheapest model there is — the local tier — so compaction never spends cloud quota. A failure here is
     // never fatal: the harness treats '' as "no summary" and falls back to clipping.

@@ -1,4 +1,4 @@
-import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, parseNote, resolveRole, researchLead, leadOf, createStream, listStreams, streamSlug, ciConfigPath, type NewStream } from '@cubicle/core';
+import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, parseNote, officeHolder, roleWithTool, researchLead, teamOf, leadOf, createStream, listStreams, streamSlug, ciConfigPath, type NewStream } from '@cubicle/core';
 
 /**
  * The three jobs a company must leave its first heartbeat with (spec §12): something on the web, something to
@@ -39,14 +39,18 @@ function covers(existing: string, seed: string): boolean {
 }
 
 function specs(org: Org, stream?: string): NewJob[] {
-  const engineer = resolveRole(org, 'engineer');
-  const growthLead = resolveRole(org, 'head_of_growth');
+  // Who builds and who sells is a capability question, not a name: the first active charter in the division that
+  // carries the tool. An empty division falls back to its own office holder, who can delegate.
+  const engOffice = officeHolder(org, 'engineering');
+  const revOffice = officeHolder(org, 'finance');
+  const engineer = roleWithTool(org, teamOf(org, engOffice)?.id, 'deploy.site') ?? engOffice;
+  const growthLead = roleWithTool(org, teamOf(org, revOffice)?.id, 'email.send') ?? revOffice;
   const analyst = researchLead(org) ?? growthLead;
-  const engineeringOwner = leadOf(org, engineer) ?? 'ceo';
+  const engineeringOwner = leadOf(org, engineer) ?? engOffice;
   return [
     {
       type: 'engineer.ship', title: FIRST_JOB_TITLES[0], assigned: engineer, priority: 2,
-      team: org.roles[engineer]?.team, owner_role: engineeringOwner === 'owner' ? 'ceo' : engineeringOwner,
+      team: org.roles[engineer]?.team, owner_role: engineeringOwner === 'owner' ? engOffice : engineeringOwner,
       goal: 'The company has no site yet. Read Brand/name.md, Brand/palette.md and Brand/voice.md, then build the first cut of Site/: one page that says what the company does, who it is for, and how to get in touch. Keep it static and boring — no framework, no build step the owner has to learn. Do not invent claims the brand notes do not support.\n\nBefore you finish: this is an engineer.ship, so it cannot report success without a green CI run newer than every source file in its stream (operating model §17). The stream starts with a placeholder pipeline in Workspace/<stream>/cubicle-ci.yaml; read it, replace the placeholder step with whatever actually checks this change, then call ci.run({ stream: "<the job\'s stream>" }) and finish on green.',
       done_when: 'Site/index.html exists, uses the name, palette and voice from Brand/, has no broken links, says what the company sells and to whom, and ci.run on the job\'s stream is green.',
       stream, risk: 'low',
