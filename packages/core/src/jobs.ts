@@ -257,10 +257,13 @@ export function stageMap(vault: Vault, chainFor: (job: JobFrontmatter) => string
  * How many of one team's jobs sit in each WIP-limited lane right now. A gate job (`GATE_JOB_TYPES`) is skipped:
  * it inherits its parent's team, and the parent already occupies the lane the gate parks it in, so counting the
  * gate job too would double the load a review in flight puts on the author's team.
+ *
+ * `all` is the job list when the caller already holds one — and both callers do. Without it this re-read every
+ * job note in the vault once per team: ten full scans per WebSocket snapshot, and one per team per role worker
+ * per idle tick. Pass the list you already have; omit it and one is listed for you.
  */
-export function wipLoad(vault: Vault, team: string, chainFor: (job: JobFrontmatter) => string[]): Record<WipStage, number> {
+export function wipLoad(vault: Vault, team: string, chainFor: (job: JobFrontmatter) => string[], all: JobFrontmatter[] = listJobs(vault)): Record<WipStage, number> {
   const load: Record<WipStage, number> = { in_progress: 0, review: 0, testing: 0 };
-  const all = listJobs(vault);
   const byId = new Map(all.map((j) => [j.id, j]));
   for (const j of all) {
     if (j.team !== team || GATE_JOB_TYPES.includes(j.type)) continue;

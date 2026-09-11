@@ -4,6 +4,7 @@ import path from 'node:path';
 import { defineTool } from '../registry.js';
 import { readCiConfig, writeCiRecord, ciConfigPath, workspacePath, isValidStreamSlug, nowIso, type CiRecord, type CiStepResult } from '@cubicle/core';
 import { sandboxExec } from './shell.js';
+import { commandPublishes, secretsGuardrail } from '../guardrails.js';
 
 const MAX_STEP_OUTPUT = 8000;
 /**
@@ -114,11 +115,31 @@ export const ciRun = defineTool({
     const session = `ci-${stream}-${Date.now().toString(36)}`;
     ctx.events.emit({ type: 'shell.output', agent: ctx.roleId, job: ctx.jobId, payload: { session, stream: 'cmd', text: `$ ci.run ${stream} (${steps.map((s) => s.name).join(' → ')})` } });
 
+    // §5's secret guardrail is matched per *tool call* (harness loop.ts), and `ci.run` is one call whose
+    // contents the guardrail never sees. But `cubicle-ci.yaml` is written by any engineer with `vault.write`,
+    // and `network: allowlist` in that same file reaches the proxy (GitHub, npm) — so a step of `git push`
+    // published with no secret scan at all, which is exactly what the guardrail exists to prevent. `ci.run` is
+    // a second route into the sandbox and is held to the same rule, with the same `commandPublishes` matcher,
+    // so the two routes cannot drift apart.
+    //
+    // The scan happens immediately before the publishing step runs rather than once up front: earlier steps
+    // build the very tree the push would carry, so scanning after them is what sees what is actually going out.
+    const secrets = secretsGuardrail();
+
     const results: CiStepResult[] = [];
     let green = true;
     const deadline = Date.now() + CI_TOTAL_TIMEOUT_MS;
     for (const step of steps) {
       const t0 = Date.now();
+      if (commandPublishes(step.run)) {
+        const refusal = await secrets.check('shell.run', { command: step.run }, ctx);
+        if (refusal) {
+          ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: 'ci.run', step: step.name, reason: refusal } });
+          results.push({ name: step.name, code: null, ok: false, duration_ms: 0, output: `REFUSED before it ran — this step publishes, and ${refusal}` });
+          green = false;
+          break;   // a step that would leak a secret is not "advisory": allow_failure does not apply
+        }
+      }
       const remaining = deadline - t0;
       if (remaining <= 0) {
         results.push({ name: step.name, code: null, ok: false, duration_ms: 0, output: `the pipeline hit its ${CI_TOTAL_TIMEOUT_MS / 60_000}-minute total budget before this step ran. Split the pipeline, lower timeout_s, or re-run the rest with only: ["${step.name}", …].` });

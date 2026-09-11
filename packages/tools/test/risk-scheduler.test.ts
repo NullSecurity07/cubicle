@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, readJob } from '@cubicle/core';
+import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, readJob, createStream, listJobs, GATE_JOB_TYPES } from '@cubicle/core';
 import { parseToolsConfig, schedulerRequest, missingRiskText, type ToolContext } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -51,5 +51,65 @@ describe('scheduler.request and risk', () => {
   it('the tool description tells the model when each level applies', () => {
     expect(schedulerRequest.description).toMatch(/destructive migrations/);
     expect(schedulerRequest.description).toMatch(/engineer\.ship/);
+  });
+});
+
+describe('scheduler.request validates the stream slug (fix wave item 4 / C2)', () => {
+  // `stream` is free text a model writes, and it becomes a path segment and a Docker mount source downstream.
+  const HOSTILE = ['../../etc', '..', 'Workspace/x', 'check out', 'check,out', 'Checkout', '-checkout'];
+
+  it('refuses a stream that is not a slug, and names the streams that exist', async () => {
+    createStream(vault, { name: 'Checkout', problem: 'p', customers: 'c', outcome_metric: 'm', owner_team: 'dev', error_budget: 4 }, 'product_manager');
+    for (const bad of HOSTILE) {
+      const r = await schedulerRequest.handler(ship({ risk: 'low', stream: bad }), ctxFor('dev_manager'));
+      expect(r.ok, bad).toBe(false);
+      expect(r.text, bad).toMatch(/is not a stream slug/);
+      expect(r.text, bad).toMatch(/checkout/);
+    }
+    expect(listJobs(vault).filter((j) => j.type === 'engineer.ship')).toHaveLength(0);
+  });
+
+  it('says there are no streams yet rather than naming none', async () => {
+    const r = await schedulerRequest.handler(ship({ risk: 'low', stream: '../../etc' }), ctxFor('dev_manager'));
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/No streams exist yet/);
+  });
+
+  it('a well-formed slug is still accepted, and omitting stream is still fine', async () => {
+    const ok = await schedulerRequest.handler(ship({ risk: 'low', stream: 'checkout' }), ctxFor('dev_manager'));
+    expect(ok.ok).toBe(true);
+    const none = await schedulerRequest.handler(ship({ risk: 'low', title: 'Another thing' }), ctxFor('dev_manager'));
+    expect(none.ok).toBe(true);
+    expect(readJob(vault, (none.data as { id: string }).id)?.data.stream ?? null).toBeNull();
+  });
+});
+
+describe('the reserved job types match the ones nothing counts (fix wave item 7 / I7)', () => {
+  // These three are skipped by wipLoad and ignored by the heartbeat's open-work count. An agent that could
+  // schedule them would have a lane invisible to both the WIP limit and the re-planning gate.
+  const HIDDEN = ['requester.review', 'research.review', 'incident'];
+
+  it('an engineer cannot schedule one', async () => {
+    for (const type of HIDDEN) {
+      const r = await schedulerRequest.handler(ship({ risk: 'low', type, assigned: 'backend_engineer' }), ctxFor('frontend_engineer'));
+      expect(r.ok, type).toBe(false);
+      expect(r.text, type).toMatch(/reserved for the daemon/);
+    }
+  });
+
+  it('nor can a lead, nor the CEO — these are the daemon\'s own', async () => {
+    for (const type of HIDDEN) {
+      expect((await schedulerRequest.handler(ship({ risk: 'low', type, assigned: 'backend_engineer' }), ctxFor('dev_manager'))).ok, type).toBe(false);
+      expect((await schedulerRequest.handler(ship({ risk: 'low', type, assigned: 'backend_engineer', done_when: 'x' }), ctxFor('ceo'))).ok, type).toBe(false);
+    }
+    expect(listJobs(vault).filter((j) => HIDDEN.includes(j.type))).toHaveLength(0);
+  });
+
+  it('every type wipLoad skips is reserved, so the two lists cannot drift apart', async () => {
+    for (const type of GATE_JOB_TYPES) {
+      const r = await schedulerRequest.handler(ship({ risk: 'low', type, assigned: 'backend_engineer' }), ctxFor('frontend_engineer'));
+      expect(r.ok, type).toBe(false);
+      expect(r.text, type).toMatch(/reserved for the daemon/);
+    }
   });
 });

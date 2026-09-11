@@ -48,8 +48,10 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
   const runs = vault.list('Runs', { ext: '.md' }).sort();
   const latest = runs.length ? runs[runs.length - 1] : null;
   const sessions = vault.db.prepare('SELECT session_id, MAX(seq) seq, MAX(path) path FROM screens GROUP BY session_id ORDER BY MAX(ts) DESC LIMIT 5').all() as { session_id: string; seq: number; path: string }[];
-  const ended = new Set(vault.events.query({ types: ['browser.session_ended'], limit: 500 }).map((e) => String(e.payload.session)));
-  const activeSessions = new Set(vault.events.query({ types: ['browser.session_started'], limit: 500 }).map((e) => String(e.payload.session)).filter((s) => !ended.has(s)));
+  // Newest window, not oldest: an ascending `limit` would freeze on the first 500 session events ever written
+  // and every later browser session would read as still open.
+  const ended = new Set(vault.events.query({ types: ['browser.session_ended'], limit: 500, order: 'desc' }).map((e) => String(e.payload.session)));
+  const activeSessions = new Set(vault.events.query({ types: ['browser.session_started'], limit: 500, order: 'desc' }).map((e) => String(e.payload.session)).filter((s) => !ended.has(s)));
   const inbox = listInbox(vault).filter((n) => n.data.kind !== 'message' && n.data.approved === null && !n.data.resolved_at)
     .map((n) => ({ id: n.data.id, kind: n.data.kind, title: (n.body.match(/^#\s+(.+)$/m)?.[1] ?? n.data.kind).trim(), path: n.path, created: n.data.created }));
   const chat: Snapshot['chat'] = [];
@@ -64,9 +66,12 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
   const org = loadOrg(vault);
   const gates = loadGates();
   const chainFor = (j: JobFrontmatter) => gatesForRisk(gates, j.type, j.risk);
-  const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission, room: t.room, floor: t.floor, parent: t.parent, wip: { limits: t.wip ?? null, load: wipLoad(vault, t.id, chainFor) } }));
+  // One job listing for the whole snapshot: `wipLoad` used to list every job note again per team, so a
+  // ten-team office paid ten full vault scans for one snapshot.
+  const allJobs = listJobs(vault);
+  const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission, room: t.room, floor: t.floor, parent: t.parent, wip: { limits: t.wip ?? null, load: wipLoad(vault, t.id, chainFor, allJobs) } }));
   return {
-    op: 'snapshot', at: nowIso(), roles, jobs: listJobs(vault),
+    op: 'snapshot', at: nowIso(), roles, jobs: allJobs,
     surfaces: sessions.map((s) => ({ streamKind: 'browser', streamId: s.session_id, lastFrame: s.path, active: activeSessions.has(s.session_id) })),
     quota: router?.quotaSnapshot() ?? [],
     latestRun: latest ? { path: latest, body: vault.readTextOrNull(latest) ?? '' } : null,

@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, updateJob, parseNote, stringifyNote } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, updateJob, parseNote, stringifyNote, listJobs, wipLoad, loadGates, gatesForRisk, type JobFrontmatter } from '@cubicle/core';
 import { WorkerPool, WIP_WARN_MS } from '../src/workers.js';
 import { buildSnapshot } from '../src/ws.js';
 
@@ -127,5 +127,100 @@ describe('the snapshot carries the lane load', () => {
     const tech = buildSnapshot(vault).teams.find((t) => t.id === 'technology')!;
     expect(tech.wip.limits).toBeNull();
     expect(tech.wip.load).toEqual({ in_progress: 0, review: 0, testing: 0 });
+  });
+});
+
+describe('a gate job is exempt from the author team\'s WIP limit (fix wave item 5 / I1)', () => {
+  /** `enqueueGate` gives the gate job the *author's* team, which is why this matters at all. */
+  const gate = (type: string, title: string, assigned: string, parent: string) =>
+    createJob(vault, { type, title, assigned, goal: 'g', team: 'dev', parent }, 'daemon');
+
+  it('a qa.review carrying team: dev dispatches while Dev is at its in_progress limit', () => {
+    setWip('dev', { in_progress: 1, review: 2, testing: 2 });
+    const a = devJob('A');
+    updateJob(vault, a, { status: 'running' }, 'daemon');   // Dev is full
+    expect(pool.nextJob('backend_engineer')).toBeNull();
+    const review = gate('qa.review', 'Review A', 'qa_lead', a);
+    expect(pool.nextJob('qa_lead')).toBe(review);
+  });
+
+  it('security.review dispatches even though Teams/security.md has no members', () => {
+    setWip('dev', { in_progress: 1, review: 2, testing: 2 });
+    const a = devJob('A');
+    updateJob(vault, a, { status: 'running' }, 'daemon');
+    const sec = gate('security.review', 'Security review of A', 'ciso', a);
+    expect(pool.nextJob('ciso')).toBe(sec);
+  });
+
+  it('every gate type is exempt, and no WIP warning is emitted for one', () => {
+    setWip('dev', { in_progress: 1, review: 2, testing: 2 });
+    const a = devJob('A');
+    updateJob(vault, a, { status: 'running' }, 'daemon');
+    const ids = [
+      gate('qa.review', 'QA A', 'qa_lead', a),
+      gate('security.review', 'Sec A', 'ciso', a),
+      gate('requester.review', 'Requester A', 'product_manager', a),
+      gate('research.review', 'Research A', 'research_manager', a),
+      gate('coo.verify', 'Verify A', 'coo', a),
+    ];
+    const roles = ['qa_lead', 'ciso', 'product_manager', 'research_manager', 'coo'];
+    roles.forEach((r, i) => expect(pool.nextJob(r), r).toBe(ids[i]));
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'wip')).toBe(false);
+  });
+
+  it('the exemption does not leak to ordinary Dev work, which is still refused', () => {
+    setWip('dev', { in_progress: 1, review: 2, testing: 2 });
+    const a = devJob('A');
+    updateJob(vault, a, { status: 'running' }, 'daemon');
+    gate('qa.review', 'Review A', 'qa_lead', a);
+    devJob('B');
+    expect(pool.nextJob('backend_engineer')).toBeNull();
+  });
+
+  it('a gate job still waits for its dependencies', () => {
+    const a = devJob('A');
+    const blocker = devJob('Blocker');
+    const review = createJob(vault, { type: 'qa.review', title: 'Review A', assigned: 'qa_lead', goal: 'g', team: 'dev', parent: a, depends_on: [blocker] }, 'daemon');
+    expect(pool.nextJob('qa_lead')).toBeNull();
+    updateJob(vault, blocker, { status: 'done' }, 'daemon');
+    expect(pool.nextJob('qa_lead')).toBe(review);
+  });
+});
+
+describe('wipLoad does not re-list every job note per call (fix wave item 6 / I6)', () => {
+  /** `listJobs` starts with exactly one `vault.list('Jobs', …)`, so counting those counts full vault scans. */
+  function countJobScans<T>(fn: () => T): { result: T; scans: number } {
+    const realList = vault.list.bind(vault);
+    let scans = 0;
+    const spy = vi.spyOn(vault, 'list').mockImplementation((dirRel: string, opts?: Parameters<Vault['list']>[1]) => {
+      if (String(dirRel) === 'Jobs') scans++;
+      return realList(dirRel, opts);
+    });
+    try { return { result: fn(), scans }; } finally { spy.mockRestore(); }
+  }
+
+  it('a snapshot over every team lists the jobs once', () => {
+    setWip('dev', { in_progress: 3, review: 2, testing: 2 });
+    devJob('A'); devJob('B');
+    const { result, scans } = countJobScans(() => buildSnapshot(vault));
+    expect(result.teams.length).toBeGreaterThanOrEqual(8);
+    expect(scans).toBe(1);
+  });
+
+  it('nextJob lists the jobs once however many teams it weighs', () => {
+    setWip('dev', { in_progress: 1, review: 2, testing: 2 });
+    updateJob(vault, devJob('A'), { status: 'running' }, 'daemon');
+    devJob('B');
+    const { scans } = countJobScans(() => pool.nextJob('backend_engineer'));
+    expect(scans).toBe(1);
+  });
+
+  it('the passed-in list gives the same answer as listing it again', () => {
+    setWip('dev', { in_progress: 3, review: 2, testing: 2 });
+    updateJob(vault, devJob('A'), { status: 'running' }, 'daemon');
+    updateJob(vault, devJob('B'), { status: 'in_review', gate_index: 0 }, 'daemon');
+    const gates = loadGates();
+    const chainFor = (j: JobFrontmatter) => gatesForRisk(gates, j.type, j.risk);
+    expect(wipLoad(vault, 'dev', chainFor, listJobs(vault))).toEqual(wipLoad(vault, 'dev', chainFor));
   });
 });

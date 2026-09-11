@@ -34,8 +34,23 @@ export function streamPath(slug: string): string { return `${STREAMS_DIR}/${slug
 /** Where the stream's code lives and where `ci.run` mounts its sandbox. */
 export function workspacePath(slug: string): string { return `Workspace/${slug}`; }
 
+/**
+ * What a stream slug may contain — exactly what `streamSlug()` produces. Worth pinning as a shape rather than
+ * trusting the caller, because the slug becomes a workspace directory that `ci.run` binds into the sandbox, and
+ * Docker parses `--mount type=bind,src=...,dst=...` as a CSV key/value list: a slug with a comma in it would
+ * inject mount options. It is also a path segment, and `vault.abs` throws on `..`. Validate before a
+ * model-supplied slug reaches a path or a mount.
+ *
+ * Declared here rather than in `ci.ts` so that `readStream` can use it without importing its own importer;
+ * `ci.ts` re-exports both names, which is where the rest of the codebase reads them from.
+ */
+export const STREAM_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
+export function isValidStreamSlug(slug: string): boolean { return STREAM_SLUG_RE.test(slug); }
+
 export function streamSlug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'stream';
+  // The trailing trim runs again after the length cap: "growth-and-retention-..." cut at 48 can land on a
+  // hyphen, and a slug that ends in one is a directory name nobody meant to create.
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48).replace(/-+$/, '') || 'stream';
 }
 
 /** `_template.md` is the owner's copy-me note, not a stream. */
@@ -44,7 +59,17 @@ function isStreamNote(rel: string): boolean {
   return !stem.startsWith('_');
 }
 
+/**
+ * The stream note for a slug, or null when there is none.
+ *
+ * A slug that is not a slug reads as "no such stream" rather than throwing. `stream` arrives on a job, on a
+ * `deploy.done` payload and on a `scheduler.request` call, all of which a model writes, and `vault.abs` throws
+ * `UnsafePathError` on anything containing `..`. The daemon's tick calls this from its sweeps, so one bad value
+ * used to take the whole tick down with it — heartbeat trigger included — on every tick, for ever, because the
+ * event stays in the log. Validating here means no caller has to remember to.
+ */
 export function readStream(vault: Vault, slug: string): { data: StreamFrontmatter; body: string } | null {
+  if (!isValidStreamSlug(slug)) return null;
   const n = vault.readNoteOrNull(streamPath(slug));
   if (!n) return null;
   const p = StreamFrontmatter.safeParse({ ...n.data, slug });
@@ -80,9 +105,12 @@ export interface NewStream {
 export function createStream(vault: Vault, s: NewStream, by: string): string {
   let slug = s.slug ? streamSlug(s.slug) : streamSlug(s.name);
   if (vault.exists(streamPath(slug))) {
+    // Room for the suffix: a 48-character slug plus "-2" is no longer a valid slug, and everything downstream
+    // (ci.run's mount, readStream, ciStatus) refuses one.
+    const base = slug.slice(0, 44).replace(/-+$/, '') || 'stream';
     let n = 2;
-    while (vault.exists(streamPath(`${slug}-${n}`))) n++;
-    slug = `${slug}-${n}`;
+    while (vault.exists(streamPath(`${base}-${n}`))) n++;
+    slug = `${base}-${n}`;
   }
   const data = StreamFrontmatter.parse({
     slug, name: s.name, problem: s.problem, customers: s.customers, outcome_metric: s.outcome_metric,

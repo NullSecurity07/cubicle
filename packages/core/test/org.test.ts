@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'vitest';
-import { can, defaultPermissions, leadOf, reportsOf, isLead, type Org } from '../src/org.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { can, defaultPermissions, leadOf, reportsOf, isLead, loadOrg, type Org } from '../src/org.js';
+import { scaffoldVault } from '../src/template.js';
+import { Vault } from '../src/vault.js';
+import { stringifyNote, parseNote } from '../src/frontmatter.js';
 
 const role = (r: string, extra: Record<string, unknown> = {}) => ({ role: r, display: r, model_tier: 'medium' as const, tools: [], approval_overrides: {}, active: true, hired: 'x', sprite: r, desk: r, permissions: [], ...extra });
 const team = (id: string, lead: string, members: string[]) => ({ id, name: id, lead, members, mission: '', processes: [] });
@@ -82,5 +88,67 @@ describe('org resolver (spec §2)', () => {
     const malformed: Org = { ...org, teams: { ...org.teams, dev: { ...org.teams.dev, members: [...MEMBERS.dev, 'dev_manager'] } } };
     expect(can(malformed, 'dev_manager', 'schedule', 'dev_manager')).toBe(false); // lead cannot schedule self even if in members
     expect(can(malformed, 'ceo', 'schedule', 'ceo')).toBe(false); // CEO cannot schedule self
+  });
+});
+
+/**
+ * `loadOrg` caches its result per `Vault` (org.ts) — nextJob's WIP check calls it on every idle
+ * worker's poll, so re-reading every Teams/Roles note on every call was expensive enough, under
+ * load, to push a heartbeat cycle past a test timeout. The cache must still see every way a
+ * Teams/ or Roles/ note can change: an agent write through the Vault API (`vault.wrote`), and an
+ * owner edit made straight in Obsidian, which never goes through that API and instead reaches the
+ * vault as `owner.edited` from `VaultWatcher` (including a delete/rename, reported as
+ * `owner.edited` with `deleted: true`) — and it must never leak across two different vaults.
+ */
+describe('loadOrg caching (perf fix)', () => {
+  let dir: string; let vault: Vault;
+  beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-orgcache-')); vault = (await scaffoldVault(dir)).vault; });
+  afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  it('a role written through the Vault API (vault.wrote) invalidates the cache', () => {
+    expect(loadOrg(vault).roles.temp_role).toBeUndefined();
+    vault.writeNote('Roles/temp_role.md', { role: 'temp_role', display: 'Temp Role', active: true, hired: '2026-01-01', sprite: 'temp_role', desk: 'temp_role' }, '', 'owner');
+    expect(loadOrg(vault).roles.temp_role).toBeDefined();
+    expect(loadOrg(vault).roles.temp_role.display).toBe('Temp Role');
+  });
+
+  it('an owner edit made straight on disk (no vault.wrote) is picked up once the watcher reports owner.edited', () => {
+    const rel = 'Roles/backend_engineer.md';
+    const before = loadOrg(vault).roles.backend_engineer;
+    expect(before).toBeDefined();
+    expect(before.display).not.toBe('Edited In Obsidian');
+
+    // Edit the file on disk directly, the way Obsidian would — bypassing vault.writeNote entirely,
+    // so no vault.wrote fires. The cache must still be holding the pre-edit value here.
+    const note = parseNote(vault.readText(rel));
+    writeFileSync(path.join(vault.root, rel), stringifyNote({ ...note.data, display: 'Edited In Obsidian' }, note.body));
+    expect(loadOrg(vault).roles.backend_engineer.display).not.toBe('Edited In Obsidian'); // still cached
+
+    // VaultWatcher (watcher.ts) is what notices a disk-only change and emits this; simulate it directly
+    // rather than starting a real chokidar watcher (debounced, filesystem-timing-dependent) in a unit test.
+    vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: rel, area: 'Roles', deleted: false } });
+    expect(loadOrg(vault).roles.backend_engineer.display).toBe('Edited In Obsidian');
+  });
+
+  it('a deleted/renamed role (owner.edited with deleted: true) invalidates the cache too', () => {
+    vault.writeNote('Roles/temp_role.md', { role: 'temp_role', display: 'Temp Role', active: true, hired: '2026-01-01', sprite: 'temp_role', desk: 'temp_role' }, '', 'owner');
+    expect(loadOrg(vault).roles.temp_role).toBeDefined();
+    // A rename/delete made outside the Vault API: remove the file, no vault.wrote, only the watcher's
+    // owner.edited({ deleted: true }) — same as VaultWatcher.fire() emits for an `unlink`.
+    rmSync(path.join(vault.root, 'Roles/temp_role.md'));
+    vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: 'Roles/temp_role.md', area: 'Roles', deleted: true } });
+    expect(loadOrg(vault).roles.temp_role).toBeUndefined();
+  });
+
+  it('two Vault instances never share a cache entry, even for the same role id', async () => {
+    const dir2 = mkdtempSync(path.join(tmpdir(), 'cubicle-orgcache-2-'));
+    try {
+      const vault2 = (await scaffoldVault(dir2)).vault;
+      try {
+        vault.writeNote('Roles/temp_role.md', { role: 'temp_role', display: 'Only In Vault One', active: true, hired: '2026-01-01', sprite: 'temp_role', desk: 'temp_role' }, '', 'owner');
+        expect(loadOrg(vault).roles.temp_role?.display).toBe('Only In Vault One');
+        expect(loadOrg(vault2).roles.temp_role).toBeUndefined();
+      } finally { vault2.close(); }
+    } finally { rmSync(dir2, { recursive: true, force: true }); }
   });
 });

@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { TeamFrontmatter, RoleFrontmatter, type Permission } from './schemas.js';
+import { TeamFrontmatter, RoleFrontmatter, type Permission, type CubicleEvent } from './schemas.js';
 import type { Vault } from './vault.js';
 import { parseNote, stringifyNote } from './frontmatter.js';
 import { listJobs, updateJob } from './jobs.js';
@@ -9,8 +9,26 @@ import { nowIso } from './fs.js';
 export interface Org { teams: Record<string, TeamFrontmatter>; roles: Record<string, RoleFrontmatter> }
 export type Action = Permission;
 
-/** Teams/*.md + active Roles/*.md (never archive/ or _hireable/). Pure read; call per tick, it is cheap. */
-export function loadOrg(vault: Vault): Org {
+/**
+ * `loadOrg` re-reads and re-parses every Teams/*.md and Roles/*.md note, which used to be fine when the only
+ * caller was the once-per-heartbeat-tick planner. `nextJob`'s WIP check (§7) now calls it once per idle worker
+ * per poll — a dozen-plus roles, each polling on its own schedule — which turned "cheap, call per tick" into a
+ * few dozen synchronous file reads every few hundred milliseconds and was enough, under load, to push a busy
+ * heartbeat cycle past a 30s test timeout (never a hang: the same cycle finishes fine with more time or less
+ * contention). Cache per vault, invalidated by anything that changes a Teams/ or Roles/ note: an agent write
+ * (`vault.wrote`) *and* an owner edit made straight in Obsidian, which never goes through the Vault write API
+ * and instead reaches the daemon as `owner.edited` from `VaultWatcher` (watcher.ts) — including a delete/rename,
+ * which the watcher reports as `owner.edited` with `deleted: true`. Both event payloads carry the same shape
+ * (`{ path }`), so one predicate below covers both.
+ */
+const orgCache = new WeakMap<Vault, { org: Org | null; dirty: boolean }>();
+
+/** True when a written/edited/deleted path could change what `loadOrg` returns. */
+function isOrgPath(rel: string): boolean {
+  return rel.startsWith('Teams/') || rel.startsWith('Roles/');
+}
+
+function computeOrg(vault: Vault): Org {
   const teams: Org['teams'] = {};
   for (const rel of vault.list('Teams', { ext: '.md' })) {
     if (rel.includes('/archive/')) continue;
@@ -24,6 +42,22 @@ export function loadOrg(vault: Vault): Org {
     if (p && p.success && p.data.active) roles[p.data.role] = p.data;
   }
   return { teams, roles };
+}
+
+export function loadOrg(vault: Vault): Org {
+  let entry = orgCache.get(vault);
+  if (!entry) {
+    entry = { org: null, dirty: true };
+    orgCache.set(vault, entry);
+    const invalidateOnOrgPath = (e: CubicleEvent) => {
+      const p = String((e.payload as { path?: string } | undefined)?.path ?? '');
+      if (isOrgPath(p)) entry!.dirty = true;
+    };
+    vault.events.on('vault.wrote', invalidateOnOrgPath);
+    vault.events.on('owner.edited', invalidateOnOrgPath);
+  }
+  if (entry.dirty || !entry.org) { entry.org = computeOrg(vault); entry.dirty = false; }
+  return entry.org;
 }
 
 export function teamOf(org: Org, role: string): TeamFrontmatter | null {
