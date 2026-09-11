@@ -2,7 +2,7 @@
 name: feature
 steps:
   - { role: research_manager, type: research, title: "Research: {objective}", for: cto }
-  - { role: cto, type: team.plan, title: "Plan: {objective}" }
+  - { role: cto, type: division.plan, title: "Plan: {objective}" }
   - { role: backend_engineer, type: engineer.ship, title: "Build: {objective}" }
   - { role: cmo, type: growth.post, title: "Announce: {objective}" }
 ---

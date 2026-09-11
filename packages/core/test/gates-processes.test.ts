@@ -80,6 +80,23 @@ describe('processes (spec §3)', () => {
     vault.writeText('Processes/broken.md', '---\nname: broken\nsteps:\n  - { role: nope, type: custom, title: "X" }\n---\nbroken process\n', 'daemon');
     expect(() => expandProcess(vault, 'broken', 'x', { parent: 'p', by: 'ceo', owner_role: 'ceo' })).toThrow(/unknown or inactive role nope in process broken/);
   });
+  // The heartbeat produces neither type any more: `team.plan` became one `division.plan` per division and
+  // `critic.premortem` became the three-advisor `board.premortem` (spec §4). A template that still queued them
+  // ran the retired loop against the literal `cto`/`cfo`/`advisor_skeptic` — and `expandProcess` throws on an
+  // inactive role while `division_plans` swallows that as a `daemon.warning`, so an owner who retired one of
+  // those roles lost the process silently (final review I4).
+  it('no shipped process still queues the retired planning types', () => {
+    const retired = ['team.plan', 'critic.premortem'];
+    const processes = vault.list('Processes', { ext: '.md' }).filter((rel) => !rel.endsWith('_template.md'));
+    expect(processes.length).toBeGreaterThan(0);
+    for (const rel of processes) {
+      const name = rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/, '');
+      const p = readProcess(vault, name);
+      if (!p) continue;   // `broken.md`, written by the case above
+      for (const s of p.steps) expect(retired, `${name} step "${s.title}"`).not.toContain(s.type);
+    }
+  });
+
   it('a process omitting `parent` threads its idempotency marker through `links` only (F9)', () => {
     const ids = expandProcess(vault, 'opportunity', 'a new idea', { by: 'ceo', owner_role: 'ceo', marker: 'weekly-7' });
     for (const id of ids) {
