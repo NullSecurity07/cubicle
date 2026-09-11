@@ -12,7 +12,7 @@ import type { State } from '../state.js';
 import type { Headline } from './headlines.js';
 import { cut, planBits, briefBits } from './headlines.js';
 import type { Ctx, View } from './content.js';
-import { briefTitle, byUpdated, callsToday, chatHtml, chip, empty, esc, feedHtml, fmtTime, fmtWhen, isOpen, jobView, kindLabel, obsidianUrl, orgView, row, rows, section, teamJobs, who } from './content.js';
+import { agentView, bankView, browserStream, browserViewerView, briefTitle, byUpdated, callsToday, chatHtml, emptyHtml, esc, feedHtml, isOpen, isRoom, jobView, kindLabel, obsidianUrl, orgView, postOfficeView, queueView, roomView, section, teamJobs, terminalViewerView, who } from './content.js';
 import { md } from './markdown.js';
 
 /**
@@ -53,14 +53,14 @@ export function chartBars(def: SurfaceDef, s: State, max: number): Bar[] {
 /** Which panel a click opens: a registry entry, one job note, or the org chart (the only kinds with no anchor). */
 export function viewFor(kind: string, s: State, ctx: Ctx): View {
   if (kind.startsWith('job:')) return jobView(kind.slice(4), s, ctx);
+  if (kind.startsWith('agent:')) return agentView(kind.slice(6), s, ctx);
+  if (kind === 'ceo_office') kind = 'cabin';            // the CEO office is the cabin chat (visual notes §6)
   const def = SURFACES[kind];
   if (def) return def.view(s, ctx);
-  if (kind === 'org') return orgView(s);
-  return { mode: 'drawer', title: kind, html: empty('Nothing here yet.') };
+  if (kind === 'org') return orgView(s, ctx);
+  if (isRoom(kind, s)) return roomView(kind, s);
+  return { mode: 'drawer', title: kind, html: emptyHtml('doc', 'Nothing here yet') };
 }
-
-/** The browser session a billboard-style surface is showing: the live one, else the most recent. */
-const browserStream = (s: State): string => Object.values(s.surfaces).filter((x) => x.streamKind === 'browser').sort((a, b) => Number(b.active) - Number(a.active))[0]?.streamId ?? '';
 
 for (const def of [
   {
@@ -83,28 +83,18 @@ for (const def of [
   {
     kind: 'noticeboard', streamKind: 'list', streamId: () => 'jobs:open',
     headline: (s) => { const open = Object.values(s.jobs).filter((j) => isOpen(j.status)).sort((a, b) => a.priority - b.priority); return { head: open.length ? `${open.length} open` : 'Queue empty', short: String(open.length), lines: open.slice(0, 3).map((j) => cut(`${j.status} · ${who(s, j.assigned)}: ${cut(j.title, 26)}`, 48)) }; },   // the tower's display names are long: clip the whole line, not only the title
-    view: (s) => {
-      const open = Object.values(s.jobs).filter((j) => isOpen(j.status)).sort((a, b) => a.priority - b.priority || byUpdated(a, b));
-      return { mode: 'drawer', title: 'Queue', sub: `${open.length} open`, html: open.length ? teamJobs(open, s) : empty('Nothing queued. The next heartbeat plans new work.') };
-    },
+    view: (s) => queueView(s),
   },
   {
     kind: 'postoffice', streamKind: 'list', streamId: () => 'inbox',
     headline: (s) => { const n = s.inbox.length || s.pendingProposals; return { head: n ? `${n} to approve` : 'Nothing to approve', short: String(n), lines: s.inbox.slice(0, 3).map((p) => `${kindLabel(p.kind)}: ${cut(p.title, 34)}`), badge: n ? String(n) : undefined }; },
-    view: (s, ctx) => {
-      const list = s.inbox.length ? rows(s.inbox.map((n) => row({ left: chip('kind', kindLabel(n.kind)), title: n.title, small: n.path.replace(/^00 Inbox\//, ''), right: ctx.vaultName ? `<a href="${esc(obsidianUrl(ctx.vaultName, n.path))}">Open</a>` : esc(fmtWhen(n.created)) }))) : empty('Nothing waiting for you.');
-      const mail = s.mail.length ? rows(s.mail.slice(-20).reverse().map((m) => row({ title: m.text, right: esc(fmtTime(m.ts)) }))) : empty('No mail yet.');
-      return { mode: 'drawer', title: 'Post office', sub: `${s.inbox.length} to approve`, html: section('Waiting for you', list + `<p class="hintline">Approve or reject each one in 00 Inbox/ by setting approved: true or false.</p>`, s.inbox.length) + section('Mail log', mail) };
-    },
+    view: (s, ctx) => postOfficeView(s, ctx),
   },
   {
     kind: 'bank', streamKind: 'chart', streamId: () => 'quota',
     bars: (s) => s.quota.map((q) => ({ label: q.model, used: q.rpd_used, limit: q.limits.rpd })),
     headline: (s) => { const list = s.quota.filter((q) => q.limits.rpd > 0).slice(0, 7); const total = callsToday(s); return { head: list.length ? `${total} calls today` : 'No limits set', short: String(total), lines: list.length ? list.map((q) => cut(q.model, 16)) : ['Set rpm/rpd in providers.yaml'] }; },
-    view: (s) => {
-      const table = s.quota.length ? `<table class="data"><tr><th>Model</th><th>Today</th><th>Runway</th><th></th></tr>${s.quota.map((q) => { const pct = q.limits.rpd ? q.rpd_used / q.limits.rpd : 0; const cls = pct > 0.9 ? 'hot' : pct > 0.6 ? 'warn' : ''; return `<tr><td>${esc(q.model)}<br><small class="muted">${esc(q.provider)}</small></td><td>${q.rpd_used}${q.limits.rpd ? ` / ${q.limits.rpd}` : ''}</td><td><div class="meter ${cls}"><i style="width:${Math.round((1 - Math.min(1, pct)) * 100)}%"></i></div></td><td>${q.cooling_until ? chip('blocked', 'cooling') : chip('done', 'ok')}</td></tr>`; }).join('')}</table>` : empty('No providers reported yet.');
-      return { mode: 'drawer', title: 'Bank', sub: 'free-tier runway per model', html: section(`${callsToday(s)} calls today`, table) + `<p class="hintline">Free calls are the runway. Limits live in config/providers.yaml.</p>` };
-    },
+    view: (s) => bankView(s),
   },
   {
     kind: 'vault', streamKind: 'list', streamId: () => 'jobs',
@@ -114,22 +104,18 @@ for (const def of [
       const active = all.filter((j) => isOpen(j.status));
       const done = all.filter((j) => !isOpen(j.status)).slice(0, 30);
       const link = ctx.vaultName ? `<p class="hintline"><a href="obsidian://open?vault=${encodeURIComponent(ctx.vaultName)}">Open the vault in Obsidian</a></p>` : `<p class="hintline">Add <code>?vault=&lt;name&gt;</code> to this URL to enable Obsidian links.</p>`;
-      return { mode: 'drawer', title: 'Vault', sub: `${all.length} jobs`, html: section('In progress', active.length ? teamJobs(active, s) : empty('Nothing running right now.'), active.length) + section('Finished', done.length ? teamJobs(done, s) : empty('No finished jobs yet.'), done.length) + link };
+      return { mode: 'drawer', title: 'Vault', sub: `${all.length} jobs`, html: section('In progress', active.length ? teamJobs(active, s) : emptyHtml('clipboard', 'Nothing running right now'), active.length) + section('Finished', done.length ? teamJobs(done, s) : emptyHtml('clipboard', 'No finished jobs yet'), done.length) + link };
     },
   },
   {
     kind: 'terminal', streamKind: 'terminal', streamId: () => 'shell',
     headline: (s) => { const last = s.terminal.slice(-3); return { head: last.length ? 'Shell' : 'Shell idle', lines: last.map((l) => cut(l, 44)) }; },
-    view: (s) => ({ mode: 'drawer', title: 'Terminal shed', sub: 'shell output', html: `<pre class="term">${esc(s.terminal.slice(-160).join('\n')) || 'No commands run yet.'}</pre>` }),
+    view: (s) => terminalViewerView(s),
   },
   {
     kind: 'billboard', streamKind: 'browser', streamId: browserStream,
     headline: (s) => { const cur = s.surfaces[browserStream(s)]; return { head: cur ? (cur.active ? 'Browser live' : 'Last screenshot') : 'No browser session', lines: cur ? [] : ['Growth and the Engineer browse here'], badge: cur?.active ? 'LIVE' : undefined }; },
-    view: (s, ctx) => {
-      const cur = s.surfaces[browserStream(s)];
-      const src = cur ? ctx.frames[cur.streamId] ?? (cur.lastFrame ? `/screens/${cur.lastFrame.replace('.cubicle/screens/', '')}${ctx.tokenQuery}` : '') : '';
-      return { mode: 'drawer', title: 'Billboard', sub: cur?.active ? 'browser session live' : cur ? 'last screenshot' : 'browser', html: src ? `<img class="frame" src="${esc(src)}" alt="browser" />` : empty('No browser session yet. Growth and the Engineer stand here while browsing.') };
-    },
+    view: (s, ctx) => browserViewerView(s, ctx),
   },
   {
     kind: 'workshop', streamKind: 'iframe', streamId: () => '/site/',

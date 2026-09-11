@@ -1,4 +1,4 @@
-import { JobFrontmatter, type JobStatus } from './schemas.js';
+import { JobFrontmatter, type JobStatus, type ModelTier } from './schemas.js';
 import { makeId, nowIso } from './fs.js';
 import type { Vault } from './vault.js';
 import { stringifyNote } from './frontmatter.js';
@@ -23,6 +23,7 @@ export interface NewJob {
   done_when?: string;
   research?: ResearchRequest;
   research_slug?: string;
+  model_tier?: ModelTier;
 }
 
 export function jobPath(id: string): string {
@@ -45,7 +46,7 @@ export function createJob(vault: Vault, job: NewJob, by: string): string {
     approval: 'none', checkpoint_step: 0, side_effects_done: [], links: job.links ?? [],
     privacy: job.privacy ?? 'cloud', runs_on: job.runs_on ?? 'laptop', parent: job.parent,
     team: job.team, owner_role: job.owner_role, for: job.for, done_when: job.done_when,
-    research: job.research, research_slug: job.research_slug,
+    research: job.research, research_slug: job.research_slug, model_tier: job.model_tier,
   });
   let body = `## Goal\n\n${job.goal.trim()}\n\n`;
   if (job.research) body += `${renderResearchRequest(job.research)}\n`;

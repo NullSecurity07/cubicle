@@ -18,6 +18,9 @@ export const KNOWN_JOB_TYPES = [
  */
 export const Timestamp = z.preprocess((v) => (typeof v === 'string' && v.trim() !== '' ? v : nowIso()), z.string());
 
+export const ModelTier = z.enum(['strong', 'medium', 'cheap', 'local']);
+export type ModelTier = z.infer<typeof ModelTier>;
+
 export const BlockedOn = z.object({
   kind: z.enum(['message', 'job', 'proposal', 'quota', 'owner']),
   id: z.string(),
@@ -54,13 +57,11 @@ export const JobFrontmatter = z.looseObject({
   budget_from: z.number().int().optional(),
   research: ResearchRequest.optional(),
   research_slug: z.string().optional(),
+  model_tier: ModelTier.optional(),
 });
 export type JobFrontmatter = z.infer<typeof JobFrontmatter>;
 
 // ---------- Roles ----------
-export const ModelTier = z.enum(['strong', 'medium', 'cheap', 'local']);
-export type ModelTier = z.infer<typeof ModelTier>;
-
 export const ApprovalMode = z.enum(['auto', 'propose', 'ask', 'never']);
 export type ApprovalMode = z.infer<typeof ApprovalMode>;
 

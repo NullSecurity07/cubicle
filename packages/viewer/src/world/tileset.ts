@@ -4,6 +4,7 @@ import { TILES, T, COLUMNS, TILE, tilesetMeta } from './tiles.js';
 import { DRAW, floorOfName, type Px, type TileName } from './tiles-draw.js';
 import { roleColor, floorPalette, rolePalette, type Family } from './palette.js';
 import { GLYPHS } from '../ui/icons.js';
+import { DECOR_DRAW, DECOR_FRAME_NAMES, type DecorKind } from './decor.js';
 import { drawSpriteSheet, drawFaceSheet, spriteOpts, FACE_FRAMES, FACE_SHEET_W, FACE_SHEET_H, SPRITE_W, SPRITE_H, FACE_W, FACE_H } from './sprite-draw.js';
 import { FRAMES } from './frames.js';
 
@@ -81,5 +82,42 @@ export function makeEmotes(scene: Phaser.Scene): string {
   EMOTES.forEach((e, i) => { for (const [x, y, w, h, c] of GLYPHS[e]) px(g, i * EMOTE_W + x, y, c, w, h); });
   tex.refresh();
   EMOTES.forEach((e, i) => tex.add(e, 0, i * EMOTE_W, 0, EMOTE_W, EMOTE_H));
+  return key;
+}
+
+/** Ambient decor frames (Task 13, `world/decor.ts`): 16×16 frames side by side, named `<kind>:<frame>`. Keyed `decor`. */
+export function makeDecorSheet(scene: Phaser.Scene): string {
+  const key = 'decor';
+  if (scene.textures.exists(key)) return key;
+  const tex = scene.textures.createCanvas(key, DECOR_FRAME_NAMES.length * TILE, TILE)!;
+  const g = tex.getContext();
+  for (const f of DECOR_FRAME_NAMES) { const [kind, n] = f.name.split(':'); DECOR_DRAW[kind as DecorKind](canvasPx(g, f.x, 0), Number(n)); }
+  tex.refresh();
+  for (const f of DECOR_FRAME_NAMES) tex.add(f.name, 0, f.x, 0, TILE, TILE);
+  return key;
+}
+
+/** 64×64 radial glow (white → transparent), tinted per floor and blended ADD by the scene. */
+export function makeLampGlow(scene: Phaser.Scene): string {
+  const key = 'lamp-glow';
+  if (scene.textures.exists(key)) return key;
+  const tex = scene.textures.createCanvas(key, 64, 64)!;
+  const g = tex.getContext();
+  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,0.9)'); grad.addColorStop(0.5, 'rgba(255,255,255,0.35)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+  tex.refresh();
+  return key;
+}
+
+/** A 4×h vertical gradient the scene stretches across the map behind the tower. Redrawn when the stops change. */
+export function makeSky(scene: Phaser.Scene, key: string, stops: [string, string], h: number): string {
+  if (scene.textures.exists(key)) scene.textures.remove(key);
+  const tex = scene.textures.createCanvas(key, 4, h)!;
+  const g = tex.getContext();
+  const grad = g.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, stops[0]); grad.addColorStop(1, stops[1]);
+  g.fillStyle = grad; g.fillRect(0, 0, 4, h);
+  tex.refresh();
   return key;
 }

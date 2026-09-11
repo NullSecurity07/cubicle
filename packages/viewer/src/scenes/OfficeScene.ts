@@ -1,14 +1,18 @@
 import Phaser from 'phaser';
-import { makeTileset, TILE, roleColor } from '../world/tileset.js';
+import { makeTileset, makeDecorSheet, makeLampGlow, makeSky, TILE, roleColor } from '../world/tileset.js';
 import { buildWorld, floorAt, type World, type Tile } from '../world/map.js';
+import { T } from '../world/tiles.js';
 import { AgentSprite } from '../world/agents.js';
 import { Surface } from '../world/surfaces.js';
 import { SURFACES } from '../ui/surfaces.js';
+import { DecorLayer, RoomSigns } from '../world/decor.js';
 import { initialElevator, request, cancel, step, type ElevatorState, type ElevatorEvent, type Rider } from '../world/elevator.js';
 import { ZOOM_STEPS, zoomSnap, fitZoom, floorZoom } from '../world/camera.js';
 import { planRoute, type Leg } from '../world/route.js';
 import type { State } from '../state.js';
-import { tintFor } from '../ui/time.js';
+import { tintFor, nightColourFor, skyFor, lampAlphaFor, hourBucket, type HourBucket } from '../ui/time.js';
+import { litRooms, roomContaining } from '../world/lights.js';
+import { floorPalette, hexToInt } from '../world/palette.js';
 import { DUR, EASE, dur } from '../world/motion.js';
 
 export interface FloorSummary { floor: number; label: string; color: string; agents: { role: string; color: number; state: string }[]; meetings: number }
@@ -29,6 +33,11 @@ export class OfficeScene extends Phaser.Scene {
   private agents = new Map<string, AgentSprite>();
   private surfaces = new Map<string, Surface>();
   private night!: Phaser.GameObjects.Rectangle;
+  private sky!: Phaser.GameObjects.Image;
+  private skyStops = '';
+  private bucket: HourBucket | null = null;
+  private lamps: { img: Phaser.GameObjects.Image; room: string | null }[] = [];
+  private hourOverride: number | null = null;
   private minimap!: Phaser.Cameras.Scene2D.Camera;
   private viewRect!: Phaser.GameObjects.Rectangle;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
@@ -41,6 +50,8 @@ export class OfficeScene extends Phaser.Scene {
   private elev!: ElevatorState;
   private car!: Phaser.GameObjects.Container;
   private lastFloor = 0;
+  private decor!: DecorLayer;
+  private signs!: RoomSigns;
   hooks!: SceneHooks;
   /** The elevator: sprites call and cancel, the overlay reads the state. */
   readonly elevator = {
@@ -50,6 +61,10 @@ export class OfficeScene extends Phaser.Scene {
   };
 
   constructor() { super('office'); }
+
+  /** Overrides the wall-clock hour (for the console/debug harness); null returns to `hooks.hour()`. */
+  setHourOverride(h: number | null): void { this.hourOverride = h; }
+  private hour(): number { return this.hourOverride ?? this.hooks.hour(); }
 
   preload(): void { this.load.tilemapTiledJSON('office', '/office.json'); }
 
@@ -64,10 +79,22 @@ export class OfficeScene extends Phaser.Scene {
       if (!a) { console.warn(`[office] surface "${def.kind}" has no anchor in the map; not placed`); continue; }
       this.surfaces.set(def.kind, new Surface(this, def, a, (k) => this.hooks.onSurfaceClick(k)));
     }
+    makeDecorSheet(this);
+    this.decor = new DecorLayer(this, this.world.decor);
+    this.signs = new RoomSigns(this, this.world.signs);
     this.elev = initialElevator(this.world.floors, 1);
     this.car = (this.hooks.makeCar?.(this) ?? this.defaultCar()).setDepth(3);
     this.car.setPosition(SHAFT_CENTRE_X, this.elev.row * TILE);
-    this.night = this.add.rectangle(0, 0, w, h, 0x0a1030, 0).setOrigin(0).setDepth(50).setScrollFactor(1);
+    makeSky(this, 'sky', skyFor(this.hour()), h);
+    this.sky = this.add.image(0, 0, 'sky').setOrigin(0).setDisplaySize(w, h).setDepth(-1);
+    this.night = this.add.rectangle(0, 0, w, h, nightColourFor(this.hour()), 0).setOrigin(0).setDepth(50).setScrollFactor(1);
+    makeLampGlow(this);
+    for (const d of this.world.decor.filter((x) => x.kind === 'lamp')) {
+      const room = roomContaining(this.world.rooms, d.tile);
+      const tint = hexToInt(floorPalette(d.floor).lamp);
+      const img = this.add.image(d.tile.tx * TILE + TILE / 2, d.tile.ty * TILE + TILE, 'lamp-glow').setBlendMode(Phaser.BlendModes.ADD).setTint(tint).setAlpha(0).setDepth(49);
+      this.lamps.push({ img, room });
+    }
     // camera: drag / WASD / wheel
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => { if (p.button === 0) this.dragging = true; });
     this.input.on('pointerup', () => { this.dragging = false; });
@@ -82,7 +109,7 @@ export class OfficeScene extends Phaser.Scene {
     this.minimap.centerOn((BUILDING.x0 + BUILDING.x1 + 1) / 2 * TILE, (BUILDING.y0 + BUILDING.y1 + 1) / 2 * TILE);
     this.viewRect = this.add.rectangle(0, 0, 1, 1, 0xffffff, 0).setStrokeStyle(2 / this.minimap.zoom, 0xe6a93c, 0.9).setOrigin(0).setDepth(60);
     this.cameras.main.ignore(this.viewRect);
-    this.minimap.ignore(this.night);
+    this.minimap.ignore([this.night, this.sky, ...this.lamps.map((l) => l.img), ...this.decor.images(), ...this.signs.texts]);
     this.scale.on('resize', (g: Phaser.Structs.Size) => this.minimap.setPosition(g.width - mmW - 12, g.height - mmH - 12));
     this.focusFloor(this.pendingFloor ?? 1, this.pendingFloor === null ? 2 : undefined);   // default zoom 2, opened on F1
     this.pendingFloor = null;
@@ -143,6 +170,10 @@ export class OfficeScene extends Phaser.Scene {
       ag.update(view, dt, this.hooks.clock(), ctx);
     }
     for (const [role, ag] of this.agents) if (!s.agents[role]) { ag.destroy(); this.agents.delete(role); }
+    // each role's current tile, shared by the decor layer's occupancy checks and the lamp block's lit-rooms check
+    const tiles: Record<string, Tile> = {};
+    for (const [role, ag] of this.agents) tiles[role] = ag.tile();
+    this.decor.update(this.hooks.clock(), s.agents, tiles);
     // surfaces at ~4 fps
     if (time - this.lastRender > 250) { this.lastRender = time; const fr = this.hooks.frames(); for (const su of this.surfaces.values()) su.render(s, fr, this.hooks.clock()); }
     // camera keys
@@ -159,7 +190,22 @@ export class OfficeScene extends Phaser.Scene {
     const wv = cam.worldView;
     this.viewRect.setPosition(wv.x, wv.y).setSize(wv.width, wv.height);
     // day / night
-    this.night.setAlpha(tintFor(this.hooks.hour()));
+    const hour = this.hour();
+    this.night.setFillStyle(nightColourFor(hour), tintFor(hour));
+    const stops = skyFor(hour), stopsKey = stops.join('|');
+    if (stopsKey !== this.skyStops) { this.skyStops = stopsKey; makeSky(this, 'sky', stops, this.world.height * TILE); this.sky.setTexture('sky').setDisplaySize(this.world.width * TILE, this.world.height * TILE); }
+    const bucket = hourBucket(hour);
+    if (bucket !== this.bucket) {
+      const from = this.bucket === 'day' ? T.WINDOW_DAY : this.bucket === 'dusk' ? T.WINDOW_DUSK : this.bucket === 'night' ? T.WINDOW_NIGHT : T.WINDOW_DAY;
+      const to = bucket === 'day' ? T.WINDOW_DAY : bucket === 'dusk' ? T.WINDOW_DUSK : T.WINDOW_NIGHT;
+      this.world.map.getLayer('walls')!.tilemapLayer.replaceByIndex(from, to);
+      this.bucket = bucket;
+    }
+    const lampAlpha = lampAlphaFor(hour);
+    if (lampAlpha > 0) {
+      const lit = litRooms(s.agents, tiles, this.world.rooms);
+      for (const l of this.lamps) l.img.setAlpha(l.room && lit.has(l.room) ? lampAlpha : 0);
+    } else for (const l of this.lamps) l.img.setAlpha(0);
   }
 
   /** Tween the zoom while keeping the world point under (px, py) fixed. */
