@@ -84,6 +84,18 @@ export const RoleFrontmatter = z.looseObject({
 export type RoleFrontmatter = z.infer<typeof RoleFrontmatter>;
 
 // ---------- Teams ----------
+/**
+ * Work-in-progress limits per lane (owner's operating model §7: "In Progress: maximum 3 items / Review: maximum 2 /
+ * Testing: maximum 2"). The point is not to keep everyone busy, it is to keep valuable work flowing, so the
+ * dispatcher refuses to *start* new work past the limit rather than reassigning it.
+ */
+export const WipLimits = z.object({
+  in_progress: z.number().int().min(1).default(3),
+  review: z.number().int().min(1).default(2),
+  testing: z.number().int().min(1).default(2),
+});
+export type WipLimits = z.infer<typeof WipLimits>;
+
 export const TeamFrontmatter = z.looseObject({
   id: z.string(),
   name: z.string(),
@@ -94,6 +106,7 @@ export const TeamFrontmatter = z.looseObject({
   floor: z.number().int().optional(),
   parent: z.string().optional(),       // the division this team belongs to (dev → technology); planning happens at the division
   processes: z.array(z.string()).default([]),
+  wip: WipLimits.default({ in_progress: 3, review: 2, testing: 2 }),
 });
 export type TeamFrontmatter = z.infer<typeof TeamFrontmatter>;
 
