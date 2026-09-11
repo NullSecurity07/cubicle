@@ -18,6 +18,8 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
   Jobs/                   <job-id>.md (frontmatter = state machine), queue.md (generated), _template.md
   Messages/               <role>.md colleague inboxes (agent-writable; HTML-comment read markers)
   Site/                   the website source; dist/ is the build (gitignored)
+  Streams/                one note per product stream (problem, customers, outcome metric, error budget)
+  Workspace/              <stream>/ product source, cubicle-ci.yaml, flags.json, .cubicle-ci/ records
   Meetings/               transcripts
   .cubicle/               cache: cubicle.db, events/*.jsonl, screens/, browser/<role>/, mock/, jobs/, daemon.json
 ```
@@ -58,6 +60,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | `for` | string (optional) | who a `research` job's findings are for (a lead, not a team) |
 | `done_when` | string (optional) | the "Done when" a `team.plan` job set for a job it scheduled |
 | `risk` | `low` \| `medium` \| `high` = `"low"` | `low` | `medium` | `high` (owner's operating model §27). `medium` inserts a `security.review` gate before the rest of the chain; `high` also requires an approved `threat_model` proposal before the job may finish |
+| `stream` | string (optional) | the `Streams/<slug>.md` this job serves; `ci.run`, the ship gate and the error budget all key on it |
 | `returns` | record<string, number> = `{}` | gate job type → how many times that gate has returned this job (once-per-gate: a second return from the same gate fails the job instead of looping forever) |
 | `gate_index` | number (optional) | how far through its `config/gates.yaml` gate list the job has passed |
 | `budget_from` | number (optional) | the checkpoint_step a gate return resumed from; the step loop runs until budget_from + maxSteps, so a return gets a fresh budget instead of the remainder of the attempt |
@@ -101,6 +104,24 @@ Body: `# Charter` (system prompt), `# Standing rules`, `# What good looks like`.
 | `wip` | object = `{"in_progress":3,"review":2,"testing":2}` | work-in-progress limits per Kanban lane; `nextJob` refuses to start work past `in_progress` and the office shows a full lane as a red tab on the room sign |
 
 Body: freeform notes on how the team works, read into role prompts.
+
+### Stream note (Streams/<slug>.md)
+
+| field | type | notes |
+|---|---|---|
+| `slug` | string | matches the filename |
+| `name` | string |  |
+| `problem` | string |  |
+| `customers` | string |  |
+| `outcome_metric` | string | one number with a from and a to; never a feature list |
+| `owner_team` | string | the team id accountable for the outcome |
+| `error_budget` | number = `4` | incident-hours a week before the division plan must prioritise reliability (§23) |
+| `runbook` | string = `""` |  |
+| `repo_path` | string | where the code lives, and what `ci.run` mounts — `Workspace/<slug>` by default |
+| `status` | `active` \| `paused` \| `retired` = `"active"` |  |
+| `created` | string |  |
+
+Body sections: `## Problem`, `## Customers`, `## Outcome metric`, `## Runbook`, `## Error budget`.
 
 ### Process note (Processes/<name>.md)
 

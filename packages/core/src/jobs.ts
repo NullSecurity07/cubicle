@@ -21,6 +21,7 @@ export interface NewJob {
   for?: string;
   done_when?: string;
   risk?: RiskLevel;
+  stream?: string;
 }
 
 export function jobPath(id: string): string {
@@ -44,6 +45,7 @@ export function createJob(vault: Vault, job: NewJob, by: string): string {
     privacy: job.privacy ?? 'cloud', runs_on: job.runs_on ?? 'laptop', parent: job.parent,
     team: job.team, owner_role: job.owner_role, for: job.for, done_when: job.done_when,
     risk: job.risk ?? 'low',
+    stream: job.stream,
   });
   let body = `## Goal\n\n${job.goal.trim()}\n\n`;
   if (job.done_when) body += `## Done when\n\n${job.done_when}\n\n`;

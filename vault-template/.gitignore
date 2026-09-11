@@ -3,3 +3,6 @@
 .env
 Site/node_modules/
 Site/dist/
+Workspace/*/node_modules/
+Workspace/*/dist/
+Workspace/*/.venv/

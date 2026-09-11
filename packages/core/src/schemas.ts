@@ -68,6 +68,7 @@ export const JobFrontmatter = z.looseObject({
   for: z.string().optional(),
   done_when: z.string().optional(),
   risk: RiskLevel.default('low'),
+  stream: z.string().optional(),
   returns: z.record(z.string(), z.number().int()).default({}),
   gate_index: z.number().int().optional(),
   budget_from: z.number().int().optional(),
