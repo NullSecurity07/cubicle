@@ -286,8 +286,6 @@ export function mergeBoardVerdict(text: string): { verdict: 'pass' | 'return'; f
 }
 
 /** What the owner can rule on an idea the board has judged. */
-// SP3 Task 1 exports this from core; swap the import once merged.
-type IdeaDecision = 'keep' | 'park' | 'scrap' | 'pending';
 
 /** What one board session judges: this cycle's plan, or one idea out of the funnel. */
 export interface BoardSubject {
@@ -360,6 +358,8 @@ export async function runBoardSession(
   const board = org.teams.board;
   if (!board) return { verdict: 'pass', findings: [], advisors: [], transcript: '', answered: 0, subject: s };
   const advisors = [...new Set([board.lead, ...board.members])].filter((r) => org.roles[r]).slice(0, 3);
+  // A board whose charters are all gone is the same as no board: nobody walks to the table (review of Task 7).
+  if (advisors.length === 0) return { verdict: 'pass', findings: [], advisors: [], transcript: '', answered: 0, subject: s };
   const leadTier = org.roles[board.lead]?.model_tier ?? 'medium';
   const tierFor = (roleId: string): ModelTier => org.roles[roleId]?.model_tier ?? leadTier;
   // The board room, on screen: the advisors walk to the table, the owner's chair fills, and the whiteboard says
@@ -378,7 +378,7 @@ export async function runBoardSession(
   const transcript = notes.join('\n\n');
   const merged = await askAs(deps, board.lead, advisorSystem(vault, board.lead), chairPrompt(s, transcript), 600, leadTier);
   const out = { ...mergeBoardVerdict(merged ?? ''), advisors, transcript, answered, subject: s };
-  vault.events.emit({ type: 'meeting.closed', agent: board.lead, payload: { id: meetingId, room: 'board', subject: s.kind, title: s.title, verdict: out.verdict, findings: out.findings } });
+  vault.events.emit({ type: 'meeting.closed', agent: board.lead, payload: { id: meetingId, room: 'board', subject: s.kind, title: s.title, verdict: out.verdict, findings: out.findings, decision: `VERDICT: ${out.verdict}` } });
   return out;
 }
 
