@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, updateJob, RoleFrontmatter, listInbox } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, updateJob, RoleFrontmatter, listInbox, listJobs } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, type ToolContext } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -31,15 +31,48 @@ describe('scheduler.request through the org (spec §2)', () => {
   it('cto.plan is reserved for the daemon (via ceo), not schedulable through the tool', async () => {
     expect((await call('scheduler.request', 'cto', { type: 'cto.plan', title: 'x', assigned: 'dev_manager', goal: 'g', done_when: 'd' })).ok).toBe(false);
   });
-  it('research goes through research_request and lands on the research lead with `for`', async () => {
-    const ok = await call('scheduler.request', 'cfo', { type: 'research', title: 'Channels', assigned: 'research_manager', goal: 'g', done_when: 'report', for: 'cfo' });
-    expect(ok.ok).toBe(true); expect(readJob(vault, (ok.data as { id: string }).id)!.data.for).toBe('cfo');
-    expect((await call('scheduler.request', 'backend_engineer', { type: 'research', title: 'X', assigned: 'research_manager', goal: 'g' })).ok).toBe(false);
+  const request = {
+    decision: 'Ship the pricing page or keep the waitlist',
+    decision_owner: 'cfo',
+    question: 'Does a public price reduce signups?',
+    hypothesis: 'A public price cuts signups by more than 20%',
+    known_evidence: 'Two competitors publish prices',
+    unknowns: 'Whether our visitors are price-sensitive',
+    constraints: 'No paid tooling',
+    deadline: '2026-09-25',
+    required_confidence: 'medium',
+    potential_decisions: ['Publish the price', 'Keep the waitlist'],
+    portfolio: 'incremental',
+    impact: 4, uncertainty: 4, cost_of_being_wrong: 4,
+  };
+
+  it('research goes through research_request, lands on the research lead with `for`, and carries the request', async () => {
+    const ok = await call('scheduler.request', 'cfo', { type: 'research', title: 'Channels', assigned: 'research_manager', goal: 'g', done_when: 'report', for: 'cfo', research: request });
+    expect(ok.ok).toBe(true);
+    const j = readJob(vault, (ok.data as { id: string }).id)!;
+    expect(j.data.for).toBe('cfo');
+    expect(j.data.research).toMatchObject({ portfolio: 'incremental', required_confidence: 'medium' });
+    expect(j.data.priority).toBe(1);                      // 4 x 4 x 4 = 64
+    expect(j.body).toMatch(/## Research request/);
+    expect((await call('scheduler.request', 'backend_engineer', { type: 'research', title: 'X', assigned: 'research_manager', goal: 'g', research: request })).ok).toBe(false);
   });
-  it('`for` naming a team id (or any non-role string) instead of an active role is refused (F1)', async () => {
-    const r = await call('scheduler.request', 'cfo', { type: 'research', title: 'Channels', assigned: 'research_manager', goal: 'g', done_when: 'report', for: 'dev' });
+
+  it('an incomplete research request is refused by name, and nothing is queued', async () => {
+    const before = listJobs(vault).length;
+    const r = await call('scheduler.request', 'cfo', { type: 'research', title: 'Half a brief', assigned: 'research_manager', goal: 'g', done_when: 'report', for: 'cfo', research: { question: 'Is it worth it?' } });
     expect(r.ok).toBe(false);
-    expect(r.text).toMatch(/for must be an active role id/);
+    expect(r.text).toMatch(/Missing: decision, .*required_confidence/);
+    expect(r.text).toMatch(/- decision: the decision this research informs/);
+    expect(r.text).toMatch(/Nothing was queued/);
+    expect(listJobs(vault).length).toBe(before);
+    expect((await call('scheduler.request', 'cfo', { type: 'research', title: 'No brief', assigned: 'research_manager', goal: 'g', done_when: 'report', for: 'cfo' })).text).toMatch(/Missing: decision/);
+  });
+
+  it('the decision owner defaults to `for` when the request omits it', async () => {
+    const { decision_owner: _omitted, ...rest } = request;
+    const ok = await call('scheduler.request', 'cto', { type: 'research', title: 'Runtime choice', assigned: 'research_manager', goal: 'g', done_when: 'report', for: 'cto', research: rest });
+    expect(ok.ok).toBe(true);
+    expect(readJob(vault, (ok.data as { id: string }).id)!.data.research!.decision_owner).toBe('cto');
   });
   it('reprioritize is scoped to the caller\'s team unless CEO', async () => {
     const g = createJob(vault, { type: 'growth.post', title: 'p', assigned: 'cmo', goal: 'g', team: 'revenue' }, 'ceo');

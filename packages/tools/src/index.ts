@@ -18,6 +18,7 @@ export * from './proxy.js';
 export * from './guardrails.js';
 export * from './prune.js';
 export * from './tools/outbound.js';
+export * from './tools/research.js';
 export * from './adapters/common.js';
 export * from './adapters/email.js';
 export * from './adapters/inbox.js';
@@ -41,6 +42,7 @@ import { gitTools } from './tools/git.js';
 import { meetingOpen } from './tools/meeting.js';
 import { adrCreate } from './tools/adr.js';
 import { phase6Tools as _p6 } from './tools/outbound.js';
+import { researchStart, sourcesCite } from './tools/research.js';
 
 /** Phase 5 additions: sandbox shell, stream CI, browser with screencast, git, meetings. */
 export function phase5Tools(): AnyTool[] {
@@ -54,7 +56,7 @@ export function phase6Tools(): AnyTool[] {
 
 /** Phase 3 tool set (org guards apply to scheduler/proposal/meeting/colleague; Phases 5–6 append shell/browser/git/email/deploy/stripe/analytics/social). */
 export function phase3Tools(opts: { includeMock?: boolean } = {}): AnyTool[] {
-  const t: AnyTool[] = [...vaultTools, httpFetch, colleagueMessage, proposalCreate, schedulerRequest, ...skillsTools, finish, meetingOpen, adrCreate];
+  const t: AnyTool[] = [...vaultTools, httpFetch, colleagueMessage, proposalCreate, schedulerRequest, ...skillsTools, finish, meetingOpen, adrCreate, researchStart, sourcesCite];
   if (opts.includeMock) t.push(mockOutbound);
   return t;
 }
