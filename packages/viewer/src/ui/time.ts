@@ -90,9 +90,12 @@ export class TimeControls {
   /** No day loaded yet (the request is still in flight): a stray scrub must not rebuild the office from nothing. */
   private seek(i: number): void { if (!this.events.length) return; this.index = Math.max(0, Math.min(this.events.length, i)); this.h.onScrub(this.index); this.scrub.value = String(Math.round((this.index / Math.max(1, this.events.length)) * 1000)); }
 
-  /** Advance replay: events are spaced by their real timestamps divided by the speed factor. */
-  tick(dtMs: number, nowLive: Date): void {
-    const icon = sunOrMoon(this.hour(nowLive));
+  /**
+   * Advance replay: events are spaced by their real timestamps divided by the speed factor. `hourOverride` is
+   * `__cubicle.setHour`, so the sun/moon reads exactly the hour the office is tinted by — replay clock included.
+   */
+  tick(dtMs: number, nowLive: Date, hourOverride: number | null = null): void {
+    const icon = sunOrMoon(hourOverride ?? this.hour(nowLive));
     if (icon !== this.lastIcon) { this.lastIcon = icon; this.sunmoon.innerHTML = pixelIcon(icon, { label: icon === 'sun' ? 'Daytime' : 'Night' }); }
     if (this.mode === 'live') { this.clock.textContent = nowLive.toLocaleTimeString(); return; }
     if (!this.playing || this.index >= this.events.length) return;

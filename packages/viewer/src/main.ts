@@ -163,9 +163,15 @@ const firstRun = new FirstRun({
   onSurprise: () => { sendChat(SURPRISE_ME); void firstRun.collapse().then(() => open('cabin', undefined, { zoom: false })); },
 });
 const quick = new QuickOpen({ items: () => quickItems(state), onPick: (kind) => open(kind) });
+/** `__cubicle.setHour` mirrored: the scene tints by it, and the time bar's sun/moon must read the same hour. */
+let hourOverride: number | null = null;
 
 /** `0` fits the whole tower: the camera bounds are the map plus a margin; fractional zoom is allowed only here. */
-function fitTower(): void { const cam = scene.cameras.main; const b = cam.getBounds(); cam.setZoom(Math.min(cam.width / b.width, cam.height / b.height)).centerOn(b.centerX, b.centerY); }
+function fitTower(): void {
+  const cam = scene.cameras.main; const b = cam.getBounds();
+  if (!b.width || !b.height) return;   // the scene has not built its world yet: nothing to fit, and a 0 would be Infinity
+  cam.setZoom(Math.min(cam.width / b.width, cam.height / b.height)).centerOn(b.centerX, b.centerY);
+}
 
 /** `M` goes to the chrome above, which owns both the HTML frame and the Phaser minimap camera's visibility. */
 const minimapHook: { toggle(): void } = { toggle: () => minimap.toggle() };
@@ -248,7 +254,7 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
   theme: (mode: 'dark' | 'light' | 'system') => applyTheme(mode),
   stack: () => panel.stack.entries(),
   // Visual-check hooks (screenshot script, spec F35): freeze the clock and read the loop's frame rate.
-  setHour: (h: number | null) => scene.setHourOverride(h),
+  setHour: (h: number | null) => { hourOverride = h; scene.setHourOverride(h); },   // the time bar icon follows the office tint
   fps: () => Math.round(game.loop.actualFps),
   // A pushed frame can belong to a stream the daemon never announced (the screenshot script injects one), and a frame
   // with no surface behind it has nothing bound to draw it. Register the surface first, then let the frame land.
@@ -261,7 +267,7 @@ function loop(now: number): void {
   const dt = now - last; last = now;
   // The minimap camera moves with the window; the rail's lobby tab follows a drag inside F1, which fires no floor change.
   if (now - lastLayout > 500) { lastLayout = now; minimap.layout(); rail.update(); }
-  time.tick(dt, new Date());
+  time.tick(dt, new Date(), hourOverride);
   if (state.mode === 'live') state = tick(state, Date.now());
   if (elevatorView && scene.scene.isActive()) elevatorView.setState(toViewState(scene.elevator.state()));   // doors and digits follow the engine every frame
   requestAnimationFrame(loop);
