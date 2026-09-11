@@ -7,6 +7,11 @@ import { captureResearchDeliveries, FOLLOW_UP_DAYS, enqueueResearchFollowUps, li
 
 /** A fixed delivery clock: the event's own ts drives `delivered` and `due`, so it must not be the wall clock. */
 const DELIVERED_AT = '2026-09-11T09:00:00.000Z';
+/** The job's `created` stamp, pinned well before `DELIVERED_AT` so time-to-answer math never races the real
+ *  wall clock: `createJob` stamps `created` from `nowIso()`, and once the sandbox's real clock crosses
+ *  `DELIVERED_AT` on the same calendar day, a job "created" at the actual current instant would land after
+ *  the fixed delivery time, going negative and getting dropped by `researchMetrics`'s `ms >= 0` guard. */
+const CREATED_AT = '2026-09-10T09:00:00.000Z';
 
 let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-know-')); vault = (await scaffoldVault(dir)).vault; });
@@ -22,7 +27,7 @@ const request = ResearchRequest.parse({
 /** A research job that has been delivered: result block written, gates passed, event emitted. */
 function deliver(opts: { confidence?: string; method?: string } = {}): string {
   const id = createJob(vault, { type: 'research', title: 'Pricing', assigned: 'researcher', goal: 'g', for: 'cfo', owner_role: 'cfo', research: request, research_slug: 'pricing-abc123' }, 'cfo');
-  vault.updateNote(`Jobs/${id}.md`, (n) => ({ data: n.data, body: `${n.body}\n\`\`\`json\n${JSON.stringify({ status: 'done', summary: 'Publish the price; signups are unlikely to move', metrics: { confidence: opts.confidence ?? 'medium', method: opts.method ?? 'secondary + interviews' } })}\n\`\`\`\n` }), 'daemon');
+  vault.updateNote(`Jobs/${id}.md`, (n) => ({ data: { ...n.data, created: CREATED_AT }, body: `${n.body}\n\`\`\`json\n${JSON.stringify({ status: 'done', summary: 'Publish the price; signups are unlikely to move', metrics: { confidence: opts.confidence ?? 'medium', method: opts.method ?? 'secondary + interviews' } })}\n\`\`\`\n` }), 'daemon');
   updateJob(vault, id, { status: 'done' }, 'daemon');
   vault.events.emit({ type: 'research.delivered', agent: 'researcher', job: id, payload: {}, ts: DELIVERED_AT });
   return id;
