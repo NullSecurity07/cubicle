@@ -66,9 +66,12 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
   const org = loadOrg(vault);
   const gates = loadGates();
   const chainFor = (j: JobFrontmatter) => gatesForRisk(gates, j.type, j.risk);
-  const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission, room: t.room, floor: t.floor, parent: t.parent, wip: { limits: t.wip ?? null, load: wipLoad(vault, t.id, chainFor) } }));
+  // One job listing for the whole snapshot: `wipLoad` used to list every job note again per team, so a
+  // ten-team office paid ten full vault scans for one snapshot.
+  const allJobs = listJobs(vault);
+  const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission, room: t.room, floor: t.floor, parent: t.parent, wip: { limits: t.wip ?? null, load: wipLoad(vault, t.id, chainFor, allJobs) } }));
   return {
-    op: 'snapshot', at: nowIso(), roles, jobs: listJobs(vault),
+    op: 'snapshot', at: nowIso(), roles, jobs: allJobs,
     surfaces: sessions.map((s) => ({ streamKind: 'browser', streamId: s.session_id, lastFrame: s.path, active: activeSessions.has(s.session_id) })),
     quota: router?.quotaSnapshot() ?? [],
     latestRun: latest ? { path: latest, body: vault.readTextOrNull(latest) ?? '' } : null,
