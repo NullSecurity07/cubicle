@@ -29,6 +29,20 @@ function docker(args: string[], timeout = 20000): string {
   return execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout }).trim();
 }
 
+/**
+ * Format one field of a `--mount` value the way Docker's CSV-based mount-flag parser reads it: the whole
+ * `type=bind,src=…,dst=…` string is one comma-separated record, so a literal comma in a path has to be
+ * escaped or it starts a new field. Docker documents wrapping such a field in double quotes (doubling any
+ * literal `"` inside it), which works regardless of *where* the comma came from — a caller-supplied segment
+ * or the vault root itself (an owner can install the vault anywhere, including a path with a comma in it).
+ *
+ * `=` needs no such handling: the field is split into key/value on its *first* `=` only, so any further `=`
+ * in the value (part of a path, say) passes through untouched.
+ */
+export function mountField(key: 'src' | 'dst', value: string): string {
+  return value.includes(',') || value.includes('"') ? `${key}="${value.replace(/"/g, '""')}"` : `${key}=${value}`;
+}
+
 function proxyScriptPath(): string {
   // packages/tools/src/tools → repo root /config/sandbox/proxy.mjs (same relative depth from dist/)
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', 'config', 'sandbox', 'proxy.mjs');
@@ -102,20 +116,20 @@ async function runProcess(cmd: string, args: string[], opts: { cwd?: string; env
 export async function sandboxExec(ctx: ToolContext, opts: SandboxOptions): Promise<RunResult | { refused: string }> {
   const { command, mounts, workdir, network, timeoutMs, session } = opts;
   const where = opts.where ?? 'shell.run';
-  // Docker reads `--mount type=bind,src=…,dst=…` as a CSV key/value list, so a comma or `=` in a path injects
-  // mount options. Callers validate their own inputs; this is the backstop that makes that impossible to forget.
-  const bad = mounts.find((m) => /[,=]/.test(m.src) || /[,=]/.test(m.dst));
-  if (bad) {
-    ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: where, reason: `refusing a sandbox mount whose path contains "," or "=": ${bad.src} → ${bad.dst}` } });
-    return { refused: `blocked: a sandbox mount path may not contain "," or "=" (got ${JSON.stringify(bad.src)} → ${JSON.stringify(bad.dst)}).` };
-  }
+  // Docker reads `--mount type=bind,src=…,dst=…` as a CSV key/value list, so an unescaped comma in a path
+  // would start a new field and inject mount options — `Workspace/x,src=/etc` is a directory an agent can
+  // create with vault.write. The caller-supplied *segment* that becomes part of the path (a stream slug, a
+  // relative dir) is validated before it's ever joined into a path — see `isValidStreamSlug` — because a
+  // vault root is the owner's own, trusted install location and may itself contain a comma, `=`, or other
+  // punctuation with no attacker involved at all. `mountField` below escapes the full, already-safe path
+  // correctly for Docker's parser instead of rejecting it outright.
   for (const m of mounts) mkdirSync(m.src, { recursive: true });
   const onOutput = (chunk: string, stream: 'stdout' | 'stderr') => ctx.events.emit({ type: 'shell.output', agent: ctx.roleId, job: ctx.jobId, payload: { session, stream, text: chunk.slice(0, 4000) } });
 
   if (hasDocker() && hasSandboxImage()) {
     const cname = `cubicle-${session}`.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 60);
     const args = ['run', '--rm', '--init', '--name', cname];
-    for (const m of mounts) args.push('--mount', `type=bind,src=${m.src},dst=${m.dst}`);
+    for (const m of mounts) args.push('--mount', `type=bind,${mountField('src', m.src)},${mountField('dst', m.dst)}`);
     args.push('-w', workdir,
       '--memory', '2g', '--cpus', '2', '--pids-limit', '512', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:exec',
       '-e', 'HOME=/work/scratch', '-e', 'CI=1', '-e', 'npm_config_update_notifier=false', '-e', 'npm_config_cache=/work/scratch/.npm');
