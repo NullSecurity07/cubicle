@@ -9,11 +9,17 @@ import type { AgentView, ToolIcon, Bubble } from '../state.js';
 import { BLINK_MS, GESTURE_MS, nextBlinkDelay, nextGestureDelay, pickGesture, emoteBob, faceToward, thinkingDots, type Gesture } from './expressions.js';
 import { frameFor, poseFor, faceFrame, talkOpen, isSeatedPose, WALK_FRAMES, WALK_STEP_MS, BOB, type Dir, type PoseCtx } from './frames.js';
 import { DUR, EASE, dur } from './motion.js';
+import { RES, FONT, MONO, nameLabelStyle, nameLabelView } from './text.js';
+import { cut } from '../ui/headlines.js';
+import { PALETTE, hexToInt } from './palette.js';
+import { Latch } from './latch.js';
 
 // Drawn glyphs (no emoji: headless/minimal systems lack emoji fonts). letter + colour per tool family.
-const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = { browser: { t: 'W', c: '#2a6fdb' }, terminal: { t: '>_', c: '#2b2f3a' }, envelope: { t: 'M', c: '#c0392b' }, doc: { t: 'D', c: '#7a5c2e' }, chart: { t: '%', c: '#2e7d32' }, chat: { t: '…', c: '#6a3fb0' } };
+const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = {
+  browser: { t: 'W', c: PALETTE.tool.browser }, terminal: { t: '>_', c: PALETTE.tool.terminal }, envelope: { t: 'M', c: PALETTE.tool.envelope },
+  doc: { t: 'D', c: PALETTE.tool.doc }, chart: { t: '%', c: PALETTE.tool.chart }, chat: { t: '…', c: PALETTE.tool.chat },
+};
 const SPEED = 70; // px/s
-const RES = 3; // bubble text rasterised at 3× for crisp glyphs under zoom
 const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
 
 /** The pantry: a coffee after a finished job, and now and then after a long quiet spell at the desk. */
@@ -44,6 +50,13 @@ export class AgentSprite {
   private bubble: Phaser.GameObjects.Container;
   private bubbleText: Phaser.GameObjects.Text;
   private bubbleBg: Phaser.GameObjects.Graphics;
+  private hovered = false;
+  /** Set by the scene when this sprite is the one the panel is focused on: its name shows at any zoom. */
+  selected = false;
+  private readonly labelLatch = new Latch();
+  private readonly iconLatch = new Latch();
+  private readonly badgeLatch = new Latch();
+  private readonly depthLatch = new Latch<number>();
   private lastBubble = '';
   private lastBubbleText = '';
   private path: { x: number; y: number }[] = [];
@@ -86,16 +99,20 @@ export class AgentSprite {
     this.shadow.setPosition(0, -1);
     this.body = scene.add.sprite(0, 0, key, 'idle:0').setOrigin(0.5, 1);
     this.face = scene.add.image(-4, -SPRITE_H + 4, 'faces', 'neutral:0').setOrigin(0, 0);
-    this.label = scene.add.text(0, 2, view.display, { fontFamily: 'system-ui', fontSize: `${9 * RES}px`, color: '#fff', stroke: '#000', strokeThickness: 2 * RES }).setOrigin(0.5, 0).setScale(1 / RES);
-    this.icon = scene.add.text(10, -27, '', { fontFamily: 'ui-monospace, monospace', fontSize: '8px', color: '#fff', backgroundColor: '#2a6fdb', padding: { x: 2, y: 1 } }).setOrigin(0.5);
-    this.badge = scene.add.text(-10, -27, '', { fontFamily: 'ui-monospace, monospace', fontSize: '8px', color: '#fff', backgroundColor: '#c0392b', padding: { x: 2, y: 1 } }).setOrigin(0.5);
+    // Hidden until the camera is close enough to read it, then held at a constant screen size (ruling F1, applied
+    // every frame by `applyLabel`): a container child is scaled by the camera zoom, so the label divides it back out.
+    this.label = scene.add.text(0, 2, view.display, nameLabelStyle()).setOrigin(0.5, 0).setScale(1 / RES).setVisible(false);
+    this.icon = scene.add.text(10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.tool.browser, padding: { x: 2, y: 1 } }).setOrigin(0.5);
+    this.badge = scene.add.text(-10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.bad, padding: { x: 2, y: 1 } }).setOrigin(0.5);
     this.emote = scene.add.image(0, -SPRITE_H - 8, 'emotes', '!').setOrigin(0.5, 1).setVisible(false);
     this.bubbleBg = scene.add.graphics();
-    this.bubbleText = scene.add.text(0, 0, '', { fontFamily: 'system-ui', fontSize: `${8 * RES}px`, color: '#111', wordWrap: { width: 130 * RES }, align: 'left' }).setOrigin(0.5, 1).setScale(1 / RES);
+    this.bubbleText = scene.add.text(0, 0, '', { fontFamily: FONT, fontSize: `${8 * RES}px`, color: PALETTE.bubbleInk, wordWrap: { width: 130 * RES }, align: 'left' }).setOrigin(0.5, 1).setScale(1 / RES);
     this.bubble = scene.add.container(0, -SPRITE_H - 6, [this.bubbleBg, this.bubbleText]).setVisible(false);
     this.container = scene.add.container(0, 0, [this.shadow, this.body, this.face, this.label, this.icon, this.badge, this.emote, this.bubble]).setDepth(10);
-    this.body.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.onClick(view.role));
-    const ring = scene.add.circle(0, -2, 5, roleColor(view.role), 0.9).setStrokeStyle(1, 0x000000, 0.6);
+    this.body.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.onClick(view.role))
+      .on('pointerover', () => { this.hovered = true; })
+      .on('pointerout', () => { this.hovered = false; });
+    const ring = scene.add.circle(0, -2, 5, roleColor(view.role), 0.9).setStrokeStyle(1, hexToInt(PALETTE.labelStroke), 0.6);
     this.container.addAt(ring, 0);
     this.dot = scene.add.rectangle(0, 0, DOT, DOT, roleColor(view.role), 1).setDepth(9);
     const home = this.homeTile();
@@ -268,14 +285,26 @@ export class AgentSprite {
     // the rest runs every frame — including while riding — so a bubble/icon/badge/emote frozen at boarding still
     // expires, and the offline alpha / minimap dot stay correct
     this.updateFace(dt, nowMs, view);
-    if (view.tool) { const ic = ICON[view.tool]; this.icon.setText(ic.t).setStyle({ backgroundColor: ic.c }).setVisible(true); } else this.icon.setVisible(false);
+    // `setText` self-guards; `setStyle` does not — it re-rasterises the text canvas and re-uploads the texture.
+    // Unguarded that is up to two canvas re-renders per sprite per frame, against a 4 ms scripting budget.
+    if (view.tool) {
+      const ic = ICON[view.tool];
+      if (this.iconLatch.changed(view.tool)) this.icon.setStyle({ backgroundColor: ic.c });
+      this.icon.setText(ic.t).setVisible(true);
+    } else this.icon.setVisible(false);
     // emote icon above the head (a wave is a pose, not an icon; a coffee stop shows the cup)
     const emoteKind = this.detour === 'sit' ? 'coffee' : view.emote && view.emote.kind !== 'wave' ? view.emote.kind : null;
     // the persistent badge (! failed, ? blocked) yields while an emote says the same thing more expressively
-    if (view.badge && !emoteKind) { this.badge.setText(view.badge === 'error' ? '!' : '?').setStyle({ backgroundColor: view.badge === 'error' ? '#c0392b' : '#e0a030' }).setVisible(true); } else this.badge.setVisible(false);
+    if (view.badge && !emoteKind) {
+      if (this.badgeLatch.changed(view.badge)) this.badge.setStyle({ backgroundColor: view.badge === 'error' ? PALETTE.bad : PALETTE.warn });
+      this.badge.setText(view.badge === 'error' ? '!' : '?').setVisible(true);
+    } else this.badge.setVisible(false);
     if (emoteKind) { this.emote.setFrame(emoteKind).setVisible(true); this.emote.y = -SPRITE_H - 6 + emoteBob(nowMs); } else this.emote.setVisible(false);
     this.updateBubble(view.bubble, nowMs, emoteKind ? -SPRITE_H - EMOTE_H - 8 : -SPRITE_H - 6);
-    this.container.setDepth(10 + this.container.y / 10000);
+    // Depth is a function of y alone; setting it marks the whole display list dirty, so only set it when y moved.
+    const depth = 10 + this.container.y / 10000;
+    if (this.depthLatch.changed(depth)) this.container.setDepth(depth);
+    this.applyLabel();
     this.dot.setPosition(this.container.x, this.container.y).setVisible(this.container.visible && view.state !== 'offline');
     if (prev.state === 'leaving' && !view.active && this.gone) this.container.setVisible(false);
     if (view.state === 'offline') this.container.setAlpha(0.35); else this.container.setAlpha(1);
@@ -321,7 +350,7 @@ export class AgentSprite {
     if (isNew && b.kind === 'speech') this.bubbleSince = nowMs;
     this.lastBubble = sig;
     this.lastBubbleText = text;
-    const color = b.kind === 'action' ? '#e7e9ee' : b.kind === 'thought' ? '#4b5160' : '#111';
+    const color = b.kind === 'action' ? PALETTE.bubbleActionInk : b.kind === 'thought' ? PALETTE.bubbleThoughtInk : PALETTE.bubbleInk;
     this.bubbleText.setStyle({ color, fontStyle: b.kind === 'thought' ? 'italic' : 'normal', fontSize: `${(b.kind === 'action' ? 7 : 8) * RES}px` }).setText(text);
     const w = this.bubbleText.width / RES, h = this.bubbleText.height / RES;
     const worldX = this.container.x; const half = w / 2 + 6;
@@ -329,17 +358,20 @@ export class AgentSprite {
     const g = this.bubbleBg.clear();
     if (b.kind === 'speech') {
       const tint = roleColor(this.view.role);
-      g.fillStyle(0xffffff, 0.96).lineStyle(1, tint, 1).fillRoundedRect(-w / 2 - 4, -h - 4, w + 8, h + 6, 4).strokeRoundedRect(-w / 2 - 4, -h - 4, w + 8, h + 6, 4);
-      g.fillStyle(0xffffff, 0.96).fillTriangle(-3, 2, 3, 2, 0, 6); // tail
+      g.fillStyle(hexToInt(PALETTE.bubbleFill), 0.96).lineStyle(1, tint, 1).fillRoundedRect(-w / 2 - 4, -h - 4, w + 8, h + 6, 4).strokeRoundedRect(-w / 2 - 4, -h - 4, w + 8, h + 6, 4);
+      g.fillStyle(hexToInt(PALETTE.bubbleFill), 0.96).fillTriangle(-3, 2, 3, 2, 0, 6); // tail
       g.lineStyle(1, tint, 1).lineBetween(-3, 2, 0, 6).lineBetween(3, 2, 0, 6);
     } else if (b.kind === 'thought') {
-      g.fillStyle(0xf4f6fa, 0.95).lineStyle(1, 0x9aa3b5, 1);
+      g.fillStyle(hexToInt(PALETTE.bubbleThoughtFill), 0.95).lineStyle(1, hexToInt(PALETTE.bubbleThoughtStroke), 1);
       g.fillRoundedRect(-w / 2 - 5, -h - 5, w + 10, h + 8, 6).strokeRoundedRect(-w / 2 - 5, -h - 5, w + 10, h + 8, 6);
       g.fillCircle(-2, 5, 2).strokeCircle(-2, 5, 2).fillCircle(-5, 9, 1.2).strokeCircle(-5, 9, 1.2); // trailing thought circles
     } else {
-      g.fillStyle(0x1b1f2a, 0.94).lineStyle(1, 0x343a48, 1).fillRoundedRect(-w / 2 - 4, -h - 3, w + 8, h + 5, 3).strokeRoundedRect(-w / 2 - 4, -h - 3, w + 8, h + 5, 3);
+      g.fillStyle(hexToInt(PALETTE.bubbleActionFill), 0.94).lineStyle(1, hexToInt(PALETTE.bubbleActionStroke), 1).fillRoundedRect(-w / 2 - 4, -h - 3, w + 8, h + 5, 3).strokeRoundedRect(-w / 2 - 4, -h - 3, w + 8, h + 5, 3);
     }
     if (isNew) {
+      // A bubble arriving mid-fade would otherwise be hidden again by the outgoing tween's onComplete.
+      this.scene.tweens.killTweensOf(this.bubble);
+      this.bubble.setAlpha(1);
       this.hiding = false;
       if (b.kind === 'speech' || b.kind === 'thought') {
         this.bubble.setScale(0.85);
@@ -352,7 +384,21 @@ export class AgentSprite {
     this.bubble.setVisible(true);
   }
 
+  /** Ruling F1: the name is hidden below zoom 2 and held at a constant screen size above it, or on hover / selection. */
+  private applyLabel(): void {
+    const zoom = this.scene.cameras?.main?.zoom ?? 1;
+    if (!this.labelLatch.changed(`${zoom}|${this.hovered}|${this.selected}`)) return;
+    const v = nameLabelView(zoom, { hover: this.hovered, selected: this.selected });
+    this.label.setVisible(v.visible).setScale(v.scale).setText(v.chars === null ? this.view.display : cut(this.view.display, v.chars));
+  }
+
   debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, legs: this.legs, waitingRide: this.waitingRide, riding: !!this.car, pendingTarget: this.pendingTarget, tile: this.tile(), seat: this.seat, desk: this.view.desk, home: this.homeTile() }; }
 
-  destroy(): void { if (this.waitingRide) this.deps.elevator?.cancel(this.view.role); this.container.destroy(); this.dot.destroy(); }
+  destroy(): void {
+    if (this.waitingRide) this.deps.elevator?.cancel(this.view.role);
+    // The settle squash and any bubble fade would otherwise keep tweening destroyed objects after a scene restart.
+    this.scene.tweens.killTweensOf([this.body, this.bubble]);
+    this.container.destroy();
+    this.dot.destroy();
+  }
 }

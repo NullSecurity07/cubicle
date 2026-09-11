@@ -5,10 +5,13 @@ The shot named in parentheses is the one that proves the line; `01`, `10`–`13`
 from the tower visual plan. `office:shot` rebuilds the viewer first — if you looked at a PNG produced any other way,
 you were looking at an older build.
 
+- [ ] An empty company asks its one question on a centred card, over the office, with the input already focused (`01-first-run`)
 - [ ] Text is crisp at zoom 1, 2, 3 and 4: every glyph is uniform pixel blocks, no half-pixel blur (`03-f1`, `08-board`)
 - [ ] No text is drawn outside a bezel — screens, signs and bubbles all have a frame around them (`03-f1`, `11-terminal`)
 - [ ] The four floors are distinguishable by carpet and skirting tint, by day (`03-f1`, `04-f2`, `05-f3`, `06-f4`)
 - [ ] …and at night, when the tint reads through the darkness (`09-night`)
+- [ ] `0` fits the whole tower: four floors, the lobby and the street in one frame, the sky outside the building reading as sky and not as another floor, and no desk-name ribbon at that zoom (`09a-tower-day`)
+- [ ] …and that same fit at night is tinted as one picture — building, sky and minimap together, with no daylight square left in a corner (`09b-tower-night`)
 - [ ] Every screen has a title (`03-f1`, `10-browser-live`, `11-terminal`)
 - [ ] Amber `#e6a93c` appears only on attention items: elevator digits, the LIVE badge, the caret, badge counts (`07-elevator`, `10-browser-live`)
 - [ ] Tab reaches every control and each one shows the focus ring (`13-stack`)

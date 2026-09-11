@@ -12,11 +12,15 @@ import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
 import { withMotion, reducedMotion } from './world/motion.js';
-import { ElevatorView, toViewState } from './world/elevator-view.js';
+import { ElevatorView, toViewState, emptyViewState } from './world/elevator-view.js';
 import { announce, announcementFor, coachMark, toast } from './ui/notify.js';
 import { FirstRun } from './ui/firstrun.js';
 import { QuickOpen, quickItems } from './ui/quickopen.js';
 import { bindKeys, keysView } from './ui/keys.js';
+import { Rail, LOBBY_ROW } from './ui/rail.js';
+import { MinimapChrome } from './ui/minimap.js';
+import { floorPalette } from './world/palette.js';
+import { DUR, EASE, dur } from './world/motion.js';
 
 applyTheme(themeFromQuery(location.search));   // before the first paint: no white flash on load or theme switch
 const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
@@ -79,6 +83,8 @@ function rebuildReplayTo(index: number): void {
 }
 
 let elevatorView: ElevatorView | null = null;
+/** The one view-state object the rAF loop fills and hands to the elevator view (see `toViewState`). */
+const elevatorViewState = emptyViewState();
 function viewOf(kind: string): ReturnType<typeof viewFor> {
   if (kind === 'keys') return keysView();              // the shortcut sheet is the one kind with no data behind it
   try { ctx.floorLabels ??= Object.fromEntries(scene.floorSummary().map((f) => [f.floor, f.label])); } catch { /* the scene has not created its world yet */ }
@@ -100,6 +106,31 @@ scene.hooks = {
   onSceneShutdown() { elevatorView?.destroy(); elevatorView = null; },
 };
 
+// ---- floor rail and minimap chrome ----------------------------------------------------------------------------
+// The rail reads the scene every refresh (cheap: it morphs). The chrome is HTML laid over the Phaser minimap camera,
+// which only exists after `create`, so `layout()` also runs on a slow beat in the loop until the camera turns up.
+/** The scene reports an agent's colour as a Phaser int; the rail's view type is `#rrggbb`, so convert on the way in. */
+const agentHex = (n: number): string => `#${(n >>> 0).toString(16).padStart(6, '0')}`;
+const rail = new Rail({
+  summary: () => scene.floorSummary().map((f) => ({ ...f, agents: f.agents.map((a) => ({ ...a, color: agentHex(a.color) })) })),
+  currentFloor: () => scene.currentFloor(),
+  inLobby: () => scene.currentFloor() === 1 && (scene.cameras?.main?.midPoint.y ?? 0) / TILE >= LOBBY_ROW,
+  divisions: () => { const d: Record<number, string[]> = {}; for (const t of state.teams) if (t.floor && !t.parent) (d[t.floor] ??= []).push(t.name); return d; },
+  onFloor: (n) => scene.focusFloor(n),
+  onLobby: () => scene.focusOn('noticeboard'),
+});
+const minimap = new MinimapChrome({
+  // `scrollX/scrollY` here is the camera's top-left *in world space*, which on a zoomed camera is `worldView`, not
+  // the raw scroll (Phaser keeps scroll unzoomed: worldView.x = scrollX + width/2 - width/zoom/2).
+  camera: () => { const c = scene.cameras?.getCamera('minimap'); return c ? { x: c.x, y: c.y, width: c.width, height: c.height, scrollX: c.worldView.x, scrollY: c.worldView.y, zoom: c.zoom } : null; },
+  colours: () => ({ 1: floorPalette(1).tab, 2: floorPalette(2).tab, 3: floorPalette(3).tab, 4: floorPalette(4).tab }),
+  onPan: (wx, wy) => scene.cameras.main.pan(wx, wy, dur(DUR.minimapPan), EASE.sine),
+  onToggle: (visible) => scene.cameras.getCamera('minimap')?.setVisible(visible),
+});
+scene.hooks.onFloorChange = () => rail.update();
+window.addEventListener('resize', () => minimap.layout());
+// ---------------------------------------------------------------------------------------------------------------
+
 /**
  * The single entry for opening anything: a surface, a room, `agent:<role>`, `job:<id>`, `org`. Pushes onto the
  * stack and focuses the camera. Only a user's own click zooms (`zoom: false` for anything the app opens by itself).
@@ -114,6 +145,7 @@ function open(kind: string, origin?: Origin, opts: { zoom?: boolean } = {}): voi
 
 function refresh(): void {
   if (panel.current) panel.update(panel.current, viewOf(panel.current));
+  rail.update();
   bar.setPending(state.pendingProposals);
   bar.setBrand(state.brand.name, state.brand.tagline);
 }
@@ -133,16 +165,17 @@ const firstRun = new FirstRun({
   onSurprise: () => { sendChat(SURPRISE_ME); void firstRun.collapse().then(() => open('cabin', undefined, { zoom: false })); },
 });
 const quick = new QuickOpen({ items: () => quickItems(state), onPick: (kind) => open(kind) });
+/** `__cubicle.setHour` mirrored: the scene tints by it, and the time bar's sun/moon must read the same hour. */
+let hourOverride: number | null = null;
 
-/** `0` fits the whole tower: the camera bounds are the map plus a margin; fractional zoom is allowed only here. */
-function fitTower(): void { const cam = scene.cameras.main; const b = cam.getBounds(); cam.setZoom(Math.min(cam.width / b.width, cam.height / b.height)).centerOn(b.centerX, b.centerY); }
-
-/** The minimap belongs to the rail task; until its wiring lands `M` is a no-op — set `minimapHook.toggle` there. */
-const minimapHook: { toggle(): void } = { toggle: () => {} };
+/** `M` goes to the chrome above, which owns both the HTML frame and the Phaser minimap camera's visibility. */
+const minimapHook: { toggle(): void } = { toggle: () => minimap.toggle() };
 
 bindKeys({
   floor1: () => scene.focusFloor(1), floor2: () => scene.focusFloor(2), floor3: () => scene.focusFloor(3), floor4: () => scene.focusFloor(4),
-  lobby: () => scene.focusOn('noticeboard'), fit: fitTower,
+  // `0` fits the whole tower. One implementation, in the scene: this used to be a second, instant one here,
+  // and the scene's own `keys.ZERO` fired on the same keypress, so the two fights over the camera were visible.
+  lobby: () => scene.focusOn('noticeboard'), fit: () => scene.fitTower(),
   talk: () => open('cabin'), queue: () => open('noticeboard'), brief: () => open('newsstand'), plan: () => open('whiteboard'), org: () => open('org'),
   pause: () => time.togglePlay(), prev: () => time.step(-1), next: () => time.step(1),
   minimap: () => minimapHook.toggle(), help: () => open('keys'), quickopen: () => quick.open(),
@@ -218,7 +251,7 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
   theme: (mode: 'dark' | 'light' | 'system') => applyTheme(mode),
   stack: () => panel.stack.entries(),
   // Visual-check hooks (screenshot script, spec F35): freeze the clock and read the loop's frame rate.
-  setHour: (h: number | null) => scene.setHourOverride(h),
+  setHour: (h: number | null) => { hourOverride = h; scene.setHourOverride(h); },   // the time bar icon follows the office tint
   fps: () => Math.round(game.loop.actualFps),
   // A pushed frame can belong to a stream the daemon never announced (the screenshot script injects one), and a frame
   // with no surface behind it has nothing bound to draw it. Register the surface first, then let the frame land.
@@ -226,11 +259,16 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
 };
 
 let last = performance.now();
+let lastLayout = 0;
 function loop(now: number): void {
   const dt = now - last; last = now;
-  time.tick(dt, new Date());
+  // The minimap camera moves with the window; the rail's lobby tab follows a drag inside F1, which fires no floor change.
+  if (now - lastLayout > 500) { lastLayout = now; minimap.layout(); rail.update(); }
+  time.tick(dt, new Date(), hourOverride);
   if (state.mode === 'live') state = tick(state, Date.now());
-  if (elevatorView && scene.scene.isActive()) elevatorView.setState(toViewState(scene.elevator.state()));   // doors and digits follow the engine every frame
+  // doors and digits follow the engine every frame; `toViewState` writes into one reused object so the loop
+  // allocates nothing per frame (its riders array is already reference-cached inside elevator-view.ts)
+  if (elevatorView && scene.scene.isActive()) elevatorView.setState(toViewState(scene.elevator.state(), TILE, elevatorViewState));
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
