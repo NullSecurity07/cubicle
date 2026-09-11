@@ -51,12 +51,20 @@ describe('Docs/ideas-handbook.md', () => {
 });
 
 describe('Processes/discovery.md', () => {
-  it('expands into the steps discovery actually runs, on real roles', () => {
-    const ids = expandProcess(vault, 'discovery', 'Understand the company', { by: 'ceo', owner_role: 'ceo' });
-    expect(ids.length).toBeGreaterThan(0);
+  it('is prose, not steps: the daemon owns the one discovery job there may be', () => {
+    // A `process: discovery` line in a plan used to mint a second `discovery` job with a random id, which
+    // `discoveryJobId(digest)` idempotence cannot see — a whole research lifecycle over material already read —
+    // plus a `finance.estimate` job naming no card at all (whole-branch review, minor 6).
     const note = parseNote(vault.readText('Processes/discovery.md'));
-    for (const step of (note.data.steps as { role: string }[])) expect(vault.exists(`Roles/${step.role}.md`)).toBe(true);
+    expect(note.data.steps).toBeUndefined();
+    expect(() => expandProcess(vault, 'discovery', 'Understand the company', { by: 'ceo', owner_role: 'ceo' })).toThrow(/unknown process/);
+    expect(note.body).toContain(DISCOVERY_INBOX);
+  });
+
+  it('still reads as the account of what discovery does', () => {
+    const note = parseNote(vault.readText('Processes/discovery.md'));
     expect(note.body).toContain(FOUNDER_BRIEF);
     for (const s of FOUNDER_BRIEF_SECTIONS) expect(note.body).toContain(s);
+    for (const t of ['discovery.inputs', 'idea.card', 'research.start', 'sources.cite']) expect(note.body, t).toContain(t);
   });
 });

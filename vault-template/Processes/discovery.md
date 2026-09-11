@@ -1,14 +1,16 @@
 ---
 name: discovery
-steps:
-  - { role: research_manager, type: discovery, title: "Read what the owner gave us: {objective}", for: ceo }
-  - { role: cfo, type: finance.estimate, title: "What would it cost: {objective}" }
 ---
-How the company finds out what it is for. The daemon runs this on its own on the first cycle — this note is
-here so a lead can run it again by hand when the owner drops something new in, and so the steps are readable
-without reading the daemon.
+How the company finds out what it is for. This note is the readable version; the daemon runs the real thing.
 
-Step 1 — read everything, once. `discovery.inputs` returns the files in `Discovery/inbox/`, the founder
+**It has no `steps:`, on purpose.** The daemon queues the discovery job itself, with an id derived from a
+digest of the material, so the same material can never queue a second job. A `process: discovery` line in a
+plan would mint fresh random ids that idempotence cannot see — a second full research lifecycle over material
+already read, plus a `finance.estimate` job naming no card at all. To run discovery again, give the company
+something new to read: drop a file in `Discovery/inbox/`, or answer the founder interview. Either wakes the
+heartbeat, and the next cycle reads it.
+
+Read everything, once. `discovery.inputs` returns the files in `Discovery/inbox/`, the founder
 interview and every message the owner has typed in the cabin. That is the whole brief; there is nothing else to
 go on, and a file it could not read is named so you can say "present but unread" rather than guess.
 
@@ -32,9 +34,12 @@ Every claim about what already exists cites the file it came from. Where the own
 disagree, say so rather than picking one. Never invent a customer, a number or a date: the owner will read this
 and will know.
 
-Step 2 — price the candidates. The finance office reads each card and answers the two questions only it can:
-what this is worth if it works (`value`), and how cheap it is to try (`effort`, inverted — 5 is a week). A rough
-order of magnitude in words is the answer; a model is not.
+Then the cards are filled in from both sides, one office each. The finance office (`finance.estimate`) answers
+the two questions only it can: what this is worth if it works (`value`), and how cheap it is to try (`effort`,
+inverted — 5 is a week). A rough order of magnitude in words is the answer; a model is not. The research office
+(a follow-up `research` job) answers the other two: how well the evidence supports the demand (`evidence`) and
+how much of what the company already has this would use (`fit`), with the report and its confidence. Neither
+office may write the other's numbers — that is the whole reason there are four of them.
 
 Then the board sits on the best-scoring card, the owner keeps, parks or scraps it, and the next plan draws on
 whatever was kept. See `Docs/ideas-handbook.md`.

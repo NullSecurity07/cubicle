@@ -50,8 +50,8 @@ heartbeat's `ideas_board` step, recorded as a `board.session` job) — pass or r
 
 After the board, the owner rules: `keep`, `park` or `scrap`, recorded under `Decision` with `decided_by` and
 `decided_at`. If the owner has not ruled after the configured hours and `board_decides_after_hours` is on, the verdict
-resolves as approved and the card takes the band its score recommends, so the company is never stuck waiting
-on a card forever.
+resolves with the recommendation the note carries — the band stamped on it when the board sat, which already
+accounts for a board `return` — so the company is never stuck waiting on a card forever.
 
 ## What a plan may draw on
 
