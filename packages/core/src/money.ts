@@ -34,8 +34,17 @@ const MONEY_RE = /^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?$/;
 /** 12 digits of major units is ~1e14 minor units, comfortably inside Number.MAX_SAFE_INTEGER. */
 const MAX_MAJOR_DIGITS = 12;
 
-export function parseMoney(text: string): number | null {
-  const t = String(text ?? '').trim().replace(/^[A-Za-z]{3}\s+/, '').replace(/^[$£€]\s*/, '').trim();
+/** Escape a string for use inside a RegExp literal. */
+const reEscape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * `currency` is the ledger's own declared code (defaulting to `DEFAULT_CURRENCY` for a standalone call) — only
+ * *that* code is stripped as a marker. Any other leading letters are left in place and fail to parse, so a
+ * garbled cell (`"abc 12.00"`) is reported as unreadable rather than silently read as money.
+ */
+export function parseMoney(text: string, currency: string = DEFAULT_CURRENCY): number | null {
+  const codeRe = new RegExp(`^${reEscape(currency)}\\s+`, 'i');
+  const t = String(text ?? '').trim().replace(codeRe, '').replace(/^[$£€]\s*/, '').trim();
   const m = MONEY_RE.exec(t);
   if (!m) return null;
   const major = m[1].replace(/,/g, '');
@@ -102,10 +111,15 @@ function cells(line: string): string[] {
 const isSeparator = (c: string[]): boolean => c.every((x) => /^:?-{3,}:?$/.test(x));
 const isHeader = (c: string[]): boolean => c[0]?.toLowerCase() === LEDGER_COLUMNS[0] && c[1]?.toLowerCase() === LEDGER_COLUMNS[1];
 
+/** A cell can hold neither a pipe nor a newline without breaking the table; both become a space-safe stand-in. */
+const cell = (s: string): string => s.replace(/\|/g, '/').replace(/\s*\r?\n\s*/g, ' ').trim();
+
 /**
  * The book as data. Rows before the header are ignored (the note is allowed to carry prose and other tables);
  * rows after it that do not parse become problems carrying their **file** line number, so the brief can point
- * the owner at the line to fix.
+ * the owner at the line to fix. A row with too few cells to be a table row at all (fewer than
+ * `LEDGER_COLUMNS.length - 1`, i.e. missing more than just the optional `ref` column) is reported rather than
+ * silently skipped — the owner-edited-it-down-to-nothing case spec §1 requires kept and complained about.
  */
 export function parseLedger(md: string): Ledger {
   const note = parseNote(md);
@@ -118,23 +132,49 @@ export function parseLedger(md: string): Ledger {
   let seenHeader = false;
   for (let i = 0; i < lines.length; i++) {
     const c = cells(lines[i]);
-    if (c.length < LEDGER_COLUMNS.length - 1) continue;
-    if (!seenHeader) { seenHeader = isHeader(c); continue; }
+    if (!seenHeader) {
+      if (c.length < LEDGER_COLUMNS.length - 1) continue; // pre-header prose or an unrelated table
+      seenHeader = isHeader(c);
+      continue;
+    }
+    if (c.length === 0) continue; // a blank line or prose below the table, not a row
     if (isSeparator(c)) continue;
     const problem = (reason: string) => problems.push({ line: offset + i + 1, text: lines[i].trim(), reason });
+    if (c.length < LEDGER_COLUMNS.length - 1) { problem(`row has ${c.length} cells, expected at least ${LEDGER_COLUMNS.length - 1}`); continue; }
     const [at, kind, amount, mode, who, why, ref = ''] = c;
-    const cents = parseMoney(amount);
+    const cents = parseMoney(amount, currency);
     if (cents === null) { problem(`"${amount}" is not an amount (positive, at most two decimal places)`); continue; }
     if (!at || !Number.isFinite(Date.parse(at))) { problem(`at: "${at}" is not a timestamp`); continue; }
-    const parsed = LedgerEntry.safeParse({ at, kind: kind.toLowerCase(), cents, mode: (mode || 'live').toLowerCase(), who, why, ref });
+    const parsed = LedgerEntry.safeParse({ at, kind: kind.toLowerCase(), cents, mode: mode.toLowerCase(), who, why, ref: cell(ref) });
     if (!parsed.success) { problem(parsed.error.issues.map((iss) => `${iss.path.join('.') || 'row'}: ${iss.message}`).join('; ')); continue; }
     entries.push(parsed.data);
   }
   return { currency, entries, problems };
 }
 
-/** A cell can hold neither a pipe nor a newline without breaking the table; both become a space-safe stand-in. */
-const cell = (s: string): string => s.replace(/\|/g, '/').replace(/\s*\r?\n\s*/g, ' ').trim();
+/**
+ * The `ref` cell of every row after the header, whether or not the row otherwise parses as an entry — so
+ * `appendEntry`'s dedup catches a duplicate hiding behind an earlier row the parser cannot read (M4/ruling 7).
+ */
+function ledgerRefCells(md: string): string[] {
+  const note = parseNote(md);
+  const lines = note.body.split('\n');
+  const refs: string[] = [];
+  let seenHeader = false;
+  for (const line of lines) {
+    const c = cells(line);
+    if (!seenHeader) {
+      if (c.length < LEDGER_COLUMNS.length - 1) continue;
+      seenHeader = isHeader(c);
+      continue;
+    }
+    if (c.length === 0) continue;
+    if (isSeparator(c)) continue;
+    if (c.length < LEDGER_COLUMNS.length - 1) continue; // too short to have any ref cell at all
+    refs.push(cell(c[LEDGER_COLUMNS.length - 1] ?? ''));
+  }
+  return refs;
+}
 
 export function ledgerRow(e: LedgerEntry): string {
   return `| ${e.at} | ${e.kind} | ${formatMoney(e.cents)} | ${e.mode} | ${cell(e.who)} | ${cell(e.why)} | ${cell(e.ref)} |`;
@@ -161,30 +201,55 @@ export function readLedger(vault: Vault): Ledger {
   return md === null ? { currency: DEFAULT_CURRENCY, entries: [], problems: [] } : parseLedger(md);
 }
 
+/** Bounded retries for the compare-and-write race in `appendEntry`; an append commutes, so a retry never loses work. */
+const MAX_APPEND_ATTEMPTS = 5;
+
 /**
  * Add one row. The only writer there is, and the reason the book can be trusted: it reads the note, splices one
  * line in after the last table row, and writes it back. Every other byte of the file — the owner's prose, their
  * own rows, their currency — is untouched.
  *
  * A non-empty `ref` is an idempotency key: the daily model-cost accrual and any job-derived entry pass one, so a
- * replayed cycle finds its own row instead of charging the company twice.
+ * replayed cycle finds its own row instead of charging the company twice. It is normalized through `cell()` at
+ * construction, the same transform `ledgerRow` writes it through, so the value compared against the file and the
+ * value stored in it are always the same string (a ref with a pipe or stray whitespace still dedupes correctly).
+ *
+ * Compare-and-write, the same hazard `updateNote` guards against: the ledger is the most owner-edited file in the
+ * vault (the owner types `capital` rows into it directly), so a save landing between this function's read and its
+ * write must not be clobbered. `vault.currentSha` is checked immediately before the write; on a change it re-reads
+ * and re-splices on the fresh copy — an append commutes, so retrying never loses the concurrent write — bounded to
+ * `MAX_APPEND_ATTEMPTS` attempts before giving up loudly rather than silently dropping either side.
  */
 export function appendEntry(vault: Vault, e: NewEntry, by: string): { entry: LedgerEntry; added: boolean } {
-  const entry = LedgerEntry.parse({ ...e, at: e.at ?? nowIso(), ref: e.ref ?? '' });
-  const md = vault.readTextOrNull(LEDGER_PATH) ?? ledgerTemplate();
-  if (entry.ref) {
-    const dup = parseLedger(md).entries.find((x) => x.ref === entry.ref);
-    if (dup) return { entry: dup, added: false };
+  const at = e.at !== undefined && Number.isFinite(Date.parse(e.at)) ? e.at : nowIso();
+  const entry = LedgerEntry.parse({ ...e, at, ref: cell(e.ref ?? '') });
+
+  for (let attempt = 0; attempt < MAX_APPEND_ATTEMPTS; attempt++) {
+    const before = vault.currentSha(LEDGER_PATH);
+    const md = vault.readTextOrNull(LEDGER_PATH) ?? ledgerTemplate();
+
+    if (entry.ref) {
+      const dup = parseLedger(md).entries.find((x) => x.ref === entry.ref);
+      if (dup) return { entry: dup, added: false };
+      if (ledgerRefCells(md).includes(entry.ref)) return { entry, added: false };
+    }
+
+    const lines = md.replace(/\s+$/, '').split('\n');
+    let insertAt = -1;
+    for (let i = lines.length - 1; i >= 0; i--) if (lines[i].trim().startsWith('|')) { insertAt = i; break; }
+    const row = ledgerRow(entry);
+    const next = insertAt >= 0
+      ? [...lines.slice(0, insertAt + 1), row, ...lines.slice(insertAt + 1)]
+      : [...lines, '', `| ${LEDGER_COLUMNS.join(' | ')} |`, `|${LEDGER_COLUMNS.map(() => '---').join('|')}|`, row];
+
+    if (vault.currentSha(LEDGER_PATH) !== before) {
+      vault.events.emit({ type: 'daemon.warning', payload: { path: LEDGER_PATH, reason: 'note changed during update; retrying the append on the fresh copy' } });
+      continue;
+    }
+    vault.writeText(LEDGER_PATH, next.join('\n') + '\n', by);
+    return { entry, added: true };
   }
-  const lines = md.replace(/\s+$/, '').split('\n');
-  let at = -1;
-  for (let i = lines.length - 1; i >= 0; i--) if (lines[i].trim().startsWith('|')) { at = i; break; }
-  const row = ledgerRow(entry);
-  const next = at >= 0
-    ? [...lines.slice(0, at + 1), row, ...lines.slice(at + 1)]
-    : [...lines, '', `| ${LEDGER_COLUMNS.join(' | ')} |`, `|${LEDGER_COLUMNS.map(() => '---').join('|')}|`, row];
-  vault.writeText(LEDGER_PATH, next.join('\n') + '\n', by);
-  return { entry, added: true };
+  throw new Error(`appendEntry: ${LEDGER_PATH} changed under us ${MAX_APPEND_ATTEMPTS} times in a row; giving up`);
 }
 
 // ---------- the CFO's split ----------
