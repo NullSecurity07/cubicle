@@ -9,6 +9,8 @@ import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
 import { withMotion, reducedMotion } from './world/motion.js';
 import { ElevatorView, toViewState } from './world/elevator-view.js';
+import { setThemeAndAnnounce } from './ui/theme-event.js';
+import type { ThemeMode } from './ui/tokens.js';
 const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
 withMotion(reducedMotion() ? 0 : 1);
 motionQuery.addEventListener('change', () => withMotion(motionQuery.matches ? 0 : 1));
@@ -23,7 +25,6 @@ const ctx: Ctx = { frames, tokenQuery: token ? `?token=${encodeURIComponent(toke
 
 const scene = new OfficeScene();
 const game = new Phaser.Game({ type: Phaser.AUTO, parent: 'game', backgroundColor: '#0e1014', pixelArt: true, roundPixels: true, scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' }, scene: [scene] });
-void game;
 // Phaser also listens for mousedown / touchstart on the window (`input.windowEvents`, on by default) and hit-tests
 // those against the office, so a press on the drawer, the modal, the top bar or the time bar would "click" whatever
 // surface or agent is drawn beneath it. A press that starts outside the office stays outside it. Releases still
@@ -153,6 +154,11 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
   agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), desks: () => scene.debugDesks(), stand: (name: string) => scene.debugStand(name), surfaces: () => debugSurfaces(), open,
   zoom: (z: number) => scene.cameras.main.setZoom(z), center: (tx: number, ty: number) => scene.cameras.main.centerOn(tx * TILE, ty * TILE),
   floor: (n: number) => scene.focusFloor(n), currentFloor: () => scene.currentFloor(), elevator: () => scene.elevator.state(), route: (role: string, target: string) => scene.debugRoute(role, target),
+  // Visual-check hooks (screenshot script, spec F35): freeze the clock, inject a surface frame, read the frame rate, switch theme.
+  setHour: (h: number | null) => scene.setHourOverride(h),
+  pushFrame: (id: string, dataUrl: string) => { if (!state.surfaces[id]) state = applyEvent(state, { ts: new Date().toISOString(), type: 'browser.session_started', agent: null, job: null, payload: { session: id } }); frames[id] = dataUrl; refresh(); },
+  fps: () => Math.round(game.loop.actualFps),
+  theme: (mode: ThemeMode | 'system') => setThemeAndAnnounce(mode),
 };
 
 let last = performance.now();
