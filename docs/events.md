@@ -49,7 +49,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `team.planned` | team, jobs (ids the division.plan job scheduled) |
 | `review.passed` | gate, findings |
 | `review.returned` | gate, findings |
-| `plan.vetoed` | findings, vetoes (count so far this cycle) |
+| `plan.vetoed` | findings, vetoes (count so far this cycle), reason (board return | unkept ideas) |
 | `research.delivered` | emitted on the requester's research job |
 | `org.changed` | reason (migration | reorg | fire), changed | teams | role |
 | `guardrail.blocked` | tool, reason — every refused call, never silent. The tool wrapper emits just those two; the harness loop and the dispatcher, which pre-check before spending an idempotency key, add step and approved: true; a refused stored call in a proposal note adds proposal and kind instead |

@@ -6,6 +6,7 @@ import {
   childTeams, subtreeRoles, divisionTeams, divisionOf,
   budgetLines, GATE_JOB_TYPES,
   nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
+  FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type Router } from '@cubicle/router';
@@ -489,6 +490,53 @@ export function writeBoardSessionDecision(
     epilogue: 'The owner rules; the board advises.',
     reviewDays: 30,
   });
+}
+
+/**
+ * The findings the board adds to a plan that draws on ideas nobody kept (spec §4). A deterministic check rather
+ * than a line in the advisors' prompt: a model asked to notice a slug in a wall of markdown will miss it, and
+ * this is the one rule the whole idea pipeline exists to enforce.
+ */
+export function unkeptIdeaFindings(unkept: { id: string; decision: IdeaDecision }[]): string[] {
+  return unkept.map((i) => i.decision === 'undecided'
+    ? `The plan draws on [[Ideas/${i.id}]], which the board has not ruled on yet — plan around it or let this cycle's board session judge it first.`
+    : `The plan draws on [[Ideas/${i.id}]], which the company ${i.decision === 'scrap' ? 'scrapped' : 'parked'}. A plan may only draw on kept ideas.`);
+}
+
+/**
+ * A plan is returned for a parked or scrapped idea; an undecided one is a finding, not a return (spec §4).
+ *
+ * The asymmetry is deliberate: parked and scrapped are rulings the company made, and planning against one
+ * ignores them. Undecided is the state every card starts in, and returning a plan for it would deadlock cycle
+ * one — nothing is kept yet, the board rules on one card a cycle, and the CEO would rewrite for ever.
+ */
+export function unkeptForcesReturn(unkept: { decision: IdeaDecision }[]): boolean {
+  return unkept.some((i) => i.decision === 'park' || i.decision === 'scrap');
+}
+
+/** A returned plan carries at most this many findings: enough to act on, few enough for the CEO to answer all. */
+export const MAX_PLAN_FINDINGS = 6;
+/** …of which the deterministic guard takes at most this many whenever the board also spoke. */
+export const MAX_GUARD_FINDINGS = 3;
+
+/**
+ * The findings one plan return carries, from the guard's warnings and the board's own.
+ *
+ * The board's always survive. `mergeBoardVerdict` already caps them at four and they are the failure modes the
+ * CEO has to answer, whereas the guard's warnings are one sentence repeated per idea — so the guard takes what
+ * is left of the budget and never more than three, rather than a plan naming six undecided ideas crowding the
+ * board out of its own return (review T10, finding 1). With no session at all — the guard returned the plan
+ * before the board sat — the guard has the whole budget to itself.
+ */
+export function planReturnFindings(guard: string[], session: string[] = []): string[] {
+  const share = session.length ? Math.max(0, Math.min(MAX_GUARD_FINDINGS, MAX_PLAN_FINDINGS - session.length)) : MAX_PLAN_FINDINGS;
+  return [...guard.slice(0, share), ...session].slice(0, MAX_PLAN_FINDINGS);
+}
+
+/** The `## Kept ideas` block in the company.plan goal: what the plan may draw on, and nothing else. */
+export function keptIdeasGoalBlock(lines: string[]): string {
+  if (!lines.length) return `Kept ideas: none yet. Plan from ${FOUNDER_BRIEF}; the board rules on the idea cards this cycle and the next plan draws on whatever it keeps.`;
+  return `Kept ideas — the only ideas this plan may draw on (spec §4; naming a parked or scrapped one gets the plan returned), each out of ${IDEA_SCORE_MAX}:\n${lines.map((l) => `- ${l}`).join('\n')}`;
 }
 
 /** Stable per idea, so a resumed cycle rules on the note it already filed. */
@@ -997,13 +1045,18 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
           const teams = divisionTeams(org).map((t) => `${t.id} (lead ${t.lead}: ${t.mission})`).join('; ');
           const streams = listStreams(vault).filter((s) => s.status === 'active').map((s) => `${s.slug} (${s.outcome_metric}, owned by ${s.owner_team})`).join('; ') || 'none yet — the product manager writes Streams/<slug>.md before the first objective';
           const findings = state.boardFindings?.length ? `\n\nThe board returned the previous draft with these findings; address each one:\n${state.boardFindings.map((f) => `- ${f}`).join('\n')}` : '';
+          // What the plan is allowed to be about (spec §4). The kept cards carry their scores so the CEO can
+          // tell a 58 from a 45, and the founder brief above them is what the whole company is for — a plan
+          // written without it is a plan for some other company.
+          const kept = keptIdeasGoalBlock(keptIdeaLines(keptIdeas(vault)));
+          const brief = vault.readTextOrNull(FOUNDER_BRIEF);
           // The seat, not the id (final review I1): the job was already *assigned* by office, but it carried
           // `owner_role: 'ceo'` and a hard-coded `executive` team, which is what WIP and the job tree attribute
           // against — so after a re-staff the plan job went to the right person under the wrong name.
           const chief = officeHolder(org, 'chief_executive');
           const id = createJob(vault, {
             type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the board' : 'Write the company plan', assigned: chief, priority: 1, parent: jobId, team: teamOf(org, chief)?.id, owner_role: chief,
-            goal: `Write this cycle's objectives per division, not jobs.\n\nSituation:\n${situationSummary()}\n\nDivisions: ${teams}.\n\nStreams: ${streams}.\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <division id>" subsection per division that has work this cycle (a bullet per objective; every objective for a product division ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); a division with nothing to do gets no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
+            goal: `Write this cycle's objectives per division, not jobs.\n\nSituation:\n${situationSummary()}\n\nDivisions: ${teams}.\n\nStreams: ${streams}.\n\n${kept}${brief ? `\n\nThe founder brief (${FOUNDER_BRIEF}) is what this company is for. Read it before you plan; everything below serves it:\n\n${brief.slice(0, 2000)}` : ''}\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <division id>" subsection per division that has work this cycle (a bullet per objective; every objective for a product division ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); a division with nothing to do gets no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
           }, 'ceo');
           // This cycle is the rewrite that rejection asked for, so spend the note — but only now that the
           // rewrite exists (Task 6 review, minor 5). Stamped before `createJob`, a kill in between left the
@@ -1031,6 +1084,60 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         const plan = vault.readTextOrNull('Plans/plan.md') ?? '';
         if (!board || !org.roles[board.lead] || !planIsSubstantive(plan)) { done(i, 'board skipped'); break; }
         const ceo = officeHolder(org, 'chief_executive');
+        /**
+         * The one way a plan goes back to the CEO, whoever asked for it: the veto is counted and emitted, one
+         * rewrite is allowed, and a second return goes to the owner rather than stalling the company. Returns
+         * the heartbeat's own outcome when the cycle requeues, `null` when the caller should carry on and close
+         * the step itself.
+         */
+        const returnPlan = (findings: string[], reason: string): HeartbeatOutcome | null => {
+          const vetoes = (state.vetoes ?? 0) + 1;
+          vault.events.emit({ type: 'plan.vetoed', agent: board.lead, job: jobId, payload: { findings, vetoes, reason } });
+          if (vetoes === 1) {
+            // One rewrite, then the owner rules on whatever the CEO produced: the board cannot stall the company.
+            state = { ...state, vetoes, companyPlanJob: undefined, boardJob: undefined, boardVerdict: undefined }; saveState(state);
+            updateJob(vault, jobId, { status: 'queued', checkpoint_step: i - 1, blocked_on: undefined }, 'ceo', `- step ${i + 1} board_premortem: returned (${reason}); rewriting the plan`);
+            return { status: 'requeued', attempt: job.attempt };
+          }
+          state = { ...state, vetoes }; saveState(state);
+          createProposal(vault, { kind: 'message', from: ceo, to: 'owner', title: `The board vetoed the plan twice`, body: `Findings:\n${findings.map((f) => `- ${f}`).join('\n')}\n\nThe cycle continues with the current plan; reply if you want it changed.`, job: jobId }, ceo);
+          return null;
+        };
+        // Deterministic, and before any model call: a plan that draws on an idea the company parked or scrapped
+        // is returned whatever the advisors would have said, with the idea named (spec §4.2). An advisor asked
+        // to spot a slug in a wall of markdown will miss it, and this is the one rule the whole idea pipeline
+        // exists to enforce. An undecided idea is carried into the session's findings instead (see below).
+        const unkept = unkeptIdeasNamedIn(plan, listIdeas(vault));
+        const guardFindings = unkeptIdeaFindings(unkept);
+        // Whole budget here (no board findings to make room for), the board's share below.
+        const guardOnlyFindings = planReturnFindings(guardFindings);
+        if (unkeptForcesReturn(unkept)) {
+          // The pre-mortem note the cycle owes, in the guard's own words: `writeBoardPremortemDecision` would
+          // point the reader at a board job that does not exist and promise "the advisors' own words" nobody
+          // spoke, so this fills the same shape through the factored writer and says what actually happened.
+          try {
+            writeBoardDecision(vault, `premortem-${hbId}`, {
+              verdict: 'return', findings: guardFindings, decidedBy: board.lead, now: now(), answered: 0,
+              cycle: hbId, inputs: ['[[Plans/plan]]'],
+              unreviewedNote: BOARD_UNREVIEWED_NOTE,
+              noFindingsNote: 'The board found nothing in this plan likely to sink the cycle.',
+              context: `Pre-mortem for heartbeat ${hbId}: the plan drew on ${unkept.length} idea${unkept.length === 1 ? '' : 's'} the company did not keep, so it was returned before the board sat. No advisor was asked — this one is arithmetic, not judgement.`,
+              options: '- Run the plan as the CEO wrote it\n- Return it to the CEO to rewrite before the owner rules on it',
+              chosen: 'Return the plan to the CEO for one rewrite.',
+              why: 'A plan may only draw on ideas the company kept (spec §4); the company ruled on these already.',
+              risksHeading: 'The ideas this plan draws on that the company did not keep:',
+              reviewDays: 7,
+            });
+          } catch { /* a note is a record, never a reason to stall the cycle */ }
+          // The note above keeps every offending idea — it is the durable record of what the plan named. What
+          // the CEO rewrites against and what the owner reads is the capped list, the same budget the board's
+          // own return gets: a plan naming twenty scrapped ideas must not become a twenty-bullet prompt.
+          state = { ...state, boardVerdict: 'return', boardFindings: guardOnlyFindings }; saveState(state);
+          const out = returnPlan(guardOnlyFindings, 'unkept ideas');
+          if (out) return out;
+          done(i, `board returned: ${unkept.length} unkept idea(s), second time`);
+          break;
+        }
         const session = await runBoardSession(deps, org, plan);
         if (cancelled()) return { status: 'cancelled' };
         // The job note is the record of the session, not a unit of work: it is created with `depends_on` on this
@@ -1060,18 +1167,14 @@ export async function runHeartbeat(deps: HeartbeatDeps, jobId: string): Promise<
         // other order resumes into the "already run" branch above and the cycle loses its pre-mortem for good.
         try { writeBoardPremortemDecision(vault, hbId, boardJob, session.verdict, session.findings, board.lead, now(), session.answered); }
         catch (err) { vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'board_premortem', message: `could not write the pre-mortem decision note: ${(err as Error).message}` } }); }
-        state = { ...state, boardJob, boardVerdict: session.verdict, boardFindings: session.findings }; saveState(state);
+        // The guard's warnings lead: an idea nobody has ruled on yet does not return the plan, but the CEO and
+        // the owner should still read that the plan leans on one. They take what is left of the budget after
+        // the board's own findings, never the other way round — see `planReturnFindings`.
+        const boardFindings = planReturnFindings(guardFindings, session.findings);
+        state = { ...state, boardJob, boardVerdict: session.verdict, boardFindings }; saveState(state);
         if (session.verdict === 'return') {
-          const vetoes = (state.vetoes ?? 0) + 1;
-          vault.events.emit({ type: 'plan.vetoed', agent: board.lead, job: jobId, payload: { findings: session.findings, vetoes } });
-          if (vetoes === 1) {
-            // One rewrite, then the owner rules on whatever the CEO produced: the board cannot stall the company.
-            state = { ...state, vetoes, companyPlanJob: undefined, boardJob: undefined, boardVerdict: undefined }; saveState(state);
-            updateJob(vault, jobId, { status: 'queued', checkpoint_step: i - 1, blocked_on: undefined }, 'ceo', `- step ${i + 1} board_premortem: returned; rewriting the plan`);
-            return { status: 'requeued', attempt: job.attempt };
-          }
-          state = { ...state, vetoes }; saveState(state);
-          createProposal(vault, { kind: 'message', from: ceo, to: 'owner', title: `The board vetoed the plan twice`, body: `Findings:\n${session.findings.map((f) => `- ${f}`).join('\n')}\n\nThe cycle continues with the current plan; reply if you want it changed.`, job: jobId }, ceo);
+          const out = returnPlan(boardFindings, 'board return');
+          if (out) return out;
         }
         done(i, `board ${session.verdict}`);
         break;

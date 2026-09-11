@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listJobs, listInbox, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord, createProposal } from '@cubicle/core';
+import { scaffoldVault, Vault, listJobs, listInbox, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord, createProposal, writeIdeaCard, updateIdea } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE, runHeartbeat, createHeartbeatJob, planVerdictId, boardSubject, advisorPrompt, chairPrompt, boardAgenda } from '../src/index.js';
@@ -597,5 +597,97 @@ describe('one board session, two subjects (spec §3)', () => {
       expect(session.subject).toBe(IDEA_SUBJECT);
       expect(vault.events.query({ types: ['meeting.opened'] }).length).toBe(0);
     } finally { vault.close(); }
+  });
+});
+
+describe('a plan may draw only on ideas the company kept (spec §4.2)', () => {
+  const planNaming = (slug: string) => `---\ncycle: 1\nupdated: ${new Date().toISOString()}\n---\n# Plan\n\n## Objectives\n\n### dev\n- Ship [[Ideas/${slug}]] this cycle\n`;
+  const hbState = (hbId: string) => JSON.parse(readFileSync(path.join(dir, '.cubicle/jobs', `${hbId}.heartbeat.json`), 'utf8'));
+
+  it('the board returns a plan that draws on a scrapped idea before any advisor speaks, and lets a kept one through', async () => {
+    const v = Vault.open(dir);
+    try {
+      const slug = writeIdeaCard(v, { title: 'Crypto loyalty', source: 'discovery' }, 'research_manager');
+      updateIdea(v, slug, { score_inputs: { value: 1, evidence: 1, effort: 1, fit: 1 }, decision: 'scrap' }, 'daemon');
+      v.writeText('Plans/plan.md', planNaming(slug), 'ceo');
+
+      const llm = tierRecordingLlm();
+      const hbId = createHeartbeatJob(v, 'test');
+      updateJob(v, hbId, { checkpoint_step: HEARTBEAT_STEPS.indexOf('board_premortem') }, 'daemon');
+      const out = await runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hbId);
+
+      // The guard costs nothing: it is arithmetic, and it runs before a single advisor is asked.
+      expect(llm.calls.length).toBe(0);
+      expect(out.status).toBe('requeued');
+      const vetoed = v.events.query({ types: ['plan.vetoed'] });
+      expect(vetoed).toHaveLength(1);
+      expect(vetoed[0].payload.reason).toBe('unkept ideas');
+      expect(String((vetoed[0].payload.findings as string[])[0])).toContain(`[[Ideas/${slug}]]`);
+      expect(vetoed[0].payload.vetoes).toBe(1);
+      expect(hbState(hbId).vetoes).toBe(1);
+
+      // The cycle owes a pre-mortem note whether or not the board sat, and it names the idea and the ruling.
+      const note = v.readNoteOrNull(`Decisions/premortem-${hbId}.md`)!;
+      expect(note.data.status).toBe('proposed');
+      expect(note.body).toContain(`[[Ideas/${slug}]]`);
+      expect(note.body).toContain('scrapped');
+
+      // Back to the CEO to write a different plan — not on to the owner, and not two steps back.
+      const after = readJob(v, hbId)!.data;
+      expect(after.status).toBe('queued');
+      expect(after.checkpoint_step).toBe(HEARTBEAT_STEPS.indexOf('company_plan'));
+      expect(hbState(hbId).boardFindings[0]).toContain('A plan may only draw on kept ideas.');
+
+      // Keep the same idea and the same plan is the board's business again: the advisors get to speak.
+      updateIdea(v, slug, { decision: 'keep' }, 'owner');
+      const hb2 = createHeartbeatJob(v, 'test');
+      updateJob(v, hb2, { checkpoint_step: HEARTBEAT_STEPS.indexOf('board_premortem') }, 'daemon');
+      await runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hb2);
+      expect(llm.calls.length).toBeGreaterThan(0);
+      expect(v.events.count('plan.vetoed')).toBe(1);
+    } finally { v.close(); }
+  });
+
+  it('a rewrite that still names the scrapped idea goes to the owner, not round again (review T10, finding 5)', async () => {
+    const v = Vault.open(dir);
+    try {
+      const slug = writeIdeaCard(v, { title: 'Crypto loyalty', source: 'discovery' }, 'research_manager');
+      updateIdea(v, slug, { score_inputs: { value: 1, evidence: 1, effort: 1, fit: 1 }, decision: 'scrap' }, 'daemon');
+      v.writeText('Plans/plan.md', planNaming(slug), 'ceo');
+
+      const llm = tierRecordingLlm();
+      const hbId = createHeartbeatJob(v, 'test');
+      updateJob(v, hbId, { checkpoint_step: HEARTBEAT_STEPS.indexOf('board_premortem') }, 'daemon');
+      expect((await runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hbId)).status).toBe('requeued');
+
+      // The CEO's one rewrite still leans on the same scrapped card, so the same heartbeat is back at the board
+      // with its veto already counted. The board may not stall the company: this one goes to the owner.
+      updateJob(v, hbId, { status: 'queued', checkpoint_step: HEARTBEAT_STEPS.indexOf('board_premortem'), blocked_on: undefined }, 'daemon');
+      await runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hbId);
+
+      expect(v.events.count('plan.vetoed')).toBe(2);
+      expect(hbState(hbId).vetoes).toBe(2);
+      expect(v.events.query({ types: ['proposal.created'] }).some((e) => e.payload.kind === 'message' && String(e.payload.title).toLowerCase().includes('veto'))).toBe(true);
+      // Still no session either time: two returns, and not one advisor was asked.
+      expect(listJobs(v).filter((j) => j.type === 'board.premortem')).toHaveLength(0);
+      // …and the cycle walks on past the board rather than requeueing for ever.
+      expect(readJob(v, hbId)!.data.checkpoint_step).toBeGreaterThan(HEARTBEAT_STEPS.indexOf('board_premortem'));
+    } finally { v.close(); }
+  });
+
+  it('an undecided idea is a finding the CEO and the owner read, never a return (cycle one would deadlock)', async () => {
+    const v = Vault.open(dir);
+    try {
+      const slug = writeIdeaCard(v, { title: 'B2B API', source: 'discovery' }, 'research_manager');
+      v.writeText('Plans/plan.md', planNaming(slug), 'ceo');
+      const llm = tierRecordingLlm();
+      const hbId = createHeartbeatJob(v, 'test');
+      updateJob(v, hbId, { checkpoint_step: HEARTBEAT_STEPS.indexOf('board_premortem') }, 'daemon');
+      await runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hbId);
+
+      expect(v.events.count('plan.vetoed')).toBe(0);
+      expect(llm.calls.length).toBeGreaterThan(0);
+      expect(hbState(hbId).boardFindings[0]).toContain('has not ruled on yet');
+    } finally { v.close(); }
   });
 });
