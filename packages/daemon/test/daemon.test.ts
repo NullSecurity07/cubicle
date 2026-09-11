@@ -6,7 +6,7 @@ import WebSocket from 'ws';
 import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob, loadOrg, createStream, writeCiRecord } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot } from '../src/index.js';
+import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot, NON_WORK_TYPES } from '../src/index.js';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 
@@ -531,6 +531,10 @@ describe('daemon lifecycle', () => {
     expect(heartbeats[0].title).toMatch(/first start/);
     expect(d.config.heartbeat.jobsCompletedN).toBe(5); // default, unchanged
     await d.stop();
+  });
+  it('research.review is a gate job, not work: it belongs in NON_WORK_TYPES alongside the other review/verify gates', () => {
+    expect(NON_WORK_TYPES).toContain('research.review');
+    expect(NON_WORK_TYPES).toEqual(expect.arrayContaining(['qa.review', 'coo.verify', 'requester.review', 'research.review']));
   });
 
   it('dispatcher: file_change applies the diff; brand_change with chosen sets the name and queues reconcile; message answers route to Messages/', async () => {

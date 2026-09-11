@@ -145,3 +145,49 @@ export function resultBlock(body: string): Record<string, unknown> {
     return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
   } catch { return {}; }
 }
+
+/** The one institutional research repository (§23). Everything that ships gets a row. */
+export const RESEARCH_INDEX = 'Research/index.md';
+
+export const INDEX_HEADER = [
+  '| delivered | job | question | decision | owner | method | confidence | report | outcome |',
+  '|---|---|---|---|---|---|---|---|---|',
+].join('\n');
+
+export interface DeliveredResearch {
+  job: string;
+  /** YYYY-MM-DD. */
+  delivered: string;
+  question: string;
+  decision: string;
+  decision_owner: string;
+  method: string;
+  confidence: string;
+  /** Vault-relative path to the report, e.g. `Research/<slug>/report.md`. */
+  report: string;
+}
+
+/** A pipe inside agent-written prose would split the row into new columns; a slash is the honest repair. */
+const cell = (s: string) => s.replace(/\|/g, '/').replace(/\s+/g, ' ').trim() || '—';
+
+export function indexRow(d: DeliveredResearch, outcome = 'pending'): string {
+  const link = `[[${d.report.replace(/\.md$/, '')}]]`;
+  return `| ${cell(d.delivered)} | [[${d.job}]] | ${cell(d.question)} | ${cell(d.decision)} | ${cell(d.decision_owner)} | ${cell(d.method)} | ${cell(d.confidence)} | ${link} | ${cell(outcome)} |`;
+}
+
+/**
+ * Add or update this job's row. Keyed on the job id, so a re-run updates rather than duplicating, and the
+ * measurement job (§40) can come back weeks later and write the outcome into the row it already has.
+ */
+export function upsertIndexRow(existing: string | null, d: DeliveredResearch, outcome?: string): string {
+  const row = indexRow(d, outcome);
+  const base = existing?.trim()
+    ? existing
+    : `# Research index\n\nEvery delivered research project: the question, the decision it informed, how it was answered, how sure we were, and what actually happened. Search here before starting anything (§9).\n\n${INDEX_HEADER}\n`;
+  const withHeader = base.includes(INDEX_HEADER) ? base : `${base.trimEnd()}\n\n${INDEX_HEADER}\n`;
+  const lines = withHeader.split('\n');
+  const at = lines.findIndex((l) => l.includes(`[[${d.job}]]`));
+  if (at >= 0) { lines[at] = row; return lines.join('\n'); }
+  const out = withHeader.trimEnd();
+  return `${out}\n${row}\n`;
+}

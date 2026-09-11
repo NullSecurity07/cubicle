@@ -15,6 +15,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
   Memory/                 constitution.md (agent-immutable, tool-enforced), owner_preferences.md, lessons.md
   Skills/                 reusable procedures written by agents (archive/ for pruned ones)
   Experiments/            hypothesis/metric/review_date notes (_template.md), posts/ drafts
+  Ideas/                  idea cards filed by continuous intelligence and by discovery (_template.md)
   Jobs/                   <job-id>.md (frontmatter = state machine), queue.md (generated), _template.md
   Messages/               <role>.md colleague inboxes (agent-writable; HTML-comment read markers)
   Site/                   the website source; dist/ is the build (gitignored)
@@ -107,6 +108,19 @@ Body: `# Charter` (system prompt), `# Standing rules`, `# What good looks like`.
 | `wip` | object = `{"in_progress":3,"review":2,"testing":2}` | work-in-progress limits per Kanban lane; `nextJob` refuses to start work past `in_progress` and the office shows a full lane as a red tab on the room sign |
 
 Body: freeform notes on how the team works, read into role prompts.
+
+### Idea card (Ideas/<slug>.md)
+
+| field | type | notes |
+|---|---|---|
+| `id` | string | matches the filename |
+| `title` | string |  |
+| `source` | string | where the idea came from: `intelligence:<kind>`, `owner`, or a job id |
+| `status` | `new` \| `triaged` \| `accepted` \| `rejected` = `"new"` | new → triaged → accepted | rejected; sub-project 3 owns the triage |
+| `created` | string |  |
+| `evidence` | string[] = `[]` | paths or URLs backing the change that prompted it — an idea with none is a hunch |
+
+Body: `## What changed`, `## Why it might matter`, `## Evidence`.
 
 ### Stream note (Streams/<slug>.md)
 

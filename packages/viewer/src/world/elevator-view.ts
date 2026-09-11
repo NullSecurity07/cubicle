@@ -21,9 +21,10 @@ export function doorOpenFor(status: ElevatorState['status'], openLeft: number, o
   return Math.max(0, Math.min(1, elapsed / slideMs, openLeft / slideMs));
 }
 
-// toViewState is called every animation frame; the underlying `riders` array is a stable reference except on the
-// frame something actually boards or arrives (world/elevator.ts's `step` only replaces it then), so a tiny
-// reference-keyed cache avoids reallocating the id list on every frame that nothing changed.
+// toViewState is called every animation frame. world/elevator.ts's `step` keeps the same `riders` array reference
+// while idle or moving (the common case, and the longest-lived one), so a tiny reference-keyed cache avoids
+// reallocating the id list on those frames; while a door is open, `serve()` rebuilds the array every step
+// regardless of whether anyone actually boards, so the cache simply misses (and repopulates) for that window.
 const ridersCache = new WeakMap<Rider[], string[]>();
 function ridersOf(riders: Rider[]): string[] {
   const cached = ridersCache.get(riders);

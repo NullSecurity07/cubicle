@@ -2,6 +2,7 @@
 import type { State } from '../state.js';
 import { ROOM_LABELS, esc } from './content.js';
 import { pixelIcon } from './icons.js';
+import { trapTab } from './keys.js';
 
 export interface QuickItem { kind: string; label: string; group: 'Screens' | 'People' | 'Rooms'; hint?: string }
 export const SCREEN_LABELS: Record<string, string> = { cabin: 'Talk to the CEO', newsstand: 'Brief', whiteboard: 'Plan', noticeboard: 'Queue', postoffice: 'Post office', org: 'Org', bank: 'Bank', vault: 'Vault', terminal: 'Terminal', billboard: 'Billboard', workshop: 'Workshop' };
@@ -52,10 +53,14 @@ export class QuickOpen {
       // Escape belongs to the palette while it is open: stopping it keeps the panel's window handler from popping the sheet under it.
       else if (e.key === 'Escape') { e.stopPropagation(); this.close(); }
     });
+    // aria-modal: Tab cycles inside the palette. On the container, so it catches a focused result too, and it stops
+    // the event before the panel's window-level trap can pull Shift+Tab into the sheet underneath.
+    this.el.addEventListener('keydown', (e) => { trapTab(this.el, e, document.activeElement as HTMLElement | null); });
     this.list.addEventListener('click', (e) => { const b = (e.target as HTMLElement).closest<HTMLElement>('[data-i]'); if (b) this.pick(Number(b.dataset.i)); });
     document.addEventListener('pointerdown', (e) => { if (this.visible && !this.el.contains(e.target as Node)) this.close(); });
   }
-  open(): void { this.returnTo = document.activeElement as HTMLElement | null; this.el.hidden = false; this.visible = true; this.input.value = ''; this.sel = 0; this.render(); this.input.focus(); }
+  /** Re-opening while it is up would overwrite `returnTo` with the palette's own input. */
+  open(): void { if (this.visible) { this.input.focus(); return; } this.returnTo = document.activeElement as HTMLElement | null; this.el.hidden = false; this.visible = true; this.input.value = ''; this.sel = 0; this.render(); this.input.focus(); }
   close(): void { this.el.hidden = true; this.visible = false; this.returnTo?.focus?.(); }
   private pick(i: number): void { const it = this.shown[i]; if (!it) return; this.close(); this.deps.onPick(it.kind); }
   private render(): void {

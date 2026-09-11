@@ -50,8 +50,16 @@ input::placeholder { color: var(--text-3); }
 #rail .tab { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; min-height: 44px; padding: var(--s1) 0; border-radius: var(--r-s); color: var(--text-2); font-size: var(--fs-subhead); font-weight: 600; font-variant-numeric: tabular-nums; }
 #rail .tab:hover { background: var(--surface-3); color: var(--text); }
 #rail .tab .bar { width: 18px; height: 3px; border-radius: 2px; background: var(--floor, var(--text-3)); }
-#rail .tab[aria-current="true"] { background: var(--floor, var(--surface-3)); color: #fff; }
+/* The current tab fills with the floor's tint deepened one lightness step (Rail publishes --floor-<n>-deep from the
+   colour that floor renders with) so white reads at 4.5:1 on all four, orange F4 included; the lobby has no tint. */
+#rail .tab[data-floor="1"] { --tab-deep: var(--floor-1-deep); }
+#rail .tab[data-floor="2"] { --tab-deep: var(--floor-2-deep); }
+#rail .tab[data-floor="3"] { --tab-deep: var(--floor-3-deep); }
+#rail .tab[data-floor="4"] { --tab-deep: var(--floor-4-deep); }
+#rail .tab[aria-current="true"] { background: var(--tab-deep, var(--surface-3)); color: #fff; }
 #rail .tab[aria-current="true"] .bar { background: rgba(255,255,255,.6); }
+#rail .tab.lobby[aria-current="true"] { background: var(--surface-3); color: var(--text); box-shadow: inset 0 0 0 1px var(--hairline-2); }
+#rail .tab.lobby[aria-current="true"] .bar { background: var(--text-2); }
 #rail .tab .dots { display: flex; gap: 2px; height: 4px; } #rail .tab .dots i { width: 4px; height: 4px; border-radius: 50%; }
 #rail .tab.lobby { margin-top: auto; }
 
