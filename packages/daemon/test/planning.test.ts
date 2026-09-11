@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, listJobs, readJob, loadOrg, resolveTeamSection, listDecisions, DecisionFrontmatter, createJob, updateJob, setSection, createStream, writeCiRecord } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections } from '../src/index.js';
+import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 
 const root = path.resolve(__dirname, '../../..');
@@ -25,6 +25,15 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const daemonFor = (llm: Llm) => new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 300, maxConcurrentJobs: 3, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
 async function waitFor(pred: () => boolean, ms = 30000): Promise<void> { const t0 = Date.now(); while (!pred()) { if (Date.now() - t0 > ms) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 100)); } }
+
+describe('mergeBoardVerdict', () => {
+  it('reads the chair\'s verdict line and its bullets, and fails open to pass', () => {
+    expect(mergeBoardVerdict('VERDICT: return\n- no metric on the growth objective\n- nobody owns the deploy')).toEqual({ verdict: 'return', findings: ['no metric on the growth objective', 'nobody owns the deploy'] });
+    expect(mergeBoardVerdict('verdict: PASS\n- watch the free tier')).toEqual({ verdict: 'pass', findings: ['watch the free tier'] });
+    expect(mergeBoardVerdict('')).toEqual({ verdict: 'pass', findings: [] });
+    expect(mergeBoardVerdict('The board could not agree.')).toEqual({ verdict: 'pass', findings: [] });
+  });
+});
 
 describe('planIsSubstantive (Task 9 review finding 1)', () => {
   it('is false for a plan with no ### sections at all', () => {
@@ -89,8 +98,8 @@ describe('firstOpenJob (Task 9 review finding 2)', () => {
 });
 
 describe('two-level planning (spec §3)', () => {
-  it('steps are company_plan → critic → team_plans; a veto reruns the CEO once; leads fan out; brief has next actions per team (acceptance test 10)', async () => {
-    expect(HEARTBEAT_STEPS).toEqual(['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'company_plan', 'critic', 'team_plans', 'brief', 'commit']);
+  it('steps are company_plan → board_premortem → division_plans; a return reruns the CEO once; leads fan out; brief has next actions per team (acceptance test 10)', async () => {
+    expect(HEARTBEAT_STEPS).toEqual(['gather', 'reconcile_brand', 'answer_owner', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans', 'brief', 'commit']);
     const llm = orgLlm({ vetoes: 1 });
     const d = daemonFor(llm);
     await d.start();
@@ -98,8 +107,9 @@ describe('two-level planning (spec §3)', () => {
     try {
       await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
       const jobs = listJobs(v);
-      expect(jobs.filter((j) => j.type === 'company.plan')).toHaveLength(2); // veto → one rewrite
-      expect(jobs.filter((j) => j.type === 'critic.premortem')).toHaveLength(2);
+      expect(jobs.filter((j) => j.type === 'company.plan')).toHaveLength(2); // one return → one rewrite
+      expect(jobs.filter((j) => j.type === 'board.premortem')).toHaveLength(2);
+      expect(jobs.every((j) => j.type !== 'board.premortem' || j.status === 'done')).toBe(true);
       expect(v.events.count('plan.vetoed')).toBe(1);
       const teamPlans = jobs.filter((j) => j.type === 'team.plan');
       expect(teamPlans.map((j) => j.assigned).sort()).toEqual(['cfo', 'dev_manager']);
@@ -130,7 +140,7 @@ describe('two-level planning (spec §3)', () => {
   });
 
   it('a process: line does not make team_plans wait for its expanded jobs (Task 9 review round 2)', async () => {
-    // "launch" has no team.plan/critic.premortem/company.plan step, so its expanded jobs can't be confused with
+    // "launch" has no team.plan/board.premortem/company.plan step, so its expanded jobs can't be confused with
     // the ones team_plans itself creates; its first step (engineer.ship, no depends_on) is queued immediately but
     // needs its own worker cycle, so it should still be open when the heartbeat completes if team_plans correctly
     // waits only on the team.plan jobs (not rollup() of every heartbeat child).
@@ -145,10 +155,10 @@ describe('two-level planning (spec §3)', () => {
       const hb = jobs.find((j) => j.type === 'ceo.heartbeat')!;
       const teamPlans = jobs.filter((j) => j.type === 'team.plan');
       expect(teamPlans.every((j) => j.status === 'done')).toBe(true);
-      // Expanded jobs are direct children of the heartbeat, like team.plan/critic.premortem/company.plan, but a
+      // Expanded jobs are direct children of the heartbeat, like team.plan/board.premortem/company.plan, but a
       // different type — the lead's own scheduler.request jobs (e.g. engineer.ship from a team.plan) are parented
       // to that team.plan job instead, so this filter only catches the process expansion.
-      const expanded = jobs.filter((j) => j.parent === hb.id && !['company.plan', 'critic.premortem', 'team.plan'].includes(j.type));
+      const expanded = jobs.filter((j) => j.parent === hb.id && !['company.plan', 'board.premortem', 'team.plan'].includes(j.type));
       expect(expanded.length).toBeGreaterThan(0);
       expect(expanded.some((j) => !['done', 'failed', 'cancelled'].includes(j.status))).toBe(true);
     } finally { v.close(); await d.stop(); }
@@ -173,10 +183,10 @@ describe('brief notes a recent org migration (F10)', () => {
   });
 });
 
-describe('critic pre-mortems are validated decision notes (D7)', () => {
+describe('board pre-mortems are validated decision notes (D7)', () => {
   const SECTIONS = ['## Context', '## Options considered', '## Chosen', '## Why', '## Expected effect', '## Review date'];
 
-  it('a passing pre-mortem is an adopted decision note, and the Critic is no longer asked to write one itself', async () => {
+  it('a passing pre-mortem is an adopted decision note, and the board is not asked to write one itself', async () => {
     const d = daemonFor(orgLlm({ vetoes: 0 }));
     await d.start();
     const v = Vault.open(dir);
@@ -188,14 +198,15 @@ describe('critic pre-mortems are validated decision notes (D7)', () => {
       const note = v.readNoteOrNull(rel)!;
       const fm = DecisionFrontmatter.parse(note.data);
       expect(fm.id).toBe(`premortem-${hb.id}`);
-      expect(fm.decided_by).toBe('advisor_skeptic');
+      expect(fm.decided_by).toBe('advisor_skeptic');   // the board lead signs the joint verdict
       expect(fm.cycle).toBe(hb.id);
       expect(fm.status).toBe('adopted');
       expect(fm.inputs).toEqual(['[[Plans/plan]]']);
       for (const h of SECTIONS) expect(note.body).toContain(h);
       expect(listDecisions(v).map((x) => x.path)).toContain(rel);
-      const critic = listJobs(v).find((j) => j.type === 'critic.premortem')!;
-      expect(readJob(v, critic.id)!.body).not.toContain('Decisions/');
+      const board = listJobs(v).find((j) => j.type === 'board.premortem')!;
+      expect(readJob(v, board.id)!.body).toContain('### The Skeptic');
+      expect(readJob(v, board.id)!.body).not.toContain('Decisions/');
     } finally { v.close(); await d.stop(); }
   });
 
