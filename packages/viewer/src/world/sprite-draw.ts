@@ -3,7 +3,7 @@
  * Bodies are outlined in their own darkest colour; faces have no outline. Light from the top-left as for tiles.
  */
 import { px, hline, vline, type Px } from './tiles-draw.js';
-import { shade, hashOf, PALETTE, type RolePalette, type Family } from './palette.js';
+import { hashOf, hexToHsl, hsl, PALETTE, type RolePalette, type Family } from './palette.js';
 import { FRAMES } from './frames.js';
 import type { Mood } from '../state.js';
 
@@ -13,6 +13,9 @@ export interface SpriteOpts { headset: boolean; hairShape: 0 | 1 | 2 | 3; hoodie
 
 export function spriteOpts(role: string, team?: string): SpriteOpts { const h = hashOf(role); return { headset: team === 'sales', hairShape: ((h >>> 4) % 4) as 0 | 1 | 2 | 3, hoodie: ((h >>> 2) & 1) === 1 }; }
 export const offset = (p: Px, ox: number, oy: number): Px => ({ fill: (x, y, w, h, c) => p.fill(ox + x, oy + y, w, h, c) });
+
+/** The darkest shade of `hex`, floored so a sprite outline never renders pure black (binding rule: own darkest colour, never black). */
+function outlineOf(hex: string): string { const c = hexToHsl(hex); return hsl(c.h, c.s, Math.max(0.06, c.l - 0.2)); }
 
 /** A rect with a 1 px outline, clipped to the frame so the outline never leaves the cell. */
 function outlined(p: Px, x: number, y: number, w: number, h: number, c: string, o: string): void {
@@ -47,11 +50,11 @@ function torso(p: Px, b: Body, dy = 0): void {
   if (b.family === 'manager') { px(p, 2, y + 4, skin, 1, 2); px(p, 13, y + 4, skin, 1, 2); }   // rolled sleeves
 }
 
-function arms(p: Px, b: Body, step: number, dir: Dir): void {
+function arms(p: Px, b: Body, step: number, dir: Dir, dy = 0): void {
   const { skin } = b.pal;
   const l = step === 1 ? 1 : 2, r = step === 3 ? 14 : 13;
-  if (dir !== 2) p.fill(l, 11, 1, 5, skin);
-  if (dir !== 1) p.fill(r, 11, 1, 5, skin);
+  if (dir !== 2) p.fill(l, 11 + dy, 1, 5, skin);
+  if (dir !== 1) p.fill(r, 11 + dy, 1, 5, skin);
 }
 function legs(p: Px, b: Body, step: number): void {
   const t = b.pal.trousers;
@@ -63,11 +66,11 @@ const cup = (p: Px, x: number, y: number): void => { p.fill(x, y, 3, 3, '#f5f5f0
 
 /** One named frame at (0,0) of `p`. Unknown names draw `idle:0`. */
 export function drawSpriteFrame(p: Px, name: string, pal: RolePalette, family: Family, opts: SpriteOpts): void {
-  const b: Body = { pal, family, opts, o: shade(pal.shirtDark, -0.2) };
+  const b: Body = { pal, family, opts, o: outlineOf(pal.shirtDark) };
   const dy = family === 'advisor' ? 1 : 0;
   const [kind, a, s] = name.split(':');
-  if (kind === 'walk') { const dir = Number(a) as Dir, step = Number(s); head(p, b, dir, dy); torso(p, b); arms(p, b, step, dir); legs(p, b, step); return; }
-  if (kind === 'idle') { const dir = Number(a) as Dir; head(p, b, dir, dy); torso(p, b); arms(p, b, 0, dir); legs(p, b, 0); return; }
+  if (kind === 'walk') { const dir = Number(a) as Dir, step = Number(s); head(p, b, dir, dy); torso(p, b, dy); arms(p, b, step, dir, dy); legs(p, b, step); return; }
+  if (kind === 'idle') { const dir = Number(a) as Dir; head(p, b, dir, dy); torso(p, b, dy); arms(p, b, 0, dir, dy); legs(p, b, 0); return; }
   const { skin } = pal;
   switch (a) {
     case 'seated': seatedBase(p, b); p.fill(2, 15, 4, 2, skin); p.fill(10, 15, 4, 2, skin); return;
@@ -75,13 +78,13 @@ export function drawSpriteFrame(p: Px, name: string, pal: RolePalette, family: F
     case 'typing_b': seatedBase(p, b); p.fill(2, 14, 4, 2, skin); p.fill(10, 15, 4, 2, skin); return;
     case 'read': seatedBase(p, b); p.fill(5, 12, 6, 5, '#f5f5f0'); hline(p, 6, 13, 4, '#8d93a5'); hline(p, 6, 15, 3, '#8d93a5'); p.fill(3, 14, 2, 2, skin); p.fill(11, 14, 2, 2, skin); return;
     case 'phone': seatedBase(p, b); p.fill(2, 15, 4, 2, skin); p.fill(11, 6, 2, 4, skin); p.fill(12, 4, 2, 5, '#23262e'); return;
-    case 'coffee': head(p, b, 0, dy); torso(p, b); p.fill(3, 11, 1, 5, skin); p.fill(12, 11, 1, 3, skin); cup(p, 11, 9); legs(p, b, 0); return;
-    case 'wave': head(p, b, 0, dy); torso(p, b); p.fill(3, 11, 1, 5, skin); p.fill(13, 6, 1, 6, skin); p.fill(12, 5, 3, 1, skin); legs(p, b, 0); return;
-    case 'stretch': head(p, b, 0, dy); torso(p, b); p.fill(2, 4, 1, 7, skin); p.fill(13, 4, 1, 7, skin); legs(p, b, 0); return;
-    case 'ride': head(p, b, 0, dy); torso(p, b); p.fill(2, 11, 1, 5, skin); p.fill(13, 11, 1, 4, skin); px(p, 13, 15, PALETTE.steelLight); legs(p, b, 1); return;
-    case 'sit_side_l': head(p, b, 1, dy); torso(p, b); p.fill(3, 12, 1, 4, skin); outlined(p, 1, 18, 8, 3, pal.trousers, b.o); outlined(p, 1, 20, 3, 3, pal.trousers, b.o); return;
-    case 'sit_side_r': head(p, b, 2, dy); torso(p, b); p.fill(12, 12, 1, 4, skin); outlined(p, 7, 18, 8, 3, pal.trousers, b.o); outlined(p, 12, 20, 3, 3, pal.trousers, b.o); return;
-    default: head(p, b, 0, dy); torso(p, b); arms(p, b, 0, 0); legs(p, b, 0);
+    case 'coffee': head(p, b, 0, dy); torso(p, b, dy); p.fill(3, 11 + dy, 1, 5, skin); p.fill(12, 11 + dy, 1, 3, skin); cup(p, 11, 9 + dy); legs(p, b, 0); return;
+    case 'wave': head(p, b, 0, dy); torso(p, b, dy); p.fill(3, 11 + dy, 1, 5, skin); p.fill(13, 6 + dy, 1, 6, skin); p.fill(12, 5 + dy, 3, 1, skin); legs(p, b, 0); return;
+    case 'stretch': head(p, b, 0, dy); torso(p, b, dy); p.fill(2, 4 + dy, 1, 7, skin); p.fill(13, 4 + dy, 1, 7, skin); legs(p, b, 0); return;
+    case 'ride': head(p, b, 0, dy); torso(p, b, dy); p.fill(2, 11 + dy, 1, 5, skin); p.fill(13, 11 + dy, 1, 4, skin); px(p, 13, 15 + dy, PALETTE.steelLight); legs(p, b, 1); return;
+    case 'sit_side_l': head(p, b, 1, dy); torso(p, b, dy); p.fill(3, 12 + dy, 1, 4, skin); outlined(p, 1, 18, 8, 3, pal.trousers, b.o); outlined(p, 1, 20, 3, 3, pal.trousers, b.o); return;
+    case 'sit_side_r': head(p, b, 2, dy); torso(p, b, dy); p.fill(12, 12 + dy, 1, 4, skin); outlined(p, 7, 18, 8, 3, pal.trousers, b.o); outlined(p, 12, 20, 3, 3, pal.trousers, b.o); return;
+    default: head(p, b, 0, dy); torso(p, b, dy); arms(p, b, 0, 0, dy); legs(p, b, 0);
   }
 }
 
