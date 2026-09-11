@@ -40,6 +40,7 @@ describe('tile table (visual layer)', () => {
 describe('drawers', () => {
   it('paint at least one pixel and never leave the 16×16 cell', () => {
     for (const n of names) {
+      if (n === 'SKY') continue; // SKY paints nothing on purpose: the scene's gradient Image shows through it
       const p = new RecordingPx();
       DRAW[n](p, palFor(n));
       expect(p.count, n).toBeGreaterThan(0);

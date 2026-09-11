@@ -71,7 +71,10 @@ export const DRAW: Record<Exclude<TileName, 'EMPTY'>, Drawer> = {
   BENCH: (p) => { full(p, P.pavement); p.fill(1, 6, 14, 4, '#7a4f25'); p.fill(2, 10, 2, 4, '#5a3a1a'); p.fill(12, 10, 2, 4, '#5a3a1a'); },
   SIGN: (p) => { full(p, '#4f8a3b'); p.fill(7, 6, 2, 10, '#6b4423'); p.fill(2, 2, 12, 6, '#f2d16b'); hline(p, 3, 3, 10, '#2b2f3a'); hline(p, 3, 5, 7, '#2b2f3a'); },
   // --- plan 1's minimum set (19–27), drawn with the tower materials ---
-  SKY: (p) => { full(p, P.sky.day[0]); },
+  // Paints nothing: the sky is the scene's own gradient Image (world/tileset.ts makeSky), drawn behind the map at
+  // depth -1. A SKY ground tile only needs to be transparent so that image shows through above the roof and
+  // beside the tower; the id still exists for walkability (BLOCKED_GROUND) and the map generator's default fill.
+  SKY: () => {},
   CARPET_BLUE: (p) => carpet(p, floorPalette(2)),
   CARPET_GREEN: (p) => carpet(p, floorPalette(3)),
   CARPET_ORANGE: (p) => carpet(p, floorPalette(4)),
