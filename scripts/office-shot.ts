@@ -54,7 +54,7 @@ page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') 
 page.on('pageerror', (e) => console.log('[page exception]', String(e).slice(0, 200)));
 
 type Tile = { tx: number; ty: number };
-type Agent = { role: string; state: string; seat: unknown; tile: Tile };
+type Agent = { role: string; state: string; seat: Tile | null; tile: Tile };
 type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }> }; agents: () => Agent[]; floor: (n: number) => void; currentFloor: () => number; elevator: () => unknown; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void } };
 /** Run `fn` inside the page against `window.__cubicle`. `fn` crosses over as source text, so it can close over
  *  nothing from this script: whatever it needs (a floor number, an hour) is passed as `arg` and arrives as its
@@ -224,7 +224,16 @@ try {
   ev.emit({ type: 'meeting.opened', agent: 'ceo', job: null, payload: { id: 'm1', room: 'board', participants: board, agenda: 'Two jobs failed' } });
   // Wait for the four to actually take their chairs, not for a guessed 4.5 s: how long the walk to the table takes
   // depends on the machine, and a fixed wait either shoots an empty table on a slow box or idles on a fast one.
-  if (!(await waitForAgents((ags) => board.every((r) => ags.find((a) => a.role === r)?.seat != null), 25000))) fail('08: the board never took their seats within 25 s');
+  //
+  // Seated, not "has been given a seat". A seat is assigned the moment the meeting opens, so waiting on `seat`
+  // alone released the shutter while people were still walking — and the CEO, whose office is at the far end of
+  // F1, was at column 9 heading for column 35 when the picture was taken. Three advisors and an empty chair, in
+  // the scene that is meant to show the board, and the one scene that can show the CEO's own ring (R-M1).
+  // On the seat tile, not merely `state !== 'walking'`: the reducer keeps a meeting's participants in `walking`
+  // until the meeting turns start, so that test never came true and the wait timed out on a table that was full.
+  const seated = (a: Agent | undefined): boolean => !!a && a.seat != null && a.tile.tx === a.seat.tx && a.tile.ty === a.seat.ty;
+  if (!(await waitForAgents((ags) => board.every((r) => seated(ags.find((a) => a.role === r))), 30000))) fail('08: the board never took their seats within 30 s');
+  console.log(`board: ${JSON.stringify(await cub((c, rs: string[]) => c.agents().filter((a) => rs.includes(a.role)).map((a) => ({ r: a.role, s: a.state, t: a.tile, seat: a.seat })), board))}`);
   await gotoFloor(1, '08');
   await page.waitForTimeout(800);
   // The checklist asks this shot for the owner's "You" label, the advisors' glasses and crisp text at zoom 3, and a
