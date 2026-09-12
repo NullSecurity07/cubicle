@@ -111,10 +111,12 @@ for (const def of [
     headline: (s) => {
       const m = s.money;
       if (!m) { const list = s.quota.filter((q) => q.limits.rpd > 0).slice(0, 7); const total = callsToday(s); return { head: `${total} calls today`, short: String(total), lines: list.length ? list.map((q) => cut(q.model, 16)) : ['Set rpm/rpd in providers.yaml'] }; }
+      // Clipped like every other surface's: the wall is an in-world chart, not a text field. `USD 1234567.89` is
+      // 14 characters before a long currency code, and the fallback branch above has always truncated.
       return {
-        head: m.cash,
-        short: m.cash,
-        lines: [`Burn ${m.burn} a day`, `Runway ${m.runway}`, ...(m.dormant ? ['Dormant — add capital'] : [])].slice(0, 3),
+        head: cut(m.cash, 16),
+        short: cut(m.cash, 16),
+        lines: [`Burn ${m.burn} a day`, `Runway ${m.runway}`, ...(m.dormant ? ['Dormant — add capital'] : [])].slice(0, 3).map((l) => cut(l, 48)),
         badge: m.dormant ? 'STOPPED' : undefined,
       };
     },

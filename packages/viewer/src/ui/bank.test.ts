@@ -93,5 +93,17 @@ describe('the bank screen (spec §6)', () => {
     expect(SURFACES.bank.headline(withMoney(funded)).head).toBe('USD 250.00');
     expect(SURFACES.bank.headline(withMoney(funded)).lines.join(' ')).toContain('25 days');
     expect(SURFACES.bank.headline(withMoney(null)).head).toContain('calls today');
+    expect(SURFACES.bank.headline(withMoney({ ...funded, dormant: true })).badge).toBe('STOPPED');
+  });
+
+  it('clips the wall headline, because it is a chart in a room and not a text field (M12)', () => {
+    // A big book, or a currency code the shipped list does not carry: 14 characters before anything unusual.
+    const rich = { ...funded, cash: 'USD 1234567.89', burn: 'USD 1234567.89', runway: '1234567 days' };
+    const h = SURFACES.bank.headline(withMoney(rich));
+    expect(h.head.length).toBeLessThanOrEqual(16);
+    expect(h.short.length).toBeLessThanOrEqual(16);
+    for (const l of h.lines) expect(l.length).toBeLessThanOrEqual(48);
+    // Still a figure, not an ellipsis on its own.
+    expect(h.head).toContain('USD');
   });
 });
