@@ -44,9 +44,18 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
         // pressure test rather than to imagine a lost quarter. `ideaVerdict` drives both outcomes — a pass
         // leaves the score's recommendation standing, a return parks the card — and the chair answers in the
         // words `readPressureVerdict` accepts, rubric line and all, so a scripted run exercises the real parse.
+        // The five parts in full, not just the two machine lines and the flaws: the chair's whole answer is kept
+        // now (ruling H3), so the scripted chair has to write the whole answer for a scripted run to exercise it.
+        const fiveParts = (assumption: string, flaw: string, validation: string, verdict: string): string => [
+          '## Core Assumption', assumption, '',
+          '## Three Fatal Flaws', `- ${flaw}`, '',
+          '## Problem Validation', validation, '',
+          '## Founder-Market Fit', 'The owner ran a nursery kitchen for six years.', '',
+          '## Brutal Verdict', verdict,
+        ].join('\n');
         const ideaMerge = opts.ideaVerdict === 'return'
-          ? 'VERDICT: PIVOT REQUIRED\nRUBRIC: core assumption 1, fatal flaws 1, pain 1, founder fit 1, why now 1\n\n## Three Fatal Flaws\n- nobody has priced delivery\n\nWEDGE: the one nursery chain that already orders together'
-          : 'VERDICT: STRONG\nRUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1\n\n## Three Fatal Flaws\n- watch the free tier';
+          ? `VERDICT: PIVOT REQUIRED\nRUBRIC: core assumption 1, fatal flaws 1, pain 1, founder fit 1, why now 1\nWEDGE: the one nursery chain that already orders together\n\n${fiveParts('Nurseries buy food centrally, not per site.', 'nobody has priced delivery', 'A vitamin at the single site: the cook already shops on the way in.', 'Attack the chain, not the site.')}`
+          : `VERDICT: STRONG\nRUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1\n\n${fiveParts('Nurseries will pay 40 a week to stop planning meals.', 'watch the free tier', 'A painkiller: they already pay a caterer every term.', 'Build the cheap test this week.')}`;
         // The chair's one re-ask (SP5b). It repeats the whole format the first ask gave, so it matches the idea
         // chair's own discriminator too and must be tested FIRST; "That answer was not usable" is the phrase
         // only it carries. `hedge-then-silence` throws the way `askAs`'s catch sees a model that has gone away.

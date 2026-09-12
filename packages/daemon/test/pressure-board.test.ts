@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { advisorPrompt, chairPrompt, chairReaskPrompt, mergeBoardVerdict, boardSubject, ideaVerdictBody } from '../src/heartbeat.js';
-import { PRESSURE_UNANSWERED, BANNED_HEDGE, PRESSURE_HANDBOOK_PATH, PRESSURE_NO_FLAWS, renderBoardSection } from '@cubicle/core';
+import { advisorPrompt, chairPrompt, chairReaskPrompt, mergeBoardVerdict, unansweredMerge, boardSubject, ideaVerdictBody, cardBoardFindings, cardBoardChair } from '../src/heartbeat.js';
+import { PRESSURE_UNANSWERED, BANNED_HEDGE, PRESSURE_HANDBOOK_PATH, PRESSURE_NO_FLAWS, renderBoardSection, chairAnswerText, PRESSURE_CHAIR_CHARS } from '@cubicle/core';
 
 const PLAN_TEXT = '# Plan\n\n## Objectives\n\n### dev\n- ship the first cut\n';
 const IDEA = { kind: 'idea' as const, text: '# Meal kits\n\n## Score\n\n46 of 60', title: 'Meal kits for nurseries', slug: 'meal-kits' };
@@ -121,11 +121,78 @@ describe('the idea session takes the five-part shape and order (spec §2)', () =
     expect(ideaVerdictBody(facts)).not.toContain('Pressure test');
   });
 
-  it('two refusals return the idea, in the words the board records', () => {
-    // The wording matters because it is what the owner reads on the card and in the verdict note; the daemon
-    // path that reaches it — a chair refused twice running — is exercised in `idea-board.test.ts`.
-    expect(PRESSURE_UNANSWERED).toMatch(/twice running/);
-    expect(PRESSURE_UNANSWERED).toMatch(/returned unjudged/);
-    expect(mergeBoardVerdict('VERDICT: MAYBE', 'idea').verdict).toBe('return');
+  it('the chair\'s five parts are kept whole, on the card and in the owner\'s note (ruling H3)', () => {
+    // The owner's prompt ends "Output: Core Assumption → Three Fatal Flaws → Problem Validation →
+    // Founder-Market Fit → Brutal Verdict". Three of those five used to be computed, paid for out of the
+    // chair's one call, and dropped: only the verdict word, the rubric and the flaw bullets survived.
+    const chair = [
+      'VERDICT: STRONG',
+      'RUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1',
+      '',
+      '## Core Assumption',
+      'Nurseries will pay 40 a week to stop planning meals.',
+      '',
+      '## Three Fatal Flaws',
+      '- the caterer holds the contract',
+      '',
+      '## Problem Validation',
+      'A painkiller: they already pay a caterer every term.',
+      '',
+      '## Founder-Market Fit',
+      'The owner ran a nursery kitchen for six years.',
+    ].join('\n');
+    const section = renderBoardSection({
+      verdict: 'pass', advisors: 3, date: '2026-09-12', decision: '', findings: ['the caterer holds the contract'],
+      pressure: 'STRONG', rubric: null, chair,
+    });
+    for (const part of ['Core Assumption', 'Problem Validation', 'Founder-Market Fit']) expect(section, part).toContain(part);
+    // Demoted, because the card's eight `## ` sections are fixed (spec §7) and this lives inside one of them.
+    expect(section).toContain('#### Core Assumption');
+    expect(section).not.toMatch(/^## Core Assumption$/m);
+
+    // The findings the verdict note is rebuilt from are still the rendered bullets, not every bullet the chair
+    // wrote underneath: the sub-heading is where `cardBoardFindings` stops.
+    const card = `## The board\n\n${section}\n\n## Score\n\n- not a finding\n`;
+    expect(cardBoardFindings(card)).toEqual(['the caterer holds the contract']);
+    expect(cardBoardChair(card)).toContain('A painkiller: they already pay a caterer every term.');
+    expect(cardBoardChair(card)).not.toContain('## Score');
+    expect(cardBoardChair('## The board\n\n**Passed** — 3 advisors, 2026-09-12.\n\n- nothing\n')).toBe('');
+
+    // And what the card carries is what the owner is asked to rule on.
+    const body = ideaVerdictBody({
+      slug: 'meal-kits', title: 'Meal kits for nurseries', score: 46, band: 'keep', reason: '46/60 → keep.',
+      board: 'pass', findings: ['the caterer holds the contract'], research: '', estimate: '', decidesAfterHours: 0,
+      pressure: 'STRONG', rubric: null, chair: cardBoardChair(card),
+    });
+    expect(body).toContain('#### Founder-Market Fit');
+    expect(body).toContain('The owner ran a nursery kitchen for six years.');
+    expect(body).toContain('Set `approved: true`');
+  });
+
+  it('a runaway chair is cut rather than dropped, and a silent one adds nothing', () => {
+    expect(chairAnswerText('')).toBe('');
+    expect(chairAnswerText('   \n  ')).toBe('');
+    const long = chairAnswerText('## Core Assumption\n' + 'x'.repeat(PRESSURE_CHAIR_CHARS * 2));
+    expect(long.length).toBeLessThanOrEqual(PRESSURE_CHAIR_CHARS + 1);
+    expect(long.endsWith('…')).toBe(true);
+    // A board that raised nothing reads exactly as it did before the chair's text was kept.
+    expect(renderBoardSection({ verdict: 'pass', advisors: 3, date: '2026-09-12', decision: '', findings: [], pressure: 'STRONG' }))
+      .toBe('**Passed** — 3 advisors, 2026-09-12.\n\n**Pressure test:** STRONG.\n\n- Nothing they thought would sink it.');
+  });
+
+  it('two refusals return the idea, with the refusal first and the chair\'s own words after it', () => {
+    // `unansweredMerge` is the whole of Decision 7 — an idea nobody would judge is parked, not passed — and
+    // this is the only test that calls it directly; the daemon path that reaches it, a chair refused twice
+    // running, is driven end to end in `idea-board.test.ts`.
+    const second = mergeBoardVerdict('VERDICT: MAYBE', 'idea');
+    expect(second.refused).toBeTruthy();
+    const out = unansweredMerge(second);
+    expect(out.verdict).toBe('return');
+    expect(out.findings[0]).toBe(PRESSURE_UNANSWERED);
+    expect(out.findings[1]).toContain('MAYBE');
+    expect(out.pressure).toBeNull();
+    // Never more than the four findings the board is allowed, however much the second answer said.
+    const many = unansweredMerge({ verdict: 'return', findings: ['a', 'b', 'c', 'd'], pressure: null, rubric: null, refused: 'x' });
+    expect(many.findings).toEqual([PRESSURE_UNANSWERED, 'a', 'b', 'c']);
   });
 });

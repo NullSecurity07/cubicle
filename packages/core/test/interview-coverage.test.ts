@@ -196,7 +196,22 @@ describe('the founder brief takes the test once (spec §4)', () => {
     expect(FOUNDER_BRIEF_SECTIONS_V1).toHaveLength(7);
     for (const h of FOUNDER_BRIEF_SECTIONS_V1) expect(FOUNDER_BRIEF_SECTIONS).toContain(h);
     expect(FOUNDER_BRIEF_SECTIONS[7]).toBe(PRESSURE_TEST_SECTION);
-    expect(missingBriefSections(TEMPLATE)).toEqual([]);
+    // Every heading is there; the eighth is the one that also has to be answered (ruling H5).
+    expect(missingBriefSections(TEMPLATE)).toEqual([PRESSURE_TEST_SECTION]);
+    expect(missingBriefSections(TEMPLATE.replace(briefSectionBody(TEMPLATE, PRESSURE_TEST_SECTION), 'Core Assumption: nurseries buy food centrally. Brutal Verdict: WEAK — the county holds the contract.'))).toEqual([]);
+  });
+
+  it('the eighth section counts only when it is written (I3, ruling H5)', () => {
+    const seven = FOUNDER_BRIEF_SECTIONS_V1.map((h) => `${h}\n\nsomething real here\n`).join('\n');
+    // The heading alone, the heading with nothing under it, and the heading with the template's own prompt
+    // text under it are the same thing: a brief that has not taken the test. All three used to be adopted.
+    expect(missingBriefSections(`${seven}\n${PRESSURE_TEST_SECTION}\n`)).toEqual([PRESSURE_TEST_SECTION]);
+    expect(missingBriefSections(`${seven}\n${PRESSURE_TEST_SECTION}\n\nTBD.\n`)).toEqual([PRESSURE_TEST_SECTION]);
+    expect(missingBriefSections(`${seven}\n${PRESSURE_TEST_SECTION}\n\n${briefSectionBody(TEMPLATE, PRESSURE_TEST_SECTION)}\n`)).toEqual([PRESSURE_TEST_SECTION]);
+    // Written, in the owner's terms, is written.
+    expect(missingBriefSections(`${seven}\n${PRESSURE_TEST_SECTION}\n\nCore Assumption: nurseries buy food centrally. Brutal Verdict: WEAK — the county holds the contract.\n`)).toEqual([]);
+    // And a brief filed before the section existed is still excused, unwritten or not.
+    expect(missingBriefSections(`${seven}\n${PRESSURE_TEST_SECTION}\n`, '2026-01-01')).toEqual([]);
   });
 
   it('the template names the five parts, in the owner\'s order', () => {

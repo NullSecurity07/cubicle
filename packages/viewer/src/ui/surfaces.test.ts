@@ -4,6 +4,7 @@ import path from 'node:path';
 import { SURFACES, registerSurface, chartBars, headlineFor, viewFor } from './surfaces.js';
 import type { Ctx } from './content.js';
 import { emptyState } from '../state.js';
+import { boardOpened, boardClosed } from './board.js';
 
 /** Captured before the registration test adds one, so the two tests do not depend on their order. */
 const REGISTERED = Object.keys(SURFACES);
@@ -85,12 +86,15 @@ describe('the whiteboard panel is a panel, not the wall', () => {
 
   it('shows every flaw the board raised, even when the wall had room for two', () => {
     // `boardHeadline` spends one of its three lines on the verdict word; the panel writes that line itself and
-    // must not inherit the wall's budget, or the third flaw would silently fall off.
-    const findings = ['the payer is not the user', 'no van before 7am', 'the margin is 4%'];
-    const s = { ...emptyState(), now, plan: '# Plan', board: { id: 'm1', subject: 'idea' as const, title: 'Meal kits', verdict: 'return' as const, findings, pressure: 'PIVOT REQUIRED', rubric: '7/10', at } };
+    // must not inherit the wall's budget, or the third flaw would silently fall off. A `PIVOT REQUIRED` spends
+    // finding 0 on the wedge, so all four the board may raise have to survive `boardClosed` to get here.
+    const findings = ['Pivot required. The wedge to attack instead: the 40-site chain', 'the payer is not the user', 'no van before 7am', 'the margin is 4%'];
+    const closed = boardClosed(boardOpened({ room: 'board', id: 'm1', subject: 'idea', title: 'Meal kits' }, at)!, { id: 'm1', room: 'board', verdict: 'return', findings, pressure: 'PIVOT REQUIRED', rubric: '7/10 — core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1' }, at)!;
+    const s = { ...emptyState(), now, plan: '# Plan', board: closed };
     const html = SURFACES.whiteboard.view(s, ctx).html;
     for (const f of findings) expect(html, f).toContain(`<li>${f}</li>`);
-    expect(html).toContain('Pressure test: PIVOT REQUIRED · rubric 7/10');
+    // The panel is where the five dimensions are read; the wall shows the total alone (ruling H6).
+    expect(html).toContain('Pressure test: PIVOT REQUIRED · rubric 7/10 — core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1');
   });
 
   it('shows a flaw in full, where the wall clips it to forty characters', () => {

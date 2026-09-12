@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, loadOrg, listJobs, listInbox, readJob, updateJob, readIdea, writeIdeaCard, updateIdea, listDecisions, DecisionFrontmatter, createProposal, PRESSURE_UNANSWERED } from '@cubicle/core';
-import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_STEPS, NON_WORK_TYPES, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob, runBoardSession } from '../src/index.js';
+import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_STEPS, NON_WORK_TYPES, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob, runBoardSession, chairPrompt, CHAIR_IDEA_TOKENS, BOARD_JOB_CHAIR_SECTION } from '../src/index.js';
 import { estimateJobId, researchJobId } from '../src/discovery.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide } from './helpers/board-switch.js';
@@ -363,6 +363,25 @@ describe('the board pressure-tests an idea, on a budget (spec §2, §3)', () => 
     expect(card.body).toContain('**Pressure test:** STRONG. Rubric 7/10 —');
     const note = listInbox(vault).find((n) => n.data.kind === 'idea_verdict')!;
     expect(note.body).toContain('- Pressure test: STRONG · rubric 7/10 —');
+
+    // And the three parts of the owner's output shape that no bullet can carry reach the owner (ruling H3):
+    // on the card, in the note they rule on, and in the decision note that outlives both.
+    for (const text of [card.body, note.body, vault.readText(card.data.board_decision)]) {
+      expect(text).toContain('#### Core Assumption');
+      expect(text).toContain('#### Problem Validation');
+      expect(text).toContain('#### Founder-Market Fit');
+      expect(text).toContain('A painkiller: they already pay a caterer every term.');
+    }
+    // Demoted on the way in, so the card still has exactly its eight `## ` sections (spec §7).
+    expect(card.body.match(/^## /gm)).toHaveLength(8);
+
+    // And the board's own job note carries both halves: the three advisors' notes, and the merge they were
+    // hired for. It is the one place an owner goes to read what the board actually said.
+    const job = readJob(vault, listJobs(vault).find((j) => j.type === 'board.session')!.id)!;
+    expect(job.body).toContain('## Advisors');
+    expect(job.body).toContain(BOARD_JOB_CHAIR_SECTION);
+    expect(job.body).toContain('#### Founder-Market Fit');
+    expect(job.body).toContain('A painkiller: they already pay a caterer every term.');
   }, 30000);
 
   it('a pivot returns the card and leads the owner with the wedge', async () => {
@@ -405,6 +424,28 @@ describe('the board pressure-tests an idea, on a budget (spec §2, §3)', () => 
     expect(stubborn.verdict).toBe('return');
     expect(stubborn.findings[0]).toBe(PRESSURE_UNANSWERED);
     expect(stubborn.chairLost).toBeNull();
+  }, 30000);
+
+  it('the idea chair is given room for the whole shape, and the plan chair is not touched (ruling H4)', async () => {
+    const org = loadOrg(vault);
+    const caps: number[] = [];
+    const llm = {
+      chat: async (_r: unknown, chat: { messages: { content: string }[]; maxTokens?: number }) => {
+        if (/Merge them into ONE verdict/.test(String(chat.messages[1]?.content ?? ''))) caps.push(chat.maxTokens ?? 0);
+        return { content: 'VERDICT: STRONG\nRUBRIC: core assumption 2, fatal flaws 2, pain 2, founder fit 2, why now 2', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] };
+      },
+      promptBudget: () => 6000,
+    };
+    await runBoardSession({ vault, llm: llm as never }, org, { kind: 'idea', text: '# Meal kits', title: 'Meal kits', slug: 'meal-kits' });
+    await runBoardSession({ vault, llm: llm as never }, org, '# Plan\n\n- ship it');
+    // The idea chair is asked for three machine lines and five headed parts; the plan chair for one line and
+    // four bullets, in the 600 it has always had. One extra call is never bought by the bigger answer.
+    expect(caps).toEqual([CHAIR_IDEA_TOKENS, 600]);
+
+    // And the wedge is asked for before the five parts, so the end of a long answer is never where it sits.
+    const format = chairPrompt({ kind: 'idea', text: '# Meal kits', title: 'Meal kits', slug: 'meal-kits' }, 't');
+    expect(format.indexOf('WEDGE:')).toBeLessThan(format.indexOf('## Core Assumption'));
+    expect(format.indexOf('RUBRIC:')).toBeLessThan(format.indexOf('WEDGE:'));
   }, 30000);
 
   // The three ways a re-asked chair can end, driven through the scripted org model so the whole step — card,

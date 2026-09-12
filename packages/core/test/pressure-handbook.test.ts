@@ -52,6 +52,15 @@ describe('Docs/pressure-test-handbook.md (spec §1)', () => {
     expect(md).toContain('/10');
   });
 
+  it('keeps the notes\' one signal about how many founders there are (minor 5)', () => {
+    // `startup-evaluation-notes.md` §founder-market fit: "Solo founders are a yellow flag (not red). Two
+    // founders who've worked together before is the strongest signal." It is actionable, it is about
+    // founder-market fit, and it is not a diagram, a worked example or a reading-list entry, so §7 does not
+    // excuse it.
+    expect(md).toMatch(/solo founder is a yellow flag/i);
+    expect(md).toMatch(/worked together before/i);
+  });
+
   it('names only paths and tools that exist', () => {
     for (const p of ['Ideas/<slug>.md', 'Memory/founder-brief.md', 'Docs/ideas-handbook.md']) expect(md, p).toContain(p);
     expect(md).not.toMatch(/pressure\.test|idea\.pressure|board\.evaluate/);   // tools that do not exist
@@ -101,6 +110,12 @@ describe('the three advisors take the evaluator\'s three stances (spec §1)', ()
       expect((data(r).permissions as string[]).slice().sort(), r).toEqual(['review', 'veto']);
       expect(data(r).desk, r).toBe(r);
     }
+    // The title said "tools" and never checked them (minor 6). SP5b changed `# Standing rules` and nothing
+    // else on these three notes, so the lists are pinned here rather than asserted to be merely non-empty.
+    const base = ['vault.read', 'vault.search', 'vault.list', 'vault.write', 'http.fetch', 'colleague.message', 'skills.load', 'skills.search', 'finish'];
+    expect(data('advisor_skeptic').tools).toEqual(base);
+    expect(data('advisor_customer').tools).toEqual(base);
+    expect(data('advisor_investor').tools).toEqual(['vault.read', 'vault.search', 'vault.list', 'vault.write', 'http.fetch', 'analytics.pull', 'colleague.message', 'skills.load', 'skills.search', 'finish']);
   });
 });
 

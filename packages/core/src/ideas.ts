@@ -4,7 +4,7 @@ import { Timestamp } from './schemas.js';
 import { stringifyNote } from './frontmatter.js';
 import { setSection } from './jobs.js';
 import { nowIso } from './fs.js';
-import { renderRubric, BoardRubric } from './pressure.js';
+import { renderRubric, BoardRubric, chairAnswerText, PRESSURE_CHAIR_SECTION } from './pressure.js';
 
 /**
  * The idea dossier: something the company *could* do, with everything anyone needs to rule on it in one note.
@@ -371,6 +371,8 @@ export interface BoardSectionFacts {
   findings: string[];
   pressure?: string | null;
   rubric?: BoardRubric | null;
+  /** The chair's merged five-part answer, kept whole under its own sub-heading (ruling H3). */
+  chair?: string;
 }
 
 /**
@@ -380,10 +382,14 @@ export interface BoardSectionFacts {
  *
  * With no pressure test to report it is byte-identical to what the step wrote before SP5b, but for a trailing
  * space after the date when no decision note was written.
+ *
+ * The chair's own answer goes last, under `PRESSURE_CHAIR_SECTION`, so the findings above it stay the bullets
+ * the card is read back for and the five parts stay whole underneath (ruling H3).
  */
 export function renderBoardSection(f: BoardSectionFacts): string {
   const head = `**${f.verdict === 'pass' ? 'Passed' : 'Returned'}** — ${f.advisors} advisors, ${f.date}.${f.decision ? ` See [[${f.decision.replace(/\.md$/, '')}]].` : ''}`;
   const test = f.pressure ? `**Pressure test:** ${f.pressure}.${f.rubric ? ` Rubric ${renderRubric(f.rubric)}.` : ''}` : '';
   const findings = f.findings.map((x) => `- ${x}`).join('\n') || '- Nothing they thought would sink it.';
-  return [head, test, findings].filter(Boolean).join('\n\n');
+  const chair = f.chair?.trim() ? `${PRESSURE_CHAIR_SECTION}\n\n${chairAnswerText(f.chair)}` : '';
+  return [head, test, findings, chair].filter(Boolean).join('\n\n');
 }
