@@ -80,7 +80,10 @@ function legs(p: Px, b: Body, step: number): void {
  * be (visual QA R-I5). `x` is the left edge of the thigh; the knees face the way the sprite is turned.
  */
 function sitLegs(p: Px, b: Body, x: number): void {
-  const t = b.pal.trousers, shoe = outlineOf(t);
+  // A step lighter than the standing trousers. At 1 x a seated figure is 6 px of leg under a 1 px outline on every
+  // side, so at the family's own `#3b3a45` there was more outline than trouser and the lower half went back to
+  // reading as one dark block (visual QA R2-M2). Standing legs are 6 px tall and keep the darker value.
+  const c = hexToHsl(b.pal.trousers), t = hsl(c.h, c.s, Math.min(0.6, c.l + 0.10)), shoe = outlineOf(b.pal.trousers);
   outlined(p, x, 18, 8, 2, t, b.o);                 // thigh, along the seat
   // Three wide with two of outline between them, which is exactly the proportion `legs()` reads as two legs at
   // this size. Two-wide shins were tried first: a 1 px outline each side left more outline than trouser, and the

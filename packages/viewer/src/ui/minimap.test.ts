@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tickLayout, minimapPointToWorld, layoutKey, chromeVisibility, BUILDING_ROWS, FLOOR_ROWS } from './minimap.js';
+import { tickLayout, minimapPointToWorld, layoutKey, chromeVisibility, minimapWanted, BUILDING_ROWS, FLOOR_ROWS } from './minimap.js';
 
 describe('minimap chrome', () => {
   // The brief pinned 52 building rows and four 26 px ticks in a 104 px camera. The map says otherwise: BUILDING is
@@ -59,5 +59,25 @@ describe('which minimap control is on the screen', () => {
   });
   it('says nothing when the elevation hid it: it comes back by itself', () => {
     expect(chromeVisibility(false, true)).toEqual({ strip: false, showBtn: false });
+    expect(chromeVisibility(false, null)).toEqual({ strip: false, showBtn: false });
+  });
+});
+
+/**
+ * Visual QA R2-M4: at a room elevation the strip is a picture of a room laid over the room itself — it covered a
+ * third of the notice board in `08-board` and desk names in `11-terminal` and `14-sales`.
+ */
+describe('where the minimap belongs', () => {
+  it('is up at the floor elevation and nowhere else', () => {
+    expect(minimapWanted(1, 1)).toBe(true);
+    expect(minimapWanted(0.5, 1)).toBe(false);   // the tower fit: the same picture as the main view
+    expect(minimapWanted(2, 1)).toBe(false);
+    expect(minimapWanted(3, 1)).toBe(false);
+    expect(minimapWanted(4, 1)).toBe(false);
+  });
+  it('follows the floor elevation rather than a hard-coded zoom: a narrow window fits a floor at 2', () => {
+    expect(minimapWanted(2, 2)).toBe(true);
+    expect(minimapWanted(1, 2)).toBe(true);
+    expect(minimapWanted(3, 2)).toBe(false);
   });
 });

@@ -18,7 +18,8 @@ import { FirstRun } from './ui/firstrun.js';
 import { QuickOpen, quickItems } from './ui/quickopen.js';
 import { bindKeys, keysView } from './ui/keys.js';
 import { Rail, LOBBY_ROW } from './ui/rail.js';
-import { MinimapChrome } from './ui/minimap.js';
+import { MinimapChrome, minimapWanted } from './ui/minimap.js';
+import { floorZoom } from './world/camera.js';
 import { floorPalette } from './world/palette.js';
 import { DUR, EASE, dur } from './world/motion.js';
 
@@ -282,9 +283,10 @@ function loop(now: number): void {
   // The minimap camera moves with the window; the rail's lobby tab follows a drag inside F1, which fires no floor change.
   if (now - lastLayout > 500) {
     lastLayout = now;
-    // At the tower elevation the minimap is the same picture as the main view, with a viewport rectangle over all
-    // of it (visual QA R-M8); it comes back the moment the camera is on a floor.
-    minimap.setVisible(scene.cameras?.main ? scene.cameras.main.zoom >= 1 : true, true);
+    // The strip belongs at the floor elevation and nowhere else: below it the tower fit shows the same picture as
+    // the main view (visual QA R-M8), above it the strip covers the room it is a picture of (R2-M4).
+    const cam = scene.cameras?.main;
+    minimap.setVisible(cam ? minimapWanted(cam.zoom, floorZoom(window.innerWidth, window.innerHeight)) : true, true);
     minimap.layout();
     rail.update();
   }
