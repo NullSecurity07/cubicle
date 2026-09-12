@@ -18,7 +18,8 @@ import { FirstRun } from './ui/firstrun.js';
 import { QuickOpen, quickItems } from './ui/quickopen.js';
 import { bindKeys, keysView } from './ui/keys.js';
 import { Rail, LOBBY_ROW } from './ui/rail.js';
-import { MinimapChrome } from './ui/minimap.js';
+import { MinimapChrome, minimapWanted } from './ui/minimap.js';
+import { floorZoom } from './world/camera.js';
 import { floorPalette } from './world/palette.js';
 import { DUR, EASE, dur } from './world/motion.js';
 
@@ -259,7 +260,11 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
 (window as unknown as { __cubicle: unknown }).__cubicle = {
   get state() { return state; },
   agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), desks: () => scene.debugDesks(), stand: (name: string) => scene.debugStand(name), surfaces: () => debugSurfaces(), open,
-  zoom: (z: number) => scene.cameras.main.setZoom(z), center: (tx: number, ty: number) => scene.cameras.main.centerOn(tx * TILE, ty * TILE),
+  // Both drop the floor pin: they are the console driving the camera by hand, exactly like a drag or the wheel.
+  // Both hand the camera back — `test-overlay-clicks.ts` waits on `zoom(z).panEffect` — and both drop the floor
+  // pin: they are the console driving the camera by hand, exactly like a drag or the wheel.
+  zoom: (z: number) => { scene.unpinFloor(); return scene.cameras.main.setZoom(z); },
+  center: (tx: number, ty: number) => { scene.unpinFloor(); return scene.cameras.main.centerOn(tx * TILE, ty * TILE); },
   floor: (n: number) => scene.focusFloor(n), currentFloor: () => scene.currentFloor(), elevator: () => scene.elevator.state(), route: (role: string, target: string) => scene.debugRoute(role, target),
   theme: (mode: 'dark' | 'light' | 'system') => applyTheme(mode),
   stack: () => panel.stack.entries(),
@@ -276,7 +281,15 @@ let lastLayout = 0;
 function loop(now: number): void {
   const dt = now - last; last = now;
   // The minimap camera moves with the window; the rail's lobby tab follows a drag inside F1, which fires no floor change.
-  if (now - lastLayout > 500) { lastLayout = now; minimap.layout(); rail.update(); }
+  if (now - lastLayout > 500) {
+    lastLayout = now;
+    // The strip belongs at the floor elevation and nowhere else: below it the tower fit shows the same picture as
+    // the main view (visual QA R-M8), above it the strip covers the room it is a picture of (R2-M4).
+    const cam = scene.cameras?.main;
+    minimap.setVisible(cam ? minimapWanted(cam.zoom, floorZoom(window.innerWidth, window.innerHeight)) : true, true);
+    minimap.layout();
+    rail.update();
+  }
   time.tick(dt, new Date(), hourOverride);
   if (state.mode === 'live') state = tick(state, Date.now());
   // doors and digits follow the engine every frame; `toViewState` writes into one reused object so the loop

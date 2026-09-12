@@ -49,11 +49,16 @@
          owner has any use for, so they are not on the screen. The sun/moon and the clock belong to both modes. -->
     <div id="time" class="glass" data-mode="live">
       <div class="segmented" role="tablist" aria-label="Live or replay"><button id="live" class="seg" role="tab" aria-selected="true"><i class="dot ok"></i>Live</button><button id="replay-load" class="seg" role="tab" aria-selected="false">Replay</button></div>
-      <input type="date" id="replay-date" class="replay-only" aria-label="Replay date" />
-      <span id="sunmoon"></span>
+      <span class="datefield replay-only"><span id="replay-date-icon" class="pi" aria-hidden="true"></span><span id="replay-date-text">—</span><input type="date" id="replay-date" aria-label="Replay date" /></span>
       <button id="playpause" class="icon replay-only" aria-label="Pause the replay (Space)"></button>
       <input type="range" id="scrub" class="replay-only" min="0" max="1000" value="0" disabled aria-label="Replay position" />
-      <select id="speed" class="replay-only" aria-label="Replay speed"><option>1</option><option>5</option><option>10</option><option selected>25</option><option>50</option></select>
+      <!-- A segmented control, filled by ui/time.ts: a native <select> was the one browser-drawn widget among a bar
+           of custom ones, and it brought the platform's own arrow with it (visual QA M3). -->
+      <div id="speed" class="segmented replay-only" role="tablist" aria-label="Replay speed"></div>
+      <!-- The sun/moon sits with the time it is about. It used to come before the transport, which in live mode put
+           it next to the clock by accident and in replay mode left it stranded on the far side of the scrub bar as
+           a bare glyph with no time beside it (visual QA R2-M7). -->
+      <span id="sunmoon"></span>
       <span id="clock" class="footnote"></span>
       <span id="replay-hint" class="caption dim replay-only">Space plays · arrows step</span>
     </div>

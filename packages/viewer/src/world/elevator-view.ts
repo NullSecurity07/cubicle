@@ -10,6 +10,7 @@ import { OPEN_MS, type ElevatorState, type Rider } from './elevator.js';
 import { PALETTE, hexToInt, shade } from './palette.js';
 import { DUR, dur } from './motion.js';
 import { RES, FONT } from './text.js';
+import { addText } from './text-crisp.js';
 
 export interface ElevatorViewState { carY: number; doorOpen: number; floor: number; moving: boolean; riders: string[] }
 const DOOR_SLIDE_PX = 6, HALF = 8;
@@ -75,12 +76,26 @@ export class ElevatorView {
 
   constructor(private scene: Phaser.Scene, shaft: { tx: number; ty: number; tw: number; th: number }, floors: { n: number; y0: number }[]) {
     const x = shaft.tx * TILE, w = shaft.tw * TILE, carH = 3 * TILE;
-    // the car, drawn about its top-centre (the scene positions the container at (52.5 * TILE, row * TILE) every frame):
-    // steel back wall, a handrail, a ceiling lamp; riders are placed on it by AgentSprite.attachTo()
-    const back = scene.add.rectangle(-w / 2, 0, w, carH, hexToInt(PALETTE.steelDark)).setOrigin(0);
-    const rail = scene.add.rectangle(-w / 2 + 2, carH - 12, w - 4, 2, hexToInt(PALETTE.steelLight)).setOrigin(0);
-    this.lamp = scene.add.rectangle(-4, 1, 8, 2, hexToInt(PALETTE.windowNight)).setOrigin(0);
-    this.car = scene.add.container(x + w / 2, (floors[0]?.y0 ?? 0) * TILE, [back, rail, this.lamp]);
+    /*
+     * The car, drawn about its top-centre (the scene positions the container at (52.5 * TILE, row * TILE) every
+     * frame). It used to be a `steelDark` rectangle inside a shaft drawn in the same steel family, with a 2 px
+     * handrail and an 8 × 2 lamp: at 4x magnification the shaft showed ladder rails, one pale line and one tan
+     * slab, and the rider masked into it could not be picked out at all (visual QA C5). A cab reads as an object
+     * travelling past those rails when it is lighter than the shaft, outlined, floored, and seamed down the middle
+     * where its own doors meet — and when it casts a shadow onto the wall behind it.
+     */
+    const shadow = scene.add.rectangle(-w / 2 + 3, 4, w, carH, hexToInt(PALETTE.screenInk), 0.35).setOrigin(0);
+    const body = scene.add.rectangle(-w / 2, 0, w, carH, hexToInt(PALETTE.steel)).setOrigin(0).setStrokeStyle(1, hexToInt(shade(PALETTE.steelDark, -0.18)), 1);
+    const ceiling = scene.add.rectangle(-w / 2 + 1, 1, w - 2, 3, hexToInt(PALETTE.steelDark)).setOrigin(0);
+    const panel = scene.add.rectangle(-w / 2 + 3, 5, w - 6, carH - 11, hexToInt(shade(PALETTE.steel, -0.07))).setOrigin(0);
+    // the cab's own doors: a seam down the centre with a jamb either side, so the car reads as closed in transit
+    const seamL = scene.add.rectangle(-1, 5, 1, carH - 11, hexToInt(shade(PALETTE.steel, -0.20))).setOrigin(0);
+    const seamR = scene.add.rectangle(1, 5, 1, carH - 11, hexToInt(PALETTE.steelLight), 0.7).setOrigin(0);
+    const floorLine = scene.add.rectangle(-w / 2 + 1, carH - 6, w - 2, 5, hexToInt(shade(PALETTE.steelDark, -0.10))).setOrigin(0);
+    const kick = scene.add.rectangle(-w / 2 + 1, carH - 6, w - 2, 1, hexToInt(PALETTE.steelLight), 0.5).setOrigin(0);
+    const rail = scene.add.rectangle(-w / 2 + 3, carH - 14, w - 6, 2, hexToInt(PALETTE.steelLight)).setOrigin(0);
+    this.lamp = scene.add.rectangle(-5, 2, 10, 2, hexToInt(PALETTE.windowNight)).setOrigin(0);
+    this.car = scene.add.container(x + w / 2, (floors[0]?.y0 ?? 0) * TILE, [shadow, body, ceiling, panel, seamL, seamR, floorLine, kick, rail, this.lamp]);
     // the car and its riders are clipped to the shaft interior
     this.maskShape = scene.add.graphics().setVisible(false);
     this.maskShape.fillStyle(0xffffff).fillRect(x, shaft.ty * TILE, w, shaft.th * TILE);   // palette-lint: ignore — a geometry mask's stencil value, not a colour
@@ -93,7 +108,7 @@ export class ElevatorView {
       const recess = scene.add.rectangle(dx, dy, TILE, TILE, hexToInt(shade(PALETTE.steelDark, -0.35))).setOrigin(0).setDepth(3);
       const l = scene.add.image(dx, dy, 'office', 0).setOrigin(0).setCrop(0, 0, HALF, TILE).setDepth(4);
       const r = scene.add.image(dx, dy, 'office', 0).setOrigin(0).setCrop(HALF, 0, HALF, TILE).setDepth(4);
-      const digit = scene.add.text(dx + TILE / 2, dy - 2, String(f.n), { fontFamily: FONT, fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amber }).setOrigin(0.5, 1).setScale(1 / RES).setDepth(4).setAlpha(0.5);
+      const digit = addText(scene, dx + TILE / 2, dy - 2, String(f.n), { fontFamily: FONT, fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amber }).setOrigin(0.5, 1).setScale(1 / RES).setDepth(4).setAlpha(0.5);
       this.doors.push({ n: f.n, l, r, recess, digit });
     }
     this.setDoorFrames();

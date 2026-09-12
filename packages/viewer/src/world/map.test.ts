@@ -75,7 +75,9 @@ describe('parseMap (no Phaser)', () => {
     expect(nearestWalkable([[1]], { tx: 0, ty: 0 })).toBeNull();
   });
   it('standTile returns the tile in front of a surface, a desk by desk id, a room stand, and null for nothing', () => {
-    expect(standTile(m, 'billboard')).toEqual({ tx: 18, ty: 4 });
+    // Beside the glass, not in front of it: an agent on the screen's own centre column covered two of its three
+    // lines with their head (visual QA R-M3). The billboard spans columns 15-21, so 22 is the first free column.
+    expect(standTile(m, 'billboard')).toEqual({ tx: 22, ty: 4 });
     expect(standTile(m, 'desk:qa_lead')).toEqual(m.desks.qa_lead);
     expect(standTile(m, 'boardroom')).toEqual({ tx: 32, ty: 49 });
     expect(standTile(m, 'pantry')).toEqual({ tx: 44, ty: 43 });
@@ -110,7 +112,7 @@ describe('floors (no Phaser)', () => {
   it('rooms, reserved seats, desk info, decor and signs are exposed', () => {
     expect(Object.keys(m.rooms).sort()).toEqual([...ROOM_IDS].sort());
     expect(m.rooms.dev.props.floor).toBe(2);
-    expect(m.reserved.owner).toEqual({ tx: 32, ty: 48 });
+    expect(m.reserved.owner).toEqual({ tx: 32, ty: 47 });
     expect(m.deskInfo.backend_engineer).toEqual({ tile: { tx: 28, ty: 35 }, room: 'dev', floor: 2 });
     expect(m.deskInfo.ceo.room).toBe('ceo_office');
     expect(m.decor.some((d) => d.kind === 'coffee' && d.floor === 1)).toBe(true);

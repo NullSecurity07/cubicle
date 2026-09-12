@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { Surface } from './surfaces.js';
+import { Surface, screenBox, markRows, MARK_ROW_W, MARK_BAR_H } from './surfaces.js';
+import { CAPTION_BAND, CAPTION_PLATE_H } from './text.js';
 import type { Anchor } from './map.js';
 import type { SurfaceDef } from '../ui/surfaces.js';
 import { emptyState } from '../state.js';
@@ -118,5 +119,68 @@ describe('Surface colours', () => {
     const { scene, surface } = build();
     surface.render(emptyState(), {}, 0);
     expect(scene.objects.some((o) => o.kind === 'text' && o.text.length > 0)).toBe(true);
+  });
+});
+
+/**
+ * Visual QA C1: the glass claimed `(th - 1)` tiles of a three-tile anchor, so `maxLines` came out 0 and every
+ * sub-line the registry writes — the vault's counts, the terminal's last three lines, the bank's burn and runway —
+ * was discarded before it reached the wall. Ten screens across four floors each showed one word on a black slab.
+ */
+describe('how much a wall screen can say', () => {
+  it('gives a three-tile anchor a head and three lines', () => {
+    const box = screenBox({ tw: 9, th: 3, type: 'surface' });
+    expect(box.h).toBe(48);
+    expect(box.maxLines).toBeGreaterThanOrEqual(2);
+    expect(box.maxLines).toBe(3);
+  });
+  it('sizes the character budgets from the width, and never to nothing', () => {
+    const wide = screenBox({ tw: 10, th: 3, type: 'surface' }), narrow = screenBox({ tw: 4, th: 3, type: 'surface' });
+    expect(wide.lineChars).toBeGreaterThan(wide.headChars);      // the lines are smaller type than the head
+    expect(wide.headChars).toBeGreaterThan(narrow.headChars);
+    expect(screenBox({ tw: 1, th: 1 }).headChars).toBeGreaterThanOrEqual(1);
+  });
+  it('never lets the text box grow past the glass', () => {
+    for (const tw of [4, 6, 7, 8, 9, 10]) {
+      const b = screenBox({ tw, th: 3, type: 'surface' });
+      expect(b.innerW, `tw ${tw}`).toBeLessThanOrEqual(b.w - b.inset * 2);
+      expect(b.innerH, `tw ${tw}`).toBeLessThanOrEqual(b.h - b.inset);
+    }
+  });
+});
+
+/**
+ * Visual QA R-C1: the caption plate hangs above the screen it names, so the focus veil reserves the whole tile
+ * row above a screen for it (`CAPTION_BAND`). The plate has to actually fit inside that row, or the veil edge
+ * cuts through it.
+ */
+describe('the caption plate and the row the veil reserves for it', () => {
+  it('fits inside one tile row, hanging a pixel clear of the bezel', () => {
+    expect(CAPTION_BAND).toBe(16);                       // one tile: every veil edge stays on the grid
+    expect(CAPTION_PLATE_H + 1).toBeLessThanOrEqual(CAPTION_BAND);
+  });
+});
+
+/**
+ * Visual QA R2-I2: below `WORLD_TEXT_MIN_ZOOM` the lettering is hidden, which left ten near-black slabs across the
+ * whole-building view. Each screen draws the shape of its headline instead.
+ */
+describe('what a screen shows when its own type is too small to read', () => {
+  it('draws one row per line the screen is carrying, and none for a screen with nothing to say', () => {
+    expect(markRows(0)).toEqual([]);
+    expect(markRows(1)).toHaveLength(1);
+    expect(markRows(3)).toHaveLength(3);
+  });
+  it('never draws more rows than a three-tile screen has room for', () => {
+    expect(markRows(9)).toHaveLength(MARK_ROW_W.length);
+    expect(MARK_ROW_W.length).toBe(3);
+  });
+  it('is ragged, like text: every row is shorter than the one above it, and none fills the glass', () => {
+    for (let i = 1; i < MARK_ROW_W.length; i++) expect(MARK_ROW_W[i]).toBeLessThan(MARK_ROW_W[i - 1]);
+    for (const f of MARK_ROW_W) { expect(f).toBeGreaterThan(0); expect(f).toBeLessThan(1); }
+  });
+  it('leaves the title bar the tallest mark, so the head still reads as the head', () => {
+    expect(MARK_BAR_H).toBeGreaterThanOrEqual(2);
+    expect(MARK_BAR_H).toBeLessThanOrEqual(4);
   });
 });

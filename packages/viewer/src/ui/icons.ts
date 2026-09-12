@@ -6,7 +6,7 @@
 import type { Emote } from '../state.js';
 import { PALETTE } from '../world/palette.js';
 
-export type GlyphName = Emote | 'envelope' | 'doc' | 'chart' | 'chat' | 'close' | 'play' | 'pause' | 'sun' | 'moon' | 'chevron';
+export type GlyphName = Emote | 'envelope' | 'doc' | 'chart' | 'chat' | 'close' | 'play' | 'pause' | 'sun' | 'moon' | 'chevron' | 'calendar';
 export type Px = [x: number, y: number, w: number, h: number, colour: string];
 
 const C = 'currentColor';
@@ -34,6 +34,9 @@ export const GLYPHS: Record<GlyphName, Px[]> = {
   pause: [[2, 1, 3, 10, C], [7, 1, 3, 10, C]],
   sun: [[4, 4, 4, 4, C], [5, 0, 2, 2, C], [5, 10, 2, 2, C], [0, 5, 2, 2, C], [10, 5, 2, 2, C], [2, 2, 1, 1, C], [9, 2, 1, 1, C], [2, 9, 1, 1, C], [9, 9, 1, 1, C]],
   moon: [[4, 0, 3, 1, C], [3, 1, 2, 1, C], [2, 2, 2, 1, C], [2, 3, 1, 1, C], [1, 4, 2, 4, C], [2, 8, 2, 1, C], [2, 9, 3, 1, C], [3, 10, 4, 1, C], [4, 11, 5, 1, C]],
+  /** The replay date's own face. A `doc` stood in for it while there was no calendar, and a page of prose is not a
+   *  date: two hanging tabs, a header rule, and three day blocks. */
+  calendar: [[3, 0, 1, 2, C], [8, 0, 1, 2, C], [1, 1, 10, 1, C], [1, 11, 10, 1, C], [1, 1, 1, 11, C], [10, 1, 1, 11, C], [1, 3, 10, 1, C], [3, 5, 2, 2, C], [6, 5, 2, 2, C], [3, 8, 2, 2, C]],
   chevron: [[3, 1, 2, 1, C], [4, 2, 2, 1, C], [5, 3, 2, 1, C], [6, 4, 2, 1, C], [7, 5, 2, 2, C], [6, 7, 2, 1, C], [5, 8, 2, 1, C], [4, 9, 2, 1, C], [3, 10, 2, 1, C]],
 };
 

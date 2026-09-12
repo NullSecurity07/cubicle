@@ -1,7 +1,7 @@
 ---
 role: sales_5
-display: Sales 5
-title: Account Executive
+display: Success
+title: Customer Success Manager
 model_tier: cheap
 tools: [vault.read, vault.search, vault.list, vault.write, vault.append, email.inbox, email.send, http.fetch, colleague.message, skills.load, skills.search, finish]
 approval_overrides: { email.send: ask }

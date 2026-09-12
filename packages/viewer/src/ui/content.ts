@@ -39,7 +39,7 @@ export function obsidianUrl(vaultName: string, file: string): string {
 const KIND_LABEL: Record<string, string> = { spend: 'Spend', outbound_batch: 'Send batch', brand_change: 'Brand', charter_change: 'Charter', file_change: 'File change', hire: 'Hire', fire: 'Fire', message: 'Question' };
 export const kindLabel = (k: string): string => KIND_LABEL[k] ?? k.replace(/_/g, ' ');
 
-const DISPLAY: Record<string, string> = { ceo: 'CEO', cto: 'CTO', coo: 'COO', cfo: 'CFO / CRO', cmo: 'CMO', cgo: 'CGO', cso: 'CSO', chro: 'CHRO', clo: 'CLO / CCO', ciso: 'CISO', advisor_skeptic: 'The Skeptic', advisor_investor: 'The Investor', advisor_customer: 'The Customer', dev_manager: 'Dev Manager', qa_lead: 'QA Lead', research_manager: 'Head of Research', engineer: 'Engineer', growth: 'Growth', head_of_growth: 'Head of Growth', tech_lead: 'Tech Lead', qa: 'QA', critic: 'Critic', research_analyst: 'Research Analyst' };
+const DISPLAY: Record<string, string> = { ceo: 'CEO', cto: 'CTO', coo: 'COO', cfo: 'CFO', cmo: 'CMO', cgo: 'CGO', cso: 'CSO', chro: 'CHRO', clo: 'CLO', ciso: 'CISO', advisor_skeptic: 'The Skeptic', advisor_investor: 'The Investor', advisor_customer: 'The Customer', dev_manager: 'Dev Manager', qa_lead: 'QA Lead', research_manager: 'Head of Research', engineer: 'Engineer', growth: 'Growth', head_of_growth: 'Head of Growth', tech_lead: 'Tech Lead', qa: 'QA', critic: 'Critic', research_analyst: 'Research Analyst' };
 export const who = (s: State, role: string): string => s.agents[role]?.display ?? DISPLAY[role] ?? role;
 const roleTitle = (s: State, role: string): string => s.agents[role]?.title || role;
 const teamName = (s: State, id?: string): string => (id ? s.teams.find((t) => t.id === id)?.name ?? id : 'Unassigned');
@@ -261,7 +261,10 @@ export function browserViewerView(s: State, ctx: Ctx): View {
   const foot = cur.active ? '' : `<div class="vfoot" data-key="vfoot">Session ended${cur.endedAt ? ` ${esc(fmtTime(cur.endedAt))}` : ''} · showing the last frame</div>`;
   // One metadata row, the spec's wireframe: the .vbar carries LIVE, the agent, the host, the seq and the rate.
   // It used to be handed to the panel header as `sub` as well, so the viewer wore two header bars.
-  return { mode: 'viewer', viewer: 'browser', title: 'Billboard', html: bar + frame + foot, live: true };
+  // The header names who is browsing, not which wall the stream hangs on (visual QA M11): "Billboard" told the
+  // owner where the screen is, which they can see, rather than whose session they are watching.
+  const title = cur.agent ? `${who(s, cur.agent)} is browsing` : 'Billboard';
+  return { mode: 'viewer', viewer: 'browser', title, html: bar + frame + foot, live: true };
 }
 
 /** A shell job is running when an agent on a job is using the terminal tool (it may still be walking to the Dev room). */
@@ -272,7 +275,10 @@ export function terminalViewerView(s: State): View {
   const lines = s.terminal.slice(-400).flatMap((l) => l.split('\n'));
   if (!lines.length) return { mode: 'viewer', viewer: 'terminal', title: 'Terminal', html: emptyHtml('chevron', 'No commands run yet', 'Shell output from the Dev room streams here.'), live: true };
   const body = lines.map((l) => `<span class="line${/^[$>#]\s/.test(l) ? ' prompt' : ''}">${esc(l)}</span>`).join('\n');
-  return { mode: 'viewer', viewer: 'terminal', title: 'Terminal', sub: `${lines.length} lines`, html: `<pre class="term" data-key="term">${body}${shellRunning(s) ? '<span class="caret" data-key="caret"></span>' : ''}</pre>`, live: true };
+  // Who is at the shell, where there is someone (visual QA M11): the terminal viewer named neither the agent nor
+  // the host, so a live shell looked like a log file.
+  const at = Object.values(s.agents).find((a) => a.tool === 'terminal' && !!a.job);
+  return { mode: 'viewer', viewer: 'terminal', title: at ? `${at.display} at the shell` : 'Terminal', sub: `${lines.length} lines`, html: `<pre class="term" data-key="term">${body}${shellRunning(s) ? '<span class="caret" data-key="caret"></span>' : ''}</pre>`, live: true };
 }
 
 export const ROOM_LABELS: Record<string, string> = { pantry: 'Pantry', meetingroom: 'Meeting room', boardroom: 'Board room', ceo_office: 'CEO office' };

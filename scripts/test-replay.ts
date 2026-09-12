@@ -54,7 +54,12 @@ let pass = frames >= 1;
 // "reopen": fresh viewer, snapshot + replay
 const { chromium } = await import('playwright');
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+// `colorScheme` is not decoration: the viewer boots on `themeFromQuery`, which with no `?theme=` resolves through
+// `prefers-color-scheme`, and Playwright's default is light. `replay.png` is the only picture anyone has of the
+// replay transport, and without this it was a picture of the light theme rather than of the product's dark
+// default — every judgement made about that bar was made on the wrong theme (visual QA R-I2).
+// Mirrors scripts/office-shot.ts.
+const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' });
 // The viewer builds a replay window from **local** midnight (`onReplayRequest`: `new Date(`${date}T00:00:00`)`),
 // so the date asked for has to be the local one. Read as a UTC date, this test asked for the wrong day whenever
 // the two disagree — east of UTC, every run between local midnight and the UTC rollover requested a window that

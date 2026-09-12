@@ -1,7 +1,7 @@
 ---
 role: sales_4
-display: Sales 4
-title: Account Executive
+display: Renewals
+title: Account Manager, renewals
 model_tier: cheap
 tools: [vault.read, vault.search, vault.list, vault.write, vault.append, email.inbox, email.send, http.fetch, colleague.message, skills.load, skills.search, finish]
 approval_overrides: { email.send: ask }

@@ -2,16 +2,18 @@
 import Phaser from 'phaser';
 import type { World, Tile } from './map.js';
 import { TILE, makeSprite, makeFaces, makeEmotes, makeShadow, roleColor, SPRITE_H, EMOTE_H } from './tileset.js';
-import { toPx, portalFor } from './map.js';
+import { toPx, portalFor, floorAt } from './map.js';
 import { planRoute, type Leg } from './route.js';
 import type { ElevatorPort, ElevatorEvent } from './elevator.js';
 import type { AgentView, ToolIcon, Bubble } from '../state.js';
 import { BLINK_MS, GESTURE_MS, nextBlinkDelay, nextGestureDelay, pickGesture, emoteBob, faceToward, thinkingDots, type Gesture } from './expressions.js';
 import { frameFor, poseFor, faceFrame, talkOpen, isSeatedPose, WALK_FRAMES, WALK_STEP_MS, BOB, type Dir, type PoseCtx } from './frames.js';
 import { DUR, EASE, dur } from './motion.js';
-import { RES, FONT, MONO, nameLabelStyle, nameLabelView, nameLabelText } from './text.js';
-import { PALETTE, hexToInt } from './palette.js';
+import { RES, FONT, MONO, nameLabelStyle, nameLabelView, nameLabelText, worldTextVisible } from './text.js';
+import { addText } from './text-crisp.js';
+import { PALETTE, hexToInt, floorPalette } from './palette.js';
 import { Latch } from './latch.js';
+import { bubbleOffsetX } from './bubble.js';
 
 // Drawn glyphs (no emoji: headless/minimal systems lack emoji fonts). letter + colour per tool family.
 const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = {
@@ -19,6 +21,18 @@ const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = {
   doc: { t: 'D', c: PALETTE.tool.doc }, chart: { t: '%', c: PALETTE.tool.chart }, chat: { t: '…', c: PALETTE.tool.chat },
 };
 const SPEED = 70; // px/s
+/**
+ * Where a rider stands inside the cab, below the car's own top edge.
+ *
+ * Measured off `07-elevator` at zoom 3, not derived. The sprite's drawn legs stop short of its 24 px frame and the
+ * role ring hangs below the origin, so neither the cab's floor line (`carH - 6`, world/elevator-view.ts) nor the
+ * sprite's own height predicts where the rider lands. Scanning the car's centre column against one beside it gives
+ * the floor surface, the kick plate, the car's bottom border and where the legs and the ring actually fall: at
+ * `3 * TILE - 2` the ring covered all three rows of that border and put two into the shaft, so the cab's own edge
+ * was broken where the rider crossed it (visual QA R-M7, R2-M1). Two pixels higher puts the legs on the floor
+ * line's band and the ring's outline on the kick.
+ */
+export const CAR_FLOOR_Y = 3 * TILE - 4;
 const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
 
 /** The pantry: a coffee after a finished job, and now and then after a long quiet spell at the desk. */
@@ -50,8 +64,15 @@ export class AgentSprite {
   private bubbleText: Phaser.GameObjects.Text;
   private bubbleBg: Phaser.GameObjects.Graphics;
   private hovered = false;
+  /** Whether the sprite is in a seated pose: a bubble spoken sitting down goes beside the speaker, not over them. */
+  private seated = false;
   /** Set by the scene when this sprite is the one the panel is focused on: its name shows at any zoom. */
   selected = false;
+  /**
+   * Every display name at the desks of this sprite's room, this one included — set by the scene when the roster
+   * changes. A desk label is only readable against its neighbours (visual QA I1), so the label needs the row.
+   */
+  siblings: string[] = [];
   private readonly labelLatch = new Latch();
   private readonly iconLatch = new Latch();
   private readonly badgeLatch = new Latch();
@@ -100,12 +121,17 @@ export class AgentSprite {
     this.face = scene.add.image(-4, -SPRITE_H + 4, 'faces', 'neutral:0').setOrigin(0, 0);
     // Hidden until the camera is close enough to read it, then held at a constant screen size (ruling F1, applied
     // every frame by `applyLabel`): a container child is scaled by the camera zoom, so the label divides it back out.
-    this.label = scene.add.text(0, 2, view.display, nameLabelStyle()).setOrigin(0.5, 0).setScale(1 / RES).setVisible(false);
-    this.icon = scene.add.text(10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.tool.browser, padding: { x: 2, y: 1 } }).setOrigin(0.5);
-    this.badge = scene.add.text(-10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.bad, padding: { x: 2, y: 1 } }).setOrigin(0.5);
+    // White on the floor's own skirting colour, which is what the room signs are: a name and the sign over the
+    // room it is in are one type system, and a plate is legible over whatever carpet the sprite is standing on
+    // (visual QA R2-I3). The colour is the desk's floor, not the sprite's current one — a person keeps their own
+    // team's ink while they are walking through someone else's floor.
+    const deskFloor = floorPalette(floorAt(world, this.homeTile().ty));
+    this.label = addText(scene, 0, 2, view.display, nameLabelStyle(undefined, deskFloor.skirting)).setOrigin(0.5, 0).setScale(1 / RES).setVisible(false);
+    this.icon = addText(scene, 10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.tool.browser, padding: { x: 2, y: 1 } }).setOrigin(0.5);
+    this.badge = addText(scene, -10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.bad, padding: { x: 2, y: 1 } }).setOrigin(0.5);
     this.emote = scene.add.image(0, -SPRITE_H - 8, 'emotes', '!').setOrigin(0.5, 1).setVisible(false);
     this.bubbleBg = scene.add.graphics();
-    this.bubbleText = scene.add.text(0, 0, '', { fontFamily: FONT, fontSize: `${8 * RES}px`, color: PALETTE.bubbleInk, wordWrap: { width: 130 * RES }, align: 'left' }).setOrigin(0.5, 1).setScale(1 / RES);
+    this.bubbleText = addText(scene, 0, 0, '', { fontFamily: FONT, fontSize: `${8 * RES}px`, color: PALETTE.bubbleInk, wordWrap: { width: 130 * RES }, align: 'left' }).setOrigin(0.5, 1).setScale(1 / RES);
     this.bubble = scene.add.container(0, -SPRITE_H - 6, [this.bubbleBg, this.bubbleText]).setVisible(false);
     this.container = scene.add.container(0, 0, [this.shadow, this.body, this.face, this.label, this.icon, this.badge, this.emote, this.bubble]).setDepth(10);
     this.body.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.onClick(view.role))
@@ -188,7 +214,10 @@ export class AgentSprite {
     this.container.setVisible(true);
     const m = (car as Phaser.GameObjects.Container).mask;
     if (m) this.container.setMask(m as Phaser.Display.Masks.GeometryMask);
-    this.container.setPosition(car.x, car.y + 3 * TILE - 2);
+    // Stand the rider on the cab's own floor line, not 4 px through it: the legs, and the name plate under them,
+    // used to hang out of the bottom of the car into the shaft (visual QA R-M7). `CAR_FLOOR_Y` is where
+    // `world/elevator-view.ts` draws that line.
+    this.container.setPosition(car.x, car.y + CAR_FLOOR_Y);
     this.setRiding(true); this.dir = 0;
   }
   /** Out of the car at a floor's elevator door. */
@@ -229,7 +258,11 @@ export class AgentSprite {
     if (this.car) {
       // in the car: visible, masked to the shaft, standing on the car floor, riding (pose:ride), facing the viewer;
       // no shadow (there is no floor light to cast one onto), and any walk-settle squash in flight is cut short
-      this.container.setPosition(this.car.x, this.car.y + 3 * TILE - 2);
+      //
+      // `CAR_FLOOR_Y`, not a second copy of the number. This line runs every frame and ran with the original
+      // `3 * TILE - 2`, quietly overwriting what `enterCar` set — so every adjustment made to that constant since,
+      // the whole of R-M7 and R2-M1, reached the delivered shot as nothing at all.
+      this.container.setPosition(this.car.x, this.car.y + CAR_FLOOR_Y);
       this.step = 0; this.body.y = 0; this.dir = 0;
       this.scene.tweens.killTweensOf(this.body); this.body.setScale(1, 1); this.wasMoving = false;
       this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0, pose: 'ride' }));
@@ -252,6 +285,7 @@ export class AgentSprite {
         this.frameTimer += dt;
         if (this.frameTimer * 1000 > WALK_STEP_MS) { this.frameTimer = 0; this.step = (this.step + 1) % WALK_FRAMES; }
         this.body.setFrame(frameFor({ moving: true, dir: this.dir as Dir, step: this.step }));
+        this.seated = false;
         this.body.y = BOB[this.step];
         this.shadow.setScale(BOB[this.step] ? 0.9 : 1, 1); this.wasMoving = true;
         if (!this.path.length) this.walkFinished(view);
@@ -276,7 +310,8 @@ export class AgentSprite {
         else if (ctx.speaker && ctx.speaker.role !== view.role && (view.target === 'boardroom' || view.target === 'meetingroom')) this.dir = faceToward({ x: this.container.x, y: this.container.y }, ctx.speaker);
         const sideSeat: PoseCtx['sideSeat'] = this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 1 ? 'l' : this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 2 ? 'r' : null;
         const pose = poseFor(view, { atDesk, riding: this.riding, sideSeat, nowMs, gesture: this.gesture, detour: this.detour });
-        this.shadow.setVisible(!this.riding && !isSeatedPose(pose));
+        this.seated = isSeatedPose(pose);
+        this.shadow.setVisible(!this.riding && !this.seated);
         if (pose) this.dir = pose === 'sit_side_l' ? 1 : pose === 'sit_side_r' ? 2 : 0;
         this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0, pose }));
       }
@@ -299,7 +334,10 @@ export class AgentSprite {
       this.badge.setText(view.badge === 'error' ? '!' : '?').setVisible(true);
     } else this.badge.setVisible(false);
     if (emoteKind) { this.emote.setFrame(emoteKind).setVisible(true); this.emote.y = -SPRITE_H - 6 + emoteBob(nowMs); } else this.emote.setVisible(false);
-    this.updateBubble(view.bubble, nowMs, emoteKind ? -SPRITE_H - EMOTE_H - 8 : -SPRITE_H - 6);
+    // A bubble is the loudest object in the office, and at the tower elevation it is an unreadable white smear over
+    // one floor of a building (visual QA, alongside I10). In-world lettering is off there; so is this.
+    if (!worldTextVisible(this.scene.cameras?.main?.zoom ?? 1)) this.bubble.setVisible(false);
+    else this.updateBubble(view.bubble, nowMs, emoteKind ? -SPRITE_H - EMOTE_H - 8 : -SPRITE_H - 6, this.seated);
     // Depth is a function of y alone; setting it marks the whole display list dirty, so only set it when y moved.
     const depth = 10 + this.container.y / 10000;
     if (this.depthLatch.changed(depth)) this.container.setDepth(depth);
@@ -330,7 +368,7 @@ export class AgentSprite {
   }
 
   /** Speech (white, tail, role-coloured border), thought (cloud, grey, animated dots) or action (dark strip with the verb). */
-  private updateBubble(b: Bubble | null, nowMs: number, y: number): void {
+  private updateBubble(b: Bubble | null, nowMs: number, y: number, seated = false): void {
     if (!b) {
       if (this.bubble.visible && !this.hiding) {
         this.hiding = true;
@@ -352,18 +390,27 @@ export class AgentSprite {
     const color = b.kind === 'action' ? PALETTE.bubbleActionInk : b.kind === 'thought' ? PALETTE.bubbleThoughtInk : PALETTE.bubbleInk;
     this.bubbleText.setStyle({ color, fontStyle: b.kind === 'thought' ? 'italic' : 'normal', fontSize: `${(b.kind === 'action' ? 7 : 8) * RES}px` }).setText(text);
     const w = this.bubbleText.width / RES, h = this.bubbleText.height / RES;
-    const worldX = this.container.x; const half = w / 2 + 6;
-    this.bubble.x = worldX - half < 0 ? half : worldX + half > this.world.width * TILE ? -half : 0;
+    // Which side of the speaker the bubble hangs on, and where its tail comes down.
+    //
+    // It used to clamp against the world only, so in `08-board` a bubble spoken at the table sat squarely over the
+    // advisors' monitors and the screen they were looking at, and in `09-night` the bottom of the viewport cut it
+    // (visual QA I10). The camera is what decides now, and a speaker who is sitting down — a meeting, the one
+    // place a bubble reliably covers the thing it is about — gets the bubble beside them rather than over them,
+    // on whichever side has more room in view. The tail then follows the speaker rather than the bubble, so an
+    // offset bubble still points at who said it.
+    const off = bubbleOffsetX(this.container.x, w, this.scene.cameras?.main?.worldView, this.world.width * TILE, seated);
+    this.bubble.x = off;
+    const tail = Math.max(-w / 2 + 4, Math.min(w / 2 - 4, -off));
     const g = this.bubbleBg.clear();
     if (b.kind === 'speech') {
       const tint = roleColor(this.view.role);
       g.fillStyle(hexToInt(PALETTE.bubbleFill), 0.96).lineStyle(1, tint, 1).fillRoundedRect(-w / 2 - 4, -h - 4, w + 8, h + 6, 4).strokeRoundedRect(-w / 2 - 4, -h - 4, w + 8, h + 6, 4);
-      g.fillStyle(hexToInt(PALETTE.bubbleFill), 0.96).fillTriangle(-3, 2, 3, 2, 0, 6); // tail
-      g.lineStyle(1, tint, 1).lineBetween(-3, 2, 0, 6).lineBetween(3, 2, 0, 6);
+      g.fillStyle(hexToInt(PALETTE.bubbleFill), 0.96).fillTriangle(tail - 3, 2, tail + 3, 2, tail, 6); // tail
+      g.lineStyle(1, tint, 1).lineBetween(tail - 3, 2, tail, 6).lineBetween(tail + 3, 2, tail, 6);
     } else if (b.kind === 'thought') {
       g.fillStyle(hexToInt(PALETTE.bubbleThoughtFill), 0.95).lineStyle(1, hexToInt(PALETTE.bubbleThoughtStroke), 1);
       g.fillRoundedRect(-w / 2 - 5, -h - 5, w + 10, h + 8, 6).strokeRoundedRect(-w / 2 - 5, -h - 5, w + 10, h + 8, 6);
-      g.fillCircle(-2, 5, 2).strokeCircle(-2, 5, 2).fillCircle(-5, 9, 1.2).strokeCircle(-5, 9, 1.2); // trailing thought circles
+      g.fillCircle(tail + 2, 5, 2).strokeCircle(tail + 2, 5, 2).fillCircle(tail + 5, 9, 1.2).strokeCircle(tail + 5, 9, 1.2); // trailing thought circles
     } else {
       g.fillStyle(hexToInt(PALETTE.bubbleActionFill), 0.94).lineStyle(1, hexToInt(PALETTE.bubbleActionStroke), 1).fillRoundedRect(-w / 2 - 4, -h - 3, w + 8, h + 5, 3).strokeRoundedRect(-w / 2 - 4, -h - 3, w + 8, h + 5, 3);
     }
@@ -386,9 +433,11 @@ export class AgentSprite {
   /** Ruling F1: the name is hidden below zoom 2 and held at a constant screen size above it, or on hover / selection. */
   private applyLabel(): void {
     const zoom = this.scene.cameras?.main?.zoom ?? 1;
-    if (!this.labelLatch.changed(`${zoom}|${this.hovered}|${this.selected}`)) return;
+    if (!this.labelLatch.changed(`${zoom}|${this.hovered}|${this.selected}|${this.siblings.length}|${this.riding}`)) return;
     const v = nameLabelView(zoom, { hover: this.hovered, selected: this.selected });
-    this.label.setVisible(v.visible).setScale(v.scale).setText(nameLabelText(this.view.display, v.chars));
+    // A name plate hangs below the feet, and inside the cab that is outside the car (R-M7): the elevator's own
+    // digits say which floor the car is on, and the rider is visible through the doorway when it opens.
+    this.label.setVisible(v.visible && !this.riding).setScale(v.scale).setText(nameLabelText(this.view.display, v.chars, this.siblings));
   }
 
   debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, legs: this.legs, waitingRide: this.waitingRide, riding: !!this.car, pendingTarget: this.pendingTarget, tile: this.tile(), seat: this.seat, desk: this.view.desk, home: this.homeTile() }; }

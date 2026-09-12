@@ -29,6 +29,29 @@ export function layoutKey(cam: { x: number; y: number; width: number; height: nu
   return `${cam.x},${cam.y},${cam.width},${cam.height}|${[1, 2, 3, 4].map((n) => colours[n] ?? '').join(',')}`;
 }
 
+/**
+ * Which of the two controls is on the screen: the strip itself, and the "Map" button that brings it back.
+ *
+ * `on` is whether the strip shows now; `wanted` is what the owner last asked for, as against what the current
+ * elevation wants (the tower fit puts the strip away by itself — at that fit it is the same picture as the main
+ * view with a viewport rectangle over all of it, visual QA R-M8). The button is the way back from a minimap the
+ * owner hid, so it appears only then: offering to undo a decision the scene made and will unmake by itself is one
+ * more control on the screen saying nothing.
+ */
+export function chromeVisibility(on: boolean, wanted: boolean | null): { strip: boolean; showBtn: boolean } {
+  return { strip: on, showBtn: !on && wanted === false };
+}
+
+/**
+ * Whether the strip belongs on the screen at this camera zoom, `floor` being the floor elevation's own zoom.
+ *
+ * It answers one question — where in the building am I — and it answers it at the floor elevation. Above that it
+ * is a picture of a room laid over the room itself: in `08-board` it covered the right third of the notice board,
+ * and in `11-terminal` and `14-sales` it covered desk names (visual QA R2-M4). Below it, at the tower fit, it is
+ * the same picture as the main view with a viewport rectangle over all of it (R-M8).
+ */
+export function minimapWanted(zoom: number, floor: number): boolean { return zoom >= 1 - 1e-6 && zoom <= floor + 1e-6; }
+
 /** `camera()` reports the minimap viewport in screen pixels plus its world top-left (see `minimapPointToWorld`). */
 export interface MinimapDeps { camera(): { x: number; y: number; width: number; height: number; scrollX: number; scrollY: number; zoom: number } | null; colours(): Record<number, string>; onPan(wx: number, wy: number): void; onToggle(visible: boolean): void }
 
@@ -65,8 +88,31 @@ export class MinimapChrome {
     if (key === this.laidOut) return;                // the window has not moved and the floors have not changed hue
     this.laidOut = key;
     Object.assign(this.el.style, { left: `${cam.x - 1}px`, top: `${cam.y - 1}px`, width: `${cam.width + 2}px`, height: `${cam.height + 2}px` });
+    // The time bar has to stop short of this column, and only the minimap knows how wide it is (visual QA R-I3).
+    document.documentElement.style.setProperty('--mm-w', `${Math.round(document.body.clientWidth - cam.x)}px`);
     const ticks = tickLayout(cam.height, colours).map((t) => `<i class="tick" data-key="tick-${t.floor}" style="top:${t.top}px;height:${t.height - 2}px;background:${t.color}"></i>`).join('');
     morph(this.el.querySelector('.ticks')!, ticks);
   }
-  toggle(): void { this.visible = !this.visible; this.el.hidden = !this.visible; this.showBtn.hidden = this.visible; this.deps.onToggle(this.visible); }
+  toggle(): void { this.setVisible(!this.visible); }
+  /**
+   * Show or hide the strip. The tower elevation calls this: at that fit the minimap shows the same picture as the
+   * main view with a viewport rectangle over all of it, which says nothing (visual QA R-M8). `auto` is the scene
+   * asking rather than the owner, so it never overrides a minimap the owner has hidden themselves.
+   */
+  setVisible(on: boolean, auto = false): void {
+    // Once the owner has an opinion, the elevation stops having one. Without this the scene's own rule fought
+    // the `M` key every half-second: press it at a room elevation and the next layout beat hid the strip again.
+    if (auto && this.wanted !== null) return;
+    if (!auto) this.wanted = on;
+    if (this.visible === on) return;
+    this.visible = on;
+    const v = chromeVisibility(on, this.wanted);
+    this.el.hidden = !v.strip;
+    this.showBtn.hidden = !v.showBtn;
+    // The time bar's cap follows the strip: with no minimap there is nothing to stop short of.
+    if (!on) document.documentElement.style.setProperty('--mm-w', '0px');
+    this.deps.onToggle(on);
+  }
+  /** What the owner last asked for, or null while they have never asked and the elevation decides. */
+  private wanted: boolean | null = null;
 }

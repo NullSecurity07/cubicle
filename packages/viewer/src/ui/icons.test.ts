@@ -3,7 +3,7 @@ import { GLYPHS, pixelIcon, type GlyphName } from './icons.js';
 import type { Emote } from '../state.js';
 
 const EMOTES: Emote[] = ['!', '?', 'idea', 'zzz', 'sweat', 'heart', 'cheer', 'clipboard', 'coffee', 'wave'];
-const UI: GlyphName[] = ['envelope', 'doc', 'chart', 'chat', 'close', 'play', 'pause', 'sun', 'moon', 'chevron'];
+const UI: GlyphName[] = ['envelope', 'doc', 'chart', 'chat', 'close', 'play', 'pause', 'sun', 'moon', 'chevron', 'calendar'];
 
 describe('pixel glyphs', () => {
   it('has a glyph for every emote the reducer can raise and every UI icon', () => {

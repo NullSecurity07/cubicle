@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import type { Emote } from '../state.js';
 import { TILES, T, COLUMNS, TILE, tilesetMeta } from './tiles.js';
-import { DRAW, floorOfName, type Px, type TileName } from './tiles-draw.js';
+import { DRAW, floorOfName, glowStep, GLOW_CELL, type Px, type TileName } from './tiles-draw.js';
 import { roleColor, floorPalette, rolePalette, type Family } from './palette.js';
 import { GLYPHS } from '../ui/icons.js';
 import { DECOR_DRAW, DECOR_FRAME_NAMES, type DecorKind } from './decor.js';
@@ -32,6 +32,24 @@ export function makeTileset(scene: Phaser.Scene): void {
     DRAW[name as Exclude<TileName, 'EMPTY'>](canvasPx(g, (i % COLUMNS) * TILE, Math.floor(i / COLUMNS) * TILE), f ? floorPalette(f) : null);
   });
   tex.refresh();
+}
+
+/**
+ * One street tile on a texture of its own, so the ground beyond the map can be a `TileSprite` rather than a flat
+ * rectangle.
+ *
+ * The run-out (`groundBands`, backdrop.ts) covers the bottom quarter of the tower frame, and as plain fills it read
+ * as a beach: the mapped pavement carries noise and a grid, and the fill beside it carried nothing. Drawn from the
+ * same `DRAW` entry the tilemap uses, the join is invisible. 16 x 16 is a power of two, which is what a tiling
+ * texture needs.
+ */
+export function makeGroundTile(scene: Phaser.Scene, name: 'PAVEMENT' | 'STREET'): string {
+  const key = `ground-${name}`;
+  if (scene.textures.exists(key)) return key;
+  const tex = scene.textures.createCanvas(key, TILE, TILE)!;
+  DRAW[name](canvasPx(tex.getContext(), 0, 0), null);
+  tex.refresh();
+  return key;
 }
 
 export { SPRITE_W, SPRITE_H, FACE_W, FACE_H };
@@ -108,15 +126,23 @@ export function makeDecorSheet(scene: Phaser.Scene): string {
   return key;
 }
 
-/** 64×64 radial glow (white → transparent), tinted per floor and blended ADD by the scene. */
+/** The lamp glow: 64 × 64, tinted per floor and blended ADD by the scene. The bands are `glowStep` (tiles-draw.ts). */
 export function makeLampGlow(scene: Phaser.Scene): string {
   const key = 'lamp-glow';
   if (scene.textures.exists(key)) return key;
-  const tex = scene.textures.createCanvas(key, 64, 64)!;
+  const size = 64, r = size / 2;
+  const tex = scene.textures.createCanvas(key, size, size)!;
   const g = tex.getContext();
-  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 32);
-  grad.addColorStop(0, 'rgba(255,255,255,0.9)'); grad.addColorStop(0.5, 'rgba(255,255,255,0.35)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+  g.clearRect(0, 0, size, size);
+  for (let y = 0; y < size; y += GLOW_CELL) {
+    for (let x = 0; x < size; x += GLOW_CELL) {
+      const dx = x + GLOW_CELL / 2 - r, dy = y + GLOW_CELL / 2 - r;
+      const a = glowStep(Math.hypot(dx, dy) / r);
+      if (a <= 0) continue;
+      g.fillStyle = `rgba(255,255,255,${a})`;
+      g.fillRect(x, y, GLOW_CELL, GLOW_CELL);
+    }
+  }
   tex.refresh();
   return key;
 }

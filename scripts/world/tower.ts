@@ -95,9 +95,35 @@ class Canvas {
   decorAt(kind: string, x: number, y: number, floor: number, extra: Props = {}): void { this.obj(this.decor, `decor_${this.decor.length + 1}`, 'decor', x, y, 1, 1, { kind, floor, ...extra }); }
 }
 
-function paintSurface(c: Canvas, s: SurfaceSpec, wallRow: number, floor: number): void {
+/**
+ * A wall screen, and the tile an agent stands on to use it.
+ *
+ * The stand tile used to be the screen's own centre column, so an agent sent to a screen stood in front of the
+ * glass and their head covered two of its three lines — the workshop read "A preview of Site/d…" in three
+ * delivered scenes (visual QA R-M3). It is beside the screen now: one column outside it, on whichever side the
+ * room has space for, so the agent is at the screen without being over it.
+ */
+function paintSurface(c: Canvas, s: SurfaceSpec, wallRow: number, floor: number, bounds: { x0: number; x1: number }): void {
   for (let x = s.tx; x < s.tx + s.tw; x++) c.set(c.furniture, x, wallRow + 1, x === s.tx ? T.SCREEN_BEZEL_L : x === s.tx + s.tw - 1 ? T.SCREEN_BEZEL_R : T.SCREEN_BEZEL);
-  c.obj(c.objects, s.kind, 'surface', s.tx, wallRow, s.tw, 3, { label: s.label, floor, stand_x: s.tx + Math.floor(s.tw / 2), stand_y: wallRow + 2 });
+  c.obj(c.objects, s.kind, 'surface', s.tx, wallRow, s.tw, 3, { label: s.label, floor, stand_x: standTileFor(c, s, wallRow, bounds), stand_y: wallRow + 2 });
+}
+
+/**
+ * Which column an agent stands on to use a wall screen.
+ *
+ * It used to be the screen's own centre, so an agent sent to a screen stood in front of the glass and their head
+ * covered two of its three lines — the workshop read "A preview of Site/d…" in three delivered scenes (visual QA
+ * R-M3). The nearest free column outside the screen's own span is used instead, walking outwards from the centre;
+ * the tile has to be empty in both the wall and furniture layers, which is why surfaces are painted after the
+ * room's own furniture. A room with nothing free falls back to the centre, which is what it always was.
+ */
+function standTileFor(c: Canvas, s: SurfaceSpec, wallRow: number, bounds: { x0: number; x1: number }): number {
+  const y = wallRow + 2, cx = s.tx + Math.floor(s.tw / 2);
+  const free = (x: number): boolean =>
+    x > bounds.x0 && x < bounds.x1 && !(x >= s.tx && x < s.tx + s.tw)
+    && c.walls[y * W + x] === T.EMPTY && c.furniture[y * W + x] === T.EMPTY;
+  for (let d = 1; d <= bounds.x1 - bounds.x0; d++) { for (const x of [cx - d, cx + d]) if (free(x)) return x; }
+  return cx;
 }
 
 /** Floor material, carpet, back-wall windows, the glass partition to the next room, the door, the sign tile,
@@ -120,8 +146,26 @@ function paintRoomBox(c: Canvas, r: RoomSpec, f: FloorSpec): void {
   c.set(c.furniture, cx + 1, y0 + 9, m.sign);
   c.obj(c.objects, r.id, 'room', r.x0 + 1, y0 + 1, r.x1 - r.x0 - 1, 8, { label: r.label, floor: f.n, stand_x: cx, stand_y: r.kind === 'pantry' ? y0 + 2 : y0 + 8 });
   c.obj(c.signs, `sign_${r.id}`, 'sign', cx + 1, y0 + 9, 1, 1, { room: r.id, label: r.label, floor: f.n });
-  c.decorAt('lamp', cx, y0 + 1, f.n);
-  for (const s of r.surfaces ?? []) paintSurface(c, s, y0, f.n);
+  // A lamp under a wall screen puts its glow on the glass: in the board room it bloomed across the whiteboard's
+  // own headline (visual QA R-I7). Step out from the centre to the first column no screen covers.
+  c.decorAt('lamp', lampColumn(r, cx), y0 + 1, f.n);
+}
+
+/**
+ * A one-person office: the desk on the centre line, and a seating corner in the three rows below it.
+ *
+ * The chiefs' rooms are ten to sixteen tiles wide and used to hold one desk, one chair and a filing cabinet — a
+ * third of `05-f3` and `06-f4` was bare carpet (visual QA I6). The lower rows are the only ones that are always
+ * free (a screen owns y0..y0+2, the desk y0+4..y0+5), and the centre column stays clear because it is the walk
+ * from the door at y0+9 to the chair at y0+5.
+ */
+/** The first column at or beside `cx` that no wall screen covers, so a lamp never glows through the glass. */
+function lampColumn(r: RoomSpec, cx: number): number {
+  const covered = (x: number): boolean => (r.surfaces ?? []).some((s) => x >= s.tx - 1 && x < s.tx + s.tw + 1);
+  for (let d = 0; d <= (r.x1 - r.x0) / 2; d++) {
+    for (const x of [cx - d, cx + d]) if (x > r.x0 && x < r.x1 && !covered(x)) return x;
+  }
+  return cx;
 }
 
 function paintOffice(c: Canvas, r: RoomSpec, f: FloorSpec): void {
@@ -131,6 +175,15 @@ function paintOffice(c: Canvas, r: RoomSpec, f: FloorSpec): void {
   c.set(F, r.x0 + 2, y0 + 1, T.BOOKSHELF_T); c.set(F, r.x0 + 2, y0 + 2, T.BOOKSHELF_B);
   c.set(F, r.x1 - 2, y0 + 1, T.PLANT_TALL_T); c.set(F, r.x1 - 2, y0 + 2, T.PLANT_TALL_B);
   c.set(F, r.x1 - 2, y0 + 4, T.FILING);
+  // left of the walk: a rug, a two-tile sofa facing the room, and a side table where the room is wide enough
+  const l0 = r.x0 + 2, l1 = cx - 2, r0 = cx + 2, r1 = r.x1 - 2;
+  c.rect(c.ground, l0, y0 + 6, Math.min(l1, l0 + 3), y0 + 8, T.RUG);
+  c.set(F, l0, y0 + 7, T.SOFA_L); c.set(F, l0 + 1, y0 + 7, T.SOFA_R);
+  if (l0 + 3 <= l1) c.set(F, l0 + 3, y0 + 7, T.SIDE_TABLE);
+  // right of the walk: a planter, and a second bookcase in the wide rooms
+  c.set(F, r1, y0 + 7, T.PLANT_SMALL);
+  c.decorAt('plant', r1, y0 + 7, f.n);
+  if (r1 - 2 >= r0) { c.set(F, r1 - 2, y0 + 7, T.BOOKSHELF_T); c.set(F, r1 - 2, y0 + 8, T.BOOKSHELF_B); }
   if (r.id === 'ceo_office') c.set(F, r.x0 + 2, y0 + 5, T.LAMP_FLOOR);
   if (r.id === 'ciso_office') c.set(F, r.x1 - 2, y0 + 2, T.SAFE_DOOR);
   c.decorAt('plant', r.x1 - 2, y0 + 2, f.n);
@@ -182,7 +235,9 @@ function paintBoard(c: Canvas, r: RoomSpec, f: FloorSpec): void {
   for (let x = cx - 3; x <= cx + 3; x++) c.set(F, x, y0 + 5, x === cx - 3 ? T.BT_TL : x === cx + 3 ? T.BT_TR : T.BT_TM);
   const seats: [number, number][] = [[cx - 3, y0 + 6], [cx - 1, y0 + 6], [cx + 1, y0 + 6], [cx + 3, y0 + 6], [cx - 4, y0 + 4], [cx + 4, y0 + 5]];
   seats.forEach(([x, y], i) => c.seat(`${r.id}_seat_${i + 1}`, x, y, r.id, f.n, {}, T.CHAIR_TASK));
-  c.seat('owner_chair', cx, y0 + 7, r.id, f.n, { reserved: 'owner' }, T.OWNER_CHAIR);
+  // At the table's near edge, in line with the seats either side of it, not a row behind them in the aisle: the
+  // owner read as a fifth person standing in the gap in the table rather than sitting at it (visual QA R2-M9).
+  c.seat('owner_chair', cx, y0 + 6, r.id, f.n, { reserved: 'owner' }, T.OWNER_CHAIR);
   c.set(F, r.x0 + 1, y0 + 1, T.PLANT_TALL_T); c.set(F, r.x0 + 1, y0 + 2, T.PLANT_TALL_B);
   c.set(F, r.x1 - 1, y0 + 1, T.PLANT_TALL_T); c.set(F, r.x1 - 1, y0 + 2, T.PLANT_TALL_B);
   c.decorAt('plant', r.x0 + 1, y0 + 2, f.n); c.decorAt('plant', r.x1 - 1, y0 + 2, f.n);
@@ -225,7 +280,9 @@ function paintFloor(c: Canvas, f: FloorSpec): void {
     c.rect(c.ground, BUILDING.x0 + 1, y0 + 10, SHAFT.x0 - 1, y0 + 12, T.CORRIDOR);
   }
   for (let y = y0 + 1; y <= y0 + 12; y++) c.set(c.walls, BUILDING.x0, y, T.WALL);      // outer wall
+  // Surfaces last: the stand tile a screen advertises has to be a column the room's own furniture has left free.
   for (const r of f.rooms) PAINT[r.kind](c, r, f);
+  for (const r of f.rooms) for (const s of r.surfaces ?? []) paintSurface(c, s, f.y0, f.n, r);
   const p = portalTile(y0);
   c.set(c.walls, p.tx, p.ty, T.ELEV_DOOR_L);
   c.set(c.furniture, SHAFT.x0, y0 + 10, T.ELEV_FRAME);
@@ -234,9 +291,16 @@ function paintFloor(c: Canvas, f: FloorSpec): void {
   c.obj(c.objects, `floor_${f.n}`, 'floor', BUILDING.x0, y0, SHAFT.x1 - BUILDING.x0 + 1, FLOOR_STRIDE + 1, { floor: f.n, label: f.label, color: f.color, portal_x: p.tx, portal_y: p.ty });
 }
 
-/** The notice board hangs on the F1 corridor wall above the corridor, opposite the board room door. */
+/**
+ * The notice board hangs on the F1 corridor wall above the corridor, opposite the board room door.
+ *
+ * It starts at column 37, not 34: the board room's sign plate is drawn from column 33 rightwards and ran straight
+ * under the old anchor, so the sign was half-eaten in every F1 frame (visual QA I4). Seven tiles rather than four,
+ * so "Queue empty" and a job line fit the glass instead of being cut to "Queue…" (I3). The pantry's sign sits at
+ * column 45, which the right edge at 43 clears.
+ */
 function paintLobby(c: Canvas): void {
-  paintSurface(c, { kind: 'noticeboard', tx: 34, tw: 4, label: 'Notice board — queue' }, 50, 1);
+  paintSurface(c, { kind: 'noticeboard', tx: 37, tw: 7, label: 'Notice board — the queue' }, 50, 1, { x0: BUILDING.x0, x1: SHAFT.x0 });
 }
 
 function paintStreet(c: Canvas): void {
@@ -245,10 +309,15 @@ function paintStreet(c: Canvas): void {
   c.rect(c.ground, 0, g + 2, W - 1, g + 3, T.STREET);
   c.rect(c.ground, 0, g + 4, W - 1, H - 1, T.PAVEMENT);
   c.rect(c.ground, ENTRANCE.x0, g + 1, ENTRANCE.x1, H - 1, T.PAVEMENT);   // the walk crosses the kerb and street as pavement
+  c.rect(c.ground, ENTRANCE.x0, g + 2, ENTRANCE.x1, g + 3, T.CROSSING);   // …and the carriageway is striped where it does
   c.rect(c.walls, BUILDING.x0, g, SHAFT.x1, g, T.WALL);
   c.set(c.walls, ENTRANCE.x0, g, T.GLASS_DOOR); c.set(c.walls, ENTRANCE.x1, g, T.GLASS_DOOR);
   c.obj(c.objects, 'door', 'anchor', ENTRANCE.x0, g, 2, 1, { label: 'Entrance', floor: 1, stand_x: ENTRANCE.x1, stand_y: g + 1 });
+  // Six hedges over 210 px of pavement is an empty lot, not a street (visual QA R2-M6). Trees on the kerb line,
+  // benches and planters behind them, none of them in the entrance walk's own columns.
   for (const x of [2, 11, 20, 29, 38, 56]) c.set(c.furniture, x, 60, T.TREE);
+  for (const x of [6, 16, 25, 34, 52, 58]) c.set(c.furniture, x, 61, T.BENCH);
+  for (const x of [8, 14, 23, 32, 42, 50, 59]) c.set(c.furniture, x, 62, T.PLANT_SMALL);
 }
 
 /** The building's outer skin, painted last so it wins over the per-floor walls beneath it: facade edges on the two

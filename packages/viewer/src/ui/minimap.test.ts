@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tickLayout, minimapPointToWorld, layoutKey, BUILDING_ROWS, FLOOR_ROWS } from './minimap.js';
+import { tickLayout, minimapPointToWorld, layoutKey, chromeVisibility, minimapWanted, BUILDING_ROWS, FLOOR_ROWS } from './minimap.js';
 
 describe('minimap chrome', () => {
   // The brief pinned 52 building rows and four 26 px ticks in a 104 px camera. The map says otherwise: BUILDING is
@@ -41,5 +41,43 @@ describe('the chrome lays itself out only when something moved', () => {
   it('covers all four floors, including one the scene has not reported yet', () => {
     expect(layoutKey(cam, { 1: '#a' })).toBe(layoutKey(cam, { 1: '#a' }));
     expect(layoutKey(cam, { 1: '#a' })).not.toBe(layoutKey(cam, colours));
+  });
+});
+
+/**
+ * Visual QA R-M8: the tower elevation puts the minimap away, because at that fit it is the same picture as the
+ * main view with a viewport rectangle over all of it. The first cut of that had the two controls the wrong way
+ * round — the "Map" button appeared when the *scene* hid the strip, and never when the owner did, so `M` was a
+ * one-way door for anyone using the mouse.
+ */
+describe('which minimap control is on the screen', () => {
+  it('shows the strip and no button while the strip is up', () => {
+    expect(chromeVisibility(true, true)).toEqual({ strip: true, showBtn: false });
+  });
+  it('offers the way back only when the owner is the one who hid it', () => {
+    expect(chromeVisibility(false, false)).toEqual({ strip: false, showBtn: true });
+  });
+  it('says nothing when the elevation hid it: it comes back by itself', () => {
+    expect(chromeVisibility(false, true)).toEqual({ strip: false, showBtn: false });
+    expect(chromeVisibility(false, null)).toEqual({ strip: false, showBtn: false });
+  });
+});
+
+/**
+ * Visual QA R2-M4: at a room elevation the strip is a picture of a room laid over the room itself — it covered a
+ * third of the notice board in `08-board` and desk names in `11-terminal` and `14-sales`.
+ */
+describe('where the minimap belongs', () => {
+  it('is up at the floor elevation and nowhere else', () => {
+    expect(minimapWanted(1, 1)).toBe(true);
+    expect(minimapWanted(0.5, 1)).toBe(false);   // the tower fit: the same picture as the main view
+    expect(minimapWanted(2, 1)).toBe(false);
+    expect(minimapWanted(3, 1)).toBe(false);
+    expect(minimapWanted(4, 1)).toBe(false);
+  });
+  it('follows the floor elevation rather than a hard-coded zoom: a narrow window fits a floor at 2', () => {
+    expect(minimapWanted(2, 2)).toBe(true);
+    expect(minimapWanted(1, 2)).toBe(true);
+    expect(minimapWanted(3, 2)).toBe(false);
   });
 });

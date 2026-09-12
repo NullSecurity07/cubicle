@@ -43,7 +43,18 @@ function torso(p: Px, b: Body, dy = 0): void {
   switch (b.family) {
     case 'chief': outlined(p, 2, y, 12, 8, shirtDark, b.o); p.fill(6, y, 4, 4, shirt); px(p, 6, y + 1, shirtDark); px(p, 9, y + 1, shirtDark); p.fill(7, y + 1, 2, 5, accent); break;   // blazer, lapel V, tie
     case 'manager': outlined(p, 3, y, 10, 8, shirt, b.o); hline(p, 3, y, 10, shirtDark); vline(p, 7, y, 5, accent); break;                                                       // shirt, lanyard
-    case 'advisor': outlined(p, 3, y, 10, 8, shirt, b.o); vline(p, 7, y + 1, 6, shirtDark); px(p, 7, y + 2, accent); px(p, 7, y + 5, accent); break;                              // cardigan, buttons
+    // Four advisor silhouettes, picked by the same hash that picks hair: three cardigans side by side at one table
+    // read as one person drawn three times (visual QA I9), and an advisor is the only family seen as a row.
+    case 'advisor': {
+      outlined(p, 3, y, 10, 8, shirt, b.o);
+      switch (b.opts.hairShape) {
+        case 1: hline(p, 3, y, 10, shirtDark); p.fill(5, y - 1, 6, 2, accent); px(p, 9, y + 1, accent, 1, 4); break;   // scarf over the shoulders
+        case 2: p.fill(6, y, 4, 5, shirtDark); px(p, 4, y, shirtDark, 2, 3); px(p, 10, y, shirtDark, 2, 3); break;    // open jacket, wide lapels
+        case 3: hline(p, 3, y, 10, shirtDark); p.fill(7, y + 1, 2, 6, accent); p.fill(6, y, 4, 1, shirtDark); break;   // collar and tie
+        default: vline(p, 7, y + 1, 6, shirtDark); px(p, 7, y + 2, accent); px(p, 7, y + 5, accent); break;            // cardigan, buttons
+      }
+      break;
+    }
     case 'owner': outlined(p, 3, y, 10, 8, PALETTE.owner, b.o); p.fill(5, y - 1, 6, 1, PALETTE.owner); break;                                                                    // turtleneck collar
     default: outlined(p, 3, y, 10, 8, shirt, b.o); if (b.opts.hoodie) { px(p, 3, y - 1, shirtDark, 2, 1); px(p, 11, y - 1, shirtDark, 2, 1); hline(p, 5, y + 5, 6, shirtDark); } else hline(p, 3, y, 10, shirtDark); break;   // hoodie (hood bump, pocket) or t-shirt
   }
@@ -60,6 +71,26 @@ function legs(p: Px, b: Body, step: number): void {
   const t = b.pal.trousers;
   outlined(p, 4, 18, 3, step === 0 ? 5 : 6, t, b.o); outlined(p, 9, 18, 3, step === 2 ? 5 : 6, t, b.o);
   if (step === 1 || step === 3) p.fill(6, 22, 4, 1, t);   // pass: feet together
+}
+/**
+ * A seated lower half: a thigh, two shins with a gap, and a shoe row — the shape `legs()` already draws standing.
+ *
+ * It used to be one 8 x 3 outlined slab plus a 3 x 3 foot block, both in the family's trousers under a dark
+ * outline, so four advisors at one table each carried a featureless dark rectangle where a person's legs should
+ * be (visual QA R-I5). `x` is the left edge of the thigh; the knees face the way the sprite is turned.
+ */
+function sitLegs(p: Px, b: Body, x: number): void {
+  // A step lighter than the standing trousers. At 1 x a seated figure is 6 px of leg under a 1 px outline on every
+  // side, so at the family's own `#3b3a45` there was more outline than trouser and the lower half went back to
+  // reading as one dark block (visual QA R2-M2). Standing legs are 6 px tall and keep the darker value.
+  const c = hexToHsl(b.pal.trousers), t = hsl(c.h, c.s, Math.min(0.6, c.l + 0.10)), shoe = outlineOf(b.pal.trousers);
+  outlined(p, x, 18, 8, 2, t, b.o);                 // thigh, along the seat
+  // Three wide with two of outline between them, which is exactly the proportion `legs()` reads as two legs at
+  // this size. Two-wide shins were tried first: a 1 px outline each side left more outline than trouser, and the
+  // whole lower half went back to being one dark block.
+  outlined(p, x, 20, 3, 3, t, b.o);                 // near shin
+  outlined(p, x + 5, 20, 3, 3, t, b.o);             // far shin, with a gap between them
+  p.fill(x, 22, 3, 1, shoe); p.fill(x + 5, 22, 3, 1, shoe);
 }
 function seatedBase(p: Px, b: Body): void { head(p, b, 0); torso(p, b); outlined(p, 4, 18, 8, 3, b.pal.trousers, b.o); }
 const cup = (p: Px, x: number, y: number): void => { p.fill(x, y, 3, 3, '#f5f5f0'); px(p, x + 3, y + 1, '#f5f5f0'); px(p, x + 1, y - 1, '#cfd6e6'); };
@@ -82,8 +113,8 @@ export function drawSpriteFrame(p: Px, name: string, pal: RolePalette, family: F
     case 'wave': head(p, b, 0, dy); torso(p, b, dy); p.fill(3, 11 + dy, 1, 5, skin); p.fill(13, 6 + dy, 1, 6, skin); p.fill(12, 5 + dy, 3, 1, skin); legs(p, b, 0); return;
     case 'stretch': head(p, b, 0, dy); torso(p, b, dy); p.fill(2, 4 + dy, 1, 7, skin); p.fill(13, 4 + dy, 1, 7, skin); legs(p, b, 0); return;
     case 'ride': head(p, b, 0, dy); torso(p, b, dy); p.fill(2, 11 + dy, 1, 5, skin); p.fill(13, 11 + dy, 1, 4, skin); px(p, 13, 15 + dy, PALETTE.steelLight); legs(p, b, 1); return;
-    case 'sit_side_l': head(p, b, 1, dy); torso(p, b, dy); p.fill(3, 12 + dy, 1, 4, skin); outlined(p, 1, 18, 8, 3, pal.trousers, b.o); outlined(p, 1, 20, 3, 3, pal.trousers, b.o); return;
-    case 'sit_side_r': head(p, b, 2, dy); torso(p, b, dy); p.fill(12, 12 + dy, 1, 4, skin); outlined(p, 7, 18, 8, 3, pal.trousers, b.o); outlined(p, 12, 20, 3, 3, pal.trousers, b.o); return;
+    case 'sit_side_l': head(p, b, 1, dy); torso(p, b, dy); p.fill(3, 12 + dy, 1, 4, skin); sitLegs(p, b, 1); return;
+    case 'sit_side_r': head(p, b, 2, dy); torso(p, b, dy); p.fill(12, 12 + dy, 1, 4, skin); sitLegs(p, b, 7); return;
     default: head(p, b, 0, dy); torso(p, b, dy); arms(p, b, 0, 0, dy); legs(p, b, 0);
   }
 }
@@ -100,7 +131,7 @@ export const FACE_SHEET_W = 3 * FACE_W, FACE_SHEET_H = FACE_ROWS.length * FACE_V
 export const FACE_FRAMES: { name: string; x: number; y: number }[] = FACE_ROWS.flatMap((mood, r) => FACE_VARIANTS.flatMap((v, vi) => [0, 1, 2].map((d) => ({ name: `${mood}:${d}${v.suffix}`, x: d * FACE_W, y: (r * FACE_VARIANTS.length + vi) * FACE_H }))));
 
 function drawFace(p: Px, mood: Mood | 'blink', dir: 0 | 1 | 2, talk: boolean, glasses: boolean): void {
-  const eye = '#1b1f2a', mouth = '#7a3b2e', brow = '#3a2a1a', glass = '#3a3f4a';
+  const eye = '#1b1f2a', mouth = '#7a3b2e', brow = '#3a2a1a', glass = '#5d656f', glassLit = '#c5ccd4';
   const eyes = dir === 0 ? [1, 5] : dir === 1 ? [0, 3] : [4, 7];
   const mouthX = dir === 0 ? 3 : dir === 1 ? 1 : 5, mouthW = dir === 0 ? 2 : 1;
   const eyeY = mood === 'thinking' ? 1 : 2;
@@ -116,7 +147,20 @@ function drawFace(p: Px, mood: Mood | 'blink', dir: 0 | 1 | 2, talk: boolean, gl
   else if (mood === 'happy') px(p, mouthX, 4, mouth, mouthW + 1, 1);
   else if (mood === 'puzzled') px(p, mouthX + (dir === 0 ? 1 : 0), 4, mouth);
   else if (mood !== 'asleep') px(p, mouthX, 4, mouth, mouthW, 1);
-  if (glasses) { for (const ex of eyes) { if (ex > 0) px(p, ex - 1, eyeY, glass); if (ex + 2 < FACE_W) px(p, ex + 2, eyeY, glass); } hline(p, Math.max(0, eyes[0] - 1), eyeY + 1, Math.min(FACE_W, eyes[1] + 3) - Math.max(0, eyes[0] - 1), glass); }
+  /*
+   * Spectacles: a rim either side of each eye and a bridge between the lenses, with a lit pixel on the top-left
+   * of the near lens. The old overlay painted a solid bar right across the eye band, so the three advisors had no
+   * eyes at all — "three masked men" in the visual QA (I9). The eye pixel itself is never covered.
+   */
+  if (glasses) {
+    for (const ex of eyes) {
+      if (ex > 0) px(p, ex - 1, eyeY, glass);
+      if (ex + 1 < FACE_W) px(p, ex + 1, eyeY, glass);
+    }
+    const l = Math.min(eyes[0], eyes[1]) + 2, r = Math.max(eyes[0], eyes[1]) - 1;
+    if (r > l) px(p, l, eyeY, glass, r - l, 1);
+    if (eyes[0] > 0 && eyeY > 0) px(p, eyes[0] - 1, eyeY - 1, glassLit);
+  }
 }
 
 export function drawFaceSheet(p: Px): void {

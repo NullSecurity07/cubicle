@@ -30,6 +30,23 @@ export function checker(p: Px, x: number, y: number, w: number, h: number, a: st
 export function dither(p: Px, x: number, y: number, w: number, h: number, c: string, n: number, seed: number): void { let s = seed; for (let i = 0; i < n; i++) { s = (s * 9301 + 49297) % 233280; const dx = s % w; s = (s * 9301 + 49297) % 233280; const dy = s % h; p.fill(x + dx, y + dy, 1, 1, c); } }
 export function floorOfName(name: string): 1 | 2 | 3 | 4 | null { const m = /_F([1-4])$/.exec(name); return m ? (Number(m[1]) as 1 | 2 | 3 | 4) : null; }
 
+/**
+ * The lamp glow, as bands rather than a ramp.
+ *
+ * It was a continuous radial gradient, and in a nearest-neighbour world where every other edge is a hard pixel
+ * and the type is uniform blocks it read as a lens flare — the brightest thing in `08-board` outside the top bar,
+ * a lilac bloom under the word "sitting" (visual QA R-I7). Four hard bands, quantised onto a 4 px cell so the
+ * edges land on the pixel grid at every integer zoom, and capped well below a headline's white so a screen's own
+ * words stay the brightest thing on the screen. `makeLampGlow` (tileset.ts) rasterises it.
+ */
+export const GLOW_CELL = 4;
+export const GLOW_STEPS = [0.34, 0.24, 0.15, 0.07];
+/** Which band a cell at `t` (0 at the lamp, 1 at the edge) falls in; 0 outside the last one. */
+export function glowStep(t: number): number {
+  const i = Math.floor(t * GLOW_STEPS.length);
+  return i >= 0 && i < GLOW_STEPS.length ? GLOW_STEPS[i] : 0;
+}
+
 const P = PALETTE;
 const full = (p: Px, c: string): void => p.fill(0, 0, 16, 16, c);
 const pal = (f: FloorPalette | null, n: number): FloorPalette => f ?? floorPalette(n);
@@ -86,6 +103,10 @@ export const DRAW: Record<Exclude<TileName, 'EMPTY'>, Drawer> = {
   // --- exterior ---
   STREET: (p) => { full(p, P.asphalt); noise(p, [shade(P.asphalt, 0.04), shade(P.asphalt, -0.03)], 16, 5); },
   KERB: (p) => { full(p, P.asphalt); p.fill(0, 0, 16, 5, P.kerb); hline(p, 0, 5, 16, shade(P.kerb, -0.15)); },
+  /* The tower fit's largest single area was the street, and it was flat (visual QA R2-M6). A crossing says the
+     road is a road and marks where the building's own walk reaches it. Stripes run across the carriageway, so on
+     a horizontal road they are vertical, and they tile: two per cell, neither touching a cell edge. */
+  CROSSING: (p) => { full(p, P.asphalt); noise(p, [shade(P.asphalt, 0.04), shade(P.asphalt, -0.03)], 10, 5); p.fill(2, 0, 4, 16, '#d9d5cd'); p.fill(10, 0, 4, 16, '#d9d5cd'); },
   PAVEMENT: (p) => { full(p, P.pavement); noise(p, ['#b5ac9e', '#9a9184'], 12, 3); hline(p, 0, 7, 16, '#9a9184'); vline(p, 7, 0, 16, '#9a9184'); },
   FACADE: (p) => { full(p, P.concrete); noise(p, [P.concreteLight, P.concreteDark], 10, 9); hline(p, 0, 15, 16, P.concreteDark); },
   FACADE_EDGE: (p) => { full(p, P.concrete); vline(p, 0, 0, 16, P.concreteLight); vline(p, 1, 0, 16, P.concreteLight); vline(p, 15, 0, 16, P.concreteDark); },
@@ -125,7 +146,9 @@ export const DRAW: Record<Exclude<TileName, 'EMPTY'>, Drawer> = {
   DESK_EXEC_L: (p) => deskTop(p, true, true), DESK_EXEC_R: (p) => deskTop(p, false, true),
   CHAIR_TASK: (p) => chair(p, '#3b4a8a', '#2f3c73', false),
   CHAIR_EXEC: (p) => chair(p, '#3a2f2a', '#2a221e', true),
-  OWNER_CHAIR: (p) => { chair(p, '#3a2f2a', '#2a221e', true); hline(p, 5, 3, 6, P.amber); },
+  // Chrome on the headrest, not amber: `#e6a93c` is the attention accent, and a gold chair in the board room read
+  // as something asking to be looked at (visual QA M7).
+  OWNER_CHAIR: (p) => { chair(p, '#3a2f2a', '#2a221e', true); hline(p, 5, 3, 6, P.steelLight); px(p, 5, 4, P.steel, 6, 1); },
   // --- board table (2 rows × 3 columns) ---
   BT_TL: (p) => tableTop(p, { t: true, l: true }), BT_TM: (p) => tableTop(p, { t: true }), BT_TR: (p) => tableTop(p, { t: true, r: true }),
   BT_BL: (p) => tableTop(p, { b: true, l: true }), BT_BM: (p) => tableTop(p, { b: true }), BT_BR: (p) => tableTop(p, { b: true, r: true }),
@@ -148,4 +171,20 @@ export const DRAW: Record<Exclude<TileName, 'EMPTY'>, Drawer> = {
   RACK_B: (p) => { bevel(p, 2, 0, 12, 16, '#23262e'); for (let y = 1; y < 12; y += 3) { hline(p, 3, y, 10, '#3a3f4a'); px(p, 4, y + 1, '#4cae5c'); px(p, 12, y + 1, P.amber); } p.fill(2, 13, 12, 3, '#1b1f2a'); },
   SAFE_DOOR: (p) => { bevel(p, 1, 0, 14, 16, P.steelDark); p.fill(3, 2, 10, 12, P.steel); p.fill(6, 5, 4, 4, P.steelDark); px(p, 7, 6, P.steelLight, 2, 2); vline(p, 12, 4, 8, P.amber); },
   SCREEN_BEZEL: (p) => bezel(p, false, false), SCREEN_BEZEL_L: (p) => bezel(p, true, false), SCREEN_BEZEL_R: (p) => bezel(p, false, true),
+  // --- the seating corner of a one-person office ---
+  // A wool rug: a weave that tiles seamlessly, so a 4 × 3 patch of it reads as one rug rather than as twelve mats.
+  RUG: (p) => { full(p, '#b9ae96'); for (let y = 0; y < 16; y += 2) hline(p, 0, y, 16, '#c7bda6'); for (let x = 1; x < 16; x += 4) vline(p, x, 0, 16, '#ad9f85'); dither(p, 0, 0, 16, 16, '#d3cab6', 10, 5); },
+  SOFA_L: (p) => sofa(p, true, false), SOFA_R: (p) => sofa(p, false, true),
+  SIDE_TABLE: (p) => { bevel(p, 2, 4, 12, 7, P.woodLight); p.fill(3, 11, 2, 4, P.woodDark); p.fill(11, 11, 2, 4, P.woodDark); p.fill(5, 2, 6, 3, '#c9d6e2'); px(p, 6, 3, '#6f8ea8', 4, 1); },
 };
+
+/** One half of a two-tile sofa: a back along the top, a seat cushion, and an arm on the outer edge. */
+function sofa(p: Px, left: boolean, right: boolean): void {
+  const body = '#55617a', backTop = shade(body, 0.10), cushion = '#6b7893', shadow = shade(body, -0.14);
+  p.fill(0, 2, 16, 5, body); hline(p, 0, 2, 16, backTop);
+  p.fill(0, 7, 16, 7, cushion); hline(p, 0, 7, 16, shade(cushion, 0.08)); hline(p, 0, 13, 16, shadow);
+  if (left) { p.fill(0, 4, 3, 10, body); hline(p, 0, 4, 3, backTop); }
+  if (right) { p.fill(13, 4, 3, 10, body); hline(p, 13, 4, 3, backTop); vline(p, 15, 4, 10, shadow); }
+  if (!left) vline(p, 0, 7, 7, shade(cushion, -0.06));
+  p.fill(left ? 3 : 0, 14, left || right ? 13 : 16, 2, shade(body, -0.25));
+}
