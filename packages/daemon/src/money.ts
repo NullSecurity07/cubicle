@@ -142,16 +142,28 @@ export const LOCK_STATE_PATH = '.cubicle/money-notices.json';
 
 /**
  * Where the memory goes when `.cubicle/` cannot be written — a read-only mount, a permissions accident, a full
- * disk. It stands in for the file and does not replace it: **every cycle tries the file again**, and the first
- * write that succeeds drops the stand-in and makes the file the record once more. So a five-minute `ENOSPC`
- * costs nothing beyond the notices said during it, and only a fault that outlives the daemon costs the one
- * repeat per standing situation that the notice on the event log warns about.
+ * disk. **Every cycle tries the file again**, and the first write that succeeds writes the merged state and
+ * drops the stand-in, so a five-minute `ENOSPC` costs nothing beyond the notices said during it, and only a
+ * fault that outlives the daemon costs the one repeat per standing situation that the notice on the event log
+ * warns about.
+ *
+ * While it exists it is the **newer** truth, not a fallback the file overrules. What the file holds is what was
+ * true before the writes started failing; what this holds is what has been decided since.
  *
  * Keyed on the vault's **root path**, not on a `Vault` instance, so two opens of the same directory in one
  * process (`rebuild`, `doctor`, a test) share one memory instead of keeping two. One small entry per vault root
  * this process has ever failed to write, which is at most a handful and is dropped again on the first success.
  */
-const inProcessNotices = new Map<string, Record<string, string>>();
+const inProcessNotices = new Map<string, HeldNotices>();
+
+/**
+ * What the stand-in holds: the situations this process meant to write, and `null` for the ones it meant to
+ * **remove**. The tombstones are the whole point. A `clearNotice` whose write fails leaves the old value
+ * sitting in the file; without a record that the removal was intended, a later cycle would read that stale
+ * value back, agree with it, and treat a genuine re-lock of the same path as already announced — silently,
+ * and for good, because from then on the file and the stand-in agree.
+ */
+type HeldNotices = Record<string, string | null>;
 
 /** What the file says, or `{}` when it is absent, unreadable, or not a JSON object. */
 function readNoticeFile(vault: Vault): Record<string, string> {
@@ -162,10 +174,17 @@ function readNoticeFile(vault: Vault): Record<string, string> {
 }
 
 function noticeState(vault: Vault): Record<string, string> {
-  // The file wins per key where it has one: it is the record, and the stand-in only holds what could not be
-  // written to it. Merging rather than choosing is what lets a cycle read back a notice written before the
-  // disk filled up *and* one said while it was full.
-  return { ...inProcessNotices.get(vault.root), ...readNoticeFile(vault) };
+  const state = readNoticeFile(vault);
+  const held = inProcessNotices.get(vault.root);
+  if (!held) return state;
+  // Where the stand-in has an opinion it is the newer one, removals included: it is what this process decided
+  // and could not write down, and the file is what was true before the write started failing. Keys the
+  // stand-in says nothing about are left as the file has them, so a fault cannot lose an unrelated notice.
+  for (const [where, situation] of Object.entries(held)) {
+    if (situation === null) delete state[where];
+    else state[where] = situation;
+  }
+  return state;
 }
 
 function saveNoticeState(vault: Vault, state: Record<string, string>): void {
@@ -181,7 +200,12 @@ function saveNoticeState(vault: Vault, state: Record<string, string>): void {
     inProcessNotices.delete(vault.root);   // the file is the record again
     return;
   } catch { /* fall through: the file cannot take it, so this process holds it instead */ }
-  inProcessNotices.set(vault.root, state);
+  // Everything this state says, plus a tombstone for every key the file still carries that it does not — the
+  // removals this write was going to make. Re-derived from the file each time, because the file cannot change
+  // while it cannot be written.
+  const next: HeldNotices = { ...state };
+  for (const where of Object.keys(readNoticeFile(vault))) if (next[where] === undefined) next[where] = null;
+  inProcessNotices.set(vault.root, next);
   if (held) return;   // already saying it in process; the owner has been told once and that is enough
   try {
     vault.events.emit({ type: 'daemon.warning', payload: {

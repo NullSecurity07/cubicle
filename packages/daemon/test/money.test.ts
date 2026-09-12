@@ -471,6 +471,37 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     }
   });
 
+  it('still announces a re-lock when it was the clearing write that could not land', () => {
+    const org = loadOrg(vault);
+    const cubicle = path.join(dir, '.cubicle');
+    const lock = (on: boolean) => vault.writeText('Memory/constitution.md',
+      `# Constitution\n\n\`\`\`yaml\nnever_modify:${on ? '\n  - Ledger/' : ' []'}\n\`\`\`\n`, 'owner');
+    lock(true);
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(lockedRunwayRows()).toHaveLength(1);
+    expect(JSON.parse(readFileSync(path.join(dir, LOCK_STATE_PATH), 'utf8'))[LOCKED_RUNWAY]).toBe(`locked:${RUNWAY_PATH}`);
+    mkdirSync(cubicle, { recursive: true });
+    chmodSync(cubicle, 0o555);
+    try {
+      // The fault lands on the *clearing* write: the unlock is decided, but the file keeps the old entry. If
+      // that stale entry were allowed to win, the re-lock below would agree with it and be swallowed for good.
+      lock(false);
+      writeRunway(vault, org, SHIPPED, NOW);
+      expect(lockedRunwayRows()).toHaveLength(1);
+      // Same path, same situation string, fault still standing — and it is still a second lock.
+      lock(true);
+      writeRunway(vault, org, SHIPPED, NOW);
+      expect(lockedRunwayRows()).toHaveLength(2);
+      chmodSync(cubicle, 0o755);
+      // And once the file can take a write again it is rewritten from what this process actually decided.
+      writeRunway(vault, org, SHIPPED, NOW);
+      expect(lockedRunwayRows()).toHaveLength(2);
+      expect(JSON.parse(readFileSync(path.join(dir, LOCK_STATE_PATH), 'utf8'))[LOCKED_RUNWAY]).toBe(`locked:${RUNWAY_PATH}`);
+    } finally {
+      chmodSync(cubicle, 0o755);
+    }
+  });
+
   it('regenerates it again as soon as the owner takes the lock off', () => {
     const org = loadOrg(vault);
     vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
