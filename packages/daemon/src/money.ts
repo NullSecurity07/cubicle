@@ -504,17 +504,19 @@ export function enqueueRunway(vault: Vault, org: Org, now: Date = new Date()): s
  * runway note an agent contributes, and it arrives through the finish contract rather than through a write, so
  * no model can put a number of its own on that page or clobber the figures when the note is regenerated.
  */
-export function runwayCommentary(vault: Vault): string {
+export function runwayCommentary(vault: Vault): { text: string; date: string } {
   const last = listJobs(vault)
     .filter((j) => j.type === 'finance.runway' && j.status === 'done')
     .sort((a, b) => a.updated.localeCompare(b.updated))
     .at(-1);
-  if (!last) return '';
+  if (!last) return { text: '', date: '' };
   // `resultBlock` reads the **last** heading-anchored `## Result` fence, so the empty one `createJob` writes
   // into every new job body cannot be mistaken for the finished one, and no text the goal happens to contain
   // can forge a summary on to the owner's bank page.
   const summary = resultBlock(readJob(vault, last.id)?.body ?? '').summary;
-  return typeof summary === 'string' ? summary.trim().split('\n').slice(0, 5).join('\n') : '';
+  // The day the opinion was written, so the note can date it: the page is regenerated four times a day and the
+  // job runs once, so most of the time this is not today, and after an outage it can be a week ago.
+  return { text: typeof summary === 'string' ? summary.trim().split('\n').slice(0, 5).join('\n') : '', date: String(last.updated).slice(0, 10) };
 }
 
 /**
@@ -547,9 +549,10 @@ export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Dat
   clearNotice(vault, LOCKED_RUNWAY);
   const calls = recordedCalls(vault, dayStartIso(now));
   const shadow = shadowCost(cfg, calls);
+  const cfo = runwayCommentary(vault);
   vault.writeText(RUNWAY_PATH, runwayNote(report, {
     calls: calls.length, paidCalls: shadow.paidCalls, shadowCents: shadow.cents, priced: hasPrices(cfg),
-    quotas: budgetRows(vault, org, cfg, now), commentary: runwayCommentary(vault), generatedAt: now.toISOString(),
+    quotas: budgetRows(vault, org, cfg, now), commentary: cfo.text, commentaryDate: cfo.date, generatedAt: now.toISOString(),
   }), 'daemon', { generated: true });
   return report;
 }

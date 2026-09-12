@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   scaffoldVault, loadOrg, readLedger, moneyReport, appendEntry, listJobs, listInbox, readJob, updateJob, jobPath,
-  createProposal, findInboxById, officeHolder, teamOf, money, HOUSE, LEDGER_PATH, RUNWAY_PATH, type Vault,
+  createProposal, findInboxById, officeHolder, teamOf, money, runwayNote, HOUSE, LEDGER_PATH, RUNWAY_PATH, type Vault,
 } from '@cubicle/core';
 import { parseProvidersConfig } from '@cubicle/router';
 import {
@@ -343,10 +343,10 @@ describe('the daily runway job (spec §2)', () => {
     appendEntry(vault, { at: '2026-09-11T08:00:00.000Z', kind: 'capital', cents: 25000, mode: 'live', who: 'owner', why: 'Seed' }, 'owner');
     call('backend_engineer', 'strong');
     const id = enqueueRunway(vault, org, NOW)!;
-    expect(runwayCommentary(vault)).toBe('');
+    expect(runwayCommentary(vault)).toEqual({ text: '', date: '' });
     vault.updateNote(jobPath(id), (n) => ({ data: n.data, body: `${n.body}\n## Result\n\n\`\`\`json\n${JSON.stringify({ status: 'done', summary: 'Free tiers cover everything.\nNothing to pay for yet.' })}\n\`\`\`\n` }), 'cfo');
     updateJob(vault, id, { status: 'done' }, 'cfo');
-    expect(runwayCommentary(vault)).toContain('Free tiers cover everything.');
+    expect(runwayCommentary(vault).text).toContain('Free tiers cover everything.');
     const r = writeRunway(vault, org, SHIPPED, NOW);
     expect(r.cashCents).toBe(25000);
     const note = vault.readText(RUNWAY_PATH);
@@ -358,6 +358,47 @@ describe('the daily runway job (spec §2)', () => {
     writeRunway(vault, org, SHIPPED, NOW);
     expect(vault.readText(RUNWAY_PATH)).toBe(note);
     expect(vault.readText(RUNWAY_PATH)).toContain('Free tiers cover everything.');
+  });
+
+  it('dates the CFO\'s opinion when it is not from today, and not when it is (M10)', () => {
+    const org = loadOrg(vault);
+    appendEntry(vault, { at: '2026-09-11T08:00:00.000Z', kind: 'capital', cents: 25000, mode: 'live', who: 'owner', why: 'Seed' }, 'owner');
+    const id = enqueueRunway(vault, org, NOW)!;
+    vault.updateNote(jobPath(id), (n) => ({ data: n.data, body: `${n.body}\n## Result\n\n\`\`\`json\n${JSON.stringify({ status: 'done', summary: 'Free tiers cover everything.' })}\n\`\`\`\n` }), 'cfo');
+    updateJob(vault, id, { status: 'done' }, 'cfo');
+
+    // Written today: the figures and the opinion are the same age, and a date line would be noise.
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(vault.readText(RUNWAY_PATH)).not.toContain('read; the figures above are current');
+
+    // Two days later the page is regenerated four times a day and the opinion has not moved. Undated, today's
+    // cash sat under a two-day-old view of it with nothing saying so.
+    const later = new Date('2026-09-14T09:00:00.000Z');
+    writeRunway(vault, org, SHIPPED, later);
+    const note = vault.readText(RUNWAY_PATH);
+    expect(note).toContain(`_From the CFO's ${String(readJob(vault, id)!.data.updated).slice(0, 10)} read; the figures above are current._`);
+    expect(note).toContain('Free tiers cover everything.');
+    // And the dateline belongs to the commentary, not to the page: no opinion, no line.
+    expect(runwayNote({ ...moneyReport(readLedger(vault), later), bookMissing: false }, { calls: 0, paidCalls: 0, shadowCents: 0, priced: false, quotas: [], commentaryDate: '2026-01-01', generatedAt: later.toISOString() })).not.toContain('read; the figures above are current');
+  });
+
+  it('says the company has no declared currency until the book exists (M17)', () => {
+    const org = loadOrg(vault);
+    // The owner has deleted the book the template ships. Cash is 0 in *a* currency, and the page says whose.
+    rmSync(vault.abs(LEDGER_PATH), { force: true });
+    const r = moneyReport(readLedger(vault), NOW);
+    expect(r.bookMissing).toBe(true);
+    expect(r.currency).toBe('USD');
+    writeRunway(vault, org, SHIPPED, NOW);
+    const note = vault.readText(RUNWAY_PATH);
+    expect(note).toContain('no declared currency');
+    expect(note).toContain('because something has to be shown');
+
+    // And once there is a book, it is the book's own currency and the sentence goes.
+    appendEntry(vault, { at: '2026-09-11T08:00:00.000Z', kind: 'capital', cents: 25000, mode: 'live', who: 'owner', why: 'Seed from savings' }, 'owner');
+    expect(moneyReport(readLedger(vault), NOW).bookMissing).toBe(false);
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(vault.readText(RUNWAY_PATH)).not.toContain('no declared currency');
   });
 });
 

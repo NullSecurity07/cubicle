@@ -112,7 +112,18 @@ export type NewEntry = Omit<LedgerEntry, 'at' | 'ref'> & { at?: string; ref?: st
 export const LEDGER_COLUMNS = ['at', 'kind', 'amount', 'mode', 'who', 'why', 'ref'] as const;
 
 export interface LedgerProblem { line: number; text: string; reason: string }
-export interface Ledger { currency: string; entries: LedgerEntry[]; problems: LedgerProblem[] }
+export interface Ledger {
+  currency: string;
+  entries: LedgerEntry[];
+  problems: LedgerProblem[];
+  /**
+   * The book is not there at all. `vault-template/` ships one and `migrateOrg` copies `Ledger/` into an existing
+   * vault, so this means the owner has deleted it — and then `currency` below is `DEFAULT_CURRENCY` because
+   * something has to be, not because anyone declared it. Carried through `moneyReport` so the runway note can say
+   * as much instead of presenting a borrowed currency as the company's own.
+   */
+  missing?: boolean;
+}
 
 /** A markdown table row's cells, or [] for a line that is not one. */
 function cells(line: string): string[] {
@@ -258,7 +269,9 @@ export function ledgerTemplate(currency: string = DEFAULT_CURRENCY, opened: stri
 
 export function readLedger(vault: Vault): Ledger {
   const md = vault.readTextOrNull(LEDGER_PATH);
-  return md === null ? { currency: DEFAULT_CURRENCY, entries: [], problems: [] } : parseLedger(md);
+  // No book: an empty position in the default currency, flagged as undeclared. Nothing here creates the file —
+  // the first `appendEntry` does, and until then the company has no currency of its own.
+  return md === null ? { currency: DEFAULT_CURRENCY, entries: [], problems: [], missing: true } : parseLedger(md);
 }
 
 /** Bounded retries for the compare-and-write race in `appendEntry`; an append commutes, so a retry never loses work. */
@@ -430,6 +443,8 @@ export interface MoneyReport {
   lastLiveAt: string | null;
   entries: number;
   problems: LedgerProblem[];
+  /** `Ledger/ledger.md` is not there, so `currency` is a default and not the company's declared one. */
+  bookMissing: boolean;
 }
 
 /**
@@ -477,6 +492,7 @@ export function moneyReport(ledger: Ledger, now: Date = new Date()): MoneyReport
     lastLiveAt: liveTimes.length ? new Date(Math.max(...liveTimes)).toISOString() : null,
     entries: ledger.entries.length,
     problems: ledger.problems,
+    bookMissing: ledger.missing === true,
   };
 }
 
@@ -520,6 +536,13 @@ export interface RunwayInputs {
   priced: boolean;
   quotas: { division: string; used: number; quota: number }[];
   commentary?: string;
+  /**
+   * The day the commentary was written — the `finance.runway` job's `updated` date. The note is regenerated on
+   * every heartbeat (four a day) while the job runs once a day, so for most of a day the page carries today's
+   * cash above yesterday's opinion of it, and after a weekend outage a week-old one. Dated where it is not
+   * today's, so the owner can tell an old read from a fresh one.
+   */
+  commentaryDate?: string;
   generatedAt?: string;
 }
 
@@ -544,6 +567,9 @@ export function runwayNote(r: MoneyReport, o: RunwayInputs): string {
     `**Burn:** ${money(r.burnCentsPerDay, r.currency)} a day (${money(r.windowOutCents, r.currency)} over ${days(r.windowDays)})`, '',
     runway, '',
   ];
+  if (r.bookMissing) {
+    lines.push(`\`${LEDGER_PATH}\` is not there, so the company has **no declared currency** — the figures above are in ${r.currency} because something has to be shown, not because anyone chose it. Create the book (or let \`ledger.record\` create it) and its frontmatter decides.`, '');
+  }
   if (r.dormant) lines.push(`**The company is dormant.** It has spent the capital it was given. Only the heartbeat runs until a \`capital\` row is added to \`${LEDGER_PATH}\`.`, '');
   if (r.mockRevenueCents > 0) lines.push(`Simulated revenue so far: ${money(r.mockRevenueCents, r.currency)}. It is **not** cash and is not counted above — nobody paid it.`, '');
   lines.push('## What a paid tier would have cost', '', shadow, '');
@@ -558,7 +584,14 @@ export function runwayNote(r: MoneyReport, o: RunwayInputs): string {
       ? r.problems.map((p) => `- line ${p.line}: ${p.reason} — \`${p.text.slice(0, 120)}\``)
       : ['_Every row in the ledger parses._']),
     '');
-  lines.push(RUNWAY_COMMENTARY, '', (o.commentary ?? '').trim() || '_The CFO has not commented yet. The daily `finance.runway` job writes this._', '');
+  // The CFO's own words, and — when they are not from today — the day they were written. The figures above are
+  // always this minute's; saying nothing would let a week-old opinion read as a comment on them.
+  const commentary = (o.commentary ?? '').trim();
+  const today = (o.generatedAt ?? nowIso()).slice(0, 10);
+  const said = (o.commentaryDate ?? '').slice(0, 10);
+  lines.push(RUNWAY_COMMENTARY, '');
+  if (commentary && said && said !== today) lines.push(`_From the CFO's ${said} read; the figures above are current._`, '');
+  lines.push(commentary || '_The CFO has not commented yet. The daily `finance.runway` job writes this._', '');
   return stringifyNote({
     generated: o.generatedAt ?? nowIso(),
     currency: r.currency,

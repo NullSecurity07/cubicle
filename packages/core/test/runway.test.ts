@@ -165,6 +165,28 @@ describe('the runway note (spec §2)', () => {
     expect(runwayNote(base, { calls: 1, paidCalls: 0, shadowCents: 0, priced: false, quotas: [] })).toContain('The CFO has not commented yet');
   });
 
+  it('dates an opinion that is not from today, so a stale read cannot pass for a fresh one (M10)', () => {
+    const opinion = { calls: 1, paidCalls: 0, shadowCents: 0, priced: false, quotas: [], commentary: 'Nothing is costing us anything.', generatedAt: NOW.toISOString() };
+    // The page is regenerated on every heartbeat; the job that writes this runs once a day.
+    const stale = runwayNote(base, { ...opinion, commentaryDate: '2026-09-05' });
+    expect(stale).toContain('_From the CFO\'s 2026-09-05 read; the figures above are current._');
+    expect(stale.indexOf('2026-09-05 read')).toBeLessThan(stale.indexOf('Nothing is costing us anything.'));
+    // Today's needs no dateline, and neither does a page with no opinion on it at all.
+    expect(runwayNote(base, { ...opinion, commentaryDate: NOW.toISOString().slice(0, 10) })).not.toContain('read; the figures above are current');
+    expect(runwayNote(base, { ...opinion, commentary: '', commentaryDate: '2026-09-05' })).not.toContain('read; the figures above are current');
+  });
+
+  it('says there is no declared currency while the book does not exist (M17)', () => {
+    const missing = moneyReport({ currency: 'USD', entries: [], problems: [], missing: true }, NOW);
+    expect(missing.bookMissing).toBe(true);
+    const md = runwayNote(missing, { calls: 0, paidCalls: 0, shadowCents: 0, priced: false, quotas: [] });
+    expect(md).toContain('no declared currency');
+    expect(md).toContain(LEDGER_PATH);
+    // A book that exists says nothing of the kind, whatever is in it.
+    expect(runwayNote(base, { calls: 0, paidCalls: 0, shadowCents: 0, priced: false, quotas: [] })).not.toContain('no declared currency');
+    expect(base.bookMissing).toBe(false);
+  });
+
   it('says the company is dormant on the page the owner is most likely to open', () => {
     const spentOut = moneyReport(book({ at: day(20), kind: 'capital', cents: 25000 }, { at: day(2), kind: 'cost', cents: 25000 }), NOW);
     expect(runwayNote(spentOut, { calls: 0, paidCalls: 0, shadowCents: 0, priced: false, quotas: [] })).toContain('**The company is dormant.**');
