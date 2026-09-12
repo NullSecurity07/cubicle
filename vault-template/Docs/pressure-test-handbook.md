@@ -113,7 +113,8 @@ Unacceptable: "I'm passionate about it" (passion is not an edge). "I noticed the
 
 The fit that gets funded is knowing the customer deeply **and** being able to build it. Knowing the customer
 without being able to build is fixable with a cofounder. Being able to build without knowing the customer is a
-technology looking for a problem. Neither is a tourist.
+technology looking for a problem. Neither is a tourist: a tourist knows neither the customer nor how to build
+for them — no lived problem, no unusual access, no technical edge, no earned secret — and scores 0 on founder fit.
 
 Related: **schlep blindness**. Founders unconsciously avoid ideas that involve tedious, painful work — sales,
 regulation, logistics, banks — so the best ideas often sit in plain sight, unclaimed because they look
