@@ -4,13 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   scaffoldVault, loadOrg, readLedger, moneyReport, appendEntry, listJobs, listInbox, readJob, updateJob, jobPath,
-  createProposal, findInboxById, officeHolder, teamOf, money, runwayNote, HOUSE, LEDGER_PATH, RUNWAY_PATH, type Vault,
+  createProposal, findInboxById, officeHolder, teamOf, money, runwayNote, HOUSE, LEDGER_PATH, RUNWAY_PATH, GATE_JOB_TYPES, type Vault,
 } from '@cubicle/core';
 import { parseProvidersConfig } from '@cubicle/router';
 import {
   BUDGETED_TIERS, dayStartIso, freeCallCapacity, divisionWeights, divisionQuotas, divisionSpend, divisionOfRole,
   budgetRows, budgetForRole, runwayJobId, enqueueRunway, runwayCommentary, writeRunway, accrueModelCost,
-  accrueModelCosts, dormancyMark, dormancyEpisodes, drawsOnFreePool, moneyMessageId, dormancyMessage, revivalMessage,
+  accrueModelCosts, callsByDay, dormancyMark, dormancyEpisodes, drawsOnFreePool, moneyMessageId, dormancyMessage, revivalMessage,
   runwayGoal, MAX_ACCRUAL_DAYS,
   LOCKED_RUNWAY, LOCKED_ACCRUAL, STAMP_AHEAD, NOTICES_UNWRITABLE, NOTICES_UNREADABLE, LOCK_STATE_PATH,
 } from '../src/money.js';
@@ -297,16 +297,48 @@ describe('what a division has spent today (spec §4)', () => {
     vault.updateNote(`Roles/${ciso}.md`, (n) => ({ data: { ...n.data, team: 'technology' }, body: n.body }), 'owner');
     const org = loadOrg(vault);
     expect(teamOf(org, ciso)!.id).toBe('technology');
-    const b = budgetForRole(vault, org, SHIPPED, ciso, NOW);
-    expect(b.division).toBe(HOUSE);
-    expect(b.quota).toBe(divisionQuotas(SHIPPED, org)[HOUSE]);
-    // And the count follows the same rule, stamp or no stamp, so `used / quota` reads the same pool on both sides.
-    callStamped(ciso, 'strong', b.division);
-    call(ciso, 'strong');
+    const gate = budgetForRole(vault, org, SHIPPED, ciso, NOW, 'office:security.review');
+    expect(gate.division).toBe(HOUSE);
+    expect(gate.quota).toBe(divisionQuotas(SHIPPED, org)[HOUSE]);
+    // And the count follows the stamp the gate was budgeted with, so `used / quota` reads the same pool on both
+    // sides — which is the only thing that keeps the gauge from contradicting the gate.
+    callStamped(ciso, 'strong', gate.division);
+    expect(divisionSpend(vault, org, dayStartIso(NOW))[HOUSE]).toBe(1);
+    expect(budgetForRole(vault, org, SHIPPED, ciso, NOW, 'office:security.review').used).toBe(1);
+  });
+
+  it('charges only that office\'s gates to the house, never the rest of its holder\'s work (F4)', () => {
+    const ciso = officeHolder(loadOrg(vault), 'security');
+    vault.updateNote(`Roles/${ciso}.md`, (n) => ({ data: { ...n.data, team: 'technology' }, body: n.body }), 'owner');
+    const org = loadOrg(vault);
+    // Every gate type is the house's. The reserve exists so a review cannot be starved by the division whose
+    // work it is reviewing, and `GATE_JOB_TYPES` is the list of things that are reviews.
+    for (const t of GATE_JOB_TYPES) expect(budgetForRole(vault, org, SHIPPED, ciso, NOW, t).division).toBe(HOUSE);
+    // Ordinary work by the same person is not. Charging it to the house would take a division's own work off its
+    // own meter and spend the reserve the heartbeat and the board depend on, the moment the owner maps the
+    // security office to somebody who sits in a division — which this vault has just done.
+    for (const t of ['engineer.ship', 'ops.harden', undefined]) {
+      const own = budgetForRole(vault, org, SHIPPED, ciso, NOW, t);
+      expect(own.division).toBe('technology');
+      expect(own.quota).toBe(divisionQuotas(SHIPPED, org).technology);
+    }
+    // Both kinds of call, each stamped with the pool that gated it: the gauge splits them the same way.
+    callStamped(ciso, 'strong', budgetForRole(vault, org, SHIPPED, ciso, NOW, 'office:security.review').division);
+    callStamped(ciso, 'strong', budgetForRole(vault, org, SHIPPED, ciso, NOW, 'engineer.ship').division);
     const spend = divisionSpend(vault, org, dayStartIso(NOW));
-    expect(spend[HOUSE]).toBe(2);
-    expect(spend.technology).toBe(0);
-    expect(budgetForRole(vault, org, SHIPPED, ciso, NOW).used).toBe(2);
+    expect(spend[HOUSE]).toBe(1);
+    expect(spend.technology).toBe(1);
+    // An unstamped row has no job on it, so the gauge walks the role's teams and counts it where that lands.
+    // Guessing "gate" from the role is the mistake this replaces: it is a fact about the job, not the person.
+    call(ciso, 'strong');
+    expect(divisionSpend(vault, org, dayStartIso(NOW)).technology).toBe(2);
+    expect(divisionSpend(vault, org, dayStartIso(NOW))[HOUSE]).toBe(1);
+    // And with the office back in its own top-level team — the shipped roster — every answer is the house's
+    // again, gate or not, because `security` is not a division on either side.
+    vault.updateNote(`Roles/${ciso}.md`, (n) => ({ data: { ...n.data, team: 'security' }, body: n.body }), 'owner');
+    const shipped = loadOrg(vault);
+    expect(budgetForRole(vault, shipped, SHIPPED, ciso, NOW, 'office:security.review').division).toBe(HOUSE);
+    expect(budgetForRole(vault, shipped, SHIPPED, ciso, NOW, 'engineer.ship').division).toBe(HOUSE);
   });
 
   it('does not charge the free quota for a call the owner paid for', () => {
@@ -865,6 +897,45 @@ providers:
       // 22 days in the window; one query for the calls, and never one per day.
       expect(queries.filter((q) => (q as { types?: string[] }).types?.includes('router.call'))).toHaveLength(1);
     } finally { vault.events.query = real; }
+  });
+
+  it('reads a long window in bounded chunks, so no one query can hold a year of the log (F3)', () => {
+    const ago = (days: number) => new Date(NOW.getTime() - days * 86_400_000).toISOString();
+    const dayOf = (days: number) => ago(days).slice(0, 10);
+    // The book's newest accrual row is 90 days old, so the walk's window is 89 days: three chunks of the 30-day
+    // accrual lookback. Not one query holding a quarter of the event log, and not 89 queries to find three days.
+    appendEntry(vault, { at: ago(90), kind: 'cost', cents: 100, mode: 'live', who: 'daemon', why: 'A charged day', ref: `model-${dayOf(90)}` }, 'daemon');
+    for (const days of [80, 45, 2]) {
+      vault.events.emit({ type: 'router.call', agent: 'ceo', ts: ago(days), payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
+    }
+    const queries: { types?: string[]; limit?: number }[] = [];
+    const real = vault.events.query.bind(vault.events);
+    vault.events.query = ((q: Parameters<typeof real>[0]) => { queries.push(q as { types?: string[]; limit?: number }); return real(q); }) as typeof real;
+    let refs: string[] = [];
+    try { refs = accrueModelCosts(vault, PRICED, NOW).map((r) => r.ref); } finally { vault.events.query = real; }
+    // Every paid day in the window is still charged, one row each: the chunking changes how the log is read and
+    // nothing at all about what the company owes.
+    expect(refs).toEqual([`model-${dayOf(80)}`, `model-${dayOf(45)}`, `model-${dayOf(2)}`]);
+    const asked = queries.filter((q) => q.types?.includes('router.call'));
+    expect(asked).toHaveLength(3);
+    for (const q of asked) expect(typeof q.limit).toBe('number');       // and no query is unbounded in rows either
+  });
+
+  it('a chunk the row limit cut is re-asked day by day, so no day is ever charged short (F3)', () => {
+    const at = (day: string, hour: number) => `2026-09-${day}T${String(hour).padStart(2, '0')}:00:00.000Z`;
+    for (const [day, hour] of [['09', 10], ['09', 11], ['10', 10], ['11', 10], ['11', 11]] as [string, number][]) {
+      vault.events.emit({ type: 'router.call', agent: 'ceo', ts: at(day, hour), payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1000, completion_tokens: 0 } } });
+    }
+    const from = '2026-09-09T00:00:00.000Z';
+    const to = '2026-09-11T23:59:59.999Z';
+    const whole = callsByDay(vault, from, to);
+    expect([...whole.keys()].sort()).toEqual(['2026-09-09', '2026-09-10', '2026-09-11']);
+    // A limit of three against five rows in one chunk. The limit keeps the *newest* rows, so a chunk taken as-is
+    // would leave the oldest day of it short — and an accrual row is written once and never corrected. The walk
+    // notices the chunk came back full and asks that stretch a day at a time instead.
+    const cut = callsByDay(vault, from, to, 3);
+    expect([...cut.keys()].sort()).toEqual([...whole.keys()].sort());
+    for (const day of whole.keys()) expect(cut.get(day)!.length).toBe(whole.get(day)!.length);
   });
 
   it('clamps a walk continuing from an ancient row, so one old accrual cannot turn a cycle into a crawl (M9)', () => {

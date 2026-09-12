@@ -120,7 +120,9 @@ export class Daemon {
    * the router demotes that job's tier when it is past quota (never stops it). It also answers *which* pool it
    * read, and the harness stamps that on every call the job makes (`budget_division`), so the gauge counts a
    * call against the pool that gated it — including the gates held by the security office, which `budgetForRole`
-   * charges to the house because a gate is the company's work and not its reviewer's division's (SP4 §4).
+   * charges to the house because a gate is the company's work and not its reviewer's division's (SP4 §4). That
+   * is why the job's type is passed as well as the role: only the gate jobs are the house's, and the same
+   * holder's ordinary team work is their division's (F4).
    * `houseBudget` is the same gauge for the house reserve itself, which is what the heartbeat and the board
    * session run against so a busy division cannot starve them. It is narrowed to the router's `ModelBudget`
    * on the way out: the extra `division` field of a `BudgetRow` would otherwise ride into `RouteRequest.budget`,
@@ -129,8 +131,8 @@ export class Daemon {
    * `isDormant` is derived from the ledger, never from the heartbeat's state file, so the owner's next `capital`
    * row revives the company with nothing to invalidate.
    */
-  private modelBudget = (roleId: string) => {
-    try { return budgetForRole(this.vault, loadOrg(this.vault), this.router.config, roleId, new Date()); }
+  private modelBudget = (roleId: string, jobType?: string) => {
+    try { return budgetForRole(this.vault, loadOrg(this.vault), this.router.config, roleId, new Date(), jobType); }
     catch { return null; }
   };
   private houseBudget = (): ModelBudget | null => {

@@ -55,8 +55,11 @@ export interface HarnessDeps {
    * `division` is which pool the answer came from — a division id, or `house` for work the reserve pays for
    * (the company's gates). It is stamped on every `router.call` the job makes, so the gauge counts the call
    * against the pool that gated it rather than inferring one from the speaker's role.
+   *
+   * `jobType` is passed because it is part of the question: a gate is the company's work and the reserve pays
+   * for it, while the same reviewer's own team work is their division's (see `houseRoles` in daemon/money.ts).
    */
-  modelBudget?: (roleId: string) => (ModelBudget & { division?: string }) | null | undefined;
+  modelBudget?: (roleId: string, jobType?: string) => (ModelBudget & { division?: string }) | null | undefined;
 }
 
 export type JobOutcome =
@@ -220,7 +223,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   // through a piece of work, which makes the output incoherent and the event log unreadable.
   // `budget` is narrowed to what `budgetedTier` reads; which pool it was travels in its own field, because a
   // stray extra key on the request is a thing nothing reads and everything can be confused by.
-  const budget = deps.modelBudget?.(roleId) ?? undefined;
+  const budget = deps.modelBudget?.(roleId, job.type) ?? undefined;
   const routeReq: RouteRequest = { tier, needsTools: true, privacy, roleId, budget: budget ? { used: budget.used, quota: budget.quota } : undefined, budgetDivision: budget?.division };
   const isLeadOrCeo = isLead(org, roleId) || roleId === officeHolder(org, 'chief_executive');
   const maxSteps = privacy === 'local' || tier === 'local' ? (deps.localMaxSteps ?? DEFAULT_LOCAL_MAX_STEPS) : (deps.maxSteps ?? (isLeadOrCeo ? DEFAULT_MAX_STEPS : DEFAULT_MEMBER_MAX_STEPS));

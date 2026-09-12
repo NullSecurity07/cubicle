@@ -4,6 +4,7 @@ import {
   HOUSE, LEDGER_PATH, RUNWAY_PATH,
   createJob, readJob, listJobs, listInbox, jobPath, idFromKey,
   officeHolder, teamOf, divisionOf, divisionTeams, subtreeRoles, createProposal, findInboxById, resultBlock,
+  GATE_JOB_TYPES,
   LedgerVetoedError, isNeverModifyPath, atomicWriteSync,
 } from '@cubicle/core';
 import { shadowCost, hasPrices, type ModelBudget, type ProvidersFile, type RecordedCall } from '@cubicle/router';
@@ -330,17 +331,25 @@ export function divisionQuotas(cfg: ProvidersFile, org: Org): Record<string, num
 }
 
 /**
- * Roles the **house** pays for whatever team they sit in. Spec §4 reserves the house for "the executive team,
- * the board, security, and anyone with no division", and the first two are top-level teams with no children, so
- * `divisionTeams` already leaves them out and they resolve to the house on their own. Security does not: the
- * company's own gates run as `officeHolder(org, 'security')`, and that office can be filled by someone who sits
- * in a division — or, when nobody holds it, falls back to a team lead and then to a division lead. A gate is the
- * company's work, not that division's, so it is charged to the reserve like the heartbeat and the board.
+ * Roles the **house** pays for whatever team they sit in, for a job of this type. Spec §4 reserves the house for
+ * "the executive team, the board, security, and anyone with no division", and the first two are top-level teams
+ * with no children, so `divisionTeams` already leaves them out and they resolve to the house on their own.
+ * Security does not: the company's own gates run as `officeHolder(org, 'security')`, and that office can be
+ * filled by someone who sits in a division — or, when nobody holds it, falls back to a team lead and then to a
+ * division lead. A gate is the company's work, not that division's, so it is charged to the reserve like the
+ * heartbeat and the board.
+ *
+ * **Only the gates** (F4). The reserve exists so a gate cannot be starved by the division whose work it is
+ * reviewing, and that is the whole of the claim: it is not a budget the security office carries around. Charging
+ * everything its holder does to the house would, the moment the owner maps `security:` to a division lead, take
+ * that division's ordinary work off its own meter and spend the reserve the heartbeat and the board depend on.
+ * So the job type decides, and a caller with no job in hand (the gauge reading rows off the event log) passes
+ * none and gets the plain team-to-division walk.
  *
  * By office, never by role id (global constraints): re-staffing the seat in the constitution moves this with it.
  */
-export function houseRoles(org: Org): ReadonlySet<string> {
-  return new Set([officeHolder(org, 'security')]);
+export function houseRoles(org: Org, jobType?: string | null): ReadonlySet<string> {
+  return GATE_JOB_TYPES.includes(String(jobType ?? '')) ? new Set([officeHolder(org, 'security')]) : new Set();
 }
 
 /**
@@ -367,7 +376,6 @@ export function divisionOfRole(org: Org, role: string | null | undefined, known:
  */
 export function divisionSpend(vault: Vault, org: Org, since: string, cfg?: ProvidersFile | null): Record<string, number> {
   const known = new Set(divisionTeams(org).map((t) => t.id));
-  const house = houseRoles(org);
   const out: Record<string, number> = { [HOUSE]: 0 };
   for (const id of known) out[id] = 0;
   for (const e of vault.events.query({ types: ['router.call'], from: since })) {
@@ -379,10 +387,15 @@ export function divisionSpend(vault: Vault, org: Org, since: string, cfg?: Provi
     // The stamp the router now carries is the pool the call was actually *gated* against, so the gauge and the
     // gate answer the same question: a division lead speaking at the board table is budgeted against the house
     // (spec §4) and is counted there too, rather than raising `used` for a division that never authorised it.
+    // The security office's gates are the same story — `budgetForRole` reads the house for them, so the stamp
+    // says `house` and this counts them there.
+    //
     // A row without the stamp — everything written before this field existed — falls back to the role's own
-    // division, which counts exactly as it did before.
+    // division, which counts exactly as it did before. No `houseRoles` here on purpose (F4): the fallback has
+    // only a role to go on, and whether that role's call was a gate is a fact about the *job*, which lives on
+    // the stamp. Guessing "gate" from the role would put the security office's ordinary work on the reserve.
     const stamped = typeof p.budget_division === 'string' && (p.budget_division === HOUSE || known.has(p.budget_division)) ? p.budget_division : null;
-    const key = stamped ?? divisionOfRole(org, e.agent, known, house);
+    const key = stamped ?? divisionOfRole(org, e.agent, known);
     out[key] = (out[key] ?? 0) + 1;
   }
   return out;
@@ -409,11 +422,15 @@ export interface RoleBudget extends ModelBudget { division: string }
  * `used`/`quota` are the router's `ModelBudget`, which is what `budgetedTier` reads; `division` is which pool
  * they came from, and it rides on to `router.call` as `budget_division` so `divisionSpend` counts the call
  * against the pool that gated it instead of inferring one from the speaker's role.
+ *
+ * `jobType` is what the role is doing, and it is what decides whether the house pays: a gate held by the security
+ * office is the company's work and draws on the reserve, while the same holder's own team work draws on their own
+ * division (F4, `houseRoles`). Omitted, the answer is the plain team-to-division walk.
  */
-export function budgetForRole(vault: Vault, org: Org, cfg: ProvidersFile, role: string, now: Date): RoleBudget {
+export function budgetForRole(vault: Vault, org: Org, cfg: ProvidersFile, role: string, now: Date, jobType?: string | null): RoleBudget {
   const quotas = divisionQuotas(cfg, org);
   const known = new Set(Object.keys(quotas).filter((k) => k !== HOUSE));
-  const key = divisionOfRole(org, role, known, houseRoles(org));
+  const key = divisionOfRole(org, role, known, houseRoles(org, jobType));
   return { used: divisionSpend(vault, org, dayStartIso(now), cfg)[key] ?? 0, quota: quotas[key] ?? 0, division: key };
 }
 
@@ -435,21 +452,47 @@ function recordedCalls(vault: Vault, from: string, to?: string): RecordedCall[] 
   return vault.events.query({ types: ['router.call'], from, to }).map(asRecordedCall);
 }
 
+
 /**
- * The same window, bucketed by the calendar day each call was made on — **one** query for a whole walk.
- *
- * The accrual used to ask the log once per day between the last charged day and yesterday, and because a day
- * with no paid calls leaves no row behind, a free stretch was re-walked from scratch every cycle: up to
- * `MAX_ACCRUAL_DAYS` queries, four times a day, to discover nothing. Bounded, so never a hang — just work
- * nobody needed.
+ * The `[from, to]` bounds of a window, cut into spans of at most `span` days, oldest first. Derived from the date
+ * halves of the bounds it is given, so the pieces cover exactly the same days the whole window did.
  */
-function callsByDay(vault: Vault, from: string, to: string): Map<string, RecordedCall[]> {
+function dayWindows(from: string, to: string, span = ACCRUAL_CHUNK_DAYS): [string, string][] {
+  const last = to.slice(0, 10);
+  const out: [string, string][] = [];
+  let start = from.slice(0, 10);
+  while (start <= last && out.length <= MAX_ACCRUAL_DAYS) {
+    const reach = dayOf(Date.parse(`${start}T00:00:00.000Z`) + (span - 1) * DAY_MS);
+    const stop = reach < last ? reach : last;
+    out.push([`${start}T00:00:00.000Z`, `${stop}T23:59:59.999Z`]);
+    start = nextDay(stop);
+  }
+  return out;
+}
+
+/**
+ * The window's `router.call` rows, bucketed by the calendar day each was made on, read in bounded chunks.
+ *
+ * `limit` is a parameter only so a test can make truncation reachable without writing 50 000 events; every
+ * caller uses the default.
+ */
+export function callsByDay(vault: Vault, from: string, to: string, limit = ACCRUAL_QUERY_LIMIT): Map<string, RecordedCall[]> {
   const out = new Map<string, RecordedCall[]>();
-  for (const e of vault.events.query({ types: ['router.call'], from, to })) {
-    const day = String(e.ts).slice(0, 10);
-    const held = out.get(day);
-    if (held) held.push(asRecordedCall(e));
-    else out.set(day, [asRecordedCall(e)]);
+  const bucket = (rows: { ts: string; payload: Record<string, unknown> }[]): void => {
+    for (const e of rows) {
+      const day = String(e.ts).slice(0, 10);
+      const held = out.get(day);
+      if (held) held.push(asRecordedCall(e));
+      else out.set(day, [asRecordedCall(e)]);
+    }
+  };
+  for (const [a, b] of dayWindows(from, to)) {
+    const rows = vault.events.query({ types: ['router.call'], from: a, to: b, limit });
+    if (rows.length < limit) { bucket(rows); continue; }
+    // The chunk came back full, so it may have been cut — and the cut takes the oldest rows in it, which would
+    // undercharge the oldest days of the chunk for ever. Ask this stretch one day at a time instead: each day
+    // carries its own copy of the limit, and a single day past it is far beyond what the daily quotas allow.
+    for (const [c, d] of dayWindows(a, b, 1)) bucket(vault.events.query({ types: ['router.call'], from: c, to: d, limit }));
   }
   return out;
 }
@@ -565,6 +608,30 @@ export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Dat
  * charging, and an unbounded first walk would scan the whole event log.
  */
 const ACCRUAL_LOOKBACK_DAYS = 30;
+/**
+ * How long one `router.call` query may be, and how many rows it may bring back.
+ *
+ * The accrual used to ask the log once per calendar day between the last charged day and yesterday, and because
+ * a day with no paid calls leaves no row behind, a free stretch was re-walked from scratch every cycle: up to
+ * `MAX_ACCRUAL_DAYS` queries, four times a day, to discover nothing (M11). Asking for the whole window at once
+ * fixed that and traded it for the other extreme — `EventLog.query` truncates nothing when no limit is passed,
+ * so a year-long window on a busy log is a year of parsed payloads in one `Map`: at the shipped free capacity
+ * (~2 600 calls a day) that is on the order of a million rows, four times a day, to price a few dozen of them.
+ *
+ * So the window is walked in chunks of the accrual lookback, each chunk bounded by a row limit as well. A
+ * 370-day walk is 13 queries rather than 370 or 1, and no query can hold more than `ACCRUAL_QUERY_LIMIT` rows.
+ */
+const ACCRUAL_CHUNK_DAYS = ACCRUAL_LOOKBACK_DAYS;
+/**
+ * Deliberately well clear of what a chunk can really hold (30 days of the shipped free capacity is ~78 000 calls,
+ * but only priced models produce a charge and a free-only config never gets here at all), because the limit keeps
+ * the **newest** rows: a truncated chunk would leave its oldest days short, and an accrual row is written once
+ * and never corrected. `callsByDay` re-asks a truncated chunk day by day rather than charging a short day, so
+ * this is the point at which it stops being one query and starts being thirty — not the point at which the
+ * arithmetic goes wrong.
+ */
+const ACCRUAL_QUERY_LIMIT = 50_000;
+
 /** The hard stop on a continued walk, so a book with an ancient accrual row cannot turn a cycle into a crawl. */
 export const MAX_ACCRUAL_DAYS = 370;
 
@@ -667,8 +734,9 @@ export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = n
   if (day < floor) day = floor;
   const out: LedgerEntry[] = [];
   if (day > yesterday) return out;
-  // One query for the whole window, bucketed by day (M11): only the days that actually saw a call are visited,
-  // so a run of free days costs one query rather than one per day for as long as it lasts.
+  // The window read in bounded chunks and bucketed by day (M11, F3): only the days that actually saw a call are
+  // visited, so a run of free days costs one query a month rather than one a day for as long as it lasts — and no
+  // single query can hold a year of the event log.
   const buckets = callsByDay(vault, `${day}T00:00:00.000Z`, `${yesterday}T23:59:59.999Z`);
   for (const d of [...buckets.keys()].sort()) {
     if (d < day || d > yesterday) continue;    // a clock or a hand-written ts outside the window it asked for
