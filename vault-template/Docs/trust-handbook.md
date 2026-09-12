@@ -19,7 +19,7 @@ to skip a review.
 ## Who reviews it
 
 The compliance office (`office:compliance.review`) asks the five questions that make an outbound action
-defensible: is the claim true, did the recipient agree to hear from us, does it obey the constitution's banned
+defensible: is the claim true, did the recipient consent to hear from us, does it obey the constitution's banned
 channels and tactics, is there a way out, and would you be content to see this in public with your name on it.
 
 The security office (`office:security.review`) asks what data, credentials and permissions the action exposes,

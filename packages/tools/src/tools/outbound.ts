@@ -193,7 +193,7 @@ function pruneSnapshots(vault: import('@cubicle/core').Vault, project: string): 
 
 export const deploySite = defineTool({
   name: 'deploy.site',
-  description: 'Publish Site/dist to Cloudflare Pages (free), one stage at a time: preview → canary → live (owner\'s operating model §20). Build first (shell.run: npm run build). canary needs a preview of the same build, live needs a canary of it; live must name the metrics it will watch. The canary percentage is a mock until real traffic-splitting infrastructure exists — it is recorded, not enforced. `rollback: true` republishes the previous live deploy — one step back, not a history walk: rolling back twice lands on the same build. First live deploy needs owner approval; later ones are automatic.',
+  description: 'Publish Site/dist to Cloudflare Pages (free), one stage at a time: preview → canary → live (owner\'s operating model §20). Build first (shell.run: npm run build). canary needs a preview of the same build, live needs a canary of it; live must name the metrics it will watch. The canary percentage is a mock until real traffic-splitting infrastructure exists — it is recorded, not enforced. `rollback: true` republishes the previous live deploy — one step back, not a history walk: rolling back twice lands on the same build. Every live deploy is filed for the owner and read by the compliance and security offices before it runs (SP5 Decision 6); preview, canary and rollback are not.',
   schema: {
     project: z.string().optional().describe('Pages project name; defaults to the brand name slug'),
     dir: z.string().default('Site/dist'),

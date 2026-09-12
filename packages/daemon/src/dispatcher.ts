@@ -84,10 +84,20 @@ function fenced(body: string): string | null {
 /**
  * Leave a proposal unresolved with a reason. The footer write is a system write (sha now matches), so the owner's
  * approval is remembered via `refused_sha`/`refused_at`: the note is retried when the owner edits it again or after 10 minutes.
+ *
+ * `closing` is the sentence after the reason, and it is a parameter because the default one is wrong for a hold:
+ * "fix it and set approved again" is the one thing the owner must *not* do under a trust hold, where the note is
+ * correct, the approval already stands, and the only thing missing is two verdicts nobody at the keyboard can
+ * supply. A refusal the owner can act on keeps the default.
  */
+const FIX_IT = 'Fix it and set approved again (retried automatically every 10 minutes).';
+/** Under a hold there is nothing to fix and nothing to re-approve: the sweep releases it the moment both offices answer. */
+const NOTHING_TO_DO = 'Nothing to do: this is applied on its own as soon as both reviews are in, and closed unsent if either returns it.';
+
 function refuseNote(vault: Vault, note: { path: string; data: InboxFrontmatter }, why: string, extra: Record<string, unknown> = {}): void {
+  const closing = why === TRUST_PENDING_HOLD ? NOTHING_TO_DO : FIX_IT;
   vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: note.data.id, kind: note.data.kind, reason: why, ...extra } });
-  vault.updateNote(note.path, (nn) => ({ data: { ...nn.data, refused: why, refused_at: nowIso() }, body: nn.body.replace(/\n\n---\n_Not applied:[^\n]*_\n?$/s, '').trimEnd() + `\n\n---\n_Not applied: ${why}. Fix it and set approved again (retried automatically every 10 minutes)._\n` }), 'daemon');
+  vault.updateNote(note.path, (nn) => ({ data: { ...nn.data, refused: why, refused_at: nowIso() }, body: nn.body.replace(/\n\n---\n_Not applied:[^\n]*_\n?$/s, '').trimEnd() + `\n\n---\n_Not applied: ${why}. ${closing}_\n` }), 'daemon');
   const sha = vault.currentSha(note.path);
   if (sha) vault.db.prepare('INSERT OR REPLACE INTO refusals(path, sha, at) VALUES (?, ?, ?)').run(note.path, sha, nowIso());
 }

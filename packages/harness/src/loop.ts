@@ -632,8 +632,10 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       let blockedReason: string | null = null;
       for (const g of deps.guardrails ?? []) { blockedReason = await g.check(toolName, args, baseCtx); if (blockedReason) break; }
       let mode = blockedReason ? 'never' : resolveMode(toolName, deps.toolsConfig, role, prefs);
-      // R17: tools marked first_time_only (deploy.site) need approval once; after a recorded completion they run automatically
-      // unless the owner pinned a stricter mode in owner_preferences.
+      // R17: tools marked first_time_only (deploy.site) need approval once; after a recorded completion the
+      // relaxation below drops them to `auto`, unless the owner pinned a stricter mode in owner_preferences.
+      // "Automatic" stops there for a leaving call: since SP5 Decision 6 the trust raise a few lines down puts
+      // every live deploy back to `propose`, so it is filed and read by the two offices however this resolves.
       if (mode === 'propose' && policy.first_time_only && !prefs.approvals[toolName]) {
         // Only a *live* deploy spends the first-time approval: since progressive delivery landed, the first
         // deploy.site call is a preview, and a preview must not buy the production deploy its approval.
