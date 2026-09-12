@@ -363,6 +363,17 @@ describe('the board pressure-tests an idea, on a budget (spec §2, §3)', () => 
     expect(card.body).toContain('**Pressure test:** STRONG. Rubric 7/10 —');
     const note = listInbox(vault).find((n) => n.data.kind === 'idea_verdict')!;
     expect(note.body).toContain('- Pressure test: STRONG · rubric 7/10 —');
+
+    // And the three parts of the owner's output shape that no bullet can carry reach the owner (ruling H3):
+    // on the card, in the note they rule on, and in the decision note that outlives both.
+    for (const text of [card.body, note.body, vault.readText(card.data.board_decision)]) {
+      expect(text).toContain('#### Core Assumption');
+      expect(text).toContain('#### Problem Validation');
+      expect(text).toContain('#### Founder-Market Fit');
+      expect(text).toContain('A painkiller: they already pay a caterer every term.');
+    }
+    // Demoted on the way in, so the card still has exactly its eight `## ` sections (spec §7).
+    expect(card.body.match(/^## /gm)).toHaveLength(8);
   }, 30000);
 
   it('a pivot returns the card and leads the owner with the wedge', async () => {

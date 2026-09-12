@@ -9,6 +9,7 @@ import {
   FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
   readPressureVerdict, pressureToBoard, pressureFindings, renderRubric, renderBoardSection,
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, type PressurePart,
+  PRESSURE_CHAIR_SECTION, chairAnswerText,
   type PressureVerdict, type BoardRubric,
   isLongPrompt, isSkip,
   readLedger, moneyReport, moneyLine, moneyNeedsYou, money, HOUSE, LEDGER_PATH, DEFAULT_CURRENCY, type MoneyReport, type LedgerEntry,
@@ -522,20 +523,23 @@ export function boardAgenda(s: BoardSubject): string {
  * verdict line — so the session costs three advisors plus one or two chair calls and never more. `calls` is
  * that count, and `reasked` says whether the extra one was spent. A chair that is silent on the re-ask spends
  * no third call and no refusal: the session falls open to `pass` and `chairLost` says so (spec Decision 6).
+ *
+ * `chairText` is the chair's merged answer itself, on an idea it actually judged — the five parts the owner's
+ * prompt asks for. Before ruling H3 it went out of scope here and three of the five reached nobody.
  */
 export async function runBoardSession(
   deps: HeartbeatDeps, org: Org, subject: string | BoardSubject,
-): Promise<BoardMerge & { advisors: string[]; transcript: string; answered: number; subject: BoardSubject; calls: number; reasked: boolean; chairLost: string | null }> {
+): Promise<BoardMerge & { advisors: string[]; transcript: string; answered: number; subject: BoardSubject; calls: number; reasked: boolean; chairLost: string | null; chairText: string }> {
   const vault = deps.vault;
   const s = boardSubject(subject);
   // Its one caller guards on `org.teams.board` first, but this is exported and tests call it directly: an org
   // with no board room must fail as "the board passed unreviewed", not as a TypeError inside the cycle (M5).
   // Nothing is emitted on this path either: no advisor walked to the table, so the room must not light up.
   const board = org.teams.board;
-  if (!board) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null };
+  if (!board) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null, chairText: '' };
   const advisors = [...new Set([board.lead, ...board.members])].filter((r) => org.roles[r]).slice(0, 3);
   // A board whose charters are all gone is the same as no board: nobody walks to the table (review of Task 7).
-  if (advisors.length === 0) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null };
+  if (advisors.length === 0) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null, chairText: '' };
   const leadTier = org.roles[board.lead]?.model_tier ?? 'medium';
   const tierFor = (roleId: string): ModelTier => org.roles[roleId]?.model_tier ?? leadTier;
   // The board room, on screen: the advisors walk to the table, the owner's chair fills, and the whiteboard says
@@ -560,6 +564,10 @@ export async function runBoardSession(
   let merge: BoardMerge = merged === null
     ? { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null }
     : mergeBoardVerdict(merged, s.kind);
+  // The chair's own five parts, kept rather than dropped on the floor (ruling H3). Only on an idea, and only
+  // when the answer was believed: the plan pre-mortem's record is byte-identical to what it always was, and a
+  // refused answer is quoted back to the chair in the re-ask rather than filed as the board's verdict.
+  let chairText = s.kind === 'idea' && merged !== null && !merge.refused ? merged : '';
   let calls = advisors.length + 1;
   let reasked = false;
   let chairLost: string | null = null;
@@ -576,9 +584,10 @@ export async function runBoardSession(
     } else {
       const second = mergeBoardVerdict(again, s.kind);
       merge = second.refused ? unansweredMerge(second) : second;
+      chairText = second.refused ? '' : again;
     }
   }
-  const out = { ...merge, advisors, transcript, answered, subject: s, calls, reasked, chairLost };
+  const out = { ...merge, advisors, transcript, answered, subject: s, calls, reasked, chairLost, chairText };
   vault.events.emit({
     type: 'meeting.closed', agent: board.lead,
     payload: {
@@ -690,13 +699,16 @@ export function writeBoardDecision(vault: Vault, id: string, o: BoardDecisionOpt
  */
 export function writeBoardSessionDecision(
   vault: Vault, slug: string, title: string, boardJobId: string,
-  verdict: 'pass' | 'return', findings: string[], decidedBy: string, now: Date, answered = 1, chairLost?: string | null,
+  verdict: 'pass' | 'return', findings: string[], decidedBy: string, now: Date, answered = 1, chairLost?: string | null, chair?: string,
 ): string {
+  // The chair's merged answer goes in the context, whole: this note is the durable record of the session, and
+  // a record of a five-part verdict that keeps one word of it is not a record (ruling H3).
+  const chairSaid = chair?.trim() ? `\n\nThe chair merged them into this:\n\n${chairAnswerText(chair)}` : '';
   return writeBoardDecision(vault, `board-${slug}`, {
     verdict, findings, decidedBy, now, answered, chairLost: chairLost ?? undefined, cycle: boardJobId, inputs: [`[[Ideas/${slug}]]`],
     unreviewedNote: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the idea passed'),
     noFindingsNote: 'The board found nothing in this idea likely to sink a quarter.',
-    context: `The board read the dossier for "${title}" ([[Ideas/${slug}]]) and imagined the company had already spent a quarter on it and failed. The advisors' own words are in [[${boardJobId}]].`,
+    context: `The board read the dossier for "${title}" ([[Ideas/${slug}]]) and imagined the company had already spent a quarter on it and failed. The advisors' own words are in [[${boardJobId}]].${chairSaid}`,
     options: '- Keep it: the company plans against it\n- Park it: the failure modes are real but answerable later\n- Scrap it: it should not be built',
     chosen: verdict === 'pass' ? 'The board saw nothing that would sink it; the recommendation stands.' : 'The board returned it; the recommendation drops to park until its findings are answered.',
     why: verdict === 'pass' ? 'The dossier answered the failure modes the board could name.' : 'The dossier does not answer failure modes the board could name.',
@@ -768,6 +780,8 @@ export interface IdeaVerdictFacts {
   /** The board's pressure-test word and rubric, when it ran one. Both absent on a card judged before SP5b. */
   pressure?: string;
   rubric?: BoardRubric | null;
+  /** The chair's merged five-part answer, as it stands on the card. Absent on a card judged before ruling H3. */
+  chair?: string;
   research: string;
   estimate: string;
   decidesAfterHours: number;
@@ -796,6 +810,10 @@ export function ideaVerdictBody(f: IdeaVerdictFacts): string {
     '## What the board said',
     '',
     findings,
+    // The chair's own words, under the bullets: the flaw bullets are a subset of them, and the three parts the
+    // owner asked for that the bullets cannot carry — the core assumption, the problem validation and the
+    // founder-market fit — are the reason the board was asked at all (ruling H3).
+    ...(f.chair?.trim() ? ['', PRESSURE_CHAIR_SECTION, '', chairAnswerText(f.chair)] : []),
     '',
     `Set \`approved: true\` to take the recommendation (**${f.band}**), or \`approved: false\` to park it and tell me why. To overrule the recommendation, set \`chosen: 1\` for keep, \`2\` for park or \`3\` for scrap and \`approved: true\`${deadline}.`,
   ].join('\n');
@@ -808,10 +826,26 @@ export function ideaVerdictBody(f: IdeaVerdictFacts): string {
  * finding, so it is dropped rather than quoted back as one.
  */
 export function cardBoardFindings(body: string): string[] {
-  const after = body.split(/^## The board[ \t]*$/m)[1] ?? '';
-  return after.split(/^## /m)[0].split('\n')
+  return boardSectionOf(body).split(/^#{2,6}[ \t]/m)[0].split('\n')
     .map((l) => l.trim().match(/^-\s+(.+)$/)?.[1]?.trim())
     .filter((f): f is string => !!f && f !== 'Nothing they thought would sink it.');
+}
+
+/** The `## The board` section of a card, up to the next one. '' when the board has not sat. */
+function boardSectionOf(body: string): string {
+  return (body.split(/^## The board[ \t]*$/m)[1] ?? '').split(/^## /m)[0];
+}
+
+/**
+ * The chair's own merged answer, read back off the card (ruling H3). The verdict note is rebuilt from the card
+ * — that is how a kill between the stamp and `createProposal` is recovered — so the five parts the owner reads
+ * in the note have to come from the same place as the findings above them, not from a session variable this
+ * process may no longer have.
+ */
+export function cardBoardChair(body: string): string {
+  const section = boardSectionOf(body);
+  const at = section.search(new RegExp(`^${PRESSURE_CHAIR_SECTION}[ \\t]*$`, 'm'));
+  return at < 0 ? '' : section.slice(at).replace(/^.*\n/, '').trim();
 }
 
 /**
@@ -840,7 +874,7 @@ export function fileIdeaVerdict(
     body: ideaVerdictBody({
       slug, title: card.data.title, score, band, reason, board,
       findings: opts.findings,
-      pressure: card.data.board_pressure || undefined, rubric: card.data.board_rubric,
+      pressure: card.data.board_pressure || undefined, rubric: card.data.board_rubric, chair: cardBoardChair(card.body),
       research: card.data.research, estimate: card.data.estimate,
       decidesAfterHours: vault.constitution().board_decides_after_hours,
     }),
@@ -1396,7 +1430,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'ideas_board', reason: session.chairLost } });
         }
         let decisionRel = '';
-        try { decisionRel = writeBoardSessionDecision(vault, idea.id, card.data.title, boardJob, session.verdict, session.findings, board.lead, now(), session.answered, session.chairLost); }
+        try { decisionRel = writeBoardSessionDecision(vault, idea.id, card.data.title, boardJob, session.verdict, session.findings, board.lead, now(), session.answered, session.chairLost, session.chairText); }
         catch (err) { vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'ideas_board', message: `could not write the board decision note: ${(err as Error).message}` } }); }
         // The verdict goes on the card before the proposal is filed: a crash between the two must leave the
         // dossier true, not leave the owner ruling on a card that never heard from the board.
@@ -1405,6 +1439,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           content: renderBoardSection({
             verdict: session.verdict, advisors: session.advisors.length, date: now().toISOString().slice(0, 10),
             decision: decisionRel, findings: session.findings, pressure: session.pressure, rubric: session.rubric,
+            chair: session.chairText,
           }),
         });
         // The board's verdict is an input to the band (a returned idea parks), so the `## Score` section is

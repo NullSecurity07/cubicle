@@ -351,6 +351,35 @@ export function readPressureVerdict(text: string): PressureRead {
   return { ok: true, verdict, flaws: flawBullets(t), wedge, rubric: parseRubric(t) };
 }
 
+/**
+ * The heading the chair's own merged answer is written under, wherever it is kept. One constant because the
+ * card is written by the heartbeat and read back by it: the verdict note is rebuilt from the card after a kill,
+ * so the words that find the section again have to be the words that wrote it.
+ */
+export const PRESSURE_CHAIR_SECTION = '### What the chair wrote';
+
+/** How much of the chair's answer is kept. Four or five headed paragraphs; a runaway answer is cut, not dropped. */
+export const PRESSURE_CHAIR_CHARS = 2400;
+
+/**
+ * The chair's merged answer, made safe to keep inside a `## ` section of a note somebody else owns (ruling H3).
+ *
+ * The owner's prompt ends "Output: Core Assumption → Three Fatal Flaws → Problem Validation → Founder-Market
+ * Fit → Brutal Verdict", and until this existed three of those five were computed, paid for out of the chair's
+ * one call, and dropped: the card and the owner's note carried the verdict word, the rubric and the flaw
+ * bullets, and nothing else the chair said reached anybody.
+ *
+ * Its headings are demoted to `####` because the answer is written *under* `## The board` on the idea card and
+ * under `## What the board said` in the owner's note, and a `## Core Assumption` landing there would be a ninth
+ * section of a card whose eight sections are fixed (spec §7).
+ */
+export function chairAnswerText(text: string): string {
+  const t = (text ?? '').replace(/\r/g, '').trim();
+  if (!t) return '';
+  const demoted = t.split('\n').map((l) => l.replace(/^[ \t]*#{1,6}[ \t]*(?=\S)/, '#### ')).join('\n');
+  return demoted.length > PRESSURE_CHAIR_CHARS ? `${demoted.slice(0, PRESSURE_CHAIR_CHARS).trimEnd()}…` : demoted;
+}
+
 /** STRONG passes; WEAK and PIVOT REQUIRED both return. The board advises; the owner decides. */
 export function pressureToBoard(v: PressureVerdict): 'pass' | 'return' {
   return v === 'STRONG' ? 'pass' : 'return';
