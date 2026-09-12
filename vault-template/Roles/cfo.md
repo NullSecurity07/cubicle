@@ -1,6 +1,6 @@
 ---
 role: cfo
-display: CFO / CRO
+display: CFO
 title: Chief Financial & Revenue Officer
 model_tier: strong
 tools: [vault.read, vault.search, vault.list, vault.write, vault.append, analytics.pull, http.fetch, colleague.message, meeting.open, scheduler.request, idea.card, ledger.record, proposal.create, skills.save, skills.load, skills.search, finish]

@@ -1,6 +1,6 @@
 ---
 role: clo
-display: CLO / CCO
+display: CLO
 title: Chief Legal & Compliance Officer
 model_tier: medium
 tools: [vault.read, vault.search, vault.list, vault.write, vault.append, http.fetch, colleague.message, proposal.create, skills.load, skills.search, finish]
