@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, appendEntry, listJobs, listInbox, readJob, updateJob, RUNWAY_PATH, type Vault } from '@cubicle/core';
+import { scaffoldVault, appendEntry, readLedger, listJobs, listInbox, readJob, updateJob, RUNWAY_PATH, type Vault } from '@cubicle/core';
+import { Router, QuotaTracker, parseProvidersConfig } from '@cubicle/router';
 import { HEARTBEAT_STEPS, createHeartbeatJob, runHeartbeat, type HeartbeatDeps } from '../src/heartbeat.js';
 
 let dir: string;
@@ -23,6 +24,34 @@ const deps = (): HeartbeatDeps => ({ vault, llm: llm as unknown as HeartbeatDeps
 const seed = (at: string, cents: number, why: string) => appendEntry(vault, { at, kind: 'capital', cents, mode: 'live', who: 'owner', why }, 'owner');
 const spend = (at: string, cents: number, why: string) => appendEntry(vault, { at, kind: 'cost', cents, mode: 'live', who: 'daemon', why }, 'daemon');
 const latestBrief = () => vault.readText(vault.list('Runs', { ext: '.md' }).sort().at(-1)!);
+/** The `Needs owner:` fact line the brief carries, which is where `moneyNeedsYou`'s rows have to land. */
+const needsOwner = () => latestBrief().split('\n').find((l) => l.startsWith('Needs owner:')) ?? '';
+/**
+ * A cycle run from the top — so the `money` step genuinely runs, which is the point — and then moved on to its
+ * brief by hand. A funded heartbeat blocks on its own `company.plan` job, and driving the planning rounds for
+ * real would need a scripted model for the CEO, the board and every division lead; these cases are about what
+ * the `brief` step says about money, not about planning, so the checkpoint is written straight to `brief`,
+ * skipping `board_premortem`, `owner_verdict` and `division_plans`. `packages/daemon/test/planning.test.ts`
+ * is where the fan-out is driven end to end.
+ */
+const briefAfterFullCycle = async (trigger: string): Promise<string> => {
+  const id = createHeartbeatJob(vault, trigger);
+  expect((await runHeartbeat(deps(), id)).status).toBe('blocked');
+  updateJob(vault, id, { status: 'queued', checkpoint_step: HEARTBEAT_STEPS.indexOf('brief'), blocked_on: undefined }, 'daemon');
+  expect((await runHeartbeat(deps(), id)).status).toBe('done');
+  return latestBrief();
+};
+
+/** A priced providers file, so `writeRunway` and `accrueModelCost` have something real to price against. */
+const PRICED = `
+cascade: [paid]
+providers:
+  - id: paid
+    base_url: https://example.test/v1
+    models:
+      - { id: big, tier: strong, tools: native, limits: { rpd: 100 }, price: { input_per_mtok: 300, output_per_mtok: 1500 } }
+`;
+const withRouter = (): HeartbeatDeps => ({ ...deps(), router: new Router(parseProvidersConfig(PRICED), new QuotaTracker(vault.db), { env: {} }) });
 
 beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-money-step-'));
@@ -101,6 +130,123 @@ describe('the money step (spec §5, §6)', () => {
     // No router in these deps, so no providers file and no regeneration — and the cycle ran on regardless.
     expect(vault.readText(RUNWAY_PATH)).toContain('after the first heartbeat');
     expect(readJob(vault, id)!.body).toContain('step 2 money');
+  });
+
+  it('jumps to the brief in one write, so a kill mid-jump never lets a stopped company plan', async () => {
+    seed('2026-09-10T08:00:00.000Z', 25000, 'Seed');
+    spend('2026-09-11T08:00:00.000Z', 25000, 'All of it');
+    const id = createHeartbeatJob(vault, 'test');
+    // Every checkpoint the cycle is ever *durably* on, sampled from inside the write that puts it there — which
+    // is precisely the set a `kill -9` can strand the job at. The dormant path must never leave one between
+    // `money` and `brief`: checkpointed at `reconcile_brand`, the resumed cycle does not re-run `money`,
+    // nothing re-checks dormancy until the brief, and a stopped company spends a full planning round.
+    const seen: string[] = [];
+    const off = vault.events.on('vault.wrote', (e) => {
+      if (e.payload.path !== `Jobs/${id}.md`) return;
+      seen.push(HEARTBEAT_STEPS[readJob(vault, id)?.data.checkpoint_step ?? -1] ?? 'end');
+    });
+    try { await runHeartbeat(deps(), id); } finally { off(); }
+    expect(seen).toContain('money');                                // it did stop at the money step
+    expect(seen).toContain('brief');                                // and the next checkpoint is the brief
+    for (const step of ['reconcile_brand', 'answer_owner', 'discovery', 'ideas_board', 'meeting', 'company_plan', 'board_premortem', 'owner_verdict', 'division_plans']) {
+      expect(seen).not.toContain(step);
+    }
+    expect(readJob(vault, id)!.body).toContain('step 2 money: dormant');
+
+    // Now the kill: put the job back on the checkpoint the jump wrote, throw the cache away, and resume.
+    updateJob(vault, id, { status: 'queued', checkpoint_step: HEARTBEAT_STEPS.indexOf('brief'), blocked_on: undefined }, 'daemon');
+    const stateFile = vault.abs(`.cubicle/jobs/${id}.heartbeat.json`);
+    if (existsSync(stateFile)) unlinkSync(stateFile);
+    calls = 0;
+    expect((await runHeartbeat(deps(), id)).status).toBe('done');
+    expect(calls).toBe(0);
+    expect(listJobs(vault).some((j) => ['company.plan', 'division.plan', 'board.premortem'].includes(j.type))).toBe(false);
+  });
+
+  it('puts the runway warning in the brief only when the runway is short', async () => {
+    seed('2026-09-11T08:00:00.000Z', 10000, 'Seed');
+    spend('2026-09-11T08:00:00.000Z', 9000, 'Hosting');              // USD 10 left against USD 45 a day
+    const brief = await briefAfterFullCycle('test');
+    expect(brief).toContain('Runway is');                            // not dormant: there is still cash
+    expect(needsOwner()).toContain('Runway is');
+    expect(needsOwner()).toContain('add capital');
+  });
+
+  it('says nothing about money in "what needs you" when nothing does', async () => {
+    seed('2026-09-11T08:00:00.000Z', 25000, 'Seed');                 // funded, nothing spent, nothing to say
+    await briefAfterFullCycle('test');
+    const row = needsOwner();
+    expect(row).not.toContain('Runway is');
+    expect(row).not.toContain('is dormant');
+    expect(row).not.toContain('cannot be read');
+    expect(latestBrief()).toContain('USD 250.00 cash');              // the fact line is there every cycle regardless
+  });
+
+  it('revives on a capital row: the next cycle says we are back and plans again', async () => {
+    seed('2026-09-10T08:00:00.000Z', 25000, 'Seed');
+    spend('2026-09-11T08:00:00.000Z', 25000, 'All of it');
+    expect((await runHeartbeat(deps(), createHeartbeatJob(vault, 'dormant'))).status).toBe('done');
+    seed('2026-09-12T09:00:00.000Z', 10000, 'Topping up');
+    const id = createHeartbeatJob(vault, 'revived');
+    expect((await runHeartbeat(deps(), id)).status).toBe('blocked');           // planning again
+    expect(readJob(vault, id)!.body).toContain('told the owner we are back');
+    const back = listInbox(vault).find((n) => (n.data as { money?: string }).money === 'revived')!;
+    expect(back.body).toContain('Back to work');
+    expect(back.body).toContain('the company is running again');
+    expect(listJobs(vault).some((j) => j.type === 'company.plan')).toBe(true);
+    expect(listJobs(vault).some((j) => j.type === 'finance.runway')).toBe(true);
+
+    // Out again. This is a *second* dormancy, not the first one still standing, so the owner is told a second
+    // time — the silence that keeps two consecutive dormant cycles quiet must not swallow a fresh episode.
+    spend('2026-09-12T10:00:00.000Z', 10000, 'All of that too');
+    const again = createHeartbeatJob(vault, 'dormant again');
+    expect((await runHeartbeat(deps(), again)).status).toBe('done');
+    const notes = listInbox(vault).filter((n) => (n.data as { money?: string }).money === 'dormant');
+    expect(notes.length).toBe(2);
+    expect(new Set(notes.map((n) => n.data.id)).size).toBe(2);        // a distinct note, not the first rewritten
+    expect(readJob(vault, again)!.body).toContain('told the owner');
+  });
+
+  it('books yesterday\'s paid calls into the ledger before it reads the position', async () => {
+    seed('2026-09-11T08:00:00.000Z', 25000, 'Seed');
+    // A day's worth of calls on the priced model, dated yesterday: today is never charged, because the day is
+    // not over and a part-day charge would be charged again this evening.
+    for (const ts of ['2026-09-11T10:00:00.000Z', '2026-09-11T20:00:00.000Z']) {
+      vault.events.emit({ type: 'router.call', agent: 'ceo', ts, payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
+    }
+    const id = createHeartbeatJob(vault, 'test');
+    expect((await runHeartbeat(withRouter(), id)).status).toBe('blocked');
+    expect(readJob(vault, id)!.body).toContain('accrued USD 6.00 of model cost');
+    const row = readLedger(vault).entries.find((e) => e.ref === 'model-2026-09-11')!;
+    expect(row).toMatchObject({ kind: 'cost', cents: 600, mode: 'live', who: 'daemon' });
+    // Accrued *first*, so the position the cycle reports already has the spend in it.
+    expect(readJob(vault, id)!.body).toContain('USD 244.00 cash');
+    // And a second cycle the same day charges nothing twice.
+    const second = createHeartbeatJob(vault, 'second');
+    await runHeartbeat(withRouter(), second);
+    expect(readJob(vault, second)!.body).not.toContain('of model cost');
+    expect(readLedger(vault).entries.filter((e) => e.ref === 'model-2026-09-11').length).toBe(1);
+  });
+
+  it('with a router it prices the book into the runway note, and a write that fails warns without stopping the cycle', async () => {
+    seed('2026-09-11T08:00:00.000Z', 25000, 'Seed');
+    const id = createHeartbeatJob(vault, 'test');
+    expect((await runHeartbeat(withRouter(), id)).status).toBe('blocked');
+    const note = vault.readText(RUNWAY_PATH);
+    expect(note).not.toContain('after the first heartbeat');                   // regenerated, not the scaffold
+    expect(note).toContain('**Cash:** USD 250.00');
+    expect(note).toContain('## What a paid tier would have cost');
+    expect(vault.events.count('daemon.warning')).toBe(0);
+
+    // Now make the write fail the way a disk does, and run another cycle: the note is a report, never the
+    // cycle, so the company carries on and the owner gets a warning rather than a stopped heartbeat.
+    const abs = vault.abs(RUNWAY_PATH);
+    rmSync(abs, { force: true });
+    mkdirSync(abs);
+    const second = createHeartbeatJob(vault, 'second');
+    expect((await runHeartbeat(withRouter(), second)).status).toBe('blocked'); // still planning
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'money.runway')).toBe(true);
+    expect(readJob(vault, second)!.body).toContain('step 2 money');
   });
 
   it('derives the brief\'s money from the ledger, so losing the cycle\'s state file changes nothing', async () => {
