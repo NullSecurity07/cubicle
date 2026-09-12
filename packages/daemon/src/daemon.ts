@@ -268,6 +268,9 @@ export class Daemon {
     this.offEvents.push(this.vault.events.on('job.queued', () => this.workers.wake()));
     this.offEvents.push(this.vault.events.on('heartbeat.completed', () => {
       this.jobsDoneSinceHeartbeat = 0;
+      // A dormant cycle completes like any other — that is how the revival gets noticed — but it must not leave
+      // new work behind it (spec §5, and see `runTick`).
+      if (this.isDormant()) return;
       const id = maybeEnqueueCharterCompression(this.vault);
       if (id) this.log(`charter compression queued: ${id}`);
       const intel = maybeEnqueueIntelligence(this.vault);
@@ -379,20 +382,30 @@ export class Daemon {
       const n = await this.sweep(reason, 'proposals', () => dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake(), guardrails: this.guardrails, questionWaitMs: this.config.questionWaitMs, dormant: this.isDormant }));
       await this.sweep(reason, 'prune-screens', () => { if (Date.now() - this.lastPrune > 3600_000) { this.lastPrune = Date.now(); const pruned = pruneScreens(this.vault); if (pruned) this.log(`pruned ${pruned} old screencast frames`); } });
       if (n) this.log(`tick(${reason}): ${n} proposal/unblock action(s)`);
-      const reviews = await this.sweep(reason, 'experiment-reviews', () => enqueueExperimentReviews(this.vault));
-      if (reviews?.length) this.log(`tick(${reason}): ${reviews.length} experiment review(s) queued`);
+      // Spec §5: a dormant company starts nothing new. `nextJob` holds ordinary work back, so a job queued here
+      // would only sit in the queue — but the CEO's last message to the owner says "Nothing is queued, nobody is
+      // working", and that sentence has to be true. What still runs while the company is stopped: the owner's
+      // proposals (which carry their own dormancy guard), pruning, indexing what has already been delivered,
+      // expired flags, and the heartbeat trigger — the one thing that notices the revival.
+      const dormant = this.isDormant();
+      if (!dormant) {
+        const reviews = await this.sweep(reason, 'experiment-reviews', () => enqueueExperimentReviews(this.vault));
+        if (reviews?.length) this.log(`tick(${reason}): ${reviews.length} experiment review(s) queued`);
+      }
       const captured = await this.sweep(reason, 'research-deliveries', () => captureResearchDeliveries(this.vault));
       if (captured?.length) this.log(`tick(${reason}): indexed ${captured.length} delivered research project(s)`);
-      const followUps = await this.sweep(reason, 'research-follow-ups', () => enqueueResearchFollowUps(this.vault));
-      if (followUps?.length) this.log(`tick(${reason}): ${followUps.length} research follow-up measurement(s) queued`);
-      const pm = await this.sweep(reason, 'postmortem', () => maybeEnqueuePostmortem(this.vault));
-      if (pm) this.log(`tick(${reason}): postmortem ${pm}`);
-      const wr = await this.sweep(reason, 'weekly-review', () => maybeEnqueueWeeklyReview(this.vault, this.openMeeting));
-      if (wr?.length) this.log(`tick(${reason}): weekly review expanded (${wr.length} job(s))`);
-      const inc = await this.sweep(reason, 'incidents', () => maybeOpenIncident(this.vault));
-      if (inc) this.log(`tick(${reason}): incident ${inc} opened`);
-      const corrective = await this.sweep(reason, 'corrective-actions', () => maybeCorrectiveActions(this.vault));
-      if (corrective?.length) this.log(`tick(${reason}): ${corrective.length} corrective action(s) queued`);
+      if (!dormant) {
+        const followUps = await this.sweep(reason, 'research-follow-ups', () => enqueueResearchFollowUps(this.vault));
+        if (followUps?.length) this.log(`tick(${reason}): ${followUps.length} research follow-up measurement(s) queued`);
+        const pm = await this.sweep(reason, 'postmortem', () => maybeEnqueuePostmortem(this.vault));
+        if (pm) this.log(`tick(${reason}): postmortem ${pm}`);
+        const wr = await this.sweep(reason, 'weekly-review', () => maybeEnqueueWeeklyReview(this.vault, this.openMeeting));
+        if (wr?.length) this.log(`tick(${reason}): weekly review expanded (${wr.length} job(s))`);
+        const inc = await this.sweep(reason, 'incidents', () => maybeOpenIncident(this.vault));
+        if (inc) this.log(`tick(${reason}): incident ${inc} opened`);
+        const corrective = await this.sweep(reason, 'corrective-actions', () => maybeCorrectiveActions(this.vault));
+        if (corrective?.length) this.log(`tick(${reason}): ${corrective.length} corrective action(s) queued`);
+      }
       const flags = await this.sweep(reason, 'flag-lessons', () => maybeFlagLessons(this.vault));
       if (flags?.length) this.log(`tick(${reason}): ${flags.length} expired flag(s) recorded as lessons`);
       await this.sweep(reason, 'heartbeat-trigger', () => {

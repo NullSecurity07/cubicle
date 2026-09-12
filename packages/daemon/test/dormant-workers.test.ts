@@ -2,14 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, createJob, createProposal, findInboxById, appendEntry, readLedger, moneyReport, loadOrg, HOUSE, LEDGER_PATH, type Vault } from '@cubicle/core';
+import { scaffoldVault, createJob, createProposal, findInboxById, appendEntry, readLedger, moneyReport, loadOrg, listJobs, stringifyNote, HOUSE, LEDGER_PATH, type Vault } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler, type Llm } from '@cubicle/harness';
 import type { ChatMessage, ModelBudget, RoutedChatResult, RouteRequest, ToolSchema } from '@cubicle/router';
 import { WorkerPool } from '../src/workers.js';
 import { dispatchProposals } from '../src/dispatcher.js';
 import { runHeartbeat, createHeartbeatJob, runBoardSession, withCycleBudget } from '../src/heartbeat.js';
-import { pollCached, DORMANCY_POLL_MS } from '../src/daemon.js';
+import { Daemon, pollCached, DORMANCY_POLL_MS } from '../src/daemon.js';
+import { defaultConfig } from '../src/config.js';
 
 let dir: string;
 let vault: Vault;
@@ -186,6 +187,39 @@ describe('a dormant company applies no proposal that spends', () => {
     await dispatchProposals(deps(() => { throw new Error('ledger on fire'); }));
     expect(findInboxById(vault, p.id)!.data.resolved_at).toBeTruthy();
   });
+});
+
+describe('a dormant company queues nothing new, so the CEO\'s message stays true (M16)', () => {
+  it('skips the tick\'s enqueueing sweeps while stopped, and runs them again once the owner funds it', async () => {
+    // The CEO's last message says "Nothing is queued, nobody is working". `nextJob` holds work back, so a job
+    // queued here would only sit there — but the sentence has to be true, and a growing queue is the owner's
+    // evidence that it is not.
+    vault.writeText('Experiments/exp_1.md', stringifyNote({ id: 'exp_1', title: 'Cold email v2', owner: 'cmo', status: 'running', metric: 'replies', review_date: '2026-01-01' }, '## Hypothesis\n\nx\n'), 'cmo');
+    appendEntry(vault, { at: '2026-09-10T08:00:00.000Z', kind: 'capital', cents: 25000, mode: 'live', who: 'owner', why: 'Seed from savings' }, 'owner');
+    appendEntry(vault, { at: '2026-09-11T08:00:00.000Z', kind: 'cost', cents: 25000, mode: 'live', who: 'daemon', why: 'Every penny of it' }, 'daemon');
+    expect(moneyReport(readLedger(vault), new Date()).dormant).toBe(true);
+
+    const d = new Daemon(
+      defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 60_000, maxConcurrentJobs: 1, providersPath: path.resolve(__dirname, '../../../config/providers.yaml'), toolsPath: path.resolve(__dirname, '../../../config/tools.yaml') }),
+      { llm: { async chat() { throw new Error('no model call belongs in this test'); }, promptBudget: () => 6000 }, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined },
+    );
+    await d.start();
+    try {
+      const reviews = () => listJobs(d.vault).filter((j) => j.type === 'office:operations.verify');
+      const before = listJobs(d.vault).map((j) => j.id).sort();
+      await d.runTick('test');
+      expect(reviews()).toEqual([]);
+      // Nothing new at all — and the heartbeat, which is what notices the revival, is still the exception the
+      // pool starts (asserted at the top of this file).
+      expect(listJobs(d.vault).map((j) => j.id).sort()).toEqual(before);
+
+      // The owner tops it up: the same sweep now has work to do.
+      appendEntry(d.vault, { at: '2026-09-12T08:00:00.000Z', kind: 'capital', cents: 10000, mode: 'live', who: 'owner', why: 'Topping the company up' }, 'owner');
+      await new Promise((r) => setTimeout(r, DORMANCY_POLL_MS + 50));   // the dormancy reading is cached for a beat
+      await d.runTick('funded');
+      expect(reviews()).toHaveLength(1);
+    } finally { await d.stop(); }
+  }, 60_000);
 });
 
 describe('the cycle speaks on the house budget, read once (SP4 §4)', () => {
