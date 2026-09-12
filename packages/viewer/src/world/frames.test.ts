@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { FRAMES, POSES, frameIndex, frameFor, poseFor, faceFrame, talkOpen, WALK_FRAMES, WALK_STEP_MS, BOB, type PoseCtx } from './frames.js';
 import type { AgentView } from '../state.js';
 
-const view = (o: Partial<AgentView> = {}): AgentView => ({ role: 'sre', display: 'SRE', sprite: 'sre', desk: 'sre', active: true, state: 'idle_at_desk', tool: null, job: null, bubble: null, target: null, badge: null, mood: 'neutral', moodUntil: null, emote: null, idleSince: null, division: 'other', family: 'member', ...o });
+const view = (o: Partial<AgentView> = {}): AgentView => ({ role: 'sre', display: 'SRE', sprite: 'sre', desk: 'sre', active: true, state: 'idle_at_desk', tool: null, job: null, bubble: null, target: null, badge: null, mood: 'neutral', moodUntil: null, emote: null, idleSince: null, checking: null, division: 'other', family: 'member', ...o });
 const ctx = (o: Partial<PoseCtx> = {}): PoseCtx => ({ atDesk: true, riding: false, sideSeat: null, nowMs: 0, gesture: 'none', detour: null, ...o });
 
 describe('frame table', () => {

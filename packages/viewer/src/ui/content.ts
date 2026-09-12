@@ -7,7 +7,7 @@
  * The builders live below the registry that calls them (`ui/surfaces.ts` imports this file, never the other
  * way round), so this module has no cycle to be careful about and can be read top to bottom.
  */
-import type { State, JobView, TeamView, AgentView } from '../state.js';
+import { statusText, type State, type JobView, type TeamView, type AgentView } from '../state.js';
 import { md, inline } from './markdown.js';
 import { pixelIcon, type GlyphName } from './icons.js';
 import { pantryStale, PANTRY_TURN_CHARS, type PantryState } from './pantry.js';
@@ -115,6 +115,9 @@ export const callsToday = (s: State): number => s.quota.reduce((n, q) => n + (q.
 
 /** Colour of a feed row's dot from what the reducer wrote. */
 export function feedKind(text: string): 'ok' | 'warn' | 'bad' | 'info' {
+  // Before the `bad` line, and deliberately: a call the guardrail could not *check* was neither refused nor
+  // sent, and a red dot beside it would say the company did something wrong when it did not.
+  if (/^waiting for the guardrail:/.test(text)) return 'info';
   if (/^guardrail:|rejected:|failed|left the company/.test(text)) return 'bad';
   if (/^proposal:|^you edited/.test(text)) return 'warn';
   if (/^deployed |^hired |approved:/.test(text)) return 'ok';
@@ -333,7 +336,9 @@ export function agentView(role: string, s: State, ctx: Ctx): View {
   const job = ag.job ? s.jobs[ag.job] : null;
   const team = s.teams.find((t) => t.lead === role || t.members.includes(role)) ?? null;
   const leadRole = ag.reportsTo ?? (team ? (team.lead === role ? (role === 'ceo' ? null : 'ceo') : team.lead) : null);
-  const subParts = [`${ag.state.replace(/_/g, ' ')}${ag.tool ? ` · using ${ag.tool}` : ''}`, ag.title ?? ag.display];
+  // While the constitution's classifier is reading an outbound call, that is what the person is doing — the
+  // state line would say "working", which is true and useless. See `statusText`.
+  const subParts = [statusText(ag) ?? `${ag.state.replace(/_/g, ' ')}${ag.tool ? ` · using ${ag.tool}` : ''}`, ag.title ?? ag.display];
   if (team) subParts.push(team.name);
   if (leadRole) subParts.push(`reports to ${who(s, leadRole)}`);
   const jobHtml = job ? rows([row({ left: chip(job.status), title: job.title, small: `${job.type} · step ${job.checkpoint_step}`, right: 'open', open: `job:${job.id}` })]) : emptyHtml('clipboard', 'Not on a job right now');

@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { ProviderConfig } from './config.js';
+import { assertProviderAllowed } from './test-guard.js';
 
 export type ChatMessage = ChatCompletionMessageParam;
 export type ToolDef = ChatCompletionTool;
@@ -50,6 +51,9 @@ export function apiKeyFor(p: ProviderConfig, env: NodeJS.ProcessEnv = process.en
 }
 
 export function makeClient(p: ProviderConfig, env: NodeJS.ProcessEnv = process.env, timeoutMs?: number): OpenAI {
+  // Every chat completion is built here, so this is the one chokepoint a test suite cannot route around.
+  // A no-op outside tests; see test-guard.ts for why a fake `Llm` was never the isolation it looked like.
+  assertProviderAllowed(p.base_url, p.id);
   const key = apiKeyFor(p, env);
   return new OpenAI({ apiKey: key ?? 'missing', baseURL: p.base_url, maxRetries: 0, timeout: timeoutMs ?? p.timeout_ms });
 }

@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, listJobs, updateJob, createProposal, findInboxById, idFromKey, nowIso, loadOrg } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
-import { vaultScheduler } from '@cubicle/harness';
-import { requeueUnblocked, executeStoredCall, defaultConfig, escalationTarget } from '../src/index.js';
+import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, readJob, listJobs, updateJob, createProposal, findInboxById, idFromKey, nowIso, loadOrg, CLASSIFIER_UNAVAILABLE_HOLD } from '@cubicle/core';
+import { parseToolsConfig, ToolRegistry, phase3Tools, proposalKindFor, constitutionGuardrail, classifyBannedTactic, classifierUnavailableNow, CLASSIFIER_UNAVAILABLE_PREFIX } from '@cubicle/tools';
+import { runJob, vaultScheduler } from '@cubicle/harness';
+import { requeueUnblocked, executeStoredCall, dispatchProposals, defaultConfig, escalationTarget, RETRY_NOW } from '../src/index.js';
 
 const root = path.resolve(__dirname, '../../..');
 
@@ -158,6 +158,276 @@ describe('an approved call whose mode changed to never (D3)', () => {
     expect(blocked[0].payload.tool).toBe('mock.outbound');
     expect(blocked[0].payload.approved).toBe(true);
     expect(String(blocked[0].payload.reason)).toMatch(/never/);
+  });
+});
+
+describe('an approved call the constitution guardrail could not check', () => {
+  /**
+   * A proposal carrying an outbound call the owner has approved, and the deps to dispatch it with
+   * `guardrails`.
+   *
+   * The kind comes from `proposalKindFor`, the same function the tool layer files with, so the note is one
+   * the system could actually have produced. `mock.outbound` is the tool because it is one the classifier
+   * really reads (`OUTBOUND_TEXT_TOOLS`) and the only such tool with no `trust_review`, so a hold here is
+   * the classifier's and nobody else's. Its real kind is `outbound_batch` — pairing it with `spend` was the
+   * invalid pairing re-review 1 caught, and it is why the round-1 tests passed over a path the classifier
+   * can never take.
+   */
+  function approvedOutbound(guardrails: { check: () => string | null }[]) {
+    vault.updateNote('Roles/cmo.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
+    const job = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'cmo', goal: 'send' }, 'cto');
+    const key = `${job}:1:1`;
+    const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
+    const kind = proposalKindFor(cfg, 'mock.outbound');
+    expect(kind).toBe('outbound_batch');   // the path this whole describe is about
+    const p = createProposal(vault, { kind, from: 'cmo', job, title: 'send one', body: 'x', call: { tool: 'mock.outbound', args: { to: 'a@x', body: 'hi' }, idempotency_key: key, job, role: 'cmo' } }, 'cmo');
+    return { job, key, p, cfg, deps: { vault, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), toolsConfig: cfg, scheduler: vaultScheduler(vault), env: {}, guardrails } };
+  }
+  /** Approve as the owner. Only a raw file edit reads as one: `updateNote` records its own sha as a system write. */
+  const approve = (rel: string) => writeFileSync(path.join(dir, rel), readFileSync(path.join(dir, rel), 'utf8').replace(/^approved: .*$/m, 'approved: true'));
+  const OUTAGE = `${CLASSIFIER_UNAVAILABLE_PREFIX} (no answer in 20000 ms), so the call is refused rather than sent unchecked. Try it again once a model is answering.`;
+
+  /**
+   * `executeStoredCall`'s own two-kind distinction. It is kind-agnostic, and its one production caller is the
+   * `spend` branch — where no shipped tool carries classifiable copy (`deploy.site` and `stripe.payment_link`
+   * are not in `OUTBOUND_TEXT_TOOLS`), so the classifier cannot reach it today. The branch is kept, and
+   * tested, so that a future `spend` tool that does carry copy cannot inherit the round-1 bug; the path an
+   * outbound call actually takes is the `dispatchProposals` case below and the harness's own resume.
+   */
+  it('keeps the approval, the key and the note, and retries — it is not a refusal (review round 1, CRITICAL)', async () => {
+    // The classifier timed out. Nobody decided anything about this call; it was simply not checked.
+    const outage = OUTAGE;
+    let down = true;
+    const { job, key, p, deps } = approvedOutbound([{ check: () => (down ? outage : null) }]);
+
+    const first = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(first.ok).toBe(false);
+    expect(first.deferred).toBe(true);
+    expect(first.text).toMatch(/could not check this call/);
+    expect(first.text).toMatch(/idempotency key is unspent/);
+    expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false);   // nothing was sent
+    // Everything the next attempt needs is still here: the ledger is untouched, and so is the note.
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
+    const note = findInboxById(vault, p.id)!;
+    expect((note.data as { executing_at?: string }).executing_at).toBeUndefined();
+    expect((note.data as { blocked_by_guardrail?: string }).blocked_by_guardrail).toBeUndefined();
+    expect(note.data.resolved_at ?? null).toBeNull();
+
+    // The re-dispatch while the outage stands says the same thing — never "a previous attempt was
+    // interrupted after starting this call (lost result)", which was untrue and killed the send for good.
+    const again = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(again.deferred).toBe(true);
+    expect(again.text).not.toMatch(/interrupted|lost result|already executed/);
+
+    // A model answers, and the very next sweep sends it — with the approval the owner already gave.
+    down = false;
+    const sent = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(sent.ok).toBe(true);
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([key]);
+    expect(readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1);
+  });
+
+  it('a rule that was actually broken still ends the call, key unspent, with one approved guardrail.blocked', async () => {
+    // The other kind of refusal: a verdict, not a missing one. It must not be held and retried for ever.
+    const { job, p, deps } = approvedOutbound([{ check: () => 'constitution: banned tactic detected: fake urgency' }]);
+    const r = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(r.ok).toBe(false);
+    expect(r.deferred).toBeUndefined();
+    expect(r.text).toContain('blocked even though approved');
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
+    const blocked = vault.events.query({ types: ['guardrail.blocked'] });
+    expect(blocked).toHaveLength(1);
+    expect(String(blocked[0].payload.reason)).toContain('fake urgency');
+  });
+
+  /**
+   * The path an approved outbound call actually takes. `dispatchProposals` used to resolve an
+   * `outbound_batch` unconditionally and wake its author, which handed the harness a note it could no longer
+   * be held by — so a twenty-second outage turned into a permanent "blocked even though approved" on the job
+   * and a closed proposal, with the owner's approval spent (re-review 1, CRITICAL).
+   */
+  it('holds an outbound_batch rather than resolving it, keeps its author asleep, and sends it when the model is back', async () => {
+    // The real guardrail over a router that fails, not a stub returning the refusal string: the sleep guard
+    // keys on the classifier's own outage record, which only a real classification writes (re-review 2).
+    const state = { down: true };
+    const router = { async chat() { if (state.down) throw new Error('ollama down'); return { content: '{"violates": false, "tactic": ""}', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'cheap', downgraded: false, parsedToolCalls: [] }; } };
+    const { job, p, deps } = approvedOutbound([constitutionGuardrail(router as unknown as Parameters<typeof constitutionGuardrail>[0])]);
+    approve(p.path);
+    // The author waits on the proposal, exactly as the harness leaves it when it files an ask-mode call.
+    updateJob(vault, job, { status: 'blocked', blocked_on: { kind: 'proposal', id: p.id, since: nowIso() } }, 'cmo');
+
+    expect(await dispatchProposals(deps)).toBe(0);           // nothing was applied, and nobody was woken
+    const held = findInboxById(vault, p.id)!;
+    expect(held.data.resolved_at ?? null).toBeNull();        // the owner's approval still stands
+    expect(held.data.approved).toBe(true);
+    expect(held.body).toContain('could not check this call');
+    // Nothing to fix and nothing to re-approve: the owner must not be told to set `approved` again, and must
+    // not be told to wait ten minutes either — the hold is released on the next cycle.
+    expect(held.body).toContain('on the next cycle');
+    expect(held.body).not.toContain('Fix it and set approved again');
+    expect(held.body).not.toMatch(/10 minutes|ten minutes/);
+    // Waking the author would only have the harness re-block it a moment later, once per tick, writing an
+    // "unblocked" line into the job note each time — the same reason a trust hold keeps its author asleep.
+    expect(readJob(vault, job)!.data.status).toBe('blocked');
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
+    expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false);
+    // It is a deferral, not a refusal: the office must not tell the owner this call was not allowed.
+    expect(vault.events.count('guardrail.blocked')).toBe(0);
+    expect(vault.events.count('guardrail.deferred')).toBe(1);
+    // Due on the next pass rather than in ten minutes — the same lever the trust hold uses.
+    expect((vault.db.prepare('SELECT at FROM refusals WHERE path = ?').get(p.path) as { at: string }).at).toBe(RETRY_NOW);
+
+    // Three more sweeps across an outage that could run for hours: **no clock is moved here** — the note is
+    // due on every pass, which is the point — and yet the note is not touched again and the room is not told
+    // again, the same rule the dormancy hold and the trust hold are written once for.
+    const sha = vault.currentSha(held.path);
+    for (let i = 0; i < 3; i++) expect(await dispatchProposals(deps)).toBe(0);
+    expect(vault.currentSha(held.path)).toBe(sha);
+    expect(vault.events.count('guardrail.deferred')).toBe(1);
+
+    // A model answers — here, as in production, some other classification somewhere in the company — and the
+    // very next tick resolves the note and wakes the author to send it: no ten-minute wait for a
+    // twenty-second outage (SP5's I1 complaint, and the same `retryOnNextPass` lever).
+    state.down = false;
+    await classifyBannedTactic(router as unknown as Parameters<typeof classifyBannedTactic>[0], `unrelated copy ${Date.now()}`, ['fake urgency']);
+    expect(await dispatchProposals(deps)).toBeGreaterThanOrEqual(1);
+    const done = findInboxById(vault, p.id)!;
+    expect(done.data.resolved_at).toBeTruthy();
+    expect((done.data as { refused?: string }).refused).toBeUndefined();
+    expect(readJob(vault, job)!.data.status).toBe('queued');   // the author may now execute its stored call
+  });
+
+  it('the held note is due on every pass, not on the ten-minute timer', async () => {
+    // The lever itself, stated plainly: a dormancy hold waits (its cause lasts days); a classifier hold does
+    // not (its cause lasts seconds). Both keep their `refusals` row — it is what carries the owner's standing
+    // approval across the hold — and only the clock differs.
+    const { p, deps } = approvedOutbound([{ check: () => OUTAGE }]);
+    approve(p.path);
+    await dispatchProposals(deps);
+    const row = vault.db.prepare('SELECT at FROM refusals WHERE path = ?').get(p.path) as { at: string };
+    expect(row.at).toBe(RETRY_NOW);
+    expect(Date.now() - Date.parse(row.at)).toBeGreaterThan(10 * 60_000);
+  });
+
+  it('a rule that was actually broken is still the harness\'s to record, and the note is resolved as before', async () => {
+    // The dispatcher's pre-check acts on one answer only. A real violation is left exactly where it was: the
+    // note resolves, the author wakes, and the harness records the block on the job where its author reads it.
+    const { job, p, deps } = approvedOutbound([{ check: () => 'constitution: banned tactic detected: fake urgency' }]);
+    approve(p.path);
+    updateJob(vault, job, { status: 'blocked', blocked_on: { kind: 'proposal', id: p.id, since: nowIso() } }, 'cmo');
+
+    expect(await dispatchProposals(deps)).toBeGreaterThanOrEqual(1);
+    expect(findInboxById(vault, p.id)!.data.resolved_at).toBeTruthy();
+    expect(vault.events.count('guardrail.deferred')).toBe(0);
+    expect(readJob(vault, job)!.data.status).toBe('queued');
+  });
+});
+
+/**
+ * The two churn findings of re-review 2, both about what a *standing* outage costs. Neither loses a send;
+ * both were the daemon working much harder than it needed to while no model could answer.
+ *
+ * These use the real `constitutionGuardrail` over a router that throws, because the thing under test is the
+ * classifier's own module-level outage record — a stub guardrail returning the refusal string would never
+ * write it, and the guards below key on it.
+ */
+describe('a standing classifier outage costs the daemon almost nothing', () => {
+  const cfg = () => parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
+  /** A router that fails while `down` says so, and answers "nothing banned" once it does not. Counts its calls. */
+  function flakyRouter(state: { down: boolean }) {
+    const calls = { n: 0 };
+    const router = { async chat() { calls.n++; if (state.down) throw new Error('ollama down'); return { content: '{"violates": false, "tactic": ""}', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'cheap', downgraded: false, parsedToolCalls: [] }; } };
+    return { router: router as unknown as Parameters<typeof constitutionGuardrail>[0], calls };
+  }
+  /** One approved `outbound_batch` with copy of its own, and the job waiting on it. */
+  function outbound(n: number): { id: string; path: string; job: string } {
+    const job = createJob(vault, { type: 'growth.outreach', title: `outreach ${n}`, assigned: 'cmo', goal: 'send' }, 'cto');
+    const p = createProposal(vault, { kind: 'outbound_batch', from: 'cmo', job, title: `send ${n}`, body: 'x', call: { tool: 'mock.outbound', args: { to: `a${n}@x`, body: `hello number ${n} on ${Date.now()}` }, idempotency_key: `${job}:1:1`, job, role: 'cmo' } }, 'cmo');
+    writeFileSync(path.join(dir, p.path), readFileSync(path.join(dir, p.path), 'utf8').replace(/^approved: .*$/m, 'approved: true'));
+    updateJob(vault, job, { status: 'blocked', blocked_on: { kind: 'proposal', id: p.id, since: nowIso() } }, 'cmo');
+    return { ...p, job };
+  }
+
+  beforeEach(() => {
+    vault.updateNote('Roles/cmo.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
+  });
+
+  it('probes once for all the notes it is holding, not once each (re-review 2, I2)', async () => {
+    // The classifier's round trip is bounded at 20 s and runs inside the tick. One probe per held note per
+    // pass was a minute of tick against a thirty-second interval for three notes, delaying `requeueUnblocked`
+    // — the only requeue path in the repo — for every blocked job in the company.
+    const state = { down: true };
+    const { router, calls } = flakyRouter(state);
+    const notes = [outbound(1), outbound(2), outbound(3)];
+    const deps = { vault, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), toolsConfig: cfg(), scheduler: vaultScheduler(vault), env: {}, guardrails: [constitutionGuardrail(router)] };
+
+    expect(await dispatchProposals(deps)).toBe(0);
+    expect(calls.n).toBe(1);                                  // three notes, one probe
+    for (const p of notes) expect(findInboxById(vault, p.id)!.data.resolved_at ?? null).toBeNull();
+    expect(vault.events.count('guardrail.deferred')).toBe(3); // each note is still told about, once
+
+    // The next pass, inside the memo window: the answer is already known, so nothing leaves the process.
+    expect(await dispatchProposals(deps)).toBe(0);
+    expect(calls.n).toBe(1);
+
+    // The model answers. Nothing here re-probes on its own — that is the whole point of the previous
+    // assertion — so recovery is noticed the way production notices it: some other classification somewhere
+    // in the company succeeds and ends the era (and failing that, the memo window lapses within a minute).
+    // Then each note's own copy is genuinely checked, and all three go.
+    state.down = false;
+    await classifyBannedTactic(router, `unrelated copy ${Date.now()}`, ['fake urgency']);
+    const before = calls.n;
+    expect(await dispatchProposals(deps)).toBeGreaterThanOrEqual(3);
+    expect(calls.n).toBe(before + 3);                         // three different texts, three honest checks
+    for (const p of notes) {
+      expect(findInboxById(vault, p.id)!.data.resolved_at).toBeTruthy();
+      expect(readJob(vault, p.job)!.data.status).toBe('queued');
+    }
+  });
+
+  it('a resolved note held on resume does not wake its author once per tick (re-review 2, I1)', async () => {
+    // The window the harness deferral exists for: the dispatcher checked, resolved the note and woke the
+    // author, and only then did the model go down — or the daemon restarted, taking the in-process memo with
+    // it. The note is closed, so the dispatcher's hold cannot cover it; without a marker of its own the job
+    // was woken and re-blocked every tick, two autocommitted job-note writes each, for the whole outage.
+    const state = { down: true };
+    const { router } = flakyRouter(state);
+    const guardrails = [constitutionGuardrail(router)];
+    const { id, job } = outbound(9);
+    const deps = { vault, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), toolsConfig: cfg(), scheduler: vaultScheduler(vault), env: {}, guardrails };
+    const harness = { vault, llm: { async chat() { return { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'x' } }] }; }, promptBudget: () => 6000 }, toolsConfig: cfg(), registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), scheduler: vaultScheduler(vault), env: {}, guardrails };
+
+    // The note is closed and the author woken, the way a healthy dispatch pass leaves them.
+    vault.updateNote(findInboxById(vault, id)!.path, (n) => ({ data: { ...n.data, resolved_at: nowIso() }, body: n.body }), 'daemon');
+    updateJob(vault, job, { status: 'queued' }, 'daemon');
+    expect((await runJob(harness, job)).status).toBe('blocked');
+
+    const waiting = (body: string) => body.split('\n').filter((l) => l.includes('waiting for the constitution guardrail')).length;
+    expect(waiting(readJob(vault, job)!.body)).toBe(1);
+    expect((findInboxById(vault, id)!.data as { refused?: string }).refused).toBe(CLASSIFIER_UNAVAILABLE_HOLD);
+
+    // Four ticks. The author stays asleep: no "unblocked" line, and the "waiting" line is not written again.
+    for (let i = 0; i < 4; i++) {
+      expect(requeueUnblocked(vault)).toBe(0);
+      if (readJob(vault, job)!.data.status === 'queued') await runJob(harness, job);
+    }
+    const held = readJob(vault, job)!;
+    expect(held.data.status).toBe('blocked');
+    expect(waiting(held.body)).toBe(1);
+    expect(held.body).not.toContain('unblocked (proposal');
+    expect(vault.events.count('guardrail.deferred')).toBe(1);
+    expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false);
+
+    // The model answers: the era moves, the hold stops holding, and the job resumes once and sends.
+    // Any successful classification ends the outage — here, the dispatcher's own probe on its next pass.
+    state.down = false;
+    expect(classifierUnavailableNow()).toBe(true);
+    await classifyBannedTactic(router, `unrelated copy ${Date.now()}`, ['fake urgency']);
+    expect(classifierUnavailableNow()).toBe(false);
+    expect(requeueUnblocked(vault)).toBe(1);
+    expect((await runJob(harness, job)).status).toBe('done');
+    expect(readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1);
+    expect((findInboxById(vault, id)!.data as { refused?: string }).refused).toBeUndefined();
   });
 });
 

@@ -20,6 +20,17 @@ const steps = [
 async function main() {
   if (cmd === 'init') {
     const { vault } = await scaffoldVault(vaultPath);
+    // The fake `Llm` below replaces the *harness's* model, not the daemon's `Router` — and the constitution
+    // guardrail holds that Router. Its `banned_tactics` classifier reads the body of every `mock.outbound`
+    // this script sends, so without this line `pnpm test:kill9` makes a real inference call to whatever model
+    // server the machine is running, twice, in the middle of a race it times with a SIGKILL. Exactly the shape
+    // B1 found in the daemon suite; the reasoning is written out in full in
+    // `packages/daemon/test/helpers/no-local-model.ts`. Written as `owner`, the only writer the constitution
+    // allows, and checked afterwards so a template change cannot quietly hand the script its model call back.
+    const before = vault.readText('Memory/constitution.md');
+    vault.writeText('Memory/constitution.md', before.replace(/^banned_tactics:[ \t]*\n(?:[ \t]+-[^\n]*\n)*/m, 'banned_tactics: []\n'), 'owner');
+    const left = vault.constitution().banned_tactics;
+    if (left.length) throw new Error(`kill9: banned_tactics is still ${JSON.stringify(left)}; the guardrail would call a real model server on every mock.outbound this script sends`);
     vault.updateNote('Roles/cmo.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
     createJob(vault, { type: 'growth.outreach', title: 'kill9 outreach', assigned: 'cmo', goal: 'send two' }, 'cto');
     vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed', synthetic: true } }); // keep the startup heartbeat quiet
