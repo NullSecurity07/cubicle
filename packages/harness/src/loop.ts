@@ -6,6 +6,7 @@ import {
   loadGates, gatesForRisk, criteriaFor, gateAssignee, type GateTable,
   loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
+  trustReviewsFor, trustDecision, trustVerdictFor, recordTrustVerdict, type TrustToolPolicy,
 } from '@cubicle/core';
 import { NoModelAvailableError, TIER_RANK, type ModelBudget, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -106,6 +107,16 @@ export function appendObservation(vault: Vault, jobId: string, o: Observation): 
 
 export function idempotencyKey(job: JobFrontmatter, step: number): string {
   return `${job.id}:${job.attempt}:${step}`;
+}
+
+/**
+ * The one `config/tools.yaml` field SP5 adds, read out of a tool's policy. `core` deliberately never imports
+ * `tools`, so `trust_review` reaches it as its own one-field shape (`TrustToolPolicy`) rather than as `ToolPolicy`;
+ * reading it structurally also means the harness compiles and behaves identically whether or not the tools
+ * package's own schema declares the key yet.
+ */
+function trustPolicy(pol: unknown): TrustToolPolicy | undefined {
+  return pol ? { trust_review: (pol as { trust_review?: unknown }).trust_review === true } : undefined;
 }
 
 /**
@@ -287,6 +298,11 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       const findings = result.blockers.length ? result.blockers : result.summary ? [result.summary] : ['reviewer could not complete the review'];
       applyVerdict(job.parent!, job.type, { ...result, verdict: 'return', findings });
     }
+    // SP5: a trust review gates a *call*, not a job's gate chain, so it carries no `parent`, `isGateJob` is false
+    // and `applyVerdict` never sees it. `trustVerdictFor` turns this Result block into the one record that counts,
+    // and makes a review that ran out of steps a *return* — a review that did not happen is not a pass.
+    const trustVerdict = trustVerdictFor(job, result);
+    if (trustVerdict) recordTrustVerdict(vault, trustVerdict);
     // Skills loop (spec §9.3): a failed job counts a failure against every skill it loaded; two failures archive the skill.
     if (result.status === 'failed') {
       const loaded = [...new Set(observations.filter((o) => o.kind === 'tool' && o.tool === 'skills.load' && o.ok !== false).map((o) => String(o.args?.name ?? '')))].filter(Boolean);
@@ -450,6 +466,15 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     if (b.kind === 'proposal') {
       const prop = findInboxById(vault, b.id);
       const call = prop?.data.call;
+      /**
+       * Spec §3: whether the two offices have cleared the stored call, or `null` when it owes them nothing.
+       * Read once, here, because both answers below turn on it: an approved call whose reviews are still out is
+       * held (nothing is spent while they are out), and a returned call is refused whether or not the owner ever
+       * answered. The dispatcher holds the proposal for the same reason, and the tool layer would refuse the call
+       * regardless — but only after the key had been spent, and the at-most-once ledger is append-only, so this
+       * check is what keeps a verdict that lands ten minutes later still able to send.
+       */
+      const trust = call ? trustDecision(events, trustPolicy(deps.toolsConfig.tools[call.tool]), call) : null;
       if (prop && prop.data.approved === true && !call && prop.data.kind === 'threat_model') {
         // A threat_model the owner approves carries no stored call — it is a plain decision, not something to
         // execute — so the answer itself is the unblock. Without this the job sat blocked forever. Narrowed to
@@ -462,14 +487,19 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       } else if (prop && prop.data.approved === true && call) {
         const step = job.checkpoint_step; // the pending call owns this step
         const key = call.idempotency_key;
+        if (trust?.kind === 'hold') return stillBlocked();
         // The approval is older than the config: the tool's mode may have moved to `never` — in tools.yaml, in
         // this charter, or in the owner's preferences — while the job sat blocked. Preferences are re-read here
         // rather than reused from `prefs` above, which is the snapshot taken when the run started. Checking
         // before the call keeps the idempotency key unspent, so re-approving works once the mode is relaxed;
         // without it the wrapper refused the call only after the key was burned. Mirrors the dispatcher (D3/M1).
-        const revoked = resolveMode(call.tool, deps.toolsConfig, role, vault.ownerPreferences()) === 'never'
-          ? `${call.tool} is set to mode never; the owner's configuration outranks this approval`
-          : null;
+        // A returned review takes the same path a revoked mode does: the refusal and its findings are recorded,
+        // the key stays unspent, and the job runs on and may file a fresh call.
+        const revoked = trust?.kind === 'returned'
+          ? trust.reason
+          : resolveMode(call.tool, deps.toolsConfig, role, vault.ownerPreferences()) === 'never'
+            ? `${call.tool} is set to mode never; the owner's configuration outranks this approval`
+            : null;
         let vetoed: string | null = revoked;
         if (!vetoed) for (const g of deps.guardrails ?? []) { vetoed = await g.check(call.tool, call.args, baseCtx); if (vetoed) break; }
         if (job.side_effects_done.includes(key)) {
@@ -487,6 +517,18 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
           events.emit({ type: 'agent.tool_result', agent: roleId, job: jobId, payload: { tool: call.tool, ok: res.ok, step, approved: true } });
         }
         updateJob(vault, jobId, { status: 'running', approval: 'approved', blocked_on: undefined }, roleId);
+      } else if (prop && prop.data.approved == null && call && trust?.kind === 'returned') {
+        // The offices returned the call while the owner was still deciding. A return outranks an approval on
+        // every path, so an approval that arrives now could not send it either: waiting on the owner is waiting
+        // for an answer that cannot help. The refusal is recorded with the review's own words, the key is never
+        // spent, and the job finishes blocked. (The daemon's sweep closes the proposal note itself.)
+        const step = job.checkpoint_step;
+        const reason = trust.reason;
+        events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason, step, approved: false } });
+        record({ step, kind: 'tool', tool: call.tool, args: call.args, result: `blocked: ${reason}`, ok: false });
+        updateJob(vault, jobId, { approval: 'rejected', blocked_on: undefined }, roleId, `- step ${step}: ${call.tool} BLOCKED by the trust review before the owner answered: ${reason}`);
+        refresh();
+        return finishWith(JobResult.parse({ status: 'blocked', summary: reason, blockers: [reason] }), step);
       } else if (prop && prop.data.approved === false) {
         record({ step: job.checkpoint_step, kind: 'tool', tool: call?.tool ?? 'unknown', args: call?.args ?? {}, result: 'rejected by owner. Do not retry this action; adapt or finish.', ok: false });
         updateJob(vault, jobId, { status: 'running', approval: 'rejected', blocked_on: undefined }, roleId, `- step ${job.checkpoint_step}: ${call?.tool ?? 'call'} rejected by owner`);
@@ -615,6 +657,22 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
         const live = !!(env.CLOUDFLARE_API_TOKEN && env.CLOUDFLARE_ACCOUNT_ID);
         if ((live ? liveDone || brandUrl : anyDone)) mode = 'auto';
       }
+      // Spec §3 / Decision 6: a leaving call is never executed in the same breath as it is made. `auto` is raised
+      // to `propose` so the agent is not simply refused mid-job — the call is filed, the job carries on, and the
+      // send happens after the owner's approval and both reviews. `ask` and `propose` behave as they always did.
+      // The raise is guarded on `policy.outbound` because the whole mechanism is keyed on the idempotency key,
+      // which only an outbound tool gets; in `config/tools.yaml` every `trust_review` tool is outbound.
+      //
+      // It runs *after* the `first_time_only` relaxation above, not before: that relaxation is what turns a live
+      // `deploy.site` into an `auto` call, and an `auto` leaving call executes — spending the key on something the
+      // tool layer refuses. The at-most-once ledger is append-only, so a key spent that way is spent for good and
+      // no verdict landing later could send the call. Raising last is what keeps the key unspent.
+      const trustGates = trustReviewsFor(trustPolicy(policy), toolName, args);
+      const trustRaised = trustGates.length > 0 && policy.outbound && mode === 'auto';
+      if (trustRaised) mode = 'propose';
+      const trustBody = trustGates.length
+        ? `\n\n${trustGates.join(' and ')} read the exact text above before it goes out; a return closes it unsent.${trustRaised ? ` (You set \`${toolName}\` to run automatically. It is filed here anyway because it leaves the company.)` : ''}`
+        : '';
       if (mode === 'never') {
         const reason = blockedReason ?? 'approval mode is never';
         events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: toolName, reason, step } });
@@ -626,7 +684,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
         const kind = proposalKindFor(deps.toolsConfig, toolName);
         const { id } = createProposal(vault, {
           kind, from: roleId, job: jobId, title: `${roleId} asks to run ${toolName}`,
-          body: `Job [[${jobId}]] (${job.title}) wants to call \`${toolName}\`:\n\n\`\`\`json\n${JSON.stringify(args, null, 2)}\n\`\`\`\n\nSet \`approved: true\` to run it, \`approved: false\` to refuse.`,
+          body: `Job [[${jobId}]] (${job.title}) wants to call \`${toolName}\`:\n\n\`\`\`json\n${JSON.stringify(args, null, 2)}\n\`\`\`\n\nSet \`approved: true\` to run it, \`approved: false\` to refuse.${trustBody}`,
           call: { tool: toolName, args, idempotency_key: key, job: jobId, role: roleId },
         }, roleId);
         updateJob(vault, jobId, { status: 'blocked', approval: 'pending', checkpoint_step: step, blocked_on: { kind: 'proposal', id, since: nowIso() } }, roleId, `- step ${step}: ${toolName} awaits owner approval (${id})`);
@@ -639,7 +697,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
         const kind = proposalKindFor(deps.toolsConfig, toolName);
         const { id } = createProposal(vault, {
           kind, from: roleId, job: jobId, title: `${roleId} proposes ${toolName}`,
-          body: `Job [[${jobId}]] (${job.title}) proposes to run \`${toolName}\`:\n\n\`\`\`json\n${JSON.stringify(args, null, 2)}\n\`\`\`\n\nSet \`approved: true\` and the daemon runs it once.`,
+          body: `Job [[${jobId}]] (${job.title}) proposes to run \`${toolName}\`:\n\n\`\`\`json\n${JSON.stringify(args, null, 2)}\n\`\`\`\n\nSet \`approved: true\` and the daemon runs it once.${trustBody}`,
           call: { tool: toolName, args, idempotency_key: key, job: jobId, role: roleId },
         }, roleId);
         const text = `proposed: ${toolName} was filed as proposal ${id} for the owner; it runs after approval. Continue with the rest of the job.`;
