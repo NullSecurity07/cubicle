@@ -7,7 +7,7 @@ import {
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath, isClassifierUnavailable } from '@cubicle/tools';
 import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
-import { cancelPointlessTrustReviews, trustGatesForNote } from './trust.js';
+import { cancelPointlessTrustReviews, trustGatesForNote, retryOnNextPass } from './trust.js';
 import { applyHire, applyFire, applyReorg, charterDiffSection } from './evolution.js';
 import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
 import { appendObservation } from '@cubicle/harness';
@@ -93,8 +93,12 @@ function fenced(body: string): string | null {
 const FIX_IT = 'Fix it and set approved again (retried automatically every 10 minutes).';
 /** Under a hold there is nothing to fix and nothing to re-approve: the sweep releases it the moment both offices answer. */
 const NOTHING_TO_DO = 'Nothing to do: this is applied on its own as soon as both reviews are in, and closed unsent if either returns it.';
-/** Same shape as the trust hold: nothing is wrong with the note, so "fix it and approve again" is the wrong advice. */
-const NOTHING_TO_FIX = 'Nothing to do: it is sent on its own as soon as a model answers the guardrail again (retried every 10 minutes).';
+/**
+ * Same shape as the trust hold: nothing is wrong with the note, so "fix it and approve again" is the wrong
+ * advice — and, like the trust hold, it is retried on the *next* pass rather than on the ten-minute timer, so
+ * it does not promise the owner a wait it no longer takes.
+ */
+const NOTHING_TO_FIX = 'Nothing to do: it is sent on its own on the next cycle, as soon as a model answers the guardrail again.';
 
 function refuseNote(vault: Vault, note: { path: string; data: InboxFrontmatter }, why: string, extra: Record<string, unknown> = {}): void {
   const closing = why === TRUST_PENDING_HOLD ? NOTHING_TO_DO : why === CLASSIFIER_UNAVAILABLE_HOLD ? NOTHING_TO_FIX : FIX_IT;
@@ -378,9 +382,16 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             const r = await executeStoredCall(deps, note);
             // Nothing was sent and nothing was decided — the guardrail could not reach a model. Hold the
             // note exactly as the dormancy and trust cases do: the approval stands, the key is unspent, and
-            // `retryDue` re-admits it. Written once per episode, for the same reason they are.
+            // the footer is written once per episode, for the same reason theirs are.
+            //
+            // But it is due on the **next pass**, not in ten minutes. The refusal machinery's timer was
+            // chosen for a dormancy that lasts days; a model outage clears in seconds, and making an
+            // owner-approved send wait ten minutes for a twenty-second interruption is the same complaint
+            // SP5's I1 made about the trust hold. Same lever, `retryOnNextPass`: the row stays — it is what
+            // carries the owner's standing approval — and only its clock is moved.
             if (r.deferred) {
               if ((d as { refused?: string }).refused !== r.text) refuseNote(vault, note, r.text);
+              retryOnNextPass(vault, note.path);
               continue;
             }
             outcome = `${d.call.tool}: ${r.ok ? 'ok' : 'failed'} — ${r.text.slice(0, 200)}`;

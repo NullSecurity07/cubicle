@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault, Vault, createJob, readJob, listJobs, updateJob, createProposal, findInboxById, idFromKey, nowIso, loadOrg } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools, CLASSIFIER_UNAVAILABLE_PREFIX } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
-import { requeueUnblocked, executeStoredCall, dispatchProposals, defaultConfig, escalationTarget } from '../src/index.js';
+import { requeueUnblocked, executeStoredCall, dispatchProposals, defaultConfig, escalationTarget, RETRY_NOW } from '../src/index.js';
 
 const root = path.resolve(__dirname, '../../..');
 
@@ -228,35 +228,50 @@ describe('an approved call the constitution guardrail could not check', () => {
     const { job, key, p, deps } = approvedOutbound([{ check: () => (down ? outage : null) }]);
     // Only a raw file edit reads as the owner's: `updateNote` records its own sha as a system write.
     writeFileSync(path.join(dir, p.path), readFileSync(path.join(dir, p.path), 'utf8').replace(/^approved: .*$/m, 'approved: true'));
-    /** A refused note is retried on the owner's next edit or after ten minutes; this is that wait. */
-    const tenMinutesPass = () => vault.db.prepare('UPDATE refusals SET at = ?').run(new Date(Date.now() - 11 * 60_000).toISOString());
 
     expect(await dispatchProposals(deps)).toBe(0);           // nothing was applied
     const held = findInboxById(vault, p.id)!;
     expect(held.data.resolved_at ?? null).toBeNull();        // the owner's approval still stands
     expect(held.data.approved).toBe(true);
     expect(held.body).toContain('could not check this call');
-    // Nothing to fix and nothing to re-approve: the owner must not be told to set `approved` again.
-    expect(held.body).toContain('as soon as a model answers the guardrail again');
+    // Nothing to fix and nothing to re-approve: the owner must not be told to set `approved` again, and must
+    // not be told to wait ten minutes either — the hold is released on the next cycle.
+    expect(held.body).toContain('on the next cycle');
     expect(held.body).not.toContain('Fix it and set approved again');
+    expect(held.body).not.toMatch(/10 minutes|ten minutes/);
     expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
     expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false);
 
-    // Three more sweeps across an outage that could run for hours: the note is not touched again and the room
-    // is not told again — the same rule the dormancy hold and the trust hold are written once for.
+    // Three more sweeps across an outage that could run for hours: **no clock is moved here** — the note is
+    // due on every pass, which is the point — and yet the note is not touched again and the room is not told
+    // again, the same rule the dormancy hold and the trust hold are written once for.
     const sha = vault.currentSha(held.path);
-    for (let i = 0; i < 3; i++) { tenMinutesPass(); expect(await dispatchProposals(deps)).toBe(0); }
+    for (let i = 0; i < 3; i++) expect(await dispatchProposals(deps)).toBe(0);
     expect(vault.currentSha(held.path)).toBe(sha);
     expect(vault.events.query({ types: ['guardrail.blocked'] }).filter((e) => String(e.payload.reason).includes('could not check this call'))).toHaveLength(1);
 
-    // A model answers. Nothing about the note changed, so the guardrail alone is what lets it through, and the
-    // approval the owner already gave is the one that applies.
+    // A model answers, and the very next tick sends it — no ten-minute wait for a twenty-second outage
+    // (SP5's I1 complaint about the trust hold, and the same lever, `retryOnNextPass`). Nothing about the
+    // note changed, so the guardrail alone is what lets it through, under the approval the owner already gave.
     down = false;
-    tenMinutesPass();
     expect(await dispatchProposals(deps)).toBe(1);
     expect(findInboxById(vault, p.id)!.data.resolved_at).toBeTruthy();
     expect(readJob(vault, job)!.data.side_effects_done).toEqual([key]);
     expect(readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1);
+  });
+
+  it('the held note is due on every pass, not on the ten-minute timer', () => {
+    // The lever itself, stated plainly: a dormancy hold waits (its cause lasts days); a classifier hold does
+    // not (its cause lasts seconds). Both keep their `refusals` row — it is what carries the owner's standing
+    // approval across the hold — and only the clock differs.
+    const outage = `${CLASSIFIER_UNAVAILABLE_PREFIX} (ollama down), so the call is refused rather than sent unchecked. Try it again once a model is answering.`;
+    const { p, deps } = approvedOutbound([{ check: () => outage }]);
+    writeFileSync(path.join(dir, p.path), readFileSync(path.join(dir, p.path), 'utf8').replace(/^approved: .*$/m, 'approved: true'));
+    return dispatchProposals(deps).then(() => {
+      const row = vault.db.prepare('SELECT at FROM refusals WHERE path = ?').get(p.path) as { at: string };
+      expect(row.at).toBe(RETRY_NOW);
+      expect(Date.now() - Date.parse(row.at)).toBeGreaterThan(10 * 60_000);
+    });
   });
 });
 

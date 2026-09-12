@@ -94,7 +94,22 @@ export function trustGatesForNote(cfg: ToolsConfig, d: InboxFrontmatter): string
  * deleting it would have `dispatchProposals` read the still-present `refused` mark with no row behind it, which
  * is "never retry".
  */
-const RETRY_NOW = new Date(0).toISOString();
+export const RETRY_NOW = new Date(0).toISOString();
+
+/**
+ * Mark a refused note due on the dispatcher's **next pass** instead of in ten minutes' time.
+ *
+ * The refusal machinery's ten minutes were chosen for a dormancy that lasts days. Any hold whose cause can
+ * clear in seconds wants this instead: the trust hold the moment the last verdict lands, and the constitution
+ * guardrail's hold the moment a model is answering again. Returns true when it actually moved the row —
+ * false when there is no row, or it is already due.
+ */
+export function retryOnNextPass(vault: Vault, path: string): boolean {
+  const row = vault.db.prepare('SELECT at FROM refusals WHERE path = ?').get(path) as { at: string } | undefined;
+  if (!row || row.at === RETRY_NOW) return false;
+  vault.db.prepare('UPDATE refusals SET at = ? WHERE path = ?').run(RETRY_NOW, path);
+  return true;
+}
 
 /**
  * End the dispatcher's hold the moment the last verdict lands.
@@ -110,10 +125,7 @@ const RETRY_NOW = new Date(0).toISOString();
  */
 export function releaseTrustHold(vault: Vault, note: { path: string; data: InboxFrontmatter }): boolean {
   if ((note.data as { refused?: string }).refused !== TRUST_PENDING_HOLD) return false;
-  const row = vault.db.prepare('SELECT at FROM refusals WHERE path = ?').get(note.path) as { at: string } | undefined;
-  if (!row || row.at === RETRY_NOW) return false;
-  vault.db.prepare('UPDATE refusals SET at = ? WHERE path = ?').run(RETRY_NOW, note.path);
-  return true;
+  return retryOnNextPass(vault, note.path);
 }
 
 /**
