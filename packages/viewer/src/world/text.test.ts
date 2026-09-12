@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RES, FONT, MONO, NAME_LABEL_ZOOM, NAME_LABEL_PX, DESK_PITCH_PX, nameLabelView, nameLabelScale, nameLabelChars, nameLabelText, nameLabelStyle, signLabelStyle } from './text.js';
+import { RES, FONT, MONO, NAME_LABEL_ZOOM, NAME_LABEL_PX, DESK_PITCH_PX, nameLabelView, nameLabelScale, nameLabelChars, nameLabelText, nameLabelStyle, signLabelStyle, groupLabels, sharedLeadingWords, snapPixels, rgbOf, worldTextVisible } from './text.js';
 import { PALETTE } from './palette.js';
 import { cut } from '../ui/headlines.js';
 
@@ -26,8 +26,8 @@ describe('name labels (ruling F1)', () => {
       expect(raster * nameLabelScale(zoom) * zoom, `zoom ${zoom}`).toBeCloseTo(NAME_LABEL_PX);
       expect(raster * nameLabelView(zoom).scale * zoom, `zoom ${zoom}`).toBeCloseTo(NAME_LABEL_PX);
     }
-    // what the old code did — a fixed 1/RES — grew with the zoom: 9 px at zoom 1, 36 px at zoom 4
-    expect(raster * (1 / RES) * 4).toBe(36);
+    // what the old code did — a fixed 1/RES — grew with the zoom: the label was four times too tall at zoom 4
+    expect(raster * (1 / RES) * 4).toBe(NAME_LABEL_PX * 4);
   });
 
   it('never divides by zero on a degenerate zoom', () => {
@@ -37,8 +37,8 @@ describe('name labels (ruling F1)', () => {
 });
 
 describe('one set of in-world text constants', () => {
-  it('rasterises at 3× and uses one font stack with real fallbacks', () => {
-    expect(RES).toBe(3);
+  it('rasterises once per world pixel and uses one font stack with real fallbacks', () => {
+    expect(RES).toBe(1);
     expect(FONT).toMatch(/^system-ui,/);
     expect(FONT.split(',').length).toBeGreaterThan(3);   // headless and minimal systems have no system-ui
     expect(MONO).toMatch(/monospace$/);
@@ -86,30 +86,54 @@ describe('how much of a name is shown', () => {
  */
 describe('what a desk label says when the name will not fit', () => {
   const QA = ['QA Lead', 'QA Automation', 'QA Exploratory', 'QA Performance', 'QA Security', 'QA Release'];
+  const DEV = ['Dev Manager', 'Product Manager', 'Product Designer', 'Backend Engineer', 'Frontend Engineer', 'Fullstack Engineer', 'Platform Engineer', 'SRE'];
+  const RESEARCH = ['Research Manager', 'Researcher', 'Research Analyst', 'Data Scientist', 'Intelligence Analyst', 'Research Engineer'];
+  const chars = nameLabelChars(NAME_LABEL_ZOOM);
+
   it('shows every QA desk whole and distinct at the zoom the labels appear at', () => {
-    const chars = nameLabelChars(NAME_LABEL_ZOOM);
-    const shown = QA.map((n) => nameLabelText(n, chars));
+    const shown = groupLabels(QA, chars);
     expect(new Set(shown).size).toBe(QA.length);
     for (const s of shown) { expect(s.length).toBeLessThanOrEqual(chars); expect(s, s).not.toContain('…'); }
+    expect(shown[1]).toBe('Automation');   // the word after the room's own name is what tells the desks apart
   });
   it('was not true of a plain cut, which is the bug: half the room trailed off', () => {
-    const chars = nameLabelChars(NAME_LABEL_ZOOM);
     expect(QA.map((n) => cut(n, chars)).filter((s) => s.includes('…')).length).toBe(3);
+  });
+
+  /**
+   * I1: a character budget (the old `GROUP_TAG_MAX = 3`) rescued "QA " and nothing else. Dev showed "Product…"
+   * twice and Research showed "Research…" three times, and both rooms are the ones a floor shot lands on.
+   */
+  it('tells apart the two names a room-wide strip cannot reach', () => {
+    const dev = groupLabels(DEV, chars);
+    expect(new Set(dev).size).toBe(DEV.length);
+    expect(dev[DEV.indexOf('Product Manager')]).toBe('Manager');
+    expect(dev[DEV.indexOf('Product Designer')]).toBe('Designer');
+    expect(dev[DEV.indexOf('Dev Manager')]).toBe('Dev Manager');   // it fits, and nothing collides with it
+  });
+  it('tells apart a room where only some of the names share a head', () => {
+    const r = groupLabels(RESEARCH, chars);
+    expect(new Set(r).size).toBe(RESEARCH.length);
+    expect(r[RESEARCH.indexOf('Research Analyst')]).toBe('Analyst');
+    expect(r[RESEARCH.indexOf('Research Engineer')]).toBe('Engineer');
+    expect(r[RESEARCH.indexOf('Researcher')]).toBe('Researcher');
+  });
+  it('counts the leading words a set of names shares, and never strips one to nothing', () => {
+    expect(sharedLeadingWords(QA)).toBe(1);
+    expect(sharedLeadingWords(['Product Manager', 'Product Designer'])).toBe(1);
+    expect(sharedLeadingWords(['QA Release', 'QA Release Manager'])).toBe(1);   // not 2: one of them would vanish
+    expect(sharedLeadingWords(['Dev Manager', 'Data Scientist'])).toBe(0);
+    expect(sharedLeadingWords(['Only One'])).toBe(0);
   });
   it('leaves a name that fits exactly as it is', () => {
     expect(nameLabelText('QA Lead', 12)).toBe('QA Lead');
     expect(nameLabelText('CTO', 12)).toBe('CTO');
     expect(nameLabelText('QA Automation', null)).toBe('QA Automation');
-  });
-  it('drops only a short group tag, never a real first word', () => {
-    expect(nameLabelText('QA Automation', 7)).toBe(cut('Automation', 7));
-    expect(nameLabelText('Head of Growth', 7)).toBe(cut('Head of Growth', 7));   // "Head" is the name, not a tag
+    expect(nameLabelText('Head of Growth', 7, ['Head of Growth', 'Data Scientist'])).toBe(cut('Head of Growth', 7));
   });
   it('leaves the rest of the roster alone at the zoom labels appear at', () => {
-    const chars = nameLabelChars(NAME_LABEL_ZOOM);
-    // Names that fit are untouched whatever they start with, so "Dev Manager" does not become "Manager" and
-    // "CFO / CRO" does not become "/ CRO".
-    for (const n of ['Dev Manager', 'CFO / CRO', 'The Skeptic', 'CTO', 'SRE', 'Sales 1']) expect(nameLabelText(n, chars), n).toBe(n);
+    // Names that fit, with nothing to disambiguate against, are untouched whatever they start with.
+    for (const n of ['Dev Manager', 'The Skeptic', 'CTO', 'SRE', 'Sales 1']) expect(nameLabelText(n, chars), n).toBe(n);
   });
   it('falls back to a plain cut for a single long word', () => {
     expect(nameLabelText('Administrator', 7)).toBe(cut('Administrator', 7));
