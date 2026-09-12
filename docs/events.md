@@ -25,7 +25,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 | `agent.spoke` | to, text, kind — rendered as a speech bubble |
 | `meeting.opened` | id, room (`board` | `meeting` | `pantry`), participants, agenda, subject, title (the `meeting.open` tool sends path instead of subject/title) |
 | `meeting.turn` | id, round, text |
-| `meeting.closed` | id, room, subject, title, verdict, findings, decision (the `meeting.close` tool sends id, path, decision, turns; a pantry chat sends room: pantry, path (the `Pantry/` note), turns and a decision of `IDEA: <the idea>`, `IDEA not filed: <why>` or `no idea`) |
+| `meeting.closed` | id, room, subject, title, verdict, findings, decision (the `meeting.close` tool sends id, path, decision, turns; a pantry chat sends room: pantry, path (the `Pantry/` note), turns and a decision of `IDEA: <the idea>`, `IDEA not filed: <why>` or `no idea`). A board session on an **idea** also sends pressure (SP5b: the pressure test's one word — `STRONG`, `WEAK` or `PIVOT REQUIRED`) and rubric (that verdict's 0–2 × 5 score, already rendered as `7/10 — core assumption 2, …`, because the viewer depends on no package and must not re-derive it); a plan pre-mortem sends both empty |
 | `browser.session_started` | session |
 | `browser.frame` | session, seq, path (.cubicle/screens/…; bytes travel only on the WS frame op) |
 | `browser.session_ended` | session, frames |

@@ -74,7 +74,12 @@ for (const def of [
     },
     view: (s, ctx) => {
       const b = boardHeadline(s.board, s.now);
-      const board = b ? section('The board', `<p>${esc(b.head)}</p>${b.lines.length ? `<ul>${b.lines.map((l) => `<li>${esc(l.replace(/^• /, ''))}</li>`).join('')}</ul>` : ''}`) : '';
+      const bd = s.board;
+      // The pressure test gets its own line rather than a bullet among the findings: it is a verdict on the
+      // idea, and the bullets are reasons. `hintline` is the existing muted class; no new colour.
+      const test = b && bd?.verdict && bd.pressure ? `<p class="hintline">Pressure test: ${esc(bd.pressure)}${bd.rubric ? ` · rubric ${esc(bd.rubric)}` : ''}</p>` : '';
+      const bullets = b ? b.lines.filter((l) => l.startsWith('• ')) : [];
+      const board = b ? section('The board', `<p>${esc(b.head)}</p>${test}${bullets.length ? `<ul>${bullets.map((l) => `<li>${esc(l.replace(/^• /, ''))}</li>`).join('')}</ul>` : ''}`) : '';
       return { mode: 'doc', title: 'Plan', sub: 'Plans/plan.md', html: board + (s.plan ? md(s.plan) : `<p class="muted">No plan yet. The CEO writes the first one during heartbeat #1.</p>`), copy: s.plan, link: obsidianUrl(ctx.vaultName, 'Plans/plan.md') };
     },
   },

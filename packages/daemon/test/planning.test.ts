@@ -81,7 +81,12 @@ function tierRecordingLlm(): Llm & { calls: { roleId: string; tier: string; prom
     async chat(req: RouteRequest, chat: { messages: ChatMessage[]; tools?: ToolSchema[] }) {
       const last = String(chat.messages.at(-1)?.content ?? '');
       calls.push({ roleId: req.roleId ?? '?', tier: String(req.tier), prompt: last });
-      const content = /VERDICT: pass/.test(last) ? 'VERDICT: pass\n- none' : '- a failure mode';
+      // Two chair prompts, two shapes (SP5b): the plan's asks for `VERDICT: pass`, the idea's for one of the
+      // three pressure-test words. Answering the idea chair parseably keeps a session at four calls — an
+      // unusable answer would buy the chair its one re-ask, and every cost assertion below would shift.
+      const content = /VERDICT: pass/.test(last) ? 'VERDICT: pass\n- none'
+        : /VERDICT: STRONG/.test(last) ? 'VERDICT: STRONG\nRUBRIC: core assumption 2, fatal flaws 2, pain 2, founder fit 2, why now 2\n- none'
+        : '- a failure mode';
       return { content, toolCalls: [], finishReason: 'stop' as const, usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] };
     },
     promptBudget: () => 6000,
@@ -90,10 +95,10 @@ function tierRecordingLlm(): Llm & { calls: { roleId: string; tier: string; prom
 
 describe('mergeBoardVerdict', () => {
   it('reads the chair\'s verdict line and its bullets, and fails open to pass', () => {
-    expect(mergeBoardVerdict('VERDICT: return\n- no metric on the growth objective\n- nobody owns the deploy')).toEqual({ verdict: 'return', findings: ['no metric on the growth objective', 'nobody owns the deploy'] });
-    expect(mergeBoardVerdict('verdict: PASS\n- watch the free tier')).toEqual({ verdict: 'pass', findings: ['watch the free tier'] });
-    expect(mergeBoardVerdict('')).toEqual({ verdict: 'pass', findings: [] });
-    expect(mergeBoardVerdict('The board could not agree.')).toEqual({ verdict: 'pass', findings: [] });
+    expect(mergeBoardVerdict('VERDICT: return\n- no metric on the growth objective\n- nobody owns the deploy')).toMatchObject({ verdict: 'return', findings: ['no metric on the growth objective', 'nobody owns the deploy'] });
+    expect(mergeBoardVerdict('verdict: PASS\n- watch the free tier')).toMatchObject({ verdict: 'pass', findings: ['watch the free tier'] });
+    expect(mergeBoardVerdict('')).toMatchObject({ verdict: 'pass', findings: [] });
+    expect(mergeBoardVerdict('The board could not agree.')).toMatchObject({ verdict: 'pass', findings: [] });
   });
 });
 
@@ -582,7 +587,8 @@ describe('one board session, two subjects (spec §3)', () => {
   });
 
   it('asks a different question of an idea, and says who decides', () => {
-    expect(advisorPrompt(IDEA_SUBJECT)).toContain('spent a quarter on this and it failed');
+    expect(advisorPrompt(IDEA_SUBJECT)).toContain('Pressure test it the way Paul Graham reads a YC application');
+    expect(advisorPrompt(IDEA_SUBJECT)).toContain('Three Fatal Flaws');
     expect(advisorPrompt(IDEA_SUBJECT)).not.toContain('Imagine the cycle has already failed');
     expect(chairPrompt(IDEA_SUBJECT, 'advisors said things')).toContain('the owner does');
     expect(boardAgenda(IDEA_SUBJECT)).toBe('Idea review: Meal kits for nurseries');
@@ -623,7 +629,14 @@ describe('one board session, two subjects (spec §3)', () => {
       expect(opened.job).toBe(null);
       expect(closed.job).toBe(null);
 
-      await runBoardSession({ vault, llm }, org, IDEA_SUBJECT);
+      const before = llm.calls.length;
+      const ideaSession = await runBoardSession({ vault, llm }, org, IDEA_SUBJECT);
+      // Three advisors and one chair, and no more: the chair answered in the form it was asked for, so the one
+      // re-ask SP5b allows is not spent and the heartbeat's model budget is exactly what it was.
+      expect(ideaSession.calls).toBe(4);
+      expect(ideaSession.reasked).toBe(false);
+      expect(ideaSession.pressure).toBe('STRONG');
+      expect(llm.calls.length - before).toBe(4);
       const idea = vault.events.query({ types: ['meeting.opened'] }).at(-1)!;
       expect(idea.payload.subject).toBe('idea');
       expect(idea.payload.title).toBe('Meal kits for nurseries');
