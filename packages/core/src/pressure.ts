@@ -93,6 +93,17 @@ function labelLine(label: string, tail: string, flags: string): RegExp {
 }
 
 const VERDICT_LINE_RE = labelLine(VERDICT_LABEL, '.*', 'gim');
+
+/**
+ * `## Brutal Verdict` on a line of its own, with the answer on the first line under it.
+ *
+ * This is the shape the chair's own prompt asks for: the five parts are headings, and `Brutal Verdict` is the
+ * fifth of them with nothing after it (`CHAIR_HEADING['Brutal Verdict']` is empty in `heartbeat.ts`). A chair
+ * that writes no machine line and answers under the heading it was shown has answered in the form it was
+ * given, and was refused for a line break — spending the one re-ask the budget has on punctuation, which is the
+ * failure ruling H1 closed for numbering, bolding and blockquotes.
+ */
+const VERDICT_HEAD_RE = new RegExp(`^${LINE_LEAD}(?:${VERDICT_LABEL})[*_\`]*[ \\t]*\\n+[ \\t]*(\\S.*)$`, 'gim');
 const RUBRIC_LINE_RE = labelLine('rubric', '.*', 'im');
 const WEDGE_LINE_RE = labelLine('wedge', '.+', 'im');
 
@@ -337,10 +348,29 @@ function verdictOn(value: string): PressureVerdict | null {
  * never overwrites one; when no line on the page is a vote, the last of those is what the refusal quotes back.
  * An answer whose only verdict line is an echo has not voted at all, and is missing rather than STRONG.
  */
+/**
+ * Every value on the page that was offered as a verdict, in the order the chair wrote them, with the format
+ * echoes taken out. Two sources: a labelled line, and a bare `Brutal Verdict` heading with its first line.
+ *
+ * The heading's line counts **only when it is already a vote**. Prose under `## Brutal Verdict` — "the idea does
+ * not survive its first flaw" — is the chair's reasoning, not an attempt at the machine line it was asked for,
+ * and quoting it back as `the verdict was "…", which is not one of …` would name the wrong failure: that answer
+ * carried no VERDICT line, and the re-ask should say so.
+ */
+function verdictValues(t: string): string[] {
+  const found: { at: number; value: string }[] = [];
+  for (const m of t.matchAll(VERDICT_LINE_RE)) found.push({ at: m.index ?? 0, value: cleanValue(m[1]) });
+  for (const m of t.matchAll(VERDICT_HEAD_RE)) {
+    const value = cleanValue(m[1]);
+    if (verdictOn(value)) found.push({ at: m.index ?? 0, value });
+  }
+  return found.sort((a, b) => a.at - b.at).map((f) => f.value).filter((v) => !isFormatEcho(v));
+}
+
 export function readPressureVerdict(text: string): PressureRead {
   const t = text ?? '';
   if (BANNED_HEDGE_RE.test(t)) return { ok: false, reason: PRESSURE_REFUSAL_HEDGE };
-  const values = [...t.matchAll(VERDICT_LINE_RE)].map((m) => cleanValue(m[1])).filter((v) => !isFormatEcho(v));
+  const values = verdictValues(t);
   const verdict = values.map(verdictOn).filter((v): v is PressureVerdict => v !== null).at(-1);
   if (!verdict) {
     const said = values.filter((v) => v.length > 0).at(-1);
