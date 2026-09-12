@@ -10,6 +10,12 @@ import type { Guardrail } from './guardrails.js';
 export const ToolPolicy = z.object({
   mode: ApprovalMode.default('auto'),
   outbound: z.boolean().default(false),
+  /**
+   * SP5: this tool leaves the company, so every call needs the compliance office and the security office to have
+   * read the exact arguments first (`trustReviewsFor` refines it per call — a `deploy.site` preview does not).
+   * Enforced unconditionally in `mcp.ts`, beside the `mode: never` checks, so no caller can forget it.
+   */
+  trust_review: z.boolean().default(false),
   proposal_kind: z.string().optional(),
   owner_owned_mode: ApprovalMode.optional(),
   first_time_only: z.boolean().default(false), // first-time propose is implemented in the harness loop

@@ -36,9 +36,10 @@ export function systemTypes(org: Org): Record<string, string[]> {
     // SP4: the daily runway read is the daemon's job. The finance office may still hand-queue one — a re-read
     // after the owner adds capital — and so may the chief executive.
     'finance.runway': [ceo, fin],
-    // SP5: a trust review is the daemon's job (it gates an outbound call, not a role's own work), but the
-    // compliance office may still hand-queue one itself, same as operations and security do for their gates.
-    'office:compliance.review': [ceo, comp],
+    // SP5: the trust sweep files a compliance review; the tick opens a pantry chat. The office that runs the
+    // review may hand-queue its own (a re-review after the author fixed what was named), and so may the chief
+    // executive. Nobody hand-queues a coffee break.
+    'office:compliance.review': [ceo, comp], 'pantry.chat': [],
   };
 }
 

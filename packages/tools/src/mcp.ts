@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { trustVeto } from '@cubicle/core';
 import { resolveMode, type AnyTool, type ToolContext, type ToolResult } from './registry.js';
 
 export interface RoleToolClient {
@@ -37,6 +38,13 @@ export async function createRoleToolClient(defs: AnyTool[], baseCtx: ToolContext
           // `never` without having to remember to supply it — including the daemon's own tool paths.
           if (resolveMode(def.name, ctx.config, ctx.role) === 'never') return refuse('mode never');
           if (resolveMode(def.name, ctx.config, ctx.role, ctx.vault.ownerPreferences()) === 'never') return refuse('mode never (owner preference)');
+          // Spec §1, guarantee 1: a refused review never runs the action. This is the check that makes it true
+          // regardless of what the harness and the dispatcher do — both check first, to keep the idempotency key
+          // unspent, but only this one is unconditional. It reads `config/tools.yaml` and the append-only event
+          // log, neither of which an agent can write, and it sits here rather than in `ctx.guardrails` because a
+          // guardrail list is a dependency a caller can omit (Decision 4).
+          const untrusted = trustVeto(ctx, def.name, args);
+          if (untrusted) return refuse(untrusted);
           for (const g of ctx.guardrails ?? []) {
             const veto = await g.check(def.name, args, ctx);
             if (veto) return refuse(veto);
