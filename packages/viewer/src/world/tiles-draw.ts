@@ -125,7 +125,9 @@ export const DRAW: Record<Exclude<TileName, 'EMPTY'>, Drawer> = {
   DESK_EXEC_L: (p) => deskTop(p, true, true), DESK_EXEC_R: (p) => deskTop(p, false, true),
   CHAIR_TASK: (p) => chair(p, '#3b4a8a', '#2f3c73', false),
   CHAIR_EXEC: (p) => chair(p, '#3a2f2a', '#2a221e', true),
-  OWNER_CHAIR: (p) => { chair(p, '#3a2f2a', '#2a221e', true); hline(p, 5, 3, 6, P.amber); },
+  // Chrome on the headrest, not amber: `#e6a93c` is the attention accent, and a gold chair in the board room read
+  // as something asking to be looked at (visual QA M7).
+  OWNER_CHAIR: (p) => { chair(p, '#3a2f2a', '#2a221e', true); hline(p, 5, 3, 6, P.steelLight); px(p, 5, 4, P.steel, 6, 1); },
   // --- board table (2 rows × 3 columns) ---
   BT_TL: (p) => tableTop(p, { t: true, l: true }), BT_TM: (p) => tableTop(p, { t: true }), BT_TR: (p) => tableTop(p, { t: true, r: true }),
   BT_BL: (p) => tableTop(p, { b: true, l: true }), BT_BM: (p) => tableTop(p, { b: true }), BT_BR: (p) => tableTop(p, { b: true, r: true }),
@@ -148,4 +150,20 @@ export const DRAW: Record<Exclude<TileName, 'EMPTY'>, Drawer> = {
   RACK_B: (p) => { bevel(p, 2, 0, 12, 16, '#23262e'); for (let y = 1; y < 12; y += 3) { hline(p, 3, y, 10, '#3a3f4a'); px(p, 4, y + 1, '#4cae5c'); px(p, 12, y + 1, P.amber); } p.fill(2, 13, 12, 3, '#1b1f2a'); },
   SAFE_DOOR: (p) => { bevel(p, 1, 0, 14, 16, P.steelDark); p.fill(3, 2, 10, 12, P.steel); p.fill(6, 5, 4, 4, P.steelDark); px(p, 7, 6, P.steelLight, 2, 2); vline(p, 12, 4, 8, P.amber); },
   SCREEN_BEZEL: (p) => bezel(p, false, false), SCREEN_BEZEL_L: (p) => bezel(p, true, false), SCREEN_BEZEL_R: (p) => bezel(p, false, true),
+  // --- the seating corner of a one-person office ---
+  // A wool rug: a weave that tiles seamlessly, so a 4 × 3 patch of it reads as one rug rather than as twelve mats.
+  RUG: (p) => { full(p, '#b9ae96'); for (let y = 0; y < 16; y += 2) hline(p, 0, y, 16, '#c7bda6'); for (let x = 1; x < 16; x += 4) vline(p, x, 0, 16, '#ad9f85'); dither(p, 0, 0, 16, 16, '#d3cab6', 10, 5); },
+  SOFA_L: (p) => sofa(p, true, false), SOFA_R: (p) => sofa(p, false, true),
+  SIDE_TABLE: (p) => { bevel(p, 2, 4, 12, 7, P.woodLight); p.fill(3, 11, 2, 4, P.woodDark); p.fill(11, 11, 2, 4, P.woodDark); p.fill(5, 2, 6, 3, '#c9d6e2'); px(p, 6, 3, '#6f8ea8', 4, 1); },
 };
+
+/** One half of a two-tile sofa: a back along the top, a seat cushion, and an arm on the outer edge. */
+function sofa(p: Px, left: boolean, right: boolean): void {
+  const body = '#55617a', backTop = shade(body, 0.10), cushion = '#6b7893', shadow = shade(body, -0.14);
+  p.fill(0, 2, 16, 5, body); hline(p, 0, 2, 16, backTop);
+  p.fill(0, 7, 16, 7, cushion); hline(p, 0, 7, 16, shade(cushion, 0.08)); hline(p, 0, 13, 16, shadow);
+  if (left) { p.fill(0, 4, 3, 10, body); hline(p, 0, 4, 3, backTop); }
+  if (right) { p.fill(13, 4, 3, 10, body); hline(p, 13, 4, 3, backTop); vline(p, 15, 4, 10, shadow); }
+  if (!left) vline(p, 0, 7, 7, shade(cushion, -0.06));
+  p.fill(left ? 3 : 0, 14, left || right ? 13 : 16, 2, shade(body, -0.25));
+}

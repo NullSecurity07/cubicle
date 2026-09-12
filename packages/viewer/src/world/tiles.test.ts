@@ -30,7 +30,7 @@ const palFor = (n: string) => { const f = floorOfName(n); return f ? floorPalett
 describe('tile table (visual layer)', () => {
   it('keeps ids 1–27 where plan 1 left them and appends the rest', () => {
     expect(T.GRASS).toBe(1); expect(T.SIGN).toBe(18); expect(T.SKY).toBe(19); expect(T.SLAB).toBe(27);
-    expect(T.STREET).toBe(28); expect(T.SCREEN_BEZEL_R).toBe(TILES.length - 1);
+    expect(T.STREET).toBe(28); expect(T.SCREEN_BEZEL_R).toBe(105); expect(T.SIDE_TABLE).toBe(TILES.length - 1);
     expect(new Set(TILES).size).toBe(TILES.length);
     expect(COLUMNS).toBe(16);
   });

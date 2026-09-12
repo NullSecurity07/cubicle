@@ -124,6 +124,14 @@ function paintRoomBox(c: Canvas, r: RoomSpec, f: FloorSpec): void {
   for (const s of r.surfaces ?? []) paintSurface(c, s, y0, f.n);
 }
 
+/**
+ * A one-person office: the desk on the centre line, and a seating corner in the three rows below it.
+ *
+ * The chiefs' rooms are ten to sixteen tiles wide and used to hold one desk, one chair and a filing cabinet — a
+ * third of `05-f3` and `06-f4` was bare carpet (visual QA I6). The lower rows are the only ones that are always
+ * free (a screen owns y0..y0+2, the desk y0+4..y0+5), and the centre column stays clear because it is the walk
+ * from the door at y0+9 to the chair at y0+5.
+ */
 function paintOffice(c: Canvas, r: RoomSpec, f: FloorSpec): void {
   paintRoomBox(c, r, f);
   const cx = cxOf(r), { y0 } = f, F = c.furniture;
@@ -131,6 +139,15 @@ function paintOffice(c: Canvas, r: RoomSpec, f: FloorSpec): void {
   c.set(F, r.x0 + 2, y0 + 1, T.BOOKSHELF_T); c.set(F, r.x0 + 2, y0 + 2, T.BOOKSHELF_B);
   c.set(F, r.x1 - 2, y0 + 1, T.PLANT_TALL_T); c.set(F, r.x1 - 2, y0 + 2, T.PLANT_TALL_B);
   c.set(F, r.x1 - 2, y0 + 4, T.FILING);
+  // left of the walk: a rug, a two-tile sofa facing the room, and a side table where the room is wide enough
+  const l0 = r.x0 + 2, l1 = cx - 2, r0 = cx + 2, r1 = r.x1 - 2;
+  c.rect(c.ground, l0, y0 + 6, Math.min(l1, l0 + 3), y0 + 8, T.RUG);
+  c.set(F, l0, y0 + 7, T.SOFA_L); c.set(F, l0 + 1, y0 + 7, T.SOFA_R);
+  if (l0 + 3 <= l1) c.set(F, l0 + 3, y0 + 7, T.SIDE_TABLE);
+  // right of the walk: a planter, and a second bookcase in the wide rooms
+  c.set(F, r1, y0 + 7, T.PLANT_SMALL);
+  c.decorAt('plant', r1, y0 + 7, f.n);
+  if (r1 - 2 >= r0) { c.set(F, r1 - 2, y0 + 7, T.BOOKSHELF_T); c.set(F, r1 - 2, y0 + 8, T.BOOKSHELF_B); }
   if (r.id === 'ceo_office') c.set(F, r.x0 + 2, y0 + 5, T.LAMP_FLOOR);
   if (r.id === 'ciso_office') c.set(F, r.x1 - 2, y0 + 2, T.SAFE_DOOR);
   c.decorAt('plant', r.x1 - 2, y0 + 2, f.n);
@@ -234,9 +251,16 @@ function paintFloor(c: Canvas, f: FloorSpec): void {
   c.obj(c.objects, `floor_${f.n}`, 'floor', BUILDING.x0, y0, SHAFT.x1 - BUILDING.x0 + 1, FLOOR_STRIDE + 1, { floor: f.n, label: f.label, color: f.color, portal_x: p.tx, portal_y: p.ty });
 }
 
-/** The notice board hangs on the F1 corridor wall above the corridor, opposite the board room door. */
+/**
+ * The notice board hangs on the F1 corridor wall above the corridor, opposite the board room door.
+ *
+ * It starts at column 37, not 34: the board room's sign plate is drawn from column 33 rightwards and ran straight
+ * under the old anchor, so the sign was half-eaten in every F1 frame (visual QA I4). Seven tiles rather than four,
+ * so "Queue empty" and a job line fit the glass instead of being cut to "Queue…" (I3). The pantry's sign sits at
+ * column 45, which the right edge at 43 clears.
+ */
 function paintLobby(c: Canvas): void {
-  paintSurface(c, { kind: 'noticeboard', tx: 34, tw: 4, label: 'Notice board — queue' }, 50, 1);
+  paintSurface(c, { kind: 'noticeboard', tx: 37, tw: 7, label: 'Notice board — the queue' }, 50, 1);
 }
 
 function paintStreet(c: Canvas): void {
