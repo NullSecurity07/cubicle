@@ -7,6 +7,9 @@ import {
   budgetLines, GATE_JOB_TYPES,
   nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
   FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
+  readPressureVerdict, pressureToBoard, pressureFindings, renderRubric, renderBoardSection,
+  PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, type PressurePart,
+  type PressureVerdict, type BoardRubric,
   isLongPrompt, isSkip,
   readLedger, moneyReport, moneyLine, moneyNeedsYou, money, HOUSE, LEDGER_PATH, DEFAULT_CURRENCY, type MoneyReport, type LedgerEntry,
 } from '@cubicle/core';
@@ -332,18 +335,44 @@ function advisorName(vault: Vault, role: string): string {
   return String(vault.readNoteOrNull(`Roles/${role}.md`)?.data.display ?? role);
 }
 
+export interface BoardMerge {
+  verdict: 'pass' | 'return';
+  findings: string[];
+  /** The pressure-test word, on an idea the chair answered properly; null on a plan or on a refusal. */
+  pressure: PressureVerdict | null;
+  rubric: BoardRubric | null;
+  /** Why the answer was not believed, or null. Non-null is what buys the chair its one re-ask. */
+  refused: string | null;
+}
+
 /**
- * The chair's merged answer, read strictly enough to be trusted and loosely enough never to block the cycle: a
- * `VERDICT: return` line returns the plan, anything else (including a missing line, or no model at all) passes
- * it. The board advises; it may not stall the company by answering badly.
+ * The chair's merged answer, read strictly enough to be trusted and loosely enough never to block the cycle.
+ *
+ * A **plan** reads as it always has: a `VERDICT: return` line returns it, anything else — a missing line, a
+ * hedge, no model at all — passes it. The board advises; it may not stall the company by answering badly.
+ *
+ * An **idea** is read against the pressure test instead (spec §3), and there the asymmetry flips. A plan that
+ * is never judged still runs, so failing open is safe; an idea that is never judged is only parked, so a chair
+ * that hedges, names no verdict or invents a fourth outcome is refused, and a refusal that survives its one
+ * re-ask returns the idea rather than passing it by default.
  */
-export function mergeBoardVerdict(text: string): { verdict: 'pass' | 'return'; findings: string[] } {
-  const verdict = /^\s*verdict:\s*return\b/im.test(text) ? 'return' : 'pass';
-  const findings = text.split('\n')
-    .map((l) => l.trim().match(/^[-*]\s+(.+)$/)?.[1]?.trim())
-    .filter((f): f is string => !!f && f.length > 3)
-    .slice(0, 4);
-  return { verdict, findings };
+export function mergeBoardVerdict(text: string, kind: BoardSubject['kind'] = 'plan'): BoardMerge {
+  if (kind !== 'idea') {
+    const verdict = /^\s*verdict:\s*return\b/im.test(text) ? 'return' : 'pass';
+    const findings = text.split('\n')
+      .map((l) => l.trim().match(/^[-*]\s+(.+)$/)?.[1]?.trim())
+      .filter((f): f is string => !!f && f.length > 3)
+      .slice(0, 4);
+    return { verdict, findings, pressure: null, rubric: null, refused: null };
+  }
+  const read = readPressureVerdict(text);
+  if (!read.ok) return { verdict: 'return', findings: [read.reason], pressure: null, rubric: null, refused: read.reason };
+  return { verdict: pressureToBoard(read.verdict), findings: pressureFindings(read), pressure: read.verdict, rubric: read.rubric, refused: null };
+}
+
+/** What the board records when the re-ask was refused too, or went unanswered. */
+function unansweredMerge(m: BoardMerge): BoardMerge {
+  return { ...m, verdict: 'return', findings: [PRESSURE_UNANSWERED, ...m.findings].slice(0, PRESSURE_MAX_FLAWS) };
 }
 
 /** What one board session judges: this cycle's plan, or one idea out of the funnel. */
@@ -368,24 +397,107 @@ export function boardSubject(subject: string | BoardSubject): BoardSubject {
 /** How much of the subject an advisor reads. A plan is long; an idea dossier is one page and goes in whole. */
 export const SUBJECT_CHARS = 4000;
 
+/**
+ * What each of the five parts asks for. Keyed on `PRESSURE_PARTS` rather than written out as a numbered list,
+ * so the advisors' questions, the chair's headings and the `## Three Fatal Flaws` heading `readPressureVerdict`
+ * scopes its flaws to all come from core's one ordered list and cannot drift apart.
+ */
+const ADVISOR_ASK: Record<PressurePart, string> = {
+  'Core Assumption': 'the one belief that, if false, makes everything else irrelevant, written as a falsifiable sentence.',
+  'Three Fatal Flaws': 'the three most likely ways this dies, each naming a mechanism specific to this idea, this market and this customer. "Competition is tough" and "user acquisition is hard" are not flaws.',
+  'Problem Validation': 'vitamin, painkiller or hair on fire, and the ugly workaround these people use today.',
+  'Founder-Market Fit': 'why this company is the right one to do it, or plainly why it is not.',
+  'Brutal Verdict': `${PRESSURE_VERDICTS.join(', ')} — and one line of why.`,
+};
+
+/** The heading each part gets in the chair's merged answer; only the flaws carry a rule about how many. */
+const CHAIR_HEADING: Record<PressurePart, string> = {
+  'Core Assumption': '',
+  'Three Fatal Flaws': ' — at most four bullets, each a flaw specific to this idea and the change that fixes it',
+  'Problem Validation': '',
+  'Founder-Market Fit': '',
+  'Brutal Verdict': '',
+};
+
 export function advisorPrompt(s: BoardSubject): string {
   if (s.kind === 'plan') {
     return `This cycle's plan:\n\n${s.text.slice(0, SUBJECT_CHARS)}\n\nImagine the cycle has already failed. Write at most three bullets: the failure mode you see and the one change that would prevent it. One line each, concrete, no preamble.`;
   }
-  return `An idea the company is considering:\n\n${s.text.slice(0, SUBJECT_CHARS)}\n\nImagine the company spent a quarter on this and it failed. Write at most three bullets: the failure mode you see and the one change that would prevent it — or say plainly that it should not be built. One line each, concrete, no preamble.`;
+  return [
+    'An idea the company is considering:',
+    '',
+    s.text.slice(0, SUBJECT_CHARS),
+    '',
+    'Pressure test it the way Paul Graham reads a YC application: assume it is wrong and try to prove it. Answer in five parts, in this order, one or two lines each, no preamble.',
+    '',
+    ...PRESSURE_PARTS.map((part, i) => `${i + 1}. ${part} — ${ADVISOR_ASK[part]}`),
+    '',
+    // `Docs/` is a memory-search directory, so naming the handbook is enough for an advisor to fetch it; the
+    // path itself is core's one constant (`PRESSURE_HANDBOOK_PATH`) rather than a literal repeated here.
+    `Every flaw must be specific to this idea; no generic advice. The catalogue to hunt in is \`${PRESSURE_HANDBOOK_PATH}\`.`,
+  ].join('\n');
 }
 
 /**
- * The chair's merge prompt. The two subjects must stay distinguishable by their words alone: the scripted models
- * in `scripts/lib/org-llm.ts` route the board's calls on the text of the last prompt, so an idea session that
- * read like a plan session would steal the plan's scripted veto. Both say "this plan" / "this idea" verbatim.
+ * The chair's merge prompt. The two subjects must stay distinguishable by their words alone: the scripted
+ * models in `scripts/lib/org-llm.ts` route the board's calls on the text of the last prompt, so the plan's says
+ * "this plan" and asks for `VERDICT: pass`, and the idea's says "this idea" and asks for one of the three
+ * pressure-test words. The plan branch is byte-identical to what it was before SP5b.
  */
 export function chairPrompt(s: BoardSubject, transcript: string): string {
-  const what = s.kind === 'plan' ? 'plan' : 'idea';
-  const returnLine = s.kind === 'plan'
-    ? 'Return the plan only if running it as written would waste the cycle; you cannot delay.'
-    : 'Return the idea only if the dossier does not answer a failure mode that would sink it; you cannot delay, and you do not decide — the owner does.';
-  return `You chair the board. Your advisors wrote:\n\n${transcript}\n\nMerge them into ONE verdict for the owner on this ${what}. First line exactly "VERDICT: pass" or "VERDICT: return". Then at most four bullets, each a failure mode this ${what} does not answer and the change that fixes it. ${returnLine}`;
+  if (s.kind !== 'idea') {
+    return `You chair the board. Your advisors wrote:\n\n${transcript}\n\nMerge them into ONE verdict for the owner on this plan. First line exactly "VERDICT: pass" or "VERDICT: return". Then at most four bullets, each a failure mode this plan does not answer and the change that fixes it. Return the plan only if running it as written would waste the cycle; you cannot delay.`;
+  }
+  return [
+    'You chair the board. Your advisors wrote:',
+    '',
+    transcript,
+    '',
+    'Merge them into ONE verdict for the owner on this idea. The test is: would Paul Graham fund this in its current form? Write exactly this, in this order:',
+    '',
+    ...chairFormat(),
+  ].join('\n');
+}
+
+/**
+ * The exact shape the chair's answer must take, written once because the first ask and the one re-ask both have
+ * to carry all of it. `askAs` sends a fresh single-turn chat, so a re-asked chair remembers nothing of the first
+ * prompt: a re-ask that only said "then the RUBRIC line, then the five parts" would name neither the five rubric
+ * labels `parseRubric` looks for nor the `## Three Fatal Flaws` heading `readPressureVerdict` scopes its flaws
+ * to, and a chair that complied as well as it could would still lose both — on the one extra call the
+ * heartbeat's budget was raised to buy.
+ */
+function chairFormat(): string[] {
+  return [
+    `VERDICT: ${PRESSURE_VERDICTS.join(' or ')} — one of those three, and nothing else on that line.`,
+    `RUBRIC: ${RUBRIC_DIMENSIONS.map((d) => `${RUBRIC_LABEL[d]} <0-2>`).join(', ')} — out of ${RUBRIC_MAX}.`,
+    '',
+    'Then the five parts, in this order, under these headings:',
+    '',
+    ...PRESSURE_PARTS.map((part) => `## ${part}${CHAIR_HEADING[part]}`),
+    '',
+    'On PIVOT REQUIRED only, close with a line `WEDGE: <the narrowest useful slice, and the most desperate users to aim it at>`.',
+    '',
+    `Be direct. Never write "${BANNED_HEDGE}" — it is a way of not deciding. You cannot delay, and you do not decide: the owner does.`,
+  ];
+}
+
+/**
+ * The one re-ask a chair gets, and only when it answered badly rather than not at all (spec Decision 6). It
+ * names what it is judging and repeats the whole format, because this call starts a conversation of its own.
+ */
+export function chairReaskPrompt(s: BoardSubject, transcript: string, why: string): string {
+  return [
+    `That answer was not usable: ${why}.`,
+    '',
+    `Answer again on "${s.title}", from the same advisors' notes. The first line must be exactly "VERDICT: " followed by one of ${PRESSURE_VERDICTS.join(', ')} and nothing else, then the RUBRIC line, then the five parts. Decide. In full, the form your answer owes:`,
+    '',
+    ...chairFormat(),
+    '',
+    'The advisors wrote:',
+    '',
+    transcript.slice(0, SUBJECT_CHARS),
+  ].join('\n');
 }
 
 /** The agenda line the board room shows while the session is open. */
@@ -405,20 +517,25 @@ export function boardAgenda(s: BoardSubject): string {
  * advisor_investor/advisor_customer charter set to `medium` must not be silently upgraded to `strong`. A missing
  * tier falls back to the board lead's, then to `medium`. `answered` is how many of the (deduplicated) advisors
  * actually got a model response, so a caller can tell "the board passed" from "no model was available at all".
+ *
+ * On an idea the chair gets **one** re-ask, and only when it answered badly — a hedge, a fourth outcome, no
+ * verdict line — so the session costs three advisors plus one or two chair calls and never more. `calls` is
+ * that count, and `reasked` says whether the extra one was spent. A chair that is silent on the re-ask spends
+ * no third call and no refusal: the session falls open to `pass` and `chairLost` says so (spec Decision 6).
  */
 export async function runBoardSession(
   deps: HeartbeatDeps, org: Org, subject: string | BoardSubject,
-): Promise<{ verdict: 'pass' | 'return'; findings: string[]; advisors: string[]; transcript: string; answered: number; subject: BoardSubject }> {
+): Promise<BoardMerge & { advisors: string[]; transcript: string; answered: number; subject: BoardSubject; calls: number; reasked: boolean; chairLost: string | null }> {
   const vault = deps.vault;
   const s = boardSubject(subject);
   // Its one caller guards on `org.teams.board` first, but this is exported and tests call it directly: an org
   // with no board room must fail as "the board passed unreviewed", not as a TypeError inside the cycle (M5).
   // Nothing is emitted on this path either: no advisor walked to the table, so the room must not light up.
   const board = org.teams.board;
-  if (!board) return { verdict: 'pass', findings: [], advisors: [], transcript: '', answered: 0, subject: s };
+  if (!board) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null };
   const advisors = [...new Set([board.lead, ...board.members])].filter((r) => org.roles[r]).slice(0, 3);
   // A board whose charters are all gone is the same as no board: nobody walks to the table (review of Task 7).
-  if (advisors.length === 0) return { verdict: 'pass', findings: [], advisors: [], transcript: '', answered: 0, subject: s };
+  if (advisors.length === 0) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null };
   const leadTier = org.roles[board.lead]?.model_tier ?? 'medium';
   const tierFor = (roleId: string): ModelTier => org.roles[roleId]?.model_tier ?? leadTier;
   // The board room, on screen: the advisors walk to the table, the owner's chair fills, and the whiteboard says
@@ -435,10 +552,55 @@ export async function runBoardSession(
     notes.push(`### ${advisorName(vault, a)}\n${text ?? '(no answer: no model was available)'}`);
   }
   const transcript = notes.join('\n\n');
-  const merged = await askAs(deps, board.lead, advisorSystem(vault, board.lead), chairPrompt(s, transcript), 600, leadTier);
-  const out = { ...mergeBoardVerdict(merged ?? ''), advisors, transcript, answered, subject: s };
-  vault.events.emit({ type: 'meeting.closed', agent: board.lead, payload: { id: meetingId, room: 'board', subject: s.kind, title: s.title, verdict: out.verdict, findings: out.findings, decision: `VERDICT: ${out.verdict}` } });
+  const chair = (prompt: string): Promise<string | null> => askAs(deps, board.lead, advisorSystem(vault, board.lead), prompt, 600, leadTier);
+  const merged = await chair(chairPrompt(s, transcript));
+  // No answer at all is not a bad answer. With no model available the session falls open exactly as it did
+  // before the pressure test existed, and `answered === 0` is what tells the owner nobody reviewed anything —
+  // spending the re-ask on a silent model would buy a second silence (spec Decision 6).
+  let merge: BoardMerge = merged === null
+    ? { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null }
+    : mergeBoardVerdict(merged, s.kind);
+  let calls = advisors.length + 1;
+  let reasked = false;
+  let chairLost: string | null = null;
+  if (merge.refused) {
+    reasked = true;
+    calls++;
+    const again = await chair(chairReaskPrompt(s, transcript, merge.refused));
+    if (again === null) {
+      // Silence is not a second refusal. Decision 7 returns an idea the chair declined to judge *twice*; here
+      // it declined once and then the model was gone, which is Decision 6's zero-model path arriving late, so
+      // the session falls open and `chairLost` carries the reason to the warning and the decision note.
+      chairLost = chairLostNote(merge.refused);
+      merge = { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null };
+    } else {
+      const second = mergeBoardVerdict(again, s.kind);
+      merge = second.refused ? unansweredMerge(second) : second;
+    }
+  }
+  const out = { ...merge, advisors, transcript, answered, subject: s, calls, reasked, chairLost };
+  vault.events.emit({
+    type: 'meeting.closed', agent: board.lead,
+    payload: {
+      id: meetingId, room: 'board', subject: s.kind, title: s.title, verdict: out.verdict, findings: out.findings,
+      // Strings, not objects: the viewer depends on no package here, and a second copy of the rubric's
+      // arithmetic over there is a second place for it to be wrong (spec Decision 12).
+      pressure: out.pressure ?? '', rubric: out.rubric ? renderRubric(out.rubric) : '',
+      decision: `VERDICT: ${out.pressure ?? out.verdict}`,
+    },
+  });
   return out;
+}
+
+/**
+ * What the board says when the chair's first answer was refused and the re-ask found no model at all. Silence
+ * is never a refusal (spec Decision 6), so this is not "the chair would not decide twice running": one model
+ * call disagreed with the form and the next one never happened, which is the zero-model path reached late. The
+ * idea passes, as it would have if no model had answered from the start, and this sentence is why — on the
+ * `daemon.warning` the owner reads and in the `Decisions/` note, so neither reads as a clean bill of health.
+ */
+export function chairLostNote(reason: string): string {
+  return `the chair's first answer was refused (${reason}) and the second call had no model, so the idea passed unreviewed`;
 }
 
 /** The board note's own words for "no advisor answered" — shared by the decision note and the daemon warning. */
@@ -481,6 +643,8 @@ export interface BoardDecisionOpts {
   inputs: string[];
   /** The note's own words for "no advisor answered", with the right subject in them. */
   unreviewedNote: string;
+  /** `chairLostNote(...)` when the chair's answer was refused and the re-ask found no model; else absent. */
+  chairLost?: string;
   /** What the risks section says when the board passed and raised nothing. */
   noFindingsNote: string;
   context: string;
@@ -503,15 +667,17 @@ export interface BoardDecisionOpts {
  * written twice, so they are written once here.
  */
 export function writeBoardDecision(vault: Vault, id: string, o: BoardDecisionOpts): string {
-  const unreviewed = o.verdict === 'pass' && o.answered === 0;
-  const risks = unreviewed ? `- ${o.unreviewedNote}` : o.findings.length ? o.findings.map((f) => `- ${f}`).join('\n') : `- ${o.noFindingsNote}`;
+  // Two ways a `pass` can mean "nobody judged this": no advisor answered at all, or the chair's one answer was
+  // refused and the re-ask found no model. Either way the note must not read as a clean bill of health.
+  const unjudged = o.verdict === 'pass' ? (o.answered === 0 ? o.unreviewedNote : o.chairLost ?? '') : '';
+  const risks = unjudged ? `- ${unjudged}` : o.findings.length ? o.findings.map((f) => `- ${f}`).join('\n') : `- ${o.noFindingsNote}`;
   return writeDecision(vault, id, {
     decided_by: o.decidedBy, cycle: o.cycle, status: o.verdict === 'pass' ? 'adopted' : 'proposed', inputs: o.inputs,
   }, {
     context: o.context,
     options: o.options,
     chosen: o.chosen,
-    why: unreviewed ? o.unreviewedNote : o.why,
+    why: unjudged || o.why,
     expected_effect: `${o.risksHeading}\n\n${risks}${o.epilogue ? `\n\n${o.epilogue}` : ''}`,
     review_date: new Date(o.now.getTime() + o.reviewDays * 24 * 3600_000).toISOString().slice(0, 10),
   }, o.decidedBy);
@@ -524,10 +690,10 @@ export function writeBoardDecision(vault: Vault, id: string, o: BoardDecisionOpt
  */
 export function writeBoardSessionDecision(
   vault: Vault, slug: string, title: string, boardJobId: string,
-  verdict: 'pass' | 'return', findings: string[], decidedBy: string, now: Date, answered = 1,
+  verdict: 'pass' | 'return', findings: string[], decidedBy: string, now: Date, answered = 1, chairLost?: string | null,
 ): string {
   return writeBoardDecision(vault, `board-${slug}`, {
-    verdict, findings, decidedBy, now, answered, cycle: boardJobId, inputs: [`[[Ideas/${slug}]]`],
+    verdict, findings, decidedBy, now, answered, chairLost: chairLost ?? undefined, cycle: boardJobId, inputs: [`[[Ideas/${slug}]]`],
     unreviewedNote: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the idea passed'),
     noFindingsNote: 'The board found nothing in this idea likely to sink a quarter.',
     context: `The board read the dossier for "${title}" ([[Ideas/${slug}]]) and imagined the company had already spent a quarter on it and failed. The advisors' own words are in [[${boardJobId}]].`,
@@ -599,6 +765,9 @@ export interface IdeaVerdictFacts {
   reason: string;
   board: 'pass' | 'return';
   findings: string[];
+  /** The board's pressure-test word and rubric, when it ran one. Both absent on a card judged before SP5b. */
+  pressure?: string;
+  rubric?: BoardRubric | null;
   research: string;
   estimate: string;
   decidesAfterHours: number;
@@ -622,6 +791,7 @@ export function ideaVerdictBody(f: IdeaVerdictFacts): string {
     `- Research: ${f.research || 'none linked'}`,
     `- Cost: ${f.estimate || 'not estimated'}`,
     `- Board: ${f.board === 'pass' ? 'passed' : 'returned'}`,
+    ...(f.pressure ? [`- Pressure test: ${f.pressure}${f.rubric ? ` · rubric ${renderRubric(f.rubric)}` : ''}`] : []),
     '',
     '## What the board said',
     '',
@@ -669,7 +839,9 @@ export function fileIdeaVerdict(
     target: ideaPath(slug), title: `Keep, park or scrap: ${card.data.title}`,
     body: ideaVerdictBody({
       slug, title: card.data.title, score, band, reason, board,
-      findings: opts.findings, research: card.data.research, estimate: card.data.estimate,
+      findings: opts.findings,
+      pressure: card.data.board_pressure || undefined, rubric: card.data.board_rubric,
+      research: card.data.research, estimate: card.data.estimate,
       decidesAfterHours: vault.constitution().board_decides_after_hours,
     }),
   }, opts.from);
@@ -1218,15 +1390,22 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // pre-mortem raises, for the same reason — the decision note says so too, but the owner reads events.
         if (session.answered === 0) {
           vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'ideas_board', reason: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the idea passed') } });
+        } else if (session.chairLost) {
+          // The advisors answered and the chair did not, twice over in two different ways. Same warning route,
+          // because to the owner it is the same fact: this idea passed without anyone merging a verdict on it.
+          vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'ideas_board', reason: session.chairLost } });
         }
         let decisionRel = '';
-        try { decisionRel = writeBoardSessionDecision(vault, idea.id, card.data.title, boardJob, session.verdict, session.findings, board.lead, now(), session.answered); }
+        try { decisionRel = writeBoardSessionDecision(vault, idea.id, card.data.title, boardJob, session.verdict, session.findings, board.lead, now(), session.answered, session.chairLost); }
         catch (err) { vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'ideas_board', message: `could not write the board decision note: ${(err as Error).message}` } }); }
         // The verdict goes on the card before the proposal is filed: a crash between the two must leave the
         // dossier true, not leave the owner ruling on a card that never heard from the board.
-        updateIdea(vault, idea.id, { board_verdict: session.verdict, board_decision: decisionRel }, 'daemon', {
+        updateIdea(vault, idea.id, { board_verdict: session.verdict, board_decision: decisionRel, board_pressure: session.pressure ?? '', board_rubric: session.rubric }, 'daemon', {
           heading: '## The board',
-          content: `**${session.verdict === 'pass' ? 'Passed' : 'Returned'}** — ${session.advisors.length} advisors, ${now().toISOString().slice(0, 10)}. ${decisionRel ? `See [[${decisionRel.replace(/\.md$/, '')}]].` : ''}\n\n${session.findings.map((f) => `- ${f}`).join('\n') || '- Nothing they thought would sink it.'}`,
+          content: renderBoardSection({
+            verdict: session.verdict, advisors: session.advisors.length, date: now().toISOString().slice(0, 10),
+            decision: decisionRel, findings: session.findings, pressure: session.pressure, rubric: session.rubric,
+          }),
         });
         // The board's verdict is an input to the band (a returned idea parks), so the `## Score` section is
         // re-rendered from the card as it now stands rather than from the numbers read before the session.

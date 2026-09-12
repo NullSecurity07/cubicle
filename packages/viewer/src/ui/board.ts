@@ -7,7 +7,21 @@
 import type { Headline } from './headlines.js';
 import { cut } from './headlines.js';
 
-export interface BoardState { id: string; subject: 'plan' | 'idea'; title: string; verdict: 'pass' | 'return' | null; findings: string[]; at: string }
+export interface BoardState {
+  id: string;
+  subject: 'plan' | 'idea';
+  title: string;
+  verdict: 'pass' | 'return' | null;
+  findings: string[];
+  /**
+   * The pressure test's own word (`STRONG` | `WEAK` | `PIVOT REQUIRED`) and its rubric, already rendered by
+   * `renderRubric` in core. Strings rather than numbers on purpose: this package depends on no package in the
+   * workspace, and a second copy of the rubric arithmetic over here is a second place for it to be wrong.
+   */
+  pressure: string;
+  rubric: string;
+  at: string;
+}
 
 /** How long a closed verdict holds the whiteboard before it goes back to showing the plan. */
 export const BOARD_HEADLINE_MS = 30 * 60_000;
@@ -24,7 +38,7 @@ export const BOARD_SESSION_MAX_MS = 20 * 60_000;
 /** `meeting.opened` in the board room starts a session; any other room leaves the board alone. */
 export function boardOpened(p: Record<string, unknown>, ts: string): BoardState | null {
   if (String(p.room ?? '') !== 'board') return null;
-  return { id: String(p.id ?? ''), subject: p.subject === 'idea' ? 'idea' : 'plan', title: String(p.title ?? p.agenda ?? ''), verdict: null, findings: [], at: ts };
+  return { id: String(p.id ?? ''), subject: p.subject === 'idea' ? 'idea' : 'plan', title: String(p.title ?? p.agenda ?? ''), verdict: null, findings: [], pressure: '', rubric: '', at: ts };
 }
 
 /**
@@ -36,7 +50,14 @@ export function boardOpened(p: Record<string, unknown>, ts: string): BoardState 
 export function boardClosed(cur: BoardState | null, p: Record<string, unknown>, ts: string): BoardState | null {
   if (!cur) return cur;
   if (cur.id !== String(p.id ?? '')) return String(p.room ?? '') === 'board' ? null : cur;
-  return { ...cur, verdict: p.verdict === 'return' ? 'return' : 'pass', findings: Array.isArray(p.findings) ? p.findings.map(String).slice(0, 3) : [], at: ts };
+  return {
+    ...cur,
+    verdict: p.verdict === 'return' ? 'return' : 'pass',
+    findings: Array.isArray(p.findings) ? p.findings.map(String).slice(0, 3) : [],
+    pressure: String(p.pressure ?? ''),
+    rubric: String(p.rubric ?? ''),
+    at: ts,
+  };
 }
 
 /**
@@ -50,5 +71,8 @@ export function boardHeadline(b: BoardState | null, now: number): Headline | nul
   if (now - Date.parse(b.at) > BOARD_HEADLINE_MS) return null;
   const verb = b.verdict === 'pass' ? 'passed' : 'returned';
   const head = b.subject === 'plan' ? `The board ${verb} the plan` : `The board ${verb}: ${b.title}`;
-  return { head: cut(head, 44), lines: b.findings.slice(0, 3).map((f) => '• ' + cut(f, 40)), short: b.verdict };
+  // An idea the board pressure-tested leads with the verdict word and the rubric, because that is the sentence
+  // the owner came to the wall for; the flaws fill whatever of the three lines is left. A plan reads as it did.
+  const test = b.pressure ? [cut(b.rubric ? `${b.pressure} · ${b.rubric}` : b.pressure, 40)] : [];
+  return { head: cut(head, 44), lines: [...test, ...b.findings.slice(0, 3).map((f) => '• ' + cut(f, 40))].slice(0, 3), short: b.pressure ? cut(b.pressure, 6) : b.verdict };
 }

@@ -8,7 +8,7 @@ describe('the board room and the whiteboard (spec §6)', () => {
   it('only a board-room meeting touches the board state', () => {
     expect(boardOpened({ id: 'm1', room: 'meeting', agenda: 'standup' }, T0)).toBeNull();
     expect(boardOpened({ id: 'm1', room: 'board', subject: 'idea', title: 'Meal kits' }, T0))
-      .toEqual({ id: 'm1', subject: 'idea', title: 'Meal kits', verdict: null, findings: [], at: T0 });
+      .toEqual({ id: 'm1', subject: 'idea', title: 'Meal kits', verdict: null, findings: [], pressure: '', rubric: '', at: T0 });
     expect(boardOpened({ id: 'm1', room: 'board', agenda: "Pre-mortem: this cycle's plan" }, T0)!.subject).toBe('plan');
   });
 
@@ -59,5 +59,38 @@ describe('the board room and the whiteboard (spec §6)', () => {
     const closed = boardClosed(open, { id: 'm1', verdict: 'return' }, T0)!;
     expect(boardHeadline(closed, now)!.head.length).toBeLessThanOrEqual(44);
     expect(boardHeadline(closed, now)!.head).toMatch(/…$/);
+  });
+});
+
+describe('the whiteboard says what the pressure test said (spec §6)', () => {
+  const at = '2026-09-12T09:00:00.000Z';
+  const now = Date.parse(at) + 1000;
+  const open = boardOpened({ room: 'board', id: 'm1', subject: 'idea', title: 'Meal kits for nurseries' }, at)!;
+
+  it('a closed idea session leads with the verdict word and the rubric, inside the office\'s text limits', () => {
+    const closed = boardClosed(open, { id: 'm1', room: 'board', verdict: 'return', findings: ['the payer is not the user', 'no van before 7am', 'third'], pressure: 'PIVOT REQUIRED', rubric: '7/10 — core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1' }, at)!;
+    const h = boardHeadline(closed, now)!;
+    expect(h.head).toBe('The board returned: Meal kits for nurseries');
+    expect(h.lines).toHaveLength(3);
+    expect(h.lines[0].startsWith('PIVOT REQUIRED · 7/10')).toBe(true);
+    expect(h.head.length).toBeLessThanOrEqual(44);
+    for (const l of h.lines) expect(l.length, l).toBeLessThanOrEqual(42);
+    expect(h.short).toBe('PIVOT…');
+  });
+
+  it('a plan session, and a board that ran before the pressure test, read exactly as they did', () => {
+    const planOpen = boardOpened({ room: 'board', id: 'm2', subject: 'plan', title: "this cycle's plan" }, at)!;
+    const planClosed = boardClosed(planOpen, { id: 'm2', room: 'board', verdict: 'pass', findings: ['watch the free tier'] }, at)!;
+    const h = boardHeadline(planClosed, now)!;
+    expect(h.head).toBe('The board passed the plan');
+    expect(h.lines).toEqual(['• watch the free tier']);
+    expect(h.short).toBe('pass');
+    expect(planClosed.pressure).toBe('');
+  });
+
+  it('an open session is untouched, and a closed one still ages off the wall', () => {
+    expect(boardHeadline(open, now)).toEqual({ head: 'The board is sitting', lines: ['Meal kits for nurseries'], short: 'Board' });
+    const closed = boardClosed(open, { id: 'm1', room: 'board', verdict: 'pass', findings: [], pressure: 'STRONG', rubric: '9/10' }, at)!;
+    expect(boardHeadline(closed, Date.parse(at) + BOARD_HEADLINE_MS + 1)).toBeNull();
   });
 });

@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, loadOrg, listJobs, listInbox, readJob, updateJob, readIdea, writeIdeaCard, updateIdea, listDecisions, DecisionFrontmatter, createProposal } from '@cubicle/core';
-import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_STEPS, NON_WORK_TYPES, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob } from '../src/index.js';
+import { scaffoldVault, Vault, loadOrg, listJobs, listInbox, readJob, updateJob, readIdea, writeIdeaCard, updateIdea, listDecisions, DecisionFrontmatter, createProposal, PRESSURE_UNANSWERED } from '@cubicle/core';
+import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_STEPS, NON_WORK_TYPES, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob, runBoardSession } from '../src/index.js';
 import { estimateJobId, researchJobId } from '../src/discovery.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide } from './helpers/board-switch.js';
@@ -349,5 +349,105 @@ describe('an unattended night rules on ideas too (spec §3.5)', () => {
     expect(note.data.approved).toBeNull();
     expect(note.data.resolved_at).toBeNull();
     expect(readIdea(vault, slug)!.data.decision).toBe('undecided');
+  }, 30000);
+});
+
+describe('the board pressure-tests an idea, on a budget (spec §2, §3)', () => {
+  it('a scripted pass writes the verdict word and the rubric onto the card and into the owner\'s note', async () => {
+    const slug = scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
+    await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'pass' }) }, createHeartbeatJob(vault, 'test'));
+    const card = readIdea(vault, slug)!;
+    expect(card.data.board_verdict).toBe('pass');
+    expect(card.data.board_pressure).toBe('STRONG');
+    expect(card.data.board_rubric).toEqual({ core_assumption: 2, fatal_flaws: 1, pain: 2, founder_fit: 1, why_now: 1 });
+    expect(card.body).toContain('**Pressure test:** STRONG. Rubric 7/10 —');
+    const note = listInbox(vault).find((n) => n.data.kind === 'idea_verdict')!;
+    expect(note.body).toContain('- Pressure test: STRONG · rubric 7/10 —');
+  }, 30000);
+
+  it('a pivot returns the card and leads the owner with the wedge', async () => {
+    const slug = scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
+    await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'return' }) }, createHeartbeatJob(vault, 'test'));
+    const card = readIdea(vault, slug)!;
+    expect(card.data.board_verdict).toBe('return');
+    expect(card.data.board_pressure).toBe('PIVOT REQUIRED');
+    expect(card.body).toContain('**Returned**');
+    const note = listInbox(vault).find((n) => n.data.kind === 'idea_verdict')!;
+    expect(note.data.band).toBe('park');                       // a returned idea still parks, unchanged
+    expect(note.body).toContain('The wedge to attack instead: the one nursery chain');
+  }, 30000);
+
+  it('the session costs three advisors and one chair, and one more only when the chair hedges', async () => {
+    const org = loadOrg(vault);
+    const subject = { kind: 'idea' as const, text: '# Meal kits', title: 'Meal kits', slug: 'meal-kits' };
+    const scripted = (answers: string[]): { chat: () => Promise<unknown>; promptBudget: () => number } => {
+      let n = 0;
+      return { chat: async () => ({ content: answers[Math.min(n++, answers.length - 1)], toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium', downgraded: false, parsedToolCalls: [] }), promptBudget: () => 6000 };
+    };
+    const good = 'VERDICT: STRONG\nRUBRIC: core assumption 2, fatal flaws 2, pain 2, founder fit 2, why now 2\n- watch the margin';
+    const clean = await runBoardSession({ vault, llm: scripted([good, good, good, good]) as never }, org, subject);
+    expect(clean.calls).toBe(clean.advisors.length + 1);
+    expect(clean.reasked).toBe(false);
+    expect(clean.verdict).toBe('pass');
+
+    // A hedge costs exactly one more call, and never two.
+    let n = 0;
+    const hedging = { chat: async () => ({ content: n++ === 3 ? 'VERDICT: STRONG\nIt has potential, but the margins worry me.' : good, toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] }), promptBudget: () => 6000 };
+    const re = await runBoardSession({ vault, llm: hedging as never }, org, subject);
+    expect(re.calls).toBe(re.advisors.length + 2);
+    expect(re.reasked).toBe(true);
+    expect(re.verdict).toBe('pass');
+    expect(re.chairLost).toBeNull();
+
+    // A chair that will not decide twice running returns the idea rather than passing it by default.
+    const stubborn = await runBoardSession({ vault, llm: scripted(['x', 'x', 'x', 'VERDICT: MAYBE', 'VERDICT: it depends']) as never }, org, subject);
+    expect(stubborn.calls).toBe(stubborn.advisors.length + 2);
+    expect(stubborn.verdict).toBe('return');
+    expect(stubborn.findings[0]).toBe(PRESSURE_UNANSWERED);
+    expect(stubborn.chairLost).toBeNull();
+  }, 30000);
+
+  // The three ways a re-asked chair can end, driven through the scripted org model so the whole step — card,
+  // decision note, warning and the owner's note — is exercised, not just `runBoardSession`'s return value.
+  it('a hedge answered properly the second time is the verdict the owner reads', async () => {
+    const slug = scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
+    await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'pass', ideaChair: 'hedge-then-good' }) }, createHeartbeatJob(vault, 'test'));
+    const card = readIdea(vault, slug)!;
+    expect(card.data.board_verdict).toBe('pass');
+    expect(card.data.board_pressure).toBe('STRONG');
+    // The re-ask repeats the whole format, so the second answer keeps its rubric and its flaws — the extra call
+    // buys a verdict with the same evidence behind it as a first-time answer, not a bare word.
+    expect(card.data.board_rubric).toEqual({ core_assumption: 2, fatal_flaws: 1, pain: 2, founder_fit: 1, why_now: 1 });
+    expect(card.body).toContain('**Pressure test:** STRONG. Rubric 7/10 —');
+    expect(card.body).toContain('- watch the free tier');
+    expect(vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'ideas_board')).toEqual([]);
+  }, 30000);
+
+  it('a chair that will not decide twice returns the idea, and says so on the card', async () => {
+    const slug = scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
+    await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'pass', ideaChair: 'hedge-then-refusal' }) }, createHeartbeatJob(vault, 'test'));
+    const card = readIdea(vault, slug)!;
+    expect(card.data.board_verdict).toBe('return');
+    expect(card.data.board_pressure).toBe('');
+    expect(card.body).toContain(PRESSURE_UNANSWERED);
+    const note = listInbox(vault).find((n) => n.data.kind === 'idea_verdict')!;
+    expect(note.body).toContain(PRESSURE_UNANSWERED);
+  }, 30000);
+
+  it('a chair whose second call finds no model passes the idea unreviewed, and the warning says why (Decision 6)', async () => {
+    const slug = scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
+    await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'pass', ideaChair: 'hedge-then-silence' }) }, createHeartbeatJob(vault, 'test'));
+    const card = readIdea(vault, slug)!;
+    // Silence is not a refusal, so the idea is not returned unjudged; it falls open exactly as it does when no
+    // model answers from the start, and the owner is told rather than shown a clean bill of health.
+    expect(card.data.board_verdict).toBe('pass');
+    expect(card.data.board_pressure).toBe('');
+    expect(card.body).not.toContain(PRESSURE_UNANSWERED);
+    const warned = vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'ideas_board');
+    expect(warned).toHaveLength(1);
+    expect(String(warned[0].payload.reason)).toContain('the second call had no model');
+    expect(String(warned[0].payload.reason)).toContain('banned phrase');
+    const decision = listDecisions(vault).find((d) => d.data.id === `board-${slug}`)!;
+    expect(decision.body).toContain('the second call had no model');
   }, 30000);
 });
