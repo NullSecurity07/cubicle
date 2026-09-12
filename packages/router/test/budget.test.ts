@@ -7,6 +7,7 @@ import { parseProvidersConfig } from '../src/config.js';
 import { budgetedTier, Router } from '../src/router.js';
 import { QuotaTracker } from '../src/quota.js';
 import { openMemoryDb, EventLog } from '@cubicle/core';
+import { allowProviderBaseUrl } from '../src/test-guard.js';
 
 describe('a division past its quota drops to the cheapest tier (spec §4)', () => {
   it('demotes strong and medium, and leaves the floor alone', () => {
@@ -90,6 +91,9 @@ describe('chat(): the downgrade reason distinguishes a division budget from an o
     });
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    // The stub above is this process answering itself, not a provider: vouch for it so the repo-wide guard in
+    // packages/router/test-setup.ts lets the Router reach it. Every other destination stays refused.
+    allowProviderBaseUrl(base);
   });
   afterAll(() => server.close());
 

@@ -7,3 +7,4 @@ export * from './price.js';
 export * from './embeddings.js';
 export * from './metrics.js';
 export * from './providers-cli.js';
+export * from './test-guard.js';

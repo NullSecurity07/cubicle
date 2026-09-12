@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { main } from '../src/cli.js';
 import { scaffoldVault, Vault, createJob, readJob, updateJob } from '@cubicle/core';
+import { allowProviderBaseUrl } from '@cubicle/router';
 
 let chunks: unknown[] = [];
 let server: http.Server;
@@ -23,6 +24,9 @@ beforeAll(async () => {
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  // The stub above is this process answering itself, not a provider: vouch for it so the repo-wide guard in
+  // packages/router/test-setup.ts lets `cubicle chat`'s real Router reach it. Nothing else is allowed out.
+  allowProviderBaseUrl(base);
 });
 afterAll(() => server.close());
 

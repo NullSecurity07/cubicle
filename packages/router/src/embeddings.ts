@@ -1,4 +1,5 @@
 import type { ProvidersFile } from './config.js';
+import { assertProviderAllowed } from './test-guard.js';
 
 /** Ollama embeddings via POST /api/embed (verified 2026-09-02, returns { embeddings: number[][] }). */
 export async function embedTexts(config: ProvidersFile, texts: string[], fetchImpl: typeof fetch = fetch): Promise<number[][]> {
@@ -6,6 +7,9 @@ export async function embedTexts(config: ProvidersFile, texts: string[], fetchIm
   if (!p || !p.embeddings) throw new Error('No embeddings provider configured');
   const base = p.base_url.replace(/\/v1\/?$/, '');
   const url = p.embeddings.endpoint ?? `${base}/api/embed`;
+  // The other door out of this package: `MemoryIndex` embeds through here, and an embedding call is as real a
+  // provider connection as a chat completion. A no-op outside tests; see test-guard.ts.
+  assertProviderAllowed(url, p.id);
   const res = await fetchImpl(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: p.embeddings.id, input: texts }) });
   if (!res.ok) throw new Error(`embed failed: HTTP ${res.status}`);
   const j = (await res.json()) as { embeddings?: number[][]; error?: string };
