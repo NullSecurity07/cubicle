@@ -152,6 +152,12 @@ const call = (agent: string, tier: string, ts = '2026-09-12T09:00:00.000Z') => {
   return vault.events.emit({ type: 'router.call', agent, ts, payload: { provider, model, tier, tokens: { prompt_tokens: 1000, completion_tokens: 100 } } });
 };
 
+/** The same call with the pool it was gated against stamped on it, the way the harness and the heartbeat do. */
+const callStamped = (agent: string, tier: string, division: string, ts = '2026-09-12T09:00:00.000Z') => {
+  const [provider, model] = FREE_MODEL[tier];
+  return vault.events.emit({ type: 'router.call', agent, ts, payload: { provider, model, tier, budget_division: division, tokens: { prompt_tokens: 1000, completion_tokens: 100 } } });
+};
+
 /** A call on whatever provider/model the case is about, for the cases that are about the model. */
 const callOn = (agent: string, tier: string, provider: string, model: string, ts = '2026-09-12T09:00:00.000Z') =>
   vault.events.emit({ type: 'router.call', agent, ts, payload: { provider, model, tier, tokens: { prompt_tokens: 1000, completion_tokens: 100 } } });
@@ -258,6 +264,48 @@ describe('what a division has spent today (spec §4)', () => {
     const rows = budgetRows(vault, org, SHIPPED, NOW);
     expect(rows.at(-1)!.division).toBe(HOUSE);                      // the house reads last, after the divisions
     expect(rows.find((r) => r.division === 'technology')).toEqual({ division: 'technology', used: 1, quota: tech.quota });
+  });
+
+  it('counts a call against the pool that gated it, not the pool its speaker sits in (I4)', () => {
+    const org = loadOrg(vault);
+    // The case the roster will reach the moment the owner puts a division lead on the board, which is a
+    // supported edit: `teamOf` prefers the role's own `team:`, so this speaker resolves to technology, while
+    // §4 budgets every voice at that table against the house reserve. Stamped, the two agree.
+    const lead = org.teams.technology.lead;
+    expect(divisionOfRole(org, lead, new Set(['technology']))).toBe('technology');
+    callStamped(lead, 'strong', HOUSE);
+    callStamped('backend_engineer', 'strong', 'technology');
+    const spend = divisionSpend(vault, org, dayStartIso(NOW));
+    expect(spend[HOUSE]).toBe(1);
+    expect(spend.technology).toBe(1);
+  });
+
+  it('falls back to the speaker\'s division for a row with no stamp, or a stamp that names nothing (I4)', () => {
+    const org = loadOrg(vault);
+    const lead = org.teams.technology.lead;
+    call(lead, 'strong');                                   // written before the field existed
+    callStamped(lead, 'strong', 'a_division_that_is_gone'); // an unknown pool is not a pool
+    expect(divisionSpend(vault, org, dayStartIso(NOW)).technology).toBe(2);
+    expect(divisionSpend(vault, org, dayStartIso(NOW))[HOUSE]).toBe(0);
+  });
+
+  it('charges the company\'s gates to the house, even when the security office sits in a division (I4, §4)', () => {
+    const ciso = officeHolder(loadOrg(vault), 'security');
+    // The owner moves the security office into a division — a gate is still the company's work, and the house
+    // reserve is what keeps gates off the divisions' meter.
+    vault.updateNote(`Roles/${ciso}.md`, (n) => ({ data: { ...n.data, team: 'technology' }, body: n.body }), 'owner');
+    const org = loadOrg(vault);
+    expect(teamOf(org, ciso)!.id).toBe('technology');
+    const b = budgetForRole(vault, org, SHIPPED, ciso, NOW);
+    expect(b.division).toBe(HOUSE);
+    expect(b.quota).toBe(divisionQuotas(SHIPPED, org)[HOUSE]);
+    // And the count follows the same rule, stamp or no stamp, so `used / quota` reads the same pool on both sides.
+    callStamped(ciso, 'strong', b.division);
+    call(ciso, 'strong');
+    const spend = divisionSpend(vault, org, dayStartIso(NOW));
+    expect(spend[HOUSE]).toBe(2);
+    expect(spend.technology).toBe(0);
+    expect(budgetForRole(vault, org, SHIPPED, ciso, NOW).used).toBe(2);
   });
 
   it('does not charge the free quota for a call the owner paid for', () => {

@@ -30,7 +30,7 @@ function threeCalls(seen: RouteRequest[]): Llm {
   };
 }
 
-const deps = (llm: Llm, modelBudget?: (roleId: string) => ModelBudget | null) => ({
+const deps = (llm: Llm, modelBudget?: (roleId: string) => (ModelBudget & { division?: string }) | null) => ({
   vault, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })),
   scheduler: vaultScheduler(vault), env: {}, modelBudget,
 });
@@ -45,6 +45,18 @@ describe("a job carries its division's budget (SP4 §4)", () => {
     expect(seen).toHaveLength(3);                          // three router calls
     expect(asked).toEqual(['intelligence_analyst']);       // one budget read, for the job's own role
     for (const r of seen) expect(r.budget).toEqual({ used: 1, quota: 10 });
+  });
+
+  it('stamps every call with the pool the budget was read for, and nothing else (I4)', async () => {
+    const seen: RouteRequest[] = [];
+    const id = createJob(vault, { type: 'custom', title: 'Stamped', assigned: 'intelligence_analyst', goal: 'g' }, 'daemon');
+    await runJob(deps(threeCalls(seen), () => ({ used: 1, quota: 10, division: 'house' })), id);
+    for (const r of seen) {
+      expect(r.budgetDivision).toBe('house');
+      // The pool travels in its own field: `budget` is narrowed to what `budgetedTier` reads, so nothing extra
+      // rides along on the request for a later reader to misuse.
+      expect(r.budget).toEqual({ used: 1, quota: 10 });
+    }
   });
 
   it('a division past its quota keeps working at the cheapest tier — it never stops', async () => {

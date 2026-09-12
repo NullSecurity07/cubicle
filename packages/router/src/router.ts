@@ -30,6 +30,13 @@ export interface RouteRequest {
   exclude?: string[];
   /** The division budget this call is charged against; set once per job by the harness. */
   budget?: ModelBudget | null;
+  /**
+   * Which pool that budget was read for — a division id, or `house` for the heartbeat, the board and the
+   * company's gates. Stamped on `router.call` as `budget_division` so the gauge counts a call against the same
+   * pool the gate charged it to: without it, `divisionSpend` had to guess from the speaker's role, and a
+   * division lead sitting at the board table raised `used` for a division that never authorised the call.
+   */
+  budgetDivision?: string;
 }
 
 export interface Candidate {
@@ -205,7 +212,7 @@ export class Router {
         // `reason` rides along only on a downgraded call, so a division that spent its own budget never reads as
         // a keys problem: `modelUseRows` (packages/daemon/src/heartbeat.ts) excludes `division budget` downgrades
         // from the count that trips "check your API keys".
-        this.events?.emit({ type: 'router.call', agent: req.roleId ?? null, payload: { provider: c.provider.id, model: c.model.id, tier: c.model.tier, tokens: res.usage, tools: c.model.tools, downgraded: isDowngrade, reason: isDowngrade ? (overBudget ? 'division budget' : 'cascade') : undefined, finish_reason: res.finishReason, empty: !res.content && res.toolCalls.length === 0 } });
+        this.events?.emit({ type: 'router.call', agent: req.roleId ?? null, payload: { provider: c.provider.id, model: c.model.id, tier: c.model.tier, tokens: res.usage, tools: c.model.tools, downgraded: isDowngrade, reason: isDowngrade ? (overBudget ? 'division budget' : 'cascade') : undefined, budget_division: req.budgetDivision ?? undefined, finish_reason: res.finishReason, empty: !res.content && res.toolCalls.length === 0 } });
         this.emitQuotaUpdated(c);
         const parsed: RoutedChatResult['parsedToolCalls'] = [];
         let jsonParseError: string | undefined;

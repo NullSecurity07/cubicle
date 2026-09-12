@@ -8,7 +8,7 @@ import {
   nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
   FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
   isLongPrompt, isSkip,
-  readLedger, moneyReport, moneyLine, moneyNeedsYou, money, type MoneyReport, type LedgerEntry,
+  readLedger, moneyReport, moneyLine, moneyNeedsYou, money, HOUSE, type MoneyReport, type LedgerEntry,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type ModelBudget, type Router } from '@cubicle/router';
@@ -728,7 +728,11 @@ async function askAs(deps: HeartbeatDeps, roleId: string, system: string, user: 
     // `roleId` is who speaks; the budget is the house's whoever that is (SP4 §4, and `HeartbeatDeps.modelBudget`):
     // a board advisor who leads a division that spent its quota this morning must still get a strong model at
     // the table, because the house reserve is there to keep the cycle and the board off the divisions' meter.
-    const r = await deps.llm.chat({ tier, needsTools: false, roleId, budget: deps.modelBudget?.() ?? undefined }, { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], maxTokens });
+    // …and the calls are *stamped* with the house, so the bank screen counts them there too. Without the stamp
+    // `divisionSpend` had to infer a pool from the speaker's role, and an advisor whose `team:` names a division
+    // raised that division's `used` for a call the house had paid for.
+    const budget = deps.modelBudget?.() ?? undefined;
+    const r = await deps.llm.chat({ tier, needsTools: false, roleId, budget, budgetDivision: budget ? HOUSE : undefined }, { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], maxTokens });
     return r.content.trim() || null;
   } catch {
     return null;

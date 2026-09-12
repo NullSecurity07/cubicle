@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, createJob, createProposal, findInboxById, appendEntry, readLedger, moneyReport, loadOrg, LEDGER_PATH, type Vault } from '@cubicle/core';
+import { scaffoldVault, createJob, createProposal, findInboxById, appendEntry, readLedger, moneyReport, loadOrg, HOUSE, LEDGER_PATH, type Vault } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler, type Llm } from '@cubicle/harness';
 import type { ChatMessage, ModelBudget, RoutedChatResult, RouteRequest, ToolSchema } from '@cubicle/router';
@@ -206,6 +206,9 @@ describe('the cycle speaks on the house budget, read once (SP4 §4)', () => {
     expect(seen.length).toBeGreaterThan(1);                                  // the advisors, then the chair
     expect(new Set(seen.map((r) => r.roleId)).size).toBeGreaterThan(1);      // each speaks as themselves…
     for (const r of seen) expect(r.budget).toEqual(HOUSE_BUDGET);            // …and all of them on the house
+    // And every one of those calls is *stamped* house, so the bank screen counts them where they were paid for
+    // rather than against whichever division an advisor's `team:` field happens to name (I4).
+    for (const r of seen) expect(r.budgetDivision).toBe(HOUSE);
     // Non-vacuous: more calls than readings, so removing the memo fails this line.
     expect(seen.length).toBeGreaterThan(reads);
     expect(reads).toBe(1);
@@ -219,6 +222,7 @@ describe('the cycle speaks on the house budget, read once (SP4 §4)', () => {
 
     expect(seen.length).toBeGreaterThan(0);
     for (const r of seen) expect(r.budget).toEqual(HOUSE_BUDGET);
+    for (const r of seen) expect(r.budgetDivision).toBe(HOUSE);
     expect(reads).toBe(1);                                                   // `runHeartbeat` wraps its own deps
   });
 

@@ -1,7 +1,7 @@
 import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO, officeHolder, loadOrg, moneyReport, readLedger, HOUSE } from '@cubicle/core';
-import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown } from '@cubicle/router';
+import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown, type ModelBudget } from '@cubicle/router';
 import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, secretsGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter } from '@cubicle/core';
 import { MemoryIndex, vaultScheduler, type Llm, type Guardrail } from '@cubicle/harness';
@@ -57,10 +57,16 @@ export function isPidAlive(pid: number): boolean {
 /**
  * How long one reading of "is the company dormant?" is reused for. A tick wakes every worker at once and each
  * then calls `nextJob`, so without this a single sweep parses `Ledger/ledger.md` once per active role — and the
- * ledger only grows: it gains a `cost` row a day for ever, and nothing ever removes one. The window is far
- * shorter than the 15 s idle interval, so a sweep shares one parse and the owner's `capital` row is still seen
- * on the very next poll. If a profile ever shows this parse still hurting, the ledger's own reader is the place
- * to fix it — not a longer window here, which would only delay the revival.
+ * ledger only grows: it gains a `cost` row a day for ever, and nothing ever removes one.
+ *
+ * What makes a revival safe is **not** the 15 s idle interval; it is the watcher's debounce. The owner's
+ * `capital` row wakes every worker directly (`owner.edited` → `this.workers.wake()` below), and that wake
+ * arrives one debounce after the write — 1500 ms (`WatcherOptions.debounceMs`, `packages/core/src/watcher.ts`).
+ * Because that is longer than this window, any cached reading still live when the wake lands was taken *after*
+ * the write and therefore already sees the capital: no `capital` row can be missed for a tick as the constants
+ * stand. The margin is 500 ms, and it is the load-bearing relation — drop the watcher's debounce below 1 s, or
+ * raise this, and a revival silently costs a full idle interval instead. If a profile ever shows this parse
+ * still hurting, the ledger's own reader is the place to fix it, not a longer window here.
  */
 export const DORMANCY_POLL_MS = 1000;
 
@@ -111,18 +117,27 @@ export class Daemon {
    * while the brief and `cubicle doctor` complain about the file.
    *
    * `modelBudget` is a division's day quota and what it has spent of it; the harness reads it once per job and
-   * the router demotes that job's tier when it is past quota (never stops it). `houseBudget` is the same gauge
-   * for the house reserve, which is what the heartbeat and the board session run against so a busy division
-   * cannot starve them (SP4 §4). `isDormant` is derived from the ledger, never from the heartbeat's state file,
-   * so the owner's next `capital` row revives the company with nothing to invalidate.
+   * the router demotes that job's tier when it is past quota (never stops it). It also answers *which* pool it
+   * read, and the harness stamps that on every call the job makes (`budget_division`), so the gauge counts a
+   * call against the pool that gated it — including the gates held by the security office, which `budgetForRole`
+   * charges to the house because a gate is the company's work and not its reviewer's division's (SP4 §4).
+   * `houseBudget` is the same gauge for the house reserve itself, which is what the heartbeat and the board
+   * session run against so a busy division cannot starve them. It is narrowed to the router's `ModelBudget`
+   * on the way out: the extra `division` field of a `BudgetRow` would otherwise ride into `RouteRequest.budget`,
+   * where nothing reads it and the request already carries `budgetDivision` for that job.
+   *
+   * `isDormant` is derived from the ledger, never from the heartbeat's state file, so the owner's next `capital`
+   * row revives the company with nothing to invalidate.
    */
   private modelBudget = (roleId: string) => {
     try { return budgetForRole(this.vault, loadOrg(this.vault), this.router.config, roleId, new Date()); }
     catch { return null; }
   };
-  private houseBudget = () => {
-    try { return budgetRows(this.vault, loadOrg(this.vault), this.router.config, new Date()).find((r) => r.division === HOUSE) ?? null; }
-    catch { return null; }
+  private houseBudget = (): ModelBudget | null => {
+    try {
+      const r = budgetRows(this.vault, loadOrg(this.vault), this.router.config, new Date()).find((x) => x.division === HOUSE);
+      return r ? { used: r.used, quota: r.quota } : null;
+    } catch { return null; }
   };
   private isDormant = pollCached(() => {
     try { return moneyReport(readLedger(this.vault), new Date()).dormant; }

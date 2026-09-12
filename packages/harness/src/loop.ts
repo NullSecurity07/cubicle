@@ -51,8 +51,12 @@ export interface HarnessDeps {
    * The division budget this job's calls run against (SP4 §4). Read **once, at job start**, not per call:
    * changing a job's tier halfway through a piece of work makes the output incoherent and the event log
    * unreadable. A division that crosses its quota mid-job finishes at its tier, and the next job drops.
+   *
+   * `division` is which pool the answer came from — a division id, or `house` for work the reserve pays for
+   * (the company's gates). It is stamped on every `router.call` the job makes, so the gauge counts the call
+   * against the pool that gated it rather than inferring one from the speaker's role.
    */
-  modelBudget?: (roleId: string) => ModelBudget | null | undefined;
+  modelBudget?: (roleId: string) => (ModelBudget & { division?: string }) | null | undefined;
 }
 
 export type JobOutcome =
@@ -214,7 +218,10 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   // handed to the router unchanged each step, so a division that crosses its quota mid-job finishes the job at
   // the tier it started on and only its *next* job drops. A budget re-read per call would swap models halfway
   // through a piece of work, which makes the output incoherent and the event log unreadable.
-  const routeReq: RouteRequest = { tier, needsTools: true, privacy, roleId, budget: deps.modelBudget?.(roleId) ?? undefined };
+  // `budget` is narrowed to what `budgetedTier` reads; which pool it was travels in its own field, because a
+  // stray extra key on the request is a thing nothing reads and everything can be confused by.
+  const budget = deps.modelBudget?.(roleId) ?? undefined;
+  const routeReq: RouteRequest = { tier, needsTools: true, privacy, roleId, budget: budget ? { used: budget.used, quota: budget.quota } : undefined, budgetDivision: budget?.division };
   const isLeadOrCeo = isLead(org, roleId) || roleId === officeHolder(org, 'chief_executive');
   const maxSteps = privacy === 'local' || tier === 'local' ? (deps.localMaxSteps ?? DEFAULT_LOCAL_MAX_STEPS) : (deps.maxSteps ?? (isLeadOrCeo ? DEFAULT_MAX_STEPS : DEFAULT_MEMBER_MAX_STEPS));
   const promptBudget = deps.llm.promptBudget?.(routeReq) ?? 6000;

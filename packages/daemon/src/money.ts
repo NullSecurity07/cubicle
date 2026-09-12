@@ -329,9 +329,28 @@ export function divisionQuotas(cfg: ProvidersFile, org: Org): Record<string, num
   return allocateQuota(freeCallCapacity(cfg), divisionWeights(org));
 }
 
-/** Which division a role's calls are charged to. Anything that does not resolve is the house's. */
-export function divisionOfRole(org: Org, role: string | null | undefined, known: ReadonlySet<string>): string {
+/**
+ * Roles the **house** pays for whatever team they sit in. Spec §4 reserves the house for "the executive team,
+ * the board, security, and anyone with no division", and the first two are top-level teams with no children, so
+ * `divisionTeams` already leaves them out and they resolve to the house on their own. Security does not: the
+ * company's own gates run as `officeHolder(org, 'security')`, and that office can be filled by someone who sits
+ * in a division — or, when nobody holds it, falls back to a team lead and then to a division lead. A gate is the
+ * company's work, not that division's, so it is charged to the reserve like the heartbeat and the board.
+ *
+ * By office, never by role id (global constraints): re-staffing the seat in the constitution moves this with it.
+ */
+export function houseRoles(org: Org): ReadonlySet<string> {
+  return new Set([officeHolder(org, 'security')]);
+}
+
+/**
+ * Which division a role's calls are charged to. Anything that does not resolve is the house's, and so is anyone
+ * in `house` — pass `houseRoles(org)` to honour the security office, omit it and the answer is the plain
+ * team-to-division walk (which is what every pre-SP4 event and every caller without an org opinion wants).
+ */
+export function divisionOfRole(org: Org, role: string | null | undefined, known: ReadonlySet<string>, house?: ReadonlySet<string>): string {
   if (!role) return HOUSE;
+  if (house?.has(role)) return HOUSE;
   const div = divisionOf(org, teamOf(org, role)?.id);
   return div && known.has(div) ? div : HOUSE;
 }
@@ -348,15 +367,22 @@ export function divisionOfRole(org: Org, role: string | null | undefined, known:
  */
 export function divisionSpend(vault: Vault, org: Org, since: string, cfg?: ProvidersFile | null): Record<string, number> {
   const known = new Set(divisionTeams(org).map((t) => t.id));
+  const house = houseRoles(org);
   const out: Record<string, number> = { [HOUSE]: 0 };
   for (const id of known) out[id] = 0;
   for (const e of vault.events.query({ types: ['router.call'], from: since })) {
-    const p = e.payload as { tier?: unknown; provider?: unknown; model?: unknown };
+    const p = e.payload as { tier?: unknown; provider?: unknown; model?: unknown; budget_division?: unknown };
     // With a providers file the file decides, tier included, so `used` and `quota` move together when the
     // owner re-tiers a model. Without one, the tier the call was recorded at is the only thing to go on.
     if (cfg) { if (!drawsOnFreePool(cfg, String(p.provider ?? ''), String(p.model ?? ''))) continue; }
     else if (!BUDGETED_TIERS.includes(String(p.tier ?? ''))) continue;
-    const key = divisionOfRole(org, e.agent, known);
+    // The stamp the router now carries is the pool the call was actually *gated* against, so the gauge and the
+    // gate answer the same question: a division lead speaking at the board table is budgeted against the house
+    // (spec §4) and is counted there too, rather than raising `used` for a division that never authorised it.
+    // A row without the stamp — everything written before this field existed — falls back to the role's own
+    // division, which counts exactly as it did before.
+    const stamped = typeof p.budget_division === 'string' && (p.budget_division === HOUSE || known.has(p.budget_division)) ? p.budget_division : null;
+    const key = stamped ?? divisionOfRole(org, e.agent, known, house);
     out[key] = (out[key] ?? 0) + 1;
   }
   return out;
@@ -373,17 +399,22 @@ export function budgetRows(vault: Vault, org: Org, cfg: ProvidersFile, now: Date
     .map((division) => ({ division, used: used[division] ?? 0, quota: quotas[division] ?? 0 }));
 }
 
+/** A budget and the pool it was read for, so the caller can stamp the calls it gates with the same answer. */
+export interface RoleBudget extends ModelBudget { division: string }
+
 /**
  * The budget one role's calls run against. Read once per job by the harness, not per call: demoting a job's
  * tier halfway through a piece of work makes the output incoherent and the event log unreadable.
  *
- * The return shape is the router's `ModelBudget` (`{ used, quota }`), which is what `budgetedTier` reads.
+ * `used`/`quota` are the router's `ModelBudget`, which is what `budgetedTier` reads; `division` is which pool
+ * they came from, and it rides on to `router.call` as `budget_division` so `divisionSpend` counts the call
+ * against the pool that gated it instead of inferring one from the speaker's role.
  */
-export function budgetForRole(vault: Vault, org: Org, cfg: ProvidersFile, role: string, now: Date): ModelBudget {
+export function budgetForRole(vault: Vault, org: Org, cfg: ProvidersFile, role: string, now: Date): RoleBudget {
   const quotas = divisionQuotas(cfg, org);
   const known = new Set(Object.keys(quotas).filter((k) => k !== HOUSE));
-  const key = divisionOfRole(org, role, known);
-  return { used: divisionSpend(vault, org, dayStartIso(now), cfg)[key] ?? 0, quota: quotas[key] ?? 0 };
+  const key = divisionOfRole(org, role, known, houseRoles(org));
+  return { used: divisionSpend(vault, org, dayStartIso(now), cfg)[key] ?? 0, quota: quotas[key] ?? 0, division: key };
 }
 
 /** `router.call` events in a window, in the shape `shadowCost` prices. */
