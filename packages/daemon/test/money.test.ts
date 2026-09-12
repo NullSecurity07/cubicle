@@ -78,6 +78,23 @@ providers:
     models:
       - { id: shelved, tier: strong, tools: native, limits: { rpd: 900 } }
 `);
+// The same model before and after the owner re-tiers it (F3): the config decides, not the recorded call.
+const TIER_BEFORE = parseProvidersConfig(`
+cascade: [g]
+providers:
+  - id: g
+    base_url: https://example.test/v1
+    models:
+      - { id: mover, tier: cheap, tools: native, limits: { rpd: 500 } }
+`);
+const TIER_AFTER = parseProvidersConfig(`
+cascade: [g]
+providers:
+  - id: g
+    base_url: https://example.test/v1
+    models:
+      - { id: mover, tier: medium, tools: native, limits: { rpd: 500 } }
+`);
 // A stamp the owner mistyped a year into the future (N2).
 const PRICED_FUTURE = parseProvidersConfig(`
 prices_verified: "2027-09-11"
@@ -156,8 +173,24 @@ describe('what the free tier is worth in a day (spec §4)', () => {
     expect(drawsOnFreePool(SHIPPED, 'gemini', 'gemini-3.5-flash')).toBe(true);
     expect(drawsOnFreePool(PRICED, 'paid', 'big')).toBe(false);        // priced: the owner pays, not the pool
     expect(drawsOnFreePool(SHIPPED, 'ollama', 'qwen2.5:7b')).toBe(false);  // local: free and unmetered
-    expect(drawsOnFreePool(SHIPPED, 'gemini', 'some-model-we-renamed')).toBe(true);  // unknown: counted, never lost
+    expect(drawsOnFreePool(SHIPPED, 'gemini', 'gemini-3.1-flash-lite')).toBe(false);  // cheap: not a budgeted tier
+    // A model the file no longer describes raises no capacity, so it must ration nobody either.
+    expect(drawsOnFreePool(SHIPPED, 'gemini', 'some-model-we-renamed')).toBe(false);
+    expect(drawsOnFreePool(SHIPPED, 'a-provider-we-dropped', 'whatever')).toBe(false);
     expect(drawsOnFreePool(null, 'anything', 'at-all')).toBe(true);     // no file to check against
+  });
+
+  it('moves a re-tiered model on both sides at once, whatever tier the call was recorded at', () => {
+    const org = loadOrg(vault);
+    // Recorded as `strong`; the file says `cheap` today, so it contributes nothing and rations nobody.
+    callOn('backend_engineer', 'strong', 'g', 'mover');
+    expect(freeCallCapacity(TIER_BEFORE)).toBe(0);
+    expect(drawsOnFreePool(TIER_BEFORE, 'g', 'mover')).toBe(false);
+    expect(divisionSpend(vault, org, dayStartIso(NOW), TIER_BEFORE).technology).toBe(0);
+    // The owner promotes it to `medium`: it starts raising quota and usage in the same breath.
+    expect(freeCallCapacity(TIER_AFTER)).toBe(500);
+    expect(drawsOnFreePool(TIER_AFTER, 'g', 'mover')).toBe(true);
+    expect(divisionSpend(vault, org, dayStartIso(NOW), TIER_AFTER).technology).toBe(1);
   });
 
   it('weighs a division by the people actually in it, and quotas sum to the capacity', () => {
@@ -275,6 +308,23 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     expect(String((warned[0].payload as { reason?: string }).reason)).toContain('never_modify');
   });
 
+  it('says so once, not once a cycle, and again only after the lock comes off and goes back on', () => {
+    const org = loadOrg(vault);
+    const lock = () => vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    const unlock = () => vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify: []\n```\n', 'owner');
+    const warnings = () => vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === 'money.runway').length;
+    lock();
+    for (let i = 0; i < 3; i++) writeRunway(vault, org, SHIPPED, NOW);
+    expect(warnings()).toBe(1);                 // three cycles of a decision they made on purpose, said once
+    unlock();
+    writeRunway(vault, org, SHIPPED, NOW);      // the page is written again; nothing is said
+    expect(warnings()).toBe(1);
+    lock();
+    writeRunway(vault, org, SHIPPED, NOW);      // locked afresh, so it is worth saying again
+    expect(warnings()).toBe(2);
+  });
+
   it('regenerates it again as soon as the owner takes the lock off', () => {
     const org = loadOrg(vault);
     vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
@@ -348,10 +398,10 @@ describe('what the models cost (spec §3)', () => {
     expect(accrueModelCosts(vault, PRICED, NOW)).toEqual([]);
     expect(accrueModelCost(vault, PRICED, NOW)).toBeNull();
     expect(readLedger(vault).entries).toEqual([]);
-    // Once per call, not once per day of the walk.
+    // Once while the lock stands — not once per day of the walk, and not once per cycle either.
     const warned = vault.events.query({ types: ['daemon.warning'] })
       .filter((e) => (e.payload as { where?: string }).where === 'money.accrual');
-    expect(warned).toHaveLength(2);                    // one per call above, three days each
+    expect(warned).toHaveLength(1);                    // two calls above, three days each, one row
     expect(String((warned[0].payload as { reason?: string }).reason)).toContain('Ledger/ledger.md');
     expect(String((warned[0].payload as { reason?: string }).reason)).toContain('never_modify');
   });
@@ -464,6 +514,30 @@ describe('dormancy and revival (spec §5)', () => {
     const dormant = listInbox(vault).filter((n) => (n.data as { money?: string }).money === 'dormant');
     expect(dormant).toHaveLength(1);
     expect(dormant[0].data.id).toBe(id);
+  });
+
+  it('does not let an orphan from an earlier episode silence a later one', () => {
+    // The reviewer's repro. Episode 1: funded 09-10, spent to zero 09-11T08:00.
+    appendEntry(vault, { at: '2026-09-10T08:00:00.000Z', kind: 'capital', cents: 25000, mode: 'live', who: 'owner', why: 'Seed' }, 'owner');
+    appendEntry(vault, { at: '2026-09-11T08:00:00.000Z', kind: 'cost', cents: 25000, mode: 'live', who: 'daemon', why: 'All of it' }, 'daemon');
+    const org = loadOrg(vault);
+    const one = dormancyMessage(vault, org, moneyReport(readLedger(vault), NOW), NOW)!;
+    // The crash: the note landed during episode 1, its `money`/`mark` stamp did not.
+    vault.updateNote(findInboxById(vault, one)!.path, (n) => {
+      const { money: _m, mark: _k, ...rest } = n.data as Record<string, unknown>;
+      return { data: { ...rest, created: '2026-09-11T08:30:00.000Z' }, body: n.body };
+    }, 'test');
+    // The owner tops up — episode 1 closes with the orphan still sitting unstamped in the inbox…
+    appendEntry(vault, { at: '2026-09-11T12:00:00.000Z', kind: 'capital', cents: 10000, mode: 'live', who: 'owner', why: 'More' }, 'owner');
+    // …and then the company runs out a second time.
+    appendEntry(vault, { at: '2026-09-12T06:00:00.000Z', kind: 'cost', cents: 10000, mode: 'live', who: 'daemon', why: 'And again' }, 'daemon');
+    expect(dormancyEpisodes(vault)).toHaveLength(2);
+    // The orphan belongs to episode 1 and must not be mistaken for episode 2 having been announced.
+    const two = dormancyMessage(vault, org, moneyReport(readLedger(vault), NOW), NOW);
+    expect(two).not.toBeNull();
+    expect(two).not.toBe(one);
+    expect(two).toBe(moneyMessageId('dormant', '2026-09-12T06:00:00.000Z'));
+    expect(listInbox(vault).filter((n) => (n.data as { money?: string }).money === 'dormant')).toHaveLength(1);
   });
 
   it('can still announce a later episode after the owner deletes the revival note', () => {

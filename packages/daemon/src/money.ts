@@ -88,22 +88,46 @@ export function freeCallCapacity(cfg: ProvidersFile): number {
  * demotes to the cheap tier sooner than it should.
  *
  * Without a providers file there is nothing to check against and the call counts, which is what this module
- * did before. With one, four facts take a call out of the pool: the provider or the model is **disabled**
- * (it raises no capacity today, so it must raise no usage today either), the provider is **local** (free and
- * unmetered), the model is **priced** (the owner pays for it; it is not drawing on a free allowance), or the
- * model has **no daily limit and no account cap above it** (the unlimited case, which contributed no capacity
- * either). A provider or model the file no longer describes still counts: losing a renamed model's calls
- * would understate the gauge, and understating what has been spent is the more dangerous error.
+ * did before. With one, the answer is `pooledModels`' answer read back for a single model, so the two can
+ * never drift: the call is in the pool when its provider is enabled and not local, and its model is enabled,
+ * unpriced, at a **budgeted tier as the file describes it today**, and bounded by a daily limit of its own or
+ * an account cap above it.
+ *
+ * The tier comes from the config and not from the recorded call, so re-tiering a model moves it on both sides
+ * at once: demote a `strong` model to `cheap` and today's calls on it stop raising `used` in the same breath
+ * as it stops raising `quota`. And a provider or model the file no longer describes counts on **neither**
+ * side — it contributes no capacity, so counting its calls would ration a division against an allowance that
+ * does not exist.
  */
 export function drawsOnFreePool(cfg: ProvidersFile | null | undefined, provider: string, model: string): boolean {
   if (!cfg) return true;
   const p = cfg.providers.find((x) => x.id === provider);
-  if (!p) return true;
-  if (!p.enabled || p.privacy === 'local') return false;
+  if (!p || !p.enabled || p.privacy === 'local') return false;
   const m = p.models.find((x) => x.id === model);
-  if (!m) return true;
-  if (!m.enabled || m.price) return false;
+  if (!m || !m.enabled || m.price) return false;
+  if (!BUDGETED_TIERS.includes(m.tier)) return false;
   return Boolean(m.limits.rpd || p.limits?.rpd);
+}
+
+/**
+ * Say once that the owner's `never_modify` list is holding a write back — not once a cycle, for ever.
+ *
+ * A heartbeat fires every six hours or every N completions, so an owner who locks `Ledger/` and leaves it
+ * locked would otherwise collect two `daemon.warning` rows a cycle about a decision they made on purpose and
+ * have not changed. Nothing dedupes `daemon.warning`, and a log full of the same row is a log nobody reads.
+ *
+ * The state lives in the event log rather than in the heartbeat's state file, like every other fact here: the
+ * warning is repeated only when the path has been written **since** the last warning, which is precisely "the
+ * lock was lifted, and now it is back". A lost state file changes nothing, and nothing needs remembering
+ * across a restart.
+ */
+function warnLockedOnce(vault: Vault, where: string, path: string, reason: string): void {
+  const warned = vault.events.last('daemon.warning', (e) => (e.payload as { where?: unknown }).where === where);
+  if (warned) {
+    const wrote = vault.events.last('vault.wrote', (e) => (e.payload as { path?: unknown }).path === path);
+    if (!wrote || wrote.ts <= warned.ts) return;
+  }
+  vault.events.emit({ type: 'daemon.warning', payload: { where, path, reason } });
 }
 
 /** A division's weight is the people actually in it: a thirteen-desk division needs more calls than a three-desk one. */
@@ -133,7 +157,8 @@ export function divisionOfRole(org: Org, role: string | null | undefined, known:
  *
  * `cfg` is optional only because a caller without a providers file (a test, a daemon whose router failed to
  * start) should still get a tier-count rather than nothing. Every caller that has one passes it, and with it
- * the count is exactly the calls `freeCallCapacity` budgeted for.
+ * the count is exactly the calls `freeCallCapacity` budgeted for — `drawsOnFreePool` answers both questions
+ * from the same file, so a model the owner re-tiers, prices or switches off moves on both sides together.
  */
 export function divisionSpend(vault: Vault, org: Org, since: string, cfg?: ProvidersFile | null): Record<string, number> {
   const known = new Set(divisionTeams(org).map((t) => t.id));
@@ -141,8 +166,10 @@ export function divisionSpend(vault: Vault, org: Org, since: string, cfg?: Provi
   for (const id of known) out[id] = 0;
   for (const e of vault.events.query({ types: ['router.call'], from: since })) {
     const p = e.payload as { tier?: unknown; provider?: unknown; model?: unknown };
-    if (!BUDGETED_TIERS.includes(String(p.tier ?? ''))) continue;
-    if (!drawsOnFreePool(cfg, String(p.provider ?? ''), String(p.model ?? ''))) continue;
+    // With a providers file the file decides, tier included, so `used` and `quota` move together when the
+    // owner re-tiers a model. Without one, the tier the call was recorded at is the only thing to go on.
+    if (cfg) { if (!drawsOnFreePool(cfg, String(p.provider ?? ''), String(p.model ?? ''))) continue; }
+    else if (!BUDGETED_TIERS.includes(String(p.tier ?? ''))) continue;
     const key = divisionOfRole(org, e.agent, known);
     out[key] = (out[key] ?? 0) + 1;
   }
@@ -260,11 +287,8 @@ export function runwayCommentary(vault: Vault): string {
 export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Date = new Date()): MoneyReport {
   const report = moneyReport(readLedger(vault), now);
   if (isNeverModifyPath(RUNWAY_PATH, vault.constitution().never_modify)) {
-    vault.events.emit({ type: 'daemon.warning', payload: {
-      where: 'money.runway',
-      path: RUNWAY_PATH,
-      reason: `${RUNWAY_PATH} is on the owner's never_modify list, so it was not regenerated; the figures behind it are still computed every cycle`,
-    } });
+    warnLockedOnce(vault, 'money.runway', RUNWAY_PATH,
+      `${RUNWAY_PATH} is on the owner's never_modify list, so it was not regenerated; the figures behind it are still computed every cycle`);
     return report;
   }
   const calls = recordedCalls(vault, dayStartIso(now));
@@ -385,11 +409,8 @@ export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = n
       // carries on with a book it simply may not add to. Anything else still throws: a disk that will not take
       // a write is a real failure and must not be swallowed as policy.
       if (!isVeto(err)) throw err;
-      vault.events.emit({ type: 'daemon.warning', payload: {
-        where: 'money.accrual',
-        path: LEDGER_PATH,
-        reason: `${LEDGER_PATH} is on the owner's never_modify list, so model cost from ${day} onwards was not recorded; nothing else is affected and the company keeps running`,
-      } });
+      warnLockedOnce(vault, 'money.accrual', LEDGER_PATH,
+        `${LEDGER_PATH} is on the owner's never_modify list, so model cost from ${day} onwards was not recorded; nothing else is affected and the company keeps running`);
       break;
     }
     if (r.added) out.push(r.entry);
@@ -484,14 +505,27 @@ function alreadyTold(vault: Vault, kind: 'dormant' | 'revived', start: string): 
 const messageIdPrefix = (kind: 'dormant' | 'revived'): string => `${idFromKey('prop', `money:${kind}`)}_`;
 
 /**
- * A dormancy message this module wrote whose second write — the stamp — never landed. Recognised by the id
- * shape alone, which is the one thing a crash between the two writes cannot take away. Without this, a mark
- * that shifted between the crash and the next cycle would leave the orphan unfindable and a second "We have
- * run out of money" would go to the owner.
+ * A dormancy message this module wrote **during this episode** whose second write — the stamp — never landed.
+ *
+ * Recognised by the id shape, which is the one thing a crash between the two writes cannot take away; without
+ * it, a mark that shifted between the crash and the next cycle would leave the orphan unfindable and a second
+ * "We have run out of money" would go to the owner.
+ *
+ * Bounded to the episode by `created`, which `createProposal` stamps on every note, because an unbounded match
+ * is worse than the bug it fixes: an orphan left over from an episode the owner has already read about would
+ * be taken as "already said" for the *next* one, and the company would never tell them it had run out a second
+ * time. A note written while an episode was live always carries a `created` at or after that episode's start,
+ * and any note from a later episode is excluded by the same test — so the candidate is the episode's own or
+ * nothing, and "told late" never becomes "not told at all".
  */
-function orphanDormancy(vault: Vault): { path: string } | null {
+function orphanDormancy(vault: Vault, start: string, episodes: DormancyEpisode[]): { path: string } | null {
   const prefix = messageIdPrefix('dormant');
-  const n = listInbox(vault).find((x) => x.data.id.startsWith(prefix) && (x.data as { money?: unknown }).money === undefined);
+  const later = episodes.map((e) => e.start).filter((s) => s > start);
+  const n = listInbox(vault).find((x) =>
+    x.data.id.startsWith(prefix)
+    && (x.data as { money?: unknown }).money === undefined
+    && x.data.created >= start
+    && !later.some((s) => s <= x.data.created));
   return n ? { path: n.path } : null;
 }
 
@@ -517,17 +551,20 @@ function stamp(vault: Vault, rel: string, kind: 'dormant' | 'revived', mark: str
  * Three guards, because a mark alone is not enough. The episode comes from the book (`dormancyEpisodes`), so a
  * hand-edited inbox cannot invent or hide one. `alreadyTold` asks whether any dormancy note carries a mark at
  * or after this episode's start, which stays true even when a past-dated accrual shifts the crossing entry
- * backwards. And a note this module wrote whose stamp was lost to a crash is found by its id shape and
- * repaired rather than written again. Being told twice that the company has stopped is worse than being told
- * late.
+ * backwards. And a note this module wrote whose stamp was lost to a crash is found by its id shape — bounded
+ * to this episode, so an old orphan can never stand in for a new silence — and repaired rather than written
+ * again. Being told twice that the company has stopped is worse than being told late; being told **not at
+ * all** is worse than either.
  */
 export function dormancyMessage(vault: Vault, org: Org, r: MoneyReport, now: Date = new Date()): string | null {
   if (!r.dormant) return null;
-  const mark = dormancyMark(vault);
-  if (mark === 'none') return null;
+  const episodes = dormancyEpisodes(vault);
+  const open = episodes.at(-1);
+  if (!open || open.end !== null) return null;
+  const mark = open.start;
   if (alreadyTold(vault, 'dormant', mark)) return null;
   const id = moneyMessageId('dormant', mark);
-  const already = findInboxById(vault, id) ?? orphanDormancy(vault);
+  const already = findInboxById(vault, id) ?? orphanDormancy(vault, mark, episodes);
   if (already) { stamp(vault, already.path, 'dormant', mark); return null; }
   const ceo = officeHolder(org, 'chief_executive');
   const { path: rel } = createProposal(vault, {
