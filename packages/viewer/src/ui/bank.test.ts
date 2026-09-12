@@ -101,7 +101,7 @@ describe('the bank screen (spec §6)', () => {
     const rich = { ...funded, cash: 'USD 1234567.89', burn: 'USD 1234567.89', runway: '1234567 days' };
     const h = SURFACES.bank.headline(withMoney(rich));
     expect(h.head.length).toBeLessThanOrEqual(16);
-    expect(h.short.length).toBeLessThanOrEqual(16);
+    expect(h.short!.length).toBeLessThanOrEqual(16);
     for (const l of h.lines) expect(l.length).toBeLessThanOrEqual(48);
     // Still a figure, not an ellipsis on its own.
     expect(h.head).toContain('USD');
