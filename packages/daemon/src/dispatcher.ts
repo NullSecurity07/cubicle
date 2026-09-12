@@ -2,6 +2,7 @@ import {
   type Vault, listInbox, readJob, updateJob, cancelJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
   loadOrg, resolveRole, divisionLeadOf, officeHolder, type Org,
   FOUNDER_BRIEF, missingBriefSections, readIdea, updateIdea, ideaBand, bandReason, ideaOutcome, IDEA_SLUG_SRC, IDEA_DECISIONS, LEDGER_PATH, type IdeaBand, type IdeaDecision,
+  trustDecision, TRUST_PENDING_HOLD, type TrustDecision, type TrustToolPolicy,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath } from '@cubicle/tools';
@@ -94,6 +95,18 @@ function retryDue(vault: Vault, note: { path: string; data: InboxFrontmatter }):
   const row = vault.db.prepare('SELECT sha, at FROM refusals WHERE path = ?').get(note.path) as { sha: string; at: string } | undefined;
   if (!row) return false;
   return vault.currentSha(note.path) !== row.sha || Date.now() - Date.parse(row.at) > 10 * 60_000;
+}
+
+/**
+ * The trust state of a stored call, or null when it owes no review. The dispatcher's whole part in SP5: it never
+ * *closes* a returned call (the sweep does, whatever the approval flag says — Decision 19) and it never sends a
+ * pending one.
+ *
+ * The cast reads `trust_review` off a `ToolPolicy`: `TrustToolPolicy` is all-optional, so TypeScript's weak-type
+ * rule wants one property in common, and `core` cannot import `tools` to say so directly.
+ */
+function trustGuard(deps: DispatcherDeps, d: InboxFrontmatter): TrustDecision | null {
+  return d.call ? trustDecision(deps.vault.events, deps.toolsConfig.tools[d.call.tool] as TrustToolPolicy | undefined, d.call) : null;
 }
 
 /** Execute a stored call as the daemon, with the original role's permissions and the stored idempotency key. */
@@ -296,14 +309,36 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
               if ((d as { refused?: string }).refused !== DORMANT_SPEND_REFUSAL) refuseNote(vault, note, DORMANT_SPEND_REFUSAL);
               continue;
             }
+            // Spec §3: the dispatcher holds a proposal whose reviews are pending — it does not resolve it, does
+            // not unblock the job, and above all does not mark the idempotency key, so a review that finishes ten
+            // minutes later still sends. Written once per episode, like the dormancy refusal above and for the
+            // same reason: the fact has not changed, and re-writing the note every ten minutes would churn the
+            // vault and its autocommits over it.
+            //
+            // There is deliberately no `returned` branch here (Decision 19): the sweep closes a returned call,
+            // whatever the approval flag says, because a returned call whose owner never reached the inbox would
+            // otherwise strand its job for ever — the dispatcher never looks at an unapproved note at all.
+            if (trustGuard(deps, d)?.kind === 'hold') {
+              if ((d as { refused?: string }).refused !== TRUST_PENDING_HOLD) refuseNote(vault, note, TRUST_PENDING_HOLD);
+              continue;
+            }
             const r = await executeStoredCall(deps, note);
             outcome = `${d.call.tool}: ${r.ok ? 'ok' : 'failed'} — ${r.text.slice(0, 200)}`;
             break;
           }
-          case 'outbound_batch':
+          case 'outbound_batch': {
+            // The same hold as `spend`, and for the same reason: an approved send whose reviews are still out is
+            // left exactly as it is — unresolved, its job still blocked, its idempotency key unspent — so the
+            // owner's approval stands and the send happens on its own once both offices have passed. As above,
+            // there is no `returned` branch: the sweep owns that close (Decision 19).
+            if (trustGuard(deps, d)?.kind === 'hold') {
+              if ((d as { refused?: string }).refused !== TRUST_PENDING_HOLD) refuseNote(vault, note, TRUST_PENDING_HOLD);
+              continue;
+            }
             // The blocked job executes the stored call itself on resume (R30); just wake it.
             outcome = 'approved; the waiting job resumes';
             break;
+          }
           case 'threat_model':
             // Nothing to execute: the approval is the decision (§27). The blocked job resumes on the next tick
             // either way — `d.approved` is always true here, since `d.approved === false` was handled above,
@@ -382,7 +417,10 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     vault.events.emit({ type: 'proposal.resolved', agent: 'owner', job: d.job ?? null, payload: { id: d.id, kind: d.kind, approved: d.approved, outcome } });
     n++;
   }
-  n += requeueUnblocked(vault, deps.questionWaitMs, { sinceFloor: deps.startedAt ?? DAEMON_STARTED_AT });
+  n += requeueUnblocked(vault, deps.questionWaitMs, {
+    sinceFloor: deps.startedAt ?? DAEMON_STARTED_AT,
+    trustHeld: (d) => trustGuard(deps, d)?.kind === 'hold',
+  });
   if (n) deps.wake?.();
   return n;
 }
@@ -474,7 +512,7 @@ function escalateQuestion(vault: Vault, job: JobFrontmatter, id: string): string
  * a colleague cannot answer while the daemon is down, and the first tick after a 14 h outage (2026-09-10) otherwise
  * escalated a question whose answer job had never had a chance to run. Without it the wait is pure wall-clock.
  */
-export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION_WAIT_MS, opts: { sinceFloor?: number } = {}): number {
+export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION_WAIT_MS, opts: { sinceFloor?: number; trustHeld?: (d: InboxFrontmatter) => boolean } = {}): number {
   const floor = opts.sinceFloor ?? 0;
   let n = 0;
   for (const j of listJobs(vault, { status: 'blocked' })) {
@@ -484,7 +522,13 @@ export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION
     let ready = false;
     if (b.kind === 'proposal') {
       const p = listInbox(vault).find((x) => x.data.id === b.id);
-      ready = !!p && p.data.approved !== null;
+      // A job waiting on a leaving call is not ready until both offices have answered: waking it would only have
+      // the harness re-block it a moment later, once per tick, for as long as the reviews take.
+      //
+      // `resolved_at` counts as an answer even with `approved: null`, and that clause is what stops the one
+      // stranding the trust sweep exists to prevent (Decision 19): a call an office returned is closed unsent
+      // whether or not the owner ever reached the inbox, and its author has to be resumed and told why.
+      ready = !!p && (p.data.approved !== null || !!p.data.resolved_at) && !(opts.trustHeld?.(p.data) ?? false);
     } else if (b.kind === 'job') {
       const sub = readJob(vault, b.id);
       ready = (!!sub && ['done', 'failed', 'cancelled'].includes(sub.data.status)) || Date.now() - Date.parse(b.since) > PLAN_WAIT_BUDGET_MS;

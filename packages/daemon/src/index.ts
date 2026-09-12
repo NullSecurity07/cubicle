@@ -3,6 +3,7 @@ export * from './daemon.js';
 export * from './heartbeat.js';
 export * from './first-run.js';
 export * from './dispatcher.js';
+export * from './trust.js';
 export * from './workers.js';
 export * from './ws.js';
 export * from './signals.js';
