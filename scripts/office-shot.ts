@@ -15,8 +15,8 @@
  * with no panel over it, so the number is the cost of drawing the tower rather than of compositing an HTML sheet.
  */
 import path from 'node:path';
-import { mkdtempSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
+import { tmpdir, loadavg, cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { scaffoldVault, createProposal } from '@cubicle/core';
 import type { RoutedChatResult } from '@cubicle/router';
@@ -93,7 +93,23 @@ const waitForAgents = async (ok: (a: Agent[]) => boolean, timeoutMs: number): Pr
 
 let fps = 0;
 let fpsSampled = false;
+let load1m = 0;
 let gl = 'unknown';
+/** The machine's 1-minute load, from the kernel where there is one. */
+const oneMinuteLoad = (): number => {
+  try {
+    const v = Number(readFileSync('/proc/loadavg', 'utf8').trim().split(/\s+/)[0]);
+    if (Number.isFinite(v) && v >= 0) return v;
+  } catch { /* not Linux, or /proc not mounted */ }
+  const v = loadavg()[0];
+  return Number.isFinite(v) && v >= 0 ? v : 0;
+};
+/**
+ * Above this the frame rate is a reading about the machine, not about the office, so the gate reports it instead
+ * of judging it. Half of a 16-core box: a run beside a full workspace build measured 35 fps at load 16 and 60 on
+ * the rerun, and failing that build would have been a lie about the code.
+ */
+const FPS_GATE_MAX_LOAD = 8;
 try {
   await page.goto(`http://127.0.0.1:${webPort}/?token=${token}`, { waitUntil: 'load' });
   await page.waitForTimeout(2500);
@@ -234,7 +250,10 @@ try {
     fps = Math.max(fps, sample); fpsSampled = true;
     if (fps >= 30) break;
   }
-  console.log(`fps: ${fps}`);
+  // The load the reading was taken under, printed beside it and kept for the gate: a frame rate without it is a
+  // number nobody can interpret a week later. (35 fps at load 16, then 60 on a rerun, is what prompted this.)
+  load1m = oneMinuteLoad();
+  console.log(`fps: ${fps} (1-min load ${load1m.toFixed(2)}, ${cpus().length} cores)`);
 
   // 10: the browser viewer, live. Three pushed frames give it a seq, an fps readout and the amber LIVE badge; the
   // 'demo' session opened in the burst above is still active, so nothing here has to fake the badge.
@@ -338,8 +357,11 @@ console.log(`screenshots in ${out}`);
 // the gate is skipped there instead of lowered: a lowered bar would pass a real regression on the GPU path too.
 // Only when a sample was actually taken: a run that threw before scene 09 never measured anything, and reporting its
 // `fps 0` as a frame-rate regression would bury the real failure under a second, invented one.
+// A busy machine is the third skip, beside the two below: the reading is then about how much CPU the office was
+// given, and the honest thing is to print it and say so rather than to fail a build that draws fine.
 if (!fpsSampled) console.log('fps gate skipped: the run ended before the frame rate was measured');
 else if (/swiftshader|llvmpipe/i.test(gl)) console.log(`fps gate skipped: ${gl} is a software rasteriser, so ${fps} fps measures it, not the office`);
-else if (fps < 30) fail(`fps ${fps} is under 30`);
+else if (fps < 30 && load1m > FPS_GATE_MAX_LOAD) console.log(`fps gate skipped: ${fps} fps was measured at 1-min load ${load1m.toFixed(2)} (over ${FPS_GATE_MAX_LOAD} on ${cpus().length} cores), which measures the machine rather than the office — rerun on an idle box to judge it`);
+else if (fps < 30) fail(`fps ${fps} is under 30 (1-min load ${load1m.toFixed(2)})`);
 if (failures.length) { console.error(`FAIL: ${failures.length} check(s) failed:\n  ${failures.join('\n  ')}`); process.exit(1); }
 process.exit(0);
