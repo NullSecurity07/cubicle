@@ -20,7 +20,7 @@ Then the research lifecycle (`Processes/research_lifecycle.md`), abbreviated to 
 
 Two outputs, both required. One `Ideas/<slug>.md` card per candidate idea, filed with `idea.card`, each with
 the evidence that points at it — one card per idea, never a digest of several. And `Memory/founder-brief.md`,
-filed as a `founder_brief` proposal with all seven sections:
+filed as a `founder_brief` proposal with all eight sections:
 
 ## What the company is
 ## Who it is for
@@ -29,6 +29,12 @@ filed as a `founder_brief` proposal with all seven sections:
 ## Constraints
 ## Candidate ideas
 ## What we do not know
+## Pressure test
+
+`## Pressure test` is the Paul Graham test run on the company itself, once: the core assumption, the three most
+likely ways it dies, whether the pain is real, founder-market fit, and one word — STRONG, WEAK or PIVOT
+REQUIRED. `Docs/pressure-test-handbook.md` is the whole of it. Re-run it whenever the brief changes materially;
+the core assumption moves when the customer moves.
 
 Every claim about what already exists cites the file it came from. Where the owner's material and the interview
 disagree, say so rather than picking one. Never invent a customer, a number or a date: the owner will read this

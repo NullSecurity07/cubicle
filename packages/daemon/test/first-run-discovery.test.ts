@@ -4,13 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   scaffoldVault, Vault, listJobs, listInbox, readJob, readIdea, updateJob, createProposal, loadOrg, officeHolder,
-  DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF, interviewPhase,
+  DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF, interviewPhase, INTERVIEW_QUESTIONS,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob } from '../src/index.js';
 import { hasIdea, ideaAt } from '../src/first-run.js';   // both live in the daemon, not in core
-import { interviewMessageId, openDiscoveryJob } from '../src/discovery.js';
+import { interviewMessageId, openDiscoveryJob, askInterview, interviewMaterial } from '../src/discovery.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide } from './helpers/board-switch.js';
 
@@ -413,4 +413,41 @@ describe('the first cycle reads, then judges, then plans (spec §5.1)', () => {
       expect(verdict.data.job).toBeTruthy();
     } finally { v.close(); await d.stop(); }
   }, 240_000);
+});
+
+describe('the CEO asks only what the owner has not already said (spec §5)', () => {
+  it('asks all six when the vault is empty, exactly as it always did', () => {
+    const id = askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'));
+    expect(id).toBeTruthy();
+    expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
+    const msg = listInbox(vault).find((n) => n.data.id === id)!;
+    // The title is the note's `# ` line: `createProposal` writes it into the body, not the frontmatter.
+    expect(msg.body.split('\n')[0]).toBe('# Six questions, while I get started');
+    for (const q of INTERVIEW_QUESTIONS) expect(msg.body).toContain(q);
+  });
+
+  it('asks three of six when the owner\'s cabin message answered the other three', () => {
+    createProposal(vault, {
+      kind: 'message', from: 'owner', to: 'ceo', title: 'what we are doing',
+      body: 'We are building a weekly meal-kit box. The product is a Saturday delivery.\n\nWe already have a waitlist of 90 people and the domain.\n\nWe tried a Facebook group and it did not work, so we abandoned it.',
+    }, 'owner');
+    const id = askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'))!;
+    const msg = listInbox(vault).find((n) => n.data.id === id)!;
+    expect(msg.body.split('\n')[0]).toBe('# Three questions, while I get started');
+    expect(msg.body).toContain('you have answered 3 of my six questions');
+    expect(msg.body).toContain(INTERVIEW_QUESTIONS[1]);
+    expect(msg.body).not.toContain(INTERVIEW_QUESTIONS[0]);
+    // The transcript records the three it asked, so the owner's answer closes exactly those.
+    const t = vault.readText(INTERVIEW_PATH);
+    expect(interviewPhase(t)).toBe('asked');
+    expect(t).toContain(INTERVIEW_QUESTIONS[5]);
+    expect(t).not.toContain(INTERVIEW_QUESTIONS[2]);
+  });
+
+  it('reads the inbox files as well as the cabin', () => {
+    vault.writeText(`${DISCOVERY_INBOX}/notes.md`, 'It is for independent nursery managers. Today they use a shared spreadsheet.', 'owner');
+    expect(interviewMaterial(vault).text).toContain('nursery managers');
+    expect(askInterview(vault, 'ceo', new Date())).toBeTruthy();
+    expect(vault.readText(INTERVIEW_PATH)).not.toContain(INTERVIEW_QUESTIONS[1]);
+  });
 });

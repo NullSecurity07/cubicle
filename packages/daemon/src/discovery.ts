@@ -4,6 +4,7 @@ import {
   DISCOVERY_INBOX, FOUNDER_BRIEF, INTERVIEW_PATH, discoveryDigest, hasFounderBrief, founderBriefTemplate,
   interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, listDiscoveryInputs, isLongPrompt,
   ownerSaid, ideaPath, IDEA_SCORE_MAX,
+  INTERVIEW_QUESTIONS, openInterviewQuestions, interviewAskTitle, renderInterviewCovered, PRESSURE_TEST_SECTION,
 } from '@cubicle/core';
 
 // `ownerSaid` moved to core so the `discovery.inputs` tool cuts a cabin note the same way this module does
@@ -91,7 +92,9 @@ export function discoveryStatus(o: {
   if (!o.everRun) {
     // The first read takes whatever there is, one line included, and an empty vault whose owner skipped the
     // interview still gets one: §1.8 — the company must be able to start from a single line, or from nothing.
-    const anything = isSubstantive(o.unread) || o.unread.anyPrompt || o.inputs > 0 || o.interview === 'answered' || o.interview === 'skipped';
+    // `covered` is the owner's material having answered all six (spec §5): like `skipped`, it means the
+    // interview is closed and there is something to read — never that the company is still waiting.
+    const anything = isSubstantive(o.unread) || o.unread.anyPrompt || o.inputs > 0 || ['answered', 'skipped', 'covered'].includes(o.interview);
     if (anything) return status(true, ask ? 'reading the line the owner typed, and asking the interview as well' : 'first discovery over the owner\'s material');
     if (ask) return status(false, 'nothing to read yet: asking the founder interview');
     if (o.interview === 'asked') return status(false, 'the founder interview is waiting for an answer');
@@ -144,11 +147,11 @@ export function discoveryGoal(opts: { founderBrief: string; briefTemplate: strin
     '1. `discovery.inputs` — the files, the interview and the cabin messages. This is the whole brief; there is nothing else to go on.',
     '2. `research.start` — open the project directory, then follow `Processes/research_lifecycle.md`. Existing evidence first: `memory.search` and `vault.search` before you fetch anything, and `http.fetch { archive: true }` + `sources.cite` for every page you do fetch.',
     `3. \`idea.card\` — one card per candidate idea, \`source: discovery\`, with the evidence that points at it and, where your research supports a view, the research half (report, confidence, evidence 1–5, fit 1–5). One card per idea, never a digest of several. Do not price anything: the finance office does that.`,
-    `4. \`proposal.create\` with \`kind: founder_brief\` and \`target: ${opts.founderBrief}\`, carrying the whole brief inside a \`## Proposed content\` fence. These seven sections, all of them:`,
+    `4. \`proposal.create\` with \`kind: founder_brief\` and \`target: ${opts.founderBrief}\`, carrying the whole brief inside a \`## Proposed content\` fence. These eight sections, all of them:`,
     '',
     opts.briefTemplate,
     '',
-    `Rules: every claim about what already exists cites the file it came from. Where the owner's material and the interview disagree, say so rather than picking one. Never invent a customer, a number or a date. The report goes to ${opts.research}; the brief goes to the owner.`,
+    `Rules: every claim about what already exists cites the file it came from. Where the owner's material and the interview disagree, say so rather than picking one. Never invent a customer, a number or a date. \`${PRESSURE_TEST_SECTION}\` is the Paul Graham test on the company as a whole — read \`Docs/pressure-test-handbook.md\` first, write the five parts in order, end on one word of STRONG, WEAK or PIVOT REQUIRED, and never write "it has potential, but". Put the same five parts in your research report. The report goes to ${opts.research}; the brief goes to the owner.`,
   ].join('\n');
 }
 
@@ -237,6 +240,20 @@ export function lastWriteTimes(vault: Vault, paths: string[]): Map<string, strin
  */
 export function interviewMessageId(ceo: string): string { return idFromKey('msg', `interview:${ceo}`); }
 
+/** How much of the owner's material the coverage check reads. A cap, not a sample: it is read once, ever. */
+export const INTERVIEW_MATERIAL_CHARS = 20_000;
+
+/**
+ * Everything the company has been told, for the coverage check: every cabin message the owner has typed (read
+ * or unread — coverage is about knowledge, not about increments), every readable file in `Discovery/inbox/`,
+ * and the founder brief if one is adopted.
+ */
+export function interviewMaterial(vault: Vault): { text: string; brief: string } {
+  const parts = [ownerPrompt(vault)];
+  for (const f of listDiscoveryInputs(vault)) if (f.readable) parts.push(vault.readTextOrNull(f.path) ?? '');
+  return { text: parts.filter(Boolean).join('\n\n').slice(0, INTERVIEW_MATERIAL_CHARS), brief: vault.readTextOrNull(FOUNDER_BRIEF) ?? '' };
+}
+
 /**
  * Ask the six questions, once: one cabin message from the chief executive, then the transcript that records it.
  *
@@ -251,13 +268,18 @@ export function interviewMessageId(ceo: string): string { return idFromKey('msg'
  */
 export function askInterview(vault: Vault, ceo: string, now: Date): string | null {
   if (interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)) !== 'none') return null;
+  const m = interviewMaterial(vault);
+  const open = openInterviewQuestions(m.text, m.brief);
+  // Nothing left to ask: the owner said all six in their own material, so nobody is asked anything and the
+  // transcript records why. Written before any message goes out, so the resume below cannot send one.
+  if (!open.length) { vault.writeText(INTERVIEW_PATH, renderInterviewCovered(now.toISOString()), 'daemon'); return null; }
   const id = interviewMessageId(ceo);
   const resumed = findInboxById(vault, id) !== null;
   createProposal(vault, {
     id, kind: 'message', from: ceo, to: 'owner',
-    title: 'Six questions, while I get started', body: renderInterviewAsk(),
+    title: interviewAskTitle(open.length), body: renderInterviewAsk(open, INTERVIEW_QUESTIONS.length - open.length),
   }, ceo);
-  vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString()), 'daemon');
+  vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString(), open), 'daemon');
   return resumed ? null : id;
 }
 
@@ -369,7 +391,7 @@ export function enqueueDiscovery(vault: Vault, org: Org, precomputed?: Discovery
     assigned: research, for: ceo, owner_role: ceo, team: teamOf(org, research)?.id,
     goal: discoveryGoal({ founderBrief: FOUNDER_BRIEF, briefTemplate: founderBriefTemplate(), hasBrief, research: ceo }),
     research: discoveryRequest({ ceo, hasBrief, deadline }),
-    done_when: `${FOUNDER_BRIEF} is filed as a founder_brief proposal with all seven sections, and every candidate idea it names is its own Ideas/<slug>.md card with evidence.`,
+    done_when: `${FOUNDER_BRIEF} is filed as a founder_brief proposal with all eight sections, including a ${PRESSURE_TEST_SECTION} that ends on one word, and every candidate idea it names is its own Ideas/<slug>.md card with evidence.`,
   }, 'daemon');
 }
 

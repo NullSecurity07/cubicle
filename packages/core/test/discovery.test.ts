@@ -101,8 +101,8 @@ describe('the cabin interview (spec §1.4)', () => {
 });
 
 describe('the founder brief (spec §1.7)', () => {
-  it('has seven sections and names the ones a draft is missing', () => {
-    expect(FOUNDER_BRIEF_SECTIONS.length).toBe(7);
+  it('has eight sections and names the ones a draft is missing', () => {
+    expect(FOUNDER_BRIEF_SECTIONS.length).toBe(8);
     expect(missingBriefSections(founderBriefTemplate())).toEqual([]);
     expect(missingBriefSections('## What the company is\n\nMeal kits.')).toEqual([...FOUNDER_BRIEF_SECTIONS].slice(1));
     // A heading mentioned inside prose is not a section.
