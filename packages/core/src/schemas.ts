@@ -292,7 +292,7 @@ export const EVENT_TYPES = [
   'quota.updated',
   'vault.wrote', 'owner.edited', 'owner.feedback_delivered',
   'team.planned', 'review.passed', 'review.returned', 'plan.vetoed', 'research.delivered', 'org.changed',
-  'guardrail.blocked',
+  'guardrail.blocked', 'guardrail.checking', 'guardrail.checked', 'guardrail.deferred',
 ] as const;
 export const EventType = z.enum(EVENT_TYPES);
 export type EventType = z.infer<typeof EventType>;

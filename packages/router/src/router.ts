@@ -179,6 +179,13 @@ export class Router {
 
     for (const c of cands) {
       const key = `${c.provider.id}/${c.model.id}`;
+      // The signal was already dead when we got here: either the caller handed us one that was aborted before
+      // the call (a job cancelled while its request was being assembled), or its deadline fired in the gap
+      // between two candidates — after a 429 or a 400 sent us on to the next one, where there is no in-flight
+      // request for the abort to interrupt. Both reach this line, and the catch below cannot: it only sees
+      // errors from a request we actually made. Stop rather than dial a model with a signal that is already
+      // dead; see the catch for what that used to cost.
+      if (chat.signal?.aborted) throw new ProviderError(c.provider.id, c.model.id, null, 'the caller aborted this request before it was sent');
       if (rejectedShape.has(c.provider.id)) { tried.push(`${key} (provider 400)`); continue; }
       // A prompt over the model's declared cap only buys a 413 (Groq: "Request too large … ITPM limit 7000") that
       // still counts as a call. Skip it here; the estimate is coarse, so the cap in providers.yaml should be conservative.
@@ -241,6 +248,14 @@ export class Router {
         }
         return out;
       } catch (err) {
+        // An abort is the caller giving up on its own clock — the constitution guardrail's classifier does
+        // exactly this at 20 s — and it says nothing about the provider. Treating it as a failure was
+        // expensive and actively misleading: the model was marked as having failed, a `daemon.warning` went
+        // into the log that the brief reads as an outage, and then the cascade walked every remaining
+        // candidate with the same dead signal and did both again for each one. Against the shipped config
+        // one classifier timeout cost about twenty warnings and twenty rpm/rpd slots on models that were
+        // never asked anything. Stop, record nothing, say nothing, and let the caller's own error stand.
+        if (chat.signal?.aborted) throw err;
         if (err instanceof RateLimitedError) {
           const n = (this.attemptCounts.get(key) ?? 0) + 1;
           this.attemptCounts.set(key, n);

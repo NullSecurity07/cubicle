@@ -9,7 +9,7 @@ import { DISCOVERY_INBOX, FOUNDER_BRIEF, founderBriefTemplate } from '@cubicle/c
 
 export const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n\n### revenue\n- Find the first organic channel\n';
 
-export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boolean; ideaVerdict?: 'pass' | 'return'; trustVerdict?: 'pass' | 'return'; outboundEmail?: Record<string, unknown> } = {}): Llm & { calls: Record<string, number> } {
+export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boolean; ideaVerdict?: 'pass' | 'return'; ideaChair?: 'hedge-then-good' | 'hedge-then-refusal' | 'hedge-then-silence'; trustVerdict?: 'pass' | 'return'; outboundEmail?: Record<string, unknown> } = {}): Llm & { calls: Record<string, number> } {
   let vetoes = opts.vetoes ?? 1;
   const plan = opts.plan ?? PLAN;
   const per = new Map<string, number>();
@@ -36,16 +36,40 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
         const planChair = /VERDICT: pass/.test(last) && /this plan/.test(last);
         // `boardSilent` simulates "no model was available" for every board call (advisors and chair alike),
         // the same way askAs's catch does when deps.llm.chat throws — used to test the zero-advisors-answered path.
-        if (opts.boardSilent && (/VERDICT: pass/.test(last) || /Imagine the (cycle has already failed|company spent a quarter on this and it failed)/.test(last))) throw new Error('no model available');
+        if (opts.boardSilent && (/VERDICT: pass/.test(last) || /VERDICT: STRONG/.test(last) || /Imagine the cycle has already failed/.test(last) || /Pressure test it the way Paul Graham reads a YC application/.test(last))) throw new Error('no model available');
         if (planChair) { const v = vetoes-- > 0; return { ...base, content: v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier' }; }
         if (/Imagine the cycle has already failed/.test(last)) return { ...base, content: '- the plan names no metric — add one\n- nobody owns the deploy — name them' };
-        // The board sitting on an idea (SP3): the chair's merge prompt says "this idea" where the plan's says
-        // "this plan", and the advisors are asked about a quarter rather than a cycle. `ideaVerdict` drives both
-        // outcomes — a pass leaves the score's recommendation standing, a return parks the card.
-        if (/VERDICT: pass/.test(last) && /this idea/.test(last)) {
-          return { ...base, content: opts.ideaVerdict === 'return' ? 'VERDICT: return\n- nobody has priced delivery' : 'VERDICT: pass\n- watch the free tier' };
+        // The board sitting on an idea (SP3, re-shaped by SP5b): the chair's merge prompt asks for one of the
+        // three pressure-test words where the plan's asks for pass/return, and the advisors are asked to
+        // pressure test rather than to imagine a lost quarter. `ideaVerdict` drives both outcomes — a pass
+        // leaves the score's recommendation standing, a return parks the card — and the chair answers in the
+        // words `readPressureVerdict` accepts, rubric line and all, so a scripted run exercises the real parse.
+        // The five parts in full, not just the two machine lines and the flaws: the chair's whole answer is kept
+        // now (ruling H3), so the scripted chair has to write the whole answer for a scripted run to exercise it.
+        const fiveParts = (assumption: string, flaw: string, validation: string, verdict: string): string => [
+          '## Core Assumption', assumption, '',
+          '## Three Fatal Flaws', `- ${flaw}`, '',
+          '## Problem Validation', validation, '',
+          '## Founder-Market Fit', 'The owner ran a nursery kitchen for six years.', '',
+          '## Brutal Verdict', verdict,
+        ].join('\n');
+        const ideaMerge = opts.ideaVerdict === 'return'
+          ? `VERDICT: PIVOT REQUIRED\nRUBRIC: core assumption 1, fatal flaws 1, pain 1, founder fit 1, why now 1\nWEDGE: the one nursery chain that already orders together\n\n${fiveParts('Nurseries buy food centrally, not per site.', 'nobody has priced delivery', 'A vitamin at the single site: the cook already shops on the way in.', 'Attack the chain, not the site.')}`
+          : `VERDICT: STRONG\nRUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1\n\n${fiveParts('Nurseries will pay 40 a week to stop planning meals.', 'watch the free tier', 'A painkiller: they already pay a caterer every term.', 'Build the cheap test this week.')}`;
+        // The chair's one re-ask (SP5b). It repeats the whole format the first ask gave, so it matches the idea
+        // chair's own discriminator too and must be tested FIRST; "That answer was not usable" is the phrase
+        // only it carries. `hedge-then-silence` throws the way `askAs`'s catch sees a model that has gone away.
+        if (/That answer was not usable/.test(last)) {
+          if (opts.ideaChair === 'hedge-then-silence') throw new Error('no model available');
+          return { ...base, content: opts.ideaChair === 'hedge-then-refusal' ? 'VERDICT: it depends' : ideaMerge };
         }
-        if (/Imagine the company spent a quarter on this and it failed/.test(last)) return { ...base, content: '- nobody has priced delivery — get a quote first' };
+        if (/VERDICT: STRONG/.test(last) && /this idea/.test(last)) {
+          // `ideaChair` makes the one re-ask scriptable: the chair hedges first, and the branch above decides
+          // what it does when asked again. Left unset, the chair answers properly the first time, as it does
+          // in every existing scenario, and the re-ask branch is never reached.
+          return { ...base, content: opts.ideaChair ? 'VERDICT: STRONG\nIt has potential, but the margins worry me.' : ideaMerge };
+        }
+        if (/Pressure test it the way Paul Graham reads a YC application/.test(last)) return { ...base, content: '1. Core Assumption — nurseries will pay weekly.\n2. Three Fatal Flaws\n- nobody has priced delivery — get a quote first\n3. Problem Validation — painkiller.\n4. Founder-Market Fit — the owner ran a kitchen.\n5. Brutal Verdict — WEAK.' };
         return { ...base, content: /NAME:/.test(last) ? 'NAME: X\nTAGLINE: y' : 'ok' };
       }
       const jobMsg = String(chat.messages[1]?.content ?? '');

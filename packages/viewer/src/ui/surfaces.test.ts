@@ -4,6 +4,7 @@ import path from 'node:path';
 import { SURFACES, registerSurface, chartBars, headlineFor, viewFor } from './surfaces.js';
 import type { Ctx } from './content.js';
 import { emptyState } from '../state.js';
+import { boardOpened, boardClosed } from './board.js';
 
 /** Captured before the registration test adds one, so the two tests do not depend on their order. */
 const REGISTERED = Object.keys(SURFACES);
@@ -50,5 +51,55 @@ describe('surface registry', () => {
       expect(typeof SURFACES[k].streamId(emptyState()), k).toBe('string');
     }
     expect(SURFACES.whiteboard.streamId(emptyState())).toBe('Plans/plan.md');
+  });
+});
+
+describe('the whiteboard panel shows the pressure test as its own line', () => {
+  it('labels it, and keeps the flaws as the bullets', () => {
+    const s = { ...emptyState(), now: Date.parse('2026-09-12T09:00:01.000Z'), plan: '# Plan', board: { id: 'm1', subject: 'idea' as const, title: 'Meal kits', verdict: 'return' as const, findings: ['the payer is not the user'], pressure: 'PIVOT REQUIRED', rubric: '7/10 — core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1', at: '2026-09-12T09:00:00.000Z' } };
+    const html = SURFACES.whiteboard.view(s, ctx).html;
+    expect(html).toContain('Pressure test: PIVOT REQUIRED · rubric 7/10');
+    expect(html).toContain('<li>the payer is not the user</li>');
+    // The rubric appears once, as a labelled line — not also as a bullet among the flaws.
+    expect(html.match(/7\/10/g)).toHaveLength(1);
+  });
+
+  it('a plan pre-mortem shows no pressure-test line at all', () => {
+    const s = { ...emptyState(), now: Date.parse('2026-09-12T09:00:01.000Z'), plan: '# Plan', board: { id: 'm2', subject: 'plan' as const, title: "this cycle's plan", verdict: 'pass' as const, findings: ['watch the free tier'], pressure: '', rubric: '', at: '2026-09-12T09:00:00.000Z' } };
+    const html = SURFACES.whiteboard.view(s, ctx).html;
+    expect(html).not.toContain('Pressure test');
+    expect(html).toContain('<li>watch the free tier</li>');
+  });
+});
+
+describe('the whiteboard panel is a panel, not the wall', () => {
+  const at = '2026-09-12T09:00:00.000Z';
+  const now = Date.parse('2026-09-12T09:00:01.000Z');
+
+  it('an open session still names what the board is sitting on', () => {
+    // The title is the one thing the panel shows while the board sits, and it carries no bullet marker.
+    const s = { ...emptyState(), now, plan: '# Plan', board: { id: 'm1', subject: 'idea' as const, title: 'Meal kits for nurseries', verdict: null, findings: [], pressure: '', rubric: '', at } };
+    const html = SURFACES.whiteboard.view(s, ctx).html;
+    expect(html).toContain('The board is sitting');
+    expect(html).toContain('<li>Meal kits for nurseries</li>');
+  });
+
+  it('shows every flaw the board raised, even when the wall had room for two', () => {
+    // `boardHeadline` spends one of its three lines on the verdict word; the panel writes that line itself and
+    // must not inherit the wall's budget, or the third flaw would silently fall off. A `PIVOT REQUIRED` spends
+    // finding 0 on the wedge, so all four the board may raise have to survive `boardClosed` to get here.
+    const findings = ['Pivot required. The wedge to attack instead: the 40-site chain', 'the payer is not the user', 'no van before 7am', 'the margin is 4%'];
+    const closed = boardClosed(boardOpened({ room: 'board', id: 'm1', subject: 'idea', title: 'Meal kits' }, at)!, { id: 'm1', room: 'board', verdict: 'return', findings, pressure: 'PIVOT REQUIRED', rubric: '7/10 — core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1' }, at)!;
+    const s = { ...emptyState(), now, plan: '# Plan', board: closed };
+    const html = SURFACES.whiteboard.view(s, ctx).html;
+    for (const f of findings) expect(html, f).toContain(`<li>${f}</li>`);
+    // The panel is where the five dimensions are read; the wall shows the total alone (ruling H6).
+    expect(html).toContain('Pressure test: PIVOT REQUIRED · rubric 7/10 — core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1');
+  });
+
+  it('shows a flaw in full, where the wall clips it to forty characters', () => {
+    const long = 'nobody has priced the delivery van, the driver or the 6am shift that the whole margin depends on';
+    const s = { ...emptyState(), now, plan: '# Plan', board: { id: 'm1', subject: 'plan' as const, title: "this cycle's plan", verdict: 'pass' as const, findings: [long], pressure: '', rubric: '', at } };
+    expect(SURFACES.whiteboard.view(s, ctx).html).toContain(`<li>${long}</li>`);
   });
 });

@@ -8,6 +8,7 @@ import { parseProvidersConfig } from '../src/config.js';
 import { QuotaTracker } from '../src/quota.js';
 import { Router, NoModelAvailableError } from '../src/router.js';
 import { providersTest } from '../src/providers-cli.js';
+import { allowProviderBaseUrl } from '../src/test-guard.js';
 
 type Behaviour = { status?: number; retryAfter?: string; content?: string; toolCall?: boolean; fail?: number };
 const behaviours = new Map<string, Behaviour>();
@@ -39,6 +40,9 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const addr = server.address() as { port: number };
   base = `http://127.0.0.1:${addr.port}`;
+  // The stub above is this process answering itself, not a provider: vouch for it so the repo-wide guard in
+  // packages/router/test-setup.ts lets the Router reach it. Every other destination stays refused.
+  allowProviderBaseUrl(base);
 });
 afterAll(() => server.close());
 
@@ -195,6 +199,7 @@ describe('the shipped cascade (acceptance test 4, config/providers.yaml)', () =>
   const CASCADE = ['gemini', 'groq', 'openrouter', 'ollama'];
   const KEYS = { GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q', OPENROUTER_API_KEY: 'o' };
   let fakes: http.Server[] = [];
+  let undoAllowances: (() => void)[] = [];
   let seen: string[] = [];
 
   /** Parse the shipped file and point every provider at its own loopback server. Cloud providers answer with
@@ -216,11 +221,15 @@ describe('the shipped cascade (acceptance test 4, config/providers.yaml)', () =>
       await new Promise<void>((r) => s.listen(0, '127.0.0.1', r));
       fakes.push(s);
       p.base_url = `http://127.0.0.1:${(s.address() as { port: number }).port}/v1`;
+      // Each provider of the *shipped* cascade is standing in on its own loopback port here — ollama included,
+      // which is the one that would otherwise find a real model server on this machine. Vouch for the stub, and
+      // take the allowance back with the server in `afterEach`, so it can never outlive the port it names.
+      undoAllowances.push(allowProviderBaseUrl(p.base_url));
     }
     return cfg;
   }
 
-  afterEach(() => { for (const s of fakes) s.close(); fakes = []; });
+  afterEach(() => { for (const s of fakes) s.close(); fakes = []; for (const undo of undoAllowances) undo(); undoAllowances = []; });
 
   it('walks gemini → groq → openrouter → ollama when the cloud is down (acceptance test 4)', async () => {
     const cfg = await shipped(503);
@@ -246,6 +255,25 @@ describe('the shipped cascade (acceptance test 4, config/providers.yaml)', () =>
     expect(r.provider).toBe('ollama');
     expect(r.downgraded).toBe(true);
     expect(events.count('router.downgraded')).toBe(1);
+  });
+});
+
+describe('an aborted request is the caller giving up, not a provider failing', () => {
+  it('a signal that is already dead dials nobody, records nothing and does not cascade', async () => {
+    behaviours.clear();
+    const before = hits.length;
+    const { router, events, quota } = mk();
+    const ac = new AbortController();
+    ac.abort();   // the gap between two candidates, or a job cancelled while its request was assembled
+
+    await expect(router.chat({ tier: 'strong', needsTools: false }, { messages: [{ role: 'user', content: 'hi' }], signal: ac.signal }))
+      .rejects.toThrow(/aborted this request before it was sent/);
+
+    expect(hits.length).toBe(before);                       // no model was dialled at all
+    expect(events.count('router.call')).toBe(0);
+    expect(events.count('daemon.warning')).toBe(0);         // an abort is not an outage
+    expect(events.count('quota.updated')).toBe(0);
+    expect(quota.coolingUntil('alpha', 'alpha-strong')).toBeNull();
   });
 });
 

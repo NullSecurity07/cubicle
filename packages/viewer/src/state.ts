@@ -13,7 +13,7 @@ const FAMILIES: Division[] = ['executive', 'board', 'technology', 'revenue', 'op
 /** Fallbacks for a state that has not seen a snapshot yet: the shipped roster's own answers. */
 export const OVERSEER = 'coo';
 export const VETO_ROLE = 'advisor_skeptic';
-export interface AgentView { role: string; display: string; sprite: string; desk: string; active: boolean; state: AgentState; tool: ToolIcon; job: string | null; bubble: Bubble | null; target: string | null; badge: 'error' | 'blocked' | null; /** face drawn on the sprite; `moodUntil` null = until the next change */ mood: Mood; moodUntil: number | null; /** pixel icon above the head */ emote: { kind: Emote; until: number } | null; /** when the agent last did anything (drives the asleep mood) */ idleSince: number | null; /** persona job title from the role charter, e.g. "Chief Technology Officer" */ title?: string; team?: string; reportsTo?: string; /** division root, for the palette */ division: Division; /** sprite silhouette: chief blazer, advisor cardigan, manager lanyard, member hoodie */ family: Family }
+export interface AgentView { role: string; display: string; sprite: string; desk: string; active: boolean; state: AgentState; tool: ToolIcon; job: string | null; bubble: Bubble | null; target: string | null; badge: 'error' | 'blocked' | null; /** face drawn on the sprite; `moodUntil` null = until the next change */ mood: Mood; moodUntil: number | null; /** pixel icon above the head */ emote: { kind: Emote; until: number } | null; /** when the agent last did anything (drives the asleep mood) */ idleSince: number | null; /** persona job title from the role charter, e.g. "Chief Technology Officer" */ title?: string; team?: string; reportsTo?: string; /** division root, for the palette */ division: Division; /** sprite silhouette: chief blazer, advisor cardigan, manager lanyard, member hoodie */ family: Family; /** the tool whose copy the constitution's classifier is checking right now, or null. See `statusText`. */ checking: string | null }
 export interface JobView { id: string; type: string; title: string; assigned: string; status: string; priority: number; checkpoint_step: number; updated: string; team?: string }
 export interface TeamView { id: string; name: string; lead: string; members: string[]; mission: string; room?: string; floor?: number; parent?: string }
 export interface SurfaceView { streamKind: 'browser' | 'terminal' | 'markdown' | 'chart' | 'iframe'; streamId: string; lastFrame?: string; active: boolean; text?: string; /** who opened the browser session */ agent?: string; /** last `browser.goto` URL of that agent */ url?: string; /** when `browser.session_ended` arrived */ endedAt?: string }
@@ -155,7 +155,7 @@ export function applySnapshot(s: State, snap: Snapshot): State {
     const prev = s.agents[r.role];
     const stillRunning = prev?.job && runningBy.get(r.role) === prev.job;
     // A snapshot is ground truth: keep in-flight pose only for a job that is still running.
-    agents[r.role] = { role: r.role, display: r.display, sprite: r.sprite, desk: r.desk, active: r.active, title: r.title, team: r.team, reportsTo: r.reports_to, division: divisionOf(r.team, snap.teams ?? []), family: familyOf(r.role, { title: r.title, team: r.team, isLead: (snap.teams ?? []).some((t) => t.lead === r.role) }), state: !r.active ? 'offline' : stillRunning ? prev!.state : entering && r.role === 'ceo' ? 'entering' : 'idle_at_desk', tool: stillRunning ? prev!.tool : null, job: stillRunning ? prev!.job : null, bubble: prev?.bubble ?? null, target: stillRunning ? prev!.target : null, badge: prev?.badge ?? null, mood: !r.active ? 'asleep' : stillRunning ? prev!.mood : prev?.mood ?? 'neutral', moodUntil: prev?.moodUntil ?? null, emote: prev?.emote ?? null, idleSince: prev?.idleSince ?? Date.now() };
+    agents[r.role] = { role: r.role, display: r.display, sprite: r.sprite, desk: r.desk, active: r.active, title: r.title, team: r.team, reportsTo: r.reports_to, division: divisionOf(r.team, snap.teams ?? []), family: familyOf(r.role, { title: r.title, team: r.team, isLead: (snap.teams ?? []).some((t) => t.lead === r.role) }), state: !r.active ? 'offline' : stillRunning ? prev!.state : entering && r.role === 'ceo' ? 'entering' : 'idle_at_desk', tool: stillRunning ? prev!.tool : null, job: stillRunning ? prev!.job : null, bubble: prev?.bubble ?? null, target: stillRunning ? prev!.target : null, badge: prev?.badge ?? null, mood: !r.active ? 'asleep' : stillRunning ? prev!.mood : prev?.mood ?? 'neutral', moodUntil: prev?.moodUntil ?? null, emote: prev?.emote ?? null, idleSince: prev?.idleSince ?? Date.now(), checking: stillRunning ? prev!.checking : null };
   }
   const jobs: Record<string, JobView> = {};
   for (const j of jobList) jobs[j.id] = j;
@@ -174,6 +174,39 @@ const BUBBLE_MS = 6000;
 const THOUGHT_MS = 4000;
 const MOOD_MS = 5000;
 export const SLEEP_AFTER_MS = 3 * 60_000;
+
+/**
+ * What the office says while the constitution's `banned_tactics` classifier is asking a model about an
+ * outbound call. It is the one guardrail check that leaves the process, it can take seconds, and until B1
+ * (2026-09-13) it said nothing at all: the agent simply stopped between `agent.tool_call` and whatever came
+ * next, which is indistinguishable from a hung company. Present tense, plain English, no jargon — the owner
+ * should be able to read it and know nothing is wrong.
+ */
+export const CHECKING_TEXT = 'checking the constitution…';
+
+/**
+ * What the office says about a call the guardrail could not check — as against one it refused. Nothing is
+ * wrong: the owner's approval stands, nothing was sent, and the next cycle sends it as soon as a model
+ * answers. Rendering that as "not allowed", with a worried face, would tell the owner the opposite of what
+ * the proposal note's own footer says (re-review 1).
+ */
+export const WAITING_TEXT = 'waiting for the guardrail';
+
+/**
+ * How long the "checking" bubble may stand without a `guardrail.checked`. The classifier is bounded by its
+ * own 20 s clock (`CLASSIFIER_TIMEOUT_MS` in @cubicle/tools), so a pair that never closes means the daemon
+ * died mid-check — and a dead daemon must not leave the office claiming it is still reading the rules.
+ */
+const CHECKING_MS = 25_000;
+
+/**
+ * The one thing an agent can be doing that neither its pose nor its tool icon can show: waiting on the
+ * constitution's classifier. `null` when it is not, and the caller falls back to its ordinary state line —
+ * `agentView` in `ui/content.ts` is the caller. Pure, so it is tested without Phaser.
+ */
+export function statusText(ag: Pick<AgentView, 'checking'>): string | null {
+  return ag.checking ? CHECKING_TEXT : null;
+}
 
 /** Short present-tense line for an action bubble, from the tool name and its summary (often JSON). */
 export function actionVerb(tool: string, summary: unknown): string {
@@ -270,10 +303,20 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'deploy.done': for (const ag of everyone()) { feel(ag, 'happy'); emote(ag, 'cheer', 4000); } st.deploys = [...st.deploys.slice(-20), { ts: e.ts, url: String(p.url ?? '') }]; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `deployed ${String(p.url ?? '')}` }]; break;
     case 'heartbeat.started': { const ceo = a('ceo'); if (ceo) { ceo.state = 'working'; ceo.job = String(e.job); feel(ceo, 'thinking', null); } break; }
     case 'heartbeat.completed': st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `brief written: ${String(p.run ?? '')}` }]; st.staleSnapshot = true; break;
-    case 'role.hired': { const role = String(p.role); st.agents[role] = { role, display: String(p.display ?? role), sprite: String(p.sprite ?? role), desk: String(p.desk ?? ''), active: true, team: p.team ? String(p.team) : undefined, reportsTo: p.reports_to ? String(p.reports_to) : undefined, division: divisionOf(p.team ? String(p.team) : undefined, st.teams), family: familyOf(role, { title: String(p.title ?? ''), team: String(p.team ?? ''), isLead: false }), state: 'entering', tool: null, job: null, bubble: { kind: 'speech', text: 'Hi, I just joined!', until: nowMs + BUBBLE_MS }, target: null, badge: null, mood: 'happy', moodUntil: nowMs + BUBBLE_MS, emote: { kind: 'heart', until: nowMs + BUBBLE_MS }, idleSince: nowMs }; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `hired ${role}` }]; break; }
+    case 'role.hired': { const role = String(p.role); st.agents[role] = { role, display: String(p.display ?? role), sprite: String(p.sprite ?? role), desk: String(p.desk ?? ''), active: true, team: p.team ? String(p.team) : undefined, reportsTo: p.reports_to ? String(p.reports_to) : undefined, division: divisionOf(p.team ? String(p.team) : undefined, st.teams), family: familyOf(role, { title: String(p.title ?? ''), team: String(p.team ?? ''), isLead: false }), state: 'entering', tool: null, job: null, bubble: { kind: 'speech', text: 'Hi, I just joined!', until: nowMs + BUBBLE_MS }, target: null, badge: null, mood: 'happy', moodUntil: nowMs + BUBBLE_MS, emote: { kind: 'heart', until: nowMs + BUBBLE_MS }, idleSince: nowMs, checking: null }; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `hired ${role}` }]; break; }
     case 'role.fired': { const role = String(p.role); const prev = st.agents[role]; if (prev) st.agents[role] = { ...prev, state: 'leaving', active: false, tool: null, job: null, target: null, badge: null, bubble: { kind: 'speech', text: 'Goodbye.', until: nowMs + BUBBLE_MS }, mood: 'worried', moodUntil: null, emote: null }; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${role} left the company` }]; break; }
     case 'quota.updated': { if (p.provider && p.model && 'rpm_used' in p) { const q = p as unknown as QuotaView; const i = st.quota.findIndex((x) => x.provider === q.provider && x.model === q.model); st.quota = i >= 0 ? st.quota.map((x, k) => (k === i ? q : x)) : [...st.quota, q]; } break; }
-    case 'guardrail.blocked': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'thought', text: `not allowed: ${String(p.reason ?? 'blocked')}`.slice(0, 120), until: nowMs + BUBBLE_MS }; feel(ag, 'worried'); emote(ag, '!', 4000); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `guardrail: ${String(p.reason ?? '')}` }]; break; }
+    // The classifier's wait, made visible. `checking` is what `statusText` reads; the bubble is what the
+    // sprite shows. Both are cleared by `guardrail.checked`, and `tick` ages them out if it never arrives.
+    // `working` only for someone who is already at their desk doing something: an agent on its way somewhere,
+    // arriving, leaving or offline keeps the pose it has, or the office would teleport a departing colleague
+    // back into their chair to read the rules.
+    case 'guardrail.checking': { const ag = a(e.agent); if (ag) { ag.checking = String(p.tool ?? ''); if (ag.state === 'idle_at_desk' || ag.state === 'talking') ag.state = 'working'; ag.bubble = { kind: 'thought', text: CHECKING_TEXT, until: nowMs + CHECKING_MS }; feel(ag, 'thinking', null); } break; }
+    case 'guardrail.checked': { const ag = a(e.agent); if (ag) { ag.checking = null; if (ag.bubble?.text === CHECKING_TEXT) ag.bubble = null; } break; }
+    // Not a refusal: nothing was decided, nothing was sent, and it goes out on the next cycle. Patient, not
+    // worried — and the feed says "waiting", so the newsstand does not read as a company being told off.
+    case 'guardrail.deferred': { const ag = a(e.agent); if (ag) { ag.checking = null; ag.bubble = { kind: 'thought', text: `${WAITING_TEXT}…`, until: nowMs + BUBBLE_MS }; feel(ag, 'thinking', BUBBLE_MS); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${WAITING_TEXT}: ${String(p.reason ?? '')}` }]; break; }
+    case 'guardrail.blocked': { const ag = a(e.agent); if (ag) { ag.checking = null; ag.bubble = { kind: 'thought', text: `not allowed: ${String(p.reason ?? 'blocked')}`.slice(0, 120), until: nowMs + BUBBLE_MS }; feel(ag, 'worried'); emote(ag, '!', 4000); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `guardrail: ${String(p.reason ?? '')}` }]; break; }
     case 'owner.edited': st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `you edited ${String(p.path)}` }]; break;
     case 'vault.wrote': { const pth = String(p.path ?? ''); if (pth.startsWith('Decisions/') && !p.deleted) st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `decision recorded: ${pth.replace(/^Decisions\//, '').replace(/\.md$/, '')} (${String(e.agent ?? '')})` }]; if ((pth === 'Plans/plan.md' || pth.startsWith('Runs/') || pth.startsWith('Ledger/')) && p.generated !== true) st.staleSnapshot = true; break; }
     default: break;
@@ -287,7 +330,9 @@ export function tick(s: State, nowMs: number): State {
   const agents = { ...s.agents };
   for (const [k, ag] of Object.entries(agents)) {
     let next = ag;
-    if (ag.bubble && ag.bubble.until < nowMs) next = { ...next, bubble: null, state: ag.state === 'talking' ? (ag.job ? 'working' : 'idle_at_desk') : ag.state };
+    // A `guardrail.checking` whose `checked` never arrived (the daemon died mid-check) expires with its
+    // bubble: the office must not go on saying it is reading the rules when nobody is.
+    if (ag.bubble && ag.bubble.until < nowMs) next = { ...next, bubble: null, checking: ag.bubble.text === CHECKING_TEXT ? null : ag.checking, state: ag.state === 'talking' ? (ag.job ? 'working' : 'idle_at_desk') : ag.state };
     if (ag.emote && ag.emote.until < nowMs) next = { ...next, emote: null };
     if (ag.moodUntil !== null && ag.moodUntil < nowMs) next = { ...next, mood: next.job && next.state === 'working' ? 'thinking' : 'neutral', moodUntil: null };
     // A long quiet spell at the desk: doze off (any event on the agent wakes it).

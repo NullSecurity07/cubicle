@@ -1,6 +1,14 @@
 /**
  * Live test against the local Ollama floor (acceptance test 5: a `tools: json` model completes a 3-tool job).
  * Runs only when CUBICLE_LIVE=1; needs Ollama with qwen2.5:7b and nomic-embed-text.
+ *
+ * This is the one test in the repo whose whole point is to leave the process, so it is also the one that has
+ * to say so out loud: the repo-wide guard (`packages/router/test-setup.ts`) refuses a real provider connection
+ * in every suite, and `CUBICLE_TEST_REAL_PROVIDERS=1` is how a run opts out of it. Requiring both means a
+ * `CUBICLE_LIVE=1` run that was not *meant* to reach a model server fails loudly instead of quietly billing
+ * the owner's quota.
+ *
+ *     CUBICLE_LIVE=1 CUBICLE_TEST_REAL_PROVIDERS=1 pnpm --filter @cubicle/harness test
  */
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
@@ -12,6 +20,7 @@ import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { runJob, vaultScheduler, MemoryIndex } from '../src/index.js';
 
 const live = process.env.CUBICLE_LIVE === '1';
+if (live && process.env.CUBICLE_TEST_REAL_PROVIDERS !== '1') throw new Error('CUBICLE_LIVE=1 needs CUBICLE_TEST_REAL_PROVIDERS=1: this test calls a real model server, and the repo-wide guard refuses that by default.');
 const root = path.resolve(__dirname, '../../..');
 
 describe.skipIf(!live)('live local model', () => {

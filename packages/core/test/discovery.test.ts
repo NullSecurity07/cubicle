@@ -101,9 +101,12 @@ describe('the cabin interview (spec §1.4)', () => {
 });
 
 describe('the founder brief (spec §1.7)', () => {
-  it('has seven sections and names the ones a draft is missing', () => {
-    expect(FOUNDER_BRIEF_SECTIONS.length).toBe(7);
-    expect(missingBriefSections(founderBriefTemplate())).toEqual([]);
+  it('has eight sections and names the ones a draft is missing', () => {
+    expect(FOUNDER_BRIEF_SECTIONS.length).toBe(8);
+    // The empty template carries all eight headings and has answered exactly one of them: none. `## Pressure
+    // test` is the section whose body is checked, so the template is short of it until someone writes it
+    // (ruling H5) — which is the point of §4, "the brief takes the test once".
+    expect(missingBriefSections(founderBriefTemplate())).toEqual(['## Pressure test']);
     expect(missingBriefSections('## What the company is\n\nMeal kits.')).toEqual([...FOUNDER_BRIEF_SECTIONS].slice(1));
     // A heading mentioned inside prose is not a section.
     expect(missingBriefSections('We never wrote ## Constraints anywhere real')).toContain('## Constraints');

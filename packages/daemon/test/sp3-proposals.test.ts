@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createProposal, readIdea, writeIdeaCard, updateIdea, FOUNDER_BRIEF, hasFounderBrief } from '@cubicle/core';
+import { scaffoldVault, Vault, createProposal, readIdea, writeIdeaCard, updateIdea, FOUNDER_BRIEF, hasFounderBrief, PRESSURE_TEST_SECTION, briefSectionBody, founderBriefTemplate } from '@cubicle/core';
 import { dispatchProposals } from '../src/dispatcher.js';
 import { ToolRegistry, parseToolsConfig } from '@cubicle/tools';
 
@@ -28,9 +28,11 @@ beforeEach(async () => {
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
 describe('founder_brief (spec §1.7)', () => {
-  const brief = ['## What the company is', 'Meal kits.', '## Who it is for', 'Nurseries.', '## What already exists', 'Two customers.',
+  /** The seven sections a brief carried before SP5b — what every brief proposed before 2026-09-12 looks like. */
+  const sevenSectionBrief = ['## What the company is', 'Meal kits.', '## Who it is for', 'Nurseries.', '## What already exists', 'Two customers.',
     '## What success looks like', 'Ten nurseries.', '## Constraints', 'No money.', '## Candidate ideas', '- [[Ideas/meal-kits]]',
     '## What we do not know', 'Whether they would pay more.'].join('\n\n');
+  const brief = `${sevenSectionBrief}\n\n## Pressure test\n\nCore Assumption: nurseries will pay per child. Brutal Verdict: WEAK.`;
 
   it('writes Memory/founder-brief.md from the proposed content the owner approved', async () => {
     const { path: rel } = createProposal(vault, { kind: 'founder_brief', from: 'research_manager', target: FOUNDER_BRIEF, title: 'What I understood', body: `## Proposed content\n\n\`\`\`\n${brief}\n\`\`\`` }, 'research_manager');
@@ -39,6 +41,35 @@ describe('founder_brief (spec §1.7)', () => {
     expect(hasFounderBrief(vault)).toBe(true);
     expect(vault.readText(FOUNDER_BRIEF)).toContain('## What we do not know');
     expect(vault.readText(rel)).toContain('_Resolved');
+  });
+
+  it('refuses a brief proposed today that has only the seven sections SP3 knew about', async () => {
+    const { path: rel } = createProposal(vault, { kind: 'founder_brief', from: 'research_manager', target: FOUNDER_BRIEF, title: 'Seven of eight', body: `## Proposed content\n\n\`\`\`\n${sevenSectionBrief}\n\`\`\`` }, 'research_manager');
+    approve(rel, { approved: 'true' });
+    await dispatchProposals(deps());
+    expect(hasFounderBrief(vault)).toBe(false);
+    expect(String(vault.readNoteOrNull(rel)!.data.refused)).toContain('## Pressure test');
+  });
+
+  it('refuses a brief whose pressure test is the template\'s own prompt text (I3, ruling H5)', async () => {
+    // §4 is "the brief takes the test once". A heading with the instructions still under it has taken nothing,
+    // and every plan from here on is written against this file.
+    const unwritten = `${sevenSectionBrief}\n\n${PRESSURE_TEST_SECTION}\n\n${briefSectionBody(founderBriefTemplate(), PRESSURE_TEST_SECTION)}`;
+    const { path: rel } = createProposal(vault, { kind: 'founder_brief', from: 'research_manager', target: FOUNDER_BRIEF, title: 'The template, pasted', body: `## Proposed content\n\n\`\`\`\n${unwritten}\n\`\`\`` }, 'research_manager');
+    approve(rel, { approved: 'true' });
+    await dispatchProposals(deps());
+    expect(hasFounderBrief(vault)).toBe(false);
+    expect(String(vault.readNoteOrNull(rel)!.data.refused)).toContain(PRESSURE_TEST_SECTION);
+  });
+
+  it('adopts an SP3-era brief filed before the pressure test existed, on the owner\'s click (spec §4)', async () => {
+    const { path: rel } = createProposal(vault, { kind: 'founder_brief', from: 'research_manager', target: FOUNDER_BRIEF, title: 'Filed last week', body: `## Proposed content\n\n\`\`\`\n${sevenSectionBrief}\n\`\`\`` }, 'research_manager');
+    // The one fact that separates a brief written before the eighth section from one written after it: the
+    // note's own `created`. A brief already sitting unanswered in `00 Inbox/` when SP5b shipped is adopted.
+    approve(rel, { approved: 'true', created: '\'2026-09-11T10:00:00.000Z\'' });
+    expect(await dispatchProposals(deps())).toBeGreaterThan(0);
+    expect(hasFounderBrief(vault)).toBe(true);
+    expect(vault.readText(FOUNDER_BRIEF)).toContain('## What we do not know');
   });
 
   it('refuses a brief that is missing sections, and says which', async () => {

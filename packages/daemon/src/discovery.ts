@@ -4,6 +4,8 @@ import {
   DISCOVERY_INBOX, FOUNDER_BRIEF, INTERVIEW_PATH, discoveryDigest, hasFounderBrief, founderBriefTemplate,
   interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, listDiscoveryInputs, isLongPrompt,
   ownerSaid, ideaPath, IDEA_SCORE_MAX,
+  INTERVIEW_QUESTIONS, openInterviewQuestions, interviewAskTitle, renderInterviewCovered, questionsAsked,
+  PRESSURE_TEST_SECTION, PRESSURE_HANDBOOK_PATH,
 } from '@cubicle/core';
 
 // `ownerSaid` moved to core so the `discovery.inputs` tool cuts a cabin note the same way this module does
@@ -62,10 +64,15 @@ function isSubstantive(u: UnreadMaterial): boolean {
  * the single-prompt company waiting for an interview answer for ever, and it is the one path the spec calls out
  * as having to work.
  *
- * `ask` is about the *vault* being thin — no files, no typed document, no brief, nobody asked yet. `run` is
- * about there being something unread to read, and about that something being worth a research job the second
- * time onwards: the first run takes anything, a re-run needs a substantive increment and is floored at one a
- * calendar day, the same backstop `intelligenceDue` uses.
+ * `ask` is about one thing only: **has anybody been asked yet**. It used to be about the vault being thin as
+ * well — no files, no typed document, no brief — and preflight G2 deleted those three clauses, because the
+ * vault they refused to interview is exactly the vault whose material already answers some of the six, which
+ * made the coverage check that decides *which* questions to ask unreachable. How much of the interview is
+ * still worth asking is `askInterview`'s judgement now, per question, not this gate's, all or nothing.
+ *
+ * `run` is about there being something unread to read, and about that something being worth a research job the
+ * second time onwards: the first run takes anything, a re-run needs a substantive increment and is floored at
+ * one a calendar day, the same backstop `intelligenceDue` uses.
  */
 export function discoveryStatus(o: {
   hasBrief: boolean;
@@ -82,17 +89,24 @@ export function discoveryStatus(o: {
   ranToday: boolean;
 }): DiscoveryStatus {
   if (o.briefProposalOpen) return { run: false, ask: false, why: 'a founder brief is already waiting for your verdict' };
-  // Thin: nothing written down and nothing typed at length. One line does not make a vault thick — the owner
-  // who typed it is exactly the owner the six questions are for — so it does not hold the interview back.
-  const ask = !o.hasBrief && o.interview === 'none' && o.inputs === 0 && !o.unread.longPrompt;
+  // The interview is asked once, ever, and the *coverage check* — not this gate — decides how much of it is
+  // still worth asking (preflight G2). This used to read "thin vault only": no brief, no inbox file, nothing
+  // typed at length. That made the two routes the coverage check exists for into dead code, because the vault
+  // it refused to interview is exactly the vault whose material already answers some of the six. Now the
+  // questions go out whenever nobody has been asked yet, and `askInterview` sends only the ones the founder
+  // brief, the inbox files and the owner's cabin text have not already answered — or, when they answer all
+  // six, sends nothing at all and records the `covered` phase.
+  const ask = o.interview === 'none';
   const status = (run: boolean, why: string): DiscoveryStatus => ({ run, ask, why });
   if (o.alreadyRun) return status(false, 'discovery has already read this material');
 
   if (!o.everRun) {
     // The first read takes whatever there is, one line included, and an empty vault whose owner skipped the
     // interview still gets one: §1.8 — the company must be able to start from a single line, or from nothing.
-    const anything = isSubstantive(o.unread) || o.unread.anyPrompt || o.inputs > 0 || o.interview === 'answered' || o.interview === 'skipped';
-    if (anything) return status(true, ask ? 'reading the line the owner typed, and asking the interview as well' : 'first discovery over the owner\'s material');
+    // `covered` is the owner's material having answered all six (spec §5): like `skipped`, it means the
+    // interview is closed and there is something to read — never that the company is still waiting.
+    const anything = isSubstantive(o.unread) || o.unread.anyPrompt || o.inputs > 0 || ['answered', 'skipped', 'covered'].includes(o.interview);
+    if (anything) return status(true, ask ? 'reading what the owner gave us, and asking the interview as well — only the questions it does not already answer' : 'first discovery over the owner\'s material');
     if (ask) return status(false, 'nothing to read yet: asking the founder interview');
     if (o.interview === 'asked') return status(false, 'the founder interview is waiting for an answer');
     return status(false, 'nothing to read yet');
@@ -144,11 +158,11 @@ export function discoveryGoal(opts: { founderBrief: string; briefTemplate: strin
     '1. `discovery.inputs` — the files, the interview and the cabin messages. This is the whole brief; there is nothing else to go on.',
     '2. `research.start` — open the project directory, then follow `Processes/research_lifecycle.md`. Existing evidence first: `memory.search` and `vault.search` before you fetch anything, and `http.fetch { archive: true }` + `sources.cite` for every page you do fetch.',
     `3. \`idea.card\` — one card per candidate idea, \`source: discovery\`, with the evidence that points at it and, where your research supports a view, the research half (report, confidence, evidence 1–5, fit 1–5). One card per idea, never a digest of several. Do not price anything: the finance office does that.`,
-    `4. \`proposal.create\` with \`kind: founder_brief\` and \`target: ${opts.founderBrief}\`, carrying the whole brief inside a \`## Proposed content\` fence. These seven sections, all of them:`,
+    `4. \`proposal.create\` with \`kind: founder_brief\` and \`target: ${opts.founderBrief}\`, carrying the whole brief inside a \`## Proposed content\` fence. These eight sections, all of them:`,
     '',
     opts.briefTemplate,
     '',
-    `Rules: every claim about what already exists cites the file it came from. Where the owner's material and the interview disagree, say so rather than picking one. Never invent a customer, a number or a date. The report goes to ${opts.research}; the brief goes to the owner.`,
+    `Rules: every claim about what already exists cites the file it came from. Where the owner's material and the interview disagree, say so rather than picking one. Never invent a customer, a number or a date. \`${PRESSURE_TEST_SECTION}\` is the Paul Graham test on the company as a whole — read \`${PRESSURE_HANDBOOK_PATH}\` first, write the five parts in order, end on one word of STRONG, WEAK or PIVOT REQUIRED, and never write "it has potential, but". Put the same five parts in your research report. The report goes to ${opts.research}; the brief goes to the owner.`,
   ].join('\n');
 }
 
@@ -237,6 +251,33 @@ export function lastWriteTimes(vault: Vault, paths: string[]): Map<string, strin
  */
 export function interviewMessageId(ceo: string): string { return idFromKey('msg', `interview:${ceo}`); }
 
+/** How much of the owner's material the coverage check reads. A cap, not a sample: it is read once, ever. */
+export const INTERVIEW_MATERIAL_CHARS = 20_000;
+
+/**
+ * Everything the company has been told, for the coverage check: every cabin message the owner has typed (read
+ * or unread — coverage is about knowledge, not about increments), every readable file in `Discovery/inbox/`,
+ * and the founder brief if one is adopted.
+ *
+ * The brief comes back twice on purpose. As `brief` it is read by heading, which is the strict route: a
+ * section counts only when it is written rather than left as the template's prose. As part of `text` it is
+ * read by cue, which is the only route open to "what have you already tried that did not work" — no brief
+ * heading answers that one, so a brief that says "we tried X and it did not work" would otherwise buy the
+ * owner a question they had already answered in the very document the company planned from.
+ *
+ * Putting it in `text` is safe because `coveredQuestions` runs `ownerAuthored` over everything first, which
+ * takes out the template's own prose and every `## ` heading. Without that it was not safe: `## Who it is for`
+ * is itself a match for that question's `/it is for/` cue, and `## Pressure test`'s template prompt contains
+ * "the workaround these people use today", so an entirely unwritten brief covered question 1 (review T4).
+ */
+export function interviewMaterial(vault: Vault): { text: string; brief: string } {
+  const brief = vault.readTextOrNull(FOUNDER_BRIEF) ?? '';
+  const parts = [ownerPrompt(vault)];
+  for (const f of listDiscoveryInputs(vault)) if (f.readable) parts.push(vault.readTextOrNull(f.path) ?? '');
+  parts.push(brief);
+  return { text: parts.filter(Boolean).join('\n\n').slice(0, INTERVIEW_MATERIAL_CHARS), brief };
+}
+
 /**
  * Ask the six questions, once: one cabin message from the chief executive, then the transcript that records it.
  *
@@ -246,19 +287,39 @@ export function interviewMessageId(ceo: string): string { return idFromKey('msg'
  * silently dead. In this order a kill resumes into the transcript write: `createProposal` is idempotent on the
  * deterministic id, so the owner is never asked twice.
  *
+ * **The resume check comes before every write** (review T4, Important 2). Coverage made the two writes
+ * material-dependent for the first time, and that turned the one-write gap into two bugs. A kill after the
+ * message left phase `none`; on the next cycle, material that had since grown could make the covered branch
+ * fire, writing `## Already answered` while the CEO's six questions sat in the owner's inbox — and
+ * `captureInterviewAnswer` only closes an `asked` transcript, so the owner's reply to a message they can see
+ * would never have been recorded by anything. Even without new material, `createProposal`'s idempotent replay
+ * does not rewrite the body, so re-deriving the open questions on a resume recorded one set in the transcript
+ * and left the owner reading another. So: if the message is already out, the transcript is written from *that
+ * message's* questions, and `covered` is never reachable once anybody has been asked anything.
+ *
  * Returns the message id when this call is what sent it, and null when the interview had already been asked —
  * including the resume, where the transcript is written but no new message goes out.
  */
 export function askInterview(vault: Vault, ceo: string, now: Date): string | null {
   if (interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)) !== 'none') return null;
   const id = interviewMessageId(ceo);
-  const resumed = findInboxById(vault, id) !== null;
+  const sent = findInboxById(vault, id);
+  if (sent) {
+    // The resume. The owner can see this message, so the transcript records exactly the questions it carries.
+    vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString(), questionsAsked(sent.body)), 'daemon');
+    return null;
+  }
+  const m = interviewMaterial(vault);
+  const open = openInterviewQuestions(m.text, m.brief);
+  // Nothing to ask: the owner said all six in their own material. Nobody is sent anything, and the transcript
+  // says so. Reachable only here, where it is already known that no message has gone out.
+  if (!open.length) { vault.writeText(INTERVIEW_PATH, renderInterviewCovered(now.toISOString()), 'daemon'); return null; }
   createProposal(vault, {
     id, kind: 'message', from: ceo, to: 'owner',
-    title: 'Six questions, while I get started', body: renderInterviewAsk(),
+    title: interviewAskTitle(open.length), body: renderInterviewAsk(open, INTERVIEW_QUESTIONS.length - open.length),
   }, ceo);
-  vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString()), 'daemon');
-  return resumed ? null : id;
+  vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString(), open), 'daemon');
+  return id;
 }
 
 /**
@@ -369,7 +430,7 @@ export function enqueueDiscovery(vault: Vault, org: Org, precomputed?: Discovery
     assigned: research, for: ceo, owner_role: ceo, team: teamOf(org, research)?.id,
     goal: discoveryGoal({ founderBrief: FOUNDER_BRIEF, briefTemplate: founderBriefTemplate(), hasBrief, research: ceo }),
     research: discoveryRequest({ ceo, hasBrief, deadline }),
-    done_when: `${FOUNDER_BRIEF} is filed as a founder_brief proposal with all seven sections, and every candidate idea it names is its own Ideas/<slug>.md card with evidence.`,
+    done_when: `${FOUNDER_BRIEF} is filed as a founder_brief proposal with all eight sections, including a ${PRESSURE_TEST_SECTION} that ends on one word, and every candidate idea it names is its own Ideas/<slug>.md card with evidence.`,
   }, 'daemon');
 }
 

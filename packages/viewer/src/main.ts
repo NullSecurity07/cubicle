@@ -238,7 +238,7 @@ const net = new Net(url, token, {
     if (state.mode === 'live') liveState = state;
     replayBase = emptyState();
     // seed roles from the live snapshot so sprites exist even before their first event of the day
-    if (liveState) replayBase = { ...replayBase, agents: Object.fromEntries(Object.entries(liveState.agents).map(([k, v]) => [k, { ...v, state: 'idle_at_desk' as const, job: null, tool: null, bubble: null, target: null, badge: null }])), plan: liveState.plan, latestRun: liveState.latestRun, quota: liveState.quota, brand: liveState.brand };
+    if (liveState) replayBase = { ...replayBase, agents: Object.fromEntries(Object.entries(liveState.agents).map(([k, v]) => [k, { ...v, state: 'idle_at_desk' as const, job: null, tool: null, bubble: null, target: null, badge: null, checking: null }])), plan: liveState.plan, latestRun: liveState.latestRun, quota: liveState.quota, brand: liveState.brand };
     replayCheckpoints = []; replayState = null; replayCursor = 0;
     time.setReplay(replayBuffer);
     rebuildReplayTo(0);
