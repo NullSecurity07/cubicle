@@ -10,6 +10,8 @@ import type Phaser from 'phaser';
 import { px, hline, vline, type Px } from './tiles-draw.js';
 import { PALETTE, floorPalette } from './palette.js';
 import { RES, signLabelStyle } from './text.js';
+import { motionOff } from './motion.js';
+import { addText } from './text-crisp.js';
 import { TILE, type Tile } from './map.js';
 import type { AgentView } from '../state.js';
 
@@ -21,13 +23,21 @@ export const DECOR_FRAMES: Record<DecorKind, number> = { plant: 2, plant2: 2, co
 const KINDS: DecorKind[] = ['plant', 'plant2', 'coffee', 'lamp', 'monitor', 'cooler'];
 export const DECOR_FRAME_NAMES: { name: string; x: number }[] = (() => { const out: { name: string; x: number }[] = []; let x = 0; for (const k of KINDS) for (let f = 0; f < DECOR_FRAMES[k]; f++) { out.push({ name: `${k}:${f}`, x }); x += TILE; } return out; })();
 
-/** Which frame a decor object shows now; null hides it. */
+/**
+ * Which frame a decor object shows now; null hides it.
+ *
+ * Under `prefers-reduced-motion` every frame-swap animation holds its resting frame. This is time-based rather
+ * than tweened, so the one place reduced motion is applied — `dur()` — never saw it, and plants swayed, coffee
+ * steamed and the cooler bubbled while every tween in the office was frozen (visual QA I7). State the frame
+ * *says* something (a lit monitor, a machine in use) is not motion and still shows.
+ */
 export function decorFrame(kind: DecorKind, nowMs: number, ctx: { occupied: boolean; working: boolean }): number | null {
+  const still = motionOff();
   switch (kind) {
-    case 'plant': case 'plant2': return Math.floor(nowMs / 800) % 2;
-    case 'coffee': return ctx.occupied ? Math.floor(nowMs / 500) % 3 : null;
+    case 'plant': case 'plant2': return still ? 0 : Math.floor(nowMs / 800) % 2;
+    case 'coffee': return ctx.occupied ? (still ? 0 : Math.floor(nowMs / 500) % 3) : null;
     case 'monitor': return ctx.working ? 1 : 0;
-    case 'cooler': return nowMs % 6000 < 400 ? 1 : 0;
+    case 'cooler': return still ? 0 : (nowMs % 6000 < 400 ? 1 : 0);
     case 'lamp': return null;
   }
 }
@@ -128,7 +138,7 @@ export class RoomSigns {
       // Depth 5.5, above the wall Surfaces at 5: a screen hung on the same wall band used to clip "Board room" to
       // "Boar…". The 2 px of extra left padding is the clear band that keeps the first glyph off the screen frame.
       const anchorX = sg.tile.tx * TILE + 4;
-      const text = scene.add.text(anchorX, sg.tile.ty * TILE + 1, label, signLabelStyle(color)).setOrigin(0, 0).setScale(1 / RES).setDepth(5.5);
+      const text = addText(scene, anchorX, sg.tile.ty * TILE + 1, label, signLabelStyle(color)).setOrigin(0, 0).setScale(1 / RES).setDepth(5.5);
       const room = rooms[sg.room];
       // How far right the label may slide and still sit over its own room, with its own width taken off.
       const roomRight = room ? (room.tx + room.tw) * TILE - 4 - text.width / RES : anchorX;
@@ -136,12 +146,16 @@ export class RoomSigns {
       this.items.push({ text, anchorX, roomRight });
     }
   }
-  /** `worldLeft` is the world x of the first column the floor rail does not cover. Cheap: one clamp per sign. */
-  update(worldLeft: number): void {
+  /**
+   * `worldLeft` is the world x of the first column the floor rail does not cover. Cheap: one clamp per sign.
+   * `lettering` is false at the tower elevation, where a 7 px sign is drawn at less than a screen pixel per world
+   * pixel and reads as a smudge over the room it names.
+   */
+  update(worldLeft: number, lettering = true): void {
     for (const it of this.items) {
       const x = signX(it.anchorX, it.roomRight, worldLeft);
       if (it.text.x !== x) it.text.setX(x);
-      const on = signVisible(x, worldLeft);
+      const on = lettering && signVisible(x, worldLeft);
       if (it.text.visible !== on) it.text.setVisible(on);
     }
   }

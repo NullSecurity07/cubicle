@@ -9,7 +9,8 @@ import type { AgentView, ToolIcon, Bubble } from '../state.js';
 import { BLINK_MS, GESTURE_MS, nextBlinkDelay, nextGestureDelay, pickGesture, emoteBob, faceToward, thinkingDots, type Gesture } from './expressions.js';
 import { frameFor, poseFor, faceFrame, talkOpen, isSeatedPose, WALK_FRAMES, WALK_STEP_MS, BOB, type Dir, type PoseCtx } from './frames.js';
 import { DUR, EASE, dur } from './motion.js';
-import { RES, FONT, MONO, nameLabelStyle, nameLabelView, nameLabelText } from './text.js';
+import { RES, FONT, MONO, nameLabelStyle, nameLabelView, nameLabelText, worldTextVisible } from './text.js';
+import { addText } from './text-crisp.js';
 import { PALETTE, hexToInt } from './palette.js';
 import { Latch } from './latch.js';
 
@@ -19,6 +20,24 @@ const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = {
   doc: { t: 'D', c: PALETTE.tool.doc }, chart: { t: '%', c: PALETTE.tool.chart }, chat: { t: '…', c: PALETTE.tool.chat },
 };
 const SPEED = 70; // px/s
+/** Air between the bubble and the edge it is kept inside, in world pixels. */
+export const BUBBLE_MARGIN = 6;
+
+/**
+ * Where a speech bubble sits relative to the sprite that owns it, in world pixels.
+ *
+ * `view` is the camera's world rectangle (absent before the first frame, and in the unit tests). The bubble is
+ * centred on the speaker where it can be; when that would cross an edge of the view it slides along until it is
+ * inside, and it never travels so far that the tail leaves the speaker.
+ */
+export function bubbleOffsetX(speakerX: number, w: number, view: { x: number; width: number } | undefined, worldW: number): number {
+  const half = w / 2 + BUBBLE_MARGIN;
+  const left = view ? Math.max(view.x, 0) : 0;
+  const right = view ? Math.min(view.x + view.width, worldW) : worldW;
+  if (right - left < w) return 0;                                   // narrower than the bubble: centre and let it bleed
+  const lo = left + half - speakerX, hi = right - half - speakerX;   // the offsets that keep the bubble inside
+  return Math.max(lo, Math.min(hi, 0));
+}
 const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
 
 /** The pantry: a coffee after a finished job, and now and then after a long quiet spell at the desk. */
@@ -52,6 +71,11 @@ export class AgentSprite {
   private hovered = false;
   /** Set by the scene when this sprite is the one the panel is focused on: its name shows at any zoom. */
   selected = false;
+  /**
+   * Every display name at the desks of this sprite's room, this one included — set by the scene when the roster
+   * changes. A desk label is only readable against its neighbours (visual QA I1), so the label needs the row.
+   */
+  siblings: string[] = [];
   private readonly labelLatch = new Latch();
   private readonly iconLatch = new Latch();
   private readonly badgeLatch = new Latch();
@@ -100,12 +124,12 @@ export class AgentSprite {
     this.face = scene.add.image(-4, -SPRITE_H + 4, 'faces', 'neutral:0').setOrigin(0, 0);
     // Hidden until the camera is close enough to read it, then held at a constant screen size (ruling F1, applied
     // every frame by `applyLabel`): a container child is scaled by the camera zoom, so the label divides it back out.
-    this.label = scene.add.text(0, 2, view.display, nameLabelStyle()).setOrigin(0.5, 0).setScale(1 / RES).setVisible(false);
-    this.icon = scene.add.text(10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.tool.browser, padding: { x: 2, y: 1 } }).setOrigin(0.5);
-    this.badge = scene.add.text(-10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.bad, padding: { x: 2, y: 1 } }).setOrigin(0.5);
+    this.label = addText(scene, 0, 2, view.display, nameLabelStyle()).setOrigin(0.5, 0).setScale(1 / RES).setVisible(false);
+    this.icon = addText(scene, 10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.tool.browser, padding: { x: 2, y: 1 } }).setOrigin(0.5);
+    this.badge = addText(scene, -10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.bad, padding: { x: 2, y: 1 } }).setOrigin(0.5);
     this.emote = scene.add.image(0, -SPRITE_H - 8, 'emotes', '!').setOrigin(0.5, 1).setVisible(false);
     this.bubbleBg = scene.add.graphics();
-    this.bubbleText = scene.add.text(0, 0, '', { fontFamily: FONT, fontSize: `${8 * RES}px`, color: PALETTE.bubbleInk, wordWrap: { width: 130 * RES }, align: 'left' }).setOrigin(0.5, 1).setScale(1 / RES);
+    this.bubbleText = addText(scene, 0, 0, '', { fontFamily: FONT, fontSize: `${8 * RES}px`, color: PALETTE.bubbleInk, wordWrap: { width: 130 * RES }, align: 'left' }).setOrigin(0.5, 1).setScale(1 / RES);
     this.bubble = scene.add.container(0, -SPRITE_H - 6, [this.bubbleBg, this.bubbleText]).setVisible(false);
     this.container = scene.add.container(0, 0, [this.shadow, this.body, this.face, this.label, this.icon, this.badge, this.emote, this.bubble]).setDepth(10);
     this.body.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.onClick(view.role))
@@ -299,7 +323,10 @@ export class AgentSprite {
       this.badge.setText(view.badge === 'error' ? '!' : '?').setVisible(true);
     } else this.badge.setVisible(false);
     if (emoteKind) { this.emote.setFrame(emoteKind).setVisible(true); this.emote.y = -SPRITE_H - 6 + emoteBob(nowMs); } else this.emote.setVisible(false);
-    this.updateBubble(view.bubble, nowMs, emoteKind ? -SPRITE_H - EMOTE_H - 8 : -SPRITE_H - 6);
+    // A bubble is the loudest object in the office, and at the tower elevation it is an unreadable white smear over
+    // one floor of a building (visual QA, alongside I10). In-world lettering is off there; so is this.
+    if (!worldTextVisible(this.scene.cameras?.main?.zoom ?? 1)) this.bubble.setVisible(false);
+    else this.updateBubble(view.bubble, nowMs, emoteKind ? -SPRITE_H - EMOTE_H - 8 : -SPRITE_H - 6);
     // Depth is a function of y alone; setting it marks the whole display list dirty, so only set it when y moved.
     const depth = 10 + this.container.y / 10000;
     if (this.depthLatch.changed(depth)) this.container.setDepth(depth);
@@ -352,8 +379,13 @@ export class AgentSprite {
     const color = b.kind === 'action' ? PALETTE.bubbleActionInk : b.kind === 'thought' ? PALETTE.bubbleThoughtInk : PALETTE.bubbleInk;
     this.bubbleText.setStyle({ color, fontStyle: b.kind === 'thought' ? 'italic' : 'normal', fontSize: `${(b.kind === 'action' ? 7 : 8) * RES}px` }).setText(text);
     const w = this.bubbleText.width / RES, h = this.bubbleText.height / RES;
-    const worldX = this.container.x; const half = w / 2 + 6;
-    this.bubble.x = worldX - half < 0 ? half : worldX + half > this.world.width * TILE ? -half : 0;
+    // Which side of the speaker the bubble hangs on, and how far along it sits.
+    //
+    // It used to clamp against the world only, so in `08-board` a bubble spoken at the table sat squarely over the
+    // advisors' monitors and in `09-night` it was cut off by the bottom of the viewport (visual QA I10). The camera
+    // is what decides: the bubble goes on whichever side of the speaker has more room in view, and is then pushed
+    // back inside the viewport so no part of it is off screen.
+    this.bubble.x = bubbleOffsetX(this.container.x, w, this.scene.cameras?.main?.worldView, this.world.width * TILE);
     const g = this.bubbleBg.clear();
     if (b.kind === 'speech') {
       const tint = roleColor(this.view.role);
@@ -386,9 +418,9 @@ export class AgentSprite {
   /** Ruling F1: the name is hidden below zoom 2 and held at a constant screen size above it, or on hover / selection. */
   private applyLabel(): void {
     const zoom = this.scene.cameras?.main?.zoom ?? 1;
-    if (!this.labelLatch.changed(`${zoom}|${this.hovered}|${this.selected}`)) return;
+    if (!this.labelLatch.changed(`${zoom}|${this.hovered}|${this.selected}|${this.siblings.length}`)) return;
     const v = nameLabelView(zoom, { hover: this.hovered, selected: this.selected });
-    this.label.setVisible(v.visible).setScale(v.scale).setText(nameLabelText(this.view.display, v.chars));
+    this.label.setVisible(v.visible).setScale(v.scale).setText(nameLabelText(this.view.display, v.chars, this.siblings));
   }
 
   debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, legs: this.legs, waitingRide: this.waitingRide, riding: !!this.car, pendingTarget: this.pendingTarget, tile: this.tile(), seat: this.seat, desk: this.view.desk, home: this.homeTile() }; }

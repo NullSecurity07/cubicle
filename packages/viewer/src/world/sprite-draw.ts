@@ -43,7 +43,18 @@ function torso(p: Px, b: Body, dy = 0): void {
   switch (b.family) {
     case 'chief': outlined(p, 2, y, 12, 8, shirtDark, b.o); p.fill(6, y, 4, 4, shirt); px(p, 6, y + 1, shirtDark); px(p, 9, y + 1, shirtDark); p.fill(7, y + 1, 2, 5, accent); break;   // blazer, lapel V, tie
     case 'manager': outlined(p, 3, y, 10, 8, shirt, b.o); hline(p, 3, y, 10, shirtDark); vline(p, 7, y, 5, accent); break;                                                       // shirt, lanyard
-    case 'advisor': outlined(p, 3, y, 10, 8, shirt, b.o); vline(p, 7, y + 1, 6, shirtDark); px(p, 7, y + 2, accent); px(p, 7, y + 5, accent); break;                              // cardigan, buttons
+    // Four advisor silhouettes, picked by the same hash that picks hair: three cardigans side by side at one table
+    // read as one person drawn three times (visual QA I9), and an advisor is the only family seen as a row.
+    case 'advisor': {
+      outlined(p, 3, y, 10, 8, shirt, b.o);
+      switch (b.opts.hairShape) {
+        case 1: hline(p, 3, y, 10, shirtDark); p.fill(5, y - 1, 6, 2, accent); px(p, 9, y + 1, accent, 1, 4); break;   // scarf over the shoulders
+        case 2: p.fill(6, y, 4, 5, shirtDark); px(p, 4, y, shirtDark, 2, 3); px(p, 10, y, shirtDark, 2, 3); break;    // open jacket, wide lapels
+        case 3: hline(p, 3, y, 10, shirtDark); p.fill(7, y + 1, 2, 6, accent); p.fill(6, y, 4, 1, shirtDark); break;   // collar and tie
+        default: vline(p, 7, y + 1, 6, shirtDark); px(p, 7, y + 2, accent); px(p, 7, y + 5, accent); break;            // cardigan, buttons
+      }
+      break;
+    }
     case 'owner': outlined(p, 3, y, 10, 8, PALETTE.owner, b.o); p.fill(5, y - 1, 6, 1, PALETTE.owner); break;                                                                    // turtleneck collar
     default: outlined(p, 3, y, 10, 8, shirt, b.o); if (b.opts.hoodie) { px(p, 3, y - 1, shirtDark, 2, 1); px(p, 11, y - 1, shirtDark, 2, 1); hline(p, 5, y + 5, 6, shirtDark); } else hline(p, 3, y, 10, shirtDark); break;   // hoodie (hood bump, pocket) or t-shirt
   }
@@ -100,7 +111,7 @@ export const FACE_SHEET_W = 3 * FACE_W, FACE_SHEET_H = FACE_ROWS.length * FACE_V
 export const FACE_FRAMES: { name: string; x: number; y: number }[] = FACE_ROWS.flatMap((mood, r) => FACE_VARIANTS.flatMap((v, vi) => [0, 1, 2].map((d) => ({ name: `${mood}:${d}${v.suffix}`, x: d * FACE_W, y: (r * FACE_VARIANTS.length + vi) * FACE_H }))));
 
 function drawFace(p: Px, mood: Mood | 'blink', dir: 0 | 1 | 2, talk: boolean, glasses: boolean): void {
-  const eye = '#1b1f2a', mouth = '#7a3b2e', brow = '#3a2a1a', glass = '#3a3f4a';
+  const eye = '#1b1f2a', mouth = '#7a3b2e', brow = '#3a2a1a', glass = '#5d656f', glassLit = '#c5ccd4';
   const eyes = dir === 0 ? [1, 5] : dir === 1 ? [0, 3] : [4, 7];
   const mouthX = dir === 0 ? 3 : dir === 1 ? 1 : 5, mouthW = dir === 0 ? 2 : 1;
   const eyeY = mood === 'thinking' ? 1 : 2;
@@ -116,7 +127,20 @@ function drawFace(p: Px, mood: Mood | 'blink', dir: 0 | 1 | 2, talk: boolean, gl
   else if (mood === 'happy') px(p, mouthX, 4, mouth, mouthW + 1, 1);
   else if (mood === 'puzzled') px(p, mouthX + (dir === 0 ? 1 : 0), 4, mouth);
   else if (mood !== 'asleep') px(p, mouthX, 4, mouth, mouthW, 1);
-  if (glasses) { for (const ex of eyes) { if (ex > 0) px(p, ex - 1, eyeY, glass); if (ex + 2 < FACE_W) px(p, ex + 2, eyeY, glass); } hline(p, Math.max(0, eyes[0] - 1), eyeY + 1, Math.min(FACE_W, eyes[1] + 3) - Math.max(0, eyes[0] - 1), glass); }
+  /*
+   * Spectacles: a rim either side of each eye and a bridge between the lenses, with a lit pixel on the top-left
+   * of the near lens. The old overlay painted a solid bar right across the eye band, so the three advisors had no
+   * eyes at all — "three masked men" in the visual QA (I9). The eye pixel itself is never covered.
+   */
+  if (glasses) {
+    for (const ex of eyes) {
+      if (ex > 0) px(p, ex - 1, eyeY, glass);
+      if (ex + 1 < FACE_W) px(p, ex + 1, eyeY, glass);
+    }
+    const l = Math.min(eyes[0], eyes[1]) + 2, r = Math.max(eyes[0], eyes[1]) - 1;
+    if (r > l) px(p, l, eyeY, glass, r - l, 1);
+    if (eyes[0] > 0 && eyeY > 0) px(p, eyes[0] - 1, eyeY - 1, glassLit);
+  }
 }
 
 export function drawFaceSheet(p: Px): void {
