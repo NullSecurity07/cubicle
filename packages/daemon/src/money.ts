@@ -7,7 +7,7 @@ import {
   LedgerVetoedError, isNeverModifyPath, atomicWriteSync,
 } from '@cubicle/core';
 import { shadowCost, hasPrices, type ModelBudget, type ProvidersFile, type RecordedCall } from '@cubicle/router';
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync, realpathSync, rmSync } from 'node:fs';
 
 /**
  * The daemon's side of the money: everything deterministic, and not one model call anywhere in this file.
@@ -165,17 +165,33 @@ export const LOCK_STATE_PATH = '.cubicle/money-notices.json';
  */
 const notices = new Map<string, Record<string, string>>();
 
-/** Roots whose last write-through did not land. Retried on the next change; complained about once per fault. */
+/**
+ * The key: the vault's root with symlinks resolved, so two opens of one directory by different paths share one
+ * memory rather than each loading the file and disagreeing at the edges. `realpathSync` needs the directory to
+ * exist and can throw on an odd mount; the already-resolved `vault.root` is a perfectly good key when it does,
+ * and the worst that costs is the two-paths case it was meant to collapse.
+ */
+function noticeKey(vault: Vault): string {
+  try { return realpathSync(vault.root); } catch { return vault.root; }
+}
+
+/**
+ * Roots whose copy on disk is behind the memory — a write that did not land, or a load that could not be
+ * trusted. Retried on the next change, including the branches that change nothing; complained about once per
+ * fault.
+ */
 const unflushed = new Set<string>();
 
 /**
  * The map for this vault, loading it from the file on first use. A file that is simply absent is not a fault —
  * nothing has been said yet — but one that cannot be read, or that does not hold a JSON object, starts the
- * memory empty and says so once. Empty means every standing complaint is made again, which is noise; trusting
- * half a file would be worse.
+ * memory empty, says so once, and is **rewritten from memory on this run's first change**. Empty means every
+ * standing complaint is made again, which is noise; trusting half a file would be worse; and leaving the file
+ * as it was found would let the next run believe something this one has already decided against.
  */
 function loadNotices(vault: Vault): Record<string, string> {
-  const held = notices.get(vault.root);
+  const key = noticeKey(vault);
+  const held = notices.get(key);
   if (held) return held;
   let state: Record<string, string> = {};
   let unreadable = false;
@@ -186,8 +202,15 @@ function loadNotices(vault: Vault): Record<string, string> {
   } catch (err) {
     unreadable = (err as NodeJS.ErrnoException | null)?.code !== 'ENOENT';
   }
-  notices.set(vault.root, state);
+  notices.set(key, state);
   if (unreadable) {
+    // "Nothing is remembered" is itself a change, and the only thing this run knows that the disk does not.
+    // Marking the root unflushed makes the next change — including the do-nothing branches of `clearNotice`
+    // and `warnOnce`, which both catch the disk up — rewrite the file from memory, so a file that could not be
+    // read cannot survive to be *believed* by the next run. Without it, a run whose only decision was a clear
+    // would write nothing, the stale entry would outlive it, and the run after that would read it back and
+    // swallow a re-lock for good.
+    unflushed.add(key);
     try {
       vault.events.emit({ type: 'daemon.warning', payload: {
         where: NOTICES_UNREADABLE,
@@ -209,14 +232,15 @@ function loadNotices(vault: Vault): Record<string, string> {
  * only the heartbeat calls in here, one job at a time.
  */
 function flushNotices(vault: Vault, state: Record<string, string>): void {
-  const faulted = unflushed.has(vault.root);
+  const key = noticeKey(vault);
+  const faulted = unflushed.has(key);
   try {
     if (Object.keys(state).length === 0) rmSync(vault.abs(LOCK_STATE_PATH), { force: true });
     else atomicWriteSync(vault.abs(LOCK_STATE_PATH), JSON.stringify(state, null, 2));   // creates `.cubicle/`
-    unflushed.delete(vault.root);
+    unflushed.delete(key);
     return;
   } catch { /* the memory is still right; only the copy on disk is behind, and the next change retries it */ }
-  unflushed.add(vault.root);
+  unflushed.add(key);
   if (faulted) return;   // said once already; the owner does not need it every cycle
   try {
     vault.events.emit({ type: 'daemon.warning', payload: {
@@ -233,7 +257,7 @@ function clearNotice(vault: Vault, where: string): void {
   if (state[where] === undefined) {
     // Nothing remembered, so nothing to forget and no file to create saying so — but if the disk is behind,
     // this is still a chance to catch it up.
-    if (unflushed.has(vault.root)) flushNotices(vault, state);
+    if (unflushed.has(noticeKey(vault))) flushNotices(vault, state);
     return;
   }
   delete state[where];
@@ -284,7 +308,7 @@ function warnOnce(vault: Vault, where: string, situation: string, extra: Record<
   if (state[where] === situation) {
     // Said already. If the copy on disk is behind, this is the retry — per change rather than per restart, so
     // a fault that has since been fixed costs nothing beyond the cycles it actually lasted.
-    if (unflushed.has(vault.root)) flushNotices(vault, state);
+    if (unflushed.has(noticeKey(vault))) flushNotices(vault, state);
     return;
   }
   vault.events.emit({ type: 'daemon.warning', payload: { where, ...extra } });

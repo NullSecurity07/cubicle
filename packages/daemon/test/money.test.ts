@@ -107,6 +107,26 @@ providers:
       - { id: big, tier: strong, tools: native, limits: { rpd: 100 }, price: { input_per_mtok: 300, output_per_mtok: 1500 } }
 `);
 
+/**
+ * Do directory modes actually stop a write here? Root ignores them, and so do some filesystems (a Docker
+ * overlay as root, a `vfat`/`9p` mount). The fault tests below simulate an unwritable `.cubicle/` with
+ * `chmod 0555` and assert the write *failed*, so where modes are advisory they would assert the opposite of
+ * what happens. Probed once, when this file loads.
+ */
+const MODES_ENFORCED: boolean = (() => {
+  if (process.getuid?.() === 0) return false;
+  const probe = mkdtempSync(path.join(tmpdir(), 'cubicle-mode-probe-'));
+  try {
+    chmodSync(probe, 0o555);
+    try { writeFileSync(path.join(probe, 'probe'), 'x'); return false; } catch { return true; }
+  } catch { return false; } finally {
+    try { chmodSync(probe, 0o755); } catch { /* best effort */ }
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+/** Named so the reason shows up beside a skipped test rather than only in this comment. */
+const NEEDS_MODES = 'needs a non-root user on a filesystem that enforces directory modes';
+
 const NOW = new Date('2026-09-12T12:00:00.000Z');
 let dir: string;
 let vault: Vault;
@@ -443,7 +463,7 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     expect(existsSync(notices)).toBe(false);
   });
 
-  it('remembers in this process when it cannot write, and says so once', () => {
+  it.skipIf(!MODES_ENFORCED)(`remembers in this run when it cannot write, and says so once (${NEEDS_MODES})`, () => {
     const org = loadOrg(vault);
     vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
     mkdirSync(path.join(dir, '.cubicle'), { recursive: true });
@@ -471,7 +491,7 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     }
   });
 
-  it('still announces a re-lock when it was the clearing write that could not land', () => {
+  it.skipIf(!MODES_ENFORCED)(`still announces a re-lock when it was the clearing write that could not land (${NEEDS_MODES})`, () => {
     const org = loadOrg(vault);
     const cubicle = path.join(dir, '.cubicle');
     const lock = (on: boolean) => vault.writeText('Memory/constitution.md',
@@ -502,30 +522,46 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     }
   });
 
-  it('cannot be confused by a notices file that could not be read for one cycle', () => {
+  it.skipIf(!MODES_ENFORCED)(`repairs a notices file it could not read, on the first change (${NEEDS_MODES})`, () => {
     const org = loadOrg(vault);
     const notices = path.join(dir, LOCK_STATE_PATH);
-    const lock = (on: boolean) => vault.writeText('Memory/constitution.md',
-      `# Constitution\n\n\`\`\`yaml\nnever_modify:${on ? '\n  - Ledger/' : ' []'}\n\`\`\`\n`, 'owner');
-    lock(true);
-    writeRunway(vault, org, SHIPPED, NOW);
-    expect(lockedRunwayRows()).toHaveLength(1);
-    // One unreadable moment, with the file otherwise intact and its entry still valid. A design that re-read
-    // the file each cycle could not tell "cannot be read right now" from "nothing has been said": the clear
-    // would look unnecessary, the stale entry would survive, and the re-lock below would agree with it and be
-    // swallowed for good. The memory is read once a run, so there is nothing here to flicker.
+    // A previous run left a perfectly good file behind, and the load of *this* run cannot read it.
+    mkdirSync(path.join(dir, '.cubicle'), { recursive: true });
+    writeFileSync(notices, JSON.stringify({ [LOCKED_RUNWAY]: `locked:${RUNWAY_PATH}` }));
     chmodSync(notices, 0o000);
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    const unreadable = () => vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === NOTICES_UNREADABLE);
     try {
-      lock(false);
-      writeRunway(vault, org, SHIPPED, NOW);      // the clear happens in memory, and is written through
+      // It starts with no memory rather than half of one, says so once, and repeats the standing complaint.
+      writeRunway(vault, org, SHIPPED, NOW);
+      expect(unreadable()).toHaveLength(1);
+      expect(lockedRunwayRows()).toHaveLength(1);
+      // And the file it could not read has been rewritten from memory, so the next run reads something true.
+      expect(JSON.parse(readFileSync(notices, 'utf8'))).toEqual({ [LOCKED_RUNWAY]: `locked:${RUNWAY_PATH}` });
+      // A second cycle adds neither sentence: the memory was loaded once and the file is no longer behind.
+      writeRunway(vault, org, SHIPPED, NOW);
+      expect(unreadable()).toHaveLength(1);
       expect(lockedRunwayRows()).toHaveLength(1);
     } finally {
       if (existsSync(notices)) chmodSync(notices, 0o644);
     }
-    lock(true);
-    writeRunway(vault, org, SHIPPED, NOW);        // and a re-lock is still a re-lock
-    expect(lockedRunwayRows()).toHaveLength(2);
-    expect(JSON.parse(readFileSync(notices, 'utf8'))[LOCKED_RUNWAY]).toBe(`locked:${RUNWAY_PATH}`);
+  });
+
+  it('does not leave a file it distrusted for the next run to believe', () => {
+    const org = loadOrg(vault);
+    const notices = path.join(dir, LOCK_STATE_PATH);
+    // The same shape without needing permissions: a file that parses as nothing takes the same branch as one
+    // that cannot be read at all. The owner has since taken the lock off, so this run's only decision is a
+    // clear — and a clear of something the memory does not hold used to write nothing, leaving the stale entry
+    // for the next run to read back and swallow a re-lock with.
+    mkdirSync(path.join(dir, '.cubicle'), { recursive: true });
+    writeFileSync(notices, '{ not json');
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === NOTICES_UNREADABLE)).toHaveLength(1);
+    // Nothing is remembered, so there is nothing to remember — and the file says so too.
+    expect(existsSync(notices)).toBe(false);
   });
 
   it('reads the file once on a fresh run, and honours or distrusts it accordingly', async () => {
