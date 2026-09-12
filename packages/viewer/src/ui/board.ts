@@ -35,6 +35,19 @@ export const BOARD_HEADLINE_MS = 30 * 60_000;
  */
 export const BOARD_SESSION_MAX_MS = 20 * 60_000;
 
+/**
+ * How many findings a closed session keeps. Four, which is `PRESSURE_MAX_FLAWS` in core — written out here
+ * because this package depends on no package in the workspace. The wall still shows three lines; the doc panel
+ * shows all of them, and on a `PIVOT REQUIRED` the first finding is the wedge, so a cap of three showed the
+ * wedge and two of the three flaws and called it "every flaw the board raised".
+ */
+export const BOARD_MAX_FINDINGS = 4;
+
+/** The wall's share of the rubric: the total, without the five dimensions it has no room for (ruling H6). */
+export function rubricTotalOf(rubric: string): string {
+  return rubric.split(' — ')[0].trim();
+}
+
 /** `meeting.opened` in the board room starts a session; any other room leaves the board alone. */
 export function boardOpened(p: Record<string, unknown>, ts: string): BoardState | null {
   if (String(p.room ?? '') !== 'board') return null;
@@ -53,7 +66,7 @@ export function boardClosed(cur: BoardState | null, p: Record<string, unknown>, 
   return {
     ...cur,
     verdict: p.verdict === 'return' ? 'return' : 'pass',
-    findings: Array.isArray(p.findings) ? p.findings.map(String).slice(0, 3) : [],
+    findings: Array.isArray(p.findings) ? p.findings.map(String).slice(0, BOARD_MAX_FINDINGS) : [],
     pressure: String(p.pressure ?? ''),
     rubric: String(p.rubric ?? ''),
     at: ts,
@@ -71,8 +84,14 @@ export function boardHeadline(b: BoardState | null, now: number): Headline | nul
   if (now - Date.parse(b.at) > BOARD_HEADLINE_MS) return null;
   const verb = b.verdict === 'pass' ? 'passed' : 'returned';
   const head = b.subject === 'plan' ? `The board ${verb} the plan` : `The board ${verb}: ${b.title}`;
-  // An idea the board pressure-tested leads with the verdict word and the rubric, because that is the sentence
-  // the owner came to the wall for; the flaws fill whatever of the three lines is left. A plan reads as it did.
-  const test = b.pressure ? [cut(b.rubric ? `${b.pressure} · ${b.rubric}` : b.pressure, 40)] : [];
+  // An idea the board pressure-tested leads with the verdict word and the rubric's total, because that is the
+  // sentence the owner came to the wall for; the flaws fill whatever of the three lines is left. A plan reads
+  // as it did.
+  //
+  // The total, not the whole rubric: the wall's line is forty columns and the five dimensions are ninety, so
+  // `PIVOT REQUIRED · 7/10 — core assumption 2,…` was printed mid-clause with a dangling comma. `PIVOT
+  // REQUIRED · 7/10` is twenty-one columns and is a whole sentence. The doc panel has the room and keeps the
+  // five dimensions (ruling H6).
+  const test = b.pressure ? [cut(b.rubric ? `${b.pressure} · ${rubricTotalOf(b.rubric)}` : b.pressure, 40)] : [];
   return { head: cut(head, 44), lines: [...test, ...b.findings.slice(0, 3).map((f) => '• ' + cut(f, 40))].slice(0, 3), short: b.pressure ? cut(b.pressure, 6) : b.verdict };
 }
