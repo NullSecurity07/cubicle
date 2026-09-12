@@ -47,6 +47,30 @@ const classifierMemo = new Map<string, { at: number; era: number; verdict: Class
 let classifierEra = 0;
 
 /**
+ * One record for the *classifier*, as against one per text: when it last failed, and in which era. The
+ * per-text memo above answers "what is the verdict on this copy"; this answers the cheaper question "is it
+ * worth asking at all right now", which is what a caller holding several notes needs.
+ */
+let classifierOutage: { era: number; at: number } | null = null;
+
+/**
+ * True when the classifier is known to be unreachable right now: the last attempt failed, no model has
+ * answered since (the era has not moved), and that was recent enough to still believe.
+ *
+ * It exists so a caller with several held calls pays for **one** probe rather than one per call. The
+ * dispatcher runs `classifierCannotCheck` over every held outbound note on every pass, and each of those was
+ * a fresh 20-second round trip inside the daemon's tick — three held notes could cost a minute against a
+ * 30-second interval, delaying `requeueUnblocked` for every blocked job in the company (re-review 2, I2).
+ * Now the first note probes and the rest read this.
+ *
+ * It is deliberately time-bounded as well as era-bounded: an outage nobody has re-tested for a whole TTL is
+ * no longer something to take on trust, so the next caller pays for a fresh probe.
+ */
+export function classifierUnavailableNow(): boolean {
+  return !!classifierOutage && classifierOutage.era === classifierEra && Date.now() - classifierOutage.at < CLASSIFIER_TTL_MS;
+}
+
+/**
  * The classifier's **own** bound on how long an outbound call may wait for it, independent of the provider's
  * `timeout_ms` — the local floor in `config/providers.yaml` sets that to 300 000 ms, and this check runs
  * INLINE on the outbound path emitting nothing while it runs. B1 (2026-09-13) measured one round trip at
@@ -160,6 +184,10 @@ export async function classifyBannedTactic(router: Router, text: string, tactics
   const settle = (verdict: ClassifierVerdict, reason: string | null, answered: boolean): ClassifierResult => {
     if (classifierMemo.size >= CLASSIFIER_MAX) classifierMemo.clear();
     if (answered) classifierEra++;
+    // The classifier-wide record, for callers deciding whether to ask at all. A model that answered clears it
+    // by bumping the era out from under it; one nobody could reach writes it, stamped with the era the
+    // attempt began in so a success that landed mid-flight still counts.
+    if (!answered) classifierOutage = { era: eraAtStart, at: Date.now() };
     classifierMemo.set(memoKey, { at: Date.now(), era: answered ? classifierEra : eraAtStart, verdict, reason });
     const elapsedMs = Date.now() - started;
     watch.checked?.(verdict, elapsedMs);

@@ -6,7 +6,7 @@ import {
   loadGates, gatesForRisk, criteriaFor, gateAssignee, type GateTable,
   loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
-  trustReviewsFor, trustDecision, trustVerdictFor, recordTrustVerdict,
+  trustReviewsFor, trustDecision, trustVerdictFor, recordTrustVerdict, CLASSIFIER_UNAVAILABLE_HOLD,
 } from '@cubicle/core';
 import { NoModelAvailableError, TIER_RANK, type ModelBudget, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -501,16 +501,30 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
           // Nobody checked this call, so nobody refused it either. Recording a block here would spend the
           // owner's approval on a twenty-second model outage — the round-1 Critical, on the path the
           // classifier actually takes (re-review 1). Stay blocked on the proposal exactly as a pending trust
-          // review does: the key is unspent, the job's `blocked_on` stands, and the dispatcher — which holds
-          // the note for the same reason — wakes this job on the cycle where a model answers again.
-          events.emit({ type: 'guardrail.deferred', agent: roleId, job: jobId, payload: { tool: call.tool, reason: vetoed, step, approved: true } });
-          updateJob(vault, jobId, {}, roleId, `- step ${step}: ${call.tool} waiting for the constitution guardrail: ${vetoed}`);
+          // review does: the key is unspent and the job's `blocked_on` stands.
+          //
+          // And leave the dispatcher's own marker on the note, because by the time this runs the note is
+          // usually **resolved** — that is the window this branch exists for — and without the marker
+          // `requeueUnblocked` would wake this job on the very next tick, only for this branch to put it
+          // back, once per tick, for the whole outage (re-review 2, I1). Written once: a second pass through
+          // here would say nothing new, and every line of it is an autocommitted vault write.
+          const alreadyHeld = (prop.data as { refused?: string }).refused === CLASSIFIER_UNAVAILABLE_HOLD;
+          if (!alreadyHeld) {
+            vault.updateNote(prop.path, (n) => ({ data: { ...n.data, refused: CLASSIFIER_UNAVAILABLE_HOLD, refused_at: nowIso() }, body: n.body }), 'daemon');
+            events.emit({ type: 'guardrail.deferred', agent: roleId, job: jobId, payload: { tool: call.tool, reason: vetoed, step, approved: true } });
+            updateJob(vault, jobId, {}, roleId, `- step ${step}: ${call.tool} waiting for the constitution guardrail: ${vetoed}`);
+          }
           return stillBlocked();
         } else if (vetoed) {
           events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason: vetoed, step, approved: true } });
           record({ step, kind: 'tool', tool: call.tool, args: call.args, result: `blocked even though approved: ${vetoed}`, ok: false });
           updateJob(vault, jobId, {}, roleId, `- step ${step}: ${call.tool} BLOCKED even though approved: ${vetoed}`);
         } else {
+          // The guardrail answered, so whatever hold a previous pass left on the note is over. Clearing it
+          // keeps a resolved note from carrying a stale marker that says the company is still waiting.
+          if ((prop.data as { refused?: string }).refused === CLASSIFIER_UNAVAILABLE_HOLD) {
+            vault.updateNote(prop.path, (n) => { const { refused: _r, refused_at: _a, ...rest } = n.data as Record<string, unknown>; return { data: rest, body: n.body }; }, 'daemon');
+          }
           // At-most-once: record the key before the external call (a kill mid-call must not replay it).
           updateJob(vault, jobId, { side_effects_done: [...job.side_effects_done, key] }, roleId, `- step ${step}: ${call.tool} ATTEMPTING after owner approval (${key})`);
           const res = await client.call(call.tool, call.args, { idempotencyKey: key });

@@ -239,6 +239,16 @@ export function trustRefusal(tool: string, st: TrustState): string {
 export const TRUST_PENDING_HOLD = 'the compliance and security offices are still reviewing this, so nothing is sent yet; it is applied on its own once both have passed';
 
 /**
+ * The same shape, for a proposal whose stored call the constitution guardrail could not check because its
+ * `banned_tactics` classifier reached no model. Fixed for the same reason, and it lives here — beside the
+ * trust hold rather than in the dispatcher — because **both** sides of the outbound path write it: the
+ * dispatcher when it holds a note before resolving, and the harness when the model goes down in the window
+ * between that check and the waiting job's resume. One marker, so `requeueUnblocked` can leave the author
+ * asleep whichever side wrote it (re-review 2, I1).
+ */
+export const CLASSIFIER_UNAVAILABLE_HOLD = 'the constitution guardrail could not check this call: no model answered its banned_tactics classifier. Nothing was sent, the approval still stands, and the idempotency key is unspent';
+
+/**
  * What the tool layer needs to answer "may this run?". `ToolContext` satisfies it structurally, so the check in
  * `mcp.ts` is one line and takes no new dependency — and being unconditional rather than an injectable
  * `Guardrail` is the point (Decision 4): a guardrail list is something a caller can forget, and the guarantee is

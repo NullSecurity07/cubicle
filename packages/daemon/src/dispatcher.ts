@@ -2,10 +2,10 @@ import {
   type Vault, listInbox, readJob, updateJob, cancelJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
   loadOrg, resolveRole, divisionLeadOf, officeHolder, type Org,
   FOUNDER_BRIEF, missingBriefSections, readIdea, updateIdea, ideaBand, bandReason, ideaOutcome, IDEA_SLUG_SRC, IDEA_DECISIONS, LEDGER_PATH, type IdeaBand, type IdeaDecision,
-  trustDecision, TRUST_PENDING_HOLD, type TrustDecision,
+  trustDecision, TRUST_PENDING_HOLD, CLASSIFIER_UNAVAILABLE_HOLD, type TrustDecision,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
-import { findAnswer, messagePath, isClassifierUnavailable } from '@cubicle/tools';
+import { findAnswer, messagePath, isClassifierUnavailable, classifierUnavailableNow } from '@cubicle/tools';
 import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
 import { cancelPointlessTrustReviews, trustGatesForNote, retryOnNextPass } from './trust.js';
 import { applyHire, applyFire, applyReorg, charterDiffSection } from './evolution.js';
@@ -139,6 +139,12 @@ function holdForClassifier(vault: Vault, note: { path: string; data: InboxFrontm
 async function classifierCannotCheck(deps: DispatcherDeps, note: { path: string; data: InboxFrontmatter }): Promise<boolean> {
   const call = note.data.call;
   if (!call || !deps.guardrails?.length) return false;
+  // The classifier's own round trip is bounded at 20 s and runs *inside* the tick. Asking it once per held
+  // note per pass was a minute of tick against a thirty-second interval for three held notes, which delays
+  // `requeueUnblocked` — the only requeue path in the repo — for every blocked job in the company (re-review
+  // 2, I2). One probe per outage per memo window answers for all of them: whoever gets here first pays for
+  // it, everyone else reads the answer.
+  if (classifierUnavailableNow()) return true;
   const roleId = call.role ?? note.data.from;
   const roleNote = deps.vault.readNoteOrNull(`Roles/${roleId}.md`);
   if (!roleNote) return false;
@@ -185,12 +191,6 @@ function trustDefers(deps: DispatcherDeps, note: { path: string; data: InboxFron
   if (trust.kind === 'hold' && (note.data as { refused?: string }).refused !== TRUST_PENDING_HOLD) refuseNote(deps.vault, note, TRUST_PENDING_HOLD);
   return true;
 }
-
-/**
- * What the owner reads on a note the constitution guardrail could not check. Fixed text, like the dormancy
- * refusal and the trust hold, so it is written once per episode however many sweeps the outage spans.
- */
-const CLASSIFIER_UNAVAILABLE_HOLD = 'the constitution guardrail could not check this call: no model answered its banned_tactics classifier. Nothing was sent, the approval still stands, and the idempotency key is unspent';
 
 /**
  * Execute a stored call as the daemon, with the original role's permissions and the stored idempotency key.
@@ -664,10 +664,18 @@ export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION
       // The constitution hold is the same shape as the trust hold and skips for the same reason: while no
       // model can check the call, waking the author would only have the harness re-block it a moment later,
       // once per tick, writing an "unblocked (proposal …)" line into the job note each time for as long as
-      // the outage lasts. The hold is lifted by the dispatcher itself, on the pass where the classifier
-      // answers, and the author is woken then.
-      const classifierHeld = !!p && (p.data as { refused?: string }).refused === CLASSIFIER_UNAVAILABLE_HOLD;
-      const held = !!p && !p.data.resolved_at && ((opts.trustHeld?.(p.data) ?? false) || classifierHeld);
+      // the outage lasts.
+      //
+      // It is the one hold that outlives `resolved_at`, and deliberately (re-review 2, I1). The marker is
+      // written by **both** sides: the dispatcher before it resolves a note, and the harness when the model
+      // goes down in the window between that check and the job's own resume — by which time the note is
+      // already closed. Skipping a resolved note there would have left exactly the loop this guard exists to
+      // prevent, unbounded, for the length of the outage. The resolved note cannot strand its author either,
+      // because the release is not the note's: `classifierUnavailableNow()` stops being true the moment a
+      // model answers (the era moves) or the memo window lapses, whichever comes first, and the author is
+      // woken on that pass.
+      const classifierHeld = !!p && (p.data as { refused?: string }).refused === CLASSIFIER_UNAVAILABLE_HOLD && classifierUnavailableNow();
+      const held = !!p && ((!p.data.resolved_at && (opts.trustHeld?.(p.data) ?? false)) || classifierHeld);
       ready = !!p && (p.data.approved !== null || !!p.data.resolved_at) && !held;
     } else if (b.kind === 'job') {
       const sub = readJob(vault, b.id);
