@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { makeTileset, makeDecorSheet, makeLampGlow, makeSky, makeOwnerSprite, makeFaces, TILE, roleColor } from '../world/tileset.js';
+import { makeTileset, makeDecorSheet, makeLampGlow, makeGroundTile, makeSky, makeOwnerSprite, makeFaces, TILE, roleColor } from '../world/tileset.js';
 import { buildWorld, floorAt, type World, type Tile, type Anchor, type FloorInfo } from '../world/map.js';
 import { T } from '../world/tiles.js';
 import { AgentSprite } from '../world/agents.js';
@@ -137,8 +137,8 @@ export class OfficeScene extends Phaser.Scene {
     // They start at the building's own foot, which is the bottom edge of the minimap's bounds, so the little tower
     // never sees them and has nothing to ignore.
     const gb = groundBands(BUILDING, TILE, this.world.width, this.world.height);
-    for (const [band, colour] of [[gb.road, PALETTE.asphalt], [gb.pavement, PALETTE.pavement]] as const) {
-      this.add.rectangle(band.x, band.y, band.width, band.height, hexToInt(colour)).setOrigin(0).setDepth(-5).setScrollFactor(1);
+    for (const [band, tile] of [[gb.road, 'STREET'], [gb.pavement, 'PAVEMENT']] as const) {
+      this.add.tileSprite(band.x, band.y, band.width, band.height, makeGroundTile(this, tile)).setOrigin(0).setDepth(-5).setScrollFactor(1);
     }
     const nr = nightRect(BUILDING, TILE), sr = groundRect(BUILDING, TILE, this.world.width, this.world.height);
     this.night = this.add.rectangle(nr.x, nr.y, nr.width, nr.height, nightColourFor(this.hour()), 0).setOrigin(0).setDepth(50).setScrollFactor(1);
@@ -257,9 +257,10 @@ export class OfficeScene extends Phaser.Scene {
     this.skyDeco?.destroy(true);
     const b = skyBody(w, h, body);
     const parts: Phaser.GameObjects.GameObject[] = [];
-    // Stars at full night only. A dusk sky is still bright enough to read as day, and stars in it looked like dust
-    // on the lens rather than like evening.
-    if (night) for (const s of stars(w, h)) parts.push(this.add.rectangle(s.x, s.y, s.s, s.s, hexToInt(PALETTE.windowNight), s.s === 2 ? 0.85 : 0.55).setOrigin(0));
+    // Stars at full night only, in the moon's own pale — they were the lit-window amber, which in the sky read as
+    // windows floating over the tower and spent the accent colour on scenery. A dusk sky is still bright enough to
+    // read as day, and stars in it looked like dust on the lens rather than like evening.
+    if (night) for (const s of stars(w, h)) parts.push(this.add.rectangle(s.x, s.y, s.s, s.s, hexToInt(PALETTE.moon), s.s === 2 ? 0.85 : 0.55).setOrigin(0));
     // A disc rasterised row by row on the pixel grid: the rim first, then the face one pixel inside it.
     const face = body === 'sun' ? PALETTE.sun : PALETTE.moon, rim = body === 'sun' ? PALETTE.sunRim : PALETTE.moonRim;
     const disc = (r: number, colour: string): void => {

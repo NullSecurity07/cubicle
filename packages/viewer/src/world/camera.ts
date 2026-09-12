@@ -1,5 +1,6 @@
 import { TILE } from './tiles.js';
 import { CAPTION_BAND } from './text.js';
+import { GROUND_OVERSCAN } from './backdrop.js';
 
 /** Integer zooms only: pixel art stays crisp. Plan 2 (D26) owns this set. */
 export const ZOOM_STEPS = [1, 2, 3, 4];
@@ -142,8 +143,11 @@ export interface FloorRows { n: number; y0: number; y1: number }
  * own night, and a veil drawn over it leaves a rectangle of darker sky with a visible edge. That is not a
  * hypothetical — the bands ran a tile wide of the building on each side, and once the floor scenes were taken by
  * day (visual QA R-I4) the result was a hard vertical seam down both sides of the frame, sky at rgb(190,216,241)
- * above the focused floor and rgb(91,106,135) beside the ones below it. The street is the one band that runs the
- * full width of the map, because the pavement does.
+ * above the focused floor and rgb(91,106,135) beside the ones below it.
+ *
+ * The street band is the exception, and it is as wide as the ground it dims — `GROUND_OVERSCAN` past the map on
+ * both sides and below (`groundBands`, backdrop.ts). Stopped at the map's own edge it left the run-out at full
+ * brightness, which in `12-light-theme` read as a dark road ending in mid-air against a light one.
  */
 export function veilBands(n: number, floors: readonly FloorRows[], building: { x0: number; x1: number; y0: number; y1: number }, world: { cols: number; rows: number }): Band[] {
   const floor = floors.find((f) => f.n === n);
@@ -151,14 +155,16 @@ export function veilBands(n: number, floors: readonly FloorRows[], building: { x
   const below = floors.find((f) => f.n === n - 1);
   const bot = below ? below.y0 : floor.y1 + 1;
   const x = building.x0 * TILE, w = (building.x1 - building.x0 + 1) * TILE;
-  const top = (building.y0 - 1) * TILE, foot = (building.y1 + 2) * TILE;
+  // The foot is the building's last row, not a row past it: from there down it is street, and the street band is
+  // what dims it — the same split `nightRect` and `groundRect` make, so no row is dimmed twice or missed.
+  const top = (building.y0 - 1) * TILE, foot = (building.y1 + 1) * TILE;
   // The lower edge only moves up where there is a floor below with captions to protect; the ground floor's own
   // last row is its own.
   const lit0 = floor.y0 * TILE - CAPTION_BAND, lit1 = bot * TILE - (below ? CAPTION_BAND : 0);
   const out: Band[] = [];
   if (lit0 > top) out.push({ x, y: top, w, h: lit0 - top });
   if (lit1 < foot) out.push({ x, y: lit1, w, h: foot - lit1 });
-  if (foot < world.rows * TILE) out.push({ x: 0, y: foot, w: world.cols * TILE, h: world.rows * TILE - foot });
+  if (foot < world.rows * TILE) out.push({ x: -GROUND_OVERSCAN, y: foot, w: world.cols * TILE + GROUND_OVERSCAN * 2, h: world.rows * TILE - foot + GROUND_OVERSCAN });
   return out;
 }
 /** How dark the veil goes. Enough to push a floor back without hiding that the tower continues. */

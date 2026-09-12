@@ -34,6 +34,24 @@ export function makeTileset(scene: Phaser.Scene): void {
   tex.refresh();
 }
 
+/**
+ * One street tile on a texture of its own, so the ground beyond the map can be a `TileSprite` rather than a flat
+ * rectangle.
+ *
+ * The run-out (`groundBands`, backdrop.ts) covers the bottom quarter of the tower frame, and as plain fills it read
+ * as a beach: the mapped pavement carries noise and a grid, and the fill beside it carried nothing. Drawn from the
+ * same `DRAW` entry the tilemap uses, the join is invisible. 16 x 16 is a power of two, which is what a tiling
+ * texture needs.
+ */
+export function makeGroundTile(scene: Phaser.Scene, name: 'PAVEMENT' | 'STREET'): string {
+  const key = `ground-${name}`;
+  if (scene.textures.exists(key)) return key;
+  const tex = scene.textures.createCanvas(key, TILE, TILE)!;
+  DRAW[name](canvasPx(tex.getContext(), 0, 0), null);
+  tex.refresh();
+  return key;
+}
+
 export { SPRITE_W, SPRITE_H, FACE_W, FACE_H };
 
 /** 31-frame 16×24 body sheet per role and family, frames named by `FRAMES`. Keyed by `spriteKey` (sprite-draw.ts). */

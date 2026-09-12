@@ -90,14 +90,16 @@ export interface Run { y: number; x0: number; w: number }
  *
  * The first cut of the sun was four overlapping rectangles with the corners taken off, which at r 10 read as a
  * yellow square — a sticky note pinned to the sky rather than a sun (visual QA R-M6). A disc has to actually be
- * round at this size, and it has to be round in whole pixels, because everything else in the frame is. Rows are
- * sampled at their own centres, so the silhouette is symmetric and the widest run is the full diameter.
+ * round at this size, and it has to be round in whole pixels, because everything else in the frame is.
+ *
+ * Rows are sampled at their own centres. The half-width is rounded, not floored: floored, the widest run came out
+ * two pixels short of the 2r the row count gives, and the sun was visibly an egg.
  */
 export function discRuns(r: number): Run[] {
   const out: Run[] = [];
   for (let y = -r; y < r; y++) {
     const dy = y + 0.5;
-    const half = Math.floor(Math.sqrt(Math.max(0, r * r - dy * dy)));
+    const half = Math.round(Math.sqrt(Math.max(0, r * r - dy * dy)));
     if (half > 0) out.push({ y, x0: -half, w: half * 2 });
   }
   return out;

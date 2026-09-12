@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { snapZoom, floorZoom, ZOOM_STEPS, FIT_STEPS, TOWER_ZOOM, FLOOR_VIEW, FLOOR_ROWS, BARS_H, CHROME, GUTTER, ROOF_SKY, zoomSnap, snapZoomDown, stepDown, fitZoom, fitCamera, cameraCentre, cameraBounds, clampTop, rectOfTiles, veilBands, veilAlpha, VEIL_ALPHA } from './camera.js';
+import { GROUND_OVERSCAN } from './backdrop.js';
 import { CAPTION_BAND } from './text.js';
 
 const VIEW = { w: 1280, h: 800 };
@@ -107,8 +108,9 @@ describe('the focus veil', () => {
   it('covers the tower above and below the floor in focus, and the street', () => {
     expect(bands(2)).toEqual([
       { x: 4 * 16, y: 1 * 16, w: 51 * 16, h: 28 * 16 - CAPTION_BAND - 16 },
-      { x: 4 * 16, y: 41 * 16 - CAPTION_BAND, w: 51 * 16, h: 56 * 16 - (41 * 16 - CAPTION_BAND) },
-      { x: 0, y: 56 * 16, w: 60 * 16, h: 8 * 16 },
+      { x: 4 * 16, y: 41 * 16 - CAPTION_BAND, w: 51 * 16, h: 55 * 16 - (41 * 16 - CAPTION_BAND) },
+      // The street band is as wide and as deep as the ground it dims, which runs out past the map on every side.
+      { x: -GROUND_OVERSCAN, y: 55 * 16, w: 60 * 16 + GROUND_OVERSCAN * 2, h: 9 * 16 + GROUND_OVERSCAN },
     ]);
   });
 
@@ -146,13 +148,13 @@ describe('the focus veil', () => {
   it('never draws over the sky beside the building', () => {
     for (const n of [1, 2, 3, 4]) {
       for (const b of bands(n)) {
-        if (b.y < (BUILDING.y1 + 2) * 16) { expect(b.x).toBe(BUILDING.x0 * 16); expect(b.x + b.w).toBe((BUILDING.x1 + 1) * 16); }
+        if (b.y < (BUILDING.y1 + 1) * 16) { expect(b.x).toBe(BUILDING.x0 * 16); expect(b.x + b.w).toBe((BUILDING.x1 + 1) * 16); }
       }
     }
   });
 
   it('drops the band the floor has run out of, and draws none for a floor that is not there', () => {
-    expect(bands(4).map((b) => b.y)).toEqual([15 * 16 - CAPTION_BAND, 56 * 16]);   // nothing above F4's caption row
+    expect(bands(4).map((b) => b.y)).toEqual([15 * 16 - CAPTION_BAND, 55 * 16]);   // nothing above F4's caption row
     expect(bands(1)[0].y).toBe(1 * 16);
     expect(veilBands(9, FLOORS, BUILDING, WORLD)).toEqual([]);
   });

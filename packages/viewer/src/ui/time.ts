@@ -107,7 +107,7 @@ export class TimeControls {
     this.date.value = new Date().toISOString().slice(0, 10);
     // The native date input still holds and validates the value; the face beside it is ours, because the platform's
     // calendar glyph was the last browser-drawn widget on a bar of custom ones (visual QA R-M4).
-    document.getElementById('replay-date-icon')!.innerHTML = pixelIcon('doc');
+    document.getElementById('replay-date-icon')!.innerHTML = pixelIcon('calendar');
     this.drawDate();
     this.date.addEventListener('input', () => this.drawDate());
     this.date.addEventListener('change', () => this.drawDate());

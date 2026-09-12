@@ -97,10 +97,8 @@ describe('a disc on the pixel grid', () => {
     for (const r of [4, 8, 9, 10, 16]) {
       const runs = discRuns(r);
       expect(runs).toHaveLength(2 * r);
-      const widest = Math.max(...runs.map((x) => x.w));
-      // Rows are sampled at their own centres, so the middle run is a pixel short of the diameter on a small disc.
-      expect(widest).toBeGreaterThanOrEqual(2 * r - 2);
-      expect(widest).toBeLessThanOrEqual(2 * r);
+      // As wide as it is tall. Floored rather than rounded, this came out two short and the sun was an egg.
+      expect(Math.max(...runs.map((x) => x.w))).toBe(2 * r);
       for (const run of runs) expect(run.x0).toBe(-run.w / 2);         // centred on the axis
       const widths = runs.map((x) => x.w);
       expect(widths).toEqual([...widths].reverse());                   // top half mirrors the bottom

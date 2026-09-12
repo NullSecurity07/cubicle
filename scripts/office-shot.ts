@@ -69,10 +69,15 @@ const cub = <T, A = undefined>(fn: (c: Cub['__cubicle'], arg: A) => T, arg?: A):
  * was fifteen dark pictures (visual QA R-I4). Midday for the floor and room scenes; one explicit dusk, because
  * C2's sky is otherwise an argument rather than a picture; night only where the scene is about night.
  */
-const DAY = 12, DUSK = 19.5, NIGHT = 22;
+// 19:00, not the 19:30 the re-review suggested: measured over the shipped stops at quarter-hour steps, 19:00 is
+// where the horizon is warmest (hue 25, saturation 0.82, lightness 0.68 — an orange under a purple upper sky). By
+// 19:30 it has already gone to dusty rose, which proves the ramp is not red but does not show anyone a sunset.
+const DAY = 12, DUSK = 19, NIGHT = 22;
+/** A pinned hour as the office's own clock shows it: 19.5 is half past seven, not "19.5 o'clock". */
+const hhmm = (h: number): string => `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
 let sceneHour: number | null = null;
 const setHour = async (h: number | null): Promise<void> => { if (h === sceneHour) return; sceneHour = h; await cub((c, v: number | null) => c.setHour(v), h); };
-const shot = async (name: string, settleMs = 900): Promise<void> => { await page.waitForTimeout(settleMs); await page.screenshot({ path: path.join(out, `${name}.png`) }); console.log(`shot ${name} at ${sceneHour === null ? 'the wall clock' : `${sceneHour}:00`}`); };
+const shot = async (name: string, settleMs = 900): Promise<void> => { await page.waitForTimeout(settleMs); await page.screenshot({ path: path.join(out, `${name}.png`) }); console.log(`shot ${name} at ${sceneHour === null ? 'the wall clock' : hhmm(sceneHour)}`); };
 const failures: string[] = [];
 const fail = (m: string): void => { failures.push(m); console.log(`FAIL: ${m}`); };
 /** A pushable browser frame, drawn in the page. `page.evaluate` is handed source text, not a function: tsx rewrites
@@ -228,7 +233,9 @@ try {
   const seat = await cub((c) => c.stand('boardroom'));
   if (!seat) fail('08: the map has no stand tile for the boardroom, so the shot is a floor fit');
   await cub((c) => c.zoom(3));
-  if (seat) await cub((c, s: Tile) => c.center(s.tx, s.ty - 1), seat);
+  // Two rows above the seat, not one: at one the whiteboard's own caption plate sat under the top bar, in the scene
+  // that is meant to show a bubble, four faces and crisp type together.
+  if (seat) await cub((c, s: Tile) => c.center(s.tx, s.ty - 2), seat);
   // The spoken turn goes last, not with `meeting.opened`: a bubble times out after a few seconds, and the walk to the
   // table plus the camera framing above eat more than that. Emitted here, it is still up when the shutter opens —
   // which is the point, since this is the shot that has to show a bubble not colliding with a room label.
