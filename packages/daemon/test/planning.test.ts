@@ -8,10 +8,12 @@ import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE, runHeartbeat, createHeartbeatJob, planVerdictId, boardSubject, advisorPrompt, chairPrompt, boardAgenda } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
-import { LOAD_1M, LOAD_SCALE, WAIT_MS, TEST_MS } from './helpers/load.js';
+import { TEST_MS, eventProgress, waitForProgress } from './helpers/load.js';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
+/** "Has anything happened": the event log's JSONL mirror, appended to by every emitted event (helpers/load.ts). */
+const progress = eventProgress(() => dir);
 // Every heartbeat here needs a company to plan for: nothing runs before the owner has given one an idea
 // (spec §12, C1). The brand name is the inert way to say so — an inbox message would also land in the brief.
 beforeEach(async () => {
@@ -58,18 +60,13 @@ const daemonFor = (llm: Llm) => {
   return d;
 };
 /**
- * Poll a condition on real timers. The budget comes from the machine's load (`helpers/load.ts`), read once for
- * this file: a hard 60 s was the flake — the cycle that finishes in seconds on an idle box has taken longer than
- * that with six vitest workers and a build running beside it, and a wall-clock ceiling is the one thing here that
- * has to move with the machine.
+ * Poll a condition on real timers, failing only when the daemon has written nothing for the stall budget
+ * (`helpers/load.ts`). A hard 60 s was the original flake, and scaling it by a load read at import was not the
+ * cure: under `pnpm -r test` every suite starts while the 1-minute average still describes an idle box. Watching
+ * the event log makes the wait independent of how busy the machine is.
  */
-async function waitFor(pred: () => boolean, ms = WAIT_MS): Promise<void> {
-  const t0 = Date.now();
-  while (!pred()) {
-    if (disposed) throw new Error('waitFor: torn down while still waiting');
-    if (Date.now() - t0 > ms) throw new Error(`waitFor: timeout after ${Date.now() - t0} ms (budget ${ms} ms, 1-min load ${LOAD_1M.toFixed(2)}, scale ${LOAD_SCALE})`);
-    await new Promise((r) => setTimeout(r, 100));
-  }
+async function waitFor(pred: () => boolean, what = 'a condition'): Promise<void> {
+  await waitForProgress(pred, { progress, torn: () => disposed, what });
 }
 
 // A plan good enough to exercise runBoardSession directly, without going through a whole heartbeat.
@@ -451,7 +448,7 @@ describe('division planning (spec item 3)', () => {
       // Three divisions is the tightest case in the suite — several heartbeat round trips before the fan-out —
       // and it timed out at 54 s against the helper's 60 s default under load (Task 6 review, finding 2). Twice
       // the file's own budget, which is itself scaled by the machine's load.
-      await planUntilFannedOut(d, v, 3, 2 * WAIT_MS);
+      await planUntilFannedOut(d, v, 3);
       const plans = listJobs(v).filter((j) => j.type === 'division.plan');
       expect(plans.map((j) => j.assigned).sort()).toEqual(['cfo', 'coo', 'cto']);
       expect(listJobs(v).filter((j) => j.type === 'board.premortem')).toHaveLength(1);

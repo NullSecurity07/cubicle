@@ -7,10 +7,12 @@ import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, mockedServices, mockedServicesRow, modelUseRows, isKeyProblemDowngrade, planningGate, divisionPlanGoal } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
-import { LOAD_1M, LOAD_SCALE, WAIT_MS, TEST_MS } from './helpers/load.js';
+import { TEST_MS, eventProgress, waitForProgress } from './helpers/load.js';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
+/** "Has anything happened": the event log's JSONL mirror, appended to by every emitted event (helpers/load.ts). */
+const progress = eventProgress(() => dir);
 beforeEach(async () => {
   disposed = false;
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-brief-'));
@@ -62,13 +64,13 @@ const daemonFor = (llm: Llm, env: NodeJS.ProcessEnv = NO_KEYS) => {
   daemons.push(d);
   return d;
 };
-async function waitFor(pred: () => boolean, ms = WAIT_MS): Promise<void> {
-  const t0 = Date.now();
-  while (!pred()) {
-    if (disposed) throw new Error('waitFor: torn down while still waiting');
-    if (Date.now() - t0 > ms) throw new Error(`waitFor: timeout after ${Date.now() - t0} ms (budget ${ms} ms, 1-min load ${LOAD_1M.toFixed(2)}, scale ${LOAD_SCALE})`);
-    await new Promise((r) => setTimeout(r, 100));
-  }
+/**
+ * Poll a condition on real timers, failing only when the daemon has written nothing for the stall budget
+ * (`helpers/load.ts`). The ceiling this used to carry was scaled by a load read at import, which under
+ * `pnpm -r test` is the one moment that still looks idle; watching the event log needs no such guess.
+ */
+async function waitFor(pred: () => boolean, what = 'a condition'): Promise<void> {
+  await waitForProgress(pred, { progress, torn: () => disposed, what });
 }
 const lastBrief = (v: Vault) => readFileSync(path.join(dir, v.list('Runs', { ext: '.md' }).sort().at(-1)!), 'utf8');
 const factsOf = (brief: string) => brief.split('_Facts used:_')[1] ?? '';

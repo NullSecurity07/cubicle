@@ -10,10 +10,12 @@ import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchPropos
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { letTheBoardDecide } from './helpers/board-switch.js';
-import { LOAD_1M, LOAD_SCALE, TEST_MS } from './helpers/load.js';
+import { TEST_MS, eventProgress, loadScale, oneMinuteLoad, waitForProgress } from './helpers/load.js';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
+/** "Has anything happened": the event log's JSONL mirror, which every emitted event appends to. See helpers/load.ts. */
+const progress = eventProgress(() => dir);
 beforeEach(async () => {
   disposed = false;
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-daemon-'));
@@ -110,20 +112,15 @@ function daemonFor(llm: Llm, port = 0) {
 }
 
 /**
- * Poll a condition on real timers, against a budget that moves with the machine (`helpers/load.ts`, read once for
- * this file). The hard literals these call sites carried were the flake: a cycle that finishes in seconds on an
- * idle box has taken longer than 15 s with six vitest workers and a build running beside it, and a wall-clock
- * ceiling is the one thing here that has to scale. `ms` stays the per-call intent — a quick wait or a whole
- * cycle — and `LOAD_SCALE` (1 to 4) is what contention does to it.
+ * Poll a condition on real timers, failing only when the daemon has written **nothing** for the stall budget
+ * (`helpers/load.ts`). The wall-clock ceilings these call sites used to carry were the flake, and the load that
+ * scaled them was read at import — which under `pnpm -r test` is the one moment that still looks idle. A wait
+ * that watches the event log instead is load-independent by construction: a box four times slower takes four
+ * times longer while events keep arriving, and a daemon that has genuinely stopped fails here, inside the body,
+ * where the `finally` that stops it still runs.
  */
-async function waitFor(pred: () => boolean, ms = 15000): Promise<void> {
-  const budget = ms * LOAD_SCALE;
-  const t0 = Date.now();
-  while (!pred()) {
-    if (disposed) throw new Error('waitFor: torn down while still waiting');
-    if (Date.now() - t0 > budget) throw new Error(`waitFor: timeout after ${Date.now() - t0} ms (budget ${budget} ms, 1-min load ${LOAD_1M.toFixed(2)}, scale ${LOAD_SCALE})`);
-    await new Promise((r) => setTimeout(r, 100));
-  }
+async function waitFor(pred: () => boolean, what = 'a condition'): Promise<void> {
+  await waitForProgress(pred, { progress, torn: () => disposed, what });
 }
 
 /**
@@ -131,22 +128,22 @@ async function waitFor(pred: () => boolean, ms = 15000): Promise<void> {
  * between a job finishing and its gate job being enqueued, so a plain waitFor on it can return mid-chain and the
  * assertion after it then races the next gate.
  *
- * `ms` scales with the load like every other budget here; `stableMs` does not. How long a state has to hold
- * before it counts as settled is a property of the thing being watched, not of how busy the box is.
+ * `stableMs` does not move with the machine: how long a state has to hold before it counts as settled is a
+ * property of the thing being watched, not of how busy the box is. The outer deadline is the flapping guard —
+ * a predicate that keeps going true and false again while the daemon works would otherwise never settle — and
+ * it reads the load *now*, not at import.
  */
-async function waitForStable(pred: () => boolean, stableMs = 1500, ms = 40000): Promise<void> {
-  const budget = ms * LOAD_SCALE;
-  const t0 = Date.now();
+async function waitForStable(pred: () => boolean, stableMs = 1500, what = 'a settled queue'): Promise<void> {
+  const deadline = Date.now() + 60_000 * loadScale();
   for (;;) {
-    // `waitFor` scales what it is handed, so the remainder passed back to it is divided out first.
-    await waitFor(pred, Math.max(1000, (budget - (Date.now() - t0)) / LOAD_SCALE));
+    await waitFor(pred, what);
     const held = Date.now();
     while (Date.now() - held < stableMs) {
       await new Promise((r) => setTimeout(r, 100));
       if (!pred()) break;
     }
     if (pred() && Date.now() - held >= stableMs) return;
-    if (Date.now() - t0 > budget) throw new Error(`waitForStable: no ${stableMs} ms of stability inside ${budget} ms (1-min load ${LOAD_1M.toFixed(2)}, scale ${LOAD_SCALE})`);
+    if (Date.now() > deadline) throw new Error(`waitForStable: ${what} never held for ${stableMs} ms (1-min load ${oneMinuteLoad().toFixed(2)})`);
   }
 }
 
@@ -232,7 +229,7 @@ describe('heartbeat as a resumable job', () => {
     // "restart": a daemon comes up, marks nothing (heartbeat is blocked, not running), runs the plan job and resumes
     const d = daemonFor(llm);
     await d.start();
-    await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 30000);
+    await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 'the first heartbeat');
     await d.stop();
     const v2 = Vault.open(dir);
     expect(v2.list('Runs', { ext: '.md' }).length).toBe(1);
@@ -299,7 +296,7 @@ describe('only the local floor is up', () => {
     const d = daemonFor(llm);
     await d.start();
     try {
-      await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 40000);
+      await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 'the first heartbeat');
     } finally { await d.stop(); }
     const vault = Vault.open(dir);
     try {
@@ -441,8 +438,8 @@ describe('daemon lifecycle', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => listJobs(v).some((j) => j.type === 'ceo.heartbeat' && /unanswered owner message/.test(j.title)), 10000);
-      await waitFor(() => /answered: true/.test(readFileSync(path.join(dir, '00 Inbox/idea.md'), 'utf8')), 20000);
+      await waitFor(() => listJobs(v).some((j) => j.type === 'ceo.heartbeat' && /unanswered owner message/.test(j.title)), 'the heartbeat job for the unanswered owner message');
+      await waitFor(() => /answered: true/.test(readFileSync(path.join(dir, '00 Inbox/idea.md'), 'utf8')), 'the inbox note to be marked answered');
     } finally { await d.stop(); }
     const text = readFileSync(path.join(dir, '00 Inbox/idea.md'), 'utf8');
     expect(text).toMatch(/## CEO/);
@@ -465,7 +462,7 @@ describe('daemon lifecycle', () => {
 
       // The owner types the idea into the cabin chat.
       createProposal(d.vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'idea', body: 'Bookkeeping for tiny shops' }, 'owner');
-      await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
+      await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 'the first heartbeat');
 
       // Heartbeat #1 is the one that names the company and the one that seeds the three first jobs.
       expect(listJobs(d.vault).filter((j) => j.type === 'ceo.heartbeat')).toHaveLength(1);
@@ -482,9 +479,9 @@ describe('daemon lifecycle', () => {
     vault.close();
     const d = daemonFor(fakeLlm());
     await d.start();
-    await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
+    await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 'the first heartbeat');
     // engineer.ship (scaffold) runs and finishes; its office:operations.verify runs; then nothing else is enqueued
-    await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'office:operations.verify' && j.status === 'done').length >= 1, 20000);
+    await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'office:operations.verify' && j.status === 'done').length >= 1, 'an operations verify job to finish');
     await waitForStable(() => listJobs(d.vault).filter((j) => ['queued', 'running'].includes(j.status)).length === 0);
     const jobs = listJobs(d.vault);
     // No verify-of-verify chain: a gate job never itself sits under another gate job.
@@ -581,10 +578,10 @@ describe('daemon lifecycle', () => {
     vault.close();
     const d = daemonFor(fakeLlm());
     await d.start();
-    await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 20000);
+    await waitFor(() => d.vault.events.count('heartbeat.completed') >= 1, 'the first heartbeat');
     // the first heartbeat's own cycle produces company.plan, board.premortem, the seeded first jobs, team:qa.review, office:operations.verify —
     // five of those six are planning/gate jobs; if they counted toward jobsCompletedN (5) a second heartbeat would fire.
-    await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'office:operations.verify' && j.status === 'done').length >= 1, 20000);
+    await waitFor(() => listJobs(d.vault).filter((j) => j.type === 'office:operations.verify' && j.status === 'done').length >= 1, 'an operations verify job to finish');
     await new Promise((r) => setTimeout(r, 1500)); // let the tick settle
     const heartbeats = listJobs(d.vault).filter((j) => j.type === 'ceo.heartbeat');
     expect(heartbeats).toHaveLength(1);
@@ -687,12 +684,12 @@ describe('daemon lifecycle', () => {
     // A whole job through the harness — the worker picks it up, calls a model, the ask-mode tool refuses, the
     // proposal is written and the job blocks. Every comparable wait in this file is 20-40 s; this one was 15 s,
     // and it is the case that went red, timing out at 15.4 s. The budget was under-set, not the code slow.
-    await waitFor(() => readJob(d.vault, id)!.data.status === 'blocked' && readJob(d.vault, id)!.data.approval === 'pending', 30000);
+    await waitFor(() => readJob(d.vault, id)!.data.status === 'blocked' && readJob(d.vault, id)!.data.approval === 'pending', 'the ask-mode call to file its proposal and block the job');
     const prop = findInboxById(d.vault, readJob(d.vault, id)!.data.blocked_on!.id)!;
     expect(listInbox(d.vault).filter((n) => n.data.kind === 'outbound_batch').length).toBe(1);
     writeFileSync(path.join(dir, prop.path), readFileSync(path.join(dir, prop.path), 'utf8').replace('approved: null', 'approved: true')); // owner in Obsidian
     // The other half of the same trip: the dispatcher sees the approval, requeues, and the worker runs it out.
-    await waitFor(() => readJob(d.vault, id)!.data.status === 'done', 30000);
+    await waitFor(() => readJob(d.vault, id)!.data.status === 'done', 'the approved job to finish');
     const j = readJob(d.vault, id)!.data;
     expect(j.side_effects_done).toEqual([`${id}:1:1`]);
     expect(j.approval).toBe('approved');
@@ -731,7 +728,7 @@ describe('daemon lifecycle', () => {
     writeFileSync(notePath, before.replace(/^status: running$/m, 'status: cancelled'));
     releaseStep();
     // Also a whole job through the harness before anything can be cancelled, so it gets the same budget.
-    await waitFor(() => d.vault.events.count('job.cancelled') >= 1, 30000);
+    await waitFor(() => d.vault.events.count('job.cancelled') >= 1, 'the cancelled job');
     // "within one step": the model was asked for exactly one tool call and none of it was executed.
     expect(readJob(d.vault, id)!.data.checkpoint_step).toBeLessThanOrEqual(1);
     expect(readJob(d.vault, id)!.data.status).toBe('cancelled');
@@ -760,7 +757,7 @@ describe('daemon lifecycle', () => {
     ws.send(JSON.stringify({ op: 'chat', text: 'Bookkeeping for tiny shops' }));
     await waitFor(() => msgs.some((m) => m.op === 'chat.ack'));
     expect(listInbox(d.vault).some((n) => n.data.kind === 'message' && n.data.from === 'owner')).toBe(true);
-    await waitFor(() => msgs.some((m) => m.op === 'event' && m.type === 'heartbeat.completed'), 20000);
+    await waitFor(() => msgs.some((m) => m.op === 'event' && m.type === 'heartbeat.completed'), 'heartbeat.completed on the socket');
     ws.send(JSON.stringify({ op: 'replay', from: '2000-01-01T00:00:00.000Z' }));
     await waitFor(() => msgs.some((m) => m.op === 'replay'));
     const rep = msgs.find((m) => m.op === 'replay') as { events: unknown[] };
@@ -831,7 +828,7 @@ describe('local-tier summariser (D1)', () => {
     const d = track(new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 500, maxConcurrentJobs: 2, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined }));
     await d.start();
     try {
-      await waitFor(() => prose.some((p) => p.tier === 'local' && p.system.startsWith('Summarize the following observations')), 30000);
+      await waitFor(() => prose.some((p) => p.tier === 'local' && p.system.startsWith('Summarize the following observations')), 'the local-tier summary call');
     } finally { await d.stop(); }
     const call = prose.find((p) => p.system.startsWith('Summarize the following observations'))!;
     expect(call.tier).toBe('local');

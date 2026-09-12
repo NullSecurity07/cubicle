@@ -1,6 +1,6 @@
 import { listJobs, type Vault } from '@cubicle/core';
 import type { Daemon } from '../../src/index.js';
-import { WAIT_MS } from './load.js';
+import { loadScale, waitForProgress } from './load.js';
 
 /**
  * `board_decides_after_hours` ships at 0 — the plan waits for the owner for as long as the owner takes — so a
@@ -14,13 +14,8 @@ export function letTheBoardDecide(vault: Vault, hours = BOARD_DECIDES_AFTER_HOUR
   vault.writeText('Memory/constitution.md', vault.readText('Memory/constitution.md').replace(/^board_decides_after_hours:.*$/m, `board_decides_after_hours: ${hours}`), 'owner');
 }
 
-async function waitFor(pred: () => boolean, ms: number): Promise<void> {
-  const t0 = Date.now();
-  while (!pred()) {
-    if (Date.now() - t0 > ms) throw new Error('timeout');
-    await new Promise((r) => setTimeout(r, 100));
-  }
-}
+/** The newest event id: "has anything happened", straight off the live vault handle this helper is given. */
+const progressOf = (v: Vault) => () => v.events.query({ limit: 1, order: 'desc' })[0]?.id ?? -1;
 
 /**
  * A cycle with no owner at the keyboard: wait for the first heartbeat, then keep asking for another until the
@@ -28,14 +23,30 @@ async function waitFor(pred: () => boolean, ms: number): Promise<void> {
  * above has elapsed, lets the board's verdict stand and fans the divisions out. `requestHeartbeat` returns the
  * open heartbeat instead of creating a second one, so polling it is safe.
  */
-export async function planUntilFannedOut(d: Daemon, v: Vault, expected: number, ms = WAIT_MS): Promise<void> {
-  await waitFor(() => v.events.count('heartbeat.completed') >= 1, ms);
+export async function planUntilFannedOut(d: Daemon, v: Vault, expected: number): Promise<void> {
+  const progress = progressOf(v);
+  await waitForProgress(() => v.events.count('heartbeat.completed') >= 1, { progress, what: 'the first heartbeat' });
   const divisionPlans = () => listJobs(v).filter((j) => j.type === 'division.plan');
-  const deadline = Date.now() + ms;
-  while (divisionPlans().length < expected) {
-    if (Date.now() > deadline) throw new Error(`only ${divisionPlans().length} division plan(s) after ${Math.round(ms / 1000)} s`);
-    await new Promise((r) => setTimeout(r, 500));
-    d.requestHeartbeat('the board decides');
+  // Keep asking for another heartbeat while we wait. This is the one loop here that cannot be purely
+  // stall-driven: asking is itself a write, so the vault is never silent while it runs, and the stall detector
+  // would never fire. The ceiling is read from the load *now* rather than at import, which is the flake this
+  // helper's budgets used to have.
+  const poke = setInterval(() => { if (divisionPlans().length < expected) d.requestHeartbeat('the board decides'); }, 500);
+  const deadline = Date.now() + 120_000 * loadScale();
+  try {
+    while (divisionPlans().length < expected) {
+      if (Date.now() > deadline) throw new Error(`only ${divisionPlans().length} division plan(s) of ${expected}, and the company is still working`);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  } finally {
+    clearInterval(poke);
   }
-  await waitFor(() => divisionPlans().every((j) => ['done', 'failed', 'cancelled'].includes(j.status)), ms);
+  await waitForProgress(() => divisionPlans().every((j) => ['done', 'failed', 'cancelled'].includes(j.status)), { progress, what: 'the division plans to finish' });
+  // And wait for the heartbeat to pick them up. `team.planned` is emitted by the `division_plans` step when the
+  // heartbeat *resumes* — one tick after the last plan finishes — so a helper that returned on the job statuses
+  // alone handed the caller a vault where the fan-out had happened but the company had not said so yet. That
+  // race was invisible while the waits were wall-clock and long; it is a test bug either way. A plan that ended
+  // `failed` or `cancelled` never gets an event, so the target is the number that finished `done`.
+  const planned = () => divisionPlans().filter((j) => j.status === 'done').length;
+  await waitForProgress(() => v.events.count('team.planned') >= planned(), { progress, what: 'the heartbeat to record the division plans' });
 }

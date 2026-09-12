@@ -9,18 +9,17 @@ import { NON_WORK_TYPES, type HeartbeatDeps } from '../src/heartbeat.js';
 import { Daemon, defaultConfig } from '../src/index.js';
 import { PANTRY_ROLE_ID, PANTRY_TURN_TOKENS, idleRoles, pantryPair, pantryJobId, lastPantryChat, pantryNoteFor, maybeEnqueuePantryChat, runPantryChat, pantryPrompt } from '../src/pantry.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
-import { WAIT_MS, LOAD_1M, LOAD_SCALE, TEST_MS } from './helpers/load.js';
+import { TEST_MS, eventProgress, waitForProgress } from './helpers/load.js';
 
 const root = path.resolve(__dirname, '../../..');
 const NOW = new Date('2026-09-12T15:30:00.000Z');
 
-/** Poll a condition on real timers, against a budget that moves with the machine's load (helpers/load.ts). */
-async function waitFor(pred: () => boolean, ms = WAIT_MS): Promise<void> {
-  const t0 = Date.now();
-  while (!pred()) {
-    if (Date.now() - t0 > ms) throw new Error(`waitFor: timeout after ${Date.now() - t0} ms (budget ${ms} ms, 1-min load ${LOAD_1M.toFixed(2)}, scale ${LOAD_SCALE})`);
-    await new Promise((r) => setTimeout(r, 100));
-  }
+/**
+ * Poll a condition on real timers, failing only when the daemon has written nothing for the stall budget
+ * (`helpers/load.ts`): a wait that watches progress needs no guess about how busy the machine is.
+ */
+async function waitFor(pred: () => boolean, what = 'a condition'): Promise<void> {
+  await waitForProgress(pred, { progress, what });
 }
 
 /** A scripted model that says one line per turn and closes with whatever `idea` says. */
@@ -40,6 +39,8 @@ function chatter(opts: { idea?: string; silentAfter?: number } = {}): Llm & { ca
 }
 
 let dir: string; let vault: Vault;
+/** "Has anything happened": the event log's JSONL mirror, appended to by every emitted event (helpers/load.ts). */
+const progress = eventProgress(() => dir);
 /** Every daemon the acceptance case starts, stopped before the vault it writes to is removed. */
 const daemons: Daemon[] = [];
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-pantry-run-')); vault = (await scaffoldVault(dir)).vault; });
