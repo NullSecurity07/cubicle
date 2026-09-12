@@ -23,6 +23,10 @@ Two rules matter more than the rest:
 Use `ledger.record` to add a row. You cannot record `capital`: only the owner puts money in. If the company
 needs money, say so with `proposal.create` and let them decide.
 
+One row of yours may be at most **1 000** of whatever the book's currency is. The book is append-only, so a wrong
+row that size cannot be quietly fixed — it has to be cancelled by a second row, in front of the owner. Anything
+larger is theirs to approve: file it with `proposal.create` as a spend and say what it is for.
+
 ## Cash, burn, runway
 
 - **Cash** is live capital plus live revenue minus live cost.

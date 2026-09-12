@@ -71,7 +71,10 @@ describe('Docs/tech-radar.md', () => {
 describe('Docs/money-handbook.md', () => {
   it('covers every rule an agent can get wrong about money', () => {
     const h = read('Docs/money-handbook.md');
-    for (const topic of ['append-only', 'mock', 'capital', 'ledger.record', 'runway', 'model quota', 'cheapest tier', 'dormant']) {
+    // `1 000` is MAX_AGENT_ENTRY_CENTS (packages/tools/src/tools/ledger.ts) in major units — decision 13, and the
+    // other half of the same rule as "you cannot record capital". An agent that reads this page must not have to
+    // discover the cap by being refused.
+    for (const topic of ['append-only', 'mock', 'capital', 'ledger.record', 'runway', 'model quota', 'cheapest tier', 'dormant', '1 000', 'proposal.create']) {
       expect(h, topic).toContain(topic);
     }
   });

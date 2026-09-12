@@ -162,12 +162,14 @@ describe('ledger.record (spec §1, §7)', () => {
 });
 
 describe('Ledger/ is owner-owned for agent vault writes (spec §7)', () => {
-  it('refuses vault.write to Ledger/ledger.md outright, naming the finance office, while ledger.record still appends', async () => {
-    const holder = officeHolder(loadOrg(vault), 'finance');
+  it('refuses vault.write to Ledger/ledger.md outright, pointing at the tool the caller already has, while ledger.record still appends', async () => {
     const w = await vaultWrite.handler({ path: 'Ledger/ledger.md', content: 'whatever an agent likes' }, ctx('cfo', 'job_test'));
     expect(w.ok).toBe(false);
-    expect(w.text).toContain(holder);
     expect(w.text).toContain('ledger.record');
+    // `ledger.record` is in `phase3Tools`, so it is on every role's list: the refusal must not send the caller on
+    // an errand to the finance office for a row it can write itself (M15).
+    expect(w.text).not.toContain(officeHolder(loadOrg(vault), 'finance'));
+    expect(w.text).toContain('append-only');
     expect(readLedger(vault).entries).toEqual([]);
 
     const r = await ledgerRecord.handler({ kind: 'cost', amount: '2.00', mode: 'live', why: 'One coffee for the office', ref: '' }, ctx('cfo', 'job_test'));
