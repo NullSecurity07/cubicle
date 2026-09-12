@@ -342,7 +342,7 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
   }
   // 3. teams, processes, docs, the research area and hireable charters that are simply missing
   copyDir('Teams'); copyDir('Processes'); copyDir('Docs'); copyDir('Roles/_hireable');
-  copyDir('Research'); copyDir('Ideas'); copyDir('Discovery'); copyDir('Ledger'); copyMissing('Metrics/research.md');
+  copyDir('Research'); copyDir('Ideas'); copyDir('Discovery'); copyDir('Ledger'); copyDir('Pantry'); copyMissing('Metrics/research.md');
   // 3b. The v2 stopgap: division notes listed their rooms' leads as members so a lead could reach them before the
   //     team tree existed. `can(schedule)` walks the tree now, and a doubly-listed lead breaks team size and
   //     `reportsOf`, so take it out wherever a member also leads a team under this one.

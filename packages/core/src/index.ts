@@ -24,3 +24,4 @@ export * from './money.js';
 export * from './streams.js';
 export * from './ci.js';
 export * from './money.js';
+export * from './pantry.js';
