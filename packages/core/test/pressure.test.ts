@@ -3,8 +3,17 @@ import {
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_MAX, BoardRubric,
   readPressureVerdict, parseRubric, rubricTotal, rubricBand, renderRubric,
   pressureToBoard, pressureFindings, PRESSURE_NO_WEDGE, PRESSURE_REFUSAL_HEDGE, PRESSURE_REFUSAL_MISSING,
-  PRESSURE_HANDBOOK_PATH,
+  PRESSURE_HANDBOOK_PATH, PRESSURE_NO_FLAWS,
 } from '../src/pressure.js';
+
+/** The two machine lines the chair's prompt shows it, verbatim. A chair that reprints them has not voted. */
+const ECHO = [
+  'VERDICT: STRONG | WEAK | PIVOT REQUIRED',
+  'RUBRIC: core assumption <0-2>, fatal flaws <0-2>, pain <0-2>, founder fit <0-2>, why now <0-2>',
+].join('\n');
+
+/** A flaws section, for the cases that are about something else. */
+const FLAWS = (...f: string[]) => ['## Three Fatal Flaws', ...f.map((x) => `- ${x}`)].join('\n');
 
 const STRONG = [
   'VERDICT: STRONG',
@@ -96,33 +105,92 @@ describe('the flaws are the flaws, not every bullet on the page (Decision 9)', (
     expect(r.ok && r.flaws.join(' ')).not.toContain('shared spreadsheet');
   });
 
-  it('falls back to every bullet when there are no headings, and caps at four', () => {
-    const flat = ['VERDICT: WEAK', ...Array.from({ length: 7 }, (_, i) => `- flaw number ${i}`)].join('\n');
-    const r = readPressureVerdict(flat);
+  it('caps the section at four', () => {
+    const many = ['VERDICT: WEAK', FLAWS(...Array.from({ length: 7 }, (_, i) => `flaw number ${i}`))].join('\n');
+    const r = readPressureVerdict(many);
     expect(r.ok && r.flaws).toHaveLength(4);
     expect(r.ok && r.flaws[0]).toBe('flaw number 0');
   });
 
   it('never files the machine lines as flaws', () => {
-    const r = readPressureVerdict('VERDICT: PIVOT REQUIRED\n- RUBRIC: core assumption 1\n- WEDGE: one nursery chain\n- the real flaw here');
+    const r = readPressureVerdict('VERDICT: PIVOT REQUIRED\n## Three Fatal Flaws\n- RUBRIC: core assumption 1\n- WEDGE: one nursery chain\n- the real flaw here');
     expect(r.ok && r.flaws).toEqual(['the real flaw here']);
+  });
+
+  it('never reaches outside the section, even when there is no section to read', () => {
+    // The fallback to every bullet in the answer is the thing Decision 9 forbids: this is what it filed.
+    const prose = [
+      'VERDICT: WEAK',
+      '## Three Fatal Flaws',
+      'One, the caterer. Two, liability. Three, the van.',
+      '## Problem Validation',
+      '- they use a spreadsheet today',
+    ].join('\n');
+    const r = readPressureVerdict(prose);
+    expect(r.ok && r.flaws).toEqual(['One, the caterer. Two, liability. Three, the van.']);
+
+    // A next heading with no space after the hashes still closes the section.
+    const tight = ['VERDICT: WEAK', '## Three Fatal Flaws', '- the caterer holds the contract', '##Problem Validation', '- they use a spreadsheet today'].join('\n');
+    expect(readPressureVerdict(tight).ok && (readPressureVerdict(tight) as { flaws: string[] }).flaws).toEqual(['the caterer holds the contract']);
+
+    // No section at all is no flaws — and the finding says so rather than arriving empty.
+    const none = readPressureVerdict('VERDICT: WEAK\n- they use a spreadsheet today');
+    expect(none.ok && none.flaws).toEqual([]);
+    expect(none.ok && pressureFindings(none)).toEqual([PRESSURE_NO_FLAWS]);
+  });
+});
+
+describe('an echoed format line is not a vote (review T12 finding 1)', () => {
+  it('ignores the line that names all three, and takes the chair\'s real verdict', () => {
+    const r = readPressureVerdict([ECHO, '', 'The board talked it over.', '', 'VERDICT: WEAK'].join('\n'));
+    expect(r).toMatchObject({ ok: true, verdict: 'WEAK' });
+    // The `<0-2>` placeholders are not five scores of zero.
+    expect(r.ok && r.rubric).toBeNull();
+  });
+
+  it('a chair that only echoed the template has not voted at all', () => {
+    const r = readPressureVerdict(ECHO);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.reason).toBe(PRESSURE_REFUSAL_MISSING);
+    // Every shape of the enumeration, not just the pipe.
+    expect(readPressureVerdict('VERDICT: STRONG / WEAK / PIVOT').ok).toBe(false);
+    expect(readPressureVerdict('VERDICT (one word first): STRONG / WEAK / PIVOT').ok).toBe(false);
+  });
+
+  it('takes the last of two real verdict lines, so a chair that thinks again is heard', () => {
+    expect(readPressureVerdict('VERDICT: STRONG\n\nOn reflection:\n\nVERDICT: WEAK')).toMatchObject({ ok: true, verdict: 'WEAK' });
+    expect(readPressureVerdict('VERDICT: WEAK\n\nVERDICT: STRONG')).toMatchObject({ ok: true, verdict: 'STRONG' });
+  });
+
+  it('a verdict that argues against another word is still one verdict', () => {
+    // The reason clause is prose, not an enumeration (Decision 4).
+    expect(readPressureVerdict('VERDICT: WEAK — the wedge is not strong enough to matter')).toMatchObject({ ok: true, verdict: 'WEAK' });
+    expect(readPressureVerdict('VERDICT: STRONG, and no pivot is required here')).toMatchObject({ ok: true, verdict: 'STRONG' });
+  });
+
+  it('reads an em dash after the keyword, so punctuation does not burn the re-ask', () => {
+    expect(readPressureVerdict('VERDICT — STRONG')).toMatchObject({ ok: true, verdict: 'STRONG' });
+    const r = readPressureVerdict('VERDICT — PIVOT\nWEDGE — one nursery chain\nRUBRIC — core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1');
+    expect(r).toMatchObject({ ok: true, verdict: 'PIVOT REQUIRED' });
+    expect(r.ok && r.rubric).toEqual({ core_assumption: 2, fatal_flaws: 1, pain: 2, founder_fit: 1, why_now: 1 });
+    expect(r.ok && pressureFindings(r)[0]).toContain('one nursery chain');
   });
 });
 
 describe('a pivot leads with the wedge (spec §3)', () => {
   it('puts the wedge first, and says so when there is none', () => {
-    const r = readPressureVerdict('VERDICT: PIVOT REQUIRED\n- the buyer is not the user\nWEDGE: one nursery chain, the 40 sites that already order together');
+    const r = readPressureVerdict(`VERDICT: PIVOT REQUIRED\n${FLAWS('the buyer is not the user')}\nWEDGE: one nursery chain, the 40 sites that already order together`);
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error('unreachable');
     const f = pressureFindings(r);
     expect(f[0]).toBe('Pivot required. The wedge to attack instead: one nursery chain, the 40 sites that already order together');
     expect(f[1]).toBe('the buyer is not the user');
-    const bare = readPressureVerdict('VERDICT: PIVOT REQUIRED\n- the buyer is not the user');
+    const bare = readPressureVerdict(`VERDICT: PIVOT REQUIRED\n${FLAWS('the buyer is not the user')}`);
     expect(bare.ok && pressureFindings(bare)[0]).toBe(PRESSURE_NO_WEDGE);
   });
 
   it('a strong or weak verdict carries only its flaws', () => {
-    const r = readPressureVerdict('VERDICT: WEAK\n- nobody is hacking a solution today\nWEDGE: ignored on a weak verdict');
+    const r = readPressureVerdict(`VERDICT: WEAK\n${FLAWS('nobody is hacking a solution today')}\nWEDGE: ignored on a weak verdict`);
     expect(r.ok && pressureFindings(r)).toEqual(['nobody is hacking a solution today']);
   });
 });
@@ -138,6 +206,19 @@ describe('the 0-2 x 5 rubric (spec §6)', () => {
     expect(parseRubric('RUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 1')).toBeNull();
     expect(parseRubric('nothing here')).toBeNull();
     expect(parseRubric('RUBRIC: core assumption 3, fatal flaws 1, pain 2, founder fit 1, why now 1')).toBeNull();
+  });
+
+  it('a dimension scores only on exactly one digit (review T12 finding 2)', () => {
+    // The prompt's own placeholder is not five zeros.
+    expect(parseRubric('RUBRIC: core assumption <0-2>, fatal flaws <0-2>, pain <0-2>, founder fit <0-2>, why now <0-2>')).toBeNull();
+    // One placeholder among four real scores is still not a rubric.
+    expect(parseRubric('RUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now <0-2>')).toBeNull();
+    // A range is not a score, and neither is prose.
+    expect(parseRubric('RUBRIC: core assumption 1-2, fatal flaws 1, pain 2, founder fit 1, why now 1')).toBeNull();
+    expect(parseRubric('RUBRIC: core assumption high, fatal flaws 1, pain 2, founder fit 1, why now 1')).toBeNull();
+    // A dimension written twice keeps the first score, the way a reader would.
+    expect(parseRubric('RUBRIC: core assumption 2, core assumption 0, fatal flaws 1, pain 2, founder fit 1, why now 1'))
+      .toEqual({ core_assumption: 2, fatal_flaws: 1, pain: 2, founder_fit: 1, why_now: 1 });
   });
 
   it('reads the labels a chair varies, and the bands the notes set', () => {

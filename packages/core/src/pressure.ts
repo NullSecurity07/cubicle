@@ -55,14 +55,28 @@ export const RUBRIC_LABEL: Record<RubricDimension, string> = {
   why_now: 'why now',
 };
 
-/** How each dimension is found on a `RUBRIC:` line. Written once so the prompt and the parse cannot drift. */
+/**
+ * How each dimension is named on a `RUBRIC:` line. Written once so the prompt and the parse cannot drift.
+ * Labels only — the score is read separately, because *how many* digits a dimension carries is the thing that
+ * separates a score from a placeholder.
+ */
 const RUBRIC_CUE: Record<RubricDimension, RegExp> = {
-  core_assumption: /core\s*assumption\D{0,6}([0-2])/i,
-  fatal_flaws: /(?:fatal\s*)?flaws?\D{0,6}([0-2])/i,
-  pain: /pain(?:\s*level)?\D{0,6}([0-2])/i,
-  founder_fit: /founder[\s-]*(?:market[\s-]*)?fit\D{0,6}([0-2])/i,
-  why_now: /why\s*now\D{0,6}([0-2])/i,
+  core_assumption: /core\s*assumption/i,
+  fatal_flaws: /(?:fatal\s*)?flaws?/i,
+  pain: /pain(?:\s*level)?/i,
+  founder_fit: /founder[\s-]*(?:market[\s-]*)?fit/i,
+  why_now: /why\s*now/i,
 };
+
+/**
+ * What separates `VERDICT`, `RUBRIC` and `WEDGE` from their value. Colon, hyphen, en dash — and the em dash
+ * this codebase writes everywhere, `renderRubric`'s own output included, so `VERDICT — STRONG` is an answer
+ * rather than a re-ask spent on punctuation.
+ */
+const DELIM = '[:\\-–—]';
+
+/** A machine line the chair was asked to write. Never a flaw, wherever it appears. */
+const MACHINE_LINE_RE = /^(?:\*\*)?(?:rubric|wedge|verdict)(?:\*\*)?\s*[:\-–—]/i;
 
 const zeroToTwo = z.number().int().min(0).max(2);
 
@@ -96,15 +110,24 @@ export function renderRubric(r: BoardRubric): string {
 /**
  * The rubric out of a chair's answer, or null. All five or nothing: four scores and a guess is not a rubric,
  * and a partial one on a card would read as a board that scored the idea 6/10 when it scored four dimensions.
+ *
+ * A dimension counts only when its own segment of the line carries **exactly one** digit, and that digit is
+ * 0–2. The prompt's own template reads `core assumption <0-2>, fatal flaws <0-2>, …`; a chair that echoes it
+ * before answering must not be read as having scored every dimension zero, which is what "find the first digit
+ * after the label" does. Two digits is a placeholder or a range (`1-2`), and neither is a score.
  */
 export function parseRubric(text: string): BoardRubric | null {
-  const line = text.match(/^[ \t]*(?:[-*]\s*)?(?:\*\*)?\s*rubric\s*(?:\*\*)?\s*[:\-–]\s*(.+)$/im)?.[1];
+  const line = text.match(new RegExp(`^[ \\t]*(?:[-*]\\s*)?(?:\\*\\*)?\\s*rubric\\s*(?:\\*\\*)?\\s*${DELIM}\\s*(.+)$`, 'im'))?.[1];
   if (!line) return null;
+  // One segment per dimension. A dimension written twice keeps the first score, the way a reader would.
+  const segments = line.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
   const out: Record<string, number> = {};
   for (const d of RUBRIC_DIMENSIONS) {
-    const m = line.match(RUBRIC_CUE[d]);
-    if (!m) return null;
-    out[d] = Number(m[1]);
+    const seg = segments.find((s) => RUBRIC_CUE[d].test(s));
+    if (seg === undefined) return null;
+    const digits = seg.match(/\d/g) ?? [];
+    if (digits.length !== 1) return null;
+    out[d] = Number(digits[0]);
   }
   const parsed = BoardRubric.safeParse(out);
   return parsed.success ? parsed.data : null;
@@ -116,6 +139,12 @@ export const PRESSURE_REFUSAL_MISSING = 'the answer carried no VERDICT line at a
 export function pressureRefusalUnknown(said: string): string {
   return `the verdict was "${said.slice(0, 40)}", which is not one of ${PRESSURE_VERDICTS.join(', ')}`;
 }
+
+/**
+ * What a verdict carries when `## Three Fatal Flaws` is missing or empty — itself a finding, not a silence.
+ * A board that ruled on an idea without naming one thing that could sink it has told the owner something.
+ */
+export const PRESSURE_NO_FLAWS = 'the chair named no flaws';
 
 /** What a PIVOT REQUIRED says when the chair named no wedge — itself a finding, not a silence. */
 export const PRESSURE_NO_WEDGE = 'the board says pivot but named no wedge: the narrowest slice, and the most desperate users to aim it at, are unstated';
@@ -134,21 +163,56 @@ function bulletsIn(text: string): string[] {
   return text.split('\n')
     .map((l) => l.trim().match(/^[-*]\s+(.+)$/)?.[1]?.trim())
     .filter((f): f is string => !!f && f.length > 3)
-    .filter((f) => !/^(?:\*\*)?(?:rubric|wedge|verdict)(?:\*\*)?\s*[:\-–]/i.test(f));
+    .filter((f) => !MACHINE_LINE_RE.test(f));
+}
+
+/** The same lines when the chair wrote its three flaws as prose rather than as a list. */
+function linesIn(text: string): string[] {
+  return text.split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 3)
+    .filter((l) => !MACHINE_LINE_RE.test(l));
 }
 
 /**
- * The flaws, read out of `## Three Fatal Flaws` when the chair wrote the five parts, and out of the whole
- * answer when it did not. Scoped rather than global so a bullet under `## Problem Validation` — "they use a
- * spreadsheet today" — is not filed as a reason the idea dies.
+ * The flaws, read **only** out of `## Three Fatal Flaws`: its bullets, or its own lines when the chair wrote a
+ * paragraph there instead. No section means no flaws (`PRESSURE_NO_FLAWS` says so), because the alternative —
+ * falling back to every bullet in the answer — is exactly what Decision 9 forbids: it files "they use a
+ * spreadsheet today" from under `## Problem Validation` as a reason the idea dies. An empty list is honest, and
+ * the chair still gets its verdict.
+ *
+ * The section ends at the next heading whether or not the chair put a space after the hashes.
  */
 function flawBullets(text: string): string[] {
   const head = text.match(/^#{1,4}[ \t]*(?:\d+[.)]\s*)?Three Fatal Flaws.*$/im);
-  if (head?.index === undefined) return bulletsIn(text).slice(0, PRESSURE_MAX_FLAWS);
+  if (head?.index === undefined) return [];
   const after = text.slice(head.index + head[0].length);
-  const section = after.split(/^#{1,4}[ \t]/m)[0];
-  const scoped = bulletsIn(section);
-  return (scoped.length ? scoped : bulletsIn(text)).slice(0, PRESSURE_MAX_FLAWS);
+  const section = after.split(/^#{1,4}/m)[0];
+  const bullets = bulletsIn(section);
+  return (bullets.length ? bullets : linesIn(section)).slice(0, PRESSURE_MAX_FLAWS);
+}
+
+/**
+ * The words that name an outcome. `PIVOT` alone stands for `PIVOT REQUIRED`, so the whole-word forms are what
+ * a line is counted against.
+ */
+const VERDICT_WORD_RE = [/\bSTRONG\b/i, /\bWEAK\b/i, /\bPIVOT\b/i];
+
+/**
+ * Everything on a verdict line before the chair's reasons begin. `VERDICT: WEAK — it is not strong enough` names
+ * one verdict and then argues; only the part before the dash or comma is the chair naming an outcome.
+ */
+function verdictHead(value: string): string {
+  return value.split(/[—–,]/)[0];
+}
+
+/**
+ * A line that names more than one outcome is the chair restating its instructions, not voting:
+ * `VERDICT: STRONG | WEAK | PIVOT REQUIRED` is the prompt's own format line. Reading it as a vote is the
+ * dangerous direction — it reported STRONG, and so passed, for an idea the chair went on to call weak.
+ */
+function isFormatEcho(value: string): boolean {
+  return VERDICT_WORD_RE.filter((re) => re.test(verdictHead(value))).length > 1;
 }
 
 /**
@@ -158,20 +222,27 @@ function flawBullets(text: string): string[] {
  * not a fourth outcome (Decision 4). `VERDICT: maybe`, `VERDICT: it has potential but…` and an answer with no
  * verdict line are all refusals, because each of them is the chair declining to decide, which is the failure
  * the whole exercise exists to prevent.
+ *
+ * Of the verdict lines that are votes rather than format echoes, the **last** one is the answer: a chair that
+ * thinks again, or that reprints the template before deciding, has its final word taken. An answer whose only
+ * verdict line is an echo has not voted at all, and is missing rather than STRONG.
  */
 export function readPressureVerdict(text: string): PressureRead {
   const t = text ?? '';
   if (BANNED_HEDGE_RE.test(t)) return { ok: false, reason: PRESSURE_REFUSAL_HEDGE };
-  const m = t.match(/^[ \t]*(?:[-*]\s*)?(?:\*\*)?\s*verdict\s*(?:\*\*)?\s*[:\-–]\s*(?:\*\*)?\s*([A-Za-z ]+)/im);
-  if (!m) return { ok: false, reason: PRESSURE_REFUSAL_MISSING };
-  const raw = m[1].trim().toUpperCase().replace(/\s+/g, ' ');
+  const lines = [...t.matchAll(new RegExp(`^[ \\t]*(?:[-*]\\s*)?(?:\\*\\*)?\\s*verdict\\s*(?:\\*\\*)?\\s*${DELIM}\\s*(.*)$`, 'gim'))]
+    .map((m) => m[1])
+    .filter((value) => !isFormatEcho(value));
+  const last = lines.at(-1);
+  if (last === undefined) return { ok: false, reason: PRESSURE_REFUSAL_MISSING };
+  const raw = (last.match(/^(?:\*\*)?\s*([A-Za-z ]+)/)?.[1] ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
   const verdict: PressureVerdict | null =
     /^PIVOT(?: REQUIRED)?\b/.test(raw) ? 'PIVOT REQUIRED'
       : /^STRONG\b/.test(raw) ? 'STRONG'
         : /^WEAK\b/.test(raw) ? 'WEAK'
           : null;
   if (!verdict) return { ok: false, reason: pressureRefusalUnknown(raw) };
-  const wedge = t.match(/^[ \t]*(?:[-*]\s*)?(?:\*\*)?\s*wedge\s*(?:\*\*)?\s*[:\-–]\s*(.+)$/im)?.[1]?.trim() ?? '';
+  const wedge = t.match(new RegExp(`^[ \\t]*(?:[-*]\\s*)?(?:\\*\\*)?\\s*wedge\\s*(?:\\*\\*)?\\s*${DELIM}\\s*(.+)$`, 'im'))?.[1]?.trim() ?? '';
   return { ok: true, verdict, flaws: flawBullets(t), wedge, rubric: parseRubric(t) };
 }
 
@@ -182,10 +253,12 @@ export function pressureToBoard(v: PressureVerdict): 'pass' | 'return' {
 
 /**
  * The findings a verdict carries. A pivot leads with the wedge, because "attack this narrower thing instead"
- * is the one finding the author can act on today; the flaws follow it.
+ * is the one finding the author can act on today; the flaws follow it. A verdict that named no flaws says so,
+ * rather than arriving as an empty list the reader has to interpret.
  */
 export function pressureFindings(r: { verdict: PressureVerdict; flaws: string[]; wedge: string }): string[] {
-  if (r.verdict !== 'PIVOT REQUIRED') return r.flaws.slice(0, PRESSURE_MAX_FLAWS);
+  const flaws = r.flaws.length ? r.flaws : [PRESSURE_NO_FLAWS];
+  if (r.verdict !== 'PIVOT REQUIRED') return flaws.slice(0, PRESSURE_MAX_FLAWS);
   const wedge = r.wedge.trim() ? `Pivot required. The wedge to attack instead: ${r.wedge.trim()}` : PRESSURE_NO_WEDGE;
-  return [wedge, ...r.flaws].slice(0, PRESSURE_MAX_FLAWS);
+  return [wedge, ...flaws].slice(0, PRESSURE_MAX_FLAWS);
 }
