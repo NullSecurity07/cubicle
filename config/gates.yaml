@@ -36,6 +36,11 @@ gates:
   coo.verify: []
   security.review: []
   finance.runway: []
+  # SP5: the two trust gates every outbound call owes. `office:security.review` is already listed above as a
+  # risk-chain gate; the same entry serves both, because it is the same review done against a call.
+  office:compliance.review: []
+  # SP5: a coffee break is not work and owes nothing; the entry exists so it does not inherit `custom`'s chain.
+  pantry.chat: []
 
 criteria:
   engineer.ship: "The change builds and runs; Site/ has no broken links; tests or a smoke check exist; the job's Done when holds."
@@ -65,3 +70,5 @@ criteria:
   security.review: "Say what data, credentials and permissions the change touches, and judge each: secrets never in the diff, input validated at the boundary, authorisation checked on the server, nothing sensitive logged. A finding cites the file and the line. Verdict pass or return."
   coo.verify: "Evidence-based; exactly one lesson."
   finance.runway: "Five lines at most, each one about a number already in Ledger/runway.md — cash, burn, runway, what a paid tier would have cost, or a division near its model quota. Say what you would do about it. Never restate a figure as if you calculated it, never invent one, and never propose a spend the owner has not been asked for."
+  office:compliance.review: "Judge the exact text and arguments that would leave the company, not a summary. Five questions: is every claim true and supportable; did the recipient consent to hear from us; does it obey the constitution's banned channels and banned tactics; is there a way out (an unsubscribe, a refund, a rollback); and would the owner be content to see this in public with their name on it. A finding names the line to change. Verdict pass or return."
+  pantry.chat: "Two people, six turns, one closing IDEA line or IDEA: none. Nothing is decided here and nothing leaves the room."

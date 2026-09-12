@@ -53,5 +53,9 @@ describe('generated docs', () => {
     expect(schema).toMatch(/followups\/<job>\.md/);
     expect(schema).toMatch(/research\.md \(regenerated weekly\)/);
     expect(schema).toMatch(/^\| `created` \| string \|/m);   // a zod pipe, not the word "pipe"
+    // SP5: the two facts a reader cannot get from a zod schema — that a trust verdict is keyed on the call, and
+    // where a pantry chat is written down.
+    expect(events).toMatch(/`review\.passed` \| gate, findings —.*trust: true/);
+    expect(schema).toMatch(/^  Pantry\/ +one note per pantry chat/m);
   });
 });
