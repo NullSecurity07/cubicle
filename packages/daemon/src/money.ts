@@ -18,6 +18,13 @@ import { shadowCost, hasPrices, type ModelBudget, type ProvidersFile, type Recor
  *
  * Nothing here caches a money fact. Every figure is derived from `Ledger/ledger.md` and the event log on the
  * call that needs it, so losing the heartbeat's state file changes no number and silences no message.
+ *
+ * One consequence of that, worth stating where it will be read: both halves of the division gauge are decided
+ * by `config/providers.yaml` **as it stands now**, so removing or renaming a model mid-day drops that day's
+ * already-recorded calls on it from `used` while `quota` is unchanged, and the affected divisions stay on the
+ * strong tier a little longer than one day's pool should allow. It corrects itself at the next UTC midnight,
+ * because the window only ever covers today. The alternative — counting calls against an allowance the file no
+ * longer offers — rations a division for a model it cannot use, which is the worse of the two.
  */
 
 const DAY_MS = 86_400_000;
@@ -109,6 +116,15 @@ export function drawsOnFreePool(cfg: ProvidersFile | null | undefined, provider:
   return Boolean(m.limits.rpd || p.limits?.rpd);
 }
 
+/** `where` values only `warnLockedOnce` ever writes, so no other failure can be mistaken for a lock notice. */
+export const LOCKED_RUNWAY = 'money.runway.locked';
+export const LOCKED_ACCRUAL = 'money.accrual.locked';
+
+/** How far back the lock notice looks for its own last word. Bounded, so this never scans the whole log. */
+export const LOCK_WARN_WINDOW_DAYS = 2;
+/** And a row cap on top of the window, for a vault that writes very fast. */
+export const LOCK_WARN_ROWS = 2000;
+
 /**
  * Say once that the owner's `never_modify` list is holding a write back — not once a cycle, for ever.
  *
@@ -116,16 +132,27 @@ export function drawsOnFreePool(cfg: ProvidersFile | null | undefined, provider:
  * locked would otherwise collect two `daemon.warning` rows a cycle about a decision they made on purpose and
  * have not changed. Nothing dedupes `daemon.warning`, and a log full of the same row is a log nobody reads.
  *
- * The state lives in the event log rather than in the heartbeat's state file, like every other fact here: the
- * warning is repeated only when the path has been written **since** the last warning, which is precisely "the
- * lock was lifted, and now it is back". A lost state file changes nothing, and nothing needs remembering
- * across a restart.
+ * The state lives in the event log rather than in the heartbeat's state file, like every other fact here, and
+ * it is one bounded newest-first read. Walking back from now, whichever comes first decides: **this exact
+ * notice** — same `where` *and* same `reason` — means nothing has been written since it, so stay quiet; a
+ * **write of the path** means the lock came off and is back on, so say it again. The reason is part of the key
+ * on purpose: the accrual's names the days it is skipping, so a lock that outlives a day says so once a day
+ * rather than freezing at the date it first fired.
+ *
+ * The `where` values are this function's own (`….locked`), never a step name another emitter shares — a
+ * `money.runway` row logged when `writeRunway` *throws* must not be able to pass for "I already told them the
+ * page is locked" and silence the notice for good.
+ *
+ * The window is real-clock rather than the caller's `now`, because every row it reads was stamped by the
+ * clock, not by the money's arithmetic. Its one cost is that a lock standing longer than the window says so
+ * again — twice a week, not twice a cycle, which is the point.
  */
 function warnLockedOnce(vault: Vault, where: string, path: string, reason: string): void {
-  const warned = vault.events.last('daemon.warning', (e) => (e.payload as { where?: unknown }).where === where);
-  if (warned) {
-    const wrote = vault.events.last('vault.wrote', (e) => (e.payload as { path?: unknown }).path === path);
-    if (!wrote || wrote.ts <= warned.ts) return;
+  const from = new Date(Date.now() - LOCK_WARN_WINDOW_DAYS * DAY_MS).toISOString();
+  for (const e of vault.events.query({ types: ['vault.wrote', 'daemon.warning'], from, limit: LOCK_WARN_ROWS, order: 'desc' })) {
+    const p = e.payload as { where?: unknown; reason?: unknown; path?: unknown };
+    if (e.type === 'daemon.warning' && p.where === where && p.reason === reason) return;
+    if (e.type === 'vault.wrote' && p.path === path) break;
   }
   vault.events.emit({ type: 'daemon.warning', payload: { where, path, reason } });
 }
@@ -287,7 +314,7 @@ export function runwayCommentary(vault: Vault): string {
 export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Date = new Date()): MoneyReport {
   const report = moneyReport(readLedger(vault), now);
   if (isNeverModifyPath(RUNWAY_PATH, vault.constitution().never_modify)) {
-    warnLockedOnce(vault, 'money.runway', RUNWAY_PATH,
+    warnLockedOnce(vault, LOCKED_RUNWAY, RUNWAY_PATH,
       `${RUNWAY_PATH} is on the owner's never_modify list, so it was not regenerated; the figures behind it are still computed every cycle`);
     return report;
   }
@@ -409,8 +436,12 @@ export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = n
       // carries on with a book it simply may not add to. Anything else still throws: a disk that will not take
       // a write is a real failure and must not be swallowed as policy.
       if (!isVeto(err)) throw err;
-      warnLockedOnce(vault, 'money.accrual', LEDGER_PATH,
-        `${LEDGER_PATH} is on the owner's never_modify list, so model cost from ${day} onwards was not recorded; nothing else is affected and the company keeps running`);
+      // The days named are recomputed every time this would fire, and the text is part of the dedupe key, so a
+      // lock that outlives a day says so again with the new range instead of leaving a week-old date in the
+      // log for an owner to read literally.
+      const span = day === yesterday ? day : `${day} to ${yesterday}`;
+      warnLockedOnce(vault, LOCKED_ACCRUAL, LEDGER_PATH,
+        `${LEDGER_PATH} is on the owner's never_modify list, so model cost for ${span} was not recorded; nothing else is affected and the company keeps running`);
       break;
     }
     if (r.added) out.push(r.entry);
@@ -515,17 +546,18 @@ const messageIdPrefix = (kind: 'dormant' | 'revived'): string => `${idFromKey('p
  * is worse than the bug it fixes: an orphan left over from an episode the owner has already read about would
  * be taken as "already said" for the *next* one, and the company would never tell them it had run out a second
  * time. A note written while an episode was live always carries a `created` at or after that episode's start,
- * and any note from a later episode is excluded by the same test — so the candidate is the episode's own or
- * nothing, and "told late" never becomes "not told at all".
+ * so "told late" never becomes "not told at all".
+ *
+ * `start` is always the **open** episode's start, which is the newest one there is — no episode begins after
+ * it, so `created >= start` selects this episode and nothing else on its own. A second clause excluding notes
+ * from a later episode would be unreachable code, and the one caller is right here.
  */
-function orphanDormancy(vault: Vault, start: string, episodes: DormancyEpisode[]): { path: string } | null {
+function orphanDormancy(vault: Vault, start: string): { path: string } | null {
   const prefix = messageIdPrefix('dormant');
-  const later = episodes.map((e) => e.start).filter((s) => s > start);
   const n = listInbox(vault).find((x) =>
     x.data.id.startsWith(prefix)
     && (x.data as { money?: unknown }).money === undefined
-    && x.data.created >= start
-    && !later.some((s) => s <= x.data.created));
+    && x.data.created >= start);
   return n ? { path: n.path } : null;
 }
 
@@ -564,7 +596,7 @@ export function dormancyMessage(vault: Vault, org: Org, r: MoneyReport, now: Dat
   const mark = open.start;
   if (alreadyTold(vault, 'dormant', mark)) return null;
   const id = moneyMessageId('dormant', mark);
-  const already = findInboxById(vault, id) ?? orphanDormancy(vault, mark, episodes);
+  const already = findInboxById(vault, id) ?? orphanDormancy(vault, mark);
   if (already) { stamp(vault, already.path, 'dormant', mark); return null; }
   const ceo = officeHolder(org, 'chief_executive');
   const { path: rel } = createProposal(vault, {

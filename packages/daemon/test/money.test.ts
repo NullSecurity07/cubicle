@@ -11,6 +11,7 @@ import {
   BUDGETED_TIERS, dayStartIso, freeCallCapacity, divisionWeights, divisionQuotas, divisionSpend, divisionOfRole,
   budgetRows, budgetForRole, runwayJobId, enqueueRunway, runwayCommentary, writeRunway, accrueModelCost,
   accrueModelCosts, dormancyMark, dormancyEpisodes, drawsOnFreePool, moneyMessageId, dormancyMessage, revivalMessage,
+  LOCKED_RUNWAY, LOCKED_ACCRUAL, LOCK_WARN_WINDOW_DAYS,
 } from '../src/money.js';
 
 const SHIPPED = parseProvidersConfig(readFileSync(path.resolve(__dirname, '../../../config/providers.yaml'), 'utf8'));
@@ -302,7 +303,7 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     expect(r.cashCents).toBe(25000);                        // the figures are still computed
     expect(vault.readText(RUNWAY_PATH)).toBe(before);       // the page is untouched
     const warned = vault.events.query({ types: ['daemon.warning'] })
-      .filter((e) => (e.payload as { where?: string }).where === 'money.runway');
+      .filter((e) => (e.payload as { where?: string }).where === LOCKED_RUNWAY);
     expect(warned).toHaveLength(1);
     expect(String((warned[0].payload as { reason?: string }).reason)).toContain(RUNWAY_PATH);
     expect(String((warned[0].payload as { reason?: string }).reason)).toContain('never_modify');
@@ -313,7 +314,7 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     const lock = () => vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
     const unlock = () => vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify: []\n```\n', 'owner');
     const warnings = () => vault.events.query({ types: ['daemon.warning'] })
-      .filter((e) => (e.payload as { where?: string }).where === 'money.runway').length;
+      .filter((e) => (e.payload as { where?: string }).where === LOCKED_RUNWAY).length;
     lock();
     for (let i = 0; i < 3; i++) writeRunway(vault, org, SHIPPED, NOW);
     expect(warnings()).toBe(1);                 // three cycles of a decision they made on purpose, said once
@@ -323,6 +324,34 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     lock();
     writeRunway(vault, org, SHIPPED, NOW);      // locked afresh, so it is worth saying again
     expect(warnings()).toBe(2);
+  });
+
+  it('is not silenced by an unrelated money.runway failure logged by the heartbeat', () => {
+    const org = loadOrg(vault);
+    // What `heartbeat.ts` writes when `writeRunway` *throws*: same step, different shape, nothing to do with
+    // the owner's list. Keying the notice on the step name alone would let this stand in for it for ever.
+    vault.events.emit({ type: 'daemon.warning', payload: { where: 'money.runway', message: 'ENOSPC writing Ledger/runway.md' } });
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    for (let i = 0; i < 3; i++) writeRunway(vault, org, SHIPPED, NOW);
+    const locked = vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === LOCKED_RUNWAY);
+    expect(locked).toHaveLength(1);
+    expect(String((locked[0].payload as { reason?: string }).reason)).toContain('never_modify');
+  });
+
+  it('reads a bounded window of the log, never the whole of it', () => {
+    const org = loadOrg(vault);
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    writeRunway(vault, org, SHIPPED, NOW);
+    // Its own notice sits inside the window, so a second call in the same window stays quiet…
+    writeRunway(vault, org, SHIPPED, NOW);
+    const where = (w: string) => vault.events.query({ types: ['daemon.warning'] }).filter((e) => (e.payload as { where?: string }).where === w);
+    expect(where(LOCKED_RUNWAY)).toHaveLength(1);
+    // …and the window is what makes that bounded: a notice older than it is out of reach by design.
+    const cutoff = new Date(Date.now() - LOCK_WARN_WINDOW_DAYS * 86_400_000).toISOString();
+    expect(where(LOCKED_RUNWAY).every((e) => e.ts >= cutoff)).toBe(true);
+    expect(vault.events.query({ types: ['daemon.warning'], from: cutoff }).length)
+      .toBeLessThanOrEqual(vault.events.query({ types: ['daemon.warning'] }).length);
   });
 
   it('regenerates it again as soon as the owner takes the lock off', () => {
@@ -400,10 +429,30 @@ describe('what the models cost (spec §3)', () => {
     expect(readLedger(vault).entries).toEqual([]);
     // Once while the lock stands — not once per day of the walk, and not once per cycle either.
     const warned = vault.events.query({ types: ['daemon.warning'] })
-      .filter((e) => (e.payload as { where?: string }).where === 'money.accrual');
+      .filter((e) => (e.payload as { where?: string }).where === LOCKED_ACCRUAL);
     expect(warned).toHaveLength(1);                    // two calls above, three days each, one row
     expect(String((warned[0].payload as { reason?: string }).reason)).toContain('Ledger/ledger.md');
     expect(String((warned[0].payload as { reason?: string }).reason)).toContain('never_modify');
+    expect(String((warned[0].payload as { reason?: string }).reason)).toContain('2026-09-09 to 2026-09-11');
+  });
+
+  it('names the days it is skipping, and says so again when that range moves on', () => {
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    for (const day of ['2026-09-09', '2026-09-10', '2026-09-11', '2026-09-12']) {
+      vault.events.emit({ type: 'router.call', agent: 'ceo', ts: `${day}T10:00:00.000Z`, payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
+    }
+    const reasons = () => vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === LOCKED_ACCRUAL)
+      .map((e) => String((e.payload as { reason?: string }).reason));
+    accrueModelCosts(vault, PRICED, NOW);
+    accrueModelCosts(vault, PRICED, NOW);                         // same day, same range: said once
+    expect(reasons()).toHaveLength(1);
+    expect(reasons()[0]).toContain('2026-09-09 to 2026-09-11');
+    // A day later the lock still stands, but the range it is skipping has grown — so it says the new one.
+    accrueModelCosts(vault, PRICED, new Date('2026-09-13T12:00:00.000Z'));
+    expect(reasons()).toHaveLength(2);
+    expect(reasons()[1]).toContain('2026-09-09 to 2026-09-12');
+    expect(reasons()[1]).not.toBe(reasons()[0]);
   });
 
   it('still reaches back thirty days when the file says nothing about when its prices appeared', () => {
