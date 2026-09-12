@@ -10,6 +10,7 @@ import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchPropos
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { letTheBoardDecide } from './helpers/board-switch.js';
+import { noLocalModel } from './helpers/no-local-model.js';
 import { TEST_MS, eventProgress, loadScale, oneMinuteLoad, waitForProgress } from './helpers/load.js';
 
 const root = path.resolve(__dirname, '../../..');
@@ -23,6 +24,11 @@ beforeEach(async () => {
   // Nobody is at the keyboard in these tests and `board_decides_after_hours` ships off, so a plan would wait for
   // the owner for ever and no division would ever plan. Hand the board the ruling after a fraction of an hour.
   letTheBoardDecide(vault);
+  // Nothing in this file may reach a model server. The fake `Llm` each case injects covers the harness, not
+  // the `Router` the constitution guardrail holds, and that guardrail's banned-tactics check is a real call to
+  // the local model on every outbound text — tens of seconds of vault silence that the stall detector below
+  // can only read as a hung daemon. See helpers/no-local-model.ts: this is the B1 flake.
+  noLocalModel(vault);
   // An engineer.ship cannot finish without a green CI record for its stream (§17), so the scripted dev plan
   // below ships against this one. No source files exist under Workspace/site, so the record never goes stale.
   createStream(vault, { slug: 'site', name: 'Site', problem: 'The company has no site.', customers: 'Everyone who hears about us', outcome_metric: 'a first cut exists', owner_team: 'dev' }, 'ceo');
@@ -696,6 +702,14 @@ describe('daemon lifecycle', () => {
     expect(listInbox(d.vault).filter((n) => n.data.kind === 'outbound_batch').length).toBe(1); // no re-ask
     const keys = readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).key);
     expect(keys).toEqual([`${id}:1:1`]);
+    // And it got here without asking a model anything the case did not itself script. `router.call` is emitted
+    // once per real model round trip, so zero of them is the statement that nothing left this process: the
+    // injected `Llm` answered every step, and the constitution guardrail — which holds the daemon's real
+    // `Router` and is the one thing here a fake model does not cover — resolved in memory. This is the case
+    // that flaked for three days, and it flaked because that guardrail spent 3-80 s of vault silence in a
+    // local model while the stall detector, which can only see writes, called the daemon hung. Without
+    // `noLocalModel` in the `beforeEach` this count is 1 and the flake is back.
+    expect(d.vault.events.count('router.call')).toBe(0);
     await d.stop();
   }, TEST_MS);
 
