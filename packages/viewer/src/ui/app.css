@@ -47,7 +47,7 @@ input::placeholder { color: var(--text-3); }
 #bar nav { margin-left: auto; display: flex; gap: var(--s1); align-items: center; }
 /* Glass comes from the .glass class (tokens.css), which carries the @supports fallback for browsers with no
    backdrop-filter; setting --glass inline here meant this one floated as a 72 %-transparent slab on those. */
-#coach { position: absolute; left: calc(var(--rail-w) + var(--s4)); top: calc(var(--bar-h) + var(--s3)); padding: var(--s2) var(--s3); border-radius: var(--r); color: var(--text-2); z-index: 9; pointer-events: none; transition: opacity var(--d-reader) var(--ease-in); }
+#coach { position: absolute; left: calc(var(--rail-w) + var(--s4)); bottom: calc(var(--time-h) + var(--s3)); padding: var(--s2) var(--s3); border-radius: var(--r); color: var(--text-2); z-index: 9; pointer-events: none; transition: opacity var(--d-reader) var(--ease-in); }
 #coach.fade { opacity: 0; }
 
 /* ---- floor rail (elevation 0) ---- */
@@ -55,6 +55,8 @@ input::placeholder { color: var(--text-3); }
 #rail .tab { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; min-height: 44px; padding: var(--s1) 0; border-radius: var(--r-s); color: var(--text-2); font-size: var(--fs-subhead); font-weight: 600; font-variant-numeric: tabular-nums; }
 #rail .tab:hover { background: var(--surface-3); color: var(--text); }
 #rail .tab .bar { width: 18px; height: 3px; border-radius: 2px; background: var(--floor, var(--text-3)); }
+/* The lobby tab's own caption (visual QA M2): a letter alone needed a tooltip to explain it. */
+#rail .tab .cap { font-size: 9px; font-weight: 600; line-height: 1; letter-spacing: 0.02em; color: inherit; opacity: 0.75; }
 /* The current tab fills with the floor's tint deepened one lightness step (Rail publishes --floor-<n>-deep from the
    colour that floor renders with) so white reads at 4.5:1 on all four, orange F4 included; the lobby has no tint. */
 #rail .tab[data-floor="1"] { --tab-deep: var(--floor-1-deep); }
@@ -212,7 +214,8 @@ details.pinned .prose { padding: 0 var(--s4) var(--s3); }
 #time { position: absolute; left: calc(var(--rail-w) + var(--s3)); bottom: var(--s3); display: flex; gap: var(--s2); align-items: center; padding: var(--s1) var(--s2); border-radius: var(--r); z-index: 9; }
 #time .segmented { margin: 0; }
 #time input[type=range] { width: 220px; accent-color: var(--accent); }
-#time input[type=date], #time select { min-height: var(--hit); padding: 0 var(--s2); font-size: var(--fs-subhead); }
+#time input[type=date] { min-height: var(--hit); padding: 0 var(--s2); font-size: var(--fs-subhead); }
+#time #speed .seg { padding: 0 var(--s2); min-width: 26px; font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
 #time #sunmoon { display: inline-flex; color: var(--text-2); }
 #time #clock { color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* Live mode has no date to pick, no position to scrub and no speed to choose; the replay transport appears with the
@@ -221,7 +224,7 @@ details.pinned .prose { padding: 0 var(--s4) var(--s3); }
 #time #replay-hint { white-space: nowrap; }
 
 /* ---- minimap chrome ---- */
-#minimap-chrome { position: absolute; z-index: 9; pointer-events: none; border: 1px solid var(--hairline-2); border-radius: var(--r-s); box-shadow: var(--shadow-1); }
+#minimap-chrome { position: absolute; z-index: 9; pointer-events: none; border: 1px solid var(--hairline-2); border-radius: var(--r-s); box-shadow: var(--shadow-2); outline: 4px solid var(--surface-1); outline-offset: 0; }
 #minimap-chrome .ticks { position: absolute; left: -6px; top: 0; bottom: 0; width: 4px; }
 #minimap-chrome .tick { position: absolute; left: 0; width: 4px; border-radius: 2px; }
 #minimap-chrome .click { position: absolute; inset: 0; pointer-events: auto; cursor: pointer; }

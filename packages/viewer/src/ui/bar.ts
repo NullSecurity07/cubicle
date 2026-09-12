@@ -18,5 +18,16 @@ export class TopBar {
     this.pending.dataset.count = String(n);
     this.pending.setAttribute('aria-label', `${n} proposals need you`);
   }
-  setConn(ok: boolean, text: string): void { this.connText.textContent = text; this.conn.className = `status ${ok ? 'ok' : 'bad'}`; }
+  /**
+   * The socket's own state, and only when it is worth saying.
+   *
+   * There used to be two live indicators on the screen at once: a green "live" dot up here and the Live segment of
+   * the time bar's mode control (visual QA M1). The mode is the time bar's; a healthy connection is the absence of
+   * a warning, so the top bar shows this only while the socket is connecting or down.
+   */
+  setConn(ok: boolean, text: string): void {
+    this.connText.textContent = text;
+    this.conn.className = `status ${ok ? 'ok' : 'bad'}`;
+    this.conn.hidden = ok;
+  }
 }

@@ -42,7 +42,9 @@ export function railHtml(summary: FloorInfo[], current: number, lobby: boolean, 
     const label = `Floor ${f.floor}, ${f.label}, ${active.length} active${meetings}`;
     return `<button class="tab" data-floor="${f.floor}" style="--floor:${esc(f.color)}" aria-current="${current === f.floor && !lobby}" title="${esc(title)}" aria-label="${esc(label)}"><span class="n">F${f.floor}</span><span class="bar"></span><span class="dots">${active.map((a) => `<i style="background:${esc(a.color)}"></i>`).join('')}</span></button>`;
   });
-  tabs.push(`<button class="tab lobby" data-floor="0" aria-current="${lobby}" title="Lobby" aria-label="Lobby"><span class="n">L</span><span class="bar"></span></button>`);
+  // The lobby tab used to be a bare "L" whose only explanation was a title attribute (visual QA M2). It carries
+  // its own caption: the rail is 44 px wide, which is room enough for a 9 px word under the letter.
+  tabs.push(`<button class="tab lobby" data-floor="0" aria-current="${lobby}" title="The lobby and the street" aria-label="Lobby and street"><span class="n">L</span><span class="cap">Lobby</span><span class="bar"></span></button>`);
   return tabs.join('');
 }
 

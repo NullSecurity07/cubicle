@@ -185,9 +185,18 @@ try {
   // `floor(n)` tweens it, so they cannot be combined: a `floor(n)` here would tween straight back over them.
   await cub((c) => c.zoom(3));
   // The car covers about nine tiles a second, so a row read even a fraction of a second early frames it off-centre:
-  // zoom first, then read the row and centre on it in the same step as the shot. It hangs three tiles below `row`,
-  // and the shaft is centred on 52.5.
-  await cub((c) => { const r = (c.elevator() as { row: number }).row; c.center(52.5, r + 1.5); });
+  // zoom first, then read the row and centre on it in the same step as the shot.
+  //
+  // The frame is the car *and the landing it is passing*, not the car and the sky: the old centre (52.5, row + 1.5)
+  // put a third of the shot outside the building, and the checklist line this scene exists for — "the doors are
+  // closed while the car is moving" — needs a set of doors in it (visual QA C5). The landing doors sit at row
+  // y0 + 11 of each floor, so 13, 26, 39 and 52; the camera centres between the car and the nearest of them, and
+  // on column 45 so the corridor, the doors and the shaft share the frame.
+  await cub((c) => {
+    const r = (c.elevator() as { row: number }).row;
+    const landing = [13, 26, 39, 52].reduce((best, d) => (Math.abs(d - r) < Math.abs(best - r) ? d : best), 13);
+    c.center(45, (r + 1.5 + landing) / 2);
+  });
   await shot('07-elevator', 0);
 
   // 08: a board meeting on F1 with the owner in the chair
@@ -228,6 +237,10 @@ try {
   // rather than remembered between shots, and where the night tint has to cover the surround and the minimap too.
   // Reached through the `0` key rather than a camera call, because the fit is a key path the owner has and a zoom set
   // from the script would not prove `fitTower` still works.
+  // Midday for the day half of the pair: without it `09a-tower-day` was taken on the wall clock, which for every
+  // run of this script so far has been dusk — so the day/night comparison the checklist asks for compared dusk to
+  // night, and `PALETTE.sky.day` appeared in none of the fifteen scenes (visual QA I8).
+  await cub((c) => c.setHour(12));
   await page.keyboard.press('0');
   await shot('09a-tower-day', 1200);
   await cub((c) => c.setHour(23));
