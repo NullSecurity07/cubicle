@@ -8,13 +8,45 @@ import { chartBars, headlineFor } from '../ui/surfaces.js';
 import { DUR, EASE, dur, motionOff } from './motion.js';
 import { PALETTE, hexToInt } from './palette.js';
 import { RES, FONT } from './text.js';
+import { addText } from './text-crisp.js';
 
-const PAD = 6;
+/** Text margin inside the glass: wider at the sides, where there is room, than top and bottom, where there is not. */
+const PAD_X = 5, PAD_Y = 2;
 /** How far the bezel stands proud of the glass on every side, and how far the wall shadow falls below it. */
 const BEZEL = 2, SEAT = 2;
-const HEAD_PX = 10, LINE_PX = 8, LINE_H = 10, HEAD_H = 14;
-const CHAR_W = 0.62; // generous glyph width as a fraction of the font size, so a cut line never reaches the box edge
+const HEAD_PX = 10, LINE_PX = 8, LINE_H = 9, HEAD_H = 12;
+/**
+ * The platform rasteriser's natural line box for an 8 px face is about 11 px, which is two more than the 9 px the
+ * layout above budgets: three lines then ran past the glass and the third was sliced in half. `lineSpacing` is
+ * added to the line box, so a negative value is what pulls the pitch back onto the grid.
+ */
+const LINE_SPACING = -3;
+const CHAR_W = 0.56; // generous glyph width as a fraction of the font size, so a cut line never reaches the box edge
 const NARROW = 40; // inner width below which a screen shows only its short form (a count or a word)
+/** How far the glass is set in from the anchor's top and sides, so the bezel lands on the map's bezel tiles. */
+const INSET = 4;
+
+/**
+ * The geometry of one screen, from its map anchor alone — pure, so the line budget is a unit test rather than a
+ * screenshot. The anchor is three tiles tall (the wall row and the two room rows under it, `paintSurface` in
+ * scripts/world/tower.ts) and the glass used to claim only `(th - 1)` of them: 32 px, of which 22 were usable,
+ * of which the head ate 14 — so `maxLines` came out 0 and every sub-line the registry wrote was discarded before
+ * it reached the wall. At the anchor's full height a three-tile screen carries a head and three lines.
+ */
+export function screenBox(anchor: { tw: number; th: number; type?: string }): {
+  w: number; h: number; inset: number; innerW: number; innerH: number; maxLines: number; headChars: number; lineChars: number;
+} {
+  const w = anchor.tw * TILE, h = Math.max(TILE * 2, anchor.th * TILE);
+  const inset = anchor.type === 'surface' && anchor.th > 1 ? INSET : 0;
+  const innerW = w - inset * 2 - PAD_X * 2;
+  const innerH = h - inset - PAD_Y * 2;
+  return {
+    w, h, inset, innerW, innerH,
+    maxLines: Math.max(0, Math.floor((innerH - HEAD_H) / LINE_H)),
+    headChars: Math.max(1, Math.floor(innerW / (HEAD_PX * CHAR_W))),
+    lineChars: Math.max(1, Math.floor(innerW / (LINE_PX * CHAR_W))),
+  };
+}
 
 /**
  * A place on the map that shows a glanceable preview of one stream (spec §10 "Surface") and opens the HTML
@@ -42,37 +74,61 @@ export class Surface {
   private readonly innerW: number;
   private readonly innerH: number;
   private readonly inset: number;
+  private readonly maxLines: number;
+  private readonly headChars: number;
+  private readonly lineChars: number;
+  /** The caption plate; hidden with the head and the lines at the tower elevation. */
+  private plate!: Phaser.GameObjects.Text;
+  private letteringOn = true;
+  private wantHead = false;
+  private wantText = false;
 
   constructor(private scene: Phaser.Scene, public readonly def: SurfaceDef, public readonly anchor: Anchor, onClick: (kind: string) => void) {
     // The anchor is the registry's box for this surface: the map rectangle, or the wall its entry picked out of a room.
     const x = anchor.tx * TILE, y = anchor.ty * TILE;
-    const w = anchor.tw * TILE, h = Math.max(TILE * 2, (anchor.th - 1) * TILE);
-    this.inset = anchor.type === 'surface' && anchor.th > 1 ? 4 : 0;
-    this.innerW = w - this.inset * 2 - PAD * 2;
-    this.innerH = h - this.inset - PAD;
+    const box = screenBox(anchor);
+    const { w, h } = box;
+    this.inset = box.inset; this.innerW = box.innerW; this.innerH = box.innerH;
+    this.maxLines = box.maxLines; this.headChars = box.headChars; this.lineChars = box.lineChars;
     // A screen is a mounted object. The glass sits inside a bezel, a lit line runs along the bezel's top edge, and a
     // shadow falls below it onto the wall — without them a wall screen is a pure-black slab floating free of the room
     // (harshest in the light theme, where the wall behind it is pale).
-    const gw = w - this.inset * 2, gh = h - this.inset, gx = w / 2, gy = h / 2 + this.inset;
+    const gw = w - this.inset * 2, gh = h - this.inset, gx = w / 2, gy = this.inset + gh / 2;
     this.seat = scene.add.rectangle(gx, gy + BEZEL + SEAT / 2, gw + BEZEL * 2, gh + BEZEL * 2, hexToInt(PALETTE.screenBezelEdge), 0.45);
     this.bezel = scene.add.rectangle(gx, gy, gw + BEZEL * 2, gh + BEZEL * 2, hexToInt(PALETTE.screenBezel), 1).setStrokeStyle(1, hexToInt(PALETTE.screenBezelEdge), 1);
     this.lit = scene.add.rectangle(gx, gy - gh / 2 - BEZEL + 0.5, gw + BEZEL * 2 - 2, 1, hexToInt(PALETTE.screenBezelLit), 0.9);
     this.bg = scene.add.rectangle(gx, gy, gw, gh, hexToInt(PALETTE.screenBg), 0.98).setStrokeStyle(1, hexToInt(PALETTE.screenFrame), 1);
-    // Crisp text under camera zoom: rasterise at RES× the size and scale the object down by 1/RES.
-    this.head = scene.add.text(this.inset + PAD, this.inset + 4, '', { fontFamily: FONT, fontSize: `${HEAD_PX * RES}px`, fontStyle: 'bold', color: PALETTE.screenText }).setOrigin(0, 0).setScale(1 / RES);
-    this.text = scene.add.text(this.inset + PAD, this.inset + 4 + HEAD_H, '', { fontFamily: FONT, fontSize: `${LINE_PX * RES}px`, color: PALETTE.screenMuted, lineSpacing: (LINE_H - LINE_PX - 2) * RES }).setOrigin(0, 0).setScale(1 / RES);
+    // One rasterisation per world pixel, flattened to 1-bit: the camera's integer zoom is what enlarges the glyphs.
+    this.head = addText(scene, this.inset + PAD_X, this.inset + PAD_Y, '', { fontFamily: FONT, fontSize: `${HEAD_PX * RES}px`, fontStyle: 'bold', color: PALETTE.screenText }).setOrigin(0, 0).setScale(1 / RES);
+    this.text = addText(scene, this.inset + PAD_X, this.inset + PAD_Y + HEAD_H, '', { fontFamily: FONT, fontSize: `${LINE_PX * RES}px`, color: PALETTE.screenMuted, lineSpacing: LINE_SPACING * RES }).setOrigin(0, 0).setScale(1 / RES);
     this.bars = scene.add.graphics();
-    this.badge = scene.add.text(w - this.inset - 3, this.inset + 3, '', { fontFamily: FONT, fontSize: `${8 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 3 * RES, y: RES } }).setOrigin(1, 0).setScale(1 / RES).setVisible(false);
+    this.badge = addText(scene, w - this.inset - 3, this.inset + 2, '', { fontFamily: FONT, fontSize: `${8 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 3 * RES, y: RES } }).setOrigin(1, 0).setScale(1 / RES).setVisible(false);
     this.wipe = scene.add.rectangle(this.inset, this.inset, 3, h - this.inset, hexToInt(PALETTE.wipe), 0.35).setOrigin(0).setVisible(false);
-    this.live = scene.add.text(this.inset + 3, this.inset + 3, 'LIVE', { fontFamily: FONT, fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 2 * RES, y: RES } }).setOrigin(0, 0).setScale(1 / RES).setVisible(false);
-    this.caret = scene.add.rectangle(0, 0, 4, LINE_PX, hexToInt(PALETTE.amber), 1).setOrigin(0, 0).setVisible(false);
+    this.live = addText(scene, this.inset + 3, this.inset + 2, 'LIVE', { fontFamily: FONT, fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 2 * RES, y: RES } }).setOrigin(0, 0).setScale(1 / RES).setVisible(false);
+    this.caret = scene.add.rectangle(0, 0, 4, LINE_PX - 1, hexToInt(PALETTE.amber), 1).setOrigin(0, 0).setVisible(false);
     // The LIVE badge breathes — but an endless yoyo under reduced motion would strobe at frame rate, so there the
     // badge simply sits at full alpha and no tween is created at all (nothing to leak on teardown either).
     if (motionOff()) this.live.setAlpha(1);
     else this.liveTween = scene.tweens.add({ targets: this.live, alpha: 0.6, duration: dur(DUR.livePulse), yoyo: true, repeat: -1, ease: EASE.sine });
-    const title = scene.add.text(w / 2, -9, String(anchor.props.label ?? def.kind).split('—')[0].trim(), { fontFamily: FONT, fontSize: `${8 * RES}px`, color: PALETTE.screenText, stroke: PALETTE.screenInk, strokeThickness: 2 * RES }).setOrigin(0.5, 1).setScale(1 / RES);
-    this.container = scene.add.container(x, y, [this.seat, this.bezel, this.lit, this.bg, this.head, this.text, this.bars, this.badge, this.wipe, this.live, this.caret, title]).setDepth(5);
+    // The caption names the object. It used to be stroked text floating on the wall — and, for the notice board,
+    // on the lobby carpet 40 px from the screen it names. On its own plate it is a mounted label: the checklist's
+    // "no text is drawn outside a bezel" holds for captions too.
+    const caption = String(anchor.props.label ?? def.kind).split('—')[0].trim();
+    this.plate = addText(scene, w / 2, -1, caption, { fontFamily: FONT, fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.screenText, backgroundColor: PALETTE.screenBezel, padding: { x: 3 * RES, y: RES } }).setOrigin(0.5, 1).setScale(1 / RES);
+    this.container = scene.add.container(x, y, [this.seat, this.bezel, this.lit, this.bg, this.head, this.text, this.bars, this.badge, this.wipe, this.live, this.caret, this.plate]).setDepth(5);
     this.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => onClick(def.kind));
+  }
+
+  /** Lettering off at the tower elevation (world/text.ts `worldTextVisible`): glass, bezel and badge stay. */
+  setLettering(on: boolean): void {
+    if (on === this.letteringOn) return;
+    this.letteringOn = on;
+    this.applyLettering();
+  }
+  private applyLettering(): void {
+    this.head.setVisible(this.letteringOn && this.wantHead);
+    this.text.setVisible(this.letteringOn && this.wantText);
+    this.plate.setVisible(this.letteringOn);
   }
 
   private setImage(dataUrlOrKey: string | null): void {
@@ -96,7 +152,8 @@ export class Surface {
       this.container.addAt(img, oldIndex + 1);
       this.image = img;
       this.scene.tweens.add({ targets: img, alpha: 1, duration: dur(DUR.crossfade), onComplete: () => { old?.destroy(); } });
-      this.text.setVisible(false); this.head.setVisible(false);
+      this.wantHead = false; this.wantText = false;
+      this.applyLettering();
       this.wipeOnChange(`i|${key}|${this.lastKey}`);
     };
     if (this.scene.textures.exists(key)) this.scene.textures.remove(key);
@@ -117,11 +174,12 @@ export class Surface {
   private setHeadline(head: string, lines: string[]): void {
     this.wipeOnChange(`t|${head}|${lines.join('\n')}`);
     this.image?.setVisible(false);
-    const maxLines = Math.max(0, Math.floor((this.innerH - HEAD_H) / LINE_H));
-    const headChars = Math.floor(this.innerW / (HEAD_PX * CHAR_W)), lineChars = Math.floor(this.innerW / (LINE_PX * CHAR_W));
+    const kept = lines.slice(0, this.maxLines).map((l) => cut(l, this.lineChars));
+    this.wantHead = true; this.wantText = kept.length > 0;
     // Crop after every setText: Phaser clamps a crop to the frame that existed when it was set.
-    this.head.setVisible(true).setText(cut(head, headChars)).setCrop(0, 0, this.innerW * RES, HEAD_H * RES);
-    this.text.setVisible(true).setText(lines.slice(0, maxLines).map((l) => cut(l, lineChars)).join('\n')).setCrop(0, 0, this.innerW * RES, Math.max(0, maxLines * LINE_H + 2) * RES);
+    this.head.setText(cut(head, this.headChars)).setCrop(0, 0, this.innerW * RES, HEAD_H * RES);
+    this.text.setText(kept.join('\n')).setCrop(0, 0, this.innerW * RES, Math.max(0, this.innerH - HEAD_H) * RES);
+    this.applyLettering();
   }
 
   render(s: State, frames: Record<string, string>, nowMs: number): void {
@@ -139,11 +197,11 @@ export class Surface {
     // mean: the labels and the numbers come from `def.bars`, so a second chart surface draws its own data.
     if (this.def.streamKind === 'chart') {
       this.bars.clear();
-      const rows = chartBars(this.def, s, Math.floor((this.innerH - HEAD_H) / LINE_H));
+      const rows = chartBars(this.def, s, this.maxLines);
       if (!rows.length) { this.setHeadline(hl.head, hl.lines); return; }
-      const labelW = Math.floor(this.innerW * 0.42), x0 = this.inset + PAD + labelW + 4, w = this.innerW - labelW - 4;
+      const labelW = Math.floor(this.innerW * 0.42), x0 = this.inset + PAD_X + labelW + 4, w = this.innerW - labelW - 4;
       this.setHeadline(hl.head, rows.map((b) => cut(b.label, Math.floor(labelW / (LINE_PX * CHAR_W)))));
-      const y0 = this.inset + 4 + HEAD_H;
+      const y0 = this.inset + PAD_Y + HEAD_H;
       rows.forEach((b, i) => {
         const pct = Math.min(1, b.used / b.limit);
         const y = y0 + i * LINE_H + 2;
@@ -155,10 +213,12 @@ export class Surface {
     if (this.innerW < NARROW) { this.setHeadline(hl.short ?? hl.head.split(' ')[0], []); return; }
     this.setHeadline(hl.head, hl.lines);
     const running = this.def.streamKind === 'terminal' && Object.values(s.agents).some((a) => a.tool === 'terminal');
-    this.caret.setVisible(running && Math.floor(nowMs / 530) % 2 === 0);
+    // The caret blinks — unless reduced motion is on, where a 530 ms strobe is exactly what the preference asks
+    // us not to draw. It then simply stays lit, which is what `app.css` already does for the HTML terminal.
+    this.caret.setVisible(running && (motionOff() || Math.floor(nowMs / 530) % 2 === 0));
     if (running) {
       const lines = hl.lines.length;
-      this.caret.setPosition(this.inset + PAD + Math.min(this.innerW - 4, this.text.width / RES + 1), this.inset + 4 + HEAD_H + Math.max(0, lines - 1) * LINE_H + 1);
+      this.caret.setPosition(this.inset + PAD_X + Math.min(this.innerW - 4, this.text.width / RES + 1), this.inset + PAD_Y + HEAD_H + Math.max(0, lines - 1) * LINE_H + 1);
     }
   }
 

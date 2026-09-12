@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { Surface } from './surfaces.js';
+import { Surface, screenBox } from './surfaces.js';
 import type { Anchor } from './map.js';
 import type { SurfaceDef } from '../ui/surfaces.js';
 import { emptyState } from '../state.js';
@@ -118,5 +118,32 @@ describe('Surface colours', () => {
     const { scene, surface } = build();
     surface.render(emptyState(), {}, 0);
     expect(scene.objects.some((o) => o.kind === 'text' && o.text.length > 0)).toBe(true);
+  });
+});
+
+/**
+ * Visual QA C1: the glass claimed `(th - 1)` tiles of a three-tile anchor, so `maxLines` came out 0 and every
+ * sub-line the registry writes — the vault's counts, the terminal's last three lines, the bank's burn and runway —
+ * was discarded before it reached the wall. Ten screens across four floors each showed one word on a black slab.
+ */
+describe('how much a wall screen can say', () => {
+  it('gives a three-tile anchor a head and three lines', () => {
+    const box = screenBox({ tw: 9, th: 3, type: 'surface' });
+    expect(box.h).toBe(48);
+    expect(box.maxLines).toBeGreaterThanOrEqual(2);
+    expect(box.maxLines).toBe(3);
+  });
+  it('sizes the character budgets from the width, and never to nothing', () => {
+    const wide = screenBox({ tw: 10, th: 3, type: 'surface' }), narrow = screenBox({ tw: 4, th: 3, type: 'surface' });
+    expect(wide.lineChars).toBeGreaterThan(wide.headChars);      // the lines are smaller type than the head
+    expect(wide.headChars).toBeGreaterThan(narrow.headChars);
+    expect(screenBox({ tw: 1, th: 1 }).headChars).toBeGreaterThanOrEqual(1);
+  });
+  it('never lets the text box grow past the glass', () => {
+    for (const tw of [4, 6, 7, 8, 9, 10]) {
+      const b = screenBox({ tw, th: 3, type: 'surface' });
+      expect(b.innerW, `tw ${tw}`).toBeLessThanOrEqual(b.w - b.inset * 2);
+      expect(b.innerH, `tw ${tw}`).toBeLessThanOrEqual(b.h - b.inset);
+    }
   });
 });

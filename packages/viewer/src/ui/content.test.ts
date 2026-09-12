@@ -99,7 +99,9 @@ describe('drawer and document views', () => {
   });
   it('the cabin wall shows the latest brief when there is one, else the first-run question', () => {
     expect(headlineFor('cabin', s).head).toBe(headlineFor('newsstand', s).head);
-    expect(headlineFor('cabin', emptyState()).head).toBe('What company will you start today?');
+    // The cabin screen is eight tiles wide: the old question was cut to "What company…" on the wall (visual QA I3).
+    expect(headlineFor('cabin', emptyState()).head).toBe('Your idea?');
+    expect(headlineFor('cabin', emptyState()).lines.join(' ')).toContain('surprise me');
   });
 });
 

@@ -70,7 +70,9 @@ for (const def of [
       const b = boardHeadline(s.board, s.now);
       if (b) return b;
       const p = planBits(s.plan);
-      return p.objective || p.items.length ? { head: cut(p.objective || 'This cycle', 44), lines: p.items.slice(0, 3).map((i) => '• ' + cut(i, 40)) } : { head: 'No plan yet', lines: ['The CEO writes it on heartbeat #1'] };
+      return p.objective || p.items.length
+        ? { head: cut(p.objective || 'This cycle', 44), lines: p.items.slice(0, 3).map((i) => '• ' + cut(i, 26)) }
+        : { head: 'No plan yet', lines: ['The CEO writes the first', 'one on heartbeat #1'] };
     },
     view: (s, ctx) => {
       const b = boardHeadline(s.board, s.now);
@@ -81,10 +83,10 @@ for (const def of [
   {
     kind: 'newsstand', streamKind: 'markdown', streamId: (s) => s.latestRun?.path ?? 'Runs/',
     headline: (s) => {
-      if (!s.latestRun) { const recent = s.feed.slice(-2).reverse(); return { head: 'No brief yet', lines: recent.length ? recent.map((f) => '• ' + cut(f.text, 40)) : ['Written after each heartbeat'] }; }
+      if (!s.latestRun) { const recent = s.feed.slice(-2).reverse(); return { head: 'No brief yet', short: 'No brief', lines: recent.length ? recent.map((f) => '• ' + cut(f.text, 40)) : ['Written after', 'each heartbeat'] }; }
       const b = briefBits(s.latestRun.body);
       const needs = b.needs.filter((n) => !/^none\b/i.test(n));
-      return { head: briefTitle(s.latestRun.path).replace('Brief · ', 'Brief '), lines: [...b.happened.slice(0, 2).map((h) => '• ' + cut(h, 40)), ...(needs.length ? ['Needs you: ' + cut(needs[0], 30)] : [])], badge: needs.length ? String(needs.length) : undefined };
+      return { head: briefTitle(s.latestRun.path).replace('Brief · ', 'Brief '), short: 'Brief', lines: [...b.happened.slice(0, 2).map((h) => '• ' + cut(h, 40)), ...(needs.length ? ['Needs you: ' + cut(needs[0], 30)] : [])], badge: needs.length ? String(needs.length) : undefined };
     },
     view: (s, ctx) => s.latestRun
       ? { mode: 'doc', title: briefTitle(s.latestRun.path), sub: s.latestRun.path, html: md(s.latestRun.body) + feedHtml(s), copy: s.latestRun.body, link: obsidianUrl(ctx.vaultName, s.latestRun.path) }
@@ -92,12 +94,16 @@ for (const def of [
   },
   {
     kind: 'noticeboard', streamKind: 'list', streamId: () => 'jobs:open',
-    headline: (s) => { const open = Object.values(s.jobs).filter((j) => isOpen(j.status)).sort((a, b) => a.priority - b.priority); return { head: open.length ? `${open.length} open` : 'Queue empty', short: String(open.length), lines: open.slice(0, 3).map((j) => cut(`${j.status} · ${who(s, j.assigned)}: ${cut(j.title, 26)}`, 48)) }; },   // the tower's display names are long: clip the whole line, not only the title
+    // Written to the width the wall actually has (visual QA I3): "Queue empty" used to be cut to "Queue…" on a
+    // four-tile screen. The screen is seven tiles now and the empty state fits whole. A line is the job's title
+    // and nothing else — the tower's display names are long enough that a name and a title on one line left two
+    // ellipses on every row, and who has it is a click away in the queue itself.
+    headline: (s) => { const open = Object.values(s.jobs).filter((j) => isOpen(j.status)).sort((a, b) => a.priority - b.priority); return { head: open.length ? `${open.length} open` : 'Queue empty', short: open.length ? String(open.length) : 'Queue', lines: open.slice(0, 3).map((j) => cut(j.title, 20)) }; },
     view: (s) => queueView(s),
   },
   {
     kind: 'postoffice', streamKind: 'list', streamId: () => 'inbox',
-    headline: (s) => { const n = s.inbox.length || s.pendingProposals; return { head: n ? `${n} to approve` : 'Nothing to approve', short: String(n), lines: s.inbox.slice(0, 3).map((p) => `${kindLabel(p.kind)}: ${cut(p.title, 34)}`), badge: n ? String(n) : undefined }; },
+    headline: (s) => { const n = s.inbox.length || s.pendingProposals; return { head: n ? `${n} to approve` : 'Nothing to approve', short: n ? String(n) : 'Clear', lines: n ? s.inbox.slice(0, 3).map((p) => cut(`${kindLabel(p.kind)}: ${p.title}`, 28)) : ['Proposals land here', 'for your yes or no'], badge: n ? String(n) : undefined }; },
     view: (s, ctx) => postOfficeView(s, ctx),
   },
   {
@@ -110,13 +116,13 @@ for (const def of [
       : s.quota.map((q) => ({ label: q.model, used: q.rpd_used, limit: q.limits.rpd }))),
     headline: (s) => {
       const m = s.money;
-      if (!m) { const list = s.quota.filter((q) => q.limits.rpd > 0).slice(0, 7); const total = callsToday(s); return { head: `${total} calls today`, short: String(total), lines: list.length ? list.map((q) => cut(q.model, 16)) : ['Set rpm/rpd in providers.yaml'] }; }
+      if (!m) { const list = s.quota.filter((q) => q.limits.rpd > 0).slice(0, 7); const total = callsToday(s); return { head: `${total} calls today`, short: String(total), lines: list.length ? list.map((q) => cut(q.model, 16)) : ['Set rpm and rpd in', 'providers.yaml'] }; }
       // Clipped like every other surface's: the wall is an in-world chart, not a text field. `USD 1234567.89` is
       // 14 characters before a long currency code, and the fallback branch above has always truncated.
       return {
         head: cut(m.cash, 16),
         short: cut(m.cash, 16),
-        lines: [`Burn ${m.burn} a day`, `Runway ${m.runway}`, ...(m.dormant ? ['Dormant — add capital'] : [])].slice(0, 3).map((l) => cut(l, 48)),
+        lines: [`Burn ${m.burn} a day`, `Runway ${m.runway}`, ...(m.dormant ? ['Dormant: add capital'] : [])].slice(0, 3).map((l) => cut(l, 24)),
         badge: m.dormant ? 'STOPPED' : undefined,
       };
     },
@@ -124,7 +130,8 @@ for (const def of [
   },
   {
     kind: 'vault', streamKind: 'list', streamId: () => 'jobs',
-    headline: (s) => { const all = Object.values(s.jobs); const c = (st: string): number => all.filter((j) => j.status === st).length; return { head: `${all.length} jobs`, short: String(all.length), lines: [`${c('done')} done · ${c('running')} running · ${c('blocked')} blocked`, 'Open in Obsidian'] }; },
+    // "1 jobs" was a plural bug, and a bare count on a vault reads as money: the head says what is being counted.
+    headline: (s) => { const all = Object.values(s.jobs); const c = (st: string): number => all.filter((j) => j.status === st).length; return { head: `${all.length} job ${all.length === 1 ? 'note' : 'notes'}`, short: String(all.length), lines: [`${c('done')} done · ${c('running')} running`, `${c('blocked')} blocked`, 'Open in Obsidian'] }; },
     view: (s, ctx) => {
       const all = Object.values(s.jobs).sort(byUpdated);
       const active = all.filter((j) => isOpen(j.status));
@@ -135,17 +142,17 @@ for (const def of [
   },
   {
     kind: 'terminal', streamKind: 'terminal', streamId: () => 'shell',
-    headline: (s) => { const last = s.terminal.slice(-3); return { head: last.length ? 'Shell' : 'Shell idle', lines: last.map((l) => cut(l, 44)) }; },
+    headline: (s) => { const last = s.terminal.slice(-3); return { head: last.length ? 'Shell' : 'Shell idle', short: 'Shell', lines: last.length ? last.map((l) => cut(l, 28)) : ['Nobody is running', 'a command'] }; },
     view: (s) => terminalViewerView(s),
   },
   {
     kind: 'billboard', streamKind: 'browser', streamId: browserStream,
-    headline: (s) => { const cur = s.surfaces[browserStream(s)]; return { head: cur ? (cur.active ? 'Browser live' : 'Last screenshot') : 'No browser session', lines: cur ? [] : ['Growth and the Engineer browse here'], badge: cur?.active ? 'LIVE' : undefined }; },
+    headline: (s) => { const cur = s.surfaces[browserStream(s)]; return { head: cur ? (cur.active ? 'Browser live' : 'Last shot') : 'No session', short: cur ? 'Live' : 'Idle', lines: cur ? [] : ['Growth and the', 'Engineer browse here'], badge: cur?.active ? 'LIVE' : undefined }; },
     view: (s, ctx) => browserViewerView(s, ctx),
   },
   {
     kind: 'workshop', streamKind: 'iframe', streamId: () => '/site/',
-    headline: (s) => { const url = s.deploys.at(-1)?.url; return url ? { head: 'Deployed', lines: [cut(url.replace(/^https?:\/\//, ''), 40)] } : { head: 'Not deployed yet', lines: ['Preview of Site/dist'] }; },
+    headline: (s) => { const url = s.deploys.at(-1)?.url; return url ? { head: 'Deployed', short: 'Live', lines: [cut(url.replace(/^https?:\/\//, ''), 30)] } : { head: 'Not deployed yet', short: 'Draft', lines: ['A preview of Site/dist', 'until you approve it'] }; },
     view: (s, ctx) => {
       const url = s.deploys.at(-1)?.url ?? '';
       return { mode: 'drawer', title: 'Workshop', sub: url ? `deployed at ${url}` : 'site preview', html: `${url ? `<p class="hintline">Last deploy: <a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a></p>` : ''}<iframe class="site" src="/site/${ctx.tokenQuery}" sandbox="allow-scripts allow-forms" referrerpolicy="no-referrer" title="site preview"></iframe><p class="hintline">Site/dist, isolated from the office. Not deployed until you approve it.</p>` };
@@ -154,7 +161,7 @@ for (const def of [
   {
     kind: 'cabin', streamKind: 'markdown', streamId: () => 'chat:ceo',
     // The brief is pinned on the cabin wall (spec §10); before there is one, the wall asks the first-run question (§12 e).
-    headline: (s) => (s.latestRun ? SURFACES.newsstand.headline(s) : { head: 'What company will you start today?', lines: ['Click to tell the CEO, or say “surprise me”'] }),
+    headline: (s) => (s.latestRun ? SURFACES.newsstand.headline(s) : { head: 'Your idea?', short: 'Idea?', lines: ['Click to tell the CEO', 'what to build — or say', '“surprise me”'] }),
     view: (s) => ({ mode: 'chat', title: s.agents.ceo?.display ?? 'CEO', sub: s.brand.name ? `${s.brand.name}${s.brand.tagline ? ` · ${s.brand.tagline}` : ''}` : 'Tell the CEO what to build, or say "surprise me"', html: chatHtml(s) }),
   },
 ] satisfies SurfaceDef[]) registerSurface(def);
