@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createProposal, readIdea, writeIdeaCard, updateIdea, FOUNDER_BRIEF, hasFounderBrief } from '@cubicle/core';
+import { scaffoldVault, Vault, createProposal, readIdea, writeIdeaCard, updateIdea, FOUNDER_BRIEF, hasFounderBrief, PRESSURE_TEST_SECTION, briefSectionBody, founderBriefTemplate } from '@cubicle/core';
 import { dispatchProposals } from '../src/dispatcher.js';
 import { ToolRegistry, parseToolsConfig } from '@cubicle/tools';
 
@@ -49,6 +49,17 @@ describe('founder_brief (spec §1.7)', () => {
     await dispatchProposals(deps());
     expect(hasFounderBrief(vault)).toBe(false);
     expect(String(vault.readNoteOrNull(rel)!.data.refused)).toContain('## Pressure test');
+  });
+
+  it('refuses a brief whose pressure test is the template\'s own prompt text (I3, ruling H5)', async () => {
+    // §4 is "the brief takes the test once". A heading with the instructions still under it has taken nothing,
+    // and every plan from here on is written against this file.
+    const unwritten = `${sevenSectionBrief}\n\n${PRESSURE_TEST_SECTION}\n\n${briefSectionBody(founderBriefTemplate(), PRESSURE_TEST_SECTION)}`;
+    const { path: rel } = createProposal(vault, { kind: 'founder_brief', from: 'research_manager', target: FOUNDER_BRIEF, title: 'The template, pasted', body: `## Proposed content\n\n\`\`\`\n${unwritten}\n\`\`\`` }, 'research_manager');
+    approve(rel, { approved: 'true' });
+    await dispatchProposals(deps());
+    expect(hasFounderBrief(vault)).toBe(false);
+    expect(String(vault.readNoteOrNull(rel)!.data.refused)).toContain(PRESSURE_TEST_SECTION);
   });
 
   it('adopts an SP3-era brief filed before the pressure test existed, on the owner\'s click (spec §4)', async () => {

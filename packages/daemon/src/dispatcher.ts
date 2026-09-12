@@ -373,8 +373,11 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             // is refused rather than adopted, because every plan from here on is written against this file.
             // The proposal's own `created`, so a brief filed before the pressure test existed is adopted on
             // the owner's click rather than refused for a section the company had not thought of (spec §4).
+            // `## Pressure test` counts only when it is written: a brief carrying the heading with the
+            // template's own instructions under it has not taken the test, and §4 is that the brief takes it
+            // once (ruling H5). The other seven are still judged on the heading.
             const missing = missingBriefSections(content, String(note.data.created ?? ''));
-            if (missing.length) { refuseNote(vault, note, `the founder brief is missing ${missing.join(', ')}; add the section(s) and approve again`, { target }); continue; }
+            if (missing.length) { refuseNote(vault, note, `the founder brief has not written ${missing.join(', ')}; write the section(s) and approve again`, { target }); continue; }
             vault.writeText(target, content, 'daemon', { job: d.job ?? null });
             outcome = `founder brief adopted at ${target}`;
             break;

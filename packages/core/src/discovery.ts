@@ -364,13 +364,21 @@ export const FOUNDER_BRIEF_SECTIONS = [...FOUNDER_BRIEF_SECTIONS_V1, PRESSURE_TE
 export const PRESSURE_TEST_SINCE = '2026-09-12';
 
 /**
- * Which sections a brief is missing. `writtenAt` is the proposal note's `created`; omitted, the brief is
- * treated as written now and owes all eight. A `founder_brief` note already sitting unanswered in `00 Inbox/`
- * when this shipped is therefore adopted on the owner's click rather than refused for a section the company
- * had not thought of when it filed the note.
+ * Which sections a brief is missing, or — for `## Pressure test` — has not actually written. `writtenAt` is the
+ * proposal note's `created`; omitted, the brief is treated as written now and owes all eight. A `founder_brief`
+ * note already sitting unanswered in `00 Inbox/` when this shipped is therefore adopted on the owner's click
+ * rather than refused for a section the company had not thought of when it filed the note.
+ *
+ * The eighth section is the one whose *body* is checked (ruling H5). §4 is "the brief takes the test once", and
+ * a brief that carries the heading with `founderBriefTemplate()`'s own instructions still under it has taken
+ * nothing: the heading test would let the empty template be adopted as the company's founder brief, which is
+ * the same failure Decision 15 rules out one layer up in `sectionAnswers`. The other seven keep the heading
+ * test they have always had; they were not part of this sub-project and a stricter rule on them would refuse
+ * briefs the company has already adopted.
  */
 export function missingBriefSections(md: string, writtenAt = ''): string[] {
-  const missing = FOUNDER_BRIEF_SECTIONS.filter((h) => !new RegExp(`^${h}\\s*$`, 'm').test(md));
+  const missing: string[] = FOUNDER_BRIEF_SECTIONS.filter((h) => !new RegExp(`^${h}\\s*$`, 'm').test(md));
+  if (!missing.includes(PRESSURE_TEST_SECTION) && !sectionAnswers(md, PRESSURE_TEST_SECTION)) missing.push(PRESSURE_TEST_SECTION);
   if (writtenAt && writtenAt.slice(0, 10) < PRESSURE_TEST_SINCE) return missing.filter((h) => h !== PRESSURE_TEST_SECTION);
   return missing;
 }
