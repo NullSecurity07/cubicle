@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_MAX, BoardRubric,
-  readPressureVerdict, parseRubric, rubricTotal, rubricBand, renderRubric,
+  readPressureVerdict, parseRubric, rubricTotal, renderRubric,
   pressureToBoard, pressureFindings, PRESSURE_NO_WEDGE, PRESSURE_REFUSAL_HEDGE, PRESSURE_REFUSAL_MISSING,
   PRESSURE_HANDBOOK_PATH, PRESSURE_NO_FLAWS,
 } from '../src/pressure.js';
@@ -232,14 +232,8 @@ describe('the 0-2 x 5 rubric (spec §6)', () => {
       .toEqual({ core_assumption: 2, fatal_flaws: 1, pain: 2, founder_fit: 1, why_now: 1 });
   });
 
-  it('reads the labels a chair varies, and the bands the notes set', () => {
+  it('reads the labels a chair varies', () => {
     expect(parseRubric('- **RUBRIC**: core assumption: 1; flaws: 2; pain level: 0; founder-market fit: 2; why now: 1')).toEqual({ core_assumption: 1, fatal_flaws: 2, pain: 0, founder_fit: 2, why_now: 1 });
-    expect(rubricBand(9)).toBe('strong');
-    expect(rubricBand(8)).toBe('strong');
-    expect(rubricBand(7)).toBe('pivot');
-    expect(rubricBand(5)).toBe('pivot');
-    expect(rubricBand(4)).toBe('weak');
-    expect(rubricBand(0)).toBe('weak');
   });
 
   it('renders as one line a reader can check against the numbers', () => {

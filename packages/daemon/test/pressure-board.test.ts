@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { advisorPrompt, chairPrompt, chairReaskPrompt, mergeBoardVerdict, boardSubject } from '../src/heartbeat.js';
+import { advisorPrompt, chairPrompt, chairReaskPrompt, mergeBoardVerdict, boardSubject, ideaVerdictBody } from '../src/heartbeat.js';
 import { PRESSURE_UNANSWERED, BANNED_HEDGE, PRESSURE_HANDBOOK_PATH, PRESSURE_NO_FLAWS, renderBoardSection } from '@cubicle/core';
 
 const PLAN_TEXT = '# Plan\n\n## Objectives\n\n### dev\n- ship the first cut\n';
@@ -87,8 +87,45 @@ describe('the idea session takes the five-part shape and order (spec §2)', () =
     expect(chairReaskPrompt(IDEA, 't', 'x')).toContain('STRONG, WEAK, PIVOT REQUIRED');
   });
 
-  it('the unanswered-twice finding says what happened', () => {
+  it('the re-ask carries the whole format, because the chair is asked in a chat of its own', () => {
+    // `askAs` sends system + this one message and nothing else, so everything the answer is parsed against has
+    // to be in here: the rubric's five labels, the heading the flaws are read from, and the wedge line.
+    const r = chairReaskPrompt(IDEA, 'advisors said things', 'the verdict was "MAYBE"');
+    expect(r).toContain(IDEA.title);
+    expect(r).toContain('RUBRIC: core assumption <0-2>, fatal flaws <0-2>, pain <0-2>, founder fit <0-2>, why now <0-2>');
+    expect(r).toContain('## Three Fatal Flaws');
+    expect(r).toContain('WEDGE:');
+    expect(r).toContain(BANNED_HEDGE);
+    expect(r).toContain('advisors said things');
+    // And an answer that does what the re-ask asked for keeps its rubric and its flaws, which is the whole
+    // point of spending the extra call: a re-ask that lost either would buy a verdict with nothing behind it.
+    const compliant = 'VERDICT: WEAK\nRUBRIC: core assumption 1, fatal flaws 0, pain 1, founder fit 2, why now 1\n\n## Core Assumption\nThey pay weekly.\n\n## Three Fatal Flaws\n- the payer is not the user\n- no van before 7am\n\n## Brutal Verdict\nWEAK.';
+    const m = mergeBoardVerdict(compliant, 'idea');
+    expect(m.refused).toBeNull();
+    expect(m.pressure).toBe('WEAK');
+    expect(m.rubric).toEqual({ core_assumption: 1, fatal_flaws: 0, pain: 1, founder_fit: 2, why_now: 1 });
+    expect(m.findings).toEqual(['the payer is not the user', 'no van before 7am']);
+  });
+
+  it('the owner\'s note names the pressure test and its rubric, and is silent about a board that ran neither', () => {
+    const facts = {
+      slug: 'meal-kits', title: 'Meal kits for nurseries', score: 46, band: 'keep' as const,
+      reason: '46/60 → keep.', board: 'pass' as const, findings: ['watch the margin'],
+      research: '', estimate: '', decidesAfterHours: 0,
+    };
+    expect(ideaVerdictBody({ ...facts, pressure: 'STRONG', rubric: { core_assumption: 2, fatal_flaws: 1, pain: 2, founder_fit: 1, why_now: 1 } }))
+      .toContain('- Pressure test: STRONG · rubric 7/10 — core assumption 2');
+    // A verdict word with no rubric says the word alone rather than an empty "rubric".
+    expect(ideaVerdictBody({ ...facts, pressure: 'WEAK', rubric: null })).toContain('- Pressure test: WEAK\n');
+    // A card the board judged before SP5b carries neither field, and its note reads exactly as it always did.
+    expect(ideaVerdictBody(facts)).not.toContain('Pressure test');
+  });
+
+  it('two refusals return the idea, in the words the board records', () => {
+    // The wording matters because it is what the owner reads on the card and in the verdict note; the daemon
+    // path that reaches it — a chair refused twice running — is exercised in `idea-board.test.ts`.
     expect(PRESSURE_UNANSWERED).toMatch(/twice running/);
     expect(PRESSURE_UNANSWERED).toMatch(/returned unjudged/);
+    expect(mergeBoardVerdict('VERDICT: MAYBE', 'idea').verdict).toBe('return');
   });
 });

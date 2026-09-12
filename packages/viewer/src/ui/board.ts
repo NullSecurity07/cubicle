@@ -74,9 +74,5 @@ export function boardHeadline(b: BoardState | null, now: number): Headline | nul
   // An idea the board pressure-tested leads with the verdict word and the rubric, because that is the sentence
   // the owner came to the wall for; the flaws fill whatever of the three lines is left. A plan reads as it did.
   const test = b.pressure ? [cut(b.rubric ? `${b.pressure} · ${b.rubric}` : b.pressure, 40)] : [];
-  return {
-    head: cut(head, 44),
-    lines: [...test, ...b.findings.map((f) => '• ' + cut(f, 40))].slice(0, 3),
-    short: b.pressure ? cut(b.pressure, 6) : b.verdict,
-  };
+  return { head: cut(head, 44), lines: [...test, ...b.findings.slice(0, 3).map((f) => '• ' + cut(f, 40))].slice(0, 3), short: b.pressure ? cut(b.pressure, 6) : b.verdict };
 }

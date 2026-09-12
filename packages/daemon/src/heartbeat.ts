@@ -455,6 +455,20 @@ export function chairPrompt(s: BoardSubject, transcript: string): string {
     '',
     'Merge them into ONE verdict for the owner on this idea. The test is: would Paul Graham fund this in its current form? Write exactly this, in this order:',
     '',
+    ...chairFormat(),
+  ].join('\n');
+}
+
+/**
+ * The exact shape the chair's answer must take, written once because the first ask and the one re-ask both have
+ * to carry all of it. `askAs` sends a fresh single-turn chat, so a re-asked chair remembers nothing of the first
+ * prompt: a re-ask that only said "then the RUBRIC line, then the five parts" would name neither the five rubric
+ * labels `parseRubric` looks for nor the `## Three Fatal Flaws` heading `readPressureVerdict` scopes its flaws
+ * to, and a chair that complied as well as it could would still lose both — on the one extra call the
+ * heartbeat's budget was raised to buy.
+ */
+function chairFormat(): string[] {
+  return [
     `VERDICT: ${PRESSURE_VERDICTS.join(' or ')} — one of those three, and nothing else on that line.`,
     `RUBRIC: ${RUBRIC_DIMENSIONS.map((d) => `${RUBRIC_LABEL[d]} <0-2>`).join(', ')} — out of ${RUBRIC_MAX}.`,
     '',
@@ -465,15 +479,22 @@ export function chairPrompt(s: BoardSubject, transcript: string): string {
     'On PIVOT REQUIRED only, close with a line `WEDGE: <the narrowest useful slice, and the most desperate users to aim it at>`.',
     '',
     `Be direct. Never write "${BANNED_HEDGE}" — it is a way of not deciding. You cannot delay, and you do not decide: the owner does.`,
-  ].join('\n');
+  ];
 }
 
-/** The one re-ask a chair gets, and only when it answered badly rather than not at all (spec Decision 6). */
+/**
+ * The one re-ask a chair gets, and only when it answered badly rather than not at all (spec Decision 6). It
+ * names what it is judging and repeats the whole format, because this call starts a conversation of its own.
+ */
 export function chairReaskPrompt(s: BoardSubject, transcript: string, why: string): string {
   return [
     `That answer was not usable: ${why}.`,
     '',
-    `Answer again, on the same advisors' notes. The first line must be exactly "VERDICT: " followed by one of ${PRESSURE_VERDICTS.join(', ')} and nothing else, then the RUBRIC line, then the five parts. Decide.`,
+    `Answer again on "${s.title}", from the same advisors' notes. The first line must be exactly "VERDICT: " followed by one of ${PRESSURE_VERDICTS.join(', ')} and nothing else, then the RUBRIC line, then the five parts. Decide. In full, the form your answer owes:`,
+    '',
+    ...chairFormat(),
+    '',
+    'The advisors wrote:',
     '',
     transcript.slice(0, SUBJECT_CHARS),
   ].join('\n');

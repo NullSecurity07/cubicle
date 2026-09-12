@@ -97,11 +97,6 @@ export function rubricTotal(r: BoardRubric): number {
   return RUBRIC_DIMENSIONS.reduce((sum, d) => sum + r[d], 0);
 }
 
-/** 8–10 strong · 5–7 pivot / needs work · 0–4 weak. Advisory: it never moves `ideaBand` (Decision 11). */
-export function rubricBand(total: number): 'strong' | 'pivot' | 'weak' {
-  return total >= 8 ? 'strong' : total >= 5 ? 'pivot' : 'weak';
-}
-
 /** `7/10 — core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1`. One line, everywhere it is shown. */
 export function renderRubric(r: BoardRubric): string {
   return `${rubricTotal(r)}/${RUBRIC_MAX} — ${RUBRIC_DIMENSIONS.map((d) => `${RUBRIC_LABEL[d]} ${r[d]}`).join(', ')}`;

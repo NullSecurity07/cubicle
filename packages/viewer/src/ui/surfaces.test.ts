@@ -70,3 +70,32 @@ describe('the whiteboard panel shows the pressure test as its own line', () => {
     expect(html).toContain('<li>watch the free tier</li>');
   });
 });
+
+describe('the whiteboard panel is a panel, not the wall', () => {
+  const at = '2026-09-12T09:00:00.000Z';
+  const now = Date.parse('2026-09-12T09:00:01.000Z');
+
+  it('an open session still names what the board is sitting on', () => {
+    // The title is the one thing the panel shows while the board sits, and it carries no bullet marker.
+    const s = { ...emptyState(), now, plan: '# Plan', board: { id: 'm1', subject: 'idea' as const, title: 'Meal kits for nurseries', verdict: null, findings: [], pressure: '', rubric: '', at } };
+    const html = SURFACES.whiteboard.view(s, ctx).html;
+    expect(html).toContain('The board is sitting');
+    expect(html).toContain('<li>Meal kits for nurseries</li>');
+  });
+
+  it('shows every flaw the board raised, even when the wall had room for two', () => {
+    // `boardHeadline` spends one of its three lines on the verdict word; the panel writes that line itself and
+    // must not inherit the wall's budget, or the third flaw would silently fall off.
+    const findings = ['the payer is not the user', 'no van before 7am', 'the margin is 4%'];
+    const s = { ...emptyState(), now, plan: '# Plan', board: { id: 'm1', subject: 'idea' as const, title: 'Meal kits', verdict: 'return' as const, findings, pressure: 'PIVOT REQUIRED', rubric: '7/10', at } };
+    const html = SURFACES.whiteboard.view(s, ctx).html;
+    for (const f of findings) expect(html, f).toContain(`<li>${f}</li>`);
+    expect(html).toContain('Pressure test: PIVOT REQUIRED · rubric 7/10');
+  });
+
+  it('shows a flaw in full, where the wall clips it to forty characters', () => {
+    const long = 'nobody has priced the delivery van, the driver or the 6am shift that the whole margin depends on';
+    const s = { ...emptyState(), now, plan: '# Plan', board: { id: 'm1', subject: 'plan' as const, title: "this cycle's plan", verdict: 'pass' as const, findings: [long], pressure: '', rubric: '', at } };
+    expect(SURFACES.whiteboard.view(s, ctx).html).toContain(`<li>${long}</li>`);
+  });
+});

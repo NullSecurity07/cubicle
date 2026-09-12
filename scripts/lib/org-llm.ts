@@ -47,20 +47,18 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
         const ideaMerge = opts.ideaVerdict === 'return'
           ? 'VERDICT: PIVOT REQUIRED\nRUBRIC: core assumption 1, fatal flaws 1, pain 1, founder fit 1, why now 1\n\n## Three Fatal Flaws\n- nobody has priced delivery\n\nWEDGE: the one nursery chain that already orders together'
           : 'VERDICT: STRONG\nRUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1\n\n## Three Fatal Flaws\n- watch the free tier';
-        if (/VERDICT: STRONG/.test(last) && /this idea/.test(last)) {
-          // `ideaChair` makes the one re-ask scriptable: the chair hedges first, and the branch below decides
-          // what it does when asked again. Left unset, the chair answers properly the first time, as it does
-          // in every existing scenario, and the re-ask branch is never reached.
-          return { ...base, content: opts.ideaChair ? 'VERDICT: STRONG\nIt has potential, but the margins worry me.' : ideaMerge };
-        }
-        // The chair's one re-ask (SP5b). Its prompt is the only one in the repo that opens "That answer was not
-        // usable", and it carries the advisors' transcript rather than the idea, so it says neither "this idea"
-        // nor "VERDICT: STRONG" — without its own discriminator it would fall through to the terminal `ok` and
-        // no scripted run could exercise the path. `hedge-then-silence` throws the way `askAs`'s catch sees a
-        // model that has gone away.
+        // The chair's one re-ask (SP5b). It repeats the whole format the first ask gave, so it matches the idea
+        // chair's own discriminator too and must be tested FIRST; "That answer was not usable" is the phrase
+        // only it carries. `hedge-then-silence` throws the way `askAs`'s catch sees a model that has gone away.
         if (/That answer was not usable/.test(last)) {
           if (opts.ideaChair === 'hedge-then-silence') throw new Error('no model available');
           return { ...base, content: opts.ideaChair === 'hedge-then-refusal' ? 'VERDICT: it depends' : ideaMerge };
+        }
+        if (/VERDICT: STRONG/.test(last) && /this idea/.test(last)) {
+          // `ideaChair` makes the one re-ask scriptable: the chair hedges first, and the branch above decides
+          // what it does when asked again. Left unset, the chair answers properly the first time, as it does
+          // in every existing scenario, and the re-ask branch is never reached.
+          return { ...base, content: opts.ideaChair ? 'VERDICT: STRONG\nIt has potential, but the margins worry me.' : ideaMerge };
         }
         if (/Pressure test it the way Paul Graham reads a YC application/.test(last)) return { ...base, content: '1. Core Assumption — nurseries will pay weekly.\n2. Three Fatal Flaws\n- nobody has priced delivery — get a quote first\n3. Problem Validation — painkiller.\n4. Founder-Market Fit — the owner ran a kitchen.\n5. Brutal Verdict — WEAK.' };
         return { ...base, content: /NAME:/.test(last) ? 'NAME: X\nTAGLINE: y' : 'ok' };

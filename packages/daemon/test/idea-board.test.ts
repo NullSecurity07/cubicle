@@ -415,6 +415,11 @@ describe('the board pressure-tests an idea, on a budget (spec §2, §3)', () => 
     const card = readIdea(vault, slug)!;
     expect(card.data.board_verdict).toBe('pass');
     expect(card.data.board_pressure).toBe('STRONG');
+    // The re-ask repeats the whole format, so the second answer keeps its rubric and its flaws — the extra call
+    // buys a verdict with the same evidence behind it as a first-time answer, not a bare word.
+    expect(card.data.board_rubric).toEqual({ core_assumption: 2, fatal_flaws: 1, pain: 2, founder_fit: 1, why_now: 1 });
+    expect(card.body).toContain('**Pressure test:** STRONG. Rubric 7/10 —');
+    expect(card.body).toContain('- watch the free tier');
     expect(vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'ideas_board')).toEqual([]);
   }, 30000);
 
