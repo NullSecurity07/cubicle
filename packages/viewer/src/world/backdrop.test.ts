@@ -15,8 +15,27 @@ describe('the sky', () => {
     }
   });
   it('rounds a fractional canvas size up, and never collapses to nothing', () => {
-    expect(skyRect(1279.4, 799.2)).toEqual({ x: 0, y: 0, width: 1280, height: 800 });
-    expect(skyRect(0, 0)).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+    const r = skyRect(1279.4, 799.2);
+    expect([r.width, r.height]).toEqual([1280, 800]);
+    expect(r.x).toBeLessThanOrEqual(0); expect(r.y).toBeLessThanOrEqual(0);   // the round-up hangs off the edge, never inside it
+    expect(skyRect(0, 0)).toEqual({ x: -0.5, y: -0.5, width: 1, height: 1 });
+  });
+
+  /**
+   * Visual QA (found while fixing C2/C3): `scrollFactor 0` stops an object scrolling, not the camera zoom scaling
+   * it about the middle of the viewport. At the tower elevation the sky was drawn at half size in the middle of
+   * the canvas with the flat clear colour around it — a hard-edged rectangle of gradient in a field of horizon.
+   */
+  it('still covers the viewport once the camera zoom has multiplied it', () => {
+    for (const zoom of [0.5, 1, 2, 3, 4]) {
+      const r = skyRect(1280, 800, zoom);
+      // what the camera does to a scrollFactor-0 object: scale about the centre of the viewport
+      const screen = (v: number, centre: number): number => (v - centre) * zoom + centre;
+      expect(screen(r.x, 640), `zoom ${zoom}`).toBeLessThanOrEqual(0);
+      expect(screen(r.x + r.width, 640), `zoom ${zoom}`).toBeGreaterThanOrEqual(1280);
+      expect(screen(r.y, 400), `zoom ${zoom}`).toBeLessThanOrEqual(0);
+      expect(screen(r.y + r.height, 400), `zoom ${zoom}`).toBeGreaterThanOrEqual(800);
+    }
   });
   it('hands the canvas clear colour the horizon stop, so the pre-texture frame is never the page theme', () => {
     expect(backdropColour(skyFor(2))).toBe(skyFor(2)[1]);

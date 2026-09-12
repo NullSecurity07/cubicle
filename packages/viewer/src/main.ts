@@ -259,7 +259,8 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
 (window as unknown as { __cubicle: unknown }).__cubicle = {
   get state() { return state; },
   agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), desks: () => scene.debugDesks(), stand: (name: string) => scene.debugStand(name), surfaces: () => debugSurfaces(), open,
-  zoom: (z: number) => scene.cameras.main.setZoom(z), center: (tx: number, ty: number) => scene.cameras.main.centerOn(tx * TILE, ty * TILE),
+  // Both drop the floor pin: they are the console driving the camera by hand, exactly like a drag or the wheel.
+  zoom: (z: number) => { scene.unpinFloor(); scene.cameras.main.setZoom(z); }, center: (tx: number, ty: number) => { scene.unpinFloor(); scene.cameras.main.centerOn(tx * TILE, ty * TILE); },
   floor: (n: number) => scene.focusFloor(n), currentFloor: () => scene.currentFloor(), elevator: () => scene.elevator.state(), route: (role: string, target: string) => scene.debugRoute(role, target),
   theme: (mode: 'dark' | 'light' | 'system') => applyTheme(mode),
   stack: () => panel.stack.entries(),
