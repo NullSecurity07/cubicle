@@ -19,6 +19,8 @@ export const TILES = [
   'PLANT_TALL_T', 'PLANT_TALL_B', 'PLANT_SMALL', 'BOOKSHELF_T', 'BOOKSHELF_B', 'FILING', 'LAMP_FLOOR', 'RACK_T', 'RACK_B', 'SAFE_DOOR', 'SCREEN_BEZEL', 'SCREEN_BEZEL_L', 'SCREEN_BEZEL_R',
   // the chief offices' seating corner (visual QA I6): a rug, a two-tile sofa and a side table, so no room is bare carpet
   'RUG', 'SOFA_L', 'SOFA_R', 'SIDE_TABLE',
+  // the street (visual QA R2-M6): a crossing where the entrance walk meets the road
+  'CROSSING',
 ] as const;
 export type TileName = (typeof TILES)[number];
 export const T = Object.fromEntries(TILES.map((n, i) => [n, i])) as Record<TileName, number>;

@@ -235,7 +235,9 @@ function paintBoard(c: Canvas, r: RoomSpec, f: FloorSpec): void {
   for (let x = cx - 3; x <= cx + 3; x++) c.set(F, x, y0 + 5, x === cx - 3 ? T.BT_TL : x === cx + 3 ? T.BT_TR : T.BT_TM);
   const seats: [number, number][] = [[cx - 3, y0 + 6], [cx - 1, y0 + 6], [cx + 1, y0 + 6], [cx + 3, y0 + 6], [cx - 4, y0 + 4], [cx + 4, y0 + 5]];
   seats.forEach(([x, y], i) => c.seat(`${r.id}_seat_${i + 1}`, x, y, r.id, f.n, {}, T.CHAIR_TASK));
-  c.seat('owner_chair', cx, y0 + 7, r.id, f.n, { reserved: 'owner' }, T.OWNER_CHAIR);
+  // At the table's near edge, in line with the seats either side of it, not a row behind them in the aisle: the
+  // owner read as a fifth person standing in the gap in the table rather than sitting at it (visual QA R2-M9).
+  c.seat('owner_chair', cx, y0 + 6, r.id, f.n, { reserved: 'owner' }, T.OWNER_CHAIR);
   c.set(F, r.x0 + 1, y0 + 1, T.PLANT_TALL_T); c.set(F, r.x0 + 1, y0 + 2, T.PLANT_TALL_B);
   c.set(F, r.x1 - 1, y0 + 1, T.PLANT_TALL_T); c.set(F, r.x1 - 1, y0 + 2, T.PLANT_TALL_B);
   c.decorAt('plant', r.x0 + 1, y0 + 2, f.n); c.decorAt('plant', r.x1 - 1, y0 + 2, f.n);
@@ -307,10 +309,15 @@ function paintStreet(c: Canvas): void {
   c.rect(c.ground, 0, g + 2, W - 1, g + 3, T.STREET);
   c.rect(c.ground, 0, g + 4, W - 1, H - 1, T.PAVEMENT);
   c.rect(c.ground, ENTRANCE.x0, g + 1, ENTRANCE.x1, H - 1, T.PAVEMENT);   // the walk crosses the kerb and street as pavement
+  c.rect(c.ground, ENTRANCE.x0, g + 2, ENTRANCE.x1, g + 3, T.CROSSING);   // …and the carriageway is striped where it does
   c.rect(c.walls, BUILDING.x0, g, SHAFT.x1, g, T.WALL);
   c.set(c.walls, ENTRANCE.x0, g, T.GLASS_DOOR); c.set(c.walls, ENTRANCE.x1, g, T.GLASS_DOOR);
   c.obj(c.objects, 'door', 'anchor', ENTRANCE.x0, g, 2, 1, { label: 'Entrance', floor: 1, stand_x: ENTRANCE.x1, stand_y: g + 1 });
+  // Six hedges over 210 px of pavement is an empty lot, not a street (visual QA R2-M6). Trees on the kerb line,
+  // benches and planters behind them, none of them in the entrance walk's own columns.
   for (const x of [2, 11, 20, 29, 38, 56]) c.set(c.furniture, x, 60, T.TREE);
+  for (const x of [6, 16, 25, 34, 52, 58]) c.set(c.furniture, x, 61, T.BENCH);
+  for (const x of [8, 14, 23, 32, 42, 50, 59]) c.set(c.furniture, x, 62, T.PLANT_SMALL);
 }
 
 /** The building's outer skin, painted last so it wins over the per-floor walls beneath it: facade edges on the two

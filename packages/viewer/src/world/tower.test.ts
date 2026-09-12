@@ -55,8 +55,8 @@ describe('buildTower', () => {
   it('seats: boardroom 6, meetingroom 8, pantry 8; the owner chair is a reserved seat', () => {
     expect(m.seats.boardroom).toHaveLength(6); expect(m.seats.meetingroom).toHaveLength(8); expect(m.seats.pantry).toHaveLength(8);
     const owner = objs.find((o) => o.name === 'owner_chair')!;
-    expect(owner.type).toBe('seat'); expect(prop(owner, 'reserved')).toBe('owner'); expect(owner.x / 16).toBe(32); expect(owner.y / 16).toBe(48);
-    expect(m.seats.boardroom).not.toContainEqual({ tx: 32, ty: 48 });
+    expect(owner.type).toBe('seat'); expect(prop(owner, 'reserved')).toBe('owner'); expect(owner.x / 16).toBe(32); expect(owner.y / 16).toBe(47);
+    expect(m.seats.boardroom).not.toContainEqual({ tx: 32, ty: 47 });   // the owner's own chair, at the table's near edge (R2-M9)
   });
   it('walkability: portals and entrance doors walkable, shaft and screens blocked, every chair, seat and stand walkable', () => {
     for (const ty of [13, 26, 39, 52]) { expect(m.grid[ty][50], `portal row ${ty}`).toBe(0); expect(m.grid[ty][51], `shaft row ${ty}`).toBe(1); }

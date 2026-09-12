@@ -103,6 +103,10 @@ export const DRAW: Record<Exclude<TileName, 'EMPTY'>, Drawer> = {
   // --- exterior ---
   STREET: (p) => { full(p, P.asphalt); noise(p, [shade(P.asphalt, 0.04), shade(P.asphalt, -0.03)], 16, 5); },
   KERB: (p) => { full(p, P.asphalt); p.fill(0, 0, 16, 5, P.kerb); hline(p, 0, 5, 16, shade(P.kerb, -0.15)); },
+  /* The tower fit's largest single area was the street, and it was flat (visual QA R2-M6). A crossing says the
+     road is a road and marks where the building's own walk reaches it. Stripes run across the carriageway, so on
+     a horizontal road they are vertical, and they tile: two per cell, neither touching a cell edge. */
+  CROSSING: (p) => { full(p, P.asphalt); noise(p, [shade(P.asphalt, 0.04), shade(P.asphalt, -0.03)], 10, 5); p.fill(2, 0, 4, 16, '#d9d5cd'); p.fill(10, 0, 4, 16, '#d9d5cd'); },
   PAVEMENT: (p) => { full(p, P.pavement); noise(p, ['#b5ac9e', '#9a9184'], 12, 3); hline(p, 0, 7, 16, '#9a9184'); vline(p, 7, 0, 16, '#9a9184'); },
   FACADE: (p) => { full(p, P.concrete); noise(p, [P.concreteLight, P.concreteDark], 10, 9); hline(p, 0, 15, 16, P.concreteDark); },
   FACADE_EDGE: (p) => { full(p, P.concrete); vline(p, 0, 0, 16, P.concreteLight); vline(p, 1, 0, 16, P.concreteLight); vline(p, 15, 0, 16, P.concreteDark); },

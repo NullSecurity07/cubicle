@@ -112,7 +112,7 @@ describe('floors (no Phaser)', () => {
   it('rooms, reserved seats, desk info, decor and signs are exposed', () => {
     expect(Object.keys(m.rooms).sort()).toEqual([...ROOM_IDS].sort());
     expect(m.rooms.dev.props.floor).toBe(2);
-    expect(m.reserved.owner).toEqual({ tx: 32, ty: 48 });
+    expect(m.reserved.owner).toEqual({ tx: 32, ty: 47 });
     expect(m.deskInfo.backend_engineer).toEqual({ tile: { tx: 28, ty: 35 }, room: 'dev', floor: 2 });
     expect(m.deskInfo.ceo.room).toBe('ceo_office');
     expect(m.decor.some((d) => d.kind === 'coffee' && d.floor === 1)).toBe(true);

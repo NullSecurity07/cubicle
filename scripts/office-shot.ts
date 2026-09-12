@@ -334,6 +334,12 @@ try {
   ev.emit({ type: 'shell.output', agent: 'frontend_engineer', job: w, payload: { session: 's', stream: 'stdout', text: '> vitest run\n Test Files  18 passed (18)\n      Tests  204 passed (204)' } });
   await page.waitForTimeout(1200);
   await cub((c) => c.open('terminal'));
+  await page.waitForTimeout(700);
+  // On the Dev room, not on the terminal's own wall: `focusOn` centres the screen, which is in Dev's top row, so
+  // the frame held half of F3 above it and cut the QA row's names at the top edge (visual QA R2-M8). F2's rooms
+  // run rows 29-40, so 35 is the floor's middle and the frame is exactly one floor.
+  await cub((c) => c.zoom(3));
+  await cub((c) => c.center(32, 35));
   // The caret blinks on a 530 ms 50 %-duty animation, so half of all shutters catch it invisible — and this is the
   // scene the checklist leans on for it. Under `prefers-reduced-motion` the stylesheet turns that animation off and
   // the caret stays lit (app.css: "the caret stays lit, the LIVE badge stays solid"), which is what a still wants.
@@ -410,9 +416,11 @@ try {
   await cub((c) => c.theme('dark'));
   await page.waitForTimeout(300);
   await cub((c) => c.zoom(3));
-  // Centred on 41, not on the room's own 44: at 44 the right third of the frame is the lift shaft and the sky past
-  // the building's corner, and the five names are pushed into the left half.
-  await cub((c) => c.center(41, 35));
+  // On the room the shot names. Centring left of it to trim the lift shaft out of the right of the frame put the
+  // Dev room under the left edge instead, and a name cut by the viewport reads as a name cut by the label budget
+  // (visual QA R2-M8). Sales runs columns 39-50, so its own middle is 44.5; the shaft and the sky past the
+  // building's corner are what the right of the frame is, and they are honestly what is there.
+  await cub((c) => c.center(44.5, 35));
   await shot('14-sales', 900);
   await closePanels();
 } catch (err) {
