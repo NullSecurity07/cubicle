@@ -8,7 +8,7 @@ import {
   nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
   FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
   isLongPrompt, isSkip,
-  readLedger, moneyReport, moneyLine, moneyNeedsYou, money, HOUSE, type MoneyReport, type LedgerEntry,
+  readLedger, moneyReport, moneyLine, moneyNeedsYou, money, HOUSE, LEDGER_PATH, DEFAULT_CURRENCY, type MoneyReport, type LedgerEntry,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type ModelBudget, type Router } from '@cubicle/router';
@@ -815,6 +815,42 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
   const done = (stepIdx: number, note: string) => { updateJob(vault, jobId, { checkpoint_step: stepIdx + 1 }, 'ceo', `- step ${stepIdx + 1} ${HEARTBEAT_STEPS[stepIdx]}: ${note}`); job = read().data; };
   const cancelled = () => read().data.status === 'cancelled';
 
+  /**
+   * The company's position, with the **read** guarded and not only the arithmetic.
+   *
+   * `readLedger` can throw where `moneyReport` cannot: `Vault.readTextOrNull` is `existsSync(p) ? readFileSync(p)
+   * : null`, so a path that exists but is not a readable file raises — `EISDIR` for a folder left where the book
+   * should be, `EACCES` for a file the owner chmodded or a restore that changed ownership. Both of this cycle's
+   * money reads (the `money` step, and the brief's deliberate re-read) went through it bare, and the step loop has
+   * no per-step catch, so an unreadable book killed the whole cycle: no money line, no plan, no brief, and a
+   * heartbeat left `running` to be requeued straight back into the same throw. That is exactly what the invariant
+   * written three times on this branch forbids — money can make the company cheaper, it must never make it silent.
+   *
+   * So a book that cannot be read reads as "nothing is known" for this one cycle: an empty position, which is
+   * deliberately **not** dormant (dormancy needs a live `capital` row, so nothing is stopped and no worker is
+   * parked), one `daemon.warning` naming the path and the error, and a money line that says the book could not be
+   * read rather than presenting a fabricated zero as the company's truth.
+   *
+   * Said **once per cycle**, not once per read: the two reads are one fault, and the event log is something the
+   * owner reads. Once per *cycle* rather than once per pass, because a cycle blocks on its own planning jobs and
+   * comes back here minutes later — the warning is stamped with the heartbeat job, so the resume that finally
+   * reaches the brief finds the row this cycle already wrote instead of repeating it.
+   */
+  let ledgerReadWarned = false;
+  interface MoneyRead { report: MoneyReport; unreadable: boolean }
+  const readMoney = (): MoneyRead => {
+    try { return { report: moneyReport(readLedger(vault), now()), unreadable: false }; }
+    catch (err) {
+      const told = ledgerReadWarned || vault.events.query({ types: ['daemon.warning'], job: jobId }).some((e) => e.payload.where === 'money.ledger');
+      ledgerReadWarned = true;
+      if (!told) vault.events.emit({ type: 'daemon.warning', job: jobId, payload: { where: 'money.ledger', path: LEDGER_PATH, message: `${LEDGER_PATH} could not be read: ${String((err as Error).message ?? err)}`.slice(0, 200) } });
+      return { report: moneyReport({ currency: DEFAULT_CURRENCY, entries: [], problems: [], missing: true }, now()), unreadable: true };
+    }
+  };
+  /** The cycle's one money line — or, when the book could not be read, the honest replacement for it. */
+  const moneyLineOf = (m: MoneyRead): string =>
+    m.unreadable ? `Money: \`${LEDGER_PATH}\` could not be read, so the company's position is unknown this cycle (the \`money.ledger\` warning on the log says why)` : moneyLine(m.report);
+
   // The situation the CEO plans against: elapsed time, experiments to adopt, owner feedback, edits and finished jobs.
   const situationSummary = (): string => {
     const experiments = vault.list('Experiments', { ext: '.md' }).filter((r) => !r.endsWith('_template.md') && !r.startsWith('Experiments/posts/')).map((r) => ({ r, d: vault.readNoteOrNull(r)?.data as Record<string, unknown> | undefined })).filter((x) => x.d && ['won', 'lost', 'running'].includes(String(x.d.status)));
@@ -944,11 +980,14 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           try { accrued = accrueModelCost(vault, cfg, now()); }
           catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'money.accrual', message: String((err as Error).message ?? err).slice(0, 200) } }); }
         }
-        const report: MoneyReport = moneyReport(readLedger(vault), now());
-        const line = moneyLine(report);
+        const position = readMoney();
+        const report: MoneyReport = position.report;
+        const line = moneyLineOf(position);
         // The runway note is a report, never the cycle: a providers file the router could not parse must not
-        // stop the company from working.
-        if (cfg) {
+        // stop the company from working. And a book that could not be read regenerates **nothing**: the page is
+        // the owner's standing record of the position, and overwriting the last true one with a stand-in empty
+        // report would turn a read fault into a false statement that outlives the cycle that made it.
+        if (cfg && !position.unreadable) {
           // The report this step already derived, rather than a second identical read of the same book.
           try { writeRunway(vault, org, cfg, now(), report); }
           catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'money.runway', message: String((err as Error).message ?? err).slice(0, 200) } }); }
@@ -970,12 +1009,17 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           break;
         }
         const revived = revivalMessage(vault, org, report, now());
-        const runway = enqueueRunway(vault, org, now());
+        // `enqueueRunway` reads the book again to write the CFO's figures into the job's goal, so it is the third
+        // read this step makes and it would throw out of the cycle just as the first two used to. There is also
+        // nothing for the CFO to say: a job whose goal carried a stand-in zero would have them write an opinion
+        // about a position nobody has. No position, no runway job — tomorrow's cycle queues one.
+        const runway = position.unreadable ? null : enqueueRunway(vault, org, now());
         done(i, [
           line,
           revived ? `told the owner we are back (${revived})` : '',
           accrued ? `accrued ${money(accrued.cents, report.currency)} of model cost` : '',
-          runway ? `queued ${runway}` : 'today\'s runway job is already queued',
+          position.unreadable ? 'no runway job and no runway note: neither can be written from a position nobody could read'
+            : runway ? `queued ${runway}` : 'today\'s runway job is already queued',
         ].filter(Boolean).join('; '));
         break;
       }
@@ -1575,8 +1619,11 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // forget the money line or seed a stopped company with its first jobs. The ledger is the only thing
         // that knows, and it costs one read to ask it — which is why the cycle caches nothing about money at
         // all, and why nothing here may be changed to trust a remembered figure.
-        const moneyNow = moneyReport(readLedger(vault), now());
-        const moneyFacts = { line: moneyLine(moneyNow), needsYou: moneyNeedsYou(moneyNow), dormant: moneyNow.dormant };
+        // Guarded by the same `readMoney` the `money` step uses, and for the same reason: this read is the last
+        // thing between a cycle's work and the owner hearing about it, so a book that cannot be read must cost
+        // the brief its money line and nothing else.
+        const moneyNow = readMoney();
+        const moneyFacts = { line: moneyLineOf(moneyNow), needsYou: moneyNeedsYou(moneyNow.report), dormant: moneyNow.report.dormant };
         // D8 seeds heartbeat #1 with a stream and the first jobs — but never for a company that has no money
         // to do them with. A dormant cycle writes its brief and nothing else.
         const firstStream = moneyFacts.dormant ? null : seedFirstStream(vault);

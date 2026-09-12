@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, unlinkSync, mkdirSync, chmodSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, appendEntry, readLedger, listJobs, listInbox, readJob, updateJob, RUNWAY_PATH, type Vault } from '@cubicle/core';
+import { scaffoldVault, appendEntry, readLedger, listJobs, listInbox, readJob, updateJob, RUNWAY_PATH, LEDGER_PATH, type Vault } from '@cubicle/core';
 import { Router, QuotaTracker, parseProvidersConfig } from '@cubicle/router';
 import { HEARTBEAT_STEPS, createHeartbeatJob, runHeartbeat, type HeartbeatDeps } from '../src/heartbeat.js';
 
@@ -316,5 +316,56 @@ describe('the money step (spec §5, §6)', () => {
     expect(brief).toContain('USD 0.00 cash');
     expect(brief).toContain('the company is dormant');
     expect(listJobs(vault).some((j) => j.type !== 'ceo.heartbeat')).toBe(false);   // nothing seeded for a stopped company
+  });
+
+  it('a book that cannot be read warns once, says so, and never stops the cycle (F1)', async () => {
+    seed('2026-09-11T08:00:00.000Z', 25000, 'Seed');
+    // One good cycle first, so there is a true runway note and a real CFO job on disk to protect.
+    const warmUp = createHeartbeatJob(vault, 'warm up');
+    expect((await runHeartbeat(withRouter(), warmUp)).status).toBe('blocked');
+    const goodNote = vault.readText(RUNWAY_PATH);
+    expect(goodNote).toContain('**Cash:** USD 250.00');
+
+    // A directory where the book should be — a misplaced folder, a restore, a sync client. `existsSync` is true,
+    // so `readTextOrNull` goes on to `readFileSync` and gets EISDIR. Before this guard that throw came out of the
+    // money step with nothing to catch it: no money line, no plan, no brief, and the job left `running` to be
+    // requeued straight back into the same throw.
+    const abs = vault.abs(LEDGER_PATH);
+    rmSync(abs, { force: true });
+    mkdirSync(abs);
+
+    const id = createHeartbeatJob(vault, 'unreadable book');
+    expect((await runHeartbeat(withRouter(), id)).status).toBe('blocked');       // planning, not dead
+    const warned = vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'money.ledger');
+    expect(warned).toHaveLength(1);
+    expect(warned[0].job).toBe(id);
+    expect(warned[0].payload.path).toBe(LEDGER_PATH);
+    expect(String(warned[0].payload.message)).toMatch(/EISDIR|directory/i);
+    const log = readJob(vault, id)!.body;
+    expect(log).toContain('step 2 money');
+    expect(log).toContain('could not be read');
+    expect(log).not.toContain('USD 0.00 cash');                                 // no position invented for the log
+    // Nothing was written from the stand-in: the last true page stands, and no CFO was asked for an opinion about
+    // a position nobody could read.
+    expect(vault.readText(RUNWAY_PATH)).toBe(goodNote);
+    expect(listJobs(vault).filter((j) => j.type === 'finance.runway')).toHaveLength(1);   // the warm-up's, not a second
+
+    // And the cycle reaches its brief, which says the same thing instead of a figure.
+    updateJob(vault, id, { status: 'queued', checkpoint_step: HEARTBEAT_STEPS.indexOf('brief'), blocked_on: undefined }, 'daemon');
+    expect((await runHeartbeat(withRouter(), id)).status).toBe('done');
+    const brief = latestBrief();
+    expect(brief).toContain('could not be read');
+    expect(brief).not.toContain('the company is dormant');                      // an unreadable book stops nothing
+    // Still one row for the whole cycle, across the resume, though the brief asked the book again.
+    expect(vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'money.ledger')).toHaveLength(1);
+
+    // Put the book back and the very next cycle is ordinary again: the position, the note and the CFO's job all
+    // return, and the complaint is not carried forward.
+    rmSync(abs, { recursive: true, force: true });
+    seed('2026-09-12T08:00:00.000Z', 1000, 'Top-up');
+    const after = createHeartbeatJob(vault, 'book is back');
+    expect((await runHeartbeat(withRouter(), after)).status).toBe('blocked');
+    expect(readJob(vault, after)!.body).toContain('USD 10.00 cash');
+    expect(vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'money.ledger')).toHaveLength(1);
   });
 });
