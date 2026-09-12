@@ -371,7 +371,9 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             if (!content) { outcome = 'no "## Proposed content" block found'; break; }
             // The owner may have edited the block before approving it; a brief that lost a section on the way
             // is refused rather than adopted, because every plan from here on is written against this file.
-            const missing = missingBriefSections(content);
+            // The proposal's own `created`, so a brief filed before the pressure test existed is adopted on
+            // the owner's click rather than refused for a section the company had not thought of (spec §4).
+            const missing = missingBriefSections(content, String(note.data.created ?? ''));
             if (missing.length) { refuseNote(vault, note, `the founder brief is missing ${missing.join(', ')}; add the section(s) and approve again`, { target }); continue; }
             vault.writeText(target, content, 'daemon', { job: d.job ?? null });
             outcome = `founder brief adopted at ${target}`;

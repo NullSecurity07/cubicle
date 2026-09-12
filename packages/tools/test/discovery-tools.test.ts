@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  scaffoldVault, Vault, RoleFrontmatter, readIdea, DISCOVERY_INBOX, INTERVIEW_PATH,
-  renderInterviewAsked, closeInterview, loadOrg,
+  scaffoldVault, Vault, RoleFrontmatter, readIdea, DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF,
+  renderInterviewAsked, renderInterviewCovered, closeInterview, loadOrg,
 } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools, type ToolContext } from '../src/index.js';
 import { discoveryInputs, ideaCard, fairShare, inOffice } from '../src/tools/discovery.js';
@@ -71,6 +71,41 @@ describe('discovery.inputs (spec §1)', () => {
     expect(r.text).toContain('skipped the interview');
     expect(r.text).toContain('## What the owner has typed in the cabin\n_Nothing._');
     expect((r.data as { sources: string[] }).sources).toEqual([]);
+  });
+
+  // SP5b §5: nobody was asked, because the owner had already said all six in their own material. Reported as
+  // "not answered yet" — which is what the old ternary's else arm said — the brief would go looking for words
+  // that are sitting in the very files and messages either side of that line.
+  it('says the interview was not needed, not that it is unanswered, when the material covered it', async () => {
+    vault.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We are building a weekly meal-kit box for nurseries.', 'owner');
+    vault.writeText(INTERVIEW_PATH, renderInterviewCovered('2026-09-12T09:00:00.000Z'), 'daemon');
+
+    const r = await discoveryInputs.handler({ max_chars: 60000 }, ctx('research_manager'));
+    expect(r.ok).toBe(true);
+    expect((r.data as { interview: string }).interview).toBe('covered');
+    expect(r.text).toContain('Not asked: the owner\'s own material already answered all 6 questions');
+    expect(r.text).not.toContain('Not answered yet');
+    expect(r.text).not.toContain('skipped the interview');
+    // The material it was taken from is still handed over, and the transcript is not itself a source: it holds
+    // the questions, never the owner's words.
+    expect(r.text).toContain('We are building a weekly meal-kit box');
+    expect((r.data as { sources: string[] }).sources).not.toContain(INTERVIEW_PATH);
+    // No brief adopted, so there is nothing else to point at: everything is in this call.
+    expect(r.text).not.toContain(FOUNDER_BRIEF);
+  });
+
+  // Review T4, minor 3: when coverage came through the brief's sections, the answers are in a file this call
+  // does not return, so "the files and messages here" sent the agent to the wrong document.
+  it('names the founder brief in that sentence when there is one, because this call does not return it', async () => {
+    vault.writeText(FOUNDER_BRIEF, '## What the company is\n\nA weekly meal-kit box delivered to nurseries.\n', 'owner');
+    vault.writeText(INTERVIEW_PATH, renderInterviewCovered('2026-09-12T09:00:00.000Z'), 'daemon');
+
+    const r = await discoveryInputs.handler({ max_chars: 60000 }, ctx('research_manager'));
+    expect(r.text).toContain(FOUNDER_BRIEF);
+    expect(r.text).toContain('which this call does not return');
+    expect(r.text).not.toContain('Not answered yet');
+    // It is still not a source: this call did not hand the brief over, it only said where it is.
+    expect((r.data as { sources: string[] }).sources).not.toContain(FOUNDER_BRIEF);
   });
 
   it('marks a truncation rather than hiding it', async () => {

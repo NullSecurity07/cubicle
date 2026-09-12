@@ -22,10 +22,14 @@ describe('what the discovery step does this cycle (spec §1, §5)', () => {
     expect(discoveryStatus({ ...base, interview: 'asked' }).why).toContain('waiting for an answer');
   });
 
-  it('runs on any one of the three inputs, and never asks the interview as well', () => {
-    for (const material of [{ inputs: 2, unread: { ...nothing, newInput: true } }, { unread: { ...nothing, longPrompt: true, anyPrompt: true } }, { interview: 'answered' as const, unread: { ...nothing, newInterview: true } }]) {
-      expect(discoveryStatus({ ...base, ...material })).toMatchObject({ run: true, ask: false });
+  // Reading and asking are independent, and since preflight G2 material no longer silences the interview: the
+  // *coverage check* decides how much of it is still worth asking, so a vault with a file or a typed document
+  // gets the questions that file does not answer. What closes the interview is having been asked, once.
+  it('runs on any one of the three inputs, and asks alongside until somebody has been asked', () => {
+    for (const material of [{ inputs: 2, unread: { ...nothing, newInput: true } }, { unread: { ...nothing, longPrompt: true, anyPrompt: true } }]) {
+      expect(discoveryStatus({ ...base, ...material })).toMatchObject({ run: true, ask: true });
     }
+    expect(discoveryStatus({ ...base, interview: 'answered' as const, unread: { ...nothing, newInterview: true } })).toMatchObject({ run: true, ask: false });
   });
 
   // The headline requirement (spec §1.3, §1.8, §5.5): "the owner types one line, the CEO proposes a name, and
@@ -35,10 +39,11 @@ describe('what the discovery step does this cycle (spec §1, §5)', () => {
     const oneLine = { ...base, unread: { ...nothing, anyPrompt: true } };
     expect(discoveryStatus(oneLine)).toMatchObject({ run: true, ask: true });
     expect(discoveryStatus(oneLine).why).toContain('asking the interview as well');
-    // A document is not interviewed about: the owner already wrote the answers down.
-    expect(discoveryStatus({ ...base, unread: { ...nothing, anyPrompt: true, longPrompt: true } })).toMatchObject({ run: true, ask: false });
-    // Nor is an owner who dropped a file.
-    expect(discoveryStatus({ ...base, inputs: 1, unread: { ...nothing, newInput: true } })).toMatchObject({ run: true, ask: false });
+    // An owner who wrote a document is asked too — but only about what the document does not answer, which is
+    // `askInterview`'s job and not this gate's (preflight G2). Refusing here made that check dead code.
+    expect(discoveryStatus({ ...base, unread: { ...nothing, anyPrompt: true, longPrompt: true } })).toMatchObject({ run: true, ask: true });
+    // And so is an owner who dropped a file.
+    expect(discoveryStatus({ ...base, inputs: 1, unread: { ...nothing, newInput: true } })).toMatchObject({ run: true, ask: true });
   });
 
   it('runs from the vault when the owner skips the interview rather than stalling for ever', () => {
@@ -47,7 +52,9 @@ describe('what the discovery step does this cycle (spec §1, §5)', () => {
   });
 
   it('never queues twice for the same material', () => {
-    expect(discoveryStatus({ ...base, inputs: 2, alreadyRun: true })).toMatchObject({ run: false, ask: false });
+    // `ask` is orthogonal: material already read still owes the owner the questions it does not answer.
+    expect(discoveryStatus({ ...base, inputs: 2, alreadyRun: true })).toMatchObject({ run: false, ask: true });
+    expect(discoveryStatus({ ...base, inputs: 2, alreadyRun: true, interview: 'asked' })).toMatchObject({ run: false, ask: false });
     expect(discoveryStatus({ ...base, inputs: 2, alreadyRun: true }).why).toContain('already read this material');
   });
 
@@ -89,11 +96,14 @@ describe('what the discovery step does this cycle (spec §1, §5)', () => {
   });
 
   it('with a brief adopted, only new material runs discovery again', () => {
-    expect(discoveryStatus({ ...after, hasBrief: true })).toMatchObject({ run: false, ask: false });
+    // A brief no longer silences the interview either: a brief that answers all six produces the `covered`
+    // phase and no message at all, which is `askInterview`'s decision to make, not this gate's (preflight G2).
+    expect(discoveryStatus({ ...after, hasBrief: true })).toMatchObject({ run: false, ask: true });
     expect(discoveryStatus({ ...after, hasBrief: true }).why).toContain('the founder brief covers everything');
     expect(discoveryStatus({ ...after, hasBrief: true, interview: 'skipped' })).toMatchObject({ run: false, ask: false });
     const more = { ...after, hasBrief: true, ranToday: false, inputs: 1, unread: { ...nothing, newInput: true } };
-    expect(discoveryStatus(more)).toMatchObject({ run: true, ask: false });
+    expect(discoveryStatus(more)).toMatchObject({ run: true, ask: true });
+    expect(discoveryStatus({ ...more, interview: 'covered' })).toMatchObject({ run: true, ask: false });
     expect(discoveryStatus(more).why).toContain('new material');
   });
 });
