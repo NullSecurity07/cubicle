@@ -345,8 +345,8 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
   it('says nothing for five days of locked cycles: once per lock, never on a timer', () => {
     const org = loadOrg(vault);
     vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
-    // Five days of heartbeats against a lock the owner has not touched. The page is never written, so the sha
-    // the notice is remembered against never moves, however long the lock stands.
+    // Five days of heartbeats against a lock the owner has not touched. Nothing about the lock has changed, so
+    // nothing the notice is remembered against has changed either, however long the lock stands.
     for (let d = 0; d < 5; d++) writeRunway(vault, org, SHIPPED, new Date(`2026-09-1${2 + d}T12:00:00.000Z`));
     expect(lockedRunwayRows()).toHaveLength(1);
     // What is remembered is the *question* — is this page locked — and not a word of the owner's spelling of
@@ -458,6 +458,14 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
       expect(unwritable()).toHaveLength(1);
       expect(String((unwritable()[0].payload as { reason?: string }).reason)).toContain('restart');
       expect(existsSync(path.join(dir, LOCK_STATE_PATH))).toBe(false);
+      // The fault is fixed. The next cycle tries the file again — the stand-in is for as long as the fault
+      // lasts, not for as long as the daemon does — and the notice is still not repeated.
+      chmodSync(path.join(dir, '.cubicle'), 0o755);
+      writeRunway(vault, org, SHIPPED, NOW);
+      expect(existsSync(path.join(dir, LOCK_STATE_PATH))).toBe(true);
+      expect(JSON.parse(readFileSync(path.join(dir, LOCK_STATE_PATH), 'utf8'))[LOCKED_RUNWAY]).toBe(`locked:${RUNWAY_PATH}`);
+      expect(lockedRunwayRows()).toHaveLength(1);
+      expect(unwritable()).toHaveLength(1);
     } finally {
       chmodSync(path.join(dir, '.cubicle'), 0o755);
     }

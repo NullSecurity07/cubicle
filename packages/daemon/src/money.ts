@@ -141,38 +141,55 @@ export const NOTICES_UNWRITABLE = 'money.notices.unwritable';
 export const LOCK_STATE_PATH = '.cubicle/money-notices.json';
 
 /**
- * Where the memory goes when `.cubicle/` cannot be written — a read-only mount, a permissions accident.
- * Per-vault and for this process only: the notices stay deduped for as long as the daemon runs, and a restart
- * costs exactly one repeat of each situation still standing at that moment. Keyed weakly so a test's vault is
- * collected with it.
+ * Where the memory goes when `.cubicle/` cannot be written — a read-only mount, a permissions accident, a full
+ * disk. It stands in for the file and does not replace it: **every cycle tries the file again**, and the first
+ * write that succeeds drops the stand-in and makes the file the record once more. So a five-minute `ENOSPC`
+ * costs nothing beyond the notices said during it, and only a fault that outlives the daemon costs the one
+ * repeat per standing situation that the notice on the event log warns about.
+ *
+ * Keyed on the vault's **root path**, not on a `Vault` instance, so two opens of the same directory in one
+ * process (`rebuild`, `doctor`, a test) share one memory instead of keeping two. One small entry per vault root
+ * this process has ever failed to write, which is at most a handful and is dropped again on the first success.
  */
-const inProcessNotices = new WeakMap<Vault, Record<string, string>>();
+const inProcessNotices = new Map<string, Record<string, string>>();
 
-function noticeState(vault: Vault): Record<string, string> {
-  const held = inProcessNotices.get(vault);
-  if (held) return { ...held };
+/** What the file says, or `{}` when it is absent, unreadable, or not a JSON object. */
+function readNoticeFile(vault: Vault): Record<string, string> {
   try {
     const v: unknown = JSON.parse(readFileSync(vault.abs(LOCK_STATE_PATH), 'utf8'));
     return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, string>) : {};
   } catch { return {}; }
 }
 
+function noticeState(vault: Vault): Record<string, string> {
+  // The file wins per key where it has one: it is the record, and the stand-in only holds what could not be
+  // written to it. Merging rather than choosing is what lets a cycle read back a notice written before the
+  // disk filled up *and* one said while it was full.
+  return { ...inProcessNotices.get(vault.root), ...readNoticeFile(vault) };
+}
+
 function saveNoticeState(vault: Vault, state: Record<string, string>): void {
-  if (inProcessNotices.has(vault)) { inProcessNotices.set(vault, state); return; }
-  const abs = vault.abs(LOCK_STATE_PATH);
+  const held = inProcessNotices.has(vault.root);
   try {
     // Nothing to remember is no file: a vault that has never had a notice held back should not acquire one,
-    // and "this file exists" should keep meaning "something is being suppressed".
-    if (Object.keys(state).length === 0) { rmSync(abs, { force: true }); return; }
-    atomicWriteSync(abs, JSON.stringify(state, null, 2));   // creates `.cubicle/` itself
-  } catch {
-    inProcessNotices.set(vault, state);
+    // and "this file exists" should keep meaning "something is being suppressed". The whole file is rewritten
+    // or removed, so a notice a second writer added between this cycle's read and its write would be lost —
+    // the same window `atomicWriteSync` has always had, with the same cost (one repeated sentence) and the
+    // same absence of a second writer: only the heartbeat calls into here, one job at a time.
+    if (Object.keys(state).length === 0) rmSync(vault.abs(LOCK_STATE_PATH), { force: true });
+    else atomicWriteSync(vault.abs(LOCK_STATE_PATH), JSON.stringify(state, null, 2));   // creates `.cubicle/`
+    inProcessNotices.delete(vault.root);   // the file is the record again
+    return;
+  } catch { /* fall through: the file cannot take it, so this process holds it instead */ }
+  inProcessNotices.set(vault.root, state);
+  if (held) return;   // already saying it in process; the owner has been told once and that is enough
+  try {
     vault.events.emit({ type: 'daemon.warning', payload: {
       where: NOTICES_UNWRITABLE,
       path: LOCK_STATE_PATH,
-      reason: `${LOCK_STATE_PATH} cannot be written, so what has already been said is remembered in this process only; every notice still standing is repeated once after a restart`,
+      reason: `${LOCK_STATE_PATH} cannot be written, so what has already been said is remembered in this process only until it can be; every notice still standing is repeated once after a restart`,
     } });
-  }
+  } catch { /* a log that cannot take an append is not this module's to surface, and never its to die on */ }
 }
 
 /** Forget a notice, so the next time the situation arises it is said again. */
@@ -201,7 +218,7 @@ function clearNotice(vault: Vault, where: string): void {
  * to *observe* the gap — an unlock and a re-lock between two heartbeats is a gap nothing saw, and nothing is
  * said.
  */
-export function lockSituation(rel: string): string {
+function lockSituation(rel: string): string {
   return `locked:${rel}`;
 }
 
@@ -224,7 +241,12 @@ export function lockSituation(rel: string): string {
  */
 function warnOnce(vault: Vault, where: string, situation: string, extra: Record<string, unknown>): void {
   const state = noticeState(vault);
-  if (state[where] === situation) return;
+  if (state[where] === situation) {
+    // Said already. If the only place that is written down is this process, try the file again — the retry is
+    // per cycle, so a fault that has since been fixed costs nothing beyond the cycles it actually lasted.
+    if (inProcessNotices.has(vault.root)) saveNoticeState(vault, state);
+    return;
+  }
   vault.events.emit({ type: 'daemon.warning', payload: { where, ...extra } });
   state[where] = situation;
   saveNoticeState(vault, state);
@@ -444,13 +466,21 @@ function firstAccrualDay(vault: Vault, cfg: ProvidersFile, now: Date): string {
   const stamp = String(cfg.prices_verified ?? cfg.verified ?? '').slice(0, 10);
   // A stamp that is fine again forgets the complaint about one that was not, so the same bad value coming
   // back — a revert, a restored backup, a bad merge — is said a second time rather than swallowed for ever.
+  // Within this function's own reach, which is narrow: it is called only while the book has no `model-<date>`
+  // row to continue from, so the first successful accrual retires the complaint and this clear together. That
+  // is the right place to stop caring — past that row the stamp decides nothing, because the walk continues
+  // from the book instead of from it.
   if (!DATE_RE.test(stamp) || stamp <= yesterday) { clearNotice(vault, STAMP_AHEAD); }
   if (!DATE_RE.test(stamp)) return lookback;
   if (stamp > yesterday) {
-    // Once per distinct stamp value, not once a cycle and not once a day: this fires on every cycle for as
-    // long as the typo stands (there is never a `model-<date>` row to continue from). The situation is the
-    // **stamp** and nothing else — the sentence names today's clamp target, which slides at every UTC
-    // midnight, and keying on that would turn one unchanged typo into a row a day.
+    // Once per distinct stamp value, not once a cycle and not once a day. The situation is the **stamp** and
+    // nothing else — the sentence names today's clamp target, which slides at every UTC midnight, and keying
+    // on that would turn one unchanged typo into a row a day.
+    //
+    // "Every cycle" means every cycle that gets this far: the clamp below returns `yesterday`, so the walk
+    // usually writes a `model-<date>` row on this very cycle and every later one continues from the book
+    // rather than from the stamp. It is a standing typo on a company with nothing chargeable that would
+    // otherwise repeat itself, and that is the case this guards.
     warnOnce(vault, STAMP_AHEAD, stamp, {
       stamp,
       reason: `the providers file's price stamp "${stamp}" is in the future; accruing model cost from ${yesterday} instead`,
