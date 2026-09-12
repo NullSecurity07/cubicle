@@ -258,6 +258,25 @@ describe('the shipped cascade (acceptance test 4, config/providers.yaml)', () =>
   });
 });
 
+describe('an aborted request is the caller giving up, not a provider failing', () => {
+  it('a signal that is already dead dials nobody, records nothing and does not cascade', async () => {
+    behaviours.clear();
+    const before = hits.length;
+    const { router, events, quota } = mk();
+    const ac = new AbortController();
+    ac.abort();   // the gap between two candidates, or a job cancelled while its request was assembled
+
+    await expect(router.chat({ tier: 'strong', needsTools: false }, { messages: [{ role: 'user', content: 'hi' }], signal: ac.signal }))
+      .rejects.toThrow(/aborted this request before it was sent/);
+
+    expect(hits.length).toBe(before);                       // no model was dialled at all
+    expect(events.count('router.call')).toBe(0);
+    expect(events.count('daemon.warning')).toBe(0);         // an abort is not an outage
+    expect(events.count('quota.updated')).toBe(0);
+    expect(quota.coolingUntil('alpha', 'alpha-strong')).toBeNull();
+  });
+});
+
 describe('overloaded models are skipped for a while (503 high demand)', () => {
   it('a 503 marks the model cooling so the next call cascades without paying for the failed round-trip', async () => {
     behaviours.clear();

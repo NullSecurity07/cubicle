@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { boardSessionOpen } from './world/owner.js';
 import { boardHeadline } from './ui/board.js';
-import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, overseerRole, vetoRole, statusText, CHECKING_TEXT, type Snapshot } from './state.js';
+import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, overseerRole, vetoRole, statusText, CHECKING_TEXT, WAITING_TEXT, type Snapshot } from './state.js';
 
 const role = (o: Partial<Snapshot['roles'][number]> & { role: string }) => ({ display: o.role, sprite: o.role, desk: o.role, active: true, ...o });
 
@@ -411,6 +411,19 @@ describe('the constitution check is something the owner can read', () => {
     expect(statusText(s.agents[anAgent])).toBeNull();
     expect(s.agents[anAgent].bubble!.text).toContain('not allowed');
     expect(s.feed[s.feed.length - 1].text).toContain('banned_tactics classifier');
+  });
+
+  it('tells the owner a deferred call is waiting, not that it was refused', () => {
+    // The proposal note's own footer says nothing is wrong and it goes out next cycle. A `guardrail.blocked`
+    // rendering — "not allowed", worried face, `!` over the head — would say the opposite (re-review 1).
+    let s = applyEvent(applySnapshot(emptyState(), snap), checking('email.send'), 1000);
+    s = applyEvent(s, ev('guardrail.deferred', anAgent, { tool: 'email.send', reason: 'the constitution guardrail could not check this call' }), 2000);
+    expect(s.agents[anAgent].checking).toBeNull();
+    expect(s.agents[anAgent].bubble!.text).toContain(WAITING_TEXT);
+    expect(s.agents[anAgent].bubble!.text).not.toContain('not allowed');
+    expect(s.agents[anAgent].mood).toBe('thinking');       // patient, not worried
+    expect(s.agents[anAgent].emote).toBeNull();            // no alarm over the head
+    expect(s.feed[s.feed.length - 1].text).toContain(WAITING_TEXT);
   });
 
   it('leaves a sprite that is not at its desk where it is, rather than seating it to read the rules', () => {

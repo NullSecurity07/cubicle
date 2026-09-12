@@ -142,11 +142,25 @@ export async function classifyBannedTactic(router: Router, text: string, tactics
   if (fresh) return { verdict: hit!.verdict, reason: hit!.reason, elapsedMs: 0, memoised: true };
 
   const started = Date.now();
-  const settle = (verdict: ClassifierVerdict, reason: string | null): ClassifierResult => {
+  /**
+   * The era as it was when this attempt *began*, which is what an unreachable model's refusal is stamped with.
+   * Reading `classifierEra` at settle time instead was a hole the counter was supposed to close (re-review 1):
+   * `WorkerPool` runs one worker per role concurrently, so two classifications overlap whenever two agents
+   * send at once — worker A times out at t+20 s, worker B succeeds at t+3 s and ends the outage, and A then
+   * recorded its refusal under the *recovered* era, where it was served silently for the rest of the TTL.
+   */
+  const eraAtStart = classifierEra;
+  /**
+   * `answered` is "a model replied", not "the reply was useful". It is what ends an outage — including a reply
+   * with no verdict in it, which is a model that is plainly up (re-review 1, minor). That reply is still an
+   * `unavailable`, but it is stamped with the *new* era so a persistently rambling model is asked once per
+   * TTL rather than on every call; a model nobody could reach is stamped with `eraAtStart` so any success
+   * that lands during the attempt releases it.
+   */
+  const settle = (verdict: ClassifierVerdict, reason: string | null, answered: boolean): ClassifierResult => {
     if (classifierMemo.size >= CLASSIFIER_MAX) classifierMemo.clear();
-    // A model answered: every `unavailable` recorded before this moment is stale, however recent.
-    if (verdict !== 'unavailable') classifierEra++;
-    classifierMemo.set(memoKey, { at: Date.now(), era: classifierEra, verdict, reason });
+    if (answered) classifierEra++;
+    classifierMemo.set(memoKey, { at: Date.now(), era: answered ? classifierEra : eraAtStart, verdict, reason });
     const elapsedMs = Date.now() - started;
     watch.checked?.(verdict, elapsedMs);
     return { verdict, reason, elapsedMs, memoised: false };
@@ -181,16 +195,16 @@ export async function classifyBannedTactic(router: Router, text: string, tactics
     const m = (r.content ?? '').match(/\{[\s\S]*\}/);
     if (!m) {
       watch.warn?.('banned_tactics classifier answered without a verdict; refusing the call rather than sending it unchecked');
-      return settle('unavailable', unavailableReason('the model answered with no verdict'));
+      return settle('unavailable', unavailableReason('the model answered with no verdict'), true);
     }
     const j = JSON.parse(m[0]) as { violates?: boolean; tactic?: string };
     return j.violates
-      ? settle('violation', `constitution: banned tactic detected: ${j.tactic || 'unspecified'}`)
-      : settle('clear', null);
+      ? settle('violation', `constitution: banned tactic detected: ${j.tactic || 'unspecified'}`, true)
+      : settle('clear', null, true);
   } catch (err) {
     const cause = timedOut ? `no answer in ${CLASSIFIER_TIMEOUT_MS} ms` : (err as Error).message.slice(0, 120);
     watch.warn?.(`banned_tactics classifier unavailable (${cause}); refusing the call rather than sending it unchecked`);
-    return settle('unavailable', unavailableReason(cause));
+    return settle('unavailable', unavailableReason(cause), false);
   } finally {
     clearTimeout(timer);
   }

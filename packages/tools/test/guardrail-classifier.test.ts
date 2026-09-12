@@ -130,6 +130,40 @@ describe('the banned_tactics classifier is bounded by its own clock', () => {
     expect(back.seen.length).toBe(1);
   });
 
+  it('a success that lands *during* a failing attempt invalidates it — the era is read at the start, not the end', async () => {
+    // `WorkerPool` runs one worker per role at once, so two classifications overlap whenever two agents send
+    // together. Worker A is slow and fails; worker B succeeds while A is still waiting. Reading the era at
+    // settle time stamped A's refusal with B's *recovered* era, and the stale refusal was then served
+    // silently for the rest of the TTL — the exact staleness the counter exists to remove (re-review 1).
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const slow = router(async () => { await gate; throw new Error('ollama down'); });
+    const text = freshText();
+
+    const failing = classifyBannedTactic(slow, text, ['fake urgency']);
+    await classifyBannedTactic(says('{"violates": false, "tactic": ""}'), freshText(), ['fake urgency']);  // B answers first
+    release();
+    expect((await failing).verdict).toBe('unavailable');
+
+    const back = says('{"violates": false, "tactic": ""}');
+    const again = await classifyBannedTactic(back, text, ['fake urgency']);
+    expect(again.memoised).toBe(false);   // asked again, not served the refusal B had already disproved
+    expect(again.verdict).toBe('clear');
+  });
+
+  it('a model that answers without a verdict still ends the outage for everyone else', async () => {
+    // It rambled, so this text is still unchecked — but the model is plainly up, and the refusals the outage
+    // caused elsewhere must not go on standing (re-review 1, minor).
+    const stale = freshText();
+    expect((await classifyBannedTactic(router(async () => { throw new Error('ollama down'); }), stale, ['fake urgency'])).verdict).toBe('unavailable');
+    const rambling = says('probably fine, I think');
+    expect((await classifyBannedTactic(rambling, freshText(), ['fake urgency'])).verdict).toBe('unavailable');
+
+    const back = says('{"violates": false, "tactic": ""}');
+    expect((await classifyBannedTactic(back, stale, ['fake urgency'])).memoised).toBe(false);
+    expect(back.seen.length).toBe(1);
+  });
+
   it('a verdict a model actually gave is still remembered across an outage — it is a fact about the text', async () => {
     const clear = says('{"violates": false, "tactic": ""}');
     const text = freshText();

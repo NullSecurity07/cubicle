@@ -139,11 +139,17 @@ describe('final critique', () => {
     // It used to answer `null` here — "carry on, nothing checked this" — which made the constitution's
     // strictest rule the one rule a dead local model could switch off (B1, 2026-09-13). It now refuses.
     expect((await classifyBannedTactic(broken, 'buy now', ['fake urgency'], { warn: (m) => warnings.push(m) })).verdict).toBe('unavailable');
+    expect(warnings.length).toBe(1);
+    // A repeat inside the same outage is served from the memo and does not warn again.
+    expect((await classifyBannedTactic(broken, 'buy now', ['fake urgency'], { warn: (m) => warnings.push(m) })).memoised).toBe(true);
+    expect(warnings.length).toBe(1);
+
+    // A reply with no verdict in it is still unusable for *this* text — but it proves the model is up, so it
+    // ends the outage, and the refusal above stops being served from memory (re-review 1, minor).
     const noJson = { async chat() { return { content: 'sure thing' }; } } as never;
     expect((await classifyBannedTactic(noJson, 'buy today', ['fake urgency'], { warn: (m) => warnings.push(m) })).verdict).toBe('unavailable');
     expect(warnings.length).toBe(2);
-    // A repeat of a failed classification is served from the memo and does not warn again.
-    expect((await classifyBannedTactic(broken, 'buy now', ['fake urgency'], { warn: (m) => warnings.push(m) })).memoised).toBe(true);
-    expect(warnings.length).toBe(2);
+    expect((await classifyBannedTactic(broken, 'buy now', ['fake urgency'], { warn: (m) => warnings.push(m) })).memoised).toBe(false);
+    expect(warnings.length).toBe(3);
   });
 });

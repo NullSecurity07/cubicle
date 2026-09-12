@@ -102,10 +102,53 @@ const NOTHING_TO_FIX = 'Nothing to do: it is sent on its own on the next cycle, 
 
 function refuseNote(vault: Vault, note: { path: string; data: InboxFrontmatter }, why: string, extra: Record<string, unknown> = {}): void {
   const closing = why === TRUST_PENDING_HOLD ? NOTHING_TO_DO : why === CLASSIFIER_UNAVAILABLE_HOLD ? NOTHING_TO_FIX : FIX_IT;
-  vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: note.data.id, kind: note.data.kind, reason: why, ...extra } });
+  // A classifier that could not run refused nothing — it decided nothing at all — so it gets its own event.
+  // `guardrail.blocked` is rendered as "not allowed", with a worried face, which is the exact opposite of
+  // what this note's own footer tells the owner (re-review 1, minor).
+  const type = why === CLASSIFIER_UNAVAILABLE_HOLD ? 'guardrail.deferred' as const : 'guardrail.blocked' as const;
+  vault.events.emit({ type, payload: { proposal: note.data.id, kind: note.data.kind, reason: why, ...extra } });
   vault.updateNote(note.path, (nn) => ({ data: { ...nn.data, refused: why, refused_at: nowIso() }, body: nn.body.replace(/\n\n---\n_Not applied:[^\n]*_\n?$/s, '').trimEnd() + `\n\n---\n_Not applied: ${why}. ${closing}_\n` }), 'daemon');
   const sha = vault.currentSha(note.path);
   if (sha) vault.db.prepare('INSERT OR REPLACE INTO refusals(path, sha, at) VALUES (?, ?, ?)').run(note.path, sha, nowIso());
+}
+
+/**
+ * Hold a note the constitution guardrail could not check, and leave it due on the next pass.
+ *
+ * The whole point of the hold is that nothing was decided: `approved` stands, the idempotency key is unspent,
+ * `resolved_at` is never stamped and the `refusals` row (which is what carries the approval across the hold)
+ * is kept. Written once per episode — a model outage can run for a while, and re-writing the note and its
+ * autocommit on every pass over a fact that has not changed is the churn the dormancy refusal and the trust
+ * hold are both written once for.
+ */
+function holdForClassifier(vault: Vault, note: { path: string; data: InboxFrontmatter }): void {
+  if ((note.data as { refused?: string }).refused !== CLASSIFIER_UNAVAILABLE_HOLD) refuseNote(vault, note, CLASSIFIER_UNAVAILABLE_HOLD);
+  retryOnNextPass(vault, note.path);
+}
+
+/**
+ * True when the constitution guardrail cannot check this note's stored call *right now*, because its
+ * classifier could not reach a model.
+ *
+ * Only that one answer is acted on here. A real refusal — a banned tactic, a banned channel, a daily cap — is
+ * left to whoever executes the call, exactly as it was before: for a `spend` that is `executeStoredCall` a
+ * few lines later, and for an `outbound_batch` it is the waiting job's own resume, which records the block on
+ * the job where the author can read it. This function exists only so that a call nobody could check is not
+ * closed on its way past.
+ */
+async function classifierCannotCheck(deps: DispatcherDeps, note: { path: string; data: InboxFrontmatter }): Promise<boolean> {
+  const call = note.data.call;
+  if (!call || !deps.guardrails?.length) return false;
+  const roleId = call.role ?? note.data.from;
+  const roleNote = deps.vault.readNoteOrNull(`Roles/${roleId}.md`);
+  if (!roleNote) return false;
+  const jobId = call.job ?? note.data.job ?? null;
+  const ctx: ToolContext = { vault: deps.vault, events: deps.vault.events, roleId, role: RoleFrontmatter.parse(roleNote.data), jobId, config: deps.toolsConfig, env: deps.env, scheduler: deps.scheduler, workspace: `.cubicle/workspace/${jobId ?? 'daemon'}`, now: () => new Date(), idempotencyKey: call.idempotency_key, guardrails: deps.guardrails };
+  for (const g of deps.guardrails) {
+    const v = await g.check(call.tool, call.args, ctx);
+    if (v) return isClassifierUnavailable(v);
+  }
+  return false;
 }
 
 function retryDue(vault: Vault, note: { path: string; data: InboxFrontmatter }): boolean {
@@ -389,11 +432,7 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             // owner-approved send wait ten minutes for a twenty-second interruption is the same complaint
             // SP5's I1 made about the trust hold. Same lever, `retryOnNextPass`: the row stays — it is what
             // carries the owner's standing approval — and only its clock is moved.
-            if (r.deferred) {
-              if ((d as { refused?: string }).refused !== r.text) refuseNote(vault, note, r.text);
-              retryOnNextPass(vault, note.path);
-              continue;
-            }
+            if (r.deferred) { holdForClassifier(vault, note); continue; }
             outcome = `${d.call.tool}: ${r.ok ? 'ok' : 'failed'} — ${r.text.slice(0, 200)}`;
             break;
           }
@@ -403,6 +442,15 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             // in the last few seconds is left to the sweep, which says so in its own footer.
             const trust = trustGuard(deps, d);
             if (trustDefers(deps, note, trust)) continue;
+            // A third deferral, and the one that matters most here: **every** tool the constitution's
+            // classifier reads is an `outbound_batch` (`email.send`, `social.post`, `mock.outbound`,
+            // `browser.submit`), so this is the branch a classifier outage actually lands on — the `spend`
+            // tools carry no outbound copy and never reach the classifier at all (re-review 1, CRITICAL).
+            // Resolving the note here while no model can check the call would close the owner's approval on
+            // a send that was never decided about: the waiting job resumes a moment later, finds a note it
+            // can no longer be held by, and records a permanent "blocked even though approved" for a
+            // twenty-second outage. Hold it instead, and let the next cycle send it.
+            if (await classifierCannotCheck(deps, note)) { holdForClassifier(vault, note); continue; }
             // The blocked job executes the stored call itself on resume (R30); just wake it. A call that owed
             // reviews says which decision released it: on that note "approved" is only the owner's half, and the
             // footer is the one place the owner can read that the offices agreed too.
@@ -612,7 +660,14 @@ export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION
       // the owner says *no* while the reviews are out, the gates stay pending for ever, and without this clause
       // the author sat `blocked` on a closed proposal for the life of the vault, in no "What needs you" row and
       // with no warning anywhere. The rejection (or the sweep's verdict footer) is the answer the job resumes on.
-      const held = !!p && !p.data.resolved_at && (opts.trustHeld?.(p.data) ?? false);
+      //
+      // The constitution hold is the same shape as the trust hold and skips for the same reason: while no
+      // model can check the call, waking the author would only have the harness re-block it a moment later,
+      // once per tick, writing an "unblocked (proposal …)" line into the job note each time for as long as
+      // the outage lasts. The hold is lifted by the dispatcher itself, on the pass where the classifier
+      // answers, and the author is woken then.
+      const classifierHeld = !!p && (p.data as { refused?: string }).refused === CLASSIFIER_UNAVAILABLE_HOLD;
+      const held = !!p && !p.data.resolved_at && ((opts.trustHeld?.(p.data) ?? false) || classifierHeld);
       ready = !!p && (p.data.approved !== null || !!p.data.resolved_at) && !held;
     } else if (b.kind === 'job') {
       const sub = readJob(vault, b.id);

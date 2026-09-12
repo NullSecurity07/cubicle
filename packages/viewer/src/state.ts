@@ -185,6 +185,14 @@ export const SLEEP_AFTER_MS = 3 * 60_000;
 export const CHECKING_TEXT = 'checking the constitution…';
 
 /**
+ * What the office says about a call the guardrail could not check — as against one it refused. Nothing is
+ * wrong: the owner's approval stands, nothing was sent, and the next cycle sends it as soon as a model
+ * answers. Rendering that as "not allowed", with a worried face, would tell the owner the opposite of what
+ * the proposal note's own footer says (re-review 1).
+ */
+export const WAITING_TEXT = 'waiting for the guardrail';
+
+/**
  * How long the "checking" bubble may stand without a `guardrail.checked`. The classifier is bounded by its
  * own 20 s clock (`CLASSIFIER_TIMEOUT_MS` in @cubicle/tools), so a pair that never closes means the daemon
  * died mid-check — and a dead daemon must not leave the office claiming it is still reading the rules.
@@ -305,6 +313,9 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     // back into their chair to read the rules.
     case 'guardrail.checking': { const ag = a(e.agent); if (ag) { ag.checking = String(p.tool ?? ''); if (ag.state === 'idle_at_desk' || ag.state === 'talking') ag.state = 'working'; ag.bubble = { kind: 'thought', text: CHECKING_TEXT, until: nowMs + CHECKING_MS }; feel(ag, 'thinking', null); } break; }
     case 'guardrail.checked': { const ag = a(e.agent); if (ag) { ag.checking = null; if (ag.bubble?.text === CHECKING_TEXT) ag.bubble = null; } break; }
+    // Not a refusal: nothing was decided, nothing was sent, and it goes out on the next cycle. Patient, not
+    // worried — and the feed says "waiting", so the newsstand does not read as a company being told off.
+    case 'guardrail.deferred': { const ag = a(e.agent); if (ag) { ag.checking = null; ag.bubble = { kind: 'thought', text: `${WAITING_TEXT}…`, until: nowMs + BUBBLE_MS }; feel(ag, 'thinking', BUBBLE_MS); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${WAITING_TEXT}: ${String(p.reason ?? '')}` }]; break; }
     case 'guardrail.blocked': { const ag = a(e.agent); if (ag) { ag.checking = null; ag.bubble = { kind: 'thought', text: `not allowed: ${String(p.reason ?? 'blocked')}`.slice(0, 120), until: nowMs + BUBBLE_MS }; feel(ag, 'worried'); emote(ag, '!', 4000); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `guardrail: ${String(p.reason ?? '')}` }]; break; }
     case 'owner.edited': st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `you edited ${String(p.path)}` }]; break;
     case 'vault.wrote': { const pth = String(p.path ?? ''); if (pth.startsWith('Decisions/') && !p.deleted) st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `decision recorded: ${pth.replace(/^Decisions\//, '').replace(/\.md$/, '')} (${String(e.agent ?? '')})` }]; if ((pth === 'Plans/plan.md' || pth.startsWith('Runs/') || pth.startsWith('Ledger/')) && p.generated !== true) st.staleSnapshot = true; break; }

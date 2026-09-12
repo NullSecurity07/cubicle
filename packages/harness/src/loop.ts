@@ -11,7 +11,7 @@ import {
 import { NoModelAvailableError, TIER_RANK, type ModelBudget, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
 import {
-  ToolRegistry, createRoleToolClient, resolveMode, policyFor, proposalKindFor, findAnswer, unreadMessages, renderMessages, listAdrs,
+  ToolRegistry, createRoleToolClient, resolveMode, policyFor, proposalKindFor, findAnswer, unreadMessages, renderMessages, listAdrs, isClassifierUnavailable,
   type ToolsConfig, type ToolContext, type SchedulerApi, type MemoryApi, type ToolResult, type RoleToolClient,
 } from '@cubicle/tools';
 import { assembleContext, type Observation } from './context.js';
@@ -490,10 +490,22 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
           : resolveMode(call.tool, deps.toolsConfig, role, vault.ownerPreferences()) === 'never'
             ? `${call.tool} is set to mode never; the owner's configuration outranks this approval`
             : null;
+        const alreadyDone = job.side_effects_done.includes(key);
         let vetoed: string | null = revoked;
-        if (!vetoed) for (const g of deps.guardrails ?? []) { vetoed = await g.check(call.tool, call.args, baseCtx); if (vetoed) break; }
-        if (job.side_effects_done.includes(key)) {
+        // Not for a call that already ran: the classifier is a model round trip with its own twenty-second
+        // bound, and spending it to re-judge a send that is already out is twenty seconds of nothing.
+        if (!vetoed && !alreadyDone) for (const g of deps.guardrails ?? []) { vetoed = await g.check(call.tool, call.args, baseCtx); if (vetoed) break; }
+        if (alreadyDone) {
           record({ step, kind: 'tool', tool: call.tool, args: call.args, result: 'already executed before the interruption (idempotency key recorded)', ok: true });
+        } else if (vetoed && isClassifierUnavailable(vetoed)) {
+          // Nobody checked this call, so nobody refused it either. Recording a block here would spend the
+          // owner's approval on a twenty-second model outage — the round-1 Critical, on the path the
+          // classifier actually takes (re-review 1). Stay blocked on the proposal exactly as a pending trust
+          // review does: the key is unspent, the job's `blocked_on` stands, and the dispatcher — which holds
+          // the note for the same reason — wakes this job on the cycle where a model answers again.
+          events.emit({ type: 'guardrail.deferred', agent: roleId, job: jobId, payload: { tool: call.tool, reason: vetoed, step, approved: true } });
+          updateJob(vault, jobId, {}, roleId, `- step ${step}: ${call.tool} waiting for the constitution guardrail: ${vetoed}`);
+          return stillBlocked();
         } else if (vetoed) {
           events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason: vetoed, step, approved: true } });
           record({ step, kind: 'tool', tool: call.tool, args: call.args, result: `blocked even though approved: ${vetoed}`, ok: false });

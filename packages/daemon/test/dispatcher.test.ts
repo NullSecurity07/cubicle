@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, createJob, readJob, listJobs, updateJob, createProposal, findInboxById, idFromKey, nowIso, loadOrg } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, phase3Tools, CLASSIFIER_UNAVAILABLE_PREFIX } from '@cubicle/tools';
+import { parseToolsConfig, ToolRegistry, phase3Tools, proposalKindFor, CLASSIFIER_UNAVAILABLE_PREFIX } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { requeueUnblocked, executeStoredCall, dispatchProposals, defaultConfig, escalationTarget, RETRY_NOW } from '../src/index.js';
 
@@ -164,21 +164,39 @@ describe('an approved call whose mode changed to never (D3)', () => {
 describe('an approved call the constitution guardrail could not check', () => {
   /**
    * A proposal carrying an outbound call the owner has approved, and the deps to dispatch it with
-   * `guardrails`. `spend` is the kind whose stored call the *dispatcher* executes — an `outbound_batch` is
-   * run by the waiting job itself on resume, so it never reaches `executeStoredCall`.
+   * `guardrails`.
+   *
+   * The kind comes from `proposalKindFor`, the same function the tool layer files with, so the note is one
+   * the system could actually have produced. `mock.outbound` is the tool because it is one the classifier
+   * really reads (`OUTBOUND_TEXT_TOOLS`) and the only such tool with no `trust_review`, so a hold here is
+   * the classifier's and nobody else's. Its real kind is `outbound_batch` — pairing it with `spend` was the
+   * invalid pairing re-review 1 caught, and it is why the round-1 tests passed over a path the classifier
+   * can never take.
    */
   function approvedOutbound(guardrails: { check: () => string | null }[]) {
     vault.updateNote('Roles/cmo.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
     const job = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'cmo', goal: 'send' }, 'cto');
     const key = `${job}:1:1`;
-    const p = createProposal(vault, { kind: 'spend', from: 'cmo', job, title: 'send one', body: 'x', call: { tool: 'mock.outbound', args: { to: 'a@x', body: 'hi' }, idempotency_key: key, job, role: 'cmo' } }, 'cmo');
     const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
-    return { job, key, p, deps: { vault, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), toolsConfig: cfg, scheduler: vaultScheduler(vault), env: {}, guardrails } };
+    const kind = proposalKindFor(cfg, 'mock.outbound');
+    expect(kind).toBe('outbound_batch');   // the path this whole describe is about
+    const p = createProposal(vault, { kind, from: 'cmo', job, title: 'send one', body: 'x', call: { tool: 'mock.outbound', args: { to: 'a@x', body: 'hi' }, idempotency_key: key, job, role: 'cmo' } }, 'cmo');
+    return { job, key, p, cfg, deps: { vault, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), toolsConfig: cfg, scheduler: vaultScheduler(vault), env: {}, guardrails } };
   }
+  /** Approve as the owner. Only a raw file edit reads as one: `updateNote` records its own sha as a system write. */
+  const approve = (rel: string) => writeFileSync(path.join(dir, rel), readFileSync(path.join(dir, rel), 'utf8').replace(/^approved: .*$/m, 'approved: true'));
+  const OUTAGE = `${CLASSIFIER_UNAVAILABLE_PREFIX} (no answer in 20000 ms), so the call is refused rather than sent unchecked. Try it again once a model is answering.`;
 
+  /**
+   * `executeStoredCall`'s own two-kind distinction. It is kind-agnostic, and its one production caller is the
+   * `spend` branch — where no shipped tool carries classifiable copy (`deploy.site` and `stripe.payment_link`
+   * are not in `OUTBOUND_TEXT_TOOLS`), so the classifier cannot reach it today. The branch is kept, and
+   * tested, so that a future `spend` tool that does carry copy cannot inherit the round-1 bug; the path an
+   * outbound call actually takes is the `dispatchProposals` case below and the harness's own resume.
+   */
   it('keeps the approval, the key and the note, and retries — it is not a refusal (review round 1, CRITICAL)', async () => {
     // The classifier timed out. Nobody decided anything about this call; it was simply not checked.
-    const outage = `${CLASSIFIER_UNAVAILABLE_PREFIX} (no answer in 20000 ms), so the call is refused rather than sent unchecked. Try it again once a model is answering.`;
+    const outage = OUTAGE;
     let down = true;
     const { job, key, p, deps } = approvedOutbound([{ check: () => (down ? outage : null) }]);
 
@@ -222,14 +240,20 @@ describe('an approved call the constitution guardrail could not check', () => {
     expect(String(blocked[0].payload.reason)).toContain('fake urgency');
   });
 
-  it('dispatchProposals holds the note rather than resolving it, says so once per episode, and sends it when the model is back', async () => {
-    const outage = `${CLASSIFIER_UNAVAILABLE_PREFIX} (ollama down), so the call is refused rather than sent unchecked. Try it again once a model is answering.`;
+  /**
+   * The path an approved outbound call actually takes. `dispatchProposals` used to resolve an
+   * `outbound_batch` unconditionally and wake its author, which handed the harness a note it could no longer
+   * be held by — so a twenty-second outage turned into a permanent "blocked even though approved" on the job
+   * and a closed proposal, with the owner's approval spent (re-review 1, CRITICAL).
+   */
+  it('holds an outbound_batch rather than resolving it, keeps its author asleep, and sends it when the model is back', async () => {
     let down = true;
-    const { job, key, p, deps } = approvedOutbound([{ check: () => (down ? outage : null) }]);
-    // Only a raw file edit reads as the owner's: `updateNote` records its own sha as a system write.
-    writeFileSync(path.join(dir, p.path), readFileSync(path.join(dir, p.path), 'utf8').replace(/^approved: .*$/m, 'approved: true'));
+    const { job, p, deps } = approvedOutbound([{ check: () => (down ? OUTAGE : null) }]);
+    approve(p.path);
+    // The author waits on the proposal, exactly as the harness leaves it when it files an ask-mode call.
+    updateJob(vault, job, { status: 'blocked', blocked_on: { kind: 'proposal', id: p.id, since: nowIso() } }, 'cmo');
 
-    expect(await dispatchProposals(deps)).toBe(0);           // nothing was applied
+    expect(await dispatchProposals(deps)).toBe(0);           // nothing was applied, and nobody was woken
     const held = findInboxById(vault, p.id)!;
     expect(held.data.resolved_at ?? null).toBeNull();        // the owner's approval still stands
     expect(held.data.approved).toBe(true);
@@ -239,8 +263,16 @@ describe('an approved call the constitution guardrail could not check', () => {
     expect(held.body).toContain('on the next cycle');
     expect(held.body).not.toContain('Fix it and set approved again');
     expect(held.body).not.toMatch(/10 minutes|ten minutes/);
+    // Waking the author would only have the harness re-block it a moment later, once per tick, writing an
+    // "unblocked" line into the job note each time — the same reason a trust hold keeps its author asleep.
+    expect(readJob(vault, job)!.data.status).toBe('blocked');
     expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
     expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false);
+    // It is a deferral, not a refusal: the office must not tell the owner this call was not allowed.
+    expect(vault.events.count('guardrail.blocked')).toBe(0);
+    expect(vault.events.count('guardrail.deferred')).toBe(1);
+    // Due on the next pass rather than in ten minutes — the same lever the trust hold uses.
+    expect((vault.db.prepare('SELECT at FROM refusals WHERE path = ?').get(p.path) as { at: string }).at).toBe(RETRY_NOW);
 
     // Three more sweeps across an outage that could run for hours: **no clock is moved here** — the note is
     // due on every pass, which is the point — and yet the note is not touched again and the room is not told
@@ -248,30 +280,41 @@ describe('an approved call the constitution guardrail could not check', () => {
     const sha = vault.currentSha(held.path);
     for (let i = 0; i < 3; i++) expect(await dispatchProposals(deps)).toBe(0);
     expect(vault.currentSha(held.path)).toBe(sha);
-    expect(vault.events.query({ types: ['guardrail.blocked'] }).filter((e) => String(e.payload.reason).includes('could not check this call'))).toHaveLength(1);
+    expect(vault.events.count('guardrail.deferred')).toBe(1);
 
-    // A model answers, and the very next tick sends it — no ten-minute wait for a twenty-second outage
-    // (SP5's I1 complaint about the trust hold, and the same lever, `retryOnNextPass`). Nothing about the
-    // note changed, so the guardrail alone is what lets it through, under the approval the owner already gave.
+    // A model answers, and the very next tick resolves the note and wakes the author to send it — no
+    // ten-minute wait for a twenty-second outage (SP5's I1 complaint, and the same `retryOnNextPass` lever).
     down = false;
-    expect(await dispatchProposals(deps)).toBe(1);
-    expect(findInboxById(vault, p.id)!.data.resolved_at).toBeTruthy();
-    expect(readJob(vault, job)!.data.side_effects_done).toEqual([key]);
-    expect(readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1);
+    expect(await dispatchProposals(deps)).toBeGreaterThanOrEqual(1);
+    const done = findInboxById(vault, p.id)!;
+    expect(done.data.resolved_at).toBeTruthy();
+    expect((done.data as { refused?: string }).refused).toBeUndefined();
+    expect(readJob(vault, job)!.data.status).toBe('queued');   // the author may now execute its stored call
   });
 
-  it('the held note is due on every pass, not on the ten-minute timer', () => {
+  it('the held note is due on every pass, not on the ten-minute timer', async () => {
     // The lever itself, stated plainly: a dormancy hold waits (its cause lasts days); a classifier hold does
     // not (its cause lasts seconds). Both keep their `refusals` row — it is what carries the owner's standing
     // approval across the hold — and only the clock differs.
-    const outage = `${CLASSIFIER_UNAVAILABLE_PREFIX} (ollama down), so the call is refused rather than sent unchecked. Try it again once a model is answering.`;
-    const { p, deps } = approvedOutbound([{ check: () => outage }]);
-    writeFileSync(path.join(dir, p.path), readFileSync(path.join(dir, p.path), 'utf8').replace(/^approved: .*$/m, 'approved: true'));
-    return dispatchProposals(deps).then(() => {
-      const row = vault.db.prepare('SELECT at FROM refusals WHERE path = ?').get(p.path) as { at: string };
-      expect(row.at).toBe(RETRY_NOW);
-      expect(Date.now() - Date.parse(row.at)).toBeGreaterThan(10 * 60_000);
-    });
+    const { p, deps } = approvedOutbound([{ check: () => OUTAGE }]);
+    approve(p.path);
+    await dispatchProposals(deps);
+    const row = vault.db.prepare('SELECT at FROM refusals WHERE path = ?').get(p.path) as { at: string };
+    expect(row.at).toBe(RETRY_NOW);
+    expect(Date.now() - Date.parse(row.at)).toBeGreaterThan(10 * 60_000);
+  });
+
+  it('a rule that was actually broken is still the harness\'s to record, and the note is resolved as before', async () => {
+    // The dispatcher's pre-check acts on one answer only. A real violation is left exactly where it was: the
+    // note resolves, the author wakes, and the harness records the block on the job where its author reads it.
+    const { job, p, deps } = approvedOutbound([{ check: () => 'constitution: banned tactic detected: fake urgency' }]);
+    approve(p.path);
+    updateJob(vault, job, { status: 'blocked', blocked_on: { kind: 'proposal', id: p.id, since: nowIso() } }, 'cmo');
+
+    expect(await dispatchProposals(deps)).toBeGreaterThanOrEqual(1);
+    expect(findInboxById(vault, p.id)!.data.resolved_at).toBeTruthy();
+    expect(vault.events.count('guardrail.deferred')).toBe(0);
+    expect(readJob(vault, job)!.data.status).toBe('queued');
   });
 });
 

@@ -115,6 +115,9 @@ export const callsToday = (s: State): number => s.quota.reduce((n, q) => n + (q.
 
 /** Colour of a feed row's dot from what the reducer wrote. */
 export function feedKind(text: string): 'ok' | 'warn' | 'bad' | 'info' {
+  // Before the `bad` line, and deliberately: a call the guardrail could not *check* was neither refused nor
+  // sent, and a red dot beside it would say the company did something wrong when it did not.
+  if (/^waiting for the guardrail:/.test(text)) return 'info';
   if (/^guardrail:|rejected:|failed|left the company/.test(text)) return 'bad';
   if (/^proposal:|^you edited/.test(text)) return 'warn';
   if (/^deployed |^hired |approved:/.test(text)) return 'ok';

@@ -97,6 +97,40 @@ describe('nothing is spent while the reviews are out (spec §3)', () => {
     expect(readJob(vault, id)!.data.side_effects_done).toEqual([key]);
   });
 
+  it('a classifier that could not run leaves the job blocked and the key unspent, and the send goes out when it can', async () => {
+    // The path an approved outbound call actually takes: the waiting job's own resume, not the dispatcher's
+    // `spend` branch (re-review 1, CRITICAL). A guardrail that could not reach a model has refused nothing,
+    // so recording "blocked even though approved" here would spend the owner's approval on a model outage.
+    const { CLASSIFIER_UNAVAILABLE_PREFIX } = await import('@cubicle/tools');
+    const outage = `${CLASSIFIER_UNAVAILABLE_PREFIX} (no answer in 20000 ms), so the call is refused rather than sent unchecked. Try it again once a model is answering.`;
+    let down = true;
+    const guardrails = [{ check: () => (down ? outage : null) }];
+
+    const id = outreach();
+    await runJob(deps(scripted([send, done])), id);
+    const prop = findInboxById(vault, readJob(vault, id)!.data.blocked_on!.id)!;
+    const key = prop.data.call!.idempotency_key;
+    vault.updateNote(prop.path, (n) => ({ data: { ...n.data, approved: true }, body: n.body }), 'owner');
+    clear(key, prop.data.id);   // both offices are happy; only the constitution check is missing
+
+    const held = await runJob(deps(scripted([done]), { guardrails }), id);
+    expect(held.status).toBe('blocked');
+    expect(held.status === 'blocked' && held.on.id).toBe(prop.data.id);   // still waiting on the same proposal
+    expect(vault.events.count('email.sent')).toBe(0);
+    expect(readJob(vault, id)!.data.side_effects_done).toEqual([]);       // the key is not spent on a non-answer
+    // A deferral, not a refusal: the job note and the event log must not say the call was turned down.
+    expect(vault.events.count('guardrail.blocked')).toBe(0);
+    expect(vault.events.count('guardrail.deferred')).toBe(1);
+    expect(readJob(vault, id)!.body).toContain('waiting for the constitution guardrail');
+    expect(readJob(vault, id)!.body).not.toContain('BLOCKED even though approved');
+
+    // A model answers, and the next run sends it — on the same key, under the same approval.
+    down = false;
+    expect((await runJob(deps(scripted([done]), { guardrails }), id)).status).toBe('done');
+    expect(vault.events.count('email.sent')).toBe(1);
+    expect(readJob(vault, id)!.data.side_effects_done).toEqual([key]);
+  });
+
   it('a returned review tells the job what the review said, and the job runs on unsent', async () => {
     const id = outreach();
     await runJob(deps(scripted([send, done])), id);
