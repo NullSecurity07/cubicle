@@ -1,9 +1,10 @@
 import {
   type Vault, type Org, type JobFrontmatter,
   listJobs, readJob, createJob, updateJob, jobPath, loadOrg, teamOf, idFromKey, nowIso, HOUSE,
-  PANTRY_MAX_TURNS, pantryIdea, pantryNote, pantryNotePath, filePantryIdea, type PantryTurn,
+  PANTRY_DIR, PANTRY_MAX_TURNS, pantryIdea, pantryNote, pantryNotePath, filePantryIdea, type PantryTurn,
 } from '@cubicle/core';
-import type { HeartbeatDeps } from './heartbeat.js';
+import { withCycleBudget, type HeartbeatDeps } from './heartbeat.js';
+import { hasIdea } from './first-run.js';
 
 /**
  * The pantry chat. A worker-pool branch, like the heartbeat, not a harness job (Decision 9): six alternating
@@ -28,6 +29,15 @@ export const PANTRY_FIRST_CYCLE = 1;
 const OPEN = ['queued', 'running', 'blocked', 'in_review'] as const;
 
 /**
+ * What one person has open, this chat aside. Idleness is the pantry's whole premise and it is a live condition:
+ * the chat is `priority: 5`, so it waits behind everything else queued for whoever it is assigned to, and by the
+ * time it comes up either of the pair may have work. `exceptJob` is the chat itself, which is queued to `a`.
+ */
+export function openJobsOf(vault: Vault, role: string, exceptJob: string): JobFrontmatter[] {
+  return listJobs(vault, { assigned: role, status: [...OPEN] }).filter((j) => j.id !== exceptJob);
+}
+
+/**
  * Everyone with nothing to do: an active charter, no open job, and not one of the board's advisors — three
  * people who are idle by design would otherwise be the only ones ever in the pantry. Sorted, so the pair is a
  * function of the cycle and nothing else.
@@ -40,14 +50,43 @@ export function idleRoles(org: Org, open: JobFrontmatter[]): string[] {
 }
 
 /**
- * The pair. `a` rotates with the cycle so the same two people are not always the ones talking, and `b` is the
- * first idle person from another room — the pantry is where people meet people they do not work with.
+ * When each person was last in the pantry, as the path of the last note they appear in. Read from the notes
+ * themselves rather than from the event log, because the note is the company's record of the conversation and
+ * survives a log trim; the file names begin with the date, so sorting them is sorting by when.
  */
-export function pantryPair(idle: string[], cycle: number, teamFor: (role: string) => string | undefined): [string, string] | null {
+export function lastPantryChat(vault: Vault): Record<string, string> {
+  const seen: Record<string, string> = {};
+  for (const rel of vault.list(PANTRY_DIR, { ext: '.md' }).sort()) {
+    if (rel.endsWith('_about.md')) continue;
+    const note = vault.readNoteOrNull<{ participants?: unknown }>(rel);
+    const parts = Array.isArray(note?.data.participants) ? note!.data.participants.map(String) : [];
+    for (const p of parts) seen[p] = rel;          // sorted oldest-first, so the last write is the most recent
+  }
+  return seen;
+}
+
+/** Longest-since-a-coffee first; among the people who have never had one, the cycle decides who goes. */
+function nextUp(order: string[], seen: Record<string, string>, cycle: number): string {
+  const never = order.filter((r) => !seen[r]);
+  return never.length ? never[cycle % never.length] : order[0];
+}
+
+/**
+ * The pair: the two idle people who were in the pantry longest ago, and preferably from two different rooms —
+ * the pantry is where people meet people they do not work with.
+ *
+ * Both seats rotate (review M1). Sorting by the last note each person attended is what does it once the company
+ * has a history; before it has one, every rank is equal and the cycle number picks, so a brand-new company does
+ * not send the same alphabetically-first two people every time either.
+ */
+export function pantryPair(idle: string[], cycle: number, teamFor: (role: string) => string | undefined, seen: Record<string, string> = {}): [string, string] | null {
   if (idle.length < 2) return null;
-  const a = idle[cycle % idle.length];
-  const rest = idle.filter((r) => r !== a);
-  const b = rest.find((r) => teamFor(r) !== teamFor(a)) ?? rest[cycle % rest.length];
+  const since = (r: string) => seen[r] ?? '';      // never been: sorts first, which is what "longest ago" means
+  const order = [...idle].sort((x, y) => since(x).localeCompare(since(y)));
+  const a = nextUp(order, seen, cycle);
+  const rest = order.filter((r) => r !== a);
+  const elsewhere = rest.filter((r) => teamFor(r) !== teamFor(a));
+  const b = nextUp(elsewhere.length ? elsewhere : rest, seen, cycle);
   return [a, b];
 }
 
@@ -69,12 +108,18 @@ export function maybeEnqueuePantryChat(vault: Vault, opts: { dormant?: () => boo
   if (dormant) return null;
   const cycle = vault.events.count('heartbeat.completed');
   if (cycle < PANTRY_FIRST_CYCLE) return null;
+  // …and the owner has said what the company is (Decision 20, as refined by review I3). A completed cycle alone
+  // is not enough: the daemon's first tick on a brand-new vault requests a heartbeat (`since = Infinity`), that
+  // cycle completes before the owner has typed a word, and the next tick would then file the first note in
+  // `Pantry/` as two people with nothing whatever to talk about — possibly with an `Ideas/` card out of it. The
+  // same test the first-run card uses, so the office and the pantry agree on when the company started.
+  if (!hasIdea(vault)) return null;
   const id = pantryJobId(cycle);
   if (vault.exists(jobPath(id))) return null;
   const open = listJobs(vault, { status: [...OPEN] });
   if (open.some((j) => j.type === 'pantry.chat')) return null;
   const org = loadOrg(vault);
-  const pair = pantryPair(idleRoles(org, open), cycle, (r) => teamOf(org, r)?.id);
+  const pair = pantryPair(idleRoles(org, open), cycle, (r) => teamOf(org, r)?.id, lastPantryChat(vault));
   if (!pair) return null;
   const [a, b] = pair;
   return createJob(vault, {
@@ -123,7 +168,18 @@ async function say(deps: HeartbeatDeps, speaker: string, user: string): Promise<
   }
 }
 
-export type PantryOutcome = { status: 'done' };
+/**
+ * The note this job wrote, or null. The write carried the job id, and the event log is append-only, so this is
+ * the one record a resume can trust — `pantryNotePath` would answer "the next free name", which after a kill is
+ * a second note for one conversation.
+ */
+export function pantryNoteFor(vault: Vault, jobId: string): string | null {
+  const w = vault.events.query({ types: ['vault.wrote'], job: jobId }).find((e) => String(e.payload.path ?? '').startsWith(`${PANTRY_DIR}/`));
+  return w ? String(w.payload.path) : null;
+}
+
+/** Done, or called off because one of the two had work by the time the coffee came up. */
+export type PantryOutcome = { status: 'done' } | { status: 'cancelled'; skipped: string };
 
 /** Run one pantry chat to its note. It never fails: a chat nobody could hold is a chat with no turns. */
 export async function runPantryChat(deps: HeartbeatDeps, jobId: string): Promise<PantryOutcome> {
@@ -140,6 +196,37 @@ export async function runPantryChat(deps: HeartbeatDeps, jobId: string): Promise
   const pair = [a, b].filter(Boolean);
   const meetingId = idFromKey('meet', `pantry:${jobId}`);
 
+  // A kill between the note write and the `done` update leaves this job queued again with its conversation
+  // already on disk (review M2). Finish pointing at it: re-running the turns would spend six more cheap calls to
+  // say different things about the same coffee, and would file a second `-2` note for it.
+  const written = pantryNoteFor(vault, jobId);
+  if (written) {
+    const held = Number(vault.readNoteOrNull<{ turns?: unknown }>(written)?.data.turns ?? 0);
+    const summary = `${held} turn${held === 1 ? '' : 's'} in the pantry; the note was already written`;
+    updateJob(vault, jobId, { status: 'done', checkpoint_step: held }, 'daemon', `- ${nowIso()}: resumed after ${written} was written; nothing more to say`);
+    vault.events.emit({ type: 'job.done', agent: a, job: jobId, payload: { type: job.type, status: 'done', summary, artifacts: [written] } });
+    return { status: 'done' };
+  }
+
+  // Both were idle when the tick picked them, which may have been minutes ago: the chat is `priority: 5`, so it
+  // waits behind everything else queued for `a`. "Two people with nothing to do" (§6) is a live condition, so it
+  // is re-checked here, at the moment the coffee would actually happen. If either has work the break is called
+  // off quietly — no turns, no note, no sprite sent to the counter — rather than showing somebody in two places
+  // at once and spending three turns of their attention on small talk (review I1).
+  const busy = pair.find((r) => openJobsOf(vault, r, jobId).length > 0);
+  if (busy) {
+    updateJob(vault, jobId, { status: 'cancelled' }, 'daemon', `- ${nowIso()}: skipped: ${displayOf(org, busy)} picked up work before the coffee`);
+    // Announced by the daemon, not by `a`: `a` may be the one who is busy, and the office's `job.cancelled`
+    // reducer sends the named agent back to an idle desk — which would take their real job off the screen.
+    vault.events.emit({ type: 'job.cancelled', agent: 'daemon', job: jobId, payload: { at_step: 0, reason: 'skipped', type: job.type, by: busy } });
+    return { status: 'cancelled', skipped: busy };
+  }
+
+  // One reading of the house budget for the whole chat, as the harness reads one per job (SP4 §4, and the comment
+  // on `withCycleBudget`): the gauge it reads walks the ledger, which only grows, and a chat whose turns straddle
+  // a quota crossing would change model halfway through one conversation (review I2).
+  const d = withCycleBudget(deps);
+
   updateJob(vault, jobId, { status: 'running' }, 'daemon', `- ${nowIso()}: pantry chat opened with ${b || 'nobody'}`);
   vault.events.emit({ type: 'job.started', agent: a, job: jobId, payload: { type: job.type, title: job.title, attempt: job.attempt, from_step: 0, resumed: false } });
   vault.events.emit({ type: 'meeting.opened', agent: a, job: jobId, payload: { id: meetingId, room: 'pantry', participants: pair, agenda: 'A coffee in the pantry' } });
@@ -149,7 +236,7 @@ export async function runPantryChat(deps: HeartbeatDeps, jobId: string): Promise
     for (let i = 0; i < PANTRY_MAX_TURNS; i++) {
       const speaker = i % 2 === 0 ? a : b;
       const other = speaker === a ? b : a;
-      const text = await say(deps, speaker, pantryPrompt({ speaker, speakerName: names[speaker], otherName: names[other], turns, last: i === PANTRY_MAX_TURNS - 1 }));
+      const text = await say(d, speaker, pantryPrompt({ speaker, speakerName: names[speaker], otherName: names[other], turns, last: i === PANTRY_MAX_TURNS - 1 }));
       // A turn with no model answer ends the chat early and the job still finishes done: a company with no model
       // available does not fail a coffee break.
       if (!text) break;

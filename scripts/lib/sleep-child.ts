@@ -52,7 +52,9 @@ async function main() {
     },
     promptBudget: () => 6000,
   };
-  const d = new Daemon(defaultConfig(vaultPath, process.env, { port: 0, tickMs: 1000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, memory: false, heartbeatHooks: {}, log: (m) => console.log(`[cubicle] ${m}`) });
+  // `disablePantry`: this script checkpoints one named job across a suspend and counts what resumed, and a coffee
+  // break the tick scheduled beside it is neither checkpointed nor counted (SP5 Decision 20).
+  const d = new Daemon(defaultConfig(vaultPath, process.env, { port: 0, tickMs: 1000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disablePantry: true, memory: false, heartbeatHooks: {}, log: (m) => console.log(`[cubicle] ${m}`) });
   // No heartbeat in this test: mark one as completed "now" so the startup trigger stays quiet
   await d.start();
   d.vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed', synthetic: true } });
