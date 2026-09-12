@@ -137,6 +137,8 @@ Body: freeform notes on how the team works, read into role prompts.
 | `estimate` | string = `""` | the finance office's rough order of magnitude, in words — never a ledger entry |
 | `board_verdict` | `pass` \| `return` \| null = `null` | pass | return from the board session; a return parks a keep |
 | `board_decision` | string = `""` | the `Decisions/board-<slug>.md` note the session wrote |
+| `board_pressure` | string = `""` | SP5b: the board's pressure-test verdict in one word — `STRONG`, `WEAK` or `PIVOT REQUIRED` (`Docs/pressure-test-handbook.md`). Empty on a card the board has not pressure-tested |
+| `board_rubric` | object \| null = `null` | SP5b: the board's 0–2 score on core assumption, fatal flaws, pain, founder fit and why now, out of 10. Advisory — it never moves `score`, `score_inputs` or the keep/park/scrap band |
 
 Body: `## What changed`, `## Why it might matter`, `## Evidence`, `## Research`, `## What it would cost`, `## The board`, `## Score`, `## Decision`.
 
