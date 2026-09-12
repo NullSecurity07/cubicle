@@ -7,10 +7,12 @@ import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, mockedServices, mockedServicesRow, modelUseRows, isKeyProblemDowngrade, planningGate, divisionPlanGoal } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
+import { LOAD_1M, LOAD_SCALE, WAIT_MS, TEST_MS } from './helpers/load.js';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
 beforeEach(async () => {
+  disposed = false;
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-brief-'));
   const { vault } = await scaffoldVault(dir);
   vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'PlateReady' }, body: n.body }), 'owner');
@@ -24,21 +26,28 @@ beforeEach(async () => {
   vault.close();
 });
 const daemons: Daemon[] = [];
+/** Set when teardown begins, so a poll loop from a case already given up on stops touching the vault. */
+let disposed = false;
 // Stop every daemon this test started before the vault it writes to is removed. A test body that vitest has
 // already given up on (see TEST_MS) never reaches its own `finally`, so without this the daemon outlives the
 // directory: its tick, its watcher and its workers keep writing to a path that is gone, which throws ENOENT
 // storms attributed to whichever test is running next and starves that test of CPU until it times out too —
 // one slow test used to take the rest of the file down with it.
 afterEach(async () => {
+  disposed = true;
   for (const d of daemons.splice(0)) await d.stop().catch(() => undefined);
+  // One turn of the loop, so a callback already queued behind those stops runs before the directory goes.
+  await new Promise((r) => setImmediate(r));
   rmSync(dir, { recursive: true, force: true });
 });
 
 const NO_KEYS = { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv;
-// A whole heartbeat cycle is ~16 model calls and a few dozen jobs; on a loaded machine that can pass 30 s. The
-// budget has to leave room for `waitFor`'s own 60 s to expire first, so a stuck test fails inside its `try` and
-// still runs the `finally` that stops the daemon.
-const TEST_MS = 120_000;
+// A whole heartbeat cycle is ~16 model calls and a few dozen jobs; on a loaded machine that can pass 30 s. Both
+// budgets are `helpers/load.ts`'s, read once for this file and scaled by the machine's 1-minute load: a fixed
+// ceiling is what made this file and planning.test.ts fail on a busy box and pass on an idle one. `TEST_MS`
+// leaves room for `waitFor`'s own budget to expire first, so a stuck test fails inside its `try` and still runs
+// the `finally` that stops the daemon.
+//
 // Every assertion below reads the vault while the daemon is still running, and describes the vault after exactly
 // the heartbeat(s) the test asked for. The `jobsCompletedN` trigger (spec §8) breaks that: the first heartbeat's
 // own cycle queues real work jobs, and once five of them finish — ~300 ms after `heartbeat.completed`, i.e. inside
@@ -53,7 +62,14 @@ const daemonFor = (llm: Llm, env: NodeJS.ProcessEnv = NO_KEYS) => {
   daemons.push(d);
   return d;
 };
-async function waitFor(pred: () => boolean, ms = 30000): Promise<void> { const t0 = Date.now(); while (!pred()) { if (Date.now() - t0 > ms) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 100)); } }
+async function waitFor(pred: () => boolean, ms = WAIT_MS): Promise<void> {
+  const t0 = Date.now();
+  while (!pred()) {
+    if (disposed) throw new Error('waitFor: torn down while still waiting');
+    if (Date.now() - t0 > ms) throw new Error(`waitFor: timeout after ${Date.now() - t0} ms (budget ${ms} ms, 1-min load ${LOAD_1M.toFixed(2)}, scale ${LOAD_SCALE})`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 const lastBrief = (v: Vault) => readFileSync(path.join(dir, v.list('Runs', { ext: '.md' }).sort().at(-1)!), 'utf8');
 const factsOf = (brief: string) => brief.split('_Facts used:_')[1] ?? '';
 
@@ -80,7 +96,7 @@ describe('degraded-mode row (the team ran on the local model)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       const facts = factsOf(lastBrief(v));
       expect(facts).toContain('Model use: 6 calls, 5 downgraded to local');
       expect(facts).toContain('(5 of 6 calls downgraded): no cloud provider has an API key');
@@ -93,7 +109,7 @@ describe('degraded-mode row (the team ran on the local model)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       const facts = factsOf(lastBrief(v));
       expect(facts).toContain('(3 of 6 calls downgraded): cloud models were rate-limited or cooling');
     } finally { v.close(); await d.stop(); }
@@ -103,7 +119,7 @@ describe('degraded-mode row (the team ran on the local model)', () => {
     const v2 = Vault.open(dir);
     try {
       d2.requestHeartbeat('test');
-      await waitFor(() => v2.events.count('heartbeat.completed') >= 2, 60000);
+      await waitFor(() => v2.events.count('heartbeat.completed') >= 2);
       const facts = factsOf(lastBrief(v2));
       expect(facts).toContain('Model use: 10 calls, 1 downgraded to local');
       expect(facts).not.toContain('ran mostly on the local model');
@@ -127,7 +143,7 @@ describe('degraded-mode row (the team ran on the local model)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       const facts = factsOf(lastBrief(v));
       expect(facts).toContain('Model use: 6 calls, 0 downgraded to local');
       expect(facts).not.toContain('ran mostly on the local model');
@@ -153,7 +169,7 @@ describe('mock-mode stamp (simulated deploy/email/analytics)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       const facts = factsOf(lastBrief(v));
       expect(facts).toContain('Outbound services: deploy live, email mock, analytics mock');
       expect(facts).toContain('- Email and analytics are simulated (no BREVO_*/GOATCOUNTER_* keys)');
@@ -191,7 +207,7 @@ describe('re-planning gate', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       const types = listJobs(v).map((j) => j.type);
       expect(types).not.toContain('company.plan');
       expect(types).not.toContain('board.premortem');
@@ -214,7 +230,7 @@ describe('re-planning gate', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       expect(listJobs(v).filter((j) => j.type === 'company.plan')).toHaveLength(1);
       expect(factsOf(lastBrief(v))).not.toContain('Planning: skipped');
     } finally { v.close(); await d.stop(); }
@@ -225,13 +241,13 @@ describe('re-planning gate', () => {
       // Second heartbeat: the plan the first one wrote is still waiting for a verdict, so this cycle rules on it
       // and fans it out rather than writing over it (program design §4) — no second company.plan.
       d2.requestHeartbeat('test');
-      await waitFor(() => v2.events.count('heartbeat.completed') >= 2, 60000);
+      await waitFor(() => v2.events.count('heartbeat.completed') >= 2);
       expect(listJobs(v2).filter((j) => j.type === 'company.plan')).toHaveLength(1);
       expect(listJobs(v2).filter((j) => j.type === 'division.plan').length).toBeGreaterThan(0);
       // Third heartbeat: nothing waits on a verdict any more and the plan orgLlm wrote has no `updated` stamp →
       // not fresh → re-plan.
       d2.requestHeartbeat('test');
-      await waitFor(() => listJobs(v2).filter((j) => j.type === 'company.plan').length >= 2, 60000);
+      await waitFor(() => listJobs(v2).filter((j) => j.type === 'company.plan').length >= 2);
     } finally { v2.close(); await d2.stop(); }
   }, TEST_MS);
 });

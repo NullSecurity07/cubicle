@@ -8,12 +8,14 @@ import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE, runHeartbeat, createHeartbeatJob, planVerdictId, boardSubject, advisorPrompt, chairPrompt, boardAgenda } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
+import { LOAD_1M, LOAD_SCALE, WAIT_MS, TEST_MS } from './helpers/load.js';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
 // Every heartbeat here needs a company to plan for: nothing runs before the owner has given one an idea
 // (spec §12, C1). The brand name is the inert way to say so — an inbox message would also land in the brief.
 beforeEach(async () => {
+  disposed = false;
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-plan-'));
   const { vault } = await scaffoldVault(dir);
   vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'PlateReady' }, body: n.body }), 'owner');
@@ -26,10 +28,49 @@ beforeEach(async () => {
   writeCiRecord(vault, 'site', { stream: 'site', started: '2026-09-11T09:59:00.000Z', finished: '2026-09-11T10:00:00.000Z', green: true, commit: null, steps: [{ name: 'test', code: 0, ok: true, duration_ms: 5, output: 'ok' }] }, 'backend_engineer');
   vault.close();
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+/**
+ * Every daemon this file started, stopped before the vault it writes to is removed.
+ *
+ * The teardown has to be ordered and unconditional. A test body vitest has given up on never reaches its own
+ * `finally`, so a daemon could outlive `rmSync`: its tick, its watcher's debounce and its workers keep writing to
+ * a directory that is gone, which throws ENOENT storms attributed to whichever case runs next and starves that
+ * one of CPU until it times out too — one slow case taking the rest of the file down with it, which is the shape
+ * this flake had. `d.stop()` clears the tick, awaits `VaultWatcher.stop()` (which clears its debounce timers and
+ * awaits chokidar's `close()`) and closes the pool, so after it nothing is left holding the directory.
+ */
+const daemons: Daemon[] = [];
+/**
+ * Set the moment teardown begins, so a poll loop belonging to a case that has already been given up on stops
+ * touching a vault that is being removed rather than raising under the next case's name.
+ */
+let disposed = false;
+afterEach(async () => {
+  disposed = true;
+  for (const d of daemons.splice(0)) await d.stop().catch(() => undefined);
+  // One turn of the loop, so a callback already queued behind those stops runs before the directory goes.
+  await new Promise((r) => setImmediate(r));
+  rmSync(dir, { recursive: true, force: true });
+});
 
-const daemonFor = (llm: Llm) => new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 300, maxConcurrentJobs: 3, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
-async function waitFor(pred: () => boolean, ms = 30000): Promise<void> { const t0 = Date.now(); while (!pred()) { if (Date.now() - t0 > ms) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 100)); } }
+const daemonFor = (llm: Llm) => {
+  const d = new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 300, maxConcurrentJobs: 3, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+  daemons.push(d);
+  return d;
+};
+/**
+ * Poll a condition on real timers. The budget comes from the machine's load (`helpers/load.ts`), read once for
+ * this file: a hard 60 s was the flake — the cycle that finishes in seconds on an idle box has taken longer than
+ * that with six vitest workers and a build running beside it, and a wall-clock ceiling is the one thing here that
+ * has to move with the machine.
+ */
+async function waitFor(pred: () => boolean, ms = WAIT_MS): Promise<void> {
+  const t0 = Date.now();
+  while (!pred()) {
+    if (disposed) throw new Error('waitFor: torn down while still waiting');
+    if (Date.now() - t0 > ms) throw new Error(`waitFor: timeout after ${Date.now() - t0} ms (budget ${ms} ms, 1-min load ${LOAD_1M.toFixed(2)}, scale ${LOAD_SCALE})`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 
 // A plan good enough to exercise runBoardSession directly, without going through a whole heartbeat.
 const PLAN_TEXT = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n';
@@ -100,7 +141,7 @@ describe('team section header matching (F4)', () => {
       expect(plans.map((j) => j.assigned).sort()).toEqual(['cfo', 'cto']);
       expect(v.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'division_plans' && /Nonexistent/.test(String(e.payload.message)))).toBe(true);
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 });
 
 describe('firstOpenJob (Task 9 review finding 2)', () => {
@@ -163,18 +204,18 @@ describe('two-level planning (spec §3)', () => {
       // Two heartbeats (the plan, then the fan-out once the board's verdict stands) - the ceiling covers both.
       expect(Object.values(llm.calls).reduce((a, b) => a + b, 0)).toBeLessThan(100);
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
   it('a second veto escalates to the owner as a message and the cycle continues', async () => {
     const d = daemonFor(orgLlm({ vetoes: 2 }));
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       expect(v.events.count('plan.vetoed')).toBe(2);
       expect(listJobs(v).filter((j) => j.type === 'company.plan')).toHaveLength(2);
       expect(v.events.query({ types: ['proposal.created'] }).some((e) => e.payload.kind === 'message' && String(e.payload.title).toLowerCase().includes('veto'))).toBe(true);
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 
   it('a process: line does not make team_plans wait for its expanded jobs (Task 9 review round 2)', async () => {
     // "launch" has no team.plan/board.premortem/company.plan step, so its expanded jobs can't be confused with
@@ -200,7 +241,7 @@ describe('two-level planning (spec §3)', () => {
       expect(expanded.length).toBeGreaterThan(0);
       expect(expanded.some((j) => !['done', 'failed', 'cancelled'].includes(j.status))).toBe(true);
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 });
 
 describe('brief notes a recent org migration (F10)', () => {
@@ -213,12 +254,12 @@ describe('brief notes a recent org migration (F10)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       const runs = v.list('Runs', { ext: '.md' }).sort();
       const brief = readFileSync(path.join(dir, runs.at(-1)!), 'utf8');
       expect(brief).toContain('The company was reorganised into teams');
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 });
 
 describe('board pre-mortems are validated decision notes (D7)', () => {
@@ -229,7 +270,7 @@ describe('board pre-mortems are validated decision notes (D7)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       // A run now holds more than one heartbeat: pick the one that actually held the board session.
       const all = listJobs(v);
       const hb = all.find((j) => j.type === 'ceo.heartbeat' && all.some((c) => c.parent === j.id && c.type === 'board.premortem'))!;
@@ -248,14 +289,14 @@ describe('board pre-mortems are validated decision notes (D7)', () => {
       expect(readJob(v, board.id)!.body).toContain('### The Skeptic');
       expect(readJob(v, board.id)!.body).not.toContain('Decisions/');
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 
   it('a returned pre-mortem is a proposed decision note carrying the findings', async () => {
     const d = daemonFor(orgLlm({ vetoes: 2 }));
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       // A run now holds more than one heartbeat: pick the one that actually held the board session.
       const all = listJobs(v);
       const hb = all.find((j) => j.type === 'ceo.heartbeat' && all.some((c) => c.parent === j.id && c.type === 'board.premortem'))!;
@@ -263,7 +304,7 @@ describe('board pre-mortems are validated decision notes (D7)', () => {
       expect(DecisionFrontmatter.parse(note.data).status).toBe('proposed');
       expect(note.body).toContain('growth objective has no metric');
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 });
 
 describe('board advisors each speak at their own charter\'s model_tier (Task 4 review finding 1)', () => {
@@ -367,7 +408,7 @@ describe('a board where every model call fails does not read as a clean pre-mort
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       const warnings = v.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'board_premortem');
       expect(warnings.some((e) => e.payload.reason === BOARD_UNREVIEWED_NOTE)).toBe(true);
       const hb = listJobs(v).find((j) => j.type === 'ceo.heartbeat')!;
@@ -375,7 +416,7 @@ describe('a board where every model call fails does not read as a clean pre-mort
       expect(note.body).toContain(BOARD_UNREVIEWED_NOTE);
       expect(note.body).not.toContain('The plan survived the pre-mortem.');
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 });
 
 describe('brief lists jobs that stopped and wait for the owner', () => {
@@ -389,7 +430,7 @@ describe('brief lists jobs that stopped and wait for the owner', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       const runs = v.list('Runs', { ext: '.md' }).sort();
       const brief = readFileSync(path.join(dir, runs.at(-1)!), 'utf8');
       const facts = brief.split('_Facts used:_')[1] ?? '';
@@ -397,7 +438,7 @@ describe('brief lists jobs that stopped and wait for the owner', () => {
       expect(facts).toContain('cto may not schedule cto');
       expect(facts).toContain('status: queued');
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 });
 
 describe('division planning (spec item 3)', () => {
@@ -408,8 +449,9 @@ describe('division planning (spec item 3)', () => {
     const v = Vault.open(dir);
     try {
       // Three divisions is the tightest case in the suite — several heartbeat round trips before the fan-out —
-      // and it timed out at 54 s against the helper's 60 s default under load (Task 6 review, finding 2).
-      await planUntilFannedOut(d, v, 3, 120000);
+      // and it timed out at 54 s against the helper's 60 s default under load (Task 6 review, finding 2). Twice
+      // the file's own budget, which is itself scaled by the machine's load.
+      await planUntilFannedOut(d, v, 3, 2 * WAIT_MS);
       const plans = listJobs(v).filter((j) => j.type === 'division.plan');
       expect(plans.map((j) => j.assigned).sort()).toEqual(['cfo', 'coo', 'cto']);
       expect(listJobs(v).filter((j) => j.type === 'board.premortem')).toHaveLength(1);
@@ -420,7 +462,7 @@ describe('division planning (spec item 3)', () => {
     } finally { v.close(); await d.stop(); }
     // The per-case timeout is raised past the helper's budget on purpose: whichever gives up first should be
     // the helper, whose message says how many division plans it actually saw.
-  }, 150000);
+  }, TEST_MS);
 
   it('with the switch off — the shipped default — the plan waits for the owner, and no new work starts', async () => {
     const seed = Vault.open(dir);
@@ -431,7 +473,7 @@ describe('division planning (spec item 3)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
-      await waitFor(() => v.events.count('heartbeat.completed') >= 1, 60000);
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       // Give the daemon several more ticks: no amount of waiting decides this plan, only the owner does.
       await new Promise((r) => setTimeout(r, 2000));
       d.requestHeartbeat('nothing has changed');
@@ -444,10 +486,10 @@ describe('division planning (spec item 3)', () => {
       // The owner approves; the next heartbeat plans the divisions against the plan that was waiting.
       v.updateNote(verdict.path, (n) => ({ data: { ...n.data, approved: true }, body: n.body }), 'owner');
       d.requestHeartbeat('owner approved the plan');
-      await waitFor(() => listJobs(v).filter((j) => j.type === 'division.plan').length >= 2, 60000);
+      await waitFor(() => listJobs(v).filter((j) => j.type === 'division.plan').length >= 2);
       expect(listJobs(v).filter((j) => j.type === 'company.plan')).toHaveLength(1);
     } finally { v.close(); await d.stop(); }
-  });
+  }, TEST_MS);
 });
 
 describe('the fan-out is crash-idempotent (final review C1)', () => {

@@ -1,5 +1,6 @@
 import { listJobs, type Vault } from '@cubicle/core';
 import type { Daemon } from '../../src/index.js';
+import { WAIT_MS } from './load.js';
 
 /**
  * `board_decides_after_hours` ships at 0 — the plan waits for the owner for as long as the owner takes — so a
@@ -27,7 +28,7 @@ async function waitFor(pred: () => boolean, ms: number): Promise<void> {
  * above has elapsed, lets the board's verdict stand and fans the divisions out. `requestHeartbeat` returns the
  * open heartbeat instead of creating a second one, so polling it is safe.
  */
-export async function planUntilFannedOut(d: Daemon, v: Vault, expected: number, ms = 60000): Promise<void> {
+export async function planUntilFannedOut(d: Daemon, v: Vault, expected: number, ms = WAIT_MS): Promise<void> {
   await waitFor(() => v.events.count('heartbeat.completed') >= 1, ms);
   const divisionPlans = () => listJobs(v).filter((j) => j.type === 'division.plan');
   const deadline = Date.now() + ms;
