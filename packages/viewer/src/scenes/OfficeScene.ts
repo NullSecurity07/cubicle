@@ -186,7 +186,7 @@ export class OfficeScene extends Phaser.Scene {
     this.scale.on('resize', (g: Phaser.Structs.Size) => { this.minimap.setPosition(g.width - mmW - 12, g.height - mmH - 12); this.applySky(skyFor(this.hour())); this.applyBounds(); this.applySkyDeco(); });
     // the owner's avatar: seated in the owner chair, shown only while a board meeting is open
     const ownerTile = this.world.reserved.owner;
-    if (ownerTile) { this.owner = new OwnerAvatar(this, ownerTile, makeOwnerSprite(this), makeFaces(this)); this.minimap.ignore(this.owner.container); }
+    if (ownerTile) { this.owner = new OwnerAvatar(this, ownerTile, makeOwnerSprite(this), makeFaces(this), floorPalette(floorAt(this.world, ownerTile.ty)).skirting); this.minimap.ignore(this.owner.container); }
     this.focusFloor(this.pendingFloor ?? 1);   // the floor elevation, opened on F1
     this.pendingFloor = null;
     if (this.pendingFocus) { const f = this.pendingFocus; this.pendingFocus = null; this.focusOn(f); }

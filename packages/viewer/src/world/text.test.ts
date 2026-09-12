@@ -45,26 +45,40 @@ describe('one set of in-world text constants', () => {
   });
   it('draws the shared label and sign styles from the palette', () => {
     const label = nameLabelStyle();
-    expect(label).toEqual({ fontFamily: FONT, fontSize: `${NAME_LABEL_PX * RES}px`, color: PALETTE.labelInk, stroke: PALETTE.labelStroke, strokeThickness: 2 * RES });
+    expect(label).toEqual({ fontFamily: FONT, fontSize: `${NAME_LABEL_PX * RES}px`, fontStyle: '600', color: PALETTE.labelInk, stroke: PALETTE.labelStroke, strokeThickness: 2 * RES });
     const sign = signLabelStyle('#334455');
     expect(sign.backgroundColor).toBe('#334455');
     expect(sign.fontFamily).toBe(FONT);
     expect(sign.color).toBe(PALETTE.labelInk);
+  });
+
+  /**
+   * Visual QA R2-I3: a desk name was white with a black stroke over whatever carpet it fell on — the palest type
+   * in every room-zoom scene, against room signs that are white on a solid plate. Given a room's ink it takes the
+   * signs' treatment, so the two are one type system.
+   */
+  it('gives a desk name the room signs own plate when it knows the room ink', () => {
+    const plated = nameLabelStyle(NAME_LABEL_PX, '#334455');
+    expect(plated.backgroundColor).toBe('#334455');
+    expect(plated.color).toBe(PALETTE.labelInk);
+    expect(plated.stroke, 'a plate needs no stroke').toBeUndefined();
+    expect(plated.padding).toEqual(signLabelStyle('#334455').padding);
+    expect(plated.fontStyle).toBe(signLabelStyle('#334455').fontStyle);
   });
 });
 
 describe('how much of a name is shown', () => {
   it('claims at most the gap to the next desk, and reveals more as you zoom in', () => {
     expect(DESK_PITCH_PX).toBe(32);
-    expect(nameLabelChars(2)).toBe(12);
-    expect(nameLabelChars(3)).toBe(19);
-    expect(nameLabelChars(4)).toBe(25);
+    expect(nameLabelChars(2)).toBe(11);
+    expect(nameLabelChars(3)).toBe(17);
+    expect(nameLabelChars(4)).toBe(23);
     // monotonic: zooming in never shows less of a name
     for (let z = 2; z < 4; z += 0.25) expect(nameLabelChars(z + 0.25)).toBeGreaterThanOrEqual(nameLabelChars(z));
     expect(nameLabelChars(0.1)).toBeGreaterThanOrEqual(4);   // never a budget of nothing
   });
   it('shows the whole name, unbudgeted, for the one sprite under the pointer or open in the panel', () => {
-    expect(nameLabelView(2).chars).toBe(12);
+    expect(nameLabelView(2).chars).toBe(11);
     expect(nameLabelView(2, { hover: true }).chars).toBeNull();
     expect(nameLabelView(4, { selected: true }).chars).toBeNull();
   });

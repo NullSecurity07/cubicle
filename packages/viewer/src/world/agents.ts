@@ -2,7 +2,7 @@
 import Phaser from 'phaser';
 import type { World, Tile } from './map.js';
 import { TILE, makeSprite, makeFaces, makeEmotes, makeShadow, roleColor, SPRITE_H, EMOTE_H } from './tileset.js';
-import { toPx, portalFor } from './map.js';
+import { toPx, portalFor, floorAt } from './map.js';
 import { planRoute, type Leg } from './route.js';
 import type { ElevatorPort, ElevatorEvent } from './elevator.js';
 import type { AgentView, ToolIcon, Bubble } from '../state.js';
@@ -11,7 +11,7 @@ import { frameFor, poseFor, faceFrame, talkOpen, isSeatedPose, WALK_FRAMES, WALK
 import { DUR, EASE, dur } from './motion.js';
 import { RES, FONT, MONO, nameLabelStyle, nameLabelView, nameLabelText, worldTextVisible } from './text.js';
 import { addText } from './text-crisp.js';
-import { PALETTE, hexToInt } from './palette.js';
+import { PALETTE, hexToInt, floorPalette } from './palette.js';
 import { Latch } from './latch.js';
 import { bubbleOffsetX } from './bubble.js';
 
@@ -30,7 +30,10 @@ const SPEED = 70; // px/s
  * than derived: scanning the car's centre column in `07-elevator` gives the cab's floor surface, the car's own
  * bottom edge, and where the legs and the ring actually land.
  */
-const RING_BELOW = 7;   // measured on `07-elevator`: the feet land on the floor line and the ring's arc clears the car
+// Measured on `07-elevator` at zoom 3: at seven the ring's fill still covered the car's bottom border (y 548-550)
+// and put a row into the shaft, so the cab's own edge was broken where the rider crossed it (visual QA R2-M1).
+// At nine the legs end on the floor line's band and the ring sits inside it.
+const RING_BELOW = 9;
 export const CAR_FLOOR_Y = 3 * TILE - 6 - RING_BELOW;
 const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
 
@@ -120,7 +123,12 @@ export class AgentSprite {
     this.face = scene.add.image(-4, -SPRITE_H + 4, 'faces', 'neutral:0').setOrigin(0, 0);
     // Hidden until the camera is close enough to read it, then held at a constant screen size (ruling F1, applied
     // every frame by `applyLabel`): a container child is scaled by the camera zoom, so the label divides it back out.
-    this.label = addText(scene, 0, 2, view.display, nameLabelStyle()).setOrigin(0.5, 0).setScale(1 / RES).setVisible(false);
+    // White on the floor's own skirting colour, which is what the room signs are: a name and the sign over the
+    // room it is in are one type system, and a plate is legible over whatever carpet the sprite is standing on
+    // (visual QA R2-I3). The colour is the desk's floor, not the sprite's current one — a person keeps their own
+    // team's ink while they are walking through someone else's floor.
+    const deskFloor = floorPalette(floorAt(world, this.homeTile().ty));
+    this.label = addText(scene, 0, 2, view.display, nameLabelStyle(undefined, deskFloor.skirting)).setOrigin(0.5, 0).setScale(1 / RES).setVisible(false);
     this.icon = addText(scene, 10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.tool.browser, padding: { x: 2, y: 1 } }).setOrigin(0.5);
     this.badge = addText(scene, -10, -27, '', { fontFamily: MONO, fontSize: '8px', color: PALETTE.labelInk, backgroundColor: PALETTE.bad, padding: { x: 2, y: 1 } }).setOrigin(0.5);
     this.emote = scene.add.image(0, -SPRITE_H - 8, 'emotes', '!').setOrigin(0.5, 1).setVisible(false);

@@ -86,12 +86,33 @@ export const CAPTION_PLATE_H = CAPTION_FONT_PX + CAPTION_PAD_Y * 2 + 2;
 
 /** Below this zoom a name label is a smear across the desks rather than a name, so it is not drawn (ruling F1). */
 export const NAME_LABEL_ZOOM = 2;
-/** How tall a name reads on screen, in screen pixels, at every zoom it is shown at. */
-export const NAME_LABEL_PX = 9;
+/**
+ * How tall a name reads on screen, in screen pixels, at every zoom it is shown at.
+ *
+ * Nine was the smallest and palest type in every room-zoom scene: at zoom 3 the room sign "Sales" is 21 px of
+ * white on blue and the desk label "Outbound" directly above it was 9 px of white with a black stroke on tan, so
+ * zooming in made a name relatively *smaller* (visual QA R2-I3). The label is a plate now rather than stroked
+ * text — the same treatment the screen captions got — so a name and a room sign are one type system rather than
+ * two, and the face is as large as the desk pitch allows.
+ *
+ * Ten, not the twelve the 4-point scale would prefer, and the arithmetic is the reason. A label may claim the gap
+ * to the next desk, `DESK_PITCH_PX` (32 world px, 64 screen px at the zoom labels first appear at), so its budget
+ * is `64 / (px * LABEL_CHAR_W)`: 11 columns at 10 px, 10 at 11 px, 9 at 12 px. Eleven is what "Dev Manager",
+ * "Exploratory" and "Performance" need to stay whole and distinct at zoom 2 — which is defect I1, closed in the
+ * first wave and measured at `11-terminal`. Twelve reopens it. The plate is what buys the readability instead.
+ */
+export const NAME_LABEL_PX = 10;
 
-/** The name under a sprite: white, black-stroked, rasterised at RES. Shared by agents and the owner's avatar. */
-export function nameLabelStyle(px = NAME_LABEL_PX): TextStyle {
-  return { fontFamily: FONT, fontSize: `${px * RES}px`, color: PALETTE.labelInk, stroke: PALETTE.labelStroke, strokeThickness: 2 * RES };
+/**
+ * The name under a sprite: white on a solid plate in the room's own ink, rasterised at RES. Shared by agents and
+ * the owner's avatar. Without a background it falls back to the stroked form, which is what a label with no room
+ * behind it (the owner's "You" before a floor is known) gets.
+ */
+export function nameLabelStyle(px = NAME_LABEL_PX, background?: string): TextStyle {
+  const base = { fontFamily: FONT, fontSize: `${px * RES}px`, fontStyle: '600', color: PALETTE.labelInk };
+  return background
+    ? { ...base, backgroundColor: background, padding: { x: 2 * RES, y: RES } }
+    : { ...base, stroke: PALETTE.labelStroke, strokeThickness: 2 * RES };
 }
 
 /** A room sign: the floor's skirting colour behind white 7 px text. */
@@ -114,9 +135,9 @@ export const LABEL_CHAR_W = 0.55;
 
 /**
  * How many characters of a name fit between two neighbouring desks at this zoom. The label is screen-space
- * constant while the desks are not, so zooming in genuinely reveals more of the name: 12 characters at
- * zoom 2, 19 at zoom 3, 25 at zoom 4. Without this, a row of "Intelligence Analyst"-length names at zoom 2 runs
- * into its neighbours and the row is no more readable than the smear it replaced.
+ * constant while the desks are not, so zooming in genuinely reveals more of the name: 11 characters at zoom 2,
+ * 17 at zoom 3, 23 at zoom 4. Without this, a row of "Intelligence Analyst"-length names at zoom 2 runs into its
+ * neighbours and the row is no more readable than the smear it replaced.
  */
 export function nameLabelChars(zoom: number): number { return Math.max(4, Math.floor((DESK_PITCH_PX * zoom) / (NAME_LABEL_PX * LABEL_CHAR_W))); }
 
