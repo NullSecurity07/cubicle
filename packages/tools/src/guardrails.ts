@@ -68,8 +68,12 @@ function unavailableReason(cause: string): string {
   return `constitution guardrail: the banned_tactics classifier could not check this text (${cause}), so the call is refused rather than sent unchecked. It goes through as soon as a model answers again.`;
 }
 
-/** Watches one classification. */
+/** Watches one classification, so a caller can make an otherwise invisible wait visible. */
 export interface ClassifierWatcher {
+  /** The model is about to be asked; nothing else will be said until `checked`. */
+  checking?(): void;
+  /** A verdict was reached, or the attempt gave up, after `elapsedMs`. Always paired with `checking`. */
+  checked?(verdict: ClassifierVerdict, elapsedMs: number): void;
   /** Said once per failed classification — the caller turns it into one `daemon.warning`. */
   warn?(message: string): void;
 }
@@ -99,9 +103,14 @@ export async function classifyBannedTactic(router: Router, text: string, tactics
   const settle = (verdict: ClassifierVerdict, reason: string | null): ClassifierResult => {
     if (classifierMemo.size >= CLASSIFIER_MAX) classifierMemo.clear();
     classifierMemo.set(memoKey, { at: Date.now(), verdict, reason });
-    return { verdict, reason, elapsedMs: Date.now() - started, memoised: false };
+    const elapsedMs = Date.now() - started;
+    watch.checked?.(verdict, elapsedMs);
+    return { verdict, reason, elapsedMs, memoised: false };
   };
 
+  // Announced only past the memo: a memo hit never leaves the process, so there is no wait to show and the
+  // office must not flicker for the second evaluation of a call the first one already answered.
+  watch.checking?.();
   const ac = new AbortController();
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -142,8 +151,12 @@ export async function classifyBannedTactic(router: Router, text: string, tactics
  * Constitution enforcement at the tool layer (spec §7): max_emails_per_day, banned_channels, banned_tactics
  * (a model as the classifier), never_modify (vault guard already), pii_local_only (harness routing). The
  * caller turns a non-null reason into `guardrail.blocked` — the MCP wrapper for every call, and the harness
- * loop and proposal dispatcher for the calls they refuse before reaching it. The one thing it emits for
- * itself is the single `daemon.warning` for a classifier that could not answer.
+ * loop and proposal dispatcher for the calls they refuse before reaching it.
+ *
+ * What it emits for itself is the classifier's wait: `guardrail.checking` before the model is asked and
+ * `guardrail.checked` when it answers. Every other check here is arithmetic on the vault and returns in
+ * microseconds; that one leaves the process for seconds and used to do so in complete silence, which is the
+ * whole of B1 — for the length of that await a working company and a hung one are the same observation.
  */
 export function constitutionGuardrail(router?: Router): Guardrail {
   return {
@@ -177,10 +190,12 @@ export function constitutionGuardrail(router?: Router): Guardrail {
           let res: ClassifierResult;
           try {
             res = await classifyBannedTactic(router, text, c.banned_tactics, {
+              checking: () => ctx.events.emit({ type: 'guardrail.checking', agent: ctx.roleId, job: ctx.jobId, payload: { tool, role: ctx.roleId, job: ctx.jobId } }),
+              checked: (verdict, elapsed_ms) => ctx.events.emit({ type: 'guardrail.checked', agent: ctx.roleId, job: ctx.jobId, payload: { tool, verdict, elapsed_ms } }),
               warn: (message) => ctx.events.emit({ type: 'daemon.warning', agent: ctx.roleId, job: ctx.jobId, payload: { where: CLASSIFIER_WHERE, message } }),
             });
           } catch (err) {
-            // `classifyBannedTactic` is written not to throw; if the emitter above does, the job must
+            // `classifyBannedTactic` is written not to throw; if one of the emitters above does, the job must
             // still not fail on it — refuse the call, say why, and let the owner see the warning.
             const message = `banned_tactics classifier threw (${(err as Error).message.slice(0, 120)}); refusing the call rather than sending it unchecked`;
             try { ctx.events.emit({ type: 'daemon.warning', agent: ctx.roleId, job: ctx.jobId, payload: { where: CLASSIFIER_WHERE, message } }); } catch { /* the event log is already the thing that failed */ }

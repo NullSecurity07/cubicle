@@ -5,7 +5,7 @@ import type { AgentView } from '../state.js';
 
 const room = (name: string, tx: number, ty: number, tw: number, th: number): Anchor => ({ name, type: 'room', tx, ty, tw, th, props: {} });
 const rooms = { dev: room('dev', 26, 29, 12, 8), qa: room('qa', 36, 16, 14, 8) };
-const view = (role: string, state: AgentView['state']): AgentView => ({ role, display: role, sprite: role, desk: role, active: true, state, tool: null, job: null, bubble: null, target: null, badge: null, mood: 'neutral', moodUntil: null, emote: null, idleSince: null, division: 'other', family: 'member' });
+const view = (role: string, state: AgentView['state']): AgentView => ({ role, display: role, sprite: role, desk: role, active: true, state, tool: null, job: null, bubble: null, target: null, badge: null, mood: 'neutral', moodUntil: null, emote: null, idleSince: null, checking: null, division: 'other', family: 'member' });
 
 describe('lamps', () => {
   it('roomContaining finds the room rect around a tile', () => {

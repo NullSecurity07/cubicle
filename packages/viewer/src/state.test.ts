@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { boardSessionOpen } from './world/owner.js';
 import { boardHeadline } from './ui/board.js';
-import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, overseerRole, vetoRole, type Snapshot } from './state.js';
+import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, overseerRole, vetoRole, statusText, CHECKING_TEXT, type Snapshot } from './state.js';
 
 const role = (o: Partial<Snapshot['roles'][number]> & { role: string }) => ({ display: o.role, sprite: o.role, desk: o.role, active: true, ...o });
 
@@ -359,5 +359,56 @@ describe('withFrameSeq', () => {
     const after = withFrameSeq(before, 'demo', 1);
     expect(before.frames).toEqual({});
     expect(after).not.toBe(before);
+  });
+});
+
+/**
+ * The constitution check the office used to make invisible (B1, 2026-09-13): the guardrail's `banned_tactics`
+ * classifier asks a model before an outbound call, takes seconds, and wrote nothing at all while it ran — so
+ * the sprite simply stopped, and a working company looked exactly like a hung one. A plain reducer, tested
+ * without Phaser: the scene only reads what these two events put here.
+ */
+describe('the constitution check is something the owner can read', () => {
+  const anAgent = snap.roles[1].role;   // read from the snapshot, never spelled out
+  const checking = (tool: string) => ev('guardrail.checking', anAgent, { tool, role: anAgent, job: 'job_1' });
+
+  it('says "checking the constitution…" from guardrail.checking until guardrail.checked', () => {
+    let s = applySnapshot(emptyState(), snap);
+    expect(s.agents[anAgent].checking).toBeNull();
+
+    s = applyEvent(s, checking('mock.outbound'), 1000);
+    expect(s.agents[anAgent].checking).toBe('mock.outbound');
+    expect(statusText(s.agents[anAgent])).toBe(CHECKING_TEXT);
+    expect(CHECKING_TEXT).toBe('checking the constitution…');
+    expect(s.agents[anAgent].bubble!.text).toBe(CHECKING_TEXT);
+    expect(s.agents[anAgent].mood).toBe('thinking');
+
+    s = applyEvent(s, ev('guardrail.checked', anAgent, { tool: 'mock.outbound', verdict: 'clear', elapsed_ms: 2400 }), 3400);
+    expect(s.agents[anAgent].checking).toBeNull();
+    expect(s.agents[anAgent].bubble).toBeNull();
+    expect(statusText(s.agents[anAgent])).toBeNull();
+  });
+
+  it('holds the line for the whole wait — a check that outlasts an ordinary bubble is still on screen', () => {
+    let s = applyEvent(applySnapshot(emptyState(), snap), checking('email.send'), 1000);
+    // Ten seconds in: well past the 4 s an action bubble lives, and a classifier call really does run this long.
+    s = tick(s, 11_000);
+    expect(statusText(s.agents[anAgent])).toBe(CHECKING_TEXT);
+  });
+
+  it('lets go when the checked never arrives — a daemon that died mid-check does not leave the office reading', () => {
+    let s = applyEvent(applySnapshot(emptyState(), snap), checking('email.send'), 1000);
+    s = tick(s, 1000 + 30_000);   // past the classifier's own 20 s bound, so the pair can never close now
+    expect(s.agents[anAgent].checking).toBeNull();
+    expect(statusText(s.agents[anAgent])).toBeNull();
+  });
+
+  it('a refusal clears the check and says why, so the two are never shown at once', () => {
+    let s = applyEvent(applySnapshot(emptyState(), snap), checking('email.send'), 1000);
+    s = applyEvent(s, ev('guardrail.checked', anAgent, { tool: 'email.send', verdict: 'unavailable', elapsed_ms: 20_000 }), 21_000);
+    s = applyEvent(s, ev('guardrail.blocked', anAgent, { tool: 'email.send', reason: 'constitution guardrail: the banned_tactics classifier could not check this text' }), 21_000);
+    expect(s.agents[anAgent].checking).toBeNull();
+    expect(statusText(s.agents[anAgent])).toContain('not allowed');
+    expect(s.feed[s.feed.length - 1].text).toContain('banned_tactics classifier');
   });
 });
