@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { advisorPrompt, chairPrompt, chairReaskPrompt, mergeBoardVerdict, boardSubject, ideaVerdictBody, cardBoardFindings, cardBoardChair } from '../src/heartbeat.js';
+import { advisorPrompt, chairPrompt, chairReaskPrompt, mergeBoardVerdict, unansweredMerge, boardSubject, ideaVerdictBody, cardBoardFindings, cardBoardChair } from '../src/heartbeat.js';
 import { PRESSURE_UNANSWERED, BANNED_HEDGE, PRESSURE_HANDBOOK_PATH, PRESSURE_NO_FLAWS, renderBoardSection, chairAnswerText, PRESSURE_CHAIR_CHARS } from '@cubicle/core';
 
 const PLAN_TEXT = '# Plan\n\n## Objectives\n\n### dev\n- ship the first cut\n';
@@ -180,11 +180,19 @@ describe('the idea session takes the five-part shape and order (spec §2)', () =
       .toBe('**Passed** — 3 advisors, 2026-09-12.\n\n**Pressure test:** STRONG.\n\n- Nothing they thought would sink it.');
   });
 
-  it('two refusals return the idea, in the words the board records', () => {
-    // The wording matters because it is what the owner reads on the card and in the verdict note; the daemon
-    // path that reaches it — a chair refused twice running — is exercised in `idea-board.test.ts`.
-    expect(PRESSURE_UNANSWERED).toMatch(/twice running/);
-    expect(PRESSURE_UNANSWERED).toMatch(/returned unjudged/);
-    expect(mergeBoardVerdict('VERDICT: MAYBE', 'idea').verdict).toBe('return');
+  it('two refusals return the idea, with the refusal first and the chair\'s own words after it', () => {
+    // `unansweredMerge` is the whole of Decision 7 — an idea nobody would judge is parked, not passed — and
+    // this is the only test that calls it directly; the daemon path that reaches it, a chair refused twice
+    // running, is driven end to end in `idea-board.test.ts`.
+    const second = mergeBoardVerdict('VERDICT: MAYBE', 'idea');
+    expect(second.refused).toBeTruthy();
+    const out = unansweredMerge(second);
+    expect(out.verdict).toBe('return');
+    expect(out.findings[0]).toBe(PRESSURE_UNANSWERED);
+    expect(out.findings[1]).toContain('MAYBE');
+    expect(out.pressure).toBeNull();
+    // Never more than the four findings the board is allowed, however much the second answer said.
+    const many = unansweredMerge({ verdict: 'return', findings: ['a', 'b', 'c', 'd'], pressure: null, rubric: null, refused: 'x' });
+    expect(many.findings).toEqual([PRESSURE_UNANSWERED, 'a', 'b', 'c']);
   });
 });

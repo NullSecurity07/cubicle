@@ -111,6 +111,9 @@ wrong; you have an **earned secret** from years in the industry.
 Unacceptable: "I'm passionate about it" (passion is not an edge). "I noticed the problem" (noticing is cheap).
 "I've read a lot about the space" (so has the competitor). "I'm a great generalist".
 
+On how many of them: a solo founder is a yellow flag, not a red one; two founders
+who have worked together before is the strongest signal there is.
+
 The fit that gets funded is knowing the customer deeply **and** being able to build it. Knowing the customer
 without being able to build is fixable with a cofounder. Being able to build without knowing the customer is a
 technology looking for a problem. Neither is a tourist: a tourist knows neither the customer nor how to build

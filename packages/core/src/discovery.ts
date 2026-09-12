@@ -338,7 +338,11 @@ export function interviewAnswer(transcript: string | null): string {
   return (after ?? '').replace(/^\s*_\d{4}-\d{2}-\d{2}_\s*$/m, '').trim();
 }
 
-/** The seven sections a founder brief has always carried. */
+/**
+ * The seven sections a founder brief carried before 2026-09-12 — the documented historical list, exported for
+ * the tests that build an SP3-era brief and for anyone reading `PRESSURE_TEST_SINCE` and asking what a brief
+ * from before it looks like. Nothing in `src/` consumes it but the line below; that is the point of it.
+ */
 export const FOUNDER_BRIEF_SECTIONS_V1 = [
   '## What the company is',
   '## Who it is for',

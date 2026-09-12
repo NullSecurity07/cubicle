@@ -371,8 +371,12 @@ export function mergeBoardVerdict(text: string, kind: BoardSubject['kind'] = 'pl
   return { verdict: pressureToBoard(read.verdict), findings: pressureFindings(read), pressure: read.verdict, rubric: read.rubric, refused: null };
 }
 
-/** What the board records when the re-ask was refused too, or went unanswered. */
-function unansweredMerge(m: BoardMerge): BoardMerge {
+/**
+ * What the board records when the re-ask was refused too: the idea is returned, and the refusal leads the
+ * findings so the owner reads why before they read what. Exported because it is the whole of Decision 7 — an
+ * idea nobody would judge is parked, not passed — and it was the one piece of that path with no direct test.
+ */
+export function unansweredMerge(m: BoardMerge): BoardMerge {
   return { ...m, verdict: 'return', findings: [PRESSURE_UNANSWERED, ...m.findings].slice(0, PRESSURE_MAX_FLAWS) };
 }
 
