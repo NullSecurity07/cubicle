@@ -13,6 +13,7 @@ import { RES, FONT, MONO, nameLabelStyle, nameLabelView, nameLabelText, worldTex
 import { addText } from './text-crisp.js';
 import { PALETTE, hexToInt } from './palette.js';
 import { Latch } from './latch.js';
+import { bubbleOffsetX } from './bubble.js';
 
 // Drawn glyphs (no emoji: headless/minimal systems lack emoji fonts). letter + colour per tool family.
 const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = {
@@ -20,24 +21,6 @@ const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = {
   doc: { t: 'D', c: PALETTE.tool.doc }, chart: { t: '%', c: PALETTE.tool.chart }, chat: { t: '…', c: PALETTE.tool.chat },
 };
 const SPEED = 70; // px/s
-/** Air between the bubble and the edge it is kept inside, in world pixels. */
-export const BUBBLE_MARGIN = 6;
-
-/**
- * Where a speech bubble sits relative to the sprite that owns it, in world pixels.
- *
- * `view` is the camera's world rectangle (absent before the first frame, and in the unit tests). The bubble is
- * centred on the speaker where it can be; when that would cross an edge of the view it slides along until it is
- * inside, and it never travels so far that the tail leaves the speaker.
- */
-export function bubbleOffsetX(speakerX: number, w: number, view: { x: number; width: number } | undefined, worldW: number): number {
-  const half = w / 2 + BUBBLE_MARGIN;
-  const left = view ? Math.max(view.x, 0) : 0;
-  const right = view ? Math.min(view.x + view.width, worldW) : worldW;
-  if (right - left < w) return 0;                                   // narrower than the bubble: centre and let it bleed
-  const lo = left + half - speakerX, hi = right - half - speakerX;   // the offsets that keep the bubble inside
-  return Math.max(lo, Math.min(hi, 0));
-}
 const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
 
 /** The pantry: a coffee after a finished job, and now and then after a long quiet spell at the desk. */
@@ -69,6 +52,8 @@ export class AgentSprite {
   private bubbleText: Phaser.GameObjects.Text;
   private bubbleBg: Phaser.GameObjects.Graphics;
   private hovered = false;
+  /** Whether the sprite is in a seated pose: a bubble spoken sitting down goes beside the speaker, not over them. */
+  private seated = false;
   /** Set by the scene when this sprite is the one the panel is focused on: its name shows at any zoom. */
   selected = false;
   /**
@@ -276,6 +261,7 @@ export class AgentSprite {
         this.frameTimer += dt;
         if (this.frameTimer * 1000 > WALK_STEP_MS) { this.frameTimer = 0; this.step = (this.step + 1) % WALK_FRAMES; }
         this.body.setFrame(frameFor({ moving: true, dir: this.dir as Dir, step: this.step }));
+        this.seated = false;
         this.body.y = BOB[this.step];
         this.shadow.setScale(BOB[this.step] ? 0.9 : 1, 1); this.wasMoving = true;
         if (!this.path.length) this.walkFinished(view);
@@ -300,7 +286,8 @@ export class AgentSprite {
         else if (ctx.speaker && ctx.speaker.role !== view.role && (view.target === 'boardroom' || view.target === 'meetingroom')) this.dir = faceToward({ x: this.container.x, y: this.container.y }, ctx.speaker);
         const sideSeat: PoseCtx['sideSeat'] = this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 1 ? 'l' : this.seat && (view.target === 'boardroom' || view.target === 'meetingroom') && this.dir === 2 ? 'r' : null;
         const pose = poseFor(view, { atDesk, riding: this.riding, sideSeat, nowMs, gesture: this.gesture, detour: this.detour });
-        this.shadow.setVisible(!this.riding && !isSeatedPose(pose));
+        this.seated = isSeatedPose(pose);
+        this.shadow.setVisible(!this.riding && !this.seated);
         if (pose) this.dir = pose === 'sit_side_l' ? 1 : pose === 'sit_side_r' ? 2 : 0;
         this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0, pose }));
       }
@@ -326,7 +313,7 @@ export class AgentSprite {
     // A bubble is the loudest object in the office, and at the tower elevation it is an unreadable white smear over
     // one floor of a building (visual QA, alongside I10). In-world lettering is off there; so is this.
     if (!worldTextVisible(this.scene.cameras?.main?.zoom ?? 1)) this.bubble.setVisible(false);
-    else this.updateBubble(view.bubble, nowMs, emoteKind ? -SPRITE_H - EMOTE_H - 8 : -SPRITE_H - 6);
+    else this.updateBubble(view.bubble, nowMs, emoteKind ? -SPRITE_H - EMOTE_H - 8 : -SPRITE_H - 6, this.seated);
     // Depth is a function of y alone; setting it marks the whole display list dirty, so only set it when y moved.
     const depth = 10 + this.container.y / 10000;
     if (this.depthLatch.changed(depth)) this.container.setDepth(depth);
@@ -357,7 +344,7 @@ export class AgentSprite {
   }
 
   /** Speech (white, tail, role-coloured border), thought (cloud, grey, animated dots) or action (dark strip with the verb). */
-  private updateBubble(b: Bubble | null, nowMs: number, y: number): void {
+  private updateBubble(b: Bubble | null, nowMs: number, y: number, seated = false): void {
     if (!b) {
       if (this.bubble.visible && !this.hiding) {
         this.hiding = true;
@@ -379,23 +366,27 @@ export class AgentSprite {
     const color = b.kind === 'action' ? PALETTE.bubbleActionInk : b.kind === 'thought' ? PALETTE.bubbleThoughtInk : PALETTE.bubbleInk;
     this.bubbleText.setStyle({ color, fontStyle: b.kind === 'thought' ? 'italic' : 'normal', fontSize: `${(b.kind === 'action' ? 7 : 8) * RES}px` }).setText(text);
     const w = this.bubbleText.width / RES, h = this.bubbleText.height / RES;
-    // Which side of the speaker the bubble hangs on, and how far along it sits.
+    // Which side of the speaker the bubble hangs on, and where its tail comes down.
     //
     // It used to clamp against the world only, so in `08-board` a bubble spoken at the table sat squarely over the
-    // advisors' monitors and in `09-night` it was cut off by the bottom of the viewport (visual QA I10). The camera
-    // is what decides: the bubble goes on whichever side of the speaker has more room in view, and is then pushed
-    // back inside the viewport so no part of it is off screen.
-    this.bubble.x = bubbleOffsetX(this.container.x, w, this.scene.cameras?.main?.worldView, this.world.width * TILE);
+    // advisors' monitors and the screen they were looking at, and in `09-night` the bottom of the viewport cut it
+    // (visual QA I10). The camera is what decides now, and a speaker who is sitting down — a meeting, the one
+    // place a bubble reliably covers the thing it is about — gets the bubble beside them rather than over them,
+    // on whichever side has more room in view. The tail then follows the speaker rather than the bubble, so an
+    // offset bubble still points at who said it.
+    const off = bubbleOffsetX(this.container.x, w, this.scene.cameras?.main?.worldView, this.world.width * TILE, seated);
+    this.bubble.x = off;
+    const tail = Math.max(-w / 2 + 4, Math.min(w / 2 - 4, -off));
     const g = this.bubbleBg.clear();
     if (b.kind === 'speech') {
       const tint = roleColor(this.view.role);
       g.fillStyle(hexToInt(PALETTE.bubbleFill), 0.96).lineStyle(1, tint, 1).fillRoundedRect(-w / 2 - 4, -h - 4, w + 8, h + 6, 4).strokeRoundedRect(-w / 2 - 4, -h - 4, w + 8, h + 6, 4);
-      g.fillStyle(hexToInt(PALETTE.bubbleFill), 0.96).fillTriangle(-3, 2, 3, 2, 0, 6); // tail
-      g.lineStyle(1, tint, 1).lineBetween(-3, 2, 0, 6).lineBetween(3, 2, 0, 6);
+      g.fillStyle(hexToInt(PALETTE.bubbleFill), 0.96).fillTriangle(tail - 3, 2, tail + 3, 2, tail, 6); // tail
+      g.lineStyle(1, tint, 1).lineBetween(tail - 3, 2, tail, 6).lineBetween(tail + 3, 2, tail, 6);
     } else if (b.kind === 'thought') {
       g.fillStyle(hexToInt(PALETTE.bubbleThoughtFill), 0.95).lineStyle(1, hexToInt(PALETTE.bubbleThoughtStroke), 1);
       g.fillRoundedRect(-w / 2 - 5, -h - 5, w + 10, h + 8, 6).strokeRoundedRect(-w / 2 - 5, -h - 5, w + 10, h + 8, 6);
-      g.fillCircle(-2, 5, 2).strokeCircle(-2, 5, 2).fillCircle(-5, 9, 1.2).strokeCircle(-5, 9, 1.2); // trailing thought circles
+      g.fillCircle(tail + 2, 5, 2).strokeCircle(tail + 2, 5, 2).fillCircle(tail + 5, 9, 1.2).strokeCircle(tail + 5, 9, 1.2); // trailing thought circles
     } else {
       g.fillStyle(hexToInt(PALETTE.bubbleActionFill), 0.94).lineStyle(1, hexToInt(PALETTE.bubbleActionStroke), 1).fillRoundedRect(-w / 2 - 4, -h - 3, w + 8, h + 5, 3).strokeRoundedRect(-w / 2 - 4, -h - 3, w + 8, h + 5, 3);
     }
