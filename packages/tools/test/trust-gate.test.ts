@@ -29,6 +29,31 @@ describe('the tool layer is where the guarantee lives (spec §1, Decision 4)', (
     expect(policyFor(cfg, 'vault.write').trust_review).toBe(false);
   });
 
+  /**
+   * The invariant, over the shipped config rather than over a list written by hand (I2). A sixth tool added to
+   * `config/tools.yaml` with `outbound: true` and no `trust_review` would reach recipients with no review and
+   * leave the whole suite green — `trustVeto` returns null for a policy that does not carry the flag. SP6 adds a
+   * technology division and more tools, so this is the guard that keeps the guarantee true as the product grows.
+   *
+   * The converse matters as much: the harness only raises `auto` → `propose` when `policy.outbound`, and the
+   * record is keyed on the idempotency key, which only an outbound tool gets — so a `trust_review` tool without
+   * `outbound` would be refused by the tool layer in a loop the agent has no way out of.
+   */
+  it('`outbound` and `trust_review` imply each other in the shipped config, whatever tools it grows (I2)', () => {
+    const names = Object.keys(cfg.tools);
+    expect(names.length).toBeGreaterThan(10);                  // the config really was parsed
+    for (const name of names) {
+      const pol = policyFor(cfg, name);
+      // `mock.outbound` is the one exception, and it is exempt by identity rather than by shape: it appends to
+      // `.cubicle/` and reaches nobody (Decision 3), so it is outbound for the idempotency key alone.
+      if (name === 'mock.outbound') continue;
+      if (pol.outbound) expect(pol.trust_review, `${name} leaves the company, so it must carry trust_review: true`).toBe(true);
+      if (pol.trust_review) expect(pol.outbound, `${name} is trust-reviewed, so it must carry outbound: true — the record is keyed on the idempotency key`).toBe(true);
+    }
+    expect(policyFor(cfg, 'mock.outbound').outbound).toBe(true);
+    expect(policyFor(cfg, 'mock.outbound').trust_review).toBe(false);
+  });
+
   it('email.send is refused before the handler runs, and no email is sent', async () => {
     const c = await client('cmo', 'job_e');
     try {
