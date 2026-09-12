@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -11,7 +11,7 @@ import {
   BUDGETED_TIERS, dayStartIso, freeCallCapacity, divisionWeights, divisionQuotas, divisionSpend, divisionOfRole,
   budgetRows, budgetForRole, runwayJobId, enqueueRunway, runwayCommentary, writeRunway, accrueModelCost,
   accrueModelCosts, dormancyMark, dormancyEpisodes, drawsOnFreePool, moneyMessageId, dormancyMessage, revivalMessage,
-  LOCKED_RUNWAY, LOCKED_ACCRUAL, STAMP_AHEAD, LOCK_STATE_PATH, LOCK_WARN_WINDOW_DAYS,
+  LOCKED_RUNWAY, LOCKED_ACCRUAL, STAMP_AHEAD, LOCK_STATE_PATH, LOCK_WARN_WINDOW_DAYS, lockSituation,
 } from '../src/money.js';
 
 const SHIPPED = parseProvidersConfig(readFileSync(path.resolve(__dirname, '../../../config/providers.yaml'), 'utf8'));
@@ -349,7 +349,25 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     // the notice is remembered against never moves, however long the lock stands.
     for (let d = 0; d < 5; d++) writeRunway(vault, org, SHIPPED, new Date(`2026-09-1${2 + d}T12:00:00.000Z`));
     expect(lockedRunwayRows()).toHaveLength(1);
-    expect(JSON.parse(readFileSync(path.join(dir, LOCK_STATE_PATH), 'utf8'))[LOCKED_RUNWAY]).toContain('never_modify');
+    // What is remembered is the *lock*, not the page: the owner's never_modify list plus the path it holds.
+    expect(JSON.parse(readFileSync(path.join(dir, LOCK_STATE_PATH), 'utf8'))[LOCKED_RUNWAY]).toBe(lockSituation(vault, RUNWAY_PATH));
+  });
+
+  it('does not repeat itself because the owner edited the page the lock protects', () => {
+    const org = loadOrg(vault);
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(lockedRunwayRows()).toHaveLength(1);
+    // Keeping their own runway page by hand is the whole point of locking the folder, so it is not news.
+    writeFileSync(path.join(dir, RUNWAY_PATH), `${readFileSync(path.join(dir, RUNWAY_PATH), 'utf8')}\nMy own note.\n`);
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(lockedRunwayRows()).toHaveLength(1);
+    // Taking the lock off and putting it back is news: it is a decision they made twice.
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify: []\n```\n', 'owner');
+    writeRunway(vault, org, SHIPPED, NOW);
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(lockedRunwayRows()).toHaveLength(2);
   });
 
   it('falls back to a bounded read of the log when the remembered state is gone', () => {
@@ -357,7 +375,7 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
     const reason = `${RUNWAY_PATH} is on the owner's never_modify list, so it was not regenerated; the figures behind it are still computed every cycle`;
     // A notice already in the log an hour ago, and no remembered state: the recovery read finds it and stays quiet.
-    vault.events.emit({ type: 'daemon.warning', ts: new Date(Date.now() - 3_600_000).toISOString(), payload: { where: LOCKED_RUNWAY, path: RUNWAY_PATH, reason } });
+    vault.events.emit({ type: 'daemon.warning', ts: new Date(Date.now() - 3_600_000).toISOString(), payload: { where: LOCKED_RUNWAY, situation: lockSituation(vault, RUNWAY_PATH), path: RUNWAY_PATH, reason } });
     writeRunway(vault, org, SHIPPED, NOW);
     expect(lockedRunwayRows()).toHaveLength(1);
   });
@@ -371,7 +389,7 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     // is discriminating: deleting the `from` clause from the recovery read turns the 2 below into a 1.
     // Its pair is the test above, where the same notice an hour old *does* dedupe.
     const old = new Date(Date.now() - (LOCK_WARN_WINDOW_DAYS + 1) * 86_400_000).toISOString();
-    vault.events.emit({ type: 'daemon.warning', ts: old, payload: { where: LOCKED_RUNWAY, path: RUNWAY_PATH, reason } });
+    vault.events.emit({ type: 'daemon.warning', ts: old, payload: { where: LOCKED_RUNWAY, situation: lockSituation(vault, RUNWAY_PATH), path: RUNWAY_PATH, reason } });
     writeRunway(vault, org, SHIPPED, NOW);
     expect(lockedRunwayRows()).toHaveLength(2);
   });
@@ -439,7 +457,7 @@ describe('what the models cost (spec §3)', () => {
     expect(String((stampRows()[0].payload as { reason?: string }).reason)).toContain('2027-09-11');
   });
 
-  it('mentions a mistyped stamp once per stamp, not once per cycle', () => {
+  it('mentions a mistyped stamp once per stamp, whatever day it is read on', () => {
     const stampRows = () => vault.events.query({ types: ['daemon.warning'] })
       .filter((e) => (e.payload as { where?: string }).where === STAMP_AHEAD);
     // Nothing chargeable, so no `model-<date>` row is ever written and every cycle re-reads the stamp — which
@@ -447,6 +465,11 @@ describe('what the models cost (spec §3)', () => {
     for (let i = 0; i < 4; i++) accrueModelCosts(vault, PRICED_FUTURE, NOW);
     expect(stampRows()).toHaveLength(1);
     expect(String((stampRows()[0].payload as { reason?: string }).reason)).toContain('2027-09-11');
+    expect((stampRows()[0].payload as { stamp?: string }).stamp).toBe('2027-09-11');
+    // The sentence names the day it clamped to, which moves at every UTC midnight. The typo has not moved, so
+    // neither has the situation: three more days of cycles are still one row.
+    for (const d of ['2026-09-13', '2026-09-14', '2026-09-15']) accrueModelCosts(vault, PRICED_FUTURE, new Date(`${d}T12:00:00.000Z`));
+    expect(stampRows()).toHaveLength(1);
     // A *different* typo is a different situation, and worth saying.
     const OTHER = parseProvidersConfig(`
 prices_verified: "2028-01-01"
