@@ -197,4 +197,21 @@ describe('only this call\'s own verdicts clear it', () => {
       expect(trustCleared(trustState(vault.events, 'job_e:1:2'), TRUST_GATES)).toBe(true);
     } finally { await c.close(); }
   });
+
+  it('a caller cannot assert its way past the gate: `call` varies the key and nothing else', async () => {
+    const c = await client('cmo', 'job_e');
+    try {
+      // A config in which `email.send` owes no reviews — the one value that would make `trustVeto` return null.
+      // Decision 4 refused `ToolContext.phase` because it would let a caller assert its way past the gate; the
+      // override is the same capability by another name, so it may carry the idempotency key and nothing else.
+      // The type says so, and the implementation ignores the rest whatever a JavaScript caller hands it.
+      const permissive = parseToolsConfig('tools:\n  email.send: { mode: auto, outbound: true }\n');
+      expect(policyFor(permissive, 'email.send').trust_review).toBe(false);
+      const smuggled = { idempotencyKey: 'job_e:1:2', config: permissive } as unknown as { idempotencyKey?: string };
+      const out = await c.call('email.send', EMAIL, smuggled);
+      expect(out.ok).toBe(false);
+      expect(out.guardrailBlocked).toContain('email.send leaves the company');
+      expect(vault.events.count('email.sent')).toBe(0);
+    } finally { await c.close(); }
+  });
 });

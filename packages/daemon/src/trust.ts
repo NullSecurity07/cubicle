@@ -1,7 +1,7 @@
 import {
-  type Vault, type InboxFrontmatter, type GateTable, type Org,
-  listInbox, createJob, jobPath, loadOrg, loadGates, nowIso,
-  trustReviewsFor, trustState, trustReviewerFor, trustJobId, trustGateGoal, trustGateLabel, type TrustState, type TrustToolPolicy,
+  type Vault, type InboxFrontmatter, type JobFrontmatter, type GateTable, type Org,
+  listInbox, createJob, jobPath, readJob, loadOrg, loadGates, nowIso,
+  trustReviewsFor, trustState, trustReviewerFor, trustJobId, trustGateGoal, trustGateLabel, recordTrustVerdict, type TrustState,
 } from '@cubicle/core';
 import type { ToolsConfig } from '@cubicle/tools';
 
@@ -10,8 +10,10 @@ import type { ToolsConfig } from '@cubicle/tools';
  *
  * Three jobs, in this order. It files the two reviews for every outbound call waiting in `00 Inbox/`; it closes a
  * proposal a review has returned, unsent, so the waiting job resumes and is told why; and it says once, out loud,
- * when an office has nobody to run its review — because that call now stays refused for ever, and a gate that
- * fails closed in silence is indistinguishable from a bug.
+ * when a review can never answer — an office with nobody to run it, or a review job that ended without a verdict —
+ * because a gate that fails closed in silence is indistinguishable from a bug. The two cases differ in what they
+ * can do about it: nobody to review means the call stays refused until the owner staffs the office, while a
+ * review that ended is recorded as a return, which closes the call and frees its author to file a fresh one.
  *
  * It runs *before* `dispatchProposals` in the tick (Decision 19), for a reason the dispatcher cannot fix itself:
  * `dispatchProposals` never looks at an unapproved note, so a returned `email.send` whose owner has not reached
@@ -28,17 +30,62 @@ export interface TrustSweepDeps {
 export interface TrustSweepResult { reviews: string[]; closed: string[] }
 
 /** One warning per office per proposal per process. A tick every few seconds would otherwise repeat it for ever. */
-const warnedUnstaffed = new Set<string>();
+const warned = new Set<string>();
+
+/** Say a thing once per process. Both of the sweep's warnings are about a state that does not change on its own. */
+function warnOnce(vault: Vault, mark: string, job: string | null, payload: Record<string, unknown>): void {
+  if (warned.has(mark)) return;
+  warned.add(mark);
+  vault.events.emit({ type: 'daemon.warning', job, payload });
+}
 
 /**
- * The gates one stored call owes, or `[]`. The flag is the owner's file; the refinement is the call's own arguments.
+ * Why a review job will never answer, or null while it still might.
  *
- * The cast reads `trust_review` off a `ToolPolicy`: `TrustToolPolicy` is all-optional, so TypeScript's weak-type
- * rule wants one property in common, and `core` cannot import `tools` to declare the overlap itself.
+ * `cancelled` and `failed` are plain. `blocked` is the one that needs care: a review waiting on a quota, on a
+ * colleague's answer or on the owner's approval of one of its own calls is still on its way — `requeueUnblocked`
+ * and the harness's own resume will wake it. A job that *finished* as blocked is the opposite: nothing requeues
+ * it but the owner (`loop.ts`'s entry guard says so in the same words), so its gate would stay pending for ever.
  */
+function reviewEnded(j: JobFrontmatter): string | null {
+  if (j.status === 'cancelled' || j.status === 'failed') return j.status;
+  if (j.status === 'blocked' && j.approval !== 'pending' && (!j.blocked_on || j.blocked_on.kind === 'owner')) return 'blocked';
+  return null;
+}
+
+/**
+ * A review that ended without a verdict is a **return**, for the same reason Decision 14 makes a failed review
+ * one: an unfinished review must never become a pass, and — the part that costs more — it must never become a
+ * silent hold either. Without this the gate stays pending for ever, the dispatcher holds the proposal for ever,
+ * the author's job stays blocked for ever, and nothing in the vault connects the stuck job to the reason. The
+ * sweep will not re-file the review (its deterministic id already exists), so nobody else can notice.
+ *
+ * Returns the state as it stands after any verdict this wrote.
+ */
+function returnEndedReviews(vault: Vault, note: { path: string; data: InboxFrontmatter }, need: string[], st: TrustState): TrustState {
+  const call = note.data.call!;
+  let wrote = false;
+  for (const gate of st.pending) {
+    const id = trustJobId(call.idempotency_key, gate);
+    const job = readJob(vault, id);
+    if (!job) continue;                       // never filed (an unstaffed office) — that path warns on its own
+    const ended = reviewEnded(job.data);
+    if (!ended) continue;
+    const why = `the ${gate} review ended ${ended} without a verdict`;
+    recordTrustVerdict(vault, { key: call.idempotency_key, proposal: note.data.id, gate, verdict: 'return', findings: [why], job: id, by: 'daemon' });
+    warnOnce(vault, `ended:${gate}:${note.data.id}`, note.data.job ?? null, {
+      where: 'trust.review', gate, proposal: note.data.id, job: id, tool: call.tool,
+      message: `${why}, so \`${call.tool}\` in ${note.data.id} is returned unsent rather than held for ever. Requeue ${id} if the office should still read it; the author has to file a fresh call either way.`,
+    });
+    wrote = true;
+  }
+  return wrote ? trustState(vault.events, call.idempotency_key, need) : st;
+}
+
+/** The gates one stored call owes, or `[]`. The flag is the owner's file; the refinement is the call's own arguments. */
 export function trustGatesForNote(cfg: ToolsConfig, d: InboxFrontmatter): string[] {
   if (!d.call) return [];
-  return trustReviewsFor(cfg.tools[d.call.tool] as TrustToolPolicy | undefined, d.call.tool, d.call.args);
+  return trustReviewsFor(cfg.tools[d.call.tool], d.call.tool, d.call.args);
 }
 
 /** The state of a proposal's reviews, or null when it owes none. */
@@ -59,7 +106,10 @@ export function sweepTrustReviews(deps: TrustSweepDeps): TrustSweepResult {
     const need = trustGatesForNote(deps.toolsConfig, d);
     if (!need.length) continue;
     const call = d.call;
-    const st = trustState(vault.events, call.idempotency_key, need);
+    // A review that has ended without answering is read as a return before anything else, so the call is closed
+    // in the same pass rather than held until somebody notices the stuck job.
+    let st = trustState(vault.events, call.idempotency_key, need);
+    if (st.pending.length) st = returnEndedReviews(vault, note, need, st);
     if (st.returned.length) {
       closeReturned(vault, note, st);
       out.closed.push(d.id);
@@ -80,11 +130,7 @@ export function sweepTrustReviews(deps: TrustSweepDeps): TrustSweepResult {
       if (!reviewer) {
         // Failing closed is the only honest default for a gate whose purpose is to stop things, but it must be
         // loud: the review is pending for ever and the call never runs until the owner staffs the office.
-        const mark = `${gate}:${d.id}`;
-        if (!warnedUnstaffed.has(mark)) {
-          warnedUnstaffed.add(mark);
-          vault.events.emit({ type: 'daemon.warning', job: d.job ?? null, payload: { where: 'trust', gate, proposal: d.id, tool: call.tool, message: `nobody but ${author} can run ${gate}, so \`${call.tool}\` in ${d.id} stays refused and nothing is sent. Staff the office in Memory/constitution.md, or hire into it.` } });
-        }
+        warnOnce(vault, `${gate}:${d.id}`, d.job ?? null, { where: 'trust', gate, proposal: d.id, tool: call.tool, message: `nobody but ${author} can run ${gate}, so \`${call.tool}\` in ${d.id} stays refused and nothing is sent. Staff the office in Memory/constitution.md, or hire into it.` });
         continue;
       }
       out.reviews.push(createJob(vault, {
@@ -122,4 +168,4 @@ function closeReturned(vault: Vault, note: { path: string; data: InboxFrontmatte
 }
 
 /** Test seam: the once-per-process warning memo. */
-export function resetTrustWarnings(): void { warnedUnstaffed.clear(); }
+export function resetTrustWarnings(): void { warned.clear(); }

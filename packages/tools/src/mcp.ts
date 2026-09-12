@@ -9,7 +9,14 @@ export interface RoleToolClient {
   server: McpServer;
   /** JSON-schema tool list as MCP reports it (used for native tools and the JSON-tool prompt). */
   listTools(): Promise<{ name: string; description: string; parameters: Record<string, unknown> }[]>;
-  call(name: string, args: Record<string, unknown>, ctxOverride?: Partial<ToolContext>): Promise<ToolResult>;
+  /**
+   * Run one tool. The only thing a caller may vary per call is the idempotency key — deliberately not a
+   * `Partial<ToolContext>`: Decision 4 refused `ToolContext.phase` because it "would let a caller assert its way
+   * past the gate", and an override that could replace `config` or `events` is the same capability under another
+   * name (a caller could hand the trust veto a config with no `trust_review` on it, or an empty event log).
+   * Narrowing the type is what makes "the harness cannot bypass the gate" structural rather than a convention.
+   */
+  call(name: string, args: Record<string, unknown>, ctxOverride?: { idempotencyKey?: string }): Promise<ToolResult>;
   close(): Promise<void>;
 }
 
@@ -70,7 +77,9 @@ export async function createRoleToolClient(defs: AnyTool[], baseCtx: ToolContext
     },
     async call(name, args, ctxOverride) {
       const prev = ctx;
-      if (ctxOverride) ctx = { ...ctx, ...ctxOverride };
+      // `idempotencyKey` and nothing else, whatever a caller passes: `config` and `events` are what the trust
+      // veto reads, and they belong to the client that was built for this role.
+      if (ctxOverride) ctx = { ...ctx, idempotencyKey: ctxOverride.idempotencyKey };
       try {
         const r = await client.callTool({ name, arguments: args });
         const callId = (r._meta as { callId?: string } | undefined)?.callId;

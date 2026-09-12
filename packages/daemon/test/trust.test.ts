@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  scaffoldVault, Vault, createJob, createProposal, readJob, listJobs, listInbox, findInboxById, loadOrg, loadGates,
+  scaffoldVault, Vault, createJob, createProposal, readJob, updateJob, cancelJob, listJobs, listInbox, findInboxById, loadOrg, loadGates, nowIso,
   recordTrustVerdict, trustState, trustJobId, TRUST_GATES, TRUST_PENDING_HOLD,
 } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools, phase6Tools, type ToolPolicy } from '@cubicle/tools';
@@ -145,10 +145,45 @@ describe('nothing is spent while the reviews are out (spec §3)', () => {
     expect(sweep().closed).toEqual([]);
     retryNow(prop.path);
     await dispatch();
-    expect(findInboxById(vault, prop.data.id)!.data.resolved_at).toBeTruthy();
+    const released = findInboxById(vault, prop.data.id)!;
+    expect(released.data.resolved_at).toBeTruthy();
+    // The footer says which decision released it: the owner's approval was only half of it.
+    expect(released.body).toContain('cleared by the compliance and security offices');
     expect((await runJob(h, job)).status).toBe('done');
     expect(sent()).toBe(1);
     expect(readJob(vault, job)!.data.side_effects_done).toEqual([key]);
+  });
+
+  it('a return that lands between the sweep and the dispatch is never footed as approved', async () => {
+    const { h, dispatch } = scene('pass');
+    const { job, prop, key } = await fileAnEmail(h);
+    approve(prop.path);
+    await dispatch();                       // held: the reviews are out
+
+    // The race the sweep normally wins: a verdict lands after this tick's sweep has already run. The dispatcher
+    // must not resolve the note — "approved; the waiting job resumes" is the one sentence that is not true of a
+    // call an office refused, and on a `spend` resolving it would burn the key for a refusal too.
+    recordTrustVerdict(vault, { key, proposal: prop.data.id, gate: TRUST_GATES[0], verdict: 'return', findings: ['the body has no unsubscribe line'], by: 'clo' });
+    retryNow(prop.path);
+    await dispatch();
+    const raced = findInboxById(vault, prop.data.id)!;
+    expect(raced.data.resolved_at).toBeNull();
+    expect(raced.body).not.toContain('the waiting job resumes');
+    expect(sent()).toBe(0);
+
+    // The next sweep — seconds away, and always ahead of the dispatcher — writes the footer that says so.
+    expect(sweep().closed).toEqual([prop.data.id]);
+    const closed = findInboxById(vault, prop.data.id)!;
+    expect(closed.body).toContain(`returned unsent by ${TRUST_GATES[0]}`);
+    expect(closed.body).toContain('**Nothing was sent.**');
+    // The author resumes and is told. Its proposal *was* approved, so the harness lets it carry on and file a
+    // fresh call rather than finishing it blocked — the asymmetry Ruling Q1 draws: only a call the owner never
+    // answered ends the job, because that job has nothing else to wait for.
+    await dispatch();
+    expect((await runJob(h, job)).status).toBe('done');
+    expect(sent()).toBe(0);
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
+    expect(String(vault.events.query({ types: ['guardrail.blocked'] }).at(-1)!.payload.reason)).toContain('returned by');
   });
 
   it("the offices' own verdicts release the call: two passes through the review jobs and it sends", async () => {
@@ -234,6 +269,60 @@ describe('the sweep files each review once, and fails closed loudly (spec §5)',
     expect((await runJob(spy, reviews[0])).status).toBe('done');
     expect(seen.join('\n')).toContain('before it leaves the company');
     expect(seen.join('\n')).toContain('nursery@example.com');
+  });
+
+  // `blocked` is a reviewer that finished by asking the owner something; `cancelled` is the owner closing the
+  // review job. Neither ever records a verdict, and nothing requeues either.
+  it.each(['blocked', 'cancelled'])('a review that ends %s without a verdict is a return, said out loud', async (status) => {
+    const { h, dispatch } = scene('pass');
+    const { job, prop, key, reviews } = await fileAnEmail(h);
+    approve(prop.path);
+    await dispatch();
+    expect((findInboxById(vault, prop.data.id)!.data as { refused?: string }).refused).toBe(TRUST_PENDING_HOLD);
+
+    // One office answers; the other's review ends without ever recording one. Before this, that gate stayed
+    // pending for ever — the sweep will not re-file a review whose deterministic id already exists, so the
+    // dispatcher held the call, `trustHeld` held the author's job, and nothing said why.
+    expect((await runJob(h, reviews[0])).status).toBe('done');
+    if (status === 'cancelled') cancelJob(vault, reviews[1], 'owner', 'the owner closed it');
+    else updateJob(vault, reviews[1], { status: 'blocked', blocked_on: { kind: 'owner', id: reviews[1], since: nowIso() } }, 'daemon');
+
+    expect(sweep().closed).toEqual([prop.data.id]);
+    const st = trustState(vault.events, key);
+    expect(st.passed).toHaveLength(1);
+    expect(st.returned).toHaveLength(1);
+    const closed = findInboxById(vault, prop.data.id)!;
+    expect(closed.data.resolved_at).toBeTruthy();
+    expect(closed.body).toContain(`ended ${status} without a verdict`);
+    expect(closed.body).toContain('**Nothing was sent.**');
+
+    const warns = () => vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'trust.review');
+    expect(warns()).toHaveLength(1);
+    expect(String(warns()[0].payload.message)).toContain('returned unsent rather than held for ever');
+    expect(String(warns()[0].payload.job)).toBe(reviews[1]);
+    sweep();
+    expect(warns()).toHaveLength(1);      // once per office per proposal, not once per tick
+
+    // The author is woken, told what the office never got round to saying, and sends nothing.
+    expect(await dispatch()).toBeGreaterThan(0);
+    await runJob(h, job);
+    expect(sent()).toBe(0);
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
+    expect(String(vault.events.query({ types: ['guardrail.blocked'] }).at(-1)!.payload.reason)).toContain('without a verdict');
+  });
+
+  it('a review still on its way is not mistaken for one that ended', async () => {
+    const { h } = scene('pass');
+    const { prop, key, reviews } = await fileAnEmail(h);
+    // Blocked on something that will answer: a quota retry, a colleague's answer, the owner's approval of one of
+    // the reviewer's own calls. `requeueUnblocked` and the harness resume wake all three, so the gate is still
+    // pending, not returned — the hold is correct here and the call must not be closed.
+    updateJob(vault, reviews[0], { status: 'blocked', blocked_on: { kind: 'quota', id: 'all-providers', since: nowIso() } }, 'daemon');
+    updateJob(vault, reviews[1], { status: 'blocked', approval: 'pending', blocked_on: { kind: 'proposal', id: 'prop_x', since: nowIso() } }, 'daemon');
+    expect(sweep()).toEqual({ reviews: [], closed: [] });
+    expect(trustState(vault.events, key).returned).toEqual([]);
+    expect(findInboxById(vault, prop.data.id)!.data.resolved_at).toBeNull();
+    expect(vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'trust.review')).toEqual([]);
   });
 
   it('an office with nobody to run its review warns once and leaves the call refused for ever', async () => {
