@@ -472,16 +472,27 @@ function chairFormat(): string[] {
   return [
     `VERDICT: ${PRESSURE_VERDICTS.join(' or ')} — one of those three, and nothing else on that line.`,
     `RUBRIC: ${RUBRIC_DIMENSIONS.map((d) => `${RUBRIC_LABEL[d]} <0-2>`).join(', ')} — out of ${RUBRIC_MAX}.`,
+    'WEDGE: <the narrowest useful slice, and the most desperate users to aim it at> — on PIVOT REQUIRED only; leave the line out otherwise.',
     '',
     'Then the five parts, in this order, under these headings:',
     '',
     ...PRESSURE_PARTS.map((part) => `## ${part}${CHAIR_HEADING[part]}`),
     '',
-    'On PIVOT REQUIRED only, close with a line `WEDGE: <the narrowest useful slice, and the most desperate users to aim it at>`.',
-    '',
     `Be direct. Never write "${BANNED_HEDGE}" — it is a way of not deciding. You cannot delay, and you do not decide: the owner does.`,
   ];
 }
+
+/**
+ * What the idea chair may write, in tokens (ruling H4). The plan's chair keeps the 600 it has always had.
+ *
+ * Before SP5b the chair wrote one verdict line and up to four bullets inside 600 tokens. It is now asked for
+ * three machine lines and five headed sections, and an answer that runs past the cap is cut **from the end** —
+ * where, under the old ordering, the `WEDGE:` line sat. `PIVOT REQUIRED` is precisely the verdict where the
+ * wedge is the point, so a truncated answer degraded to "the board says pivot but named no wedge" on an answer
+ * whose chair had named one. The wedge is asked for second now, and the cap doubles: it is one call per
+ * session either way, so the number of calls the budget counts does not move (spec §2).
+ */
+export const CHAIR_IDEA_TOKENS = 1200;
 
 /**
  * The one re-ask a chair gets, and only when it answered badly rather than not at all (spec Decision 6). It
@@ -491,7 +502,7 @@ export function chairReaskPrompt(s: BoardSubject, transcript: string, why: strin
   return [
     `That answer was not usable: ${why}.`,
     '',
-    `Answer again on "${s.title}", from the same advisors' notes. The first line must be exactly "VERDICT: " followed by one of ${PRESSURE_VERDICTS.join(', ')} and nothing else, then the RUBRIC line, then the five parts. Decide. In full, the form your answer owes:`,
+    `Answer again on "${s.title}", from the same advisors' notes. The first line must be exactly "VERDICT: " followed by one of ${PRESSURE_VERDICTS.join(', ')} and nothing else, then the RUBRIC line, then the WEDGE line if you are pivoting, then the five parts. Decide. In full, the form your answer owes:`,
     '',
     ...chairFormat(),
     '',
@@ -556,7 +567,7 @@ export async function runBoardSession(
     notes.push(`### ${advisorName(vault, a)}\n${text ?? '(no answer: no model was available)'}`);
   }
   const transcript = notes.join('\n\n');
-  const chair = (prompt: string): Promise<string | null> => askAs(deps, board.lead, advisorSystem(vault, board.lead), prompt, 600, leadTier);
+  const chair = (prompt: string): Promise<string | null> => askAs(deps, board.lead, advisorSystem(vault, board.lead), prompt, s.kind === 'idea' ? CHAIR_IDEA_TOKENS : 600, leadTier);
   const merged = await chair(chairPrompt(s, transcript));
   // No answer at all is not a bad answer. With no model available the session falls open exactly as it did
   // before the pressure test existed, and `answered === 0` is what tells the owner nobody reviewed anything —
