@@ -7,6 +7,7 @@ import {
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath } from '@cubicle/tools';
 import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
+import { cancelPointlessTrustReviews, trustGatesForNote } from './trust.js';
 import { applyHire, applyFire, applyReorg, charterDiffSection } from './evolution.js';
 import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
 import { appendObservation } from '@cubicle/harness';
@@ -421,6 +422,9 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     }
     vault.updateNote(note.path, (nn) => { const { refused: _r, refused_at: _a, ...rest } = nn.data as Record<string, unknown>; return { data: { ...rest, resolved_at: nowIso() }, body: nn.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: ${outcome}_\n` }; }, 'daemon');
     vault.db.prepare('DELETE FROM refusals WHERE path = ?').run(note.path);
+    // The note is closed, so its call can never run — above all when the owner said no while the two reviews were
+    // still out (C1). A review left in the queue would spend a cheap model call on a call nobody can send.
+    if (d.call) cancelPointlessTrustReviews(vault, trustGatesForNote(deps.toolsConfig, d), d.call.idempotency_key, `${d.id} was closed (${outcome.slice(0, 100)}) before this review ran, so there is nothing left to review`);
     vault.events.emit({ type: 'proposal.resolved', agent: 'owner', job: d.job ?? null, payload: { id: d.id, kind: d.kind, approved: d.approved, outcome } });
     n++;
   }
@@ -535,7 +539,14 @@ export function requeueUnblocked(vault: Vault, questionWaitMs = DEFAULT_QUESTION
       // `resolved_at` counts as an answer even with `approved: null`, and that clause is what stops the one
       // stranding the trust sweep exists to prevent (Decision 19): a call an office returned is closed unsent
       // whether or not the owner ever reached the inbox, and its author has to be resumed and told why.
-      ready = !!p && (p.data.approved !== null || !!p.data.resolved_at) && !(opts.trustHeld?.(p.data) ?? false);
+      //
+      // **A resolved note can never send, so it must never hold its author** (C1). `trustHeld` only asks whether
+      // the two gates have answered, and the sweep skips a resolved note outright — so on the ordinary path where
+      // the owner says *no* while the reviews are out, the gates stay pending for ever, and without this clause
+      // the author sat `blocked` on a closed proposal for the life of the vault, in no "What needs you" row and
+      // with no warning anywhere. The rejection (or the sweep's verdict footer) is the answer the job resumes on.
+      const held = !!p && !p.data.resolved_at && (opts.trustHeld?.(p.data) ?? false);
+      ready = !!p && (p.data.approved !== null || !!p.data.resolved_at) && !held;
     } else if (b.kind === 'job') {
       const sub = readJob(vault, b.id);
       ready = (!!sub && ['done', 'failed', 'cancelled'].includes(sub.data.status)) || Date.now() - Date.parse(b.since) > PLAN_WAIT_BUDGET_MS;

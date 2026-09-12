@@ -247,6 +247,60 @@ describe('nothing is spent while the reviews are out (spec §3)', () => {
     expect(listJobs(vault).filter((j) => j.type.endsWith('.review'))).toHaveLength(2);   // the first call's two, and no more
     expect(listInbox(vault).find((n) => n.data.id === prop.data.id)!.data.resolved_at).toBeNull();
   });
+
+  // C1: the reviews are still out when the owner says no. Before this, `trustHeld` answered `hold` for the closed
+  // note too — the sweep skips a resolved note, so its gates can never move again — and the author sat blocked on
+  // a proposal nobody would ever touch, in no "What needs you" row and with no warning anywhere.
+  it('the owner rejecting a call whose reviews are still out never strands its author (C1)', async () => {
+    const { h, dispatch } = scene('pass');
+    const { job, prop, key, reviews } = await fileAnEmail(h);
+    approve(prop.path, 'false');
+
+    // One pass: the note is closed rejected, and the same pass wakes the author.
+    expect(await dispatch()).toBeGreaterThan(0);
+    const closed = findInboxById(vault, prop.data.id)!;
+    expect(closed.data.resolved_at).toBeTruthy();
+    expect(closed.body).toContain('rejected');
+    expect(trustState(vault.events, key).pending).toHaveLength(2);   // neither office ever answered, and never will
+    expect(readJob(vault, job)!.data.status).toBe('queued');
+    expect(requeueUnblocked(vault)).toBe(0);                          // woken once, not once per tick
+
+    // The two reviews are dropped rather than run: a rejected send cannot leave the company whatever they say.
+    for (const r of reviews) expect(readJob(vault, r)!.data.status).toBe('cancelled');
+
+    // The author resumes, is told the owner refused, and sends nothing.
+    expect((await runJob(h, job)).status).toBe('done');
+    expect(sent()).toBe(0);
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
+    expect(readJob(vault, job)!.data.approval).toBe('rejected');
+    expect(readJob(vault, job)!.body).toContain('rejected by owner');
+    expect(readJob(vault, job)!.data.blocked_on).toBeUndefined();
+  });
+
+  it('a review ending without a verdict after the rejection cannot re-strand it (C1)', async () => {
+    const { h, dispatch } = scene('pass');
+    const { job, prop, key, reviews } = await fileAnEmail(h);
+    // This one was already with its office when the owner answered, so it is not dropped with the other.
+    updateJob(vault, reviews[1], { status: 'running' }, 'daemon');
+    approve(prop.path, 'false');
+    expect(await dispatch()).toBeGreaterThan(0);
+    expect(readJob(vault, reviews[0])!.data.status).toBe('cancelled');
+    expect(readJob(vault, reviews[1])!.data.status).toBe('running');
+
+    // It then ends without ever recording a verdict. The sweep cannot help — it skips a resolved note, so that
+    // gate is pending for ever — and before C1 this is where the author's job stayed blocked for the life of the
+    // vault: `status: blocked`, both gates pending, and not one `daemon.warning` about it.
+    updateJob(vault, reviews[1], { status: 'blocked', blocked_on: { kind: 'owner', id: reviews[1], since: nowIso() } }, 'daemon');
+    for (let i = 0; i < 10; i++) { sweep(); await dispatch(); }
+    expect(trustState(vault.events, key).pending).toHaveLength(2);
+    expect(readJob(vault, job)!.data.status).toBe('queued');
+    expect(listJobs(vault, { status: ['blocked'] }).filter((j) => j.blocked_on?.kind === 'proposal')).toEqual([]);
+
+    // And the author finishes, told what the owner decided, with nothing sent.
+    expect((await runJob(h, job)).status).toBe('done');
+    expect(sent()).toBe(0);
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
+  });
 });
 
 describe('the sweep files each review once, and fails closed loudly (spec §5)', () => {

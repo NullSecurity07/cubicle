@@ -1,6 +1,6 @@
 import {
   type Vault, type InboxFrontmatter, type JobFrontmatter, type GateTable, type Org,
-  listInbox, createJob, jobPath, readJob, loadOrg, loadGates, nowIso,
+  listInbox, createJob, cancelJob, jobPath, readJob, loadOrg, loadGates, nowIso,
   trustReviewsFor, trustState, trustReviewerFor, trustJobId, trustGateGoal, trustGateLabel, recordTrustVerdict, type TrustState,
 } from '@cubicle/core';
 import type { ToolsConfig } from '@cubicle/tools';
@@ -95,6 +95,27 @@ export function trustStateForNote(vault: Vault, cfg: ToolsConfig, d: InboxFrontm
   return trustState(vault.events, d.call.idempotency_key, gates);
 }
 
+/**
+ * Drop the reviews a *closed* call no longer needs, and say so in each cancelled job's log.
+ *
+ * A call whose proposal is resolved can never leave the company — the owner turned it down, or a review already
+ * returned it — so a review still sitting in the queue would spend a cheap model call reading something that
+ * cannot run, which is exactly the cost Ruling Q14 avoids on the filing side. Only a `queued` review is
+ * cancelled: one that is running may be a moment from its verdict, and yanking a job mid-step loses the work.
+ * Returns the ids it cancelled (usually none: on the happy path both reviews are long done).
+ */
+export function cancelPointlessTrustReviews(vault: Vault, gates: string[], key: string, why: string): string[] {
+  const out: string[] = [];
+  for (const gate of gates) {
+    const id = trustJobId(key, gate);
+    const job = readJob(vault, id);
+    if (!job || job.data.status !== 'queued') continue;
+    cancelJob(vault, id, 'daemon', why);
+    out.push(id);
+  }
+  return out;
+}
+
 export function sweepTrustReviews(deps: TrustSweepDeps): TrustSweepResult {
   const vault = deps.vault;
   const gates = deps.gates ?? loadGates();
@@ -112,6 +133,8 @@ export function sweepTrustReviews(deps: TrustSweepDeps): TrustSweepResult {
     if (st.pending.length) st = returnEndedReviews(vault, note, need, st);
     if (st.returned.length) {
       closeReturned(vault, note, st);
+      // The other office's review, if it is still in the queue, is now reading a call that cannot run.
+      cancelPointlessTrustReviews(vault, need, call.idempotency_key, `${d.id} was returned by ${st.returned.join(' and ')} and closed unsent, so there is nothing left to review`);
       out.closed.push(d.id);
       continue;
     }
