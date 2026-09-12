@@ -21,8 +21,15 @@ const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = {
   doc: { t: 'D', c: PALETTE.tool.doc }, chart: { t: '%', c: PALETTE.tool.chart }, chat: { t: '…', c: PALETTE.tool.chat },
 };
 const SPEED = 70; // px/s
-/** Where the cab's floor line sits below the car's own top edge (world/elevator-view.ts draws it at `carH - 6`). */
-export const CAR_FLOOR_Y = 3 * TILE - 6;
+/**
+ * Where a rider stands inside the cab, below the car's own top edge.
+ *
+ * The cab's floor line is at `carH - 6` (world/elevator-view.ts). The rider's origin sits `RING_BELOW` above it,
+ * because the role ring is drawn at the feet and hangs a few pixels under the origin — put the feet on the line
+ * and the ring is what spills into the shaft instead of the legs (visual QA R-M7).
+ */
+const RING_BELOW = 3;   // the ring is a circle at cy -2, r 5, with a 1 px stroke: 3 px of it is under the origin
+export const CAR_FLOOR_Y = 3 * TILE - 6 - RING_BELOW;
 const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
 
 /** The pantry: a coffee after a finished job, and now and then after a long quiet spell at the desk. */

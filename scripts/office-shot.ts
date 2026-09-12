@@ -195,9 +195,13 @@ try {
   // the shot catches an idle shaft and proves nothing. `moving` specifically, not merely `waiting`: this shot is the
   // one that proves the doors stay shut while the car travels, and a car still parked proves nothing.
   // A raw Playwright timeout here would skip the daemon shutdown below, so turn it into a throw the try/finally owns.
-  await page.waitForFunction(() => ((window as unknown as Cub).__cubicle.elevator() as { status: string }).status === 'moving', undefined, { timeout: 30000, polling: 50 })
-    .catch(() => { throw new Error('07: the car never moved'); });
-  const elev = await cub((c) => c.elevator()) as { row: number };
+  //
+  // With a rider aboard, not merely moving: the car's first move is the empty run up to fetch the COO, and a shot
+  // taken then is an empty cab. This scene is also the only evidence for the rider sitting *inside* the car rather
+  // than hanging through its floor into the shaft (visual QA R-M7), and an empty cab proves neither.
+  await page.waitForFunction(() => { const e = (window as unknown as Cub).__cubicle.elevator() as { status: string; riders: unknown[] }; return e.status === 'moving' && e.riders.length > 0; }, undefined, { timeout: 40000, polling: 50 })
+    .catch(() => { throw new Error('07: the car never carried anyone'); });
+  const elev = await cub((c) => c.elevator()) as { row: number };   // logged: the framing below is read off it
   console.log('elevator:', JSON.stringify(elev));
   // A floor fit is zoom 1, at which the car is 48 px tall and its doors are a smear. This shot is the one that has to
   // prove the doors stay shut in transit, so frame the shaft itself; `row` is where the car was a moment ago, and it
