@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  scaffoldVault, readLedger, moneyReport, loadOrg, officeHolder, formatMoney, LEDGER_PATH, ledgerTemplate,
+  scaffoldVault, readLedger, moneyReport, appendEntry, loadOrg, officeHolder, formatMoney, LEDGER_PATH, ledgerTemplate,
   RoleFrontmatter, type Vault, type CubicleEvent,
 } from '@cubicle/core';
 import { parseToolsConfig, vaultWrite, type ToolContext } from '../src/index.js';
@@ -117,6 +117,47 @@ describe('ledger.record (spec §1, §7)', () => {
     expect(a.ok && b.ok).toBe(true);
     expect(b.text).toContain('already in the book');
     expect(readLedger(vault).entries).toHaveLength(1);
+  });
+
+  it('one job may record a revenue and the cost of servicing it, and a replay of either still changes nothing (I3)', async () => {
+    // The ordinary shape of a sale, recorded the way the tool's own `ref` description says to: the job id, twice.
+    // Keyed on the ref alone, the cost was answered with "already in the book" — true of a row the agent never
+    // wrote — and the money quietly never reached the book.
+    const ref = 'job_20260912_ab12';
+    const sale = await ledgerRecord.handler({ kind: 'revenue', amount: '40.00', mode: 'live', why: 'Nursery order paid on the link', ref }, ctxFor('cso'));
+    const servicing = await ledgerRecord.handler({ kind: 'cost', amount: '6.00', mode: 'live', why: 'Courier for the nursery order', ref }, ctxFor('cso'));
+    expect(sale.ok && servicing.ok).toBe(true);
+    expect(servicing.text).not.toContain('already in the book');
+    expect(readLedger(vault).entries.map((e) => e.kind)).toEqual(['revenue', 'cost']);
+    expect(moneyReport(readLedger(vault), new Date()).cashCents).toBe(3400);
+
+    // And the replay of either is still one row: the key is the ref *and* the kind, so a retry is idempotent
+    // where it should be and blind nowhere.
+    const again = await ledgerRecord.handler({ kind: 'revenue', amount: '40.00', mode: 'live', why: 'Nursery order paid on the link', ref }, ctxFor('cso'));
+    expect(again.ok).toBe(true);
+    expect(again.text).toContain('already in the book');
+    expect(again.text).toContain(ref);                       // the ref the agent passed, not the stored key
+    expect(readLedger(vault).entries).toHaveLength(2);
+    expect(readLedger(vault).entries.map((e) => e.ref)).toEqual([`${ref}:revenue`, `${ref}:cost`]);
+  });
+
+  it('refuses the daemon\'s reserved `model-` refs, and the day\'s accrual still lands afterwards (I2)', async () => {
+    for (const ref of ['model-2026-09-12', 'MODEL-2026-09-12', ' model-anything ']) {
+      const r = await ledgerRecord.handler({ kind: 'cost', amount: '1.00', mode: 'live', why: 'Trying to take the daemon\'s own key', ref }, ctxFor('cfo'));
+      expect(r.ok).toBe(false);
+      expect(r.text).toContain('reserved');
+    }
+    expect(readLedger(vault).entries).toHaveLength(0);
+
+    // The key is still the daemon's: this is the row `accrueModelCosts` books, and it has to be `added`. If the
+    // refusal above had let a row through, `appendEntry` would answer "already there", `accruedDays` would call
+    // the day charged, and a real cost would be absent from the book for ever.
+    const day = appendEntry(vault, {
+      at: '2026-09-12T23:59:59.999Z', kind: 'cost', cents: 600, mode: 'live', who: 'daemon',
+      why: '2 model calls on priced models, 2026-09-12', ref: 'model-2026-09-12',
+    }, 'daemon');
+    expect(day.added).toBe(true);
+    expect(readLedger(vault).entries.map((e) => e.ref)).toEqual(['model-2026-09-12']);
   });
 });
 

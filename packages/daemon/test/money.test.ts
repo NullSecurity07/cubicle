@@ -627,6 +627,17 @@ describe('what the models cost (spec §3)', () => {
     expect(readLedger(vault).entries).toHaveLength(1);
   });
 
+  it('is not fooled by an agent row keyed near its own, and still books the day (I2, I3)', () => {
+    // What `ledger.record` stores for a job that recorded a cost: `<ref>:<kind>`. It is not a `model-<date>` row,
+    // so it cannot be mistaken for a charged day — and the daemon's own key for that day is still free. (The tool
+    // refuses a `model-` ref outright; this is the other half, at the reader.)
+    appendEntry(vault, { at: '2026-09-11T09:00:00.000Z', kind: 'cost', cents: 100, mode: 'live', who: 'cfo', why: 'A real charge the CFO booked', ref: 'model-2026-09-11:cost' }, 'cfo');
+    vault.events.emit({ type: 'router.call', agent: 'ceo', ts: '2026-09-11T10:00:00.000Z', payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
+    const e = accrueModelCost(vault, PRICED, NOW)!;
+    expect(e).toMatchObject({ kind: 'cost', cents: 300, ref: 'model-2026-09-11' });
+    expect(readLedger(vault).entries.map((x) => x.ref)).toEqual(['model-2026-09-11:cost', 'model-2026-09-11']);
+  });
+
   it('books every day a daemon that was off for three days owes, one row each', () => {
     for (const day of ['2026-09-09', '2026-09-10', '2026-09-11']) {
       vault.events.emit({ type: 'router.call', agent: 'ceo', ts: `${day}T10:00:00.000Z`, payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
