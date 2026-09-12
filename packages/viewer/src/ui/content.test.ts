@@ -261,6 +261,12 @@ describe('tower views (plan 3)', () => {
     expect(roomView('pantry', tower).html).toContain('Nobody here right now');
     const inPantry = { ...tower, agents: { ...tower.agents, cmo: { ...tower.agents.cmo, target: 'pantry' } } };
     expect(roomView('pantry', inPantry).html).toContain('data-open="agent:cmo"');
+    // SP5: the chat is readable from the room, and only from the pantry.
+    const chatting = { ...tower, now: Date.parse('2026-09-12T15:00:05.000Z'), pantry: { id: 'm1', participants: ['cmo', 'coo'], turns: [{ role: 'cmo', text: 'Nurseries keep asking for a weekly box.' }], idea: null, notFiled: null, note: null, open: true, at: '2026-09-12T15:00:00.000Z' } };
+    expect(roomView('pantry', chatting).html).toContain('Nurseries keep asking for a weekly box.');
+    expect(roomView('meetingroom', chatting).html).not.toContain('weekly box');
+    // A chat nobody closed is gone from the panel after ten minutes, rather than claiming one is in progress.
+    expect(roomView('pantry', { ...chatting, now: Date.parse('2026-09-12T15:20:00.000Z') }).html).not.toContain('weekly box');
     expect(viewFor('ceo_office', tower, ctx).mode).toBe('chat');
   });
   it('the agent sheet is pure: state line, team, reports-to, current job, charter link, Locate', () => {

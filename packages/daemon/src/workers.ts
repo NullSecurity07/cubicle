@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { type Vault, listJobs, readJob, updateJob, RoleFrontmatter, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, GATE_JOB_TYPES, LEDGER_PATH, type JobFrontmatter } from '@cubicle/core';
 import { runJob, type HarnessDeps, type JobOutcome } from '@cubicle/harness';
 import { runHeartbeat, type HeartbeatDeps, type HeartbeatOutcome } from './heartbeat.js';
+import { runPantryChat } from './pantry.js';
 
 export interface WorkerPoolOptions {
   harness: Omit<HarnessDeps, 'vault'>;
@@ -176,6 +177,9 @@ export class WorkerPool extends EventEmitter {
         const job = readJob(this.vault, jobId)!.data;
         let outcome: JobOutcome | HeartbeatOutcome;
         if (job.type === 'ceo.heartbeat') outcome = await runHeartbeat({ vault: this.vault, ...this.opts.heartbeat }, jobId);
+        // A conversation, not work: the same dependency bag the heartbeat gets, so the worker pool gains no
+        // option and the turns run against the same house budget the board session does (Decision 9).
+        else if (job.type === 'pantry.chat') outcome = await runPantryChat({ vault: this.vault, ...this.opts.heartbeat }, jobId);
         else outcome = await runJob({ vault: this.vault, ...this.opts.harness }, jobId);
         this.emit('outcome', { jobId, roleId, outcome });
       } catch (err) {

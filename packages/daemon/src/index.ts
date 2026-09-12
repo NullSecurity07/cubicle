@@ -13,3 +13,4 @@ export * from './doctor.js';
 export * from './static.js';
 export * from './discovery.js';
 export * from './money.js';
+export * from './pantry.js';

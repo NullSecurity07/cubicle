@@ -107,8 +107,11 @@ export const PLAN_WAIT_BUDGET_MS = 40 * 90_000;
  *  heartbeat's completion trigger and toward their team's WIP.
  *
  *  `finance.runway` joins `intelligence` for exactly its reason: it is the daemon's own once-a-day bookkeeping,
- *  not work anyone planned, and counting it would let the company's accounts drive its own cadence. */
-export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES, 'intelligence', 'research.measure', 'division.plan', 'board.premortem', 'board.session', 'finance.runway'];
+ *  not work anyone planned, and counting it would let the company's accounts drive its own cadence.
+ *
+ *  `pantry.chat` (SP5 §6) is the plainest case of all: it is a coffee break between two people who had nothing
+ *  to do, so counting it would have the company's own idleness triggering its next cycle. */
+export const NON_WORK_TYPES = ['ceo.heartbeat', 'company.plan', 'critic.premortem', 'team.plan', ...GATE_JOB_TYPES, 'intelligence', 'research.measure', 'division.plan', 'board.premortem', 'board.session', 'finance.runway', 'pantry.chat'];
 
 /**
  * The outbound services whose adapters are in mock mode for this env, in the order the brief names them. Asks the

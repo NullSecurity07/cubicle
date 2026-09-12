@@ -10,6 +10,7 @@
 import type { State, JobView, TeamView, AgentView } from '../state.js';
 import { md, inline } from './markdown.js';
 import { pixelIcon, type GlyphName } from './icons.js';
+import { pantryStale, PANTRY_TURN_CHARS, type PantryState } from './pantry.js';
 
 export type ViewMode = 'drawer' | 'doc' | 'chat' | 'viewer';
 export interface View {
@@ -288,7 +289,33 @@ export function roomView(roomId: string, s: State): View {
   const list = people.length
     ? rows(people.map((r) => row({ left: chip(s.agents[r].state, s.agents[r].state.replace(/_/g, ' ')), title: who(s, r), small: roleTitle(s, r), open: `agent:${r}`, actions: locate(r) })))
     : emptyHtml('chat', 'Nobody here right now');
-  return { mode: 'drawer', title, sub: team ? team.mission : undefined, html: section(team ? 'Team' : 'Here now', list, people.length || undefined) };
+  return { mode: 'drawer', title, sub: team ? team.mission : undefined, html: section(team ? 'Team' : 'Here now', list, people.length || undefined) + (roomId === 'pantry' ? pantrySection(s.pantry, s.now, (r) => who(s, r)) : '') };
+}
+
+/** One line of transcript, cut to the in-world budget with an ellipsis rather than a hard stop. */
+const cutTurn = (s: string, n: number): string => (s.length <= n ? s : s.slice(0, n - 1).trimEnd() + '…');
+
+/**
+ * The pantry's own section of the room panel: who is talking, the turns so far, the idea if one came out, and
+ * the note's path. Nothing here comes from the snapshot, so a viewer that reconnects after the chat ended is
+ * never told a conversation is in progress; the state ages out on its own (`pantryStale`).
+ */
+export function pantrySection(p: PantryState | null, now: number, nameOf: (role: string) => string): string {
+  if (!p || pantryStale(p, now)) return '';
+  const who = p.participants.map(nameOf).join(' and ') || 'nobody';
+  const head = p.open ? `${who} are having a coffee` : `${who} had a coffee`;
+  const body = p.turns.length
+    ? rows(p.turns.map((t) => row({ left: esc(nameOf(t.role)), title: cutTurn(t.text, PANTRY_TURN_CHARS), open: `agent:${t.role}` })))
+    : emptyHtml('chat', 'Nobody has said anything yet');
+  // Three outcomes, and the panel says which: a card was filed, the rule refused the idea and why (ruling Q12),
+  // or the chat simply produced nothing — which is the usual answer and must not read as a failure.
+  const idea = p.idea
+    ? `<div class="card"><b>Idea</b><div class="hintline">${esc(cutTurn(p.idea, 160))}</div></div>`
+    : p.notFiled
+      ? `<div class="card"><b>Idea</b><div class="hintline">Not filed: ${esc(cutTurn(p.notFiled, 160))}</div></div>`
+      : p.open ? '' : '<div class="card"><div class="hintline">Nothing new came of it.</div></div>';
+  const note = p.note ? `<div class="hintline">Written up in <code>${esc(p.note)}</code>.</div>` : '';
+  return section(head, body + idea + note, p.turns.length || undefined);
 }
 
 /** One job note, opened from a queue row. */

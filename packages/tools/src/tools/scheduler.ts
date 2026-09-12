@@ -39,6 +39,11 @@ export function systemTypes(org: Org): Record<string, string[]> {
     // SP5: a trust review is the daemon's job (it gates an outbound call, not a role's own work), but the
     // compliance office may still hand-queue one itself, same as operations and security do for their gates.
     'office:compliance.review': [ceo, comp],
+    // SP5 §6: the pantry chat is the tick's alone. It is in `NON_WORK_TYPES`, so nothing counts it — no WIP lane,
+    // no re-planning gate — and it carries no team, so an agent able to queue one could park work where the
+    // company cannot see it. Nobody may, not even the chief executive: two people are sent for a coffee because
+    // they are idle, which is a fact about the moment and not a decision anyone takes.
+    'pantry.chat': [],
   };
 }
 
