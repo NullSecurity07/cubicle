@@ -343,7 +343,10 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     const org = loadOrg(vault);
     vault.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell meal kits.', 'owner');
     ranYesterday(enqueueDiscovery(vault, org)!);
-    ownerSays(['We are also opening in schools.', 'The buyer there is the catering manager.', 'Two counties have asked.', 'We have no price for it yet.', 'What we do not know is whether the kitchens will cook it.'].join('\n'), '2026-09-11T13:00:00.000Z');
+    // An hour ago, not a fixed timestamp: `ranYesterday` back-dates the job by exactly 24 h from *now*, so a
+    // literal "2026-09-11T13:00Z" stopped being "after the last run" the moment the clock passed 13:00 UTC —
+    // and this case then failed for the rest of every day, on nothing but the time it was run.
+    ownerSays(['We are also opening in schools.', 'The buyer there is the catering manager.', 'Two counties have asked.', 'We have no price for it yet.', 'What we do not know is whether the kitchens will cook it.'].join('\n'), new Date(Date.now() - 3_600_000).toISOString());
     expect(currentDiscoveryStatus(vault)).toMatchObject({ run: true });
     expect(currentDiscoveryStatus(vault).why).toContain('new material');
   });
