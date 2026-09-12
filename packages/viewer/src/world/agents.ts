@@ -21,6 +21,8 @@ const ICON: Record<Exclude<ToolIcon, null>, { t: string; c: string }> = {
   doc: { t: 'D', c: PALETTE.tool.doc }, chart: { t: '%', c: PALETTE.tool.chart }, chat: { t: '…', c: PALETTE.tool.chat },
 };
 const SPEED = 70; // px/s
+/** Where the cab's floor line sits below the car's own top edge (world/elevator-view.ts draws it at `carH - 6`). */
+export const CAR_FLOOR_Y = 3 * TILE - 6;
 const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
 
 /** The pantry: a coffee after a finished job, and now and then after a long quiet spell at the desk. */
@@ -197,7 +199,10 @@ export class AgentSprite {
     this.container.setVisible(true);
     const m = (car as Phaser.GameObjects.Container).mask;
     if (m) this.container.setMask(m as Phaser.Display.Masks.GeometryMask);
-    this.container.setPosition(car.x, car.y + 3 * TILE - 2);
+    // Stand the rider on the cab's own floor line, not 4 px through it: the legs, and the name plate under them,
+    // used to hang out of the bottom of the car into the shaft (visual QA R-M7). `CAR_FLOOR_Y` is where
+    // `world/elevator-view.ts` draws that line.
+    this.container.setPosition(car.x, car.y + CAR_FLOOR_Y);
     this.setRiding(true); this.dir = 0;
   }
   /** Out of the car at a floor's elevator door. */
@@ -409,9 +414,11 @@ export class AgentSprite {
   /** Ruling F1: the name is hidden below zoom 2 and held at a constant screen size above it, or on hover / selection. */
   private applyLabel(): void {
     const zoom = this.scene.cameras?.main?.zoom ?? 1;
-    if (!this.labelLatch.changed(`${zoom}|${this.hovered}|${this.selected}|${this.siblings.length}`)) return;
+    if (!this.labelLatch.changed(`${zoom}|${this.hovered}|${this.selected}|${this.siblings.length}|${this.riding}`)) return;
     const v = nameLabelView(zoom, { hover: this.hovered, selected: this.selected });
-    this.label.setVisible(v.visible).setScale(v.scale).setText(nameLabelText(this.view.display, v.chars, this.siblings));
+    // A name plate hangs below the feet, and inside the cab that is outside the car (R-M7): the elevator's own
+    // digits say which floor the car is on, and the rider is visible through the doorway when it opens.
+    this.label.setVisible(v.visible && !this.riding).setScale(v.scale).setText(nameLabelText(this.view.display, v.chars, this.siblings));
   }
 
   debug(): Record<string, unknown> { return { role: this.view.role, state: this.view.state, mood: this.view.mood, emote: this.view.emote?.kind ?? null, bubble: this.view.bubble?.kind ?? null, target: this.view.target, currentTarget: this.currentTarget, walkingTo: this.walkingTo, detour: this.detour, pathLen: this.path.length, legs: this.legs, waitingRide: this.waitingRide, riding: !!this.car, pendingTarget: this.pendingTarget, tile: this.tile(), seat: this.seat, desk: this.view.desk, home: this.homeTile() }; }

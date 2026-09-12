@@ -59,8 +59,20 @@ describe('families and role palettes', () => {
     for (const k of ['shirt', 'shirtDark', 'accent', 'hair', 'skin', 'trousers', 'ring'] as const) expect(a[k]).toMatch(/^#[0-9a-f]{6}$/);
   });
   it('roleColor keeps the three known overrides and equals the ring', () => {
-    expect(roleColor('ceo')).toBe(0xf2c14e); expect(roleColor('cto')).toBe(0x4e9af2); expect(roleColor('coo')).toBe(0xb98ef2);
+    expect(roleColor('ceo')).toBe(0x3fb8a6); expect(roleColor('cto')).toBe(0x4e9af2); expect(roleColor('coo')).toBe(0xb98ef2);
     expect(roleColor('qa_lead')).toBe(hexToInt(rolePalette('qa_lead', 'manager').ring));
+  });
+  /**
+   * Visual QA M7 / R-M1: the CEO's ring was `#f2c14e`, which is the amber family the palette reserves for
+   * attention, so in `08-board` the CEO alone carried a gold disc among blue and purple ones.
+   */
+  it('gives no role a ring in the accent hue', () => {
+    const amber = hexToHsl(PALETTE.amber);
+    for (const role of ['ceo', 'cto', 'coo', 'qa_lead', 'dev_manager', 'advisor_skeptic']) {
+      const ring = rolePalette(role, 'member').ring, c = hexToHsl(ring);
+      const dh = Math.abs(((c.h - amber.h + 540) % 360) - 180);
+      expect(dh > 25 || c.s < 0.25, `${role} ring ${ring}`).toBe(true);
+    }
   });
 });
 

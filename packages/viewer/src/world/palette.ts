@@ -63,6 +63,12 @@ export const PALETTE = {
   good: '#4cae5c', warn: '#e0a030', bad: '#c0392b', barTrack: '#2a2e37',
   wipe: '#ffffff',
   glassLit: '#5ad1ff', minimapBg: '#0e1014',
+  /**
+   * What is in the sky besides the gradient. The sun is a pale warm white, not the amber `#e6a93c`: amber is the
+   * one colour this product spends on attention (the elevator digits, the LIVE badge, the caret, badge counts),
+   * and a sun in it made the day sky look like it was asking to be clicked (visual QA R-M6).
+   */
+  sun: '#fff3d2', sunRim: '#f6dfa8', moon: '#e4e8f2', moonRim: '#a8b1c6', crater: '#c9d0e0',
   labelInk: '#ffffff', labelStroke: '#000000',
   /** the letter-badge behind a sprite's current tool: one colour per tool family, never amber */
   tool: { browser: '#2a6fdb', terminal: '#2b2f3a', envelope: '#c0392b', doc: '#7a5c2e', chart: '#2e7d32', chat: '#6a3fb0' },
@@ -107,7 +113,13 @@ export function familyOf(role: string, o: { title?: string; team?: string; isLea
   return 'member';
 }
 
-const RING_OVERRIDES: Record<string, string> = { ceo: '#f2c14e', cto: '#4e9af2', coo: '#b98ef2' };
+/**
+ * Ring colours that are fixed rather than hashed. The CEO's used to be `#f2c14e`, which is the amber family the
+ * palette reserves for attention: in `08-board` the CEO alone carried a gold disc among blue and purple ones and
+ * read as the thing asking to be looked at (visual QA M7/R-M1). Teal says "this one is different" without
+ * borrowing the accent.
+ */
+const RING_OVERRIDES: Record<string, string> = { ceo: '#3fb8a6', cto: '#4e9af2', coo: '#b98ef2' };
 const FAMILY_SL: Record<Family, { s: number; l: number }> = { chief: { s: 0.55, l: 0.42 }, manager: { s: 0.55, l: 0.52 }, member: { s: 0.55, l: 0.60 }, advisor: { s: 0.35, l: 0.50 }, owner: { s: 0, l: 0.2 } };
 
 /** Shirt hue snapped to a 12-hue wheel; saturation/lightness by family; hair and skin by hash. */

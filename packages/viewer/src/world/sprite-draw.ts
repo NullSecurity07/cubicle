@@ -72,6 +72,23 @@ function legs(p: Px, b: Body, step: number): void {
   outlined(p, 4, 18, 3, step === 0 ? 5 : 6, t, b.o); outlined(p, 9, 18, 3, step === 2 ? 5 : 6, t, b.o);
   if (step === 1 || step === 3) p.fill(6, 22, 4, 1, t);   // pass: feet together
 }
+/**
+ * A seated lower half: a thigh, two shins with a gap, and a shoe row — the shape `legs()` already draws standing.
+ *
+ * It used to be one 8 x 3 outlined slab plus a 3 x 3 foot block, both in the family's trousers under a dark
+ * outline, so four advisors at one table each carried a featureless dark rectangle where a person's legs should
+ * be (visual QA R-I5). `x` is the left edge of the thigh; the knees face the way the sprite is turned.
+ */
+function sitLegs(p: Px, b: Body, x: number): void {
+  const t = b.pal.trousers, shoe = outlineOf(t);
+  outlined(p, x, 18, 8, 2, t, b.o);                 // thigh, along the seat
+  // Three wide with two of outline between them, which is exactly the proportion `legs()` reads as two legs at
+  // this size. Two-wide shins were tried first: a 1 px outline each side left more outline than trouser, and the
+  // whole lower half went back to being one dark block.
+  outlined(p, x, 20, 3, 3, t, b.o);                 // near shin
+  outlined(p, x + 5, 20, 3, 3, t, b.o);             // far shin, with a gap between them
+  p.fill(x, 22, 3, 1, shoe); p.fill(x + 5, 22, 3, 1, shoe);
+}
 function seatedBase(p: Px, b: Body): void { head(p, b, 0); torso(p, b); outlined(p, 4, 18, 8, 3, b.pal.trousers, b.o); }
 const cup = (p: Px, x: number, y: number): void => { p.fill(x, y, 3, 3, '#f5f5f0'); px(p, x + 3, y + 1, '#f5f5f0'); px(p, x + 1, y - 1, '#cfd6e6'); };
 
@@ -93,8 +110,8 @@ export function drawSpriteFrame(p: Px, name: string, pal: RolePalette, family: F
     case 'wave': head(p, b, 0, dy); torso(p, b, dy); p.fill(3, 11 + dy, 1, 5, skin); p.fill(13, 6 + dy, 1, 6, skin); p.fill(12, 5 + dy, 3, 1, skin); legs(p, b, 0); return;
     case 'stretch': head(p, b, 0, dy); torso(p, b, dy); p.fill(2, 4 + dy, 1, 7, skin); p.fill(13, 4 + dy, 1, 7, skin); legs(p, b, 0); return;
     case 'ride': head(p, b, 0, dy); torso(p, b, dy); p.fill(2, 11 + dy, 1, 5, skin); p.fill(13, 11 + dy, 1, 4, skin); px(p, 13, 15 + dy, PALETTE.steelLight); legs(p, b, 1); return;
-    case 'sit_side_l': head(p, b, 1, dy); torso(p, b, dy); p.fill(3, 12 + dy, 1, 4, skin); outlined(p, 1, 18, 8, 3, pal.trousers, b.o); outlined(p, 1, 20, 3, 3, pal.trousers, b.o); return;
-    case 'sit_side_r': head(p, b, 2, dy); torso(p, b, dy); p.fill(12, 12 + dy, 1, 4, skin); outlined(p, 7, 18, 8, 3, pal.trousers, b.o); outlined(p, 12, 20, 3, 3, pal.trousers, b.o); return;
+    case 'sit_side_l': head(p, b, 1, dy); torso(p, b, dy); p.fill(3, 12 + dy, 1, 4, skin); sitLegs(p, b, 1); return;
+    case 'sit_side_r': head(p, b, 2, dy); torso(p, b, dy); p.fill(12, 12 + dy, 1, 4, skin); sitLegs(p, b, 7); return;
     default: head(p, b, 0, dy); torso(p, b, dy); arms(p, b, 0, 0, dy); legs(p, b, 0);
   }
 }
