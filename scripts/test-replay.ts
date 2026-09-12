@@ -39,7 +39,9 @@ const llm: Llm = {
   },
   promptBudget: () => 6000,
 };
-const d = new Daemon(defaultConfig(dir, { ...process.env, CUBICLE_ALLOW_LOCAL_FETCH: '1' }, { port: 0, tickMs: 1000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableSleepWatch: true, memory: false, log: () => undefined });
+// `disablePantry`: this script replays a fixed event log and counts what came back, and a coffee break scheduled
+// by the live tick would be an event the replay never had (SP5 Decision 20).
+const d = new Daemon(defaultConfig(dir, { ...process.env, CUBICLE_ALLOW_LOCAL_FETCH: '1' }, { port: 0, tickMs: 1000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableSleepWatch: true, disablePantry: true, memory: false, log: () => undefined });
 await d.start();
 const token = d.ws!.token;
 const webPort = d.config.port + 1; // port 0 binds an ephemeral port; d.config.port is the real one after start()

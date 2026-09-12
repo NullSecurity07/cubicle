@@ -14,6 +14,7 @@ import { createHeartbeatJob, NON_WORK_TYPES, type HeartbeatDeps } from './heartb
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
 import { captureResearchDeliveries, enqueueResearchFollowUps, enqueueExperimentReviews, maybeEnqueueCharterCompression, maybeEnqueueIntelligence, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions, maybeFlagLessons } from './evolution.js';
+import { maybeEnqueuePantryChat } from './pantry.js';
 import { hasIdea } from './first-run.js';
 import { StaticServer } from './static.js';
 import { pruneScreens } from '@cubicle/tools';
@@ -25,6 +26,8 @@ export interface DaemonOverrides {
   heartbeatHooks?: Partial<Pick<HeartbeatDeps, 'pollInbox' | 'pullAnalytics' | 'openMeeting' | 'noCloudKeys'>>;
   disableWs?: boolean;
   disableSleepWatch?: boolean;
+  /** Tests that count the company's jobs set this so they are not counting a coffee break (Decision 20). */
+  disablePantry?: boolean;
   memory?: boolean;
   log?: (msg: string) => void;
   /** Tests set false and close the vault themselves. */
@@ -410,6 +413,12 @@ export class Daemon {
       }
       const flags = await this.sweep(reason, 'flag-lessons', () => maybeFlagLessons(this.vault));
       if (flags?.length) this.log(`tick(${reason}): ${flags.length} expired flag(s) recorded as lessons`);
+      // Two people with nothing on have a coffee (SP5 §6). Scheduled from the tick rather than from a heartbeat
+      // step (Decision 7): idleness is a live condition, and the heartbeat runs when the company is at its
+      // busiest and would see nobody idle. It carries its own dormancy guard rather than sitting in the block
+      // above, because the guard is also what a replayed tick and a test's override read.
+      const chat = await this.sweep(reason, 'pantry', () => (this.overrides.disablePantry ? null : maybeEnqueuePantryChat(this.vault, { dormant: this.isDormant })));
+      if (chat) this.log(`tick(${reason}): pantry chat ${chat}`);
       await this.sweep(reason, 'heartbeat-trigger', () => {
         const last = this.vault.events.last('heartbeat.completed');
         const since = last ? (Date.now() - Date.parse(last.ts)) / 3600_000 : Infinity;

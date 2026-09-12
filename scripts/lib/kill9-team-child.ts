@@ -47,7 +47,8 @@ async function main() {
     },
     promptBudget: () => 6000,
   };
-  const d = new Daemon(defaultConfig(vaultPath, { ...process.env, CUBICLE_MOCK_TOOLS: '1' }, { tickMs: 300, maxConcurrentJobs: 3, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: (m) => console.log(`[cubicle] ${m}`) });
+  // `disablePantry`: this scenario counts the planning fan-out's jobs, and a coffee break is not one of them (SP5 Decision 20).
+  const d = new Daemon(defaultConfig(vaultPath, { ...process.env, CUBICLE_MOCK_TOOLS: '1' }, { tickMs: 300, maxConcurrentJobs: 3, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, disablePantry: true, memory: false, log: (m) => console.log(`[cubicle] ${m}`) });
   await d.start();
   const t0 = Date.now();
   // The first cycle only files the verdict note; keep asking until the board's verdict has stood and the

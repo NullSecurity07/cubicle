@@ -104,6 +104,42 @@ describe('viewer state machine (spec §10)', () => {
     const anHourOn = applyEvent(standup, { ts: '2026-09-11T11:00:00.000Z', type: 'job.done', agent: 'cto', job: 'job_x', payload: {} });
     expect(anHourOn.meetings.m2.open).toBe(true);
   });
+  // SP5 §8: two sprites at the pantry seats the map already has, and the transcript in the panel's own state.
+  it('a pantry chat walks two people to the counter, collects the turns, and ages out on its own clock', () => {
+    let s = applySnapshot(emptyState(), snap);
+    s = applyEvent(s, { ts: '2026-09-12T15:00:00.000Z', type: 'meeting.opened', agent: 'cmo', job: 'job_p', payload: { id: 'mp1', room: 'pantry', participants: ['cmo', 'coo'], agenda: 'A coffee in the pantry' } });
+    expect(s.agents.cmo.target).toBe('pantry');        // a room with seats: OfficeScene seats them, no Phaser change
+    expect(s.agents.coo.target).toBe('pantry');
+    expect(s.pantry).toMatchObject({ id: 'mp1', participants: ['cmo', 'coo'], turns: [], open: true });
+    s = applyEvent(s, { ts: '2026-09-12T15:00:10.000Z', type: 'meeting.turn', agent: 'cmo', job: 'job_p', payload: { id: 'mp1', round: 1, text: 'The nurseries keep asking for a weekly box.' } });
+    expect(s.pantry!.turns).toEqual([{ role: 'cmo', text: 'The nurseries keep asking for a weekly box.' }]);
+    s = applyEvent(s, { ts: '2026-09-12T15:00:20.000Z', type: 'meeting.closed', agent: 'cmo', job: 'job_p', payload: { id: 'mp1', room: 'pantry', turns: 1, path: 'Pantry/2026-09-12-cmo-and-coo.md', decision: 'IDEA: Weekly meal kits for nurseries' } });
+    expect(s.pantry).toMatchObject({ open: false, idea: 'Weekly meal kits for nurseries', note: 'Pantry/2026-09-12-cmo-and-coo.md' });
+    expect(s.agents.cmo.target).toBeNull();
+    // Half an hour on, the panel has let it go; a chat nobody closed goes at ten minutes (both off the log).
+    const later = applyEvent(s, { ts: '2026-09-12T15:31:00.000Z', type: 'job.done', agent: 'cto', job: 'job_x', payload: {} });
+    expect(later.pantry).toBeNull();
+    const lost = applyEvent(applySnapshot(emptyState(), snap), { ts: '2026-09-12T15:00:00.000Z', type: 'meeting.opened', agent: 'cmo', job: 'job_p', payload: { id: 'mp2', room: 'pantry', participants: ['cmo', 'coo'] } });
+    const elevenOn = applyEvent(lost, { ts: '2026-09-12T15:11:00.000Z', type: 'job.done', agent: 'cto', job: 'job_x', payload: {} });
+    expect(elevenOn.pantry).toBeNull();
+    expect(elevenOn.meetings.mp2.open).toBe(false);
+    expect(elevenOn.agents.cmo.target).toBeNull();
+  });
+
+  // Ruling Q8: a trust review's return is about the outbound call it read, and the review job it rides on has
+  // just finished — flipping that job back to `queued` would show a finished review re-opened on the board.
+  it('a trust review that returns a call does not re-open the review job on the board', () => {
+    let s = applySnapshot(emptyState(), snap);
+    s = applyEvent(s, ev('job.checkpoint', 'cmo', { in_review: 'office:compliance.review' }));
+    expect(s.jobs.job_1.status).toBe('in_review');
+    s = applyEvent(s, ev('review.returned', 'clo', { gate: 'office:compliance.review', trust: true, proposal: 'p1', findings: ['the address is not the one the owner approved'] }), 1000);
+    expect(s.jobs.job_1.status).toBe('in_review');
+    expect(s.feed.at(-1)!.text).toContain('office:compliance.review returned');
+    // An ordinary gate's return still re-queues the author's job, exactly as it always did.
+    s = applyEvent(s, ev('review.returned', 'qa_lead', { gate: 'team:qa.review', findings: ['no title'] }), 1000);
+    expect(s.jobs.job_1.status).toBe('queued');
+  });
+
   it('surfaces track browser sessions, frames, mail, terminal, proposals, deploys', () => {
     let s = applySnapshot(emptyState(), snap);
     s = applyEvent(s, ev('browser.session_started', 'cmo', { session: 's1' }));
@@ -137,6 +173,11 @@ describe('viewer state machine (spec §10)', () => {
     expect(beating.firstRun).toBe(true);
     const working = applySnapshot(emptyState(), { ...snap, brand: { name: '', tagline: '', url: '' }, jobs: [hb, { ...hb, id: 'job_x', type: 'engineer.ship', assigned: 'backend_engineer' }], chat: [] });
     expect(working.firstRun).toBe(false);
+    // Nor is a coffee break (SP5): the daemon opens the pantry from the first completed cycle, and on a new vault
+    // that cycle completes before the owner has typed anything. Two idle people must not hide the entrance.
+    const coffee = applySnapshot(emptyState(), { ...snap, brand: { name: '', tagline: '', url: '' }, jobs: [{ ...hb, id: 'job_pantry_1', type: 'pantry.chat', assigned: 'clo' }], chat: [] });
+    expect(coffee.firstRun).toBe(true);
+    expect(coffee.agents.ceo.state).toBe('entering');
   });
   it('the CEO entrance is a one-shot, not something every snapshot restarts', () => {
     const emptyCo = { ...snap, brand: { name: '', tagline: '', url: '' }, jobs: [], chat: [] };

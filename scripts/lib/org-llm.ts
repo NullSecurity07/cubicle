@@ -20,6 +20,15 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
       const base = { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 5, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] as { name: string; args: Record<string, unknown> }[] };
       if (!chat.tools) {
         const last = String(chat.messages.at(-1)?.content ?? '');
+        // A coffee in the pantry (SP5 §6). Answered properly rather than with the `ok` below, so a scripted run
+        // exercises the whole path — six turns, the closing `IDEA:` line, and the deterministic rule that judges
+        // it (ruling Q16). Checked first: the pantry's closing prompt is the only other one that says `IDEA:`,
+        // and it says nothing about a verdict, so it can never be mistaken for the board's.
+        if (/having a coffee in the pantry/.test(last)) {
+          return { ...base, tier: 'cheap' as const, content: /IDEA: <one sentence>/.test(last)
+            ? 'The nurseries would pay for it before we build anything.\nIDEA: A weekly meal-kit box for nurseries'
+            : 'The nurseries keep asking whether we deliver a weekly box.' };
+        }
         // A board chair's merge prompt, for either subject, names the exact verdict line; an advisor's does not.
         // Since SP3 the board also sits on ideas, and both chair prompts ask for "VERDICT: pass" — so the plan's
         // chair is identified by the phrase only its prompt carries ("this plan"; the idea's says "this idea").

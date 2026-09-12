@@ -46,7 +46,8 @@ async function main() {
     },
     promptBudget: () => 6000,
   };
-  const d = new Daemon(defaultConfig(vaultPath, { ...process.env, CUBICLE_MOCK_TOOLS: '1' }, { tickMs: 1000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: (m) => console.log(`[cubicle] ${m}`) });
+  // `disablePantry`: this script counts the company's jobs and their steps, and a coffee break is neither (SP5 Decision 20).
+  const d = new Daemon(defaultConfig(vaultPath, { ...process.env, CUBICLE_MOCK_TOOLS: '1' }, { tickMs: 1000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, disablePantry: true, memory: false, log: (m) => console.log(`[cubicle] ${m}`) });
   await d.start();
   if (d.vault.events.count('job.interrupted') > 0) console.log('JOB.INTERRUPTED EMITTED');
   const t0 = Date.now();

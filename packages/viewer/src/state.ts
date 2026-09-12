@@ -1,6 +1,7 @@
 /** Viewer state: a pure reducer over daemon events + snapshots. No persistence — the viewer is disposable (spec §10). */
 import { familyOf, type Family } from './world/palette.js';
 import { boardOpened, boardClosed, BOARD_SESSION_MAX_MS, type BoardState } from './ui/board.js';
+import { pantryOpened, pantryTurn, pantryClosed, pantryStale, PANTRY_SESSION_MAX_MS, type PantryState } from './ui/pantry.js';
 export type AgentState = 'idle_at_desk' | 'working' | 'walking' | 'talking' | 'error' | 'blocked' | 'entering' | 'leaving' | 'offline';
 export type ToolIcon = 'browser' | 'terminal' | 'envelope' | 'doc' | 'chart' | 'chat' | null;
 export type Mood = 'neutral' | 'happy' | 'worried' | 'puzzled' | 'asleep' | 'thinking';
@@ -59,6 +60,8 @@ export interface State {
   meetings: Record<string, { room: string; participants: string[]; open: boolean; at: string }>;
   /** The board room right now, or the verdict it just reached; null when the board is not in session. See ui/board.ts. */
   board: BoardState | null;
+  /** The pantry chat in progress, or the one that just ended; null when nobody is at the counter. See ui/pantry.ts. */
+  pantry: PantryState | null;
   frames: Record<string, { seq: number; jpegBase64?: string; path?: string }>;
   lastEventTs: string | null;
   deploys: { ts: string; url: string }[];
@@ -79,7 +82,7 @@ export function withFrameSeq(s: State, id: string, seq?: number): State {
   return { ...s, frames: { ...s.frames, [id]: { ...cur, seq: seq ?? cur.seq + 1 } } };
 }
 
-export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], money: null, latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], offices: {}, inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, board: null, frames: {}, lastEventTs: null, deploys: [], firstRun: false });
+export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], money: null, latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], offices: {}, inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, board: null, pantry: null, frames: {}, lastEventTs: null, deploys: [], firstRun: false });
 
 /** Who walks over when a job fails: the operations office. */
 export function overseerRole(st: Pick<State, 'offices'>): string { return st.offices?.operations ?? OVERSEER; }
@@ -124,6 +127,17 @@ function mergeChat(fromSnapshot: ChatMsg[], local: ChatMsg[]): ChatMsg[] {
   return [...fromSnapshot, ...extra].sort((a, b) => a.ts.localeCompare(b.ts));
 }
 
+/**
+ * Job types that are not work the company is doing, for the empty-office test below (spec §12 d).
+ *
+ * The heartbeat has never counted: a heartbeat job note can be in the vault before the owner has said anything.
+ * `pantry.chat` joins it for the same reason and a sharper one — the daemon's floor for a coffee break is one
+ * completed cycle (SP5 Decision 20), and the very first cycle of a brand-new vault is the one that completes
+ * before the owner has typed a word. Counting it would replace "What company will you start today?" with an
+ * ordinary office because two people with nothing to do went for a coffee.
+ */
+export const NOT_COMPANY_WORK = ['ceo.heartbeat', 'pantry.chat'];
+
 export function applySnapshot(s: State, snap: Snapshot): State {
   const agents: Record<string, AgentView> = {};
   const roles = Array.isArray(snap.roles) ? snap.roles : [];
@@ -132,7 +146,7 @@ export function applySnapshot(s: State, snap: Snapshot): State {
   // Spec §12 d): on an empty company the office is empty and the CEO walks in through the door to the cabin.
   // The CEO's own heartbeat does not count as work the company is doing — a heartbeat job note can be in the
   // vault before the owner has said anything, and counting it hid the entrance entirely (C1).
-  const firstRun = !(snap.brand?.name ?? '').trim() && jobList.every((j) => j.type === 'ceo.heartbeat') && (snap.chat ?? []).length === 0;
+  const firstRun = !(snap.brand?.name ?? '').trim() && jobList.every((j) => NOT_COMPANY_WORK.includes(j.type)) && (snap.chat ?? []).length === 0;
   // The entrance is a one-shot: it starts on the first snapshot of a viewer session and lasts until the CEO is
   // doing something else. Setting it on every snapshot sent the CEO back through the door for as long as the
   // vault stayed empty, overriding wherever an event had asked it to walk.
@@ -198,11 +212,16 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
   // of the table and three advisors standing in the board room for the rest of the day — the office claiming a
   // meeting is in progress, which is exactly what §6.2 rules out. Timed off the event log, like the rest of
   // this reducer, so a replay ages it out at the same point a live office does.
+  // The pantry has the same failure and its own, shorter clock (`PANTRY_SESSION_MAX_MS`): six cheap calls, and a
+  // kill in that window would otherwise leave two people standing at the counter for the rest of the day.
   for (const [id, m] of Object.entries(st.meetings)) {
-    if (!m.open || m.room !== 'board' || Date.parse(e.ts) - Date.parse(m.at) <= BOARD_SESSION_MAX_MS) continue;
+    const max = m.room === 'board' ? BOARD_SESSION_MAX_MS : m.room === 'pantry' ? PANTRY_SESSION_MAX_MS : null;
+    if (!m.open || max === null || Date.parse(e.ts) - Date.parse(m.at) <= max) continue;
     st.meetings[id] = { ...m, open: false };
     for (const r of m.participants) { const ag = st.agents[r]; if (ag?.active) st.agents[r] = { ...ag, target: null, state: 'walking' }; }
   }
+  // The panel keeps its own two clocks (Decision 21), so a finished chat stays readable after the sprites leave.
+  if (st.pantry && pantryStale(st.pantry, Date.parse(e.ts))) st.pantry = null;
   // Inactive (fired) agents no longer react to events; they only leave.
   const a = (role: string | null | undefined): AgentView | null => {
     if (!role || !st.agents[role] || !st.agents[role].active) return null;
@@ -223,7 +242,11 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'shell.output': st.terminal = [...st.terminal.slice(-300), String(p.text ?? '')]; break;
     case 'agent.spoke': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'speech', text: `→ ${String(p.to)}: ${String(p.text ?? '').slice(0, 120)}`, until: nowMs + BUBBLE_MS }; if (ag.state !== 'walking') ag.state = 'talking'; if (ag.mood === 'thinking') feel(ag, 'neutral', null); } if (p.to === 'owner') { st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `CEO → you: ${String(p.text ?? '')}` }]; if (e.agent === 'ceo') st.chat = [...st.chat.slice(-200), { ts: e.ts, from: 'ceo', text: String(p.text ?? '') }]; } break; }
     case 'job.checkpoint': { if (p.in_review) { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'in_review', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.job = null; ag.tool = null; ag.target = null; feel(ag, 'neutral', null); } } break; }
-    case 'review.returned': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'queued', updated: e.ts }; const author = a(j?.assigned); if (author) { feel(author, 'worried', 8000); emote(author, 'sweat', 4000); } const rev = a(e.agent); if (rev) { rev.bubble = { kind: 'speech', text: `→ ${j?.assigned ?? 'author'}: ${String((p.findings as string[] | undefined)?.[0] ?? 'please fix')}`.slice(0, 140), until: nowMs + BUBBLE_MS }; if (rev.state !== 'walking') rev.state = 'talking'; } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${String(p.gate)} returned ${String(e.job)}` }]; break; }
+    // A trust review's return is about the *call* it read, not about the job it is attached to (SP5 §3, ruling Q8):
+    // the review job itself has just finished, so flipping it back to `queued` would show a finished review as
+    // re-opened on the board and would aim the reviewer's line at the review's own assignee. The owner still sees
+    // the return in the decision feed, which is where an outbound call that was refused belongs.
+    case 'review.returned': { if (p.trust) { st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${String(p.gate)} returned ${String(e.job)}` }]; break; } const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'queued', updated: e.ts }; const author = a(j?.assigned); if (author) { feel(author, 'worried', 8000); emote(author, 'sweat', 4000); } const rev = a(e.agent); if (rev) { rev.bubble = { kind: 'speech', text: `→ ${j?.assigned ?? 'author'}: ${String((p.findings as string[] | undefined)?.[0] ?? 'please fix')}`.slice(0, 140), until: nowMs + BUBBLE_MS }; if (rev.state !== 'walking') rev.state = 'talking'; } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${String(p.gate)} returned ${String(e.job)}` }]; break; }
     case 'review.passed': { const rev = a(e.agent); if (rev) feel(rev, 'happy', 3000); break; }
     case 'plan.vetoed': { const c = a(e.agent) ?? a(vetoRole(st)); if (c) { emote(c, '!', 6000); feel(c, 'puzzled', 6000); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `the board returned the plan: ${String((p.findings as string[] | undefined)?.[0] ?? '')}` }]; break; }
     case 'research.delivered': { const r = a(e.agent); if (r) { emote(r, 'idea', 5000); feel(r, 'happy'); } break; }
@@ -234,9 +257,9 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'job.failed': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: p.requeued ? 'queued' : 'failed', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.badge = 'error'; ag.target = null; ag.tool = null; ag.job = null; ag.bubble = null; feel(ag, 'worried', 10000); emote(ag, 'sweat', 6000); } const overseer = overseerRole(st); const coo = a(overseer); if (coo && e.agent !== overseer) { const desk = e.agent ? st.agents[e.agent]?.desk : ''; if (desk) { coo.target = `desk:${desk}`; coo.state = 'walking'; } emote(coo, 'clipboard', 20000); } break; }
     case 'job.cancelled': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'cancelled', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.job = null; ag.tool = null; ag.target = null; ag.bubble = null; feel(ag, 'neutral', null); } break; }
     case 'job.interrupted': { const ag = a(e.agent); if (ag) ag.badge = 'blocked'; break; }
-    case 'meeting.opened': { const id = String(p.id); const parts = (p.participants as string[]) ?? []; const room = String(p.room ?? 'meeting'); st.meetings[id] = { room, participants: parts, open: true, at: e.ts }; for (const r of parts) { const ag = a(r); if (ag) { ag.target = room === 'board' ? 'boardroom' : 'meetingroom'; ag.state = 'walking'; } } st.board = boardOpened(p, e.ts) ?? st.board; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${room} meeting opened: ${String(p.agenda ?? '')}` }]; break; }
-    case 'meeting.turn': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'speech', text: String(p.text ?? '').slice(0, 140), until: nowMs + BUBBLE_MS }; ag.state = 'talking'; } break; }
-    case 'meeting.closed': { const id = String(p.id); if (st.meetings[id]) { st.meetings[id] = { ...st.meetings[id], open: false }; for (const r of st.meetings[id].participants) { const ag = a(r); if (ag) { ag.target = null; ag.state = 'walking'; } } } st.board = boardClosed(st.board, p, e.ts); st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `meeting closed → ${String(p.decision ?? '')}` }]; break; }
+    case 'meeting.opened': { const id = String(p.id); const parts = (p.participants as string[]) ?? []; const room = String(p.room ?? 'meeting'); st.meetings[id] = { room, participants: parts, open: true, at: e.ts }; for (const r of parts) { const ag = a(r); if (ag) { ag.target = room === 'board' ? 'boardroom' : room === 'pantry' ? 'pantry' : 'meetingroom'; ag.state = 'walking'; } } st.board = boardOpened(p, e.ts) ?? st.board; st.pantry = pantryOpened(p, e.ts) ?? st.pantry; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${room} meeting opened: ${String(p.agenda ?? '')}` }]; break; }
+    case 'meeting.turn': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'speech', text: String(p.text ?? '').slice(0, 140), until: nowMs + BUBBLE_MS }; ag.state = 'talking'; } st.pantry = pantryTurn(st.pantry, e.agent, p, e.ts); break; }
+    case 'meeting.closed': { const id = String(p.id); if (st.meetings[id]) { st.meetings[id] = { ...st.meetings[id], open: false }; for (const r of st.meetings[id].participants) { const ag = a(r); if (ag) { ag.target = null; ag.state = 'walking'; } } } st.board = boardClosed(st.board, p, e.ts); st.pantry = pantryClosed(st.pantry, p, e.ts); st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `meeting closed → ${String(p.decision ?? '')}` }]; break; }
     case 'browser.session_started': st.surfaces[String(p.session)] = { streamKind: 'browser', streamId: String(p.session), active: true, agent: e.agent ?? undefined }; break;
     case 'browser.frame': { const id = String(p.session); const cur = st.surfaces[id] ?? { streamKind: 'browser' as const, streamId: id, active: true }; st.surfaces[id] = { ...cur, lastFrame: String(p.path), active: true }; st.frames[id] = { ...(st.frames[id] ?? { seq: 0 }), seq: Number(p.seq), path: String(p.path) }; break; }
     case 'browser.session_ended': { const id = String(p.session); if (st.surfaces[id]) st.surfaces[id] = { ...st.surfaces[id], active: false, endedAt: e.ts }; break; }
