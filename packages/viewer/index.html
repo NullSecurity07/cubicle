@@ -53,7 +53,9 @@
       <span id="sunmoon"></span>
       <button id="playpause" class="icon replay-only" aria-label="Pause the replay (Space)"></button>
       <input type="range" id="scrub" class="replay-only" min="0" max="1000" value="0" disabled aria-label="Replay position" />
-      <select id="speed" class="replay-only" aria-label="Replay speed"><option>1</option><option>5</option><option>10</option><option selected>25</option><option>50</option></select>
+      <!-- A segmented control, filled by ui/time.ts: a native <select> was the one browser-drawn widget among a bar
+           of custom ones, and it brought the platform's own arrow with it (visual QA M3). -->
+      <div id="speed" class="segmented replay-only" role="tablist" aria-label="Replay speed"></div>
       <span id="clock" class="footnote"></span>
       <span id="replay-hint" class="caption dim replay-only">Space plays · arrows step</span>
     </div>

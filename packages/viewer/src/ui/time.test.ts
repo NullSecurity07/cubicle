@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { hourBucket, skyFor, nightColourFor, lampAlphaFor, tintFor, sunOrMoon, replayLabel, REPLAY_AUTOLOAD_MS } from './time.js';
-import { PALETTE, hexToInt } from '../world/palette.js';
+import { PALETTE, hexToInt, hexToHsl } from '../world/palette.js';
 
 describe('hour buckets', () => {
   it('splits the day into night / dusk / day', () => {
@@ -12,10 +12,40 @@ describe('sky', () => {
   it('uses the palette stops at the centre of each bucket and blends between them', () => {
     expect(skyFor(13)).toEqual(PALETTE.sky.day);
     expect(skyFor(23)).toEqual(PALETTE.sky.night);
-    expect(skyFor(19.5)).toEqual(PALETTE.sky.dusk);
-    const [top] = skyFor(20.25);                       // half way from dusk to night
-    expect(top).not.toBe(PALETTE.sky.dusk[0]); expect(top).not.toBe(PALETTE.sky.night[0]);
+    expect(skyFor(19)).toEqual(PALETTE.sky.dusk);
+    expect(skyFor(20)).toEqual(PALETTE.sky.evening);
+    const [top] = skyFor(20.5);                        // half way from evening to night
+    expect(top).not.toBe(PALETTE.sky.evening[0]); expect(top).not.toBe(PALETTE.sky.night[0]);
     expect(top).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  /**
+   * Visual QA C2: the stops used to be blended through HSL along the shorter hue arc, and the shorter arc from the
+   * dusk orange to the night navy runs backwards through red and magenta. At 19:49 — the hour every screenshot of
+   * the 2026-09-12 run was taken at — the sky measured rgb(195, 57, 88): a crimson slab over a fifth of the frame.
+   */
+  it('never passes through red, at any minute of either ramp', () => {
+    // A sunset does run orange → rose → violet, so the guard cannot be "no warm hues": it is that no stop is ever a
+    // *saturated* red. The old shorter-arc blend measured hue 346° at saturation 0.55; the warmest this ramp ever
+    // gets inside the red band is a terracotta at saturation 0.46, and the bar sits between the two.
+    for (let h = 4; h <= 22; h += 0.05) {
+      for (const stop of skyFor(h)) {
+        const c = hexToHsl(stop);
+        const red = c.h >= 335 || c.h < 12;   // red and crimson proper, not the orange end of the sunset
+        expect(red && c.s >= 0.45, `${stop} at ${h.toFixed(2)} (hue ${c.h.toFixed(0)}, sat ${c.s.toFixed(2)})`).toBe(false);
+      }
+    }
+    // and the blend the QA caught would fail it: hue 346°, saturation 0.55
+    const crimson = hexToHsl('#c33958');
+    expect(crimson.h >= 335 && crimson.s >= 0.45).toBe(true);
+  });
+
+  it('is warm at the horizon and cool at the zenith, not the other way round', () => {
+    const warmth = (c: string): number => { const n = parseInt(c.slice(1), 16); return ((n >> 16) & 255) - (n & 255); };
+    for (const h of [7.5, 13, 18.5, 19, 20]) {   // at full night both stops are navy and there is no warm end
+      const [zenith, horizon] = skyFor(h);
+      expect(warmth(horizon), `hour ${h}`).toBeGreaterThanOrEqual(warmth(zenith));
+    }
   });
 });
 

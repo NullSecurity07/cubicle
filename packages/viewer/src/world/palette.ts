@@ -29,6 +29,21 @@ export function hexToHsl(hex: string): { h: number; s: number; l: number } {
 /** Lighten (dL > 0) or darken (dL < 0) by a lightness delta in 0–1 units. */
 export function shade(hex: string, dL: number): string { const c = hexToHsl(hex); return hsl(c.h, c.s, clamp01(c.l + dL)); }
 export function hexToInt(hex: string): number { return parseInt(hex.slice(1), 16); }
+/**
+ * Blend two `#rrggbb` colours channel by channel.
+ *
+ * The sky used to blend through HSL along the shorter hue arc, and the shorter arc from dusk (hue 25°) to night
+ * (hue 228°) runs backwards through 352° and 300°: every evening the sky turned crimson, then magenta, before it
+ * reached navy (visual QA C2). There is no hue path between an orange horizon and a navy one that is not a lie;
+ * a straight line between the two colours is, and the palette carries an explicit evening stop so the line passes
+ * through the violet a real dusk has.
+ */
+export function mixHex(a: string, b: string, t: number): string {
+  const u = Math.max(0, Math.min(1, t));
+  const x = parseInt(a.slice(1), 16), y = parseInt(b.slice(1), 16);
+  const ch = (sh: number): string => hex2((((x >> sh) & 255) + ((((y >> sh) & 255)) - ((x >> sh) & 255)) * u) / 255);
+  return `#${ch(16)}${ch(8)}${ch(0)}`;
+}
 export function hashOf(s: string): number { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; }
 
 export const PALETTE = {
@@ -60,7 +75,10 @@ export const PALETTE = {
   water: '#9ad0ff', waterLight: '#e6f4ff', waterDark: '#7cb8e8',
   steam: 'rgba(255,255,255,0.7)',
   dusk: '#3b2a4a', night: '#0a1030',
-  sky: { day: ['#9ec7ee', '#dfeaf5'], dusk: ['#f0a36b', '#6a4c8a'], night: ['#0b1026', '#1b2140'] },
+  /* [zenith, horizon]. Warm low and cool high, at every hour: the dusk pair used to be the other way round, which
+     put a flat orange slab across the top of four scenes. `evening` is the stop between dusk and night — without
+     it any blend from an orange horizon to a navy one passes through mud or through red. */
+  sky: { day: ['#9ec7ee', '#dfeaf5'], dusk: ['#6a4c8a', '#f0a36b'], evening: ['#332a5c', '#7a5c93'], night: ['#0b1026', '#1b2140'] },
   windowDay: '#a9d6ff', windowDusk: '#f3b884', windowNight: '#ffe08a',
   skin: ['#f1c9a5', '#d9a577', '#b07a4e', '#6e4a30'],
   hair: ['#2b2118', '#4a2c17', '#6d4c41', '#c0392b', '#d9b26a', '#3a3a3a'],

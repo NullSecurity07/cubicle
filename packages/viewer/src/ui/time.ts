@@ -1,5 +1,5 @@
 import type { CubicleEvent } from '../state.js';
-import { PALETTE, hexToInt, hexToHsl, hsl } from '../world/palette.js';
+import { PALETTE, hexToInt, mixHex } from '../world/palette.js';
 import { pixelIcon } from './icons.js';
 
 /** How dark the night overlay gets at its deepest. */
@@ -21,18 +21,23 @@ export type HourBucket = 'day' | 'dusk' | 'night';
 /** Night before 6 and from 21; dusk on the two ramps (6–8, 18–21); day between. Drives window tiles and the sky. */
 export function hourBucket(hour: number): HourBucket { if (hour < 6 || hour >= 21) return 'night'; if (hour < 8 || hour >= 18) return 'dusk'; return 'day'; }
 
-const mix = (a: string, b: string, t: number): string => { const x = hexToHsl(a), y = hexToHsl(b); const dh = ((y.h - x.h + 540) % 360) - 180; return hsl(x.h + dh * t, x.s + (y.s - x.s) * t, x.l + (y.l - x.l) * t); };
-
-/** Sky gradient stops (top, bottom) for the hour: day, dusk and night stops, blended across the ramps. */
+/**
+ * Sky gradient stops (zenith, horizon) for the hour: four stop pairs, blended an hour at a time.
+ *
+ * Dawn and dusk run through the same four stops in opposite order — night, evening, dusk, day — so the two ends
+ * of the day are the same sky seen twice, and neither passes anywhere near red (visual QA C2).
+ */
 export function skyFor(hour: number): [string, string] {
   const S = PALETTE.sky;
-  const blend = (from: readonly [string, string], to: readonly [string, string], t: number): [string, string] => [mix(from[0], to[0], t), mix(from[1], to[1], t)];
+  const blend = (from: readonly [string, string], to: readonly [string, string], t: number): [string, string] => [mixHex(from[0], to[0], t), mixHex(from[1], to[1], t)];
   if (hour < 5) return [S.night[0], S.night[1]];
-  if (hour < 6.5) return blend(S.night, S.dusk, (hour - 5) / 1.5);
-  if (hour < 8) return blend(S.dusk, S.day, (hour - 6.5) / 1.5);
+  if (hour < 6) return blend(S.night, S.evening, hour - 5);
+  if (hour < 7) return blend(S.evening, S.dusk, hour - 6);
+  if (hour < 8) return blend(S.dusk, S.day, hour - 7);
   if (hour < 18) return [S.day[0], S.day[1]];
-  if (hour < 19.5) return blend(S.day, S.dusk, (hour - 18) / 1.5);
-  if (hour < 21) return blend(S.dusk, S.night, (hour - 19.5) / 1.5);
+  if (hour < 19) return blend(S.day, S.dusk, hour - 18);
+  if (hour < 20) return blend(S.dusk, S.evening, hour - 19);
+  if (hour < 21) return blend(S.evening, S.night, hour - 20);
   return [S.night[0], S.night[1]];
 }
 
@@ -46,6 +51,10 @@ export function lampAlphaFor(hour: number): number { return tintFor(hour) / NIGH
 export const sunOrMoon = (hour: number): 'sun' | 'moon' => (hour >= 6 && hour < 18 ? 'sun' : 'moon');
 
 export interface TimeHandlers { onLive(): void; onReplayRequest(date: string): void; onScrub(index: number): void; }
+
+/** How much faster than real time a replay can run. The middle value is the one a fresh session opens on. */
+export const SPEEDS = [1, 5, 10, 25, 50] as const;
+export const DEFAULT_SPEED = 25;
 
 /** `?replay=YYYY-MM-DD` loads that day once the socket is up; the daemon needs a moment before it can answer. */
 export const REPLAY_AUTOLOAD_MS = 500;
@@ -65,7 +74,7 @@ export class TimeControls {
   private date = document.getElementById('replay-date') as HTMLInputElement;
   private load = document.getElementById('replay-load') as HTMLButtonElement;
   private scrub = document.getElementById('scrub') as HTMLInputElement;
-  private speed = document.getElementById('speed') as HTMLSelectElement;
+  private speedEl = document.getElementById('speed')!;
   private clock = document.getElementById('clock')!;
   private sunmoon = document.getElementById('sunmoon')!;
   private bar = document.getElementById('time')!;
@@ -75,6 +84,7 @@ export class TimeControls {
   index = 0;
   playing = false;
   mode: 'live' | 'replay' = 'live';
+  speed: number = DEFAULT_SPEED;
   private acc = 0;
 
   constructor(private h: TimeHandlers) {
@@ -88,8 +98,23 @@ export class TimeControls {
     // Play/pause is a button on the bar. It used to be a double-click on the range input: undiscoverable, and the
     // only other way in was a Space the clock's own label had to explain.
     this.playBtn.addEventListener('click', () => { this.togglePlay(); });
+    this.drawSpeeds();
+    this.speedEl.addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLElement>('[data-speed]');
+      if (!b) return;
+      this.speed = Number(b.dataset.speed);
+      this.drawSpeeds();
+    });
     this.setMode('live');
     this.drawPlay();
+  }
+
+  /**
+   * The replay speed, as a segmented control in the bar's own vocabulary. It was a native `<select>`: the one
+   * widget on the screen the browser drew itself, arrow and all, among otherwise custom controls (visual QA M3).
+   */
+  private drawSpeeds(): void {
+    this.speedEl.innerHTML = SPEEDS.map((v) => `<button class="seg" role="tab" data-speed="${v}" aria-selected="${v === this.speed}">${v}×</button>`).join('');
   }
 
   /** Live and Replay are one segmented control: the selected segment is the only amber thing on the time bar. */
@@ -134,7 +159,7 @@ export class TimeControls {
     if (this.mode === 'live') { this.clock.textContent = nowLive.toLocaleTimeString(); return; }
     if (this.index >= this.events.length) { this.stopPlaying(); return; }   // the day ran out: the button goes back to Play
     if (!this.playing) return;
-    this.acc += dtMs * Number(this.speed.value);
+    this.acc += dtMs * this.speed;
     let advanced = false;
     while (this.index < this.events.length) {
       const cur = this.events[this.index];
