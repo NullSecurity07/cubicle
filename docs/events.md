@@ -8,7 +8,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 |---|---|
 | `daemon.started` | pid, port, roles |
 | `daemon.stopping` | active_jobs |
-| `daemon.warning` | where, message — never silent; a question timeout adds id (the unanswered message) and escalated_to; `where: provider_key` carries providers [{id, env}] instead of message (a cascade provider has no API key, so its models are unavailable); the money notices (`where: money.runway.locked | money.accrual.locked | money.accrual.stamp | money.notices.unwritable`) carry reason instead of message, with path on all but the price-stamp one, which carries stamp — each is said once per lock or per mistyped stamp rather than once per cycle, remembered in .cubicle/money-notices.json |
+| `daemon.warning` | where, message — never silent; a question timeout adds id (the unanswered message) and escalated_to; `where: provider_key` carries providers [{id, env}] instead of message (a cascade provider has no API key, so its models are unavailable); the money notices (`where: money.runway.locked | money.accrual.locked | money.accrual.stamp | money.notices.unwritable | money.notices.unreadable`) carry reason instead of message, with path on all but the price-stamp one, which carries stamp — each is said once per lock or per mistyped stamp rather than once per cycle, remembered in an in-process map loaded once from .cubicle/money-notices.json and written through to it |
 | `heartbeat.started` | trigger |
 | `heartbeat.completed` | id, commit, run (Runs/ path), gathered_at |
 | `job.queued` | type, title, assigned, priority, risk |

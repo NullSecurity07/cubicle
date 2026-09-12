@@ -11,7 +11,7 @@ import {
   BUDGETED_TIERS, dayStartIso, freeCallCapacity, divisionWeights, divisionQuotas, divisionSpend, divisionOfRole,
   budgetRows, budgetForRole, runwayJobId, enqueueRunway, runwayCommentary, writeRunway, accrueModelCost,
   accrueModelCosts, dormancyMark, dormancyEpisodes, drawsOnFreePool, moneyMessageId, dormancyMessage, revivalMessage,
-  LOCKED_RUNWAY, LOCKED_ACCRUAL, STAMP_AHEAD, NOTICES_UNWRITABLE, LOCK_STATE_PATH,
+  LOCKED_RUNWAY, LOCKED_ACCRUAL, STAMP_AHEAD, NOTICES_UNWRITABLE, NOTICES_UNREADABLE, LOCK_STATE_PATH,
 } from '../src/money.js';
 
 const SHIPPED = parseProvidersConfig(readFileSync(path.resolve(__dirname, '../../../config/providers.yaml'), 'utf8'));
@@ -500,6 +500,66 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     } finally {
       chmodSync(cubicle, 0o755);
     }
+  });
+
+  it('cannot be confused by a notices file that could not be read for one cycle', () => {
+    const org = loadOrg(vault);
+    const notices = path.join(dir, LOCK_STATE_PATH);
+    const lock = (on: boolean) => vault.writeText('Memory/constitution.md',
+      `# Constitution\n\n\`\`\`yaml\nnever_modify:${on ? '\n  - Ledger/' : ' []'}\n\`\`\`\n`, 'owner');
+    lock(true);
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(lockedRunwayRows()).toHaveLength(1);
+    // One unreadable moment, with the file otherwise intact and its entry still valid. A design that re-read
+    // the file each cycle could not tell "cannot be read right now" from "nothing has been said": the clear
+    // would look unnecessary, the stale entry would survive, and the re-lock below would agree with it and be
+    // swallowed for good. The memory is read once a run, so there is nothing here to flicker.
+    chmodSync(notices, 0o000);
+    try {
+      lock(false);
+      writeRunway(vault, org, SHIPPED, NOW);      // the clear happens in memory, and is written through
+      expect(lockedRunwayRows()).toHaveLength(1);
+    } finally {
+      if (existsSync(notices)) chmodSync(notices, 0o644);
+    }
+    lock(true);
+    writeRunway(vault, org, SHIPPED, NOW);        // and a re-lock is still a re-lock
+    expect(lockedRunwayRows()).toHaveLength(2);
+    expect(JSON.parse(readFileSync(notices, 'utf8'))[LOCKED_RUNWAY]).toBe(`locked:${RUNWAY_PATH}`);
+  });
+
+  it('reads the file once on a fresh run, and honours or distrusts it accordingly', async () => {
+    const freshVault = async (notices: string | null) => {
+      const root = mkdtempSync(path.join(tmpdir(), 'cubicle-daemon-money-run-'));
+      const v = (await scaffoldVault(root)).vault;
+      v.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+      if (notices !== null) {
+        mkdirSync(path.join(root, '.cubicle'), { recursive: true });
+        writeFileSync(path.join(root, LOCK_STATE_PATH), notices);
+      }
+      return { root, v };
+    };
+    const rows = (v: Vault, where: string) => v.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === where);
+
+    // A run that starts where the last one left off: the file is read once and believed, so a complaint the
+    // previous run already made is not made again.
+    const remembered = await freshVault(JSON.stringify({ [LOCKED_RUNWAY]: `locked:${RUNWAY_PATH}` }));
+    try {
+      writeRunway(remembered.v, loadOrg(remembered.v), SHIPPED, NOW);
+      expect(rows(remembered.v, LOCKED_RUNWAY)).toHaveLength(0);
+    } finally { remembered.v.close(); rmSync(remembered.root, { recursive: true, force: true }); }
+
+    // A file that makes no sense is not half-believed: the run starts with no memory, says so once, and the
+    // standing complaint is made again — noise, which is the direction this is allowed to fail in.
+    const broken = await freshVault('{ not json');
+    try {
+      writeRunway(broken.v, loadOrg(broken.v), SHIPPED, NOW);
+      writeRunway(broken.v, loadOrg(broken.v), SHIPPED, NOW);
+      expect(rows(broken.v, LOCKED_RUNWAY)).toHaveLength(1);
+      expect(rows(broken.v, NOTICES_UNREADABLE)).toHaveLength(1);
+      expect(String((rows(broken.v, NOTICES_UNREADABLE)[0].payload as { reason?: string }).reason)).toContain('once more');
+    } finally { broken.v.close(); rmSync(broken.root, { recursive: true, force: true }); }
   });
 
   it('regenerates it again as soon as the owner takes the lock off', () => {

@@ -19,9 +19,10 @@ import { readFileSync, rmSync } from 'node:fs';
  *
  * Nothing here caches a money fact. Every figure is derived from `Ledger/ledger.md` and the event log on the
  * call that needs it, so losing the heartbeat's state file changes no number and silences no message. The one
- * thing this module does remember between cycles is which of its own complaints it has already made
- * (`LOCK_STATE_PATH`); deleting that file costs one repeated sentence per standing complaint and nothing at
- * all besides.
+ * thing this module does remember between cycles is which of its own complaints it has already made: an
+ * in-process map, loaded from `LOCK_STATE_PATH` once per run and written through to it after that. Deleting
+ * that file, or a restart after a write to it failed, costs one repeated sentence per standing complaint and
+ * nothing at all besides.
  *
  * One consequence of that, worth stating where it will be read: both halves of the division gauge are decided
  * by `config/providers.yaml` **as it stands now**, so editing a model mid-day changes what today's already
@@ -128,100 +129,115 @@ export const LOCKED_RUNWAY = 'money.runway.locked';
 export const LOCKED_ACCRUAL = 'money.accrual.locked';
 /** The owner's `prices_verified`/`verified` stamp is dated in the future — said once per distinct stamp value. */
 export const STAMP_AHEAD = 'money.accrual.stamp';
-/** Said once, if this module's own memory of what it has said cannot be written. */
+/** Said once, if the file this module keeps its own memory in cannot be written. */
 export const NOTICES_UNWRITABLE = 'money.notices.unwritable';
+/** Said once, if it exists but cannot be read or makes no sense — the memory starts empty instead. */
+export const NOTICES_UNREADABLE = 'money.notices.unreadable';
 
 /**
- * Everything this module has already said, so it does not say it again next cycle: `where` → the situation it
- * was said about. It is the **only** memory there is — there is no second store to fall out of step with — and
- * it is a cache under `.cubicle/`, not a note. Losing it costs one repeated notice per standing situation and
- * nothing else: no figure is derived from it, and a repeated sentence is the safe direction for a file whose
- * whole job is to stop a sentence being repeated.
+ * Where the memory is kept between runs: `where` → the situation it was said about. A cache under
+ * `.cubicle/`, not a note; no figure is derived from it, and the only thing losing it can cost is a repeated
+ * sentence, which is the safe direction for a file whose whole job is to stop a sentence being repeated.
  */
 export const LOCK_STATE_PATH = '.cubicle/money-notices.json';
 
 /**
- * Where the memory goes when `.cubicle/` cannot be written — a read-only mount, a permissions accident, a full
- * disk. **Every cycle tries the file again**, and the first write that succeeds writes the merged state and
- * drops the stand-in, so a five-minute `ENOSPC` costs nothing beyond the notices said during it, and only a
- * fault that outlives the daemon costs the one repeat per standing situation that the notice on the event log
- * warns about.
+ * What has already been said, per vault root — and **the authority on it for as long as this process runs**.
  *
- * While it exists it is the **newer** truth, not a fallback the file overrules. What the file holds is what was
- * true before the writes started failing; what this holds is what has been decided since.
+ * Memory first, file second. The map is loaded from `LOCK_STATE_PATH` exactly once, on first use, and every
+ * decision after that — a notice said, a notice cleared — changes the map before anything touches the disk.
+ * The file is write-through persistence and nothing else: rewritten from the map on every change, retried on
+ * the next change if a write failed, and **never read again**.
  *
- * Keyed on the vault's **root path**, not on a `Vault` instance, so two opens of the same directory in one
- * process (`rebuild`, `doctor`, a test) share one memory instead of keeping two. One small entry per vault root
- * this process has ever failed to write, which is at most a handful and is dropped again on the first success.
+ * That last part is the point. Earlier rounds re-read the file on every cycle and tried to reconcile it with
+ * what the process knew, and each reconciliation had a hole: a read that failed for a moment — `EIO` on a
+ * degrading disk, a network mount blink, a partial write caught mid-flight, `ENOSPC` inside `open()` — is
+ * indistinguishable from "nothing has been said", and one such flicker between a clear and a re-lock was
+ * enough to swallow a notice permanently. A store that is read once cannot flicker.
+ *
+ * What it costs: a **restart** re-reads the file once, and if the last write before it had failed, each
+ * complaint still standing is made one more time. That is the whole exposure, and it is the direction this is
+ * allowed to fail in.
+ *
+ * Keyed on the vault's root path rather than on a `Vault` instance, so two opens of one directory in a process
+ * (`rebuild`, `doctor`, a test) share one memory instead of disagreeing quietly. At most three entries per
+ * root — the three `where` values above — and one root per vault this process has opened.
  */
-const inProcessNotices = new Map<string, HeldNotices>();
+const notices = new Map<string, Record<string, string>>();
+
+/** Roots whose last write-through did not land. Retried on the next change; complained about once per fault. */
+const unflushed = new Set<string>();
 
 /**
- * What the stand-in holds: the situations this process meant to write, and `null` for the ones it meant to
- * **remove**. The tombstones are the whole point. A `clearNotice` whose write fails leaves the old value
- * sitting in the file; without a record that the removal was intended, a later cycle would read that stale
- * value back, agree with it, and treat a genuine re-lock of the same path as already announced — silently,
- * and for good, because from then on the file and the stand-in agree.
+ * The map for this vault, loading it from the file on first use. A file that is simply absent is not a fault —
+ * nothing has been said yet — but one that cannot be read, or that does not hold a JSON object, starts the
+ * memory empty and says so once. Empty means every standing complaint is made again, which is noise; trusting
+ * half a file would be worse.
  */
-type HeldNotices = Record<string, string | null>;
-
-/** What the file says, or `{}` when it is absent, unreadable, or not a JSON object. */
-function readNoticeFile(vault: Vault): Record<string, string> {
+function loadNotices(vault: Vault): Record<string, string> {
+  const held = notices.get(vault.root);
+  if (held) return held;
+  let state: Record<string, string> = {};
+  let unreadable = false;
   try {
-    const v: unknown = JSON.parse(readFileSync(vault.abs(LOCK_STATE_PATH), 'utf8'));
-    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, string>) : {};
-  } catch { return {}; }
-}
-
-function noticeState(vault: Vault): Record<string, string> {
-  const state = readNoticeFile(vault);
-  const held = inProcessNotices.get(vault.root);
-  if (!held) return state;
-  // Where the stand-in has an opinion it is the newer one, removals included: it is what this process decided
-  // and could not write down, and the file is what was true before the write started failing. Keys the
-  // stand-in says nothing about are left as the file has them, so a fault cannot lose an unrelated notice.
-  for (const [where, situation] of Object.entries(held)) {
-    if (situation === null) delete state[where];
-    else state[where] = situation;
+    const parsed: unknown = JSON.parse(readFileSync(vault.abs(LOCK_STATE_PATH), 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) state = parsed as Record<string, string>;
+    else unreadable = true;
+  } catch (err) {
+    unreadable = (err as NodeJS.ErrnoException | null)?.code !== 'ENOENT';
+  }
+  notices.set(vault.root, state);
+  if (unreadable) {
+    try {
+      vault.events.emit({ type: 'daemon.warning', payload: {
+        where: NOTICES_UNREADABLE,
+        path: LOCK_STATE_PATH,
+        reason: `${LOCK_STATE_PATH} could not be read, so this run starts with no memory of what it has already said; each complaint still standing is made once more`,
+      } });
+    } catch { /* a log that cannot take an append is not this module's to surface, nor its to die on */ }
   }
   return state;
 }
 
-function saveNoticeState(vault: Vault, state: Record<string, string>): void {
-  const held = inProcessNotices.has(vault.root);
+/**
+ * Write the map through to the file. The map is already right; this is the copy that outlives the process.
+ *
+ * The whole file is rewritten, or removed when there is nothing left to remember — a vault that has never had
+ * a notice held back should not acquire a file saying so, and "this file exists" should keep meaning
+ * "something is being suppressed". Whole-file means a second writer's entry would be lost, which is the window
+ * `atomicWriteSync` has always had, at the same cost of one repeated sentence, and there is no second writer:
+ * only the heartbeat calls in here, one job at a time.
+ */
+function flushNotices(vault: Vault, state: Record<string, string>): void {
+  const faulted = unflushed.has(vault.root);
   try {
-    // Nothing to remember is no file: a vault that has never had a notice held back should not acquire one,
-    // and "this file exists" should keep meaning "something is being suppressed". The whole file is rewritten
-    // or removed, so a notice a second writer added between this cycle's read and its write would be lost —
-    // the same window `atomicWriteSync` has always had, with the same cost (one repeated sentence) and the
-    // same absence of a second writer: only the heartbeat calls into here, one job at a time.
     if (Object.keys(state).length === 0) rmSync(vault.abs(LOCK_STATE_PATH), { force: true });
     else atomicWriteSync(vault.abs(LOCK_STATE_PATH), JSON.stringify(state, null, 2));   // creates `.cubicle/`
-    inProcessNotices.delete(vault.root);   // the file is the record again
+    unflushed.delete(vault.root);
     return;
-  } catch { /* fall through: the file cannot take it, so this process holds it instead */ }
-  // Everything this state says, plus a tombstone for every key the file still carries that it does not — the
-  // removals this write was going to make. Re-derived from the file each time, because the file cannot change
-  // while it cannot be written.
-  const next: HeldNotices = { ...state };
-  for (const where of Object.keys(readNoticeFile(vault))) if (next[where] === undefined) next[where] = null;
-  inProcessNotices.set(vault.root, next);
-  if (held) return;   // already saying it in process; the owner has been told once and that is enough
+  } catch { /* the memory is still right; only the copy on disk is behind, and the next change retries it */ }
+  unflushed.add(vault.root);
+  if (faulted) return;   // said once already; the owner does not need it every cycle
   try {
     vault.events.emit({ type: 'daemon.warning', payload: {
       where: NOTICES_UNWRITABLE,
       path: LOCK_STATE_PATH,
-      reason: `${LOCK_STATE_PATH} cannot be written, so what has already been said is remembered in this process only until it can be; every notice still standing is repeated once after a restart`,
+      reason: `${LOCK_STATE_PATH} cannot be written, so what has already been said is remembered in this run only; every complaint still standing is made once more after a restart`,
     } });
-  } catch { /* a log that cannot take an append is not this module's to surface, and never its to die on */ }
+  } catch { /* as above: a failing event log is not this module's to surface */ }
 }
 
 /** Forget a notice, so the next time the situation arises it is said again. */
 function clearNotice(vault: Vault, where: string): void {
-  const state = noticeState(vault);
-  if (state[where] === undefined) return;   // nothing remembered; do not create a file to say so
+  const state = loadNotices(vault);
+  if (state[where] === undefined) {
+    // Nothing remembered, so nothing to forget and no file to create saying so — but if the disk is behind,
+    // this is still a chance to catch it up.
+    if (unflushed.has(vault.root)) flushNotices(vault, state);
+    return;
+  }
   delete state[where];
-  saveNoticeState(vault, state);
+  flushNotices(vault, state);
 }
 
 /**
@@ -264,16 +280,16 @@ function lockSituation(rel: string): string {
  * page is locked" and silence the notice for good.
  */
 function warnOnce(vault: Vault, where: string, situation: string, extra: Record<string, unknown>): void {
-  const state = noticeState(vault);
+  const state = loadNotices(vault);
   if (state[where] === situation) {
-    // Said already. If the only place that is written down is this process, try the file again — the retry is
-    // per cycle, so a fault that has since been fixed costs nothing beyond the cycles it actually lasted.
-    if (inProcessNotices.has(vault.root)) saveNoticeState(vault, state);
+    // Said already. If the copy on disk is behind, this is the retry — per change rather than per restart, so
+    // a fault that has since been fixed costs nothing beyond the cycles it actually lasted.
+    if (unflushed.has(vault.root)) flushNotices(vault, state);
     return;
   }
   vault.events.emit({ type: 'daemon.warning', payload: { where, ...extra } });
-  state[where] = situation;
-  saveNoticeState(vault, state);
+  state[where] = situation;      // the memory is the authority, and it is right before the disk is touched
+  flushNotices(vault, state);
 }
 
 /** A division's weight is the people actually in it: a thirteen-desk division needs more calls than a three-desk one. */
