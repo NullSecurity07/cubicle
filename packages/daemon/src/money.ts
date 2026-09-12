@@ -4,7 +4,7 @@ import {
   HOUSE, LEDGER_PATH, RUNWAY_PATH,
   createJob, readJob, listJobs, listInbox, jobPath, idFromKey,
   officeHolder, teamOf, divisionOf, divisionTeams, subtreeRoles, createProposal, findInboxById, resultBlock,
-  LedgerVetoedError, isNeverModifyPath, atomicWriteSync, sha256,
+  LedgerVetoedError, isNeverModifyPath, atomicWriteSync,
 } from '@cubicle/core';
 import { shadowCost, hasPrices, type ModelBudget, type ProvidersFile, type RecordedCall } from '@cubicle/router';
 import { readFileSync } from 'node:fs';
@@ -152,30 +152,47 @@ function saveNoticeState(vault: Vault, state: Record<string, string>): void {
   catch { /* a cache. An unwritable one costs a repeated notice, never a wrong number. */ }
 }
 
+/**
+ * What a forgotten notice leaves behind. Not a deletion: an empty string is never a real situation (every one
+ * of them ends in a path or is a date), and leaving *something* is what stops `saidRecently` being consulted
+ * about a notice this module has deliberately forgotten — the log still holds the old row, and with no write
+ * of the path to overrule it the recovery read would adopt it and swallow the second notice.
+ */
+const FORGOTTEN = '';
+
 /** Forget a notice, so the next time the situation arises it is said again. */
 function clearNotice(vault: Vault, where: string): void {
   const state = noticeState(vault);
-  if (state[where] === undefined) return;
-  delete state[where];
-  saveNoticeState(vault, state);
+  if (state[where] === FORGOTTEN) return;   // already forgotten; do not rewrite the file every cycle
+  saveNoticeState(vault, { ...state, [where]: FORGOTTEN });
 }
 
 /**
- * The **lock** a notice is about, as opposed to the file it holds back: the owner's `never_modify` list,
- * hashed, plus the path it is stopping.
+ * The **lock** a notice is about, as opposed to the file it holds back: the `never_modify` entries that
+ * actually cover this path, and the path.
  *
  * Deliberately not the file's own sha. `never_modify: [Ledger/]` exists precisely so the owner can keep their
  * own `Ledger/runway.md` by hand, so editing it is the expected workflow — and a content sha would read every
- * one of those edits as a fresh lock and say the same sentence again. Deliberately not the whole
- * constitution's sha either, which would fire on an unrelated line about hiring. The list changes exactly when
- * the owner changes their mind about what is locked, which is the only thing worth a second notice.
+ * one of those edits as a fresh lock and say the same sentence again.
  *
- * That leaves lock → unlock → the same lock again, where the hash is identical both times. `clearNotice` on
- * the write that the unlock allows is what separates them: the notice is forgotten the moment the daemon
- * succeeds, so putting the lock back is news again.
+ * Deliberately not the whole list either, hashed or otherwise. The shipped constitution already carries five
+ * entries and the daemon appends to it itself (`migrateOrg` adds `Teams/` to any vault that lacks it), so a
+ * whole-list key would say the same sentence again because the owner locked `Docs/`, or because two entries
+ * changed places, or because the vault was upgraded. Only the entries matching **this** path are taken, and
+ * they are trimmed and sorted, so a reorder is not news and an unrelated lock is not news — while narrowing
+ * `Ledger/` to `Ledger/runway.md`, which is a different decision about this page, still is.
+ *
+ * That leaves lock → unlock → the same lock again, where the entry is identical both times. `clearNotice` on
+ * the not-locked path is what separates them: a cycle that finds the path writable forgets the notice, so
+ * putting the lock back is news. It needs a cycle to *observe* the gap, though — an unlock and a re-lock
+ * between two heartbeats is a gap nothing saw, and nothing is said.
  */
 export function lockSituation(vault: Vault, rel: string): string {
-  return `${sha256(JSON.stringify(vault.constitution().never_modify))}:${rel}`;
+  const covering = vault.constitution().never_modify
+    .filter((nm) => isNeverModifyPath(rel, [nm]))
+    .map((nm) => nm.trim())
+    .sort();
+  return `${covering.join('|')}:${rel}`;
 }
 
 /**
@@ -186,6 +203,12 @@ export function lockSituation(vault: Vault, rel: string): string {
  * `situation`) means it has been said; a write of the path means the lock was lifted since anything older, so
  * it has not. An owner's own edit is not a write here — the watcher emits `owner.edited` for those — which is
  * what keeps their hand-edits of a locked page out of this decision.
+ *
+ * Two things it cannot see, both of which cost one extra notice and never a missing one. A notice written
+ * before `situation` existed on the payload (rounds 4-7) is not recognised, so the first cycle after an
+ * upgrade with no cache says it once more and is quiet from the next cycle on. And an unlock and re-lock with
+ * no write in between leaves nothing in the log to overrule the older notice, so the cache — which a running
+ * cycle does clear — is the part that notices that, not this.
  *
  * **The cap can only ever cause a repeat, never a silence,** and by construction rather than by luck:
  * `EventLog.query` with a `limit` is `ORDER BY id DESC LIMIT N`, so the newest N rows of these two types are
@@ -233,6 +256,8 @@ function saidRecently(vault: Vault, where: string, situation: string, rel: strin
 function warnOnce(vault: Vault, where: string, situation: string, rel: string | null, extra: Record<string, unknown>): void {
   const state = noticeState(vault);
   if (state[where] === situation) return;
+  // Only a cache with nothing at all to say about this notice falls through to the log. A `FORGOTTEN` marker
+  // is something to say: it means a cycle watched the lock come off, and the notice is owed again.
   if (state[where] === undefined && saidRecently(vault, where, situation, rel)) {
     saveNoticeState(vault, { ...state, [where]: situation });
     return;
@@ -404,7 +429,9 @@ export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Dat
     });
     return report;
   }
-  // Not locked: forget any notice about a lock that has been lifted, so putting it back is news again.
+  // Not locked: forget any notice about a lock that has been lifted, so putting it back is news again. It is
+  // the *cycle observing the path is writable* that counts, not the write below — which may yet fail, and
+  // whose failure is the safe direction anyway (the next locked cycle says the notice again).
   clearNotice(vault, LOCKED_RUNWAY);
   const calls = recordedCalls(vault, dayStartIso(now));
   const shadow = shadowCost(cfg, calls);
@@ -451,6 +478,9 @@ function firstAccrualDay(vault: Vault, cfg: ProvidersFile, now: Date): string {
   const lookback = dayOf(now.getTime() - ACCRUAL_LOOKBACK_DAYS * DAY_MS);
   const yesterday = dayOf(now.getTime() - DAY_MS);
   const stamp = String(cfg.prices_verified ?? cfg.verified ?? '').slice(0, 10);
+  // A stamp that is fine again forgets the complaint about one that was not, so the same bad value coming
+  // back — a revert, a restored backup, a bad merge — is said a second time rather than swallowed for ever.
+  if (!DATE_RE.test(stamp) || stamp <= yesterday) { clearNotice(vault, STAMP_AHEAD); }
   if (!DATE_RE.test(stamp)) return lookback;
   if (stamp > yesterday) {
     // Once per distinct stamp value, not once a cycle and not once a day: this fires on every cycle for as
@@ -502,9 +532,11 @@ function accruedDays(vault: Vault): string[] {
  * throwing into the heartbeat: an owner who has locked their ledger has not asked the company to stop.
  */
 export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = new Date()): LedgerEntry[] {
-  if (!hasPrices(cfg)) return [];
-  // The book is writable again: forget the lock notice, so putting the lock back is worth saying once more.
+  // The book is writable: forget the lock notice, so putting the lock back is worth saying once more. This
+  // runs whenever the step runs and needs no write of its own — an unlocked cycle with nothing to charge
+  // writes nothing at all, and it must still count as having seen the lock go.
   if (!isNeverModifyPath(LEDGER_PATH, vault.constitution().never_modify)) clearNotice(vault, LOCKED_ACCRUAL);
+  if (!hasPrices(cfg)) return [];
   const yesterday = dayOf(now.getTime() - DAY_MS);
   const floor = dayOf(now.getTime() - MAX_ACCRUAL_DAYS * DAY_MS);
   const last = accruedDays(vault).at(-1) ?? null;

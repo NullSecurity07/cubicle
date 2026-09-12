@@ -349,8 +349,9 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     // the notice is remembered against never moves, however long the lock stands.
     for (let d = 0; d < 5; d++) writeRunway(vault, org, SHIPPED, new Date(`2026-09-1${2 + d}T12:00:00.000Z`));
     expect(lockedRunwayRows()).toHaveLength(1);
-    // What is remembered is the *lock*, not the page: the owner's never_modify list plus the path it holds.
-    expect(JSON.parse(readFileSync(path.join(dir, LOCK_STATE_PATH), 'utf8'))[LOCKED_RUNWAY]).toBe(lockSituation(vault, RUNWAY_PATH));
+    // What is remembered is the *lock*, not the page: the never_modify entry covering the path, and the path.
+    // Written out here rather than taken from `lockSituation`, so this pins the key rather than restating it.
+    expect(JSON.parse(readFileSync(path.join(dir, LOCK_STATE_PATH), 'utf8'))[LOCKED_RUNWAY]).toBe(`Ledger/:${RUNWAY_PATH}`);
   });
 
   it('does not repeat itself because the owner edited the page the lock protects', () => {
@@ -368,6 +369,49 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
     writeRunway(vault, org, SHIPPED, NOW);
     expect(lockedRunwayRows()).toHaveLength(2);
+  });
+
+  it('ignores the rest of the owner\'s never_modify list, and its order', () => {
+    const org = loadOrg(vault);
+    const constitution = (...entries: string[]) =>
+      vault.writeText('Memory/constitution.md', `# Constitution\n\n\`\`\`yaml\nnever_modify:\n${entries.map((e) => `  - ${e}`).join('\n')}\n\`\`\`\n`, 'owner');
+    constitution('Ledger/');
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(lockedRunwayRows()).toHaveLength(1);
+    // Locking something else is a decision about something else. The shipped constitution already carries
+    // five entries and `migrateOrg` appends `Teams/` on upgrade, so this is the common case, not a corner.
+    constitution('Ledger/', 'Docs/');
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(lockedRunwayRows()).toHaveLength(1);
+    // And two entries changing places is not a decision at all.
+    constitution('Docs/', 'Ledger/');
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(lockedRunwayRows()).toHaveLength(1);
+    // Taking *this* entry away and putting it back is: a cycle sees the page writable in between.
+    constitution('Docs/');
+    writeRunway(vault, org, SHIPPED, NOW);
+    constitution('Docs/', 'Ledger/');
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(lockedRunwayRows()).toHaveLength(2);
+  });
+
+  it('counts an unlock and a re-lock as a new lock without needing a write of its own', () => {
+    const org = loadOrg(vault);
+    const lock = (on: boolean) => vault.writeText('Memory/constitution.md',
+      `# Constitution\n\n\`\`\`yaml\nnever_modify:${on ? '\n  - Ledger/' : ' []'}\n\`\`\`\n`, 'owner');
+    const accrualRows = () => vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === LOCKED_ACCRUAL);
+    vault.events.emit({ type: 'router.call', agent: 'ceo', ts: '2026-09-11T10:00:00.000Z', payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
+    lock(true);
+    accrueModelCosts(vault, PRICED, NOW);
+    expect(accrualRows()).toHaveLength(1);
+    // An unlocked cycle on a free providers file writes nothing at all — and must still count as having seen
+    // the lock go, or putting it back would be silent.
+    lock(false);
+    accrueModelCosts(vault, SHIPPED, NOW);
+    lock(true);
+    accrueModelCosts(vault, PRICED, NOW);
+    expect(accrualRows()).toHaveLength(2);
   });
 
   it('falls back to a bounded read of the log when the remembered state is gone', () => {
@@ -484,6 +528,20 @@ providers:
     accrueModelCosts(vault, OTHER, NOW);
     expect(stampRows()).toHaveLength(2);
     expect(String((stampRows()[1].payload as { reason?: string }).reason)).toContain('2028-01-01');
+  });
+
+  it('says it again when a typo the owner fixed comes back', () => {
+    const stampRows = () => vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === STAMP_AHEAD);
+    accrueModelCosts(vault, PRICED_FUTURE, NOW);
+    expect(stampRows()).toHaveLength(1);
+    // Fixed: a stamp that is fine again forgets the complaint about the one that was not.
+    accrueModelCosts(vault, PRICED_STAMPED, NOW);
+    expect(stampRows()).toHaveLength(1);
+    // And back — a revert, a restored backup, a bad merge. The same value is news a second time.
+    accrueModelCosts(vault, PRICED_FUTURE, NOW);
+    expect(stampRows()).toHaveLength(2);
+    expect(String((stampRows()[1].payload as { stamp?: string }).stamp)).toBe('2027-09-11');
   });
 
   it('gives up with one warning when the owner has locked the book, and never throws into the cycle', () => {
