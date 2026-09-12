@@ -349,7 +349,9 @@ export function divisionQuotas(cfg: ProvidersFile, org: Org): Record<string, num
  * By office, never by role id (global constraints): re-staffing the seat in the constitution moves this with it.
  */
 export function houseRoles(org: Org, jobType?: string | null): ReadonlySet<string> {
-  return GATE_JOB_TYPES.includes(String(jobType ?? '')) ? new Set([officeHolder(org, 'security')]) : new Set();
+  // The house pays for the gates: the security office's reviews and, since SP5 added `office:compliance.review`,
+  // the compliance office's too. A review is a cost of running the company, not of the division that asked.
+  return GATE_JOB_TYPES.includes(String(jobType ?? '')) ? new Set([officeHolder(org, 'security'), officeHolder(org, 'compliance')]) : new Set();
 }
 
 /**

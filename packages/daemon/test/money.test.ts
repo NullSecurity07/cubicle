@@ -314,6 +314,11 @@ describe('what a division has spent today (spec §4)', () => {
     // Every gate type is the house's. The reserve exists so a review cannot be starved by the division whose
     // work it is reviewing, and `GATE_JOB_TYPES` is the list of things that are reviews.
     for (const t of GATE_JOB_TYPES) expect(budgetForRole(vault, org, SHIPPED, ciso, NOW, t).division).toBe(HOUSE);
+    // SP5's compliance review is a gate too, held by the compliance office: its reviews are the house's as well,
+    // and its holder's ordinary work still lands on their own division.
+    const clo = officeHolder(org, 'compliance');
+    expect(budgetForRole(vault, org, SHIPPED, clo, NOW, 'office:compliance.review').division).toBe(HOUSE);
+    expect(budgetForRole(vault, org, SHIPPED, clo, NOW, 'engineer.ship').division).not.toBe(HOUSE);
     // Ordinary work by the same person is not. Charging it to the house would take a division's own work off its
     // own meter and spend the reserve the heartbeat and the board depend on, the moment the owner maps the
     // security office to somebody who sits in a division — which this vault has just done.
