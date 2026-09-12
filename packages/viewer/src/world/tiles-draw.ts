@@ -30,6 +30,23 @@ export function checker(p: Px, x: number, y: number, w: number, h: number, a: st
 export function dither(p: Px, x: number, y: number, w: number, h: number, c: string, n: number, seed: number): void { let s = seed; for (let i = 0; i < n; i++) { s = (s * 9301 + 49297) % 233280; const dx = s % w; s = (s * 9301 + 49297) % 233280; const dy = s % h; p.fill(x + dx, y + dy, 1, 1, c); } }
 export function floorOfName(name: string): 1 | 2 | 3 | 4 | null { const m = /_F([1-4])$/.exec(name); return m ? (Number(m[1]) as 1 | 2 | 3 | 4) : null; }
 
+/**
+ * The lamp glow, as bands rather than a ramp.
+ *
+ * It was a continuous radial gradient, and in a nearest-neighbour world where every other edge is a hard pixel
+ * and the type is uniform blocks it read as a lens flare — the brightest thing in `08-board` outside the top bar,
+ * a lilac bloom under the word "sitting" (visual QA R-I7). Four hard bands, quantised onto a 4 px cell so the
+ * edges land on the pixel grid at every integer zoom, and capped well below a headline's white so a screen's own
+ * words stay the brightest thing on the screen. `makeLampGlow` (tileset.ts) rasterises it.
+ */
+export const GLOW_CELL = 4;
+export const GLOW_STEPS = [0.34, 0.24, 0.15, 0.07];
+/** Which band a cell at `t` (0 at the lamp, 1 at the edge) falls in; 0 outside the last one. */
+export function glowStep(t: number): number {
+  const i = Math.floor(t * GLOW_STEPS.length);
+  return i >= 0 && i < GLOW_STEPS.length ? GLOW_STEPS[i] : 0;
+}
+
 const P = PALETTE;
 const full = (p: Px, c: string): void => p.fill(0, 0, 16, 16, c);
 const pal = (f: FloorPalette | null, n: number): FloorPalette => f ?? floorPalette(n);
