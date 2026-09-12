@@ -4,7 +4,8 @@ import {
   DISCOVERY_INBOX, FOUNDER_BRIEF, INTERVIEW_PATH, discoveryDigest, hasFounderBrief, founderBriefTemplate,
   interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, listDiscoveryInputs, isLongPrompt,
   ownerSaid, ideaPath, IDEA_SCORE_MAX,
-  INTERVIEW_QUESTIONS, openInterviewQuestions, interviewAskTitle, renderInterviewCovered, PRESSURE_TEST_SECTION,
+  INTERVIEW_QUESTIONS, openInterviewQuestions, interviewAskTitle, renderInterviewCovered, questionsAsked,
+  PRESSURE_TEST_SECTION, PRESSURE_HANDBOOK_PATH,
 } from '@cubicle/core';
 
 // `ownerSaid` moved to core so the `discovery.inputs` tool cuts a cabin note the same way this module does
@@ -63,10 +64,15 @@ function isSubstantive(u: UnreadMaterial): boolean {
  * the single-prompt company waiting for an interview answer for ever, and it is the one path the spec calls out
  * as having to work.
  *
- * `ask` is about the *vault* being thin — no files, no typed document, no brief, nobody asked yet. `run` is
- * about there being something unread to read, and about that something being worth a research job the second
- * time onwards: the first run takes anything, a re-run needs a substantive increment and is floored at one a
- * calendar day, the same backstop `intelligenceDue` uses.
+ * `ask` is about one thing only: **has anybody been asked yet**. It used to be about the vault being thin as
+ * well — no files, no typed document, no brief — and preflight G2 deleted those three clauses, because the
+ * vault they refused to interview is exactly the vault whose material already answers some of the six, which
+ * made the coverage check that decides *which* questions to ask unreachable. How much of the interview is
+ * still worth asking is `askInterview`'s judgement now, per question, not this gate's, all or nothing.
+ *
+ * `run` is about there being something unread to read, and about that something being worth a research job the
+ * second time onwards: the first run takes anything, a re-run needs a substantive increment and is floored at
+ * one a calendar day, the same backstop `intelligenceDue` uses.
  */
 export function discoveryStatus(o: {
   hasBrief: boolean;
@@ -156,7 +162,7 @@ export function discoveryGoal(opts: { founderBrief: string; briefTemplate: strin
     '',
     opts.briefTemplate,
     '',
-    `Rules: every claim about what already exists cites the file it came from. Where the owner's material and the interview disagree, say so rather than picking one. Never invent a customer, a number or a date. \`${PRESSURE_TEST_SECTION}\` is the Paul Graham test on the company as a whole — read \`Docs/pressure-test-handbook.md\` first, write the five parts in order, end on one word of STRONG, WEAK or PIVOT REQUIRED, and never write "it has potential, but". Put the same five parts in your research report. The report goes to ${opts.research}; the brief goes to the owner.`,
+    `Rules: every claim about what already exists cites the file it came from. Where the owner's material and the interview disagree, say so rather than picking one. Never invent a customer, a number or a date. \`${PRESSURE_TEST_SECTION}\` is the Paul Graham test on the company as a whole — read \`${PRESSURE_HANDBOOK_PATH}\` first, write the five parts in order, end on one word of STRONG, WEAK or PIVOT REQUIRED, and never write "it has potential, but". Put the same five parts in your research report. The report goes to ${opts.research}; the brief goes to the owner.`,
   ].join('\n');
 }
 
@@ -258,6 +264,11 @@ export const INTERVIEW_MATERIAL_CHARS = 20_000;
  * read by cue, which is the only route open to "what have you already tried that did not work" — no brief
  * heading answers that one, so a brief that says "we tried X and it did not work" would otherwise buy the
  * owner a question they had already answered in the very document the company planned from.
+ *
+ * Putting it in `text` is safe because `coveredQuestions` runs `ownerAuthored` over everything first, which
+ * takes out the template's own prose and every `## ` heading. Without that it was not safe: `## Who it is for`
+ * is itself a match for that question's `/it is for/` cue, and `## Pressure test`'s template prompt contains
+ * "the workaround these people use today", so an entirely unwritten brief covered question 1 (review T4).
  */
 export function interviewMaterial(vault: Vault): { text: string; brief: string } {
   const brief = vault.readTextOrNull(FOUNDER_BRIEF) ?? '';
@@ -276,24 +287,39 @@ export function interviewMaterial(vault: Vault): { text: string; brief: string }
  * silently dead. In this order a kill resumes into the transcript write: `createProposal` is idempotent on the
  * deterministic id, so the owner is never asked twice.
  *
+ * **The resume check comes before every write** (review T4, Important 2). Coverage made the two writes
+ * material-dependent for the first time, and that turned the one-write gap into two bugs. A kill after the
+ * message left phase `none`; on the next cycle, material that had since grown could make the covered branch
+ * fire, writing `## Already answered` while the CEO's six questions sat in the owner's inbox — and
+ * `captureInterviewAnswer` only closes an `asked` transcript, so the owner's reply to a message they can see
+ * would never have been recorded by anything. Even without new material, `createProposal`'s idempotent replay
+ * does not rewrite the body, so re-deriving the open questions on a resume recorded one set in the transcript
+ * and left the owner reading another. So: if the message is already out, the transcript is written from *that
+ * message's* questions, and `covered` is never reachable once anybody has been asked anything.
+ *
  * Returns the message id when this call is what sent it, and null when the interview had already been asked —
  * including the resume, where the transcript is written but no new message goes out.
  */
 export function askInterview(vault: Vault, ceo: string, now: Date): string | null {
   if (interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)) !== 'none') return null;
+  const id = interviewMessageId(ceo);
+  const sent = findInboxById(vault, id);
+  if (sent) {
+    // The resume. The owner can see this message, so the transcript records exactly the questions it carries.
+    vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString(), questionsAsked(sent.body)), 'daemon');
+    return null;
+  }
   const m = interviewMaterial(vault);
   const open = openInterviewQuestions(m.text, m.brief);
-  // Nothing left to ask: the owner said all six in their own material, so nobody is asked anything and the
-  // transcript records why. Written before any message goes out, so the resume below cannot send one.
+  // Nothing to ask: the owner said all six in their own material. Nobody is sent anything, and the transcript
+  // says so. Reachable only here, where it is already known that no message has gone out.
   if (!open.length) { vault.writeText(INTERVIEW_PATH, renderInterviewCovered(now.toISOString()), 'daemon'); return null; }
-  const id = interviewMessageId(ceo);
-  const resumed = findInboxById(vault, id) !== null;
   createProposal(vault, {
     id, kind: 'message', from: ceo, to: 'owner',
     title: interviewAskTitle(open.length), body: renderInterviewAsk(open, INTERVIEW_QUESTIONS.length - open.length),
   }, ceo);
   vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString(), open), 'daemon');
-  return resumed ? null : id;
+  return id;
 }
 
 /**

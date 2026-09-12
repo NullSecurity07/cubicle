@@ -1,5 +1,6 @@
 import type { Vault } from './vault.js';
 import { sha256, nowIso } from './fs.js';
+import { PRESSURE_HANDBOOK_PATH } from './pressure.js';
 
 /**
  * Discovery: how the company learns what the owner is actually building, before it plans anything.
@@ -135,7 +136,19 @@ export const INTERVIEW_SECTION_CHARS = 40;
 export const INTERVIEW_COVERAGE: readonly QuestionCoverage[] = [
   {
     section: '## What the company is',
-    cues: [/\bwe(?:'re| are)\s+building\b/i, /\bI(?:'m| am)\s+building\b/i, /\bthe product is\b/i, /\bwe(?:'re| are)\s+making\b/i, /\bit(?:'s| is)\s+an?\s+\w+/i],
+    // Every cue here has to carry the *thing being built* (review T4, Important 3). This list used to end in
+    // `/it(?:'s| is) an? \w+/`, which matches "it is a mess" and "it's a shame" — and since cues are counted
+    // across every message and every file at once, one loose match plus one ordinary one reached the
+    // threshold on prose that answered nothing. What replaced it names a product, or says who it helps.
+    cues: [
+      /\bwe(?:'re| are)\s+building\b/i,
+      /\bI(?:'m| am)\s+building\b/i,
+      /\bthe product is\b/i,
+      /\bwe(?:'re| are)\s+(?:making|selling|launching)\b/i,
+      /\bwe\s+(?:build|make|sell|run)\s+\w+/i,
+      /\b(?:it|this)(?:'s| is)\s+an?\s+(?:app|tool|service|platform|marketplace|product|site|website|shop|store|box|kit|subscription|newsletter|agency|plugin|extension|game|API)\b/i,
+      /\bhelps\s+\w+/i,
+    ],
   },
   {
     section: '## Who it is for',
@@ -180,11 +193,38 @@ export function sectionAnswers(brief: string, heading: string, template: string 
   return body !== briefSectionBody(template, heading);
 }
 
+/**
+ * The material with everything the company wrote itself taken out of it, so the cue pass reads only what a
+ * person actually said (review T4, Important 1).
+ *
+ * Two things go. **The template's own prose**, wherever it appears: an adopted brief carrying a heading with
+ * the template's instructions still under it has answered nothing, and counting those words as cues is exactly
+ * the failure Decision 15 exists to prevent — it was reachable, because `## Pressure test`'s prompt contains
+ * "the workaround these people use today" and that is one of `## Who it is for`'s cues. **And every `## `
+ * heading line**, because a heading is the template's word and not the owner's: `## Who it is for` matches
+ * that same question's `/it is for/` cue, so a brief with both would have covered a question nobody answered.
+ *
+ * A written section keeps its body, which is the point: that text is an answer, whoever typed it.
+ *
+ * It cuts, and never adds — an owner's own `## ` heading is lost with the rest. That direction is the safe
+ * one: a missed cue asks the owner a question they may have answered, where a false cue silently plans the
+ * company around an answer that was never given.
+ */
+export function ownerAuthored(material: string, template: string = founderBriefTemplate()): string {
+  let out = material;
+  for (const h of FOUNDER_BRIEF_SECTIONS) {
+    const body = briefSectionBody(template, h);
+    if (body) out = out.split(body).join(' ');
+  }
+  return out.replace(/^\s*#{1,6}\s.*$/gm, ' ');
+}
+
 /** Which of the six the material already answers, index-aligned with `INTERVIEW_QUESTIONS`. */
 export function coveredQuestions(material: string, brief = '', template: string = founderBriefTemplate()): boolean[] {
+  const said = ownerAuthored(material, template);
   return INTERVIEW_COVERAGE.map((q) => {
     if (brief && sectionAnswers(brief, q.section, template)) return true;
-    return q.cues.filter((c) => c.test(material)).length >= INTERVIEW_CUES_NEEDED;
+    return q.cues.filter((c) => c.test(said)).length >= INTERVIEW_CUES_NEEDED;
   });
 }
 
@@ -254,6 +294,20 @@ export function renderInterviewCovered(at: string): string {
     ...INTERVIEW_QUESTIONS.map((q, i) => `${i + 1}. ${q}`),
     '',
   ].join('\n');
+}
+
+/**
+ * Which of the six a message the owner can already see actually carries.
+ *
+ * The resume path reads the questions out of the message rather than deriving them again (review T4,
+ * Important 2). `createProposal` is idempotent on the deterministic id and does *not* rewrite the body, so a
+ * resume that re-derived them from material that has since grown would leave the transcript recording one set
+ * of questions and the owner reading another. A message with none of the six in it — an SP3-era one, or one an
+ * older build wrote — falls back to all six, which is what that message said it was asking.
+ */
+export function questionsAsked(message: string): string[] {
+  const found = INTERVIEW_QUESTIONS.filter((q) => message.includes(q));
+  return found.length ? found : [...INTERVIEW_QUESTIONS];
 }
 
 /** The transcript as the CEO leaves it after asking. */
@@ -335,7 +389,7 @@ export function founderBriefTemplate(): string {
     '## Constraints', '', 'Money, time, what is off the table, anything the constitution already bans.', '',
     '## Candidate ideas', '', 'One line per `Ideas/<slug>.md` card you filed, with its slug. These are candidates, not decisions: the board rules on them and the owner decides.', '',
     '## What we do not know', '', 'The gaps that would change the plan if they were filled. A brief with nothing here was not written from evidence.', '',
-    PRESSURE_TEST_SECTION, '', 'The five parts, in this order, on the company as a whole. **Core Assumption:** the one belief that, if false, makes everything else irrelevant, as a falsifiable sentence. **Three Fatal Flaws:** the three most likely ways this dies, each naming a mechanism specific to this idea, market and customer — no generic advice. **Problem Validation:** vitamin, painkiller or hair on fire, and the workaround these people use today. **Founder-Market Fit:** why this owner, specifically. **Brutal Verdict:** STRONG, WEAK or PIVOT REQUIRED, in one word, then why. Never "it has potential, but". See `Docs/pressure-test-handbook.md`.', '',
+    PRESSURE_TEST_SECTION, '', 'The five parts, in this order, on the company as a whole. **Core Assumption:** the one belief that, if false, makes everything else irrelevant, as a falsifiable sentence. **Three Fatal Flaws:** the three most likely ways this dies, each naming a mechanism specific to this idea, market and customer — no generic advice. **Problem Validation:** vitamin, painkiller or hair on fire, and the workaround these people use today. **Founder-Market Fit:** why this owner, specifically. **Brutal Verdict:** STRONG, WEAK or PIVOT REQUIRED, in one word, then why. Never "it has potential, but". See `' + PRESSURE_HANDBOOK_PATH + '`.', '',
   ].join('\n');
 }
 

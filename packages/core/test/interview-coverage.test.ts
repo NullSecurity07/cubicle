@@ -4,7 +4,7 @@ import {
   coveredQuestions, openInterviewQuestions, briefSectionBody, sectionAnswers,
   interviewPhase, renderInterviewAsk, renderInterviewCovered, interviewAskTitle,
   founderBriefTemplate, missingBriefSections, FOUNDER_BRIEF_SECTIONS, FOUNDER_BRIEF_SECTIONS_V1,
-  PRESSURE_TEST_SECTION, PRESSURE_TEST_SINCE,
+  PRESSURE_TEST_SECTION, PRESSURE_TEST_SINCE, ownerAuthored, questionsAsked,
 } from '../src/discovery.js';
 
 const TEMPLATE = founderBriefTemplate();
@@ -71,6 +71,89 @@ describe('a written founder brief answers its own questions (Decision 15)', () =
 
   it('a one-word section is a shrug, not an answer', () => {
     expect(sectionAnswers('## Constraints\n\nNone.', '## Constraints', TEMPLATE)).toBe(false);
+  });
+});
+
+// Review T4, Important 1. The daemon puts the brief inside `material` as well as passing it as `brief`, and
+// nothing tested that shape. The template's own words then covered a question through the cue route, which is
+// the one thing Decision 15 says must never happen — and by the back door, since the strict section route it
+// rejected was never even consulted.
+describe('the template\'s own words are never an answer, by either route (Decision 15)', () => {
+  it('the reviewer\'s case: an unwritten brief, read as material, covers nothing', () => {
+    expect(coveredQuestions(TEMPLATE, TEMPLATE, TEMPLATE)).toEqual([false, false, false, false, false, false]);
+    expect(coveredQuestions(TEMPLATE)).toEqual([false, false, false, false, false, false]);
+  });
+
+  it('the two cues it used to find are both the company\'s own writing, not the owner\'s', () => {
+    // `## Who it is for` is itself a match for that question's `/it is for/` cue, and `## Pressure test`'s
+    // prompt says "the workaround these people use today" — one heading and one instruction, never an answer.
+    const heading = '## Who it is for';
+    const prompt = briefSectionBody(TEMPLATE, PRESSURE_TEST_SECTION);
+    expect(prompt).toContain('workaround');
+    expect(INTERVIEW_COVERAGE[1].cues.some((c) => c.test(heading))).toBe(true);
+    expect(INTERVIEW_COVERAGE[1].cues.some((c) => c.test(prompt))).toBe(true);
+    // Both are gone before a single cue is tried.
+    const stripped = ownerAuthored(`${heading}\n\n${prompt}`, TEMPLATE);
+    expect(INTERVIEW_COVERAGE[1].cues.filter((c) => c.test(stripped))).toHaveLength(0);
+    expect(coveredQuestions(`${heading}\n\n${prompt}`, '', TEMPLATE)[1]).toBe(false);
+  });
+
+  it('a brief that left "Who it is for" as the template still gets asked who it is for', () => {
+    const brief = [
+      '## What the company is', '', 'A weekly meal-kit box delivered to nurseries before seven in the morning.', '',
+      '## Who it is for', '', briefSectionBody(TEMPLATE, '## Who it is for'), '',
+      // The reviewer's shape: one realistic Problem Validation cue. It used to reach two because the heading
+      // above supplied the other; one cue is not an answer, and a heading never was one.
+      '## Pressure test', '', 'Problem Validation: hair on fire — the workaround costs them an hour every Monday.', '',
+    ].join('\n');
+    expect(coveredQuestions(brief, brief, TEMPLATE)[1]).toBe(false);
+    expect(openInterviewQuestions(brief, brief, TEMPLATE)).toContain(INTERVIEW_QUESTIONS[1]);
+    // And the section that *is* written still answers its own question, by the route that is meant to.
+    expect(coveredQuestions(brief, brief, TEMPLATE)[0]).toBe(true);
+  });
+
+  it('two cues in a section somebody actually wrote are still an answer: it is the template that is not', () => {
+    // The ruling's line: a written brief section is owner-authored text. What changed is that the template's
+    // prose and the headings are not — so this covers, and the case above does not.
+    const written = '## Pressure test\n\nProblem Validation: today they keep it in a spreadsheet, and the workaround costs an hour a day.';
+    expect(coveredQuestions(written, written, TEMPLATE)[1]).toBe(true);
+  });
+
+  it('strips only what the company wrote: a written section keeps every word of its body', () => {
+    const said = 'Independent nursery managers running twenty to sixty places, who plan menus on a shared spreadsheet.';
+    expect(ownerAuthored(`## Who it is for\n\n${said}`, TEMPLATE)).toContain(said);
+  });
+});
+
+// Review T4, Important 3. Cues are counted across every message and every file at once, so a cue that matches
+// ordinary English reaches the threshold of two on prose that answers nothing at all.
+describe('every cue for "what are you building" carries the thing being built', () => {
+  it('"it is a mess" is not a product, however much building is going on around it', () => {
+    expect(coveredQuestions('It is a mess in there. We are building trust with the council.')[0]).toBe(false);
+  });
+
+  it('but a real one-line description is', () => {
+    expect(coveredQuestions('We are building a weekly meal-kit box: it is a subscription that helps nursery managers plan five dinners a week.')[0]).toBe(true);
+    expect(coveredQuestions('We are building a weekly meal-kit box. The product is a Saturday delivery.')[0]).toBe(true);
+  });
+
+  it('no cue matches prose with no product in it at all', () => {
+    for (const noise of ['It is a shame it is a Tuesday.', 'It was a long meeting and it is a pity.', 'Thanks — it is a lot to take in.']) {
+      expect(INTERVIEW_COVERAGE[0].cues.filter((c) => c.test(noise)).length, noise).toBeLessThan(INTERVIEW_CUES_NEEDED);
+    }
+  });
+});
+
+// Review T4, Important 2. The resume path.
+describe('a message the owner can already see decides what the transcript says', () => {
+  it('reads the questions out of the message rather than deriving them again', () => {
+    const three = [INTERVIEW_QUESTIONS[1], INTERVIEW_QUESTIONS[3], INTERVIEW_QUESTIONS[5]];
+    expect(questionsAsked(renderInterviewAsk(three, 3))).toEqual(three);
+    expect(questionsAsked(renderInterviewAsk())).toEqual([...INTERVIEW_QUESTIONS]);
+  });
+
+  it('an older message that names none of the six is taken at its word: all six', () => {
+    expect(questionsAsked('Six questions, to make sure I start from the right thing.')).toEqual([...INTERVIEW_QUESTIONS]);
   });
 });
 

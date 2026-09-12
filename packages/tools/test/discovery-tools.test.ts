@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  scaffoldVault, Vault, RoleFrontmatter, readIdea, DISCOVERY_INBOX, INTERVIEW_PATH,
+  scaffoldVault, Vault, RoleFrontmatter, readIdea, DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF,
   renderInterviewAsked, renderInterviewCovered, closeInterview, loadOrg,
 } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools, type ToolContext } from '../src/index.js';
@@ -90,6 +90,22 @@ describe('discovery.inputs (spec §1)', () => {
     // the questions, never the owner's words.
     expect(r.text).toContain('We are building a weekly meal-kit box');
     expect((r.data as { sources: string[] }).sources).not.toContain(INTERVIEW_PATH);
+    // No brief adopted, so there is nothing else to point at: everything is in this call.
+    expect(r.text).not.toContain(FOUNDER_BRIEF);
+  });
+
+  // Review T4, minor 3: when coverage came through the brief's sections, the answers are in a file this call
+  // does not return, so "the files and messages here" sent the agent to the wrong document.
+  it('names the founder brief in that sentence when there is one, because this call does not return it', async () => {
+    vault.writeText(FOUNDER_BRIEF, '## What the company is\n\nA weekly meal-kit box delivered to nurseries.\n', 'owner');
+    vault.writeText(INTERVIEW_PATH, renderInterviewCovered('2026-09-12T09:00:00.000Z'), 'daemon');
+
+    const r = await discoveryInputs.handler({ max_chars: 60000 }, ctx('research_manager'));
+    expect(r.text).toContain(FOUNDER_BRIEF);
+    expect(r.text).toContain('which this call does not return');
+    expect(r.text).not.toContain('Not answered yet');
+    // It is still not a source: this call did not hand the brief over, it only said where it is.
+    expect((r.data as { sources: string[] }).sources).not.toContain(FOUNDER_BRIEF);
   });
 
   it('marks a truncation rather than hiding it', async () => {

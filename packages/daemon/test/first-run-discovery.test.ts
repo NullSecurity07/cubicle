@@ -5,12 +5,13 @@ import path from 'node:path';
 import {
   scaffoldVault, Vault, listJobs, listInbox, readJob, readIdea, updateJob, createProposal, loadOrg, officeHolder,
   DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF, interviewPhase, INTERVIEW_QUESTIONS,
+  renderInterviewAsk, interviewAskTitle,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob } from '../src/index.js';
 import { hasIdea, ideaAt } from '../src/first-run.js';   // both live in the daemon, not in core
-import { interviewMessageId, openDiscoveryJob, askInterview, interviewMaterial, discoveryStatus } from '../src/discovery.js';
+import { interviewMessageId, openDiscoveryJob, askInterview, interviewMaterial, discoveryStatus, captureInterviewAnswer } from '../src/discovery.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide } from './helpers/board-switch.js';
 
@@ -492,6 +493,55 @@ describe('the CEO asks only what the owner has not already said (spec §5)', () 
     // Nobody was asked anything: no cabin message went out, and it is not recorded as a skip the owner chose.
     expect(listInbox(vault).some((n) => n.data.from === 'ceo')).toBe(false);
     expect(t).not.toContain('## Skipped');
+  });
+
+  // Review T4, Important 2. Coverage made both writes material-dependent, which turned the one-write gap
+  // between the message and the transcript from harmless into two ways to strand the owner.
+  it('a kill after the message resumes into the transcript, and never into `covered`', () => {
+    // Exactly the vault a kill in that gap leaves: the CEO's three questions are in the inbox, no transcript.
+    const open = [INTERVIEW_QUESTIONS[1], INTERVIEW_QUESTIONS[3], INTERVIEW_QUESTIONS[5]];
+    createProposal(vault, {
+      id: interviewMessageId('ceo'), kind: 'message', from: 'ceo', to: 'owner',
+      title: interviewAskTitle(open.length), body: renderInterviewAsk(open, 3),
+    }, 'ceo');
+    expect(vault.readTextOrNull(INTERVIEW_PATH)).toBeNull();
+
+    // And the material has since grown to answer all six, which is what used to reach the covered branch.
+    vault.writeText(FOUNDER_BRIEF, [
+      '## What the company is', '', 'A weekly meal-kit box delivered to nurseries before seven in the morning, priced per child.', '',
+      '## Who it is for', '', 'Independent nursery managers running twenty to sixty places, who plan menus on a shared spreadsheet.', '',
+      '## What already exists', '', 'A waitlist of ninety and the domain. We tried a Facebook group first and it did not work.', '',
+      '## What success looks like', '', 'Ten paying nurseries in three months, at forty pounds a week each, or it was not worth it.', '',
+      '## Constraints', '', 'No paid ads and no investors: the owner will not raise, and cold outreach is off the table.', '',
+      '## Candidate ideas', '', 'One card, `Ideas/meal-kits.md`, filed from the owner\'s own note about nurseries.', '',
+      '## What we do not know', '', 'Whether a nursery kitchen will reheat what we send, which decides the packaging.', '',
+    ].join('\n'), 'owner');
+
+    expect(askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'))).toBeNull();   // no second message
+    const t = vault.readText(INTERVIEW_PATH);
+    // Not `covered`: the owner is looking at a message, and only an `asked` transcript can be closed by their
+    // reply — `captureInterviewAnswer` would otherwise never record it, whatever they typed.
+    expect(interviewPhase(t)).toBe('asked');
+    expect(captureInterviewAnswer(vault, 'The buyer is the nursery manager.', new Date())).toBe(true);
+    expect(listInbox(vault).filter((n) => n.data.id === interviewMessageId('ceo'))).toHaveLength(1);
+  });
+
+  it('the resumed transcript records the questions the owner is reading, not the ones still open', () => {
+    // `createProposal` replays idempotently and does *not* rewrite the body, so a resume that re-derived the
+    // open questions would record one set and leave the owner reading another.
+    const open = [INTERVIEW_QUESTIONS[1], INTERVIEW_QUESTIONS[3], INTERVIEW_QUESTIONS[5]];
+    createProposal(vault, {
+      id: interviewMessageId('ceo'), kind: 'message', from: 'ceo', to: 'owner',
+      title: interviewAskTitle(open.length), body: renderInterviewAsk(open, 3),
+    }, 'ceo');
+    // Material arrives that answers one of the three the owner was actually asked.
+    vault.writeText(`${DISCOVERY_INBOX}/notes.md`, 'It is for independent nursery managers. Today they use a shared spreadsheet.', 'owner');
+
+    askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'));
+    const t = vault.readText(INTERVIEW_PATH);
+    for (const q of open) expect(t).toContain(q);                       // all three, including the covered one
+    expect(t).not.toContain(INTERVIEW_QUESTIONS[0]);                    // and none the message did not carry
+    expect(t).not.toContain(INTERVIEW_QUESTIONS[2]);
   });
 
   it('the gate lets the interview through whatever the vault holds, so the coverage check is reachable (preflight G2)', () => {
