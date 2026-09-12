@@ -21,6 +21,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
                           intelligence/<date>-c<cycle>-<kind>.md sweeps, followups/<job>.md predictions
   Jobs/                   <job-id>.md (frontmatter = state machine), queue.md (generated), _template.md
   Ledger/                 ledger.md (append-only: capital, revenue, cost), runway.md (generated: cash, burn, runway)
+  Pantry/                 one note per pantry chat: the transcript, and the idea if one came of it
   Messages/               <role>.md colleague inboxes (agent-writable; HTML-comment read markers)
   Site/                   the website source; dist/ is the build (gitignored)
   Streams/                one note per product stream (problem, customers, outcome metric, error budget)
@@ -42,7 +43,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | field | type | notes |
 |---|---|---|
 | `id` | string | the filename is authoritative: `Jobs/<id>.md` — if a note's `id` field disagrees with its filename (e.g. you copied `_template.md` by hand), the daemon rewrites `id` to match the filename and logs one `daemon.warning` |
-| `type` | string | known types: `engineer.ship`, `research`, `research.review`, `research.measure`, `intelligence`, `growth.outreach`, `growth.post`, `growth.seo`, `custom`, `company.plan`, `division.plan`, `board.premortem`, `team.plan`, `critic.premortem`, `team:qa.review`, `office:operations.verify`, `office:security.review`, `requester.review`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`), `incident`, `discovery`, `board.session`, `finance.estimate`, `qa.review`, `coo.verify`, `security.review`, `finance.runway`; each has a `config/gates.yaml` entry |
+| `type` | string | known types: `engineer.ship`, `research`, `research.review`, `research.measure`, `intelligence`, `growth.outreach`, `growth.post`, `growth.seo`, `custom`, `company.plan`, `division.plan`, `board.premortem`, `team.plan`, `critic.premortem`, `team:qa.review`, `office:operations.verify`, `office:security.review`, `requester.review`, `cto.plan`, `cto.compress_charters`, `ceo.heartbeat`, `colleague.answer` (a question a colleague asked, answered with `colleague.message(re:<id>)`), `incident`, `discovery`, `board.session`, `finance.estimate`, `qa.review`, `coo.verify`, `security.review`, `finance.runway`, `office:compliance.review`, `pantry.chat`; each has a `config/gates.yaml` entry |
 | `title` | string |  |
 | `assigned` | string |  |
 | `status` | `queued` \| `running` \| `blocked` \| `in_review` \| `done` \| `failed` \| `cancelled` = `"queued"` | you may set `cancelled`; `blocked` without `blocked_on` = paused by you; `in_review` = the job's own work is done but it still owes a gate from `config/gates.yaml` |
@@ -72,6 +73,9 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | `research` | object (optional) | the universal research request this job carries (decision, question, evidence, confidence, portfolio, score) |
 | `research_slug` | string (optional) | the Research/<slug>/ project directory for this job |
 | `model_tier` | `strong` \| `medium` \| `cheap` \| `local` (optional) | pins a cheaper tier than the assigned role's charter asks for; never routes above it, and never above the `privacy` rule |
+| `trust_key` | string (optional) | on a trust review job (SP5): the idempotency key of the outbound call it gates. The pair with `trust_proposal` is what turns the reviewer's verdict into the record; a trust review gates a *call*, so it has no `parent` |
+| `trust_proposal` | string (optional) | the `00 Inbox/` proposal holding the call under review |
+| `pantry_with` | string (optional) | on a `pantry.chat` job: the other person at the counter |
 
 Body sections: `## Goal`, `## Plan`, `## Checkpoint log`, `## Result` (JSON block `{status, artifacts, metrics, blockers, lessons, summary}`).
 

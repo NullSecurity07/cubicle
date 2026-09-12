@@ -26,6 +26,9 @@ export interface NewJob {
   model_tier?: ModelTier;
   risk?: RiskLevel;
   stream?: string;
+  trust_key?: string;
+  trust_proposal?: string;
+  pantry_with?: string;
 }
 
 export function jobPath(id: string): string {
@@ -51,6 +54,7 @@ export function createJob(vault: Vault, job: NewJob, by: string): string {
     research: job.research, research_slug: job.research_slug, model_tier: job.model_tier,
     risk: job.risk ?? 'low',
     stream: job.stream,
+    trust_key: job.trust_key, trust_proposal: job.trust_proposal, pantry_with: job.pantry_with,
   });
   let body = `## Goal\n\n${job.goal.trim()}\n\n`;
   if (job.research) body += `${renderResearchRequest(job.research)}\n`;
@@ -229,6 +233,7 @@ export type WipStage = (typeof WIP_STAGES)[number];
 const GATE_STAGE: Record<string, KanbanStage> = {
   'team:qa.review': 'testing',
   'office:security.review': 'review',
+  'office:compliance.review': 'review',
   'requester.review': 'review',
   'office:operations.verify': 'ready_for_release',
   // Pre-office names, for jobs queued before the rename.
@@ -245,7 +250,7 @@ const GATE_STAGE: Record<string, KanbanStage> = {
  * heartbeat's `NON_WORK_TYPES` reuses this same list for its own "not real work" filters.
  */
 export const GATE_JOB_TYPES: readonly string[] = [
-  'team:qa.review', 'office:security.review', 'requester.review', 'research.review', 'office:operations.verify',
+  'team:qa.review', 'office:security.review', 'office:compliance.review', 'requester.review', 'research.review', 'office:operations.verify',
   // Pre-office names: a gate job queued before the rename must stay exempt from WIP and from the heartbeat's
   // work count for the rest of its life, or renaming the gates would retroactively make old reviews "work".
   'qa.review', 'security.review', 'coo.verify',

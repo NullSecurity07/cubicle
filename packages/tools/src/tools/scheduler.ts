@@ -18,6 +18,7 @@ export function systemTypes(org: Org): Record<string, string[]> {
   const eng = officeHolder(org, 'engineering');
   const sec = officeHolder(org, 'security');
   const fin = officeHolder(org, 'finance');
+  const comp = officeHolder(org, 'compliance');
   return {
     'ceo.heartbeat': [], 'company.plan': [],
     'board.premortem': [ceo], 'division.plan': [ceo], 'team.plan': [ceo], 'critic.premortem': [ceo],
@@ -35,6 +36,9 @@ export function systemTypes(org: Org): Record<string, string[]> {
     // SP4: the daily runway read is the daemon's job. The finance office may still hand-queue one — a re-read
     // after the owner adds capital — and so may the chief executive.
     'finance.runway': [ceo, fin],
+    // SP5: a trust review is the daemon's job (it gates an outbound call, not a role's own work), but the
+    // compliance office may still hand-queue one itself, same as operations and security do for their gates.
+    'office:compliance.review': [ceo, comp],
   };
 }
 

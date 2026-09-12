@@ -26,6 +26,9 @@ export const KNOWN_JOB_TYPES = [
   // SP4: the CFO's daily read of the book — one job a calendar day, whose commentary becomes the one
   // agent-written section of Ledger/runway.md.
   'finance.runway',
+  // SP5: the compliance office's review of an outbound call (the security office's gate already exists and
+  // serves both purposes), and the pantry chat, which is a conversation rather than work.
+  'office:compliance.review', 'pantry.chat',
 ] as const;
 
 /**
@@ -95,6 +98,15 @@ export const JobFrontmatter = z.looseObject({
   research: ResearchRequest.optional(),
   research_slug: z.string().optional(),
   model_tier: ModelTier.optional(),
+  /**
+   * SP5. On a trust review job: the idempotency key of the outbound call it gates, and the `00 Inbox/` proposal
+   * that holds it. The pair is how `finishWith` turns the reviewer's verdict into the record — the review gates a
+   * *call*, not a job's gate chain, so it has no `parent` and `applyVerdict` never sees it.
+   */
+  trust_key: z.string().optional(),
+  trust_proposal: z.string().optional(),
+  /** On a `pantry.chat` job: the other person at the counter. */
+  pantry_with: z.string().optional(),
 });
 export type JobFrontmatter = z.infer<typeof JobFrontmatter>;
 
