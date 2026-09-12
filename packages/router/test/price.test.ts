@@ -40,8 +40,17 @@ describe('what a model costs (spec §3)', () => {
     const calls = Array.from({ length: 1000 }, () => ({ provider: 'paid', model: 'small', prompt_tokens: 1667, completion_tokens: 0 }));
     const r = shadowCost(PRICED, calls);
     expect(r.paidCalls).toBe(1000);
-    expect(r.cents).toBe(Math.round(1000 * 1667 * 5 / 1_000_000));
-    expect(r.cents).toBeGreaterThan(0);
+    // The literal, not the formula: recomputing `1000 * 1667 * 5 / 1_000_000` here would move both sides
+    // together if the unit ever changed, and this number (8 335 000 micro-cents) is the whole point.
+    expect(r.cents).toBe(8);
+  });
+
+  it('rounds micro-cents to the nearest cent, at the half-cent boundary', () => {
+    // Nothing else pins the direction: `Math.floor` or `Math.trunc` would keep every other case green.
+    expect(microToCents(500_000)).toBe(1);
+    expect(microToCents(499_999)).toBe(0);
+    expect(microToCents(1_500_000)).toBe(2);
+    expect(microToCents(0)).toBe(0);
   });
 
   it('a token count that is not a finite number costs nothing, and never turns a sum into NaN (I1)', () => {

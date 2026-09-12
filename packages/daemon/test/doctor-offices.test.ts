@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, loadOrg, HEARTBEAT_WAKE_AREAS } from '@cubicle/core';
-import { officeRows } from '../src/index.js';
+import { officeRows, formatDoctor } from '../src/index.js';
 
 let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-doctor-')); vault = (await scaffoldVault(dir)).vault; });
@@ -24,6 +24,21 @@ describe('cubicle doctor reads the office map (spec item 5)', () => {
     expect(row.ok).toBe(false);
     expect(row.detail).toContain('clo');
     expect(row.fix).toContain('Memory/constitution.md');
+  });
+
+  it('prints the fix for a row that is neither a pass nor a failure, so an instruction is never dead text (T4 minor)', () => {
+    // The money row is `ok: null` — no model carries a price, which is correct while everything is free — and it
+    // carries the one instruction behind spec §3. Printed only on `ok === false`, that line never reached the
+    // terminal at all.
+    const out = formatDoctor([
+      { area: 'money', item: 'model prices', ok: null, detail: 'no model carries a price', fix: 'add `price: { input_per_mtok, output_per_mtok }` to a paid model in config/providers.yaml' },
+      { area: 'local', item: 'ollama', ok: true, detail: 'up', fix: 'never shown for a pass' },
+      { area: 'services', item: 'brevo', ok: false, detail: 'missing key', fix: 'see SETUP.md' },
+    ]);
+    expect(out).toContain('fix: add `price:');
+    expect(out).toContain('fix: see SETUP.md');
+    expect(out).not.toContain('never shown for a pass');
+    expect(out).toContain('1 item(s) need attention');   // an ok: null row is not "attention", and still is not
   });
 
   it('Teams edits wake the heartbeat', () => {

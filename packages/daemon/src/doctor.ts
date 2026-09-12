@@ -147,7 +147,10 @@ export async function runDoctor(env: NodeJS.ProcessEnv, opts: { live?: boolean; 
 
 export function formatDoctor(rows: DoctorRow[]): string {
   const w = (s: string, n: number) => s.padEnd(n).slice(0, n);
-  const lines = rows.map((r) => `${r.ok === true ? '✔' : r.ok === false ? '✘' : '·'} ${w(r.area, 10)}${w(r.item, 32)}${r.detail}${r.ok === false && r.fix ? `\n      fix: ${r.fix}` : ''}`);
+  // `fix` prints for anything that is not a pass, `ok: null` included: a row that carries one carries it because
+  // there is something the owner could do, and printing it only on a failure meant the money row's "add a
+  // `price:`" line — the one instruction behind spec §3 — never reached the terminal at all.
+  const lines = rows.map((r) => `${r.ok === true ? '✔' : r.ok === false ? '✘' : '·'} ${w(r.area, 10)}${w(r.item, 32)}${r.detail}${r.ok !== true && r.fix ? `\n      fix: ${r.fix}` : ''}`);
   const bad = rows.filter((r) => r.ok === false).length;
   const blocking = rows.filter((r) => r.ok === false && r.area === 'local' && /^ollama/.test(r.item)).length;
   lines.push('', bad ? `${bad} item(s) need attention${blocking ? ` — ${blocking} of them block the local floor (Ollama)` : ' — none block the daemon; missing services run in mock mode.'}` : 'all checks passed');
