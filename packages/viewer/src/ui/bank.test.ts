@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { SURFACES, chartBars } from './surfaces.js';
 import { bankView } from './content.js';
-import { emptyState, type MoneyView, type State } from '../state.js';
+import { applySnapshot, emptyState, type MoneyView, type Snapshot, type State } from '../state.js';
 
 const quota = [{ provider: 'gemini', model: 'gemini-3.5-flash', rpm_used: 0, rpd_used: 7, tpm_used: 0, cooling_until: null, limits: { rpm: 0, rpd: 100, tpm: 0 } }];
 
@@ -12,9 +12,33 @@ const funded: MoneyView = {
   budgets: [{ division: 'technology', used: 40, quota: 882 }, { division: 'house', used: 3, quota: 653 }],
   entries: [{ at: '2026-09-12T08:00:00.000Z', kind: 'capital', amount: 'USD 250.00', mode: 'live', who: 'owner', why: 'Seed from savings' }],
 };
-const withMoney = (m: MoneyView | null): State => ({ ...emptyState(), quota, money: m });
+
+/**
+ * Through the real snapshot path, not by writing `money` on to a state object: `applySnapshot` is what the live
+ * app runs, and taking it out of the loop is how C1 went unnoticed — the screen was tested against a literal
+ * nobody produced. The daemon's own `test/snapshot-money.test.ts` asserts that `buildSnapshot` sends exactly
+ * this shape; the two tests together are the whole contract.
+ */
+const wire: Snapshot = {
+  op: 'snapshot', at: '2026-09-12T08:00:00.000Z', roles: [], jobs: [], surfaces: [], quota,
+  money: null, latestRun: null, plan: '', pendingProposals: 0,
+};
+const withMoney = (m: MoneyView | null): State => applySnapshot(emptyState(), { ...wire, money: m });
 
 describe('the bank screen (spec §6)', () => {
+  it('is fed by the snapshot the daemon sends, field for field', () => {
+    // The same list `packages/daemon/test/snapshot-money.test.ts` pins on `buildSnapshot`'s output.
+    expect(Object.keys(funded).sort()).toEqual([
+      'currency', 'cash_cents', 'cash', 'burn_cents_per_day', 'burn', 'runway_days', 'runway',
+      'dormant', 'mock_revenue_cents', 'mock_revenue', 'problems', 'budgets', 'entries',
+    ].sort());
+    expect(withMoney(funded).money).toEqual(funded);
+    // An older daemon omits the field entirely; the screen must still open.
+    const older = { ...wire } as Snapshot & { money?: MoneyView | null };
+    delete older.money;
+    expect(applySnapshot(emptyState(), older).money).toBeNull();
+  });
+
   it('leads with cash, burn and runway once there is a book', () => {
     const html = bankView(withMoney(funded)).html;
     expect(html).toContain('USD 250.00');
@@ -29,6 +53,17 @@ describe('the bank screen (spec §6)', () => {
     const html = bankView(withMoney(null)).html;
     expect(html).toContain('gemini-3.5-flash');
     expect(html).not.toContain('runway');
+  });
+
+  it('shows an unfunded company its zeroes, and never calls "not spending" a number', () => {
+    // What a fresh install actually sends: the normal state of this system, not a problem (spec §5).
+    const unfunded: MoneyView = { ...funded, cash_cents: 0, cash: 'USD 0.00', burn_cents_per_day: 0, burn: 'USD 0.00', runway_days: null, runway: 'not spending', budgets: [], entries: [] };
+    const html = bankView(withMoney(unfunded)).html;
+    expect(html).toContain('USD 0.00');
+    expect(html).toContain('not spending');
+    expect(html).not.toContain('dormant');
+    expect(html).toContain('Nothing allocated yet');
+    expect(html).toContain('Nothing in the ledger yet');
   });
 
   it('says the company is dormant, and how to start it again', () => {

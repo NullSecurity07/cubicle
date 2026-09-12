@@ -1,7 +1,8 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'node:crypto';
-import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
+import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, readLedger, moneyReport, money as moneyStr, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
+import { budgetRows } from './money.js';
 
 export interface WsDeps {
   vault: Vault;
@@ -15,6 +16,36 @@ export interface WsDeps {
   allowedOrigins?: string[];
 }
 
+/**
+ * The company's money for the bank screen. Every figure appears **twice**: the integer minor units, for meters
+ * and comparisons, and the string to print. The viewer has no `@cubicle/core` dependency by design, so it must
+ * never format money itself — a second formatter is a second rounding rule waiting to disagree with the book.
+ */
+export interface MoneySnapshot {
+  currency: string;
+  cash_cents: number; cash: string;
+  burn_cents_per_day: number; burn: string;
+  runway_days: number | null; runway: string;
+  dormant: boolean;
+  mock_revenue_cents: number; mock_revenue: string;
+  problems: number;
+  budgets: { division: string; used: number; quota: number }[];
+  entries: { at: string; kind: string; amount: string; mode: string; who: string; why: string }[];
+}
+
+/**
+ * A ledger row's `why` on the way to the screen. `ledger.record` puts a floor under it and no ceiling, so a
+ * model can put a paragraph in a drawer row; it is capped here, where the daemon formats, so the viewer keeps
+ * formatting nothing. Whole words where there is a boundary, mid-word when there is not.
+ */
+const cutWhy = (s: string, n = 80): string => {
+  const t = s.replace(/\s+/g, ' ').trim();
+  if (t.length <= n) return t;
+  const head = t.slice(0, Math.max(0, n - 1));
+  const space = head.lastIndexOf(' ');
+  return (space > (n - 1) / 2 ? head.slice(0, space) : head).trimEnd() + '…';
+};
+
 export interface Snapshot {
   op: 'snapshot';
   at: string;
@@ -22,6 +53,8 @@ export interface Snapshot {
   jobs: ReturnType<typeof listJobs>;
   surfaces: { streamKind: string; streamId: string; lastFrame?: string; active: boolean }[];
   quota: unknown[];
+  /** Cash, burn, runway, the division quotas and the last few ledger rows; null if the book could not be read. */
+  money: MoneySnapshot | null;
   latestRun: { path: string; body: string } | null;
   plan: string;
   pendingProposals: number;
@@ -72,8 +105,28 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
   // ten-team office paid ten full vault scans for one snapshot.
   const allJobs = listJobs(vault);
   const teams = Object.values(org.teams).map((t) => ({ id: t.id, name: t.name, lead: t.lead, members: t.members, mission: t.mission, room: t.room, floor: t.floor, parent: t.parent, wip: { limits: t.wip ?? null, load: wipLoad(vault, t.id, chainFor, allJobs) } }));
+  // A book that cannot be read must cost the owner the bank screen's money block and nothing else: the office
+  // still opens, the queue still renders, and the brief is where the complaint about the file belongs.
+  let money: MoneySnapshot | null = null;
+  try {
+    const ledger = readLedger(vault);
+    const now = new Date();
+    const r = moneyReport(ledger, now);
+    money = {
+      currency: r.currency,
+      cash_cents: r.cashCents, cash: moneyStr(r.cashCents, r.currency),
+      burn_cents_per_day: r.burnCentsPerDay, burn: moneyStr(r.burnCentsPerDay, r.currency),
+      runway_days: r.runwayDays, runway: r.runwayDays === null ? 'not spending' : `${r.runwayDays} day${r.runwayDays === 1 ? '' : 's'}`,
+      dormant: r.dormant,
+      mock_revenue_cents: r.mockRevenueCents, mock_revenue: moneyStr(r.mockRevenueCents, r.currency),
+      problems: r.problems.length,
+      budgets: router ? budgetRows(vault, org, router.config, now) : [],
+      // Newest first, and few: the bank screen is a gauge, not the book. The book is one click away in Obsidian.
+      entries: ledger.entries.slice(-6).reverse().map((e) => ({ at: e.at, kind: e.kind, amount: moneyStr(e.cents, r.currency), mode: e.mode, who: e.who, why: cutWhy(e.why) })),
+    };
+  } catch { money = null; }
   return {
-    op: 'snapshot', at: nowIso(), roles, jobs: allJobs,
+    op: 'snapshot', at: nowIso(), roles, jobs: allJobs, money,
     surfaces: sessions.map((s) => ({ streamKind: 'browser', streamId: s.session_id, lastFrame: s.path, active: activeSessions.has(s.session_id) })),
     quota: router?.quotaSnapshot() ?? [],
     latestRun: latest ? { path: latest, body: vault.readTextOrNull(latest) ?? '' } : null,
