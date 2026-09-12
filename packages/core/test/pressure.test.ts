@@ -3,6 +3,7 @@ import {
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_MAX, BoardRubric,
   readPressureVerdict, parseRubric, rubricTotal, rubricBand, renderRubric,
   pressureToBoard, pressureFindings, PRESSURE_NO_WEDGE, PRESSURE_REFUSAL_HEDGE, PRESSURE_REFUSAL_MISSING,
+  PRESSURE_HANDBOOK_PATH,
 } from '../src/pressure.js';
 
 const STRONG = [
@@ -58,6 +59,29 @@ describe('the three verdicts, and nothing else (spec §3)', () => {
     const silent = readPressureVerdict('- the county caterer already holds the contract');
     expect(silent.ok === false && silent.reason).toBe(PRESSURE_REFUSAL_MISSING);
     expect(readPressureVerdict('').ok).toBe(false);
+  });
+
+  it('catches the hedge however the chair punctuates it (G10)', () => {
+    // The notes and both handbooks write it with a comma; the chair writes it either way.
+    const hedged = [
+      'VERDICT: STRONG\n\nIt has potential, but the margins worry me.',
+      'VERDICT: STRONG\n\nIt has potential but the margins worry me.',
+      'VERDICT: WEAK\n\nit  has   potential ,  but nobody is paying.',
+      'VERDICT: PIVOT REQUIRED\n\nIT HAS POTENTIAL, BUT the buyer is wrong.',
+      'VERDICT: STRONG\n\nit has potential,\nbut the margins worry me.',
+    ];
+    for (const t of hedged) {
+      const r = readPressureVerdict(t);
+      expect(r.ok, t).toBe(false);
+      expect(r.ok === false && r.reason).toBe(PRESSURE_REFUSAL_HEDGE);
+    }
+    // …and does not refuse a chair who never used the phrase.
+    expect(readPressureVerdict('VERDICT: STRONG\n\nThe potential buyers are already paying someone.').ok).toBe(true);
+    expect(readPressureVerdict('VERDICT: STRONG\n\nIt has potential buttons nobody presses.').ok).toBe(true);
+  });
+
+  it('names the handbook once, so the prompts and the card cannot drift', () => {
+    expect(PRESSURE_HANDBOOK_PATH).toBe('Docs/pressure-test-handbook.md');
   });
 });
 

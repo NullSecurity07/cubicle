@@ -26,9 +26,20 @@ export type PressurePart = (typeof PRESSURE_PARTS)[number];
 export const PRESSURE_VERDICTS = ['STRONG', 'WEAK', 'PIVOT REQUIRED'] as const;
 export type PressureVerdict = (typeof PRESSURE_VERDICTS)[number];
 
-/** The phrase the owner banned, because it lets the chair avoid deciding. */
+/** The phrase the owner banned, because it lets the chair avoid deciding. The canonical wording. */
 export const BANNED_HEDGE = 'it has potential but';
-const BANNED_HEDGE_RE = /it\s+has\s+potential\s*,?\s*but/i;
+
+/**
+ * How the banned phrase is actually found. The owner's notes, `Docs/pressure-test-handbook.md` and the ideas
+ * handbook all write it with a comma — "it has potential, but" — and the chair will write it either way, so
+ * the comma is optional, the spacing is free (a line break between the words counts) and the case is ignored.
+ * Only the exported constant is canonical; this is the net. `\b` after `but` so a chair who says the idea
+ * "has potential buttons" is not refused for a word it did not use.
+ */
+const BANNED_HEDGE_RE = /it\s+has\s+potential\s*,?\s*but\b/i;
+
+/** The owner-facing half of the test, in the vault. Task 3's prompts point the chair at it. */
+export const PRESSURE_HANDBOOK_PATH = 'Docs/pressure-test-handbook.md';
 
 /** The five dimensions of the triage rubric, each scored 0–2, total out of 10. */
 export const RUBRIC_DIMENSIONS = ['core_assumption', 'fatal_flaws', 'pain', 'founder_fit', 'why_now'] as const;
