@@ -4,6 +4,8 @@
 # mode: auto | propose | ask | never
 # outbound: true  → the harness generates an idempotency key <job>:<attempt>:<step>, records it before returning,
 #                   and skips the call on resume. `propose` stores the call in a proposal for the daemon to execute.
+# trust_review: true → the call is reviewed by the compliance office and the security office before it runs, and a
+#                   returned review means it never runs. Enforced in the tool layer, not in a prompt (SP5 §1).
 # proposal_kind: which `00 Inbox/` kind a propose/ask creates.
 tools:
   vault.read:            { mode: auto }
@@ -25,14 +27,14 @@ tools:
   browser.type:          { mode: auto }
   browser.extract:       { mode: auto }
   browser.screenshot:    { mode: auto }
-  browser.submit:        { mode: ask, outbound: true, proposal_kind: outbound_batch }
+  browser.submit:        { mode: ask, outbound: true, trust_review: true, proposal_kind: outbound_batch }
   browser.close:         { mode: auto }
-  email.send:            { mode: ask, outbound: true, proposal_kind: outbound_batch }
+  email.send:            { mode: ask, outbound: true, trust_review: true, proposal_kind: outbound_batch }
   email.inbox:           { mode: auto }
-  deploy.site:           { mode: propose, outbound: true, proposal_kind: spend, first_time_only: true }
-  stripe.payment_link:   { mode: propose, outbound: true, proposal_kind: spend }
+  deploy.site:           { mode: propose, outbound: true, trust_review: true, proposal_kind: spend, first_time_only: true }
+  stripe.payment_link:   { mode: propose, outbound: true, trust_review: true, proposal_kind: spend }
   analytics.pull:        { mode: auto }
-  social.post:           { mode: ask, outbound: true, proposal_kind: outbound_batch }
+  social.post:           { mode: ask, outbound: true, trust_review: true, proposal_kind: outbound_batch }
   colleague.message:     { mode: auto }
   meeting.open:          { mode: auto }
   skills.save:           { mode: auto }

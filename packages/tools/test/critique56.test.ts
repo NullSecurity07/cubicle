@@ -3,7 +3,7 @@ import http from 'node:http';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, utimesSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob } from '@cubicle/core';
+import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, recordTrustVerdict, TRUST_GATES } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, hasDocker, hasSandboxImage, type ToolContext } from '../src/index.js';
 
 let dir: string; let vault: Vault; let server: http.Server; let port: number;
@@ -18,6 +18,8 @@ function role(id: string) { return RoleFrontmatter.parse(parseNote(vault.readTex
 function ctxFor(roleId: string, jobId: string | null, env: NodeJS.ProcessEnv = {}): ToolContext {
   return { vault, events: vault.events, roleId, role: role(roleId), jobId, config: cfg, env, workspace: 'x', now: () => new Date(), scheduler: { enqueue: (j) => createJob(vault, j, roleId) } };
 }
+/** Both offices cleared this exact call — what SP5 requires of anything that leaves the company. */
+const clear = (key: string) => { for (const gate of TRUST_GATES) recordTrustVerdict(vault, { key, proposal: 'prop_t', gate, verdict: 'pass', by: 'daemon' }); };
 
 describe('browser hardening (B1–B3)', () => {
   it('refuses file:// and private hosts unless explicitly allowed; click cannot submit; submit is self-contained', async () => {
@@ -43,6 +45,7 @@ describe('browser hardening (B1–B3)', () => {
       expect(plain.ok).toBe(true);
       const nl = await lax.call('browser.type', { selector: '#t', text: 'a\nb', session });
       expect(nl.ok).toBe(false);
+      clear('job_b2:1:4');   // browser.submit leaves the company too: a form post is a send
       const sub = await lax.call('browser.submit', { url: `http://127.0.0.1:${port}/form`, fields: { '#t': 'hello' }, submit: '#go', session }, { idempotencyKey: 'job_b2:1:4' });
       expect(sub.ok).toBe(true);
       expect(sub.text).toContain('/posted?t=hello');
@@ -68,6 +71,7 @@ describe('guardrails at the tool layer (B4, B8)', () => {
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('max_emails_per_day: 20', 'max_emails_per_day: 1') }), 'owner');
     const client = await createRoleToolClient(new ToolRegistry().registerAll(phase6Tools()).forRole(role('cmo'), cfg), ctxFor('cmo', 'job_cap'));
     try {
+      clear('job_cap:1:1'); clear('job_cap:1:2');   // both cleared, so the second refusal below is the cap's
       expect((await client.call('email.send', { to: 'one@x.example', subject: 's', body: 'b' }, { idempotencyKey: 'job_cap:1:1' })).ok).toBe(true);
       const second = await client.call('email.send', { to: 'two@x.example', subject: 's', body: 'b' }, { idempotencyKey: 'job_cap:1:2' });
       expect(second.ok).toBe(false);

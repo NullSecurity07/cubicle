@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, listJobs, listInbox } from '@cubicle/core';
+import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, listJobs, listInbox, recordTrustVerdict, TRUST_GATES } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase6Tools, suppressed, extractPlainText, customerPath, isUnsubscribeRequest, type ToolContext } from '../src/index.js';
 
 let dir: string; let vault: Vault;
@@ -13,6 +13,8 @@ function role(id: string) { return RoleFrontmatter.parse(parseNote(vault.readTex
 function ctxFor(roleId: string, jobId: string | null, extra: Partial<ToolContext> = {}): ToolContext {
   return { vault, events: vault.events, roleId, role: role(roleId), jobId, config: cfg, env: {}, workspace: 'x', now: () => new Date(), scheduler: { enqueue: (j) => createJob(vault, j, roleId) }, ...extra };
 }
+/** Both offices cleared this exact call — what SP5 requires of anything that leaves the company. */
+const clear = (key: string) => { for (const gate of TRUST_GATES) recordTrustVerdict(vault, { key, proposal: 'prop_t', gate, verdict: 'pass', by: 'daemon' }); };
 const mockLines = (name: string) => existsSync(path.join(dir, `.cubicle/mock/${name}.jsonl`)) ? readFileSync(path.join(dir, `.cubicle/mock/${name}.jsonl`), 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [];
 
 describe('email.send (mock)', () => {
@@ -21,6 +23,7 @@ describe('email.send (mock)', () => {
     try {
       const nokey = await client.call('email.send', { to: 'a@example.com', subject: 'hi', body: 'hello' });
       expect(nokey.ok).toBe(false);
+      clear('job_e:1:2');
       const r = await client.call('email.send', { to: 'a@example.com', subject: 'hi', body: 'hello there' }, { idempotencyKey: 'job_e:1:2' });
       expect(r.ok).toBe(true);
       expect(r.sideEffectKey).toBe('job_e:1:2');
@@ -31,6 +34,7 @@ describe('email.send (mock)', () => {
       expect(vault.events.count('email.sent')).toBe(1);
       vault.appendText('Customers/_suppression.md', 'a@example.com\n', 'owner');
       expect(suppressed(vault, 'A@Example.com')).toBe(true);
+      clear('job_e:1:3');   // cleared by both offices, so the refusal below is the suppression list's, not a missing review
       const blocked = await client.call('email.send', { to: 'a@example.com', subject: 'again', body: 'x' }, { idempotencyKey: 'job_e:1:3' });
       expect(blocked.ok).toBe(false);
       expect(mockLines('email').length).toBe(1);
@@ -84,12 +88,14 @@ describe('deploy.site / stripe / analytics (mock)', () => {
       const r = await client.call('deploy.site', {}, { idempotencyKey: 'job_d:1:2' });
       expect(r.ok).toBe(true);
       expect((await client.call('deploy.site', { stage: 'canary', metrics: ['error rate'] }, { idempotencyKey: 'job_d:1:2b' })).ok).toBe(true);
+      clear('job_d:1:2c');   // a live deploy leaves the company; preview and canary do not
       expect((await client.call('deploy.site', { stage: 'live', metrics: ['error rate'] }, { idempotencyKey: 'job_d:1:2c' })).ok).toBe(true);
       expect(vault.events.count('deploy.done')).toBe(3);
       expect(mockLines('deploy').length).toBe(3);
       const prop = listInbox(vault).find((n) => n.data.kind === 'brand_change' && /Record site URL/.test(n.body));
       expect(prop).toBeTruthy();
       expect(prop!.data.call?.args.content).toContain('url: https://');
+      clear('job_d:1:3');
       const link = await client.call('stripe.payment_link', { name: 'Meal planner PDF', amount_cents: 900 }, { idempotencyKey: 'job_d:1:3' });
       expect(link.ok).toBe(true);
       expect(vault.readText('Metrics/payment_links.md')).toContain('Meal planner PDF');
@@ -112,6 +118,7 @@ describe('deploy.site / stripe / analytics (mock)', () => {
   it('social.post records the draft and points at the browser', async () => {
     const client = await createRoleToolClient(new ToolRegistry().registerAll(phase6Tools()).forRole(role('cmo'), cfg), ctxFor('cmo', 'job_s'));
     try {
+      clear('job_s:1:1');
       const r = await client.call('social.post', { channel: 'hn', url: 'https://news.ycombinator.com/submit', title: 'Show HN: meal planner', body: 'text' }, { idempotencyKey: 'job_s:1:1' });
       expect(r.ok).toBe(true);
       expect(vault.list('Experiments/posts', { ext: '.md' }).length).toBe(1);
