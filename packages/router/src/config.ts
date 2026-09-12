@@ -68,10 +68,20 @@ export type ProvidersFile = z.infer<typeof ProvidersFile>;
 
 export const TIER_RANK: Record<ModelTier, number> = { strong: 3, medium: 2, cheap: 1, local: 0 };
 
-export function loadProvidersConfig(file: string): ProvidersFile {
+/**
+ * `CUBICLE_DISABLE_PROVIDERS=ollama,xai` switches providers off for this process without editing the file — the
+ * owner's own machine may need the local model for something else. Ids that match nothing are ignored.
+ */
+export function disabledProvidersFromEnv(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  return new Set((env.CUBICLE_DISABLE_PROVIDERS ?? '').split(',').map((s) => s.trim()).filter(Boolean));
+}
+
+export function loadProvidersConfig(file: string, env: NodeJS.ProcessEnv = process.env): ProvidersFile {
   const doc = YAML.parse(readFileSync(file, 'utf8'));
   const parsed = ProvidersFile.parse(doc);
   if (parsed.cascade.length === 0) parsed.cascade = parsed.providers.map((p) => p.id);
+  const off = disabledProvidersFromEnv(env);
+  for (const p of parsed.providers) if (off.has(p.id)) p.enabled = false;
   return parsed;
 }
 
