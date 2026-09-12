@@ -949,7 +949,8 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // The runway note is a report, never the cycle: a providers file the router could not parse must not
         // stop the company from working.
         if (cfg) {
-          try { writeRunway(vault, org, cfg, now()); }
+          // The report this step already derived, rather than a second identical read of the same book.
+          try { writeRunway(vault, org, cfg, now(), report); }
           catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'money.runway', message: String((err as Error).message ?? err).slice(0, 200) } }); }
         }
         if (report.dormant) {

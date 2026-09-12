@@ -417,15 +417,41 @@ export function budgetForRole(vault: Vault, org: Org, cfg: ProvidersFile, role: 
   return { used: divisionSpend(vault, org, dayStartIso(now), cfg)[key] ?? 0, quota: quotas[key] ?? 0, division: key };
 }
 
+/**
+ * One `router.call` event in the shape `shadowCost` prices. The token counts are whatever the log holds —
+ * `modelCostMicro` is the one place that decides what a number has to be before it may be multiplied by a price,
+ * so nothing is coerced twice with two different opinions.
+ */
+const asRecordedCall = (e: { payload: Record<string, unknown> }): RecordedCall => {
+  const p = e.payload as { provider?: unknown; model?: unknown; tokens?: { prompt_tokens?: unknown; completion_tokens?: unknown } };
+  return {
+    provider: String(p.provider ?? ''), model: String(p.model ?? ''),
+    prompt_tokens: Number(p.tokens?.prompt_tokens ?? 0), completion_tokens: Number(p.tokens?.completion_tokens ?? 0),
+  };
+};
+
 /** `router.call` events in a window, in the shape `shadowCost` prices. */
-export function recordedCalls(vault: Vault, from: string, to?: string): RecordedCall[] {
-  return vault.events.query({ types: ['router.call'], from, to }).map((e) => {
-    const p = e.payload as { provider?: unknown; model?: unknown; tokens?: { prompt_tokens?: unknown; completion_tokens?: unknown } };
-    return {
-      provider: String(p.provider ?? ''), model: String(p.model ?? ''),
-      prompt_tokens: Number(p.tokens?.prompt_tokens ?? 0), completion_tokens: Number(p.tokens?.completion_tokens ?? 0),
-    };
-  });
+function recordedCalls(vault: Vault, from: string, to?: string): RecordedCall[] {
+  return vault.events.query({ types: ['router.call'], from, to }).map(asRecordedCall);
+}
+
+/**
+ * The same window, bucketed by the calendar day each call was made on — **one** query for a whole walk.
+ *
+ * The accrual used to ask the log once per day between the last charged day and yesterday, and because a day
+ * with no paid calls leaves no row behind, a free stretch was re-walked from scratch every cycle: up to
+ * `MAX_ACCRUAL_DAYS` queries, four times a day, to discover nothing. Bounded, so never a hang — just work
+ * nobody needed.
+ */
+function callsByDay(vault: Vault, from: string, to: string): Map<string, RecordedCall[]> {
+  const out = new Map<string, RecordedCall[]>();
+  for (const e of vault.events.query({ types: ['router.call'], from, to })) {
+    const day = String(e.ts).slice(0, 10);
+    const held = out.get(day);
+    if (held) held.push(asRecordedCall(e));
+    else out.set(day, [asRecordedCall(e)]);
+  }
+  return out;
 }
 
 // ---------- the daily runway job ----------
@@ -494,6 +520,12 @@ export function runwayCommentary(vault: Vault): string {
 /**
  * Regenerate `Ledger/runway.md` from the book. Returns the report, so the caller does not read it twice.
  *
+ * `report` is that reading, passed in by a caller that has already taken one for the same `now` — the heartbeat's
+ * money step derives it a line earlier, and deriving the same arithmetic over the same book twice in one tick is
+ * the kind of duplication that eventually has two answers. The default keeps every other caller a one-liner. The
+ * `brief` step deliberately does **not** pass its own: it re-reads the book, because a state file must never be
+ * the source of a figure the owner sees (ruling P17).
+ *
  * The owner's `never_modify` list covers this page too. `vault.writeText` would not stop it — `assertWritable`
  * returns immediately for the privileged `daemon` actor and never looks at that list — so the check is made
  * here, with core's own `isNeverModifyPath` rather than a second copy of the matching rules, and the note is
@@ -501,8 +533,7 @@ export function runwayCommentary(vault: Vault): string {
  * line, the dormancy check and the daily job all keep working on a company whose runway page is frozen. It is
  * a report, not the company.
  */
-export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Date = new Date()): MoneyReport {
-  const report = moneyReport(readLedger(vault), now);
+export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Date = new Date(), report = moneyReport(readLedger(vault), now)): MoneyReport {
   if (isNeverModifyPath(RUNWAY_PATH, vault.constitution().never_modify)) {
     warnOnce(vault, LOCKED_RUNWAY, lockSituation(RUNWAY_PATH), {
       path: RUNWAY_PATH,
@@ -530,7 +561,7 @@ export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Dat
  * providers file carries no stamp saying when its prices were added. A fresh install has no history worth
  * charging, and an unbounded first walk would scan the whole event log.
  */
-export const ACCRUAL_LOOKBACK_DAYS = 30;
+const ACCRUAL_LOOKBACK_DAYS = 30;
 /** The hard stop on a continued walk, so a book with an ancient accrual row cannot turn a cycle into a crawl. */
 export const MAX_ACCRUAL_DAYS = 370;
 
@@ -632,16 +663,21 @@ export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = n
   let day = last ? nextDay(last) : firstAccrualDay(vault, cfg, now);
   if (day < floor) day = floor;
   const out: LedgerEntry[] = [];
-  for (; day <= yesterday; day = nextDay(day)) {
-    const to = `${day}T23:59:59.999Z`;
-    const cost = shadowCost(cfg, recordedCalls(vault, `${day}T00:00:00.000Z`, to));
+  if (day > yesterday) return out;
+  // One query for the whole window, bucketed by day (M11): only the days that actually saw a call are visited,
+  // so a run of free days costs one query rather than one per day for as long as it lasts.
+  const buckets = callsByDay(vault, `${day}T00:00:00.000Z`, `${yesterday}T23:59:59.999Z`);
+  for (const d of [...buckets.keys()].sort()) {
+    if (d < day || d > yesterday) continue;    // a clock or a hand-written ts outside the window it asked for
+    const to = `${d}T23:59:59.999Z`;
+    const cost = shadowCost(cfg, buckets.get(d)!);
     if (cost.cents <= 0) continue;
     let r: { entry: LedgerEntry; added: boolean };
     try {
       r = appendEntry(vault, {
         at: to, kind: 'cost', cents: cost.cents, mode: 'live', who: 'daemon',
-        why: `${cost.paidCalls} model call${cost.paidCalls === 1 ? '' : 's'} on priced models, ${day}`,
-        ref: `model-${day}`,
+        why: `${cost.paidCalls} model call${cost.paidCalls === 1 ? '' : 's'} on priced models, ${d}`,
+        ref: `model-${d}`,
       }, 'daemon');
     } catch (err) {
       // The owner's own veto (Task 7): they have named the book in `never_modify`, and `appendEntry` refuses
@@ -653,7 +689,7 @@ export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = n
       // The days named are recomputed every time this would fire, and the text is part of the dedupe key, so a
       // lock that outlives a day says so again with the new range instead of leaving a week-old date in the
       // log for an owner to read literally.
-      const span = day === yesterday ? day : `${day} to ${yesterday}`;
+      const span = d === yesterday ? d : `${d} to ${yesterday}`;
       warnOnce(vault, LOCKED_ACCRUAL, `${lockSituation(LEDGER_PATH)}:${span}`, {
         path: LEDGER_PATH,
         reason: `${LEDGER_PATH} is on the owner's never_modify list, so model cost for ${span} was not recorded; nothing else is affected and the company keeps running`,

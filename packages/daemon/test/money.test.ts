@@ -4,13 +4,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   scaffoldVault, loadOrg, readLedger, moneyReport, appendEntry, listJobs, listInbox, readJob, updateJob, jobPath,
-  createProposal, findInboxById, officeHolder, teamOf, HOUSE, RUNWAY_PATH, type Vault,
+  createProposal, findInboxById, officeHolder, teamOf, money, HOUSE, LEDGER_PATH, RUNWAY_PATH, type Vault,
 } from '@cubicle/core';
 import { parseProvidersConfig } from '@cubicle/router';
 import {
   BUDGETED_TIERS, dayStartIso, freeCallCapacity, divisionWeights, divisionQuotas, divisionSpend, divisionOfRole,
   budgetRows, budgetForRole, runwayJobId, enqueueRunway, runwayCommentary, writeRunway, accrueModelCost,
   accrueModelCosts, dormancyMark, dormancyEpisodes, drawsOnFreePool, moneyMessageId, dormancyMessage, revivalMessage,
+  runwayGoal, MAX_ACCRUAL_DAYS,
   LOCKED_RUNWAY, LOCKED_ACCRUAL, STAMP_AHEAD, NOTICES_UNWRITABLE, NOTICES_UNREADABLE, LOCK_STATE_PATH,
 } from '../src/money.js';
 
@@ -806,6 +807,72 @@ providers:
       vault.events.emit({ type: 'router.call', agent: 'ceo', ts: `${day}T10:00:00.000Z`, payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
     }
     expect(accrueModelCosts(vault, PRICED, NOW).map((r) => r.ref)).toEqual(['model-2026-09-01', 'model-2026-09-11']);
+  });
+
+  it('re-walks a run of free days without asking the log about each one (M11)', () => {
+    // Nothing to charge between the two paid days, so no `model-<date>` row marks them charged and the next
+    // cycle starts from the same place again. The window is now one query whatever its length, and the days with
+    // no calls at all are never visited.
+    const queries: unknown[] = [];
+    const real = vault.events.query.bind(vault.events);
+    vault.events.query = ((q: Parameters<typeof real>[0]) => { queries.push(q); return real(q); }) as typeof real;
+    try {
+      vault.events.emit({ type: 'router.call', agent: 'ceo', ts: '2026-08-20T10:00:00.000Z', payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
+      vault.events.emit({ type: 'router.call', agent: 'ceo', ts: '2026-09-11T10:00:00.000Z', payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
+      queries.length = 0;
+      expect(accrueModelCosts(vault, PRICED, NOW).map((r) => r.ref)).toEqual(['model-2026-08-20', 'model-2026-09-11']);
+      // 22 days in the window; one query for the calls, and never one per day.
+      expect(queries.filter((q) => (q as { types?: string[] }).types?.includes('router.call'))).toHaveLength(1);
+    } finally { vault.events.query = real; }
+  });
+
+  it('clamps a walk continuing from an ancient row, so one old accrual cannot turn a cycle into a crawl (M9)', () => {
+    expect(MAX_ACCRUAL_DAYS).toBe(370);
+    const ago = (days: number) => new Date(NOW.getTime() - days * 86_400_000).toISOString();
+    // A book whose newest accrual row is 500 days old: the walk would otherwise start there.
+    appendEntry(vault, { at: ago(500), kind: 'cost', cents: 100, mode: 'live', who: 'daemon', why: 'An ancient day of model cost', ref: `model-${ago(500).slice(0, 10)}` }, 'daemon');
+    for (const days of [400, 300, 1]) {
+      vault.events.emit({ type: 'router.call', agent: 'ceo', ts: ago(days), payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
+    }
+    const refs = accrueModelCosts(vault, PRICED, NOW).map((r) => r.ref);
+    // The 400-day-old call is before the floor and is never charged; everything inside it still is.
+    expect(refs).toEqual([`model-${ago(300).slice(0, 10)}`, `model-${ago(1).slice(0, 10)}`]);
+    const floor = ago(MAX_ACCRUAL_DAYS).slice(0, 10);
+    for (const r of refs) expect(r.slice('model-'.length) >= floor).toBe(true);
+  });
+});
+
+describe('the CFO\'s brief for the daily runway job (spec §2, decision 5)', () => {
+  it('carries every figure, caps the answer at five lines, and forbids deriving a number', () => {
+    // The single textual guard behind decision 5: the job's one output is an opinion, and a job that has to
+    // derive a figure first is a job that will eventually derive the wrong one.
+    appendEntry(vault, { at: '2026-09-10T08:00:00.000Z', kind: 'capital', cents: 25000, mode: 'live', who: 'owner', why: 'Seed from savings' }, 'owner');
+    appendEntry(vault, { at: '2026-09-11T08:00:00.000Z', kind: 'cost', cents: 1000, mode: 'live', who: 'daemon', why: 'A day of priced calls' }, 'daemon');
+    appendEntry(vault, { at: '2026-09-11T09:00:00.000Z', kind: 'revenue', cents: 4000, mode: 'mock', who: 'cso', why: 'A simulated nursery order' }, 'cso');
+    const r = moneyReport(readLedger(vault), NOW);
+    const goal = runwayGoal(r);
+    expect(goal).toContain('USD 240.00');                       // cash
+    expect(goal).toContain(`- Burn: ${money(r.burnCentsPerDay, r.currency)} a day`);
+    expect(goal).toContain(`- Runway: ${r.runwayDays} days`);
+    expect(goal).toContain('USD 40.00');                        // the simulated revenue, named as not cash
+    expect(goal).toContain('not cash, nobody paid it');
+    expect(goal).toContain('do not recalculate anything');
+    expect(goal).toContain('at most five lines');
+    expect(goal).toContain(RUNWAY_PATH);
+    expect(goal).toContain(LEDGER_PATH);
+
+    // An empty book says "not spending" in words, and never a number: a runway of 0 days and "nothing is being
+    // spent" are opposite facts, and this is the one place a model reads them.
+    const empty = runwayGoal(moneyReport({ currency: 'USD', entries: [], problems: [] }, NOW));
+    expect(empty).toContain('not spending');
+    expect(empty).not.toMatch(/Runway: \d/);
+    expect(empty).not.toContain('Simulated revenue');
+    expect(empty).not.toContain('do not parse');
+
+    // And a book with an unreadable row tells the CFO to say so, rather than leaving the owner to find it.
+    const withProblem = runwayGoal(moneyReport({ currency: 'USD', entries: [], problems: [{ line: 12, text: '| junk |', reason: 'not an amount' }] }, NOW));
+    expect(withProblem).toContain('1 row(s)');
+    expect(withProblem).toContain('say so');
   });
 });
 
