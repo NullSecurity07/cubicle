@@ -1,6 +1,6 @@
 import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO, officeHolder, loadOrg, moneyReport, readLedger } from '@cubicle/core';
+import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO, officeHolder, loadOrg, moneyReport, readLedger, HOUSE } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown } from '@cubicle/router';
 import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, secretsGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter } from '@cubicle/core';
@@ -8,7 +8,7 @@ import { MemoryIndex, vaultScheduler, type Llm, type Guardrail } from '@cubicle/
 import type { DaemonConfig } from './config.js';
 import { WorkerPool } from './workers.js';
 import { dispatchProposals } from './dispatcher.js';
-import { budgetForRole } from './money.js';
+import { budgetForRole, budgetRows } from './money.js';
 import { WsServer } from './ws.js';
 import { createHeartbeatJob, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
@@ -55,6 +55,31 @@ export function isPidAlive(pid: number): boolean {
 }
 
 /**
+ * How long one reading of "is the company dormant?" is reused for. A tick wakes every worker at once and each
+ * then calls `nextJob`, so without this a single sweep parses `Ledger/ledger.md` once per active role — and the
+ * ledger only grows: it gains a `cost` row a day for ever, and nothing ever removes one. The window is far
+ * shorter than the 15 s idle interval, so a sweep shares one parse and the owner's `capital` row is still seen
+ * on the very next poll. If a profile ever shows this parse still hurting, the ledger's own reader is the place
+ * to fix it — not a longer window here, which would only delay the revival.
+ */
+export const DORMANCY_POLL_MS = 1000;
+
+/**
+ * Reuse one reading of `read()` for `ttlMs`, so a burst of callers asking the same question in the same moment
+ * pays for one answer. Deliberately *not* an invalidating cache: it holds nothing across a sweep, so there is
+ * no stale state to reason about and nothing to clear when the underlying file changes. `now` is injectable so
+ * its test does not have to sleep.
+ */
+export function pollCached<T>(read: () => T, ttlMs: number, now: () => number = Date.now): () => T {
+  let last: { at: number; value: T } | null = null;
+  return () => {
+    const t = now();
+    if (!last || t - last.at >= ttlMs) last = { at: t, value: read() };
+    return last.value;
+  };
+}
+
+/**
  * The daemon: vault + router + tools + workers + heartbeat trigger + dispatcher + watcher + WS.
  * Everything it does is resumable from the vault; `stop()` checkpoints and exits within `shutdownMs`.
  */
@@ -81,23 +106,28 @@ export class Daemon {
   private openMeeting: (agenda: string, participants?: string[]) => Promise<string | null> = async () => null;
 
   /**
-   * Money can make the company cheaper; it must never make it silent. Both of these swallow their own errors —
-   * an unreadable ledger reads as "plenty of money and not dormant", which keeps the company working while the
-   * brief and `cubicle doctor` complain about the file.
+   * Money can make the company cheaper; it must never make it silent. All three of these swallow their own
+   * errors — an unreadable ledger reads as "plenty of money and not dormant", which keeps the company working
+   * while the brief and `cubicle doctor` complain about the file.
    *
    * `modelBudget` is a division's day quota and what it has spent of it; the harness reads it once per job and
-   * the router demotes that job's tier when it is past quota (never stops it). `isDormant` is derived from the
-   * ledger on every call, never from the heartbeat's state file, so the owner's next `capital` row revives the
-   * company on the next poll with nothing to invalidate.
+   * the router demotes that job's tier when it is past quota (never stops it). `houseBudget` is the same gauge
+   * for the house reserve, which is what the heartbeat and the board session run against so a busy division
+   * cannot starve them (SP4 §4). `isDormant` is derived from the ledger, never from the heartbeat's state file,
+   * so the owner's next `capital` row revives the company with nothing to invalidate.
    */
   private modelBudget = (roleId: string) => {
     try { return budgetForRole(this.vault, loadOrg(this.vault), this.router.config, roleId, new Date()); }
     catch { return null; }
   };
-  private isDormant = (): boolean => {
+  private houseBudget = () => {
+    try { return budgetRows(this.vault, loadOrg(this.vault), this.router.config, new Date()).find((r) => r.division === HOUSE) ?? null; }
+    catch { return null; }
+  };
+  private isDormant = pollCached(() => {
     try { return moneyReport(readLedger(this.vault), new Date()).dormant; }
     catch { return false; }
-  };
+  }, DORMANCY_POLL_MS);
 
   constructor(public readonly config: DaemonConfig, private overrides: DaemonOverrides = {}) {
     this.log = overrides.log ?? ((m) => console.log(`[cubicle] ${m}`));
@@ -182,7 +212,7 @@ export class Daemon {
     };
     this.workers = new WorkerPool(this.vault, {
       harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback, summarize, modelBudget: this.modelBudget },
-      heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, env: cfg.env, noCloudKeys, planMaxAgeDays: cfg.planMaxAgeDays, log: this.log, modelBudget: this.modelBudget, ...this.overrides.heartbeatHooks },
+      heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, env: cfg.env, noCloudKeys, planMaxAgeDays: cfg.planMaxAgeDays, log: this.log, modelBudget: this.houseBudget, ...this.overrides.heartbeatHooks },
       maxConcurrent: cfg.maxConcurrentJobs,
       dormant: this.isDormant,
     });

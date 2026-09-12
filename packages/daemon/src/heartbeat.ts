@@ -40,27 +40,29 @@ export interface HeartbeatDeps {
   planMaxAgeDays?: number;
   log?: (msg: string) => void;
   /**
-   * The house budget the chief executive's own asks run against (SP4 §4). `runHeartbeat` memoises it per cycle
-   * (see `withCycleBudget`), so one cycle reads a role's budget once however many times it speaks.
+   * The **house** budget every ask in a cycle runs against (SP4 §4), whoever is speaking — it takes no role for
+   * exactly that reason. The house reserve exists so that the heartbeat, the gates and the board session are
+   * never starved by a busy division: an advisor who happens to lead a division that spent its quota on ordinary
+   * work must still be able to speak at the table. `runHeartbeat` memoises it per cycle (`withCycleBudget`), so
+   * a cycle reads it once however many times the room speaks.
    */
-  modelBudget?: (roleId: string) => ModelBudget | null | undefined;
+  modelBudget?: () => ModelBudget | null | undefined;
 }
 
 /**
- * One budget read per role per cycle. The rule is the harness's (SP4 §4): a budget is read at the start of a
- * piece of work and every call it makes runs against that reading, because a cycle whose advisors silently
- * change tier halfway through a board session produces a transcript nobody can account for. `askAs` speaks as
- * several roles, so the memo is keyed by role; a `deps` object is built fresh for each heartbeat job by the
- * worker pool, so the memo lives exactly as long as the cycle does.
+ * One budget read per cycle. The rule is the harness's (SP4 §4): a budget is read at the start of a piece of
+ * work and every call it makes runs against that reading, because a cycle whose advisors silently change tier
+ * halfway through a board session produces a transcript nobody can account for. A `deps` object is built fresh
+ * for each heartbeat job by the worker pool, so the memo lives exactly as long as the cycle does.
  *
- * Exported for its own test: what it guarantees (one read per role per cycle) is a rule about calls that did
- * *not* happen, which is far more legible asserted here than inferred from a scripted cycle.
+ * Exported for its own test: what it guarantees (one read per cycle) is a rule about calls that did *not*
+ * happen, which is far more legible asserted here than inferred from a scripted cycle.
  */
 export function withCycleBudget(deps: HeartbeatDeps): HeartbeatDeps {
   const read = deps.modelBudget;
   if (!read) return deps;
-  const seen = new Map<string, ModelBudget | null | undefined>();
-  return { ...deps, modelBudget: (roleId: string) => { if (!seen.has(roleId)) seen.set(roleId, read(roleId)); return seen.get(roleId); } };
+  let seen: { budget: ModelBudget | null | undefined } | null = null;
+  return { ...deps, modelBudget: () => { if (!seen) seen = { budget: read() }; return seen.budget; } };
 }
 
 export type HeartbeatOutcome = { status: 'done' } | { status: 'blocked'; on: { kind: 'job'; id: string } } | { status: 'cancelled' } | { status: 'requeued'; attempt: number };
@@ -723,7 +725,10 @@ function gather(vault: Vault, now: Date, mail: string[], analytics: string | nul
  */
 async function askAs(deps: HeartbeatDeps, roleId: string, system: string, user: string, maxTokens = 800, tier: ModelTier = 'strong'): Promise<string | null> {
   try {
-    const r = await deps.llm.chat({ tier, needsTools: false, roleId, budget: deps.modelBudget?.(roleId) ?? undefined }, { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], maxTokens });
+    // `roleId` is who speaks; the budget is the house's whoever that is (SP4 §4, and `HeartbeatDeps.modelBudget`):
+    // a board advisor who leads a division that spent its quota this morning must still get a strong model at
+    // the table, because the house reserve is there to keep the cycle and the board off the divisions' meter.
+    const r = await deps.llm.chat({ tier, needsTools: false, roleId, budget: deps.modelBudget?.() ?? undefined }, { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], maxTokens });
     return r.content.trim() || null;
   } catch {
     return null;

@@ -60,6 +60,13 @@ export interface DispatcherDeps {
 }
 
 /**
+ * Why an approved `spend` is not executed while the company is dormant. A fixed string, because it is also the
+ * mark: a note already carrying it is left alone rather than rewritten on every retry for the length of the
+ * dormancy (see the `spend` case).
+ */
+export const DORMANT_SPEND_REFUSAL = `the company is out of money and dormant, so nothing is spent; add a \`capital\` row to ${LEDGER_PATH} and this is applied on its own`;
+
+/**
  * The `## Proposed content` block, closed by a fence of exactly the length it opened with. The length matters:
  * a founder brief that quotes a config file or a snippet carries a ``` fence of its own, and a wrapper that
  * closed at the first ``` anywhere would hand the dispatcher a truncated brief — refused, a moment later, for
@@ -268,15 +275,27 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             break;
           }
           case 'spend': {
+            // Before the dormancy check: a proposal with nothing to execute is finished in one pass whatever the
+            // money says, rather than being held for a spend that could never have happened.
+            if (!d.call) { outcome = 'no stored call'; break; }
             // A dormant company does not spend. The owner approved this before the money ran out, so the note is
-            // refused rather than rejected: `refuseNote` keeps the approval and retries it every ten minutes, so
-            // the next `capital` row in the ledger is what applies it, with no second approval to give. As
-            // everywhere else in SP4, a dormancy check that throws reads as "not dormant" — the failure mode is a
-            // company that keeps working, never one that silently stops.
+            // held rather than rejected: `refuseNote` keeps `approved: true` and records the refusal, and
+            // `retryDue` re-admits the note ten minutes later, so the `capital` row that ends the dormancy is
+            // what applies it — with no second approval to give and the idempotency key still unspent.
+            //
+            // Written **once** per episode, however long the dormancy lasts. A dormancy can run for days, and
+            // rewriting the note body and emitting `guardrail.blocked` every ten minutes for all of them would
+            // churn the vault (and its autocommits) over a fact that has not changed. Every other refusal reason
+            // is something the owner can fix in seconds, which is why they can afford to repeat themselves.
+            //
+            // As everywhere else in SP4, a dormancy check that throws reads as "not dormant" — the failure mode
+            // is a company that keeps working, never one that silently stops.
             let dormant = false;
             try { dormant = deps.dormant?.() ?? false; } catch { dormant = false; }
-            if (dormant) { refuseNote(vault, note, `the company is out of money and dormant, so nothing is spent; add a \`capital\` row to ${LEDGER_PATH} and this is applied on its own`); continue; }
-            if (!d.call) { outcome = 'no stored call'; break; }
+            if (dormant) {
+              if ((d as { refused?: string }).refused !== DORMANT_SPEND_REFUSAL) refuseNote(vault, note, DORMANT_SPEND_REFUSAL);
+              continue;
+            }
             const r = await executeStoredCall(deps, note);
             outcome = `${d.call.tool}: ${r.ok ? 'ok' : 'failed'} — ${r.text.slice(0, 200)}`;
             break;
