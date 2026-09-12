@@ -140,10 +140,11 @@ describe('nothing is spent while the reviews are out (spec §3)', () => {
     expect(vault.events.count('guardrail.blocked')).toBe(before);
     expect(findInboxById(vault, prop.data.id)!.data.resolved_at).toBeNull();
 
-    // Both gates pass, and it goes without a second approval.
+    // Both gates pass, and it goes without a second approval — on the next tick, not ten minutes later. The
+    // sweep lifts the hold it did not write (I1): nothing else would touch this note, so `retryDue`'s window,
+    // chosen for a dormancy that lasts days, would otherwise be the whole delay on a cleared send.
     for (const gate of TRUST_GATES) recordTrustVerdict(vault, { key, proposal: prop.data.id, gate, verdict: 'pass', by: 'daemon' });
     expect(sweep().closed).toEqual([]);
-    retryNow(prop.path);
     await dispatch();
     const released = findInboxById(vault, prop.data.id)!;
     expect(released.data.resolved_at).toBeTruthy();
@@ -195,7 +196,6 @@ describe('nothing is spent while the reviews are out (spec §3)', () => {
     for (const r of reviews) expect((await runJob(h, r)).status).toBe('done');
     expect(trustState(vault.events, key).passed).toHaveLength(2);
     expect(sweep().closed).toEqual([]);
-    retryNow(prop.path);
     await dispatch();
     expect(findInboxById(vault, prop.data.id)!.data.resolved_at).toBeTruthy();
     expect((await runJob(h, job)).status).toBe('done');
@@ -217,10 +217,39 @@ describe('nothing is spent while the reviews are out (spec §3)', () => {
     expect((findInboxById(vault, p.id)!.data as { refused?: string }).refused).toBe(TRUST_PENDING_HOLD);
     expect(vault.events.count('deploy.done')).toBe(0);
     expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);   // held before the key was marked
+    // Both gates pass. The next sweep lifts the hold and the next dispatch executes: no `retryNow` here, because
+    // production has nothing to back-date the row with either, and that ten-minute window — chosen for a dormancy
+    // that lasts days — was the whole delay on every gated live deploy (I1).
     for (const gate of TRUST_GATES) recordTrustVerdict(vault, { key, proposal: p.id, gate, verdict: 'pass', by: 'daemon' });
-    retryNow(rel);
+    expect(sweep().closed).toEqual([]);
     await dispatch();
     expect(findInboxById(vault, p.id)!.data.resolved_at).toBeTruthy();
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([key]);   // the call was run on that pass
+  });
+
+  it('a cleared `spend` the dispatcher runs itself goes out on the next tick, with no owner edit (I1)', async () => {
+    const { dispatch } = scene('pass');
+    const job = createJob(vault, { type: 'growth.pricing', title: 'Sell the box', assigned: 'cmo', goal: 'take money' }, 'ceo');
+    const key = `${job}:1:2`;
+    const p = createProposal(vault, {
+      kind: 'spend', from: 'cmo', job, title: 'a payment link', body: 'x',
+      call: { tool: 'stripe.payment_link', args: { name: 'Weekly box', amount_cents: 2500 }, idempotency_key: key, job, role: 'cmo' },
+    }, 'cmo');
+    expect(sweep().reviews).toHaveLength(2);
+    const rel = findInboxById(vault, p.id)!.path;
+    approve(rel);
+    await dispatch();
+    expect(vault.exists('Metrics/payment_links.md')).toBe(false);   // held: nothing bought, nothing spent
+
+    // The verdicts land, and the very next sweep+dispatch pair — the order of the daemon's own tick — applies the
+    // owner's standing approval. Nobody touches the note in between.
+    for (const gate of TRUST_GATES) recordTrustVerdict(vault, { key, proposal: p.id, gate, verdict: 'pass', by: 'daemon' });
+    expect(sweep().closed).toEqual([]);
+    await dispatch();
+    expect(findInboxById(vault, p.id)!.data.resolved_at).toBeTruthy();
+    expect(vault.readText('Metrics/payment_links.md')).toContain('Weekly box');
+    expect(vault.readText('Metrics/payment_links.md').split('Weekly box')).toHaveLength(2);   // once, not twice
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([key]);
   });
 
   it('a proposal with no leaving call is dispatched exactly as it always was', async () => {

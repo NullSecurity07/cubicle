@@ -1,7 +1,7 @@
 import {
   type Vault, type InboxFrontmatter, type JobFrontmatter, type GateTable, type Org,
   listInbox, createJob, cancelJob, jobPath, readJob, loadOrg, loadGates, nowIso,
-  trustReviewsFor, trustState, trustReviewerFor, trustJobId, trustGateGoal, trustGateLabel, recordTrustVerdict, type TrustState,
+  trustReviewsFor, trustState, trustCleared, trustReviewerFor, trustJobId, trustGateGoal, trustGateLabel, recordTrustVerdict, TRUST_PENDING_HOLD, type TrustState,
 } from '@cubicle/core';
 import type { ToolsConfig } from '@cubicle/tools';
 
@@ -96,6 +96,34 @@ export function trustStateForNote(vault: Vault, cfg: ToolsConfig, d: InboxFrontm
 }
 
 /**
+ * A `refusals.at` far enough in the past that `retryDue` is true whatever the retry window is — "retry this note
+ * on the next pass". The row itself stays: it is what carries the owner's standing approval across the hold, and
+ * deleting it would have `dispatchProposals` read the still-present `refused` mark with no row behind it, which
+ * is "never retry".
+ */
+const RETRY_NOW = new Date(0).toISOString();
+
+/**
+ * End the dispatcher's hold the moment the last verdict lands.
+ *
+ * The hold reuses SP4's refusal machinery, whose ten minutes were chosen for a dormancy that lasts days: nothing
+ * touches a held note between the verdicts and that timer, so an owner-approved live deploy that both offices
+ * cleared in seconds sat unsent for up to ten more minutes (I1). `outbound_batch` escaped it only because
+ * `requeueUnblocked` wakes the author independently; the two kinds the dispatcher executes itself —
+ * `deploy.site` and `stripe.payment_link` — did not.
+ *
+ * The sweep runs immediately before `dispatchProposals` in the tick, so a cleared call is applied on the pass
+ * that notices it. Returns true when a hold was actually lifted.
+ */
+export function releaseTrustHold(vault: Vault, note: { path: string; data: InboxFrontmatter }): boolean {
+  if ((note.data as { refused?: string }).refused !== TRUST_PENDING_HOLD) return false;
+  const row = vault.db.prepare('SELECT at FROM refusals WHERE path = ?').get(note.path) as { at: string } | undefined;
+  if (!row || row.at === RETRY_NOW) return false;
+  vault.db.prepare('UPDATE refusals SET at = ? WHERE path = ?').run(RETRY_NOW, note.path);
+  return true;
+}
+
+/**
  * Drop the reviews a *closed* call no longer needs, and say so in each cancelled job's log.
  *
  * A call whose proposal is resolved can never leave the company — the owner turned it down, or a review already
@@ -138,6 +166,10 @@ export function sweepTrustReviews(deps: TrustSweepDeps): TrustSweepResult {
       out.closed.push(d.id);
       continue;
     }
+    // Both offices have passed it: whatever hold the dispatcher wrote is over, and the note is due on the next
+    // pass rather than in ten minutes' time (I1). Before the `approved === false` check below, because a note
+    // the owner turned down is closed by the dispatcher and wants its hold lifted just the same.
+    if (trustCleared(st, need)) releaseTrustHold(vault, note);
     // A call the owner has already turned down owes no reviews: the dispatcher closes it as rejected on its next
     // pass, nothing leaves the company either way, and two review jobs would spend two model calls reading a call
     // that can never run (Ruling Q14). The close above is deliberately *not* behind this: a returned call is
