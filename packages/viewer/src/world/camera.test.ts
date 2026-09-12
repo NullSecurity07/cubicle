@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { snapZoom, floorZoom, ZOOM_STEPS, FIT_STEPS, TOWER_ZOOM, FLOOR_VIEW, FLOOR_ROWS, BARS_H, CHROME, GUTTER, zoomSnap, snapZoomDown, stepDown, fitZoom, fitCamera, cameraCentre, cameraBounds, rectOfTiles, veilBands, veilAlpha, VEIL_ALPHA } from './camera.js';
+import { snapZoom, floorZoom, ZOOM_STEPS, FIT_STEPS, TOWER_ZOOM, FLOOR_VIEW, FLOOR_ROWS, BARS_H, CHROME, GUTTER, ROOF_SKY, zoomSnap, snapZoomDown, stepDown, fitZoom, fitCamera, cameraCentre, cameraBounds, clampTop, rectOfTiles, veilBands, veilAlpha, VEIL_ALPHA } from './camera.js';
+import { CAPTION_BAND } from './text.js';
 
 const VIEW = { w: 1280, h: 800 };
 /** The tower as the scene frames it: the building's columns, the roof, and the last row of pavement. */
@@ -98,32 +99,94 @@ describe('camera bounds', () => {
 describe('the focus veil', () => {
   const BUILDING = { x0: 4, x1: 54, y0: 2, y1: 54 };
   const WORLD = { cols: 60, rows: 64 };
-  const F2 = { y0: 28, y1: 41 };
+  /** The tower's four floors as `world/map.ts` reports them: 14-row objects that overlap on the slab they share. */
+  const FLOORS = [{ n: 1, y0: 41, y1: 54 }, { n: 2, y0: 28, y1: 41 }, { n: 3, y0: 15, y1: 28 }, { n: 4, y0: 2, y1: 15 }];
+  const bands = (n: number): ReturnType<typeof veilBands> => veilBands(n, FLOORS, BUILDING, WORLD);
+  const dimmed = (n: number, y: number): boolean => bands(n).some((b) => y >= b.y && y < b.y + b.h);
+
   it('covers the tower above and below the floor in focus, and the street', () => {
-    const bands = veilBands(F2, BUILDING, WORLD);
-    expect(bands).toEqual([
-      { x: 3 * 16, y: 1 * 16, w: 53 * 16, h: 27 * 16 },     // the tower above F2
-      { x: 3 * 16, y: 42 * 16, w: 53 * 16, h: 14 * 16 },    // the tower below it, down to the pavement
-      { x: 0, y: 56 * 16, w: 60 * 16, h: 8 * 16 },          // the street, the full width of the map
+    expect(bands(2)).toEqual([
+      { x: 4 * 16, y: 1 * 16, w: 51 * 16, h: 28 * 16 - CAPTION_BAND - 16 },
+      { x: 4 * 16, y: 41 * 16 - CAPTION_BAND, w: 51 * 16, h: 56 * 16 - (41 * 16 - CAPTION_BAND) },
+      { x: 0, y: 56 * 16, w: 60 * 16, h: 8 * 16 },
     ]);
   });
+
+  /**
+   * Visual QA R-C1: a screen's caption plate hangs above the screen's own top row, which is the slab of the floor
+   * above it. Bands cut on the floor boundary dimmed every focused floor's own captions and lit the captions of
+   * the floor below — "Terminal" measured 42 average when F2 was focused and 64 when F3 was.
+   */
+  it('keeps a screen and its caption plate on the same side of every edge', () => {
+    for (const f of FLOORS) {
+      const glass = f.y0 * 16 + 4;
+      const caption = f.y0 * 16 - CAPTION_BAND + 1;
+      for (const focus of [1, 2, 3, 4]) {
+        expect(dimmed(focus, caption), `F${f.n} caption, focus F${focus}`).toBe(dimmed(focus, glass));
+      }
+      expect(dimmed(f.n, glass), `F${f.n} lit when focused`).toBe(false);
+    }
+  });
+
+  it('bounds a floor by the floor below it, not by its own overlapping last row', () => {
+    // F2's object runs to row 41, which is F1's own wall row: a cut at 42 left that row lit under a dimmed F1.
+    // The band edges then sit one row higher again, to keep each floor's captions on its own side (R-C1), so the
+    // lit band is the floor's caption row down to the row above its last corridor row.
+    expect(dimmed(2, 41 * 16 + 8)).toBe(true);
+    expect(dimmed(2, 39 * 16 + 8)).toBe(false);
+    expect(dimmed(2, 40 * 16 + 8)).toBe(true);    // the row the floor below's captions hang in
+    expect(dimmed(1, 54 * 16 + 8)).toBe(false);
+  });
+
+  /**
+   * Visual QA R-I4 made this a picture rather than a principle: the bands ran one tile wide of the building on
+   * each side, which nobody could see while every scene was night, and read as a hard vertical seam down both
+   * edges of the frame the moment the floor scenes were taken by day.
+   */
   it('never draws over the sky beside the building', () => {
-    for (const f of [{ y0: 2, y1: 15 }, { y0: 41, y1: 54 }]) {
-      for (const b of veilBands(f, BUILDING, WORLD)) {
-        if (b.y < (BUILDING.y1 + 2) * 16) { expect(b.x).toBe(3 * 16); expect(b.w).toBe(53 * 16); }
+    for (const n of [1, 2, 3, 4]) {
+      for (const b of bands(n)) {
+        if (b.y < (BUILDING.y1 + 2) * 16) { expect(b.x).toBe(BUILDING.x0 * 16); expect(b.x + b.w).toBe((BUILDING.x1 + 1) * 16); }
       }
     }
   });
-  it('drops the band the floor has run out of, and draws none without a floor', () => {
-    expect(veilBands({ y0: 2, y1: 15 }, BUILDING, WORLD).map((b) => b.y)).toEqual([1 * 16, 16 * 16, 56 * 16]);
-    expect(veilBands({ y0: 41, y1: 54 }, BUILDING, WORLD)[0].y).toBe(1 * 16);
-    expect(veilBands(undefined, BUILDING, WORLD)).toEqual([]);
+
+  it('drops the band the floor has run out of, and draws none for a floor that is not there', () => {
+    expect(bands(4).map((b) => b.y)).toEqual([15 * 16 - CAPTION_BAND, 56 * 16]);   // nothing above F4's caption row
+    expect(bands(1)[0].y).toBe(1 * 16);
+    expect(veilBands(9, FLOORS, BUILDING, WORLD)).toEqual([]);
   });
+
   it('is off at the tower elevation and on from the floor elevation up', () => {
     expect(veilAlpha(TOWER_ZOOM)).toBe(0);
     expect(veilAlpha(1)).toBe(VEIL_ALPHA);
     expect(veilAlpha(4)).toBe(VEIL_ALPHA);
     expect(VEIL_ALPHA).toBeGreaterThan(0.4);
-    expect(VEIL_ALPHA).toBeLessThan(0.8);   // context, not a blackout
+    expect(VEIL_ALPHA).toBeLessThan(0.8);
+  });
+});
+
+/**
+ * Visual QA R-I1: `clampBottom` had no partner at the top, so the top floor was centred in the band with 229 px
+ * of flat sky over the roof while the floors below ran off the bottom edge.
+ */
+describe('how much sky a floor view may hold', () => {
+  const ROOF = 2 * 16;
+  it('pins the roofline two tiles below the top bar on the top floor', () => {
+    const cy = clampTop(cameraCentre(rectOfTiles(4, 2, 54, 15), 1).cy, 1, VIEW.h, ROOF);
+    const roofOnScreen = (ROOF - (cy - VIEW.h / 2)) - CHROME.top;
+    expect(roofOnScreen).toBeCloseTo(ROOF_SKY, 6);
+  });
+  it('leaves a floor that is already low enough exactly where it was', () => {
+    const f1 = cameraCentre(rectOfTiles(4, 41, 54, 54), 1).cy;
+    expect(clampTop(f1, 1, VIEW.h, ROOF)).toBe(f1);
+    const f3 = cameraCentre(rectOfTiles(4, 15, 54, 28), 1).cy;
+    expect(clampTop(f3, 1, VIEW.h, ROOF)).toBe(f3);
+  });
+  it('scales with the zoom, so a room elevation is not pushed into the sky', () => {
+    for (const zoom of [1, 2, 3, 4]) {
+      const cy = clampTop(0, zoom, VIEW.h, ROOF);
+      expect((ROOF - (cy - VIEW.h / 2 / zoom)) * zoom - CHROME.top, `zoom ${zoom}`).toBeCloseTo(ROOF_SKY * zoom, 6);
+    }
   });
 });

@@ -68,6 +68,22 @@ export function rgbOf(colour: string | undefined): [number, number, number] | nu
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+/**
+ * A screen's caption plate lives in the tile row above the screen it names — one row, so every veil edge that has
+ * to clear it stays on the tile grid rather than cutting a hard line across the middle of a floor tile.
+ *
+ * The focus veil needs this: a plate hangs above its screen, which puts it on the slab of the floor above, so a
+ * band cut on the floor boundary dimmed every focused floor's own captions and lit the captions of the floor
+ * below — a lit label glued to an unlit screen (visual QA R-C1). Both bands move up by a row, so a screen and its
+ * plate always share a side. The plate itself (a 7 px face plus a pixel of padding) is shorter than the row, and
+ * hangs from its bottom edge so it sits on the bezel.
+ */
+export const CAPTION_BAND = 16;
+/** The plate's own type and padding; `world/surfaces.ts` builds the plate from these. */
+export const CAPTION_FONT_PX = 7, CAPTION_PAD_Y = 1;
+/** What actually has to fit inside `CAPTION_BAND`: the face, its padding, and the row Phaser's text box adds. */
+export const CAPTION_PLATE_H = CAPTION_FONT_PX + CAPTION_PAD_Y * 2 + 2;
+
 /** Below this zoom a name label is a smear across the desks rather than a name, so it is not drawn (ruling F1). */
 export const NAME_LABEL_ZOOM = 2;
 /** How tall a name reads on screen, in screen pixels, at every zoom it is shown at. */

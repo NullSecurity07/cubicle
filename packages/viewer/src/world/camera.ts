@@ -1,4 +1,5 @@
 import { TILE } from './tiles.js';
+import { CAPTION_BAND } from './text.js';
 
 /** Integer zooms only: pixel art stays crisp. Plan 2 (D26) owns this set. */
 export const ZOOM_STEPS = [1, 2, 3, 4];
@@ -71,6 +72,21 @@ export function clampBottom(cy: number, zoom: number, viewH: number, worldH: num
   const half = viewH / 2 / zoom;
   return worldH >= half * 2 ? Math.min(cy, worldH - half) : cy;
 }
+
+/** How much sky a floor view may hold above the roofline before the frame is mostly nothing. */
+export const ROOF_SKY = TILE * 2;
+/**
+ * Keep the roofline near the top of the frame.
+ *
+ * `clampBottom` had no partner, so the top floor was centred in the band with 229 px of flat sky above the roof
+ * while the floors below ran off the bottom edge — a third of `06-f4` and the whole top third of
+ * `10-browser-live` was void (visual QA R-I1). Two tiles of sky say "this is the top of the building"; more says
+ * nothing at all, and the frame is better spent on the tower.
+ */
+export function clampTop(cy: number, zoom: number, viewH: number, roofY: number, sky = ROOF_SKY): number {
+  const half = viewH / 2 / zoom;
+  return Math.max(cy, roofY - sky + half - CHROME.top / zoom);
+}
 export function fitCamera(viewW: number, viewH: number, rect: Rect, steps: readonly number[] = FIT_STEPS): { zoom: number; cx: number; cy: number } {
   const usableW = Math.max(1, viewW - CHROME.left - GUTTER * 2), usableH = Math.max(1, viewH - BARS_H - GUTTER * 2);
   const zoom = stepDown(Math.min(usableW / rect.w, usableH / rect.h), steps);
@@ -104,25 +120,44 @@ export function floorZoom(viewW: number, viewH: number, buildingW = 51 * TILE): 
 
 /** A band of the world, in world pixels: what the focus veil dims. */
 export interface Band { x: number; y: number; w: number; h: number }
+/** What `veilBands` needs of a floor: its own top row and the row of the floor below it (`y1 + 1` at the bottom). */
+export interface FloorRows { n: number; y0: number; y1: number }
+
 /**
  * The world outside the floor in focus: the tower above it, the tower below it, and the street.
  *
- * A floor view is 14 rows of a 64-row map, so whatever the zoom, the neighbouring floors share the frame — at full
+ * A floor view is 13 rows of a 64-row map, so whatever the zoom, the neighbouring floors share the frame — at full
  * brightness they carried their own room signs and screens, and `03-f1` read as if the whiteboard belonged to Dev.
  * Dimming them is the answer the tower already proves with its night rect: the floor you are on is lit, the rest of
  * the building is context.
  *
+ * Two things decide where a band ends:
+ *  - the floor *below* is what bounds this one, not `y1`: floor objects are `FLOOR_STRIDE + 1` rows and overlap by
+ *    the slab they share, so cutting at `y1 + 1` left the next floor's wall row lit;
+ *  - both edges then move up by `CAPTION_BAND`, because a screen's caption plate hangs above the screen's own top
+ *    row and so sits on the slab of the floor above it. Cut on the floor boundary and every focused floor's own
+ *    captions are dimmed while the floor below's are lit — a lit label glued to an unlit screen (R-C1).
+ *
  * The tower bands are the building's own columns, never wider: the sky either side is screen-space and carries its
- * own night, and a veil drawn over it leaves a rectangle of darker sky with a visible edge. The street is the one
- * band that runs the full width of the map, because the pavement does.
+ * own night, and a veil drawn over it leaves a rectangle of darker sky with a visible edge. That is not a
+ * hypothetical — the bands ran a tile wide of the building on each side, and once the floor scenes were taken by
+ * day (visual QA R-I4) the result was a hard vertical seam down both sides of the frame, sky at rgb(190,216,241)
+ * above the focused floor and rgb(91,106,135) beside the ones below it. The street is the one band that runs the
+ * full width of the map, because the pavement does.
  */
-export function veilBands(floor: { y0: number; y1: number } | undefined, building: { x0: number; x1: number; y0: number; y1: number }, world: { cols: number; rows: number }): Band[] {
+export function veilBands(n: number, floors: readonly FloorRows[], building: { x0: number; x1: number; y0: number; y1: number }, world: { cols: number; rows: number }): Band[] {
+  const floor = floors.find((f) => f.n === n);
   if (!floor) return [];
-  const x = (building.x0 - 1) * TILE, w = (building.x1 - building.x0 + 3) * TILE;
+  const below = floors.find((f) => f.n === n - 1);
+  const bot = below ? below.y0 : floor.y1 + 1;
+  const x = building.x0 * TILE, w = (building.x1 - building.x0 + 1) * TILE;
   const top = (building.y0 - 1) * TILE, foot = (building.y1 + 2) * TILE;
+  // The lower edge only moves up where there is a floor below with captions to protect; the ground floor's own
+  // last row is its own.
+  const lit0 = floor.y0 * TILE - CAPTION_BAND, lit1 = bot * TILE - (below ? CAPTION_BAND : 0);
   const out: Band[] = [];
-  if (floor.y0 * TILE > top) out.push({ x, y: top, w, h: floor.y0 * TILE - top });
-  if ((floor.y1 + 1) * TILE < foot) out.push({ x, y: (floor.y1 + 1) * TILE, w, h: foot - (floor.y1 + 1) * TILE });
+  if (lit0 > top) out.push({ x, y: top, w, h: lit0 - top });
+  if (lit1 < foot) out.push({ x, y: lit1, w, h: foot - lit1 });
   if (foot < world.rows * TILE) out.push({ x: 0, y: foot, w: world.cols * TILE, h: world.rows * TILE - foot });
   return out;
 }

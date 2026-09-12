@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { Surface, screenBox } from './surfaces.js';
+import { CAPTION_BAND, CAPTION_PLATE_H } from './text.js';
 import type { Anchor } from './map.js';
 import type { SurfaceDef } from '../ui/surfaces.js';
 import { emptyState } from '../state.js';
@@ -145,5 +146,17 @@ describe('how much a wall screen can say', () => {
       expect(b.innerW, `tw ${tw}`).toBeLessThanOrEqual(b.w - b.inset * 2);
       expect(b.innerH, `tw ${tw}`).toBeLessThanOrEqual(b.h - b.inset);
     }
+  });
+});
+
+/**
+ * Visual QA R-C1: the caption plate hangs above the screen it names, so the focus veil reserves the whole tile
+ * row above a screen for it (`CAPTION_BAND`). The plate has to actually fit inside that row, or the veil edge
+ * cuts through it.
+ */
+describe('the caption plate and the row the veil reserves for it', () => {
+  it('fits inside one tile row, hanging a pixel clear of the bezel', () => {
+    expect(CAPTION_BAND).toBe(16);                       // one tile: every veil edge stays on the grid
+    expect(CAPTION_PLATE_H + 1).toBeLessThanOrEqual(CAPTION_BAND);
   });
 });

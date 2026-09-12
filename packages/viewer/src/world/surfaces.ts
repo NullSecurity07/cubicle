@@ -7,7 +7,7 @@ import type { SurfaceDef } from '../ui/surfaces.js';
 import { chartBars, headlineFor } from '../ui/surfaces.js';
 import { DUR, EASE, dur, motionOff } from './motion.js';
 import { PALETTE, hexToInt } from './palette.js';
-import { RES, FONT } from './text.js';
+import { RES, FONT, CAPTION_FONT_PX, CAPTION_PAD_Y } from './text.js';
 import { addText } from './text-crisp.js';
 
 /** Text margin inside the glass: wider at the sides, where there is room, than top and bottom, where there is not. */
@@ -114,7 +114,7 @@ export class Surface {
     // on the lobby carpet 40 px from the screen it names. On its own plate it is a mounted label: the checklist's
     // "no text is drawn outside a bezel" holds for captions too.
     const caption = String(anchor.props.label ?? def.kind).split('—')[0].trim();
-    this.plate = addText(scene, w / 2, -1, caption, { fontFamily: FONT, fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.screenText, backgroundColor: PALETTE.screenBezel, padding: { x: 3 * RES, y: RES } }).setOrigin(0.5, 1).setScale(1 / RES);
+    this.plate = addText(scene, w / 2, -1, caption, { fontFamily: FONT, fontSize: `${CAPTION_FONT_PX * RES}px`, fontStyle: 'bold', color: PALETTE.screenText, backgroundColor: PALETTE.screenBezel, padding: { x: 3 * RES, y: CAPTION_PAD_Y * RES } }).setOrigin(0.5, 1).setScale(1 / RES);
     this.container = scene.add.container(x, y, [this.seat, this.bezel, this.lit, this.bg, this.head, this.text, this.bars, this.badge, this.wipe, this.live, this.caret, this.plate]).setDepth(5);
     this.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => onClick(def.kind));
   }
