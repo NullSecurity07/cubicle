@@ -88,13 +88,6 @@ export function trustGatesForNote(cfg: ToolsConfig, d: InboxFrontmatter): string
   return trustReviewsFor(cfg.tools[d.call.tool], d.call.tool, d.call.args);
 }
 
-/** The state of a proposal's reviews, or null when it owes none. */
-export function trustStateForNote(vault: Vault, cfg: ToolsConfig, d: InboxFrontmatter): TrustState | null {
-  const gates = trustGatesForNote(cfg, d);
-  if (!gates.length || !d.call) return null;
-  return trustState(vault.events, d.call.idempotency_key, gates);
-}
-
 /**
  * A `refusals.at` far enough in the past that `retryDue` is true whatever the retry window is — "retry this note
  * on the next pass". The row itself stays: it is what carries the owner's standing approval across the hold, and

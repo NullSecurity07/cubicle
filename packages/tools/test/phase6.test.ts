@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, listJobs, listInbox, recordTrustVerdict, TRUST_GATES } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase6Tools, suppressed, extractPlainText, customerPath, isUnsubscribeRequest, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase6Tools, emailSend, suppressed, extractPlainText, customerPath, isUnsubscribeRequest, type ToolContext } from '../src/index.js';
 
 let dir: string; let vault: Vault;
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -21,8 +21,18 @@ describe('email.send (mock)', () => {
   it('adds the footer, records the customer touch, refuses suppressed addresses, needs a key', async () => {
     const client = await createRoleToolClient(new ToolRegistry().registerAll(phase6Tools()).forRole(role('cmo'), cfg), ctxFor('cmo', 'job_e'));
     try {
+      // No idempotency key. Since SP5 this is refused one layer above `email.send`'s own `requireKey`: a leaving
+      // call with no key carries no filed proposal, so no office can have reviewed it, and the handler never
+      // runs. Assert the text, or this case reads as "the tool needs a key" while testing the trust veto —
+      // and `requireKey`'s own refusal would go uncovered without anyone noticing (review minor 7).
       const nokey = await client.call('email.send', { to: 'a@example.com', subject: 'hi', body: 'hello' });
       expect(nokey.ok).toBe(false);
+      expect(nokey.text).toContain('carries no filed proposal');
+      expect(nokey.guardrailBlocked).toContain('carries no filed proposal');
+      expect(vault.events.count('email.sent')).toBe(0);
+      // `email.send`'s own key check is the layer below, unreachable through the wrapper now that a keyless
+      // leaving call is refused before it. Called directly, it still says so.
+      expect(await emailSend.handler({ to: 'a@example.com', subject: 'hi', body: 'hello' } as never, ctxFor('cmo', 'job_e'))).toMatchObject({ ok: false, text: 'email.send requires an idempotency key (harness bug)' });
       clear('job_e:1:2');
       const r = await client.call('email.send', { to: 'a@example.com', subject: 'hi', body: 'hello there' }, { idempotencyKey: 'job_e:1:2' });
       expect(r.ok).toBe(true);

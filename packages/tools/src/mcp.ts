@@ -79,6 +79,13 @@ export async function createRoleToolClient(defs: AnyTool[], baseCtx: ToolContext
       const prev = ctx;
       // `idempotencyKey` and nothing else, whatever a caller passes: `config` and `events` are what the trust
       // veto reads, and they belong to the client that was built for this role.
+      //
+      // **This client is single-flight, and the swap below is why.** One `ctx` is shared by every handler, so a
+      // second `call` overlapping this one would run against the first one's key — and since the trust veto now
+      // reads `ctx.idempotencyKey`, that would check one leaving call against another's clearance. Every caller
+      // in the product is sequential (the harness's step loop, `executeStoredCall`, the daemon's system tools),
+      // and each holds its own client for the length of a job. Do not call this concurrently on one client:
+      // give the second caller its own `createRoleToolClient`, or pass the key down the handler instead.
       if (ctxOverride) ctx = { ...ctx, idempotencyKey: ctxOverride.idempotencyKey };
       try {
         const r = await client.callTool({ name, arguments: args });
