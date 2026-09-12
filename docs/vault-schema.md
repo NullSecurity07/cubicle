@@ -244,7 +244,7 @@ Body sections: Context / Options considered / Chosen / Why / Expected effect / R
 |---|---|---|
 | `max_emails_per_day` | number = `20` | enforced inside email.send |
 | `banned_channels` | string[] = `[]` |  |
-| `banned_tactics` | string[] = `[]` | substring match, then the local model as a classifier |
+| `banned_tactics` | string[] = `[]` | a substring match first, then a cheap model as a classifier — through the ordinary cascade (so `CUBICLE_DISABLE_PROVIDERS` is honoured and a local model that is off or wedged is simply not a candidate), charged to the house, bounded by the guardrail's own 20 s clock rather than the provider's, and **failing closed**: a timeout, an error or a reply with no verdict refuses the call, because outbound copy nobody checked does not leave the company. The wait is announced with `guardrail.checking` / `guardrail.checked` |
 | `max_roles` | number = `8` |  |
 | `auto_approve_hire` | boolean = `false` |  |
 | `auto_approve_charter_changes` | boolean = `false` |  |

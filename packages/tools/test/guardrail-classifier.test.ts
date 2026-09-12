@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob } from '@cubicle/core';
+import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, HOUSE } from '@cubicle/core';
 import type { Router, RoutedChatResult, RouteRequest } from '@cubicle/router';
 import { parseToolsConfig, constitutionGuardrail, classifyBannedTactic, CLASSIFIER_TIMEOUT_MS, CLASSIFIER_WHERE, type ToolContext } from '../src/index.js';
 
@@ -103,6 +103,20 @@ describe('the banned_tactics classifier is bounded by its own clock', () => {
     const hit = await classifyBannedTactic(caught, freshText(), ['fake urgency']);
     expect(hit.verdict).toBe('violation');
     expect(hit.reason).toContain('fake urgency');
+  });
+});
+
+describe('the classifier routes like every other call', () => {
+  it('asks the cheap tier through the ordinary cascade, with no privacy pin, charged to the house', async () => {
+    const r = says('{"violates": false}');
+    await classifyBannedTactic(r, freshText(), ['fake urgency']);
+    const req = r.seen[0];
+    expect(req.tier).toBe('cheap');
+    // No `privacy: 'local'`: a disabled or wedged local provider is then simply not a candidate, and
+    // CUBICLE_DISABLE_PROVIDERS (which the router honours at config load) can switch it off like any other.
+    expect(req.privacy).toBeUndefined();
+    expect(req.budgetDivision).toBe(HOUSE);
+    expect(req.needsTools).toBe(false);
   });
 });
 
