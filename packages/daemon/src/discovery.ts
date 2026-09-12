@@ -83,9 +83,14 @@ export function discoveryStatus(o: {
   ranToday: boolean;
 }): DiscoveryStatus {
   if (o.briefProposalOpen) return { run: false, ask: false, why: 'a founder brief is already waiting for your verdict' };
-  // Thin: nothing written down and nothing typed at length. One line does not make a vault thick — the owner
-  // who typed it is exactly the owner the six questions are for — so it does not hold the interview back.
-  const ask = !o.hasBrief && o.interview === 'none' && o.inputs === 0 && !o.unread.longPrompt;
+  // The interview is asked once, ever, and the *coverage check* — not this gate — decides how much of it is
+  // still worth asking (preflight G2). This used to read "thin vault only": no brief, no inbox file, nothing
+  // typed at length. That made the two routes the coverage check exists for into dead code, because the vault
+  // it refused to interview is exactly the vault whose material already answers some of the six. Now the
+  // questions go out whenever nobody has been asked yet, and `askInterview` sends only the ones the founder
+  // brief, the inbox files and the owner's cabin text have not already answered — or, when they answer all
+  // six, sends nothing at all and records the `covered` phase.
+  const ask = o.interview === 'none';
   const status = (run: boolean, why: string): DiscoveryStatus => ({ run, ask, why });
   if (o.alreadyRun) return status(false, 'discovery has already read this material');
 
@@ -95,7 +100,7 @@ export function discoveryStatus(o: {
     // `covered` is the owner's material having answered all six (spec §5): like `skipped`, it means the
     // interview is closed and there is something to read — never that the company is still waiting.
     const anything = isSubstantive(o.unread) || o.unread.anyPrompt || o.inputs > 0 || ['answered', 'skipped', 'covered'].includes(o.interview);
-    if (anything) return status(true, ask ? 'reading the line the owner typed, and asking the interview as well' : 'first discovery over the owner\'s material');
+    if (anything) return status(true, ask ? 'reading what the owner gave us, and asking the interview as well — only the questions it does not already answer' : 'first discovery over the owner\'s material');
     if (ask) return status(false, 'nothing to read yet: asking the founder interview');
     if (o.interview === 'asked') return status(false, 'the founder interview is waiting for an answer');
     return status(false, 'nothing to read yet');
@@ -247,11 +252,19 @@ export const INTERVIEW_MATERIAL_CHARS = 20_000;
  * Everything the company has been told, for the coverage check: every cabin message the owner has typed (read
  * or unread — coverage is about knowledge, not about increments), every readable file in `Discovery/inbox/`,
  * and the founder brief if one is adopted.
+ *
+ * The brief comes back twice on purpose. As `brief` it is read by heading, which is the strict route: a
+ * section counts only when it is written rather than left as the template's prose. As part of `text` it is
+ * read by cue, which is the only route open to "what have you already tried that did not work" — no brief
+ * heading answers that one, so a brief that says "we tried X and it did not work" would otherwise buy the
+ * owner a question they had already answered in the very document the company planned from.
  */
 export function interviewMaterial(vault: Vault): { text: string; brief: string } {
+  const brief = vault.readTextOrNull(FOUNDER_BRIEF) ?? '';
   const parts = [ownerPrompt(vault)];
   for (const f of listDiscoveryInputs(vault)) if (f.readable) parts.push(vault.readTextOrNull(f.path) ?? '');
-  return { text: parts.filter(Boolean).join('\n\n').slice(0, INTERVIEW_MATERIAL_CHARS), brief: vault.readTextOrNull(FOUNDER_BRIEF) ?? '' };
+  parts.push(brief);
+  return { text: parts.filter(Boolean).join('\n\n').slice(0, INTERVIEW_MATERIAL_CHARS), brief };
 }
 
 /**
