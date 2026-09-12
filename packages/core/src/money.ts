@@ -264,6 +264,12 @@ export function readLedger(vault: Vault): Ledger {
 /** Bounded retries for the compare-and-write race in `appendEntry`; an append commutes, so a retry never loses work. */
 const MAX_APPEND_ATTEMPTS = 5;
 
+/**
+ * The `where` on the retry warning. Every other `daemon.warning` in the repo carries one, and `docs/events.md`
+ * documents the type as "where, message" — a row without it is a row nothing can filter or explain.
+ */
+export const LEDGER_APPEND_RETRY = 'ledger.append_retry';
+
 /** Thrown by `appendEntry` when the owner's own `never_modify` names the book — see its doc comment. */
 export class LedgerVetoedError extends Error {
   constructor() {
@@ -329,7 +335,7 @@ export function appendEntry(vault: Vault, e: NewEntry, _by: string): { entry: Le
       : [...lines, '', `| ${LEDGER_COLUMNS.join(' | ')} |`, `|${LEDGER_COLUMNS.map(() => '---').join('|')}|`, row];
 
     if (vault.currentSha(LEDGER_PATH) !== before) {
-      vault.events.emit({ type: 'daemon.warning', payload: { path: LEDGER_PATH, reason: 'note changed during update; retrying the append on the fresh copy' } });
+      vault.events.emit({ type: 'daemon.warning', payload: { where: LEDGER_APPEND_RETRY, path: LEDGER_PATH, reason: 'note changed during update; retrying the append on the fresh copy' } });
       continue;
     }
     // Written as the privileged actor: `Ledger/` is owner-owned (see the doc comment above), and the role

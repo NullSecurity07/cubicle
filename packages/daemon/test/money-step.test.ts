@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, unlinkSync, mkdirSync, chmodSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, appendEntry, readLedger, listJobs, listInbox, readJob, updateJob, RUNWAY_PATH, type Vault } from '@cubicle/core';
@@ -52,6 +52,24 @@ providers:
       - { id: big, tier: strong, tools: native, limits: { rpd: 100 }, price: { input_per_mtok: 300, output_per_mtok: 1500 } }
 `;
 const withRouter = (): HeartbeatDeps => ({ ...deps(), router: new Router(parseProvidersConfig(PRICED), new QuotaTracker(vault.db), { env: {} }) });
+
+/**
+ * Do directory modes actually stop a write here? Root ignores them, and so do some filesystems. One case below
+ * makes `Ledger/` unwritable and asserts the append *failed*; where modes are advisory it would assert the
+ * opposite of what happens, so it is skipped rather than made vague. Probed once, when this file loads.
+ */
+const NEEDS_MODES = 'needs a filesystem that enforces modes, and not root';
+const MODES_ENFORCED: boolean = (() => {
+  if (process.getuid?.() === 0) return false;
+  const probe = mkdtempSync(path.join(tmpdir(), 'cubicle-mode-probe-'));
+  try {
+    chmodSync(probe, 0o555);
+    try { writeFileSync(path.join(probe, 'probe'), 'x'); return false; } catch { return true; }
+  } catch { return false; } finally {
+    try { chmodSync(probe, 0o755); } catch { /* best effort */ }
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
 
 beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-money-step-'));
@@ -226,6 +244,40 @@ describe('the money step (spec §5, §6)', () => {
     await runHeartbeat(withRouter(), second);
     expect(readJob(vault, second)!.body).not.toContain('of model cost');
     expect(readLedger(vault).entries.filter((e) => e.ref === 'model-2026-09-11').length).toBe(1);
+  });
+
+  it('a token count that is not a number costs nothing, and an accrual that cannot be booked warns instead of killing the cycle (I1)', async () => {
+    seed('2026-09-11T08:00:00.000Z', 25000, 'Seed');
+    // One `router.call` whose `tokens` payload is a string — a provider that answered without usage, a rebuilt
+    // log, a hand-typed row. Before the guard this made `cents: NaN`, which `LedgerEntry.parse` threw on, out of
+    // the money step at index 1: no brief, no plan, no money line, and a heartbeat that requeued into the same
+    // throw for ever.
+    vault.events.emit({ type: 'router.call', agent: 'ceo', ts: '2026-09-11T10:00:00.000Z', payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 'x' } } });
+    const id = createHeartbeatJob(vault, 'test');
+    expect((await runHeartbeat(withRouter(), id)).status).toBe('blocked');       // planning, not dead
+    expect(readJob(vault, id)!.body).toContain('step 2 money');
+    expect(readJob(vault, id)!.body).toContain('USD 250.00 cash');
+    expect(readLedger(vault).entries.some((e) => e.ref === 'model-2026-09-11')).toBe(false);
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'money.accrual')).toBe(false);
+  });
+
+  it.skipIf(!MODES_ENFORCED)(`an accrual the disk refuses warns and the cycle carries on (I1, ${NEEDS_MODES})`, async () => {
+    seed('2026-09-11T08:00:00.000Z', 25000, 'Seed');
+    vault.events.emit({ type: 'router.call', agent: 'ceo', ts: '2026-09-11T10:00:00.000Z', payload: { provider: 'paid', model: 'big', tier: 'strong', tokens: { prompt_tokens: 1_000_000, completion_tokens: 0 } } });
+    // `Ledger/` readable but not writable: the book parses, the append cannot land. Not the owner's veto — that
+    // is policy and degrades to one notice inside the walk — but a real write failure, which used to be the one
+    // unguarded call in the step.
+    chmodSync(vault.abs('Ledger'), 0o555);
+    try {
+      const id = createHeartbeatJob(vault, 'test');
+      expect((await runHeartbeat(withRouter(), id)).status).toBe('blocked');
+      const warned = vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'money.accrual');
+      expect(warned).toHaveLength(1);
+      expect(String(warned[0].payload.message)).toMatch(/EACCES|permission/i);
+      // The step still finished, and the position it reported is the book's own — one failure, not a silence.
+      expect(readJob(vault, id)!.body).toContain('step 2 money');
+      expect(readJob(vault, id)!.body).toContain('USD 250.00 cash');
+    } finally { chmodSync(vault.abs('Ledger'), 0o755); }
   });
 
   it('with a router it prices the book into the runway note, and a write that fails warns without stopping the cycle', async () => {

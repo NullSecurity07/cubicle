@@ -44,6 +44,23 @@ describe('what a model costs (spec §3)', () => {
     expect(r.cents).toBeGreaterThan(0);
   });
 
+  it('a token count that is not a finite number costs nothing, and never turns a sum into NaN (I1)', () => {
+    // Reachable from the event log: a provider that answered without usage, a hand-edited row, a rebuilt log.
+    // `Math.trunc(NaN)` is `NaN`, `NaN <= 0` is false, and the accrual would then hand `cents: NaN` to the
+    // ledger's schema, throw a ZodError into the heartbeat's money step and cost the company its whole cycle.
+    const big = findModel(PRICED, 'paid', 'big')!;
+    for (const bad of ['x', null, undefined, NaN, Infinity, -Infinity, -5, {}] as unknown[]) {
+      expect(modelCostMicro(big, { prompt_tokens: bad as number, completion_tokens: bad as number })).toBe(0);
+    }
+    expect(modelCostMicro(big, { prompt_tokens: 1_000_000, completion_tokens: 'x' as unknown as number })).toBe(300_000_000);
+    const r = shadowCost(PRICED, [
+      { provider: 'paid', model: 'big', prompt_tokens: 1_000_000, completion_tokens: 0 },
+      { provider: 'paid', model: 'big', prompt_tokens: 'nonsense' as unknown as number, completion_tokens: undefined as unknown as number },
+    ]);
+    expect(r).toEqual({ cents: 300, paidCalls: 2 });
+    expect(microToCents(NaN)).toBe(0);
+  });
+
   it('counts only the calls that were on a priced model', () => {
     const r = shadowCost(PRICED, [
       { provider: 'paid', model: 'big', prompt_tokens: 1_000_000, completion_tokens: 0 },

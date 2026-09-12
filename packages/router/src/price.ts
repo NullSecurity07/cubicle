@@ -13,16 +13,28 @@ import type { ModelConfig, ProvidersFile } from './config.js';
 
 export interface CallUsage { prompt_tokens: number; completion_tokens: number }
 
+/**
+ * A token count that can be arithmetic. `router.call`'s `tokens` payload comes off the event log, where a
+ * provider that answered without usage, a hand-written row or a rebuilt log can leave a string, a `null` or
+ * nothing at all — and `Math.trunc(NaN)` is `NaN`, which would carry all the way through `shadowCost` into
+ * `appendEntry` and put `cents: NaN` in front of the ledger's schema. Money is exactly the place not to trust
+ * the input: anything that is not a finite positive number counts as zero tokens.
+ */
+const tokens = (x: unknown): number => {
+  const v = Number(x);
+  return Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0;
+};
+
 /** Cost of one call in micro-cents. Exact: no floats, no division. */
 export function modelCostMicro(model: Pick<ModelConfig, 'price'>, usage: CallUsage): number {
   const p = model.price;
   if (!p) return 0;
-  return Math.max(0, Math.trunc(usage.prompt_tokens)) * p.input_per_mtok + Math.max(0, Math.trunc(usage.completion_tokens)) * p.output_per_mtok;
+  return tokens(usage.prompt_tokens) * p.input_per_mtok + tokens(usage.completion_tokens) * p.output_per_mtok;
 }
 
-/** Micro-cents to whole cents, rounded once. */
+/** Micro-cents to whole cents, rounded once. A sum that is somehow not a number is no cost, never `NaN` cents. */
 export function microToCents(micro: number): number {
-  return Math.round(micro / 1_000_000);
+  return Number.isFinite(micro) ? Math.round(micro / 1_000_000) : 0;
 }
 
 export function findModel(cfg: ProvidersFile, provider: string, model: string): ModelConfig | null {

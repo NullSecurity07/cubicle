@@ -8,7 +8,7 @@ import {
   nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
   FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
   isLongPrompt, isSkip,
-  readLedger, moneyReport, moneyLine, moneyNeedsYou, money, type MoneyReport,
+  readLedger, moneyReport, moneyLine, moneyNeedsYou, money, type MoneyReport, type LedgerEntry,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { renderQuotaMarkdown, type ModelBudget, type Router } from '@cubicle/router';
@@ -930,7 +930,16 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
       case 'money': {
         const org = loadOrg(vault);
         const cfg = deps.router?.config ?? null;
-        const accrued = cfg ? accrueModelCost(vault, cfg, now()) : null;
+        // Guarded like its neighbour below, and for the same reason, written three times on this branch: money
+        // can make the company cheaper, it must never make it silent. An accrual that cannot be booked — a disk
+        // that will not take the write, `appendEntry` giving up after its retries, a `router.call` row whose
+        // payload the arithmetic cannot use — would otherwise throw out of step 1 with nothing to catch it: no
+        // brief, no plan, no money line, and a heartbeat that requeues straight back into the same throw.
+        let accrued: LedgerEntry | null = null;
+        if (cfg) {
+          try { accrued = accrueModelCost(vault, cfg, now()); }
+          catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'money.accrual', message: String((err as Error).message ?? err).slice(0, 200) } }); }
+        }
         const report: MoneyReport = moneyReport(readLedger(vault), now());
         const line = moneyLine(report);
         // The runway note is a report, never the cycle: a providers file the router could not parse must not
