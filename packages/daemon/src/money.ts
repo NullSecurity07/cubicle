@@ -354,8 +354,9 @@ export function houseRoles(org: Org, jobType?: string | null): ReadonlySet<strin
 
 /**
  * Which division a role's calls are charged to. Anything that does not resolve is the house's, and so is anyone
- * in `house` — pass `houseRoles(org)` to honour the security office, omit it and the answer is the plain
- * team-to-division walk (which is what every pre-SP4 event and every caller without an org opinion wants).
+ * in `house` — pass `houseRoles(org, jobType)` to honour the security office's gates, omit it and the answer is
+ * the plain team-to-division walk (which is what every pre-SP4 event, and every caller with no job in hand,
+ * wants).
  */
 export function divisionOfRole(org: Org, role: string | null | undefined, known: ReadonlySet<string>, house?: ReadonlySet<string>): string {
   if (!role) return HOUSE;

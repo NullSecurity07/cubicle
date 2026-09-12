@@ -684,11 +684,15 @@ describe('daemon lifecycle', () => {
     };
     const d = track(new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 400, maxConcurrentJobs: 2, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: cfgPath }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined }));
     await d.start();
-    await waitFor(() => readJob(d.vault, id)!.data.status === 'blocked' && readJob(d.vault, id)!.data.approval === 'pending', 15000);
+    // A whole job through the harness — the worker picks it up, calls a model, the ask-mode tool refuses, the
+    // proposal is written and the job blocks. Every comparable wait in this file is 20-40 s; this one was 15 s,
+    // and it is the case that went red, timing out at 15.4 s. The budget was under-set, not the code slow.
+    await waitFor(() => readJob(d.vault, id)!.data.status === 'blocked' && readJob(d.vault, id)!.data.approval === 'pending', 30000);
     const prop = findInboxById(d.vault, readJob(d.vault, id)!.data.blocked_on!.id)!;
     expect(listInbox(d.vault).filter((n) => n.data.kind === 'outbound_batch').length).toBe(1);
     writeFileSync(path.join(dir, prop.path), readFileSync(path.join(dir, prop.path), 'utf8').replace('approved: null', 'approved: true')); // owner in Obsidian
-    await waitFor(() => readJob(d.vault, id)!.data.status === 'done', 20000);
+    // The other half of the same trip: the dispatcher sees the approval, requeues, and the worker runs it out.
+    await waitFor(() => readJob(d.vault, id)!.data.status === 'done', 30000);
     const j = readJob(d.vault, id)!.data;
     expect(j.side_effects_done).toEqual([`${id}:1:1`]);
     expect(j.approval).toBe('approved');
@@ -726,7 +730,8 @@ describe('daemon lifecycle', () => {
     expect(before).toMatch(/^status: running$/m);
     writeFileSync(notePath, before.replace(/^status: running$/m, 'status: cancelled'));
     releaseStep();
-    await waitFor(() => d.vault.events.count('job.cancelled') >= 1, 15000);
+    // Also a whole job through the harness before anything can be cancelled, so it gets the same budget.
+    await waitFor(() => d.vault.events.count('job.cancelled') >= 1, 30000);
     // "within one step": the model was asked for exactly one tool call and none of it was executed.
     expect(readJob(d.vault, id)!.data.checkpoint_step).toBeLessThanOrEqual(1);
     expect(readJob(d.vault, id)!.data.status).toBe('cancelled');
