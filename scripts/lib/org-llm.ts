@@ -9,7 +9,7 @@ import { DISCOVERY_INBOX, FOUNDER_BRIEF, founderBriefTemplate } from '@cubicle/c
 
 export const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n\n### revenue\n- Find the first organic channel\n';
 
-export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boolean; ideaVerdict?: 'pass' | 'return' } = {}): Llm & { calls: Record<string, number> } {
+export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boolean; ideaVerdict?: 'pass' | 'return'; trustVerdict?: 'pass' | 'return'; outboundEmail?: Record<string, unknown> } = {}): Llm & { calls: Record<string, number> } {
   let vetoes = opts.vetoes ?? 1;
   const plan = opts.plan ?? PLAN;
   const per = new Map<string, number>();
@@ -104,6 +104,20 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
           impact: 4, uncertainty: 4, cost_of_being_wrong: 4,
         } : undefined;
         return { ...base, parsedToolCalls: [n === 0 && member ? { name: 'scheduler.request', args: { type: isResearch ? 'research' : 'engineer.ship', title: `Do ${role}`, assigned: member, goal: 'g', done_when: 'd', for: isResearch ? role : undefined, risk: isResearch ? undefined : 'low', stream: member === 'backend_engineer' ? 'site' : undefined, research } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
+      }
+      // SP5: a trust review reads the exact call out of its own goal and answers with one verdict. Identified by
+      // the words only `trustGateGoal` writes, so an ordinary chain `office:security.review` (which has a parent
+      // and a different goal) still takes the generic pass below.
+      if (/before it leaves the company/.test(jobMsg)) {
+        const verdict = opts.trustVerdict ?? 'pass';
+        return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', verdict, findings: verdict === 'return' ? ['the body has no unsubscribe line'] : [], summary: `read the call and ${verdict === 'return' ? 'returned' : 'passed'} it` } }] };
+      }
+      // SP5: an outreach job that actually sends something, so a test can watch a call leave the company. One
+      // send, then finish: the counter is per job, so a resumed job (its proposal answered) finishes rather than
+      // filing a second call — which is why a test must keep one scripted model for the whole life of a job.
+      if (jobType === 'growth.outreach' && opts.outboundEmail) {
+        const calls = [{ name: 'email.send', args: opts.outboundEmail }, { name: 'finish', args: { status: 'done', summary: 'the email is with the offices' } }];
+        return { ...base, parsedToolCalls: [calls[Math.min(n, 1)]] };
       }
       return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: `${role} done`, verdict: 'pass' } }] };
     },

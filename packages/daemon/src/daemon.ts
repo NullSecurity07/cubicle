@@ -8,6 +8,7 @@ import { MemoryIndex, vaultScheduler, type Llm, type Guardrail } from '@cubicle/
 import type { DaemonConfig } from './config.js';
 import { WorkerPool } from './workers.js';
 import { dispatchProposals } from './dispatcher.js';
+import { sweepTrustReviews } from './trust.js';
 import { budgetForRole, budgetRows } from './money.js';
 import { WsServer } from './ws.js';
 import { createHeartbeatJob, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
@@ -384,6 +385,11 @@ export class Daemon {
     if (this.stopping || this.ticking) return;
     this.ticking = true;
     try {
+      // Before the dispatcher: a returned call must be closed before approvals are looked at, and the dispatcher
+      // never sees an unapproved note (Decision 19).
+      const trust = await this.sweep(reason, 'trust', () => sweepTrustReviews({ vault: this.vault, toolsConfig: loadToolsConfig(this.config.toolsPath) }));
+      if (trust?.reviews.length) this.log(`tick(${reason}): ${trust.reviews.length} trust review(s) queued`);
+      if (trust?.closed.length) this.log(`tick(${reason}): ${trust.closed.length} outbound call(s) returned unsent`);
       const n = await this.sweep(reason, 'proposals', () => dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake(), guardrails: this.guardrails, questionWaitMs: this.config.questionWaitMs, dormant: this.isDormant }));
       await this.sweep(reason, 'prune-screens', () => { if (Date.now() - this.lastPrune > 3600_000) { this.lastPrune = Date.now(); const pruned = pruneScreens(this.vault); if (pruned) this.log(`pruned ${pruned} old screencast frames`); } });
       if (n) this.log(`tick(${reason}): ${n} proposal/unblock action(s)`);

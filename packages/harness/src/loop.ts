@@ -6,7 +6,7 @@ import {
   loadGates, gatesForRisk, criteriaFor, gateAssignee, type GateTable,
   loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
-  trustReviewsFor, trustDecision, trustVerdictFor, recordTrustVerdict, type TrustToolPolicy,
+  trustReviewsFor, trustDecision, trustVerdictFor, recordTrustVerdict,
 } from '@cubicle/core';
 import { NoModelAvailableError, TIER_RANK, type ModelBudget, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -107,16 +107,6 @@ export function appendObservation(vault: Vault, jobId: string, o: Observation): 
 
 export function idempotencyKey(job: JobFrontmatter, step: number): string {
   return `${job.id}:${job.attempt}:${step}`;
-}
-
-/**
- * The one `config/tools.yaml` field SP5 adds, read out of a tool's policy. `core` deliberately never imports
- * `tools`, so `trust_review` reaches it as its own one-field shape (`TrustToolPolicy`) rather than as `ToolPolicy`;
- * reading it structurally also means the harness compiles and behaves identically whether or not the tools
- * package's own schema declares the key yet.
- */
-function trustPolicy(pol: unknown): TrustToolPolicy | undefined {
-  return pol ? { trust_review: (pol as { trust_review?: unknown }).trust_review === true } : undefined;
 }
 
 /**
@@ -474,7 +464,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
        * regardless — but only after the key had been spent, and the at-most-once ledger is append-only, so this
        * check is what keeps a verdict that lands ten minutes later still able to send.
        */
-      const trust = call ? trustDecision(events, trustPolicy(deps.toolsConfig.tools[call.tool]), call) : null;
+      const trust = call ? trustDecision(events, deps.toolsConfig.tools[call.tool], call) : null;
       if (prop && prop.data.approved === true && !call && prop.data.kind === 'threat_model') {
         // A threat_model the owner approves carries no stored call — it is a plain decision, not something to
         // execute — so the answer itself is the unblock. Without this the job sat blocked forever. Narrowed to
@@ -667,7 +657,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       // `deploy.site` into an `auto` call, and an `auto` leaving call executes — spending the key on something the
       // tool layer refuses. The at-most-once ledger is append-only, so a key spent that way is spent for good and
       // no verdict landing later could send the call. Raising last is what keeps the key unspent.
-      const trustGates = trustReviewsFor(trustPolicy(policy), toolName, args);
+      const trustGates = trustReviewsFor(policy, toolName, args);
       const trustRaised = trustGates.length > 0 && policy.outbound && mode === 'auto';
       if (trustRaised) mode = 'propose';
       const trustBody = trustGates.length
