@@ -11,7 +11,7 @@ import {
   BUDGETED_TIERS, dayStartIso, freeCallCapacity, divisionWeights, divisionQuotas, divisionSpend, divisionOfRole,
   budgetRows, budgetForRole, runwayJobId, enqueueRunway, runwayCommentary, writeRunway, accrueModelCost,
   accrueModelCosts, dormancyMark, dormancyEpisodes, drawsOnFreePool, moneyMessageId, dormancyMessage, revivalMessage,
-  LOCKED_RUNWAY, LOCKED_ACCRUAL, LOCK_WARN_WINDOW_DAYS,
+  LOCKED_RUNWAY, LOCKED_ACCRUAL, STAMP_AHEAD, LOCK_STATE_PATH, LOCK_WARN_WINDOW_DAYS,
 } from '../src/money.js';
 
 const SHIPPED = parseProvidersConfig(readFileSync(path.resolve(__dirname, '../../../config/providers.yaml'), 'utf8'));
@@ -293,6 +293,9 @@ describe('the daily runway job (spec §2)', () => {
 });
 
 describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
+  const lockedRunwayRows = () => vault.events.query({ types: ['daemon.warning'] })
+    .filter((e) => (e.payload as { where?: string }).where === LOCKED_RUNWAY);
+
   it('leaves the runway page exactly as the owner left it, and still computes the figures', () => {
     const org = loadOrg(vault);
     appendEntry(vault, { at: '2026-09-11T08:00:00.000Z', kind: 'capital', cents: 25000, mode: 'live', who: 'owner', why: 'Seed' }, 'owner');
@@ -339,19 +342,38 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     expect(String((locked[0].payload as { reason?: string }).reason)).toContain('never_modify');
   });
 
+  it('says nothing for five days of locked cycles: once per lock, never on a timer', () => {
+    const org = loadOrg(vault);
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    // Five days of heartbeats against a lock the owner has not touched. The page is never written, so the sha
+    // the notice is remembered against never moves, however long the lock stands.
+    for (let d = 0; d < 5; d++) writeRunway(vault, org, SHIPPED, new Date(`2026-09-1${2 + d}T12:00:00.000Z`));
+    expect(lockedRunwayRows()).toHaveLength(1);
+    expect(JSON.parse(readFileSync(path.join(dir, LOCK_STATE_PATH), 'utf8'))[LOCKED_RUNWAY]).toContain('never_modify');
+  });
+
+  it('falls back to a bounded read of the log when the remembered state is gone', () => {
+    const org = loadOrg(vault);
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    const reason = `${RUNWAY_PATH} is on the owner's never_modify list, so it was not regenerated; the figures behind it are still computed every cycle`;
+    // A notice already in the log an hour ago, and no remembered state: the recovery read finds it and stays quiet.
+    vault.events.emit({ type: 'daemon.warning', ts: new Date(Date.now() - 3_600_000).toISOString(), payload: { where: LOCKED_RUNWAY, path: RUNWAY_PATH, reason } });
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(lockedRunwayRows()).toHaveLength(1);
+  });
+
   it('reads a bounded window of the log, never the whole of it', () => {
     const org = loadOrg(vault);
     vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    const reason = `${RUNWAY_PATH} is on the owner's never_modify list, so it was not regenerated; the figures behind it are still computed every cycle`;
+    // The same notice, stamped just outside `LOCK_WARN_WINDOW_DAYS`. An unbounded read would find it and stay
+    // silent; the bounded one cannot see it, so the notice is said again. This is the whole assertion, and it
+    // is discriminating: deleting the `from` clause from the recovery read turns the 2 below into a 1.
+    // Its pair is the test above, where the same notice an hour old *does* dedupe.
+    const old = new Date(Date.now() - (LOCK_WARN_WINDOW_DAYS + 1) * 86_400_000).toISOString();
+    vault.events.emit({ type: 'daemon.warning', ts: old, payload: { where: LOCKED_RUNWAY, path: RUNWAY_PATH, reason } });
     writeRunway(vault, org, SHIPPED, NOW);
-    // Its own notice sits inside the window, so a second call in the same window stays quiet…
-    writeRunway(vault, org, SHIPPED, NOW);
-    const where = (w: string) => vault.events.query({ types: ['daemon.warning'] }).filter((e) => (e.payload as { where?: string }).where === w);
-    expect(where(LOCKED_RUNWAY)).toHaveLength(1);
-    // …and the window is what makes that bounded: a notice older than it is out of reach by design.
-    const cutoff = new Date(Date.now() - LOCK_WARN_WINDOW_DAYS * 86_400_000).toISOString();
-    expect(where(LOCKED_RUNWAY).every((e) => e.ts >= cutoff)).toBe(true);
-    expect(vault.events.query({ types: ['daemon.warning'], from: cutoff }).length)
-      .toBeLessThanOrEqual(vault.events.query({ types: ['daemon.warning'] }).length);
+    expect(lockedRunwayRows()).toHaveLength(2);
   });
 
   it('regenerates it again as soon as the owner takes the lock off', () => {
@@ -411,10 +433,34 @@ describe('what the models cost (spec §3)', () => {
     // `prices_verified: 2027-09-11` would put the start of the walk past its end, so nothing would ever be
     // booked and nothing would ever be left to continue from — paid cost would silently stop reaching the book.
     expect(accrueModelCosts(vault, PRICED_FUTURE, NOW).map((r) => r.ref)).toEqual(['model-2026-09-11']);
-    const warned = vault.events.query({ types: ['daemon.warning'] })
-      .filter((e) => (e.payload as { where?: string }).where === 'money.accrual');
-    expect(warned).toHaveLength(1);
-    expect(String((warned[0].payload as { reason?: string }).reason)).toContain('2027-09-11');
+    const stampRows = () => vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === STAMP_AHEAD);
+    expect(stampRows()).toHaveLength(1);
+    expect(String((stampRows()[0].payload as { reason?: string }).reason)).toContain('2027-09-11');
+  });
+
+  it('mentions a mistyped stamp once per stamp, not once per cycle', () => {
+    const stampRows = () => vault.events.query({ types: ['daemon.warning'] })
+      .filter((e) => (e.payload as { where?: string }).where === STAMP_AHEAD);
+    // Nothing chargeable, so no `model-<date>` row is ever written and every cycle re-reads the stamp — which
+    // is precisely the shape that used to fill the log with one sentence.
+    for (let i = 0; i < 4; i++) accrueModelCosts(vault, PRICED_FUTURE, NOW);
+    expect(stampRows()).toHaveLength(1);
+    expect(String((stampRows()[0].payload as { reason?: string }).reason)).toContain('2027-09-11');
+    // A *different* typo is a different situation, and worth saying.
+    const OTHER = parseProvidersConfig(`
+prices_verified: "2028-01-01"
+cascade: [paid]
+providers:
+  - id: paid
+    base_url: https://example.test/v1
+    models:
+      - { id: big, tier: strong, tools: native, limits: { rpd: 100 }, price: { input_per_mtok: 300, output_per_mtok: 1500 } }
+`);
+    accrueModelCosts(vault, OTHER, NOW);
+    accrueModelCosts(vault, OTHER, NOW);
+    expect(stampRows()).toHaveLength(2);
+    expect(String((stampRows()[1].payload as { reason?: string }).reason)).toContain('2028-01-01');
   });
 
   it('gives up with one warning when the owner has locked the book, and never throws into the cycle', () => {
