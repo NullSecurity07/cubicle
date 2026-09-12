@@ -192,27 +192,39 @@ function flawBullets(text: string): string[] {
   return (bullets.length ? bullets : linesIn(section)).slice(0, PRESSURE_MAX_FLAWS);
 }
 
-/**
- * The words that name an outcome. `PIVOT` alone stands for `PIVOT REQUIRED`, so the whole-word forms are what
- * a line is counted against.
- */
-const VERDICT_WORD_RE = [/\bSTRONG\b/i, /\bWEAK\b/i, /\bPIVOT\b/i];
+/** A word that names an outcome. `PIVOT` alone stands for `PIVOT REQUIRED`. */
+const VERDICT_WORD = '(?:STRONG|WEAK|PIVOT(?:\\s+REQUIRED)?)';
+
+/** Whitespace and punctuation — anything that is not the chair saying a further word. */
+const GAP = '[\\s\\p{P}]*';
 
 /**
- * Everything on a verdict line before the chair's reasons begin. `VERDICT: WEAK — it is not strong enough` names
- * one verdict and then argues; only the part before the dash or comma is the chair naming an outcome.
+ * An echo is recognised by its **shape**, not by counting words.
+ *
+ * The prompt shows the chair `VERDICT: STRONG | WEAK | PIVOT REQUIRED`, and a chair that reprints that has
+ * not voted. What makes it a template rather than a decision is that the outcomes are *enumerated*: two or
+ * more of them strung together by the separators the template uses — `|`, `/` or the word "or" — with nothing
+ * but whitespace and punctuation in between, starting from the top of the line.
+ *
+ * Counting verdict words instead is what the first attempt did, and it threw away real decisions: a chair that
+ * writes `VERDICT: WEAK (not STRONG)` or `VERDICT: WEAK - not STRONG enough` names one outcome and then
+ * dismisses another, which is argument, not enumeration. The shape rule keeps those, and keeps
+ * `PIVOT REQUIRED (not STRONG or WEAK)` too — the enumeration there is inside the chair's reasoning rather
+ * than in place of its answer, which is why the match is anchored.
  */
-function verdictHead(value: string): string {
-  return value.split(/[—–,]/)[0];
+const ECHO_RE = new RegExp(`^${GAP}${VERDICT_WORD}(?:${GAP}(?:\\||/|\\bor\\b)${GAP}${VERDICT_WORD})+`, 'iu');
+
+/** The outcome a line votes for: the first one it names. Everything after it is the chair's reasoning. */
+const FIRST_VERDICT_RE = new RegExp(`\\b${VERDICT_WORD}\\b`, 'i');
+
+function isFormatEcho(value: string): boolean {
+  return ECHO_RE.test(value);
 }
 
-/**
- * A line that names more than one outcome is the chair restating its instructions, not voting:
- * `VERDICT: STRONG | WEAK | PIVOT REQUIRED` is the prompt's own format line. Reading it as a vote is the
- * dangerous direction — it reported STRONG, and so passed, for an idea the chair went on to call weak.
- */
-function isFormatEcho(value: string): boolean {
-  return VERDICT_WORD_RE.filter((re) => re.test(verdictHead(value))).length > 1;
+function verdictOn(value: string): PressureVerdict | null {
+  const word = value.match(FIRST_VERDICT_RE)?.[0]?.toUpperCase();
+  if (!word) return null;
+  return word.startsWith('PIVOT') ? 'PIVOT REQUIRED' : word.startsWith('STRONG') ? 'STRONG' : 'WEAK';
 }
 
 /**
@@ -235,13 +247,11 @@ export function readPressureVerdict(text: string): PressureRead {
     .filter((value) => !isFormatEcho(value));
   const last = lines.at(-1);
   if (last === undefined) return { ok: false, reason: PRESSURE_REFUSAL_MISSING };
-  const raw = (last.match(/^(?:\*\*)?\s*([A-Za-z ]+)/)?.[1] ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
-  const verdict: PressureVerdict | null =
-    /^PIVOT(?: REQUIRED)?\b/.test(raw) ? 'PIVOT REQUIRED'
-      : /^STRONG\b/.test(raw) ? 'STRONG'
-        : /^WEAK\b/.test(raw) ? 'WEAK'
-          : null;
-  if (!verdict) return { ok: false, reason: pressureRefusalUnknown(raw) };
+  const verdict = verdictOn(last);
+  if (!verdict) {
+    const raw = (last.match(/^(?:\*\*)?\s*([A-Za-z ]+)/)?.[1] ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
+    return { ok: false, reason: pressureRefusalUnknown(raw) };
+  }
   const wedge = t.match(new RegExp(`^[ \\t]*(?:[-*]\\s*)?(?:\\*\\*)?\\s*wedge\\s*(?:\\*\\*)?\\s*${DELIM}\\s*(.+)$`, 'im'))?.[1]?.trim() ?? '';
   return { ok: true, verdict, flaws: flawBullets(t), wedge, rubric: parseRubric(t) };
 }

@@ -152,9 +152,10 @@ describe('an echoed format line is not a vote (review T12 finding 1)', () => {
     const r = readPressureVerdict(ECHO);
     expect(r.ok).toBe(false);
     expect(r.ok === false && r.reason).toBe(PRESSURE_REFUSAL_MISSING);
-    // Every shape of the enumeration, not just the pipe.
-    expect(readPressureVerdict('VERDICT: STRONG / WEAK / PIVOT').ok).toBe(false);
-    expect(readPressureVerdict('VERDICT (one word first): STRONG / WEAK / PIVOT').ok).toBe(false);
+    // All three separators the template uses, and nothing but whitespace or punctuation between the words.
+    for (const echo of ['VERDICT: STRONG | WEAK | PIVOT REQUIRED', 'VERDICT: STRONG/WEAK/PIVOT', 'VERDICT: STRONG or WEAK or PIVOT REQUIRED']) {
+      expect(readPressureVerdict(echo), echo).toMatchObject({ ok: false, reason: PRESSURE_REFUSAL_MISSING });
+    }
   });
 
   it('takes the last of two real verdict lines, so a chair that thinks again is heard', () => {
@@ -162,10 +163,20 @@ describe('an echoed format line is not a vote (review T12 finding 1)', () => {
     expect(readPressureVerdict('VERDICT: WEAK\n\nVERDICT: STRONG')).toMatchObject({ ok: true, verdict: 'STRONG' });
   });
 
-  it('a verdict that argues against another word is still one verdict', () => {
-    // The reason clause is prose, not an enumeration (Decision 4).
-    expect(readPressureVerdict('VERDICT: WEAK — the wedge is not strong enough to matter')).toMatchObject({ ok: true, verdict: 'WEAK' });
-    expect(readPressureVerdict('VERDICT: STRONG, and no pivot is required here')).toMatchObject({ ok: true, verdict: 'STRONG' });
+  it('a chair that dismisses the other outcomes has still decided (re-review T2-1)', () => {
+    // Naming one outcome and arguing against another is argument, not enumeration: the line votes for the
+    // first word on it, however the chair punctuates the rest. Counting verdict words threw all of these away.
+    const votes: Array<[string, string]> = [
+      ['VERDICT: WEAK (not STRONG)', 'WEAK'],
+      ['VERDICT: STRONG (no pivot)', 'STRONG'],
+      ['VERDICT: WEAK - not STRONG enough', 'WEAK'],
+      ['VERDICT: WEAK — the wedge is not strong enough', 'WEAK'],
+      ['VERDICT: STRONG, and no pivot is required', 'STRONG'],
+      ['VERDICT: PIVOT REQUIRED (not STRONG or WEAK)', 'PIVOT REQUIRED'],
+    ];
+    for (const [text, verdict] of votes) {
+      expect(readPressureVerdict(text), text).toMatchObject({ ok: true, verdict });
+    }
   });
 
   it('reads an em dash after the keyword, so punctuation does not burn the re-ask', () => {
