@@ -24,17 +24,15 @@ const SPEED = 70; // px/s
 /**
  * Where a rider stands inside the cab, below the car's own top edge.
  *
- * The cab's floor line is at `carH - 6` (world/elevator-view.ts). The rider's origin sits `RING_BELOW` above it,
- * because the role ring is drawn at the feet and hangs under the origin — put the origin on the line and the ring
- * is what spills into the shaft instead of the legs (visual QA R-M7). The offset is measured off the shot rather
- * than derived: scanning the car's centre column in `07-elevator` gives the cab's floor surface, the car's own
- * bottom edge, and where the legs and the ring actually land.
+ * Measured off `07-elevator` at zoom 3, not derived. The sprite's drawn legs stop short of its 24 px frame and the
+ * role ring hangs below the origin, so neither the cab's floor line (`carH - 6`, world/elevator-view.ts) nor the
+ * sprite's own height predicts where the rider lands. Scanning the car's centre column against one beside it gives
+ * the floor surface, the kick plate, the car's bottom border and where the legs and the ring actually fall: at
+ * `3 * TILE - 2` the ring covered all three rows of that border and put two into the shaft, so the cab's own edge
+ * was broken where the rider crossed it (visual QA R-M7, R2-M1). Two pixels higher puts the legs on the floor
+ * line's band and the ring's outline on the kick.
  */
-// Measured on `07-elevator` at zoom 3: at seven the ring's fill still covered the car's bottom border (y 548-550)
-// and put a row into the shaft, so the cab's own edge was broken where the rider crossed it (visual QA R2-M1).
-// At nine the legs end on the floor line's band and the ring sits inside it.
-const RING_BELOW = 9;
-export const CAR_FLOOR_Y = 3 * TILE - 6 - RING_BELOW;
+export const CAR_FLOOR_Y = 3 * TILE - 4;
 const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
 
 /** The pantry: a coffee after a finished job, and now and then after a long quiet spell at the desk. */
@@ -260,7 +258,11 @@ export class AgentSprite {
     if (this.car) {
       // in the car: visible, masked to the shaft, standing on the car floor, riding (pose:ride), facing the viewer;
       // no shadow (there is no floor light to cast one onto), and any walk-settle squash in flight is cut short
-      this.container.setPosition(this.car.x, this.car.y + 3 * TILE - 2);
+      //
+      // `CAR_FLOOR_Y`, not a second copy of the number. This line runs every frame and ran with the original
+      // `3 * TILE - 2`, quietly overwriting what `enterCar` set — so every adjustment made to that constant since,
+      // the whole of R-M7 and R2-M1, reached the delivered shot as nothing at all.
+      this.container.setPosition(this.car.x, this.car.y + CAR_FLOOR_Y);
       this.step = 0; this.body.y = 0; this.dir = 0;
       this.scene.tweens.killTweensOf(this.body); this.body.setScale(1, 1); this.wasMoving = false;
       this.body.setFrame(frameFor({ moving: false, dir: this.dir as Dir, step: 0, pose: 'ride' }));
