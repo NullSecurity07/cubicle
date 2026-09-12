@@ -4,6 +4,7 @@ import { Timestamp } from './schemas.js';
 import { stringifyNote } from './frontmatter.js';
 import { setSection } from './jobs.js';
 import { nowIso } from './fs.js';
+import { renderRubric, BoardRubric } from './pressure.js';
 
 /**
  * The idea dossier: something the company *could* do, with everything anyone needs to rule on it in one note.
@@ -224,6 +225,14 @@ export const IdeaFrontmatter = z.looseObject({
   /** `Decisions/board-<idea>.md` — the board session that judged it. */
   board_verdict: z.enum(['pass', 'return']).nullable().default(null),
   board_decision: z.string().default(''),
+  /**
+   * SP5b. The board's pressure-test verdict word (`STRONG` | `WEAK` | `PIVOT REQUIRED`) and its 0–2 × 5
+   * rubric. Both optional with defaults, so a card written before the pressure test existed still parses;
+   * both re-read by `fileIdeaVerdict` when a kill strands a verdict note, which is why they live on the card
+   * rather than in a session variable. Advisory only: `score`, `score_inputs` and `ideaBand` are untouched.
+   */
+  board_pressure: z.string().default(''),
+  board_rubric: BoardRubric.nullable().default(null),
 });
 export type IdeaFrontmatter = z.infer<typeof IdeaFrontmatter>;
 
@@ -349,4 +358,32 @@ export function updateIdea(
 /** One line per idea for a plan goal: what it is, what it scored, and where to read it. */
 export function keptIdeaLines(ideas: IdeaFrontmatter[]): string[] {
   return ideas.map((i) => `[[${ideaPath(i.id).replace(/\.md$/, '')}]] — ${i.title} (score ${i.score ?? '—'}/${IDEA_SCORE_MAX}${i.research ? `, research ${i.research_confidence ?? 'unstated'} confidence` : ''})`);
+}
+
+export interface BoardSectionFacts {
+  verdict: 'pass' | 'return';
+  /** How many advisors sat. */
+  advisors: number;
+  /** `YYYY-MM-DD`. */
+  date: string;
+  /** `Decisions/board-<slug>.md`, or '' when the note could not be written. */
+  decision: string;
+  findings: string[];
+  pressure?: string | null;
+  rubric?: BoardRubric | null;
+}
+
+/**
+ * The `## The board` section of a card. Written here rather than inline in the heartbeat's `ideas_board` step
+ * so the sentence on the card, the one in the owner's verdict note and the one on the whiteboard all come from
+ * one place — and so the placeholder `cardBoardFindings` has to drop is defined beside the code that writes it.
+ *
+ * With no pressure test to report it is byte-identical to what the step wrote before SP5b, but for a trailing
+ * space after the date when no decision note was written.
+ */
+export function renderBoardSection(f: BoardSectionFacts): string {
+  const head = `**${f.verdict === 'pass' ? 'Passed' : 'Returned'}** — ${f.advisors} advisors, ${f.date}.${f.decision ? ` See [[${f.decision.replace(/\.md$/, '')}]].` : ''}`;
+  const test = f.pressure ? `**Pressure test:** ${f.pressure}.${f.rubric ? ` Rubric ${renderRubric(f.rubric)}.` : ''}` : '';
+  const findings = f.findings.map((x) => `- ${x}`).join('\n') || '- Nothing they thought would sink it.';
+  return [head, test, findings].filter(Boolean).join('\n\n');
 }

@@ -46,6 +46,17 @@ A dossier where only one office wrote is a dossier that is half done.
 The board sits on the best-scoring card, the same three advisors as a plan pre-mortem, in one session (the
 heartbeat's `ideas_board` step, recorded as a `board.session` job) — pass or return, with the failure modes named. The board advises; it does not decide.
 
+## The pressure test
+
+Before the score is read, the board pressure-tests the idea the way a YC partner reads an application:
+the core assumption, the three most likely ways it dies, whether the pain is real, founder-market fit, and one
+word of verdict — **STRONG**, **WEAK** or **PIVOT REQUIRED**. It comes back with a 0–2 score on five dimensions
+out of 10, recorded beside the verdict under `## The board`. `Docs/pressure-test-handbook.md` is the whole of
+it, and the phrase "it has potential, but" is refused: the board decides.
+
+The pressure test is advisory and moves no number. A STRONG passes the card; a WEAK or a PIVOT returns it,
+which parks the recommendation until the findings are answered — exactly what a board return has always meant.
+
 ## The owner's verdict
 
 After the board, the owner rules: `keep`, `park` or `scrap`, recorded under `Decision` with `decided_by` and
