@@ -3,6 +3,7 @@ import {
   IdeaFrontmatter, IdeaScoreInputs, IDEA_SCORE_WEIGHTS, IDEA_SCORE_MAX, KEEP_AT, PARK_AT,
   ideaScore, ideaBand, bandReason, missingScoreInputs, renderScoreSection,
   ideaSlug, ideaSourceKind, ideasNamedIn, unkeptIdeasNamedIn, ideaOutcome, CHOSEN_DECISIONS,
+  renderBoardSection,
 } from '../src/ideas.js';
 
 const inputs = { value: 4, evidence: 4, effort: 4, fit: 3 };
@@ -121,5 +122,56 @@ describe('a plan may draw only on kept ideas (spec §4)', () => {
     const parsed = IdeaFrontmatter.parse({ id: 'competitor-dropped-free-tier', title: 'x', source: 'intelligence:competitive' });
     expect(parsed).toMatchObject({ status: 'new', evidence: [], decision: 'undecided', score: null, score_inputs: {}, research: '', board_verdict: null });
     expect(IdeaScoreInputs.partial().safeParse({}).success).toBe(true);
+  });
+});
+
+const RUBRIC = { core_assumption: 2, fatal_flaws: 1, pain: 2, founder_fit: 1, why_now: 1 };
+
+describe('the board\'s rubric on a card is additive, and decides nothing (spec §6)', () => {
+  it('a card written before the pressure test existed still parses, and gets the defaults', () => {
+    const old = { id: 'meal-kits', title: 'Meal kits', source: 'discovery', created: '2026-09-01T00:00:00.000Z' };
+    const p = IdeaFrontmatter.safeParse(old);
+    expect(p.success).toBe(true);
+    expect(p.success && p.data.board_rubric).toBeNull();
+    expect(p.success && p.data.board_pressure).toBe('');
+    // Nothing the card already carried moved.
+    expect(p.success && p.data.score).toBeNull();
+    expect(p.success && p.data.board_verdict).toBeNull();
+    expect(p.success && p.data.decision).toBe('undecided');
+  });
+
+  it('a rubric round-trips, and a broken one is refused rather than half-stored', () => {
+    const base = { id: 'x', title: 'x', source: 'owner', created: '2026-09-12T00:00:00.000Z' };
+    expect(IdeaFrontmatter.parse({ ...base, board_rubric: RUBRIC }).board_rubric).toEqual(RUBRIC);
+    expect(IdeaFrontmatter.safeParse({ ...base, board_rubric: { core_assumption: 2 } }).success).toBe(false);
+    expect(IdeaFrontmatter.safeParse({ ...base, board_rubric: { ...RUBRIC, why_now: 5 } }).success).toBe(false);
+  });
+
+  it('a 10/10 pressure test does not keep an idea the arithmetic parks, and a 0/10 does not scrap one', () => {
+    expect(ideaBand(46, { value: 4, board: 'pass' })).toBe('keep');
+    expect(ideaBand(46, { value: 4, board: 'return' })).toBe('park');
+    expect(ideaBand(20, { value: 4, board: 'pass' })).toBe('scrap');
+    const score = renderScoreSection({ value: 4, evidence: 4, effort: 4, fit: 3 }, { board: 'pass' });
+    expect(score).not.toMatch(/rubric|pressure/i);
+  });
+});
+
+describe('renderBoardSection is the one sentence three surfaces share', () => {
+  it('says the verdict, the pressure test, the rubric and the flaws', () => {
+    const s = renderBoardSection({
+      verdict: 'return', advisors: 3, date: '2026-09-12', decision: 'Decisions/board-meal-kits.md',
+      findings: ['the payer is not the user'], pressure: 'PIVOT REQUIRED', rubric: RUBRIC,
+    });
+    expect(s).toContain('**Returned** — 3 advisors, 2026-09-12. See [[Decisions/board-meal-kits]].');
+    expect(s).toContain('**Pressure test:** PIVOT REQUIRED. Rubric 7/10 — core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1.');
+    expect(s).toContain('- the payer is not the user');
+  });
+
+  it('a board that answered without a rubric, and one from before the pressure test, both still render', () => {
+    expect(renderBoardSection({ verdict: 'pass', advisors: 3, date: '2026-09-12', decision: '', findings: [], pressure: 'STRONG', rubric: null }))
+      .toBe('**Passed** — 3 advisors, 2026-09-12.\n\n**Pressure test:** STRONG.\n\n- Nothing they thought would sink it.');
+    // What the step wrote before SP5b, byte for byte.
+    expect(renderBoardSection({ verdict: 'pass', advisors: 3, date: '2026-09-11', decision: 'Decisions/board-meal-kits.md', findings: ['nobody has priced delivery'] }))
+      .toBe('**Passed** — 3 advisors, 2026-09-11. See [[Decisions/board-meal-kits]].\n\n- nobody has priced delivery');
   });
 });
