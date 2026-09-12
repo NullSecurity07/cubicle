@@ -40,13 +40,19 @@ export function pantryNotePath(vault: Vault, now: Date, participants: string[]):
 }
 
 /**
- * The idea the chat produced, or null. The **last** `IDEA:` line in the transcript wins — the closing turn is the
- * one the prompt asked for, and a speaker who mentioned the word earlier must not pre-empt it. `none`, an empty
- * line and anything under four words are all null: a coffee break that produced nothing is the normal outcome.
+ * The idea a chat produced, or null.
+ *
+ * **Give it the closing turn, not the whole transcript.** Only the closing turn is asked for an `IDEA:` line, and
+ * over a whole transcript a speaker who writes "Idea: we should call the nurseries" at turn three would supply
+ * the card whenever the closing turn omits its own (review minor 8). Within what it is given, the **last** such
+ * line wins, because a turn may mention the word before it gets to the line the prompt asked for.
+ *
+ * `none`, an empty line and anything under four words are all null: a coffee break that produced nothing is the
+ * normal outcome.
  */
-export function pantryIdea(transcript: string): string | null {
+export function pantryIdea(closingTurn: string): string | null {
   let found: string | null = null;
-  for (const line of transcript.split('\n')) {
+  for (const line of closingTurn.split('\n')) {
     const m = /IDEA:\s*(.*)$/i.exec(line);
     if (m) found = m[1];
   }
@@ -147,10 +153,13 @@ export function pantryNote(o: PantryNoteInputs): string {
   const chat = o.turns.length
     ? o.turns.map((t) => `**${t.name}:** ${t.text.replace(/\s*\r?\n\s*/g, ' ').slice(0, PANTRY_NOTE_TURN_CHARS)}`).join('\n\n')
     : '_Nobody said anything: no model was available._';
+  // An idea with no `why` is one the note was written *before* the card was filed — the order that keeps an
+  // `Ideas/` card from ever citing a `Pantry/` note that does not exist. The second write fills the line in; a
+  // kill in between leaves the idea on the record without a verdict beside it, which is the truth of that moment.
   const idea = o.filed
     ? `${o.idea}\n\nFiled as [[${o.filed}]].`
     : o.idea
-      ? `${o.idea}\n\nNot filed: ${o.why}.`
+      ? (o.why ? `${o.idea}\n\nNot filed: ${o.why}.` : String(o.idea))
       : '_Nothing new._';
   return stringifyNote({
     date: o.date,

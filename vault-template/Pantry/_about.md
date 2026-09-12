@@ -11,4 +11,6 @@ Each note carries the transcript and, at the bottom, whatever came of it. At mos
 `Ideas/` card, and only when it is genuinely new: the same idea already on the board, or one that shares half
 its words with a card that is, is refused and the note says so. Nothing here is a decision.
 
-You can delete anything in this folder. Nothing reads it back.
+You can delete anything in this folder. One thing does read it back: the daemon looks at `participants` in
+these notes to work out who has been to the pantry least recently, so deleting them all simply means the
+rotation starts again from nobody.

@@ -7,7 +7,7 @@ import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@c
 import type { Llm } from '@cubicle/harness';
 import { NON_WORK_TYPES, type HeartbeatDeps } from '../src/heartbeat.js';
 import { Daemon, defaultConfig } from '../src/index.js';
-import { PANTRY_ROLE_ID, PANTRY_TURN_TOKENS, idleRoles, pantryPair, pantryJobId, lastPantryChat, pantryNoteFor, maybeEnqueuePantryChat, runPantryChat, pantryPrompt } from '../src/pantry.js';
+import { PANTRY_ROLE_ID, PANTRY_TURN_TOKENS, idleRoles, pantryPair, pantryJobId, pantryCycleOf, lastPantryChat, pantryNoteFor, maybeEnqueuePantryChat, runPantryChat, pantryPrompt } from '../src/pantry.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { TEST_MS, eventProgress, waitForProgress } from './helpers/load.js';
 
@@ -209,6 +209,45 @@ describe('the chat costs the house and nothing else (spec §6)', () => {
     const cards = listIdeas(vault).filter((i) => i.source === 'pantry');
     expect(cards).toHaveLength(1);
     expect(cards[0].evidence).toEqual([notes()[0]]);
+  });
+
+  it('an IDEA line somebody dropped mid-chat is not the chat\'s idea (review minor 8)', async () => {
+    ready();
+    const id = maybeEnqueuePantryChat(vault)!;
+    // Turn three says the word; the closing turn — the only one the prompt asks — has nothing.
+    const llm = chatter();
+    const inner = llm.chat.bind(llm);
+    const early: Llm = { ...llm, chat: async (req, c) => {
+      const r = await inner(req, c);
+      return llm.calls.length === 3 ? { ...r, content: 'Idea: we should call every nursery in the county.' } : r;
+    } };
+    await runPantryChat(deps(early), id);
+    expect(listIdeas(vault).filter((i) => i.source === 'pantry')).toEqual([]);
+    expect(vault.readNote(notes()[0]).body).toContain('_Nothing new._');
+    expect(vault.readNote(notes()[0]).body).toContain('call every nursery');   // still in the transcript, just not the idea
+  });
+
+  it('the note is written before the card that cites it (review minor 3)', async () => {
+    ready();
+    const id = maybeEnqueuePantryChat(vault)!;
+    await runPantryChat(deps(chatter({ idea: 'Weekly meal kits for nurseries' })), id);
+    // Both writes carry the job, and the log is append-only: the note the card names exists before the card does.
+    const card = `Ideas/${listIdeas(vault).find((i) => i.source === 'pantry')!.id}.md`;
+    const writes = vault.events.query({ types: ['vault.wrote'] }).map((e) => String(e.payload.path))
+      .filter((p) => p === notes()[0] || p === card);
+    expect(writes[0]).toBe(notes()[0]);
+    expect(writes.indexOf(card)).toBeGreaterThan(0);
+    expect(listIdeas(vault).find((i) => i.source === 'pantry')!.evidence).toEqual([notes()[0]]);
+  });
+
+  it('the note records the cycle the chat was filed for, not the one it ran in (review minor 11)', async () => {
+    ready();                                   // cycle 1
+    const id = maybeEnqueuePantryChat(vault)!;
+    cycle(2);                                  // the chat waited at priority 5 while two more cycles finished
+    await runPantryChat(deps(chatter()), id);
+    expect(vault.readNote<{ cycle: number }>(notes()[0]).data.cycle).toBe(1);
+    expect(pantryCycleOf(id, 3)).toBe(1);
+    expect(pantryCycleOf('job_not_a_pantry_id', 3)).toBe(3);   // an id minted some other way falls back to now
   });
 
   it('IDEA: none writes the note and files nothing', async () => {

@@ -93,6 +93,24 @@ export function pantryPair(idle: string[], cycle: number, teamFor: (role: string
 /** One chat per cycle, re-found rather than re-filed after a restart or a replayed log. */
 export function pantryJobId(cycle: number): string { return idFromKey('job', `pantry-${cycle}`); }
 
+/** How far back `pantryCycleOf` looks for the cycle a job id was minted for. A chat waits behind work, never behind this much of it. */
+export const PANTRY_CYCLE_LOOKBACK = 50;
+
+/**
+ * The cycle this chat was enqueued for. The id is `idFromKey` over the cycle number, so it is *recovered* by
+ * matching rather than decoded: `now` is the count at run time, and the enqueue count can only be the same or
+ * lower. Falls back to `now` for an id minted some other way (a test's own job, or a chat older than the
+ * lookback).
+ *
+ * It matters because a chat waits at `priority: 5` behind everything else: one that starts after the next
+ * heartbeat completes would otherwise write a later cycle number into its note than the id it was filed under
+ * (review minor 11).
+ */
+export function pantryCycleOf(jobId: string, now: number): number {
+  for (let c = now; c >= 0 && c > now - PANTRY_CYCLE_LOOKBACK; c--) if (pantryJobId(c) === jobId) return c;
+  return now;
+}
+
 export const PANTRY_GOAL = 'A coffee in the pantry. Nothing is decided here and nothing leaves the room: six turns at most, two sentences each, and one closing IDEA line if anything came of it.';
 
 /**
@@ -119,7 +137,12 @@ export function maybeEnqueuePantryChat(vault: Vault, opts: { dormant?: () => boo
   const open = listJobs(vault, { status: [...OPEN] });
   if (open.some((j) => j.type === 'pantry.chat')) return null;
   const org = loadOrg(vault);
-  const pair = pantryPair(idleRoles(org, open), cycle, (r) => teamOf(org, r)?.id, lastPantryChat(vault));
+  // `lastPantryChat` parses every note in `Pantry/` — a directory that gains a note per cycle for ever — so it is
+  // read only once there is somebody to send. Evaluated as an argument it ran on every tick of a busy company,
+  // which is exactly the company that never has two idle people (review minor 4).
+  const idle = idleRoles(org, open);
+  if (idle.length < 2) return null;
+  const pair = pantryPair(idle, cycle, (r) => teamOf(org, r)?.id, lastPantryChat(vault));
   if (!pair) return null;
   const [a, b] = pair;
   return createJob(vault, {
@@ -191,7 +214,10 @@ export async function runPantryChat(deps: HeartbeatDeps, jobId: string): Promise
   const org = loadOrg(vault);
   const a = job.assigned;
   const b = String(job.pantry_with ?? '');
-  const cycle = vault.events.count('heartbeat.completed');
+  // The cycle this chat was *filed* for, not the count at the moment it runs: it waits at `priority: 5` behind
+  // everything else, and one that starts after the next heartbeat completes would write a number its own job id
+  // disagrees with (review minor 11).
+  const cycle = pantryCycleOf(jobId, vault.events.count('heartbeat.completed'));
   const names: Record<string, string> = { [a]: displayOf(org, a), [b]: displayOf(org, b) };
   const pair = [a, b].filter(Boolean);
   const meetingId = idFromKey('meet', `pantry:${jobId}`);
@@ -232,25 +258,36 @@ export async function runPantryChat(deps: HeartbeatDeps, jobId: string): Promise
   vault.events.emit({ type: 'meeting.opened', agent: a, job: jobId, payload: { id: meetingId, room: 'pantry', participants: pair, agenda: 'A coffee in the pantry' } });
 
   const turns: PantryTurn[] = [];
+  /** What the *closing* turn said, and only it: the one turn whose prompt asked for an `IDEA:` line. */
+  let closing = '';
   if (b && org.roles[b]) {
     for (let i = 0; i < PANTRY_MAX_TURNS; i++) {
       const speaker = i % 2 === 0 ? a : b;
       const other = speaker === a ? b : a;
-      const text = await say(d, speaker, pantryPrompt({ speaker, speakerName: names[speaker], otherName: names[other], turns, last: i === PANTRY_MAX_TURNS - 1 }));
+      const last = i === PANTRY_MAX_TURNS - 1;
+      const text = await say(d, speaker, pantryPrompt({ speaker, speakerName: names[speaker], otherName: names[other], turns, last }));
       // A turn with no model answer ends the chat early and the job still finishes done: a company with no model
       // available does not fail a coffee break.
       if (!text) break;
+      if (last) closing = text;
       turns.push({ role: speaker, name: names[speaker], text });
       vault.events.emit({ type: 'meeting.turn', agent: speaker, job: jobId, payload: { id: meetingId, round: i + 1, text: text.slice(0, 280) } });
     }
   }
 
-  const transcript = turns.map((t) => `${t.name}: ${t.text}`).join('\n');
-  const idea = pantryIdea(transcript);
+  // Read from the closing turn alone (review minor 8). Over the whole transcript, a speaker who writes "Idea: we
+  // should call the nurseries" at turn three supplies the card whenever the closing turn omits its line — and a
+  // chat that ended early was never asked for one at all.
+  const idea = pantryIdea(closing);
   const rel = pantryNotePath(vault, now, pair);
-  // Filed first, so the note can say which card it became; the card's evidence names this note, written next.
+  // The note is written before the card that cites it (review minor 3). The card's `evidence` names this note, and
+  // a kill between the two used to leave an `Ideas/` card pointing at a `Pantry/` file that does not exist — with
+  // the resume guard (`pantryNoteFor`, keyed on a `Pantry/` write) not firing, so the chat was re-run and its new
+  // idea then refused as "already filed today". This way round, a kill costs the card, not the record.
+  vault.writeText(rel, pantryNote({ date: now.toISOString().slice(0, 10), cycle, participants: pair, turns, idea, filed: null, why: '' }), 'daemon', { job: jobId });
   const filed = filePantryIdea(vault, { idea, note: rel, now, by: 'daemon' });
-  vault.writeText(rel, pantryNote({ date: now.toISOString().slice(0, 10), cycle, participants: pair, turns, idea, filed: filed.slug, why: filed.why }), 'daemon', { job: jobId });
+  // Rewritten only when there was an idea to report on: with none, the two notes are the same bytes.
+  if (idea) vault.writeText(rel, pantryNote({ date: now.toISOString().slice(0, 10), cycle, participants: pair, turns, idea, filed: filed.slug, why: filed.why }), 'daemon', { job: jobId });
 
   const summary = `${turns.length} turn${turns.length === 1 ? '' : 's'} in the pantry; ${filed.slug ? `filed Ideas/${filed.slug}.md` : filed.why}`;
   vault.events.emit({ type: 'meeting.closed', agent: a, job: jobId, payload: { id: meetingId, room: 'pantry', path: rel, turns: turns.length, decision: filed.slug ? `IDEA: ${idea}` : idea ? `IDEA not filed: ${filed.why}` : 'no idea' } });
