@@ -82,10 +82,14 @@ export interface StallWaitOpts {
  * Poll `pred` on real timers until it holds, failing only when the vault has been silent for the stall budget.
  * The budget is computed on every poll, so contention that arrives *during* a wait lengthens it.
  */
+/** A wait that keeps seeing progress but never its condition is still a failure; say so within this, not vitest's ceiling. */
+export const STALL_TOTAL_MS = 300_000;
 export async function waitForProgress(pred: () => boolean, o: StallWaitOpts): Promise<void> {
   let seen = o.progress();
   let lastChange = Date.now();
+  const started = Date.now();
   while (!pred()) {
+    if (Date.now() - started > STALL_TOTAL_MS) throw new Error(`waitFor: ${o.what ?? 'a condition'} did not hold after ${STALL_TOTAL_MS} ms although the daemon kept writing (1-min load ${oneMinuteLoad().toFixed(2)})`);
     if (o.torn?.()) throw new Error('waitFor: torn down while still waiting');
     const now = o.progress();
     if (now !== seen) { seen = now; lastChange = Date.now(); }

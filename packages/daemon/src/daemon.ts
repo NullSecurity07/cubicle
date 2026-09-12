@@ -381,9 +381,16 @@ export class Daemon {
   }
 
   private ticking = false;
+  /** The tick in flight, so `stop()` can let it finish before the sockets and the DB go (re-review of the SP5 fix wave). */
+  private tickInFlight: Promise<void> | null = null;
   async runTick(reason: string): Promise<void> {
     if (this.stopping || this.ticking) return;
     this.ticking = true;
+    const run = this.tickBody(reason);
+    this.tickInFlight = run;
+    try { await run; } finally { if (this.tickInFlight === run) this.tickInFlight = null; }
+  }
+  private async tickBody(reason: string): Promise<void> {
     try {
       // Before the dispatcher: a returned call must be closed before approvals are looked at, and the dispatcher
       // never sees an unapproved note (Decision 19).
@@ -455,6 +462,9 @@ export class Daemon {
     this.offSignals?.();
     for (const off of this.offEvents) off();
     if (this.workers) { this.workers.pause(); await Promise.race([this.workers.stop(), new Promise((r) => setTimeout(r, Math.max(500, this.config.shutdownMs - 2000)))]); }
+    // A tick still running (the trust sweep, the dispatcher) would otherwise throw on a closed DB below; give it the
+    // rest of the shutdown budget, then move on — everything it does is resumable from the vault.
+    if (this.tickInFlight) await Promise.race([this.tickInFlight.catch(() => undefined), new Promise((r) => setTimeout(r, Math.max(500, Math.min(this.config.shutdownMs - 1000, 5000))))]);
     if (!this.vault) { this.log(`stopped in ${Date.now() - t0} ms`); return; }
     await Promise.race([closeAllSessions(this.vault.events), new Promise((r) => setTimeout(r, 1500))]);
     await this.watcher?.stop();
