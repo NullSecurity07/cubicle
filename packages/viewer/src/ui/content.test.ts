@@ -67,9 +67,22 @@ describe('drawer and document views', () => {
     expect(v.html.indexOf('decision recorded')).toBeLessThan(v.html.indexOf('guardrail:')); // newest first
     expect(viewFor('newsstand', s, ctx).html).toContain('Nothing decided yet');
   });
-  it('the newsstand headline falls back to the feed before the first brief', () => {
+  /**
+   * Visual QA R2-I1: it used to fall back to the feed, which on a six-tile screen became "· proposal:…" /
+   * "· CEO · yo u: ].." — a log fragment with a bracket left hanging, on the wall of a public floor. An empty
+   * state is something the company wrote, not something the log leaked.
+   */
+  it('the newsstand says its own words before the first brief, never a feed fragment', () => {
     const noBrief: State = { ...s, latestRun: null, feed: [{ ts: '2026-09-03T12:00:00.000Z', text: 'proposal: Name the company' }] };
-    expect(headlineFor('newsstand', noBrief).lines[0]).toContain('Name the company');
+    const hl = headlineFor('newsstand', noBrief);
+    expect(hl.head).toBe('No brief yet');
+    expect(hl.lines).toHaveLength(3);
+    for (const l of hl.lines) {
+      expect(l, l).not.toContain('Name the company');
+      expect(l.length, l).toBeLessThanOrEqual(15);      // inside the screen's own line width, with room for wide glyphs
+      expect(l.startsWith('•'), l).toBe(false);
+      expect(l.endsWith('…'), l).toBe(false);
+    }
   });
   it('bank shows total calls today across providers', () => {
     const two: State = applySnapshot(emptyState(), { ...snap, quota: [

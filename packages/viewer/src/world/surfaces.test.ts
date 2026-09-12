@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { Surface, screenBox } from './surfaces.js';
+import { Surface, screenBox, markRows, MARK_ROW_W, MARK_BAR_H } from './surfaces.js';
 import { CAPTION_BAND, CAPTION_PLATE_H } from './text.js';
 import type { Anchor } from './map.js';
 import type { SurfaceDef } from '../ui/surfaces.js';
@@ -158,5 +158,29 @@ describe('the caption plate and the row the veil reserves for it', () => {
   it('fits inside one tile row, hanging a pixel clear of the bezel', () => {
     expect(CAPTION_BAND).toBe(16);                       // one tile: every veil edge stays on the grid
     expect(CAPTION_PLATE_H + 1).toBeLessThanOrEqual(CAPTION_BAND);
+  });
+});
+
+/**
+ * Visual QA R2-I2: below `WORLD_TEXT_MIN_ZOOM` the lettering is hidden, which left ten near-black slabs across the
+ * whole-building view. Each screen draws the shape of its headline instead.
+ */
+describe('what a screen shows when its own type is too small to read', () => {
+  it('draws one row per line the screen is carrying, and none for a screen with nothing to say', () => {
+    expect(markRows(0)).toEqual([]);
+    expect(markRows(1)).toHaveLength(1);
+    expect(markRows(3)).toHaveLength(3);
+  });
+  it('never draws more rows than a three-tile screen has room for', () => {
+    expect(markRows(9)).toHaveLength(MARK_ROW_W.length);
+    expect(MARK_ROW_W.length).toBe(3);
+  });
+  it('is ragged, like text: every row is shorter than the one above it, and none fills the glass', () => {
+    for (let i = 1; i < MARK_ROW_W.length; i++) expect(MARK_ROW_W[i]).toBeLessThan(MARK_ROW_W[i - 1]);
+    for (const f of MARK_ROW_W) { expect(f).toBeGreaterThan(0); expect(f).toBeLessThan(1); }
+  });
+  it('leaves the title bar the tallest mark, so the head still reads as the head', () => {
+    expect(MARK_BAR_H).toBeGreaterThanOrEqual(2);
+    expect(MARK_BAR_H).toBeLessThanOrEqual(4);
   });
 });

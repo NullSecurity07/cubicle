@@ -22,9 +22,9 @@ describe('colour maths', () => {
 });
 
 describe('floor palettes', () => {
-  it('four floors, hues 272/216/150/30, carpet saturation ≤ 30 %, tabs ≥ 50 %', () => {
+  it('four floors, hues 272/216/150/325, carpet saturation ≤ 30 %, tabs ≥ 50 %', () => {
     const hues = [1, 2, 3, 4].map((n) => floorPalette(n).hue);
-    expect(hues).toEqual([272, 216, 150, 30]);
+    expect(hues).toEqual([272, 216, 150, 325]);
     for (const n of [1, 2, 3, 4]) {
       const p = floorPalette(n);
       expect(hexToHsl(p.carpet).s).toBeLessThanOrEqual(0.31);
@@ -66,6 +66,22 @@ describe('families and role palettes', () => {
    * Visual QA M7 / R-M1: the CEO's ring was `#f2c14e`, which is the amber family the palette reserves for
    * attention, so in `08-board` the CEO alone carried a gold disc among blue and purple ones.
    */
+  /**
+   * Visual QA R2-M3: floor 4's identity hue was 30 at saturation 0.75, and the accent amber is hue 38 — so the
+   * selected F4 rail chip and F4's room signs read as calls to action. The same rule the role rings live under.
+   */
+  it('gives no floor an identity hue the chrome has already spent', () => {
+    // Amber is the action colour and `bad` is the failure colour; a floor wearing either turns its room signs and
+    // its rail chip into status. Hue 30 was amber's own family and hue 4 was `bad`'s (visual QA R2-M3).
+    for (const [name, spent] of [['accent', PALETTE.amber], ['bad', PALETTE.bad]] as const) {
+      const ref = hexToHsl(spent);
+      for (const n of [1, 2, 3, 4]) {
+        const c = hexToHsl(floorPalette(n).tab);
+        const dh = Math.abs(((c.h - ref.h + 540) % 360) - 180);
+        expect(dh > 25 || c.s < 0.25, `floor ${n} tab ${floorPalette(n).tab} against ${name}`).toBe(true);
+      }
+    }
+  });
   it('gives no role a ring in the accent hue', () => {
     const amber = hexToHsl(PALETTE.amber);
     for (const role of ['ceo', 'cto', 'coo', 'qa_lead', 'dev_manager', 'advisor_skeptic']) {

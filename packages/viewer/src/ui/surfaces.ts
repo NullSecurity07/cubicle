@@ -83,7 +83,13 @@ for (const def of [
   {
     kind: 'newsstand', streamKind: 'markdown', streamId: (s) => s.latestRun?.path ?? 'Runs/',
     headline: (s) => {
-      if (!s.latestRun) { const recent = s.feed.slice(-2).reverse(); return { head: 'No brief yet', short: 'No brief', lines: recent.length ? recent.map((f) => '• ' + cut(f.text, 40)) : ['Written after', 'each heartbeat'] }; }
+      // The newsstand's own words, always. It used to show the last two feed lines cut to 40 characters, which on
+      // a six-tile screen became "· proposal:…" / "· CEO · yo u: ].." — a log fragment with a bracket left
+      // hanging, on the wall of a public floor in two delivered scenes (visual QA R2-I1). The designed line was
+      // already here but only reachable when the feed was *also* empty, which it never is by the time anyone
+      // looks. Written well inside the screen's own line width, like `noticeboard` and `postoffice`: the budget
+      // is 17 columns but it is a character *estimate*, and a 17-column line of wide glyphs is cropped by the glass.
+      if (!s.latestRun) return { head: 'No brief yet', short: 'No brief', lines: ['Written after', 'each heartbeat', 'kept in Runs/'] };
       const b = briefBits(s.latestRun.body);
       const needs = b.needs.filter((n) => !/^none\b/i.test(n));
       return { head: briefTitle(s.latestRun.path).replace('Brief · ', 'Brief '), short: 'Brief', lines: [...b.happened.slice(0, 2).map((h) => '• ' + cut(h, 40)), ...(needs.length ? ['Needs you: ' + cut(needs[0], 30)] : [])], badge: needs.length ? String(needs.length) : undefined };

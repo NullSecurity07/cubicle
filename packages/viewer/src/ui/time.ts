@@ -8,12 +8,22 @@ export const NIGHT_ALPHA = 0.55;
 /**
  * Day/night overlay alpha for an hour of the day (0–24): dark until 6, fading out until 8, clear through the
  * working day, fading back in from 18 and full dark from 21.
+ *
+ * The evening ramp is not linear. Straight-lined over the three hours, 19:00 — the hour the sky is at its
+ * warmest of the whole day — sat at a third, and the building measured 87 % of noon while the sky was a sunset:
+ * two halves of one frame disagreeing about the time (visual QA R2-I4). Light goes fast once the sun is on the
+ * horizon, so the first hour takes half the ramp and the last two share the rest.
  */
+export const DUSK_STEPS: readonly [number, number][] = [[18, 0], [19, 0.55], [20, 0.82], [21, 1]];
 export function tintFor(hour: number): number {
   if (hour < 6) return NIGHT_ALPHA;
   if (hour < 8) return NIGHT_ALPHA * (8 - hour) / 2;
   if (hour < 18) return 0;
-  if (hour < 21) return NIGHT_ALPHA * (hour - 18) / 3;
+  if (hour >= 21) return NIGHT_ALPHA;
+  for (let i = 1; i < DUSK_STEPS.length; i++) {
+    const [h0, a0] = DUSK_STEPS[i - 1], [h1, a1] = DUSK_STEPS[i];
+    if (hour < h1) return NIGHT_ALPHA * (a0 + (a1 - a0) * (hour - h0) / (h1 - h0));
+  }
   return NIGHT_ALPHA;
 }
 
@@ -41,8 +51,19 @@ export function skyFor(hour: number): [string, string] {
   return [S.night[0], S.night[1]];
 }
 
-/** Colour of the night overlay: dusk purple on the ramps, deep blue at full night. */
-export function nightColourFor(hour: number): number { return hourBucket(hour) === 'night' ? hexToInt(PALETTE.night) : hexToInt(PALETTE.dusk); }
+/** Where the evening tint stops being warm and starts being violet, and where it has finished arriving. */
+export const DUSK_WARM_UNTIL = 19.5, DUSK_VIOLET_BY = 20.5;
+/**
+ * Colour of the day/night overlay: warm on the early ramps, dusk violet later, deep blue at full night.
+ *
+ * It used to be `PALETTE.dusk` — a desaturated violet — across the whole ramp, which is what made a sunset fall
+ * on a building as a slightly cooler noon (visual QA R2-I4). Dawn gets the same warmth for the same reason.
+ */
+export function nightColourFor(hour: number): number {
+  if (hourBucket(hour) === 'night') return hexToInt(PALETTE.night);
+  const t = Math.max(0, Math.min(1, (hour - DUSK_WARM_UNTIL) / (DUSK_VIOLET_BY - DUSK_WARM_UNTIL)));
+  return hexToInt(mixHex(PALETTE.duskWarm, PALETTE.dusk, t));
+}
 
 /** Lamp glow alpha: 0 by day, following the tint ramp, 1 at full night. */
 export function lampAlphaFor(hour: number): number { return tintFor(hour) / NIGHT_ALPHA; }

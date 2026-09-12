@@ -54,7 +54,10 @@ export const PALETTE = {
   glassFill: 'rgba(170,210,255,0.35)', glassFrame: '#7a8594', glassStreak: 'rgba(255,255,255,0.45)',
   amber: '#e6a93c', amberInk: '#2a1f08',
   marble: '#e8e4dc', marbleAlt: '#d6d1c7',
-  asphalt: '#3a3d44', kerb: '#b8b3a8', pavement: '#a89f91',
+  /* The road is lifted three steps from `#3a3d44`. Under the focus veil that value came out rgb(32,36,57) — the
+     darkest thing in six delivered scenes by a wide margin, so the bottom sixth of every floor shot read as the
+     canvas running out rather than as a street (visual QA R2-M5). */
+  asphalt: '#54585f', kerb: '#b8b3a8', pavement: '#a89f91',
   screenBg: '#0b0d11', screenFrame: '#3a4050', screenText: '#f3f5f9', screenMuted: '#b9c2d6', screenInk: '#000000',
   /* A wall screen is a mounted object, not a hole in the wall: a bezel around the glass, a lit top edge, and a
      shadow under it so it seats. Without these the screens read as pure-black slabs floating free of the room. */
@@ -72,6 +75,16 @@ export const PALETTE = {
   labelInk: '#ffffff', labelStroke: '#000000',
   /** the letter-badge behind a sprite's current tool: one colour per tool family, never amber */
   tool: { browser: '#2a6fdb', terminal: '#2b2f3a', envelope: '#c0392b', doc: '#7a5c2e', chart: '#2e7d32', chat: '#6a3fb0' },
+  /**
+   * What a wall screen shows at the tower elevation, where its own words are drawn at half a screen pixel per
+   * world pixel and hidden. Ten near-black slabs read as screens that failed to load rather than as screens too
+   * small to read (visual QA R2-I2), so each draws a lit title bar and a row per line it is carrying, in a colour
+   * its kind implies. None of them is the accent: amber stays the chrome's action colour.
+   */
+  surfaceMark: {
+    terminal: '#5ad1ff', billboard: '#2a6fdb', bank: '#4cae5c', vault: '#b98ef2', whiteboard: '#e8e4dc',
+    noticeboard: '#6a3fb0', workshop: '#4e9af2', postoffice: '#c0392b', cabin: '#3fb8a6', newsstand: '#9aa3ad',
+  } as Record<string, string>,
   bubbleFill: '#ffffff', bubbleInk: '#111111',
   bubbleThoughtFill: '#f4f6fa', bubbleThoughtStroke: '#9aa3b5', bubbleThoughtInk: '#4b5160',
   bubbleActionFill: '#1b1f2a', bubbleActionStroke: '#343a48', bubbleActionInk: '#e7e9ee',
@@ -80,7 +93,14 @@ export const PALETTE = {
   monitorOff: '#1b1f2a', monitorOn: '#5ad1ff', monitorGlyph: '#ffffff',
   water: '#9ad0ff', waterLight: '#e6f4ff', waterDark: '#7cb8e8',
   steam: 'rgba(255,255,255,0.7)',
-  dusk: '#3b2a4a', night: '#0a1030',
+  /**
+   * The two colours the day/night tint ramps through. `duskWarm` is new: the tint used to go straight to the
+   * violet `dusk`, so at 19:00 — the hour the sky is at its warmest of the whole day — the building came out
+   * 87 % of noon and slightly *cooler*, and `09c-tower-dusk` showed a noon building under a sunset (visual QA
+   * R2-I4). A sunset throws warm light on what it falls on. Early dusk and dawn are warm; the violet arrives by
+   * half past eight, with the sky.
+   */
+  duskWarm: '#6b3a22', dusk: '#3b2a4a', night: '#0a1030',
   /* [zenith, horizon]. Warm low and cool high, at every hour: the dusk pair used to be the other way round, which
      put a flat orange slab across the top of four scenes. `evening` is the stop between dusk and night — without
      it any blend from an orange horizon to a navy one passes through mud or through red. */
@@ -96,7 +116,7 @@ const FLOOR_HUES: Record<1 | 2 | 3 | 4, { hue: number; carpetS: number; carpetL:
   1: { hue: 272, carpetS: 0.22, carpetL: 0.58, skirt: [0.40, 0.40], lamp: [0.60, 0.70], tab: [0.55, 0.55], floor: '#5a3d27', floorAlt: '#6b4a30', speckle: '#4a3120' },   // dark plank + purple runner
   2: { hue: 216, carpetS: 0.24, carpetL: 0.60, skirt: [0.45, 0.42], lamp: [0.60, 0.72], tab: [0.60, 0.55], floor: '#c9a878', floorAlt: '#d6b98a', speckle: '#b5925f' },   // light oak + blue carpet tiles
   3: { hue: 150, carpetS: 0.20, carpetL: 0.58, skirt: [0.40, 0.36], lamp: [0.55, 0.68], tab: [0.50, 0.45], floor: '#c4c2bb', floorAlt: '#cfcdc6', speckle: '#b0aea6' },   // pale concrete + green carpet
-  4: { hue: 30, carpetS: 0.30, carpetL: 0.62, skirt: [0.55, 0.44], lamp: [0.70, 0.72], tab: [0.75, 0.55], floor: '#d8d2c8', floorAlt: '#e0dbd2', speckle: '#8c8f99' },   // terrazzo speckle + orange rugs
+  4: { hue: 325, carpetS: 0.30, carpetL: 0.62, skirt: [0.55, 0.44], lamp: [0.70, 0.72], tab: [0.75, 0.55], floor: '#d8d2c8', floorAlt: '#e0dbd2', speckle: '#8c8f99' },   // terrazzo speckle + magenta rugs. Hue 30 was the accent's own family (R2-M3); 4 landed on `bad`, so F4's room signs read as error badges
 };
 
 export function floorPalette(n: number): FloorPalette {

@@ -25,6 +25,18 @@ const CHAR_W = 0.56; // generous glyph width as a fraction of the font size, so 
 const NARROW = 40; // inner width below which a screen shows only its short form (a count or a word)
 /** How far the glass is set in from the anchor's top and sides, so the bezel lands on the map's bezel tiles. */
 const INSET = 4;
+/**
+ * What a screen shows when its own type is too small to read (the tower elevation, `worldTextVisible`).
+ *
+ * The glass is near-black, so turning the lettering off left the whole-building view dotted with ten featureless
+ * slabs — the highest-contrast objects in a pastel building, and the eye goes to them first and finds nothing
+ * (visual QA R2-I2). Only the Bank read, because its content is drawn bars rather than type. So every screen
+ * draws what the Bank draws: a lit title bar for the head, and a row per line it is carrying, ragged like text.
+ * A screen with nothing to say is a title bar alone, which is what "recedes" means here.
+ */
+export const MARK_BAR_H = 3;
+export const MARK_ROW_W = [0.78, 0.6, 0.44] as const;
+export function markRows(lines: number): readonly number[] { return MARK_ROW_W.slice(0, Math.max(0, Math.min(MARK_ROW_W.length, lines))); }
 
 /**
  * The geometry of one screen, from its map anchor alone — pure, so the line budget is a unit test rather than a
@@ -63,6 +75,12 @@ export class Surface {
   private text: Phaser.GameObjects.Text;
   private image: Phaser.GameObjects.Image | null = null;
   private bars: Phaser.GameObjects.Graphics;
+  /** The tower-elevation stand-in for the head and the lines: `markRows`. */
+  private mark: Phaser.GameObjects.Graphics;
+  private markLines = 0;
+  /** False while the screen is showing a chart or a browser frame, which read at any size on their own. */
+  private marksApply = true;
+  private markSig = '';
   private badge: Phaser.GameObjects.Text;
   private wipe: Phaser.GameObjects.Rectangle;
   private live: Phaser.GameObjects.Text;
@@ -102,6 +120,7 @@ export class Surface {
     this.head = addText(scene, this.inset + PAD_X, this.inset + PAD_Y, '', { fontFamily: FONT, fontSize: `${HEAD_PX * RES}px`, fontStyle: 'bold', color: PALETTE.screenText }).setOrigin(0, 0).setScale(1 / RES);
     this.text = addText(scene, this.inset + PAD_X, this.inset + PAD_Y + HEAD_H, '', { fontFamily: FONT, fontSize: `${LINE_PX * RES}px`, color: PALETTE.screenMuted, lineSpacing: LINE_SPACING * RES }).setOrigin(0, 0).setScale(1 / RES);
     this.bars = scene.add.graphics();
+    this.mark = scene.add.graphics().setVisible(false);
     this.badge = addText(scene, w - this.inset - 3, this.inset + 2, '', { fontFamily: FONT, fontSize: `${8 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 3 * RES, y: RES } }).setOrigin(1, 0).setScale(1 / RES).setVisible(false);
     this.wipe = scene.add.rectangle(this.inset, this.inset, 3, h - this.inset, hexToInt(PALETTE.wipe), 0.35).setOrigin(0).setVisible(false);
     this.live = addText(scene, this.inset + 3, this.inset + 2, 'LIVE', { fontFamily: FONT, fontSize: `${7 * RES}px`, fontStyle: 'bold', color: PALETTE.amberInk, backgroundColor: PALETTE.amber, padding: { x: 2 * RES, y: RES } }).setOrigin(0, 0).setScale(1 / RES).setVisible(false);
@@ -115,7 +134,7 @@ export class Surface {
     // "no text is drawn outside a bezel" holds for captions too.
     const caption = String(anchor.props.label ?? def.kind).split('—')[0].trim();
     this.plate = addText(scene, w / 2, -1, caption, { fontFamily: FONT, fontSize: `${CAPTION_FONT_PX * RES}px`, fontStyle: 'bold', color: PALETTE.screenText, backgroundColor: PALETTE.screenBezel, padding: { x: 3 * RES, y: CAPTION_PAD_Y * RES } }).setOrigin(0.5, 1).setScale(1 / RES);
-    this.container = scene.add.container(x, y, [this.seat, this.bezel, this.lit, this.bg, this.head, this.text, this.bars, this.badge, this.wipe, this.live, this.caret, this.plate]).setDepth(5);
+    this.container = scene.add.container(x, y, [this.seat, this.bezel, this.lit, this.bg, this.head, this.text, this.bars, this.mark, this.badge, this.wipe, this.live, this.caret, this.plate]).setDepth(5);
     this.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => onClick(def.kind));
   }
 
@@ -129,6 +148,32 @@ export class Surface {
     this.head.setVisible(this.letteringOn && this.wantHead);
     this.text.setVisible(this.letteringOn && this.wantText);
     this.plate.setVisible(this.letteringOn);
+    this.drawMark();
+  }
+
+  /**
+   * The screen's state as marks rather than as type, for the elevation where type is a smear (R2-I2). A lit title
+   * bar in the kind's own colour, then a ragged row per line the screen is carrying — the shape of a headline,
+   * not a picture of one.
+   */
+  private drawMark(): void {
+    // `applyLettering` runs on every content write, which is every frame; a Graphics rebuild per screen per frame
+    // is work for nothing while nothing has changed.
+    const sig = `${this.letteringOn}|${this.marksApply}|${this.markLines}`;
+    if (sig === this.markSig) return;
+    this.markSig = sig;
+    this.mark.clear();
+    // A chart already draws its content as marks — the Bank is the one screen that read at this elevation before
+    // any of this — and a browser frame is a picture, which reads at any size. Neither needs a stand-in.
+    const apply = !this.letteringOn && this.marksApply;
+    this.mark.setVisible(apply);
+    if (!apply) return;
+    const colour = hexToInt(PALETTE.surfaceMark[this.def.kind] ?? PALETTE.screenMuted);
+    const x = this.inset + PAD_X, y = this.inset + PAD_Y, w = this.innerW;
+    this.mark.fillStyle(colour, 1).fillRect(x, y + 2, w, MARK_BAR_H);
+    markRows(this.markLines).forEach((frac, i) => {
+      this.mark.fillStyle(colour, 0.45).fillRect(x, y + HEAD_H + i * LINE_H, Math.max(4, Math.round(w * frac)), 2);
+    });
   }
 
   private setImage(dataUrlOrKey: string | null): void {
@@ -153,6 +198,7 @@ export class Surface {
       this.image = img;
       this.scene.tweens.add({ targets: img, alpha: 1, duration: dur(DUR.crossfade), onComplete: () => { old?.destroy(); } });
       this.wantHead = false; this.wantText = false;
+      this.marksApply = false;
       this.applyLettering();
       this.wipeOnChange(`i|${key}|${this.lastKey}`);
     };
@@ -176,6 +222,8 @@ export class Surface {
     this.image?.setVisible(false);
     const kept = lines.slice(0, this.maxLines).map((l) => cut(l, this.lineChars));
     this.wantHead = true; this.wantText = kept.length > 0;
+    this.markLines = kept.length;
+    this.marksApply = true;
     // Crop after every setText: Phaser clamps a crop to the frame that existed when it was set.
     this.head.setText(cut(head, this.headChars)).setCrop(0, 0, this.innerW * RES, HEAD_H * RES);
     this.text.setText(kept.join('\n')).setCrop(0, 0, this.innerW * RES, Math.max(0, this.innerH - HEAD_H) * RES);
@@ -201,6 +249,8 @@ export class Surface {
       if (!rows.length) { this.setHeadline(hl.head, hl.lines); return; }
       const labelW = Math.floor(this.innerW * 0.42), x0 = this.inset + PAD_X + labelW + 4, w = this.innerW - labelW - 4;
       this.setHeadline(hl.head, rows.map((b) => cut(b.label, Math.floor(labelW / (LINE_PX * CHAR_W)))));
+      this.marksApply = false;   // the bars are the marks
+      this.drawMark();
       const y0 = this.inset + PAD_Y + HEAD_H;
       rows.forEach((b, i) => {
         const pct = Math.min(1, b.used / b.limit);

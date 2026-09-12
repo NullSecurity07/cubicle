@@ -53,7 +53,17 @@ describe('night colour and lamps', () => {
   it('dusk and night differ; day has no lamps; night lamps are on', () => {
     expect(nightColourFor(19)).not.toBe(nightColourFor(23));
     expect(nightColourFor(23)).toBe(hexToInt(PALETTE.night));
-    expect(nightColourFor(18.1)).toBe(hexToInt(PALETTE.dusk));
+    // Warm while the sky is warm, violet by the time the sky is (visual QA R2-I4): a sunset that falls on a
+    // building as a cooler noon is the one thing in `09c` that disagreed with the sky about the time.
+    expect(nightColourFor(18.1)).toBe(hexToInt(PALETTE.duskWarm));
+    expect(nightColourFor(19)).toBe(hexToInt(PALETTE.duskWarm));
+    expect(nightColourFor(20.5)).toBe(hexToInt(PALETTE.dusk));
+    for (const h of [18.5, 19, 19.4]) {
+      const c = hexToHsl(PALETTE.duskWarm);
+      expect(c.h, 'the warm stop is warm').toBeLessThan(45);
+      expect(nightColourFor(h)).toBe(hexToInt(PALETTE.duskWarm));
+    }
+    expect(nightColourFor(7)).toBe(hexToInt(PALETTE.duskWarm));   // dawn is warm for the same reason
     expect(lampAlphaFor(12)).toBe(0);
     expect(lampAlphaFor(21)).toBe(1);
     expect(lampAlphaFor(19.5)).toBeGreaterThan(0); expect(lampAlphaFor(19.5)).toBeLessThan(1);

@@ -32,8 +32,18 @@ describe('day / night tint', () => {
   });
   it('fades in at dusk and out at dawn', () => {
     expect(tintFor(7)).toBeCloseTo(NIGHT_ALPHA / 2);
-    expect(tintFor(19.5)).toBeCloseTo(NIGHT_ALPHA / 2);
     expect(tintFor(8)).toBe(0);
+  });
+  /**
+   * Visual QA R2-I4: over a straight three-hour line 19:00 landed at a third, and the building measured 87 % of
+   * noon under a sunset sky. Light goes fast once the sun is on the horizon, so the first hour takes half.
+   */
+  it('spends half the evening ramp in its first hour, so 19:00 is dusk and not late afternoon', () => {
+    expect(tintFor(18)).toBe(0);
+    expect(tintFor(19)).toBeCloseTo(NIGHT_ALPHA * 0.55);
+    expect(tintFor(20)).toBeCloseTo(NIGHT_ALPHA * 0.82);
+    expect(tintFor(21)).toBe(NIGHT_ALPHA);
+    for (let h = 18; h < 21; h += 0.1) expect(tintFor(h), `${h}`).toBeLessThanOrEqual(tintFor(h + 0.1) + 1e-9);
   });
 });
 
