@@ -4,8 +4,10 @@ import {
   HOUSE, LEDGER_PATH, RUNWAY_PATH,
   createJob, readJob, listJobs, listInbox, jobPath, idFromKey,
   officeHolder, teamOf, divisionOf, divisionTeams, subtreeRoles, createProposal, findInboxById, resultBlock,
+  LedgerVetoedError, isNeverModifyPath, atomicWriteSync,
 } from '@cubicle/core';
-import { shadowCost, hasPrices, findModel, type ModelBudget, type ProvidersFile, type RecordedCall } from '@cubicle/router';
+import { shadowCost, hasPrices, type ModelBudget, type ProvidersFile, type RecordedCall } from '@cubicle/router';
+import { readFileSync, realpathSync, rmSync } from 'node:fs';
 
 /**
  * The daemon's side of the money: everything deterministic, and not one model call anywhere in this file.
@@ -16,7 +18,21 @@ import { shadowCost, hasPrices, findModel, type ModelBudget, type ProvidersFile,
  * more in.
  *
  * Nothing here caches a money fact. Every figure is derived from `Ledger/ledger.md` and the event log on the
- * call that needs it, so losing the heartbeat's state file changes no number and silences no message.
+ * call that needs it, so losing the heartbeat's state file changes no number and silences no message. The one
+ * thing this module does remember between cycles is which of its own complaints it has already made: an
+ * in-process map, loaded from `LOCK_STATE_PATH` once per run and written through to it after that. Deleting
+ * that file, or a restart after a write to it failed, costs one repeated sentence per standing complaint and
+ * nothing at all besides.
+ *
+ * One consequence of that, worth stating where it will be read: both halves of the division gauge are decided
+ * by `config/providers.yaml` **as it stands now**, so editing a model mid-day changes what today's already
+ * recorded calls on it count for. **Renaming** one leaves `quota` exactly where it was — the new id carries
+ * the same `limits.rpd` — while its calls stop being counted, so the affected divisions get more headroom
+ * than the day's pool really has. **Deleting** one moves both halves against each other: the capacity it
+ * contributed goes too, and whether a division ends up ahead depends on how much of its day ran on that
+ * model. Either way it corrects itself at the next UTC midnight, because the window only ever covers today.
+ * The alternative — counting calls against an allowance the file no longer offers — rations a division for a
+ * model it cannot use, which is the worse of the two.
  */
 
 const DAY_MS = 86_400_000;
@@ -54,14 +70,17 @@ function pooledModels(p: ProvidersFile['providers'][number]): ProvidersFile['pro
 /**
  * Free calls a day at the scarce tiers, across enabled cloud providers.
  *
- * `rpd: 0` is `ModelLimits`' default and means **no declared daily limit** — `quota.ts` guards on
- * `if (L.rpd && …)` and `metrics.ts` renders `∞` — so it is never summed as zero capacity. Where the
- * provider declares an account-wide `rpd`, that account figure governs (OpenRouter's four medium models
- * declare 50 each but the account allows 50 in total, and an unlimited model still cannot exceed it). Where
- * it does not, a provider with an unlimited model contributes **nothing to this finite sum**: there is no
- * honest number to add, and inventing one would put a made-up capacity on the owner's bank screen. Its calls
- * are left out of `divisionSpend` too, so an unlimited model neither raises `used` nor `quota` — it simply is
- * not rationed.
+ * The decision is **per model**, never per provider. `rpd: 0` is `ModelLimits`' default and means *no declared
+ * daily limit* — `quota.ts` guards on `if (L.rpd && …)`, `metrics.ts` renders `∞`, and the shipped file's own
+ * header says "0 = unlimited/unknown" — so such a model is not summed as zero capacity, and it is not summed
+ * as an invented one either: it contributes nothing, and `drawsOnFreePool` leaves its calls out of the spend
+ * side to match. Its *siblings* are untouched. One model whose daily limit the owner has not looked up must
+ * not delete the capacity of the four beside it that declare one, while their calls keep raising `used` —
+ * that is the same asymmetry one level up.
+ *
+ * An account-wide `rpd` caps the sum of that provider's finite models (OpenRouter's four medium models declare
+ * 50 each but the account allows 50 in total), and is itself the capacity when the provider's only budgeted
+ * models are unlimited — there the account figure is the real ration, so those calls do draw on the pool.
  */
 export function freeCallCapacity(cfg: ProvidersFile): number {
   let total = 0;
@@ -73,7 +92,6 @@ export function freeCallCapacity(cfg: ProvidersFile): number {
     const declared = pooled.reduce((t, m) => t + m.limits.rpd, 0);
     const unlimited = pooled.some((m) => !m.limits.rpd);
     if (account) { total += unlimited ? account : Math.min(account, declared); continue; }
-    if (unlimited) continue;
     total += declared;
   }
   return total;
@@ -81,24 +99,221 @@ export function freeCallCapacity(cfg: ProvidersFile): number {
 
 /**
  * Whether one recorded call drew on the pool `freeCallCapacity` measures — the question `divisionSpend` has
- * to answer the same way, or `used` and `quota` count different things and every division demotes to the
- * cheap tier sooner than it should.
+ * to answer the same way, model for model, or `used` and `quota` count different things and every division
+ * demotes to the cheap tier sooner than it should.
  *
  * Without a providers file there is nothing to check against and the call counts, which is what this module
- * did before. With one, three facts take a call out of the pool: it was on a **priced** model (the owner
- * pays for it; it is not drawing on a free allowance), it was on a **local** provider (free and unmetered),
- * or it was on a model with **no daily limit anywhere** (the `rpd: 0` case above, which contributed no
- * capacity either). A model the file no longer describes still counts: losing a renamed model's calls would
- * understate the gauge, and understating what has been spent is the more dangerous error.
+ * did before. With one, the answer is `pooledModels`' answer read back for a single model, so the two can
+ * never drift: the call is in the pool when its provider is enabled and not local, and its model is enabled,
+ * unpriced, at a **budgeted tier as the file describes it today**, and bounded by a daily limit of its own or
+ * an account cap above it.
+ *
+ * The tier comes from the config and not from the recorded call, so re-tiering a model moves it on both sides
+ * at once: demote a `strong` model to `cheap` and today's calls on it stop raising `used` in the same breath
+ * as it stops raising `quota`. And a provider or model the file no longer describes counts on **neither**
+ * side — it contributes no capacity, so counting its calls would ration a division against an allowance that
+ * does not exist.
  */
 export function drawsOnFreePool(cfg: ProvidersFile | null | undefined, provider: string, model: string): boolean {
   if (!cfg) return true;
-  const m = findModel(cfg, provider, model);
-  if (!m) return true;
-  if (m.price) return false;
   const p = cfg.providers.find((x) => x.id === provider);
-  if (p?.privacy === 'local') return false;
-  return Boolean(m.limits.rpd || p?.limits?.rpd);
+  if (!p || !p.enabled || p.privacy === 'local') return false;
+  const m = p.models.find((x) => x.id === model);
+  if (!m || !m.enabled || m.price) return false;
+  if (!BUDGETED_TIERS.includes(m.tier)) return false;
+  return Boolean(m.limits.rpd || p.limits?.rpd);
+}
+
+/** `where` values only `warnOnce` ever writes, so no other failure can be mistaken for one of these notices. */
+export const LOCKED_RUNWAY = 'money.runway.locked';
+export const LOCKED_ACCRUAL = 'money.accrual.locked';
+/** The owner's `prices_verified`/`verified` stamp is dated in the future — said once per distinct stamp value. */
+export const STAMP_AHEAD = 'money.accrual.stamp';
+/** Said once, if the file this module keeps its own memory in cannot be written. */
+export const NOTICES_UNWRITABLE = 'money.notices.unwritable';
+/** Said once, if it exists but cannot be read or makes no sense — the memory starts empty instead. */
+export const NOTICES_UNREADABLE = 'money.notices.unreadable';
+
+/**
+ * Where the memory is kept between runs: `where` → the situation it was said about. A cache under
+ * `.cubicle/`, not a note; no figure is derived from it, and the only thing losing it can cost is a repeated
+ * sentence, which is the safe direction for a file whose whole job is to stop a sentence being repeated.
+ */
+export const LOCK_STATE_PATH = '.cubicle/money-notices.json';
+
+/**
+ * What has already been said, per vault root — and **the authority on it for as long as this process runs**.
+ *
+ * Memory first, file second. The map is loaded from `LOCK_STATE_PATH` exactly once, on first use, and every
+ * decision after that — a notice said, a notice cleared — changes the map before anything touches the disk.
+ * The file is write-through persistence and nothing else: rewritten from the map on every change, retried on
+ * the next change if a write failed, and **never read again**.
+ *
+ * That last part is the point. Earlier rounds re-read the file on every cycle and tried to reconcile it with
+ * what the process knew, and each reconciliation had a hole: a read that failed for a moment — `EIO` on a
+ * degrading disk, a network mount blink, a partial write caught mid-flight, `ENOSPC` inside `open()` — is
+ * indistinguishable from "nothing has been said", and one such flicker between a clear and a re-lock was
+ * enough to swallow a notice permanently. A store that is read once cannot flicker.
+ *
+ * What it costs: a **restart** re-reads the file once, and if the last write before it had failed, each
+ * complaint still standing is made one more time. That is the whole exposure, and it is the direction this is
+ * allowed to fail in.
+ *
+ * Keyed on the vault's root path rather than on a `Vault` instance, so two opens of one directory in a process
+ * (`rebuild`, `doctor`, a test) share one memory instead of disagreeing quietly. At most three entries per
+ * root — the three `where` values above — and one root per vault this process has opened.
+ */
+const notices = new Map<string, Record<string, string>>();
+
+/**
+ * The key: the vault's root with symlinks resolved, so two opens of one directory by different paths share one
+ * memory rather than each loading the file and disagreeing at the edges. `realpathSync` needs the directory to
+ * exist and can throw on an odd mount; the already-resolved `vault.root` is a perfectly good key when it does,
+ * and the worst that costs is the two-paths case it was meant to collapse.
+ */
+function noticeKey(vault: Vault): string {
+  try { return realpathSync(vault.root); } catch { return vault.root; }
+}
+
+/**
+ * Roots whose copy on disk is behind the memory — a write that did not land, or a load that could not be
+ * trusted. Retried on the next change, including the branches that change nothing; complained about once per
+ * fault.
+ */
+const unflushed = new Set<string>();
+
+/**
+ * The map for this vault, loading it from the file on first use. A file that is simply absent is not a fault —
+ * nothing has been said yet — but one that cannot be read, or that does not hold a JSON object, starts the
+ * memory empty, says so once, and is **rewritten from memory on this run's first change**. Empty means every
+ * standing complaint is made again, which is noise; trusting half a file would be worse; and leaving the file
+ * as it was found would let the next run believe something this one has already decided against.
+ */
+function loadNotices(vault: Vault): Record<string, string> {
+  const key = noticeKey(vault);
+  const held = notices.get(key);
+  if (held) return held;
+  let state: Record<string, string> = {};
+  let unreadable = false;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(vault.abs(LOCK_STATE_PATH), 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) state = parsed as Record<string, string>;
+    else unreadable = true;
+  } catch (err) {
+    unreadable = (err as NodeJS.ErrnoException | null)?.code !== 'ENOENT';
+  }
+  notices.set(key, state);
+  if (unreadable) {
+    // "Nothing is remembered" is itself a change, and the only thing this run knows that the disk does not.
+    // Marking the root unflushed makes the next change — including the do-nothing branches of `clearNotice`
+    // and `warnOnce`, which both catch the disk up — rewrite the file from memory, so a file that could not be
+    // read cannot survive to be *believed* by the next run. Without it, a run whose only decision was a clear
+    // would write nothing, the stale entry would outlive it, and the run after that would read it back and
+    // swallow a re-lock for good.
+    unflushed.add(key);
+    try {
+      vault.events.emit({ type: 'daemon.warning', payload: {
+        where: NOTICES_UNREADABLE,
+        path: LOCK_STATE_PATH,
+        reason: `${LOCK_STATE_PATH} could not be read, so this run starts with no memory of what it has already said; each complaint still standing is made once more`,
+      } });
+    } catch { /* a log that cannot take an append is not this module's to surface, nor its to die on */ }
+  }
+  return state;
+}
+
+/**
+ * Write the map through to the file. The map is already right; this is the copy that outlives the process.
+ *
+ * The whole file is rewritten, or removed when there is nothing left to remember — a vault that has never had
+ * a notice held back should not acquire a file saying so, and "this file exists" should keep meaning
+ * "something is being suppressed". Whole-file means a second writer's entry would be lost, which is the window
+ * `atomicWriteSync` has always had, at the same cost of one repeated sentence, and there is no second writer:
+ * only the heartbeat calls in here, one job at a time.
+ */
+function flushNotices(vault: Vault, state: Record<string, string>): void {
+  const key = noticeKey(vault);
+  const faulted = unflushed.has(key);
+  try {
+    if (Object.keys(state).length === 0) rmSync(vault.abs(LOCK_STATE_PATH), { force: true });
+    else atomicWriteSync(vault.abs(LOCK_STATE_PATH), JSON.stringify(state, null, 2));   // creates `.cubicle/`
+    unflushed.delete(key);
+    return;
+  } catch { /* the memory is still right; only the copy on disk is behind, and the next change retries it */ }
+  unflushed.add(key);
+  if (faulted) return;   // said once already; the owner does not need it every cycle
+  try {
+    vault.events.emit({ type: 'daemon.warning', payload: {
+      where: NOTICES_UNWRITABLE,
+      path: LOCK_STATE_PATH,
+      reason: `${LOCK_STATE_PATH} cannot be written, so what has already been said is remembered in this run only; every complaint still standing is made once more after a restart`,
+    } });
+  } catch { /* as above: a failing event log is not this module's to surface */ }
+}
+
+/** Forget a notice, so the next time the situation arises it is said again. */
+function clearNotice(vault: Vault, where: string): void {
+  const state = loadNotices(vault);
+  if (state[where] === undefined) {
+    // Nothing remembered, so nothing to forget and no file to create saying so — but if the disk is behind,
+    // this is still a chance to catch it up.
+    if (unflushed.has(noticeKey(vault))) flushNotices(vault, state);
+    return;
+  }
+  delete state[where];
+  flushNotices(vault, state);
+}
+
+/**
+ * The situation a lock notice is about: **this path is locked**, and nothing more.
+ *
+ * Semantic, not textual. Whether `Ledger/runway.md` is covered by the owner's `never_modify` list is a
+ * yes-or-no question that `isNeverModifyPath` already answers, and everything else about the list is spelling:
+ * which entry covers it, how many do, what order they are in, whether `Ledger/` is written `./Ledger/` or
+ * `Ledger//`, whether a redundant second entry was tidied away, whether the daemon appended `Teams/` on
+ * upgrade. None of that changes the answer, so none of it is news, and earlier keys that carried the entries
+ * themselves said the same sentence again for every one of those edits.
+ *
+ * It is also not the file's own sha. `never_modify: [Ledger/]` exists precisely so the owner can keep their
+ * own `Ledger/runway.md` by hand; editing it is the expected workflow, not an event.
+ *
+ * A key this stable is only half the mechanism. `clearNotice` is the other half: a cycle that finds the path
+ * writable forgets the notice, so lock → unlock → lock again is two notices rather than one. It takes a cycle
+ * to *observe* the gap — an unlock and a re-lock between two heartbeats is a gap nothing saw, and nothing is
+ * said.
+ */
+function lockSituation(rel: string): string {
+  return `locked:${rel}`;
+}
+
+/**
+ * Say something on the event log once per *situation* — not once a cycle, and not on a timer either.
+ *
+ * A heartbeat fires every six hours or every N completions, so an owner who locks `Ledger/` and leaves it
+ * locked would otherwise collect two `daemon.warning` rows a cycle about a decision they made on purpose and
+ * have not changed. Nothing dedupes `daemon.warning`, and a log full of the same row is a log nobody reads.
+ *
+ * The **situation** is the caller's, not this function's, and it is deliberately not the message text: the
+ * lock notices key on whether the path is locked (`lockSituation`), the accrual's adds the day range so a lock
+ * that outlives a day says so once a day with the new one, and the future-stamp notice keys on the stamp
+ * string alone so the sentence may name today's clamp target without turning a standing typo into a row a day.
+ * Split key from text, and each notice repeats when its own subject changes and at no other time.
+ *
+ * The `where` values belong to this function alone, never a step name another emitter shares — a
+ * `money.runway` row logged when `writeRunway` *throws* must not be able to pass for "I already told them the
+ * page is locked" and silence the notice for good.
+ */
+function warnOnce(vault: Vault, where: string, situation: string, extra: Record<string, unknown>): void {
+  const state = loadNotices(vault);
+  if (state[where] === situation) {
+    // Said already. If the copy on disk is behind, this is the retry — per change rather than per restart, so
+    // a fault that has since been fixed costs nothing beyond the cycles it actually lasted.
+    if (unflushed.has(noticeKey(vault))) flushNotices(vault, state);
+    return;
+  }
+  vault.events.emit({ type: 'daemon.warning', payload: { where, ...extra } });
+  state[where] = situation;      // the memory is the authority, and it is right before the disk is touched
+  flushNotices(vault, state);
 }
 
 /** A division's weight is the people actually in it: a thirteen-desk division needs more calls than a three-desk one. */
@@ -128,7 +343,8 @@ export function divisionOfRole(org: Org, role: string | null | undefined, known:
  *
  * `cfg` is optional only because a caller without a providers file (a test, a daemon whose router failed to
  * start) should still get a tier-count rather than nothing. Every caller that has one passes it, and with it
- * the count is exactly the calls `freeCallCapacity` budgeted for.
+ * the count is exactly the calls `freeCallCapacity` budgeted for — `drawsOnFreePool` answers both questions
+ * from the same file, so a model the owner re-tiers, prices or switches off moves on both sides together.
  */
 export function divisionSpend(vault: Vault, org: Org, since: string, cfg?: ProvidersFile | null): Record<string, number> {
   const known = new Set(divisionTeams(org).map((t) => t.id));
@@ -136,8 +352,10 @@ export function divisionSpend(vault: Vault, org: Org, since: string, cfg?: Provi
   for (const id of known) out[id] = 0;
   for (const e of vault.events.query({ types: ['router.call'], from: since })) {
     const p = e.payload as { tier?: unknown; provider?: unknown; model?: unknown };
-    if (!BUDGETED_TIERS.includes(String(p.tier ?? ''))) continue;
-    if (!drawsOnFreePool(cfg, String(p.provider ?? ''), String(p.model ?? ''))) continue;
+    // With a providers file the file decides, tier included, so `used` and `quota` move together when the
+    // owner re-tiers a model. Without one, the tier the call was recorded at is the only thing to go on.
+    if (cfg) { if (!drawsOnFreePool(cfg, String(p.provider ?? ''), String(p.model ?? ''))) continue; }
+    else if (!BUDGETED_TIERS.includes(String(p.tier ?? ''))) continue;
     const key = divisionOfRole(org, e.agent, known);
     out[key] = (out[key] ?? 0) + 1;
   }
@@ -242,9 +460,29 @@ export function runwayCommentary(vault: Vault): string {
   return typeof summary === 'string' ? summary.trim().split('\n').slice(0, 5).join('\n') : '';
 }
 
-/** Regenerate `Ledger/runway.md` from the book. Returns the report, so the caller does not read it twice. */
+/**
+ * Regenerate `Ledger/runway.md` from the book. Returns the report, so the caller does not read it twice.
+ *
+ * The owner's `never_modify` list covers this page too. `vault.writeText` would not stop it — `assertWritable`
+ * returns immediately for the privileged `daemon` actor and never looks at that list — so the check is made
+ * here, with core's own `isNeverModifyPath` rather than a second copy of the matching rules, and the note is
+ * left exactly as the owner left it. The figures are still computed and still returned: the caller's brief
+ * line, the dormancy check and the daily job all keep working on a company whose runway page is frozen. It is
+ * a report, not the company.
+ */
 export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Date = new Date()): MoneyReport {
   const report = moneyReport(readLedger(vault), now);
+  if (isNeverModifyPath(RUNWAY_PATH, vault.constitution().never_modify)) {
+    warnOnce(vault, LOCKED_RUNWAY, lockSituation(RUNWAY_PATH), {
+      path: RUNWAY_PATH,
+      reason: `${RUNWAY_PATH} is on the owner's never_modify list, so it was not regenerated; the figures behind it are still computed every cycle`,
+    });
+    return report;
+  }
+  // Not locked: forget any notice about a lock that has been lifted, so putting it back is news again. It is
+  // the *cycle observing the path is writable* that counts, not the write below — which may yet fail, and
+  // whose failure is the safe direction anyway (the next locked cycle says the notice again).
+  clearNotice(vault, LOCKED_RUNWAY);
   const calls = recordedCalls(vault, dayStartIso(now));
   const shadow = shadowCost(cfg, calls);
   vault.writeText(RUNWAY_PATH, runwayNote(report, {
@@ -279,12 +517,48 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  * is exactly the retroactive charge an append-only book is supposed to make impossible. `prices_verified` is
  * the stamp the owner sets beside the prices (`config/providers.yaml` documents it in the header comment);
  * `verified` is the file's own stamp and stands in when the more specific one is absent.
+ *
+ * A stamp in the **future** is clamped to yesterday and complained about. Left alone it would put the start of
+ * the walk past its end, so the walk would never run, no `model-<date>` row would ever be written, and there
+ * would be nothing to continue from next cycle either — a typo'd year would silently stop paid model cost ever
+ * reaching the book. The book's rule is that an owner's typo surfaces as a complaint, never as money quietly
+ * vanishing, so it says so on the event log and carries on.
  */
-function firstAccrualDay(cfg: ProvidersFile, now: Date): string {
+function firstAccrualDay(vault: Vault, cfg: ProvidersFile, now: Date): string {
   const lookback = dayOf(now.getTime() - ACCRUAL_LOOKBACK_DAYS * DAY_MS);
+  const yesterday = dayOf(now.getTime() - DAY_MS);
   const stamp = String(cfg.prices_verified ?? cfg.verified ?? '').slice(0, 10);
-  return DATE_RE.test(stamp) && stamp > lookback ? stamp : lookback;
+  // A stamp that is fine again forgets the complaint about one that was not, so the same bad value coming
+  // back — a revert, a restored backup, a bad merge — is said a second time rather than swallowed for ever.
+  // Within this function's own reach, which is narrow: it is called only while the book has no `model-<date>`
+  // row to continue from, so the first successful accrual retires the complaint and this clear together. That
+  // is the right place to stop caring — past that row the stamp decides nothing, because the walk continues
+  // from the book instead of from it.
+  if (!DATE_RE.test(stamp) || stamp <= yesterday) { clearNotice(vault, STAMP_AHEAD); }
+  if (!DATE_RE.test(stamp)) return lookback;
+  if (stamp > yesterday) {
+    // Once per distinct stamp value, not once a cycle and not once a day. The situation is the **stamp** and
+    // nothing else — the sentence names today's clamp target, which slides at every UTC midnight, and keying
+    // on that would turn one unchanged typo into a row a day.
+    //
+    // "Every cycle" means every cycle that gets this far: the clamp below returns `yesterday`, so the walk
+    // usually writes a `model-<date>` row on this very cycle and every later one continues from the book
+    // rather than from the stamp. It is a standing typo on a company with nothing chargeable that would
+    // otherwise repeat itself, and that is the case this guards.
+    warnOnce(vault, STAMP_AHEAD, stamp, {
+      stamp,
+      reason: `the providers file's price stamp "${stamp}" is in the future; accruing model cost from ${yesterday} instead`,
+    });
+    return yesterday;
+  }
+  return stamp > lookback ? stamp : lookback;
 }
+
+/**
+ * The owner's `never_modify` veto on the book, told apart from a real write failure. Matched by name as well
+ * as by `instanceof`, so a duplicated module instance cannot turn their policy into a crash.
+ */
+const isVeto = (err: unknown): boolean => err instanceof LedgerVetoedError || (err as Error | null)?.name === 'LedgerVetoedError';
 
 /** The date every `model-<date>` accrual row in the book is for, oldest first. */
 function accruedDays(vault: Vault): string[] {
@@ -311,24 +585,50 @@ function accruedDays(vault: Vault): string[] {
  * On free tiers this writes **nothing** — a row of 0.00 every day would be noise dressed up as bookkeeping, and
  * the runway note already says in words that everything was free. A providers file with no `price:` anywhere
  * cannot produce a charge at all, so it returns before touching the log.
+ *
+ * And if the owner has put the book on their own `never_modify` list, this degrades to one warning rather than
+ * throwing into the heartbeat: an owner who has locked their ledger has not asked the company to stop.
  */
 export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = new Date()): LedgerEntry[] {
+  // The book is writable: forget the lock notice, so putting the lock back is worth saying once more. This
+  // runs whenever the step runs and needs no write of its own — an unlocked cycle with nothing to charge
+  // writes nothing at all, and it must still count as having seen the lock go.
+  if (!isNeverModifyPath(LEDGER_PATH, vault.constitution().never_modify)) clearNotice(vault, LOCKED_ACCRUAL);
   if (!hasPrices(cfg)) return [];
   const yesterday = dayOf(now.getTime() - DAY_MS);
   const floor = dayOf(now.getTime() - MAX_ACCRUAL_DAYS * DAY_MS);
   const last = accruedDays(vault).at(-1) ?? null;
-  let day = last ? nextDay(last) : firstAccrualDay(cfg, now);
+  let day = last ? nextDay(last) : firstAccrualDay(vault, cfg, now);
   if (day < floor) day = floor;
   const out: LedgerEntry[] = [];
   for (; day <= yesterday; day = nextDay(day)) {
     const to = `${day}T23:59:59.999Z`;
     const cost = shadowCost(cfg, recordedCalls(vault, `${day}T00:00:00.000Z`, to));
     if (cost.cents <= 0) continue;
-    const r = appendEntry(vault, {
-      at: to, kind: 'cost', cents: cost.cents, mode: 'live', who: 'daemon',
-      why: `${cost.paidCalls} model call${cost.paidCalls === 1 ? '' : 's'} on priced models, ${day}`,
-      ref: `model-${day}`,
-    }, 'daemon');
+    let r: { entry: LedgerEntry; added: boolean };
+    try {
+      r = appendEntry(vault, {
+        at: to, kind: 'cost', cents: cost.cents, mode: 'live', who: 'daemon',
+        why: `${cost.paidCalls} model call${cost.paidCalls === 1 ? '' : 's'} on priced models, ${day}`,
+        ref: `model-${day}`,
+      }, 'daemon');
+    } catch (err) {
+      // The owner's own veto (Task 7): they have named the book in `never_modify`, and `appendEntry` refuses
+      // even the privileged `daemon` actor. That is their decision to make, and it is not an error the company
+      // should stop for — the walk gives up for this cycle, says so once on the event log, and the heartbeat
+      // carries on with a book it simply may not add to. Anything else still throws: a disk that will not take
+      // a write is a real failure and must not be swallowed as policy.
+      if (!isVeto(err)) throw err;
+      // The days named are recomputed every time this would fire, and the text is part of the dedupe key, so a
+      // lock that outlives a day says so again with the new range instead of leaving a week-old date in the
+      // log for an owner to read literally.
+      const span = day === yesterday ? day : `${day} to ${yesterday}`;
+      warnOnce(vault, LOCKED_ACCRUAL, `${lockSituation(LEDGER_PATH)}:${span}`, {
+        path: LEDGER_PATH,
+        reason: `${LEDGER_PATH} is on the owner's never_modify list, so model cost for ${span} was not recorded; nothing else is affected and the company keeps running`,
+      });
+      break;
+    }
     if (r.added) out.push(r.entry);
   }
   return out;
@@ -355,38 +655,95 @@ function moneyNotes(vault: Vault, kind: 'dormant' | 'revived'): { id: string; ma
     .map((n) => ({ id: n.data.id, mark: String((n.data as { mark?: unknown }).mark ?? '') }));
 }
 
-/** Dormancies the owner has been told about and not yet been told the end of. */
-function openDormancies(vault: Vault): string[] {
-  const revived = new Set(moneyNotes(vault, 'revived').map((n) => n.mark));
-  return moneyNotes(vault, 'dormant').map((n) => n.mark).filter((m) => !revived.has(m));
-}
+/** One time the company ran out: the entry that took cash to zero, and the one that lifted it back. */
+export interface DormancyEpisode { start: string; end: string | null }
 
 /**
- * When the current dormancy **episode** began: the entry that took cash to zero or below after the owner had
- * put money in, with no later entry lifting it back above zero.
+ * Every dormancy the **book** records, oldest first, replayed in date order: `start` is the entry that took
+ * cash to zero or below with the owner's capital already in, `end` the later entry that lifted it back above
+ * zero, or null while the company is still stopped.
  *
- * This, not "when money last moved", is the episode's identity. `accrueModelCosts` books a *past-dated* `live`
- * cost row on the cycle after the day it charges, so the day the company goes dormant is charged one cycle
- * later and `lastLiveAt` moves *while nothing new is being spent* — which used to change the mark, write a
- * second "We have run out of money", and then send a second "Back to work" for it. The crossing entry cannot
- * move that way: a later row only deepens the hole, and the episode ends only when cash goes positive again.
+ * The ledger is the authority on what happened, not `00 Inbox/`. The inbox says only what the owner has
+ * already been *told*, and it is a folder they edit by hand: filing away a "Back to work" note must not be
+ * able to make a past episode look open forever and silence every dormancy after it.
  *
- * Derived from the book on every call, like every other money fact here.
+ * `mode === 'live'` and the `capital`-sets-funded rule are `moneyReport`'s own, so a mock row cannot open an
+ * episode here that `r.dormant` does not agree with, and a compensating `cost` row against capital nets out
+ * the same way on both sides.
  */
-export function dormancyMark(vault: Vault): string {
+export function dormancyEpisodes(vault: Vault): DormancyEpisode[] {
   const live = readLedger(vault).entries
     .filter((e) => e.mode === 'live')
     .sort((a, b) => a.at.localeCompare(b.at));
+  const out: DormancyEpisode[] = [];
   let cash = 0;
   let funded = false;
-  let start: string | null = null;
+  let open: DormancyEpisode | null = null;
   for (const e of live) {
     cash += e.kind === 'cost' ? -e.cents : e.cents;
     if (e.kind === 'capital') funded = true;
-    if (cash > 0) start = null;
-    else if (funded && start === null) start = e.at;
+    if (cash > 0) { if (open) { open.end = e.at; open = null; } }
+    else if (funded && !open) { open = { start: e.at, end: null }; out.push(open); }
   }
-  return start ?? 'none';
+  return out;
+}
+
+/**
+ * The open episode's start entry — the mark the dormancy message is keyed on — or `'none'` when the company
+ * is not stopped.
+ *
+ * It is the *start* of the episode rather than "when money last moved" because `accrueModelCosts` books a
+ * past-dated `live` cost row on the cycle after the day it charges: `lastLiveAt` therefore moves while nothing
+ * new is being spent, which used to write a second "We have run out of money" and then a second "Back to
+ * work". The start entry is far steadier, but it is **not** immovable: an accrual dated *before* the crossing
+ * can take cash to zero a few hours earlier and shift it backwards. That is why nothing here trusts the mark
+ * alone — `alreadyTold` compares against the episode, and the crash-repair path in `dormancyMessage` falls
+ * back to any dormancy note this module wrote whose stamp never landed.
+ */
+export function dormancyMark(vault: Vault): string {
+  const last = dormancyEpisodes(vault).at(-1);
+  return last && last.end === null ? last.start : 'none';
+}
+
+/**
+ * Whether the owner has already had a message of this kind about the episode that began at `start`.
+ *
+ * Compared as `mark >= start` rather than `mark === start`, because the start entry can shift backwards under
+ * a past-dated accrual (above) while the episode itself is unchanged. Episodes do not overlap and a previous
+ * one ended before this one began, so any stamped mark at or after this start belongs to this episode and
+ * nothing else.
+ */
+function alreadyTold(vault: Vault, kind: 'dormant' | 'revived', start: string): boolean {
+  return moneyNotes(vault, kind).some((n) => n.mark >= start);
+}
+
+/** The id prefix every note of a kind shares, so an orphan can be recognised without its stamp. */
+const messageIdPrefix = (kind: 'dormant' | 'revived'): string => `${idFromKey('prop', `money:${kind}`)}_`;
+
+/**
+ * A dormancy message this module wrote **during this episode** whose second write — the stamp — never landed.
+ *
+ * Recognised by the id shape, which is the one thing a crash between the two writes cannot take away; without
+ * it, a mark that shifted between the crash and the next cycle would leave the orphan unfindable and a second
+ * "We have run out of money" would go to the owner.
+ *
+ * Bounded to the episode by `created`, which `createProposal` stamps on every note, because an unbounded match
+ * is worse than the bug it fixes: an orphan left over from an episode the owner has already read about would
+ * be taken as "already said" for the *next* one, and the company would never tell them it had run out a second
+ * time. A note written while an episode was live always carries a `created` at or after that episode's start,
+ * so "told late" never becomes "not told at all".
+ *
+ * `start` is always the **open** episode's start, which is the newest one there is — no episode begins after
+ * it, so `created >= start` selects this episode and nothing else on its own. A second clause excluding notes
+ * from a later episode would be unreachable code, and the one caller is right here.
+ */
+function orphanDormancy(vault: Vault, start: string): { path: string } | null {
+  const prefix = messageIdPrefix('dormant');
+  const n = listInbox(vault).find((x) =>
+    x.data.id.startsWith(prefix)
+    && (x.data as { money?: unknown }).money === undefined
+    && x.data.created >= start);
+  return n ? { path: n.path } : null;
 }
 
 /**
@@ -408,17 +765,23 @@ function stamp(vault: Vault, rel: string, kind: 'dormant' | 'revived', mark: str
  * goes to zero after the owner funded the company, one "Back to work" when they answer it — and it answers the
  * two questions an owner will actually have: where did it go, and how do I start it again.
  *
- * Two guards, because one is not enough. The mark is the episode's crossing entry (`dormancyMark`), which does
- * not move while the company is stopped; and an episode the owner has already been told about suppresses the
- * message whatever the mark says, so even a crossing that shifts under a past-dated accrual cannot produce a
- * second one. Being told twice that the company has stopped is worse than being told late.
+ * Three guards, because a mark alone is not enough. The episode comes from the book (`dormancyEpisodes`), so a
+ * hand-edited inbox cannot invent or hide one. `alreadyTold` asks whether any dormancy note carries a mark at
+ * or after this episode's start, which stays true even when a past-dated accrual shifts the crossing entry
+ * backwards. And a note this module wrote whose stamp was lost to a crash is found by its id shape — bounded
+ * to this episode, so an old orphan can never stand in for a new silence — and repaired rather than written
+ * again. Being told twice that the company has stopped is worse than being told late; being told **not at
+ * all** is worse than either.
  */
 export function dormancyMessage(vault: Vault, org: Org, r: MoneyReport, now: Date = new Date()): string | null {
   if (!r.dormant) return null;
-  if (openDormancies(vault).length) return null;
-  const mark = dormancyMark(vault);
+  const episodes = dormancyEpisodes(vault);
+  const open = episodes.at(-1);
+  if (!open || open.end !== null) return null;
+  const mark = open.start;
+  if (alreadyTold(vault, 'dormant', mark)) return null;
   const id = moneyMessageId('dormant', mark);
-  const already = findInboxById(vault, id);
+  const already = findInboxById(vault, id) ?? orphanDormancy(vault, mark);
   if (already) { stamp(vault, already.path, 'dormant', mark); return null; }
   const ceo = officeHolder(org, 'chief_executive');
   const { path: rel } = createProposal(vault, {
@@ -444,14 +807,20 @@ export function dormancyMessage(vault: Vault, org: Org, r: MoneyReport, now: Dat
 }
 
 /**
- * The other half: said once, when a dormancy the owner was told about has been answered with capital. Keyed on
- * the same mark, so it is the reply to *that* message rather than a fresh announcement every cycle.
+ * The other half: said once, when the dormancy the owner was told about has been answered with capital.
+ *
+ * Which dormancy is decided by the **book** — the newest episode with an `end` — and not by which inbox note
+ * still looks unanswered. Filing away or deleting a "Back to work" note therefore costs at most one repeated
+ * message about that episode; it can never make an old episode read as open and silence every dormancy after
+ * it, which is what an inbox-only guard would do to a folder the owner edits by hand.
  */
 export function revivalMessage(vault: Vault, org: Org, r: MoneyReport, now: Date = new Date()): string | null {
   if (r.dormant || r.cashCents <= 0) return null;
-  const open = openDormancies(vault);
-  if (!open.length) return null;
-  const mark = open[open.length - 1];
+  const last = dormancyEpisodes(vault).at(-1);
+  if (!last || last.end === null) return null;                   // never stopped, or still stopped
+  const mark = last.start;
+  if (!alreadyTold(vault, 'dormant', mark)) return null;         // never told them it stopped; nothing to answer
+  if (alreadyTold(vault, 'revived', mark)) return null;
   const id = moneyMessageId('revived', mark);
   const already = findInboxById(vault, id);
   if (already) { stamp(vault, already.path, 'revived', mark); return null; }

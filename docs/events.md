@@ -8,7 +8,7 @@ Envelope: `{ id, ts (ISO), type, agent (role id | daemon | owner | init | null),
 |---|---|
 | `daemon.started` | pid, port, roles |
 | `daemon.stopping` | active_jobs |
-| `daemon.warning` | where, message — never silent; a question timeout adds id (the unanswered message) and escalated_to; `where: provider_key` carries providers [{id, env}] instead of message (a cascade provider has no API key, so its models are unavailable) |
+| `daemon.warning` | where, message — never silent; a question timeout adds id (the unanswered message) and escalated_to; `where: provider_key` carries providers [{id, env}] instead of message (a cascade provider has no API key, so its models are unavailable); the money notices all carry reason instead of message — `money.runway.locked` and `money.accrual.locked` add path and are said once per lock (the accrual's once a day while it stands, naming the days it is skipping), `money.accrual.stamp` adds stamp and is said once per mistyped stamp value, `money.notices.unwritable` adds path and is said once per fault, `money.notices.unreadable` adds path and is said once per run. What has already been said lives in an in-process map, loaded once from .cubicle/money-notices.json and written through to it |
 | `heartbeat.started` | trigger |
 | `heartbeat.completed` | id, commit, run (Runs/ path), gathered_at |
 | `job.queued` | type, title, assigned, priority, risk |

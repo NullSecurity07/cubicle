@@ -46,6 +46,13 @@ the house — the heartbeat, the board, the gates, security. A division past its
 It does not stop, and it is not in trouble; it is doing the same work with a smaller model. The split is on the
 bank screen and in `Ledger/runway.md`.
 
+Both halves of that gauge — what a division may spend and what it has spent — are read from
+`config/providers.yaml` as it stands right now, so editing a model there mid-day changes what that day's calls
+on it count for. Renaming one leaves every quota where it was and stops its calls being counted, so the
+divisions have more headroom than the day really holds; deleting one takes its capacity away as well, and which
+way a division ends up depends on how much of its day ran on that model. Either way the count starts clean at
+the next UTC midnight.
+
 ## When the money runs out
 
 Cash at or below zero, in a company the owner has funded, is dormancy: the daemon starts nothing but the
