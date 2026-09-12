@@ -31,7 +31,10 @@ const { vault } = await scaffoldVault(dir);
 vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } });
 vault.close();
 const llm: Llm = { async chat(): Promise<RoutedChatResult> { await new Promise((r) => setTimeout(r, 400)); return { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium', downgraded: false, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'ok' } }] }; }, promptBudget: () => 6000 };
-const d = new Daemon(defaultConfig(dir, process.env, { port: 0, tickMs: 5000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableSleepWatch: true, memory: false, log: (m) => console.log(`[daemon] ${m}`) });
+// `disablePantry`: this script asserts on agent state and captures frames, and from the `brand_change` below on
+// the company has an idea and a completed cycle — so every tick could send two sprites to the pantry counter
+// mid-scene (SP5 Decision 20).
+const d = new Daemon(defaultConfig(dir, process.env, { port: 0, tickMs: 5000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableSleepWatch: true, disablePantry: true, memory: false, log: (m) => console.log(`[daemon] ${m}`) });
 await d.start();
 const token = d.ws!.token;
 const webPort = d.config.port + 1; // port 0 binds an ephemeral port; d.config.port is the real one after start()

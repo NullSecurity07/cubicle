@@ -42,7 +42,9 @@ async function startDaemon(): Promise<{ d: Daemon; port: number }> {
   let last: unknown;
   for (let i = 0; i < 5; i++) {
     const port = base + i * 2;
-    const d = new Daemon(defaultConfig(dir, process.env, { port, tickMs: 5000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableSleepWatch: true, memory: false, log: () => undefined });
+    // `disablePantry`: this gate clicks through a fixed scene, and from the `brand_change` below on the company
+    // has an idea and a completed cycle — so a tick could seat two sprites at the pantry mid-run (SP5 Decision 20).
+    const d = new Daemon(defaultConfig(dir, process.env, { port, tickMs: 5000, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableSleepWatch: true, disablePantry: true, memory: false, log: () => undefined });
     try { await d.start(); return { d, port }; } catch (e) { last = e; console.log(`port ${port} busy, trying the next pair`); await d.stop().catch(() => undefined); }
   }
   throw last;
