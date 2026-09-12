@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, loadOrg, listJobs, listInbox, readJob, updateJob, readIdea, writeIdeaCard, updateIdea, listDecisions, DecisionFrontmatter, createProposal, PRESSURE_UNANSWERED } from '@cubicle/core';
-import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_STEPS, NON_WORK_TYPES, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob, runBoardSession, chairPrompt, CHAIR_IDEA_TOKENS } from '../src/index.js';
+import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_STEPS, NON_WORK_TYPES, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob, runBoardSession, chairPrompt, CHAIR_IDEA_TOKENS, BOARD_JOB_CHAIR_SECTION } from '../src/index.js';
 import { estimateJobId, researchJobId } from '../src/discovery.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide } from './helpers/board-switch.js';
@@ -374,6 +374,14 @@ describe('the board pressure-tests an idea, on a budget (spec §2, §3)', () => 
     }
     // Demoted on the way in, so the card still has exactly its eight `## ` sections (spec §7).
     expect(card.body.match(/^## /gm)).toHaveLength(8);
+
+    // And the board's own job note carries both halves: the three advisors' notes, and the merge they were
+    // hired for. It is the one place an owner goes to read what the board actually said.
+    const job = readJob(vault, listJobs(vault).find((j) => j.type === 'board.session')!.id)!;
+    expect(job.body).toContain('## Advisors');
+    expect(job.body).toContain(BOARD_JOB_CHAIR_SECTION);
+    expect(job.body).toContain('#### Founder-Market Fit');
+    expect(job.body).toContain('A painkiller: they already pay a caterer every term.');
   }, 30000);
 
   it('a pivot returns the card and leads the owner with the wedge', async () => {

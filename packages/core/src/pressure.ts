@@ -71,9 +71,10 @@ const RUBRIC_CUE: Record<RubricDimension, RegExp> = {
 /**
  * What separates `VERDICT`, `RUBRIC` and `WEDGE` from their value. Colon, hyphen, en dash — and the em dash
  * this codebase writes everywhere, `renderRubric`'s own output included, so `VERDICT — STRONG` is an answer
- * rather than a re-ask spent on punctuation.
+ * rather than a re-ask spent on punctuation. And the pipe, so a chair that lays its machine lines out as a
+ * markdown table — `| VERDICT | WEAK |` — has written the same sentence in a third punctuation.
  */
-const DELIM = '[:\\-–—]';
+const DELIM = '[:\\-–—|]';
 
 /**
  * What a chair may put in front of a label without changing what the line says: a blockquote, a heading's
@@ -82,17 +83,34 @@ const DELIM = '[:\\-–—]';
  * `## Brutal Verdict: WEAK` are one sentence written four ways, and a re-ask spent on any of them is a call the
  * budget does not have.
  */
-const LINE_LEAD = '[ \\t]*(?:>[ \\t]*)*(?:#{1,6}[ \\t]*)?(?:[-*+][ \\t]+)?(?:\\d+[.)][ \\t]*)?[*_`]*[ \\t]*';
+const LINE_LEAD = '[ \\t]*(?:>[ \\t]*)*(?:\\|[ \\t]*)?(?:#{1,6}[ \\t]*)?(?:[-*+][ \\t]+)?(?:\\d+[.)][ \\t]*)?[*_`]*[ \\t]*';
 
-/** The labels the chair was told to write, as one alternation. `Brutal Verdict:` is the owner's own heading. */
-const VERDICT_LABEL = 'brutal[ \\t]+verdict|verdict';
+/**
+ * The same, without the bullet marker — the lead a **heading** may carry.
+ *
+ * `Brutal Verdict` is the owner's fifth part and a heading, and the prompts number their parts `1.`–`5.`
+ * (`advisorPrompt`, and a chair imitating it), so numbering stays. A bullet does not, because a bulleted
+ * `Brutal Verdict` line is how a chair *quotes its advisors*: each advisor was asked to end with
+ * `5. Brutal Verdict — <word>`, and merging three notes looks like `- Brutal Verdict — STRONG (engineering)`.
+ * Counting that as the chair's own vote let the last advisor quoted overwrite the chair, in the fail-open
+ * direction spec Decision 7 exists to prevent. The chair's own machine line, `VERDICT:`, keeps the bullet: it
+ * is a line the chair was told to write and never a thing it attributes to somebody else.
+ */
+const HEADING_LEAD = '[ \\t]*(?:>[ \\t]*)*(?:\\|[ \\t]*)?(?:#{1,6}[ \\t]*)?(?:\\d+[.)][ \\t]*)?[*_`]*[ \\t]*';
+
+/**
+ * The labels the chair was told to write, each with the lead it may carry. `Brutal Verdict:` is the owner's own
+ * heading; `VERDICT:` is the machine line. Written as one alternation so every reader of a verdict line — the
+ * value, the bare heading, and "is this a machine line rather than a flaw" — agrees on what a label looks like.
+ */
+const VERDICT_LEAD_LABEL = `(?:${HEADING_LEAD}brutal[ \\t]+verdict|${LINE_LEAD}verdict)`;
 
 /** `<lead><label><emphasis><delimiter> <value>`. The value is group 1. */
-function labelLine(label: string, tail: string, flags: string): RegExp {
-  return new RegExp(`^${LINE_LEAD}(?:${label})[*_\`]*[ \\t]*${DELIM}[ \\t]*(${tail})$`, flags);
+function labelLine(leadLabel: string, tail: string, flags: string): RegExp {
+  return new RegExp(`^${leadLabel}[*_\`]*[ \\t]*${DELIM}[ \\t]*(${tail})$`, flags);
 }
 
-const VERDICT_LINE_RE = labelLine(VERDICT_LABEL, '.*', 'gim');
+const VERDICT_LINE_RE = labelLine(VERDICT_LEAD_LABEL, '.*', 'gim');
 
 /**
  * `## Brutal Verdict` on a line of its own, with the answer on the first line under it.
@@ -102,23 +120,47 @@ const VERDICT_LINE_RE = labelLine(VERDICT_LABEL, '.*', 'gim');
  * that writes no machine line and answers under the heading it was shown has answered in the form it was
  * given, and was refused for a line break — spending the one re-ask the budget has on punctuation, which is the
  * failure ruling H1 closed for numbering, bolding and blockquotes.
+ *
+ * The delimiter is optional and may sit on either side of the break, because `VERDICT:` and then a newline is
+ * the same sentence as `VERDICT` and then a newline — a model that writes its label and breaks the line has
+ * written the label it was asked for, and refusing it spends the one re-ask on a colon.
  */
-const VERDICT_HEAD_RE = new RegExp(`^${LINE_LEAD}(?:${VERDICT_LABEL})[*_\`]*[ \\t]*\\n+[ \\t]*(\\S.*)$`, 'gim');
-const RUBRIC_LINE_RE = labelLine('rubric', '.*', 'im');
-const WEDGE_LINE_RE = labelLine('wedge', '.+', 'im');
+const VERDICT_HEAD_RE = new RegExp(`^${VERDICT_LEAD_LABEL}[*_\`]*[ \\t]*(?:${DELIM}[*_\`]*[ \\t]*)?\\n+[ \\t]*(\\S.*)$`, 'gim');
+const RUBRIC_LINE_RE = labelLine(`${LINE_LEAD}rubric`, '.*', 'im');
+const WEDGE_LINE_RE = labelLine(`${LINE_LEAD}wedge`, '.+', 'im');
 
 /** A machine line the chair was asked to write. Never a flaw, wherever it appears. */
-const MACHINE_LINE_RE = new RegExp(`^${LINE_LEAD}(?:rubric|wedge|${VERDICT_LABEL})[*_\`]*[ \\t]*${DELIM}`, 'i');
+const MACHINE_LINE_RE = new RegExp(`^(?:${LINE_LEAD}(?:rubric|wedge)|${VERDICT_LEAD_LABEL})[*_\`]*[ \\t]*${DELIM}`, 'i');
 
-/** A blockquote marker, stripped per line so a chair that quotes its own answer back is still read. */
+/** A blockquote marker. */
 const QUOTE_RE = /^[ \t]*(?:>[ \t]?)+/;
+
+/**
+ * The answer with the chair's **quotations** taken out of it, run before anything else is read.
+ *
+ * A blockquote is how a model attributes: the chair is handed three advisor notes and asked to merge them, and
+ * `> Brutal Verdict — STRONG` under its own `## Brutal Verdict` heading is the chair reporting what an advisor
+ * said, often in order to disagree with it. Read as a vote it silently replaced the chair's own — and replaced
+ * it with whatever was quoted last, in the direction that passes an idea nobody judged.
+ *
+ * The exception is the chair that quotes its *whole* answer back, every line of it marked. There is nothing to
+ * attribute to anybody else there, so the markers come off and the answer is read as written.
+ */
+function withoutQuotations(text: string): string {
+  const lines = text.split('\n');
+  const said = lines.filter((l) => l.trim() !== '');
+  if (said.length > 0 && said.every((l) => QUOTE_RE.test(l))) return lines.map((l) => l.replace(QUOTE_RE, '')).join('\n');
+  return lines.filter((l) => !QUOTE_RE.test(l)).join('\n');
+}
 
 /**
  * A value with the emphasis the chair wrapped it in taken off, and a bracket pair that wraps the whole of it —
  * `[STRONG | WEAK | PIVOT REQUIRED]`, `(STRONG)` — unwrapped, so what is read is what the chair meant to say.
+ * The closing pipe of a table row goes with the emphasis: `| WEDGE | the 40-site chain |` names a wedge, and
+ * the owner's card should not read "the wedge to attack instead: the 40-site chain |".
  */
 function cleanValue(value: string): string {
-  let v = value.replace(/\r/g, '').trim().replace(/^[*_`\s]+/, '').replace(/[*_`\s]+$/, '');
+  let v = value.replace(/\r/g, '').trim().replace(/^[*_`\s]+/, '').replace(/[*_`|\s]+$/, '');
   if ((v.startsWith('[') && v.endsWith(']')) || (v.startsWith('(') && v.endsWith(')'))) v = v.slice(1, -1).trim();
   return v;
 }
@@ -156,9 +198,10 @@ export function renderRubric(r: BoardRubric): string {
  * (`1-2`) is not a score either, and neither is a second number of any kind, so the digit must not be followed
  * by another digit or by a dash or slash and a digit. What it deliberately *does* ignore is the total: the
  * chair is told the rubric is "out of 10" and shown `7/10 — core assumption 2, …`, so `— total 7/10`,
- * `(7/10)` and `= 7 out of 10` are all compliance, not noise (ruling H2).
+ * `(7/10)` and `= 7 out of 10` are all compliance, not noise (ruling H2). The pipe is a delimiter too, so a
+ * dimension laid out as a markdown table row — `| core assumption | 2 |` — is scored rather than dropped.
  */
-const SCORE_AFTER_LABEL = /^[ \t]*[*_`]*[ \t]*(?:[:=\-–—][ \t]*)?[*_`]*[ \t]*(\d)(?:[ \t]*\/[ \t]*2\b)?(?!\d)(?![ \t]*[-–—/][ \t]*\d)/;
+const SCORE_AFTER_LABEL = /^[ \t]*[*_`]*[ \t]*(?:[:=|\-–—][ \t]*)?[*_`]*[ \t]*(\d)(?:[ \t]*\/[ \t]*2\b)?(?!\d)(?![ \t]*[-–—/][ \t]*\d)/;
 
 /** Every place a dimension is named, in order; the first one that carries a score is the one that counts. */
 function scoreFor(block: string, cue: RegExp): number | null {
@@ -174,14 +217,20 @@ function scoreFor(block: string, cue: RegExp): number | null {
  * dimensions. One line is what the prompt asks for; a chair that answers `RUBRIC:` and then lists the five
  * labels beneath it has written the same thing, and the block stops at the first line that names none of them
  * so the scan never wanders into the flaws.
+ *
+ * A table row carries on the block even when it names no dimension, because a rubric written as a markdown
+ * table opens with a header and a separator — `| dimension | score |`, `| --- | --- |` — before the first row
+ * that does. Nothing else in a chair's answer is a table row, so the scan still cannot reach the flaws.
  */
+const TABLE_ROW_RE = /^[ \t]*\|/;
+
 function rubricBlock(text: string): string | null {
-  const lines = text.split('\n');
+  const lines = withoutQuotations(text).split('\n');
   const at = lines.findIndex((l) => RUBRIC_LINE_RE.test(l));
   if (at < 0) return null;
   const block = [lines[at].match(RUBRIC_LINE_RE)?.[1] ?? ''];
   for (let i = at + 1; i < lines.length; i++) {
-    if (!RUBRIC_DIMENSIONS.some((d) => RUBRIC_CUE[d].test(lines[i]))) break;
+    if (!RUBRIC_DIMENSIONS.some((d) => RUBRIC_CUE[d].test(lines[i])) && !TABLE_ROW_RE.test(lines[i])) break;
     block.push(lines[i]);
   }
   return block.join('\n');
@@ -234,9 +283,15 @@ export type PressureRead =
 /** How many flaws a verdict carries. Four, the cap `mergeBoardVerdict` has always used. */
 export const PRESSURE_MAX_FLAWS = 4;
 
+/**
+ * The list items in a stretch of text, the marker taken off. An ordered list is a list: the prompts number
+ * their parts `1.`–`5.` and the flaws heading is matched in numbered form, so a numbered flaws list is a shape
+ * the prompts actively teach — and read as prose instead, the numbering reached the owner's card (`- 1. the
+ * agent bundles it`) and a lead-in sentence above the list was filed as a flaw.
+ */
 function bulletsIn(text: string): string[] {
   return text.split('\n')
-    .map((l) => l.replace(QUOTE_RE, '').trim().match(/^[-*]\s+(.+)$/)?.[1]?.trim())
+    .map((l) => l.trim().match(/^(?:[-*+]|\d+[.)])\s+(.+)$/)?.[1]?.trim())
     .filter((f): f is string => !!f && f.length > 3)
     .filter((f) => !MACHINE_LINE_RE.test(f));
 }
@@ -244,7 +299,7 @@ function bulletsIn(text: string): string[] {
 /** The same lines when the chair wrote its three flaws as prose rather than as a list. */
 function linesIn(text: string): string[] {
   return text.split('\n')
-    .map((l) => l.replace(QUOTE_RE, '').trim())
+    .map((l) => l.trim())
     .filter((l) => l.length > 3)
     .filter((l) => !MACHINE_LINE_RE.test(l));
 }
@@ -268,7 +323,7 @@ function flawBullets(text: string): string[] {
   const rest = text.slice(head.index + head[0].length).split('\n');
   const section: string[] = [];
   for (const line of rest) {
-    if (FLAWS_END_RE.test(line.replace(QUOTE_RE, ''))) break;
+    if (FLAWS_END_RE.test(line)) break;
     section.push(line);
   }
   const bullets = bulletsIn(section.join('\n'));
@@ -368,8 +423,11 @@ function verdictValues(t: string): string[] {
 }
 
 export function readPressureVerdict(text: string): PressureRead {
-  const t = text ?? '';
-  if (BANNED_HEDGE_RE.test(t)) return { ok: false, reason: PRESSURE_REFUSAL_HEDGE };
+  const raw = text ?? '';
+  // The hedge is judged on the whole answer as written, quotations included: the phrase is banned because it is
+  // a way of not deciding, and a chair that ends on somebody else's hedge has not decided either.
+  if (BANNED_HEDGE_RE.test(raw)) return { ok: false, reason: PRESSURE_REFUSAL_HEDGE };
+  const t = withoutQuotations(raw);
   const values = verdictValues(t);
   const verdict = values.map(verdictOn).filter((v): v is PressureVerdict => v !== null).at(-1);
   if (!verdict) {
@@ -377,7 +435,7 @@ export function readPressureVerdict(text: string): PressureRead {
     if (said === undefined) return { ok: false, reason: PRESSURE_REFUSAL_MISSING };
     return { ok: false, reason: pressureRefusalUnknown(said.toUpperCase().replace(/\s+/g, ' ')) };
   }
-  const wedge = t.match(WEDGE_LINE_RE)?.[1]?.trim() ?? '';
+  const wedge = cleanValue(t.match(WEDGE_LINE_RE)?.[1] ?? '');
   return { ok: true, verdict, flaws: flawBullets(t), wedge, rubric: parseRubric(t) };
 }
 

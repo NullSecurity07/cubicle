@@ -863,6 +863,14 @@ export function cardBoardChair(body: string): string {
   return at < 0 ? '' : section.slice(at).replace(/^.*\n/, '').trim();
 }
 
+/** The board job note's heading for the chair's merged answer, beneath the advisors' own notes. */
+export const BOARD_JOB_CHAIR_SECTION = '## The chair';
+
+/** The job note with the chair's merge written under the advisors, or untouched when the chair said nothing. */
+function withChair(body: string, chair: string): string {
+  return chair.trim() ? setSection(body, BOARD_JOB_CHAIR_SECTION, chairAnswerText(chair)) : body;
+}
+
 /**
  * File the `idea_verdict` note the owner rules on, built from the card as it now stands. Separate from the step
  * because it is called twice: once when the board sits, and once as recovery for a card a kill left stamped with
@@ -1432,7 +1440,10 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         }, ceo);
         vault.updateNote(`Jobs/${boardJob}.md`, (n) => ({
           data: { ...n.data, status: 'done', checkpoint_step: 1, updated: nowIso() },
-          body: setSection(setSection(n.body, '## Advisors', session.transcript), '## Result', '```json\n' + JSON.stringify({ status: 'done', summary: `board ${session.verdict} on ${idea.id}`, verdict: session.verdict, findings: session.findings }, null, 2) + '\n```'),
+          // The advisors' own words, then the chair's merge of them. The job note is where an owner goes to
+          // read what the board actually said, and a record that keeps three attempts at the five parts but
+          // not the merge they were hired for is a record of the working and not the answer (ruling H3).
+          body: setSection(withChair(setSection(n.body, '## Advisors', session.transcript), session.chairText), '## Result', '```json\n' + JSON.stringify({ status: 'done', summary: `board ${session.verdict} on ${idea.id}`, verdict: session.verdict, findings: session.findings }, null, 2) + '\n```'),
         }), board.lead, { job: boardJob });
         vault.events.emit({ type: 'job.done', agent: board.lead, job: boardJob, payload: { type: 'board.session', summary: `board ${session.verdict}`, verdict: session.verdict, idea: idea.id } });
         // Nobody answered is not "the board reviewed this and found nothing"; the same warning the plan's
