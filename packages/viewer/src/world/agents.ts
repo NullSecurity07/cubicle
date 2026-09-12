@@ -25,10 +25,12 @@ const SPEED = 70; // px/s
  * Where a rider stands inside the cab, below the car's own top edge.
  *
  * The cab's floor line is at `carH - 6` (world/elevator-view.ts). The rider's origin sits `RING_BELOW` above it,
- * because the role ring is drawn at the feet and hangs a few pixels under the origin — put the feet on the line
- * and the ring is what spills into the shaft instead of the legs (visual QA R-M7).
+ * because the role ring is drawn at the feet and hangs under the origin — put the origin on the line and the ring
+ * is what spills into the shaft instead of the legs (visual QA R-M7). The offset is measured off the shot rather
+ * than derived: scanning the car's centre column in `07-elevator` gives the cab's floor surface, the car's own
+ * bottom edge, and where the legs and the ring actually land.
  */
-const RING_BELOW = 3;   // the ring is a circle at cy -2, r 5, with a 1 px stroke: 3 px of it is under the origin
+const RING_BELOW = 7;   // measured on `07-elevator`: the feet land on the floor line and the ring's arc clears the car
 export const CAR_FLOOR_Y = 3 * TILE - 6 - RING_BELOW;
 const DOT = 4; // minimap dot, in minimap pixels: the scene scales it by 1/minimapZoom so it reads at any map size
 
