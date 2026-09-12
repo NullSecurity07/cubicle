@@ -10,10 +10,12 @@ import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchPropos
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { letTheBoardDecide } from './helpers/board-switch.js';
+import { LOAD_1M, LOAD_SCALE, TEST_MS } from './helpers/load.js';
 
 const root = path.resolve(__dirname, '../../..');
 let dir: string;
 beforeEach(async () => {
+  disposed = false;
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-daemon-'));
   const { vault } = await scaffoldVault(dir);
   // Nobody is at the keyboard in these tests and `board_decides_after_hours` ships off, so a plan would wait for
@@ -25,7 +27,36 @@ beforeEach(async () => {
   writeCiRecord(vault, 'site', { stream: 'site', started: '2026-09-11T09:59:00.000Z', finished: '2026-09-11T10:00:00.000Z', green: true, commit: null, steps: [{ name: 'test', code: 0, ok: true, duration_ms: 5, output: 'ok' }] }, 'backend_engineer');
   vault.close();
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+/**
+ * Every daemon this file started, stopped before the vault it writes to is removed — the same ordered,
+ * unconditional teardown `planning.test.ts` and `heartbeat-brief.test.ts` already have.
+ *
+ * A test body vitest has given up on never reaches its own `finally`, so a daemon could outlive `rmSync`: its
+ * tick, its watcher's debounce and its workers keep writing into a directory that is gone, which raises ENOENT
+ * storms out of `EventLog.emit` attributed to whichever case runs next and starves that one of CPU until it times
+ * out too. That is one slow case taking the rest of the file down with it, and it is what this file did — a full
+ * run here failed B1 on its 15 s budget with 131 unhandled ENOENT rejections behind it. `d.stop()` clears the
+ * tick, awaits `VaultWatcher.stop()` and closes the pool, so after it nothing is left holding the directory.
+ */
+const daemons: Daemon[] = [];
+/**
+ * Set the moment teardown begins, so a poll loop belonging to a case that has already been given up on stops
+ * touching a vault that is being removed rather than raising under the next case's name.
+ */
+let disposed = false;
+afterEach(async () => {
+  disposed = true;
+  for (const d of daemons.splice(0)) await d.stop().catch(() => undefined);
+  // One turn of the loop, so a callback already queued behind those stops runs before the directory goes.
+  await new Promise((r) => setImmediate(r));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/** Every `new Daemon` in this file goes through here, so the teardown above can stop what the case started. */
+function track<T extends Daemon>(d: T): T {
+  daemons.push(d);
+  return d;
+}
 
 /** The CEO's objectives for the cycle: only the Dev room has work, so only the CTO's division gets a division.plan. */
 const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n';
@@ -75,30 +106,47 @@ function fakeLlm(opts: { ctoSteps?: number } = {}): Llm & { calls: { role?: stri
 }
 
 function daemonFor(llm: Llm, port = 0) {
-  return new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port, tickMs: 500, maxConcurrentJobs: 2, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableSleepWatch: true, memory: false, log: () => undefined });
+  return track(new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port, tickMs: 500, maxConcurrentJobs: 2, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableSleepWatch: true, memory: false, log: () => undefined }));
 }
 
+/**
+ * Poll a condition on real timers, against a budget that moves with the machine (`helpers/load.ts`, read once for
+ * this file). The hard literals these call sites carried were the flake: a cycle that finishes in seconds on an
+ * idle box has taken longer than 15 s with six vitest workers and a build running beside it, and a wall-clock
+ * ceiling is the one thing here that has to scale. `ms` stays the per-call intent — a quick wait or a whole
+ * cycle — and `LOAD_SCALE` (1 to 4) is what contention does to it.
+ */
 async function waitFor(pred: () => boolean, ms = 15000): Promise<void> {
+  const budget = ms * LOAD_SCALE;
   const t0 = Date.now();
-  while (!pred()) { if (Date.now() - t0 > ms) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 100)); }
+  while (!pred()) {
+    if (disposed) throw new Error('waitFor: torn down while still waiting');
+    if (Date.now() - t0 > budget) throw new Error(`waitFor: timeout after ${Date.now() - t0} ms (budget ${budget} ms, 1-min load ${LOAD_1M.toFixed(2)}, scale ${LOAD_SCALE})`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 /**
  * Wait until `pred` has held continuously for `stableMs`. "The queue is empty" is momentarily true in the gap
  * between a job finishing and its gate job being enqueued, so a plain waitFor on it can return mid-chain and the
  * assertion after it then races the next gate.
+ *
+ * `ms` scales with the load like every other budget here; `stableMs` does not. How long a state has to hold
+ * before it counts as settled is a property of the thing being watched, not of how busy the box is.
  */
 async function waitForStable(pred: () => boolean, stableMs = 1500, ms = 40000): Promise<void> {
+  const budget = ms * LOAD_SCALE;
   const t0 = Date.now();
   for (;;) {
-    await waitFor(pred, Math.max(1000, ms - (Date.now() - t0)));
+    // `waitFor` scales what it is handed, so the remainder passed back to it is divided out first.
+    await waitFor(pred, Math.max(1000, (budget - (Date.now() - t0)) / LOAD_SCALE));
     const held = Date.now();
     while (Date.now() - held < stableMs) {
       await new Promise((r) => setTimeout(r, 100));
       if (!pred()) break;
     }
     if (pred() && Date.now() - held >= stableMs) return;
-    if (Date.now() - t0 > ms) throw new Error('timeout waiting for a stable state');
+    if (Date.now() - t0 > budget) throw new Error(`waitForStable: no ${stableMs} ms of stability inside ${budget} ms (1-min load ${LOAD_1M.toFixed(2)}, scale ${LOAD_SCALE})`);
   }
 }
 
@@ -194,7 +242,7 @@ describe('heartbeat as a resumable job', () => {
     expect(listJobs(v2).filter((j) => j.type === 'company.plan').length).toBe(1);
     expect(v2.list('Plans/archive', { ext: '.md' }).length).toBeLessThanOrEqual(1);
     v2.close();
-  });
+  }, TEST_MS);
 
   it('a board room with no model still passes the plan and says so in its own record (T9)', async () => {
     const vault = Vault.open(dir);
@@ -269,7 +317,7 @@ describe('only the local floor is up', () => {
       const log = (await import('node:child_process')).execSync('git log --oneline', { cwd: dir }).toString();
       expect(log).toContain('cubicle: heartbeat');
     } finally { vault.close(); }
-  }, 60000);
+  }, TEST_MS);
 });
 
 describe('the pre-mortem note survives a crash mid-board-step (D7)', () => {
@@ -364,7 +412,7 @@ describe('daemon lifecycle', () => {
   it('start logs one line per cloud provider whose API key is unset and emits exactly one provider_key daemon.warning; with keys set it stays quiet', async () => {
     // The live run that motivated this: a blank .env left every call on ollama for three days, and Metrics/quota.md
     // showed Gemini "ok 0/250" — the router's availableProviders() filter had silently removed it.
-    const mkDaemon = (env: NodeJS.ProcessEnv, lines: string[]) => new Daemon(defaultConfig(dir, env, { port: 0, tickMs: 500, maxConcurrentJobs: 1, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm: fakeLlm(), disableWs: true, disableSleepWatch: true, memory: false, log: (m) => lines.push(m) });
+    const mkDaemon = (env: NodeJS.ProcessEnv, lines: string[]) => track(new Daemon(defaultConfig(dir, env, { port: 0, tickMs: 500, maxConcurrentJobs: 1, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm: fakeLlm(), disableWs: true, disableSleepWatch: true, memory: false, log: (m) => lines.push(m) }));
     const lines: string[] = [];
     const d = mkDaemon({ CUBICLE_MOCK_TOOLS: '1' }, lines);
     await d.start();
@@ -382,7 +430,7 @@ describe('daemon lifecycle', () => {
       expect(d2.vault.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'provider_key')).toHaveLength(1); // still the one from the first start
       expect(quiet.some((l) => /not set/.test(l))).toBe(false);
     } finally { await d2.stop(); }
-  });
+  }, TEST_MS);
 
   it('an owner note typed while the daemon was down (only kind: message) triggers a heartbeat that answers it', async () => {
     const seed = Vault.open(dir);
@@ -403,7 +451,7 @@ describe('daemon lifecycle', () => {
     expect(listInbox(v).some((n) => n.data.kind === 'brand_change')).toBe(true);
     expect(listJobs(v).filter((j) => j.type === 'ceo.heartbeat').length).toBe(1); // no re-trigger loop once answered
     v.close();
-  });
+  }, TEST_MS);
 
   it('an empty vault runs no heartbeat and seeds nothing until the owner types an idea, then heartbeat #1 does both (C1)', async () => {
     const d = daemonFor(fakeLlm());
@@ -426,7 +474,7 @@ describe('daemon lifecycle', () => {
       const { FIRST_JOB_TITLES } = await import('../src/index.js');
       for (const t of FIRST_JOB_TITLES) expect(titles).toContain(t);
     } finally { await d.stop(); }
-  });
+  }, TEST_MS);
 
   it('first start runs heartbeat #1 from an owner idea with zero outbound events; verify chain terminates; the cycle seeds the offer and channel jobs (D8)', async () => {
     const vault = Vault.open(dir);
@@ -470,7 +518,7 @@ describe('daemon lifecycle', () => {
     await d.stop();
     expect(Date.now() - t0).toBeLessThan(5000);
     expect(existsSync(path.join(dir, '.cubicle', 'daemon.json'))).toBe(false);
-  });
+  }, TEST_MS);
 
   it('a fresh vault whose plan queued nothing still gets all three first jobs, and a second heartbeat seeds nothing (D8)', async () => {
     const vault = Vault.open(dir);
@@ -543,7 +591,7 @@ describe('daemon lifecycle', () => {
     expect(heartbeats[0].title).toMatch(/first start/);
     expect(d.config.heartbeat.jobsCompletedN).toBe(5); // default, unchanged
     await d.stop();
-  });
+  }, TEST_MS);
   it('research.review is a gate job, not work: it belongs in NON_WORK_TYPES alongside the other review/verify gates', () => {
     expect(NON_WORK_TYPES).toContain('research.review');
     expect(NON_WORK_TYPES).toEqual(expect.arrayContaining(['team:qa.review', 'office:operations.verify', 'requester.review', 'research.review']));
@@ -634,7 +682,7 @@ describe('daemon lifecycle', () => {
         return { ...base, parsedToolCalls: [{ name: 'mock.outbound', args: { to: 'a@x', body: 'hi' } }] };
       },
     };
-    const d = new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 400, maxConcurrentJobs: 2, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: cfgPath }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+    const d = track(new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 400, maxConcurrentJobs: 2, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: cfgPath }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined }));
     await d.start();
     await waitFor(() => readJob(d.vault, id)!.data.status === 'blocked' && readJob(d.vault, id)!.data.approval === 'pending', 15000);
     const prop = findInboxById(d.vault, readJob(d.vault, id)!.data.blocked_on!.id)!;
@@ -648,7 +696,7 @@ describe('daemon lifecycle', () => {
     const keys = readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).key);
     expect(keys).toEqual([`${id}:1:1`]);
     await d.stop();
-  });
+  }, TEST_MS);
 
   it('owner cancels a running job → worker stops within one step (acceptance test 2)', async () => {
     const vault = Vault.open(dir);
@@ -684,7 +732,7 @@ describe('daemon lifecycle', () => {
     expect(readJob(d.vault, id)!.data.status).toBe('cancelled');
     expect(d.vault.events.count('agent.tool_call')).toBe(0);
     await d.stop();
-  });
+  }, TEST_MS);
 
   it('WS serves a snapshot, broadcasts events, replays, and cabin chat writes a message note', async () => {
     const d = daemonFor(fakeLlm(), 0);
@@ -714,14 +762,14 @@ describe('daemon lifecycle', () => {
     expect(rep.events.length).toBeGreaterThan(5);
     ws.close();
     await d.stop();
-  });
+  }, TEST_MS);
 
   it('an old vault is migrated to the default org on start and the brief mentions it', async () => {
     rmSync(path.join(dir, 'Teams'), { recursive: true, force: true });
     const d = daemonFor(fakeLlm());
     await d.start();
     try { expect(existsSync(path.join(dir, 'Teams/dev.md'))).toBe(true); expect(d.vault.events.count('org.changed')).toBe(1); } finally { await d.stop(); }
-  });
+  }, TEST_MS);
 });
 
 describe('an approved call the wrapper vetoes', () => {
@@ -775,7 +823,7 @@ describe('local-tier summariser (D1)', () => {
       },
       promptBudget: () => 6000,
     };
-    const d = new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 500, maxConcurrentJobs: 2, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+    const d = track(new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 500, maxConcurrentJobs: 2, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm, disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined }));
     await d.start();
     try {
       await waitFor(() => prose.some((p) => p.tier === 'local' && p.system.startsWith('Summarize the following observations')), 30000);
@@ -784,13 +832,13 @@ describe('local-tier summariser (D1)', () => {
     expect(call.tier).toBe('local');
     expect(call.user).toContain('vault.read');
     expect(readJob(Vault.open(dir), id)).toBeTruthy();
-  });
+  }, TEST_MS);
 });
 
 describe('Brand/logo.png on an existing vault (D10)', () => {
   const LOGO = 'Brand/logo.png';
   const PNG_SIGNATURE = '89504e470d0a1a0a';
-  const quietDaemon = () => new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 500, maxConcurrentJobs: 1, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm: fakeLlm(), disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined });
+  const quietDaemon = () => track(new Daemon(defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, { port: 0, tickMs: 500, maxConcurrentJobs: 1, providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml') }), { llm: fakeLlm(), disableWs: true, disableSleepWatch: true, memory: false, log: () => undefined }));
 
   it('is drawn at start when missing, and a vault that already has one is untouched', async () => {
     const seed = Vault.open(dir);
@@ -818,5 +866,5 @@ describe('Brand/logo.png on an existing vault (D10)', () => {
       expect(readFileSync(path.join(dir, LOGO)).equals(before)).toBe(true);
       expect(d2.vault.events.query({ types: ['vault.wrote'] }).filter((e) => e.payload.path === LOGO && e.agent === 'daemon')).toHaveLength(1);
     } finally { await d2.stop(); }
-  });
+  }, TEST_MS);
 });
