@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -11,7 +11,7 @@ import {
   BUDGETED_TIERS, dayStartIso, freeCallCapacity, divisionWeights, divisionQuotas, divisionSpend, divisionOfRole,
   budgetRows, budgetForRole, runwayJobId, enqueueRunway, runwayCommentary, writeRunway, accrueModelCost,
   accrueModelCosts, dormancyMark, dormancyEpisodes, drawsOnFreePool, moneyMessageId, dormancyMessage, revivalMessage,
-  LOCKED_RUNWAY, LOCKED_ACCRUAL, STAMP_AHEAD, LOCK_STATE_PATH, LOCK_WARN_WINDOW_DAYS, lockSituation,
+  LOCKED_RUNWAY, LOCKED_ACCRUAL, STAMP_AHEAD, NOTICES_UNWRITABLE, LOCK_STATE_PATH,
 } from '../src/money.js';
 
 const SHIPPED = parseProvidersConfig(readFileSync(path.resolve(__dirname, '../../../config/providers.yaml'), 'utf8'));
@@ -349,9 +349,9 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     // the notice is remembered against never moves, however long the lock stands.
     for (let d = 0; d < 5; d++) writeRunway(vault, org, SHIPPED, new Date(`2026-09-1${2 + d}T12:00:00.000Z`));
     expect(lockedRunwayRows()).toHaveLength(1);
-    // What is remembered is the *lock*, not the page: the never_modify entry covering the path, and the path.
-    // Written out here rather than taken from `lockSituation`, so this pins the key rather than restating it.
-    expect(JSON.parse(readFileSync(path.join(dir, LOCK_STATE_PATH), 'utf8'))[LOCKED_RUNWAY]).toBe(`Ledger/:${RUNWAY_PATH}`);
+    // What is remembered is the *question* — is this page locked — and not a word of the owner's spelling of
+    // it. Written out here rather than taken from `lockSituation`, so this pins the key rather than restating it.
+    expect(JSON.parse(readFileSync(path.join(dir, LOCK_STATE_PATH), 'utf8'))[LOCKED_RUNWAY]).toBe(`locked:${RUNWAY_PATH}`);
   });
 
   it('does not repeat itself because the owner edited the page the lock protects', () => {
@@ -387,6 +387,19 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     constitution('Docs/', 'Ledger/');
     writeRunway(vault, org, SHIPPED, NOW);
     expect(lockedRunwayRows()).toHaveLength(1);
+    // Nor is tidying away a second entry that covered the same page: it was locked before and is locked after.
+    constitution('Docs/', 'Ledger/', 'Ledger/runway.md');
+    writeRunway(vault, org, SHIPPED, NOW);
+    constitution('Docs/', 'Ledger/');
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(lockedRunwayRows()).toHaveLength(1);
+    // Nor is rewriting the same entry three ways. `isNeverModifyPath` reads all three as the same lock, and so
+    // does the notice — the question is whether the page is covered, never how the owner spelled it.
+    for (const spelling of ['./Ledger/', 'Ledger//', 'Ledger/']) {
+      constitution(spelling);
+      writeRunway(vault, org, SHIPPED, NOW);
+    }
+    expect(lockedRunwayRows()).toHaveLength(1);
     // Taking *this* entry away and putting it back is: a cycle sees the page writable in between.
     constitution('Docs/');
     writeRunway(vault, org, SHIPPED, NOW);
@@ -414,28 +427,40 @@ describe('the owner\'s lock on the Ledger folder (spec §7)', () => {
     expect(accrualRows()).toHaveLength(2);
   });
 
-  it('falls back to a bounded read of the log when the remembered state is gone', () => {
+  it('writes no notices file at all until it has a notice to hold back', () => {
     const org = loadOrg(vault);
-    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
-    const reason = `${RUNWAY_PATH} is on the owner's never_modify list, so it was not regenerated; the figures behind it are still computed every cycle`;
-    // A notice already in the log an hour ago, and no remembered state: the recovery read finds it and stays quiet.
-    vault.events.emit({ type: 'daemon.warning', ts: new Date(Date.now() - 3_600_000).toISOString(), payload: { where: LOCKED_RUNWAY, situation: lockSituation(vault, RUNWAY_PATH), path: RUNWAY_PATH, reason } });
+    const notices = path.join(dir, LOCK_STATE_PATH);
+    // A vault nobody has locked anything in: there is nothing to remember, so there is no file to remember it.
     writeRunway(vault, org, SHIPPED, NOW);
-    expect(lockedRunwayRows()).toHaveLength(1);
+    accrueModelCosts(vault, SHIPPED, NOW);
+    expect(existsSync(notices)).toBe(false);
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(existsSync(notices)).toBe(true);
+    // And it goes again when the lock does: "this file exists" keeps meaning "something is being suppressed".
+    vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify: []\n```\n', 'owner');
+    writeRunway(vault, org, SHIPPED, NOW);
+    expect(existsSync(notices)).toBe(false);
   });
 
-  it('reads a bounded window of the log, never the whole of it', () => {
+  it('remembers in this process when it cannot write, and says so once', () => {
     const org = loadOrg(vault);
     vault.writeText('Memory/constitution.md', '# Constitution\n\n```yaml\nnever_modify:\n  - Ledger/\n```\n', 'owner');
-    const reason = `${RUNWAY_PATH} is on the owner's never_modify list, so it was not regenerated; the figures behind it are still computed every cycle`;
-    // The same notice, stamped just outside `LOCK_WARN_WINDOW_DAYS`. An unbounded read would find it and stay
-    // silent; the bounded one cannot see it, so the notice is said again. This is the whole assertion, and it
-    // is discriminating: deleting the `from` clause from the recovery read turns the 2 below into a 1.
-    // Its pair is the test above, where the same notice an hour old *does* dedupe.
-    const old = new Date(Date.now() - (LOCK_WARN_WINDOW_DAYS + 1) * 86_400_000).toISOString();
-    vault.events.emit({ type: 'daemon.warning', ts: old, payload: { where: LOCKED_RUNWAY, situation: lockSituation(vault, RUNWAY_PATH), path: RUNWAY_PATH, reason } });
-    writeRunway(vault, org, SHIPPED, NOW);
-    expect(lockedRunwayRows()).toHaveLength(2);
+    mkdirSync(path.join(dir, '.cubicle'), { recursive: true });
+    chmodSync(path.join(dir, '.cubicle'), 0o555);
+    try {
+      const unwritable = () => vault.events.query({ types: ['daemon.warning'] })
+        .filter((e) => (e.payload as { where?: string }).where === NOTICES_UNWRITABLE);
+      for (let i = 0; i < 3; i++) writeRunway(vault, org, SHIPPED, NOW);
+      // The lock notice is still said once — the memory moved into this process rather than disappearing…
+      expect(lockedRunwayRows()).toHaveLength(1);
+      // …and the owner is told once that it will not survive a restart, not once per cycle.
+      expect(unwritable()).toHaveLength(1);
+      expect(String((unwritable()[0].payload as { reason?: string }).reason)).toContain('restart');
+      expect(existsSync(path.join(dir, LOCK_STATE_PATH))).toBe(false);
+    } finally {
+      chmodSync(path.join(dir, '.cubicle'), 0o755);
+    }
   });
 
   it('regenerates it again as soon as the owner takes the lock off', () => {

@@ -7,7 +7,7 @@ import {
   LedgerVetoedError, isNeverModifyPath, atomicWriteSync,
 } from '@cubicle/core';
 import { shadowCost, hasPrices, type ModelBudget, type ProvidersFile, type RecordedCall } from '@cubicle/router';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 
 /**
  * The daemon's side of the money: everything deterministic, and not one model call anywhere in this file.
@@ -18,7 +18,10 @@ import { readFileSync } from 'node:fs';
  * more in.
  *
  * Nothing here caches a money fact. Every figure is derived from `Ledger/ledger.md` and the event log on the
- * call that needs it, so losing the heartbeat's state file changes no number and silences no message.
+ * call that needs it, so losing the heartbeat's state file changes no number and silences no message. The one
+ * thing this module does remember between cycles is which of its own complaints it has already made
+ * (`LOCK_STATE_PATH`); deleting that file costs one repeated sentence per standing complaint and nothing at
+ * all besides.
  *
  * One consequence of that, worth stating where it will be read: both halves of the division gauge are decided
  * by `config/providers.yaml` **as it stands now**, so editing a model mid-day changes what today's already
@@ -125,21 +128,29 @@ export const LOCKED_RUNWAY = 'money.runway.locked';
 export const LOCKED_ACCRUAL = 'money.accrual.locked';
 /** The owner's `prices_verified`/`verified` stamp is dated in the future — said once per distinct stamp value. */
 export const STAMP_AHEAD = 'money.accrual.stamp';
+/** Said once, if this module's own memory of what it has said cannot be written. */
+export const NOTICES_UNWRITABLE = 'money.notices.unwritable';
 
 /**
- * What this module has already said, so it does not say it again next cycle: `where` → the situation it was
- * said about (the lock's own identity, or the mistyped stamp — never the message text, and never the content
- * of a file the owner is entitled to edit). A cache under `.cubicle/`, not a note: losing it costs one
- * repeated notice and nothing else, which is why the event log below can stand in for it.
+ * Everything this module has already said, so it does not say it again next cycle: `where` → the situation it
+ * was said about. It is the **only** memory there is — there is no second store to fall out of step with — and
+ * it is a cache under `.cubicle/`, not a note. Losing it costs one repeated notice per standing situation and
+ * nothing else: no figure is derived from it, and a repeated sentence is the safe direction for a file whose
+ * whole job is to stop a sentence being repeated.
  */
 export const LOCK_STATE_PATH = '.cubicle/money-notices.json';
 
-/** How far back the **recovery** read looks when the cache is gone. Bounded: never a scan of the whole log. */
-export const LOCK_WARN_WINDOW_DAYS = 2;
-/** And a row cap on top of the window, for a vault that writes very fast. */
-export const LOCK_WARN_ROWS = 2000;
+/**
+ * Where the memory goes when `.cubicle/` cannot be written — a read-only mount, a permissions accident.
+ * Per-vault and for this process only: the notices stay deduped for as long as the daemon runs, and a restart
+ * costs exactly one repeat of each situation still standing at that moment. Keyed weakly so a test's vault is
+ * collected with it.
+ */
+const inProcessNotices = new WeakMap<Vault, Record<string, string>>();
 
 function noticeState(vault: Vault): Record<string, string> {
+  const held = inProcessNotices.get(vault);
+  if (held) return { ...held };
   try {
     const v: unknown = JSON.parse(readFileSync(vault.abs(LOCK_STATE_PATH), 'utf8'));
     return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, string>) : {};
@@ -147,84 +158,51 @@ function noticeState(vault: Vault): Record<string, string> {
 }
 
 function saveNoticeState(vault: Vault, state: Record<string, string>): void {
-  // `atomicWriteSync` creates the directory itself, so there is nothing to make here.
-  try { atomicWriteSync(vault.abs(LOCK_STATE_PATH), JSON.stringify(state, null, 2)); }
-  catch { /* a cache. An unwritable one costs a repeated notice, never a wrong number. */ }
+  if (inProcessNotices.has(vault)) { inProcessNotices.set(vault, state); return; }
+  const abs = vault.abs(LOCK_STATE_PATH);
+  try {
+    // Nothing to remember is no file: a vault that has never had a notice held back should not acquire one,
+    // and "this file exists" should keep meaning "something is being suppressed".
+    if (Object.keys(state).length === 0) { rmSync(abs, { force: true }); return; }
+    atomicWriteSync(abs, JSON.stringify(state, null, 2));   // creates `.cubicle/` itself
+  } catch {
+    inProcessNotices.set(vault, state);
+    vault.events.emit({ type: 'daemon.warning', payload: {
+      where: NOTICES_UNWRITABLE,
+      path: LOCK_STATE_PATH,
+      reason: `${LOCK_STATE_PATH} cannot be written, so what has already been said is remembered in this process only; every notice still standing is repeated once after a restart`,
+    } });
+  }
 }
-
-/**
- * What a forgotten notice leaves behind. Not a deletion: an empty string is never a real situation (every one
- * of them ends in a path or is a date), and leaving *something* is what stops `saidRecently` being consulted
- * about a notice this module has deliberately forgotten — the log still holds the old row, and with no write
- * of the path to overrule it the recovery read would adopt it and swallow the second notice.
- */
-const FORGOTTEN = '';
 
 /** Forget a notice, so the next time the situation arises it is said again. */
 function clearNotice(vault: Vault, where: string): void {
   const state = noticeState(vault);
-  if (state[where] === FORGOTTEN) return;   // already forgotten; do not rewrite the file every cycle
-  saveNoticeState(vault, { ...state, [where]: FORGOTTEN });
+  if (state[where] === undefined) return;   // nothing remembered; do not create a file to say so
+  delete state[where];
+  saveNoticeState(vault, state);
 }
 
 /**
- * The **lock** a notice is about, as opposed to the file it holds back: the `never_modify` entries that
- * actually cover this path, and the path.
+ * The situation a lock notice is about: **this path is locked**, and nothing more.
  *
- * Deliberately not the file's own sha. `never_modify: [Ledger/]` exists precisely so the owner can keep their
- * own `Ledger/runway.md` by hand, so editing it is the expected workflow — and a content sha would read every
- * one of those edits as a fresh lock and say the same sentence again.
+ * Semantic, not textual. Whether `Ledger/runway.md` is covered by the owner's `never_modify` list is a
+ * yes-or-no question that `isNeverModifyPath` already answers, and everything else about the list is spelling:
+ * which entry covers it, how many do, what order they are in, whether `Ledger/` is written `./Ledger/` or
+ * `Ledger//`, whether a redundant second entry was tidied away, whether the daemon appended `Teams/` on
+ * upgrade. None of that changes the answer, so none of it is news, and earlier keys that carried the entries
+ * themselves said the same sentence again for every one of those edits.
  *
- * Deliberately not the whole list either, hashed or otherwise. The shipped constitution already carries five
- * entries and the daemon appends to it itself (`migrateOrg` adds `Teams/` to any vault that lacks it), so a
- * whole-list key would say the same sentence again because the owner locked `Docs/`, or because two entries
- * changed places, or because the vault was upgraded. Only the entries matching **this** path are taken, and
- * they are trimmed and sorted, so a reorder is not news and an unrelated lock is not news — while narrowing
- * `Ledger/` to `Ledger/runway.md`, which is a different decision about this page, still is.
+ * It is also not the file's own sha. `never_modify: [Ledger/]` exists precisely so the owner can keep their
+ * own `Ledger/runway.md` by hand; editing it is the expected workflow, not an event.
  *
- * That leaves lock → unlock → the same lock again, where the entry is identical both times. `clearNotice` on
- * the not-locked path is what separates them: a cycle that finds the path writable forgets the notice, so
- * putting the lock back is news. It needs a cycle to *observe* the gap, though — an unlock and a re-lock
- * between two heartbeats is a gap nothing saw, and nothing is said.
+ * A key this stable is only half the mechanism. `clearNotice` is the other half: a cycle that finds the path
+ * writable forgets the notice, so lock → unlock → lock again is two notices rather than one. It takes a cycle
+ * to *observe* the gap — an unlock and a re-lock between two heartbeats is a gap nothing saw, and nothing is
+ * said.
  */
-export function lockSituation(vault: Vault, rel: string): string {
-  const covering = vault.constitution().never_modify
-    .filter((nm) => isNeverModifyPath(rel, [nm]))
-    .map((nm) => nm.trim())
-    .sort();
-  return `${covering.join('|')}:${rel}`;
-}
-
-/**
- * Has this exact notice already been said, as far as a bounded look back through the log can tell?
- *
- * This is the **recovery** path, for a cache that was deleted or has not been written yet — not the everyday
- * answer. Walking back from now, whichever comes first decides: this exact notice (same `where` *and* same
- * `situation`) means it has been said; a write of the path means the lock was lifted since anything older, so
- * it has not. An owner's own edit is not a write here — the watcher emits `owner.edited` for those — which is
- * what keeps their hand-edits of a locked page out of this decision.
- *
- * Two things it cannot see, both of which cost one extra notice and never a missing one. A notice written
- * before `situation` existed on the payload (rounds 4-7) is not recognised, so the first cycle after an
- * upgrade with no cache says it once more and is quiet from the next cycle on. And an unlock and re-lock with
- * no write in between leaves nothing in the log to overrule the older notice, so the cache — which a running
- * cycle does clear — is the part that notices that, not this.
- *
- * **The cap can only ever cause a repeat, never a silence,** and by construction rather than by luck:
- * `EventLog.query` with a `limit` is `ORDER BY id DESC LIMIT N`, so the newest N rows of these two types are
- * kept together. A notice that survives the cut therefore brings every row newer than itself with it — the
- * walk can never see an old notice while missing the `vault.wrote` that came after it and would have overruled
- * it. Overflow drops the *oldest* rows, which can only make a notice unreachable, and an unreachable notice is
- * one that gets said a second time.
- */
-function saidRecently(vault: Vault, where: string, situation: string, rel: string | null): boolean {
-  const from = new Date(Date.now() - LOCK_WARN_WINDOW_DAYS * DAY_MS).toISOString();
-  for (const e of vault.events.query({ types: ['vault.wrote', 'daemon.warning'], from, limit: LOCK_WARN_ROWS, order: 'desc' })) {
-    const p = e.payload as { where?: unknown; situation?: unknown; path?: unknown };
-    if (e.type === 'daemon.warning' && p.where === where && p.situation === situation) return true;
-    if (rel && e.type === 'vault.wrote' && p.path === rel) return false;
-  }
-  return false;
+export function lockSituation(rel: string): string {
+  return `locked:${rel}`;
 }
 
 /**
@@ -235,36 +213,21 @@ function saidRecently(vault: Vault, where: string, situation: string, rel: strin
  * have not changed. Nothing dedupes `daemon.warning`, and a log full of the same row is a log nobody reads.
  *
  * The **situation** is the caller's, not this function's, and it is deliberately not the message text: the
- * lock notices key on the lock itself (`lockSituation`), so an owner editing the very page the lock protects
- * changes nothing, and the accrual's adds the day range so a lock that outlives a day says so once a day with
- * the new range. The future-stamp notice keys on the stamp string alone, so the sentence may name today's
- * clamp target without turning a standing typo into a row a day. Split key from text, and each notice repeats
- * when its own subject changes and at no other time.
- *
- * It is remembered in `LOCK_STATE_PATH` across cycles, and forgotten by `clearNotice` when the thing it is
- * about goes away, which is what makes "lock, unlock, the same lock again" two notices rather than one.
- *
- * With no cache to consult — a fresh checkout, a cleared `.cubicle/` — `saidRecently` reads a bounded window
- * of the log instead and, if it finds the notice, adopts it and writes the cache so the next cycle is a file
- * read. That is a recovery path, not the mechanism; its window is a bound on the read, never a timer on the
- * notice.
+ * lock notices key on whether the path is locked (`lockSituation`), the accrual's adds the day range so a lock
+ * that outlives a day says so once a day with the new one, and the future-stamp notice keys on the stamp
+ * string alone so the sentence may name today's clamp target without turning a standing typo into a row a day.
+ * Split key from text, and each notice repeats when its own subject changes and at no other time.
  *
  * The `where` values belong to this function alone, never a step name another emitter shares — a
  * `money.runway` row logged when `writeRunway` *throws* must not be able to pass for "I already told them the
  * page is locked" and silence the notice for good.
  */
-function warnOnce(vault: Vault, where: string, situation: string, rel: string | null, extra: Record<string, unknown>): void {
+function warnOnce(vault: Vault, where: string, situation: string, extra: Record<string, unknown>): void {
   const state = noticeState(vault);
   if (state[where] === situation) return;
-  // Only a cache with nothing at all to say about this notice falls through to the log. A `FORGOTTEN` marker
-  // is something to say: it means a cycle watched the lock come off, and the notice is owed again.
-  if (state[where] === undefined && saidRecently(vault, where, situation, rel)) {
-    saveNoticeState(vault, { ...state, [where]: situation });
-    return;
-  }
-  // `situation` rides on the payload because the recovery read has to recognise the notice without the cache.
-  vault.events.emit({ type: 'daemon.warning', payload: { where, situation, ...(rel ? { path: rel } : {}), ...extra } });
-  saveNoticeState(vault, { ...state, [where]: situation });
+  vault.events.emit({ type: 'daemon.warning', payload: { where, ...extra } });
+  state[where] = situation;
+  saveNoticeState(vault, state);
 }
 
 /** A division's weight is the people actually in it: a thirteen-desk division needs more calls than a three-desk one. */
@@ -424,7 +387,8 @@ export function runwayCommentary(vault: Vault): string {
 export function writeRunway(vault: Vault, org: Org, cfg: ProvidersFile, now: Date = new Date()): MoneyReport {
   const report = moneyReport(readLedger(vault), now);
   if (isNeverModifyPath(RUNWAY_PATH, vault.constitution().never_modify)) {
-    warnOnce(vault, LOCKED_RUNWAY, lockSituation(vault, RUNWAY_PATH), RUNWAY_PATH, {
+    warnOnce(vault, LOCKED_RUNWAY, lockSituation(RUNWAY_PATH), {
+      path: RUNWAY_PATH,
       reason: `${RUNWAY_PATH} is on the owner's never_modify list, so it was not regenerated; the figures behind it are still computed every cycle`,
     });
     return report;
@@ -487,7 +451,7 @@ function firstAccrualDay(vault: Vault, cfg: ProvidersFile, now: Date): string {
     // long as the typo stands (there is never a `model-<date>` row to continue from). The situation is the
     // **stamp** and nothing else — the sentence names today's clamp target, which slides at every UTC
     // midnight, and keying on that would turn one unchanged typo into a row a day.
-    warnOnce(vault, STAMP_AHEAD, stamp, null, {
+    warnOnce(vault, STAMP_AHEAD, stamp, {
       stamp,
       reason: `the providers file's price stamp "${stamp}" is in the future; accruing model cost from ${yesterday} instead`,
     });
@@ -565,7 +529,8 @@ export function accrueModelCosts(vault: Vault, cfg: ProvidersFile, now: Date = n
       // lock that outlives a day says so again with the new range instead of leaving a week-old date in the
       // log for an owner to read literally.
       const span = day === yesterday ? day : `${day} to ${yesterday}`;
-      warnOnce(vault, LOCKED_ACCRUAL, `${lockSituation(vault, LEDGER_PATH)}:${span}`, LEDGER_PATH, {
+      warnOnce(vault, LOCKED_ACCRUAL, `${lockSituation(LEDGER_PATH)}:${span}`, {
+        path: LEDGER_PATH,
         reason: `${LEDGER_PATH} is on the owner's never_modify list, so model cost for ${span} was not recorded; nothing else is affected and the company keeps running`,
       });
       break;
