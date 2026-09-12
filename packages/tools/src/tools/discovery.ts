@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { defineTool } from '../registry.js';
 import {
   loadOrg, listInbox, officeHolder, teamOf, subtreeRoles, readJob, type Office, type Org, type Vault,
-  DISCOVERY_INBOX, INTERVIEW_PATH, listDiscoveryInputs, interviewPhase, interviewAnswer, isLongPrompt, ownerSaid,
+  DISCOVERY_INBOX, INTERVIEW_PATH, listDiscoveryInputs, interviewPhase, interviewAnswer, isLongPrompt, ownerSaid, INTERVIEW_QUESTIONS,
   IdeaScoreInputs, missingScoreInputs, readIdea, updateIdea, writeIdeaCard, ideaSlug, ideaPath, renderScoreSection,
   renderEvidenceSection, sameIdeaTitle, missingScoreNote,
 } from '@cubicle/core';
@@ -87,7 +87,16 @@ export const discoveryInputs = defineTool({
       ...(unreadable.length ? ['', `**Present but unreadable** (say so in the brief; do not guess at them): ${unreadable.map((f) => f.path).join(', ')}.`] : []),
       '',
       '## The founder interview',
-      phase === 'answered' ? renderDiscoveryBundle(interviewBudgeted) : phase === 'skipped' ? '_The owner skipped the interview. Work from everything else, and list what you would have asked under "What we do not know"._' : '_Not answered yet._',
+      // `covered` is not "unanswered": nobody was asked, because the owner's own material had already answered
+      // every question, and saying "not answered yet" about it would send the brief looking for words that
+      // are sitting in the files and messages either side of this line (SP5b spec §5).
+      phase === 'answered'
+        ? renderDiscoveryBundle(interviewBudgeted)
+        : phase === 'skipped'
+          ? '_The owner skipped the interview. Work from everything else, and list what you would have asked under "What we do not know"._'
+          : phase === 'covered'
+            ? `_Not asked: the owner's own material already answered all ${INTERVIEW_QUESTIONS.length} questions, so the CEO took the answers from the files and messages here rather than asking for them twice._`
+            : '_Not answered yet._',
       '',
       '## What the owner has typed in the cabin',
       messageBudgeted.length ? renderDiscoveryBundle(messageBudgeted) : '_Nothing._',
