@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { emptyState, applySnapshot, applyEvent, type Snapshot, type State } from '../state.js';
+import { emptyState, applySnapshot, applyEvent, CHECKING_TEXT, type Snapshot, type State } from '../state.js';
 import { briefTitle, kindLabel, chatHtml, emptyHtml, segmented, segTabId, segPaneId, feedKind, dayLabel, browserViewerView, terminalViewerView, roomView, agentView, type Ctx } from './content.js';
 import { headlineFor, viewFor } from './surfaces.js';
 import { planBits, briefBits, cut } from './headlines.js';
@@ -276,6 +276,11 @@ describe('tower views (plan 3)', () => {
     expect(v.html).toContain('data-open="job:j_open"'); expect(v.html).toContain('data-locate="agent:backend_engineer"');
     expect(v.html).toContain('obsidian://open?vault=Cubicle&amp;file=Roles%2Fbackend_engineer');
     expect(viewFor('agent:nobody', tower, ctx).html).toContain('<svg');
+    // While the constitution's classifier is reading an outbound call, the state line would say "working",
+    // which is true and tells the owner nothing about the pause they are watching.
+    const checking = agentView('backend_engineer', { ...tower, agents: { ...tower.agents, backend_engineer: { ...tower.agents.backend_engineer, state: 'working', checking: 'email.send' } } }, ctx);
+    expect(checking.sub).toContain(CHECKING_TEXT);
+    expect(checking.sub).not.toContain('working');
   });
   it('escapes user text in the new views too', () => {
     const evil = applySnapshot(emptyState(), { ...towerSnap, jobs: [{ ...towerSnap.jobs[0], title: '<script>alert(1)</script>' }], teams: [{ ...towerSnap.teams![0], name: '<img src=x onerror=1>' }] });

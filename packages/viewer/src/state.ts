@@ -192,13 +192,12 @@ export const CHECKING_TEXT = 'checking the constitution…';
 const CHECKING_MS = 25_000;
 
 /**
- * The line the office shows under an agent: what it is doing, in the owner's words. Today it answers only for
- * the constitution check, because that is the only state the sprite cannot show by itself — everything else
- * is already a pose, a tool icon or a bubble. Pure, so the reducer can be tested without Phaser.
+ * The one thing an agent can be doing that neither its pose nor its tool icon can show: waiting on the
+ * constitution's classifier. `null` when it is not, and the caller falls back to its ordinary state line —
+ * `agentView` in `ui/content.ts` is the caller. Pure, so it is tested without Phaser.
  */
-export function statusText(ag: Pick<AgentView, 'checking' | 'bubble'>): string | null {
-  if (ag.checking) return CHECKING_TEXT;
-  return ag.bubble?.text || null;
+export function statusText(ag: Pick<AgentView, 'checking'>): string | null {
+  return ag.checking ? CHECKING_TEXT : null;
 }
 
 /** Short present-tense line for an action bubble, from the tool name and its summary (often JSON). */
@@ -301,7 +300,10 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'quota.updated': { if (p.provider && p.model && 'rpm_used' in p) { const q = p as unknown as QuotaView; const i = st.quota.findIndex((x) => x.provider === q.provider && x.model === q.model); st.quota = i >= 0 ? st.quota.map((x, k) => (k === i ? q : x)) : [...st.quota, q]; } break; }
     // The classifier's wait, made visible. `checking` is what `statusText` reads; the bubble is what the
     // sprite shows. Both are cleared by `guardrail.checked`, and `tick` ages them out if it never arrives.
-    case 'guardrail.checking': { const ag = a(e.agent); if (ag) { ag.checking = String(p.tool ?? ''); if (ag.state !== 'walking') ag.state = 'working'; ag.bubble = { kind: 'thought', text: CHECKING_TEXT, until: nowMs + CHECKING_MS }; feel(ag, 'thinking', null); } break; }
+    // `working` only for someone who is already at their desk doing something: an agent on its way somewhere,
+    // arriving, leaving or offline keeps the pose it has, or the office would teleport a departing colleague
+    // back into their chair to read the rules.
+    case 'guardrail.checking': { const ag = a(e.agent); if (ag) { ag.checking = String(p.tool ?? ''); if (ag.state === 'idle_at_desk' || ag.state === 'talking') ag.state = 'working'; ag.bubble = { kind: 'thought', text: CHECKING_TEXT, until: nowMs + CHECKING_MS }; feel(ag, 'thinking', null); } break; }
     case 'guardrail.checked': { const ag = a(e.agent); if (ag) { ag.checking = null; if (ag.bubble?.text === CHECKING_TEXT) ag.bubble = null; } break; }
     case 'guardrail.blocked': { const ag = a(e.agent); if (ag) { ag.checking = null; ag.bubble = { kind: 'thought', text: `not allowed: ${String(p.reason ?? 'blocked')}`.slice(0, 120), until: nowMs + BUBBLE_MS }; feel(ag, 'worried'); emote(ag, '!', 4000); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `guardrail: ${String(p.reason ?? '')}` }]; break; }
     case 'owner.edited': st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `you edited ${String(p.path)}` }]; break;

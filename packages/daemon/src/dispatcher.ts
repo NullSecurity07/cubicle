@@ -5,7 +5,7 @@ import {
   trustDecision, TRUST_PENDING_HOLD, type TrustDecision,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
-import { findAnswer, messagePath } from '@cubicle/tools';
+import { findAnswer, messagePath, isClassifierUnavailable } from '@cubicle/tools';
 import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
 import { cancelPointlessTrustReviews, trustGatesForNote } from './trust.js';
 import { applyHire, applyFire, applyReorg, charterDiffSection } from './evolution.js';
@@ -93,9 +93,11 @@ function fenced(body: string): string | null {
 const FIX_IT = 'Fix it and set approved again (retried automatically every 10 minutes).';
 /** Under a hold there is nothing to fix and nothing to re-approve: the sweep releases it the moment both offices answer. */
 const NOTHING_TO_DO = 'Nothing to do: this is applied on its own as soon as both reviews are in, and closed unsent if either returns it.';
+/** Same shape as the trust hold: nothing is wrong with the note, so "fix it and approve again" is the wrong advice. */
+const NOTHING_TO_FIX = 'Nothing to do: it is sent on its own as soon as a model answers the guardrail again (retried every 10 minutes).';
 
 function refuseNote(vault: Vault, note: { path: string; data: InboxFrontmatter }, why: string, extra: Record<string, unknown> = {}): void {
-  const closing = why === TRUST_PENDING_HOLD ? NOTHING_TO_DO : FIX_IT;
+  const closing = why === TRUST_PENDING_HOLD ? NOTHING_TO_DO : why === CLASSIFIER_UNAVAILABLE_HOLD ? NOTHING_TO_FIX : FIX_IT;
   vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: note.data.id, kind: note.data.kind, reason: why, ...extra } });
   vault.updateNote(note.path, (nn) => ({ data: { ...nn.data, refused: why, refused_at: nowIso() }, body: nn.body.replace(/\n\n---\n_Not applied:[^\n]*_\n?$/s, '').trimEnd() + `\n\n---\n_Not applied: ${why}. ${closing}_\n` }), 'daemon');
   const sha = vault.currentSha(note.path);
@@ -137,8 +139,20 @@ function trustDefers(deps: DispatcherDeps, note: { path: string; data: InboxFron
   return true;
 }
 
-/** Execute a stored call as the daemon, with the original role's permissions and the stored idempotency key. */
-export async function executeStoredCall(deps: DispatcherDeps, note: { path: string; data: InboxFrontmatter }): Promise<{ ok: boolean; text: string }> {
+/**
+ * What the owner reads on a note the constitution guardrail could not check. Fixed text, like the dormancy
+ * refusal and the trust hold, so it is written once per episode however many sweeps the outage spans.
+ */
+const CLASSIFIER_UNAVAILABLE_HOLD = 'the constitution guardrail could not check this call: no model answered its banned_tactics classifier. Nothing was sent, the approval still stands, and the idempotency key is unspent';
+
+/**
+ * Execute a stored call as the daemon, with the original role's permissions and the stored idempotency key.
+ *
+ * `deferred` means the call was neither made nor refused: something transient stopped it, the note must be
+ * held rather than resolved, and the next sweep tries again. Only the constitution classifier's
+ * "nobody could check this" sets it today.
+ */
+export async function executeStoredCall(deps: DispatcherDeps, note: { path: string; data: InboxFrontmatter }): Promise<{ ok: boolean; text: string; deferred?: boolean }> {
   const call = note.data.call!;
   // A guardrail refused this call inside the tool layer after the owner approved it. The handler provably
   // never ran, but the idempotency key is already in the job's at-most-once ledger and that ledger is
@@ -163,16 +177,36 @@ export async function executeStoredCall(deps: DispatcherDeps, note: { path: stri
     deps.vault.events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason, approved: true } });
     return { ok: false, text: `blocked even though approved: ${reason}` };
   }
-  // At-most-once: mark the note (and the job) BEFORE running the external call.
+  // Everything above and below this line is read-only, up to the `executing_at` stamp: nothing may spend the
+  // idempotency key until the call is actually about to be made.
   if ((note.data as { executing_at?: string }).executing_at) return { ok: false, text: 'a previous attempt was interrupted after starting this call; not re-running it (lost result)' };
-  deps.vault.updateNote(note.path, (n) => ({ data: { ...n.data, executing_at: nowIso() }, body: n.body }), 'daemon');
   const job = jobId ? readJob(deps.vault, jobId) : null;
   if (job && job.data.side_effects_done.includes(call.idempotency_key)) return { ok: true, text: 'already executed (idempotency key recorded)' };
-  if (job) updateJob(deps.vault, job.data.id, { side_effects_done: [...job.data.side_effects_done, call.idempotency_key] }, 'daemon', `- ${nowIso()}: ${call.tool} ATTEMPTING by the daemon after owner approval (${call.idempotency_key})`);
   const ctx: ToolContext = { vault: deps.vault, events: deps.vault.events, roleId, role, jobId, config: deps.toolsConfig, env: deps.env, scheduler: deps.scheduler, workspace: `.cubicle/workspace/${jobId ?? 'daemon'}`, now: () => new Date(), idempotencyKey: call.idempotency_key, guardrails: deps.guardrails };
   const def = deps.registry.get(call.tool);
   if (!def) return { ok: false, text: `unknown tool ${call.tool}` };
-  for (const g of deps.guardrails ?? []) { const v = await g.check(call.tool, call.args, ctx); if (v) { deps.vault.events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason: v, approved: true } }); return { ok: false, text: `blocked even though approved: ${v}` }; } }
+  // The guardrail pre-check runs **before** the key is spent, for the same reason the `mode: never` check
+  // above does: a guardrail that refuses proves the handler never ran, and spending the key on a call that
+  // never happened destroys the owner's approval for nothing.
+  //
+  // It matters more now that the constitution's classifier can fail closed. Its refusal has two kinds, and
+  // they end very differently (review round 1, CRITICAL): a rule that was broken is a standing answer and the
+  // call is finished, but a classifier that could not reach a model has decided nothing at all. The second
+  // used to be indistinguishable from the first here, so a single 20-second model outage killed an
+  // owner-approved send for good — and the re-dispatch said "a previous attempt was interrupted after
+  // starting this call (lost result)", which was flatly untrue: nothing had started. Now the approval, the
+  // note and the key all survive it, `dispatchProposals` holds the note instead of resolving it, and the
+  // next sweep tries again.
+  for (const g of deps.guardrails ?? []) {
+    const v = await g.check(call.tool, call.args, ctx);
+    if (!v) continue;
+    if (isClassifierUnavailable(v)) return { ok: false, deferred: true, text: CLASSIFIER_UNAVAILABLE_HOLD };
+    deps.vault.events.emit({ type: 'guardrail.blocked', agent: roleId, job: jobId, payload: { tool: call.tool, reason: v, approved: true } });
+    return { ok: false, text: `blocked even though approved: ${v}` };
+  }
+  // At-most-once: mark the note (and the job) BEFORE running the external call.
+  deps.vault.updateNote(note.path, (n) => ({ data: { ...n.data, executing_at: nowIso() }, body: n.body }), 'daemon');
+  if (job) updateJob(deps.vault, job.data.id, { side_effects_done: [...job.data.side_effects_done, call.idempotency_key] }, 'daemon', `- ${nowIso()}: ${call.tool} ATTEMPTING by the daemon after owner approval (${call.idempotency_key})`);
   const client = await createRoleToolClient([def], ctx);
   try {
     const res = await client.call(call.tool, call.args, { idempotencyKey: call.idempotency_key });
@@ -342,6 +376,13 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             // every ten minutes would churn the vault and its autocommits over it. See `trustDefers`.
             if (trustDefers(deps, note, trustGuard(deps, d))) continue;
             const r = await executeStoredCall(deps, note);
+            // Nothing was sent and nothing was decided — the guardrail could not reach a model. Hold the
+            // note exactly as the dormancy and trust cases do: the approval stands, the key is unspent, and
+            // `retryDue` re-admits it. Written once per episode, for the same reason they are.
+            if (r.deferred) {
+              if ((d as { refused?: string }).refused !== r.text) refuseNote(vault, note, r.text);
+              continue;
+            }
             outcome = `${d.call.tool}: ${r.ok ? 'ok' : 'failed'} — ${r.text.slice(0, 200)}`;
             break;
           }

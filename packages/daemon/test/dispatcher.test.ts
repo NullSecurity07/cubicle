@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, createJob, readJob, listJobs, updateJob, createProposal, findInboxById, idFromKey, nowIso, loadOrg } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
+import { parseToolsConfig, ToolRegistry, phase3Tools, CLASSIFIER_UNAVAILABLE_PREFIX } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
-import { requeueUnblocked, executeStoredCall, defaultConfig, escalationTarget } from '../src/index.js';
+import { requeueUnblocked, executeStoredCall, dispatchProposals, defaultConfig, escalationTarget } from '../src/index.js';
 
 const root = path.resolve(__dirname, '../../..');
 
@@ -158,6 +158,105 @@ describe('an approved call whose mode changed to never (D3)', () => {
     expect(blocked[0].payload.tool).toBe('mock.outbound');
     expect(blocked[0].payload.approved).toBe(true);
     expect(String(blocked[0].payload.reason)).toMatch(/never/);
+  });
+});
+
+describe('an approved call the constitution guardrail could not check', () => {
+  /**
+   * A proposal carrying an outbound call the owner has approved, and the deps to dispatch it with
+   * `guardrails`. `spend` is the kind whose stored call the *dispatcher* executes — an `outbound_batch` is
+   * run by the waiting job itself on resume, so it never reaches `executeStoredCall`.
+   */
+  function approvedOutbound(guardrails: { check: () => string | null }[]) {
+    vault.updateNote('Roles/cmo.md', (n) => ({ data: { ...n.data, tools: [...(n.data.tools as string[]), 'mock.outbound'] }, body: n.body }), 'owner');
+    const job = createJob(vault, { type: 'growth.outreach', title: 'outreach', assigned: 'cmo', goal: 'send' }, 'cto');
+    const key = `${job}:1:1`;
+    const p = createProposal(vault, { kind: 'spend', from: 'cmo', job, title: 'send one', body: 'x', call: { tool: 'mock.outbound', args: { to: 'a@x', body: 'hi' }, idempotency_key: key, job, role: 'cmo' } }, 'cmo');
+    const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
+    return { job, key, p, deps: { vault, registry: new ToolRegistry().registerAll(phase3Tools({ includeMock: true })), toolsConfig: cfg, scheduler: vaultScheduler(vault), env: {}, guardrails } };
+  }
+
+  it('keeps the approval, the key and the note, and retries — it is not a refusal (review round 1, CRITICAL)', async () => {
+    // The classifier timed out. Nobody decided anything about this call; it was simply not checked.
+    const outage = `${CLASSIFIER_UNAVAILABLE_PREFIX} (no answer in 20000 ms), so the call is refused rather than sent unchecked. Try it again once a model is answering.`;
+    let down = true;
+    const { job, key, p, deps } = approvedOutbound([{ check: () => (down ? outage : null) }]);
+
+    const first = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(first.ok).toBe(false);
+    expect(first.deferred).toBe(true);
+    expect(first.text).toMatch(/could not check this call/);
+    expect(first.text).toMatch(/idempotency key is unspent/);
+    expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false);   // nothing was sent
+    // Everything the next attempt needs is still here: the ledger is untouched, and so is the note.
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
+    const note = findInboxById(vault, p.id)!;
+    expect((note.data as { executing_at?: string }).executing_at).toBeUndefined();
+    expect((note.data as { blocked_by_guardrail?: string }).blocked_by_guardrail).toBeUndefined();
+    expect(note.data.resolved_at ?? null).toBeNull();
+
+    // The re-dispatch while the outage stands says the same thing — never "a previous attempt was
+    // interrupted after starting this call (lost result)", which was untrue and killed the send for good.
+    const again = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(again.deferred).toBe(true);
+    expect(again.text).not.toMatch(/interrupted|lost result|already executed/);
+
+    // A model answers, and the very next sweep sends it — with the approval the owner already gave.
+    down = false;
+    const sent = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(sent.ok).toBe(true);
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([key]);
+    expect(readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1);
+  });
+
+  it('a rule that was actually broken still ends the call, key unspent, with one approved guardrail.blocked', async () => {
+    // The other kind of refusal: a verdict, not a missing one. It must not be held and retried for ever.
+    const { job, p, deps } = approvedOutbound([{ check: () => 'constitution: banned tactic detected: fake urgency' }]);
+    const r = await executeStoredCall(deps, findInboxById(vault, p.id)!);
+    expect(r.ok).toBe(false);
+    expect(r.deferred).toBeUndefined();
+    expect(r.text).toContain('blocked even though approved');
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
+    const blocked = vault.events.query({ types: ['guardrail.blocked'] });
+    expect(blocked).toHaveLength(1);
+    expect(String(blocked[0].payload.reason)).toContain('fake urgency');
+  });
+
+  it('dispatchProposals holds the note rather than resolving it, says so once per episode, and sends it when the model is back', async () => {
+    const outage = `${CLASSIFIER_UNAVAILABLE_PREFIX} (ollama down), so the call is refused rather than sent unchecked. Try it again once a model is answering.`;
+    let down = true;
+    const { job, key, p, deps } = approvedOutbound([{ check: () => (down ? outage : null) }]);
+    // Only a raw file edit reads as the owner's: `updateNote` records its own sha as a system write.
+    writeFileSync(path.join(dir, p.path), readFileSync(path.join(dir, p.path), 'utf8').replace(/^approved: .*$/m, 'approved: true'));
+    /** A refused note is retried on the owner's next edit or after ten minutes; this is that wait. */
+    const tenMinutesPass = () => vault.db.prepare('UPDATE refusals SET at = ?').run(new Date(Date.now() - 11 * 60_000).toISOString());
+
+    expect(await dispatchProposals(deps)).toBe(0);           // nothing was applied
+    const held = findInboxById(vault, p.id)!;
+    expect(held.data.resolved_at ?? null).toBeNull();        // the owner's approval still stands
+    expect(held.data.approved).toBe(true);
+    expect(held.body).toContain('could not check this call');
+    // Nothing to fix and nothing to re-approve: the owner must not be told to set `approved` again.
+    expect(held.body).toContain('as soon as a model answers the guardrail again');
+    expect(held.body).not.toContain('Fix it and set approved again');
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([]);
+    expect(existsSync(path.join(dir, '.cubicle/mock-outbound.jsonl'))).toBe(false);
+
+    // Three more sweeps across an outage that could run for hours: the note is not touched again and the room
+    // is not told again — the same rule the dormancy hold and the trust hold are written once for.
+    const sha = vault.currentSha(held.path);
+    for (let i = 0; i < 3; i++) { tenMinutesPass(); expect(await dispatchProposals(deps)).toBe(0); }
+    expect(vault.currentSha(held.path)).toBe(sha);
+    expect(vault.events.query({ types: ['guardrail.blocked'] }).filter((e) => String(e.payload.reason).includes('could not check this call'))).toHaveLength(1);
+
+    // A model answers. Nothing about the note changed, so the guardrail alone is what lets it through, and the
+    // approval the owner already gave is the one that applies.
+    down = false;
+    tenMinutesPass();
+    expect(await dispatchProposals(deps)).toBe(1);
+    expect(findInboxById(vault, p.id)!.data.resolved_at).toBeTruthy();
+    expect(readJob(vault, job)!.data.side_effects_done).toEqual([key]);
+    expect(readFileSync(path.join(dir, '.cubicle/mock-outbound.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1);
   });
 });
 

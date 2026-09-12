@@ -408,7 +408,21 @@ describe('the constitution check is something the owner can read', () => {
     s = applyEvent(s, ev('guardrail.checked', anAgent, { tool: 'email.send', verdict: 'unavailable', elapsed_ms: 20_000 }), 21_000);
     s = applyEvent(s, ev('guardrail.blocked', anAgent, { tool: 'email.send', reason: 'constitution guardrail: the banned_tactics classifier could not check this text' }), 21_000);
     expect(s.agents[anAgent].checking).toBeNull();
-    expect(statusText(s.agents[anAgent])).toContain('not allowed');
+    expect(statusText(s.agents[anAgent])).toBeNull();
+    expect(s.agents[anAgent].bubble!.text).toContain('not allowed');
     expect(s.feed[s.feed.length - 1].text).toContain('banned_tactics classifier');
+  });
+
+  it('leaves a sprite that is not at its desk where it is, rather than seating it to read the rules', () => {
+    const base = applySnapshot(emptyState(), snap);
+    for (const state of ['walking', 'entering', 'leaving'] as const) {
+      const s0 = { ...base, agents: { ...base.agents, [anAgent]: { ...base.agents[anAgent], state } } };
+      const s1 = applyEvent(s0, checking('email.send'), 1000);
+      expect(s1.agents[anAgent].state).toBe(state);
+      expect(statusText(s1.agents[anAgent])).toBe(CHECKING_TEXT);   // it is still checking, it is just not sitting down
+    }
+    // An agent who has been fired is not checking anything: `applyEvent` ignores inactive roles outright.
+    const off = { ...base, agents: { ...base.agents, [anAgent]: { ...base.agents[anAgent], active: false, state: 'offline' as const } } };
+    expect(applyEvent(off, checking('email.send'), 1000).agents[anAgent].checking).toBeNull();
   });
 });

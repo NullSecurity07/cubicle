@@ -36,7 +36,15 @@ function textOf(tool: string, args: Record<string, unknown>): string {
  */
 const CLASSIFIER_TTL_MS = 60_000;
 const CLASSIFIER_MAX = 200;
-const classifierMemo = new Map<string, { at: number; verdict: ClassifierVerdict; reason: string | null }>();
+const classifierMemo = new Map<string, { at: number; era: number; verdict: ClassifierVerdict; reason: string | null }>();
+
+/**
+ * Bumped every time a model actually answers. An `unavailable` verdict is remembered only within the era it
+ * was recorded in, so the first successful classification after an outage releases every refusal the outage
+ * caused instead of leaving them standing for the rest of the 60 s window (review round 1). A `clear` or
+ * `violation` is a fact about the text and keeps the full TTL.
+ */
+let classifierEra = 0;
 
 /**
  * The classifier's **own** bound on how long an outbound call may wait for it, independent of the provider's
@@ -70,9 +78,28 @@ export interface ClassifierResult {
   memoised: boolean;
 }
 
-/** What the caller is told when the classifier could not reach a verdict. Names the guardrail and the cause. */
+/**
+ * Every "nobody checked this" refusal starts with this sentence, so a caller can tell the two kinds of
+ * refusal apart. "The constitution says no" is a standing answer and the call is finished; "the classifier
+ * could not run" is a transient one and the call is still worth making later — the proposal dispatcher uses
+ * exactly this distinction to decide whether an owner-approved call is dead or merely waiting.
+ */
+export const CLASSIFIER_UNAVAILABLE_PREFIX = 'constitution guardrail: the banned_tactics classifier could not check this text';
+
+/** True when `reason` is a classifier that could not run, rather than a rule that was broken. */
+export function isClassifierUnavailable(reason: string | null | undefined): boolean {
+  return !!reason && reason.startsWith(CLASSIFIER_UNAVAILABLE_PREFIX);
+}
+
+/**
+ * What the caller is told when the classifier could not reach a verdict. Names the guardrail and the cause,
+ * and promises only what this function can actually deliver: the text is not checked, so the call is not
+ * sent, and trying again is worth doing once a model is answering. It used to end "It goes through as soon
+ * as a model answers again", which was not true — nothing here retries anything, and the memo could hold the
+ * refusal for a minute after the model came back (review round 1).
+ */
 function unavailableReason(cause: string): string {
-  return `constitution guardrail: the banned_tactics classifier could not check this text (${cause}), so the call is refused rather than sent unchecked. It goes through as soon as a model answers again.`;
+  return `${CLASSIFIER_UNAVAILABLE_PREFIX} (${cause}), so the call is refused rather than sent unchecked. Try it again once a model is answering.`;
 }
 
 /** Watches one classification, so a caller can make an otherwise invisible wait visible. */
@@ -92,7 +119,11 @@ export interface ClassifierWatcher {
  *
  * 1. **It is bounded by its own clock** (`CLASSIFIER_TIMEOUT_MS`), not the provider's. The deadline is raced
  *    against the call *and* pushed into it as an `AbortSignal`, so a router that hangs somewhere other than
- *    the HTTP request still cannot hold the outbound path open.
+ *    the HTTP request still cannot hold the outbound path open. The controller is built fresh here, per
+ *    attempt, and the router treats its abort as "the caller gave up" rather than as a provider failure —
+ *    so a timeout costs exactly this one call and does not mark, warn about or bill any other model in the
+ *    cascade (review round 1: it used to cost one warning and one quota slot per remaining candidate, about
+ *    twenty of each against the shipped config, for calls that were never made).
  * 2. **It fails closed.** A timeout, a transport error, an unparseable reply and "no model available" all
  *    mean one thing — nobody checked this text — and outbound copy nobody checked does not leave the
  *    company. It used to fail *open*, which made the constitution's strictest rule the one rule a flat local
@@ -104,12 +135,18 @@ export async function classifyBannedTactic(router: Router, text: string, tactics
   if (!text || tactics.length === 0) return { verdict: 'clear', reason: null, elapsedMs: 0, memoised: true };
   const memoKey = `${tactics.join('\u0000')}\u0001${text}`;
   const hit = classifierMemo.get(memoKey);
-  if (hit && Date.now() - hit.at < CLASSIFIER_TTL_MS) return { verdict: hit.verdict, reason: hit.reason, elapsedMs: 0, memoised: true };
+  // A remembered refusal is only good for as long as the outage that caused it: one successful answer from
+  // any model ends the era and this asks again, rather than repeating — silently, since a memo hit emits no
+  // `checking` and no warning — that nobody could check a text a model is now happy to read.
+  const fresh = hit && Date.now() - hit.at < CLASSIFIER_TTL_MS && (hit.verdict !== 'unavailable' || hit.era === classifierEra);
+  if (fresh) return { verdict: hit!.verdict, reason: hit!.reason, elapsedMs: 0, memoised: true };
 
   const started = Date.now();
   const settle = (verdict: ClassifierVerdict, reason: string | null): ClassifierResult => {
     if (classifierMemo.size >= CLASSIFIER_MAX) classifierMemo.clear();
-    classifierMemo.set(memoKey, { at: Date.now(), verdict, reason });
+    // A model answered: every `unavailable` recorded before this moment is stale, however recent.
+    if (verdict !== 'unavailable') classifierEra++;
+    classifierMemo.set(memoKey, { at: Date.now(), era: classifierEra, verdict, reason });
     const elapsedMs = Date.now() - started;
     watch.checked?.(verdict, elapsedMs);
     return { verdict, reason, elapsedMs, memoised: false };
