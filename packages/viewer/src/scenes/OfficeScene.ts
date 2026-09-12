@@ -7,16 +7,17 @@ import { Surface } from '../world/surfaces.js';
 import { SURFACES } from '../ui/surfaces.js';
 import { DecorLayer, RoomSigns, RAIL_PX } from '../world/decor.js';
 import { initialElevator, request, cancel, step, type ElevatorState, type ElevatorEvent, type Rider } from '../world/elevator.js';
-import { ZOOM_STEPS, zoomSnap, floorZoom, fitCamera, cameraCentre, cameraBounds, clampBottom, rectOfTiles, veilBands, veilAlpha, FIT_STEPS } from '../world/camera.js';
-import { skyRect, nightRect, streetRect, backdropColour } from '../world/backdrop.js';
+import { ZOOM_STEPS, zoomSnap, floorZoom, fitCamera, cameraCentre, cameraBounds, clampBottom, clampTop, rectOfTiles, veilBands, veilAlpha, FIT_STEPS } from '../world/camera.js';
+import { skyRect, nightRect, groundBands, groundRect, backdropColour, skyBody, stars, discRuns } from '../world/backdrop.js';
 import { planRoute, type Leg } from '../world/route.js';
 import type { State } from '../state.js';
-import { tintFor, nightColourFor, skyFor, lampAlphaFor, hourBucket, type HourBucket } from '../ui/time.js';
+import { tintFor, nightColourFor, skyFor, lampAlphaFor, hourBucket, sunOrMoon, type HourBucket } from '../ui/time.js';
 import { litRooms, roomContaining } from '../world/lights.js';
 import { PALETTE, floorPalette, hexToInt } from '../world/palette.js';
 import { DUR, EASE, dur } from '../world/motion.js';
 import { OwnerAvatar, boardSessionOpen } from '../world/owner.js';
-import { worldTextVisible } from '../world/text.js';
+import { worldTextVisible, signLabelStyle } from '../world/text.js';
+import { addText } from '../world/text-crisp.js';
 
 export interface FloorSummary { floor: number; label: string; color: string; agents: { role: string; color: number; state: string }[]; meetings: number }
 export interface SceneHooks {
@@ -46,6 +47,11 @@ export class OfficeScene extends Phaser.Scene {
   private skyStops = '';
   private skyStep = NaN;
   private skyZoom = NaN;
+  /** Sun or moon and, at night, a scatter of stars: the surround is two thirds of the tower frame (R-M6). */
+  private skyDeco: Phaser.GameObjects.Container | null = null;
+  private skyDecoKey = '';
+  /** A floor number in the sky beside each floor, for the one elevation that draws no in-world lettering (R-M5). */
+  private towerTags: Phaser.GameObjects.Text[] = [];
   private readonly tiles: Record<string, Tile> = {};   // one record reused every frame: the decor and lamp passes both read it
   private bucket: HourBucket | null = null;
   private lamps: { img: Phaser.GameObjects.Image; room: string | null }[] = [];
@@ -126,7 +132,15 @@ export class OfficeScene extends Phaser.Scene {
     this.applySky(skyFor(this.hour()));
     // The night tint covers the building only. Over the sky as well it multiplied the designed night gradient
     // down to near-black; the sky's own night stops are the night sky.
-    const nr = nightRect(BUILDING, TILE), sr = streetRect(BUILDING, TILE, this.world.width, this.world.height);
+    // The ground runs out past the map, under the tilemap: at the tower fit the frame is wider and taller than the
+    // world, and without it the street stopped in mid-air with sky below the pavement (visual QA R-M6).
+    // They start at the building's own foot, which is the bottom edge of the minimap's bounds, so the little tower
+    // never sees them and has nothing to ignore.
+    const gb = groundBands(BUILDING, TILE, this.world.width, this.world.height);
+    for (const [band, colour] of [[gb.road, PALETTE.asphalt], [gb.pavement, PALETTE.pavement]] as const) {
+      this.add.rectangle(band.x, band.y, band.width, band.height, hexToInt(colour)).setOrigin(0).setDepth(-5).setScrollFactor(1);
+    }
+    const nr = nightRect(BUILDING, TILE), sr = groundRect(BUILDING, TILE, this.world.width, this.world.height);
     this.night = this.add.rectangle(nr.x, nr.y, nr.width, nr.height, nightColourFor(this.hour()), 0).setOrigin(0).setDepth(50).setScrollFactor(1);
     this.nightStreet = this.add.rectangle(sr.x, sr.y, sr.width, sr.height, nightColourFor(this.hour()), 0).setOrigin(0).setDepth(50).setScrollFactor(1);
     // The focus veil sits just under the night tint: the two stack, so a floor view reads at night as well as by day.
@@ -160,8 +174,16 @@ export class OfficeScene extends Phaser.Scene {
     // night (ruling F3). It does ignore the sky, which is screen-space and would simply fill the little camera.
     // The minimap does show the night rect (ruling F3) but not the focus veil: the little tower is the whole
     // building by definition, and dimming three quarters of it would read as a rendering fault.
-    this.minimap.ignore([this.sky!, ...this.veil, ...this.lamps.map((l) => l.img), ...this.decor.images(), ...this.signs.texts, ...(this.hooks.elevatorIgnorables?.() ?? [])]);
-    this.scale.on('resize', (g: Phaser.Structs.Size) => { this.minimap.setPosition(g.width - mmW - 12, g.height - mmH - 12); this.applySky(skyFor(this.hour())); this.applyBounds(); });
+    this.minimap.ignore([this.sky!, ...(this.skyDeco ? [this.skyDeco] : []), ...this.veil, ...this.lamps.map((l) => l.img), ...this.decor.images(), ...this.signs.texts, ...(this.hooks.elevatorIgnorables?.() ?? [])]);
+    // A floor number in the sky beside each floor. The tower elevation draws no in-world lettering (a 7 px sign at
+    // half a screen pixel per world pixel is a smudge), so without these the only key to the building is the rail
+    // (visual QA R-M5). They are screen-space constant, like a desk name, so they read at 0.5 and never grow.
+    for (const f of this.world.floors) {
+      const t = addText(this, (BUILDING.x0 - 1) * TILE, (f.y0 + 6) * TILE, `F${f.n}`, signLabelStyle(floorPalette(f.n).skirting)).setOrigin(1, 0.5).setDepth(6).setVisible(false);
+      this.towerTags.push(t);
+    }
+    this.minimap.ignore(this.towerTags);
+    this.scale.on('resize', (g: Phaser.Structs.Size) => { this.minimap.setPosition(g.width - mmW - 12, g.height - mmH - 12); this.applySky(skyFor(this.hour())); this.applyBounds(); this.applySkyDeco(); });
     // the owner's avatar: seated in the owner chair, shown only while a board meeting is open
     const ownerTile = this.world.reserved.owner;
     if (ownerTile) { this.owner = new OwnerAvatar(this, ownerTile, makeOwnerSprite(this), makeFaces(this)); this.minimap.ignore(this.owner.container); }
@@ -179,6 +201,7 @@ export class OfficeScene extends Phaser.Scene {
     makeSky(this, 'sky', stops, Math.max(1, Math.ceil(this.scale.height)));
     if (!this.sky) this.sky = this.add.image(0, 0, 'sky').setOrigin(0).setScrollFactor(0).setDepth(-10);
     this.sky.setTexture('sky');
+    this.applySkyDeco();
     this.placeSky();
     // The canvas clear colour can only show for the frame before the texture exists — which is exactly the white
     // flash the review caught — so it follows the horizon rather than the page theme.
@@ -199,7 +222,7 @@ export class OfficeScene extends Phaser.Scene {
     const alpha = veilAlpha(zoom);
     if (floor !== this.veilFloor) {
       this.veilFloor = floor;
-      const bands = veilBands(this.world.floors.find((f) => f.n === floor), BUILDING, { cols: this.world.width, rows: this.world.height });
+      const bands = veilBands(floor, this.world.floors, BUILDING, { cols: this.world.width, rows: this.world.height });
       this.veil.forEach((r, i) => {
         const b = bands[i];
         if (!b) { r.setVisible(false); return; }
@@ -212,9 +235,42 @@ export class OfficeScene extends Phaser.Scene {
   /** Stretch the sky over the viewport at the camera's current zoom (backdrop.ts `skyRect`). */
   private placeSky(): void {
     if (!this.sky) return;
-    const r = skyRect(this.scale.width, this.scale.height, this.cameras.main.zoom);
+    const zoom = this.cameras.main.zoom;
+    const r = skyRect(this.scale.width, this.scale.height, zoom);
     this.sky.setPosition(r.x, r.y).setDisplaySize(r.width, r.height);
-    this.skyZoom = this.cameras.main.zoom;
+    // The furniture is laid out in screen pixels inside a container the zoom scales back out, so a star is a whole
+    // pixel at every elevation rather than a half-lit smear at the tower fit.
+    this.skyDeco?.setPosition(r.x, r.y).setScale(1 / Math.max(1e-6, zoom));
+    this.skyZoom = zoom;
+  }
+
+  /**
+   * Redraw the sun or moon and the stars. Keyed on the viewport and the body, so it runs when the window changes
+   * size or the sun sets, not every frame.
+   */
+  private applySkyDeco(): void {
+    const w = this.scale.width, h = this.scale.height, hour = this.hour();
+    const body = sunOrMoon(hour), night = hourBucket(hour) === 'night';
+    const key = `${Math.round(w)}x${Math.round(h)}|${body}|${night}`;
+    if (key === this.skyDecoKey) return;
+    this.skyDecoKey = key;
+    this.skyDeco?.destroy(true);
+    const b = skyBody(w, h, body);
+    const parts: Phaser.GameObjects.GameObject[] = [];
+    // Stars at full night only. A dusk sky is still bright enough to read as day, and stars in it looked like dust
+    // on the lens rather than like evening.
+    if (night) for (const s of stars(w, h)) parts.push(this.add.rectangle(s.x, s.y, s.s, s.s, hexToInt(PALETTE.windowNight), s.s === 2 ? 0.85 : 0.55).setOrigin(0));
+    // A disc rasterised row by row on the pixel grid: the rim first, then the face one pixel inside it.
+    const face = body === 'sun' ? PALETTE.sun : PALETTE.moon, rim = body === 'sun' ? PALETTE.sunRim : PALETTE.moonRim;
+    const disc = (r: number, colour: string): void => {
+      for (const run of discRuns(r)) parts.push(this.add.rectangle(b.x + run.x0, b.y + run.y, run.w, 1, hexToInt(colour)).setOrigin(0));
+    };
+    disc(b.r, rim);
+    disc(b.r - 1, face);
+    // Craters, so the moon is a moon and not the sun in another colour. A crescent was tried and read as a bracket.
+    if (body === 'moon') for (const [dx, dy, s] of [[-4, -3, 3], [2, 1, 4], [-1, 5, 2]] as const) parts.push(this.add.rectangle(b.x + dx, b.y + dy, s, s, hexToInt(PALETTE.crater)).setOrigin(0));
+    this.skyDeco = this.add.container(0, 0, parts).setScrollFactor(0).setDepth(-9);
+    this.minimap?.ignore(this.skyDeco);
   }
 
   /** A grey box with a strip of glass: enough to see the ride until plan 2 draws the real car. */
@@ -319,7 +375,13 @@ export class OfficeScene extends Phaser.Scene {
     if (cam.zoom !== this.skyZoom) this.placeSky();
     const lettering = worldTextVisible(cam.zoom);
     this.signs.update(wv.x + RAIL_PX / cam.zoom, lettering);
-    if (lettering !== this.lettering) { this.lettering = lettering; for (const su of this.surfaces.values()) su.setLettering(lettering); }
+    if (lettering !== this.lettering) {
+      this.lettering = lettering;
+      for (const su of this.surfaces.values()) su.setLettering(lettering);
+      // The tower elevation is the one place they show: they are what the room signs cannot be at that size.
+      for (const t of this.towerTags) t.setVisible(!lettering);
+    }
+    if (!lettering) for (const t of this.towerTags) t.setScale(1 / cam.zoom);
     this.updateVeil(f, cam.zoom);
     // day / night
     const hour = this.hour();
@@ -328,7 +390,7 @@ export class OfficeScene extends Phaser.Scene {
     // The sky is only re-rasterised when the gradient actually changes. `skyFor` allocates, so it is asked once
     // per tenth of an hour rather than once per frame (a ten-minute step is finer than the gradient's own ramps).
     const skyStep = Math.round(hour * 10);
-    if (skyStep !== this.skyStep) { this.skyStep = skyStep; const stops = skyFor(hour); if (stops.join('|') !== this.skyStops) this.applySky(stops); }
+    if (skyStep !== this.skyStep) { this.skyStep = skyStep; this.applySkyDeco(); const stops = skyFor(hour); if (stops.join('|') !== this.skyStops) this.applySky(stops); }
     const bucket = hourBucket(hour);
     if (bucket !== this.bucket) {
       const from = this.bucket === 'day' ? T.WINDOW_DAY : this.bucket === 'dusk' ? T.WINDOW_DUSK : this.bucket === 'night' ? T.WINDOW_NIGHT : T.WINDOW_DAY;
@@ -373,7 +435,9 @@ export class OfficeScene extends Phaser.Scene {
     const c = cameraCentre(rectOfTiles(BUILDING.x0, f.y0, BUILDING.x1, f.y1), z);
     const cam = this.cameras.main;
     this.pinned = f.n;
-    cam.pan(c.cx, clampBottom(c.cy, z, this.scale.height, this.world.height * TILE), dur(DUR.pan), EASE.inOut);
+    // Top first, then bottom: the roofline stays near the top of the frame (R-I1) and the pavement stays on the map.
+    const cy = clampBottom(clampTop(c.cy, z, this.scale.height, BUILDING.y0 * TILE), z, this.scale.height, this.world.height * TILE);
+    cam.pan(c.cx, cy, dur(DUR.pan), EASE.inOut);
     cam.zoomTo(z, dur(DUR.pan), EASE.inOut);
   }
   /** Which floor the office is showing: the one last asked for, or whichever the camera's midpoint is inside. */
@@ -421,7 +485,12 @@ export class OfficeScene extends Phaser.Scene {
     const role = name.startsWith('agent:') ? name.slice(6) : null;
     for (const [r, ag] of this.agents) ag.selected = r === role;
     const cam = this.cameras.main;
-    cam.pan(t.x, t.y, dur(DUR.pan), EASE.inOut);
+    // Framed by the same two clamps a floor view uses, at the zoom the pan is heading for: the billboard and the
+    // chief offices sit against the roof, and centring one of them put the top third of the frame in empty sky —
+    // `10-browser-live` was 280 px of void behind the panel (visual QA R-I1).
+    const z = opts.zoom ? 3 : cam.zoom;
+    const cy = clampBottom(clampTop(t.y, z, this.scale.height, BUILDING.y0 * TILE), z, this.scale.height, this.world.height * TILE);
+    cam.pan(t.x, cy, dur(DUR.pan), EASE.inOut);
     if (opts.zoom) { if (this.prevZoom === null) this.prevZoom = (ZOOM_STEPS as readonly number[]).includes(cam.zoom) ? cam.zoom : 2; cam.zoomTo(3, dur(DUR.pan), EASE.inOut); }
   }
 

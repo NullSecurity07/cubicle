@@ -50,6 +50,21 @@ export function lampAlphaFor(hour: number): number { return tintFor(hour) / NIGH
 /** Sun from 6:00 until 18:00, moon otherwise (matches the window tiles' day bucket). */
 export const sunOrMoon = (hour: number): 'sun' | 'moon' => (hour >= 6 && hour < 18 ? 'sun' : 'moon');
 
+/**
+ * What the bar's clock reads in live mode.
+ *
+ * `__cubicle.setHour` moves the office's own hour — the shot harness pins one per scene, so the daylight palette
+ * is proved on the pixels rather than on whatever the wall clock happened to say (visual QA R-I4). The clock has
+ * to move with it: fifteen scenes of an office in midday sun, each stamped 22:52, contradict themselves, and the
+ * gallery is the first thing the owner opens. A pinned hour reads `HH:MM` — it is an hour, not a moment, and it
+ * has no seconds to tick.
+ */
+export function clockText(now: Date, hourOverride: number | null = null): string {
+  if (hourOverride === null) return now.toLocaleTimeString();
+  const total = Math.round(((hourOverride % 24) + 24) % 24 * 60);
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
 export interface TimeHandlers { onLive(): void; onReplayRequest(date: string): void; onScrub(index: number): void; }
 
 /** How much faster than real time a replay can run. The middle value is the one a fresh session opens on. */
@@ -75,6 +90,7 @@ export class TimeControls {
   private load = document.getElementById('replay-load') as HTMLButtonElement;
   private scrub = document.getElementById('scrub') as HTMLInputElement;
   private speedEl = document.getElementById('speed')!;
+  private dateText = document.getElementById('replay-date-text')!;
   private clock = document.getElementById('clock')!;
   private sunmoon = document.getElementById('sunmoon')!;
   private bar = document.getElementById('time')!;
@@ -89,8 +105,14 @@ export class TimeControls {
 
   constructor(private h: TimeHandlers) {
     this.date.value = new Date().toISOString().slice(0, 10);
+    // The native date input still holds and validates the value; the face beside it is ours, because the platform's
+    // calendar glyph was the last browser-drawn widget on a bar of custom ones (visual QA R-M4).
+    document.getElementById('replay-date-icon')!.innerHTML = pixelIcon('doc');
+    this.drawDate();
+    this.date.addEventListener('input', () => this.drawDate());
+    this.date.addEventListener('change', () => this.drawDate());
     const q = new URLSearchParams(location.search);
-    if (q.get('replay')) { this.date.value = q.get('replay')!; setTimeout(() => this.load.click(), REPLAY_AUTOLOAD_MS); }
+    if (q.get('replay')) { this.date.value = q.get('replay')!; this.drawDate(); setTimeout(() => this.load.click(), REPLAY_AUTOLOAD_MS); }
     this.live.addEventListener('click', () => { this.stopPlaying(); this.scrub.disabled = true; this.setMode('live'); h.onLive(); });
     // Pressing Replay is what reveals the transport, so the mode flips here rather than when the day's events land.
     this.load.addEventListener('click', () => { this.setMode('replay'); if (this.date.value) h.onReplayRequest(this.date.value); });
@@ -124,6 +146,9 @@ export class TimeControls {
     this.load.setAttribute('aria-selected', String(mode === 'replay'));
     this.bar.dataset.mode = mode;   // the stylesheet hides the replay transport in live mode
   }
+  /** The date, as the bar's own type. Empty reads as an em dash rather than as a blank control. */
+  private drawDate(): void { this.dateText.textContent = this.date.value || '\u2014'; }
+
   /** The transport's own face: the icon and the label say which way the button goes. */
   private drawPlay(): void {
     const next = this.playing ? 'pause' : 'play';
@@ -156,7 +181,7 @@ export class TimeControls {
   tick(dtMs: number, nowLive: Date, hourOverride: number | null = null): void {
     const icon = sunOrMoon(hourOverride ?? this.hour(nowLive));
     if (icon !== this.lastIcon) { this.lastIcon = icon; this.sunmoon.innerHTML = pixelIcon(icon, { label: icon === 'sun' ? 'Daytime' : 'Night' }); }
-    if (this.mode === 'live') { this.clock.textContent = nowLive.toLocaleTimeString(); return; }
+    if (this.mode === 'live') { this.clock.textContent = clockText(nowLive, hourOverride); return; }
     if (this.index >= this.events.length) { this.stopPlaying(); return; }   // the day ran out: the button goes back to Play
     if (!this.playing) return;
     this.acc += dtMs * this.speed;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hourBucket, skyFor, nightColourFor, lampAlphaFor, tintFor, sunOrMoon, replayLabel, REPLAY_AUTOLOAD_MS } from './time.js';
+import { hourBucket, skyFor, nightColourFor, lampAlphaFor, tintFor, sunOrMoon, clockText, replayLabel, REPLAY_AUTOLOAD_MS } from './time.js';
 import { PALETTE, hexToInt, hexToHsl } from '../world/palette.js';
 
 describe('hour buckets', () => {
@@ -86,5 +86,26 @@ describe('the replay clock label', () => {
   });
   it('gives the socket a moment before `?replay=` loads a day', () => {
     expect(REPLAY_AUTOLOAD_MS).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Visual QA R-I4: the shot harness pins an hour per scene so the daylight palette is proved on the pixels. The
+ * clock kept reading the wall clock, so every daylight scene in the delivered gallery was stamped 22:52.
+ */
+describe('the clock under a pinned hour', () => {
+  it('reads the wall clock when nothing is pinned', () => {
+    const d = new Date(2026, 8, 12, 22, 52, 4);
+    expect(clockText(d, null)).toBe(d.toLocaleTimeString());
+  });
+  it('reads the pinned hour instead, to the minute', () => {
+    const d = new Date(2026, 8, 12, 22, 52, 4);
+    expect(clockText(d, 12)).toBe('12:00');
+    expect(clockText(d, 19.5)).toBe('19:30');
+    expect(clockText(d, 22)).toBe('22:00');
+  });
+  it('wraps rather than printing an hour no clock has', () => {
+    expect(clockText(new Date(), 24)).toBe('00:00');
+    expect(clockText(new Date(), -1)).toBe('23:00');
   });
 });

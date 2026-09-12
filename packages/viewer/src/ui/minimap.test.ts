@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tickLayout, minimapPointToWorld, layoutKey, BUILDING_ROWS, FLOOR_ROWS } from './minimap.js';
+import { tickLayout, minimapPointToWorld, layoutKey, chromeVisibility, BUILDING_ROWS, FLOOR_ROWS } from './minimap.js';
 
 describe('minimap chrome', () => {
   // The brief pinned 52 building rows and four 26 px ticks in a 104 px camera. The map says otherwise: BUILDING is
@@ -41,5 +41,23 @@ describe('the chrome lays itself out only when something moved', () => {
   it('covers all four floors, including one the scene has not reported yet', () => {
     expect(layoutKey(cam, { 1: '#a' })).toBe(layoutKey(cam, { 1: '#a' }));
     expect(layoutKey(cam, { 1: '#a' })).not.toBe(layoutKey(cam, colours));
+  });
+});
+
+/**
+ * Visual QA R-M8: the tower elevation puts the minimap away, because at that fit it is the same picture as the
+ * main view with a viewport rectangle over all of it. The first cut of that had the two controls the wrong way
+ * round — the "Map" button appeared when the *scene* hid the strip, and never when the owner did, so `M` was a
+ * one-way door for anyone using the mouse.
+ */
+describe('which minimap control is on the screen', () => {
+  it('shows the strip and no button while the strip is up', () => {
+    expect(chromeVisibility(true, true)).toEqual({ strip: true, showBtn: false });
+  });
+  it('offers the way back only when the owner is the one who hid it', () => {
+    expect(chromeVisibility(false, false)).toEqual({ strip: false, showBtn: true });
+  });
+  it('says nothing when the elevation hid it: it comes back by itself', () => {
+    expect(chromeVisibility(false, true)).toEqual({ strip: false, showBtn: false });
   });
 });

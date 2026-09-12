@@ -280,7 +280,14 @@ let lastLayout = 0;
 function loop(now: number): void {
   const dt = now - last; last = now;
   // The minimap camera moves with the window; the rail's lobby tab follows a drag inside F1, which fires no floor change.
-  if (now - lastLayout > 500) { lastLayout = now; minimap.layout(); rail.update(); }
+  if (now - lastLayout > 500) {
+    lastLayout = now;
+    // At the tower elevation the minimap is the same picture as the main view, with a viewport rectangle over all
+    // of it (visual QA R-M8); it comes back the moment the camera is on a floor.
+    minimap.setVisible(scene.cameras?.main ? scene.cameras.main.zoom >= 1 : true, true);
+    minimap.layout();
+    rail.update();
+  }
   time.tick(dt, new Date(), hourOverride);
   if (state.mode === 'live') state = tick(state, Date.now());
   // doors and digits follow the engine every frame; `toViewState` writes into one reused object so the loop

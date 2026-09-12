@@ -211,10 +211,21 @@ details.pinned .prose { padding: 0 var(--s4) var(--s3); }
 .prose i { color: var(--text-2); font-style: normal; }
 
 /* ---- time bar (elevation 0) ---- */
-#time { position: absolute; left: calc(var(--rail-w) + var(--s3)); bottom: var(--s3); display: flex; gap: var(--s2); align-items: center; padding: var(--s1) var(--s2); border-radius: var(--r); z-index: 9; }
+/* The bar stops short of the minimap's column. Without a cap it grew to the right edge in replay mode, painting
+   its rounded end over the minimap and leaving the keyboard hint half on the bar and half on the minimap's ring
+   (visual QA R-I3). `--mm-w` is the minimap strip's own width, written by ui/minimap.ts. */
+#time { position: absolute; left: calc(var(--rail-w) + var(--s3)); bottom: var(--s3); max-width: calc(100% - var(--rail-w) - var(--mm-w, 160px) - var(--s3) * 3); display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; padding: var(--s1) var(--s2); border-radius: var(--r); z-index: 9; }
 #time .segmented { margin: 0; }
 #time input[type=range] { width: 220px; accent-color: var(--accent); }
-#time input[type=date] { min-height: var(--hit); padding: 0 var(--s2); font-size: var(--fs-subhead); }
+/* The replay date is our own control: a native <input type=date> brought the platform's calendar glyph with it,
+   the last browser-drawn widget on a bar of custom ones (visual QA R-M4). The input is still there — it is what
+   holds and validates the value, and what a keyboard user types into — but it is transparent and sized to the
+   text, with the date drawn by the button around it. */
+#time .datefield { position: relative; display: inline-flex; align-items: center; gap: var(--s2); min-height: var(--hit); padding: 0 var(--s2); background: var(--surface-2); border: 1px solid var(--hairline-2); border-radius: var(--r-s); font-size: var(--fs-subhead); font-variant-numeric: tabular-nums; color: var(--text); }
+#time .datefield .pi { color: var(--text-2); }
+#time input[type=date] { position: absolute; inset: 0; width: 100%; min-height: 0; padding: 0 var(--s2); background: transparent; border: 0; border-radius: var(--r-s); color: transparent; font-size: var(--fs-subhead); }
+#time input[type=date]::-webkit-calendar-picker-indicator { opacity: 0; cursor: pointer; width: 100%; }
+#time input[type=date]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 #time #speed .seg { padding: 0 var(--s2); min-width: 26px; font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
 #time #sunmoon { display: inline-flex; color: var(--text-2); }
 #time #clock { color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
