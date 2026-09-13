@@ -5,8 +5,9 @@ import {
   interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, closesInterview, isSkip, listDiscoveryInputs, isLongPrompt,
   ownerSaid, isDiscoveryMaterial, ownerPick, asksForSurprise, SURPRISE_ME, BRAND_NAME_PATH, OWNER_PICK_LABEL, type OwnerPick, ideaPath, IDEA_SCORE_MAX,
   INTERVIEW_QUESTIONS, openInterviewQuestions, interviewAskTitle, renderInterviewCovered, questionsAsked,
+  type CeoAnswer, unstatedAnswers, ceoAnswersFrom, INTERVIEW_TAG_LEGEND, INTERVIEW_TAGS,
   PRESSURE_TEST_SECTION, PRESSURE_HANDBOOK_PATH,
-  sha256, extractOwnerComments, PROPOSED_CONTENT_FENCE,
+  parseNote, sha256, extractOwnerComments, PROPOSED_CONTENT_FENCE,
 } from '@cubicle/core';
 
 // `ownerSaid` moved to core so the `discovery.inputs` tool cuts a cabin note the same way this module does
@@ -397,6 +398,11 @@ export function discoveryGoal(opts: { founderBrief: string; briefTemplate: strin
     '',
     `Rules: every claim about what already exists cites the file it came from. Where the owner's material and the interview disagree, say so rather than picking one. Never invent a customer, a number or a date.`,
     '',
+    // The transcript is a self-interview now (ruling P8-13), and a brief that reads the CEO's own answers as
+    // the owner's word is the live run's fabrication with a new source. The tags are what separates the two,
+    // so the legend goes in the goal as well as in the tool output: the author is told before they read.
+    `\`${INTERVIEW_PATH}\` is a transcript, not a questionnaire: the CEO answered the six founder questions itself from what the company had, and the owner adds to or corrects those answers. ${INTERVIEW_TAG_LEGEND} Attribute every line you use to whoever said it, and never write "the owner said" over an answer the CEO wrote.`,
+    '',
     // The truth rules, from the owner's first live run: the brief that went to them claimed a brand the company
     // does not have, an interview nobody had answered, and an idea the owner never picked — each of which the
     // vault contradicts in one line. `checkFounderBrief` refuses all three at `proposal.create`; this is the
@@ -563,37 +569,105 @@ export function interviewMaterial(vault: Vault): { text: string; brief: string }
  *
  * Returns the message id when this call is what sent it, and null when the interview had already been asked —
  * including the resume, where the transcript is written but no new message goes out.
+ *
+ * **The CEO answers first** (ruling P8-13). `self` is the one model call in this file: it is handed the open
+ * questions and gives back the CEO's own six answers, each tagged. It is optional and it never throws outward —
+ * no model, a failed call, an empty reply and a malformed one all land on six `[unstated]` answers, and the ask
+ * still goes out. An interview the owner cannot have because the strong tier was busy is not an interview.
  */
-export function askInterview(vault: Vault, ceo: string, now: Date): string | null {
+export type SelfInterview = (questions: readonly string[]) => Promise<readonly CeoAnswer[]>;
+
+export async function askInterview(vault: Vault, ceo: string, now: Date, self?: SelfInterview): Promise<string | null> {
   if (interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)) !== 'none') return null;
   const id = interviewMessageId(ceo);
   const sent = findInboxById(vault, id);
   if (sent) {
-    // The resume. The owner can see this message, so the transcript records exactly the questions it carries.
-    vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString(), questionsAsked(sent.body)), 'daemon');
+    // The resume. The owner can see this message, so the transcript records exactly the questions *and the
+    // answers* it carries — never a second model call, which would put different answers in the transcript
+    // from the ones the owner is reading.
+    const qs = questionsAsked(sent.body);
+    vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString(), qs, ceoAnswersFrom(sent.body, qs.length)), 'daemon');
     return null;
   }
   const m = interviewMaterial(vault);
   const open = openInterviewQuestions(m.text, m.brief);
   // Nothing to ask: the owner said all six in their own material. Nobody is sent anything, and the transcript
-  // says so. Reachable only here, where it is already known that no message has gone out.
+  // says so. Reachable only here, where it is already known that no message has gone out. No model call either:
+  // a question the owner already answered does not need the CEO's reading of it.
   if (!open.length) { vault.writeText(INTERVIEW_PATH, renderInterviewCovered(now.toISOString()), 'daemon'); return null; }
+  let answers: readonly CeoAnswer[] = unstatedAnswers(open.length);
+  if (self) { try { answers = await self(open); } catch { /* the ask never fails over a model */ } }
+  if (answers.length !== open.length) answers = [...answers, ...unstatedAnswers(open.length)].slice(0, open.length);
   createProposal(vault, {
     id, kind: 'message', from: ceo, to: 'owner',
-    title: interviewAskTitle(open.length), body: renderInterviewAsk(open, INTERVIEW_QUESTIONS.length - open.length),
+    title: interviewAskTitle(open.length), body: renderInterviewAsk(open, INTERVIEW_QUESTIONS.length - open.length, answers),
   }, ceo);
-  vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString(), open), 'daemon');
+  vault.writeText(INTERVIEW_PATH, renderInterviewAsked(now.toISOString(), open, answers), 'daemon');
   return id;
 }
 
+/** How much of the vault the self-interview prompt carries. A compact view, not the whole knowledge base. */
+export const SELF_INTERVIEW_VAULT_CHARS = 4_000;
+/** How much of the idea itself. A long typed brief is the idea; it is read, but it is not the whole prompt. */
+export const SELF_INTERVIEW_IDEA_CHARS = 2_000;
+
 /**
- * Close an open interview with the owner's **answer**. Returns false when there is nothing open, so the caller
- * can tell "recorded" from "the owner was just talking".
+ * What the CEO is interviewing itself *about* (ruling P8-13): the idea, the company's name if it has one, and a
+ * compact view of what the vault already says.
+ *
+ * The idea is whichever of the three discovery inputs exists, in the order that makes the answers true. The
+ * owner's pick comes first — after "surprise me" the chosen line is the only sentence that says what the
+ * company is for, and it is the exact case the owner complained about. Failing that it is whatever they typed
+ * that is material, and failing *that* the inbox files are all there is and `vaultSays` already carries them.
+ *
+ * `vaultSays` is the coverage material — the same bytes `openInterviewQuestions` reads — so an answer tagged
+ * `[from the vault]` is tagged against something the company can point at.
+ */
+export function selfInterviewSubject(vault: Vault): { idea: string; brand: string; vaultSays: string } {
+  const pick = ownerPick(vault);
+  const typed = discoveryPrompt(vault);
+  const idea = (pick ? `${OWNER_PICK_LABEL} ${pick.line}` : typed).slice(0, SELF_INTERVIEW_IDEA_CHARS).trim();
+  const brand = String(parseNote(vault.readTextOrNull(BRAND_NAME_PATH) ?? '').data.name ?? '').trim();
+  return { idea, brand, vaultSays: interviewMaterial(vault).text.slice(0, SELF_INTERVIEW_VAULT_CHARS).trim() };
+}
+
+/**
+ * The self-interview prompt. Deterministic and built here rather than in the heartbeat, so the daemon's one
+ * model call on this path is testable without a model: the tests assert the prompt carries the idea, the brand
+ * and the vault view, and the fakes assert the parse.
+ */
+export function selfInterviewPrompt(o: { idea: string; brand: string; vaultSays: string; questions: readonly string[] }): string {
+  return [
+    'You are answering the founder interview **yourself**, before it goes to the owner. They will read your answers and add to them or correct them — they must not be asked to answer for an idea we proposed.',
+    '',
+    o.idea ? `The idea:\n\n${o.idea}` : 'The idea: nothing has been written down yet.',
+    '',
+    `The company's name: ${o.brand || 'none yet — Brand/name.md carries no name.'}`,
+    '',
+    o.vaultSays ? `What the vault already says:\n\n${o.vaultSays}` : 'The vault says nothing else yet.',
+    '',
+    `Answer these ${o.questions.length} questions in order, one numbered line each, at most two sentences per answer. End every answer with exactly one tag, in square brackets: ${INTERVIEW_TAGS.map((t) => `[${t}]`).join(', ')}.`,
+    '',
+    '`[from the idea]` means it follows from the idea above and is your own reading of it, not the owner\'s word. `[from the vault]` means a file or a message above says it. `[unstated]` means you do not know — say so in the answer and do not guess. Guessing is the failure here; "unstated" is a good answer.',
+    '',
+    ...o.questions.map((q, i) => `${i + 1}. ${q}`),
+    '',
+    'Reply with the numbered answers and nothing else.',
+  ].join('\n');
+}
+
+/**
+ * Close an open interview with the owner's **addition**. Returns false when there is nothing open, so the
+ * caller can tell "recorded" from "the owner was just talking".
  *
  * It also returns false — and writes nothing — when what the owner typed is not an answer at all (ruling
  * FR-6). It used to close on the next message whatever it said (spec §1.4 as written), which is finding F5:
  * "your text is only half" would have been filed as the six answers and the founder brief written against it.
  * `closesInterview` is the whole of that judgement, and it costs no model call.
+ *
+ * What closing *means* moved with ruling P8-13 and lives entirely in `closeInterview`: "go" endorses the CEO's
+ * answers, "skip" drops the interview, and anything else that closes is appended as a `**You:**` addition
+ * under those answers — never over them. Nothing here changed, which is the point of putting it there.
  */
 export function captureInterviewAnswer(vault: Vault, text: string, now: Date): boolean {
   const transcript = vault.readTextOrNull(INTERVIEW_PATH);

@@ -314,41 +314,129 @@ export function openInterviewQuestions(material: string, brief = '', template: s
 
 const COUNT_WORDS = ['no', 'One', 'Two', 'Three', 'Four', 'Five', 'Six'] as const;
 
-/** The cabin message's title: "Three questions, while I get started". */
+/** The cabin message's title: "Three questions, and how I would answer them". */
 export function interviewAskTitle(n: number): string {
-  return `${COUNT_WORDS[n] ?? String(n)} question${n === 1 ? '' : 's'}, while I get started`;
+  return `${COUNT_WORDS[n] ?? String(n)} question${n === 1 ? '' : 's'}, and how I would answer them`;
 }
 
 /**
- * The one message the CEO sends. Six numbered questions, answered in any depth, or skipped outright.
+ * Where one of the CEO's own answers came from — the whole of ruling P8-13's honesty rule, in three words.
  *
- * It does not say "before I plan anything", because that is not true and the owner would catch it: the company
- * starts from whatever it already has in the same cycle these questions go out (spec §5.5 — one line in the
- * cabin is enough to plan from). What the answers buy is a better brief and a better *next* plan, so that is
- * what the message promises.
- *
- * `skipped` is how many the owner's own material already answered: saying so is the difference between a
- * company that read what it was given and one that did not. With none skipped the message is byte-identical to
- * the one it has always sent.
+ * The owner's complaint from the live run was that after "surprise me" and a pick, the six founder questions
+ * were put to *them* — about an idea the company had invented. So the CEO answers first, and every answer says
+ * what it rests on: the idea it is reading, a file in the vault, or nothing at all. Without the tag the owner
+ * cannot tell the company's reading of its own idea from something they said, and neither can the research
+ * office writing the founder brief from the same transcript.
  */
-export function renderInterviewAsk(questions: readonly string[] = INTERVIEW_QUESTIONS, skipped = 0): string {
+export const INTERVIEW_TAGS = ['from the idea', 'from the vault', 'unstated'] as const;
+export type InterviewTag = (typeof INTERVIEW_TAGS)[number];
+
+/** One of the CEO's six answers, with the tag that says what it rests on. */
+export interface CeoAnswer { text: string; tag: InterviewTag }
+
+/** What an answer says when the CEO does not know. The owner's own word, never a guess (ruling FR-4, P8-13). */
+export const CEO_UNKNOWN = 'I do not know this yet — nothing we have says it, and I am not going to guess.';
+
+/** The legend every reader of the transcript gets, so a tag is never read as the owner's word. */
+export const INTERVIEW_TAG_LEGEND = 'Answers tagged [unstated] are unknown; answers tagged [from the idea] are the CEO\'s own reading of the idea, not the owner\'s word; answers tagged [from the vault] rest on a file or a message; **You:** lines are the owner\'s.';
+
+/** How long one answer may run in the transcript. One line each, the same as the owner is asked for. */
+export const CEO_ANSWER_CHARS = 600;
+
+/** Six answers the CEO does not have — the fallback when no model replied. The ask still goes out. */
+export function unstatedAnswers(n: number = INTERVIEW_QUESTIONS.length): CeoAnswer[] {
+  return Array.from({ length: n }, () => ({ text: CEO_UNKNOWN, tag: 'unstated' as InterviewTag }));
+}
+
+/** One answer's body and tag. A body with no tag on the end is `unstated`: an untagged claim is not evidence. */
+function splitTag(raw: string): CeoAnswer {
+  const body = raw.replace(/\s+/g, ' ').trim().replace(/^\*\*\s*/, '').replace(/\s*\*\*$/, '').trim();
+  const m = body.match(/\[\s*(from the idea|from the vault|unstated)\s*\]\s*\.?\s*$/i);
+  const text = (m?.index === undefined ? body : body.slice(0, m.index)).trim().slice(0, CEO_ANSWER_CHARS);
+  const tag = (m ? m[1].toLowerCase() : 'unstated') as InterviewTag;
+  if (!text) return { text: CEO_UNKNOWN, tag: 'unstated' };
+  return { text, tag };
+}
+
+/**
+ * The model's six answers, parsed **defensively** (ruling P8-13). A model that drops a tag, answers five of
+ * six, numbers them `1)` instead of `1.`, or replies with nothing at all must not cost the owner their ask: a
+ * missing tag is `unstated`, a missing answer is `unstated`, and no reply at all is six of them.
+ *
+ * Deliberately not a schema and not a second model call. The worst case here is "the CEO says it does not
+ * know", which is the truthful answer anyway and is exactly what the owner is being invited to correct.
+ */
+export function parseCeoAnswers(raw: string | null, count: number = INTERVIEW_QUESTIONS.length): CeoAnswer[] {
+  const found: (CeoAnswer | undefined)[] = [];
+  const text = (raw ?? '').replace(/\r/g, '').trim();
+  if (text) {
+    for (const block of text.split(/^(?=\s{0,3}\d{1,2}[.)]\s)/m)) {
+      const m = block.trim().match(/^(\d{1,2})[.)]\s*([\s\S]*)$/);
+      if (!m) continue;
+      const i = Number(m[1]) - 1;
+      if (i < 0 || i >= count || found[i]) continue;
+      found[i] = splitTag(m[2]);
+    }
+  }
+  return Array.from({ length: count }, (_, i) => found[i] ?? { text: CEO_UNKNOWN, tag: 'unstated' as InterviewTag });
+}
+
+/** One rendered answer line, the one spelling the message, the transcript and both parsers agree on. */
+export function renderCeoAnswer(a: CeoAnswer): string { return `**CEO:** ${a.text} [${a.tag}]`; }
+
+/**
+ * The CEO's answers read back out of anything that carries them — the transcript's `## Answers` section, or the
+ * cabin message the owner can already see. One parser, because `askInterview`'s resume path reads them off the
+ * message (the message is what the owner is looking at) and discovery reads them off the transcript.
+ */
+export function ceoAnswersFrom(text: string | null, count: number = INTERVIEW_QUESTIONS.length): CeoAnswer[] {
+  const lines = (text ?? '').split('\n').filter((l) => l.includes('**CEO:**'));
+  return Array.from({ length: count }, (_, i) => (lines[i] === undefined ? { text: CEO_UNKNOWN, tag: 'unstated' as InterviewTag } : splitTag(lines[i].replace(/^[\s\S]*?\*\*CEO:\*\*\s*/, ''))));
+}
+
+/**
+ * The one message the CEO sends — its **own** six answers, for the owner to add to or correct (ruling P8-13).
+ *
+ * It is no longer a questionnaire. The owner's complaint from the live run was that the company put the six
+ * founder questions to them about an idea the company had just invented; answering them is the CEO's job, and
+ * the owner's job is to read the answers and say where they are wrong. So the questions come with an answer
+ * each, every answer carries the tag that says what it rests on, and the ask at the end is "add anything,
+ * correct me, or say go" — not "answer these".
+ *
+ * `skipped` is how many the owner's own material already answered: those are not put back to them, because
+ * reading their own words back at them is the same discourtesy in a different direction.
+ */
+export function renderInterviewAsk(questions: readonly string[] = INTERVIEW_QUESTIONS, skipped = 0, answers: readonly CeoAnswer[] = unstatedAnswers(questions.length)): string {
+  const qs = questions.slice(0, 6);
   return [
     skipped > 0
-      ? `I am starting from what you have already given me — you have answered ${skipped} of my six questions in it, so I am not asking those again. ${questions.length} left, to make sure I start from the right thing — answer the ones you want to, in any order, in your own words; one line each is plenty.`
-      : 'I am starting from what you have already given me. Six questions, to make sure I start from the right thing — answer the ones you want to, in any order, in your own words; one line each is plenty.',
+      ? `You have answered ${skipped} of my six questions in what you already gave me, so those are not here. Here is how I would answer the ${qs.length} that are left from what I have — add anything, correct me, or say go.`
+      : 'Here is how I would answer these six from what I have — add anything, correct me, or say go.',
     '',
-    ...questions.slice(0, 6).map((q, i) => `${i + 1}. ${q}`),
+    ...qs.flatMap((q, i) => [`**${i + 1}. ${q}**`, renderCeoAnswer(answers[i] ?? { text: CEO_UNKNOWN, tag: 'unstated' }), '']),
+    'Anything tagged [unstated] is something I do not know — those are the ones worth your time. [from the idea] is my own reading of the idea, not your word for it.',
     '',
-    // The message must not promise something the daemon no longer does (finding F5, ruling FR-6): the owner's
-    // *next* message no longer closes the interview whatever it says, because a complaint or a question would
-    // otherwise be filed as the six answers. Only an answer — or "skip" — closes it, and the message says so.
-    'Answer here in your own words, or reply "skip"; a question or a quick note to me leaves these open. What you answer goes into the founder brief the next plan is written against.',
+    // The message must not promise something the daemon no longer does (finding F5, ruling FR-6, P8-13): the
+    // owner's next message is an *addition*, "go" or "skip" closes this without one, and a question leaves it
+    // open. Each of those three is what the code does, said in the owner's own reading order.
+    'Add anything, correct me, or reply "go" if this is right; "skip" drops it. A question to me leaves this open. What stands here goes into the founder brief the next plan is written against.',
   ].join('\n');
 }
 
 /** An owner reply that means "stop asking". Deliberately narrow: a one-word answer, not a word inside a sentence. */
 export function isSkip(text: string): boolean {
   return /^\s*(skip|no thanks|not now|later)\s*[.!]?\s*$/i.test(text);
+}
+
+/**
+ * An owner reply that means "your answers are right" — the `go` of ruling P8-13. It closes the interview with
+ * **no** addition, and it is what lets the brief say the owner endorsed the CEO's answers.
+ *
+ * Narrow and anchored, for the same reason `isSkip` is: "go" inside a sentence is a word, and an interview
+ * closed on a word is finding F5 again. Punctuation is allowed because people type "go." and mean go.
+ */
+export function endorsesInterview(text: string): boolean {
+  return /^\s*(go|go ahead|ok|okay|k|yes|yep|yup|correct|right|looks? right|looks? good|sounds? right|sounds? good|that'?s right|all good|fine)\s*[.!]?\s*$/i.test(text);
 }
 
 /** How many words an answer on one line has to have before it is taken as the owner's answer to all six. */
@@ -368,18 +456,48 @@ export function closesInterview(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
   if (isSkip(t)) return true;
+  // "go" is one word and would never clear the floor below, and it is the single most likely thing an owner
+  // reading six answers they agree with will type (ruling P8-13).
+  if (endorsesInterview(t)) return true;
   if (t.split('\n').filter((l) => l.trim()).length >= 2) return true;
   return t.split(/\s+/).filter(Boolean).length >= INTERVIEW_ANSWER_WORDS && !t.endsWith('?');
 }
 
 export type InterviewPhase = 'none' | 'asked' | 'answered' | 'skipped' | 'covered';
 
-/** Where the interview stands, read from the transcript alone — no cache, no state file. */
+/** The heading that records "the owner read the CEO's answers and said go". */
+export const INTERVIEW_ENDORSED_HEADING = '## Endorsed';
+/** The heading the CEO's own six answers sit under, and the material discovery reads. */
+export const INTERVIEW_ANSWERS_HEADING = '## Answers';
+
+/**
+ * The owner has actually spoken in this transcript (ruling P8-13). Three spellings, in the order they appeared:
+ * a `**You:**` addition under the CEO's answers, an `## Endorsed` block where they read those answers and said
+ * go, and — for a transcript written before P8-13 — the old `## Answer` section where the owner answered all
+ * six themselves.
+ *
+ * The CEO's own `## Answers` are deliberately **not** one of them: they are the company's reading of its own
+ * idea, and a founder brief that cited them as the owner's word would be the very lie `checkFounderBrief`
+ * rule 3 exists to catch. `## Answers` does not match `/^## Answer\b/` — the `\b` fails against the `s` — so
+ * the legacy spelling stays exact rather than swallowing the new section.
+ */
+export function ownerAnsweredInterview(transcript: string | null): boolean {
+  if (!transcript) return false;
+  return /^\*\*You:\*\*/m.test(transcript) || /^## Endorsed\b/m.test(transcript) || /^## Answer\b/m.test(transcript);
+}
+
+/**
+ * Where the interview stands, read from the transcript alone — no cache, no state file.
+ *
+ * `asked` covers the new middle state as well as the old one: the CEO has answered the six itself and the owner
+ * has not spoken yet. That is deliberate — callers ask this question to find out whether the company is waiting
+ * on the owner, and it is (ruling P8-13 adds no phase name, so nothing downstream has to learn one).
+ */
 export function interviewPhase(transcript: string | null): InterviewPhase {
   if (!transcript || !transcript.trim()) return 'none';
   if (/^## Already answered\b/m.test(transcript)) return 'covered';
   if (/^## Skipped\b/m.test(transcript)) return 'skipped';
-  if (/^## Answer\b/m.test(transcript)) return 'answered';
+  if (ownerAnsweredInterview(transcript)) return 'answered';
   return 'asked';
 }
 
@@ -412,32 +530,72 @@ export function questionsAsked(message: string): string[] {
   return found.length ? found : [...INTERVIEW_QUESTIONS];
 }
 
-/** The transcript as the CEO leaves it after asking. */
-export function renderInterviewAsked(at: string, questions: readonly string[] = INTERVIEW_QUESTIONS): string {
+/**
+ * The transcript as the CEO leaves it after answering the six itself and putting them to the owner.
+ *
+ * A transcript, not a questionnaire (ruling P8-13): the questions, then `## Answers` with one `**CEO:**` line
+ * each, and the owner's `**You:**` additions appended under them. `## Answers` is last on purpose — an
+ * addition is appended to the end of the file, and it has to land under the answers it is adding to.
+ */
+export function renderInterviewAsked(at: string, questions: readonly string[] = INTERVIEW_QUESTIONS, answers: readonly CeoAnswer[] = unstatedAnswers(questions.length)): string {
+  const qs = questions.slice(0, 6);
   return [
     '# Founder interview', '',
-    `_The CEO asked these on ${at.slice(0, 10)}. The owner answers in the cabin; an answer — or "skip" — closes the interview, and a question or a quick note to the CEO leaves it open (ruling FR-6)._`, '',
+    `_The CEO answered these itself on ${at.slice(0, 10)} and put the answers to the owner. The owner adds to them or corrects them in the cabin; an addition — or "go", or "skip" — closes the interview, and a question or a quick note to the CEO leaves it open (rulings FR-6, P8-13)._`, '',
+    `_${INTERVIEW_TAG_LEGEND}_`, '',
     '## Questions', '',
-    ...questions.slice(0, 6).map((q, i) => `${i + 1}. ${q}`),
+    ...qs.map((q, i) => `${i + 1}. ${q}`),
+    '',
+    INTERVIEW_ANSWERS_HEADING, '',
+    ...qs.map((_q, i) => `${i + 1}. ${renderCeoAnswer(answers[i] ?? { text: CEO_UNKNOWN, tag: 'unstated' })}`),
     '',
   ].join('\n');
 }
 
 /**
- * Close the interview with whatever the owner said. A skip is recorded as a skip rather than as an empty answer:
- * the discovery job reads the difference, and "the owner chose not to answer" is itself worth knowing.
+ * Close the interview with whatever the owner said (ruling P8-13). Three endings, and the difference between
+ * them is what the founder brief is allowed to claim:
+ *
+ * - **skip** — recorded as a skip. The CEO's answers stand as the company's own reading and nothing more.
+ * - **"go"** — the owner read the answers and endorsed them, which the brief may cite as such. No `**You:**`
+ *   line is invented for them: they added nothing, and putting words under their name would be the same
+ *   fabrication in a smaller font.
+ * - **anything else that closes** — appended as a `**You:**` addition *under* the CEO's answers. It never
+ *   replaces them: the owner was asked to add and correct, not to answer.
  */
 export function closeInterview(transcript: string, answer: string, at = nowIso()): string {
   const base = transcript.trimEnd();
-  if (isSkip(answer)) return `${base}\n\n## Skipped\n\n_The owner skipped the interview on ${at.slice(0, 10)}._\n`;
-  return `${base}\n\n## Answer\n\n_${at.slice(0, 10)}_\n\n${answer.trim()}\n`;
+  if (isSkip(answer)) return `${base}\n\n## Skipped\n\n_The owner skipped the interview on ${at.slice(0, 10)}. The answers above are the CEO's own._\n`;
+  if (endorsesInterview(answer)) return `${base}\n\n${INTERVIEW_ENDORSED_HEADING}\n\n_The owner read the CEO's answers on ${at.slice(0, 10)} and said go: they stand as agreed._\n`;
+  return `${base}\n\n**You:** ${answer.trim()}\n\n_Added ${at.slice(0, 10)}._\n`;
 }
 
-/** The owner's own words from a closed transcript, or '' when there are none. */
+/**
+ * The owner's own words from a transcript, or '' when there are none — their `**You:**` additions, or the
+ * `## Answer` body of a transcript written before P8-13. Never the CEO's answers.
+ */
 export function interviewAnswer(transcript: string | null): string {
   if (!transcript) return '';
+  const i = transcript.search(/^\*\*You:\*\*/m);
+  if (i >= 0) {
+    return transcript.slice(i).replace(/^\*\*You:\*\*\s*/gm, '').replace(/^\s*_Added \d{4}-\d{2}-\d{2}\._\s*$/gm, '').trim();
+  }
   const after = transcript.split(/^## Answer\s*$/m)[1];
   return (after ?? '').replace(/^\s*_\d{4}-\d{2}-\d{2}_\s*$/m, '').trim();
+}
+
+/**
+ * What discovery reads out of the transcript: the CEO's six answers **with their tags**, plus the owner's
+ * additions under them (ruling P8-13). One block, verbatim, because the tags are the whole point — a research
+ * office that cannot tell `[from the idea]` from `[from the vault]` from the owner's own line will write a
+ * founder brief that claims all three are the same thing.
+ *
+ * Cut at the next `## ` heading, so a `## Skipped` or `## Endorsed` block below is not read as material.
+ */
+export function interviewAnswersSection(transcript: string | null): string {
+  if (!transcript) return '';
+  const parts = transcript.split(new RegExp(`^${INTERVIEW_ANSWERS_HEADING}\\s*$`, 'm'));
+  return parts.length < 2 ? '' : parts[1].split(/^## /m)[0].trim();
 }
 
 /**

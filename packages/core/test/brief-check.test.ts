@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault } from '../src/template.js';
 import type { Vault } from '../src/vault.js';
 import { checkFounderBrief, briefCheckContext, briefFromProposalBody } from '../src/brief-check.js';
-import { INTERVIEW_PATH, DISCOVERY_INBOX, renderInterviewAsked, closeInterview } from '../src/discovery.js';
+import { INTERVIEW_PATH, DISCOVERY_INBOX, INTERVIEW_QUESTIONS, renderInterviewAsked, closeInterview, parseCeoAnswers } from '../src/discovery.js';
 import { loadGates, criteriaFor } from '../src/gates.js';
 
 /**
@@ -124,6 +124,26 @@ describe('checkFounderBrief (ruling FR-4)', () => {
       .replace('- The interview (`Discovery/interview.md`) has no answers yet: it holds the six questions only.', '- The owner\'s answers in `Discovery/interview.md`: six years running creator marketing at an agency.')
       .replace(/\*\*Founder-Market Fit:\*\*.*/, '**Founder-Market Fit:** six years in creator marketing, per the interview answer.');
     expect(checkFounderBrief(vault, answered, ctx)).toEqual({ ok: true, findings: [] });
+  });
+
+  it("the CEO's own answers are not the owner's: a self-interview is not answered (ruling P8-13)", () => {
+    const answers = parseCeoAnswers('1. A sponsor marketplace. [from the idea]\n2. Creators. [from the idea]');
+    vault.writeText(INTERVIEW_PATH, renderInterviewAsked('2026-09-13T08:40:00.000Z', INTERVIEW_QUESTIONS, answers), 'ceo');
+    expect(briefCheckContext(vault).interviewAnswered).toBe(false);
+    // A brief that reads those answers back as the owner's word is exactly the live run's fabrication.
+    const claim = HONEST_BRIEF.replace('- The interview (`Discovery/interview.md`) has no answers yet: it holds the six questions only.', '- The owner said in `Discovery/interview.md` that this is a sponsor marketplace.');
+    expect(checkFounderBrief(vault, claim, briefCheckContext(vault)).ok).toBe(false);
+    // The honest sentence about the same transcript passes.
+    const honest = HONEST_BRIEF.replace('- The interview (`Discovery/interview.md`) has no answers yet: it holds the six questions only.', "- `Discovery/interview.md` holds the CEO's own answers; the owner has not added to them or endorsed them.");
+    expect(checkFounderBrief(vault, honest, briefCheckContext(vault))).toEqual({ ok: true, findings: [] });
+  });
+
+  it("an owner who reads the CEO's answers and says go has answered (ruling P8-13)", () => {
+    const asked = renderInterviewAsked('2026-09-13T08:40:00.000Z', INTERVIEW_QUESTIONS, parseCeoAnswers('1. A sponsor marketplace. [from the idea]'));
+    vault.writeText(INTERVIEW_PATH, closeInterview(asked, 'go', '2026-09-13T09:00:00.000Z'), 'ceo');
+    expect(briefCheckContext(vault).interviewAnswered).toBe(true);
+    const endorsed = HONEST_BRIEF.replace('- The interview (`Discovery/interview.md`) has no answers yet: it holds the six questions only.', '- The owner endorsed the answers in `Discovery/interview.md`.');
+    expect(checkFounderBrief(vault, endorsed, briefCheckContext(vault))).toEqual({ ok: true, findings: [] });
   });
 
   it('stops asking for "unstated" once the owner has dropped a file in, even with no interview', () => {
