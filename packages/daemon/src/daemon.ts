@@ -303,9 +303,10 @@ export class Daemon {
       // Ruling S-4. Every save of a proposal in Obsidian used to buy a whole cycle — a plan, two board sessions
       // and a rewrite — and the second live run spent its day's strong tier on four of them in twenty minutes,
       // all of them the owner approving things. An approval needs no cycle: the tick above applies it within
-      // seconds. Only an owner *message* and a *rejection* need one, because only they ask for new thinking;
-      // `inboxEditWakesHeartbeat` is the whole of that judgement, and the re-planning gate reads the same
-      // predicate so a cycle woken for something else cannot re-plan off an approval either.
+      // seconds. What still needs one is an owner *message*, a *rejection*, and the adopted founder brief —
+      // the document ruling S-1 makes every planning step wait on. `inboxEditWakesHeartbeat` is the whole of
+      // that judgement, and the re-planning gate reads the same predicate so a cycle woken for something else
+      // cannot re-plan off an approval either.
       if (HEARTBEAT_WAKE_AREAS.includes(area) && (area !== '00 Inbox' || inboxEditWakesHeartbeat(this.vault, rel))) this.requestHeartbeat(`owner edited ${rel}`);
       this.workers.wake();
     }));
