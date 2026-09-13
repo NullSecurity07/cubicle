@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault } from '../src/template.js';
 import type { Vault } from '../src/vault.js';
 import { parseNote } from '../src/frontmatter.js';
-import { KEEP_AT, PARK_AT, IDEA_SCORE_MAX, IDEA_SCORE_WEIGHTS } from '../src/ideas.js';
+import { KEEP_AT, PARK_AT, IDEA_SCORE_MAX, IDEA_SCORE_WEIGHTS, SWEEP_IDEAS_SECTION, OWNER_SEEN_IDEA_SOURCES } from '../src/ideas.js';
 import { FOUNDER_BRIEF, FOUNDER_BRIEF_SECTIONS, DISCOVERY_INBOX } from '../src/discovery.js';
 import { expandProcess } from '../src/processes.js';
 
@@ -43,6 +43,17 @@ describe('Docs/ideas-handbook.md', () => {
     expect(md).toMatch(/research office[^.]*evidence[^.]*fit/i);
     expect(md).toMatch(/finance office[^.]*value[^.]*effort/i);
     expect(md).toMatch(/only[^.]*kept/i);
+  });
+
+  // Ruling W3-5: the board sits only on ideas the owner has seen, and the one way to promote a card it has not
+  // is a frontmatter flag. There is no parser for it, so the handbook is where that rule lives — if it drifts
+  // from `ownerHasSeenIdea` / the brief's own wording, nobody ever finds out.
+  it('says which cards reach the board, and how the owner promotes one that would not', () => {
+    const md = vault.readText('Docs/ideas-handbook.md');
+    expect(md).toContain('`decision: keep`');
+    expect(md).toContain(SWEEP_IDEAS_SECTION.replace(/^#+\s*/, ''));
+    for (const s of OWNER_SEEN_IDEA_SOURCES) expect(md, s).toContain(s);
+    expect(md).toMatch(/intelligence[\s\S]{0,200}not/i);
   });
 
   it('is short enough that an agent will read it', () => {

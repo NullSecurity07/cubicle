@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineTool, type ToolContext } from '../registry.js';
 import {
-  createProposal, ProposalKind, idFromKey, loadOrg, can, officeHolder,
+  createProposal, ProposalKind, idFromKey, loadOrg, can, officeHolder, listInbox, type Vault,
   checkFounderBrief, briefCheckContext, briefFromProposalBody, hasProposedContentFence, founderBriefProposalBody, citedPaths,
 } from '@cubicle/core';
 
@@ -28,6 +28,27 @@ function briefKey(ctx: ToolContext): string {
 
 /** Forget every count. Tests only — the daemon never needs it. */
 export function resetBriefTries(): void { briefTries.clear(); }
+
+/**
+ * The founder brief this job already filed and the owner has not finished with, or null.
+ *
+ * Ruling W3-4, out of the third live run: one discovery job filed the brief at step 31 and again at step 33.
+ * Two proposals, two board sessions on the same document (32 model calls), two question messages to the owner,
+ * and two notes to adopt — of which adopting either leaves the other open for ever. The job is the key because
+ * that is the unit the company works in: a *second* discovery job (the owner rejected the first brief and the
+ * research office wrote another) is a genuinely new document and gets its own note.
+ *
+ * Unresolved, not undecided: a note the owner has ruled on but the dispatcher has not applied yet is still the
+ * brief they are looking at, and is handled a step above rather than here.
+ */
+function openFounderBrief(vault: Vault, job: string | null | undefined): { path: string; data: Record<string, unknown> } | null {
+  if (!job) return null;
+  const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief' && n.data.job === job && !n.data.resolved_at);
+  return note ? { path: note.path, data: note.data as unknown as Record<string, unknown> } : null;
+}
+
+/** Said on every path that ends with a brief already in the inbox, so the author stops writing and finishes. */
+const DO_NOT_FILE_AGAIN = 'do not file again — finish the job';
 
 export const proposalCreate = defineTool({
   name: 'proposal.create',
@@ -88,6 +109,28 @@ export const proposalCreate = defineTool({
         const brief = briefFromProposalBody(body);
         body = founderBriefProposalBody(brief, citedPaths(brief));
       }
+      // One open brief per discovery job (ruling W3-4). The check runs **after** the truth check above, so the
+      // note the owner sees is always a brief that passed it, and so the two-returns rule keeps working on the
+      // same document rather than being reset by a second note.
+      const open = openFounderBrief(ctx.vault, ctx.jobId);
+      if (open) {
+        const at = `(${open.path})`;
+        const data = { id: String(open.data.id ?? ''), path: open.path };
+        // Decided already, even if the dispatcher has not applied it yet: what the owner said yes or no to is
+        // the document on screen, and rewriting it underneath their decision is the one thing worse than a
+        // duplicate (the reason `runBriefBoardSession` re-reads before its own write, ruling R-T3-3).
+        if (open.data.approved != null || open.data.chosen != null) {
+          return { ok: true, text: `the brief you already filed ${at} is with the owner and they have ruled on it; ${DO_NOT_FILE_AGAIN}`, data };
+        }
+        // The board has written its pressure test into that note (`board_pending` cleared). A rewrite would
+        // throw away sixteen model calls of argument and put the author's draft section back, so it does not
+        // happen: the brief on file stands and the owner reads it.
+        if (open.data.board_pending === false) {
+          return { ok: true, text: `the board has already pressure-tested the brief you filed ${at} and its findings are in it; a rewrite would throw them away, so ${DO_NOT_FILE_AGAIN}`, data };
+        }
+        ctx.vault.updateNote(open.path, (n) => ({ data: n.data, body: `# ${title.trim()}\n\n${body.trim()}\n` }), ctx.roleId, { job: ctx.jobId ?? null });
+        return { ok: true, text: `updated the brief you already filed ${at}; ${DO_NOT_FILE_AGAIN}`, data };
+      }
     }
     const { id, path } = createProposal(ctx.vault, { id: ctx.idempotencyKey ? idFromKey(kind === 'message' ? 'msg' : 'prop', ctx.idempotencyKey) : undefined, kind, from: ctx.roleId, to: 'owner', title, body, target, job: ctx.jobId ?? undefined }, ctx.roleId);
     // SP8 ruling P8-6: under `board_dialogue: full` the brief is not finished when it is filed — the board
@@ -99,6 +142,9 @@ export const proposalCreate = defineTool({
     }
     if (kind === 'message') return { ok: true, text: `message ${id} sent to the owner at ${path}; this job is blocked until they answer`, data: { id, path }, block: { kind: 'message', id } };
     if (kind === 'threat_model') return { ok: true, text: `threat model ${id} filed at ${path}; this job is blocked until the owner approves it`, data: { id, path }, block: { kind: 'proposal', id } };
+    // Said on the way out, not only on the way back in (ruling W3-4): the live run's job filed the brief and
+    // then filed it again two steps later, so the successful result is where "that is done" belongs.
+    if (kind === 'founder_brief') return { ok: true, text: `founder brief ${id} filed at ${path}; the owner decides. Filed; ${DO_NOT_FILE_AGAIN}`, data: { id, path } };
     return { ok: true, text: `proposal ${id} filed at ${path}; the owner decides`, data: { id, path } };
   },
 });

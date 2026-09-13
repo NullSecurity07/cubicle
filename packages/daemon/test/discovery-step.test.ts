@@ -109,8 +109,8 @@ describe('what the discovery step does this cycle (spec §1, §5)', () => {
 });
 
 describe('who gets priced this cycle (spec §5.3)', () => {
-  const idea = (id: string, over: Partial<{ decision: string; estimate: string; score_inputs: Record<string, number> }> = {}) =>
-    ({ id, decision: 'undecided', estimate: '', score_inputs: {}, ...over }) as { id: string; decision: string; estimate: string; score_inputs: { value?: number; effort?: number; evidence?: number; fit?: number } };
+  const idea = (id: string, over: Partial<{ source: string; decision: string; estimate: string; score_inputs: Record<string, number> }> = {}) =>
+    ({ id, source: 'discovery', decision: 'undecided', estimate: '', score_inputs: {}, ...over }) as { id: string; source: string; decision: string; estimate: string; score_inputs: { value?: number; effort?: number; evidence?: number; fit?: number } };
 
   it('prices a card whose estimate prose is filled in but whose numbers are not', () => {
     expect(ideasNeedingEstimate([idea('a', { estimate: 'a few weeks and a laptop' })]).map((i) => i.id)).toEqual(['a']);
@@ -146,6 +146,20 @@ describe('who gets priced this cycle (spec §5.3)', () => {
     expect(ideasNeedingResearch(ideas).map((i) => i.id)).toEqual(['b', 'c', 'a']);
     expect(ideasNeedingResearch(ideas, 1).map((i) => i.id)).toEqual(['b']);
     expect(ideasNeedingResearch([])).toEqual([]);
+  });
+
+  // Ruling W3-5: pricing and researching a card exist to put it in front of the board, so a card the board may
+  // not sit on is not worth either call. A sweep's own card waits in the brief until the owner promotes it.
+  it('spends neither office on a card nobody asked for, and both the moment the owner marks it keep', () => {
+    const sweep = [idea('s', { source: 'intelligence:competitive', score_inputs: { evidence: 5, value: 5 } })];
+    expect(ideasNeedingEstimate(sweep)).toEqual([]);
+    expect(ideasNeedingResearch(sweep)).toEqual([]);
+    const promoted = [idea('s', { source: 'intelligence:competitive', decision: 'keep', score_inputs: { evidence: 5, value: 5 } })];
+    expect(ideasNeedingEstimate(promoted).map((i) => i.id)).toEqual(['s']);
+    expect(ideasNeedingResearch(promoted).map((i) => i.id)).toEqual(['s']);
+    // The owner's own sources are unaffected, and a card they kept is still not re-priced.
+    expect(ideasNeedingEstimate([idea('p', { source: 'pantry' })]).map((i) => i.id)).toEqual(['p']);
+    expect(ideasNeedingEstimate([idea('k', { decision: 'keep' })])).toEqual([]);
   });
 });
 
@@ -399,11 +413,12 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(ids).toEqual([estimateJobId(slugs[3])]);
   });
 
-  // I2: `nextIdeaForBoard` needs all four inputs, and until now only the finance half had a producer — every
-  // card an intelligence sweep filed was unscorable for ever, sat in `Ideas/` unreported, and still cost the
-  // cycle an estimate job and up to an hour of `ideas_board` waiting.
+  // I2: `nextIdeaForBoard` needs all four inputs, and until now only the finance half had a producer — an
+  // `owner`- or `pantry`-sourced card was unscorable for ever, sat in `Ideas/` unreported, and still cost the
+  // cycle an estimate job and up to an hour of `ideas_board` waiting. (A *sweep's* card is now left out of both
+  // producers on purpose, until the owner promotes it — ruling W3-5, covered above.)
   it('asks the research office for the other half, capped and assigned the same way', () => {
-    const priced = writeIdeaCard(vault, { title: 'Priced but unresearched', source: 'intelligence:competitive' }, 'intelligence_analyst');
+    const priced = writeIdeaCard(vault, { title: 'Priced but unresearched', source: 'discovery' }, 'intelligence_analyst');
     updateIdea(vault, priced, { score_inputs: { value: 4, effort: 4 } }, 'cfo');
     const bare = writeIdeaCard(vault, { title: 'A bare hunch', source: 'owner' }, 'ceo');
     const whole = writeIdeaCard(vault, { title: 'Fully answered', source: 'discovery' }, 'research_manager');

@@ -277,12 +277,97 @@ export function keptIdeas(vault: Vault): IdeaFrontmatter[] {
 }
 
 /**
- * The highest-scoring idea the board has not sat on yet: scored (both offices have answered), no verdict, not
- * already decided. One per cycle is what the board session costs — four model calls — so the cycle spends them
- * on the best candidate rather than the oldest.
+ * The sources whose cards the owner has necessarily seen: their own material (`discovery`), a card they typed
+ * (`owner`), the idle-hours chat they read (`pantry`), and the pivot a board session proposed to them
+ * (`board`, ruling W3-2). Compared on the head segment, so `intelligence:competitive` is read as
+ * `intelligence` — and nothing else in the enum has one.
+ *
+ * `board` is deliberately matched here by name rather than added to `IDEA_SOURCES`: `source` is a free string
+ * (an unrecognised value is read as the job that filed it), so this list can say what the owner has seen
+ * without the schema having to grow a value first.
+ */
+export const OWNER_SEEN_IDEA_SOURCES = ['discovery', 'owner', 'pantry', 'board'] as const;
+
+/** True for a card nobody asked for: a sweep noticed it and filed it (`source: intelligence:*`). */
+function sweepSourced(source: string): boolean {
+  return !(OWNER_SEEN_IDEA_SOURCES as readonly string[]).includes(source.split(':')[0].trim().toLowerCase());
+}
+
+/**
+ * Whether the owner has laid eyes on this idea (ruling W3-5): it came from their own material, their own
+ * typing, the pantry, or a board pivot they were asked about — or they promoted a sweep card by marking it
+ * `keep`.
+ */
+export function ownerHasSeenIdea(idea: { source: string; decision: string }): boolean {
+  return !sweepSourced(idea.source) || idea.decision === 'keep';
+}
+
+/**
+ * Whether the company may spend the board's time — and the two offices' scoring calls — on this card.
+ *
+ * Ruling W3-5, out of the third live run: an intelligence sweep filed *Persistent Agent Memory Integration*, it
+ * was scored, it reached the board, sixteen model calls were spent arguing it and the owner was asked about
+ * engineering hours for something nobody had ever mentioned to them. A card the owner has never seen is not a
+ * candidate; it is a note. So an **undecided** card is a candidate only when it came from somewhere the owner
+ * has seen, and a **sweep** card becomes one only once they mark it `decision: keep` — which on such a card
+ * reads "have the board look at this", not "we are doing it", and is why a promoted card stays a candidate
+ * until the board has actually sat on it (`board_verdict`, checked by the callers that have it).
+ */
+export function ideaOpenToBoard(idea: { source: string; decision: string }): boolean {
+  return idea.decision === 'undecided' ? !sweepSourced(idea.source) : idea.decision === 'keep' && sweepSourced(idea.source);
+}
+
+/**
+ * The highest-scoring idea the board has not sat on yet: scored (both offices have answered), no verdict, and
+ * open to the board at all (`ideaOpenToBoard` — the owner has seen it). One per cycle is what the board session
+ * costs — up to seventeen model calls — so the cycle spends them on the best candidate rather than the oldest.
  */
 export function nextIdeaForBoard(vault: Vault): IdeaFrontmatter | null {
-  return listIdeas(vault).find((i) => i.score !== null && i.board_verdict === null && i.decision === 'undecided') ?? null;
+  return listIdeas(vault).find((i) => i.score !== null && i.board_verdict === null && ideaOpenToBoard(i)) ?? null;
+}
+
+/**
+ * The cards nobody asked for and the owner has not promoted — what the brief lists under "Ideas the sweep
+ * found" so they are visible without being expensive. A card the owner has already parked or scrapped is
+ * finished business and is not listed again.
+ *
+ * "The sweep" is the common case and the heading's word, but the rule is provenance, not the sweep: a card some
+ * *other* job filed on its own initiative (`source` is that job's id — see `provenanceFor`) is equally
+ * unrequested, and belongs on the same list for the same reason.
+ */
+export function sweepIdeas(vault: Vault): IdeaFrontmatter[] {
+  return listIdeas(vault).filter((i) => i.decision === 'undecided' && !ownerHasSeenIdea(i));
+}
+
+/**
+ * The first real line of a card's `## Why it might matter` — the one line the brief has room for. The
+ * placeholder a fresh card carries (`_Not stated._`) is italics-only and is not a reason, so it is dropped
+ * rather than quoted as one.
+ */
+export function ideaWhyLine(body: string): string {
+  const section = (body.split(/^## Why it might matter[ \t]*$/m)[1] ?? '').split(/^## /m)[0];
+  const line = section.split('\n').map((l) => l.trim()).find((l) => l && !/^_.*_$/.test(l)) ?? '';
+  return line.replace(/^[-*+]\s+/, '').slice(0, 200);
+}
+
+/** The heading the brief lists unpromoted sweep cards under (ruling W3-5). */
+export const SWEEP_IDEAS_SECTION = '## Ideas the sweep found';
+
+/** How the owner promotes one, with `<slug>` still to be filled in. One sentence, said the same way everywhere. */
+export const IDEA_PROMOTE_HINT = 'to have the board look at it, set `decision: keep` on Ideas/<slug>.md or say so to the CEO';
+
+/** Title, one-line why, and the promote instruction, for each sweep card the brief lists. */
+export function sweepIdeaRows(vault: Vault): { id: string; title: string; why: string }[] {
+  return sweepIdeas(vault).map((i) => ({ id: i.id, title: i.title, why: ideaWhyLine(readIdea(vault, i.id)?.body ?? '') }));
+}
+
+/** The brief's `## Ideas the sweep found` section: what it noticed, and what to do if the owner wants it judged. */
+export function renderSweepIdeasSection(rows: { id: string; title: string; why: string }[]): string {
+  return [
+    'Nobody asked for these: the company noticed them while it was doing something else, and the board does not sit on one until you say so.',
+    '',
+    ...rows.map((r) => `- **${r.title}** — ${r.why || 'the card gives no reason yet'} ([[${ideaPath(r.id).replace(/\.md$/, '')}]]) — ${IDEA_PROMOTE_HINT.replace('<slug>', r.id)}`),
+  ].join('\n');
 }
 
 export interface NewIdea {

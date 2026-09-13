@@ -12,11 +12,11 @@ import { proposalCreate, resetBriefTries, BRIEF_CHECK_TRIES } from '../src/tools
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 let dir: string;
 let vault: Vault;
-const ctx = (): ToolContext => ({
+const ctx = (job = 'job_discovery1'): ToolContext => ({
   vault, events: vault.events, roleId: 'research_manager',
   role: RoleFrontmatter.parse(vault.readNoteOrNull('Roles/research_manager.md')!.data),
-  jobId: 'job_discovery1', config: cfg, env: {},
-  workspace: '.cubicle/workspace/job_discovery1', now: () => new Date('2026-09-13T09:00:00.000Z'),
+  jobId: job, config: cfg, env: {},
+  workspace: `.cubicle/workspace/${job}`, now: () => new Date('2026-09-13T09:00:00.000Z'),
   scheduler: { enqueue: () => 'job_x' },
 } as ToolContext);
 
@@ -45,9 +45,9 @@ const TRUE_BRIEF = brief({
   fit: 'unstated — nothing in the material says who the owner is.',
 });
 
-const file = (b: string) => proposalCreate.handler(
-  { kind: 'founder_brief', title: 'What I understood', body: founderBriefProposalBody(b, ['Discovery/interview.md']), target: FOUNDER_BRIEF },
-  ctx(),
+const file = (b: string, opts: { job?: string; title?: string } = {}) => proposalCreate.handler(
+  { kind: 'founder_brief', title: opts.title ?? 'What I understood', body: founderBriefProposalBody(b, ['Discovery/interview.md']), target: FOUNDER_BRIEF },
+  ctx(opts.job),
 );
 const briefsFiled = () => listInbox(vault).filter((n) => n.data.kind === 'founder_brief').length;
 
@@ -145,6 +145,77 @@ describe('proposal.create checks a founder_brief against the vault before filing
       const r = await proposalCreate.handler({ kind: 'brand_change', title: 'A name', body: 'Call it X.', target: 'Brand/name.md' }, ctx());
       expect(r.ok).toBe(true);
       expect(listInbox(vault).find((n) => n.data.kind === 'brand_change')!.data.board_pending).toBeUndefined();
+    });
+  });
+
+  /**
+   * Ruling W3-4. The third live run's discovery job filed the brief at step 31 and filed it again at step 33:
+   * two proposals, two board sessions on the same document (32 model calls), two question messages, and two
+   * notes to adopt — of which adopting either left the other open for ever.
+   */
+  describe('one open brief per discovery job (ruling W3-4)', () => {
+    const REVISED = TRUE_BRIEF.replace('Creators with 10–50k followers', 'Creators with 10–100k followers');
+    const briefNote = () => listInbox(vault).find((n) => n.data.kind === 'founder_brief')!;
+
+    it('updates the note it already filed instead of filing a second one, title and all', async () => {
+      const first = await file(TRUE_BRIEF);
+      expect(first.ok).toBe(true);
+      expect(first.text).toContain('do not file again — finish the job');
+
+      const second = await file(REVISED, { title: 'What I understood (again)' });
+      expect(second.ok).toBe(true);
+      expect(second.text).toContain('updated the brief you already filed');
+      expect(second.text).toContain(briefNote().path);
+      expect(second.text).toContain('do not file again');
+      expect(briefsFiled()).toBe(1);
+      // The note carries the second draft, under the second title, still inside the fence the dispatcher adopts from.
+      const note = briefNote();
+      expect(note.body.split('\n')[0]).toBe('# What I understood (again)');
+      expect(hasProposedContentFence(note.body)).toBe(true);
+      expect(briefFromProposalBody(note.body)).toContain('10–100k followers');
+      expect(note.data.board_pending).toBe(true);              // untouched: the board has still not sat
+    });
+
+    it('gives a different discovery job its own note — a second brief is a genuinely new document', async () => {
+      expect((await file(TRUE_BRIEF)).ok).toBe(true);
+      expect((await file(REVISED, { job: 'job_discovery2' })).ok).toBe(true);
+      expect(briefsFiled()).toBe(2);
+      const jobs = listInbox(vault).filter((n) => n.data.kind === 'founder_brief').map((n) => n.data.job);
+      expect(jobs.sort()).toEqual(['job_discovery1', 'job_discovery2']);
+    });
+
+    it('never rewrites a brief the owner has already ruled on', async () => {
+      expect((await file(TRUE_BRIEF)).ok).toBe(true);
+      const path = briefNote().path;
+      vault.updateNote(path, (n) => ({ data: { ...n.data, approved: true }, body: n.body }), 'owner');
+      const again = await file(REVISED);
+      expect(again.text).toContain('they have ruled on it');
+      expect(again.text).toContain('do not file again — finish the job');
+      expect(briefsFiled()).toBe(1);
+      expect(briefFromProposalBody(briefNote().body)).toContain('10–50k followers');   // the document they said yes to
+    });
+
+    it('never throws away the board\'s pressure test by rewriting the note under it', async () => {
+      expect((await file(TRUE_BRIEF)).ok).toBe(true);
+      // What `runBriefBoardSession` leaves behind: its findings written in, the flag off.
+      vault.updateNote(briefNote().path, (n) => ({ data: { ...n.data, board_pending: false }, body: n.body }), 'daemon');
+      const again = await file(REVISED);
+      expect(again.text).toContain('already pressure-tested');
+      expect(again.text).toContain('do not file again — finish the job');
+      expect(briefsFiled()).toBe(1);
+      expect(briefFromProposalBody(briefNote().body)).toContain('10–50k followers');
+    });
+
+    it('still checks the brief against the vault first: a false rewrite gets the findings, not an update', async () => {
+      expect((await file(TRUE_BRIEF)).ok).toBe(true);
+      const bad = await file(FALSE_BRIEF);
+      expect(bad.ok).toBe(false);
+      expect(bad.text).toContain('call proposal.create again');
+      expect(briefFromProposalBody(briefNote().body)).toContain('10–50k followers');
+      // The two-returns rule is still counting on the same job, so the third attempt is refused outright.
+      expect((await file(FALSE_BRIEF)).text).toContain('call proposal.create again');
+      expect((await file(FALSE_BRIEF)).text).toContain('Do not file it again');
+      expect(briefsFiled()).toBe(1);
     });
   });
 });

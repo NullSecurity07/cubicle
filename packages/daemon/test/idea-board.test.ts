@@ -138,6 +138,28 @@ describe('the ideas_board step (spec §3.3/§3.5)', () => {
     expect(readIdea(vault, good)!.data.decision).toBe('undecided');
   }, 30000);
 
+  /**
+   * Ruling W3-5. In the third live run this card — filed by an intelligence sweep, never mentioned to the owner
+   * — got a sixteen-call board session, a decision note and a question about engineering hours. It waits in the
+   * brief now, and the board sits on it only once the owner marks it `keep`.
+   */
+  it('leaves a sweep\'s own card alone until the owner promotes it, then sits on it like any other', async () => {
+    const sweep = writeIdeaCard(vault, { title: 'Persistent agent memory', source: 'intelligence:competitive' }, 'daemon');
+    updateIdea(vault, sweep, { score_inputs: { value: 5, evidence: 5, effort: 5, fit: 5 } }, 'daemon');   // 60/60
+    const llm = orgLlm({ ideaVerdict: 'pass' });
+    await runHeartbeat({ vault, llm }, createHeartbeatJob(vault, 'test'));
+    expect(listJobs(vault).filter((j) => j.type === 'board.session').length).toBe(0);
+    expect(llm.calls.advisor_skeptic).toBeUndefined();
+    expect(readIdea(vault, sweep)!.data.board_verdict).toBeNull();
+    expect(listInbox(vault).filter((n) => n.data.kind === 'idea_verdict').length).toBe(0);
+
+    updateIdea(vault, sweep, { decision: 'keep' }, 'owner');               // the promote: "look at this one"
+    await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'pass' }) }, createHeartbeatJob(vault, 'promoted'));
+    expect(listJobs(vault).filter((j) => j.type === 'board.session').length).toBe(1);
+    expect(readIdea(vault, sweep)!.data.board_verdict).toBe('pass');
+    expect(listInbox(vault).filter((n) => n.data.kind === 'idea_verdict').length).toBe(1);
+  }, 60000);
+
   it('parks a card the board returned, and the recommendation on the note is what the ruling uses', async () => {
     const slug = scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
     const hb = createHeartbeatJob(vault, 'test');
@@ -253,7 +275,9 @@ describe('the ideas_board step (spec §3.3/§3.5)', () => {
   // answers, so the cycle must not spend an hour of its plan latency waiting for its price.
   it('does not hold the cycle for the price of a card whose research half is missing', async () => {
     scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
-    const bare = writeIdeaCard(vault, { title: 'Something nobody has looked into', source: 'intelligence:competitive' }, 'daemon');
+    // The owner's own material, not a sweep's: a sweep card is left out of both producers until it is promoted
+    // (ruling W3-5), and this case is about not *waiting* for a price that cannot help this cycle.
+    const bare = writeIdeaCard(vault, { title: 'Something nobody has looked into', source: 'discovery' }, 'daemon');
     const hb = createHeartbeatJob(vault, 'test');
     await runHeartbeat({ vault, llm: orgLlm({ ideaVerdict: 'pass' }) }, hb);
     // Both jobs are queued — the estimate and the research half — and neither was waited on.

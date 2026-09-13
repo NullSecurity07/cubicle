@@ -1,6 +1,6 @@
 import {
   type Vault, type Org, type InterviewPhase, type ResearchRequest, type DiscoveryInput,
-  createJob, createProposal, findInboxById, listInbox, listJobs, jobPath, idFromKey, officeHolder, teamOf, listIdeas,
+  createJob, createProposal, findInboxById, listInbox, listJobs, jobPath, idFromKey, officeHolder, teamOf, listIdeas, ideaOpenToBoard,
   DISCOVERY_INBOX, FOUNDER_BRIEF, INTERVIEW_PATH, discoveryDigest, hasFounderBrief, founderBriefTemplate,
   interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, closesInterview, isSkip, listDiscoveryInputs, isLongPrompt,
   ownerSaid, isDiscoveryMaterial, ownerPick, asksForSurprise, SURPRISE_ME, BRAND_NAME_PATH, OWNER_PICK_LABEL, type OwnerPick, ideaPath, IDEA_SCORE_MAX,
@@ -161,10 +161,14 @@ export const MAX_ESTIMATES_PER_CYCLE = 3;
  * "Unpriced" is read off the two numbers the finance office owns, never off the `estimate` prose: a card whose
  * estimate says "a few weeks" and carries no `value` still needs the finance office, and a card whose numbers
  * are in has been priced whatever its prose says.
+ *
+ * "Undecided" is `ideaOpenToBoard` rather than the bare flag (ruling W3-5): pricing exists to put a card in
+ * front of the board, so a card the board may not sit on is not worth a finance call either. That drops the
+ * sweep's own cards until the owner promotes one, and picks a promoted one up again.
  */
-export function ideasNeedingEstimate<T extends { id: string; decision: string; score_inputs: { value?: number; effort?: number; evidence?: number } }>(ideas: T[], max = MAX_ESTIMATES_PER_CYCLE): T[] {
+export function ideasNeedingEstimate<T extends { id: string; source: string; decision: string; score_inputs: { value?: number; effort?: number; evidence?: number } }>(ideas: T[], max = MAX_ESTIMATES_PER_CYCLE): T[] {
   return ideas
-    .filter((i) => i.decision === 'undecided' && (i.score_inputs.value === undefined || i.score_inputs.effort === undefined))
+    .filter((i) => ideaOpenToBoard(i) && (i.score_inputs.value === undefined || i.score_inputs.effort === undefined))
     .sort((a, b) => (b.score_inputs.evidence ?? 0) - (a.score_inputs.evidence ?? 0) || a.id.localeCompare(b.id))
     .slice(0, max);
 }
@@ -811,13 +815,17 @@ export function enqueueEstimates(vault: Vault, org: Org): string[] {
 /**
  * The other half of the score. `nextIdeaForBoard` needs all four inputs, and until now only `finance.estimate`
  * had a producer: the research half was written by the `discovery` job, when it chose to, and by nothing else
- * ever. Every card the daily intelligence sweep files — and every `owner`- or `pantry`-sourced card — was
- * therefore unscorable for ever: it could never reach the board, never be kept, parked or scrapped, and nothing
- * anywhere reported it. §2.5 names the mechanism ("`discovery`, **or a follow-up `research` job**"); this is it.
+ * ever. Every `owner`- or `pantry`-sourced card was therefore unscorable for ever: it could never reach the
+ * board, never be kept, parked or scrapped, and nothing anywhere reported it. §2.5 names the mechanism
+ * ("`discovery`, **or a follow-up `research` job**"); this is it.
+ *
+ * A sweep's own card is the one exception, and a deliberate one (ruling W3-5): it is listed in the brief, not
+ * researched, until the owner promotes it — the same `ideaOpenToBoard` gate the estimates use, for the same
+ * reason. Nothing about this card is spent on until somebody asks for it.
  */
-export function ideasNeedingResearch<T extends { id: string; decision: string; score_inputs: { evidence?: number; fit?: number; value?: number } }>(ideas: T[], max = MAX_ESTIMATES_PER_CYCLE): T[] {
+export function ideasNeedingResearch<T extends { id: string; source: string; decision: string; score_inputs: { evidence?: number; fit?: number; value?: number } }>(ideas: T[], max = MAX_ESTIMATES_PER_CYCLE): T[] {
   return ideas
-    .filter((i) => i.decision === 'undecided' && (i.score_inputs.evidence === undefined || i.score_inputs.fit === undefined))
+    .filter((i) => ideaOpenToBoard(i) && (i.score_inputs.evidence === undefined || i.score_inputs.fit === undefined))
     // Best-priced first, for the reason estimates go best-evidenced first: when the cap bites, spend the cycle
     // on the card the other office already thinks is worth something.
     .sort((a, b) => (b.score_inputs.value ?? 0) - (a.score_inputs.value ?? 0) || a.id.localeCompare(b.id))
