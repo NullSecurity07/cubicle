@@ -1,0 +1,145 @@
+import { describe, it, expect } from 'vitest';
+import { applySnapshot, emptyState, decideSent, decideAcked, decideFailed, type Snapshot, type InboxRow } from '../state.js';
+import { viewFor } from './surfaces.js';
+import { APPLYING_TEXT, COMMENT_REQUIRED, actionBar, commentRequired, decidableOf, decisionKey, decisionsView, verbsFor } from './decisions.js';
+import { THEMES, contrastRatio } from './tokens.js';
+import type { Ctx } from './content.js';
+
+const ctx: Ctx = { frames: {}, tokenQuery: '', vaultName: 'Cubicle' };
+const base: Snapshot = { op: 'snapshot', at: 'now', roles: [{ role: 'ceo', display: 'CEO', sprite: 'ceo', desk: 'ceo', active: true }], jobs: [], surfaces: [], quota: [], latestRun: null, plan: '', pendingProposals: 0 };
+
+const approveRow: InboxRow = { id: 'p1', kind: 'spend', title: 'Pay for the domain', path: '00 Inbox/2026-09-13-spend.md', created: '2026-09-13T09:00:00.000Z', from: 'cfo', body: '# Pay for the domain\n\nUSD 12 a year.\n', band: 'small', band_reason: 'under the cap', decidable: 'approve' };
+const chooseRow: InboxRow = { id: 'p2', kind: 'brand_change', title: 'Name the company', path: '00 Inbox/2026-09-13-brand.md', created: '2026-09-13T09:05:00.000Z', from: 'ceo', body: '# Three names\n', options: [{ n: 1, label: 'WeekPlate' }, { n: 2, label: 'PlateReady' }, { n: 3, label: 'Sunday Prep' }], decidable: 'choose' };
+const adoptRow: InboxRow = { id: 'p3', kind: 'founder_brief', title: 'The founder brief', path: '00 Inbox/2026-09-13-brief.md', created: '2026-09-13T09:10:00.000Z', from: 'ceo', body: '# Brief\n\nWhat we are building.\n', pressure: '## Pressure test\n- Who wants this?\n', board_verdict: 'promising', decidable: 'adopt' };
+const snap = (o: Partial<Snapshot>): Snapshot => ({ ...base, ...o });
+
+describe('the Decisions sheet (SP8 §1)', () => {
+  const s = applySnapshot(emptyState(), snap({ inbox: [approveRow, chooseRow], decided: [{ id: 'p0', kind: 'idea_verdict', title: 'Meal plans for busy parents', path: '00 Inbox/2026-09-12-idea.md', created: '2026-09-12T10:00:00.000Z', resolved_at: '2026-09-12T11:00:00.000Z', approved: true, outcome: 'the board decided: build it' }] }));
+
+  it('is what the post office opens: Needs you and Decided, and every row opens a reader', () => {
+    const v = viewFor('postoffice', s, ctx);
+    expect(v.title).toBe('Decisions');
+    expect(v.sub).toBe('2 need you');
+    expect(v.html).toContain('data-seg="needs"');
+    expect(v.html).toContain('data-seg="decided"');
+    expect(v.html).toContain('data-open="decision:p1"');
+    expect(v.html).toContain('data-open="decision:p0"');
+    expect(v.html).toContain('the board decided: build it');
+  });
+
+  it('says what is missing rather than nothing at all', () => {
+    const v = decisionsView(emptyState());
+    expect(v.html).toContain('Nothing needs you');
+    expect(v.html).toContain('Nothing decided yet');
+    expect(v.sub).toBe('nothing needs you');
+  });
+
+  it('keeps the mail log, and takes no room when there is none', () => {
+    expect(decisionsView(emptyState()).html).not.toContain('Mail');
+    const withMail = { ...emptyState(), mail: [{ ts: '2026-09-13T09:00:00.000Z', text: '→ hello@example.com: Hello' }] };
+    expect(decisionsView(withMail).html).toContain('hello@example.com');
+  });
+});
+
+describe('the decision reader and its action bar', () => {
+  const s = applySnapshot(emptyState(), snap({ inbox: [approveRow, chooseRow, adoptRow] }));
+
+  it('renders the note body, the pressure test and the board verdict', () => {
+    const v = viewFor('decision:p3', s, ctx);
+    expect(v.mode).toBe('doc');
+    expect(v.title).toBe('The founder brief');
+    expect(v.html).toContain('What we are building.');
+    expect(v.html).toContain('Pressure test');
+    expect(v.html).toContain('Who wants this?');
+    expect(v.html).toContain('The board: promising');
+    expect(v.link).toContain('obsidian://open?vault=Cubicle');
+  });
+
+  it('has one shape per decidable: approve, numbered options, adopt or send back', () => {
+    expect(decidableOf(approveRow)).toBe('approve');
+    expect(decidableOf({ ...chooseRow, decidable: undefined })).toBe('choose');   // options alone imply the choice
+    expect(verbsFor('adopt')).toEqual({ yes: 'Adopt brief', no: 'Send back' });
+    const approve = viewFor('decision:p1', s, ctx).html;
+    expect(approve).toContain('data-act="decide:yes"');
+    expect(approve).toContain('data-act="decide:no"');
+    expect(approve).toContain('data-key="comment"');
+    expect(approve).toContain('>Approve<');
+    const choose = viewFor('decision:p2', s, ctx).html;
+    expect(choose).toContain('data-act="choose:1"');
+    expect(choose).toContain('data-act="choose:3"');
+    expect(choose).not.toContain('data-key="comment"');   // a choice is not a comment
+    const adopt = viewFor('decision:p3', s, ctx).html;
+    expect(adopt).toContain('Adopt brief');
+    expect(adopt).toContain('Send back');
+  });
+
+  it('will not approve a choice until one is picked, and paints the picked chip with the accent', () => {
+    const none = actionBar(chooseRow, {});
+    expect(none).toMatch(/data-act="decide:yes"[^>]*disabled/);
+    const picked = actionBar(chooseRow, { chosen: 2 });
+    expect(picked).toContain('data-act="choose:2" aria-pressed="true"');
+    expect(picked).not.toMatch(/data-act="decide:yes"[^>]*disabled/);
+  });
+
+  it('a send back needs a reason; an approval does not', () => {
+    expect(commentRequired('adopt', false)).toBe(true);
+    expect(commentRequired('adopt', true)).toBe(false);
+    expect(commentRequired('approve', false)).toBe(false);
+    expect(COMMENT_REQUIRED.length).toBeGreaterThan(10);
+  });
+
+  it('says "Decided · applying…" until the dispatcher answers, then the outcome', () => {
+    let st = decideSent(applySnapshot(emptyState(), snap({ inbox: [approveRow] })), 'p1', { approved: true });
+    expect(viewFor('decision:p1', st, ctx).html).toContain(APPLYING_TEXT);
+    expect(viewFor('decision:p1', st, ctx).html).toMatch(/data-act="decide:yes"[^>]*disabled/);
+    st = decideAcked(st, 'p1');
+    expect(st.decisions.p1.status).toBe('applying');
+    expect(viewFor('decision:p1', st, ctx).html).toContain(APPLYING_TEXT);
+    const bar = actionBar(approveRow, { st: { status: 'done', approved: true, outcome: 'paid and recorded' } });
+    expect(bar).toContain('paid and recorded');
+    expect(bar).not.toContain('data-act="decide:yes"');   // nothing left to press
+  });
+
+  it('shows a refusal in the bar rather than swallowing it', () => {
+    const st = decideFailed(applySnapshot(emptyState(), snap({ inbox: [approveRow] })), 'p1', 'already resolved');
+    const html = viewFor('decision:p1', st, ctx).html;
+    expect(html).toContain('already resolved');
+    expect(html).toContain('class="state bad"');
+    expect(html).toContain('data-act="decide:yes"');      // and lets the owner try again
+  });
+
+  it('the state line is a live region, so the owner hears it without moving focus', () => {
+    expect(actionBar(approveRow, {})).toContain('role="status" aria-live="polite"');
+  });
+
+  it('a resolved note reads as what was decided, with no bar to press', () => {
+    const st = applySnapshot(emptyState(), snap({ decided: [{ id: 'p9', kind: 'spend', title: 'Pay for the domain', path: '00 Inbox/x.md', created: 'now', resolved_at: '2026-09-13T10:00:00.000Z', approved: false, outcome: 'rejected: too early' }] }));
+    const v = viewFor('decision:p9', st, ctx);
+    expect(v.html).toContain('rejected: too early');
+    expect(v.html).not.toContain('data-act=');
+    expect(viewFor('decision:nope', st, ctx).html).toContain('not in the current snapshot');
+  });
+
+  it('A approves, R rejects, 1-9 pick an option, and the comment field owns its own keys', () => {
+    const three = { decidable: 'choose' as const, options: 3 };
+    expect(decisionKey({ key: 'a' }, three, false)).toEqual({ act: 'yes' });
+    expect(decisionKey({ key: 'A' }, three, false)).toEqual({ act: 'yes' });
+    expect(decisionKey({ key: 'r' }, three, false)).toEqual({ act: 'no' });
+    expect(decisionKey({ key: '2' }, three, false)).toEqual({ act: 'choose', n: 2 });
+    expect(decisionKey({ key: '4' }, three, false)).toBeNull();          // there is no fourth option
+    expect(decisionKey({ key: '1' }, { decidable: 'approve', options: 0 }, false)).toBeNull();
+    expect(decisionKey({ key: 'a' }, three, true)).toBeNull();           // typing a comment
+    expect(decisionKey({ key: 'a', ctrlKey: true }, three, false)).toBeNull();
+  });
+});
+
+describe('the action bar reads in both themes', () => {
+  for (const mode of ['dark', 'light'] as const) {
+    const c = THEMES[mode].colors;
+    it(`${mode}: the affirmative's ink reads on the accent and the refusal line on the surface it sits on`, () => {
+      expect(contrastRatio(c.accentInk, c.accent), 'Approve').toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(c.bad, c.surface1), 'the error line').toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(c.text2, c.surface1), 'the state line').toBeGreaterThanOrEqual(4.5);
+    });
+  }
+});

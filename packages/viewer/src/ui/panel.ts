@@ -14,7 +14,14 @@ import { trapTab } from './keys.js';
 export const SURPRISE_ME = 'surprise me';
 /** A screen rectangle a level-2 presentation grows from (the bezel that was clicked). */
 export interface Origin { x: number; y: number; w: number; h: number }
-export interface PanelDeps { viewOf(kind: string): View; onChat(text: string): void; onOpen(kind: string): void; onLocate(target: string): void; /** the stack emptied: the app restores the camera */ onEmpty(): void }
+export interface PanelDeps {
+  viewOf(kind: string): View; onChat(text: string): void; onOpen(kind: string): void; onLocate(target: string): void;
+  /** the stack emptied: the app restores the camera */ onEmpty(): void;
+  /** a control inside the open view was used: `decide:yes`, `choose:3`, `thread:<id>`, `send`, `search:<text>` */
+  onAction?(act: string, o: { comment: string; text: string }): void;
+  /** an `obsidian:` link was clicked; it must never navigate (SP8 ruling P8-4) */
+  onVaultLink?(url: string): void;
+}
 
 export const presentationOf = (mode: ViewMode): Presentation => (mode === 'doc' ? 'reader' : mode === 'viewer' ? 'viewer' : 'sheet');
 /** A duration token in ms (1 under reduced motion). */
@@ -57,8 +64,27 @@ export class Panel {
       // One Tab trap for the whole app (ui/keys.ts): the panel used to carry a second, near-identical copy.
       if (e.key === 'Tab' && this.isModal()) trapTab(this.panel, e, document.activeElement as HTMLElement | null);
     });
+    // The comment field and the composer send on Enter, like every other one-line field in the product.
+    this.body.addEventListener('keydown', (e) => {
+      const el = e.target as HTMLElement;
+      if (e.key !== 'Enter' || !(el instanceof HTMLInputElement)) return;
+      if (el.dataset.key === 'composer') { e.preventDefault(); this.fire('send'); }
+      else if (el.dataset.key === 'comment') { e.preventDefault(); this.fire('decide:yes'); }
+    });
+    // The search box filters as it is typed; the input is keyed, so the re-render keeps the node and the caret.
+    this.body.addEventListener('input', (e) => {
+      const el = e.target as HTMLElement;
+      if (el instanceof HTMLInputElement && el.dataset.key === 'search') this.fire(`search:${el.value}`);
+    });
     document.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
+      // An `obsidian:` href is a hand-off, never a navigation: the office window cannot load that scheme and goes
+      // blank trying (SP8 ruling P8-4). Every one of them — panel header, a row's link, a rendered note — is caught
+      // here, before anything else, and given to the shell or to the clipboard.
+      const vault = t.closest<HTMLAnchorElement>('a[href^="obsidian:"]');
+      if (vault) { e.preventDefault(); this.deps.onVaultLink?.(vault.getAttribute('href') ?? ''); return; }
+      const control = t.closest<HTMLElement>('[data-act]');
+      if (control && this.panel.contains(control)) { e.preventDefault(); this.fire(control.dataset.act!); return; }
       const act = t.closest<HTMLElement>('[data-action="surprise-me"]');
       if (act) { e.preventDefault(); this.deps.onChat(SURPRISE_ME); return; }   // same path as the composer, so the daemon's regex fires
       const seg = t.closest<HTMLElement>('[data-seg]');
@@ -71,6 +97,16 @@ export class Panel {
       if (el) { e.preventDefault(); this.deps.onOpen(el.dataset.open!); }
     });
   }
+
+  /** One control was used. The two one-line fields travel with it, so a view never has to keep their text. */
+  private fire(act: string): void {
+    const comment = this.body.querySelector<HTMLInputElement>('input[data-key="comment"]')?.value.trim() ?? '';
+    const text = this.body.querySelector<HTMLInputElement>('input[data-key="composer"]')?.value.trim() ?? '';
+    this.deps.onAction?.(act, { comment, text });
+  }
+
+  /** Empty the composer after a send: the app has the text, and the field must not keep offering to send it again. */
+  clearComposer(): void { const el = this.body.querySelector<HTMLInputElement>('input[data-key="composer"]'); if (el) el.value = ''; }
 
   get current(): string | null { return this.stack.current()?.kind ?? null; }
   isModal(): boolean { const p = this.stack.current()?.presentation; return p === 'reader' || p === 'viewer'; }
@@ -110,6 +146,8 @@ export class Panel {
     this.layer.dataset.presentation = pres;
     // Which viewer is up (ui/content.ts `View.viewer`): the browser box and the terminal box are sized differently.
     if (v.viewer) this.layer.dataset.viewer = v.viewer; else delete this.layer.dataset.viewer;
+    // A sheet that asks for two panes (Messages) is given the width for them; the panes split themselves.
+    if (v.wide) this.layer.dataset.wide = 'true'; else delete this.layer.dataset.wide;
     // The sheet is the one glass presentation; .glass carries the @supports fallback for no backdrop-filter.
     this.panel.classList.toggle('glass', pres === 'sheet');
     this.layer.hidden = false;

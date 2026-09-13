@@ -5,7 +5,7 @@ import { pixelIcon } from './icons.js';
 import { trapTab } from './keys.js';
 
 export interface QuickItem { kind: string; label: string; group: 'Screens' | 'People' | 'Rooms'; hint?: string }
-export const SCREEN_LABELS: Record<string, string> = { cabin: 'Talk to the CEO', newsstand: 'Brief', whiteboard: 'Plan', noticeboard: 'Queue', postoffice: 'Post office', org: 'Org', bank: 'Bank', vault: 'Vault', terminal: 'Terminal', billboard: 'Billboard', workshop: 'Workshop' };
+export const SCREEN_LABELS: Record<string, string> = { cabin: 'Talk to the CEO', messages: 'Messages', newsstand: 'Brief', whiteboard: 'Plan', noticeboard: 'Queue', postoffice: 'Decisions', org: 'Org', bank: 'Bank', vault: 'Vault', terminal: 'Terminal', billboard: 'Billboard', workshop: 'Workshop' };
 
 /** 0 = no match. Subsequence match; +2 per char at a word start, +3 for a whole-prefix match, minus gaps. Empty query = 1. */
 export function fuzzyScore(query: string, text: string): number {
