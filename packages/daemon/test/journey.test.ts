@@ -23,10 +23,10 @@
  * owner decided" an assertion rather than a coincidence, and it keeps `board_decides_after_hours` from quietly
  * ruling on the plan verdict before the owner gets to.
  *
- * **Rulings in flight.** W3-1..W3-7 are being implemented on other branches. Where one is not on this branch
- * yet the assertion below feature-detects it — it asserts the ruling's behaviour when the behaviour is there and
- * takes the current path when it is not — so the case turns green at merge instead of having to be edited. The
- * `it.todo` markers at the bottom name which ones those are.
+ * **Rulings in flight.** W3-1..W3-7 were implemented on other branches. W3-1, W3-3 and W3-7 are on this one and
+ * are asserted outright; anything still in flight is feature-detected — the assertion takes the ruling's path when
+ * the behaviour is there and the current path when it is not, and `inFlight` says at the end which it took, so a
+ * green journey cannot quietly mean "it routed around the ruling".
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
@@ -37,10 +37,10 @@ import {
   scaffoldVault, Vault, listJobs, listInbox, listStreams, listIdeas, findInboxById, parseNote, readJob,
   interviewPhase, ceoAnswersFrom, INTERVIEW_QUESTIONS, INTERVIEW_PATH, FOUNDER_BRIEF, BRAND_NAME_PATH,
   PRESSURE_TEST_SECTION, briefSectionBody, briefFromProposalBody, checkFounderBrief, briefCheckContext,
-  readPressureVerdict, unkeptIdeasNamedIn, GATE_JOB_TYPES, ideasNamedIn,
+  readPressureVerdict, unkeptIdeasNamedIn, GATE_JOB_TYPES, checkPlan, planObjectives,
 } from '@cubicle/core';
 import {
-  Daemon, defaultConfig, buildSnapshot, completeIdeaLines, parseObjectiveSections, FIRST_JOB_TITLES, WAITING_FOR_BRIEF,
+  Daemon, defaultConfig, buildSnapshot, completeIdeaLines, FIRST_JOB_TITLES, WAITING_FOR_BRIEF,
   BOARD_DIALOGUE_ROUNDS, BOARD_DIALOGUE_MAX_CALLS, BOARD_QUESTIONS_TITLE_RE, BOARD_OPEN_QUESTIONS,
   type Snapshot,
 } from '../src/index.js';
@@ -308,44 +308,43 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
 
     // Ruling W3-3: the board called this brief WEAK, so "Adopt" is "Adopt anyway" and the op must carry `confirm`.
     expect(snapshot().inbox.find((r) => r.id === briefNote.data.id)!.decidable).toBe('adopt');
+    const briefRow = snapshot().inbox.find((r) => r.id === briefNote.data.id)!;
+    expect(briefRow.verdict, 'the row carries the verdict the owner would be overruling').toBe('WEAK');
+    expect(briefRow.needs_confirm).toBe(true);
     office.decide(briefNote.data.id, { approved: true });
     const answer = await office.next((m) => (m.op === 'error' && m.id === briefNote.data.id) || (m.op === 'decide.ack' && m.id === briefNote.data.id), 'the daemon to answer the adoption');
-    if (answer.op === 'decide.ack') {
-      inFlight.push('W3-3 (two-step adoption of a WEAK/PIVOT REQUIRED brief): adopted without `confirm`');
-    } else {
-      expect(String(answer.message)).toMatch(/confirm|WEAK|anyway/i);
-      expect(findInboxById(v, briefNote.data.id)!.data.approved, 'a refused adoption changes nothing').toBeNull();
-      office.decide(briefNote.data.id, { approved: true, confirm: true });
-      await office.next((m) => m.op === 'decide.ack' && m.id === briefNote.data.id, 'the confirmed adoption');
-    }
+    expect(answer.op, 'an adoption without `confirm` is refused, not applied').toBe('error');
+    expect(String(answer.message)).toMatch(/confirm|WEAK|anyway/i);
+    expect(findInboxById(v, briefNote.data.id)!.data.approved, 'a refused adoption changes nothing').toBeNull();
+    office.decide(briefNote.data.id, { approved: true, confirm: true });
+    await office.next((m) => m.op === 'decide.ack' && m.id === briefNote.data.id, 'the confirmed adoption');
 
     await waitFor(() => (v.readTextOrNull(FOUNDER_BRIEF) ?? '').trim().length > 0, 'the brief to be adopted');
     expect(v.readText(FOUNDER_BRIEF)).toContain(PRESSURE_TEST_SECTION);
 
     // Ruling W3-7: the interview is over — the brief supersedes it — and the CEO stops inviting a "go".
-    const transcript = v.readText(INTERVIEW_PATH);
-    if (/supersed/i.test(transcript)) expect(transcript).toMatch(/supersed/i);
-    else inFlight.push('W3-7 (the interview closes as superseded once the brief is adopted)');
+    await waitFor(() => /^## Superseded\b/m.test(v.readText(INTERVIEW_PATH)), 'the interview to be superseded by the brief');
+    expect(interviewPhase(v.readTextOrNull(INTERVIEW_PATH))).toBe('superseded');
 
     // The next cycle plans, and it is the first cycle that may.
+    // The plan is written once, and against the ideas the owner kept: a rewrite here would mean the guard or the
+    // board sent it back, and neither should on this journey.
     await waitFor(() => jobsOf('company.plan').length === 1, 'the company plan');
     await waitFor(() => jobsOf('company.plan').every((j) => ['done', 'failed', 'cancelled'].includes(j.status)), 'the plan to be written');
     await waitFor(() => rows('plan_verdict').length === 1, 'the plan verdict the owner rules on');
 
     const plan = v.readText('Plans/plan.md');
-    const objectives = parseObjectiveSections(plan).flatMap((s) => s.text.split('\n').map((l) => l.trim()).filter((l) => /^[-*]\s+\S/.test(l)));
     const kept = listIdeas(v).filter((i) => i.decision === 'keep').map((i) => i.id);
     expect(kept.length, 'the board kept the idea the owner picked').toBeGreaterThan(0);
+    // Ruling W3-1, read with the company's own parser and the company's own validator rather than a second idea
+    // of what an objective is: `planObjectives` knows that the bullets the division leads append are job links
+    // and not objectives, and `checkPlan` is what the heartbeat actually holds the CEO to before the board sits.
+    const objectives = planObjectives(plan);
     expect(objectives.length, 'the plan has objectives').toBeGreaterThan(0);
-    // Ruling W3-1: every objective names the idea it serves, and only a kept one.
-    for (const b of objectives) expect(ideasNamedIn(b), `objective "${b}" names the idea it serves`).not.toEqual([]);
-    for (const b of objectives) for (const slug of ideasNamedIn(b)) expect(kept).toContain(slug);
+    for (const o of objectives) expect(o.idea, `objective "${o.text}" names the kept idea it serves`).not.toBeNull();
+    for (const o of objectives) expect(kept).toContain(o.idea);
+    expect(checkPlan(v, plan), 'the plan the board is about to sit on passes the validator').toMatchObject({ ok: true, findings: [] });
     expect(unkeptIdeasNamedIn(plan, listIdeas(v))).toEqual([]);
-    // …and in code, the moment the validator lands on this branch.
-    const core = await import('@cubicle/core') as Record<string, unknown>;
-    if (typeof core.checkPlan === 'function') {
-      expect((core.checkPlan as (v: Vault, p: string) => { ok: boolean })(v, plan)).toMatchObject({ ok: true });
-    } else inFlight.push('W3-1 (`checkPlan`: a written plan is validated in code before the board sits on it)');
 
     expectOneSession('plan', 'the pre-mortem on this cycle\'s plan');
 
@@ -464,9 +463,7 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     office.close();
   }, TEST_MS);
 
-  // The rulings the journey above feature-detects. Each one turns green in the case above the moment its branch
-  // merges — these markers are here so the pending work is visible in the report rather than only in a comment.
-  it.todo('W3-1: `checkPlan` refuses a plan whose objective serves no kept idea (w3-a-plan)');
-  it.todo('W3-3: `decide` refuses to adopt a WEAK/PIVOT REQUIRED brief without `confirm: true`');
-  it.todo('W3-7: the interview transcript reads "superseded" once the founder brief is adopted');
+  // W3-1, W3-3 and W3-7 are on this branch, so the case above asserts them outright rather than feature-detecting
+  // them: `checkPlan` and `planObjectives` read the plan, the unconfirmed adoption is refused, and the interview
+  // reads superseded. `inFlight` stays for whatever ruling lands next.
 });
