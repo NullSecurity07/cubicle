@@ -307,7 +307,7 @@ a.vaultlink:hover { color: var(--text); }
 .chips { display: flex; flex-wrap: wrap; gap: 3px; }
 /* A note's kind and its band are facts about it, not things asking to be pressed: amber on this screen is the
    approvals pill and the one primary action, and nothing else (whole-branch review). */
-.chip.note, .chip.band, .chip.applying { color: var(--text-2); }
+.chip.note, .chip.band, .chip.applying, .chip.sitting { color: var(--text-2); }
 /* A participant wears their own colour, one step deeper than their sprite's ring so `--on-tint` reads on it
    (ui/messages.ts `chipTint`, asserted in both themes). */
 .chip.who { color: var(--on-tint); border-color: transparent; font-weight: 500; }
