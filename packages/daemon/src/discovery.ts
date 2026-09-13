@@ -265,10 +265,18 @@ export function ownerPick(vault: Vault): OwnerPick | null {
 /** The company's name note — the target of the `brand_change` proposal the three ideas are filed as. */
 export const BRAND_NAME_PATH = 'Brand/name.md';
 
-/** The three ideas are in the inbox and nobody has picked one: the company is waiting for the owner, not idle. */
+/**
+ * The three ideas are in the inbox and nobody has picked one: the company is waiting for the owner, not idle.
+ *
+ * "Three ideas" is read the way the dispatcher reads it (`dispatcher.ts`, the `brand_change` case): numbered
+ * option lines and no `## Proposed content` fence. The *other* `brand_change` on `Brand/name.md` — the name
+ * the CEO proposes for an idea the owner typed themselves — carries the fence and is not a pick anyone is
+ * waiting on, so saying "waiting for you to pick one of the three" about it would be a lie.
+ */
 export function pickPending(vault: Vault): boolean {
-  return listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === BRAND_NAME_PATH
-    && !n.data.resolved_at && (n.data.approved !== true || n.data.chosen === null || n.data.chosen === undefined));
+  return listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === BRAND_NAME_PATH && !n.data.resolved_at
+    && !/^## Proposed content/m.test(n.body) && n.body.split('\n').some((l) => /^\s*\d+\.\s/.test(l))
+    && (n.data.approved !== true || n.data.chosen === null || n.data.chosen === undefined));
 }
 
 /**

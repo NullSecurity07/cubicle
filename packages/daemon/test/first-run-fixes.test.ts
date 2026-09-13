@@ -174,6 +174,16 @@ describe('FR-3: discovery never starts on a note that is only a reply to the CEO
     expect(currentDiscoveryStatus(vault, new Date('2026-09-13T09:05:00.000Z')).run).toBe(true);
   });
 
+  it('does not mistake the name proposal for an unpicked set of three ideas', () => {
+    // The other `brand_change` on Brand/name.md: a name for an idea the owner typed, carrying a content fence.
+    // Nobody is waiting on a pick here, and the checkpoint log must not say they are.
+    ownerSays(vault, 'We sell meal kits to nurseries.');
+    vault.writeText('00 Inbox/2026-09-13-prop-name.md', '---\nid: prop_name\nkind: brand_change\nfrom: ceo\ntarget: Brand/name.md\ncreated: 2026-09-13T09:00:01.000Z\napproved: null\n---\n# Name the company: GreenCrate\n\n## Proposed content\n\n```\n---\nname: "GreenCrate"\n---\n# GreenCrate\n```\n', 'ceo');
+    const s = currentDiscoveryStatus(vault, new Date('2026-09-13T09:05:00.000Z'));
+    expect(s.run).toBe(true);
+    expect(s.why).not.toMatch(/pick one of the three/);
+  });
+
   it('is unchanged by a skip: the interview closes and the company reads what it has', () => {
     askInterview(vault, 'ceo', new Date('2026-09-13T09:00:00.000Z'));
     ownerSays(vault, 'skip');
