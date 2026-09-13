@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob, loadOrg, createStream, writeCiRecord } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob, loadOrg, createStream, writeCiRecord, HOUSE } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot, NON_WORK_TYPES, HEARTBEAT_STEPS } from '../src/index.js';
+import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot, makeSummarize, SUMMARIZE_SYSTEM, NON_WORK_TYPES, HEARTBEAT_STEPS } from '../src/index.js';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { letTheBoardDecide } from './helpers/board-switch.js';
@@ -817,8 +817,54 @@ describe('an approved call the wrapper vetoes', () => {
   });
 });
 
-describe('local-tier summariser (D1)', () => {
-  it('the daemon hands the harness a summarize() that runs on the local tier', async () => {
+describe('compaction summariser (D1, FR-7)', () => {
+  /** One `Llm` that records the tier and budget of every call and answers with `reply` (or throws). */
+  const recorder = (reply: (tier: string) => string) => {
+    const calls: { tier: string; division?: string; quota?: number; maxTokens?: number; system: string }[] = [];
+    const llm: Llm = {
+      async chat(req, chat) {
+        calls.push({ tier: req.tier, division: req.budgetDivision, quota: req.budget?.quota, maxTokens: chat.maxTokens, system: String(chat.messages[0]?.content ?? '') });
+        const content = reply(req.tier);
+        return { content, toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'cheap', downgraded: false, parsedToolCalls: [] };
+      },
+    };
+    return { llm, calls };
+  };
+
+  it('summarises on the cheap cloud tier, metered against the house reserve', async () => {
+    const { llm, calls } = recorder(() => 'short summary');
+    const summarize = makeSummarize({ llm, houseBudget: () => ({ used: 3, quota: 40 }), noCloudKeys: () => false });
+    expect(await summarize('a long transcript')).toBe('short summary');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ tier: 'cheap', division: HOUSE, quota: 40, maxTokens: 400 });
+    expect(calls[0].system).toBe(SUMMARIZE_SYSTEM);
+  });
+
+  it('falls back to the local floor when no cloud provider has a key, without trying the cloud first', async () => {
+    const { llm, calls } = recorder((tier) => `summary from ${tier}`);
+    const summarize = makeSummarize({ llm, noCloudKeys: () => true });
+    expect(await summarize('a long transcript')).toBe('summary from local');
+    expect(calls.map((c) => c.tier)).toEqual(['local']);
+  });
+
+  it('falls back to the local floor when the cheap call throws, and to no summary at all when both do', async () => {
+    const tiers: string[] = [];
+    const flaky = (failing: string[]): Llm => ({
+      async chat(req) {
+        tiers.push(req.tier);
+        if (failing.includes(req.tier)) throw new Error(`${req.tier} is down`);
+        return { content: 'local summary', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'fake', model: 'fake', tier: 'local', downgraded: true, parsedToolCalls: [] };
+      },
+    });
+    expect(await makeSummarize({ llm: flaky(['cheap']) })('t')).toBe('local summary');
+    expect(tiers).toEqual(['cheap', 'local']);
+    tiers.length = 0;
+    // Never fatal: '' is the harness's "no summary", and it clips instead.
+    expect(await makeSummarize({ llm: flaky(['cheap', 'local']) })('t')).toBe('');
+    expect(tiers).toEqual(['cheap', 'local']);
+  });
+
+  it('the daemon hands the harness a summarize() that falls to the local tier when it has no cloud keys', async () => {
     const vault = Vault.open(dir);
     vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } }); // recent → no startup heartbeat
     vault.writeText('Docs/big.md', 'x'.repeat(2000), 'daemon');

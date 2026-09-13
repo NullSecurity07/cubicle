@@ -72,7 +72,7 @@ The Obsidian vault is the only source of truth. Agents and the owner both read a
 | `budget_from` | number (optional) | the checkpoint_step a gate return resumed from; the step loop runs until budget_from + maxSteps, so a return gets a fresh budget instead of the remainder of the attempt |
 | `research` | object (optional) | the universal research request this job carries (decision, question, evidence, confidence, portfolio, score) |
 | `research_slug` | string (optional) | the Research/<slug>/ project directory for this job |
-| `model_tier` | `strong` \| `medium` \| `cheap` \| `local` (optional) | pins a cheaper tier than the assigned role's charter asks for; never routes above it, and never above the `privacy` rule |
+| `model_tier` | `strong` \| `medium` \| `cheap` \| `local` (optional) | pins a cheaper tier than the assigned role's charter asks for; never routes above it, and never above the `privacy` rule. A review job created by a gate chain carries `medium` (or the gate's own `model_tier:` in `config/gates.yaml`), so a review never spends the reviewer's strong-tier allowance |
 | `trust_key` | string (optional) | on a trust review job (SP5): the idempotency key of the outbound call it gates. The pair with `trust_proposal` is what turns the reviewer's verdict into the record; a trust review gates a *call*, so it has no `parent` |
 | `trust_proposal` | string (optional) | the `00 Inbox/` proposal holding the call under review |
 | `pantry_with` | string (optional) | on a `pantry.chat` job: the other person at the counter |

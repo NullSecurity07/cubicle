@@ -89,6 +89,43 @@ export function pollCached<T>(read: () => T, ttlMs: number, now: () => number = 
   };
 }
 
+/** The compaction prompt, module-level so the summariser's test can recognise the call it made. */
+export const SUMMARIZE_SYSTEM = 'Summarize the following observations in ≤ 200 words, keeping file paths, ids and numbers.';
+
+/**
+ * Context compaction (spec §6): the observations the prompt budget drops, and an over-long plan, are summarised
+ * before they are handed back to the job.
+ *
+ * It runs on the **cheap cloud** tier and falls back to the local floor only when there is no cloud provider to
+ * ask, or the cheap call failed. It used to be local-only, on the reasoning that compaction should never spend
+ * cloud quota — but the owner's first live run (finding F6) paid 30–105 s per call for that on their GPU, five
+ * times inside one research job, while the job sat waiting. A flash-lite answers a 200-word summary in a second
+ * or two and costs one call out of five hundred a day.
+ *
+ * Compaction is house work, not the job's division's: it is the system tidying up after itself, so like the
+ * heartbeat's own asks it is metered against the house reserve and stamped with it.
+ *
+ * A failure is never fatal, on either tier: `''` means "no summary" and the harness falls back to clipping.
+ */
+export function makeSummarize(deps: { llm: Llm; houseBudget?: () => ModelBudget | null; noCloudKeys?: () => boolean }): (text: string) => Promise<string> {
+  return async (text: string): Promise<string> => {
+    const budget = deps.houseBudget?.() ?? undefined;
+    const ask = async (tier: 'cheap' | 'local') => {
+      const r = await deps.llm.chat({ tier, needsTools: false, budget, budgetDivision: budget ? HOUSE : undefined }, {
+        messages: [{ role: 'system', content: SUMMARIZE_SYSTEM }, { role: 'user', content: text }],
+        maxTokens: 400,
+      });
+      return r.content;
+    };
+    // `noCloudKeys` is the daemon's own "every provider left is the local floor" reading; without it the cheap
+    // call would cascade to that floor anyway, having first spent a round trip finding out.
+    if (!(deps.noCloudKeys?.() ?? false)) {
+      try { return await ask('cheap'); } catch { /* cloud refused: the local floor still summarises */ }
+    }
+    try { return await ask('local'); } catch { return ''; }
+  };
+}
+
 /**
  * The daemon: vault + router + tools + workers + heartbeat trigger + dispatcher + watcher + WS.
  * Everything it does is resumable from the vault; `stop()` checkpoints and exits within `shutdownMs`.
@@ -216,21 +253,7 @@ export class Daemon {
     const pollInbox = async (): Promise<string[]> => { const r = await withTimeout(runSystemTool(officeHolder(loadOrg(this.vault), 'operations'), emailInbox, {}), 60_000, 'email.inbox'); return r?.ok ? r.text.split('\n').slice(1) : []; };
     const pullAnalytics = async (): Promise<string | null> => { const r = await withTimeout(runSystemTool(officeHolder(loadOrg(this.vault), 'operations'), analyticsPull, {}), 60_000, 'analytics.pull'); return r?.ok ? r.text : null; };
     const ownerFeedback = (roleId: string) => feedbackFor(collectOwnerFeedback(this.vault, this.vault.events.last('heartbeat.completed')?.ts), roleId, officeHolder(loadOrg(this.vault), 'chief_executive')).map((f) => `- (${f.source}) ${f.text}`);
-    // Context compaction (spec §6): observations the prompt budget drops, and an over-long plan, are summarised
-    // by the cheapest model there is — the local tier — so compaction never spends cloud quota. A failure here is
-    // never fatal: the harness treats '' as "no summary" and falls back to clipping.
-    const summarize = async (text: string): Promise<string> => {
-      try {
-        const r = await llm.chat({ tier: 'local', needsTools: false }, {
-          messages: [
-            { role: 'system', content: 'Summarize the following observations in ≤ 200 words, keeping file paths, ids and numbers.' },
-            { role: 'user', content: text },
-          ],
-          maxTokens: 400,
-        });
-        return r.content;
-      } catch { return ''; }
-    };
+    const summarize = makeSummarize({ llm, houseBudget: this.houseBudget, noCloudKeys });
     this.workers = new WorkerPool(this.vault, {
       harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback, summarize, modelBudget: this.modelBudget },
       heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, env: cfg.env, noCloudKeys, planMaxAgeDays: cfg.planMaxAgeDays, log: this.log, modelBudget: this.houseBudget, ...this.overrides.heartbeatHooks },

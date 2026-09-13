@@ -3,17 +3,41 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { repoRoot } from './template.js';
 import { officeHolder, divisionOf, type Org } from './org.js';
-import { OFFICES, DEFAULT_OFFICES, type Office, type RiskLevel } from './schemas.js';
+import { OFFICES, DEFAULT_OFFICES, ModelTier, type Office, type RiskLevel } from './schemas.js';
 
-export interface GateSpec { gates: string[]; criteria: string }
+export interface GateSpec { gates: string[]; criteria: string; model_tier?: ModelTier }
 export type GateTable = Record<string, GateSpec>;
+
+/**
+ * What a review costs by default. A gate reads a finished piece of work and judges it against written
+ * criteria — real work, but not the work that needs the best model in the house. The owner's first live run
+ * spent eleven strong-tier calls in a minute on gate jobs against a free strong tier of about sixty calls a
+ * day, and the company then had nothing left to think with (finding F7, ruling FR-7).
+ *
+ * It is a *default*, in both directions: `config/gates.yaml`'s `model_tier:` map raises or lowers it per gate
+ * when a review genuinely needs something else, and the reviewer's own charter is still the ceiling
+ * (`effectiveTier`), so a cheap-tier charter reviews at cheap.
+ */
+export const DEFAULT_GATE_TIER: ModelTier = 'medium';
+
+/**
+ * The tier a gate job is created at: the gate's own `model_tier:` in `config/gates.yaml` if it has one,
+ * otherwise `DEFAULT_GATE_TIER`. A gate named only in the `model_tier:` map and nowhere else is not a gate the
+ * table knows, so it reads as the default like any other unknown one.
+ */
+export function gateTier(t: GateTable, gate: string): ModelTier {
+  return t[gate]?.model_tier ?? DEFAULT_GATE_TIER;
+}
 
 export function parseGates(text: string): GateTable {
   const raw = YAML.parse(text) ?? {};
   const gatesMap = (raw.gates ?? {}) as Record<string, string[]>;
   const criteriaMap = (raw.criteria ?? {}) as Record<string, string>;
+  const tierMap = (raw.model_tier ?? {}) as Record<string, ModelTier>;
 
-  // Merge both maps by key
+  // Merge both maps by key. `model_tier:` deliberately adds no keys of its own: the job types the system knows
+  // are the ones this table gates or describes (gen-docs reads them from here), and a tier for something that
+  // is neither would invent one.
   const allKeys = new Set([...Object.keys(gatesMap), ...Object.keys(criteriaMap)]);
   const out: GateTable = {};
 
@@ -21,6 +45,7 @@ export function parseGates(text: string): GateTable {
     out[k] = {
       gates: gatesMap[k] ?? [],
       criteria: criteriaMap[k] ?? '',
+      ...(tierMap[k] ? { model_tier: ModelTier.parse(tierMap[k]) } : {}),
     };
   }
 
