@@ -32,6 +32,14 @@ export interface InboxRow {
   band?: string; band_reason?: string; board_verdict?: string;
   /** the `## Pressure test` block, when the body has one */ pressure?: string;
   decidable?: Decidable;
+  /**
+   * The owner has decided this one and the dispatcher has not finished with it (SP8 ruling P8-8). The row stays in
+   * `inbox` — it is neither waiting for the owner nor resolved — and carries what they said, so a reload or any
+   * fresh snapshot shows the decision still being applied rather than an untouched note or a row that vanished.
+   */
+  pending?: boolean;
+  /** what the owner said, as the daemon wrote it into the note */ approved?: boolean; chosen?: number;
+  /** why the dispatcher would not apply it; the owner fixes what it names and decides again */ refused?: string | null;
 }
 /** A resolved note: what the owner said and what the dispatcher did with it. */
 export interface DecidedRow { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean; chosen?: number; outcome: string }

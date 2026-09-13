@@ -71,6 +71,10 @@ describe('the Messages sheet (SP8 §2)', () => {
     expect(filterThreads(s, 'dev manager').map((t) => t.id)).toEqual(['agents:cto+dev_manager']);
     expect(filterThreads(s, 'zzz')).toEqual([]);
     expect(messagesView(s, ctx, { search: 'zzz' }).html).toContain('No conversation matches');
+    // The box shows what it is filtering by: the sheet is rebuilt on every open, and a filtered list with an
+    // empty box reads as conversations that have gone missing (whole-branch review).
+    expect(messagesView(s, ctx, { search: 'board' }).html).toContain('value="board"');
+    expect(messagesView(s, ctx, { search: '"quoted"' }).html).toContain('value="&quot;quoted&quot;"');
     expect(messagesView(emptyState(), ctx, {}).html).toContain('No conversations yet');
   });
 

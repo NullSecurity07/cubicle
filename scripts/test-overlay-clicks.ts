@@ -305,15 +305,24 @@ d.vault.writeText(
   `---\nid: ${MEETING}\nroom: board\nopened: ${new Date().toISOString()}\nfacilitator: advisor_skeptic\nparticipants: [advisor_skeptic, advisor_investor, ceo]\nstatus: open\n---\n\n# Board meeting\n\n## Transcript\n\n**Round 1 — advisor_skeptic:** ${TURNS[0]}\n\n**Round 2 — advisor_investor:** ${TURNS[1]}\n\n**Round 3 — ceo:** ${TURNS[2]}\n`,
   'advisor_skeptic',
 );
+// A kind the dispatcher can apply on its own: a `file_change` with a `## Proposed content` fence needs nothing
+// but the block and the target. (A `spend` without a stored call is refused, which is a true answer from the
+// daemon and a dead end for this check — the point here is to reach the resolved outcome.)
 const proposal = createProposal(d.vault, {
-  kind: 'spend', from: 'cfo', target: 'Ledger/ledger.md', title: 'Pay for the domain weekplate.com',
-  body: 'USD 12 a year, once.\n\nThe note is [in the vault](obsidian://open?vault=Cubicle&file=00%20Inbox%2Fspend).\n',
+  kind: 'file_change', from: 'cfo', target: 'Docs/overlay-demo.md', title: 'Write the overlay demo note',
+  body: 'One paragraph, so the run has something the dispatcher can apply.\n\nThe note is [in the vault](obsidian://open?vault=Cubicle&file=00%20Inbox%2Fspend).\n\n## Proposed content\n\n```\n# Overlay demo\n\nWritten by the owner approving a file_change in the office.\n```\n',
 }, 'cfo');
 // The socket is not faked — the frames below go to the daemon and come back from it. What is recorded here is what
 // the page put on the wire, so "Approve sent one decide frame" is a claim about the op and not about the button.
 await page.evaluate(`(() => { const send = WebSocket.prototype.send; window.__sent = []; WebSocket.prototype.send = function (d) { window.__sent.push(String(d)); return send.call(this, d); }; window.__external = []; })()`);
 const sentOps = () => page.evaluate(() => ((window as unknown as { __sent: string[] }).__sent ?? []).map((s) => JSON.parse(s) as Record<string, unknown>));
-const stateLine = () => page.$eval('#panel-body .actionbar .state', (el) => ({ text: el.textContent ?? '', bad: el.classList.contains('bad') })).catch(() => ({ text: '', bad: false }));
+/** What the reader says about the decision: the bar's live line while it is being applied, or the resolved note. */
+const decisionState = () => page.evaluate(() => {
+  const line = document.querySelector('#panel-body .actionbar .state');
+  const body = document.getElementById('panel-body');
+  const text = body ? body.textContent ?? '' : '';
+  return { text: line ? (line.textContent ?? '').trim() : '', bad: !!line && line.classList.contains('bad'), resolved: !line && /Approved/.test(text), body: text.replace(/\s+/g, ' ').slice(0, 160) };
+});
 // The daemon rebuilds `inbox` from the vault on every snapshot, so this is the note itself arriving, with whatever
 // `decidable`, body and band the daemon decided it has.
 await page.waitForFunction((id) => {
@@ -330,7 +339,7 @@ await page.click(`#panel-body [data-open="decision:${proposal.id}"]`);
 await page.waitForFunction(() => document.getElementById('layer')!.dataset.presentation === 'reader', undefined, { timeout: 10_000 }).catch(() => fail('a Decisions row did not open the reader'));
 const r7 = { pres: await presentation(), title: await panelTitle(), bar: await page.$$eval('#panel-body [data-act]', (els) => els.map((e) => (e as HTMLElement).dataset.act)) };
 console.log('a Decisions row →', JSON.stringify(r7));
-if (r7.title !== 'Pay for the domain weekplate.com') fail(`the reader opened on "${r7.title}" instead of the decision`);
+if (r7.title !== 'Write the overlay demo note') fail(`the reader opened on "${r7.title}" instead of the decision`);
 if (!r7.bar.includes('decide:yes') || !r7.bar.includes('decide:no')) fail(`the reader has no action bar (controls: ${r7.bar.join(', ')})`);
 
 // 7b. Approve: one `decide` frame, the daemon writes the owner's yes into the note, and the bar stops saying
@@ -344,14 +353,17 @@ const decided = (await sentOps()).filter((m) => m.op === 'decide');
 console.log('Approve →', JSON.stringify(decided));
 if (decided.length !== 1) fail(`Approve sent ${decided.length} decide frames`);
 else if (decided[0].id !== proposal.id || decided[0].approved !== true || decided[0].comment !== 'go ahead') fail(`the decide frame is wrong: ${JSON.stringify(decided[0])}`);
-let said = await stateLine();
-for (let i = 0; i < 60 && !said.text.trim(); i++) { await page.waitForTimeout(250); said = await stateLine(); }
-console.log('the bar after Approve →', JSON.stringify(said));
-if (said.bad || !said.text.trim()) fail(`Approve left the bar saying "${said.text.trim() || '(nothing)'}"`);
+// Either shape is a pass: the bar saying it is being applied, or — once the dispatcher has run — the reader
+// showing the resolved note, which has no bar left on it at all.
+let said = await decisionState();
+for (let i = 0; i < 60 && !said.bad && !said.resolved && !said.text; i++) { await page.waitForTimeout(250); said = await decisionState(); }
+console.log('the reader after Approve →', JSON.stringify(said));
+if (said.bad) fail(`Approve was refused: "${said.text}"`);
+else if (!said.resolved && !said.text) fail(`Approve left the reader saying nothing about the decision (${said.body})`);
 // The owner's yes, on disk, written as theirs (`ownerDecide`): the one fact neither the page nor the socket can fake.
 let frontmatter = '';
 for (let i = 0; i < 60; i++) {
-  frontmatter = readFileSync(path.join(dir, proposal.path), 'utf8').split('\n---')[0];
+  try { frontmatter = readFileSync(path.join(dir, proposal.path), 'utf8').split('\n---')[0]; } catch (e) { frontmatter = `unreadable: ${String(e).slice(0, 120)}`; }
   if (/^approved:\s*true\b/m.test(frontmatter)) break;
   await page.waitForTimeout(250);
 }

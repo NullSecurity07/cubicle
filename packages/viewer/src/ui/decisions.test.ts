@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { applySnapshot, emptyState, decideSent, decideAcked, decideFailed, type Snapshot, type InboxRow } from '../state.js';
 import { viewFor } from './surfaces.js';
-import { APPLYING_TEXT, COMMENT_REQUIRED, actionBar, commentRequired, decidableOf, decisionKey, decisionsView, verbsFor } from './decisions.js';
+import { APPLYING_TEXT, COMMENT_REQUIRED, actionBar, commentRequired, decidableOf, decideStateFor, decisionKey, decisionsView, rowStateChip, verbsFor } from './decisions.js';
 import { THEMES, contrastRatio } from './tokens.js';
 import type { Ctx } from './content.js';
 
@@ -54,6 +54,17 @@ describe('the decision reader and its action bar', () => {
     expect(v.html).toContain('Who wants this?');
     expect(v.html).toContain('The board: promising');
     expect(v.link).toContain('obsidian://open?vault=Cubicle');
+  });
+
+  it('spends amber on the one action, not on the facts about the note', () => {
+    // `chip kind` is the accent-text chip; on this screen the kind and the band are neutral, and the only amber
+    // left is the primary button (and the top bar's pill, which is not this view's).
+    const reader = viewFor('decision:p1', s, ctx).html;
+    expect(reader).not.toContain('chip kind');
+    expect(reader).toContain('chip note');
+    expect(reader).toContain('chip band');
+    expect(reader).toContain('class="btn primary"');
+    expect(decisionsView(s).html).not.toContain('chip kind');
   });
 
   it('has one shape per decidable: approve, numbered options, adopt or send back', () => {
@@ -144,6 +155,61 @@ describe('the decision reader and its action bar', () => {
     expect(decisionKey({ key: '1' }, { decidable: 'approve', options: 0 }, false)).toBeNull();
     expect(decisionKey({ key: 'a' }, three, true)).toBeNull();           // typing a comment
     expect(decisionKey({ key: 'a', ctrlKey: true }, three, false)).toBeNull();
+  });
+});
+
+/**
+ * SP8 ruling P8-8: a note the owner has decided and the dispatcher has not resolved stays in `inbox` carrying
+ * `pending`, and one it would not apply comes back `refused`. Both states have to survive a reload, so they are
+ * read off the row and not only out of this session's own reducer state.
+ */
+describe('a decision the dispatcher has not finished with', () => {
+  const pending: InboxRow = { ...approveRow, id: 'p6', pending: true, approved: true, refused: null };
+  const refused: InboxRow = { ...approveRow, id: 'p7', pending: false, approved: true, refused: 'no "## Proposed content" block found' };
+
+  it('reads "Decided · applying…" off the row, with nothing to press, on a viewer that never sent it', () => {
+    const s = applySnapshot(emptyState(), snap({ inbox: [pending] }));
+    expect(decideStateFor(pending)).toMatchObject({ status: 'applying', approved: true });
+    const html = viewFor('decision:p6', s, ctx).html;
+    expect(html).toContain(APPLYING_TEXT);
+    expect(html).not.toContain('class="state bad"');
+    expect(html).toMatch(/data-act="decide:yes"[^>]*disabled/);   // busy: the bar stays put and nothing can be pressed twice
+    expect(html).toMatch(/data-act="decide:no"[^>]*disabled/);
+  });
+
+  it('shows a refusal with the bar back, so the owner can fix what it names and decide again', () => {
+    const s = applySnapshot(emptyState(), snap({ inbox: [refused] }));
+    expect(decideStateFor(refused)).toMatchObject({ status: 'error', message: 'no "## Proposed content" block found' });
+    const html = viewFor('decision:p7', s, ctx).html;
+    expect(html).toContain('no &quot;## Proposed content&quot; block found');
+    expect(html).toContain('class="state bad"');
+    expect(html).toContain('data-act="decide:yes"');
+    expect(html).not.toMatch(/data-act="decide:yes"[^>]*disabled/);
+  });
+
+  it('a click in flight outranks the row; the row outranks a stale ack', () => {
+    // Nothing is on the note yet while the frame is still going out.
+    expect(decideStateFor({ ...approveRow, pending: true }, { status: 'sending', approved: false })).toMatchObject({ status: 'sending' });
+    // The daemon has since refused it: that is newer than this session's "applying".
+    expect(decideStateFor(refused, { status: 'applying', approved: true })).toMatchObject({ status: 'error' });
+    // Nothing on either side: a plain, pressable bar.
+    expect(decideStateFor(approveRow)).toBeUndefined();
+  });
+
+  it('the chosen option comes back from the note when this session did not pick it', () => {
+    const chosenRow: InboxRow = { ...chooseRow, id: 'p8', pending: true, approved: true, chosen: 3 };
+    const s = applySnapshot(emptyState(), snap({ inbox: [chosenRow] }));
+    expect(viewFor('decision:p8', s, ctx).html).toContain(APPLYING_TEXT);
+    expect(decideStateFor(chosenRow)).toMatchObject({ chosen: 3 });
+  });
+
+  it('the Needs-you list marks both without a second accent: applying is quiet, refused is bad', () => {
+    const html = decisionsView(applySnapshot(emptyState(), snap({ inbox: [pending, refused] }))).html;
+    expect(rowStateChip(pending)).toContain('applying');
+    expect(rowStateChip(refused)).toContain('failed');       // the `bad` chip class
+    expect(rowStateChip(approveRow)).toBe('');
+    expect(html).toContain('Decided, being applied');
+    expect(html).toContain('Refused: no &quot;## Proposed content&quot; block found');
   });
 });
 

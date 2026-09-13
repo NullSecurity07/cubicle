@@ -106,6 +106,14 @@ describe('layout tokens clear the elevation-0 controls', () => {
     expect(app).toMatch(/\.seg\[aria-selected="true"\] \{ background: var\(--accent\); color: var\(--accent-ink\); \}/);
     expect(app).not.toContain('rgba(0,0,0,.18)');
   });
+  // Pinned to its newest turn, a conversation's scrollport lands wherever the older turns fall — which was between
+  // a speaker's name and their bubble in the delivered scene. The fade is the fix, and it is a claim about the CSS.
+  it('a conversation fades its top edge rather than cutting a speaker off their bubble', () => {
+    expect(app).toMatch(/\.thread \{[^}]*mask-image: linear-gradient\(to bottom, transparent 0, #000 var\(--s5\)\)/);
+  });
+  it('the decision chips are quiet: one accent, spent on the pill and the primary action', () => {
+    expect(app).toMatch(/\.chip\.note, \.chip\.band, \.chip\.applying \{ color: var\(--text-2\); \}/);
+  });
   it('the first-run card paints the level-2 scrim itself', () => {
     expect(app).toMatch(/#firstrun \{[^}]*background: var\(--scrim\)/);
   });
