@@ -166,12 +166,17 @@ export class Panel {
     this.form.hidden = v.mode !== 'chat';
     // body: fresh views replace, live views morph (keyed nodes keep identity: <img data-key="frame">, <pre data-key="term">)
     const pinned = this.atBottom();
+    // A conversation scrolls inside the view, not with the sheet: it follows its newest turn unless the reader has
+    // scrolled up to read something older (ui/messages.ts renders it with `data-key="thread"`).
+    const threadPinned = this.threadAtBottom();
     if (fresh || presChanged) { this.body.innerHTML = v.html; } else { morph(this.body, v.html); }
     this.applySegments(kind);
     this.view = v;
     if (v.mode === 'chat' && (fresh || pinned)) this.body.scrollTop = this.body.scrollHeight;
     else if (v.live && !fresh && pinned) this.body.scrollTop = this.body.scrollHeight;
     else if (fresh) this.body.scrollTop = 0;
+    const thread = this.body.querySelector<HTMLElement>('[data-key="thread"]');
+    if (thread && (fresh || threadPinned)) thread.scrollTop = thread.scrollHeight;
     this.jump.hidden = !(v.live && !this.atBottom());
     if (fresh) {
       // Land on the panel, which suppresses its own ring, and let Tab move in. Focusing the first control inside the
@@ -191,6 +196,11 @@ export class Panel {
   }
 
   private atBottom(): boolean { return this.body.scrollHeight - this.body.scrollTop - this.body.clientHeight < 40; }
+  /** True when there is no conversation open, or when it is already showing its newest turn. */
+  private threadAtBottom(): boolean {
+    const t = this.body.querySelector<HTMLElement>('[data-key="thread"]');
+    return !t || t.scrollHeight - t.scrollTop - t.clientHeight < 40;
+  }
 
   private selectSegment(id: string): void { if (this.current) { this.segChoice.set(this.current, id); this.applySegments(this.current); } }
   /** Segmented controls come from HTML with the first tab selected; re-apply the viewer's choice after every render. */

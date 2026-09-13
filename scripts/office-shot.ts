@@ -9,6 +9,7 @@
  * The scenes, in the checklist's own order and under its own names:
  *   01-first-run  02-lobby  03-f1  04-f2  05-f3  06-f4  07-elevator  08-board  09-night
  *   09a-tower-day  09b-tower-night  09c-tower-dusk  10-browser-live  11-terminal  12-light-theme  13-stack  14-sales
+ *   15-decisions  16-messages
  * Every scene's hour is pinned (`DAY`, `DUSK`, `NIGHT`) rather than inherited from the wall clock: a run at 19:47
  * made fifteen dusk pictures and a run at 21:43 made fifteen dark ones, and neither proved the daylight palette.
  * Order is not free. `01-first-run` has to come before the Escape that dismisses the card, because the card is shown
@@ -55,7 +56,7 @@ page.on('pageerror', (e) => console.log('[page exception]', String(e).slice(0, 2
 
 type Tile = { tx: number; ty: number };
 type Agent = { role: string; state: string; seat: Tile | null; tile: Tile };
-type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }> }; agents: () => Agent[]; floor: (n: number) => void; currentFloor: () => number; elevator: () => unknown; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void } };
+type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }> }; agents: () => Agent[]; floor: (n: number) => void; currentFloor: () => number; elevator: () => unknown; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; seed: (fixture: Record<string, unknown>) => void; pushFrame: (id: string, dataUrl: string) => void } };
 /** Run `fn` inside the page against `window.__cubicle`. `fn` crosses over as source text, so it can close over
  *  nothing from this script: whatever it needs (a floor number, an hour) is passed as `arg` and arrives as its
  *  second parameter. */
@@ -422,6 +423,70 @@ try {
   // building's corner are what the right of the frame is, and they are honestly what is there.
   await cub((c) => c.center(44.5, 35));
   await shot('14-sales', 900);
+  await closePanels();
+
+  // 15/16: the two SP8 screens. Their data comes from the daemon's snapshot in a real office (decisions carry the
+  // note body and the board's pressure test; conversations are parsed out of the vault), which the scripted model
+  // above never writes — so the fixture is pushed in through `__cubicle.seed`, the harness's own hook, and the
+  // scenes are pictures of the page rendering real shapes rather than of an empty state.
+  await setHour(DAY);
+  const now = Date.now();
+  const stamp = (minsAgo: number): string => new Date(now - minsAgo * 60_000).toISOString();
+  await cub((c, f: unknown) => c.seed(f as Record<string, unknown>), {
+    inbox: [
+      {
+        id: 'sp8_brief', kind: 'founder_brief', title: 'The founder brief: meal plans for busy parents', path: '00 Inbox/2026-09-13-1040-founder_brief.md', created: stamp(12),
+        from: 'ceo', decidable: 'adopt', band: 'medium', band_reason: 'a new direction for the company', board_verdict: 'promising, if the first customer is real',
+        body: '# The founder brief\n\n**What we are building.** A weekly meal plan a parent can cook from on a Sunday afternoon, with the shopping list attached.\n\n**Who it is for.** Two-income households with school-age children who already cook and still throw food away.\n\n**Why now.** Grocery delivery has made the shopping list the easy part; deciding is still the hard part.\n\n- First customer: the parents in the school WhatsApp group.\n- First revenue: a paid plan at USD 6 a month.\n- The note is [in the vault](obsidian://open?vault=Cubicle&file=00%20Inbox%2F2026-09-13-1040-founder_brief).\n',
+        pressure: '## Pressure test\n\n**Is anyone asking for this?** Two of the five parents interviewed keep a paper plan already.\n\n**What would have to be true?** That a plan is worth six dollars against a free recipe search.\n\n**What is the cheapest way to find out?** One week of plans, hand-written, sold to the group.\n',
+      },
+      { id: 'sp8_spend', kind: 'spend', title: 'Pay for the domain weekplate.com', path: '00 Inbox/2026-09-13-1052-spend.md', created: stamp(4), from: 'cfo', decidable: 'approve', band: 'small', band_reason: 'USD 12, inside the cash the company has' },
+      { id: 'sp8_name', kind: 'brand_change', title: 'Name the company', path: '00 Inbox/2026-09-13-1055-brand_change.md', created: stamp(2), from: 'ceo', decidable: 'choose', options: [{ n: 1, label: 'WeekPlate' }, { n: 2, label: 'PlateReady' }, { n: 3, label: 'Sunday Prep' }] },
+    ],
+    decided: [
+      { id: 'sp8_idea', kind: 'idea_verdict', title: 'Meal plans for busy parents', path: '00 Inbox/2026-09-12-1810-idea_verdict.md', created: stamp(1500), resolved_at: stamp(1440), approved: true, outcome: 'the board decided: build it' },
+      { id: 'sp8_ads', kind: 'outbound_batch', title: 'Cold email 200 parenting bloggers', path: '00 Inbox/2026-09-12-1902-outbound_batch.md', created: stamp(1420), resolved_at: stamp(1400), approved: false, outcome: 'rejected: not before there is something to sell' },
+    ],
+    conversations: [
+      { id: 'board:sp8', kind: 'board', title: 'Is this worth building?', room: 'board', participants: ['advisor_skeptic', 'advisor_investor', 'advisor_customer', 'ceo'], updated: stamp(1), open: true, last: { who: 'advisor_skeptic', text: 'Name one parent who would pay six dollars.', at: stamp(1) }, turns: 6 },
+      { id: 'dm:owner-ceo', kind: 'dm', title: 'You and the CEO', participants: ['owner', 'ceo'], updated: stamp(11), open: false, last: { who: 'ceo', text: 'I filed the brief — it needs your yes.', at: stamp(11) }, turns: 4 },
+      { id: 'agents:cto+dev_manager', kind: 'agents', title: 'Dev Manager and the CTO', participants: ['cto', 'dev_manager'], updated: stamp(35), open: false, last: { who: 'cto', text: 'Ship the static site first; the plan editor can wait.', at: stamp(35) }, turns: 3 },
+      { id: 'pantry:2026-09-13-qa_lead-and-growth', kind: 'pantry', title: 'QA Lead and Growth, at the counter', room: 'pantry', participants: ['qa_lead', 'growth'], updated: stamp(96), open: false, last: { who: 'growth', text: 'What if the plan came as a printable page?', at: stamp(96) }, turns: 5 },
+    ],
+    turns: {
+      'board:sp8': [
+        { who: 'advisor_skeptic', at: stamp(6), text: 'The question for this subject: is a weekly meal plan worth paying for when recipe search is free?' },
+        { who: 'advisor_customer', at: stamp(5), text: 'Two of the five parents we spoke to already keep a paper plan. They are not paying for recipes, they are paying to stop deciding.' },
+        { who: 'advisor_investor', at: stamp(4), text: 'Six dollars a month against a free search is a thin margin for a habit that breaks the first busy week.' },
+        { who: 'advisor_skeptic', at: stamp(3), text: 'You are both hedging. Would either of you buy it?' },
+        { who: 'ceo', at: stamp(2), text: 'I would run one week by hand for the school group before we build anything.' },
+        { who: 'advisor_skeptic', at: stamp(1), text: 'Name one parent who would pay six dollars.' },
+      ],
+    },
+  });
+  await page.waitForTimeout(400);
+
+  // 15: a decision open on the owner's desk — the note as written, the board's pressure test under it, and the
+  // action bar pinned to the foot of the reader with the Decisions sheet still in the trail behind it.
+  await cub((c) => c.open('postoffice'));
+  await page.waitForTimeout(500);
+  await cub((c) => c.open('decision:sp8_brief'));
+  await page.waitForTimeout(600);
+  const barActs = await page.$$eval('#panel-body .actionbar [data-act]', (els) => els.map((e) => (e as HTMLElement).dataset.act));
+  if (!barActs.includes('decide:yes')) fail(`15: the decision reader has no action bar (controls: ${barActs.join(', ') || 'none'})`);
+  if ((await cub((c) => c.stack().length)) < 2) fail('15: the reader is not on top of the Decisions sheet, so the trail is empty');
+  await shot('15-decisions', 900);
+  await closePanels();
+
+  // 16: Messages with the board's argument open beside the thread list. At 1280 the sheet is wide enough for both
+  // panes, which is the layout this scene exists to show.
+  await cub((c) => c.open('messages'));
+  await page.waitForTimeout(500);
+  const cols = await page.$eval('#panel-body .panes', (el) => getComputedStyle(el).gridTemplateColumns);
+  if (cols.split(' ').length < 2) fail(`16: the Messages sheet is one column (${cols}), so the two-pane layout is unproven`);
+  const bubbles = await page.$$eval('#panel-body .thread .msg', (els) => els.length);
+  if (bubbles < 3) fail(`16: the conversation pane shows ${bubbles} bubbles, so there is no conversation to look at`);
+  await shot('16-messages', 900);
   await closePanels();
 } catch (err) {
   fail(err instanceof Error ? err.message : String(err));

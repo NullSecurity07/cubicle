@@ -287,8 +287,87 @@ console.log('click on the toast over the whiteboard →', JSON.stringify(r6));
 if (r6.hits.some((h) => h.ev === 'gameobjectdown')) fail('a press on the toast reached a game object beneath it');
 if (r6.pres !== null) fail('a press on the toast text opened a panel');
 
+
+// ---------------------------------------------------------------------------------------------------------------
+// SP8: the office decides and reads for itself. The daemon side lands in parallel, so the rows and threads below are
+// pushed in through `__cubicle.seed` (the same hook the screenshot harness uses) rather than written into the vault;
+// what is under test is the page — the reader, the op it puts on the wire, the thread that opens, and the
+// `obsidian:` link that must never navigate.
+// The socket is stubbed by recording every frame the page sends: `decide` is a real frame on the real socket, and
+// a daemon that does not know the op yet simply ignores it, which leaves the reader in its "applying" state.
+await page.evaluate(`(() => { const send = WebSocket.prototype.send; window.__sent = []; WebSocket.prototype.send = function (d) { window.__sent.push(String(d)); return send.call(this, d); }; window.__external = []; })()`);
+const sentOps = () => page.evaluate(() => ((window as unknown as { __sent: string[] }).__sent ?? []).map((s) => JSON.parse(s) as Record<string, unknown>));
+const DECISION = 'demo_decide';
+const THREAD = 'board:demo';
+await page.evaluate((o) => (window as unknown as Win).__cubicle.seed(o), {
+  inbox: [{
+    id: DECISION, kind: 'spend', title: 'Pay for the domain', path: '00 Inbox/2026-09-13-spend.md', created: new Date().toISOString(),
+    from: 'cfo', decidable: 'approve', band: 'small',
+    body: '# Pay for the domain\n\nUSD 12 a year, once.\n\nThe note is [in the vault](obsidian://open?vault=Cubicle&file=00%20Inbox%2F2026-09-13-spend).\n',
+  }],
+  decided: [{ id: 'demo_done', kind: 'idea_verdict', title: 'Meal plans for busy parents', path: '00 Inbox/2026-09-12-idea.md', created: new Date(Date.now() - 86_400_000).toISOString(), resolved_at: new Date(Date.now() - 3_600_000).toISOString(), approved: true, outcome: 'the board decided: build it' }],
+  conversations: [{ id: THREAD, kind: 'board', title: 'Is this worth building?', room: 'board', participants: ['advisor_skeptic', 'ceo'], updated: new Date().toISOString(), open: true, last: { who: 'advisor_skeptic', text: 'Who is the first customer?', at: new Date().toISOString() }, turns: 2 }],
+  turns: { [THREAD]: [{ who: 'advisor_skeptic', at: new Date().toISOString(), text: 'Who is the first customer?' }, { who: 'ceo', at: new Date().toISOString(), text: 'Parents who cook on Sundays.' }] },
+});
+
+// 7. Decisions: the sheet lists what needs the owner, and a row opens the reader.
+await page.evaluate(() => (window as unknown as Win).__cubicle.open('postoffice'));
+await page.waitForFunction(() => document.getElementById('layer')!.dataset.presentation === 'sheet', undefined, { timeout: 10_000 });
+if ((await panelTitle()) !== 'Decisions') fail(`the post office sheet is "${await panelTitle()}", not Decisions`);
+await page.click(`#panel-body [data-open="decision:${DECISION}"]`);
+await page.waitForFunction(() => document.getElementById('layer')!.dataset.presentation === 'reader', undefined, { timeout: 10_000 }).catch(() => fail('a Decisions row did not open the reader'));
+const r7 = { pres: await presentation(), title: await panelTitle(), bar: await page.$$eval('#panel-body [data-act]', (els) => els.map((e) => (e as HTMLElement).dataset.act)) };
+console.log('a Decisions row →', JSON.stringify(r7));
+if (r7.title !== 'Pay for the domain') fail(`the reader opened on "${r7.title}" instead of the decision`);
+if (!r7.bar.includes('decide:yes') || !r7.bar.includes('decide:no')) fail(`the reader has no action bar (controls: ${r7.bar.join(', ')})`);
+
+// 7b. Approve puts one `decide` frame on the wire and the bar says so until the dispatcher answers.
+await page.fill('#panel-body input[data-key="comment"]', 'go ahead');
+await page.click('#panel-body [data-act="decide:yes"]');
+await page.waitForTimeout(300);
+const decided = (await sentOps()).filter((m) => m.op === 'decide');
+console.log('Approve →', JSON.stringify(decided));
+if (decided.length !== 1) fail(`Approve sent ${decided.length} decide frames`);
+else if (decided[0].id !== DECISION || decided[0].approved !== true || decided[0].comment !== 'go ahead') fail(`the decide frame is wrong: ${JSON.stringify(decided[0])}`);
+const applying = await page.$eval('#panel-body .actionbar .state', (el) => el.textContent ?? '').catch(() => '');
+if (!applying.includes('applying')) fail(`the bar says "${applying}" rather than that the decision is being applied`);
+
+// 7c. An `obsidian:` link hands off and never navigates: the office window cannot load that scheme and goes blank.
+await page.evaluate(`(() => { window.__cubicle.openExternal = function (u) { window.__external.push(String(u)); }; })()`);
+const urlBefore = page.url();
+await page.click('#panel-body a[href^="obsidian:"]');
+await page.waitForTimeout(400);
+const r7c = { url: page.url(), handed: await page.evaluate(() => (window as unknown as { __external: string[] }).__external), pres: await presentation() };
+console.log('an obsidian: link →', JSON.stringify(r7c));
+if (r7c.url !== urlBefore) fail(`an obsidian: link navigated the office window to ${r7c.url}`);
+if (r7c.handed.length !== 1 || !r7c.handed[0].startsWith('obsidian://')) fail(`the shell was not handed the link (${JSON.stringify(r7c.handed)})`);
+if (r7c.pres !== 'reader') fail(`the reader closed when the link was clicked (now ${r7c.pres})`);
+await page.keyboard.press('Escape');
+await page.waitForTimeout(300);
+await page.evaluate(() => document.getElementById('panel-close')!.click());
+await page.waitForFunction(() => document.getElementById('layer')!.hidden, undefined, { timeout: 10_000 });
+
+// 8. Messages: the tab opens the sheet and a thread row opens the conversation beside the list.
+await page.click('#bar [data-open="messages"]');
+await page.waitForFunction(() => document.getElementById('layer')!.dataset.presentation === 'sheet', undefined, { timeout: 10_000 });
+await page.click(`#panel-body [data-act="thread:${THREAD}"]`);
+await page.waitForTimeout(400);
+const r8 = {
+  title: await panelTitle(),
+  open: await page.evaluate(() => (window as unknown as Win).__cubicle.ui().thread as string | null),
+  bubbles: await page.$$eval('#panel-body .thread .msg .bubble', (els) => els.map((e) => e.textContent ?? '')),
+  asked: (await sentOps()).filter((m) => m.op === 'conversation.get').map((m) => m.id),
+};
+console.log('a Messages thread →', JSON.stringify(r8));
+if (r8.title !== 'Messages') fail(`the Messages tab opened "${r8.title}"`);
+if (r8.open !== THREAD) fail(`the thread row left ${JSON.stringify(r8.open)} open`);
+if (!r8.bubbles.some((b) => b.includes('Who is the first customer?'))) fail(`the conversation pane shows ${JSON.stringify(r8.bubbles)}`);
+if (!r8.asked.includes(THREAD)) fail('opening a thread did not ask the daemon for its turns');
+await page.evaluate(() => document.getElementById('panel-close')!.click());
+await page.waitForFunction(() => document.getElementById('layer')!.hidden, undefined, { timeout: 10_000 });
+
 await browser.close();
 await d.stop();
 if (failures.length) { console.log(`FAIL: ${failures.length} check(s) failed`); process.exit(1); }
-console.log('PASS: presses on the sheet, reader, rail, viewer and toast stay on the HTML layer; releases and office clicks still reach Phaser');
+console.log('PASS: presses on the sheet, reader, rail, viewer and toast stay on the HTML layer; releases and office clicks still reach Phaser; a Decisions row opens its reader and Approve sends one decide frame; a Messages thread opens; an obsidian: link hands off without navigating');
 process.exit(0);

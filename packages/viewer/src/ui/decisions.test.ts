@@ -50,6 +50,7 @@ describe('the decision reader and its action bar', () => {
     expect(v.title).toBe('The founder brief');
     expect(v.html).toContain('What we are building.');
     expect(v.html).toContain('Pressure test');
+    expect((v.html.match(/Pressure test/g) ?? []).length).toBe(1);   // the section titles it; the block’s own heading is dropped
     expect(v.html).toContain('Who wants this?');
     expect(v.html).toContain('The board: promising');
     expect(v.link).toContain('obsidian://open?vault=Cubicle');

@@ -124,7 +124,9 @@ export function decisionView(id: string, s: State, ctx: Ctx, ui: { choice?: Reco
   const head = `<p>${chip('kind', kindLabel(n.kind))} ${bandChip(n)} <span class="muted">${esc([n.from ? who(s, n.from) : '', fmtWhen(n.created)].filter(Boolean).join(' · '))}</span></p>`;
   const why = n.band_reason ? `<p class="hintline">${esc(n.band_reason)}</p>` : '';
   const body = n.body ? `<div class="prose">${md(n.body)}</div>` : `<p class="muted">The note carries no body. Open it in Obsidian to read it in full.</p>`;
-  const pressure = n.pressure ? section('Pressure test', `<div class="prose">${md(n.pressure)}</div>`) : '';
+  // The section titles the block, so the block's own `## Pressure test` heading would be the same words twice.
+  const pressureBody = (n.pressure ?? '').replace(/^\s*#{1,3}\s*pressure test\s*\n+/i, '');
+  const pressure = pressureBody.trim() ? section('Pressure test', `<div class="prose">${md(pressureBody)}</div>`) : '';
   const verdict = n.board_verdict ? `<p class="hintline">The board: ${esc(n.board_verdict)}</p>` : '';
   return {
     mode: 'doc', icon: 'envelope', title: n.title, sub: path, link,
