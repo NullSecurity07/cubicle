@@ -43,9 +43,82 @@ export const SCRIPTED_FOUNDER_BRIEF = [
   '**Brutal Verdict:** WEAK — delivery is unpriced and the second nursery has bought once.', '',
 ].join('\n');
 
-export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boolean; ideaVerdict?: 'pass' | 'return'; ideaChair?: 'hedge-then-good' | 'hedge-then-refusal' | 'hedge-then-silence'; trustVerdict?: 'pass' | 'return'; outboundEmail?: Record<string, unknown>; boardAsksOwner?: string } = {}): Llm & { calls: Record<string, number> } {
+/**
+ * The three ideas the CEO offers an owner who typed "surprise me" (heartbeat `SURPRISE_ASK`).
+ *
+ * Written out in full, and each line complete, because `completeIdeaLines` drops a line the model stopped
+ * mid-sentence: a fixture that hands back two-and-a-half ideas would test `SURPRISE_FAILED` and nothing else.
+ */
+export const THREE_IDEAS = [
+  'CrateMate — weekly allergen-checked meal kits for nursery kitchens.',
+  'Tuckbox — a Saturday recipe box for families who batch-cook on Sundays.',
+  'Provender — per-child-per-week lunch supply for village pre-schools.',
+];
+
+/**
+ * The CEO's own six answers to the founder interview (ruling P8-13), tagged the way `parseCeoAnswers` reads
+ * them. Only the first is `[from the idea]` — the owner has said nothing else at this point, and a fixture that
+ * tagged all six as established would let a brief cite the owner's word for answers nobody gave.
+ */
+export const SIX_CEO_ANSWERS = [
+  'A weekly box of allergen-checked ingredients and recipes for nursery kitchens. [from the idea]',
+  'Nursery managers who order lunch for twenty to sixty children and cook it on site. [from the idea]',
+  'Nothing exists yet: no site, no customer, no price. [unstated]',
+  'Ten nurseries on a weekly order would make three months worth it. [from the idea]',
+  'I do not know what has been tried before. [unstated]',
+  'Nothing has been ruled out yet. [unstated]',
+];
+
+export function orgLlm(opts: {
+  vetoes?: number; plan?: string; boardSilent?: boolean; ideaVerdict?: 'pass' | 'return';
+  ideaChair?: 'hedge-then-good' | 'hedge-then-refusal' | 'hedge-then-silence'; trustVerdict?: 'pass' | 'return';
+  outboundEmail?: Record<string, unknown>; boardAsksOwner?: string;
+  /**
+   * The three ideas the surprise path files. Unset, that prompt takes the generic `ok` below, which
+   * `completeIdeaLines` reads as "no complete idea" — the shape every test that is *not* about the surprise
+   * path already relies on.
+   */
+  surpriseIdeas?: string[];
+  /** The CEO's six answers to its own founder interview. Unset, the self-interview takes the generic `ok`. */
+  selfInterview?: string[];
+  /**
+   * The pressure verdict the chair gives **the founder brief**, told apart from the idea's by the one phrase
+   * only `chairRoundPrompt` for `kind: 'brief'` carries ("this founder brief"). A journey needs the brief to
+   * come back WEAK (so the two-step adoption of ruling W3-3 is reachable) while the idea it came from passes,
+   * and one global `ideaVerdict` cannot say both.
+   */
+  briefVerdict?: 'STRONG' | 'WEAK' | 'PIVOT REQUIRED';
+  /**
+   * Answer the two prompts the CEO writes *to the owner* — the general cabin reply and the "since you were
+   * away" brief — instead of `ok`. Both are scripted from what the prompt itself carries, never invented: the
+   * reply only invites a "go" when the prompt says the interview is still open (ruling W3-7), and the brief
+   * quotes the fact lines it was given.
+   */
+  ownerReplies?: boolean;
+  /**
+   * Write a plan whose every objective names the kept idea the goal listed (ruling W3-1). The slug comes out of
+   * the `Kept ideas — …` block in the plan job's own goal, so the fixture cannot name an idea the company has
+   * not kept. Falls back to `plan` when the goal lists none.
+   */
+  planKeptIdea?: boolean;
+  /**
+   * The stream the scripted division plan puts on its `engineer.ship` request. `'site'` is the stream
+   * `planning.test.ts` scaffolds; `null` omits it, which is what a company whose only stream was seeded this
+   * cycle needs — `scheduler.request` then fills in the sole stream itself.
+   */
+  shipStream?: string | null;
+  /**
+   * The title of the one card the standing-intelligence sweeps file. `idea.card` derives `source` from the
+   * calling job's type, so a card filed from an `intelligence` job carries `intelligence:<kind>` without being
+   * told — which is the provenance ruling W3-5 turns on. Deliberately filed with no research half and no price,
+   * because that is the state the ruling is about: the owner has never seen it, so it is listed in the brief for
+   * them to promote and never put in front of the board.
+   */
+  intelligenceCard?: string;
+} = {}): Llm & { calls: Record<string, number> } {
   let vetoes = opts.vetoes ?? 1;
   const plan = opts.plan ?? PLAN;
+  const shipStream = opts.shipStream === undefined ? 'site' : opts.shipStream;
   const per = new Map<string, number>();
   const llm = {
     calls: {} as Record<string, number>,
@@ -62,6 +135,39 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
           return { ...base, tier: 'cheap' as const, content: /IDEA: <one sentence>/.test(last)
             ? 'The nurseries would pay for it before we build anything.\nIDEA: A weekly meal-kit box for nurseries'
             : 'The nurseries keep asking whether we deliver a weekly box.' };
+        }
+        // The surprise path (heartbeat `SURPRISE_ASK`, ruling FR-2): three *complete* numbered lines, or the CEO
+        // files nothing. Checked here because the same cycle's other prompts never say "surprise them".
+        if (opts.surpriseIdeas && /surprise them/.test(last)) {
+          return { ...base, content: opts.surpriseIdeas.map((l, i) => `${i + 1}. ${l}`).join('\n') };
+        }
+        // The CEO answering the six founder questions itself (ruling P8-13). One numbered line per question,
+        // each ending in one of the three tags `parseCeoAnswers` accepts.
+        if (opts.selfInterview && /answering the founder interview \*\*yourself\*\*/.test(last)) {
+          return { ...base, content: opts.selfInterview.map((a, i) => `${i + 1}. ${a}`).join('\n') };
+        }
+        // The CEO's reply in the cabin. Deliberately literal about the one thing ruling W3-7 turns on: the
+        // invitation to add, correct or say "go" is written only when the prompt asked for it, so a test can
+        // prove the invitation stops once the interview is closed rather than prove the fixture's own taste.
+        if (opts.ownerReplies && /^The owner wrote:/.test(last)) {
+          const open = /still with them/.test(last);
+          const brief = /long brief rather than a one-line idea/.test(last);
+          return { ...base, content: [
+            'Understood. The research office reads everything you have given us and files the founder brief you approve; nothing is planned until you do.',
+            brief ? 'Your document goes to them in full — I will not summarise it for you.' : '',
+            open ? 'Anything to add, any correction, or just "go", is all I need.' : '',
+          ].filter(Boolean).join(' ') };
+        }
+        // The "since you were away" brief. Built from the fact lines the prompt carries — the three headings the
+        // heartbeat validates, and the facts verbatim underneath — so the note the owner reads cannot contain
+        // anything the cycle did not report.
+        if (opts.ownerReplies && /Write the owner's "since you were away" brief/.test(last)) {
+          const factLine = (label: string) => last.match(new RegExp(`^${label}: (.*)$`, 'm'))?.[1] ?? 'nothing';
+          return { ...base, content: [
+            '## What happened', `- Finished jobs: ${factLine('Finished jobs')}`, '',
+            "## What's next", `- Queued next: ${factLine('Queued next')}`, '',
+            '## What needs you', ...factLine('Needs owner').split(' | ').map((r) => `- ${r.replace(/^- /, '')}`),
+          ].join('\n') };
         }
         // A board chair's merge prompt, for either subject, names the exact verdict line; an advisor's does not.
         // Since SP3 the board also sits on ideas, and both chair prompts ask for "VERDICT: pass" — so the plan's
@@ -107,7 +213,13 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
           'Brutal Verdict': 'Build the cheap test this week.',
         };
         const PARTS = ['Core Assumption', 'Three Fatal Flaws', 'Problem Validation', 'Founder-Market Fit', 'Brutal Verdict'];
-        const machineLines = opts.ideaVerdict === 'return'
+        // Which subject this chair is ruling on. `chairRoundPrompt` writes "this founder brief" for a brief
+        // session and "this idea" for an idea one, and that phrase is the only thing that tells them apart — so
+        // a journey can have the brief come back WEAK while the idea it came from passes.
+        const briefChair = /pressure-testing this founder brief/.test(last);
+        const machineLines = briefChair && opts.briefVerdict
+          ? `VERDICT: ${opts.briefVerdict}\nRUBRIC: core assumption 1, fatal flaws 2, pain 2, founder fit 1, why now 1${opts.briefVerdict === 'PIVOT REQUIRED' ? '\nWEDGE: the one nursery chain that already orders together' : ''}`
+          : opts.ideaVerdict === 'return'
           ? 'VERDICT: PIVOT REQUIRED\nRUBRIC: core assumption 1, fatal flaws 1, pain 1, founder fit 1, why now 1\nWEDGE: the one nursery chain that already orders together'
           : 'VERDICT: STRONG\nRUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1';
         const ideaMerge = `${machineLines}\n\n${PARTS.map((p) => `## ${p}\n${PART[p]}`).join('\n\n')}`;
@@ -139,6 +251,14 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
         return { ...base, content: /NAME:/.test(last) ? 'NAME: X\nTAGLINE: y' : 'ok' };
       }
       const jobMsg = String(chat.messages[1]?.content ?? '');
+      // A first cut on a stream that has no pipeline yet. §17's guardrail refuses `finish(done)` on an
+      // `engineer.ship` with no green CI record, and hands the refusal back as a tool result — so an author that
+      // read it would stop rather than call `finish` again for ever. Without this the scripted engineer retries
+      // until the worker pool gives up, which spends a free tier on a job that cannot succeed and drowns the
+      // event log in one message. A test with a green record (planning.test.ts) never reaches this.
+      if (/no CI record for stream/.test(chat.messages.map((m) => String(m.content ?? '')).join('\n'))) {
+        return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'blocked', summary: 'this stream has no pipeline yet, so the first cut cannot be validated; it waits for one' } }] };
+      }
       const jobId = jobMsg.match(/Jobs\/(job_\w+)\.md/)?.[1] ?? 'x';
       const n = per.get(jobId) ?? 0; per.set(jobId, n + 1);
       const jobType = jobMsg.match(/type: ([\w.]+)/)?.[1] ?? '';
@@ -148,7 +268,29 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
       // division_plans does not wait on process-expanded jobs (Task 9 review round 2). No other test's jobs use these
       // titles, so this is a no-op everywhere else.
       if (/^(Build|Announce|Outreach|Measure launch):? /.test(jobTitle) || jobTitle === 'Measure launch') return { ...base, parsedToolCalls: [{ name: 'vault.read', args: { path: 'Plans/plan.md' } }] };
-      if (jobType === 'company.plan') return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content: plan } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
+      // A standing-intelligence sweep that found one thing worth doing. Every kind proposes the same title, so
+      // `idea.card`'s own same-title rule leaves the company with one card and not four.
+      if (jobType === 'intelligence' && opts.intelligenceCard) {
+        const calls = [
+          { name: 'idea.card', args: { title: opts.intelligenceCard, evidence: ['Research/index.md'], what_changed: 'The sweep found this while reading, not the owner.', why_it_matters: 'Nobody has asked for it yet.' } },
+          { name: 'finish', args: { status: 'done', summary: 'swept and filed one card' } },
+        ];
+        return { ...base, parsedToolCalls: [calls[Math.min(n, 1)]] };
+      }
+      if (jobType === 'company.plan') {
+        // Ruling W3-1: every objective names the idea it serves, and the only ideas it may name are the ones the
+        // goal's `Kept ideas` block lists. Read from the goal rather than from a constant, so the fixture cannot
+        // invent a kept idea — and so a run where the board kept nothing falls back to the plain plan.
+        const kept = opts.planKeptIdea ? [...jobMsg.matchAll(/\[\[Ideas\/([a-z0-9][a-z0-9-]*)\]\]/g)].map((m) => m[1])[0] : undefined;
+        const text = kept ? [
+          '---', 'cycle: 1', '---', '# Plan', '', '## Objectives', '',
+          '### dev',
+          `- Ship the first cut of Site/ so a visitor can say what we sell — idea: [[Ideas/${kept}]]`, '',
+          '### revenue',
+          `- Find the first organic channel and publish three things on it — idea: [[Ideas/${kept}]]`, '',
+        ].join('\n') : plan;
+        return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content: text } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
+      }
       // Discovery (SP3): read everything once, file one candidate card, propose the founder brief, finish. The
       // real job also runs `research.start`; the scripted one skips it so a test does not need a project
       // directory, but it leaves behind exactly what the heartbeat's next two steps read — an `Ideas/<slug>.md`
@@ -193,7 +335,7 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
           portfolio: 'incremental',
           impact: 4, uncertainty: 4, cost_of_being_wrong: 4,
         } : undefined;
-        return { ...base, parsedToolCalls: [n === 0 && member ? { name: 'scheduler.request', args: { type: isResearch ? 'research' : 'engineer.ship', title: `Do ${role}`, assigned: member, goal: 'g', done_when: 'd', for: isResearch ? role : undefined, risk: isResearch ? undefined : 'low', stream: member === 'backend_engineer' ? 'site' : undefined, research } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
+        return { ...base, parsedToolCalls: [n === 0 && member ? { name: 'scheduler.request', args: { type: isResearch ? 'research' : 'engineer.ship', title: `Do ${role}`, assigned: member, goal: 'g', done_when: 'd', for: isResearch ? role : undefined, risk: isResearch ? undefined : 'low', stream: member === 'backend_engineer' ? (shipStream ?? undefined) : undefined, research } } : { name: 'finish', args: { status: 'done', summary: 'planned' } }] };
       }
       // SP5: a trust review reads the exact call out of its own goal and answers with one verdict. Identified by
       // the words only `trustGateGoal` writes, so an ordinary chain `office:security.review` (which has a parent
