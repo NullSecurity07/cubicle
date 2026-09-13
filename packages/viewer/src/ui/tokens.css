@@ -32,6 +32,9 @@
   /* What the minimap chrome reserves at the bottom right: 12 px inset + a 160 px camera + the M toggle above it.
      The sheet stops here (app.css), so an open sheet never buries the map. Mirrors OfficeScene's `mmH`/12. */
   --minimap-h: 212px;
+  /* How far #toast rises so it never covers a reader's fixed action bar; written by ui/panel.ts, 0 when there
+     is no bar on the screen. */
+  --toast-lift: 0px;
   /* One row of viewer chrome (.vbar / .vfoot): --s2 twice plus a footnote line. */
   --vbar-h: 33px;
   /* The panel's own header (.phead): --s3 twice around a --hit control, plus its hairline. */

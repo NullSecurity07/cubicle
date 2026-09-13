@@ -243,7 +243,7 @@ details.pinned .prose { padding: 0 var(--s4) var(--s3); }
 #minimap-toggle-hidden { position: absolute; right: var(--s3); bottom: var(--s3); z-index: 9; }
 
 /* ---- toast, quick open, first run, shortcuts ---- */
-#toast { position: absolute; left: 50%; bottom: 68px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s4); border-radius: var(--r-pill); background: var(--surface-1); border: 1px solid var(--hairline-2); box-shadow: var(--shadow-1); font-size: var(--fs-subhead); animation: toast-in var(--d-open) var(--ease-spring); }
+#toast { position: absolute; left: 50%; bottom: max(68px, var(--toast-lift, 0px)); transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s4); border-radius: var(--r-pill); background: var(--surface-1); border: 1px solid var(--hairline-2); box-shadow: var(--shadow-1); font-size: var(--fs-subhead); animation: toast-in var(--d-open) var(--ease-spring); }
 @keyframes toast-in { from { transform: translate(-50%, 8px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
 #quickopen { position: absolute; left: 50%; top: 18vh; transform: translateX(-50%); width: min(560px, 92vw); z-index: 31; border-radius: var(--r-l); background: var(--surface-1); border: 1px solid var(--hairline-2); box-shadow: var(--shadow-2); overflow: hidden; animation: reader-in var(--d-open) var(--ease-out); }
 #quickopen input { width: 100%; border: 0; border-bottom: 1px solid var(--hairline); border-radius: 0; background: transparent; padding: var(--s3) var(--s4); font-size: var(--fs-title3); }
