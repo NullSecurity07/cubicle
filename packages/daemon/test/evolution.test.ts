@@ -6,11 +6,13 @@ import { scaffoldVault, Vault, createJob, readJob, parseNote, createProposal, li
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler, runJob, type Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, requeueUnblocked, dispatchProposals, applyHire, applyFire, freeDesk, loadDesks, activeRoles, maybeEnqueueCharterCompression, enqueueExperimentReviews, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor } from '../src/index.js';
+import { adoptFounderBrief } from './helpers/brief.js';
 
 const root = path.resolve(__dirname, '../../..');
 const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
 let dir: string; let vault: Vault;
-beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-evo-')); vault = (await scaffoldVault(dir)).vault; });
+// Ruling S-1: the planning steps wait for an adopted founder brief, and the feedback cases below run whole cycles.
+beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-evo-')); vault = (await scaffoldVault(dir)).vault; adoptFounderBrief(vault); });
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 const ownerEdit = (rel: string, f: (t: string) => string) => writeFileSync(path.join(dir, rel), f(readFileSync(path.join(dir, rel), 'utf8')));
 const deps = () => ({ vault, registry: new ToolRegistry().registerAll(phase3Tools()), toolsConfig: cfg, scheduler: vaultScheduler(vault), env: {} });

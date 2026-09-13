@@ -52,6 +52,19 @@ async function until(v: Vault, pred: () => boolean, ms: number, what: string): P
   }
 }
 
+/**
+ * The owner, in a test where nobody is at the keyboard: wait for the founder brief discovery files, check that
+ * nothing has been planned off it yet (ruling S-1 — the brief is what every plan is written against), and adopt
+ * it the way Obsidian does, with a raw write the vault API never saw so `isOwnerChanged` reads it as theirs.
+ */
+async function ownerAdoptsTheBrief(v: Vault): Promise<void> {
+  await until(v, () => listInbox(v).some((n) => n.data.kind === 'founder_brief' && n.data.approved === null), 180_000, 'no founder brief proposal');
+  expect(listJobs(v).some((j) => j.type === 'company.plan')).toBe(false);
+  const rel = listInbox(v).find((n) => n.data.kind === 'founder_brief')!.path;
+  const abs = path.join(dir, rel);
+  writeFileSync(abs, readFileSync(abs, 'utf8').replace(/^approved: .*$/m, 'approved: true'));
+}
+
 /** Run one heartbeat from `gather`, exactly as the daemon does, and hand back its id and its outcome. */
 async function cycle(v: Vault, llm: Llm): Promise<{ hb: string; out: Awaited<ReturnType<typeof runHeartbeat>> }> {
   const hbId = createHeartbeatJob(v, 'test');
@@ -356,6 +369,8 @@ describe('the first cycle reads, then judges, then plans (spec §5.1)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
+      // Nothing plans before the owner adopts the brief (ruling S-1), so this is the owner doing it.
+      await ownerAdoptsTheBrief(v);
       // 180 s, not 90: this drives a live daemon on 300 ms polls, and the ledger already records a real-timer
       // file failing under load beside two others. The budget is a ceiling, not a wait — a healthy run reaches
       // the plan in a few seconds.
@@ -389,6 +404,8 @@ describe('the first cycle reads, then judges, then plans (spec §5.1)', () => {
     await d.start();
     const v = Vault.open(dir);
     try {
+      // The one link this ordering gained in the second run: read → card → estimate → board → **brief** → plan.
+      await ownerAdoptsTheBrief(v);
       await until(v, () => listJobs(v).some((j) => j.type === 'company.plan'), 180_000, 'no company.plan');
       const jobs = listJobs(v);
       const disc = jobs.find((j) => j.type === 'discovery')!;

@@ -7,12 +7,16 @@ import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_S
 import { estimateJobId, researchJobId } from '../src/discovery.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide } from './helpers/board-switch.js';
+import { adoptFounderBrief } from './helpers/brief.js';
 
 let dir: string;
 let vault: Vault;
 beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-sp3-board-'));
   vault = (await scaffoldVault(dir)).vault;
+  // Ruling S-1: without an adopted brief the planning steps log "waiting for the founder brief" and the cycle
+  // runs to the end. These cases assert on where the cycle *stops* (at `company_plan`), so they need one.
+  adoptFounderBrief(vault);
 });
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 

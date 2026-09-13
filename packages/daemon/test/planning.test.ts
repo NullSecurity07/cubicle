@@ -8,6 +8,7 @@ import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE, runHeartbeat, createHeartbeatJob, planVerdictId, boardSubject, advisorPrompt, chairPrompt, boardAgenda } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
+import { adoptFounderBrief } from './helpers/brief.js';
 import { TEST_MS, eventProgress, waitForProgress } from './helpers/load.js';
 
 const root = path.resolve(__dirname, '../../..');
@@ -24,6 +25,9 @@ beforeEach(async () => {
   // Nobody is at the keyboard here and `board_decides_after_hours` ships off, so a plan would wait for the owner
   // for ever and no division would ever plan. Hand the board the ruling after a fraction of an hour instead.
   letTheBoardDecide(vault);
+  // Nothing is planned before the owner has adopted a founder brief (ruling S-1), and every case in this file is
+  // about the plan. The helper writes it exactly as the dispatcher writes it when the owner approves the proposal.
+  adoptFounderBrief(vault);
   // An engineer.ship cannot finish without a green CI record for its stream (§17), so the scripted dev plan
   // ships against this one. Nothing lives under Workspace/site, so the record never goes stale.
   createStream(vault, { slug: 'site', name: 'Site', problem: 'The company has no site.', customers: 'Everyone who hears about us', outcome_metric: 'a first cut exists', owner_team: 'dev' }, 'ceo');

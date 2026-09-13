@@ -3,7 +3,7 @@ import path from 'node:path';
 import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO, officeHolder, loadOrg, moneyReport, readLedger, HOUSE } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown, type ModelBudget } from '@cubicle/router';
 import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, secretsGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
-import { RoleFrontmatter } from '@cubicle/core';
+import { RoleFrontmatter, type InboxFrontmatter } from '@cubicle/core';
 import { MemoryIndex, vaultScheduler, type Llm, type Guardrail } from '@cubicle/harness';
 import type { DaemonConfig } from './config.js';
 import { WorkerPool } from './workers.js';
@@ -11,7 +11,7 @@ import { dispatchProposals } from './dispatcher.js';
 import { sweepTrustReviews } from './trust.js';
 import { budgetForRole, budgetRows } from './money.js';
 import { WsServer } from './ws.js';
-import { createHeartbeatJob, answerOwnerMessages, unansweredOwnerMessages, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
+import { createHeartbeatJob, answerOwnerMessages, unansweredOwnerMessages, answerRejectedBrief, inboxEditWakesHeartbeat, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
 import { captureResearchDeliveries, enqueueResearchFollowUps, enqueueExperimentReviews, maybeEnqueueCharterCompression, maybeEnqueueIntelligence, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions, maybeFlagLessons } from './evolution.js';
@@ -298,8 +298,16 @@ export class Daemon {
     await this.watcher.start();
     this.offEvents.push(this.vault.events.on('owner.edited', (e) => {
       const area = String(e.payload.area);
+      const rel = String(e.payload.path ?? '');
       if (area === '00 Inbox') void this.runTick('inbox edit');
-      if (HEARTBEAT_WAKE_AREAS.includes(area)) this.requestHeartbeat(`owner edited ${e.payload.path}`);
+      // Ruling S-4. Every save of a proposal in Obsidian used to buy a whole cycle — a plan, two board sessions
+      // and a rewrite — and the second live run spent its day's strong tier on four of them in twenty minutes,
+      // all of them the owner approving things. An approval needs no cycle: the tick above applies it within
+      // seconds. What still needs one is an owner *message*, a *rejection*, and the adopted founder brief —
+      // the document ruling S-1 makes every planning step wait on. `inboxEditWakesHeartbeat` is the whole of
+      // that judgement, and the re-planning gate reads the same predicate so a cycle woken for something else
+      // cannot re-plan off an approval either.
+      if (HEARTBEAT_WAKE_AREAS.includes(area) && (area !== '00 Inbox' || inboxEditWakesHeartbeat(this.vault, rel))) this.requestHeartbeat(`owner edited ${rel}`);
       this.workers.wake();
     }));
     this.offEvents.push(this.vault.events.on('job.queued', () => this.workers.wake()));
@@ -452,6 +460,21 @@ export class Daemon {
     try { return await run; } finally { if (this.answering === run) this.answering = null; }
   }
 
+  /**
+   * The chief executive's answer to a rejected founder brief (ruling S-2 (a)), handed to the dispatcher, which
+   * has already read the owner's comment and queued the re-run.
+   *
+   * A property rather than a method so the tick can pass it by reference, and an arrow so `this` is the daemon
+   * whichever way it is called. It returns without speaking when the model layer is not up yet — a rejection
+   * resolved during startup must still close, and the dispatcher treats a missing answer as "no paragraph",
+   * never as a failure to apply.
+   */
+  private answerBriefRejection = async (note: { path: string; data: InboxFrontmatter; body: string }, ctx: { comment: string; brief: string; discoveryJob: string }): Promise<void> => {
+    if (this.stopping || !this.heartbeatDeps) return;
+    const hb = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
+    await answerRejectedBrief({ vault: this.vault, ...this.heartbeatDeps }, note, ctx, { jobId: hb?.id });
+  };
+
   private ticking = false;
   /** The tick in flight, so `stop()` can let it finish before the sockets and the DB go (re-review of the SP5 fix wave). */
   private tickInFlight: Promise<void> | null = null;
@@ -469,7 +492,7 @@ export class Daemon {
       const trust = await this.sweep(reason, 'trust', () => sweepTrustReviews({ vault: this.vault, toolsConfig: loadToolsConfig(this.config.toolsPath) }));
       if (trust?.reviews.length) this.log(`tick(${reason}): ${trust.reviews.length} trust review(s) queued`);
       if (trust?.closed.length) this.log(`tick(${reason}): ${trust.closed.length} outbound call(s) returned unsent`);
-      const n = await this.sweep(reason, 'proposals', () => dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake(), guardrails: this.guardrails, questionWaitMs: this.config.questionWaitMs, dormant: this.isDormant }));
+      const n = await this.sweep(reason, 'proposals', () => dispatchProposals({ vault: this.vault, registry: this.registry, toolsConfig: loadToolsConfig(this.config.toolsPath), scheduler: vaultScheduler(this.vault, 'daemon'), env: this.config.env, wake: () => this.workers.wake(), onRoleHired: (r) => this.workers.ensureWorker(r), onRoleFired: () => this.workers.wake(), guardrails: this.guardrails, questionWaitMs: this.config.questionWaitMs, dormant: this.isDormant, onBriefRejected: this.answerBriefRejection }));
       await this.sweep(reason, 'prune-screens', () => { if (Date.now() - this.lastPrune > 3600_000) { this.lastPrune = Date.now(); const pruned = pruneScreens(this.vault); if (pruned) this.log(`pruned ${pruned} old screencast frames`); } });
       if (n) this.log(`tick(${reason}): ${n} proposal/unblock action(s)`);
       // Spec §5: a dormant company starts nothing new. `nextJob` holds ordinary work back, so a job queued here

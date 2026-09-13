@@ -7,12 +7,14 @@ import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler, type Llm } from '@cubicle/harness';
 import { verdictOutcome, openPlanVerdict, rejectedPlanVerdict, planVerdictId, planVerdictBody, dispatchProposals, runHeartbeat, createHeartbeatJob, HEARTBEAT_STEPS } from '../src/index.js';
 import { letTheBoardDecide } from './helpers/board-switch.js';
+import { adoptFounderBrief } from './helpers/brief.js';
 
 const root = path.resolve(__dirname, '../../..');
 const toolsConfig = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
 
 let dir: string; let vault: Vault;
-beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-verdict-')); vault = (await scaffoldVault(dir)).vault; });
+// Ruling S-1: the plan steps wait for an adopted founder brief, and every case here is about the plan verdict.
+beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-verdict-')); vault = (await scaffoldVault(dir)).vault; adoptFounderBrief(vault); });
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
