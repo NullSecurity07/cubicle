@@ -1,13 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, updateJob, listInbox, INTERVIEW_PATH, interviewPhase } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, updateJob, readJob, listInbox, loadOrg, officeHolder, INTERVIEW_PATH, interviewPhase } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig } from '../src/index.js';
 import { answerOwnerMessages, unansweredOwnerMessages, completeIdeaLines, createHeartbeatJob, SURPRISE_FAILED, SURPRISE_RETRY_TOKENS } from '../src/heartbeat.js';
-import { currentDiscoveryStatus, askInterview, captureInterviewAnswer } from '../src/discovery.js';
+import { currentDiscoveryStatus, askInterview, captureInterviewAnswer, enqueueDiscovery } from '../src/discovery.js';
 import { noLocalModel } from './helpers/no-local-model.js';
+import WebSocket from 'ws';
 
 /**
  * The first live run's defects, each pinned by the behaviour the owner saw (ledger
@@ -58,6 +59,15 @@ function ownerSays(v: Vault, text: string, at = '2026-09-13T09:00:00.000Z'): str
   return p;
 }
 
+/** Poll on real timers: these cases drive a live daemon and assert on what it has written. */
+async function waitUntil(pred: () => boolean, what: string, ms = 20_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!pred()) {
+    if (Date.now() > deadline) throw new Error(`waited ${ms} ms for ${what}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 const ceoSection = (v: Vault, p: string) => (v.readNoteOrNull(p)!.body.split(/^## CEO\s*$/m)[1] ?? '').trim();
 
 describe('FR-1: the owner is answered on the tick, whatever the heartbeat is doing', () => {
@@ -101,6 +111,72 @@ describe('FR-1: the owner is answered on the tick, whatever the heartbeat is doi
       expect(v.events.query({ types: ['agent.spoke'] }).length).toBe(spokeOnce);
       expect(unansweredOwnerMessages(v)).toEqual([]);
     } finally { await d.stop(); }
+  }, 120_000);
+});
+
+describe('FR-1b: the cabin is answered even while a tick is in flight', () => {
+  it('answers a chat the tick could not reach, and never answers it twice', async () => {
+    vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } });
+    vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'GreenCrate' }, body: n.body }), 'owner');
+    vault.close();
+    const llm = scriptedLlm();
+    const d = new Daemon(
+      // A minute between ticks: nothing but this test's own calls moves, so "the next tick would have got it
+      // eventually" cannot rescue the assertion — which is the whole point. The ws is left on.
+      defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, {
+        port: 0, tickMs: 60_000, maxConcurrentJobs: 1,
+        heartbeat: { maxElapsedHours: 999, jobsCompletedN: Number.MAX_SAFE_INTEGER, startupAwayHours: 999 },
+        providersPath: path.join(root, 'config/providers.yaml'), toolsPath: path.join(root, 'config/tools.yaml'),
+      }),
+      { llm, disableSleepWatch: true, disablePantry: true, memory: false, log: () => undefined, closeDbOnStop: false },
+    );
+    await d.start();
+    let release = () => undefined as void;
+    try {
+      const v = d.vault;
+      // A cycle parked on a discovery job, so `requestHeartbeat` on the chat finds an open heartbeat and no
+      // worker runs a cycle underneath the assertions.
+      const disc = createJob(v, { type: 'discovery', title: 'Read what the owner gave us', assigned: 'research_manager', priority: 1, goal: 'Read the material.' }, 'ceo');
+      updateJob(v, disc, { status: 'running' }, 'research_manager');
+      const hb = createHeartbeatJob(v, 'test');
+      updateJob(v, hb, { status: 'blocked', blocked_on: { kind: 'job', id: disc, since: new Date().toISOString() } }, 'ceo');
+
+      // Hold the tick at its first sweep. Any sweep before `answer-owner` would do; this is the earliest, and
+      // holding it is exactly the window a chat used to fall into — `runTick` returns at once while one runs.
+      let held = false;
+      const gate = new Promise<void>((r) => { release = () => r(); });
+      const sweep = (d as unknown as { sweep: (r: string, w: string, fn: () => unknown) => Promise<unknown> }).sweep;
+      const original = sweep.bind(d);
+      vi.spyOn(d as never, 'sweep' as never).mockImplementation((async (reason: string, where: string, fn: () => unknown) => {
+        if (where === 'trust') { held = true; await gate; }
+        return original(reason, where, fn);
+      }) as never);
+
+      const tick = d.runTick('held');
+      await waitUntil(() => held, 'the tick to be holding');
+      let tickDone = false;
+      void tick.then(() => { tickDone = true; });
+
+      // The window itself: a second tick does nothing at all while one is in flight.
+      await d.runTick('chat');
+
+      const port = d.config.port;
+      const ws = new WebSocket(`ws://127.0.0.1:${port}?token=${d.ws!.token}`);
+      await new Promise((r) => ws.once('open', r));
+      ws.send(JSON.stringify({ op: 'chat', text: 'Is anything actually happening? I have not heard from you.' }));
+
+      const chatNote = () => listInbox(v).find((n) => n.data.kind === 'message' && n.data.from === 'owner' && /anything actually happening/.test(n.body));
+      await waitUntil(() => !!chatNote()?.data.answered, 'the cabin message to be answered');
+      expect(tickDone).toBe(false);                       // and the tick that could not reach it is still held
+      expect(chatNote()!.body).toContain('## CEO');
+
+      const spokeOnce = v.events.query({ types: ['agent.spoke'] }).length;
+      release();
+      await tick;
+      await d.runTick('after');
+      expect(v.events.query({ types: ['agent.spoke'] }).length).toBe(spokeOnce);
+      ws.close();
+    } finally { release(); vi.restoreAllMocks(); await d.stop(); }
   }, 120_000);
 });
 
@@ -198,6 +274,23 @@ describe('FR-3: discovery never starts on a note that is only a reply to the CEO
     expect(captureInterviewAnswer(vault, 'skip', new Date('2026-09-13T09:01:00.000Z'))).toBe(true);
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('skipped');
     expect(currentDiscoveryStatus(vault, new Date('2026-09-13T09:05:00.000Z')).run).toBe(true);
+  });
+});
+
+describe('FR-3b: the picked idea is the first thing the discovery job reads', () => {
+  it('carries the chosen line into the job the research office is given', () => {
+    vault.writeText('00 Inbox/2026-09-13-msg-surprise.md', '---\nid: msg_sur\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-13T09:00:00.000Z\nanswered: true\n---\n# surprise me\n\nsurprise me\n\n## CEO\n\nI filed three ideas as a proposal in 00 Inbox/.\n', 'owner');
+    vault.writeText('00 Inbox/2026-09-13-prop-ideas.md', '---\nid: prop_ideas\nkind: brand_change\nfrom: ceo\ntarget: Brand/name.md\ncreated: 2026-09-13T09:00:01.000Z\napproved: true\nchosen: 2\n---\n# Three company ideas — pick one\n\n1. GreenCrate — meal kits for nurseries.\n2. Deskless — shift scheduling for cafes.\n3. Tinyletter Co — a newsletter for allotment holders.\n', 'ceo');
+
+    const org = loadOrg(vault);
+    const status = currentDiscoveryStatus(vault, new Date('2026-09-13T09:06:00.000Z'));
+    expect(status.run).toBe(true);
+    const id = enqueueDiscovery(vault, org, status)!;
+    const job = readJob(vault, id)!;
+    expect(job.data.assigned).toBe(officeHolder(org, 'research'));
+    expect(job.body).toContain("The owner picked this idea from the CEO's three:");
+    expect(job.body).toContain('Deskless — shift scheduling for cafes.');
+    expect(job.body).not.toMatch(/surprise me/i);
   });
 });
 

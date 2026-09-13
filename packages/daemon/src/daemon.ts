@@ -115,10 +115,12 @@ export class Daemon {
   private guardrails: import('@cubicle/harness').Guardrail[] = [];
   private openMeeting: (agenda: string, participants?: string[]) => Promise<string | null> = async () => null;
   /**
-   * What a heartbeat cycle is given, kept so the **tick** can answer the owner with exactly the same code the
-   * `answer_owner` step runs (ruling FR-1). Null until `start()` has built it.
+   * What a heartbeat cycle is given, kept so the **tick** and the cabin can answer the owner with exactly the
+   * same code the `answer_owner` step runs (ruling FR-1). Null until `start()` has built it.
    */
   private heartbeatDeps: Omit<HeartbeatDeps, 'vault'> | null = null;
+  /** The answer in flight. Its own lock, so two messages serialise without either waiting for a whole tick. */
+  private answering: Promise<number> | null = null;
 
   /**
    * Money can make the company cheaper; it must never make it silent. All three of these swallow their own
@@ -291,7 +293,7 @@ export class Daemon {
     this.offEvents.push(this.vault.events.on('quota.updated', () => this.writeQuotaMd()));
 
     if (!this.overrides.disableWs) {
-      this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.runTick('chat'); } });
+      this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.answerOwnerNow('chat'); void this.runTick('chat'); } });
       const port = await this.ws.start();
       cfg.port = port; // port 0 binds an ephemeral port; downstream config, daemon.json, and events must see the real one
       this.log(`ws listening on ws://127.0.0.1:${port}`);
@@ -386,6 +388,47 @@ export class Daemon {
     }
   }
 
+  /**
+   * Answer every owner message nobody has answered yet, now.
+   *
+   * Two callers: the cabin, the moment the owner presses enter, and the tick, as the catch-up for anything the
+   * cabin missed (a message typed while the daemon was down, an older build's note). It runs the
+   * `answer_owner` heartbeat step's own code and is idempotent on the note's `answered` flag.
+   *
+   * **Its own lock, not the tick's.** `runTick` returns immediately while a tick is in flight, so routing the
+   * cabin through it left a message typed mid-tick waiting for the next interval — up to `tickMs` of silence
+   * in a chat window, which is the shape of the defect FR-1 is about. Answers serialise behind each other
+   * instead, so two messages in the same second cost two replies in order rather than two racing writes.
+   *
+   * Deliberately outside the dormancy guard: a stopped company still talks to its owner.
+   */
+  async answerOwnerNow(reason: string): Promise<number> {
+    const run = (this.answering ?? Promise.resolve(0))
+      .catch(() => 0)
+      .then(async () => {
+        if (this.stopping || !this.heartbeatDeps) return 0;
+        try {
+          const msgs = unansweredOwnerMessages(this.vault);
+          if (!msgs.length) return 0;
+          // The open cycle's id when there is one, so the reply and the proposal are attributed to it as they
+          // always were. The ids the sweep derives come from the message, never from the job, so it does not
+          // matter which of the callers answers first.
+          const hb = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
+          const n = await answerOwnerMessages({ vault: this.vault, ...this.heartbeatDeps }, this.vault, msgs, { jobId: hb?.id });
+          if (n) this.log(`${reason}: ${n} owner message(s) answered`);
+          return n;
+        } catch (err) {
+          // The cabin calls this without awaiting it, so it catches its own failures the way `sweep` does:
+          // an unhandled rejection here would take the process down over one unwritable note.
+          this.vault.events.emit({ type: 'daemon.warning', payload: { where: 'answer-owner', message: String((err as Error).stack ?? err).slice(0, 500) } });
+          this.log(`${reason}: answering the owner failed — ${String((err as Error).message ?? err).slice(0, 200)}`);
+          return 0;
+        }
+      });
+    this.answering = run;
+    try { return await run; } finally { if (this.answering === run) this.answering = null; }
+  }
+
   private ticking = false;
   /** The tick in flight, so `stop()` can let it finish before the sockets and the DB go (re-review of the SP5 fix wave). */
   private tickInFlight: Promise<void> | null = null;
@@ -446,27 +489,15 @@ export class Daemon {
         const unanswered = hasOpen ? undefined : listInbox(this.vault).find((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && !n.data.answered);
         if (!hasOpen && (since >= this.config.heartbeat.maxElapsedHours || this.heartbeatRequested || unanswered)) this.requestHeartbeat(this.heartbeatRequested ?? (unanswered ? `unanswered owner message ${unanswered.data.id}` : `${since.toFixed(1)} h elapsed`));
       });
-      // The owner gets an answer on the tick, whatever the cycle is doing (finding F2, ruling FR-1). Answering
-      // is a step of the heartbeat, and on the first live run that heartbeat was blocked on a discovery job,
-      // so the owner's follow-up sat unanswered for the whole run while the trigger above refused to even look
-      // for it ("only when no heartbeat is open"). This runs the step's own code, it is idempotent on the
-      // note's `answered` flag, and it is deliberately outside the dormancy guard above: a stopped company
-      // still talks to its owner — silence is the one thing it may never be.
+      // The catch-up: whatever the cabin did not answer itself — a message typed while the daemon was down, an
+      // older build's note — is answered here, whatever the cycle is doing (finding F2, ruling FR-1). On the
+      // first live run the heartbeat was blocked on a discovery job and the trigger above refused to even look
+      // for the owner's follow-up ("only when no heartbeat is open").
       //
       // It runs **after** the trigger on purpose. The trigger reads the same unanswered note, and a message
       // from the owner should still wake a cycle: answering says what the company will do, the cycle is what
       // actually plans against it. Answering first would take that wake away.
-      const spoke = await this.sweep(reason, 'answer-owner', async () => {
-        if (!this.heartbeatDeps) return 0;
-        const msgs = unansweredOwnerMessages(this.vault);
-        if (!msgs.length) return 0;
-        // The open cycle's id when there is one, so the reply and the proposal are attributed to it as they
-        // always were. The ids the sweep derives come from the message, never from the job, so it does not
-        // matter which of the two answers first.
-        const hb = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
-        return answerOwnerMessages({ vault: this.vault, ...this.heartbeatDeps }, this.vault, msgs, { jobId: hb?.id });
-      });
-      if (spoke) this.log(`tick(${reason}): ${spoke} owner message(s) answered`);
+      await this.sweep(reason, 'answer-owner', () => this.answerOwnerNow(`tick(${reason})`));
       this.workers.wake();
     } catch (err) {
       this.vault.events.emit({ type: 'daemon.warning', payload: { where: 'tick', message: String((err as Error).stack ?? err).slice(0, 500) } });
@@ -492,6 +523,9 @@ export class Daemon {
     // A tick still running (the trust sweep, the dispatcher) would otherwise throw on a closed DB below; give it the
     // rest of the shutdown budget, then move on — everything it does is resumable from the vault.
     if (this.tickInFlight) await Promise.race([this.tickInFlight.catch(() => undefined), new Promise((r) => setTimeout(r, Math.max(500, Math.min(this.config.shutdownMs - 1000, 5000))))]);
+    // And a reply the cabin started outside a tick (ruling FR-1b): it is a model call and a note write, so it
+    // gets the same bounded grace rather than being cut off mid-write on a vault that is about to close.
+    if (this.answering) await Promise.race([this.answering.catch(() => 0), new Promise((r) => setTimeout(r, Math.max(500, Math.min(this.config.shutdownMs - 1000, 5000))))]);
     if (!this.vault) { this.log(`stopped in ${Date.now() - t0} ms`); return; }
     await Promise.race([closeAllSessions(this.vault.events), new Promise((r) => setTimeout(r, 1500))]);
     await this.watcher?.stop();
