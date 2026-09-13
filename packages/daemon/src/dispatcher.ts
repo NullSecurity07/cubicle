@@ -2,7 +2,7 @@ import {
   type Vault, listInbox, readJob, updateJob, cancelJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
   loadOrg, resolveRole, divisionLeadOf, officeHolder, type Org,
   FOUNDER_BRIEF, missingBriefSections, readIdea, updateIdea, ideaBand, bandReason, ideaOutcome, IDEA_SLUG_SRC, IDEA_DECISIONS, LEDGER_PATH, type IdeaBand, type IdeaDecision,
-  trustDecision, TRUST_PENDING_HOLD, CLASSIFIER_UNAVAILABLE_HOLD, type TrustDecision,
+  trustDecision, TRUST_PENDING_HOLD, CLASSIFIER_UNAVAILABLE_HOLD, type TrustDecision, boardStillSitting,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath, isClassifierUnavailable, classifierUnavailableNow } from '@cubicle/tools';
@@ -367,6 +367,13 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
     const c = vault.constitution();
     const chiefExecutive = officeHolder(loadOrg(vault), 'chief_executive');
     const engineering = officeHolder(loadOrg(vault), 'engineering');
+    // A founder brief the board is still pressure-testing is **skipped, not refused** (ruling R-T3-3). The
+    // owner can set `approved: true` in Obsidian while the session is mid-flight, and adopting there would
+    // write the author's draft to `Memory/founder-brief.md` and leave the session rewriting a resolved note.
+    // Skipping leaves the flag, the flip and the note exactly as they are: the session clears the flag a
+    // moment later and the very next tick applies the approval that was already sitting there. Nothing is
+    // logged, because this runs every tick until the board finishes and a line per tick is noise.
+    if (boardStillSitting(d)) continue;
     const autoApproved = d.approved === null && ((d.kind === 'hire' && c.auto_approve_hire && d.from === chiefExecutive) || (d.kind === 'charter_change' && c.auto_approve_charter_changes && d.from === engineering) || (d.kind === 'reorg' && c.auto_approve_reorg && d.from === chiefExecutive));
     if (d.approved === null && !autoApproved) continue;
     const previouslyRefused = !!(d as { refused?: string }).refused;

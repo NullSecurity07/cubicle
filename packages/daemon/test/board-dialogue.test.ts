@@ -1,16 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   scaffoldVault, Vault, loadOrg, listInbox, listJobs, readJob, readIdea, writeIdeaCard, updateIdea, createProposal,
   officeHolder, parseNote, PRESSURE_PARTS, OWNER_QUESTION, isOwnerQuestion, hedges, BANNED_HEDGE,
-  DISCOVERY_INBOX, briefFromProposalBody, checkFounderBrief, briefCheckContext, readPressureVerdict,
+  DISCOVERY_INBOX, briefFromProposalBody, founderBriefProposalBody, checkFounderBrief, briefCheckContext,
+  readPressureVerdict, boardStillSitting, BOARD_STILL_SITTING, nowIso,
 } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { runJob, vaultScheduler } from '@cubicle/harness';
 import {
   runBoardSession, runHeartbeat, createHeartbeatJob, requeueUnblocked, buildSnapshot, splitRejectedBrief,
+  runBriefBoardSession, dispatchProposals,
   BOARD_DIALOGUE_MAX_CALLS, BOARD_DIALOGUE_ROUNDS, BOARD_OPEN_QUESTIONS, boardSubjectKey,
   challengeReason, findingIn, questionIn, parseFindingsSection, ownerSpokeSince, partsText,
   renderBriefPressureSection, subjectMaterial, boardQuestionsMessageId, questionsAlreadyAsked,
@@ -502,5 +504,179 @@ describe('the reuse rule only reuses what has not changed (review I2, I3)', () =
     expect(boardQuestionsMessageId('idea:meal-kits:abc', ['what have you run before?'])).toBe(one);
     expect(boardQuestionsMessageId('idea:meal-kits:abc', ['and who pays?'])).not.toBe(one);
     expect(boardQuestionsMessageId('idea:spoons:abc', ['what have you run before?'])).not.toBe(one);
+  });
+});
+
+/**
+ * What the scoped re-review found (R-T3-1/2/3): the normal path was right and every path around it was not —
+ * a brief that missed its one cycle was stuck for good, a refused section was announced as the board's, and
+ * nothing daemon-side stopped the owner adopting a half-written brief from Obsidian.
+ */
+describe('the brief board recovers, tells the truth, and cannot be decided out from under (re-review)', () => {
+  const root = path.resolve(__dirname, '../../..');
+  const DRAFT = [
+    '## What the company is', '', 'A weekly meal-kit box for nurseries.', '',
+    '## Who it is for', '', 'Nursery managers who cook for forty children a day.', '',
+    '## What already exists', '', 'Two nurseries buying weekly; the company has no name yet.', '',
+    '## What success looks like', '', 'Unstated: the owner has not said.', '',
+    '## Constraints', '', 'The free tier only.', '',
+    '## Candidate ideas', '', '- meal-kits — a weekly box for nurseries.', '',
+    '## What we do not know', '', 'Whether anybody has priced the delivery.', '',
+    '## Pressure test', '',
+    '**Core Assumption:** nurseries will pay weekly for food they cook themselves.',
+    '**Founder-Market Fit:** unstated — nothing says who the owner is.',
+    '**Brutal Verdict:** WEAK — the draft, written by the research office.', '',
+  ].join('\n');
+
+  /** A `founder_brief` in the inbox exactly as `proposal.create` leaves one under `board_dialogue: full`. */
+  function fileBrief(v: Vault, draft = DRAFT): { id: string; path: string } {
+    const p = createProposal(v, { kind: 'founder_brief', from: 'research_manager', target: 'Memory/founder-brief.md', title: 'What I understood', body: founderBriefProposalBody(draft, []) }, 'research_manager');
+    v.updateNote(p.path, (n) => ({ data: { ...n.data, board_pending: true }, body: n.body }), 'research_manager');
+    return p;
+  }
+
+  /** A board that answers every round, optionally with one part written so the truth check refuses it. */
+  function briefLlm(opts: { fit?: string; cite?: string } = {}): { chat: (r: unknown, c: { messages: { content: string }[] }) => Promise<unknown>; promptBudget: () => number } {
+    return {
+      promptBudget: () => 6000,
+      async chat(_r: unknown, chat: { messages: { content: string }[] }) {
+        const last = String(chat.messages.at(-1)?.content ?? '');
+        const reply = (content: string) => ({ content, toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium' as const, downgraded: false, parsedToolCalls: [] });
+        if (/^You chair the board of this company\./.test(last)) {
+          const close = last.match(/close the round on \*\*([^*]+)\*\*/)?.[1] ?? '';
+          const open = last.match(/the question of \*\*([^*]+)\*\*/)?.[1] ?? '';
+          const said = close === 'Founder-Market Fit' && opts.fit ? opts.fit
+            : close === 'Core Assumption' && opts.cite ? `they will pay, per ${opts.cite}`
+            : `the board holds ${close} answered.`;
+          const finding = close ? `FINDING: ${said}\n\n` : '';
+          if (/VERDICT: STRONG or WEAK or PIVOT REQUIRED/.test(last)) return reply(`${finding}VERDICT: STRONG\nRUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1`);
+          return reply(`${finding}NEXT: On ${open}: what does this rest on?`);
+        }
+        if (/The chair has asked, on \*\*/.test(last)) return reply('Two nurseries already pay a caterer every term.');
+        return reply('ok');
+      },
+    };
+  }
+
+  const briefNote = (v: Vault) => listInbox(v).find((n) => n.data.kind === 'founder_brief')!;
+
+  it('R-T3-1: a brief left pending by an earlier cycle is finished by the next one, and never stays pending', async () => {
+    fileBrief(vault);
+    expect(briefNote(vault).data.board_pending).toBe(true);
+    // `briefProposalOpen` makes this cycle's discovery step return above where the session used to be held —
+    // the very shape that stranded the brief. Three cycles, and the first of them finishes it.
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await runHeartbeat({ vault, llm: briefLlm() as never, env: {} }, createHeartbeatJob(vault, `cycle ${cycle}`));
+      expect(briefNote(vault).data.board_pending, `cycle ${cycle}`).toBe(false);
+    }
+    expect(vault.list('Meetings', { ext: '.md' }).filter((r) => r.includes('-board-founder-brief'))).toHaveLength(1);
+    expect(briefFromProposalBody(briefNote(vault).body)).toContain('the board holds Problem Validation answered');
+  }, 60000);
+
+  it('R-T3-1: a session that throws leaves the flag on, warns, and is retried next cycle', async () => {
+    fileBrief(vault);
+    // A real throw from inside the session: the transcript is written to `Meetings/` after every turn, and a
+    // vault whose constitution forbids writing there refuses the very first one. (`askAs` swallows a model
+    // error, so a silent model is the no-model path and not this one.)
+    const constitution = vault.readText('Memory/constitution.md');
+    vault.writeText('Memory/constitution.md', constitution.replace(/^never_modify:\n/m, 'never_modify:\n  - Meetings/\n'), 'owner');
+    await runHeartbeat({ vault, llm: briefLlm() as never, env: {} }, createHeartbeatJob(vault, 'board cannot write'));
+    expect(briefNote(vault).data.board_pending).toBe(true);      // still owed, so still pending
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => /try again next cycle/.test(String(e.payload.message)))).toBe(true);
+
+    // The next cycle is the retry, and it finishes the document.
+    vault.writeText('Memory/constitution.md', constitution, 'owner');
+    await runHeartbeat({ vault, llm: briefLlm() as never, env: {} }, createHeartbeatJob(vault, 'retry'));
+    expect(briefNote(vault).data.board_pending).toBe(false);
+    expect(briefFromProposalBody(briefNote(vault).body)).toContain('the board holds Core Assumption answered');
+  }, 60000);
+
+  it('R-T3-2: a section the truth check refuses is retried with the word it asks for, and then used', async () => {
+    fileBrief(vault);
+    // No interview answers and nothing in Discovery/inbox/, so rule 3 refuses any Founder-Market Fit that is
+    // not `unstated` — the owner's "type an idea and see what happens" first run.
+    expect(briefCheckContext(vault)).toMatchObject({ interviewAnswered: false, inboxFiles: 0 });
+    const held = await runBriefBoardSession({ vault, llm: briefLlm({ fit: 'the owner ran two catering businesses' }) as never }, loadOrg(vault));
+    expect(held!.used).toBe(true);
+    const brief = briefFromProposalBody(briefNote(vault).body);
+    expect(brief).toMatch(/\*\*Founder-Market Fit:\*\* unstated/);
+    expect(brief).toContain('the board holds Core Assumption answered');       // the other four are the board's
+    expect(checkFounderBrief(vault, brief, briefCheckContext(vault)).ok).toBe(true);
+    expect(briefNote(vault).body).toContain('Its five findings are the');
+  }, 60000);
+
+  it('R-T3-2: a section that cannot be saved is not announced as the board\'s, anywhere', async () => {
+    fileBrief(vault);
+    const held = await runBriefBoardSession({ vault, llm: briefLlm({ cite: '`Nope/missing.md`' }) as never }, loadOrg(vault));
+    expect(held!.used).toBe(false);
+    const note = briefNote(vault);
+    // The draft stands below the fence…
+    expect(briefFromProposalBody(note.body)).toContain('the draft, written by the research office');
+    expect(briefFromProposalBody(note.body)).not.toContain('Nope/missing.md');
+    // …and the block above it says so rather than claiming five findings that are not there.
+    expect(note.body).toContain("the research office's draft, not the board's findings");
+    expect(note.body).not.toContain('Its five findings are the');
+    expect(note.body).toContain(held!.notePath.replace(/\.md$/, ''));
+    // The decision note tells the same story, and the argument is still linked from it.
+    const decision = vault.readText(`Decisions/board-brief-${note.data.id}.md`);
+    expect(decision).toContain("is the research office's draft and not the board's findings");
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'brief_board')).toBe(true);
+  }, 60000);
+
+  it('R-T3-3: the dispatcher leaves a pending brief alone, and applies the approval once the board is done', async () => {
+    const filed = fileBrief(vault);
+    const deps = () => ({ vault, registry: new ToolRegistry().registerAll(phase3Tools()), toolsConfig: parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8')), scheduler: vaultScheduler(vault), env: {} });
+    // The owner approves in Obsidian while the board is still sitting: a raw write, so the owner-flip guard
+    // reads it as theirs. Nothing is adopted, nothing is refused, and the flip is still there afterwards.
+    writeFileSync(path.join(dir, filed.path), readFileSync(path.join(dir, filed.path), 'utf8').replace(/^approved: .*$/m, 'approved: true'));
+    expect(await dispatchProposals(deps())).toBe(0);
+    // (the fixture already adopted a brief in `beforeEach`, so what matters is that *this* one was not written)
+    expect(vault.readText('Memory/founder-brief.md')).not.toContain('the draft, written by the research office');
+    expect(briefNote(vault).data.resolved_at ?? null).toBeNull();
+    expect(briefNote(vault).body).not.toContain('Not applied');
+
+    // The board finishes. Its findings are not written over a decided note (the re-read), and the very next
+    // dispatch applies the approval that was already sitting there.
+    const held = await runBriefBoardSession({ vault, llm: briefLlm() as never }, loadOrg(vault));
+    expect(held!.used).toBe(true);
+    expect(briefNote(vault).data.board_pending).toBe(false);
+    expect(await dispatchProposals(deps())).toBe(1);
+    expect(vault.readText('Memory/founder-brief.md')).toContain('the board holds Core Assumption answered');
+  }, 60000);
+
+  it('R-T3-3: a brief resolved mid-session is left exactly as the owner left it', async () => {
+    const filed = fileBrief(vault);
+    let resolved = false;
+    const llm = briefLlm();
+    const racing = {
+      promptBudget: () => 6000,
+      async chat(r: unknown, chat: { messages: { content: string }[] }) {
+        const out = await llm.chat(r, chat);
+        // The owner decides while the board is mid-argument: the last thing the session does must not undo it.
+        if (!resolved && /VERDICT: STRONG or WEAK or PIVOT REQUIRED/.test(String(chat.messages.at(-1)?.content ?? ''))) {
+          resolved = true;
+          vault.updateNote(filed.path, (n) => ({ data: { ...n.data, approved: true, resolved_at: nowIso() }, body: n.body }), 'daemon');
+        }
+        return out;
+      },
+    };
+    const held = await runBriefBoardSession({ vault, llm: racing as never }, loadOrg(vault));
+    expect(resolved).toBe(true);
+    expect(held!.used).toBe(false);
+    const note = briefNote(vault);
+    expect(note.data.board_pending).toBe(true);                     // never cleared on a note nobody may rewrite
+    expect(note.body).not.toContain('The board pressure-tested this');
+    expect(briefFromProposalBody(note.body)).toContain('the draft, written by the research office');
+    // …and the argument is not lost: the transcript stands, and a warning says where it went.
+    expect(vault.readTextOrNull(held!.notePath)).toBeTruthy();
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => /decided while the board was still sitting/.test(String(e.payload.message)))).toBe(true);
+  }, 60000);
+
+  it('names the block once, in core, so three surfaces cannot disagree', () => {
+    expect(boardStillSitting({ kind: 'founder_brief', board_pending: true })).toBe(true);
+    expect(boardStillSitting({ kind: 'founder_brief', board_pending: false })).toBe(false);
+    expect(boardStillSitting({ kind: 'founder_brief' })).toBe(false);
+    expect(boardStillSitting({ kind: 'idea_verdict', board_pending: true })).toBe(false);
+    expect(BOARD_STILL_SITTING).toContain('still pressure-testing');
   });
 });

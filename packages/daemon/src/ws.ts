@@ -64,6 +64,10 @@ export interface Snapshot {
    * Proposals awaiting the owner (never plain messages) — the post office list. `board_pending` is true for a
    * `founder_brief` the board has not pressure-tested yet (SP8, ruling P8-6): the document is half-written, so
    * it is listed but must not be decidable.
+   *
+   * Whatever computes a row's `decidable`, it owes this row nothing but `core`'s own predicate: a row where
+   * `boardStillSitting(note.data)` holds has no decidable state at all, and the `decide` op refuses it with
+   * `BOARD_STILL_SITTING` (ruling R-T3-3) so a plain browser tab cannot decide what the office greys out.
    */
   inbox: { id: string; kind: string; title: string; path: string; created: string; board_pending: boolean }[];
   /** Owner ↔ CEO conversation from 00 Inbox/ message notes (oldest first) — the cabin thread. */
