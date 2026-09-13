@@ -9,7 +9,7 @@ import { findAnswer, messagePath, isClassifierUnavailable, classifierUnavailable
 import { PLAN_WAIT_BUDGET_MS, soleStreamForShip } from './heartbeat.js';
 import { cancelPointlessTrustReviews, trustGatesForNote, retryOnNextPass } from './trust.js';
 import { applyHire, applyFire, applyReorg, charterDiffSection } from './evolution.js';
-import { briefRejectionComment, enqueueRejectionDiscovery } from './discovery.js';
+import { splitRejectedBrief, enqueueRejectionDiscovery } from './discovery.js';
 import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
 import { appendObservation } from '@cubicle/harness';
 
@@ -302,11 +302,12 @@ export async function executeStoredCall(deps: DispatcherDeps, note: { path: stri
  */
 async function rejectBrief(deps: DispatcherDeps, note: { path: string; data: InboxFrontmatter; body: string }, d: InboxFrontmatter): Promise<string> {
   const vault = deps.vault;
-  const comment = briefRejectionComment(note);
-  const brief = fenced(note.body) ?? '';
+  // One split, not two readers: the comment is defined as what the brief is not (ruling C1), and `fenced()`
+  // alone returned null — and so "(no readable brief)" — for every brief filed before the fence was enforced.
+  const { brief, comment } = splitRejectedBrief(note);
   let job: string;
   try {
-    job = enqueueRejectionDiscovery(vault, loadOrg(vault), { proposalId: d.id, comment, brief });
+    job = enqueueRejectionDiscovery(vault, loadOrg(vault), { proposalId: d.id, proposalPath: note.path, comment, brief });
   } catch (err) {
     vault.events.emit({ type: 'daemon.warning', payload: { where: 'dispatcher.founder_brief_rejected', proposal: d.id, message: `could not queue the re-run: ${String((err as Error).message ?? err).slice(0, 200)}` } });
     return 'rejected; the re-run could not be queued';

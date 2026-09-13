@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { defineTool, type ToolContext } from '../registry.js';
 import {
   createProposal, ProposalKind, idFromKey, loadOrg, can, officeHolder,
-  checkFounderBrief, briefCheckContext, briefFromProposalBody,
+  checkFounderBrief, briefCheckContext, briefFromProposalBody, hasProposedContentFence, founderBriefProposalBody, citedPaths,
 } from '@cubicle/core';
 
 /**
@@ -38,7 +38,8 @@ export const proposalCreate = defineTool({
     body: z.string().describe('markdown; for charter/brand/file changes include the full proposed content'),
     target: z.string().optional().describe('vault path the proposal changes, if any'),
   },
-  async handler({ kind, title, body, target }, ctx) {
+  async handler({ kind, title, body: rawBody, target }, ctx) {
+    let body = rawBody;
     // Two kinds belong to the system, not to an agent. A hand-written `plan_verdict` would be read by the next
     // heartbeat as a plan waiting for the owner (see openPlanVerdict) and would hold back the company's planning.
     if (kind === 'outbound_batch') return { ok: false, text: 'outbound_batch proposals are created by the tool layer, not directly' };
@@ -75,6 +76,18 @@ export const proposalCreate = defineTool({
           : { ok: false, text: `The brief is not filed: it says things the vault does not. Fix these and call proposal.create again (${BRIEF_CHECK_TRIES - tries} more ${BRIEF_CHECK_TRIES - tries === 1 ? 'try' : 'tries'}):\n${found}` };
       }
       briefTries.delete(briefKey(ctx));
+      // Ruling C1: `founderBriefProposalBody` is the **only** shape this note ever has. Three readers depend on
+      // the `## Proposed content` fence — the dispatcher adopts what is inside it, the rejection path hands the
+      // research office the brief out of it, and `briefRejectionComment` reads the owner's own words as what
+      // lies outside it — and until now nothing put it there: `vault.write` only *instructs* the author to use
+      // one, and the dispatcher notices a missing fence at approve time and never on the rejection path. The
+      // live run's brief had none, so the owner's "rejected make it better or get a new idea" was invisible and
+      // a thousand characters of the company's own prose went back to them as their words. A brief that arrives
+      // without the fence is wrapped here, once, where the bytes are still ours to shape.
+      if (!hasProposedContentFence(body)) {
+        const brief = briefFromProposalBody(body);
+        body = founderBriefProposalBody(brief, citedPaths(brief));
+      }
     }
     const { id, path } = createProposal(ctx.vault, { id: ctx.idempotencyKey ? idFromKey(kind === 'message' ? 'msg' : 'prop', ctx.idempotencyKey) : undefined, kind, from: ctx.roleId, to: 'owner', title, body, target, job: ctx.jobId ?? undefined }, ctx.roleId);
     if (kind === 'message') return { ok: true, text: `message ${id} sent to the owner at ${path}; this job is blocked until they answer`, data: { id, path }, block: { kind: 'message', id } };

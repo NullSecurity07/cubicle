@@ -49,8 +49,24 @@ export function briefCheckContext(vault: Vault): BriefCheckContext {
  * fence is checked as written: a brief that forgot its fence is still a brief making claims.
  */
 export function briefFromProposalBody(body: string): string {
-  const m = body.match(/## Proposed content\s*\n+(`{3,})[a-z]*\n([\s\S]*?)\n\1[ \t]*(?:\n|$)/);
+  const m = body.match(PROPOSED_CONTENT_RE);
   return m ? m[2] : body;
+}
+
+/** The `## Proposed content` block, as the dispatcher's own `fenced()` reads it. One spelling, three readers. */
+const PROPOSED_CONTENT_RE = /## Proposed content\s*\n+(`{3,})[a-z]*\n([\s\S]*?)\n\1[ \t]*(?:\n|$)/;
+
+/**
+ * True when a proposal body already carries that block.
+ *
+ * The founder brief is the one proposal whose body is *rewritten* when it does not (`proposal.create`). Three
+ * readers depend on the fence being there, and before ruling C1 nothing made it so: the dispatcher adopts what
+ * is inside it, the rejection path hands the research office the brief out of it, and the owner's own rejection
+ * comment is read as what lies *outside* it. The live run's brief carried no fence, and the comment reader
+ * handed the owner a thousand characters of the company's own prose back as their words.
+ */
+export function hasProposedContentFence(body: string): boolean {
+  return PROPOSED_CONTENT_RE.test(body);
 }
 
 /**
@@ -61,7 +77,7 @@ export function briefFromProposalBody(body: string): string {
  * directory (`Discovery/inbox`) would be. A token carrying `<` — `Ideas/<slug>.md` — is the template's own
  * placeholder and names no file either.
  */
-function citedPaths(md: string): string[] {
+export function citedPaths(md: string): string[] {
   const out = new Set<string>();
   for (const m of md.matchAll(/`([^`\n]+)`/g)) {
     const t = m[1].trim();

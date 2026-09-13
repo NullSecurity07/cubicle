@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   scaffoldVault, Vault, RoleFrontmatter, listInbox, founderBriefProposalBody,
-  INTERVIEW_PATH, FOUNDER_BRIEF, renderInterviewAsked,
+  INTERVIEW_PATH, FOUNDER_BRIEF, renderInterviewAsked, hasProposedContentFence, briefFromProposalBody,
 } from '@cubicle/core';
 import { parseToolsConfig, type ToolContext } from '../src/index.js';
 import { proposalCreate, resetBriefTries, BRIEF_CHECK_TRIES } from '../src/tools/proposal.js';
@@ -89,5 +89,39 @@ describe('proposal.create checks a founder_brief against the vault before filing
   it('leaves every other proposal kind alone', async () => {
     const r = await proposalCreate.handler({ kind: 'file_change', title: 'A note', body: 'Brand name is SponsorMatch.', target: 'Docs/notes.md' }, ctx());
     expect(r.ok).toBe(true);
+  });
+
+  /**
+   * Ruling C1. Discovery filed the live brief as the note's body, with no `## Proposed content` fence, and three
+   * readers depend on that fence being there: the dispatcher adopts what is inside it, the rejection path hands
+   * the research office the brief out of it, and the owner's rejection comment is read as what lies outside it.
+   * The last of those handed the owner a thousand characters of the company's own prose back as their words.
+   */
+  describe('the note has one shape, whatever the author sent (ruling C1)', () => {
+    it('wraps an unfenced brief into the block the dispatcher adopts from', async () => {
+      const r = await proposalCreate.handler({ kind: 'founder_brief', title: 'What I understood', body: TRUE_BRIEF, target: FOUNDER_BRIEF }, ctx());
+      expect(r.ok).toBe(true);
+      const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief')!;
+      expect(hasProposedContentFence(note.body)).toBe(true);
+      // The bytes inside the fence are the brief the author wrote, unchanged — that is what gets adopted.
+      expect(briefFromProposalBody(note.body).trim()).toBe(TRUE_BRIEF.trim());
+      // …and the wrapper says where it was read from, taken from the brief's own citations.
+      expect(note.body).toContain('**Read from:**');
+      expect(note.body).toContain('Discovery/interview.md');
+    });
+
+    it('leaves a brief that already carries the fence exactly as it is', async () => {
+      const body = founderBriefProposalBody(TRUE_BRIEF, ['Discovery/interview.md']);
+      const r = await proposalCreate.handler({ kind: 'founder_brief', title: 'What I understood', body, target: FOUNDER_BRIEF }, ctx());
+      expect(r.ok).toBe(true);
+      const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief')!;
+      expect(note.body).toContain(body.trim());
+    });
+
+    it('a brief the check refuses is not wrapped and not filed', async () => {
+      const r = await proposalCreate.handler({ kind: 'founder_brief', title: 'What I understood', body: FALSE_BRIEF, target: FOUNDER_BRIEF }, ctx());
+      expect(r.ok).toBe(false);
+      expect(briefsFiled()).toBe(0);
+    });
   });
 });

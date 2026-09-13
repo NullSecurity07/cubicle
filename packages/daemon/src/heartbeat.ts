@@ -11,7 +11,7 @@ import {
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, type PressurePart,
   PRESSURE_CHAIR_SECTION, chairAnswerText,
   type PressureVerdict, type BoardRubric,
-  isLongPrompt, isSkip, asksForSurprise, interviewPhase, INTERVIEW_PATH,
+  isLongPrompt, isSkip, asksForSurprise, interviewPhase, INTERVIEW_PATH, BRAND_NAME_PATH,
   readLedger, moneyReport, moneyLine, moneyNeedsYou, money, HOUSE, LEDGER_PATH, DEFAULT_CURRENCY, type MoneyReport, type LedgerEntry,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
@@ -243,6 +243,17 @@ export function inboxEditWakesHeartbeat(vault: Vault, rel: string): boolean {
   const d = note.data;
   if (d.kind === 'message') return d.from === 'owner';
   if (d.kind === 'founder_brief') return d.approved !== null;
+  // …and the pick, for exactly the founder brief's reason (ruling I1). The three ideas the CEO files are a
+  // `brand_change` on `Brand/name.md`, and while they sit unpicked `discoveryStatus` refuses to run at all —
+  // "waiting for you to pick one of the three ideas". So the click that picks one is the event that makes
+  // discovery possible, and nothing on the tick acts on it: the dispatcher writes the name and stops there.
+  // In the live run the pick and the research job were four seconds apart, and that four seconds was the
+  // heartbeat this rule had taken away — recovery would otherwise have been the six-hourly trigger.
+  //
+  // `approved !== null`, not "any edit": Obsidian saves mid-keystroke, and an owner halfway through typing
+  // `chosen:` has not picked anything yet. A decision either way wakes a cycle — a rejected trio is the same
+  // silent drop ruling S-2 closed for briefs.
+  if (d.kind === 'brand_change' && d.target === BRAND_NAME_PATH) return d.approved !== null;
   return d.kind === 'plan_verdict' && d.approved === false;
 }
 
@@ -1000,6 +1011,8 @@ interface Gathered {
   gathered_at?: string;
   elapsedHours: number;
   ownerEdits: string[];
+  /** `Site/` writes this window that a running job's shell made, not the owner (ruling I4). Reported, not planned on. */
+  attributedSiteWrites?: number;
   finished: { id: string; type: string; title: string; status: string; summary: string }[];
   mail: string[];
   analytics: string | null;
@@ -1023,16 +1036,66 @@ export function lastGatheredAt(vault: Vault): string | null {
   return notes.length ? notes[notes.length - 1].created : null;
 }
 
+/**
+ * How close a `Site/` write has to be to a running shell before it is that job's output rather than the
+ * owner's. Five seconds: a build writes its files in a burst while the command is still producing output, and
+ * an owner typing in Obsidian is not within five seconds of a shell that is also writing the same tree.
+ */
+export const SHELL_EDIT_WINDOW_MS = 5000;
+
+/**
+ * The moments a job's shell was running against `Site/` (ruling I4).
+ *
+ * `shell.run` mounts `Site/` and a scratch dir; `ci.run` mounts one `Workspace/<stream>` and can touch nothing
+ * under `Site/` at all, so its `shell.output` marker is skipped rather than counted as a window. Both the tool
+ * call and the output lines are read, because a command that prints nothing still leaves the `agent.tool_call`
+ * and a long build leaves output all the way through it.
+ */
+export function siteShellWindows(vault: Vault, since: string | null): number[] {
+  const from = since ? new Date(Date.parse(since) - SHELL_EDIT_WINDOW_MS * 2).toISOString() : undefined;
+  const out: number[] = [];
+  for (const e of vault.events.query({ types: ['shell.output', 'agent.tool_call'], from })) {
+    if (!e.job) continue;
+    const p = e.payload as { tool?: unknown; text?: unknown };
+    if (e.type === 'agent.tool_call' && String(p.tool ?? '') !== 'shell.run') continue;
+    if (e.type === 'shell.output' && /^\$ ci\.run\b/.test(String(p.text ?? ''))) continue;
+    const t = Date.parse(e.ts);
+    if (Number.isFinite(t)) out.push(t);
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/**
+ * Whether this `owner.edited` is really a job's build output (ruling I4).
+ *
+ * `Site/` is owner-editable again — the reconcile jobs are told "never revert owner edits under Site/", and the
+ * only way an engineer ever learns of such an edit is the owner-edit block the harness builds from these
+ * events, so excluding the whole tree made that instruction unenforceable. The build output is excluded by
+ * name instead (`isCachePath`), and what a build writes *outside* those names — `Site/src/pages/index.astro`
+ * rewritten by an engineer's own `shell.run` — is separated here, by when it happened rather than by what it
+ * is. A `Site/` edit made while no shell was running is the owner's, and stays.
+ */
+export function isJobSiteWrite(path: string, ts: string, windows: readonly number[]): boolean {
+  if (!path.startsWith('Site/')) return false;
+  const t = Date.parse(ts);
+  if (!Number.isFinite(t)) return false;
+  return windows.some((w) => Math.abs(w - t) <= SHELL_EDIT_WINDOW_MS);
+}
+
 function gather(vault: Vault, now: Date, mail: string[], analytics: string | null): Gathered {
   const since = lastGatheredAt(vault);
   const elapsedHours = since ? (now.getTime() - Date.parse(since)) / 3600_000 : Infinity;
-  const ownerEdits = [...new Set(vault.events.query({ types: ['owner.edited'], from: since ?? undefined }).map((e) => String(e.payload.path)))];
+  const windows = siteShellWindows(vault, since);
+  const edits = vault.events.query({ types: ['owner.edited'], from: since ?? undefined });
+  const mine = edits.filter((e) => isJobSiteWrite(String(e.payload.path ?? ''), e.ts, windows));
+  const ownerEdits = [...new Set(edits.filter((e) => !mine.includes(e)).map((e) => String(e.payload.path)))];
+  const attributedSiteWrites = new Set(mine.map((e) => String(e.payload.path))).size;
   const finished = vault.events.query({ types: ['job.done', 'job.failed'], from: since ?? undefined })
     .filter((e) => e.job)
     .map((e) => { const j = readJob(vault, e.job!); return { id: e.job!, type: j?.data.type ?? '?', title: j?.data.title ?? '?', status: e.type === 'job.done' ? 'done' : 'failed', summary: String(e.payload.summary ?? e.payload.reason ?? '') }; })
     .filter((f) => f.type !== 'ceo.heartbeat');
   const ownerMessages = listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && (!since || String(n.data.created ?? '') > since)).length;
-  return { since, gathered_at: now.toISOString(), elapsedHours, ownerEdits, finished, mail, analytics, unansweredOwnerMessages: unansweredOwnerMessages(vault), ownerMessages };
+  return { since, gathered_at: now.toISOString(), elapsedHours, ownerEdits, attributedSiteWrites, finished, mail, analytics, unansweredOwnerMessages: unansweredOwnerMessages(vault), ownerMessages };
 }
 
 /**
@@ -1535,7 +1598,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         state = { ...state, ...g, feedbackShas, commentBaselines }; saveState(state);
         // Persist the gathered facts in the job note so a cache wipe cannot change what later steps see.
         vault.updateNote(`Jobs/${jobId}.md`, (n) => ({ data: n.data, body: setSection(n.body, '## Plan', '```json\n' + JSON.stringify({ since: g.since, gathered_at: g.gathered_at, elapsedHours: Number.isFinite(g.elapsedHours) ? g.elapsedHours : null, ownerEdits: g.ownerEdits, finished: g.finished, mail: g.mail.length, analytics: g.analytics, owner_messages: g.unansweredOwnerMessages.map((m) => m.id), owner_messages_since: g.ownerMessages }, null, 2) + '\n```') }), 'ceo', { job: jobId });
-        done(i, `elapsed ${Number.isFinite(g.elapsedHours) ? g.elapsedHours.toFixed(1) + 'h' : 'first run'}; ${g.ownerEdits.length} owner edits; ${g.finished.length} jobs finished; ${g.mail.length} mails; ${g.unansweredOwnerMessages.length} owner messages`);
+        done(i, `elapsed ${Number.isFinite(g.elapsedHours) ? g.elapsedHours.toFixed(1) + 'h' : 'first run'}; ${g.ownerEdits.length} owner edits${g.attributedSiteWrites ? ` (${g.attributedSiteWrites} Site/ write${g.attributedSiteWrites === 1 ? '' : 's'} attributed to a running job)` : ''}; ${g.finished.length} jobs finished; ${g.mail.length} mails; ${g.unansweredOwnerMessages.length} owner messages`);
         break;
       }
       // The company's money, before anything is planned against it. Pure arithmetic: not one model call on
