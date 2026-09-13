@@ -11,7 +11,7 @@ import { dispatchProposals } from './dispatcher.js';
 import { sweepTrustReviews } from './trust.js';
 import { budgetForRole, budgetRows } from './money.js';
 import { WsServer } from './ws.js';
-import { createHeartbeatJob, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
+import { createHeartbeatJob, answerOwnerMessages, unansweredOwnerMessages, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
 import { captureResearchDeliveries, enqueueResearchFollowUps, enqueueExperimentReviews, maybeEnqueueCharterCompression, maybeEnqueueIntelligence, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions, maybeFlagLessons } from './evolution.js';
@@ -114,6 +114,11 @@ export class Daemon {
   private lastPrune = 0;
   private guardrails: import('@cubicle/harness').Guardrail[] = [];
   private openMeeting: (agenda: string, participants?: string[]) => Promise<string | null> = async () => null;
+  /**
+   * What a heartbeat cycle is given, kept so the **tick** can answer the owner with exactly the same code the
+   * `answer_owner` step runs (ruling FR-1). Null until `start()` has built it.
+   */
+  private heartbeatDeps: Omit<HeartbeatDeps, 'vault'> | null = null;
 
   /**
    * Money can make the company cheaper; it must never make it silent. All three of these swallow their own
@@ -231,9 +236,10 @@ export class Daemon {
         return r.content;
       } catch { return ''; }
     };
+    this.heartbeatDeps = { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, env: cfg.env, noCloudKeys, planMaxAgeDays: cfg.planMaxAgeDays, log: this.log, modelBudget: this.houseBudget, ...this.overrides.heartbeatHooks };
     this.workers = new WorkerPool(this.vault, {
       harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback, summarize, modelBudget: this.modelBudget },
-      heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, env: cfg.env, noCloudKeys, planMaxAgeDays: cfg.planMaxAgeDays, log: this.log, modelBudget: this.houseBudget, ...this.overrides.heartbeatHooks },
+      heartbeat: this.heartbeatDeps,
       maxConcurrent: cfg.maxConcurrentJobs,
       dormant: this.isDormant,
     });
@@ -440,6 +446,27 @@ export class Daemon {
         const unanswered = hasOpen ? undefined : listInbox(this.vault).find((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && !n.data.answered);
         if (!hasOpen && (since >= this.config.heartbeat.maxElapsedHours || this.heartbeatRequested || unanswered)) this.requestHeartbeat(this.heartbeatRequested ?? (unanswered ? `unanswered owner message ${unanswered.data.id}` : `${since.toFixed(1)} h elapsed`));
       });
+      // The owner gets an answer on the tick, whatever the cycle is doing (finding F2, ruling FR-1). Answering
+      // is a step of the heartbeat, and on the first live run that heartbeat was blocked on a discovery job,
+      // so the owner's follow-up sat unanswered for the whole run while the trigger above refused to even look
+      // for it ("only when no heartbeat is open"). This runs the step's own code, it is idempotent on the
+      // note's `answered` flag, and it is deliberately outside the dormancy guard above: a stopped company
+      // still talks to its owner — silence is the one thing it may never be.
+      //
+      // It runs **after** the trigger on purpose. The trigger reads the same unanswered note, and a message
+      // from the owner should still wake a cycle: answering says what the company will do, the cycle is what
+      // actually plans against it. Answering first would take that wake away.
+      const spoke = await this.sweep(reason, 'answer-owner', async () => {
+        if (!this.heartbeatDeps) return 0;
+        const msgs = unansweredOwnerMessages(this.vault);
+        if (!msgs.length) return 0;
+        // The open cycle's id when there is one, so the reply and the proposal are attributed to it as they
+        // always were. The ids the sweep derives come from the message, never from the job, so it does not
+        // matter which of the two answers first.
+        const hb = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
+        return answerOwnerMessages({ vault: this.vault, ...this.heartbeatDeps }, this.vault, msgs, { jobId: hb?.id });
+      });
+      if (spoke) this.log(`tick(${reason}): ${spoke} owner message(s) answered`);
       this.workers.wake();
     } catch (err) {
       this.vault.events.emit({ type: 'daemon.warning', payload: { where: 'tick', message: String((err as Error).stack ?? err).slice(0, 500) } });
