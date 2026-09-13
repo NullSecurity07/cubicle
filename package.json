@@ -14,6 +14,7 @@
     "cubicle": "node --import tsx/esm --conditions=development packages/daemon/src/cli.ts",
     "launch": "bash scripts/run.sh",
     "test:acceptance": "vitest run --config vitest.acceptance.config.ts",
+    "test:clock": "NODE_OPTIONS=\"--import $PWD/scripts/shift-clock.mjs\" pnpm -r --filter './packages/**' --workspace-concurrency=1 run test",
     "test:kill9": "node --import tsx/esm --conditions=development scripts/test-kill9.ts",
     "test:sleep": "node --import tsx/esm --conditions=development scripts/test-sleep.ts",
     "test:replay": "node --import tsx/esm --conditions=development scripts/test-replay.ts",
