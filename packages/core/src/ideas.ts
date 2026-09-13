@@ -283,6 +283,12 @@ export interface NewIdea {
   evidence?: string[];
   what_changed?: string;
   why_it_matters?: string;
+  /**
+   * The clock the filer is working to, as an ISO stamp. Defaults to now. A rule that reads `created` back —
+   * the pantry's one card a day — must see the same clock it decided by, or it agrees with itself only until
+   * the real date rolls over underneath a caller that was given a different one.
+   */
+  created?: string;
 }
 
 /**
@@ -316,7 +322,7 @@ export function writeIdeaCard(vault: Vault, idea: NewIdea, by: string): string {
     while (vault.exists(ideaPath(`${base}-${n}`))) n++;
     slug = `${base}-${n}`;
   }
-  const data = IdeaFrontmatter.parse({ id: slug, title: idea.title, source: idea.source, created: nowIso(), evidence: idea.evidence ?? [] });
+  const data = IdeaFrontmatter.parse({ id: slug, title: idea.title, source: idea.source, created: idea.created ?? nowIso(), evidence: idea.evidence ?? [] });
   const body = [
     `# ${idea.title}`, '',
     '## What changed', '', (idea.what_changed ?? '').trim() || '_Not stated._', '',

@@ -127,6 +127,7 @@ export function filePantryIdea(vault: Vault, o: { idea: string | null; note: str
     title: o.idea,
     source: PANTRY_SOURCE,
     evidence: [o.note],
+    created: o.now.toISOString(),
     what_changed: 'Two people with nothing on talked it over in the pantry.',
     why_it_matters: o.idea,
   }, o.by ?? 'daemon');
