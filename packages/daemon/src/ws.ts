@@ -79,12 +79,19 @@ export interface Snapshot {
   /** Brand/name.md frontmatter — the office top bar. */
   brand: { name: string; tagline: string; url: string };
   /**
-   * Proposals awaiting the owner (never plain messages) — the Decisions sheet's *Needs you* segment.
+   * Every open proposal (never a plain message) — the Decisions sheet's *Needs you* segment.
    *
    * Everything the reader needs to show the decision and everything the action bar needs to send one, so that
    * opening a row is a render and not a round trip. `body` is the note as markdown, CEO boilerplate included,
    * because the owner is deciding on what the company actually wrote; it is capped, since a founder brief with
    * a long pressure test is the one note that could otherwise put a megabyte on every reconnect.
+   *
+   * **Open, not undecided** (ruling P8-8). The list used to be `approved === null`, which meant a note fell out
+   * of it the instant the owner decided and did not appear in `decided` until the dispatcher had resolved it —
+   * a hole the reader rendered as nothing at all. For a note the dispatcher *refuses* (`refuseNote` records the
+   * reason and never resolves it) that hole is permanent: the owner's decision would simply vanish from the
+   * sheet. A decided-but-unresolved note keeps its row, marked `pending`, and carries the refusal when there is
+   * one, so the sheet can say "applying…" and then say what went wrong.
    */
   inbox: {
     id: string; kind: string; title: string; path: string; created: string;
@@ -96,6 +103,13 @@ export interface Snapshot {
     /** The `## Pressure test` block when the note carries one, so the argument is on screen with the button. */
     pressure: string;
     decidable: Decidable;
+    /** Decided and waiting on the dispatcher. `false` for a row that still needs the owner. */
+    pending: boolean;
+    /** The owner's own flags, so a pending row can show what was decided. `null` while undecided. */
+    approved: boolean | null;
+    chosen: number | null;
+    /** Why the dispatcher would not apply it — the `refused` the note carries — or null. */
+    refused: string | null;
   }[];
   /** The last 20 notes the dispatcher closed — the Decisions sheet's *Decided* segment. */
   decided: { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean | null; chosen: number | null; outcome: string }[];
@@ -128,7 +142,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
   const activeSessions = new Set(vault.events.query({ types: ['browser.session_started'], limit: 500, order: 'desc' }).map((e) => String(e.payload.session)).filter((s) => !ended.has(s)));
   const notes = listInbox(vault);
   const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
-  const inbox: Snapshot['inbox'] = notes.filter((n) => n.data.kind !== 'message' && n.data.approved === null && !n.data.resolved_at)
+  const inbox: Snapshot['inbox'] = notes.filter((n) => n.data.kind !== 'message' && !n.data.resolved_at)
     .map((n) => {
       const d = n.data as Record<string, unknown>;
       const options = proposalOptions(n.data.kind, n.body);
@@ -140,6 +154,9 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
         band: str(d.band), band_reason: str(d.band_reason), board_verdict: str(d.board_verdict),
         pressure: pressureBlock(n.body),
         decidable: decidableFor(n.data.kind, options),
+        pending: n.data.approved !== null,
+        approved: n.data.approved, chosen: n.data.chosen,
+        refused: typeof d.refused === 'string' && d.refused ? d.refused : null,
       };
     });
   // Newest first and few: *Decided* is the owner's receipt for what their clicks did, not the archive. The
@@ -194,7 +211,9 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
     quota: router?.quotaSnapshot() ?? [],
     latestRun: latest ? { path: latest, body: vault.readTextOrNull(latest) ?? '' } : null,
     plan: vault.readTextOrNull('Plans/plan.md') ?? '',
-    pendingProposals: inbox.length,
+    // The pill is "N to approve", so it counts what still needs the owner — never a row that is only waiting
+    // on the dispatcher. A decided note is off the owner's plate whatever the sheet still shows of it.
+    pendingProposals: inbox.filter((r) => !r.pending).length,
     brand, inbox, decided, chat, teams, offices: org.offices ?? {},
     conversations: listConversations(vault),
   };
@@ -248,18 +267,24 @@ export class WsServer {
           } else if (msg.op === 'decide') {
             // Malformed known ops answer; unknown ops are still ignored. A `decide` the daemon cannot parse is
             // the office asking for something, and silence there is a button that does nothing.
-            if (typeof msg.id !== 'string' || !msg.id || typeof msg.approved !== 'boolean') {
-              ws.send(JSON.stringify({ op: 'error', message: 'decide needs id (string) and approved (boolean)' }));
+            //
+            // **Every one of these answers names the note** (review I4). The viewer routes an error to the
+            // reader it belongs to by `id`, and with no id it falls back to the first pending decision — so two
+            // decisions in flight and the wrong reader shows the refusal. `id` is null only when the message
+            // did not carry a usable one, which is the one case there is no note to name.
+            const id = typeof msg.id === 'string' && msg.id ? msg.id : null;
+            const refuse = (message: string) => ws.send(JSON.stringify({ op: 'error', id, message }));
+            if (!id || typeof msg.approved !== 'boolean') {
+              refuse('decide needs id (string) and approved (boolean)');
             } else if (msg.chosen !== undefined && msg.chosen !== null && typeof msg.chosen !== 'number') {
-              ws.send(JSON.stringify({ op: 'error', message: 'decide: chosen must be a number' }));
+              refuse('decide: chosen must be a number');
             } else if (msg.comment !== undefined && typeof msg.comment !== 'string') {
-              ws.send(JSON.stringify({ op: 'error', message: 'decide: comment must be a string' }));
+              refuse('decide: comment must be a string');
             } else {
-              const id = msg.id;
               try {
                 ownerDecide(this.deps.vault, id, { approved: msg.approved, chosen: msg.chosen as number | null | undefined, comment: msg.comment as string | undefined });
               } catch (err) {
-                ws.send(JSON.stringify({ op: 'error', message: String((err as Error).message).slice(0, 200) }));
+                refuse(String((err as Error).message).slice(0, 200));
                 return;
               }
               // Acknowledge first, tick second: the reader goes to "applying…" on the ack, and a dispatcher pass
