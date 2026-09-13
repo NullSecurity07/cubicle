@@ -52,6 +52,14 @@ describe('Docs/pressure-test-handbook.md (spec §1)', () => {
     expect(md).toContain('/10');
   });
 
+  // FR-5: the handbook said "answer in one word first" three lines above a verdict that is two words, and in
+  // the owner's first live run the CEO returned a correct brief for exactly that contradiction.
+  it('asks for the verdict first rather than for one word, and says two words are still one verdict', () => {
+    expect(md).not.toMatch(/one word/i);
+    expect(md).toMatch(/the verdict first/i);
+    expect(md).toMatch(/PIVOT REQUIRED` is two words/);
+  });
+
   it('keeps the notes\' one signal about how many founders there are (minor 5)', () => {
     // `startup-evaluation-notes.md` §founder-market fit: "Solo founders are a yellow flag (not red). Two
     // founders who've worked together before is the strongest signal." It is actionable, it is about

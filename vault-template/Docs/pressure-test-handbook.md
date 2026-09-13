@@ -126,7 +126,8 @@ as someone here is willing to do the schlep.
 
 ## The three verdicts
 
-Three allowed outcomes, and no fourth. Answer in **one word first**, then justify.
+Three allowed outcomes, and no fourth. Give **the verdict first — STRONG, WEAK or PIVOT REQUIRED — then the
+reasons**. `PIVOT REQUIRED` is two words and is still one verdict; what is banned is hedging, not a space.
 
 - **STRONG** — the core assumption is plausible, the flaws are survivable, the pain is real, the founder fits.
   Build a cheap test now.
