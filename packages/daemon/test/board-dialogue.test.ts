@@ -12,7 +12,7 @@ import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { runJob, vaultScheduler } from '@cubicle/harness';
 import {
   runBoardSession, runHeartbeat, createHeartbeatJob, requeueUnblocked, buildSnapshot, splitRejectedBrief,
-  runBriefBoardSession, dispatchProposals,
+  runBriefBoardSession, dispatchProposals, BRIEF_DECIDED_EARLY,
   BOARD_DIALOGUE_MAX_CALLS, BOARD_DIALOGUE_ROUNDS, BOARD_OPEN_QUESTIONS, boardSubjectKey,
   challengeReason, findingIn, questionIn, parseFindingsSection, ownerSpokeSince, partsText,
   renderBriefPressureSection, subjectMaterial, boardQuestionsMessageId, questionsAlreadyAsked,
@@ -623,7 +623,7 @@ describe('the brief board recovers, tells the truth, and cannot be decided out f
     expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'brief_board')).toBe(true);
   }, 60000);
 
-  it('R-T3-3: the dispatcher leaves a pending brief alone, and applies the approval once the board is done', async () => {
+  it('R-T3-3: an approval given before the board finished is handed back, not carried over', async () => {
     const filed = fileBrief(vault);
     const deps = () => ({ vault, registry: new ToolRegistry().registerAll(phase3Tools()), toolsConfig: parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8')), scheduler: vaultScheduler(vault), env: {} });
     // The owner approves in Obsidian while the board is still sitting: a raw write, so the owner-flip guard
@@ -635,13 +635,34 @@ describe('the brief board recovers, tells the truth, and cannot be decided out f
     expect(briefNote(vault).data.resolved_at ?? null).toBeNull();
     expect(briefNote(vault).body).not.toContain('Not applied');
 
-    // The board finishes. Its findings are not written over a decided note (the re-read), and the very next
-    // dispatch applies the approval that was already sitting there.
+    // The board finishes. That yes was given on a document the owner has not read — the pressure test under it
+    // is not the section they saw — so it is handed back rather than applied: undecided, with the line saying
+    // why, and counted by the pill again.
     const held = await runBriefBoardSession({ vault, llm: briefLlm() as never }, loadOrg(vault));
     expect(held!.used).toBe(true);
-    expect(briefNote(vault).data.board_pending).toBe(false);
+    const after = briefNote(vault);
+    expect(after.data.board_pending).toBe(false);
+    expect(after.data.approved).toBeNull();
+    expect(after.body).toContain(BRIEF_DECIDED_EARLY);
+    expect(after.body.indexOf(BRIEF_DECIDED_EARLY)).toBeLessThan(after.body.indexOf('## Proposed content'));
+    expect(buildSnapshot(vault).inbox.some((r) => r.id === filed.id)).toBe(true);
+    expect(await dispatchProposals(deps())).toBe(0);
+    expect(vault.readText('Memory/founder-brief.md')).not.toContain('the board holds Core Assumption answered');
+
+    // …and a fresh approval, on the brief they can now actually read, is applied.
+    writeFileSync(path.join(dir, filed.path), readFileSync(path.join(dir, filed.path), 'utf8').replace(/^approved: .*$/m, 'approved: true'));
     expect(await dispatchProposals(deps())).toBe(1);
     expect(vault.readText('Memory/founder-brief.md')).toContain('the board holds Core Assumption answered');
+  }, 60000);
+
+  it('R-T3-3: what the owner typed under the fence is theirs, and survives the hand-back', async () => {
+    const filed = fileBrief(vault);
+    const abs = path.join(dir, filed.path);
+    writeFileSync(abs, `${readFileSync(abs, 'utf8').replace(/^approved: .*$/m, 'approved: true').trimEnd()}\n\nYes, but call the nurseries first.\n`);
+    await runBriefBoardSession({ vault, llm: briefLlm() as never }, loadOrg(vault));
+    const after = briefNote(vault);
+    expect(after.data.approved).toBeNull();
+    expect(splitRejectedBrief(after).comment).toBe('Yes, but call the nurseries first.');
   }, 60000);
 
   it('R-T3-3: a brief resolved mid-session is left exactly as the owner left it', async () => {

@@ -33,6 +33,7 @@ import {
   chairFormat, ADVISOR_ASK, askAs, advisorSystem, SUBJECT_CHARS, CHAIR_IDEA_TOKENS,
   runBoardSession, writeBoardDecision, BOARD_UNREVIEWED_NOTE, BOARD_OPEN_QUESTIONS,
 } from './heartbeat.js';
+import { splitRejectedBrief } from './discovery.js';
 
 /** The five argued rounds plus the verdict. Six is a consequence of `PRESSURE_PARTS`, not a second opinion. */
 export const BOARD_DIALOGUE_ROUNDS = PRESSURE_PARTS.length + 1;
@@ -628,8 +629,9 @@ export function renderBriefPressureSection(
  * carry the other verdict outright — so a block claiming "its five findings are below" would have the owner
  * reading two contradicting verdicts on one screen and adopting the wrong one as the board's.
  */
-export function briefBoardBlock(o: { verdict: string; notePath: string; questions: string[]; unusable?: string }): string {
+export function briefBoardBlock(o: { verdict: string; notePath: string; questions: string[]; unusable?: string; decidedEarly?: boolean }): string {
   return [
+    ...(o.decidedEarly ? [BRIEF_DECIDED_EARLY, ''] : []),
     o.unusable
       ? `The board pressure-tested this before you saw it and ruled **${o.verdict}**, but ${o.unusable}. The \`${PRESSURE_TEST_SECTION}\` section below is the research office's draft, not the board's findings — read the argument itself in [[${o.notePath.replace(/\.md$/, '')}]].`
       : `The board pressure-tested this before you saw it and ruled **${o.verdict}**. Its five findings are the \`${PRESSURE_TEST_SECTION}\` section of the brief below, and the argument it took to get there is in [[${o.notePath.replace(/\.md$/, '')}]].`,
@@ -690,6 +692,15 @@ export function partsRefusedBy(findings: string[]): PressurePart[] {
   const said = findings.join('\n');
   return PRESSURE_PARTS.filter((p) => new RegExp(p.replace(/-/g, '[- ]'), 'i').test(said));
 }
+
+/**
+ * What the owner is told when they approved a brief the board was still rewriting.
+ *
+ * Their yes was given on a document they have not read: the `## Pressure test` under it is not the section they
+ * saw. So the approval is cleared rather than carried over — the note goes back to "Needs you" with this line
+ * on it, the pill counts it again, and the dispatcher has no flip to forge-check at all.
+ */
+export const BRIEF_DECIDED_EARLY = 'You approved this before the board finished; the pressure test has changed — read it and decide again.';
 
 /** What the owner is told above the fence when the board's own section could not be used. */
 export function briefBoardUnusable(check: string[]): string {
@@ -785,17 +796,17 @@ export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promi
     vault.events.emit({ type: 'daemon.warning', agent: chair, payload: { where: 'brief_board', message: `the founder brief was decided while the board was still sitting, so its findings were not written into it; they are in [[${session.notePath.replace(/\.md$/, '')}]]` } });
     return { notePath: session.notePath, verdict, questions: session.questions, used: false };
   }
-  // An approval the owner set while the board was still sitting has to survive this write (ruling R-T3-3: it
-  // "is applied after the flag clears"). The dispatcher honours a flip by comparing the file against the last
-  // sha the daemon recorded, and rewriting the body would make the note look daemon-written and the owner's
-  // yes would be refused as forged — so the owner's own last version is recorded as the written one, which is
-  // what it is. Nothing is invented: this only runs when the flip was already there and already the owner's.
-  const ownerFlipped = now.data.approved !== null && vault.isOwnerChanged(proposal.path);
-  const ownerSha = ownerFlipped ? vault.currentSha(proposal.path) : null;
+  // An approval set from Obsidian while the board was still rewriting the section was given on a document the
+  // owner has not read, so it is **cleared, not carried over**: the note goes back to undecided with
+  // `BRIEF_DECIDED_EARLY` above the fence, the pill counts it again, and the dispatcher has no flip to
+  // forge-check. What the owner typed underneath is theirs and is kept — `founderBriefProposalBody` rebuilds
+  // everything above the fence, so their paragraph is re-appended under it where the rejection path reads it.
+  const decidedEarly = now.data.approved !== null;
+  const comment = decidedEarly ? splitRejectedBrief({ data: now.data as Record<string, unknown>, body: now.body }).comment : '';
+  const body = briefProposalBodyWithBoard(brief, briefBoardBlock({ verdict, notePath: session.notePath, questions: session.questions, unusable, decidedEarly }));
   vault.updateNote(proposal.path, (n) => ({
-    data: { ...n.data, board_pending: false },
-    body: briefProposalBodyWithBoard(brief, briefBoardBlock({ verdict, notePath: session.notePath, questions: session.questions, unusable })),
+    data: { ...n.data, board_pending: false, ...(decidedEarly ? { approved: null, chosen: null } : {}) },
+    body: comment ? `${body.trimEnd()}\n\n${comment}\n` : body,
   }), chair);
-  if (ownerSha) vault.recordWritten(proposal.path, ownerSha, 'owner');
   return { notePath: session.notePath, verdict, questions: session.questions, used: !unusable };
 }
