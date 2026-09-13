@@ -506,3 +506,55 @@ export function pressureFindings(r: { verdict: PressureVerdict; flaws: string[];
   const wedge = r.wedge.trim() ? `Pivot required. The wedge to attack instead: ${r.wedge.trim()}` : PRESSURE_NO_WEDGE;
   return [wedge, ...flaws].slice(0, PRESSURE_MAX_FLAWS);
 }
+
+/**
+ * The pivot the chair **proposed**, out of a verdict it ruled `PIVOT REQUIRED` on — or `''`.
+ *
+ * Ruling W3-2: a board that says "pivot" has proposed a different business, and the company's answer to that is
+ * an idea card the owner rules on, not a plan quietly rewritten to it. So the proposal has to be readable in
+ * code, and it is read from the two places the chair is asked to put it: the words after the verdict word on
+ * its own line (`**Brutal Verdict:** PIVOT REQUIRED — <the pivot>`, the shape the third live run wrote), and
+ * the `WEDGE:` line the chair is asked for on a pivot and nowhere else.
+ *
+ * The verdict's own words win over the wedge, because they are the sentence the chair wrote about *this*
+ * company; the wedge is the fallback for a chair that answered the machine line and put its reasoning
+ * elsewhere. `''` for STRONG and WEAK: neither proposes anything, and a card filed off one would be the board
+ * inventing a business out of a complaint.
+ */
+export function pressurePivot(text: string): string {
+  const t = withoutQuotations(text ?? '');
+  const last = verdictValues(t).filter((v) => verdictOn(v) !== null).at(-1);
+  if (!last || verdictOn(last) !== 'PIVOT REQUIRED') return '';
+  const said = last.replace(new RegExp(`^${VERDICT_WORD}[ \\t]*[-–—:,.]*[ \\t]*`, 'i'), '').trim();
+  return said || cleanValue(t.match(WEDGE_LINE_RE)?.[1] ?? '').trim();
+}
+
+/**
+ * A finding whose subject is how the company *works* rather than what it sells: its `fix by` is a process
+ * change and belongs in the next plan, not on an idea card.
+ *
+ * The chair writes a plan finding as `<subject>: <what fails>; fix by <what to do instead>` (the live run's four
+ * were Demand, Distribution, Economics and Execution), so the subject is the head of the finding and the test is
+ * the list of subjects that are not the product. An exclusion list rather than an inclusion one: a subject the
+ * chair invents is likelier to be about the business than about the process, and the cost of being wrong is one
+ * idea card the owner parks, against a pivot nobody was ever asked about.
+ */
+const EXECUTION_SUBJECT_RE = /^[ \t]*(?:[-*+][ \t]+)?[*_`]*(execution|process|delivery|staffing|hiring|recruit\w*|timeline|schedule|sequencing|tooling|quality|testing|ops|operations|governance)\b/i;
+
+/**
+ * The `fix by …` clauses in a board's findings that change what the company sells (ruling W3-2).
+ *
+ * A plan session has no pressure verdict — it returns or it passes — so `pressurePivot` has nothing to read on
+ * that path. What it has instead is the chair's findings, each ending in the fix it wants, and a fix that
+ * changes the product is a pivot by another name: the live run's board asked for signed SBOM attestations and
+ * commercial compliance partners, and the CEO wrote them straight into the plan.
+ */
+export function productFixes(findings: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const f of findings) {
+    if (EXECUTION_SUBJECT_RE.test(f)) continue;
+    const fix = f.match(/\bfix(?:ed)?\s+by\s+([^\n]+)$/i)?.[1]?.trim().replace(/[.;,]+$/, '');
+    if (fix && fix.length > 8) out.push(fix);
+  }
+  return out;
+}

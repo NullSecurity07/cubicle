@@ -2,6 +2,7 @@ import {
   type Vault, listInbox, readJob, updateJob, cancelJob, listJobs, nowIso, parseNote, stringifyNote, createJob, idFromKey, RoleFrontmatter, type InboxFrontmatter, type JobFrontmatter,
   loadOrg, resolveRole, divisionLeadOf, officeHolder, type Org,
   FOUNDER_BRIEF, missingBriefSections, readIdea, updateIdea, ideaBand, bandReason, ideaOutcome, IDEA_SLUG_SRC, IDEA_DECISIONS, LEDGER_PATH, type IdeaBand, type IdeaDecision,
+  INTERVIEW_PATH, supersedeInterview,
   trustDecision, TRUST_PENDING_HOLD, CLASSIFIER_UNAVAILABLE_HOLD, type TrustDecision,
   decidedByOwner, numberedOptions, proposedContentBlock, boardStillSitting,
 } from '@cubicle/core';
@@ -565,6 +566,17 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             const missing = missingBriefSections(content, String(note.data.created ?? ''));
             if (missing.length) { refuseNote(vault, note, `the founder brief has not written ${missing.join(', ')}; write the section(s) and approve again`, { target }); continue; }
             vault.writeText(target, content, 'daemon', { job: d.job ?? null });
+            // The interview those answers fed is over (ruling W3-7). Written here rather than in the heartbeat
+            // because this is the one place a brief is ever adopted — from the office, from Obsidian, whoever
+            // clicked — and an interview that stays open is an interview every later CEO reply asks the owner to
+            // add to (R3-7: seven hours of "add anything, or just 'go'" after the brief was already adopted).
+            // Wrapped: a transcript that cannot be written is never a reason not to adopt the brief.
+            try {
+              const closed = supersedeInterview(vault.readTextOrNull(INTERVIEW_PATH), nowIso());
+              if (closed) vault.writeText(INTERVIEW_PATH, closed, 'daemon', { job: d.job ?? null });
+            } catch (err) {
+              vault.events.emit({ type: 'daemon.warning', payload: { where: 'dispatcher.founder_brief', proposal: d.id, message: `the founder brief was adopted but ${INTERVIEW_PATH} could not be closed: ${String((err as Error).message ?? err).slice(0, 200)}` } });
+            }
             outcome = `founder brief adopted at ${target}`;
             break;
           }

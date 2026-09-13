@@ -31,7 +31,7 @@ import {
   type HeartbeatDeps, type BoardSubject, type BoardMerge, type BoardSessionResult,
   boardSubject, boardAgenda, mergeBoardVerdict, unansweredMerge, chairReaskPrompt, chairLostNote,
   chairFormat, ADVISOR_ASK, askAs, advisorSystem, SUBJECT_CHARS, CHAIR_IDEA_TOKENS,
-  runBoardSession, writeBoardDecision, BOARD_UNREVIEWED_NOTE, BOARD_OPEN_QUESTIONS,
+  runBoardSession, writeBoardDecision, BOARD_UNREVIEWED_NOTE, BOARD_OPEN_QUESTIONS, fileChairPivot,
 } from './heartbeat.js';
 import { splitRejectedBrief } from './discovery.js';
 
@@ -766,6 +766,17 @@ export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promi
   // Still refused: the draft stands, and **the note says so**. A block claiming the board's five findings are
   // below the fence, over a section the research office wrote and a verdict that may be the other word, is the
   // one thing worse than no board at all (ruling R-T3-2).
+  // Ruling W3-2, before the brief is rewritten and whatever the truth check makes of the section: a board that
+  // says PIVOT REQUIRED has proposed a different company, and the company's answer is an idea card the owner rules
+  // on. The pivot is read out of the verdict the chair actually wrote (`session.pressure` is only the word), so it
+  // is filed even when the findings could not be used — what the owner is being offered is the chair's proposal,
+  // not the section it would have gone into. Idempotent on the transcript, so a retried cycle files one card.
+  if (session.notePath) {
+    fileChairPivot(vault, {
+      text: [session.chairText, ...session.findings].filter(Boolean).join('\n'),
+      findings: session.findings, subject: BRIEF_SUBJECT_TITLE, transcript: session.notePath, by: chair, now: new Date(),
+    });
+  }
   const unusable = check.ok ? '' : briefBoardUnusable(check.findings);
   if (unusable) {
     brief = draft;

@@ -35,10 +35,11 @@ export function ideaSlug(title: string): string {
 /**
  * Where an idea came from. `intelligence` carries its sweep kind after a colon (`intelligence:competitive`);
  * `discovery` is the owner's own material, `pantry` is the idle-hours chat (SP5 writes those), `owner` is a
- * card the owner typed. Anything else is read as the job id that filed it — an idea with no provenance cannot
- * be checked, which is why `source` has no default.
+ * card the owner typed, and `board` is a pivot the chair proposed and the company will not act on until the
+ * owner keeps it (ruling W3-2). Anything else is read as the job id that filed it — an idea with no provenance
+ * cannot be checked, which is why `source` has no default.
  */
-export const IDEA_SOURCES = ['discovery', 'intelligence', 'pantry', 'owner'] as const;
+export const IDEA_SOURCES = ['discovery', 'intelligence', 'pantry', 'owner', 'board'] as const;
 export type IdeaSource = (typeof IDEA_SOURCES)[number];
 
 export function ideaSourceKind(source: string): IdeaSource | 'job' | 'unknown' {
@@ -345,6 +346,57 @@ export function writeIdeaCard(vault: Vault, idea: NewIdea, by: string): string {
   ].join('\n');
   vault.writeText(ideaPath(slug), stringifyNote(data as Record<string, unknown>, body), by);
   return slug;
+}
+
+/** What a pivot card records as its provenance. `IDEA_SOURCES` knows the word; nothing else may spell it. */
+export const BOARD_IDEA_SOURCE = 'board';
+
+/** How much of one pivot becomes a card title. Long enough to read as an idea, short enough to be a filename. */
+export const PIVOT_TITLE_CHARS = 70;
+
+/**
+ * A title for the pivot the chair proposed: what it wants the company to do instead, not what it said was wrong.
+ *
+ * "Pivot from a newsletter **to** a high-intent, affiliate-driven deployment service" carries its proposal after
+ * the `to`, so that is looked for first; a fix-by clause is already nothing but the proposal, so its own first
+ * clause stands. Falls back to naming the subject, which is honest and never empty: a card whose title is the
+ * first seventy characters of a complaint would be filed under the wrong name for ever.
+ */
+export function pivotTitle(pivot: string, subject: string): string {
+  const to = pivot.match(/\bpivot(?:ing|ed)?\s+(?:away\s+)?(?:from\s+[\s\S]{1,160}?\s+)?to\s+([^.;\n]{4,160})/i)?.[1];
+  const head = (to ?? pivot.split(/[.;\n]/)[0] ?? '').replace(/\s+/g, ' ').trim().replace(/^[-–—:,]+\s*/, '');
+  const cut = head.length > PIVOT_TITLE_CHARS ? `${head.slice(0, PIVOT_TITLE_CHARS).replace(/\s+\S*$/, '')}…` : head;
+  return cut.length >= 8 ? cut.replace(/^./, (c) => c.toUpperCase()) : `Board pivot on ${subject}`;
+}
+
+/**
+ * File the chair's proposed pivot as a candidate idea card (ruling W3-2), or return `null` when there is nothing
+ * to file and the slug of the card that already covers it when there is.
+ *
+ * This is what the company does with "PIVOT REQUIRED" instead of acting on it: the pivot becomes a card like any
+ * other, sourced `board`, with the transcript as its evidence, and it waits for the owner to keep it. The plan
+ * goes on serving the ideas the owner already kept until then.
+ *
+ * **Idempotent on the transcript path**, not on the title: one session proposes one pivot, and the chair's words
+ * for it change between two readings of the same meeting (a resumed cycle, a re-filed verdict). The transcript
+ * is the one thing that identifies the session, so a card already carrying it as evidence *is* this pivot.
+ */
+export function fileBoardPivot(
+  vault: Vault,
+  o: { pivot: string; subject: string; transcript: string; by: string; created?: string },
+): string | null {
+  const pivot = (o.pivot ?? '').replace(/\s+/g, ' ').trim();
+  if (!pivot || !o.transcript) return null;
+  const already = listIdeas(vault).find((c) => c.source === BOARD_IDEA_SOURCE && c.evidence.includes(o.transcript));
+  if (already) return already.id;
+  return writeIdeaCard(vault, {
+    title: pivotTitle(pivot, o.subject),
+    source: BOARD_IDEA_SOURCE,
+    evidence: [o.transcript],
+    created: o.created,
+    what_changed: `The board pressure-tested ${o.subject} and proposed a pivot rather than the business as it stands. Nothing is planned against this until you keep it.`,
+    why_it_matters: `The chair's own words: ${pivot}`,
+  }, o.by);
 }
 
 /**

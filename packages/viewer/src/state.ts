@@ -31,6 +31,16 @@ export interface InboxRow {
   /** numbered lines the owner picks between (`brand_change`, `idea_verdict`); empty otherwise */ options?: InboxOption[];
   band?: string; band_reason?: string; board_verdict?: string;
   /** the `## Pressure test` block, when the body has one */ pressure?: string;
+  /**
+   * The board's pressure-test verdict word on this note — `STRONG`, `WEAK`, `PIVOT REQUIRED` — or absent. Not the
+   * session's pass/return (`board_verdict`): this is what the board thinks of the business itself.
+   */
+  verdict?: string;
+  /**
+   * Saying yes to this one overrules the board (SP9 ruling W3-3), so the bar says the verdict out loud, the primary
+   * button reads "Adopt anyway", and the click carries `confirm: true`. Without it the daemon refuses the decision.
+   */
+  needs_confirm?: boolean;
   decidable?: Decidable;
   /**
    * The owner has decided this one and the dispatcher has not finished with it (SP8 ruling P8-8). The row stays in
