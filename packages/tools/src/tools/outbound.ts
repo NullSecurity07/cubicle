@@ -17,6 +17,26 @@ export function customerPath(email: string): string {
   return `Customers/${slugify(e)}-${createHash('sha1').update(e).digest('hex').slice(0, 6)}.md`;
 }
 
+/**
+ * Where this address came from, per its `Customers/` note: a URL a role actually read it on, or `inbox` for an
+ * address that wrote to us first. Null when there is no note, or the note carries no `source:`.
+ */
+export function recipientSource(vault: import('@cubicle/core').Vault, email: string): string | null {
+  const n = vault.readNoteOrNull(customerPath(email));
+  const s = (n?.data as { source?: unknown } | undefined)?.source;
+  return typeof s === 'string' && s.trim() ? s.trim() : null;
+}
+
+/**
+ * The refusal an unsourced recipient earns (ruling S-3). The second live run had Sales invent three companies
+ * with made-up addresses and the CSO try to mail them; the guardrail caught the tone and compliance caught the
+ * footer, and neither caught the fiction. So the fiction is caught here, in code: no `Customers/` note with a
+ * `source:`, no send. The text is the refusal a role can act on — research, then file the note.
+ */
+export function unsourcedRecipientText(to: string): string {
+  return `${to} is not a sourced prospect, so this email is refused: nothing in the vault says where the address came from. Invented addresses are never sent. Find real prospects first — read the web with http.fetch or the browser tools until you have a real person or company and the page their address is on — then file the note with vault.write ${customerPath(to)} carrying \`source: <the URL you found it on>\` (or \`source: inbox\` for someone who wrote to us), and send again. One Customers/ note per lead with the evidence you found.`;
+}
+
 /** Emails sent today (UTC): from the event log, or from Customers/ timelines when the cache was wiped. */
 export function emailsSentToday(vault: import('@cubicle/core').Vault, now = new Date()): number {
   const day = now.toISOString().slice(0, 10);
@@ -41,11 +61,17 @@ function requireKey(ctx: { idempotencyKey?: string }): string | null {
 
 export const emailSend = defineTool({
   name: 'email.send',
-  description: 'Send one email (Brevo). Adds the mandatory unsubscribe footer, refuses suppressed addresses, logs the touch on the Customers/ note. Owner approval by default.',
+  description: 'Send one email (Brevo). The recipient must already be a sourced prospect: a Customers/<slug>.md note carrying `source:` — the URL the address was found on, or `inbox` for someone who wrote to us. Adds the mandatory unsubscribe footer, refuses suppressed addresses, logs the touch on the Customers/ note. Owner approval by default.',
   schema: { to: z.string().email(), subject: z.string().min(1).max(200), body: z.string().min(1), to_name: z.string().optional(), html: z.string().optional() },
   async handler({ to, subject, body, to_name, html }, ctx) {
     const key = requireKey(ctx);
     if (!key) return { ok: false, text: 'email.send requires an idempotency key (harness bug)' };
+    // Ruling S-3: the address must be backed by a Customers/ note that says where it came from. Checked before
+    // everything else — an invented recipient is not a quota question or a suppression question.
+    if (!recipientSource(ctx.vault, to)) {
+      ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: 'email.send', reason: 'unsourced recipient', to } });
+      return { ok: false, text: unsourcedRecipientText(to) };
+    }
     if (suppressed(ctx.vault, to)) { ctx.events.emit({ type: 'guardrail.blocked', agent: ctx.roleId, job: ctx.jobId, payload: { tool: 'email.send', reason: 'suppressed address', to } }); return { ok: false, text: `${to} is on the suppression list; never email them` }; }
     // Constitution hard cap, enforced here (tool layer) — not only in the harness pre-check, so approved or dispatched calls obey it too.
     const cap = ctx.vault.constitution().max_emails_per_day;
@@ -80,7 +106,9 @@ export const emailInbox = defineTool({
       const wantsOut = isUnsubscribeRequest(m.subject, m.text);
       if (wantsOut) addSuppression(ctx.vault, m.from, ctx.roleId);
       const existing = ctx.vault.readNoteOrNull(rel);
-      const data = { ...(existing?.data ?? { email: m.from, name: m.fromName ?? '', created: nowIso() }), status: wantsOut ? 'unsubscribed' : 'replied', last_reply: m.date, replies: Number((existing?.data as { replies?: number })?.replies ?? 0) + 1 };
+      // `source: inbox` is what lets the reply job actually reply (ruling S-3): someone who wrote to us is a sourced
+      // recipient. Set on an existing note too — a note filed by hand before this rule would otherwise block the reply.
+      const data = { ...(existing?.data ?? { email: m.from, name: m.fromName ?? '', created: nowIso() }), source: (existing?.data as { source?: unknown })?.source || 'inbox', status: wantsOut ? 'unsubscribed' : 'replied', last_reply: m.date, replies: Number((existing?.data as { replies?: number })?.replies ?? 0) + 1 };
       const bodyMd = (existing?.body ?? `# ${m.fromName || m.from}\n\n## Timeline\n`) + `\n- ${m.date} reply received: "${m.subject}"${wantsOut ? ' → unsubscribe detected, added to suppression (remove the line in Customers/_suppression.md to reverse)' : ''}\n\n> ${m.text.replace(/\n/g, '\n> ').slice(0, 3000)}\n`;
       ctx.vault.writeText(rel, stringifyNote(data, bodyMd), ctx.roleId, { job: ctx.jobId });
       ctx.events.emit({ type: 'email.received', agent: ctx.roleId, job: ctx.jobId, payload: { from: m.from, subject: m.subject, id: m.id, unsubscribe: wantsOut, mode: reader.mode } });

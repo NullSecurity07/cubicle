@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, updateJob, RoleFrontmatter, listInbox, listJobs, loadOrg, GATE_JOB_TYPES } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, updateJob, createStream, RoleFrontmatter, listInbox, listJobs, loadOrg, GATE_JOB_TYPES } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, systemTypes, type ToolContext } from '../src/index.js';
 // Relative, not a package dependency: @cubicle/daemon already depends on @cubicle/tools, so declaring the reverse
 // in package.json would make `pnpm -r build` a cycle. This reaches into its source only to check the invariant below.
@@ -10,7 +10,14 @@ import { NON_WORK_TYPES } from '../../daemon/src/heartbeat.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 let dir: string; let vault: Vault; let reg: ToolRegistry;
-beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-guards-')); vault = (await scaffoldVault(dir)).vault; reg = new ToolRegistry().registerAll(phase3Tools({ includeMock: true })); });
+beforeEach(async () => {
+  dir = mkdtempSync(path.join(tmpdir(), 'cubicle-guards-'));
+  vault = (await scaffoldVault(dir)).vault;
+  reg = new ToolRegistry().registerAll(phase3Tools({ includeMock: true }));
+  // Ruling S-6: an engineering job with no stream is refused at the queue. These tests are about the org rules,
+  // so the company has the one stream its work serves and `scheduler.request` defaults to it.
+  createStream(vault, { name: 'Checkout', problem: 'p', customers: 'c', outcome_metric: 'm', owner_team: 'dev' }, 'product_manager');
+});
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 const role = (id: string) => RoleFrontmatter.parse(vault.readNoteOrNull(`Roles/${id}.md`)!.data);
 const ctx = (roleId: string, jobId: string | null = 'job_t'): ToolContext => ({ vault, events: vault.events, roleId, role: role(roleId), jobId, config: cfg, env: {}, workspace: '.cubicle/workspace/job_t', now: () => new Date(), scheduler: { enqueue: (j) => createJob(vault, j, roleId) } });

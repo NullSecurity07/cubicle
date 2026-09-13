@@ -6,7 +6,7 @@ import {
   scaffoldVault, Vault, createJob, createProposal, readJob, updateJob, cancelJob, listJobs, listInbox, findInboxById, loadOrg, loadGates, nowIso,
   recordTrustVerdict, trustState, trustJobId, TRUST_GATES, TRUST_PENDING_HOLD,
 } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, phase3Tools, phase6Tools, type ToolPolicy } from '@cubicle/tools';
+import { parseToolsConfig, ToolRegistry, phase3Tools, phase6Tools, customerPath, type ToolPolicy } from '@cubicle/tools';
 import { runJob, vaultScheduler, type HarnessDeps } from '@cubicle/harness';
 import { sweepTrustReviews, dispatchProposals, requeueUnblocked, resetTrustWarnings } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
@@ -26,7 +26,14 @@ const gates = loadGates(path.join(root, 'config/gates.yaml'));
 const EMAIL = { to: 'nursery@example.com', subject: 'A weekly box', body: 'We run a weekly box for nurseries.' };
 
 let dir: string; let vault: Vault;
-beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-d-trust-')); vault = (await scaffoldVault(dir)).vault; resetTrustWarnings(); });
+beforeEach(async () => {
+  dir = mkdtempSync(path.join(tmpdir(), 'cubicle-d-trust-'));
+  vault = (await scaffoldVault(dir)).vault;
+  resetTrustWarnings();
+  // Ruling S-3: `email.send` refuses an address no `Customers/` note sources. This suite is about the two review
+  // gates, so the recipient here is a researched lead and its note says where it was found.
+  vault.writeNote(customerPath(EMAIL.to), { email: EMAIL.to, source: 'https://nursery.example.com/contact' }, `# ${EMAIL.to}\n`, 'cmo');
+});
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
 /**

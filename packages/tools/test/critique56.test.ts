@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, utimesSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, recordTrustVerdict, TRUST_GATES } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, hasDocker, hasSandboxImage, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, customerPath, hasDocker, hasSandboxImage, type ToolContext } from '../src/index.js';
 
 let dir: string; let vault: Vault; let server: http.Server; let port: number;
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -72,6 +72,8 @@ describe('guardrails at the tool layer (B4, B8)', () => {
     const client = await createRoleToolClient(new ToolRegistry().registerAll(phase6Tools()).forRole(role('cmo'), cfg), ctxFor('cmo', 'job_cap'));
     try {
       clear('job_cap:1:1'); clear('job_cap:1:2');   // both cleared, so the second refusal below is the cap's
+      // …and both sourced (ruling S-3), so it is not the sourcing rule either.
+      for (const to of ['one@x.example', 'two@x.example']) vault.writeNote(customerPath(to), { email: to, source: 'https://x.example/team' }, `# ${to}\n`, 'cmo');
       expect((await client.call('email.send', { to: 'one@x.example', subject: 's', body: 'b' }, { idempotencyKey: 'job_cap:1:1' })).ok).toBe(true);
       const second = await client.call('email.send', { to: 'two@x.example', subject: 's', body: 'b' }, { idempotencyKey: 'job_cap:1:2' });
       expect(second.ok).toBe(false);

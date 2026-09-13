@@ -97,6 +97,27 @@ export function isCachePath(rel: string): boolean {
   return CACHE_PREFIXES.some((pre) => p.startsWith(pre) || p === pre.slice(0, -1)) || p.startsWith('Site/dist/') || p === 'Site/dist' || p.startsWith('Site/node_modules/') || p === 'Site/node_modules' || WORKSPACE_GENERATED_RE.test(p);
 }
 
+/**
+ * Areas whose writes are never the owner's: `Workspace/` is a job's working copy, `Site/` is the site the
+ * engineers build, `.cubicle/` is the daemon's own state. All three are written by shell commands and by tools
+ * that do not go through `vault.write`, so the watcher's `written_sha` bookkeeping cannot vouch for them and
+ * every one of those writes looked like an owner edit — the second live run put "Owner edits" in the founder
+ * brief for files the company itself had just built (ruling S-7).
+ */
+export const NON_OWNER_PREFIXES = ['Workspace/', 'Site/', '.cubicle/'];
+
+/**
+ * True when a change at `rel` could be an owner edit at all. The one place that question is answered: the live
+ * watcher and the daemon's offline comment sweep must agree, or a file the watcher ignores comes back as an
+ * owner edit the next time the daemon starts.
+ */
+export function isOwnerEditablePath(rel: string): boolean {
+  let p: string;
+  try { p = normalizeRel(rel); } catch { return false; }
+  if (!p) return false;
+  return !NON_OWNER_PREFIXES.some((pre) => p.startsWith(pre) || p === pre.slice(0, -1));
+}
+
 export function isPrivilegedActor(by: string): boolean {
   return PRIVILEGED_ACTORS.has(by);
 }

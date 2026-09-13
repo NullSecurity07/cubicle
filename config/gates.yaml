@@ -50,7 +50,7 @@ gates:
 criteria:
   engineer.ship: "The change builds and runs; Site/ has no broken links; tests or a smoke check exist; the job's Done when holds."
   research: "Sources linked; options compared against the free-tier constraint; one clear recommendation; a next step the requester can schedule."
-  growth.outreach: "Every message is approved before it leaves; the audience and the offer are named; results are measurable."
+  growth.outreach: "Every recipient is a real, sourced prospect — a Customers/<slug>.md note with `source:` (the URL it was found on, or `inbox`); every message is approved before it leaves; the audience and the offer are named; results are measurable."
   growth.post: "On-brand, no banned tactics, one call to action."
   growth.seo: "Pages have titles, descriptions and internal links; nothing fabricated."
   custom: "The job's Done when holds and the evidence is in the Result."
@@ -78,7 +78,10 @@ criteria:
   security.review: "Say what data, credentials and permissions the change touches, and judge each: secrets never in the diff, input validated at the boundary, authorisation checked on the server, nothing sensitive logged. A finding cites the file and the line. Verdict pass or return."
   coo.verify: "Evidence-based; exactly one lesson."
   finance.runway: "Five lines at most, each one about a number already in Ledger/runway.md — cash, burn, runway, what a paid tier would have cost, or a division near its model quota. Say what you would do about it. Never restate a figure as if you calculated it, never invent one, and never propose a spend the owner has not been asked for."
-  office:compliance.review: "Judge the exact text and arguments that would leave the company, not a summary. Five questions: is every claim true and supportable; did the recipient consent to hear from us; does it obey the constitution's banned channels and banned tactics; is there a way out (an unsubscribe, a refund, a rollback); and would the owner be content to see this in public with their name on it. A finding names the line to change. Verdict pass or return."
+  # S-3: the fiction the first two gates missed. Sales invented three companies with made-up addresses in the
+  # second live run and the CSO tried to mail them; `email.send` now refuses an unsourced recipient in code, and
+  # this criterion is the same rule stated for the reviewer, so a return says why rather than only what.
+  office:compliance.review: "Judge the exact text and arguments that would leave the company, not a summary. Six questions: is every recipient real and sourced — each address backed by a Customers/<slug>.md note carrying `source:`, the URL it was found on or `inbox` for someone who wrote to us, never an address a role invented (Roles/cmo.md: 'Research before outreach: one Customers/ note per lead with the evidence you found'); is every claim true and supportable; did the recipient consent to hear from us; does it obey the constitution's banned channels and banned tactics; is there a way out (an unsubscribe, a refund, a rollback); and would the owner be content to see this in public with their name on it. A finding names the line to change. Verdict pass or return."
   pantry.chat: "Two people, six turns, one closing IDEA line or IDEA: none. Nothing is decided here and nothing leaves the room."
 
 # Per-gate tier, when `medium` is the wrong default for one review. Every key must also appear under `gates:`

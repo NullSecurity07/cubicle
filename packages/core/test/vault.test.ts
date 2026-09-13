@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,7 +7,7 @@ import { scaffoldVault, repoRoot } from '../src/template.js';
 import { ENV_EXAMPLE } from '../src/env-example.js';
 import { Vault } from '../src/vault.js';
 import { VaultWatcher } from '../src/watcher.js';
-import { OwnerOwnedPathError } from '../src/guard.js';
+import { OwnerOwnedPathError, isOwnerEditablePath } from '../src/guard.js';
 import { EventLog } from '../src/events.js';
 import { openMemoryDb } from '../src/db.js';
 import { lastCommitHash } from '../src/git.js';
@@ -213,6 +213,33 @@ describe('VaultWatcher', () => {
       off();
       await w.stop();
     }
+  });
+
+  // Ruling S-7: `Workspace/`, `Site/` and `.cubicle/` are build output and job workspaces. Shell commands write
+  // them without going through `vault.write`, so `written_sha` cannot vouch for them and every one of those
+  // writes came back as an owner edit — the second live run's founder brief reported "Owner edits" for files the
+  // company itself had just built.
+  it('never attributes a Workspace/ or Site/ write to the owner, but still reports an ordinary note', async () => {
+    const w = new VaultWatcher(vault, { debounceMs: 300 });
+    const seen: string[] = [];
+    const off = vault.events.on('owner.edited', (e) => seen.push(String(e.payload.path)));
+    await w.start();
+    try {
+      mkdirSync(path.join(dir, 'Workspace/checkout/src'), { recursive: true });
+      writeFileSync(path.join(dir, 'Workspace/checkout/src/app.ts'), 'export const x = 1;\n');
+      mkdirSync(path.join(dir, 'Site'), { recursive: true });
+      writeFileSync(path.join(dir, 'Site/index.html'), '<h1>hi</h1>\n');
+      // …and one path that IS the owner's, written the same way in the same window: the guard is about the area,
+      // not about the watcher having stopped noticing anything.
+      writeFileSync(path.join(dir, 'Brand/voice.md'), '---\n---\nfriendly\n');
+      await new Promise((r) => setTimeout(r, 900));
+      expect(seen).toContain('Brand/voice.md');
+      expect(seen.filter((rel) => rel.startsWith('Workspace/') || rel.startsWith('Site/'))).toEqual([]);
+      expect(isOwnerEditablePath('Workspace/checkout/src/app.ts')).toBe(false);
+      expect(isOwnerEditablePath('Site/index.html')).toBe(false);
+      expect(isOwnerEditablePath('.cubicle/daemon.json')).toBe(false);
+      expect(isOwnerEditablePath('Brand/voice.md')).toBe(true);
+    } finally { off(); await w.stop(); }
   });
 
   // Before this the only 'error' listener was the one-shot reject inside start()'s ready race, so a chokidar
