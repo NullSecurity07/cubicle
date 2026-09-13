@@ -120,10 +120,12 @@ export class OwnerDecideError extends Error {
 /** How much of one comment is kept. A sentence or two is the ask; a novel is a note the owner should write. */
 export const OWNER_COMMENT_MAX = 4000;
 
-/**
+/*
  * Ruling R-T3-3: a founder brief whose board session has not finished is not the owner's to adopt yet — the
- * pressure test is half of what they would be deciding on, and §4 is that the brief takes it once.
- *
+ * pressure test is half of what they would be deciding on, and §4 is that the brief takes it once. The predicate
+ * and the message are core's own (`boardStillSitting`, `BOARD_STILL_SITTING`), shared with the dispatcher and
+ * the snapshot so the three surfaces cannot drift.
+ */
 
 /**
  * Decide a proposal from inside CUBICLE, exactly as an Obsidian edit would.

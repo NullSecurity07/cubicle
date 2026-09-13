@@ -163,7 +163,7 @@ describe('ownerDecide writes the note the way an editor would', () => {
     expect(() => ownerDecide(vault, id, { approved: true })).toThrow(OwnerDecideError);
     expect(() => ownerDecide(vault, id, { approved: true })).toThrow('the board is still pressure-testing this brief; it will be ready to adopt in a moment, with the board\'s findings in it');
     // Sending it back is a decision on the brief too, and it is blocked for the same reason.
-    expect(() => ownerDecide(vault, id, { approved: false, comment: 'too vague' })).toThrow(/still sitting/);
+    expect(() => ownerDecide(vault, id, { approved: false, comment: 'too vague' })).toThrow(/still pressure-testing/);
     expect(findInboxById(vault, id)!.data.approved).toBeNull();
 
     // Once the board is off it, the same click lands.
