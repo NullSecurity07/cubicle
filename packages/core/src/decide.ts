@@ -36,7 +36,10 @@ export function numberedOptions(body: string): ProposalOption[] {
   const out: ProposalOption[] = [];
   for (const line of body.split('\n')) {
     const m = /^\s*(\d+)\.\s(.*)$/.exec(line);
-    if (m) out.push({ n: Number(m[1]), label: m[2].trim().replace(/^[*_`]+|[*_`]+$/g, '').trim(), line });
+    // `label` is a chip, so it loses its markdown — the same characters the dispatcher strips when it turns the
+    // chosen line into a company name, so the chip the owner clicks reads as what the note will end up saying.
+    // `line` keeps the bytes, because that is what the dispatcher parses.
+    if (m) out.push({ n: Number(m[1]), label: m[2].replace(/[*_`]/g, '').trim(), line });
   }
   return out;
 }

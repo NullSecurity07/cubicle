@@ -43,6 +43,16 @@ interface Conversation { thread: Thread; turns: Turn[] }
 
 const displayOf = (org: Org, role: string): string => org.roles[role]?.display || role;
 
+/**
+ * The scaffold's own furniture, which is not a conversation: `README.md` and the `_`-prefixed explainers the
+ * template leaves in `Pantry/` and friends for whoever opens the vault in Obsidian. `listDecisions` skips the
+ * same two shapes for the same reason.
+ */
+function isFurniture(rel: string): boolean {
+  const base = rel.slice(rel.lastIndexOf('/') + 1);
+  return base === 'README.md' || base.startsWith('_');
+}
+
 function mtimeOf(vault: Vault, rel: string): string {
   try { return statSync(vault.abs(rel)).mtime.toISOString(); } catch { return nowIso(); }
 }
@@ -109,7 +119,7 @@ export function meetingTurns(body: string): Turn[] {
 function meetingConversations(vault: Vault): Conversation[] {
   const out: Conversation[] = [];
   for (const rel of vault.list(MEETINGS_DIR, { ext: '.md' })) {
-    if (rel.endsWith('README.md')) continue;
+    if (isFurniture(rel)) continue;
     const note = vault.readNoteOrNull(rel);
     if (!note) continue;
     const d = note.data as { id?: unknown; room?: unknown; participants?: unknown; facilitator?: unknown; status?: unknown; decision?: unknown };
@@ -155,7 +165,7 @@ export function pantryTurns(body: string): Turn[] {
 function pantryConversations(vault: Vault): Conversation[] {
   const out: Conversation[] = [];
   for (const rel of vault.list('Pantry', { ext: '.md' })) {
-    if (rel.endsWith('README.md')) continue;
+    if (isFurniture(rel)) continue;
     const note = vault.readNoteOrNull(rel);
     if (!note) continue;
     const file = rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/, '');
@@ -187,7 +197,7 @@ export function agentThreadId(a: string, b: string): string {
 function agentConversations(vault: Vault, org: Org): Conversation[] {
   const byPair = new Map<string, { pair: string[]; turns: Turn[]; updated: string }>();
   for (const rel of vault.list('Messages', { ext: '.md' })) {
-    if (rel.endsWith('README.md')) continue;
+    if (isFurniture(rel)) continue;
     const to = rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/, '');
     const text = vault.readTextOrNull(rel);
     if (!text) continue;
