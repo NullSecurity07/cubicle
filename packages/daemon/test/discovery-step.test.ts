@@ -199,12 +199,16 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(askInterview(vault, 'ceo', NOW)).toBeNull();       // never twice
   });
 
-  it('closes the interview with the owner\'s next message, whatever it says', () => {
+  // Ruling FR-6: it closes on an *answer*, not on whatever comes next. A short note to the CEO leaves the six
+  // questions open (finding F5 — "your text is only half" would otherwise have been filed as the answers).
+  it('closes the interview with the owner\'s answer, and leaves it open for anything else', () => {
     askInterview(vault, 'ceo', NOW);
-    expect(captureInterviewAnswer(vault, 'We sell meal kits to nurseries.', NOW)).toBe(true);
+    expect(captureInterviewAnswer(vault, 'and another thing', NOW)).toBe(false);   // not an answer: still open
+    expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
+    expect(captureInterviewAnswer(vault, 'We sell meal kits to nurseries, and two of them already pay us.', NOW)).toBe(true);
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('answered');
     expect(vault.readText(INTERVIEW_PATH)).toContain('meal kits to nurseries');
-    expect(captureInterviewAnswer(vault, 'and another thing', NOW)).toBe(false);   // already closed
+    expect(captureInterviewAnswer(vault, 'Nurseries, not parents.\nTwo already pay us.', NOW)).toBe(false);   // already closed
   });
 
   it('resumes a kill between the message and the transcript without asking twice', () => {
@@ -330,7 +334,7 @@ describe('the interview and the two fan-outs, against a real vault', () => {
 
     // 09:30 — the owner answers the six questions. The richest material there is, and it is read today.
     askInterview(vault, 'ceo', NOW);
-    captureInterviewAnswer(vault, 'Nurseries, not parents. Two already pay us. Ten in three months.', new Date());
+    captureInterviewAnswer(vault, 'Nurseries, not parents.\nTwo already pay us.\nTen in three months.', new Date());
     const answered = currentDiscoveryStatus(vault);
     expect(answered.run).toBe(true);
     expect(enqueueDiscovery(vault, org, answered)).toBeTruthy();

@@ -2,15 +2,18 @@ import {
   type Vault, type Org, type InterviewPhase, type ResearchRequest, type DiscoveryInput,
   createJob, createProposal, findInboxById, listInbox, listJobs, jobPath, idFromKey, officeHolder, teamOf, listIdeas,
   DISCOVERY_INBOX, FOUNDER_BRIEF, INTERVIEW_PATH, discoveryDigest, hasFounderBrief, founderBriefTemplate,
-  interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, listDiscoveryInputs, isLongPrompt,
-  ownerSaid, ideaPath, IDEA_SCORE_MAX,
+  interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, closesInterview, isSkip, listDiscoveryInputs, isLongPrompt,
+  ownerSaid, isDiscoveryMaterial, ownerPick, SURPRISE_ME, BRAND_NAME_PATH, OWNER_PICK_LABEL, type OwnerPick, ideaPath, IDEA_SCORE_MAX,
   INTERVIEW_QUESTIONS, openInterviewQuestions, interviewAskTitle, renderInterviewCovered, questionsAsked,
   PRESSURE_TEST_SECTION, PRESSURE_HANDBOOK_PATH,
 } from '@cubicle/core';
 
 // `ownerSaid` moved to core so the `discovery.inputs` tool cuts a cabin note the same way this module does
-// (whole-branch review, minor 2). Re-exported here because it was part of this module's surface first.
-export { ownerSaid };
+// (whole-branch review, minor 2). `isDiscoveryMaterial` and `ownerPick` moved for exactly that reason and one
+// more (ruling FR-3b): the tool that hands a discovery job its material must answer "is this material?" and
+// "what did the owner pick?" with the same code that decided to start the job. Re-exported here because they
+// were part of this module's surface first.
+export { ownerSaid, isDiscoveryMaterial, ownerPick, SURPRISE_ME, BRAND_NAME_PATH, OWNER_PICK_LABEL, type OwnerPick };
 
 /**
  * The discovery step: what the company reads before it plans anything, who is asked when there is nothing to
@@ -49,11 +52,17 @@ export interface UnreadMaterial {
   longPrompt: boolean;
   /** Any unread owner words at all, one line included: the single-prompt path (spec §1.3, §5.5). */
   anyPrompt: boolean;
+  /**
+   * The owner picked one of the three ideas the CEO proposed, since discovery last read the vault (ruling
+   * FR-3). It is the answer to "surprise me": until it lands there is nothing to research, and once it lands
+   * the chosen line is what the company is for.
+   */
+  pick?: boolean;
 }
 
-/** A re-run has to be worth a research job. A short reply is not; these three are. */
+/** A re-run has to be worth a research job. A short reply is not; these four are. */
 function isSubstantive(u: UnreadMaterial): boolean {
-  return u.newInput || u.newInterview || u.longPrompt;
+  return u.newInput || u.newInterview || u.longPrompt || !!u.pick;
 }
 
 /**
@@ -80,6 +89,8 @@ export function discoveryStatus(o: {
   /** How many files sit in `Discovery/inbox/` at all — what "the vault is thin" means, read or not. */
   inputs: number;
   interview: InterviewPhase;
+  /** The three ideas are in the inbox, unpicked: the company is waiting for the owner and must say so. */
+  pickPending?: boolean;
   unread: UnreadMaterial;
   /** Discovery has run at least once before (there is a `discovery` job in the log). */
   everRun: boolean;
@@ -107,11 +118,16 @@ export function discoveryStatus(o: {
     // interview is closed and there is something to read — never that the company is still waiting.
     const anything = isSubstantive(o.unread) || o.unread.anyPrompt || o.inputs > 0 || ['answered', 'skipped', 'covered'].includes(o.interview);
     if (anything) return status(true, ask ? 'reading what the owner gave us, and asking the interview as well — only the questions it does not already answer' : 'first discovery over the owner\'s material');
+    // Nothing to read *and* three ideas waiting to be picked: that is not an idle company, it is a company
+    // waiting on the owner, and the checkpoint log must say which (finding F3 — discovery ran on the
+    // "surprise me" note itself and fabricated a brief rather than waiting for the pick).
+    if (o.pickPending) return status(false, 'waiting for you to pick one of the three ideas; the one you choose is what discovery reads');
     if (ask) return status(false, 'nothing to read yet: asking the founder interview');
     if (o.interview === 'asked') return status(false, 'the founder interview is waiting for an answer');
     return status(false, 'nothing to read yet');
   }
   if (!isSubstantive(o.unread)) {
+    if (o.pickPending) return status(false, 'waiting for you to pick one of the three ideas; the one you choose is what discovery reads');
     if (o.unread.anyPrompt) return status(false, 'nothing new to read: a reply to the CEO is not material for a second discovery job');
     return status(false, o.hasBrief ? 'the founder brief covers everything the owner has given us' : 'nothing new since discovery last read the vault');
   }
@@ -121,7 +137,9 @@ export function discoveryStatus(o: {
   // richest material the company will ever be given; deferring them to tomorrow because cycle one already read
   // the owner's one line would make the CEO's own promise ("what you say next goes into the founder brief the
   // next plan is written against") false on the day it matters most.
-  const onlyTyping = !o.unread.newInput && !o.unread.newInterview;
+  // The owner's pick is not typing either: it happens once, it is a click on a note the CEO filed, and
+  // deferring the company's whole reason for existing to tomorrow's first cycle would be absurd (ruling FR-3).
+  const onlyTyping = !o.unread.newInput && !o.unread.newInterview && !o.unread.pick;
   if (o.ranToday && onlyTyping) return status(false, 'discovery already read a document you typed today; the next one is read on the next day\'s first cycle');
   return status(true, o.hasBrief ? 'new material since the founder brief' : 'new material since the last discovery');
 }
@@ -148,11 +166,15 @@ export function ideasNeedingEstimate<T extends { id: string; decision: string; s
  * founder brief must be proposed as, and the one rule that keeps the brief honest — every claim about what
  * already exists cites the file it came from.
  */
-export function discoveryGoal(opts: { founderBrief: string; briefTemplate: string; hasBrief: boolean; research: string }): string {
+export function discoveryGoal(opts: { founderBrief: string; briefTemplate: string; hasBrief: boolean; research: string; pick?: string | null }): string {
   return [
     opts.hasBrief
       ? `The owner has added new material since the founder brief was adopted. Read all of it, then propose an *edit* to ${opts.founderBrief} — never a second brief — and file cards for anything genuinely new.`
       : `This company does not know what it is for yet. Everything the owner has given us is in one call. Turn it into the founder brief they approve, and into one idea card per candidate.`,
+    // The pick is the whole brief when the owner said "surprise me" (ruling FR-3b): the job must open on the
+    // line they chose, not find it three sections into a tool's output — or not at all, which is how the first
+    // live run's job came to write a brief about a company nobody had described.
+    ...(opts.pick ? ['', `${OWNER_PICK_LABEL} **${opts.pick}**. That is what this company is; read everything else in the light of it, and never contradict it without saying so.`] : []),
     '',
     'Do, in this order:',
     '1. `discovery.inputs` — the files, the interview and the cabin messages. This is the whole brief; there is nothing else to go on.',
@@ -201,6 +223,29 @@ export function ownerPrompt(vault: Vault, since: string | null = null): string {
     .map((n) => ownerSaid(n.body))
     .filter(Boolean)
     .join('\n\n');
+}
+
+/** The owner's cabin words, minus everything that is only a reply to the CEO. What discovery may read. */
+export function discoveryPrompt(vault: Vault, since: string | null = null): string {
+  return listInbox(vault)
+    .filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && (!since || String(n.data.created ?? '') > since))
+    .map((n) => ownerSaid(n.body))
+    .filter(isDiscoveryMaterial)
+    .join('\n\n');
+}
+
+/**
+ * The three ideas are in the inbox and nobody has picked one: the company is waiting for the owner, not idle.
+ *
+ * "Three ideas" is read the way the dispatcher reads it (`dispatcher.ts`, the `brand_change` case): numbered
+ * option lines and no `## Proposed content` fence. The *other* `brand_change` on `Brand/name.md` — the name
+ * the CEO proposes for an idea the owner typed themselves — carries the fence and is not a pick anyone is
+ * waiting on, so saying "waiting for you to pick one of the three" about it would be a lie.
+ */
+export function pickPending(vault: Vault): boolean {
+  return listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === BRAND_NAME_PATH && !n.data.resolved_at
+    && !/^## Proposed content/m.test(n.body) && n.body.split('\n').some((l) => /^\s*\d+\.\s/.test(l))
+    && (n.data.approved !== true || n.data.chosen === null || n.data.chosen === undefined));
 }
 
 /**
@@ -331,12 +376,18 @@ export function askInterview(vault: Vault, ceo: string, now: Date): string | nul
 }
 
 /**
- * Close an open interview with whatever the owner said next. Returns false when there is nothing open, so the
- * caller can tell "recorded" from "the owner was just talking".
+ * Close an open interview with the owner's **answer**. Returns false when there is nothing open, so the caller
+ * can tell "recorded" from "the owner was just talking".
+ *
+ * It also returns false — and writes nothing — when what the owner typed is not an answer at all (ruling
+ * FR-6). It used to close on the next message whatever it said (spec §1.4 as written), which is finding F5:
+ * "your text is only half" would have been filed as the six answers and the founder brief written against it.
+ * `closesInterview` is the whole of that judgement, and it costs no model call.
  */
 export function captureInterviewAnswer(vault: Vault, text: string, now: Date): boolean {
   const transcript = vault.readTextOrNull(INTERVIEW_PATH);
   if (interviewPhase(transcript) !== 'asked') return false;
+  if (!closesInterview(text)) return false;
   vault.writeText(INTERVIEW_PATH, closeInterview(transcript!, text, now.toISOString()), 'daemon');
   return true;
 }
@@ -356,10 +407,13 @@ export function discoveryJobId(digest: string): string { return idFromKey('job',
  */
 export function currentDiscoveryStatus(vault: Vault, now = new Date()): DiscoveryStatus & { digest: string; inputs: DiscoveryInput[] } {
   const since = lastDiscoveryAt(vault);
-  const prompt = ownerPrompt(vault, since);
+  // `discoveryPrompt`, not `ownerPrompt`: a note that is only a reply to the CEO — "surprise me", "skip", two
+  // words of thanks — is not material, and discovery must not start on it (finding F3, ruling FR-3).
+  const prompt = discoveryPrompt(vault, since);
+  const pick = ownerPick(vault);
   const inputs = listDiscoveryInputs(vault);
   const interview = interviewPhase(vault.readTextOrNull(INTERVIEW_PATH));
-  const written = lastWriteTimes(vault, [...inputs.map((f) => f.path), INTERVIEW_PATH]);
+  const written = lastWriteTimes(vault, [...inputs.map((f) => f.path), INTERVIEW_PATH, ...(pick ? [pick.path] : [])]);
   // No discovery job yet means nothing has been read, so everything counts as new; after one, a file is new
   // when it was written after that job was queued.
   const unread = (p: string): boolean => !since || (written.get(p) ?? '') > since;
@@ -370,11 +424,13 @@ export function currentDiscoveryStatus(vault: Vault, now = new Date()): Discover
       briefProposalOpen: briefProposalOpen(vault),
       inputs: inputs.length,
       interview,
+      pickPending: pickPending(vault),
       unread: {
         newInput: inputs.some((f) => unread(f.path)),
         newInterview: interview === 'answered' && unread(INTERVIEW_PATH),
         longPrompt: isLongPrompt(prompt),
         anyPrompt: prompt.trim().length > 0,
+        pick: !!pick && unread(pick.path),
       },
       everRun: since !== null,
       alreadyRun: vault.exists(jobPath(discoveryJobId(digest))),
@@ -436,7 +492,7 @@ export function enqueueDiscovery(vault: Vault, org: Org, precomputed?: Discovery
     id: discoveryJobId(status.digest), type: 'discovery', priority: 1,
     title: hasBrief ? 'Read the new material and revise the founder brief' : 'Read what the owner gave us and write the founder brief',
     assigned: research, for: ceo, owner_role: ceo, team: teamOf(org, research)?.id,
-    goal: discoveryGoal({ founderBrief: FOUNDER_BRIEF, briefTemplate: founderBriefTemplate(), hasBrief, research: ceo }),
+    goal: discoveryGoal({ founderBrief: FOUNDER_BRIEF, briefTemplate: founderBriefTemplate(), hasBrief, research: ceo, pick: ownerPick(vault)?.line ?? null }),
     research: discoveryRequest({ ceo, hasBrief, deadline }),
     done_when: `${FOUNDER_BRIEF} is filed as a founder_brief proposal with all eight sections, including a ${PRESSURE_TEST_SECTION} that ends on the verdict line (STRONG, WEAK or PIVOT REQUIRED), and every candidate idea it names is its own Ideas/<slug>.md card with evidence.`,
   }, 'daemon');
