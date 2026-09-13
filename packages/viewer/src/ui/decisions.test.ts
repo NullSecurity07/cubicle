@@ -74,6 +74,19 @@ describe('the decision reader and its action bar', () => {
     expect(adopt).toContain('Send back');
   });
 
+  it('follows the daemon on what is being asked, never the presence of options (T1 contract)', () => {
+    // An `idea_verdict` carries the fixed keep / park / scrap table; a `brand_change` with one proposed name is a
+    // plain yes or no even though the note may still list something numbered.
+    const verdict: InboxRow = { id: 'p4', kind: 'idea_verdict', title: 'Meal plans for busy parents', path: '00 Inbox/x.md', created: 'now', decidable: 'choose', options: [{ n: 1, label: 'keep' }, { n: 2, label: 'park' }, { n: 3, label: 'scrap' }] };
+    const bar = actionBar(verdict, { chosen: 2 });
+    for (const label of ['keep', 'park', 'scrap']) expect(bar).toContain(label);
+    expect(bar).toContain('data-act="choose:2" aria-pressed="true"');
+    const single: InboxRow = { id: 'p5', kind: 'brand_change', title: 'Name the company: WeekPlate', path: '00 Inbox/y.md', created: 'now', decidable: 'approve', options: [{ n: 1, label: 'WeekPlate' }] };
+    expect(decidableOf(single)).toBe('approve');
+    expect(actionBar(single, {})).not.toContain('data-act="choose:1"');
+    expect(actionBar(single, {})).toContain('data-key="comment"');
+  });
+
   it('will not approve a choice until one is picked, and paints the picked chip with the accent', () => {
     const none = actionBar(chooseRow, {});
     expect(none).toMatch(/data-act="decide:yes"[^>]*disabled/);
