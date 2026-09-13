@@ -260,6 +260,17 @@ export class Vault {
     return row?.sha ?? null;
   }
 
+  /**
+   * Who made the last recorded write to this path — `daemon`, `owner`, `init`, a role id — or null for a file
+   * the system has never written. It is the other half of `isOwnerChanged`: that answers "did somebody edit
+   * this behind our back", this one answers "and whose name is on the write we *did* make", which is how a
+   * decision taken inside CUBICLE (`ownerDecide`, written as `owner`) is told apart from one the daemon made.
+   */
+  writtenBy(rel: string): string | null {
+    const row = this.db.prepare('SELECT "by" AS who FROM written_sha WHERE path = ?').get(normalizeRel(rel)) as { who: string } | undefined;
+    return row?.who ?? null;
+  }
+
   currentSha(rel: string): string | null {
     const p = this.abs(rel);
     if (!existsSync(p) || statSync(p).isDirectory()) return null;
