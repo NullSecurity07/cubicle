@@ -45,6 +45,12 @@ describe('planObjectives', () => {
     expect(planObjectives(LIVE_PLAN).filter((o) => /Jobs\/|job_/.test(o.text))).toEqual([]);
   });
 
+  it('skips a bullet that is nothing but a wikilink, whatever it points at', () => {
+    // The shape the division lead's goal asks for, plus the two other spellings the live vault carries.
+    const plan = '### technology\n- Publish 20 pages. idea: altstack\n- [[Jobs/job_x.md]]\n- Jobs/job_y.md\n- job_z\n- [[Streams/first-product]]\n';
+    expect(planObjectives(plan).map((o) => o.text)).toEqual(['Publish 20 pages. idea: altstack']);
+  });
+
   it('takes the marker off the bullet or off a continuation line under it', () => {
     const plan = '## Objectives\n\n### technology\n- Ship the directory. stream: first-product idea: altstack\n- Write the newsletter.\n  idea: altstack\n';
     expect(planObjectives(plan).map((o) => o.idea)).toEqual(['altstack', 'altstack']);
@@ -52,6 +58,19 @@ describe('planObjectives', () => {
 
   it('lower-cases the slug, so `idea: AltStack` is the card it names', () => {
     expect(planObjectives('### revenue\n- Sell it. idea: AltStack\n')[0].idea).toBe('altstack');
+  });
+
+  it('reads the marker however it is written: a bare slug, a wikilink, a path, backticks', () => {
+    // A rewrite spent on punctuation is a rewrite spent on nothing. Every one of these names the same card.
+    const forms = [
+      '- A. idea: altstack',
+      '- B. idea: [[Ideas/altstack]]',
+      '- C. idea: [[Ideas/altstack.md]]',
+      '- D. idea: Ideas/altstack',
+      '- E. idea: `altstack`',
+      '- F — ship it (idea: altstack)',
+    ].join('\n');
+    expect(planObjectives(`### dev\n${forms}\n`).map((o) => o.idea)).toEqual(Array(6).fill('altstack'));
   });
 });
 

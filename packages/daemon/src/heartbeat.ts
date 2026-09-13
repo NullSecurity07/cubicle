@@ -363,7 +363,7 @@ export function divisionPlanGoal(org: Org, t: TeamFrontmatter, objectives: strin
   const roomLine = rooms.length
     ? `Your division: ${rooms.map((c) => `${c.name} (lead ${c.lead}: ${c.members.join(', ') || 'no members'})`).join('; ')}.`
     : 'Your division has no rooms under it.';
-  return `Your division's objectives this cycle:\n${objectives}${budget}\n\nNext action from the last brief: ${lastNextAction}\n\n${roomLine}\n\nDo: (1) vault.read Plans/plan.md and vault.list Jobs to see open work; (2) enqueue at most 4 jobs with scheduler.request for anyone in your division (${people.join(', ') || 'nobody'}), each finishable in one sitting, each with done_when, each naming its stream and its risk — give a room's work to its lead when the room should decide who does it; (3) vault.append the job ids under your "### ${t.id}" section in Plans/plan.md; (4) finish with a one-paragraph summary. Research needs go to ${researchTo} with for: ${t.lead}.${people.length === 0 ? ` Your division has nobody under you: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from ${researchTo}; do not call scheduler.request for yourself.` : ''}`;
+  return `Your division's objectives this cycle:\n${objectives}${budget}\n\nNext action from the last brief: ${lastNextAction}\n\n${roomLine}\n\nDo: (1) vault.read Plans/plan.md and vault.list Jobs to see open work; (2) enqueue at most 4 jobs with scheduler.request for anyone in your division (${people.join(', ') || 'nobody'}), each finishable in one sitting, each with done_when, each naming its stream and its risk — give a room's work to its lead when the room should decide who does it; (3) vault.append the jobs you queued under your "### ${t.id}" section in Plans/plan.md, one bullet each, each bullet **nothing but a wikilink** — \`- [[Jobs/<id>]]\` — and never a job's title: a titled bullet there reads as an objective, and an objective has to name the kept idea it serves (\`${PLAN_IDEA_MARKER} <slug>\`) or the next cycle's plan is refused for it; (4) finish with a one-paragraph summary. Research needs go to ${researchTo} with for: ${t.lead}.${people.length === 0 ? ` Your division has nobody under you: plan work you will do yourself in follow-up jobs assigned to you by the CEO (ask with colleague.message), or request research from ${researchTo}; do not call scheduler.request for yourself.` : ''}`;
 }
 
 /**
@@ -928,7 +928,7 @@ export function keptIdeasGoalBlock(lines: string[]): string {
  */
 export function planIdeaRule(kept: string[]): string {
   if (!kept.length) return `No idea has been kept yet, so no objective can name one: plan from ${FOUNDER_BRIEF} alone this cycle, and keep every objective inside what it says.`;
-  return `HARD RULE: every objective bullet ends with "${PLAN_IDEA_MARKER} <slug>" naming the kept idea it serves — one of ${kept.map((k) => `\`${k}\``).join(', ')} — after its "stream:" if it has one. An objective that serves none of those, or that serves an idea the owner parked, scrapped or has not ruled on, is refused in code before the board sees it and the whole plan comes back to you. The board's findings are advice about the ideas the owner kept; they are never a licence to plan a different business.`;
+  return `HARD RULE: every objective bullet ends with "${PLAN_IDEA_MARKER} <slug>" naming the kept idea it serves — one of ${kept.map((k) => `\`${k}\``).join(', ')} — after its "stream:" if it has one (a wikilink, \`${PLAN_IDEA_MARKER} [[Ideas/<slug>]]\`, reads the same). An objective that serves none of those, or that serves an idea the owner parked, scrapped or has not ruled on, is refused in code before the board sees it and the whole plan comes back to you. The board's findings are advice about the ideas the owner kept; they are never a licence to plan a different business.`;
 }
 
 /**
@@ -963,6 +963,51 @@ export function fileChairPivot(
     vault.events.emit({ type: 'daemon.warning', agent: o.by, payload: { where: 'board_pivot', message: `the board proposed a pivot on ${o.subject} and it could not be filed as an idea card: ${(err as Error).message.slice(0, 200)}` } });
     return null;
   }
+}
+
+/**
+ * Close every idea verdict the owner never came back to, once `board_decides_after_hours` has elapsed on it
+ * (spec §3.5), and return how many were closed.
+ *
+ * The recommendation **stamped on the note** is what stands, never a fresh recomputation: the card may have been
+ * re-filed since the board read it, and a recomputation would apply `park` — or `scrap` — on a note whose body
+ * told the owner the recommendation was `keep`.
+ *
+ * The decision is written here rather than left to the dispatcher on purpose: `dispatchProposals` acts on an
+ * approval flag only when `vault.isOwnerChanged` says the *owner* set it, so a daemon write of `approved: true`
+ * would be refused as a forged approval — correctly. This is the deciding code, so it writes the decision onto
+ * the card itself and stamps `resolved_at`.
+ *
+ * Lifted out of the `owner_verdict` step because **the plan has to know** (ruling W3-1). Held there alone, a card
+ * the board judged was kept at step 10 and the plan was written at step 8 — so on the first cycle that may plan
+ * at all, `keptIdeas` was empty, no objective could name anything, and the company spent a whole cycle planning
+ * against the brief alone with a kept idea one step away. `company_plan` runs it before it writes, and
+ * `owner_verdict` still runs it for the cycles that plan nothing. Idempotent: it only ever touches a note that is
+ * open and undecided, so two calls in one cycle decide once.
+ */
+export function closeIdeaVerdicts(vault: Vault, o: { now: Date; decidesAfterHours: number; jobId?: string }): number {
+  let closed = 0;
+  for (const note of listInbox(vault).filter((n) => n.data.kind === 'idea_verdict' && n.data.approved === null && !n.data.resolved_at)) {
+    const boardVerdict = (note.data as { board_verdict?: string }).board_verdict === 'pass' ? 'pass' as const : 'return' as const;
+    const outcome = verdictOutcome({ approved: null, created: note.data.created, now: o.now, boardVerdict, decidesAfterHours: o.decidesAfterHours });
+    if (outcome === 'pending') continue;
+    // The band is the decision, and it already carries the board's return (`ideaBand` parks a returned idea
+    // rather than scrapping it). `approved` records what `verdictOutcome` actually said, so a note the board
+    // returned does not read as approved to anything that later filters on that flag; `decision` is the field
+    // that says what happened to the idea, matching the card.
+    const band = ((note.data as { band?: string }).band ?? 'park') as IdeaBand;
+    const slug = String(note.data.target ?? '').slice('Ideas/'.length).replace(/\.md$/, '');
+    if (slug && readIdea(vault, slug)) {
+      updateIdea(vault, slug, { decision: band, decided_by: 'board', decided_at: nowIso(), status: band === 'scrap' ? 'rejected' : band === 'keep' ? 'accepted' : 'triaged' }, 'daemon', {
+        heading: '## Decision',
+        content: `**${band}** — the board, ${nowIso().slice(0, 10)}. The owner did not rule within ${o.decidesAfterHours} h, so the recommendation stood (\`board_decides_after_hours\`).`,
+      });
+    }
+    vault.updateNote(note.path, (n) => ({ data: { ...n.data, approved: outcome === 'approved', decision: band, decided_by: 'board', resolved_at: nowIso() }, body: n.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: the recommendation (${band}) stood after ${o.decidesAfterHours} h._\n` }), 'daemon');
+    vault.events.emit({ type: 'proposal.resolved', agent: 'daemon', job: o.jobId, payload: { id: note.data.id, kind: 'idea_verdict', approved: outcome === 'approved', decision: band, outcome: `the board decided: ${band}` } });
+    closed++;
+  }
+  return closed;
 }
 
 /** Stable per idea, so a resumed cycle rules on the note it already filed. */
@@ -2127,6 +2172,11 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
       }
       case 'company_plan': {
         if (planningWaitsForBrief()) { done(i, WAITING_FOR_BRIEF); break; }
+        // Before a word of the plan is written: what did the company decide about its ideas? An idea verdict the
+        // owner never came back to is closed here rather than four steps later (ruling W3-1) — otherwise the plan
+        // is written against an empty `keptIdeas` while a kept idea sits one step away, which is exactly how a
+        // plan comes to name nothing at all. See `closeIdeaVerdicts`; `owner_verdict` runs it again for free.
+        closeIdeaVerdicts(vault, { now: now(), decidesAfterHours: vault.constitution().board_decides_after_hours, jobId });
         // Await company.plan as a sub-job. First visit: create it and block. Second visit: it finished.
         if (!state.companyPlanJob) {
           // A plan already waiting for the owner blocks NEW work only (program design §4): do not write another
@@ -2343,35 +2393,11 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
       }
       case 'owner_verdict': {
         const decidesAfterHours = vault.constitution().board_decides_after_hours;
-        // `board_decides_after_hours` governs idea verdicts too (spec §3.5). The recommendation stamped on the
-        // note is what stands when it elapses — never a fresh recomputation, because the card may have changed
-        // since the board read it.
-        //
-        // This runs before every early exit below, not after the plan verdict: a cycle whose plan was skipped or
-        // had nothing to rule on still has to close the idea notes it filed, or an unattended night would leave
-        // them open for ever. The decision is written here rather than left to the dispatcher on purpose:
-        // `dispatchProposals` acts on an approval flag only when `vault.isOwnerChanged` says the *owner* set it,
-        // so a daemon write of `approved: true` would be refused as a forged approval — correctly. This loop is
-        // the deciding code, so it writes the decision onto the card itself and stamps `resolved_at`.
-        for (const note of listInbox(vault).filter((n) => n.data.kind === 'idea_verdict' && n.data.approved === null && !n.data.resolved_at)) {
-          const boardVerdict = (note.data as { board_verdict?: string }).board_verdict === 'pass' ? 'pass' as const : 'return' as const;
-          const outcome = verdictOutcome({ approved: null, created: note.data.created, now: now(), boardVerdict, decidesAfterHours });
-          if (outcome === 'pending') continue;
-          // The band is the decision, and it already carries the board's return (`ideaBand` parks a returned
-          // idea rather than scrapping it). `approved` records what `verdictOutcome` actually said, so a note
-          // the board returned does not read as approved to anything that later filters on that flag;
-          // `decision` is the field that says what happened to the idea, matching the card.
-          const band = ((note.data as { band?: string }).band ?? 'park') as IdeaBand;
-          const slug = String(note.data.target ?? '').slice('Ideas/'.length).replace(/\.md$/, '');
-          if (slug && readIdea(vault, slug)) {
-            updateIdea(vault, slug, { decision: band, decided_by: 'board', decided_at: nowIso(), status: band === 'scrap' ? 'rejected' : band === 'keep' ? 'accepted' : 'triaged' }, 'daemon', {
-              heading: '## Decision',
-              content: `**${band}** — the board, ${nowIso().slice(0, 10)}. The owner did not rule within ${decidesAfterHours} h, so the recommendation stood (\`board_decides_after_hours\`).`,
-            });
-          }
-          vault.updateNote(note.path, (n) => ({ data: { ...n.data, approved: outcome === 'approved', decision: band, decided_by: 'board', resolved_at: nowIso() }, body: n.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: the recommendation (${band}) stood after ${decidesAfterHours} h._\n` }), 'daemon');
-          vault.events.emit({ type: 'proposal.resolved', agent: 'daemon', job: jobId, payload: { id: note.data.id, kind: 'idea_verdict', approved: outcome === 'approved', decision: band, outcome: `the board decided: ${band}` } });
-        }
+        // The idea half of this step (see `closeIdeaVerdicts`), and it runs before every early exit below: a
+        // cycle whose plan was skipped or had nothing to rule on still has to close the idea notes it filed, or
+        // an unattended night would leave them open for ever. `company_plan` has already run the same sweep for
+        // the cycles that do plan; it is idempotent, so whichever gets there first is the one that decides.
+        closeIdeaVerdicts(vault, { now: now(), decidesAfterHours, jobId });
         // Ruling S-1's gate belongs **here**, not at the top of the step: everything above is the ideas board's
         // half of this step, and the board keeps running while the brief is being written (that is where the
         // brief's candidate ideas come from). Only the plan verdict below waits — and with no brief there was

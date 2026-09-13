@@ -15,16 +15,29 @@ import { IDEA_SLUG_SRC, listIdeas, keptIdeas, type IdeaDecision } from './ideas.
  * before the board sits, because an advisor asked to spot a missing slug in a wall of markdown will miss it.
  */
 
-/** The marker an objective carries to say which kept idea it serves: `idea: <slug>`, beside `stream: <slug>`. */
+/**
+ * The marker an objective carries to say which kept idea it serves: `idea: <slug>`, beside `stream: <slug>`.
+ *
+ * Read in every spelling a writer reaches for, because refusing one costs a whole rewrite over punctuation: the
+ * bare slug the prompt asks for, the same slug wrapped in the wikilink markdown actually uses to name a note
+ * (`idea: [[Ideas/altstack]]`, with or without the `.md`), a bare path, and any of those in backticks. The slug
+ * itself is the answer in all of them.
+ */
 export const PLAN_IDEA_MARKER = 'idea:';
-const PLAN_IDEA_RE = new RegExp(`(?:^|[\\s(\\[])idea:[ \\t]*\`?(${IDEA_SLUG_SRC})\`?`, 'i');
+const PLAN_IDEA_RE = new RegExp(`(?:^|[\\s(\\[])idea:[ \\t]*(?:\`|\\[\\[)?(?:Ideas/)?(${IDEA_SLUG_SRC})(?:\\.md)?(?:\`|\\]\\])?`, 'i');
 
 /**
- * A bullet that is a **job**, not an objective: the division leads append the ids of the jobs they queued under
- * their own `### <team>` section, as wikilinks or as bare ids. Those are the plan's record of what came of it and
- * are never asked to name an idea — only the objectives the CEO wrote are.
+ * A bullet that is a **record**, not an objective: the division leads append the jobs they queued under their own
+ * `### <team>` section, and the live vault shows all three spellings — `- [[Jobs/job_x.md]]`, `- Jobs/job_x.md`
+ * and a bare `- job_x`. Those are what came of the plan, and are never asked to name an idea; only the objectives
+ * the CEO wrote are.
+ *
+ * A bullet that is **nothing but a wikilink** counts too, whatever it points at: an objective states an outcome
+ * in words, so a bare link is somebody's cross-reference. That is the shape the division lead's goal now asks
+ * for, and reading a link as an objective would refuse the next plan for a bullet nobody wrote as one.
  */
 const JOB_BULLET_RE = /^(?:\[\[)?Jobs\/|^job_/i;
+const LINK_ONLY_RE = /^\[\[[^\]]+\]\]\.?$/;
 
 /** One objective of the plan: the section it sits under, its own text, and the idea it says it serves. */
 export interface PlanObjective {
@@ -62,7 +75,8 @@ export function planObjectives(plan: string): PlanObjective[] {
       const bullet = line.trim().match(/^[-*+]\s+(.*)$/);
       if (bullet) {
         flush();
-        if (!JOB_BULLET_RE.test(bullet[1].trim())) lines = [bullet[1]];
+        const head = bullet[1].trim();
+        if (!JOB_BULLET_RE.test(head) && !LINK_ONLY_RE.test(head)) lines = [bullet[1]];
         continue;
       }
       if (lines && line.trim()) lines.push(line.trim());
