@@ -327,9 +327,13 @@ export function nextIdeaForBoard(vault: Vault): IdeaFrontmatter | null {
 }
 
 /**
- * The cards a sweep filed that the owner has not promoted — what the brief lists under "Ideas the sweep found"
- * so they are visible without being expensive. A card the owner has already parked or scrapped is finished
- * business and is not listed again.
+ * The cards nobody asked for and the owner has not promoted — what the brief lists under "Ideas the sweep
+ * found" so they are visible without being expensive. A card the owner has already parked or scrapped is
+ * finished business and is not listed again.
+ *
+ * "The sweep" is the common case and the heading's word, but the rule is provenance, not the sweep: a card some
+ * *other* job filed on its own initiative (`source` is that job's id — see `provenanceFor`) is equally
+ * unrequested, and belongs on the same list for the same reason.
  */
 export function sweepIdeas(vault: Vault): IdeaFrontmatter[] {
   return listIdeas(vault).filter((i) => i.decision === 'undecided' && !ownerHasSeenIdea(i));
@@ -360,7 +364,7 @@ export function sweepIdeaRows(vault: Vault): { id: string; title: string; why: s
 /** The brief's `## Ideas the sweep found` section: what it noticed, and what to do if the owner wants it judged. */
 export function renderSweepIdeasSection(rows: { id: string; title: string; why: string }[]): string {
   return [
-    'Nobody has asked the board to look at these — a sweep noticed them and filed a card:',
+    'Nobody asked for these: the company noticed them while it was doing something else, and the board does not sit on one until you say so.',
     '',
     ...rows.map((r) => `- **${r.title}** — ${r.why || 'the card gives no reason yet'} ([[${ideaPath(r.id).replace(/\.md$/, '')}]]) — ${IDEA_PROMOTE_HINT.replace('<slug>', r.id)}`),
   ].join('\n');

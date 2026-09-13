@@ -51,7 +51,8 @@ heartbeat's `ideas_board` step, recorded as a `board.session` job) — pass or r
 
 **It sits only on ideas the owner has seen.** A card whose `source` is `discovery`, `owner`, `pantry` or
 `board` (a pivot the board itself proposed) is a candidate as soon as it is scored. A card an
-**intelligence** sweep filed is not: nobody asked for it, and a board session on it costs up to seventeen
+**intelligence** sweep filed is not — nor is one any other job filed on its own initiative (its `source` is
+that job's id): nobody asked for it, and a board session on it costs up to seventeen
 model calls, a question to the owner and a decision note about something they have never been told about.
 Those cards are listed in every brief under **Ideas the sweep found** — title, one line of why, and where to
 read them — and nothing else is spent on them: neither office is asked to score one either.
