@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CUBICLE — the campus (concept)</title>
+    <link rel="icon" href="data:," />
+    <style>
+      html { background: #0f1116; color-scheme: dark; }
+      body { margin: 0; height: 100%; overflow: hidden; }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <!-- The canvas is the concept. Everything over it is the product's own chrome, unchanged except for the rail,
+         which the spec replaces: zones instead of floors. -->
+    <canvas id="stage"></canvas>
+
+    <header id="bar" class="glass">
+      <div class="brand"><span class="mark" aria-hidden="true"></span><strong id="brand-name">Lantern</strong><span id="brand-tagline">a quiet tool for loud inboxes</span></div>
+      <nav aria-label="Company">
+        <span class="status ok" id="conn"><i class="dot"></i><span id="conn-text">live</span></span>
+        <button class="pill attn" id="pending" data-open="postoffice">3 to approve</button>
+        <button class="txt" data-open="messages">Messages</button>
+        <button class="txt" data-open="newsstand">Brief</button>
+        <button class="txt" data-open="whiteboard">Plan</button>
+        <button class="txt" data-open="noticeboard">Queue</button>
+        <button class="txt" data-open="org">Org</button>
+        <button class="txt primary" data-open="cabin">Talk to the CEO</button>
+      </nav>
+    </header>
+
+    <nav id="rail" class="glass" aria-label="Zones"></nav>
+
+    <div id="time" class="glass" data-mode="live">
+      <div class="segmented" role="tablist" aria-label="Live or replay">
+        <button id="live" class="seg" role="tab" aria-selected="true"><i class="dot ok"></i>Live</button>
+        <button id="replay-load" class="seg" role="tab" aria-selected="false">Replay</button>
+      </div>
+      <span id="sunmoon"></span>
+      <span id="clock" class="footnote num"></span>
+    </div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
