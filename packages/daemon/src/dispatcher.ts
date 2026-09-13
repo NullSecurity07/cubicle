@@ -3,6 +3,7 @@ import {
   loadOrg, resolveRole, divisionLeadOf, officeHolder, type Org,
   FOUNDER_BRIEF, missingBriefSections, readIdea, updateIdea, ideaBand, bandReason, ideaOutcome, IDEA_SLUG_SRC, IDEA_DECISIONS, LEDGER_PATH, type IdeaBand, type IdeaDecision,
   trustDecision, TRUST_PENDING_HOLD, CLASSIFIER_UNAVAILABLE_HOLD, type TrustDecision,
+  decidedByOwner, numberedOptions, proposedContentBlock,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath, isClassifierUnavailable, classifierUnavailableNow } from '@cubicle/tools';
@@ -89,8 +90,7 @@ export const DORMANT_SPEND_REFUSAL = `the company is out of money and dormant, s
  * same way they always did.
  */
 function fenced(body: string): string | null {
-  const m = body.match(/## Proposed content\s*\n+(`{3,})[a-z]*\n([\s\S]*?)\n\1[ \t]*(?:\n|$)/);
-  return m ? m[2] + (m[2].endsWith('\n') ? '' : '\n') : null;
+  return proposedContentBlock(body);
 }
 
 /**
@@ -330,8 +330,14 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
   let n = 0;
   for (const note of listInbox(vault)) {
     const d = note.data;
-    // Only the owner flips approvals: the note's sha must differ from the last system write (agents cannot write 00 Inbox/ at all).
-    const ownerFlipped = vault.isOwnerChanged(note.path);
+    // Only the owner flips approvals: the note's sha must differ from the last system write (agents cannot write
+    // 00 Inbox/ at all) — **or** the last write to it is recorded under the owner's own name, which is the one
+    // thing that writes it: `ownerDecide`, the Decisions sheet's op (ruling P8-1). Deciding in the office is
+    // deciding, and the sha guard alone cannot say so: it is written to catch a system write pretending to be a
+    // flip, and a decision taken inside CUBICLE *is* a system write, so it would be refused on the owner's own
+    // click. Nothing else in `00 Inbox/` is ever written as `owner` except the cabin's own `kind: message`
+    // notes, which this loop skips before it reaches any approval at all.
+    const ownerFlipped = vault.isOwnerChanged(note.path) || decidedByOwner(vault, note.path);
     // Owner answered an agent's question (kind: message, to: owner)
     if (d.kind === 'message' && d.to === 'owner' && d.from !== 'owner' && d.answered && !d.resolved_at) {
       if (!ownerFlipped) { vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: d.id, reason: 'answered flag was not set by the owner' } }); continue; }
@@ -414,8 +420,10 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             if (invalid) { refuseNote(vault, note, invalid, { target }); continue; }
             let content = (d.call?.tool === 'vault.write' && typeof d.call.args.content === 'string') ? String(d.call.args.content) : fenced(note.body);
             if (d.kind === 'brand_change' && target === 'Brand/name.md' && !content) {
-              const options = note.body.split('\n').filter((l) => /^\s*\d+\.\s/.test(l));
-              const line = d.chosen ? options.find((l) => new RegExp(`^\\s*${d.chosen}\\.\\s`).test(l)) : undefined;
+              // One parser (`numberedOptions`): the snapshot shows the owner a chip per option and this applies
+              // the line a number names, so the two must agree on what a numbered line is, down to the digit.
+              const options = numberedOptions(note.body);
+              const line = d.chosen ? options.find((o) => o.n === d.chosen)?.line : undefined;
               if (options.length && !line) { refuseNote(vault, note, d.chosen ? `chosen: ${d.chosen} matches no option; set chosen: 1..${options.length}` : `set chosen: 1..${options.length} to pick an option`); continue; }
               if (line) {
                 const clean = (x: string) => x.replace(/[*_`]/g, '').trim();

@@ -324,7 +324,7 @@ export class Daemon {
     this.offEvents.push(this.vault.events.on('quota.updated', () => this.writeQuotaMd()));
 
     if (!this.overrides.disableWs) {
-      this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.answerOwnerNow('chat'); void this.runTick('chat'); } });
+      this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.answerOwnerNow('chat'); void this.runTick('chat'); }, onDecide: () => { void this.runTick('decide'); } });
       const port = await this.ws.start();
       cfg.port = port; // port 0 binds an ephemeral port; downstream config, daemon.json, and events must see the real one
       this.log(`ws listening on ws://127.0.0.1:${port}`);
