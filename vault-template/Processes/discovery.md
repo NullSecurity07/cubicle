@@ -47,6 +47,11 @@ likely ways it dies, whether the pain is real, founder-market fit, and the verdi
 PIVOT REQUIRED — then the reasons. `Docs/pressure-test-handbook.md` is the whole of it. Re-run it whenever the brief changes materially;
 the core assumption moves when the customer moves.
 
+File the brief **once**. If `proposal.create` hands it back — a claim the files do not support — fix it and call
+again: the same note is updated, never duplicated, and the reply says so. Once it is filed the job is done with
+it; a second filing would put two notes in front of the owner, of which adopting either leaves the other open
+for ever.
+
 Every claim about what already exists cites the file it came from. Where the owner's material and the interview
 disagree, say so rather than picking one. Never invent a customer, a number or a date: the owner will read this
 and will know. And attribute the interview line by line: an answer tagged `[from the idea]` or `[unstated]` is

@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { IdeaFrontmatter, writeIdeaCard, readIdea, listIdeas, keptIdeas, updateIdea, nextIdeaForBoard, keptIdeaLines, missingScoreInputs, missingScoreNote, sameIdeaTitle, IDEA_SECTIONS } from '../src/ideas.js';
+import {
+  IdeaFrontmatter, writeIdeaCard, readIdea, listIdeas, keptIdeas, updateIdea, nextIdeaForBoard, keptIdeaLines,
+  missingScoreInputs, missingScoreNote, sameIdeaTitle, IDEA_SECTIONS,
+  ownerHasSeenIdea, ideaOpenToBoard, sweepIdeas, sweepIdeaRows, renderSweepIdeasSection, SWEEP_IDEAS_SECTION,
+} from '../src/ideas.js';
 import { scaffoldVault } from '../src/template.js';
 import { parseNote } from '../src/frontmatter.js';
 
@@ -100,5 +104,79 @@ describe('the card on disk (spec §2.3, §2.5)', () => {
     expect(nextIdeaForBoard(vault)!.id).toBe(b);
     updateIdea(vault, b, { board_verdict: 'pass' }, 'x');
     expect(nextIdeaForBoard(vault)!.id).toBe(a);
+  });
+});
+
+/**
+ * Ruling W3-5. The third live run spent a sixteen-call board session, a decision note and a question to the
+ * owner about engineering hours on *Persistent Agent Memory Integration* — a card an intelligence sweep had
+ * filed and nobody had ever mentioned to the owner. A card the owner has not seen is a note, not a candidate.
+ */
+describe('the board sits only on ideas the owner has seen (ruling W3-5)', () => {
+  let dir: string;
+  let vault: Awaited<ReturnType<typeof scaffoldVault>>['vault'];
+  beforeEach(async () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'cubicle-owner-seen-'));
+    vault = (await scaffoldVault(dir)).vault;
+  });
+  afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  const scored = (slug: string, inputs: { value: number; evidence: number; effort: number; fit: number }) =>
+    updateIdea(vault, slug, { score_inputs: inputs }, 'daemon');
+
+  it('never hands the board a scored sweep card, and hands it over the moment the owner marks it keep', () => {
+    const sweep = writeIdeaCard(vault, { title: 'Persistent agent memory', source: 'intelligence:competitive', why_it_matters: 'Two rivals shipped it this month.' }, 'daemon');
+    scored(sweep, { value: 5, evidence: 5, effort: 5, fit: 5 });           // 60: the best-scoring card there is
+    expect(readIdea(vault, sweep)!.data.score).toBe(60);
+    expect(nextIdeaForBoard(vault)).toBeNull();                            // …and still nobody asked for it
+
+    const own = writeIdeaCard(vault, { title: 'Meal kits for nurseries', source: 'discovery' }, 'daemon');
+    scored(own, { value: 3, evidence: 3, effort: 3, fit: 3 });             // 33: the owner's own material wins
+    expect(nextIdeaForBoard(vault)!.id).toBe(own);
+
+    // The promote: `decision: keep` on a sweep card reads "have the board look at this".
+    updateIdea(vault, sweep, { decision: 'keep' }, 'owner');
+    expect(nextIdeaForBoard(vault)!.id).toBe(sweep);
+    // And only until the board has actually sat on it.
+    updateIdea(vault, sweep, { board_verdict: 'pass' }, 'daemon');
+    expect(nextIdeaForBoard(vault)!.id).toBe(own);
+  });
+
+  it('reads the owner\'s own sources, and a parked or scrapped sweep card is finished business', () => {
+    for (const source of ['discovery', 'owner', 'pantry', 'board']) {
+      expect(ownerHasSeenIdea({ source, decision: 'undecided' }), source).toBe(true);
+      expect(ideaOpenToBoard({ source, decision: 'undecided' }), source).toBe(true);
+      // A kept card of the owner's own is not a board candidate: that decision has already been taken.
+      expect(ideaOpenToBoard({ source, decision: 'keep' }), source).toBe(false);
+    }
+    expect(ownerHasSeenIdea({ source: 'intelligence:competitive', decision: 'undecided' })).toBe(false);
+    expect(ownerHasSeenIdea({ source: 'intelligence:competitive', decision: 'keep' })).toBe(true);
+    for (const decision of ['park', 'scrap']) {
+      expect(ideaOpenToBoard({ source: 'intelligence:competitive', decision })).toBe(false);
+      expect(ownerHasSeenIdea({ source: 'intelligence:competitive', decision })).toBe(false);
+    }
+  });
+
+  it('lists the sweep\'s unpromoted cards for the brief: title, one line of why, and how to promote one', () => {
+    const sweep = writeIdeaCard(vault, { title: 'Persistent agent memory', source: 'intelligence:competitive', why_it_matters: 'Two rivals shipped it this month.\nA third is hiring for it.' }, 'daemon');
+    const quiet = writeIdeaCard(vault, { title: 'A newsletter about spoons', source: 'intelligence:market' }, 'daemon');
+    writeIdeaCard(vault, { title: 'Meal kits for nurseries', source: 'discovery', why_it_matters: 'The owner already sells to two nurseries.' }, 'daemon');
+
+    expect(sweepIdeas(vault).map((i) => i.id).sort()).toEqual([quiet, sweep].sort());
+    const rows = sweepIdeaRows(vault);
+    expect(rows.find((r) => r.id === sweep)!.why).toBe('Two rivals shipped it this month.');
+    expect(rows.find((r) => r.id === quiet)!.why).toBe('');                // `_Not stated._` is not a reason
+    const section = renderSweepIdeasSection(rows);
+    expect(section).toContain('**Persistent agent memory** — Two rivals shipped it this month.');
+    expect(section).toContain(`[[Ideas/${sweep}]]`);
+    expect(section).toContain(`set \`decision: keep\` on Ideas/${sweep}.md or say so to the CEO`);
+    expect(section).toContain('the card gives no reason yet');
+    expect(section).not.toContain('Meal kits');                            // the owner's own card is not "the sweep's"
+
+    // Promoted or ruled on, it leaves the list: it is the board's business now, or nobody's.
+    updateIdea(vault, sweep, { decision: 'keep' }, 'owner');
+    updateIdea(vault, quiet, { decision: 'scrap' }, 'owner');
+    expect(sweepIdeas(vault)).toEqual([]);
+    expect(SWEEP_IDEAS_SECTION).toBe('## Ideas the sweep found');
   });
 });

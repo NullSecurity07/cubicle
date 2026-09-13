@@ -6,6 +6,7 @@ import {
   childTeams, subtreeRoles, divisionTeams, divisionOf,
   budgetLines, GATE_JOB_TYPES,
   nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
+  ideaOpenToBoard, sweepIdeaRows, renderSweepIdeasSection, SWEEP_IDEAS_SECTION,
   FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
   readPressureVerdict, pressureToBoard, pressureFindings, renderRubric, renderBoardSection,
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, type PressurePart,
@@ -1899,7 +1900,9 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // new one; the proposal id is derived from the slug, so a cycle that already filed it does nothing.
         const refiled: string[] = [];
         for (const c of listIdeas(vault)) {
-          if (c.board_verdict === null || c.decision !== 'undecided') continue;
+          // `ideaOpenToBoard` rather than the bare `undecided` flag, so the one card that is judged while
+          // *decided* — a sweep card the owner promoted with `decision: keep` (ruling W3-5) — is recovered too.
+          if (c.board_verdict === null || !ideaOpenToBoard(c)) continue;
           if (findInboxById(vault, idFromKey('prop', ideaVerdictKey(c.id)))) continue;
           const r = fileIdeaVerdict(vault, c.id, { from: ceo, job: jobId, findings: cardBoardFindings(readIdea(vault, c.id)?.body ?? '') });
           if (!r?.filed) continue;
@@ -2470,7 +2473,13 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         const fallback = `## What happened\n- ${state.finished?.length ? state.finished.map((f) => `${f.title}: ${f.status}`).join('\n- ') : 'Nothing finished since the last heartbeat.'}\n\n## What's next\n- ${queued.length ? queued.map((j) => `${j.assigned}: ${j.title}`).join('\n- ') : 'Waiting on the plan.'}\n\n## What needs you\n${needsYou.length ? needsYou.join('\n') : '- Nothing right now.'}`;
         const org = loadOrg(vault);
         const nextActionPerTeam = Object.values(org.teams).map((t) => `- ${t.id}: ${queued.find((j) => j.team === t.id)?.title ?? 'nothing queued'}`).join('\n');
-        const content = stringifyNote({ heartbeat: hbId, at: nowIso(), elapsed_hours: Number.isFinite(state.elapsedHours) ? Number(state.elapsedHours!.toFixed(1)) : null, trigger: job.title }, `# Since you were away\n\n${drafted ?? fallback}\n\n## Next action per team\n\n${nextActionPerTeam}\n\n---\n_Facts used:_\n\n\`\`\`\n${facts}\n\`\`\`\n`);
+        // Ruling W3-5: the board never sits on a card the owner has not seen, so an intelligence sweep's own
+        // cards surface here and nowhere else — title, one line of why, and how to have the board look at one.
+        // Written deterministically from the cards, below the drafted brief, because the model is told not to
+        // invent anything and these are not facts about the cycle: they are a list the owner acts on or ignores.
+        const sweepRows = sweepIdeaRows(vault);
+        const sweepSection = sweepRows.length ? `${SWEEP_IDEAS_SECTION}\n\n${renderSweepIdeasSection(sweepRows)}\n\n` : '';
+        const content = stringifyNote({ heartbeat: hbId, at: nowIso(), elapsed_hours: Number.isFinite(state.elapsedHours) ? Number(state.elapsedHours!.toFixed(1)) : null, trigger: job.title }, `# Since you were away\n\n${drafted ?? fallback}\n\n${sweepSection}## Next action per team\n\n${nextActionPerTeam}\n\n---\n_Facts used:_\n\n\`\`\`\n${facts}\n\`\`\`\n`);
         vault.writeText(runRel, content, 'ceo', { job: jobId });
         state = { ...state, runPath: runRel }; saveState(state);
         writeQueueMd(vault);

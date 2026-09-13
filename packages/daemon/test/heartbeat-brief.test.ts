@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listJobs, createJob, updateJob, createProposal, loadOrg, createStream, writeCiRecord } from '@cubicle/core';
+import { scaffoldVault, Vault, listJobs, createJob, updateJob, createProposal, loadOrg, createStream, writeCiRecord, writeIdeaCard, readIdea } from '@cubicle/core';
+import { estimateJobId, researchJobId } from '../src/discovery.js';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, mockedServices, mockedServicesRow, modelUseRows, isKeyProblemDowngrade, planningGate, divisionPlanGoal } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
@@ -283,6 +284,33 @@ describe('division planning goals', () => {
       const plans = listJobs(v).filter((j) => j.type === 'division.plan');
       expect(plans.map((j) => j.assigned).sort()).toEqual(['cfo', 'cto']);
       expect(v.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'division_plans' && /security/.test(String(e.payload.message)))).toBe(true);
+    } finally { v.close(); await d.stop(); }
+  }, TEST_MS);
+});
+
+/**
+ * Ruling W3-5. An intelligence sweep's card is not a candidate until the owner has seen it, so the brief is the
+ * one place it surfaces: title, one line of why, and how to have the board look at it. Nothing is spent on it
+ * in the meantime — the live run's sixteen-call session on *Persistent Agent Memory Integration* is the bill.
+ */
+describe('the ideas the sweep found', () => {
+  it('lists an unpromoted intelligence card in the brief and spends nothing on it', async () => {
+    const seed = Vault.open(dir);
+    const slug = writeIdeaCard(seed, { title: 'Persistent agent memory', source: 'intelligence:competitive', why_it_matters: 'Two rivals shipped it this month.' }, 'daemon');
+    seed.close();
+    const d = daemonFor(orgLlm({ vetoes: 0 }));
+    await d.start();
+    const v = Vault.open(dir);
+    try {
+      await waitFor(() => v.events.count('heartbeat.completed') >= 1);
+      const brief = lastBrief(v);
+      expect(brief).toContain('## Ideas the sweep found');
+      expect(brief).toContain('**Persistent agent memory** — Two rivals shipped it this month.');
+      expect(brief).toContain(`set \`decision: keep\` on Ideas/${slug}.md or say so to the CEO`);
+      // Nobody asked for it: no board verdict, and neither office was sent a job about it.
+      expect(readIdea(v, slug)!.data.board_verdict).toBeNull();
+      expect(v.exists(`Jobs/${estimateJobId(slug)}.md`)).toBe(false);
+      expect(v.exists(`Jobs/${researchJobId(slug)}.md`)).toBe(false);
     } finally { v.close(); await d.stop(); }
   }, TEST_MS);
 });

@@ -12,7 +12,8 @@ the six founder questions itself, tagged `[from the idea]`, `[from the vault]` o
 added to or corrected those answers — when the owner drops in new material, and
 proposes `Memory/founder-brief.md` alongside its cards; **intelligence** sweeps notice something changed in the
 world; and the owner can type one in directly. Wherever it came from, the source goes in the card so a reader
-can weigh it.
+can weigh it — and the source decides what happens next: a sweep's card is listed for the owner and goes no
+further until they ask for it (see [The board](#the-board)).
 
 ## The dossier's eight sections
 
@@ -47,6 +48,18 @@ A dossier where only one office wrote is a dossier that is half done.
 
 The board sits on the best-scoring card, the same three advisors as a plan pre-mortem, in one session (the
 heartbeat's `ideas_board` step, recorded as a `board.session` job) — pass or return, with the failure modes named. The board advises; it does not decide.
+
+**It sits only on ideas the owner has seen.** A card whose `source` is `discovery`, `owner`, `pantry` or
+`board` (a pivot the board itself proposed) is a candidate as soon as it is scored. A card an
+**intelligence** sweep filed is not: nobody asked for it, and a board session on it costs up to seventeen
+model calls, a question to the owner and a decision note about something they have never been told about.
+Those cards are listed in every brief under **Ideas the sweep found** — title, one line of why, and where to
+read them — and nothing else is spent on them: neither office is asked to score one either.
+
+To have the board look at one, the owner sets `decision: keep` in its frontmatter (or says so to the CEO, who
+sets it). On a sweep card that flag reads "look at this one", not "we are doing it": the card becomes a
+candidate, both offices fill their halves, the board sits on it, and the owner then rules on it in the usual
+`idea_verdict` note. `park` or `scrap` on such a card closes it without a session.
 
 ## The pressure test
 
