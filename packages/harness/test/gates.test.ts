@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, listJobs, createStream, writeCiRecord } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, listJobs, createStream, writeCiRecord, loadGates } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { runJob, vaultScheduler, type Llm } from '../src/index.js';
@@ -157,5 +157,54 @@ describe('review gates (spec §3)', () => {
     const resumed = await runJob(deps(stepsThenFinish(maxSteps - 1, { status: 'done', summary: 'built again' }), { maxSteps }), id);
     expect(resumed.status).not.toBe('failed');
     expect(readJob(vault, id)!.data.checkpoint_step).toBe((maxSteps - 1) + maxSteps);
+  });
+});
+
+/**
+ * FR-7 (2026-09-13 first-run fixes): a review is not the work that needs the best model in the house. Gate jobs
+ * are created at the gate's tier — medium unless `config/gates.yaml` overrides it — so a review by a strong-tier
+ * office holder does not spend a strong call, of which the free tier has about sixty a day.
+ */
+describe('review gates run on the medium tier (FR-7)', () => {
+  /** Records the tier the harness asked for, then passes the review. */
+  const recording = (seen: RouteRequest[]): Llm => ({
+    async chat(r: RouteRequest): Promise<RoutedChatResult> {
+      seen.push(r);
+      return { content: '', toolCalls: [], finishReason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 }, provider: 'f', model: 'f', tier: 'medium', downgraded: false, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: 'ok', verdict: 'pass', lessons: ['ok'] } }] };
+    },
+    promptBudget: () => 6000,
+  });
+
+  it('a requester.review created by the gate chain carries model_tier medium, and routes there for a strong-tier reviewer', async () => {
+    const r = createJob(vault, { type: 'research', title: 'R', assigned: 'researcher', goal: 'g', for: 'ceo', owner_role: 'ceo' }, 'ceo');
+    await runJob(deps(finishing({ status: 'done', summary: 'report' })), r);
+    const quality = listJobs(vault).find((j) => j.type === 'research.review')!;
+    expect(quality.model_tier).toBe('medium');
+    await runJob(deps(finishing({ status: 'done', summary: 'sound', verdict: 'pass' })), quality.id);
+
+    const requester = listJobs(vault).find((j) => j.type === 'requester.review')!;
+    expect(requester).toMatchObject({ assigned: 'ceo', model_tier: 'medium' });
+    const seen: RouteRequest[] = [];
+    await runJob(deps(recording(seen)), requester.id);
+    // The CEO's charter is strong; the review still runs at medium.
+    expect(seen.at(-1)!.tier).toBe('medium');
+  });
+
+  it('the gate tier is a ceiling the charter still lowers: a cheap-tier reviewer reviews cheap', async () => {
+    const id = createJob(vault, { type: 'custom', title: 'Odd job', assigned: 'backend_engineer', goal: 'g', team: 'dev' }, 'dev_manager');
+    await runJob(deps(finishing({ status: 'done', summary: 'done' })), id);
+    const verify = listJobs(vault).find((j) => j.type === 'office:operations.verify')!;
+    expect(verify).toMatchObject({ assigned: 'coo', model_tier: 'medium' });
+    const seen: RouteRequest[] = [];
+    await runJob(deps(recording(seen)), verify.id);
+    expect(seen.at(-1)!.tier).toBe('cheap'); // the COO's charter
+  });
+
+  it('the gate table may name a different tier for one gate', async () => {
+    const table = loadGates();
+    const gates = { ...table, 'team:qa.review': { ...table['team:qa.review'], model_tier: 'strong' as const } };
+    const id = createJob(vault, { type: 'engineer.ship', stream: 'checkout', title: 'Build', assigned: 'backend_engineer', goal: 'g', team: 'dev', owner_role: 'dev_manager' }, 'dev_manager');
+    await runJob({ ...deps(finishing({ status: 'done', summary: 'built' })), gates }, id);
+    expect(listJobs(vault).find((j) => j.type === 'team:qa.review')!.model_tier).toBe('strong');
   });
 });
