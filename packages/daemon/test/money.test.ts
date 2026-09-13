@@ -403,6 +403,9 @@ describe('the daily runway job (spec §2)', () => {
     const id = enqueueRunway(vault, org, NOW)!;
     vault.updateNote(jobPath(id), (n) => ({ data: n.data, body: `${n.body}\n## Result\n\n\`\`\`json\n${JSON.stringify({ status: 'done', summary: 'Free tiers cover everything.' })}\n\`\`\`\n` }), 'cfo');
     updateJob(vault, id, { status: 'done' }, 'cfo');
+    // Pin the job's stamp inside NOW's day: `updateJob` writes the real clock, and this test's "today" is NOW's
+    // day, not the machine's. Left on the real clock, the "written today" branch could hold only on 2026-09-12.
+    vault.updateNote(jobPath(id), (n) => ({ data: { ...n.data, updated: NOW.toISOString() }, body: n.body }), 'cfo');
 
     // Written today: the figures and the opinion are the same age, and a date line would be noise.
     writeRunway(vault, org, SHIPPED, NOW);
