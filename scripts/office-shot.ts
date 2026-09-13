@@ -9,6 +9,7 @@
  * The scenes, in the checklist's own order and under its own names:
  *   01-first-run  02-lobby  03-f1  04-f2  05-f3  06-f4  07-elevator  08-board  09-night
  *   09a-tower-day  09b-tower-night  09c-tower-dusk  10-browser-live  11-terminal  12-light-theme  13-stack  14-sales
+ *   15-decisions  16-messages
  * Every scene's hour is pinned (`DAY`, `DUSK`, `NIGHT`) rather than inherited from the wall clock: a run at 19:47
  * made fifteen dusk pictures and a run at 21:43 made fifteen dark ones, and neither proved the daylight palette.
  * Order is not free. `01-first-run` has to come before the Escape that dismisses the card, because the card is shown
@@ -20,7 +21,7 @@ import path from 'node:path';
 import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir, loadavg, cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { scaffoldVault, createProposal } from '@cubicle/core';
+import { createProposal, pantryNote, pantryNotePath, scaffoldVault, setSection, stringifyNote } from '@cubicle/core';
 import type { RoutedChatResult } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig } from '@cubicle/daemon';
@@ -55,7 +56,7 @@ page.on('pageerror', (e) => console.log('[page exception]', String(e).slice(0, 2
 
 type Tile = { tx: number; ty: number };
 type Agent = { role: string; state: string; seat: Tile | null; tile: Tile };
-type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }> }; agents: () => Agent[]; floor: (n: number) => void; currentFloor: () => number; elevator: () => unknown; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void } };
+type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }>; inbox?: { id: string }[]; conversations?: { id: string; kind: string; room?: string }[] }; agents: () => Agent[]; floor: (n: number) => void; currentFloor: () => number; elevator: () => unknown; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void } };
 /** Run `fn` inside the page against `window.__cubicle`. `fn` crosses over as source text, so it can close over
  *  nothing from this script: whatever it needs (a floor number, an hour) is passed as `arg` and arrives as its
  *  second parameter. */
@@ -422,6 +423,144 @@ try {
   // building's corner are what the right of the frame is, and they are honestly what is there.
   await cub((c) => c.center(44.5, 35));
   await shot('14-sales', 900);
+  await closePanels();
+
+
+  // 15/16: the two SP8 screens, drawn from real notes in this run's vault (ruling P8-7). The daemon builds the
+  // inbox row and the conversation index off the files below with its own parsers and answers `conversation.get`
+  // from them, so a fixture pushed into the page would be overwritten by the daemon's own answer — and was.
+  await setHour(DAY);
+  const nowMs = Date.now();
+  const isoAgo = (minsAgo: number): string => new Date(nowMs - minsAgo * 60_000).toISOString();
+  const today = new Date(nowMs).toISOString().slice(0, 10);
+  const FENCE = '````';
+
+  // The founder brief the owner is asked to adopt: the CEO's covering note, then the document itself in the
+  // `## Proposed content` fence the dispatcher reads, with all eight sections and the pressure test written.
+  const briefDoc = [
+    '# Founder brief',
+    '',
+    '## What the company is',
+    'A weekly meal plan a parent can cook from on a Sunday afternoon, with the shopping list attached.',
+    '',
+    '## Who it is for',
+    'Two-income households with school-age children who already cook and still throw food away.',
+    '',
+    '## What already exists',
+    'Recipe search, which is free, and meal-kit boxes, which are not. Neither decides the week for anyone.',
+    '',
+    '## What success looks like',
+    'Twenty parents paying USD 6 a month by the end of the quarter, cooking from the plan four weeks running.',
+    '',
+    '## Constraints',
+    'No paid acquisition until someone has paid. One week of plans written by hand before anything is built.',
+    '',
+    '## Candidate ideas',
+    '- The plan as a printable page.',
+    '- The plan as a weekly email.',
+    '- The shopping list as the product, with the plan attached.',
+    '',
+    '## What we do not know',
+    'Whether a plan is worth six dollars against a free search, and who writes it in week five.',
+    '',
+    '## Pressure test',
+    '**Is anyone asking for this?** Two of the five parents interviewed keep a paper plan already.',
+    '',
+    '**What would have to be true?** That deciding is the expensive part of the week, not cooking.',
+    '',
+    '**What is the cheapest way to find out?** One week of plans, hand-written, sold to the school group.',
+    '',
+  ].join('\n');
+  const brief = createProposal(d.vault, {
+    kind: 'founder_brief', from: 'ceo', title: 'The founder brief: meal plans for busy parents',
+    body: `The board has finished with it. Adopt it and every plan from here is written against it, or send it back with what is wrong.\n\n## Proposed content\n\n${FENCE}\n${briefDoc}${FENCE}\n`,
+  }, 'ceo');
+  // `InboxFrontmatter` is a loose object, so the band the CEO put on it rides along with the note.
+  d.vault.updateNote(brief.path, (n) => ({ data: { ...n.data, band: 'medium', band_reason: 'a new direction for the company', board_pending: false }, body: n.body }), 'ceo');
+
+  // The board, mid-session: the `meeting.open` shape with no decision, so the index reads it as still sitting.
+  d.vault.writeText(
+    `Meetings/${today.replace(/-/g, '')}-1100-board-worth-building.md`,
+    stringifyNote({ id: 'board_demo', room: 'board', opened: isoAgo(6), facilitator: 'advisor_skeptic', participants: ['advisor_skeptic', 'advisor_investor', 'advisor_customer', 'ceo'], status: 'in_progress' },
+      ['# Board: Is this worth building?', '', '## Agenda', '', 'Is a weekly meal plan worth paying for when recipe search is free?', '', '## Transcript', '',
+        '**Round 1 — advisor_skeptic:** The question for this subject: is a weekly meal plan worth paying for when recipe search is free?',
+        '',
+        '**Round 2 — advisor_customer:** Two of the five parents we spoke to already keep a paper plan. They are not paying for recipes, they are paying to stop deciding.',
+        '',
+        '**Round 3 — advisor_investor:** Six dollars a month against a free search is a thin margin for a habit that breaks the first busy week.',
+        '',
+        '**Round 4 — advisor_skeptic:** You are both hedging. Would either of you buy it?',
+        '',
+        '**Round 5 — ceo:** I would run one week by hand for the school group before we build anything.',
+        '',
+        '**Round 6 — advisor_skeptic:** Name one parent who would pay six dollars.',
+        ''].join('\n')),
+    'advisor_skeptic',
+  );
+
+  // A coffee break, written by the daemon's own note builder so the parser reads the shape it wrote.
+  const pantryParticipants = ['QA Lead', 'Growth'];
+  d.vault.writeText(pantryNotePath(d.vault, new Date(nowMs - 96 * 60_000), pantryParticipants), pantryNote({
+    date: today, cycle: 3, participants: pantryParticipants,
+    turns: [
+      { role: 'qa_lead', name: 'QA Lead', text: 'Everything we test is a page nobody has asked for yet.' },
+      { role: 'growth', name: 'Growth', text: 'What if the plan came as a printable page? Parents stick it on the fridge.' },
+      { role: 'qa_lead', name: 'QA Lead', text: 'Then the thing to test is whether they cook from it on Wednesday.' },
+    ],
+    idea: 'The plan as a printable fridge page', filed: null, why: 'the company has not decided the brief yet',
+  }), 'daemon');
+
+  // Two colleagues, in the shape `colleague.message` appends: one thread per unordered pair.
+  d.vault.appendText('Messages/dev_manager.md', `\n## ${isoAgo(40)} from cto (fyi) <!-- id:msg_demo_1 -->\n\nShip the static site first; the plan editor can wait until someone has paid for a plan.\n`, 'cto');
+  d.vault.appendText('Messages/cto.md', `\n## ${isoAgo(35)} from dev_manager (fyi) <!-- id:msg_demo_2 -->\n\nAgreed. I will put the printable page behind the same template so we can hand-write week one.\n`, 'dev_manager');
+
+  // The owner and the CEO: a cabin message with the CEO's reply appended, which is the `## CEO` section the
+  // index reads as the reply turn.
+  const message = createProposal(d.vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'Start with meal plans for busy parents', body: 'Start with meal plans for busy parents. I want to see one week written by hand before anything is built.' }, 'owner');
+  d.vault.updateNote(message.path, (n) => ({ data: { ...n.data, answered: true }, body: setSection(n.body, '## CEO', 'I filed the brief — it needs your yes. The board is arguing the pressure test now; the first week is hand-written either way.') }), 'ceo');
+
+  // Both proposals emit `proposal.created`, which is what makes the viewer re-read the snapshot; everything above
+  // is on disk by then, so one snapshot carries the decision and the four threads together.
+  await page.waitForFunction((id) => {
+    const st = (window as unknown as Cub).__cubicle.state;
+    let row = false;
+    for (const n of st.inbox ?? []) if (n.id === id) row = true;
+    return row && (st.conversations ?? []).length >= 4;
+  }, brief.id, { timeout: 30000 }).catch(() => fail('15/16: the brief and the four conversations never reached the viewer’s snapshot'));
+
+  // 15: a decision open on the owner's desk — the note as the daemon sends it, the board's pressure test under
+  // it, and the action bar pinned to the foot of the reader with the Decisions sheet still in the trail behind it.
+  await cub((c) => c.open('postoffice'));
+  await page.waitForTimeout(500);
+  await cub((c, id: string) => c.open(`decision:${id}`), brief.id);
+  await page.waitForTimeout(600);
+  const barActs = await page.$$eval('#panel-body .actionbar [data-act]', (els) => els.map((e) => (e as HTMLElement).dataset.act));
+  if (!barActs.includes('decide:yes')) fail(`15: the decision reader has no action bar (controls: ${barActs.join(', ') || 'none'})`);
+  if ((await cub((c) => c.stack().length)) < 2) fail('15: the reader is not on top of the Decisions sheet, so the trail is empty');
+  if (!(await page.$('#panel-body .prose'))) fail('15: the reader shows no document, so the scene is a decision with nothing to read');
+  await shot('15-decisions', 900);
+  await closePanels();
+
+  // 16: Messages with the board's argument open beside the thread list. At 1280 the sheet is wide enough for both
+  // panes, which is the layout this scene exists to show. The thread is opened by clicking its row, so the turns
+  // in the picture are the ones `conversation.get` answered with.
+  await cub((c) => c.open('messages'));
+  await page.waitForTimeout(600);
+  const boardThread = await page.evaluate(() => {
+    const threads = (window as unknown as Cub).__cubicle.state.conversations ?? [];
+    for (const t of threads) if (t.kind === 'board' || t.room === 'board') return String(t.id);
+    return null;
+  }) as string | null;
+  if (!boardThread) fail('16: the board transcript in Meetings/ is not in the conversation index');
+  else {
+    await page.click(`#panel-body [data-act="thread:${boardThread}"]`);
+    await page.waitForTimeout(800);
+  }
+  const cols = await page.$eval('#panel-body .panes', (el) => getComputedStyle(el).gridTemplateColumns);
+  if (cols.split(' ').length < 2) fail(`16: the Messages sheet is one column (${cols}), so the two-pane layout is unproven`);
+  const bubbles = await page.$$eval('#panel-body .thread .msg', (els) => els.length);
+  if (bubbles < 3) fail(`16: the conversation pane shows ${bubbles} bubbles, so there is no conversation to look at`);
+  await shot('16-messages', 900);
   await closePanels();
 } catch (err) {
   fail(err instanceof Error ? err.message : String(err));

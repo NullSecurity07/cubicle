@@ -49,3 +49,14 @@ Each of these lines exists because a delivered screenshot showed the opposite.
 - [ ] Every wall screen is a mounted object: a bezel, a lit top edge and a shadow seating it on the wall, in both themes (`05-f3`, `12-light-theme`)
 - [ ] No room sign is half-eaten by the floor rail: each is whole, or absent while its room is off the screen (`03-f1`, `05-f3`, `13-stack`)
 - [ ] Sibling desks are told apart at the zoom labels appear at: the Dev row is not a column of "Product …" (`11-terminal`, `14-sales`)
+
+## Decisions and Messages (added by SP8, 2026-09-13)
+
+- [ ] A decision is made in the office: the reader shows the note as written, and the action bar is at the foot of it with one amber affirmative (`15-decisions`)
+- [ ] The action bar never scrolls out of the reader, whatever the length of the note (`15-decisions`)
+- [ ] The pressure test is a section of the reader, titled once (`15-decisions`)
+- [ ] The key that does the same thing is on the button that does it, and reads on an amber fill (`15-decisions`)
+- [ ] Messages is two panes when the sheet has the room: the thread list left, one conversation right (`16-messages`)
+- [ ] A participant chip is the person's own colour with white on it, at 4.5:1, in both themes (`16-messages`)
+- [ ] An open conversation shows its newest turn, not its oldest (`16-messages`)
+- [ ] A live meeting carries one LIVE mark in the list and one in the conversation header — no third amber thing on the screen (`16-messages`)

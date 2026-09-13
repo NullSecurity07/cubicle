@@ -31,6 +31,7 @@ offices:
   research: research_manager
   engineering: cto
 board_decides_after_hours: 0
+board_dialogue: full
 migrations:
   - board-medium-tier-2026-09-13
 ```
@@ -44,3 +45,4 @@ migrations:
 - `offices` maps each office the daemon addresses to a role id: gates, escalation and planning ask for the office, so re-staffing a seat is an edit here, not a code change.
 - `migrations` records the one-time upgrades already applied to this vault; the daemon adds an id when it applies one and never applies that one again. Leave it alone.
 - `board_decides_after_hours` is off (`0`): a plan waits in `00 Inbox/` for your verdict for as long as it takes, and work you already approved keeps running while it waits — only new work stops. Set a number of hours to let the board's own verdict stand after that long, which is what an unattended overnight run wants.
+- `board_dialogue` is `full`: the board holds its pressure test as a dialogue you can read — the chair asks each of the five questions in its own words, the other two advisors answer it in turn, and the chair rules on each round in the open. The transcript lands in `Meetings/` and the owner's note links it. Set `brief` for the older four-call session (three pre-mortems and one merge) if you would rather spend the calls elsewhere; the verdict is judged the same way either way.

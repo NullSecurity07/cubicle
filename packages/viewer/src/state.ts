@@ -21,7 +21,40 @@ export interface QuotaView { provider: string; model: string; rpm_used: number; 
 export interface CubicleEvent { id?: number; ts: string; type: string; agent: string | null; job: string | null; payload: Record<string, unknown> }
 export interface ChatMsg { ts: string; from: 'ceo' | 'you'; text: string }
 export interface BrandView { name: string; tagline: string; url: string }
-export interface InboxRow { id: string; kind: string; title: string; path: string; created: string }
+export interface InboxOption { n: number; label: string }
+/** What the owner is being asked for (SP8 §1): a yes/no, a numbered choice, or adopt-or-send-back. */
+export type Decidable = 'approve' | 'choose' | 'adopt';
+export interface InboxRow {
+  id: string; kind: string; title: string; path: string; created: string;
+  /** the role that asked */ from?: string; job?: string; target?: string;
+  /** the note body as markdown, the CEO boilerplate included */ body?: string;
+  /** numbered lines the owner picks between (`brand_change`, `idea_verdict`); empty otherwise */ options?: InboxOption[];
+  band?: string; band_reason?: string; board_verdict?: string;
+  /** the `## Pressure test` block, when the body has one */ pressure?: string;
+  decidable?: Decidable;
+  /**
+   * The owner has decided this one and the dispatcher has not finished with it (SP8 ruling P8-8). The row stays in
+   * `inbox` — it is neither waiting for the owner nor resolved — and carries what they said, so a reload or any
+   * fresh snapshot shows the decision still being applied rather than an untouched note or a row that vanished.
+   */
+  pending?: boolean;
+  /** what the owner said, as the daemon wrote it into the note */ approved?: boolean; chosen?: number;
+  /** why the dispatcher would not apply it; the owner fixes what it names and decides again */ refused?: string | null;
+  /**
+   * The board has not finished pressure-testing this founder brief (SP8 ruling P8-6), so the document the owner
+   * would be adopting is half-written. Nothing to decide yet: the row says the board is sitting and the bar is
+   * closed until the argument is in. The approvals pill already leaves these out, on the daemon side.
+   */
+  board_pending?: boolean;
+}
+/** A resolved note: what the owner said and what the dispatcher did with it. */
+export interface DecidedRow { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean; chosen?: number; outcome: string }
+/** One turn of a conversation. `at` is null for note shapes that carry no stamp; those are ordered as written. */
+export interface ThreadTurn { who: string; at: string | null; text: string }
+export type ThreadKind = 'dm' | 'meeting' | 'board' | 'pantry' | 'agents';
+export interface Thread { id: string; kind: ThreadKind; title: string; room?: string; participants: string[]; updated: string; open: boolean; last: { who: string; text: string; at: string } | null; turns: number }
+/** A decision in flight: sent, acknowledged and being applied, resolved, or refused. */
+export interface DecideState { status: 'sending' | 'applying' | 'done' | 'error'; approved: boolean; chosen?: number; outcome?: string; message?: string }
 /** Mirrors `MoneySnapshot` in the daemon. Every figure comes pre-formatted: the viewer never formats money. */
 export interface MoneyView {
   currency: string;
@@ -34,7 +67,7 @@ export interface MoneyView {
   budgets: { division: string; used: number; quota: number }[];
   entries: { at: string; kind: string; amount: string; mode: string; who: string; why: string }[];
 }
-export interface Snapshot { op: 'snapshot'; at: string; roles: { role: string; display: string; sprite: string; desk: string; active: boolean; title?: string; team?: string; reports_to?: string }[]; jobs: JobView[]; surfaces: { streamKind: string; streamId: string; lastFrame?: string; active: boolean }[]; quota: QuotaView[]; latestRun: { path: string; body: string } | null; plan: string; pendingProposals: number; brand?: BrandView; inbox?: InboxRow[]; chat?: ChatMsg[]; teams?: TeamView[]; offices?: Record<string, string>; /** Optional: an older daemon omits it. */ money?: MoneyView | null }
+export interface Snapshot { op: 'snapshot'; at: string; roles: { role: string; display: string; sprite: string; desk: string; active: boolean; title?: string; team?: string; reports_to?: string }[]; jobs: JobView[]; surfaces: { streamKind: string; streamId: string; lastFrame?: string; active: boolean }[]; quota: QuotaView[]; latestRun: { path: string; body: string } | null; plan: string; pendingProposals: number; brand?: BrandView; inbox?: InboxRow[]; /** the last 20 resolved notes */ decided?: DecidedRow[]; /** the conversation index, newest first */ conversations?: Thread[]; chat?: ChatMsg[]; teams?: TeamView[]; offices?: Record<string, string>; /** Optional: an older daemon omits it. */ money?: MoneyView | null }
 
 export interface State {
   connected: boolean;
@@ -53,6 +86,14 @@ export interface State {
   teams: TeamView[];               // Teams/*.md — the org chart
   offices: Record<string, string>; // the constitution's office → role map
   inbox: InboxRow[];              // proposals awaiting the owner (from the snapshot)
+  decided: DecidedRow[];          // what the owner has already decided, newest first (from the snapshot)
+  conversations: Thread[];        // the conversation index, newest first (from the snapshot)
+  /** turns fetched with `conversation.get`, per thread id */
+  turns: Record<string, ThreadTurn[]>;
+  /** turns that arrived live since that fetch, per thread id, newest last and capped at LIVE_TURNS */
+  live: Record<string, ThreadTurn[]>;
+  /** decisions the owner has sent and the daemon has not finished applying, by note id */
+  decisions: Record<string, DecideState>;
   chat: ChatMsg[];                // the CEO cabin thread (snapshot history + live events)
   terminal: string[];              // last shell output lines
   mail: { ts: string; text: string }[];
@@ -82,7 +123,7 @@ export function withFrameSeq(s: State, id: string, seq?: number): State {
   return { ...s, frames: { ...s.frames, [id]: { ...cur, seq: seq ?? cur.seq + 1 } } };
 }
 
-export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], money: null, latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], offices: {}, inbox: [], chat: [], terminal: [], mail: [], feed: [], meetings: {}, board: null, pantry: null, frames: {}, lastEventTs: null, deploys: [], firstRun: false });
+export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], money: null, latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], offices: {}, inbox: [], decided: [], conversations: [], turns: {}, live: {}, decisions: {}, chat: [], terminal: [], mail: [], feed: [], meetings: {}, board: null, pantry: null, frames: {}, lastEventTs: null, deploys: [], firstRun: false });
 
 /** Who walks over when a job fails: the operations office. */
 export function overseerRole(st: Pick<State, 'offices'>): string { return st.offices?.operations ?? OVERSEER; }
@@ -167,7 +208,72 @@ export function applySnapshot(s: State, snap: Snapshot): State {
   for (const su of Array.isArray(snap.surfaces) ? snap.surfaces : []) surfaces[su.streamId] = { streamKind: su.streamKind as SurfaceView['streamKind'], streamId: su.streamId, lastFrame: su.lastFrame, active: su.active };
   const frames: State['frames'] = {};
   for (const id of Object.keys(surfaces)) if (s.frames[id]) frames[id] = s.frames[id];
-  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, money: snap.money ?? null, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, teams: snap.teams ?? [], offices: snap.offices ?? {}, inbox: snap.inbox ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, firstRun, staleSnapshot: false };
+  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, money: snap.money ?? null, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, teams: snap.teams ?? [], offices: snap.offices ?? {}, inbox: snap.inbox ?? [], decided: snap.decided ?? [], conversations: snap.conversations ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, firstRun, staleSnapshot: false };
+}
+
+/**
+ * Conversations (SP8 §2). The index and a thread's turns come from the vault through the daemon; what arrives live
+ * between two fetches is kept in a small per-thread buffer so an open thread grows as people speak without the
+ * viewer inventing history. Opening a thread always fetches, and the fetch clears the buffer it replaces.
+ */
+export const LIVE_TURNS = 50;
+/** How many threads the index keeps (the daemon's own ceiling). */
+export const MAX_THREADS = 60;
+
+/** A thread as it should be read: what was fetched, then whatever arrived live after it. */
+export function conversationTurns(s: Pick<State, 'turns' | 'live'>, id: string): ThreadTurn[] {
+  return [...(s.turns[id] ?? []), ...(s.live[id] ?? [])];
+}
+
+/** A `conversation` reply landed: it is the whole thread, so the live buffer it replaces is dropped. */
+export function applyConversation(s: State, id: string, turns: ThreadTurn[]): State {
+  const live = { ...s.live };
+  delete live[id];
+  return { ...s, turns: { ...s.turns, [id]: turns }, live };
+}
+
+/** The `decide` op was sent; the reader is busy until the ack and then until `proposal.resolved`. */
+export function decideSent(s: State, id: string, o: { approved: boolean; chosen?: number }): State {
+  return { ...s, decisions: { ...s.decisions, [id]: { status: 'sending', approved: o.approved, chosen: o.chosen } } };
+}
+/** `decide.ack`: the daemon has written it and is applying it now. */
+export function decideAcked(s: State, id: string): State {
+  const cur = s.decisions[id];
+  return cur ? { ...s, decisions: { ...s.decisions, [id]: { ...cur, status: 'applying' } } } : s;
+}
+/** An `error` reply, or a socket that would not carry the op: the owner has to be told, and nothing was decided. */
+export function decideFailed(s: State, id: string, message: string): State {
+  const cur = s.decisions[id];
+  return { ...s, decisions: { ...s.decisions, [id]: { status: 'error', approved: cur?.approved ?? false, chosen: cur?.chosen, message } } };
+}
+
+/** The thread a live meeting event belongs to: the index's own id where there is one, else the daemon's own shape. */
+export function threadIdFor(st: Pick<State, 'conversations' | 'meetings'>, meetingId: string): string {
+  const known = st.conversations.find((t) => t.id === `board:${meetingId}` || t.id === `meeting:${meetingId}` || t.id === `pantry:${meetingId}`);
+  if (known) return known.id;
+  const room = st.meetings[meetingId]?.room;
+  if (room === 'board') return `board:${meetingId}`;
+  if (room === 'pantry') return st.conversations.find((t) => t.kind === 'pantry')?.id ?? `pantry:${meetingId}`;
+  return `meeting:${meetingId}`;
+}
+
+/** The colleague-messages thread for a pair, in the daemon's own unordered-pair shape. */
+export const pairThreadId = (a: string, b: string): string => `agents:${[a, b].sort().join('+')}`;
+
+const displayOf = (st: State, role: string): string => st.agents[role]?.display ?? role;
+
+/** Insert or update one thread and keep the index newest-first. */
+function touchThread(st: State, id: string, kind: ThreadKind, make: () => Omit<Thread, 'id' | 'kind'>, patch: (t: Thread) => Thread): void {
+  const at = st.conversations.findIndex((t) => t.id === id);
+  const base: Thread = at >= 0 ? st.conversations[at] : { id, kind, ...make() };
+  const next = patch(base);
+  const rest = at >= 0 ? st.conversations.filter((_, i) => i !== at) : st.conversations;
+  st.conversations = [next, ...rest].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, MAX_THREADS);
+}
+
+/** A turn that arrived live, into the open thread's buffer (the last LIVE_TURNS of it). */
+function appendLive(st: State, id: string, turn: ThreadTurn): void {
+  st.live = { ...st.live, [id]: [...(st.live[id] ?? []), turn].slice(-LIVE_TURNS) };
 }
 
 const BUBBLE_MS = 6000;
@@ -273,7 +379,7 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'agent.tool_call': { const ag = a(e.agent); if (ag) { const tool = String(p.tool ?? ''); if (tool === 'browser.goto') { let url = ''; try { url = String((JSON.parse(String(p.summary ?? '{}')) as { url?: string }).url ?? ''); } catch { url = ''; } if (url) for (const [id, su] of Object.entries(st.surfaces)) if (su.streamKind === 'browser' && su.active && su.agent === e.agent) st.surfaces[id] = { ...su, url }; } ag.tool = toolIcon(tool); const t = targetFor(tool); if (t && ag.target !== t) { ag.target = t; ag.state = 'walking'; } else if (!t && ag.target && !ag.target.endsWith('room')) { ag.target = null; ag.state = 'walking'; } ag.bubble = { kind: 'action', text: actionVerb(tool, p.summary), until: nowMs + THOUGHT_MS }; if (tool === 'proposal.create' || tool === 'scheduler.request') emote(ag, 'idea', 3000); } if (String(p.tool) === 'shell.run') st.terminal = [...st.terminal.slice(-200), `$ ${String(p.summary ?? '')}`]; break; }
     case 'agent.tool_result': { const ag = a(e.agent); if (ag) { if (ag.state !== 'walking' || !ag.target) ag.state = 'working'; if (p.ok === false) { feel(ag, 'worried', 3000); emote(ag, 'sweat', 3000); } if (ag.bubble?.kind === 'action') ag.bubble = null; } break; }
     case 'shell.output': st.terminal = [...st.terminal.slice(-300), String(p.text ?? '')]; break;
-    case 'agent.spoke': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'speech', text: `→ ${String(p.to)}: ${String(p.text ?? '').slice(0, 120)}`, until: nowMs + BUBBLE_MS }; if (ag.state !== 'walking') ag.state = 'talking'; if (ag.mood === 'thinking') feel(ag, 'neutral', null); } if (p.to === 'owner') { st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `CEO → you: ${String(p.text ?? '')}` }]; if (e.agent === 'ceo') st.chat = [...st.chat.slice(-200), { ts: e.ts, from: 'ceo', text: String(p.text ?? '') }]; } break; }
+    case 'agent.spoke': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'speech', text: `→ ${String(p.to)}: ${String(p.text ?? '').slice(0, 120)}`, until: nowMs + BUBBLE_MS }; if (ag.state !== 'walking') ag.state = 'talking'; if (ag.mood === 'thinking') feel(ag, 'neutral', null); } if (p.to === 'owner') { st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `CEO → you: ${String(p.text ?? '')}` }]; if (e.agent === 'ceo') st.chat = [...st.chat.slice(-200), { ts: e.ts, from: 'ceo', text: String(p.text ?? '') }]; } { const from = String(e.agent ?? ''); const to = String(p.to ?? ''); const text = String(p.text ?? ''); if (to === 'owner' && from === 'ceo') { appendLive(st, 'dm:owner-ceo', { who: from, at: e.ts, text }); touchThread(st, 'dm:owner-ceo', 'dm', () => ({ title: 'You and the CEO', participants: ['owner', 'ceo'], updated: e.ts, open: false, last: null, turns: 0 }), (t) => ({ ...t, updated: e.ts, turns: t.turns + 1, last: { who: from, text, at: e.ts } })); } else if (from && to && to !== 'owner') { const tid = pairThreadId(from, to); appendLive(st, tid, { who: from, at: e.ts, text }); touchThread(st, tid, 'agents', () => ({ title: `${displayOf(st, from)} · ${displayOf(st, to)}`, participants: [from, to], updated: e.ts, open: false, last: null, turns: 0 }), (t) => ({ ...t, updated: e.ts, turns: t.turns + 1, last: { who: from, text, at: e.ts } })); } } break; }
     case 'job.checkpoint': { if (p.in_review) { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'in_review', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.job = null; ag.tool = null; ag.target = null; feel(ag, 'neutral', null); } } break; }
     // A trust review's return is about the *call* it read, not about the job it is attached to (SP5 §3, ruling Q8):
     // the review job itself has just finished, so flipping it back to `queued` would show a finished review as
@@ -290,16 +396,16 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'job.failed': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: p.requeued ? 'queued' : 'failed', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.badge = 'error'; ag.target = null; ag.tool = null; ag.job = null; ag.bubble = null; feel(ag, 'worried', 10000); emote(ag, 'sweat', 6000); } const overseer = overseerRole(st); const coo = a(overseer); if (coo && e.agent !== overseer) { const desk = e.agent ? st.agents[e.agent]?.desk : ''; if (desk) { coo.target = `desk:${desk}`; coo.state = 'walking'; } emote(coo, 'clipboard', 20000); } break; }
     case 'job.cancelled': { const j = st.jobs[String(e.job)]; if (j) st.jobs[j.id] = { ...j, status: 'cancelled', updated: e.ts }; const ag = a(e.agent); if (ag) { ag.state = 'idle_at_desk'; ag.job = null; ag.tool = null; ag.target = null; ag.bubble = null; feel(ag, 'neutral', null); } break; }
     case 'job.interrupted': { const ag = a(e.agent); if (ag) ag.badge = 'blocked'; break; }
-    case 'meeting.opened': { const id = String(p.id); const parts = (p.participants as string[]) ?? []; const room = String(p.room ?? 'meeting'); st.meetings[id] = { room, participants: parts, open: true, at: e.ts }; for (const r of parts) { const ag = a(r); if (ag) { ag.target = room === 'board' ? 'boardroom' : room === 'pantry' ? 'pantry' : 'meetingroom'; ag.state = 'walking'; } } st.board = boardOpened(p, e.ts) ?? st.board; st.pantry = pantryOpened(p, e.ts) ?? st.pantry; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${room} meeting opened: ${String(p.agenda ?? '')}` }]; break; }
-    case 'meeting.turn': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'speech', text: String(p.text ?? '').slice(0, 140), until: nowMs + BUBBLE_MS }; ag.state = 'talking'; } st.pantry = pantryTurn(st.pantry, e.agent, p, e.ts); break; }
-    case 'meeting.closed': { const id = String(p.id); if (st.meetings[id]) { st.meetings[id] = { ...st.meetings[id], open: false }; for (const r of st.meetings[id].participants) { const ag = a(r); if (ag) { ag.target = null; ag.state = 'walking'; } } } st.board = boardClosed(st.board, p, e.ts); st.pantry = pantryClosed(st.pantry, p, e.ts); st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `meeting closed → ${String(p.decision ?? '')}` }]; break; }
+    case 'meeting.opened': { const id = String(p.id); const parts = (p.participants as string[]) ?? []; const room = String(p.room ?? 'meeting'); st.meetings[id] = { room, participants: parts, open: true, at: e.ts }; for (const r of parts) { const ag = a(r); if (ag) { ag.target = room === 'board' ? 'boardroom' : room === 'pantry' ? 'pantry' : 'meetingroom'; ag.state = 'walking'; } } st.board = boardOpened(p, e.ts) ?? st.board; st.pantry = pantryOpened(p, e.ts) ?? st.pantry; { const tid = threadIdFor(st, id); const kind: ThreadKind = room === 'board' ? 'board' : room === 'pantry' ? 'pantry' : 'meeting'; const title = String(p.agenda ?? '') || `${room} meeting`; touchThread(st, tid, kind, () => ({ title, room, participants: parts, updated: e.ts, open: true, last: null, turns: 0 }), (t) => ({ ...t, title: t.title || title, room, participants: parts.length ? parts : t.participants, updated: e.ts, open: true })); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${room} meeting opened: ${String(p.agenda ?? '')}` }]; break; }
+    case 'meeting.turn': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'speech', text: String(p.text ?? '').slice(0, 140), until: nowMs + BUBBLE_MS }; ag.state = 'talking'; } st.pantry = pantryTurn(st.pantry, e.agent, p, e.ts); { const tid = threadIdFor(st, String(p.id ?? '')); const speaker = String(e.agent ?? p.role ?? ''); const text = String(p.text ?? ''); appendLive(st, tid, { who: speaker, at: e.ts, text }); const room = st.meetings[String(p.id ?? '')]?.room ?? 'meeting'; const kind: ThreadKind = room === 'board' ? 'board' : room === 'pantry' ? 'pantry' : 'meeting'; touchThread(st, tid, kind, () => ({ title: `${room} meeting`, room, participants: speaker ? [speaker] : [], updated: e.ts, open: true, last: null, turns: 0 }), (t) => ({ ...t, updated: e.ts, open: true, turns: t.turns + 1, last: { who: speaker, text, at: e.ts }, participants: speaker && !t.participants.includes(speaker) ? [...t.participants, speaker] : t.participants })); } break; }
+    case 'meeting.closed': { const id = String(p.id); if (st.meetings[id]) { st.meetings[id] = { ...st.meetings[id], open: false }; for (const r of st.meetings[id].participants) { const ag = a(r); if (ag) { ag.target = null; ag.state = 'walking'; } } } st.board = boardClosed(st.board, p, e.ts); st.pantry = pantryClosed(st.pantry, p, e.ts); { const tid = threadIdFor(st, id); if (st.conversations.some((t) => t.id === tid)) touchThread(st, tid, 'meeting', () => ({ title: 'meeting', participants: [], updated: e.ts, open: false, last: null, turns: 0 }), (t) => ({ ...t, open: false, updated: e.ts })); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `meeting closed → ${String(p.decision ?? '')}` }]; break; }
     case 'browser.session_started': st.surfaces[String(p.session)] = { streamKind: 'browser', streamId: String(p.session), active: true, agent: e.agent ?? undefined }; break;
     case 'browser.frame': { const id = String(p.session); const cur = st.surfaces[id] ?? { streamKind: 'browser' as const, streamId: id, active: true }; st.surfaces[id] = { ...cur, lastFrame: String(p.path), active: true }; st.frames[id] = { ...(st.frames[id] ?? { seq: 0 }), seq: Number(p.seq), path: String(p.path) }; break; }
     case 'browser.session_ended': { const id = String(p.session); if (st.surfaces[id]) st.surfaces[id] = { ...st.surfaces[id], active: false, endedAt: e.ts }; break; }
     case 'email.sent': st.mail = [...st.mail.slice(-100), { ts: e.ts, text: `→ ${String(p.to)}: ${String(p.subject ?? '')}${p.mock ? ' (mock)' : ''}` }]; break;
     case 'email.received': st.mail = [...st.mail.slice(-100), { ts: e.ts, text: `← ${String(p.from)}: ${String(p.subject ?? '')}` }]; break;
     case 'proposal.created': st.staleSnapshot = true; if (p.kind === 'message' && p.to === 'ceo') { const t = String(p.title ?? ''); if (!st.chat.some((c) => c.from === 'you' && c.text.startsWith(t))) st.chat = [...st.chat.slice(-200), { ts: e.ts, from: 'you', text: t }]; const ceo = a('ceo'); if (ceo) { emote(ceo, 'wave', 3000); feel(ceo, 'happy', 3000); } break; } st.pendingProposals = p.kind === 'message' ? st.pendingProposals : st.pendingProposals + 1; st.mail = [...st.mail.slice(-100), { ts: e.ts, text: `approval needed: ${String(p.title ?? p.kind)}` }]; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `proposal: ${String(p.title ?? p.kind)}` }]; break;
-    case 'proposal.resolved': st.staleSnapshot = true; st.pendingProposals = Math.max(0, st.pendingProposals - (p.kind === 'message' ? 0 : 1)); st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${String(p.kind)} ${p.approved === false ? 'rejected' : 'approved'}: ${String(p.outcome ?? '')}` }]; break;
+    case 'proposal.resolved': { st.staleSnapshot = true; st.pendingProposals = Math.max(0, st.pendingProposals - (p.kind === 'message' ? 0 : 1)); const rid = String(p.id ?? ''); const approved = p.approved !== false; const outcome = String(p.outcome ?? ''); const pend = st.decisions[rid]; if (pend) st.decisions = { ...st.decisions, [rid]: { ...pend, status: 'done', approved, outcome } }; const was = st.inbox.find((n) => n.id === rid); if (was) { st.inbox = st.inbox.filter((n) => n.id !== rid); st.decided = [{ id: was.id, kind: was.kind, title: was.title, path: was.path, created: was.created, resolved_at: e.ts, approved, chosen: pend?.chosen, outcome }, ...st.decided].slice(0, 20); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${String(p.kind)} ${p.approved === false ? 'rejected' : 'approved'}: ${String(p.outcome ?? '')}` }]; break; }
     case 'deploy.done': for (const ag of everyone()) { feel(ag, 'happy'); emote(ag, 'cheer', 4000); } st.deploys = [...st.deploys.slice(-20), { ts: e.ts, url: String(p.url ?? '') }]; st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `deployed ${String(p.url ?? '')}` }]; break;
     case 'heartbeat.started': { const ceo = a('ceo'); if (ceo) { ceo.state = 'working'; ceo.job = String(e.job); feel(ceo, 'thinking', null); } break; }
     case 'heartbeat.completed': st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `brief written: ${String(p.run ?? '')}` }]; st.staleSnapshot = true; break;

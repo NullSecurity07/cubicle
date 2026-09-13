@@ -198,13 +198,13 @@ describe('heartbeat as a resumable job', () => {
     expect(planOut.status).toBe('done');
     expect(vault.readText('Plans/plan.md')).toContain('Scaffold the site from Brand/');
     expect(requeueUnblocked(vault)).toBe(1);
-    // The board room is four model calls inside this step, not a sub-job, so the heartbeat passes straight
-    // through board_premortem, rules on the plan, and blocks on the CTO's division.plan instead.
+    // The board room runs inside this step, not as a sub-job, so the heartbeat passes straight through
+    // board_premortem, rules on the plan, and blocks on the CTO's division.plan instead.
     clock = new Date(clock.getTime() + 3600_000);
     expect((await runHeartbeat(deps, hb)).status).toBe('blocked');
     const boardJob = listJobs(vault).find((j) => j.type === 'board.premortem')!;
     expect(boardJob.status).toBe('done');
-    expect(readJob(vault, boardJob.id)!.body).toContain('### The Skeptic');
+    expect(readJob(vault, boardJob.id)!.body).toContain('Round 1 — advisor_skeptic');
     expect(existsSync(path.join(dir, 'Decisions'))).toBe(true);
     // finish the CTO's division.plan → it enqueues the scaffold job
     const divisionPlan = listJobs(vault).find((j) => j.type === 'division.plan')!;

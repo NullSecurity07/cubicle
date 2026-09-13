@@ -90,6 +90,13 @@ export const proposalCreate = defineTool({
       }
     }
     const { id, path } = createProposal(ctx.vault, { id: ctx.idempotencyKey ? idFromKey(kind === 'message' ? 'msg' : 'prop', ctx.idempotencyKey) : undefined, kind, from: ctx.roleId, to: 'owner', title, body, target, job: ctx.jobId ?? undefined }, ctx.roleId);
+    // SP8 ruling P8-6: under `board_dialogue: full` the brief is not finished when it is filed — the board
+    // pressure-tests it and its findings become the `## Pressure test` section. A tool cannot hold a board
+    // session, so it says so instead, and the daemon's discovery step finishes the document and takes the flag
+    // off. Until then the owner is not asked to rule on a half-written brief.
+    if (kind === 'founder_brief' && ctx.vault.constitution().board_dialogue !== 'brief') {
+      ctx.vault.updateNote(path, (n) => ({ data: { ...n.data, board_pending: true }, body: n.body }), ctx.roleId);
+    }
     if (kind === 'message') return { ok: true, text: `message ${id} sent to the owner at ${path}; this job is blocked until they answer`, data: { id, path }, block: { kind: 'message', id } };
     if (kind === 'threat_model') return { ok: true, text: `threat model ${id} filed at ${path}; this job is blocked until the owner approves it`, data: { id, path }, block: { kind: 'proposal', id } };
     return { ok: true, text: `proposal ${id} filed at ${path}; the owner decides`, data: { id, path } };

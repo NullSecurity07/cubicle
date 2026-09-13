@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { boardSessionOpen } from './world/owner.js';
 import { boardHeadline } from './ui/board.js';
-import { emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, overseerRole, vetoRole, statusText, CHECKING_TEXT, WAITING_TEXT, type Snapshot } from './state.js';
+import { applyConversation, conversationTurns, decideAcked, decideFailed, decideSent, LIVE_TURNS, pairThreadId, emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, overseerRole, vetoRole, statusText, CHECKING_TEXT, WAITING_TEXT, type Snapshot } from './state.js';
 
 const role = (o: Partial<Snapshot['roles'][number]> & { role: string }) => ({ display: o.role, sprite: o.role, desk: o.role, active: true, ...o });
 
@@ -437,5 +437,90 @@ describe('the constitution check is something the owner can read', () => {
     // An agent who has been fired is not checking anything: `applyEvent` ignores inactive roles outright.
     const off = { ...base, agents: { ...base.agents, [anAgent]: { ...base.agents[anAgent], active: false, state: 'offline' as const } } };
     expect(applyEvent(off, checking('email.send'), 1000).agents[anAgent].checking).toBeNull();
+  });
+});
+
+/** SP8 §1: the owner decides in the office, and the dispatcher's answer moves the row. */
+describe('decisions the owner makes', () => {
+  const row = { id: 'p1', kind: 'spend', title: 'Pay for the domain', path: '00 Inbox/x.md', created: '2026-09-13T09:00:00.000Z', decidable: 'approve' as const };
+  const withRow = () => applySnapshot(emptyState(), { ...snap, pendingProposals: 1, inbox: [row] });
+
+  it('a sent decision is busy until the ack, and busy again until the dispatcher applies it', () => {
+    let s = decideSent(withRow(), 'p1', { approved: true });
+    expect(s.decisions.p1).toMatchObject({ status: 'sending', approved: true });
+    s = decideAcked(s, 'p1');
+    expect(s.decisions.p1.status).toBe('applying');
+    s = applyEvent(s, ev('proposal.resolved', 'owner', { id: 'p1', kind: 'spend', approved: true, outcome: 'paid and recorded' }));
+    expect(s.decisions.p1).toMatchObject({ status: 'done', approved: true, outcome: 'paid and recorded' });
+    expect(s.inbox).toEqual([]);                                   // the row moved …
+    expect(s.decided[0]).toMatchObject({ id: 'p1', approved: true, outcome: 'paid and recorded', title: 'Pay for the domain' });
+    expect(s.decided[0].resolved_at).toBe('2026-09-02T00:00:00.000Z');
+    expect(s.pendingProposals).toBe(0);
+    expect(s.staleSnapshot).toBe(true);                            // … and the snapshot is re-read for the truth
+  });
+
+  it('a rejection carries the chosen option and reads as rejected', () => {
+    let s = decideSent(withRow(), 'p1', { approved: false, chosen: 2 });
+    s = applyEvent(s, ev('proposal.resolved', 'owner', { id: 'p1', kind: 'spend', approved: false, outcome: 'not this cycle' }));
+    expect(s.decided[0]).toMatchObject({ approved: false, chosen: 2, outcome: 'not this cycle' });
+  });
+
+  it('a refusal is kept on the decision itself, and nothing is moved', () => {
+    const s = decideFailed(decideSent(withRow(), 'p1', { approved: true }), 'p1', 'already resolved');
+    expect(s.decisions.p1).toMatchObject({ status: 'error', message: 'already resolved' });
+    expect(s.inbox).toHaveLength(1);
+  });
+
+  it('a resolution for a note the viewer never had still lands in the feed and changes nothing else', () => {
+    const s = applyEvent(withRow(), ev('proposal.resolved', 'daemon', { id: 'other', kind: 'idea_verdict', approved: true, outcome: 'build it' }));
+    expect(s.inbox).toHaveLength(1);
+    expect(s.decided).toEqual([]);
+    expect(s.feed.at(-1)!.text).toContain('build it');
+  });
+});
+
+/** SP8 §2: the conversation index, and what a live turn does to it. */
+describe('conversations', () => {
+  const base = applySnapshot(emptyState(), snap);
+  const at = (t: string) => `2026-09-13T${t}.000Z`;
+
+  it('a snapshot carries the index; an older daemon without one still works', () => {
+    const s = applySnapshot(emptyState(), { ...snap, conversations: [{ id: 'dm:owner-ceo', kind: 'dm' as const, title: 'You and the CEO', participants: ['owner', 'ceo'], updated: at('10:00:00'), open: false, last: null, turns: 2 }], decided: [] });
+    expect(s.conversations).toHaveLength(1);
+    expect(applySnapshot(s, snap).conversations).toEqual([]);
+  });
+
+  it('an opened meeting becomes a thread, its turns land on it, and closing it stops the LIVE dot', () => {
+    let s = applyEvent(base, { ...ev('meeting.opened', 'ceo', { id: 'm1', room: 'board', participants: ['ceo', 'advisor_skeptic'], agenda: 'Is this worth building?' }), ts: at('09:00:00') });
+    expect(s.conversations[0]).toMatchObject({ id: 'board:m1', kind: 'board', title: 'Is this worth building?', open: true, room: 'board' });
+    s = applyEvent(s, { ...ev('meeting.turn', 'advisor_skeptic', { id: 'm1', round: 1, text: 'Who is the first customer?' }), ts: at('09:01:00') });
+    expect(conversationTurns(s, 'board:m1')).toEqual([{ who: 'advisor_skeptic', at: at('09:01:00'), text: 'Who is the first customer?' }]);
+    expect(s.conversations[0]).toMatchObject({ turns: 1, updated: at('09:01:00') });
+    expect(s.conversations[0].last).toMatchObject({ who: 'advisor_skeptic', text: 'Who is the first customer?' });
+    s = applyEvent(s, { ...ev('meeting.closed', 'ceo', { id: 'm1', decision: 'build it' }), ts: at('09:02:00') });
+    expect(s.conversations[0].open).toBe(false);
+  });
+
+  it('the CEO speaking to the owner is the one thread the owner is in; colleagues get a thread per pair', () => {
+    let s = applyEvent(base, { ...ev('agent.spoke', 'ceo', { to: 'owner', text: 'I filed the brief.' }), ts: at('10:00:00') });
+    expect(s.conversations[0].id).toBe('dm:owner-ceo');
+    expect(s.conversations[0].participants).toEqual(['owner', 'ceo']);
+    expect(conversationTurns(s, 'dm:owner-ceo')).toHaveLength(1);
+    s = applyEvent(s, { ...ev('agent.spoke', 'cmo', { to: 'coo', text: 'Can you review this?' }), ts: at('10:05:00') });
+    const id = pairThreadId('cmo', 'coo');
+    expect(id).toBe('agents:cmo+coo');
+    expect(pairThreadId('coo', 'cmo')).toBe(id);                   // one thread per unordered pair
+    expect(s.conversations[0].id).toBe(id);                        // newest first
+    expect(conversationTurns(s, id)).toHaveLength(1);
+  });
+
+  it('the live buffer is bounded, and a fetched thread replaces it whole', () => {
+    let s = applyEvent(base, { ...ev('meeting.opened', 'ceo', { id: 'm2', room: 'meeting', participants: ['ceo'], agenda: 'Standup' }), ts: at('11:00:00') });
+    for (let i = 0; i < LIVE_TURNS + 12; i++) s = applyEvent(s, { ...ev('meeting.turn', 'ceo', { id: 'm2', round: i, text: `turn ${i}` }), ts: at('11:00:01') });
+    expect(s.live['meeting:m2']).toHaveLength(LIVE_TURNS);
+    expect(conversationTurns(s, 'meeting:m2')[0].text).toBe('turn 12');
+    s = applyConversation(s, 'meeting:m2', [{ who: 'ceo', at: at('11:00:00'), text: 'turn 0' }]);
+    expect(conversationTurns(s, 'meeting:m2')).toEqual([{ who: 'ceo', at: at('11:00:00'), text: 'turn 0' }]);
+    expect(s.live['meeting:m2']).toBeUndefined();
   });
 });

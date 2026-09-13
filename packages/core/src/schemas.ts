@@ -239,6 +239,14 @@ export const InboxFrontmatter = z.looseObject({
   call: StoredCall.optional(),
   target: z.string().optional(),   // file path for brand_change / charter_change / file_change
   job: z.string().optional(),      // originating job id
+  /**
+   * SP8 §3 (ruling P8-6): a `founder_brief` whose `## Pressure test` the board has not held yet. The brief is
+   * filed by the discovery job's own tool call, so it reaches `00 Inbox/` before the board can sit on it; this
+   * says the document is not finished and the owner should not be asked to rule on it. The daemon clears it
+   * when the session's findings are written into the brief. Absent on every other kind, and on a vault whose
+   * `board_dialogue` is `brief` — there the discovery job's own section is the section.
+   */
+  board_pending: z.boolean().optional(),
 });
 export type InboxFrontmatter = z.infer<typeof InboxFrontmatter>;
 
@@ -261,6 +269,16 @@ export const Constitution = z.object({
    * advises; only the owner rules, unless the owner says otherwise.
    */
   board_decides_after_hours: z.number().min(0).default(0),
+  /**
+   * How the board holds a pressure test (SP8 §3). `full` is the dialogue the owner reads: the chair states each
+   * of the five questions in its own words, the other two advisors answer it in turn, and the chair rules on
+   * each round in the open — six rounds, one transcript note, at most 17 model calls. `brief` is the four-call
+   * session the board ran before SP8: three pre-mortems and one merge, with nothing to read but the merge.
+   *
+   * It is a switch and not a tier: a vault that cannot spend 17 calls on one idea sets `brief` and loses the
+   * argument, not the verdict — both paths end on the same `readPressureVerdict` parse.
+   */
+  board_dialogue: z.enum(['full', 'brief']).default('full'),
   /**
    * One-time migrations this vault has already had applied, by id. A step that *lowers* a value the owner may
    * legitimately raise again cannot be gated on the value itself — it would silently undo the owner on every

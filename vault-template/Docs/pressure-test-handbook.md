@@ -1,7 +1,7 @@
 # Pressure-test handbook
 
 How this company judges a startup idea: the Paul Graham / YC test, in the order it has to be run. The board
-runs it on every idea card; the founder brief takes it once. `Docs/ideas-handbook.md` is how an idea is scored
+runs it on every idea card, and on the founder brief before you are asked to adopt it. `Docs/ideas-handbook.md` is how an idea is scored
 and decided — this is how it is *judged*.
 
 The stance: skeptical but not cynical. Assume the idea is wrong and try to prove it. Whatever survives is worth
@@ -175,8 +175,26 @@ automation is premature. A founder unwilling to do the unscalable thing probably
 And note what actually stops a copycat: network effects, switching costs, proprietary data or distribution,
 brand (rare this early), and **speed of learning**, which is the only moat a week-one company really has.
 
+## How the board runs it
+
+The board runs this as a dialogue you can read: six rounds, written to
+`Meetings/<stamp>-board-<subject>.md` and linked from the note you rule on. In each of the first five rounds —
+one per part above — the chair states that round's question in its own words, the other two advisors answer it
+in turn (120 words each, having read everything said so far), and the chair rules: one `FINDING:` line, which
+is what you read on the card as that part. When the two disagree, or one of them hedges, the chair challenges
+them by name once before ruling. Round six is the verdict and the rubric. At most 17 model calls;
+`board_dialogue: brief` in the constitution buys the older four-call session instead, with nothing to read but
+the answer.
+
+**The question rule: the board may not guess.** When nothing in front of it answers a round, the chair writes
+`QUESTION FOR THE OWNER: …` in place of that finding and moves on, and one cabin message — "The board needs N
+answers from you" — collects every one of them. The verdict still stands as given. What your answers change is
+the next session on that subject: it re-argues only the rounds that asked you something and keeps the rest
+verbatim.
+
 ## Where this shows up
 
 - Every `Ideas/<slug>.md` card: the board's verdict, its rubric and its findings under `## The board`.
-- `Memory/founder-brief.md`: one `## Pressure test` section, the five parts, on the company as a whole.
+- `Memory/founder-brief.md`: one `## Pressure test` section — the board's own five findings on the company.
 - The owner's `idea_verdict` note in `00 Inbox/`, which is where the ruling is actually made.
+- `Meetings/<stamp>-board-<subject>.md`: the transcript, and a cabin message for anything it had to ask you.

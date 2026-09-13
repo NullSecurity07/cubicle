@@ -13,7 +13,9 @@ import type { Headline } from './headlines.js';
 import { cut, planBits, briefBits } from './headlines.js';
 import { boardHeadline } from './board.js';
 import type { Ctx, View } from './content.js';
-import { agentView, bankView, browserStream, browserViewerView, briefTitle, byUpdated, callsToday, chatHtml, emptyHtml, esc, feedHtml, isOpen, isRoom, jobView, kindLabel, obsidianUrl, orgView, postOfficeView, queueView, roomView, section, teamJobs, terminalViewerView, who } from './content.js';
+import { agentView, bankView, browserStream, browserViewerView, briefTitle, byUpdated, callsToday, chatHtml, emptyHtml, esc, feedHtml, isOpen, isRoom, jobView, kindLabel, obsidianUrl, orgView, queueView, roomView, section, teamJobs, terminalViewerView, who } from './content.js';
+import { decisionView, decisionsView } from './decisions.js';
+import { MESSAGES, messagesView, roomThread } from './messages.js';
 import { md } from './markdown.js';
 
 /**
@@ -55,11 +57,16 @@ export function chartBars(def: SurfaceDef, s: State, max: number): Bar[] {
 export function viewFor(kind: string, s: State, ctx: Ctx): View {
   if (kind.startsWith('job:')) return jobView(kind.slice(4), s, ctx);
   if (kind.startsWith('agent:')) return agentView(kind.slice(6), s, ctx);
+  if (kind.startsWith('decision:')) return decisionView(kind.slice(9), s, ctx, { choice: ctx.ui?.choice });
   if (kind === 'ceo_office') kind = 'cabin';            // the CEO office is the cabin chat (visual notes §6)
+  // Messages has no map anchor: it is a top-bar tab, a quick-open entry and the key `C`, like `org` and `keys`.
+  if (kind === MESSAGES) return messagesView(s, ctx, { thread: ctx.ui?.thread ?? null, search: ctx.ui?.search ?? '' });
   const def = SURFACES[kind];
   if (def) return def.view(s, ctx);
   if (kind === 'org') return orgView(s, ctx);
-  if (isRoom(kind, s)) return roomView(kind, s);
+  // A room where people talk opens the conversation they had in it (SP8 §2): the board room, the meeting room and
+  // the pantry are transcripts first and furniture second. Before there is one, the room itself is what to show.
+  if (isRoom(kind, s)) { const t = roomThread(s, kind); return t ? messagesView(s, ctx, { thread: ctx.ui?.thread ?? t.id, search: ctx.ui?.search ?? '' }) : roomView(kind, s); }
   return { mode: 'drawer', title: kind, html: emptyHtml('doc', 'Nothing here yet') };
 }
 
@@ -119,7 +126,7 @@ for (const def of [
   {
     kind: 'postoffice', streamKind: 'list', streamId: () => 'inbox',
     headline: (s) => { const n = s.inbox.length || s.pendingProposals; return { head: n ? `${n} to approve` : 'Nothing to approve', short: n ? String(n) : 'Clear', lines: n ? s.inbox.slice(0, 3).map((p) => cut(`${kindLabel(p.kind)}: ${p.title}`, 28)) : ['Proposals land here', 'for your yes or no'], badge: n ? String(n) : undefined }; },
-    view: (s, ctx) => postOfficeView(s, ctx),
+    view: (s) => decisionsView(s),
   },
   {
     kind: 'bank', streamKind: 'chart', streamId: () => 'money',

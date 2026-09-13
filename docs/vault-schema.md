@@ -139,6 +139,8 @@ Body: freeform notes on how the team works, read into role prompts.
 | `board_decision` | string = `""` | the `Decisions/board-<slug>.md` note the session wrote |
 | `board_pressure` | string = `""` | SP5b: the board's pressure-test verdict in one word — `STRONG`, `WEAK` or `PIVOT REQUIRED` (`Docs/pressure-test-handbook.md`). Empty on a card the board has not pressure-tested |
 | `board_rubric` | object \| null = `null` | SP5b: the board's 0–2 score on core assumption, fatal flaws, pain, founder fit and why now, out of 10. Advisory — it never moves `score`, `score_inputs` or the keep/park/scrap band |
+| `board_transcript` | string = `""` | SP8: the `Meetings/<stamp>-board-<slug>.md` transcript of the dialogue that judged it, so the owner's note can link the argument. Empty under `board_dialogue: brief`, which holds no dialogue |
+| `board_questions` | string[] = `[]` | SP8: what that session could not answer from the material and asked the owner instead; the owner's note lists them and one cabin message from the chair carries them |
 
 Body: `## What changed`, `## Why it might matter`, `## Evidence`, `## Research`, `## What it would cost`, `## The board`, `## Score`, `## Decision`.
 
@@ -206,6 +208,7 @@ Body: freeform notes, appended to every expanded step's job goal.
 | `call` | object (optional) | stored tool call executed after approval (`spend`, `outbound_batch`, `file_change`) |
 | `target` | string (optional) | file a brand/charter/file change applies to (validated per kind) |
 | `job` | string (optional) |  |
+| `board_pending` | boolean (optional) | SP8: a `founder_brief` the board has not pressure-tested yet. The brief reaches the inbox from the discovery job's own tool call, so this says the `## Pressure test` section is not written and the owner should not be asked to rule on it; the daemon clears it when the board's findings are in the brief. Never set under `board_dialogue: brief` |
 
 ### Decision note (Decisions/*.md)
 
@@ -254,6 +257,7 @@ Body sections: Context / Options considered / Chosen / Why / Expected effect / R
 | `auto_approve_reorg` | boolean = `false` |  |
 | `offices` | record<string, string> = `{"chief_executive":"ceo","finance":"cfo","operations":"coo","security":"ciso","compliance":"clo","people":"chro","research":"research_manager","engineering":"cto"}` | office → role id, for the eight offices (`chief_executive, finance, operations, security, compliance, people, research, engineering`); gates, escalation and planning ask for the office, so re-staffing a seat is an edit here rather than a code change |
 | `board_decides_after_hours` | number = `0` | hours a plan waits for the owner's verdict before the board's own verdict stands; `0` (the default, and an absent key) means it waits indefinitely — the board advises, only the owner rules |
+| `board_dialogue` | `full` \| `brief` = `"full"` | how the board holds a pressure test: `full` (the default) is the dialogue — the chair states each of the five questions in its own words, the other two advisors answer it in turn, the chair rules on each round in the open, and the whole argument is written to a `Meetings/` transcript the owner's note links (six rounds, at most 17 model calls); `brief` is the pre-SP8 session — three pre-mortems and one merge, four calls and no transcript. Both end on the same verdict parse |
 | `migrations` | string[] = `[]` |  |
 
 ### Owner preferences (fenced `yaml` block in Memory/owner_preferences.md)

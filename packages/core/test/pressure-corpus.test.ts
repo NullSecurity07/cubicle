@@ -466,6 +466,47 @@ const CORPUS: Case[] = [
     verdict: 'PIVOT REQUIRED',
     rubric: R(2, 1, 2, 1, 1),
     wedge: 'the 40-site chain whose manager is the buyer',
+  },  {
+    // SP8 §3. The full board does not hand the parse one merged answer: it hands it the five round findings,
+    // rendered as the parts, with the chair's **last turn** under them. So the page the parse reads carries the
+    // chair's own words twice over — once as the finding it wrote closing the verdict round, and once as the
+    // machine lines it voted with — and it has to take the vote and not the prose above it. The flaws come from
+    // round two's finding, which is bullets, and the verdict from the bottom of the page.
+    name: '16. a multi-turn dialogue, rendered as the five parts with the chair\'s last turn under them (SP8)',
+    text: [
+      '## Core Assumption',
+      '',
+      'Nurseries will pay 40 a week to stop planning meals.',
+      '',
+      '## Three Fatal Flaws',
+      '',
+      'three ways this dies',
+      '- The county caterer holds the contract and renews every August',
+      '- Nobody has quoted the 7am van',
+      '',
+      '## Problem Validation',
+      '',
+      'A painkiller: they already pay a caterer every term.',
+      '',
+      '## Founder-Market Fit',
+      '',
+      'QUESTION FOR THE OWNER: what have you actually run before?',
+      '',
+      '## Brutal Verdict',
+      '',
+      'The pain is real and the fit is unknown; I am not pivoting on an unknown.',
+      '',
+      'FINDING: the wedge is right and the fit is the open question',
+      '',
+      'VERDICT: WEAK',
+      'RUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 0, why now 1',
+    ].join('\n'),
+    verdict: 'WEAK',
+    rubric: R(2, 1, 2, 0, 1),
+    flaws: [
+      'The county caterer holds the contract and renews every August',
+      'Nobody has quoted the 7am van',
+    ],
   },
 ];
 

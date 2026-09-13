@@ -22,6 +22,7 @@ import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, ga
 import { seedFirstJobs, seedFirstStream } from './first-run.js';
 import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId, hasApprovedBrief, rejectionAsksForNewIdea } from './discovery.js';
 import { writeRunway, accrueModelCost, enqueueRunway, dormancyMessage, revivalMessage } from './money.js';
+import { runBoardDialogue, linkBoardTranscript, runBriefBoardSession, type BoardSessionOpts } from './board-dialogue.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -311,14 +312,20 @@ const PLAN_EXCERPT_CHARS = 3000;
  * pre-mortem decision note because this is the one place the owner is being asked to rule, and a verdict asked
  * for without the case against it is not a decision.
  */
-export function planVerdictBody(opts: { board: 'pass' | 'return'; findings: string[]; plan: string; decidesAfterHours: number }): string {
+export function planVerdictBody(opts: { board: 'pass' | 'return'; findings: string[]; plan: string; decidesAfterHours: number; transcript?: string; questions?: string[] }): string {
   const findings = opts.findings.length
     ? opts.findings.map((f) => `- ${f}`).join('\n')
     : '- The board raised nothing that would sink the cycle.';
+  // SP8 §3: the argument the owner rules on is one click away, and what the board could not know is named
+  // rather than guessed at. Both empty under `board_dialogue: brief`, which holds no dialogue.
+  const transcript = opts.transcript ? `\n\nThe whole argument: [[${opts.transcript.replace(/\.md$/, '')}]].` : '';
+  const questions = opts.questions?.length
+    ? `\n\n${BOARD_OPEN_QUESTIONS}\n\n${opts.questions.map((q) => `- ${q.replace(/^QUESTION FOR THE OWNER:\s*/i, '')}`).join('\n')}\n\nThe verdict stands as given; answering these only changes what the board re-argues next time.`
+    : '';
   const deadline = opts.decidesAfterHours > 0
     ? `; after ${opts.decidesAfterHours} h the board's verdict stands (\`board_decides_after_hours\` in Memory/constitution.md)`
     : '';
-  return `The board ${opts.board === 'pass' ? 'passed' : 'returned'} this plan.\n\n${findings}\n\n## The plan\n\n${opts.plan.slice(0, PLAN_EXCERPT_CHARS)}\n\nSet \`approved: true\` to let the divisions plan against it, or \`approved: false\` to send it back. Work already approved keeps running while you decide${deadline}.`;
+  return `The board ${opts.board === 'pass' ? 'passed' : 'returned'} this plan.\n\n${findings}${transcript}${questions}\n\n## The plan\n\n${opts.plan.slice(0, PLAN_EXCERPT_CHARS)}\n\nSet \`approved: true\` to let the divisions plan against it, or \`approved: false\` to send it back. Work already approved keeps running while you decide${deadline}.`;
 }
 
 /**
@@ -412,14 +419,14 @@ export function firstOpenJob(ids: string[], statusOf: (id: string) => string | u
 }
 
 /** The system prompt an advisor speaks from: the hard rules plus its own charter and persona. */
-function advisorSystem(vault: Vault, role: string): string {
+export function advisorSystem(vault: Vault, role: string): string {
   const constitution = vault.readTextOrNull('Memory/constitution.md') ?? '';
   const note = vault.readNoteOrNull(`Roles/${role}.md`);
   return `# Constitution\n${constitution}\n\n# Your charter (${String(note?.data.display ?? role)})\n${note?.body ?? ''}\n\nAnswer in plain markdown, no preamble.`;
 }
 
 /** What the board calls an advisor by: the display name on its role note, else its id. */
-function advisorName(vault: Vault, role: string): string {
+export function advisorName(vault: Vault, role: string): string {
   return String(vault.readNoteOrNull(`Roles/${role}.md`)?.data.display ?? role);
 }
 
@@ -445,7 +452,7 @@ export interface BoardMerge {
  * re-ask returns the idea rather than passing it by default.
  */
 export function mergeBoardVerdict(text: string, kind: BoardSubject['kind'] = 'plan'): BoardMerge {
-  if (kind !== 'idea') {
+  if (kind === 'plan') {
     const verdict = /^\s*verdict:\s*return\b/im.test(text) ? 'return' : 'pass';
     const findings = text.split('\n')
       .map((l) => l.trim().match(/^[-*]\s+(.+)$/)?.[1]?.trim())
@@ -467,15 +474,28 @@ export function unansweredMerge(m: BoardMerge): BoardMerge {
   return { ...m, verdict: 'return', findings: [PRESSURE_UNANSWERED, ...m.findings].slice(0, PRESSURE_MAX_FLAWS) };
 }
 
-/** What one board session judges: this cycle's plan, or one idea out of the funnel. */
+/**
+ * What one board session judges: this cycle's plan, one idea out of the funnel, or the founder brief.
+ *
+ * `plan` is the pre-mortem and is the odd one out — it asks for `VERDICT: pass | return` and reads as it always
+ * has. `idea` and `brief` are both the **pressure test** (ruling P8-6: the owner's ask is that the framework
+ * "asks itself and talks to itself", and the brief is where it matters most), so every branch below that is
+ * about the pressure test asks `kind !== 'plan'` rather than naming the two.
+ */
 export interface BoardSubject {
-  kind: 'plan' | 'idea';
+  kind: 'plan' | 'idea' | 'brief';
   /** What the advisors read. */
   text: string;
   /** One line naming what is being judged: the meeting agenda, the decision note and the whiteboard all use it. */
   title: string;
-  /** `Ideas/<slug>` for an idea session; absent for a plan. */
+  /** `Ideas/<slug>` for an idea session, `founder-brief` for the brief; absent for a plan. Filenames only. */
   slug?: string;
+  /**
+   * What identifies this subject *across* sessions, when the slug does not. The brief's is its proposal id — two
+   * briefs on one vault are two documents, and a re-run after a rejection must not inherit the last one's
+   * findings. Ideas and plans key on their slug and need none.
+   */
+  key?: string;
 }
 
 /**
@@ -494,7 +514,7 @@ export const SUBJECT_CHARS = 4000;
  * so the advisors' questions, the chair's headings and the `## Three Fatal Flaws` heading `readPressureVerdict`
  * scopes its flaws to all come from core's one ordered list and cannot drift apart.
  */
-const ADVISOR_ASK: Record<PressurePart, string> = {
+export const ADVISOR_ASK: Record<PressurePart, string> = {
   'Core Assumption': 'the one belief that, if false, makes everything else irrelevant, written as a falsifiable sentence.',
   'Three Fatal Flaws': 'the three most likely ways this dies, each naming a mechanism specific to this idea, this market and this customer. "Competition is tough" and "user acquisition is hard" are not flaws.',
   'Problem Validation': 'vitamin, painkiller or hair on fire, and the ugly workaround these people use today.',
@@ -516,7 +536,7 @@ export function advisorPrompt(s: BoardSubject): string {
     return `This cycle's plan:\n\n${s.text.slice(0, SUBJECT_CHARS)}\n\nImagine the cycle has already failed. Write at most three bullets: the failure mode you see and the one change that would prevent it. One line each, concrete, no preamble.`;
   }
   return [
-    'An idea the company is considering:',
+    s.kind === 'brief' ? 'The founder brief the company is about to plan against:' : 'An idea the company is considering:',
     '',
     s.text.slice(0, SUBJECT_CHARS),
     '',
@@ -526,7 +546,7 @@ export function advisorPrompt(s: BoardSubject): string {
     '',
     // `Docs/` is a memory-search directory, so naming the handbook is enough for an advisor to fetch it; the
     // path itself is core's one constant (`PRESSURE_HANDBOOK_PATH`) rather than a literal repeated here.
-    `Every flaw must be specific to this idea; no generic advice. The catalogue to hunt in is \`${PRESSURE_HANDBOOK_PATH}\`.`,
+    `Every flaw must be specific to this ${s.kind === 'brief' ? 'company' : 'idea'}; no generic advice. The catalogue to hunt in is \`${PRESSURE_HANDBOOK_PATH}\`.`,
   ].join('\n');
 }
 
@@ -537,7 +557,7 @@ export function advisorPrompt(s: BoardSubject): string {
  * pressure-test words. The plan branch is byte-identical to what it was before SP5b.
  */
 export function chairPrompt(s: BoardSubject, transcript: string): string {
-  if (s.kind !== 'idea') {
+  if (s.kind === 'plan') {
     return `You chair the board. Your advisors wrote:\n\n${transcript}\n\nMerge them into ONE verdict for the owner on this plan. First line exactly "VERDICT: pass" or "VERDICT: return". Then at most four bullets, each a failure mode this plan does not answer and the change that fixes it. Return the plan only if running it as written would waste the cycle; you cannot delay.`;
   }
   return [
@@ -545,7 +565,7 @@ export function chairPrompt(s: BoardSubject, transcript: string): string {
     '',
     transcript,
     '',
-    'Merge them into ONE verdict for the owner on this idea. The test is: would Paul Graham fund this in its current form? Write exactly this, in this order:',
+    `Merge them into ONE verdict for the owner on ${s.kind === 'brief' ? 'this founder brief' : 'this idea'}. The test is: would Paul Graham fund this in its current form? Write exactly this, in this order:`,
     '',
     ...chairFormat(),
   ].join('\n');
@@ -559,7 +579,7 @@ export function chairPrompt(s: BoardSubject, transcript: string): string {
  * to, and a chair that complied as well as it could would still lose both — on the one extra call the
  * heartbeat's budget was raised to buy.
  */
-function chairFormat(): string[] {
+export function chairFormat(): string[] {
   return [
     `VERDICT: ${PRESSURE_VERDICTS.join(' or ')} — one of those three, and nothing else on that line.`,
     `RUBRIC: ${RUBRIC_DIMENSIONS.map((d) => `${RUBRIC_LABEL[d]} <0-2>`).join(', ')} — out of ${RUBRIC_MAX}.`,
@@ -605,7 +625,8 @@ export function chairReaskPrompt(s: BoardSubject, transcript: string, why: strin
 
 /** The agenda line the board room shows while the session is open. */
 export function boardAgenda(s: BoardSubject): string {
-  return s.kind === 'plan' ? 'Pre-mortem: this cycle\'s plan' : `Idea review: ${s.title}`;
+  if (s.kind === 'plan') return 'Pre-mortem: this cycle\'s plan';
+  return s.kind === 'brief' ? `Pressure test: ${s.title}` : `Idea review: ${s.title}`;
 }
 
 /**
@@ -629,19 +650,45 @@ export function boardAgenda(s: BoardSubject): string {
  * `chairText` is the chair's merged answer itself, on an idea it actually judged — the five parts the owner's
  * prompt asks for. Before ruling H3 it went out of scope here and three of the five reached nobody.
  */
+export interface BoardSessionResult extends BoardMerge {
+  advisors: string[];
+  transcript: string;
+  answered: number;
+  subject: BoardSubject;
+  calls: number;
+  reasked: boolean;
+  chairLost: string | null;
+  chairText: string;
+  /** SP8 §3: the `Meetings/` transcript of the dialogue. `''` under `board_dialogue: brief`, which holds none. */
+  notePath: string;
+  /** SP8 §3: what the board could not answer from the material and asked the owner instead. */
+  questions: string[];
+  /**
+   * SP8 §3: the round findings, by part. The same five the `chairText` renders, kept structured because the
+   * founder brief's `## Pressure test` is written out of them in its own shape (bold lead-ins, not headings)
+   * and re-parsing the rendered page to get them back would be reading our own output. Empty on the brief path.
+   */
+  findingsByPart: Partial<Record<PressurePart, string>>;
+}
+
 export async function runBoardSession(
-  deps: HeartbeatDeps, org: Org, subject: string | BoardSubject,
-): Promise<BoardMerge & { advisors: string[]; transcript: string; answered: number; subject: BoardSubject; calls: number; reasked: boolean; chairLost: string | null; chairText: string }> {
+  deps: HeartbeatDeps, org: Org, subject: string | BoardSubject, opts: BoardSessionOpts = {},
+): Promise<BoardSessionResult> {
   const vault = deps.vault;
+  // SP8 §3. `full` is the default and holds the argument in the open; `brief` is everything below this line,
+  // byte for byte what the board did before SP8. The switch is read here rather than at either call site so
+  // that every caller — the ideas board, the plan pre-mortem, a test calling this directly — gets the same
+  // session shape whichever way the vault is set.
+  if (vault.constitution().board_dialogue !== 'brief') return runBoardDialogue(deps, org, subject, opts);
   const s = boardSubject(subject);
   // Its one caller guards on `org.teams.board` first, but this is exported and tests call it directly: an org
   // with no board room must fail as "the board passed unreviewed", not as a TypeError inside the cycle (M5).
   // Nothing is emitted on this path either: no advisor walked to the table, so the room must not light up.
   const board = org.teams.board;
-  if (!board) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null, chairText: '' };
+  if (!board) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null, chairText: '', notePath: '', questions: [], findingsByPart: {} };
   const advisors = [...new Set([board.lead, ...board.members])].filter((r) => org.roles[r]).slice(0, 3);
   // A board whose charters are all gone is the same as no board: nobody walks to the table (review of Task 7).
-  if (advisors.length === 0) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null, chairText: '' };
+  if (advisors.length === 0) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null, chairText: '', notePath: '', questions: [], findingsByPart: {} };
   const leadTier = org.roles[board.lead]?.model_tier ?? 'medium';
   const tierFor = (roleId: string): ModelTier => org.roles[roleId]?.model_tier ?? leadTier;
   // The board room, on screen: the advisors walk to the table, the owner's chair fills, and the whiteboard says
@@ -658,7 +705,7 @@ export async function runBoardSession(
     notes.push(`### ${advisorName(vault, a)}\n${text ?? '(no answer: no model was available)'}`);
   }
   const transcript = notes.join('\n\n');
-  const chair = (prompt: string): Promise<string | null> => askAs(deps, board.lead, advisorSystem(vault, board.lead), prompt, s.kind === 'idea' ? CHAIR_IDEA_TOKENS : 600, leadTier);
+  const chair = (prompt: string): Promise<string | null> => askAs(deps, board.lead, advisorSystem(vault, board.lead), prompt, s.kind === 'plan' ? 600 : CHAIR_IDEA_TOKENS, leadTier);
   const merged = await chair(chairPrompt(s, transcript));
   // No answer at all is not a bad answer. With no model available the session falls open exactly as it did
   // before the pressure test existed, and `answered === 0` is what tells the owner nobody reviewed anything —
@@ -669,7 +716,7 @@ export async function runBoardSession(
   // The chair's own five parts, kept rather than dropped on the floor (ruling H3). Only on an idea, and only
   // when the answer was believed: the plan pre-mortem's record is byte-identical to what it always was, and a
   // refused answer is quoted back to the chair in the re-ask rather than filed as the board's verdict.
-  let chairText = s.kind === 'idea' && merged !== null && !merge.refused ? merged : '';
+  let chairText = s.kind !== 'plan' && merged !== null && !merge.refused ? merged : '';
   let calls = advisors.length + 1;
   let reasked = false;
   let chairLost: string | null = null;
@@ -689,7 +736,7 @@ export async function runBoardSession(
       chairText = second.refused ? '' : again;
     }
   }
-  const out = { ...merge, advisors, transcript, answered, subject: s, calls, reasked, chairLost, chairText };
+  const out: BoardSessionResult = { ...merge, advisors, transcript, answered, subject: s, calls, reasked, chairLost, chairText, notePath: '', questions: [], findingsByPart: {} };
   vault.events.emit({
     type: 'meeting.closed', agent: board.lead,
     payload: {
@@ -884,6 +931,9 @@ export interface IdeaVerdictFacts {
   rubric?: BoardRubric | null;
   /** The chair's merged five-part answer, as it stands on the card. Absent on a card judged before ruling H3. */
   chair?: string;
+  /** SP8 §3: the `Meetings/` transcript of the argument, and what the board had to ask the owner. */
+  transcript?: string;
+  questions?: string[];
   research: string;
   estimate: string;
   decidesAfterHours: number;
@@ -908,7 +958,11 @@ export function ideaVerdictBody(f: IdeaVerdictFacts): string {
     `- Cost: ${f.estimate || 'not estimated'}`,
     `- Board: ${f.board === 'pass' ? 'passed' : 'returned'}`,
     ...(f.pressure ? [`- Pressure test: ${f.pressure}${f.rubric ? ` · rubric ${renderRubric(f.rubric)}` : ''}`] : []),
+    // The argument itself, one click away: the owner reads how the board got here before they rule on it
+    // (SP8 §3). Absent on a card the `brief` board judged, which held no dialogue and wrote no transcript.
+    ...(f.transcript ? [`- Transcript: [[${f.transcript.replace(/\.md$/, '')}]]`] : []),
     '',
+    ...(f.questions?.length ? [BOARD_OPEN_QUESTIONS, '', ...f.questions.map((q) => `- ${q.replace(/^QUESTION FOR THE OWNER:\s*/i, '')}`), '', 'The verdict stands as given; answering these only changes what the board re-argues next time.', ''] : []),
     '## What the board said',
     '',
     findings,
@@ -920,6 +974,9 @@ export function ideaVerdictBody(f: IdeaVerdictFacts): string {
     `Set \`approved: true\` to take the recommendation (**${f.band}**), or \`approved: false\` to park it and tell me why. To overrule the recommendation, set \`chosen: 1\` for keep, \`2\` for park or \`3\` for scrap and \`approved: true\`${deadline}.`,
   ].join('\n');
 }
+
+/** The heading the open questions sit under, on both proposals the owner rules on (SP8 §3). */
+export const BOARD_OPEN_QUESTIONS = '## What the board could not answer';
 
 /**
  * The findings the board raised on a card, read back off its `## The board` section. The verdict note is
@@ -985,6 +1042,7 @@ export function fileIdeaVerdict(
       slug, title: card.data.title, score, band, reason, board,
       findings: opts.findings,
       pressure: card.data.board_pressure || undefined, rubric: card.data.board_rubric, chair: cardBoardChair(card.body),
+      transcript: card.data.board_transcript, questions: card.data.board_questions,
       research: card.data.research, estimate: card.data.estimate,
       decidesAfterHours: vault.constitution().board_decides_after_hours,
     }),
@@ -1103,7 +1161,7 @@ function gather(vault: Vault, now: Date, mail: string[], analytics: string | nul
  * defaults to `strong` for the CEO's own asks (via `ask`, below); board advisors pass their own charter's tier
  * so a `medium`-tier charter is never silently upgraded (the charter is a cost ceiling, not a floor).
  */
-async function askAs(deps: HeartbeatDeps, roleId: string, system: string, user: string, maxTokens = 800, tier: ModelTier = 'strong'): Promise<string | null> {
+export async function askAs(deps: HeartbeatDeps, roleId: string, system: string, user: string, maxTokens = 800, tier: ModelTier = 'strong'): Promise<string | null> {
   try {
     // `roleId` is who speaks; the budget is the house's whoever that is (SP4 §4, and `HeartbeatDeps.modelBudget`):
     // a board advisor who leads a division that spent its quota this morning must still get a strong model at
@@ -1394,7 +1452,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; researchJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; boardNote?: string; boardQuestions?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; researchJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -1694,6 +1752,28 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
       case 'discovery': {
         const org = loadOrg(vault);
         const ceo = officeHolder(org, 'chief_executive');
+        /**
+         * The board's pressure test on a brief that is waiting for one (ruling P8-6), run **first** so that
+         * every cycle is a recovery pass (ruling R-T3-1).
+         *
+         * Held only at the bottom of this step, it was reachable on exactly one cycle — the one that resumed
+         * when the discovery job went terminal — and a brief that missed it was stuck for good: `board_pending`
+         * has no other writer, `briefProposalOpen` makes `status.run` false so every later cycle returns above
+         * it, and the owner is left with a note they cannot decide, no transcript, and no plan. So it runs
+         * before anything in this step can `break`, and it is a no-op when nothing is pending.
+         */
+        const pressureTestTheBrief = async (where: string): Promise<string> => {
+          try {
+            const held = await runBriefBoardSession(deps, org);
+            return held ? `; the board pressure-tested the founder brief (${held.verdict}${held.questions.length ? `, ${held.questions.length} question(s) for you` : ''})` : '';
+          } catch (err) {
+            // The flag stays on, which is what makes the next cycle try again rather than strand the note.
+            vault.events.emit({ type: 'daemon.warning', agent: ceo, job: jobId, payload: { where, message: `the board could not pressure-test the founder brief; it will try again next cycle: ${(err as Error).message.slice(0, 200)}` } });
+            return '';
+          }
+        };
+        const recovered = await pressureTestTheBrief('discovery.recovery');
+        if (cancelled()) return { status: 'cancelled' };
         if (!state.discoveryJob) {
           // A discovery job that is still being worked on means the company is reading right now, whatever the
           // cache says. Checked from the vault before anything else, because a kill in the one write between
@@ -1723,9 +1803,9 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
             status = currentDiscoveryStatus(vault, now());
           }
           const askedNote = asked ? `asked the founder interview (${asked})` : '';
-          if (!status.run) { done(i, [askedNote, status.why].filter(Boolean).join('; ')); break; }
+          if (!status.run) { done(i, [askedNote, status.why].filter(Boolean).join('; ') + recovered); break; }
           const id = enqueueDiscovery(vault, org, status);
-          if (!id) { done(i, [askedNote, status.why].filter(Boolean).join('; ')); break; }
+          if (!id) { done(i, [askedNote, status.why].filter(Boolean).join('; ') + recovered); break; }
           state = { ...state, discoveryJob: id }; saveState(state);
           return block(id, `waiting for discovery ${id}${askedNote ? `; ${askedNote}` : ''}`);
         }
@@ -1735,10 +1815,14 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           // make this cycle's brief say the team plans had not finished even after every one of them did.
           const w = waitForDiscovery(state.discoveryJob, (min) => `discovery ${state.discoveryJob} still ${sub?.data.status ?? 'missing'} after ${min} min — planning from what there is`);
           if (w) return w;
-          break;
+          break;   // `recovered` already ran: a brief left pending by an earlier cycle is finished either way
         }
         if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
-        done(i, `discovery ${sub.data.status}`);
+        // …and again now the job has filed its brief, so the document is finished inside the cycle that wrote
+        // it rather than at the start of the next one. A no-op when the pass above already held the session.
+        const briefBoard = recovered || await pressureTestTheBrief('discovery');
+        if (cancelled()) return { status: 'cancelled' };
+        done(i, `discovery ${sub.data.status}${briefBoard}`);
         break;
       }
       case 'ideas_board': {
@@ -1799,7 +1883,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // beside these is already wrapped.
         const card = readIdea(vault, idea.id);
         if (!card) { done(i, `board skipped: Ideas/${idea.id} disappeared before the session${refiledNote}`); break; }
-        const session = await runBoardSession(deps, org, { kind: 'idea', text: `# ${card.data.title}\n\n${card.body}`, title: card.data.title, slug: idea.id });
+        const session = await runBoardSession(deps, org, { kind: 'idea', text: `# ${card.data.title}\n\n${card.body}`, title: card.data.title, slug: idea.id }, { decision: `board-${idea.id}` });
         if (cancelled()) return { status: 'cancelled' };
         // The record, closed in the same tick and depending on this heartbeat so no worker picks it up.
         const boardJob = createJob(vault, {
@@ -1830,7 +1914,11 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         catch (err) { vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'ideas_board', message: `could not write the board decision note: ${(err as Error).message}` } }); }
         // The verdict goes on the card before the proposal is filed: a crash between the two must leave the
         // dossier true, not leave the owner ruling on a card that never heard from the board.
-        updateIdea(vault, idea.id, { board_verdict: session.verdict, board_decision: decisionRel, board_pressure: session.pressure ?? '', board_rubric: session.rubric }, 'daemon', {
+        // The transcript path and the open questions go on the card beside the verdict: `fileIdeaVerdict`
+        // rebuilds the owner's note from the card after a kill, so the link to the argument has to live where
+        // the findings do (SP8 §3).
+        linkBoardTranscript(vault, session.notePath, `board-${idea.id}`, board.lead);
+        updateIdea(vault, idea.id, { board_verdict: session.verdict, board_decision: decisionRel, board_pressure: session.pressure ?? '', board_rubric: session.rubric, board_transcript: session.notePath, board_questions: session.questions }, 'daemon', {
           heading: '## The board',
           content: renderBoardSection({
             verdict: session.verdict, advisors: session.advisors.length, date: now().toISOString().slice(0, 10),
@@ -2014,7 +2102,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           done(i, `board returned: ${unkept.length} unkept idea(s), second time`);
           break;
         }
-        const session = await runBoardSession(deps, org, plan);
+        const session = await runBoardSession(deps, org, plan, { decision: `premortem-${hbId}` });
         if (cancelled()) return { status: 'cancelled' };
         // The job note is the record of the session, not a unit of work: it is created with `depends_on` on this
         // heartbeat (so no worker can pick it up while the heartbeat runs) and closed in the same tick. Its id is
@@ -2041,13 +2129,14 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // writes it as a validated Decisions/ note rather than trusting the board to hand-roll the frontmatter
         // and the six sections. Written BEFORE the verdict becomes durable in the state file: a crash in the
         // other order resumes into the "already run" branch above and the cycle loses its pre-mortem for good.
+        linkBoardTranscript(vault, session.notePath, `premortem-${hbId}`, board.lead);
         try { writeBoardPremortemDecision(vault, hbId, boardJob, session.verdict, session.findings, board.lead, now(), session.answered); }
         catch (err) { vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'board_premortem', message: `could not write the pre-mortem decision note: ${(err as Error).message}` } }); }
         // The guard's warnings lead: an idea nobody has ruled on yet does not return the plan, but the CEO and
         // the owner should still read that the plan leans on one. They take what is left of the budget after
         // the board's own findings, never the other way round — see `planReturnFindings`.
         const boardFindings = planReturnFindings(guardFindings, session.findings);
-        state = { ...state, boardJob, boardVerdict: session.verdict, boardFindings }; saveState(state);
+        state = { ...state, boardJob, boardVerdict: session.verdict, boardFindings, boardNote: session.notePath, boardQuestions: session.questions }; saveState(state);
         if (session.verdict === 'return') {
           const out = returnPlan(boardFindings, 'board return');
           if (out) return out;
@@ -2110,7 +2199,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           const { id, path: rel } = createProposal(vault, {
             id: planVerdictId(hbId), kind: 'plan_verdict', from: ceo, to: 'owner', job: jobId,
             title: `Approve this cycle's plan`,
-            body: planVerdictBody({ board, findings: state.boardFindings ?? [], plan, decidesAfterHours }),
+            body: planVerdictBody({ board, findings: state.boardFindings ?? [], plan, decidesAfterHours, transcript: state.boardNote, questions: state.boardQuestions }),
           }, ceo);
           // The board's verdict lives on the note, not in cache state: a later heartbeat rules on this plan after
           // a restart, and it must know what the board actually said.

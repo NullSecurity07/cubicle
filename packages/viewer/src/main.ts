@@ -3,11 +3,13 @@ import './ui/app.css';
 import Phaser from 'phaser';
 import { OfficeScene } from './scenes/OfficeScene.js';
 import { Net, resolveWs } from './net.js';
-import { emptyState, applyEvent, applySnapshot, tick, withFrameSeq, type State, type CubicleEvent, type Snapshot } from './state.js';
+import { applyConversation, decideAcked, decideFailed, decideSent, emptyState, applyEvent, applySnapshot, tick, withFrameSeq, type State, type CubicleEvent, type Snapshot, type ThreadTurn } from './state.js';
 import { Panel, SURPRISE_ME, type Origin } from './ui/panel.js';
 import { TopBar } from './ui/bar.js';
 import { applyTheme, currentTheme, themeFromQuery, THEMES } from './ui/tokens.js';
-import type { Ctx } from './ui/content.js';
+import { emptyUi, vaultPathOf, type Ctx } from './ui/content.js';
+import { COMMENT_REQUIRED, commentRequired, decidableOf, decideStateFor, decisionKey } from './ui/decisions.js';
+import { MESSAGES, roomThread } from './ui/messages.js';
 import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
 import { TILE } from './world/tileset.js';
@@ -35,7 +37,8 @@ const fps: Record<string, number> = {};
 const bar = new TopBar();
 const { url, token } = resolveWs();
 const vaultName = new URLSearchParams(location.search).get('vault') ?? '';
-const ctx: Ctx = { frames, tokenQuery: token ? `?token=${encodeURIComponent(token)}` : '', vaultName, fps };
+const ui = emptyUi();
+const ctx: Ctx = { frames, tokenQuery: token ? `?token=${encodeURIComponent(token)}` : '', vaultName, fps, ui };
 
 const scene = new OfficeScene();
 const game = new Phaser.Game({ type: Phaser.AUTO, parent: 'game', backgroundColor: THEMES[currentTheme()].colors.bg, pixelArt: true, roundPixels: true, scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' }, scene: [scene] });
@@ -91,7 +94,7 @@ function viewOf(kind: string): ReturnType<typeof viewFor> {
   try { ctx.floorLabels ??= Object.fromEntries(scene.floorSummary().map((f) => [f.floor, f.label])); } catch { /* the scene has not created its world yet */ }
   return viewFor(kind, state, ctx);
 }
-const panel = new Panel({ viewOf, onOpen: (kind) => open(kind), onLocate: (target) => scene.focusOn(target), onEmpty: () => scene.restoreZoom(), onChat: (text) => sendChat(text) });
+const panel = new Panel({ viewOf, onOpen: (kind) => open(kind), onLocate: (target) => scene.focusOn(target), onEmpty: () => scene.restoreZoom(), onChat: (text) => sendChat(text), onAction: (act, o) => onAction(act, o), onVaultLink: (url) => openVaultLink(url) });
 // Built, not shown. The first-run card is the other first-contact message; the mark waits until the first snapshot
 // says the card is not coming, or until the card has gone (ui/firstrun.ts `onDismissed`).
 const coach = coachMark('Drag to pan, scroll to zoom, click anything in the office. Press ? for shortcuts.');
@@ -141,9 +144,63 @@ window.addEventListener('resize', () => minimap.layout());
 function open(kind: string, origin?: Origin, opts: { zoom?: boolean } = {}): void {
   if (kind === 'ceo_office') kind = 'cabin';           // the CEO office is the owner's channel
   const zoom = opts.zoom ?? true;
+  // Messages opens on a thread: the room's own transcript when a room was clicked, else the newest conversation.
+  // The fetch is the op — the index carries only the last line — and `viewFor` stays pure.
+  if (kind === MESSAGES || roomThread(state, kind)) {
+    const want = (kind === MESSAGES ? null : roomThread(state, kind)?.id ?? null) ?? ui.thread ?? state.conversations[0]?.id ?? null;
+    if (want && want !== ui.thread) ui.thread = want;
+    if (ui.thread) net.conversation(ui.thread);
+  }
   panel.show(kind, viewOf(kind), origin ?? undefined);
   if (kind.startsWith('agent:')) scene.focusOn(kind, { zoom });
-  else if (!kind.includes(':') && kind !== 'org' && kind !== 'keys') scene.focusOn(kind, { zoom });
+  else if (!kind.includes(':') && kind !== 'org' && kind !== 'keys' && kind !== MESSAGES) scene.focusOn(kind, { zoom });
+}
+
+/** The comment the owner has typed under a decision, if the reader is open. */
+const commentNow = (): string => document.querySelector<HTMLInputElement>('#panel-body input[data-key="comment"]')?.value.trim() ?? '';
+
+/**
+ * The owner's yes or no (SP8 §1). The op is sent, the reader says "Decided · applying…" until `decide.ack` and then
+ * until the dispatcher's `proposal.resolved`, and a refusal — an error reply, a socket that is down, a send back
+ * with nothing said — is shown in the bar rather than swallowed.
+ */
+function decide(id: string, approved: boolean, comment: string): void {
+  const note = state.inbox.find((n) => n.id === id);
+  if (!note) return;
+  const status = decideStateFor(note, state.decisions[id])?.status;
+  if (status === 'sending' || status === 'applying') return;
+  const d = decidableOf(note);
+  const chosen = d === 'choose' ? ui.choice[id] : undefined;
+  if (d === 'choose' && approved && !chosen) return;
+  if (commentRequired(d, approved) && !comment) { state = decideFailed(state, id, COMMENT_REQUIRED); refresh(); return; }
+  state = decideSent(state, id, { approved, chosen });
+  refresh();
+  if (!net.decide(id, { approved, chosen, comment })) { state = decideFailed(state, id, 'The daemon is not connected, so nothing was decided.'); refresh(); }
+}
+
+/** A control inside the open view was used (ui/panel.ts routes every `data-act` here). */
+function onAction(act: string, o: { comment: string; text: string }): void {
+  const cur = panel.current ?? '';
+  if (act.startsWith('search:')) { ui.search = act.slice(7); refresh(); return; }
+  if (act.startsWith('thread:')) { const id = act.slice(7); ui.thread = id; net.conversation(id); refresh(); return; }
+  if (act === 'send') { if (o.text) { sendChat(o.text); panel.clearComposer(); } return; }
+  if (!cur.startsWith('decision:')) return;
+  const id = cur.slice('decision:'.length);
+  if (act.startsWith('choose:')) { ui.choice[id] = Number(act.slice(7)); refresh(); return; }
+  if (act === 'decide:yes' || act === 'decide:no') decide(id, act === 'decide:yes', o.comment);
+}
+
+/**
+ * An `obsidian:` link, which the office window must never navigate to (SP8 ruling P8-4): the Tauri shell opens it
+ * where there is one, and otherwise the note's path goes to the clipboard so the owner can find it themselves.
+ */
+function openVaultLink(url: string): void {
+  const shell = (window as unknown as { __cubicle?: { openExternal?: (u: string) => void } }).__cubicle;
+  if (typeof shell?.openExternal === 'function') { shell.openExternal(url); return; }
+  const path = vaultPathOf(url) || url;
+  void navigator.clipboard?.writeText(path)
+    .then(() => toast(`Copied the note's path — open it in Obsidian`))
+    .catch(() => toast(`The note is at ${path}`));
 }
 
 function refresh(): void {
@@ -180,12 +237,31 @@ bindKeys({
   // `0` fits the whole tower. One implementation, in the scene: this used to be a second, instant one here,
   // and the scene's own `keys.ZERO` fired on the same keypress, so the two fights over the camera were visible.
   lobby: () => scene.focusOn('noticeboard'), fit: () => scene.fitTower(),
-  talk: () => open('cabin'), queue: () => open('noticeboard'), brief: () => open('newsstand'), plan: () => open('whiteboard'), org: () => open('org'),
+  talk: () => open('cabin'), messages: () => open(MESSAGES), queue: () => open('noticeboard'), brief: () => open('newsstand'), plan: () => open('whiteboard'), org: () => open('org'),
   pause: () => time.togglePlay(), prev: () => time.step(-1), next: () => time.step(1),
   minimap: () => minimapHook.toggle(), help: () => open('keys'), quickopen: () => quick.open(),
 // The two aria-modal cards own the keyboard while they are up: one Tab out of their text field used to leave `T`
 // opening the cabin sheet underneath and `1`-`4` flying the camera behind them.
-}, () => firstRun.visible || quick.visible);
+// A decision reader owns the keyboard too: `1`-`4` would otherwise fly the camera while the owner is picking
+// between four numbered options, and `A`/`R` are the two buttons in front of them.
+}, () => firstRun.visible || quick.visible || (panel.current?.startsWith('decision:') ?? false));
+
+// `A` approve/adopt, `R` reject/send back, `1`-`9` pick an option — only while a decision is open, never while the
+// owner is typing a comment (ui/decisions.ts owns the table; this is the binding).
+window.addEventListener('keydown', (e) => {
+  const cur = panel.current ?? '';
+  if (!cur.startsWith('decision:') || firstRun.visible || quick.visible) return;
+  const id = cur.slice('decision:'.length);
+  const note = state.inbox.find((n) => n.id === id);
+  if (!note) return;
+  const el = e.target as HTMLElement | null;
+  const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+  const hit = decisionKey(e, { decidable: decidableOf(note), options: note.options?.length ?? 0 }, typing);
+  if (!hit) return;
+  e.preventDefault();
+  if (hit.act === 'choose') { ui.choice[id] = hit.n; refresh(); return; }
+  decide(id, hit.act === 'yes', commentNow());
+});
 
 /**
  * A live frame arrived (from the daemon or `__cubicle.pushFrame`): remember it, count it, measure the rate, refresh
@@ -244,6 +320,14 @@ const net = new Net(url, token, {
     rebuildReplayTo(0);
     bar.setConn(true, `replay · ${replayBuffer.length} events`);
   },
+  onDecideAck(id) { state = decideAcked(state, id); refresh(); },
+  onConversation(id, turns) { state = applyConversation(state, id, turns as ThreadTurn[]); refresh(); },
+  // An error the daemon ties to a decision belongs in that reader's own state line; anything else is a toast.
+  onError(message, id) {
+    const pending = id ?? Object.keys(state.decisions).find((k) => state.decisions[k].status === 'sending' || state.decisions[k].status === 'applying') ?? null;
+    if (pending && state.decisions[pending]) { state = decideFailed(state, pending, message); refresh(); return; }
+    toast(message);
+  },
   onStatus(ok, detail) { state = { ...state, connected: ok }; bar.setConn(ok, ok ? 'live' : detail); },
 });
 net.connect();
@@ -257,7 +341,12 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
   }));
 }
 
+// Whatever the shell put here first is kept: Tauri injects `openExternal` on this same object before the module
+// runs, and a bare assignment would throw away the one hook that keeps `obsidian:` links out of the office window.
+// Spread, not `Object.assign` onto it: `state` is a getter, and assigning would copy today's value and freeze it.
+const shellHooks = (window as unknown as { __cubicle?: Record<string, unknown> }).__cubicle ?? {};
 (window as unknown as { __cubicle: unknown }).__cubicle = {
+  ...shellHooks,
   get state() { return state; },
   agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), desks: () => scene.debugDesks(), stand: (name: string) => scene.debugStand(name), surfaces: () => debugSurfaces(), open,
   // Both drop the floor pin: they are the console driving the camera by hand, exactly like a drag or the wheel.
@@ -274,6 +363,8 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
   // A pushed frame can belong to a stream the daemon never announced (the screenshot script injects one), and a frame
   // with no surface behind it has nothing bound to draw it. Register the surface first, then let the frame land.
   pushFrame: (id: string, dataUrl: string) => { if (!state.surfaces[id]) { state = applyEvent(state, { ts: new Date().toISOString(), type: 'browser.session_started', agent: null, job: null, payload: { session: id } }); refresh(); } onFrameData(id, dataUrl); },
+  /** What the sheet has picked (the open thread, the search, a chosen option) — read and driven by the click test. */
+  ui: () => ui,
 };
 
 let last = performance.now();

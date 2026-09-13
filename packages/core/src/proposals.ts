@@ -98,3 +98,20 @@ export function listInbox(vault: Vault): { path: string; data: InboxFrontmatter;
 export function findInboxById(vault: Vault, id: string): { path: string; data: InboxFrontmatter; body: string } | null {
   return listInbox(vault).find((n) => n.data.id === id) ?? null;
 }
+
+/**
+ * What the owner is told when they try to decide a founder brief the board is still arguing (ruling R-T3-3).
+ *
+ * One sentence, in core, because three surfaces have to say it and none of them may disagree: the `decide` op,
+ * the dispatcher's own skip when the owner sets `approved:` in Obsidian, and the office's disabled action bar.
+ */
+export const BOARD_STILL_SITTING = 'the board is still pressure-testing this brief; it will be ready to adopt in a moment, with the board\'s findings in it';
+
+/**
+ * True while a proposal is a founder brief whose pressure test the board has not written yet (SP8, ruling
+ * P8-6). Nothing may adopt it in that state: what would be adopted is the author's draft, and the session
+ * finishing a moment later would rewrite a note the owner had already resolved.
+ */
+export function boardStillSitting(data: { kind?: unknown; board_pending?: unknown }): boolean {
+  return data.kind === 'founder_brief' && data.board_pending === true;
+}

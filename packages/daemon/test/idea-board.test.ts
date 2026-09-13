@@ -6,7 +6,7 @@ import { scaffoldVault, Vault, loadOrg, listJobs, listInbox, readJob, updateJob,
 import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_STEPS, NON_WORK_TYPES, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob, runBoardSession, chairPrompt, CHAIR_IDEA_TOKENS, BOARD_JOB_CHAIR_SECTION } from '../src/index.js';
 import { estimateJobId, researchJobId } from '../src/discovery.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
-import { letTheBoardDecide } from './helpers/board-switch.js';
+import { holdTheBriefBoard, letTheBoardDecide } from './helpers/board-switch.js';
 import { adoptFounderBrief } from './helpers/brief.js';
 
 let dir: string;
@@ -208,6 +208,7 @@ describe('the ideas_board step (spec §3.3/§3.5)', () => {
   }, 30000);
 
   it('spends at most four model calls on the board: one turn per advisor and one chair merge', async () => {
+    holdTheBriefBoard(vault);   // the four-call session is what this case is about (SP8 §3)
     scoredCard(vault, 'Meal kits for nurseries', { value: 5, evidence: 4, effort: 4, fit: 5 });
     scoredCard(vault, 'A newsletter about spoons', { value: 4, evidence: 4, effort: 4, fit: 4 });
     const llm = orgLlm({ ideaVerdict: 'pass' });
@@ -401,6 +402,7 @@ describe('the board pressure-tests an idea, on a budget (spec §2, §3)', () => 
   }, 30000);
 
   it('the session costs three advisors and one chair, and one more only when the chair hedges', async () => {
+    holdTheBriefBoard(vault);
     const org = loadOrg(vault);
     const subject = { kind: 'idea' as const, text: '# Meal kits', title: 'Meal kits', slug: 'meal-kits' };
     const scripted = (answers: string[]): { chat: () => Promise<unknown>; promptBudget: () => number } => {
@@ -431,6 +433,7 @@ describe('the board pressure-tests an idea, on a budget (spec §2, §3)', () => 
   }, 30000);
 
   it('the idea chair is given room for the whole shape, and the plan chair is not touched (ruling H4)', async () => {
+    holdTheBriefBoard(vault);
     const org = loadOrg(vault);
     const caps: number[] = [];
     const llm = {
