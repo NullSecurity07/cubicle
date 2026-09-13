@@ -522,7 +522,7 @@ describe('the CEO asks only what the owner has not already said (spec §5)', () 
     // Not `covered`: the owner is looking at a message, and only an `asked` transcript can be closed by their
     // reply — `captureInterviewAnswer` would otherwise never record it, whatever they typed.
     expect(interviewPhase(t)).toBe('asked');
-    expect(captureInterviewAnswer(vault, 'The buyer is the nursery manager.', new Date())).toBe(true);
+    expect(captureInterviewAnswer(vault, 'The buyer is the nursery manager, and she is the one who signs off the menu.', new Date())).toBe(true);
     expect(listInbox(vault).filter((n) => n.data.id === interviewMessageId('ceo'))).toHaveLength(1);
   });
 

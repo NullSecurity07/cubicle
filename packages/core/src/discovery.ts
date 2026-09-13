@@ -1,5 +1,7 @@
 import type { Vault } from './vault.js';
 import { sha256, nowIso } from './fs.js';
+import { parseNote } from './frontmatter.js';
+import { listInbox } from './proposals.js';
 import { PRESSURE_HANDBOOK_PATH } from './pressure.js';
 
 /**
@@ -89,6 +91,82 @@ export function discoveryDigest(vault: Vault, prompt = '', inputs: DiscoveryInpu
  */
 export function ownerSaid(body: string): string {
   return body.split(/^## CEO\s*$/m)[0].replace(/^#\s[^\n]*\r?\n?/, '').trim();
+}
+
+/** The company's name note — and the target of the `brand_change` proposal the CEO's three ideas are filed as. */
+export const BRAND_NAME_PATH = 'Brand/name.md';
+
+/** The phrase itself. Never tested against a whole note on its own — see `asksForSurprise`. */
+export const SURPRISE_ME = /\bsurprise me\b/i;
+
+/**
+ * Whether this note is the owner asking the CEO to propose the three ideas.
+ *
+ * **Anchored**, and in one place (whole-branch review, Important 3). The cabin tested it anchored — a line that
+ * is only the phrase, or the phrase in the last three lines — while the material filter tested it bare, so a
+ * 547-word founder brief that happened to describe *"a 'surprise me' button that picks a gift at random"* was
+ * not a surprise request to the CEO (it took the long-brief branch and was promised a reading) and was not
+ * material to discovery either: the owner's richest material, discarded without a word. One predicate, used by
+ * both, is what stops the two drifting again.
+ */
+export function asksForSurprise(body: string): boolean {
+  return /^\s*#?.*surprise me\s*$/im.test(body) || SURPRISE_ME.test(body.split('\n').slice(-3).join('\n'));
+}
+
+/** How many words the owner has to have written before a cabin note is something a research job could read. */
+export const MATERIAL_WORDS = 3;
+
+/**
+ * Whether one thing the owner typed is material a discovery job could read (ruling FR-3).
+ *
+ * Finding F3: the first live run started a full research lifecycle on the note that said "surprise me", and
+ * the brief it produced was fabricated — it had nothing to read, so it made claims about a name, an interview
+ * and a founder-market fit that no file supported. "surprise me" is a request for ideas, "skip" is a refusal
+ * to be interviewed, and two words to the CEO is a reply, not a brief. None of the three is something to
+ * research, and the two sides of the question — the daemon deciding whether to start a job, and the tool that
+ * hands the job its material — have to answer it the same way, which is why this lives here and not in either.
+ *
+ * The documented single-line path is untouched: a real one-line idea ("We sell meal kits to nurseries") is
+ * three words or more and matches neither trigger, so it still buys discovery on cycle one (spec §1.3, §5.5).
+ */
+export function isDiscoveryMaterial(said: string): boolean {
+  const t = said.trim();
+  if (!t) return false;
+  // A document is never "only a reply to the CEO", whatever phrases it happens to contain (review, Important 3).
+  if (isLongPrompt(t)) return true;
+  if (asksForSurprise(t) || isSkip(t)) return false;
+  return t.split(/\s+/).filter(Boolean).length >= MATERIAL_WORDS;
+}
+
+/** The chosen idea, and the file the owner's pick was read from. */
+export interface OwnerPick { line: string; path: string }
+
+/** How the picked idea is introduced wherever discovery reads it. One sentence, the owner's decision, verbatim. */
+export const OWNER_PICK_LABEL = "The owner picked this idea from the CEO's three:";
+
+/**
+ * The owner's pick, which **is** material (ruling FR-3, FR-3b): after "surprise me" the company has nothing to
+ * read until the owner chooses one of the three ideas, and the chosen line is the one sentence that says what
+ * the company is for. It is what starts discovery, and it is the first thing discovery reads.
+ *
+ * Two spellings of the same decision, in the order they appear: the approved `brand_change` carrying `chosen:`
+ * (visible the moment the owner edits the note) and `Brand/name.md` once the dispatcher has written it — the
+ * latter only when a proposal the owner approved is what put the name there. A name that was simply always in
+ * the vault (a scaffold, an owner's own edit) is not a decision anyone just made, and reading it as unread
+ * material would buy a research lifecycle off a file nobody touched.
+ */
+export function ownerPick(vault: Vault): OwnerPick | null {
+  const proposals = listInbox(vault).filter((n) => n.data.kind === 'brand_change' && n.data.target === BRAND_NAME_PATH);
+  const picked = proposals.find((n) => n.data.approved === true && n.data.chosen !== null && n.data.chosen !== undefined);
+  if (picked) {
+    const line = picked.body.split('\n').map((l) => l.trim()).find((l) => new RegExp(`^${Number(picked.data.chosen)}\\.\\s`).test(l));
+    if (line) return { line, path: picked.path };
+  }
+  if (!proposals.some((n) => n.data.approved === true)) return null;
+  const brand = parseNote(vault.readTextOrNull(BRAND_NAME_PATH) ?? '');
+  const name = String(brand.data.name ?? '').trim();
+  if (!name) return null;
+  return { line: [name, String(brand.data.tagline ?? '').trim()].filter(Boolean).join(' — '), path: BRAND_NAME_PATH };
 }
 
 /** True once the owner has approved a founder brief. Discovery never writes a second one unasked. */
@@ -261,13 +339,37 @@ export function renderInterviewAsk(questions: readonly string[] = INTERVIEW_QUES
     '',
     ...questions.slice(0, 6).map((q, i) => `${i + 1}. ${q}`),
     '',
-    'Whatever you say next closes this, and goes into the founder brief the next plan is written against. Reply "skip" and I will work from what is already in the vault instead.',
+    // The message must not promise something the daemon no longer does (finding F5, ruling FR-6): the owner's
+    // *next* message no longer closes the interview whatever it says, because a complaint or a question would
+    // otherwise be filed as the six answers. Only an answer — or "skip" — closes it, and the message says so.
+    'Answer here in your own words, or reply "skip"; a question or a quick note to me leaves these open. What you answer goes into the founder brief the next plan is written against.',
   ].join('\n');
 }
 
 /** An owner reply that means "stop asking". Deliberately narrow: a one-word answer, not a word inside a sentence. */
 export function isSkip(text: string): boolean {
   return /^\s*(skip|no thanks|not now|later)\s*[.!]?\s*$/i.test(text);
+}
+
+/** How many words an answer on one line has to have before it is taken as the owner's answer to all six. */
+export const INTERVIEW_ANSWER_WORDS = 12;
+
+/**
+ * Whether what the owner just typed is an **answer**, and so closes the interview.
+ *
+ * The first live run's finding F5: the interview closed on the owner's next message whatever it said, so a
+ * complaint, a question or "your text is only half" would have been filed as the six answers and planned
+ * against. Ruling FR-6 draws the line in code rather than with a model call (a classifier costs a call, and
+ * the spec wants the interview to cost nothing): "skip" closes it; so does an answer — two non-empty lines, or
+ * a dozen words that are not a question. Anything else leaves the six questions open and gets an ordinary
+ * reply from the CEO that says so.
+ */
+export function closesInterview(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (isSkip(t)) return true;
+  if (t.split('\n').filter((l) => l.trim()).length >= 2) return true;
+  return t.split(/\s+/).filter(Boolean).length >= INTERVIEW_ANSWER_WORDS && !t.endsWith('?');
 }
 
 export type InterviewPhase = 'none' | 'asked' | 'answered' | 'skipped' | 'covered';
@@ -314,7 +416,7 @@ export function questionsAsked(message: string): string[] {
 export function renderInterviewAsked(at: string, questions: readonly string[] = INTERVIEW_QUESTIONS): string {
   return [
     '# Founder interview', '',
-    `_The CEO asked these on ${at.slice(0, 10)}. The owner answers in the cabin; the next message they send closes the interview, whatever it says._`, '',
+    `_The CEO asked these on ${at.slice(0, 10)}. The owner answers in the cabin; an answer — or "skip" — closes the interview, and a question or a quick note to the CEO leaves it open (ruling FR-6)._`, '',
     '## Questions', '',
     ...questions.slice(0, 6).map((q, i) => `${i + 1}. ${q}`),
     '',
@@ -401,7 +503,7 @@ export function founderBriefTemplate(): string {
     '## Constraints', '', 'Money, time, what is off the table, anything the constitution already bans.', '',
     '## Candidate ideas', '', 'One line per `Ideas/<slug>.md` card you filed, with its slug. These are candidates, not decisions: the board rules on them and the owner decides.', '',
     '## What we do not know', '', 'The gaps that would change the plan if they were filled. A brief with nothing here was not written from evidence.', '',
-    PRESSURE_TEST_SECTION, '', 'The five parts, in this order, on the company as a whole. **Core Assumption:** the one belief that, if false, makes everything else irrelevant, as a falsifiable sentence. **Three Fatal Flaws:** the three most likely ways this dies, each naming a mechanism specific to this idea, market and customer — no generic advice. **Problem Validation:** vitamin, painkiller or hair on fire, and the workaround these people use today. **Founder-Market Fit:** why this owner, specifically. **Brutal Verdict:** STRONG, WEAK or PIVOT REQUIRED, in one word, then why. Never "it has potential, but". See `' + PRESSURE_HANDBOOK_PATH + '`.', '',
+    PRESSURE_TEST_SECTION, '', 'The five parts, in this order, on the company as a whole. **Core Assumption:** the one belief that, if false, makes everything else irrelevant, as a falsifiable sentence. **Three Fatal Flaws:** the three most likely ways this dies, each naming a mechanism specific to this idea, market and customer — no generic advice. **Problem Validation:** vitamin, painkiller or hair on fire, and the workaround these people use today. **Founder-Market Fit:** why this owner, specifically. **Brutal Verdict:** the verdict first — STRONG, WEAK or PIVOT REQUIRED — then the reasons. Never "it has potential, but". See `' + PRESSURE_HANDBOOK_PATH + '`.', '',
   ].join('\n');
 }
 

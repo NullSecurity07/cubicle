@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   scaffoldVault, Vault, RoleFrontmatter, readIdea, DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF,
-  renderInterviewAsked, renderInterviewCovered, closeInterview, loadOrg,
+  renderInterviewAsked, renderInterviewCovered, closeInterview, loadOrg, hasFounderBrief, isDiscoveryMaterial, asksForSurprise,
 } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, phase3Tools, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ToolRegistry, phase3Tools, vaultWrite, vaultAppend, type ToolContext } from '../src/index.js';
 import { discoveryInputs, ideaCard, fairShare, inOffice } from '../src/tools/discovery.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
@@ -63,6 +63,26 @@ describe('discovery.inputs (spec §1)', () => {
     expect(d.interview).toBe('answered');
     expect(d.messages).toBe(1);
     expect(d.long_prompt).toBe(false);
+  });
+
+  // Ruling FR-3b. The first live run's job read the note that said "surprise me" and wrote a founder brief
+  // about a company nobody had described. The words "surprise me" are not material; the idea the owner picked
+  // out of the CEO's three is, and it is the only sentence that says what the company is for.
+  it('opens on the idea the owner picked, and never hands the job "surprise me"', async () => {
+    vault.writeText('00 Inbox/2026-09-13-msg-surprise.md', '---\nid: msg_sur\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-13T09:00:00.000Z\nanswered: true\n---\n# surprise me\n\nsurprise me\n\n## CEO\n\nI filed three ideas as a proposal in 00 Inbox/.\n', 'owner');
+    vault.writeText('00 Inbox/2026-09-13-msg-thanks.md', '---\nid: msg_th\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-13T09:02:00.000Z\n---\n# thanks\n\nthanks!\n', 'owner');
+    vault.writeText('00 Inbox/2026-09-13-prop-ideas.md', '---\nid: prop_ideas\nkind: brand_change\nfrom: ceo\ntarget: Brand/name.md\ncreated: 2026-09-13T09:00:01.000Z\napproved: true\nchosen: 2\n---\n# Three company ideas — pick one\n\n1. GreenCrate — meal kits for nurseries.\n2. Deskless — shift scheduling for cafes.\n3. Tinyletter Co — a newsletter for allotment holders.\n', 'ceo');
+
+    const r = await discoveryInputs.handler({ max_chars: 60000 }, ctx('research_manager'));
+    expect(r.text).toContain('The owner picked this idea from the CEO\'s three:');
+    expect(r.text).toContain('2. Deskless — shift scheduling for cafes.');
+    expect(r.text).not.toContain('GreenCrate');                    // the options they did not pick
+    expect(r.text).not.toMatch(/surprise me/i);                    // nor the words that asked for them
+    expect(r.text).not.toContain('thanks!');                       // nor two words of thanks
+    const d = r.data as { sources: string[]; messages: number; pick: string | null };
+    expect(d.pick).toBe('2. Deskless — shift scheduling for cafes.');
+    expect(d.sources).toContain('00 Inbox/2026-09-13-prop-ideas.md');
+    expect(d.messages).toBe(0);
   });
 
   it('says plainly when there is nothing, and when the owner skipped', async () => {
@@ -321,5 +341,55 @@ describe('registration reaches the five charters (spec review finding 7)', () =>
     const backendNames = reg.forRole(role('backend_engineer'), cfg).map((t) => t.name);
     expect(backendNames).not.toContain('idea.card');
     expect(backendNames).not.toContain('discovery.inputs');
+  });
+});
+
+describe('the founder brief is adopted, never written (ruling FR-4, review Important 4)', () => {
+  // What the live run actually did: the discovery job wrote `Memory/founder-brief.md` directly 49 seconds
+  // before it filed the proposal, so an unchecked brief carrying three fabricated claims was in the vault
+  // whatever the owner then decided — and `hasFounderBrief` told every later plan the company had one.
+  const brief = '## What the company is\n\nMeal kits for nurseries, invented on the spot.\n';
+
+  it('refuses vault.write and vault.append to it, writes nothing, and names the road that is checked', async () => {
+    for (const [tool, name] of [[vaultWrite, 'vault.write'], [vaultAppend, 'vault.append']] as const) {
+      const r = await (tool.handler as (a: { path: string; content: string }, c: ToolContext) => Promise<{ ok: boolean; text: string }>)({ path: FOUNDER_BRIEF, content: brief }, ctx('research_manager'));
+      expect(r.ok, name).toBe(false);
+      expect(r.text).toContain('proposal.create kind=founder_brief');
+      expect(vault.readTextOrNull(FOUNDER_BRIEF)).toBeNull();
+      expect(hasFounderBrief(vault)).toBe(false);
+    }
+    // Refused where the owner can see it, like every other blocked write. (The dispatcher's own write on the
+    // owner's approval goes through `vault.writeText` as the daemon, not through this tool, and is covered by
+    // `packages/daemon/test/sp3-proposals.test.ts`.)
+    expect(vault.events.query({ types: ['guardrail.blocked'] }).length).toBe(2);
+  });
+});
+
+describe('one predicate for "surprise me", and a document is always material (review Important 3)', () => {
+  const brief = ['We are building a gift shop for people who hate choosing gifts.',
+    'The product is a short quiz and a box; the quiz has a "surprise me" button that picks a gift at random.',
+    'Today they stand in a card shop for twenty minutes and leave with a candle.',
+    'Two shops have said they would stock it. We have no name and no site yet.',
+    'We tried a pop-up in November and sold eleven boxes, which was not enough.',
+    'What we do not know is whether anyone buys a second one.'].join('\n');
+
+  it('reads a long brief that merely mentions the phrase as material, and does not take it as the ask', () => {
+    expect(asksForSurprise(brief)).toBe(false);
+    expect(isDiscoveryMaterial(brief)).toBe(true);
+  });
+
+  it('reads it as material even where the anchored test does fire: a document is never only a reply', () => {
+    // The phrase inside the last three lines of a document — the anchor cannot tell this from the ask, so the
+    // material filter must not depend on it. `isLongPrompt` decides first, and a brief is always read.
+    const late = `${brief}\nThe quiz ends on a "surprise me" button, which is the whole charm of it.`;
+    expect(asksForSurprise(late)).toBe(true);
+    expect(isDiscoveryMaterial(late)).toBe(true);
+  });
+
+  it("still takes the owner's own request for three ideas as the ask, and never as material", () => {
+    expect(asksForSurprise('surprise me')).toBe(true);
+    expect(asksForSurprise('# surprise me\n\nsurprise me')).toBe(true);
+    expect(asksForSurprise('I have thought about it all week.\nsurprise me')).toBe(true);
+    expect(isDiscoveryMaterial('surprise me')).toBe(false);
   });
 });

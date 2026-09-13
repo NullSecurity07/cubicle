@@ -1,6 +1,33 @@
 import { z } from 'zod';
-import { defineTool } from '../registry.js';
-import { createProposal, ProposalKind, idFromKey, loadOrg, can, officeHolder } from '@cubicle/core';
+import { defineTool, type ToolContext } from '../registry.js';
+import {
+  createProposal, ProposalKind, idFromKey, loadOrg, can, officeHolder,
+  checkFounderBrief, briefCheckContext, briefFromProposalBody,
+} from '@cubicle/core';
+
+/**
+ * How many times one author may be handed its own findings back before the tool stops inviting a fix.
+ *
+ * Two, because the findings are specific enough to act on ("Brand/name.md carries an empty name") and a third
+ * identical refusal is a model rewriting the same sentence rather than reading the file. After that the tool
+ * refuses outright and says so: the honest brief — the one that writes "unstated" where nothing is established
+ * — is always available, and a job that cannot write it should finish saying so rather than keep trying.
+ */
+export const BRIEF_CHECK_TRIES = 2;
+
+/**
+ * Refusals per author, this process. Keyed by vault and job so two jobs (and two test vaults) never share a
+ * count. In-memory on purpose: a restart hands the author its tries back, which errs towards letting a brief
+ * be filed after a fix rather than towards refusing one for a count nobody can see.
+ */
+const briefTries = new Map<string, number>();
+
+function briefKey(ctx: ToolContext): string {
+  return `${ctx.vault.root}:${ctx.jobId ?? ctx.roleId}`;
+}
+
+/** Forget every count. Tests only — the daemon never needs it. */
+export function resetBriefTries(): void { briefTries.clear(); }
 
 export const proposalCreate = defineTool({
   name: 'proposal.create',
@@ -32,6 +59,23 @@ export const proposalCreate = defineTool({
     }
     // A threat model covers one change (§27), and `approvedThreatModel` matches it to the job that filed it.
     if (kind === 'threat_model' && !ctx.jobId) return { ok: false, text: 'a threat_model belongs to a job; file it from the job whose change it covers' };
+    // The founder brief is checked against the vault before the owner is asked to adopt it (ruling FR-4): every
+    // cited file exists, no name while `Brand/name.md` has none, no answers while the interview has none, and a
+    // pressure test that ends on a verdict. The findings come back here, as this tool's own output, so the
+    // author fixes the brief in the same turn rather than the owner reading a beautiful and false document.
+    if (kind === 'founder_brief') {
+      const check = checkFounderBrief(ctx.vault, briefFromProposalBody(body), briefCheckContext(ctx.vault));
+      if (!check.ok) {
+        const key = briefKey(ctx);
+        const tries = (briefTries.get(key) ?? 0) + 1;
+        briefTries.set(key, tries);
+        const found = check.findings.map((f) => `- ${f}`).join('\n');
+        return tries > BRIEF_CHECK_TRIES
+          ? { ok: false, text: `This brief was returned ${BRIEF_CHECK_TRIES} times for the same kind of claim and is refused. Do not file it again. What the files do not establish is not a gap to fill in prose: write "unstated" under the section that would have carried it, put the rest under "## What we do not know", and finish saying which claims you could not support.\n${found}` }
+          : { ok: false, text: `The brief is not filed: it says things the vault does not. Fix these and call proposal.create again (${BRIEF_CHECK_TRIES - tries} more ${BRIEF_CHECK_TRIES - tries === 1 ? 'try' : 'tries'}):\n${found}` };
+      }
+      briefTries.delete(briefKey(ctx));
+    }
     const { id, path } = createProposal(ctx.vault, { id: ctx.idempotencyKey ? idFromKey(kind === 'message' ? 'msg' : 'prop', ctx.idempotencyKey) : undefined, kind, from: ctx.roleId, to: 'owner', title, body, target, job: ctx.jobId ?? undefined }, ctx.roleId);
     if (kind === 'message') return { ok: true, text: `message ${id} sent to the owner at ${path}; this job is blocked until they answer`, data: { id, path }, block: { kind: 'message', id } };
     if (kind === 'threat_model') return { ok: true, text: `threat model ${id} filed at ${path}; this job is blocked until the owner approves it`, data: { id, path }, block: { kind: 'proposal', id } };

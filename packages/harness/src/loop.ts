@@ -3,7 +3,7 @@ import path from 'node:path';
 import {
   type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
   readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
-  loadGates, gatesForRisk, criteriaFor, gateAssignee, type GateTable,
+  loadGates, gatesForRisk, criteriaFor, gateAssignee, gateTier, type GateTable,
   loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
   trustReviewsFor, trustDecision, trustVerdictFor, recordTrustVerdict, CLASSIFIER_UNAVAILABLE_HOLD,
@@ -385,6 +385,11 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     const gateCriteria = gates[gate]?.criteria ?? '';
     deps.scheduler.enqueue({
       type: gate, title: `${isVerifyGate(gate) ? 'Verify' : 'Review'}: ${parent.title}`, assigned: assignee, priority: 4, parent: parent.id, links: [`[[${parent.id}]]`], privacy: parent.privacy,
+      // A review runs at the gate's tier — medium unless `config/gates.yaml` says otherwise — not at the
+      // reviewer's charter tier. Reviewers are leads and office holders, so without this every gate was a
+      // strong-tier call: the owner's first live run burnt eleven of a ~60-a-day free allowance on reviews in
+      // one minute (FR-7). `effectiveTier` still clamps this to the charter, so a cheap charter reviews cheap.
+      model_tier: gateTier(gates, gate),
       team: parent.team, owner_role: parent.owner_role, for: parent.for,
       // The reviewer needs the change's stream — where the CI records and the code are — or a team:qa.review cannot
       // tell a fresh green run from a stale one. The parent's *risk* is passed in the goal below rather than

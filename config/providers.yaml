@@ -12,6 +12,11 @@
 #
 #        The CFO reads prices to say what a cycle *would* have cost on a paid tier (Ledger/runway.md). A priced
 #        model is never counted as free-tier capacity when the model quota per division is allocated.
+# thinking: true on a model that reasons before it answers and bills that reasoning to the same output budget
+#        (every Gemini 3.x *flash* model; not the lite models, not gemma). For such a model the router ignores the
+#        caller's maxTokens as an output cap and sends max_output_tokens, because a small cap is eaten by the
+#        thinking and the answer comes back cut at finish_reason "length" — a live run got a 30-token half-sentence
+#        out of gemini-3.5-flash that way. maxTokens still counts in the prompt/quota estimate. Default: false.
 # limits: 0 = unlimited/unknown. A 429 from the provider marks the model "cooling" regardless of these numbers.
 # Gemini free-tier RPM/RPD are only visible in AI Studio (https://aistudio.google.com/rate-limit) — paste yours below.
 verified: "2026-09-10"
@@ -25,10 +30,10 @@ providers:
     timeout_ms: 90000
     day_reset_tz: America/Los_Angeles   # Google quotas reset at midnight Pacific
     models:
-      - { id: gemini-3.5-flash, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 5, rpd: 20, tpm: 250000 }, note: "verified ok 2026-09-02 (thinking model: keep max_output_tokens generous); limits from the owner's AI Studio rate-limit page 2026-09-10 — the free strong tier is only 20 calls/day per flash model, so the other flash models below pool with it" }
-      - { id: gemini-3.7-flash, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 5, rpd: 20, tpm: 250000 }, note: "was disabled 2026-09-02 (503s / timeouts); re-tested 2026-09-10" }
-      - { id: gemini-3.8-flash, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 5, rpd: 20, tpm: 250000 }, note: "added 2026-09-10 from the AI Studio rate-limit page (5 rpm / 20 rpd)" }
-      - { id: gemini-3.6-flash, enabled: false, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 5, rpd: 20, tpm: 250000 }, note: "was disabled 2026-09-02 (slow, empty content); re-tested 2026-09-10: works but 49 s per call, so it stays off" }
+      - { id: gemini-3.5-flash, thinking: true, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 5, rpd: 20, tpm: 250000 }, note: "verified ok 2026-09-02 (thinking model: keep max_output_tokens generous); limits from the owner's AI Studio rate-limit page 2026-09-10 — the free strong tier is only 20 calls/day per flash model, so the other flash models below pool with it" }
+      - { id: gemini-3.7-flash, thinking: true, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 5, rpd: 20, tpm: 250000 }, note: "was disabled 2026-09-02 (503s / timeouts); re-tested 2026-09-10" }
+      - { id: gemini-3.8-flash, thinking: true, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 5, rpd: 20, tpm: 250000 }, note: "added 2026-09-10 from the AI Studio rate-limit page (5 rpm / 20 rpd)" }
+      - { id: gemini-3.6-flash, enabled: false, thinking: true, tier: strong, tools: native, context: 1048576, max_prompt_tokens: 200000, max_output_tokens: 8192, limits: { rpm: 5, rpd: 20, tpm: 250000 }, note: "was disabled 2026-09-02 (slow, empty content); re-tested 2026-09-10: works but 49 s per call, so it stays off" }
       - { id: gemini-3.5-flash-lite, tier: medium, tools: native, context: 1048576, max_prompt_tokens: 120000, max_output_tokens: 8192, limits: { rpm: 15, rpd: 500, tpm: 250000 }, note: "verified ok + native tool calls 2026-09-02" }
       - { id: gemini-3.1-flash-lite, tier: cheap, tools: native, context: 1048576, max_prompt_tokens: 60000, max_output_tokens: 4096, limits: { rpm: 15, rpd: 500, tpm: 250000 }, note: "verified ok 2026-09-02" }
       # Gemma 4 on the Gemini API: 30 rpm / 14 400 rpd each but only 16K tokens per MINUTE, so prompts are capped small

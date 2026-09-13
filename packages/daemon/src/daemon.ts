@@ -11,7 +11,7 @@ import { dispatchProposals } from './dispatcher.js';
 import { sweepTrustReviews } from './trust.js';
 import { budgetForRole, budgetRows } from './money.js';
 import { WsServer } from './ws.js';
-import { createHeartbeatJob, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
+import { createHeartbeatJob, answerOwnerMessages, unansweredOwnerMessages, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
 import { captureResearchDeliveries, enqueueResearchFollowUps, enqueueExperimentReviews, maybeEnqueueCharterCompression, maybeEnqueueIntelligence, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions, maybeFlagLessons } from './evolution.js';
@@ -89,6 +89,43 @@ export function pollCached<T>(read: () => T, ttlMs: number, now: () => number = 
   };
 }
 
+/** The compaction prompt, module-level so the summariser's test can recognise the call it made. */
+export const SUMMARIZE_SYSTEM = 'Summarize the following observations in ≤ 200 words, keeping file paths, ids and numbers.';
+
+/**
+ * Context compaction (spec §6): the observations the prompt budget drops, and an over-long plan, are summarised
+ * before they are handed back to the job.
+ *
+ * It runs on the **cheap cloud** tier and falls back to the local floor only when there is no cloud provider to
+ * ask, or the cheap call failed. It used to be local-only, on the reasoning that compaction should never spend
+ * cloud quota — but the owner's first live run (finding F6) paid 30–105 s per call for that on their GPU, five
+ * times inside one research job, while the job sat waiting. A flash-lite answers a 200-word summary in a second
+ * or two and costs one call out of five hundred a day.
+ *
+ * Compaction is house work, not the job's division's: it is the system tidying up after itself, so like the
+ * heartbeat's own asks it is metered against the house reserve and stamped with it.
+ *
+ * A failure is never fatal, on either tier: `''` means "no summary" and the harness falls back to clipping.
+ */
+export function makeSummarize(deps: { llm: Llm; houseBudget?: () => ModelBudget | null; noCloudKeys?: () => boolean }): (text: string) => Promise<string> {
+  return async (text: string): Promise<string> => {
+    const budget = deps.houseBudget?.() ?? undefined;
+    const ask = async (tier: 'cheap' | 'local') => {
+      const r = await deps.llm.chat({ tier, needsTools: false, budget, budgetDivision: budget ? HOUSE : undefined }, {
+        messages: [{ role: 'system', content: SUMMARIZE_SYSTEM }, { role: 'user', content: text }],
+        maxTokens: 400,
+      });
+      return r.content;
+    };
+    // `noCloudKeys` is the daemon's own "every provider left is the local floor" reading; without it the cheap
+    // call would cascade to that floor anyway, having first spent a round trip finding out.
+    if (!(deps.noCloudKeys?.() ?? false)) {
+      try { return await ask('cheap'); } catch { /* cloud refused: the local floor still summarises */ }
+    }
+    try { return await ask('local'); } catch { return ''; }
+  };
+}
+
 /**
  * The daemon: vault + router + tools + workers + heartbeat trigger + dispatcher + watcher + WS.
  * Everything it does is resumable from the vault; `stop()` checkpoints and exits within `shutdownMs`.
@@ -114,6 +151,13 @@ export class Daemon {
   private lastPrune = 0;
   private guardrails: import('@cubicle/harness').Guardrail[] = [];
   private openMeeting: (agenda: string, participants?: string[]) => Promise<string | null> = async () => null;
+  /**
+   * What a heartbeat cycle is given, kept so the **tick** and the cabin can answer the owner with exactly the
+   * same code the `answer_owner` step runs (ruling FR-1). Null until `start()` has built it.
+   */
+  private heartbeatDeps: Omit<HeartbeatDeps, 'vault'> | null = null;
+  /** The answer in flight. Its own lock, so two messages serialise without either waiting for a whole tick. */
+  private answering: Promise<number> | null = null;
 
   /**
    * Money can make the company cheaper; it must never make it silent. All three of these swallow their own
@@ -216,24 +260,11 @@ export class Daemon {
     const pollInbox = async (): Promise<string[]> => { const r = await withTimeout(runSystemTool(officeHolder(loadOrg(this.vault), 'operations'), emailInbox, {}), 60_000, 'email.inbox'); return r?.ok ? r.text.split('\n').slice(1) : []; };
     const pullAnalytics = async (): Promise<string | null> => { const r = await withTimeout(runSystemTool(officeHolder(loadOrg(this.vault), 'operations'), analyticsPull, {}), 60_000, 'analytics.pull'); return r?.ok ? r.text : null; };
     const ownerFeedback = (roleId: string) => feedbackFor(collectOwnerFeedback(this.vault, this.vault.events.last('heartbeat.completed')?.ts), roleId, officeHolder(loadOrg(this.vault), 'chief_executive')).map((f) => `- (${f.source}) ${f.text}`);
-    // Context compaction (spec §6): observations the prompt budget drops, and an over-long plan, are summarised
-    // by the cheapest model there is — the local tier — so compaction never spends cloud quota. A failure here is
-    // never fatal: the harness treats '' as "no summary" and falls back to clipping.
-    const summarize = async (text: string): Promise<string> => {
-      try {
-        const r = await llm.chat({ tier: 'local', needsTools: false }, {
-          messages: [
-            { role: 'system', content: 'Summarize the following observations in ≤ 200 words, keeping file paths, ids and numbers.' },
-            { role: 'user', content: text },
-          ],
-          maxTokens: 400,
-        });
-        return r.content;
-      } catch { return ''; }
-    };
+    const summarize = makeSummarize({ llm, houseBudget: this.houseBudget, noCloudKeys });
+    this.heartbeatDeps = { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, env: cfg.env, noCloudKeys, planMaxAgeDays: cfg.planMaxAgeDays, log: this.log, modelBudget: this.houseBudget, ...this.overrides.heartbeatHooks };
     this.workers = new WorkerPool(this.vault, {
       harness: { llm, router: this.router, toolsConfig, registry: this.registry, scheduler, memory: this.memory ?? undefined, guardrails, env: cfg.env, ownerFeedback, summarize, modelBudget: this.modelBudget },
-      heartbeat: { llm, router: this.router, openMeeting: this.openMeeting, pollInbox, pullAnalytics, env: cfg.env, noCloudKeys, planMaxAgeDays: cfg.planMaxAgeDays, log: this.log, modelBudget: this.houseBudget, ...this.overrides.heartbeatHooks },
+      heartbeat: this.heartbeatDeps,
       maxConcurrent: cfg.maxConcurrentJobs,
       dormant: this.isDormant,
     });
@@ -285,7 +316,7 @@ export class Daemon {
     this.offEvents.push(this.vault.events.on('quota.updated', () => this.writeQuotaMd()));
 
     if (!this.overrides.disableWs) {
-      this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.runTick('chat'); } });
+      this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.answerOwnerNow('chat'); void this.runTick('chat'); } });
       const port = await this.ws.start();
       cfg.port = port; // port 0 binds an ephemeral port; downstream config, daemon.json, and events must see the real one
       this.log(`ws listening on ws://127.0.0.1:${port}`);
@@ -380,6 +411,47 @@ export class Daemon {
     }
   }
 
+  /**
+   * Answer every owner message nobody has answered yet, now.
+   *
+   * Two callers: the cabin, the moment the owner presses enter, and the tick, as the catch-up for anything the
+   * cabin missed (a message typed while the daemon was down, an older build's note). It runs the
+   * `answer_owner` heartbeat step's own code and is idempotent on the note's `answered` flag.
+   *
+   * **Its own lock, not the tick's.** `runTick` returns immediately while a tick is in flight, so routing the
+   * cabin through it left a message typed mid-tick waiting for the next interval — up to `tickMs` of silence
+   * in a chat window, which is the shape of the defect FR-1 is about. Answers serialise behind each other
+   * instead, so two messages in the same second cost two replies in order rather than two racing writes.
+   *
+   * Deliberately outside the dormancy guard: a stopped company still talks to its owner.
+   */
+  async answerOwnerNow(reason: string): Promise<number> {
+    const run = (this.answering ?? Promise.resolve(0))
+      .catch(() => 0)
+      .then(async () => {
+        if (this.stopping || !this.heartbeatDeps) return 0;
+        try {
+          const msgs = unansweredOwnerMessages(this.vault);
+          if (!msgs.length) return 0;
+          // The open cycle's id when there is one, so the reply and the proposal are attributed to it as they
+          // always were. The ids the sweep derives come from the message, never from the job, so it does not
+          // matter which of the callers answers first.
+          const hb = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
+          const n = await answerOwnerMessages({ vault: this.vault, ...this.heartbeatDeps }, this.vault, msgs, { jobId: hb?.id });
+          if (n) this.log(`${reason}: ${n} owner message(s) answered`);
+          return n;
+        } catch (err) {
+          // The cabin calls this without awaiting it, so it catches its own failures the way `sweep` does:
+          // an unhandled rejection here would take the process down over one unwritable note.
+          this.vault.events.emit({ type: 'daemon.warning', payload: { where: 'answer-owner', message: String((err as Error).stack ?? err).slice(0, 500) } });
+          this.log(`${reason}: answering the owner failed — ${String((err as Error).message ?? err).slice(0, 200)}`);
+          return 0;
+        }
+      });
+    this.answering = run;
+    try { return await run; } finally { if (this.answering === run) this.answering = null; }
+  }
+
   private ticking = false;
   /** The tick in flight, so `stop()` can let it finish before the sockets and the DB go (re-review of the SP5 fix wave). */
   private tickInFlight: Promise<void> | null = null;
@@ -440,6 +512,15 @@ export class Daemon {
         const unanswered = hasOpen ? undefined : listInbox(this.vault).find((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && !n.data.answered);
         if (!hasOpen && (since >= this.config.heartbeat.maxElapsedHours || this.heartbeatRequested || unanswered)) this.requestHeartbeat(this.heartbeatRequested ?? (unanswered ? `unanswered owner message ${unanswered.data.id}` : `${since.toFixed(1)} h elapsed`));
       });
+      // The catch-up: whatever the cabin did not answer itself — a message typed while the daemon was down, an
+      // older build's note — is answered here, whatever the cycle is doing (finding F2, ruling FR-1). On the
+      // first live run the heartbeat was blocked on a discovery job and the trigger above refused to even look
+      // for the owner's follow-up ("only when no heartbeat is open").
+      //
+      // It runs **after** the trigger on purpose. The trigger reads the same unanswered note, and a message
+      // from the owner should still wake a cycle: answering says what the company will do, the cycle is what
+      // actually plans against it. Answering first would take that wake away.
+      await this.sweep(reason, 'answer-owner', () => this.answerOwnerNow(`tick(${reason})`));
       this.workers.wake();
     } catch (err) {
       this.vault.events.emit({ type: 'daemon.warning', payload: { where: 'tick', message: String((err as Error).stack ?? err).slice(0, 500) } });
@@ -465,6 +546,9 @@ export class Daemon {
     // A tick still running (the trust sweep, the dispatcher) would otherwise throw on a closed DB below; give it the
     // rest of the shutdown budget, then move on — everything it does is resumable from the vault.
     if (this.tickInFlight) await Promise.race([this.tickInFlight.catch(() => undefined), new Promise((r) => setTimeout(r, Math.max(500, Math.min(this.config.shutdownMs - 1000, 5000))))]);
+    // And a reply the cabin started outside a tick (ruling FR-1b): it is a model call and a note write, so it
+    // gets the same bounded grace rather than being cut off mid-write on a vault that is about to close.
+    if (this.answering) await Promise.race([this.answering.catch(() => 0), new Promise((r) => setTimeout(r, Math.max(500, Math.min(this.config.shutdownMs - 1000, 5000))))]);
     if (!this.vault) { this.log(`stopped in ${Date.now() - t0} ms`); return; }
     await Promise.race([closeAllSessions(this.vault.events), new Promise((r) => setTimeout(r, 1500))]);
     await this.watcher?.stop();

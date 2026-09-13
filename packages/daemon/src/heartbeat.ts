@@ -11,7 +11,7 @@ import {
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, type PressurePart,
   PRESSURE_CHAIR_SECTION, chairAnswerText,
   type PressureVerdict, type BoardRubric,
-  isLongPrompt, isSkip,
+  isLongPrompt, isSkip, asksForSurprise, interviewPhase, INTERVIEW_PATH,
   readLedger, moneyReport, moneyLine, moneyNeedsYou, money, HOUSE, LEDGER_PATH, DEFAULT_CURRENCY, type MoneyReport, type LedgerEntry,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
@@ -927,7 +927,16 @@ interface Gathered {
   finished: { id: string; type: string; title: string; status: string; summary: string }[];
   mail: string[];
   analytics: string | null;
-  unansweredOwnerMessages: { path: string; id: string; created: string; body: string }[];
+  unansweredOwnerMessages: OwnerMessage[];
+  /**
+   * How many messages the owner typed since the last cycle gathered, **answered or not**.
+   *
+   * The re-planning gate below asks "did the owner ask for something?", and until FR-1 the only reading of
+   * that was "a message nobody has answered". Now the tick answers within seconds of the owner hitting enter,
+   * so by the time a cycle gathers there is usually nothing unanswered left — and the plan the owner's message
+   * was meant to shake loose would be skipped because the CEO had been quick about replying to it.
+   */
+  ownerMessages: number;
 }
 
 /** The previous heartbeat's gather moment: from its completion event, else from the last done heartbeat note (kill between updateJob and emit). */
@@ -946,8 +955,8 @@ function gather(vault: Vault, now: Date, mail: string[], analytics: string | nul
     .filter((e) => e.job)
     .map((e) => { const j = readJob(vault, e.job!); return { id: e.job!, type: j?.data.type ?? '?', title: j?.data.title ?? '?', status: e.type === 'job.done' ? 'done' : 'failed', summary: String(e.payload.summary ?? e.payload.reason ?? '') }; })
     .filter((f) => f.type !== 'ceo.heartbeat');
-  const unansweredOwnerMessages = listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && !n.data.answered).map((n) => ({ path: n.path, id: n.data.id, created: n.data.created, body: n.body }));
-  return { since, gathered_at: now.toISOString(), elapsedHours, ownerEdits, finished, mail, analytics, unansweredOwnerMessages };
+  const ownerMessages = listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && (!since || String(n.data.created ?? '') > since)).length;
+  return { since, gathered_at: now.toISOString(), elapsedHours, ownerEdits, finished, mail, analytics, unansweredOwnerMessages: unansweredOwnerMessages(vault), ownerMessages };
 }
 
 /**
@@ -989,6 +998,179 @@ function ceoSystem(vault: Vault): string {
   const prefs = vault.readTextOrNull('Memory/owner_preferences.md') ?? '';
   const lessons = vault.readTextOrNull('Memory/lessons.md') ?? '';
   return `# Constitution\n${constitution}\n\n# Your charter (${String(note?.data.display ?? chief)})\n${note?.body ?? ''}\n\n# Owner preferences\n${prefs}\n\n# Lessons\n${lessons.slice(-3000)}\n\nAnswer in plain markdown, no preamble.`;
+}
+
+/** One owner message nobody has answered, as both callers of `answerOwnerMessages` see it. */
+export interface OwnerMessage { path: string; id: string; created: string; body: string }
+
+/** Every owner message in the cabin the CEO has not answered yet. One read of the inbox, one filter, two callers. */
+export function unansweredOwnerMessages(vault: Vault): OwnerMessage[] {
+  return listInbox(vault)
+    .filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && !n.data.answered)
+    .map((n) => ({ path: n.path, id: n.data.id, created: n.data.created, body: n.body }));
+}
+
+/**
+ * How long a claim on an owner message stands before another caller takes the note over.
+ *
+ * Long enough for the slowest reply anyone has seen (a strong-tier call on the "surprise me" path ran 1–30 s
+ * in the owner's live run), short enough that a process killed mid-answer does not strand the note: the next
+ * caller past this window answers it.
+ */
+export const ANSWER_CLAIM_MS = 5 * 60_000;
+
+/** The three-ideas ask. Sent twice at most: once on the prompt budget, once with room for a thinking model. */
+const SURPRISE_ASK = 'The owner wants you to surprise them. Propose exactly three one-line business ideas a two-person team can start this week with a static website and email, all free to run. Format: a numbered list "1. <name> — <one sentence>". Write all three lines in full and write nothing else.';
+/** The re-ask's ceiling. Generous on purpose: the first run's reply was cut off mid-sentence at the default. */
+export const SURPRISE_RETRY_TOKENS = 1200;
+/** What the CEO says when two asks did not produce three whole ideas. Honest, and it says what to do next. */
+export const SURPRISE_FAILED = 'I could not get three complete ideas from the model this time — ask me again in a minute, or type an idea.';
+
+/**
+ * The numbered ideas in a reply, truncated ones dropped, renumbered 1–3.
+ *
+ * Finding F1: the first live run's reply was cut at 30 tokens (`finish_reason: length`) and the half of it that
+ * arrived — a name, an em dash, and nothing after it — was filed as the three-ideas proposal unchecked. The
+ * owner was then asked to pick one of three ideas, two of which did not exist. So a line counts only when the
+ * model finished writing it, and the proposal is filed only with three of them (ruling FR-2).
+ *
+ * Renumbering matters: the proposal says `chosen: 1|2|3` and the dispatcher matches that number against the
+ * line, so three ideas that arrived as 1, 3 and 4 have to read 1, 2, 3 in the note the owner picks from.
+ */
+export function completeIdeaLines(reply: string | null): string[] {
+  const lines = (reply ?? '').split('\n').map((l) => l.trim()).filter((l) => /^\d+\.\s+\S/.test(l));
+  return lines.filter(ideaLineComplete).slice(0, 3).map((l, i) => l.replace(/^\d+\.\s*/, `${i + 1}. `));
+}
+
+/** One idea line the model finished: a name, and a sentence after the dash rather than the dash it stopped on. */
+export function ideaLineComplete(line: string): boolean {
+  const body = line.replace(/^\d+\.\s*/, '').trim();
+  if (!body) return false;
+  if (/[—–\-:,;]$/.test(body)) return false;                    // cut off mid-line, which is what truncation looks like
+  const sentence = body.split(/\s+[—–-]\s+|:\s+/)[1];
+  return sentence === undefined ? body.split(/\s+/).length >= 3 : sentence.trim().length > 0;
+}
+
+/**
+ * Answer every owner message nobody has answered yet, and return how many were answered.
+ *
+ * This is the `answer_owner` heartbeat step, lifted out of it so the daemon's tick can run exactly the same
+ * code (ruling FR-1). Finding F2: the owner's follow-up went unanswered through a whole live run because
+ * answering was a step of a cycle that was blocked on a discovery job, and the tick would not even look while
+ * a heartbeat was open. The owner types into a chat window; a chat window that goes quiet for ten minutes is
+ * broken, whatever the company is doing behind it.
+ *
+ * Every id it derives comes from the *message*, never from the caller, so no two callers can file two
+ * proposals for one message whichever of them runs first — and the note is **claimed before the model call**,
+ * not after it (whole-branch review, Important 1). Reading `answered` and writing it either side of a 30 s
+ * model call left a window the cabin and the cycle both walked into: `onChat` starts a reply *and* requests a
+ * heartbeat, and `answer_owner` is step 3 of 13 with no model call ahead of it, so the cycle reached the same
+ * note while the cabin was still waiting on the model. The owner saw the CEO answer twice and the company paid
+ * twice. The claim is stamped with no `await` between the read and the write, which is what makes it a claim.
+ */
+export async function answerOwnerMessages(
+  deps: HeartbeatDeps,
+  vault: Vault,
+  msgs: readonly OwnerMessage[],
+  opts: { jobId?: string; now?: () => Date } = {},
+): Promise<number> {
+  const now = opts.now ?? deps.now ?? (() => new Date());
+  const jobId = opts.jobId;
+  let answered = 0;
+  for (const m of msgs) {
+    const note = vault.readNoteOrNull(m.path);
+    if (!note || note.data.answered) continue;
+    // Somebody else is on this one, and has not been gone long enough to have died: leave it to them.
+    const claimed = Date.parse(String(note.data.answering ?? ''));
+    if (Number.isFinite(claimed) && now().getTime() - claimed < ANSWER_CLAIM_MS) continue;
+    claim(vault, m.path, now().toISOString(), jobId);
+    try {
+      answered += await answerOne(deps, vault, m, note.body, now, jobId);
+    } catch (err) {
+      // The claim is cleared on the way out so the note is not stranded until the window expires. The error is
+      // the caller's — the tick's sweep and the cabin's own catch both turn it into a `daemon.warning`.
+      release(vault, m.path, jobId);
+      throw err;
+    }
+  }
+  return answered;
+}
+
+/** Stamp the note as being answered right now. Never inside an `await`: see `answerOwnerMessages`. */
+function claim(vault: Vault, path: string, at: string, jobId?: string): void {
+  vault.updateNote(path, (n) => ({ data: { ...n.data, answering: at }, body: n.body }), 'ceo', { job: jobId });
+}
+
+/** Drop the claim, leaving the note exactly as it was for whoever comes next. */
+function release(vault: Vault, path: string, jobId?: string): void {
+  try {
+    vault.updateNote(path, (n) => { const { answering: _claim, ...rest } = n.data as Record<string, unknown>; return { data: rest, body: n.body }; }, 'ceo', { job: jobId });
+  } catch { /* the note is gone, or unwritable: the claim expires on its own */ }
+}
+
+/** One message: the reply the CEO drafts for it, the proposal it may file, and the note it writes back. */
+async function answerOne(deps: HeartbeatDeps, vault: Vault, m: OwnerMessage, body: string, now: () => Date, jobId?: string): Promise<number> {
+  const isFirstIdea = !(parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data.name as string) && !listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md');
+  // The same predicate `isDiscoveryMaterial` uses, from core: the cabin and discovery must agree about what a
+  // request for three ideas looks like, or a brief that merely mentions the phrase is dropped by one and
+  // promised a reading by the other (whole-branch review, Important 3).
+  const surprise = asksForSurprise(body);
+  // What the owner typed, without the `# title` line the cabin prepends. The interview has to read the
+  // stripped text: `isSkip` is anchored to the whole string, so an owner who types `skip` (note body
+  // `# skip\n\nskip`) would otherwise be recorded as having answered the six questions with "skip".
+  const said = ownerSaid(body);
+  // An open interview is closed by an answer, or by "skip" — never by a question or a quick note (ruling
+  // FR-6; it used to close on whatever came next, so a complaint became the six answers). This is a vault
+  // write, not a model call: the interview must not cost a cycle's quota to conduct.
+  const closedInterview = captureInterviewAnswer(vault, said, now());
+  const interviewStillOpen = !closedInterview && interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)) === 'asked';
+  // A document, not a one-line idea: discovery reads it, and the CEO does not try to squeeze a company
+  // name out of its first sentence.
+  const longPrompt = isLongPrompt(body);
+  const propId = idFromKey('prop', `owner-answer:${m.id}`);
+  let reply: string | null = null;
+  if (surprise) {
+    let raw = await ask(deps, ceoSystem(vault), SURPRISE_ASK);
+    let ideas = completeIdeaLines(raw);
+    // One re-ask, with room for a model that thinks before it answers (finding F1). Beyond that the CEO says
+    // so rather than filing a proposal the owner cannot pick from.
+    if (ideas.length < 3) {
+      raw = await ask(deps, ceoSystem(vault), SURPRISE_ASK, SURPRISE_RETRY_TOKENS);
+      ideas = completeIdeaLines(raw);
+    }
+    if (ideas.length < 3) {
+      reply = SURPRISE_FAILED;
+    } else {
+      const three = ideas.join('\n');
+      createProposal(vault, { id: propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${three}\n\nSet \`chosen: 1|2|3\` and \`approved: true\`; the chosen line's name becomes the company name.`, job: jobId }, 'ceo');
+      reply = `I filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n${three}`;
+    }
+    // "skip" is a refusal to be interviewed, not a business idea: naming the company after it would be
+    // absurd, and it belongs in the general reply, which already says the interview was closed.
+  } else if (isFirstIdea && !longPrompt && !isSkip(said)) {
+    const r = await ask(deps, ceoSystem(vault), `The owner's business idea:\n\n${body}\n\nReply with exactly two lines:\nNAME: <a short, brandable company name>\nTAGLINE: <one sentence>`);
+    const name = r?.match(/NAME:\s*(.+)/i)?.[1]?.trim() ?? 'Untitled Co';
+    const tagline = r?.match(/TAGLINE:\s*(.+)/i)?.[1]?.trim() ?? '';
+    createProposal(vault, { id: propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: `Name the company: ${name}`, body: `## Proposed content\n\n\`\`\`\n---\nname: "${name.replace(/"/g, "'")}"\ntagline: "${tagline.replace(/"/g, "'")}"\nurl: ""\n---\n# ${name}\n\n${tagline}\n\`\`\`\n\nSet \`approved: true\` to adopt.`, job: jobId }, 'ceo');
+    reply = `Got it. I proposed the name **${name}** (${tagline}) in 00 Inbox/ — approve or edit it. The CTO is planning the first jobs now.`;
+  } else {
+    const extra = [
+      closedInterview ? 'You had asked them six questions; their reply is now in Discovery/interview.md and the research office will read it.' : '',
+      // The owner has to be told, in the reply they are already reading, that the six questions are still
+      // waiting — nothing else will say it, and the interview no longer closes itself on this message (FR-6).
+      interviewStillOpen ? 'The six questions you sent them in the cabin are still open: what they just wrote is not an answer to them. End your reply with one line saying so — an answer in their own words, or "skip", is all you need.' : '',
+      longPrompt ? 'This is a long brief rather than a one-line idea: the research office is reading it in full and will file a founder brief for them to approve. Do not try to summarise it yourself.' : '',
+    ].filter(Boolean).join(' ');
+    reply = (await ask(deps, ceoSystem(vault), `The owner wrote:\n\n${body}\n\n${extra}\n\nReply briefly and concretely. If it is an instruction, say what you will do and enqueue nothing yourself (the divisions plan). If it is a question, answer it.`)) ?? 'Noted. (No model was available to draft a fuller reply; I will act on this next cycle.)';
+  }
+  // Persist the defaults listInbox derived for an owner-typed note (id/created/from/to) so later ticks see a
+  // stable, complete note — and drop the claim in the same write that makes it unnecessary.
+  vault.updateNote(m.path, (n) => {
+    const { answering: _claim, ...rest } = n.data as Record<string, unknown>;
+    return { data: { ...rest, id: m.id, created: m.created, from: 'owner', to: 'ceo', answered: true }, body: setSection(n.body, '## CEO', reply!) };
+  }, 'ceo', { job: jobId });
+  vault.events.emit({ type: 'agent.spoke', agent: 'ceo', job: jobId, payload: { to: 'owner', text: reply!.slice(0, 280), id: m.id } });
+  return 1;
 }
 
 /**
@@ -1135,7 +1317,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
 
   if (job.checkpoint_step > 0 && !state.finished) {
     const m = readJob(vault, jobId)?.body.match(/## Plan\s*\n+```json\n([\s\S]*?)\n```/);
-    if (m) { try { const f = JSON.parse(m[1]); state = { ...state, since: f.since, gathered_at: f.gathered_at, elapsedHours: f.elapsedHours ?? Infinity, ownerEdits: f.ownerEdits ?? [], finished: f.finished ?? [], mail: [], analytics: f.analytics ?? null, unansweredOwnerMessages: [] }; } catch { /* fall through with defaults */ } }
+    if (m) { try { const f = JSON.parse(m[1]); state = { ...state, since: f.since, gathered_at: f.gathered_at, elapsedHours: f.elapsedHours ?? Infinity, ownerEdits: f.ownerEdits ?? [], finished: f.finished ?? [], mail: [], analytics: f.analytics ?? null, unansweredOwnerMessages: [], ownerMessages: f.owner_messages_since ?? (f.owner_messages ?? []).length }; } catch { /* fall through with defaults */ } }
   }
   for (let i = job.checkpoint_step; i < HEARTBEAT_STEPS.length; i++) {
     if (cancelled()) return { status: 'cancelled' };
@@ -1192,7 +1374,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         const commentBaselines = gatheredCommentBaselines(vault, gatheredFeedback);
         state = { ...state, ...g, feedbackShas, commentBaselines }; saveState(state);
         // Persist the gathered facts in the job note so a cache wipe cannot change what later steps see.
-        vault.updateNote(`Jobs/${jobId}.md`, (n) => ({ data: n.data, body: setSection(n.body, '## Plan', '```json\n' + JSON.stringify({ since: g.since, gathered_at: g.gathered_at, elapsedHours: Number.isFinite(g.elapsedHours) ? g.elapsedHours : null, ownerEdits: g.ownerEdits, finished: g.finished, mail: g.mail.length, analytics: g.analytics, owner_messages: g.unansweredOwnerMessages.map((m) => m.id) }, null, 2) + '\n```') }), 'ceo', { job: jobId });
+        vault.updateNote(`Jobs/${jobId}.md`, (n) => ({ data: n.data, body: setSection(n.body, '## Plan', '```json\n' + JSON.stringify({ since: g.since, gathered_at: g.gathered_at, elapsedHours: Number.isFinite(g.elapsedHours) ? g.elapsedHours : null, ownerEdits: g.ownerEdits, finished: g.finished, mail: g.mail.length, analytics: g.analytics, owner_messages: g.unansweredOwnerMessages.map((m) => m.id), owner_messages_since: g.ownerMessages }, null, 2) + '\n```') }), 'ceo', { job: jobId });
         done(i, `elapsed ${Number.isFinite(g.elapsedHours) ? g.elapsedHours.toFixed(1) + 'h' : 'first run'}; ${g.ownerEdits.length} owner edits; ${g.finished.length} jobs finished; ${g.mail.length} mails; ${g.unansweredOwnerMessages.length} owner messages`);
         break;
       }
@@ -1269,50 +1451,10 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         break;
       }
       case 'answer_owner': {
-        const msgs = state.unansweredOwnerMessages ?? [];
-        let answered = 0;
-        for (const m of msgs) {
-          const note = vault.readNoteOrNull(m.path);
-          if (!note || note.data.answered) continue;
-          const body = note.body;
-          const isFirstIdea = !(parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data.name as string) && !listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md');
-          const surprise = /^\s*#?.*surprise me\s*$/im.test(body) || /\bsurprise me\b/i.test(body.split('\n').slice(-3).join('\n'));
-          // What the owner typed, without the `# title` line the cabin prepends. The interview has to read the
-          // stripped text: `isSkip` is anchored to the whole string, so an owner who types `skip` (note body
-          // `# skip\n\nskip`) would otherwise be recorded as having answered the six questions with "skip".
-          const said = ownerSaid(body);
-          // An open interview is closed by whatever the owner says next, whatever it says (spec §1.4). This is
-          // a vault write, not a model call: the interview must not cost a cycle's quota to conduct.
-          const closedInterview = captureInterviewAnswer(vault, said, now());
-          // A document, not a one-line idea: discovery reads it, and the CEO does not try to squeeze a company
-          // name out of its first sentence.
-          const longPrompt = isLongPrompt(body);
-          let reply: string | null = null;
-          if (surprise) {
-            reply = await ask(deps, ceoSystem(vault), `The owner wants you to surprise them. Propose exactly three one-line business ideas a two-person team can start this week with a static website and email, all free to run. Format: a numbered list "1. <name> — <one sentence>".`);
-            const ideas = reply ?? '1. Untitled — (no model available; edit this proposal)\n2. —\n3. —';
-            createProposal(vault, { id: idFromKey('prop', `${jobId}:${m.id}`), kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${ideas}\n\nSet \`chosen: 1|2|3\` and \`approved: true\`; the chosen line's name becomes the company name.`, job: jobId }, 'ceo');
-            reply = `I filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n${ideas}`;
-            // "skip" is a refusal to be interviewed, not a business idea: naming the company after it would be
-            // absurd, and it belongs in the general reply, which already says the interview was closed.
-          } else if (isFirstIdea && !longPrompt && !isSkip(said)) {
-            const r = await ask(deps, ceoSystem(vault), `The owner's business idea:\n\n${body}\n\nReply with exactly two lines:\nNAME: <a short, brandable company name>\nTAGLINE: <one sentence>`);
-            const name = r?.match(/NAME:\s*(.+)/i)?.[1]?.trim() ?? 'Untitled Co';
-            const tagline = r?.match(/TAGLINE:\s*(.+)/i)?.[1]?.trim() ?? '';
-            createProposal(vault, { id: idFromKey('prop', `${jobId}:${m.id}`), kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: `Name the company: ${name}`, body: `## Proposed content\n\n\`\`\`\n---\nname: "${name.replace(/"/g, "'")}"\ntagline: "${tagline.replace(/"/g, "'")}"\nurl: ""\n---\n# ${name}\n\n${tagline}\n\`\`\`\n\nSet \`approved: true\` to adopt.`, job: jobId }, 'ceo');
-            reply = `Got it. I proposed the name **${name}** (${tagline}) in 00 Inbox/ — approve or edit it. The CTO is planning the first jobs now.`;
-          } else {
-            const extra = [
-              closedInterview ? 'You had asked them six questions; their reply is now in Discovery/interview.md and the research office will read it.' : '',
-              longPrompt ? 'This is a long brief rather than a one-line idea: the research office is reading it in full and will file a founder brief for them to approve. Do not try to summarise it yourself.' : '',
-            ].filter(Boolean).join(' ');
-            reply = (await ask(deps, ceoSystem(vault), `The owner wrote:\n\n${body}\n\n${extra}\n\nReply briefly and concretely. If it is an instruction, say what you will do and enqueue nothing yourself (the divisions plan). If it is a question, answer it.`)) ?? 'Noted. (No model was available to draft a fuller reply; I will act on this next cycle.)';
-          }
-          // Persist the defaults listInbox derived for an owner-typed note (id/created/from/to) so later ticks see a stable, complete note.
-          vault.updateNote(m.path, (n) => ({ data: { ...n.data, id: m.id, created: m.created, from: 'owner', to: 'ceo', answered: true }, body: setSection(n.body, '## CEO', reply!) }), 'ceo', { job: jobId });
-          vault.events.emit({ type: 'agent.spoke', agent: 'ceo', job: jobId, payload: { to: 'owner', text: reply!.slice(0, 280), id: m.id } });
-          answered++;
-        }
+        // The body of this step is `answerOwnerMessages`, which the daemon's tick also runs (ruling FR-1): the
+        // owner is answered within seconds of typing, whatever the cycle is doing. Whichever gets there first,
+        // the other finds `answered: true` and does nothing.
+        const answered = await answerOwnerMessages(deps, vault, state.unansweredOwnerMessages ?? [], { jobId, now });
         done(i, `${answered} owner message(s) answered`);
         break;
       }
@@ -1522,7 +1664,10 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           // heartbeat — because skipping wrongly costs a cycle of stale direction while planning wrongly costs
           // only quota. A board return (state.vetoes) is a rewrite request and is never skipped.
           const openJobs = listJobs(vault, { status: ['queued', 'running'] }).filter((j) => !NON_WORK_TYPES.includes(j.type)).length;
-          const ownerAsked = (state.unansweredOwnerMessages?.length ?? 0) > 0 || (state.ownerEdits?.length ?? 0) > 0 || /owner|forced/i.test(job.title);
+          // `ownerMessages` counts what the owner typed since the last cycle whether or not it has been
+          // answered (ruling FR-1 made answering a tick sweep, so a message is usually answered before the
+          // cycle that should re-plan against it ever gathers).
+          const ownerAsked = (state.ownerMessages ?? 0) > 0 || (state.unansweredOwnerMessages?.length ?? 0) > 0 || (state.ownerEdits?.length ?? 0) > 0 || /owner|forced/i.test(job.title);
           // A turned-down plan is a rewrite request in its own right, whether the owner rejected it or the board
           // did on a silent owner — not something the gate should only notice because an owner edit happened to
           // land in the same window.

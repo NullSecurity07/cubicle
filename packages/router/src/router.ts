@@ -11,6 +11,13 @@ import { buildJsonToolInstruction, parseJsonToolReply, type ToolSchema } from '.
 export interface ModelBudget { used: number; quota: number }
 
 /**
+ * How much visible answer a `thinking` model has to produce for a reply cut short at `finish_reason: length`
+ * to count as an answer at all. Below this the reply is a fragment — a clause, half a sentence — and the
+ * router cascades past it exactly as it does past an empty one.
+ */
+export const THINKING_MIN_VISIBLE_TOKENS = 64;
+
+/**
  * The tier a request actually routes at, once its division's budget is taken into account. Past its quota a
  * `strong` or `medium` request becomes `cheap`; a request already at `cheap` or `local` is left alone. The
  * cheap tier is the floor, so a division past its quota gets worse models and **never stops**.
@@ -174,7 +181,7 @@ export class Router {
     const promptTokens = est - (chat.maxTokens ?? 1024);
     /** Providers that answered 400 to this request: the request shape is wrong for them, so their other models would say the same. */
     const rejectedShape = new Set<string>();
-    /** The last reply that had neither content nor a tool call; returned only if no candidate does better. */
+    /** The best reply nobody could use — empty, or a thinking model's fragment; returned only if no candidate does better. */
     let lastEmpty: RoutedChatResult | null = null;
 
     for (const c of cands) {
@@ -211,7 +218,12 @@ export class Router {
           ? [{ role: 'system', content: `${first.content}\n\n# Tool protocol\n${instr}` }, ...chat.messages.slice(1)]
           : [{ role: 'system', content: instr }, ...chat.messages];
       }
-      const maxTokens = Math.min(chat.maxTokens ?? c.model.max_output_tokens, c.model.max_output_tokens);
+      // A thinking model bills its reasoning to the same output budget, so a caller's `maxTokens` is spent
+      // before the answer starts and what comes back is a sentence cut at `finish_reason: length` (the owner's
+      // first live run: 30 tokens out of gemini-3.5-flash for `askAs`'s 800). For those models the cap sent to
+      // the provider is the model's own `max_output_tokens`; `chat.maxTokens` stays what it always was for the
+      // prompt and quota estimate above, a hint about how long the answer should be.
+      const maxTokens = c.model.thinking ? c.model.max_output_tokens : Math.min(chat.maxTokens ?? c.model.max_output_tokens, c.model.max_output_tokens);
       try {
         const res = await chatOnce(c.provider, c.model.id, { ...chat, messages, tools: nativeTools, maxTokens, responseFormatJson: useJsonTools && chat.responseFormatJson !== false ? false : chat.responseFormatJson }, this.env);
         this.quota.record(c.provider.id, c.model.id, res.usage.prompt_tokens, res.usage.completion_tokens, true);
@@ -236,14 +248,26 @@ export class Router {
           else jsonParseError = r.reason;
         }
         const out: RoutedChatResult = { ...res, provider: c.provider.id, model: c.model.id, tier: c.model.tier, downgraded: isDowngrade, parsedToolCalls: parsed, jsonParseError, finalAnswer };
-        if (!res.content && res.toolCalls.length === 0 && parsed.length === 0 && !jsonParseError) {
-          // Nothing came back (2026-09-10: twelve of these, in runs at one step, in the same minutes Gemini was
-          // answering 503 "high demand"; the rebuilt prompts reproduce none of them). Retrying the same model with
-          // the same prompt is what cost jobs their attempts, so try the next candidate; the warning keeps the
-          // provider's finish reason so a repeat can be diagnosed from the event log.
-          this.events?.emit({ type: 'daemon.warning', agent: req.roleId ?? null, payload: { where: 'empty_reply', provider: c.provider.id, model: c.model.id, finish_reason: res.finishReason, usage: res.usage, raw: JSON.stringify(res.raw ?? null).slice(0, 400) } });
-          tried.push(`${key} (empty)`);
-          lastEmpty = out;
+        // Nothing came back (2026-09-10: twelve of these, in runs at one step, in the same minutes Gemini was
+        // answering 503 "high demand"; the rebuilt prompts reproduce none of them).
+        const empty = !res.content && res.toolCalls.length === 0 && parsed.length === 0 && !jsonParseError;
+        // A thinking model that stopped at `length` with barely a sentence to show for it spent its budget on
+        // reasoning and never got to the answer — the owner's first live run filed a 30-token fragment as the
+        // CEO's reply. That is as useless as an empty reply, so it takes the same road: one more candidate, not
+        // a second call to the model that just did it. The fragment is still kept as `lastEmpty`, so if nobody
+        // else answers the caller gets it rather than an error.
+        const starved = !empty && c.model.thinking && res.finishReason === 'length'
+          && res.toolCalls.length === 0 && parsed.length === 0
+          && estimateTokens(res.content) < THINKING_MIN_VISIBLE_TOKENS;
+        if (empty || starved) {
+          // Retrying the same model with the same prompt is what cost jobs their attempts, so try the next
+          // candidate; the warning keeps the provider's finish reason so a repeat can be diagnosed from the
+          // event log.
+          this.events?.emit({ type: 'daemon.warning', agent: req.roleId ?? null, payload: { where: starved ? 'thinking_truncated' : 'empty_reply', provider: c.provider.id, model: c.model.id, finish_reason: res.finishReason, usage: res.usage, raw: JSON.stringify(res.raw ?? null).slice(0, 400) } });
+          tried.push(`${key} (${starved ? 'length' : 'empty'})`);
+          // Keep the most useful fallback rather than the last one: a truncated fragment is worth more to the
+          // caller than a reply with nothing in it at all.
+          if (!lastEmpty || (!lastEmpty.content && out.content)) lastEmpty = out;
           continue;
         }
         return out;
