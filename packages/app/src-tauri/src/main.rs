@@ -12,7 +12,7 @@ use config::Config;
 use icon::TrayState;
 use std::path::{Path, PathBuf};
 use std::process::Child;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -37,6 +37,9 @@ struct Shell {
     child: Mutex<Option<Child>>,
     root: PathBuf,
     shown: Mutex<Option<TrayState>>,
+    /// The only origin the office window may navigate to, kept live rather than captured: a daemon
+    /// that comes back on another port changes the office URL, and re-opening must still be allowed.
+    office_origin: Arc<Mutex<String>>,
 }
 
 impl Shell {
@@ -288,6 +291,10 @@ fn open_office(app: &AppHandle) {
         log(&format!("office url is not a url: {url}"));
         return;
     };
+    // Before either path: a daemon that came back on another port moved the office with it, and the
+    // guard has to allow where we are about to send the window.
+    let origin = shell.office_origin.clone();
+    *origin.lock().unwrap() = url.origin().ascii_serialization();
     if let Some(win) = app.get_webview_window(OFFICE) {
         let _ = win.navigate(url);
         let _ = win.show();
@@ -296,7 +303,6 @@ fn open_office(app: &AppHandle) {
     }
     // The guard is installed once, on the window that lasts the whole session; the `navigate()`
     // above reuses the same webview, so re-opening the office keeps it.
-    let origin = url.origin().ascii_serialization();
     let built = WebviewWindowBuilder::new(app, OFFICE, WebviewUrl::External(url))
         .title("CUBICLE — the office")
         .inner_size(1280.0, 800.0)
@@ -304,7 +310,8 @@ fn open_office(app: &AppHandle) {
         .initialization_script(OPEN_EXTERNAL_SHIM)
         .on_navigation(move |url| {
             let url = url.as_str();
-            if navigation_allowed(url, &origin) {
+            let allowed = origin.lock().map(|o| navigation_allowed(url, &o)).unwrap_or(false);
+            if allowed {
                 return true;
             }
             open_external(url);
@@ -524,6 +531,7 @@ fn main() {
                 child: Mutex::new(None),
                 root: daemon::repo_root(),
                 shown: Mutex::new(None),
+                office_origin: Arc::new(Mutex::new(String::new())),
             });
             TrayIconBuilder::with_id("cubicle")
                 .icon(icon::tray_image(TrayState::Stopped))
@@ -619,6 +627,8 @@ mod tests {
     #[test]
     fn a_broken_office_origin_allows_nothing() {
         assert!(!navigation_allowed("http://127.0.0.1:7412/", "not-an-origin"));
+        // The state the tray starts in, before the office has ever been opened.
+        assert!(!navigation_allowed("http://127.0.0.1:7412/", ""));
     }
 
     #[test]
