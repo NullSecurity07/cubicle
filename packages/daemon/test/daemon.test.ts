@@ -10,6 +10,7 @@ import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchPropos
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { letTheBoardDecide } from './helpers/board-switch.js';
+import { adoptFounderBrief } from './helpers/brief.js';
 import { noLocalModel } from './helpers/no-local-model.js';
 import { TEST_MS, eventProgress, loadScale, oneMinuteLoad, waitForProgress } from './helpers/load.js';
 
@@ -29,6 +30,9 @@ beforeEach(async () => {
   // the local model on every outbound text — tens of seconds of vault silence that the stall detector below
   // can only read as a hung daemon. See helpers/no-local-model.ts: this is the B1 flake.
   noLocalModel(vault);
+  // Nothing is planned before the owner has adopted a founder brief (ruling S-1), and most of this file is
+  // about the cycle that plans. Written the way the dispatcher writes it when the owner approves the proposal.
+  adoptFounderBrief(vault);
   // An engineer.ship cannot finish without a green CI record for its stream (§17), so the scripted dev plan
   // below ships against this one. No source files exist under Workspace/site, so the record never goes stale.
   createStream(vault, { slug: 'site', name: 'Site', problem: 'The company has no site.', customers: 'Everyone who hears about us', outcome_metric: 'a first cut exists', owner_team: 'dev' }, 'ceo');

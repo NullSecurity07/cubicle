@@ -5,6 +5,7 @@ import path from 'node:path';
 import { scaffoldVault, appendEntry, readLedger, listJobs, listInbox, readJob, updateJob, RUNWAY_PATH, LEDGER_PATH, type Vault } from '@cubicle/core';
 import { Router, QuotaTracker, parseProvidersConfig } from '@cubicle/router';
 import { HEARTBEAT_STEPS, createHeartbeatJob, runHeartbeat, type HeartbeatDeps } from '../src/heartbeat.js';
+import { adoptFounderBrief } from './helpers/brief.js';
 
 let dir: string;
 let vault: Vault;
@@ -74,6 +75,9 @@ const MODES_ENFORCED: boolean = (() => {
 beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-money-step-'));
   vault = (await scaffoldVault(dir)).vault;
+  // Ruling S-1: the planning steps wait for an adopted founder brief. These cases are about the *money* step
+  // and say "carries on to plan", so the company they describe is one whose owner has already signed the brief.
+  adoptFounderBrief(vault);
   calls = 0;
 });
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });

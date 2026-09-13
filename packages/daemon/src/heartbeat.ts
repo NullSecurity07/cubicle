@@ -223,10 +223,16 @@ export function rejectedPlanVerdict(vault: Vault): { path: string; data: InboxFr
  * saves was the owner *approving* something, which is the one inbox edit that needs no cycle at all: the
  * dispatcher applies an approval on the very next tick, and the tick runs every few seconds.
  *
- * Two edits still wake one, and they are the two nothing else would act on. An owner **message** is the company
- * being asked a question, and the cycle is what plans against it (the answer itself is a tick sweep — ruling
- * FR-1 — so this is about the plan, not the reply). A **rejection** is a rewrite request: a turned-down plan
- * verdict or founder brief has to reach the CEO, and no other trigger carries it.
+ * Three edits still wake one, and they are the three nothing else would act on. An owner **message** is the
+ * company being asked a question, and the cycle is what plans against it (the answer itself is a tick sweep —
+ * ruling FR-1 — so this is about the plan, not the reply). A **rejection** is a rewrite request: a turned-down
+ * plan verdict or founder brief has to reach the CEO, and no other trigger carries it.
+ *
+ * And the **founder brief either way**, which is the one approval that has to wake a cycle. Ruling S-1 makes
+ * every planning step wait on that document, so the click that adopts it is the moment the company can finally
+ * plan — and if it were treated like any other approval the first run would sit, brief in hand and nothing
+ * queued, until the six-hourly trigger came round. The tick applies the approval; only a heartbeat plans
+ * against it.
  *
  * Read off the note as it stands now rather than off the edit, because that is the state the woken cycle would
  * act on. A note that has since been deleted wakes nothing.
@@ -236,7 +242,8 @@ export function inboxEditWakesHeartbeat(vault: Vault, rel: string): boolean {
   if (!note) return false;
   const d = note.data;
   if (d.kind === 'message') return d.from === 'owner';
-  return (d.kind === 'plan_verdict' || d.kind === 'founder_brief') && d.approved === false;
+  if (d.kind === 'founder_brief') return d.approved !== null;
+  return d.kind === 'plan_verdict' && d.approved === false;
 }
 
 /**
@@ -1986,7 +1993,6 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         break;
       }
       case 'owner_verdict': {
-        if (planningWaitsForBrief()) { done(i, WAITING_FOR_BRIEF); break; }
         const decidesAfterHours = vault.constitution().board_decides_after_hours;
         // `board_decides_after_hours` governs idea verdicts too (spec §3.5). The recommendation stamped on the
         // note is what stands when it elapses — never a fresh recomputation, because the card may have changed
@@ -2017,6 +2023,11 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           vault.updateNote(note.path, (n) => ({ data: { ...n.data, approved: outcome === 'approved', decision: band, decided_by: 'board', resolved_at: nowIso() }, body: n.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: the recommendation (${band}) stood after ${decidesAfterHours} h._\n` }), 'daemon');
           vault.events.emit({ type: 'proposal.resolved', agent: 'daemon', job: jobId, payload: { id: note.data.id, kind: 'idea_verdict', approved: outcome === 'approved', decision: band, outcome: `the board decided: ${band}` } });
         }
+        // Ruling S-1's gate belongs **here**, not at the top of the step: everything above is the ideas board's
+        // half of this step, and the board keeps running while the brief is being written (that is where the
+        // brief's candidate ideas come from). Only the plan verdict below waits — and with no brief there was
+        // no plan this cycle either, so there is nothing to rule on in any case.
+        if (planningWaitsForBrief()) { done(i, WAITING_FOR_BRIEF); break; }
         // No new plan this cycle means nothing to rule on: the plan the divisions are working from was already
         // approved, and `division_plans` skips on `planSkipped` before it ever looks at `state.verdict`.
         if (state.planSkipped) { done(i, 'no new plan to rule on'); break; }

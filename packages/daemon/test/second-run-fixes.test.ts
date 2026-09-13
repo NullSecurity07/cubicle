@@ -64,8 +64,8 @@ function pickAnIdea(v: Vault): string {
 }
 
 /** One heartbeat from `gather`, exactly as the daemon runs it. */
-const cycle = (v: Vault, llm: Llm, hb = createHeartbeatJob(v, 'test')) =>
-  runHeartbeat({ vault: v, llm, env: {}, now: () => new Date() }, hb).then((out) => ({ hb, out }));
+const cycle = (v: Vault, llm: Llm, hb = createHeartbeatJob(v, 'test'), extra: Partial<Parameters<typeof runHeartbeat>[0]> = {}) =>
+  runHeartbeat({ vault: v, llm, env: {}, now: () => new Date(), ...extra }, hb).then((out) => ({ hb, out }));
 
 const stepOf = (v: Vault, hb: string) => HEARTBEAT_STEPS[readJob(v, hb)!.data.checkpoint_step as number];
 const planJobs = (v: Vault) => listJobs(v).filter((j) => j.type === 'company.plan');
@@ -290,6 +290,8 @@ describe('S-4: an approval is applied on the tick; only a message or a rejection
     const approved = note('p_ok', 'kind: plan_verdict\nfrom: ceo\nto: owner\napproved: true\n');
     const rejected = note('p_no', 'kind: plan_verdict\nfrom: ceo\nto: owner\napproved: false\n');
     const briefNo = note('b_no', 'kind: founder_brief\nfrom: research_manager\napproved: false\n');
+    const briefOk = note('b_yes', 'kind: founder_brief\nfrom: research_manager\napproved: true\n');
+    const briefOpen = note('b_wait', 'kind: founder_brief\nfrom: research_manager\napproved: null\n');
     const pending = note('b_open', 'kind: brand_change\nfrom: ceo\napproved: null\n');
     const brandOk = note('b_ok', 'kind: brand_change\nfrom: ceo\napproved: true\n');
     const fromOwner = note('m_own', 'kind: message\nfrom: owner\nto: ceo\n');
@@ -298,6 +300,9 @@ describe('S-4: an approval is applied on the tick; only a message or a rejection
     expect(inboxEditWakesHeartbeat(vault, approved)).toBe(false);
     expect(inboxEditWakesHeartbeat(vault, rejected)).toBe(true);
     expect(inboxEditWakesHeartbeat(vault, briefNo)).toBe(true);
+    // The one approval that wakes a cycle: it is the document ruling S-1 makes every planning step wait on.
+    expect(inboxEditWakesHeartbeat(vault, briefOk)).toBe(true);
+    expect(inboxEditWakesHeartbeat(vault, briefOpen)).toBe(false);
     expect(inboxEditWakesHeartbeat(vault, pending)).toBe(false);
     expect(inboxEditWakesHeartbeat(vault, brandOk)).toBe(false);
     expect(inboxEditWakesHeartbeat(vault, fromOwner)).toBe(true);
@@ -368,7 +373,8 @@ describe('S-4: an approval is applied on the tick; only a message or a rejection
       v.writeText(approved, '---\nid: p_ok\nkind: plan_verdict\nfrom: ceo\nto: owner\ncreated: 2026-09-13T09:00:00.000Z\napproved: true\nfanned_out: hb_old\nresolved_at: 2026-09-13T09:01:00.000Z\n---\n# Plan verdict\n', 'owner');
       v.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: approved, area: '00 Inbox', deleted: false, wakes_heartbeat: true } });
 
-      const { hb } = await cycle(v, scriptedLlm(), createHeartbeatJob(v, 'jobs completed'));
+      // The gate is off without `planMaxAgeDays`, so this is the one case that has to hand it over.
+      const { hb } = await cycle(v, scriptedLlm(), createHeartbeatJob(v, 'jobs completed'), { planMaxAgeDays: 3 });
       expect(readJob(v, hb)!.body).toContain('planning skipped');
       expect(planJobs(v)).toHaveLength(0);
     } finally { v.close(); }
