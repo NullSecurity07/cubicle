@@ -287,7 +287,6 @@ const net = new Net(url, token, {
   onSnapshot(snap: Snapshot) {
     if (state.mode === 'replay') { liveState = applySnapshot(liveState ?? emptyState(), snap); return; }
     state = applySnapshot(state, snap);
-    if (seeded) state = { ...state, ...seeded };   // `__cubicle.seed` (below): a fixture must survive the next snapshot
     seedFrames(snap);
     refresh();
     // Spec §12 d/e: an empty company asks the first-run question once per session. The app opened the card, not the
@@ -342,9 +341,6 @@ function debugSurfaces(): Record<string, { streamKind: string; streamId: string;
   }));
 }
 
-/** Fixture state pushed in by `__cubicle.seed` (the screenshot and click harnesses); null in a real session. */
-let seeded: Partial<State> | null = null;
-
 // Whatever the shell put here first is kept: Tauri injects `openExternal` on this same object before the module
 // runs, and a bare assignment would throw away the one hook that keeps `obsidian:` links out of the office window.
 // Spread, not `Object.assign` onto it: `state` is a getter, and assigning would copy today's value and freeze it.
@@ -367,12 +363,6 @@ const shellHooks = (window as unknown as { __cubicle?: Record<string, unknown> }
   // A pushed frame can belong to a stream the daemon never announced (the screenshot script injects one), and a frame
   // with no surface behind it has nothing bound to draw it. Register the surface first, then let the frame land.
   pushFrame: (id: string, dataUrl: string) => { if (!state.surfaces[id]) { state = applyEvent(state, { ts: new Date().toISOString(), type: 'browser.session_started', agent: null, job: null, payload: { session: id } }); refresh(); } onFrameData(id, dataUrl); },
-  /**
-   * Fixture data for the screenshot and click harnesses: the parts of a snapshot a scripted daemon cannot produce
-   * yet (decisions, conversations, a thread's turns). It is re-applied after every snapshot so a tick cannot wipe
-   * the scene mid-shot, and it exists nowhere in a real session — nothing calls it but the two scripts.
-   */
-  seed: (patch: Partial<State>) => { seeded = { ...(seeded ?? {}), ...patch }; state = { ...state, ...patch }; refresh(); },
   /** What the sheet has picked (the open thread, the search, a chosen option) — read and driven by the click test. */
   ui: () => ui,
 };
