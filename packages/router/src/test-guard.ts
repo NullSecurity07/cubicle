@@ -2,7 +2,7 @@
  * Repo-wide test isolation for model providers.
  *
  * **Why this exists.** A test that injects a fake `Llm` looks completely cut off from every model server and
- * is not. B1 (root-caused 2026-09-13) found the whole `@cubicle/daemon` suite making a real `qwen2.5:7b`
+ * is not. B1 (root-caused 2026-09-13) found the whole `@cubicle/daemon` suite making a real local-model
  * inference call through Ollama on **every run** — against a standing "cloud only, no local-model runs"
  * decision — because the fake replaced the *harness's* model while the constitution guardrail held the
  * daemon's real `Router`. The fix for that one path was to clear the constitution list the guardrail read.
