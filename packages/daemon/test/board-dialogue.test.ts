@@ -1,15 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  scaffoldVault, Vault, loadOrg, listInbox, listJobs, readIdea, writeIdeaCard, updateIdea, createProposal,
+  scaffoldVault, Vault, loadOrg, listInbox, listJobs, readJob, readIdea, writeIdeaCard, updateIdea, createProposal,
   officeHolder, parseNote, PRESSURE_PARTS, OWNER_QUESTION, isOwnerQuestion, hedges, BANNED_HEDGE,
+  DISCOVERY_INBOX, briefFromProposalBody, checkFounderBrief, briefCheckContext, readPressureVerdict,
 } from '@cubicle/core';
+import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
+import { runJob, vaultScheduler } from '@cubicle/harness';
 import {
-  runBoardSession, runHeartbeat, createHeartbeatJob,
+  runBoardSession, runHeartbeat, createHeartbeatJob, requeueUnblocked, buildSnapshot, splitRejectedBrief,
   BOARD_DIALOGUE_MAX_CALLS, BOARD_DIALOGUE_ROUNDS, BOARD_OPEN_QUESTIONS, boardSubjectKey,
   challengeReason, findingIn, questionIn, parseFindingsSection, ownerSpokeSince, partsText,
+  renderBriefPressureSection, subjectMaterial, boardQuestionsMessageId, questionsAlreadyAsked,
 } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { holdTheBriefBoard, letTheBoardDecide } from './helpers/board-switch.js';
@@ -216,6 +220,7 @@ describe('the board asks rather than guesses (SP8 §3, task 3)', () => {
     expect(silent.prompts.filter((p) => /The chair has asked, on \*\*/.test(p.text))).toHaveLength(0);
     expect(second.chairText).toContain('Core Assumption answered');
     expect(second.questions).toHaveLength(1);        // still unanswered, so still open
+    expect(listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.from === org.teams.board!.lead)).toHaveLength(1);
 
     // The owner speaks. Now the one round that asked is argued again, and no other.
     createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'About me', body: 'I ran a nursery kitchen for six years.' }, 'owner');
@@ -264,10 +269,28 @@ describe('the pieces the dialogue is built out of', () => {
     expect(challengeReason([{ role: 'a', text: 'This is STRONG.' }, { role: 'b', text: 'This is WEAK.' }])).toContain('different verdicts');
   });
 
-  it('keys a subject so the next session finds the last one, and never confuses two ideas', () => {
-    expect(boardSubjectKey(IDEA)).toBe('idea:meal-kits');
-    expect(boardSubjectKey({ kind: 'plan', text: PLAN, title: "this cycle's plan" })).toBe('plan');
+  it('keys a subject on its content, so two ideas, two plans and two drafts are three different subjects', () => {
+    expect(boardSubjectKey(IDEA)).toMatch(/^idea:meal-kits:[0-9a-f]{12}$/);
     expect(boardSubjectKey(IDEA)).not.toBe(boardSubjectKey({ ...IDEA, slug: 'spoons' }));
+    // Review I2: every cycle's plan used to key as the constant `plan`, so cycle two found cycle one's session,
+    // reused all five of its findings and voted on today's plan over yesterday's argument.
+    const cycleOne = { kind: 'plan' as const, text: PLAN, title: "this cycle's plan" };
+    const cycleTwo = { ...cycleOne, text: `${PLAN}- And ship the pricing page
+` };
+    expect(boardSubjectKey(cycleOne)).toMatch(/^plan:plan:[0-9a-f]{12}$/);
+    expect(boardSubjectKey(cycleTwo)).not.toBe(boardSubjectKey(cycleOne));
+    expect(boardSubjectKey({ ...cycleOne })).toBe(boardSubjectKey(cycleOne));   // the same plan is the same subject
+  });
+
+  it('does not count the board\'s own writing as the subject changing', () => {
+    const card = '# Meal kits\n\n## Evidence\n\n- two nurseries pay\n';
+    const judged = `${card}\n## The board\n\n**Passed** — 2026-09-13\n\n## Score\n\n46/60\n`;
+    expect(subjectMaterial(judged)).toBe(subjectMaterial(card));
+    expect(boardSubjectKey({ kind: 'idea', text: judged, title: 'Meal kits', slug: 'meal-kits' }))
+      .toBe(boardSubjectKey({ kind: 'idea', text: card, title: 'Meal kits', slug: 'meal-kits' }));
+    // …but a real change to the dossier is a different subject, and is argued afresh.
+    expect(boardSubjectKey({ kind: 'idea', text: `${card}- and a third asked`, title: 'Meal kits', slug: 'meal-kits' }))
+      .not.toBe(boardSubjectKey({ kind: 'idea', text: card, title: 'Meal kits', slug: 'meal-kits' }));
   });
 
   it('renders and re-reads the five parts, and never reuses a part nobody reached', () => {
@@ -293,3 +316,191 @@ describe('the pieces the dialogue is built out of', () => {
 });
 
 const BOARD_FINDINGS_HEADING = '## Findings';
+
+/**
+ * The brief's own pressure test (ruling P8-6), driven the way the company drives it: the real discovery job
+ * files the brief through `proposal.create`, and the next heartbeat's `discovery` step holds the session and
+ * finishes the document before the owner is asked anything.
+ */
+describe('the board pressure-tests the founder brief before the owner sees it (ruling P8-6)', () => {
+  const root = path.resolve(__dirname, '../../..');
+
+  /**
+   * Run the discovery job the heartbeat queued — and the gates it goes `in_review` behind — with the real tool
+   * layer, so the brief reaches `00 Inbox/` through `proposal.create` exactly as it does in a live run.
+   */
+  async function runDiscoveryJob(v: Vault, llm: ReturnType<typeof orgLlm>): Promise<void> {
+    const cfg = parseToolsConfig(readFileSync(path.join(root, 'config/tools.yaml'), 'utf8'));
+    const deps = { vault: v, llm, toolsConfig: cfg, registry: new ToolRegistry().registerAll(phase3Tools()), scheduler: vaultScheduler(v), env: {} };
+    const discovery = listJobs(v).find((j) => j.type === 'discovery')!;
+    const terminal = () => ['done', 'failed', 'cancelled'].includes(readJob(v, discovery.id)!.data.status);
+    for (let turn = 0; turn < 12 && !terminal(); turn++) {
+      const queued = listJobs(v, { status: ['queued'] }).filter((j) => j.type !== 'ceo.heartbeat');
+      if (!queued.length) { requeueUnblocked(v); continue; }
+      for (const j of queued) await runJob(deps, j.id);
+      requeueUnblocked(v);
+    }
+    expect(readJob(v, discovery.id)!.data.status).toBe('done');
+  }
+
+  /** The company from a dropped file to a brief the board has ruled on: two heartbeats around the job. */
+  async function discoverAndSit(v: Vault, llm = orgLlm({ ideaVerdict: 'pass' })): Promise<void> {
+    v.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell weekly meal kits to nurseries. Two already pay us.', 'owner');
+    const first = await runHeartbeat({ vault: v, llm, env: {} }, createHeartbeatJob(v, 'read this'));
+    expect(first.status).toBe('blocked');
+    await runDiscoveryJob(v, llm);
+    requeueUnblocked(v);
+    await runHeartbeat({ vault: v, llm, env: {} }, listJobs(v).find((j) => j.type === 'ceo.heartbeat')!.id);
+  }
+
+
+  it('fills the brief with the five round findings, links the argument, and only then is it decidable', async () => {
+    await discoverAndSit(vault);
+    const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief')!;
+    expect(note.data.board_pending).toBe(false);              // the document is finished; the owner may rule
+
+    // The transcript is a board thread of its own, six rounds deep, keyed on the proposal that carried the brief.
+    const transcript = vault.list('Meetings', { ext: '.md' }).find((r) => r.includes('-board-founder-brief'))!;
+    expect(transcript).toBeTruthy();
+    const meeting = parseNote(vault.readText(transcript));
+    expect(meeting.data.room).toBe('board');
+    expect(meeting.data.status).toBe('done');
+    expect(meeting.data.subject).toBe('brief');
+    expect(String(meeting.data.subject_key)).toMatch(/^brief:[0-9a-f]{12}$/);
+    expect(meeting.data.decision).toBe(`board-brief-${note.data.id}`);
+    expect(Number(meeting.data.calls)).toBeLessThanOrEqual(BOARD_DIALOGUE_MAX_CALLS);
+    expect(new Set([...String(meeting.body).matchAll(/^\*\*Round (\d+) — /gm)].map((m) => m[1])).size).toBe(BOARD_DIALOGUE_ROUNDS);
+
+    // The brief the owner would adopt: the board's five findings, its verdict, and nothing left as a draft.
+    const brief = briefFromProposalBody(note.body);
+    for (const part of PRESSURE_PARTS) expect(brief).toContain(`**${part}:**`);
+    expect(brief).toContain('Nurseries will pay 40 a week to stop planning meals.');
+    expect(brief).toContain('**Brutal Verdict:** STRONG');
+    expect(brief).toContain(transcript.replace(/\.md$/, ''));
+    // …and it still passes the truth check that every brief owes before the owner reads it (ruling FR-4).
+    expect(checkFounderBrief(vault, brief, briefCheckContext(vault))).toMatchObject({ ok: true, findings: [] });
+
+    // The block the owner reads sits ABOVE the fence: everything under it is read as their own words when
+    // they turn a brief down (ruling C1), so the company must never write there.
+    expect(note.body.indexOf('The board pressure-tested this')).toBeLessThan(note.body.indexOf('## Proposed content'));
+    expect(splitRejectedBrief(note).comment).toBe('');
+    expect(splitRejectedBrief(note).brief.trim()).toBe(brief.trim());
+
+    // And the session is a decision of record like any other board session.
+    expect(vault.readNoteOrNull(`Decisions/board-brief-${note.data.id}.md`)).toBeTruthy();
+  }, 60000);
+
+  it('lists what it could not answer on the note the owner rules on, and asks them in the cabin', async () => {
+    await discoverAndSit(vault, orgLlm({ ideaVerdict: 'pass', boardAsksOwner: 'Founder-Market Fit' }));
+    const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief')!;
+    expect(note.body).toContain(BOARD_OPEN_QUESTIONS);
+    expect(note.body).toContain('what have you actually run before');
+    // The board never guesses: the part it could not answer says so in the brief, in the owner's own word.
+    const brief = briefFromProposalBody(note.body);
+    expect(brief).toMatch(/\*\*Founder-Market Fit:\*\* unstated/);
+    expect(checkFounderBrief(vault, brief, briefCheckContext(vault))).toMatchObject({ ok: true });
+    // …and one cabin message from the chair carries them, exactly as an idea session's questions do.
+    const chair = loadOrg(vault).teams.board!.lead;
+    const asked = listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.from === chair);
+    expect(asked).toHaveLength(1);
+    expect(asked[0].body).toContain('The board needs 1 answer from you');
+  }, 60000);
+
+  it('board_dialogue: brief keeps the discovery job\'s own section and holds no session', async () => {
+    holdTheBriefBoard(vault);
+    await discoverAndSit(vault);
+    const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief')!;
+    expect(note.data.board_pending).toBeUndefined();
+    expect(vault.list('Meetings', { ext: '.md' }).some((r) => r.includes('-board-founder-brief'))).toBe(false);
+    // The author's own pressure test, as it has always been.
+    expect(briefFromProposalBody(note.body)).toContain('nurseries will pay weekly for a box of food');
+  }, 60000);
+
+  it('the snapshot says a brief the board has not sat on is not ready for the owner', async () => {
+    vault.writeText(`${DISCOVERY_INBOX}/pitch.md`, 'We sell weekly meal kits to nurseries.', 'owner');
+    const llm = orgLlm({ ideaVerdict: 'pass' });
+    expect((await runHeartbeat({ vault, llm, env: {} }, createHeartbeatJob(vault, 'read this'))).status).toBe('blocked');
+    await runDiscoveryJob(vault, llm);
+    const pending = buildSnapshot(vault).inbox.find((r) => r.kind === 'founder_brief')!;
+    expect(pending.board_pending).toBe(true);
+    requeueUnblocked(vault);
+    await runHeartbeat({ vault, llm, env: {} }, listJobs(vault).find((j) => j.type === 'ceo.heartbeat')!.id);
+    expect(buildSnapshot(vault).inbox.find((r) => r.kind === 'founder_brief')!.board_pending).toBe(false);
+  }, 60000);
+
+  it('a vault with no board room does not strand the brief behind a board that will never sit', async () => {
+    const teams = vault.list('Teams', { ext: '.md' }).find((r) => r.endsWith('board.md'))!;
+    vault.updateNote(teams, (n) => ({ data: { ...n.data, lead: 'advisor_skeptic', members: [] }, body: n.body }), 'owner');
+    for (const r of ['advisor_skeptic', 'advisor_investor', 'advisor_customer']) {
+      vault.updateNote(`Roles/${r}.md`, (n) => ({ data: { ...n.data, active: false }, body: n.body }), 'owner');
+    }
+    await discoverAndSit(vault);
+    const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief')!;
+    expect(note.data.board_pending).toBe(false);
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => e.payload.where === 'brief_board')).toBe(true);
+  }, 60000);
+
+  it('renders a section the brief\'s own parser reads back, question or no question', () => {
+    const section = renderBriefPressureSection({
+      'Core Assumption': 'they will pay weekly',
+      'Three Fatal Flaws': 'three ways this dies\n- no van\n- the caterer renews in August',
+      'Problem Validation': 'a painkiller',
+      'Founder-Market Fit': `${OWNER_QUESTION} what have you run before?`,
+      'Brutal Verdict': 'the fit is the open question',
+    }, 'WEAK', 'Meetings/2026-09-13-1400-board-founder-brief.md');
+    expect(readPressureVerdict(section)).toMatchObject({ ok: true, verdict: 'WEAK' });
+    expect(section).toContain('**Three Fatal Flaws:** three ways this dies; no van; the caterer renews in August');
+    expect(section).toMatch(/\*\*Founder-Market Fit:\*\* unstated — QUESTION FOR THE OWNER:/);
+    expect(section).toContain('[[Meetings/2026-09-13-1400-board-founder-brief]]');
+  });
+});
+
+/**
+ * The two things the whole-branch review found the reuse rule getting wrong (I2, I3). Both are about *when* the
+ * board is allowed to say nothing new: a subject it has already argued, and a question it has already asked.
+ */
+describe('the reuse rule only reuses what has not changed (review I2, I3)', () => {
+  it('argues every cycle\'s plan afresh, and reuses only a plan that is word for word the same', async () => {
+    const org = loadOrg(vault);
+    const cycleOne = await runBoardSession({ vault, llm: dialogueLlm() as never }, org, PLAN);
+    expect(cycleOne.calls).toBe(PRESSURE_PARTS.length * 2 + BOARD_DIALOGUE_ROUNDS);
+
+    // Cycle two writes a different plan. Before I2 this found cycle one's session, reused all five findings,
+    // made no advisor call at all, and voted on today's plan over yesterday's argument.
+    const next = dialogueLlm();
+    const cycleTwo = await runBoardSession({ vault, llm: next as never }, org, `${PLAN}- And ship the pricing page\n`);
+    expect(cycleTwo.calls).toBe(cycleOne.calls);
+    expect(next.prompts.filter((p) => /The chair has asked, on \*\*/.test(p.text))).toHaveLength(PRESSURE_PARTS.length * 2);
+
+    // The same plan, on the other hand, is the argument the board already had.
+    const again = dialogueLlm();
+    await runBoardSession({ vault, llm: again as never }, org, PLAN);
+    expect(again.prompts.filter((p) => /The chair has asked, on \*\*/.test(p.text))).toHaveLength(0);
+  }, 30000);
+
+  it('asks an open question once, however many times the board records it', async () => {
+    const org = loadOrg(vault);
+    const chair = org.teams.board!.lead;
+    const asks = () => listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.from === chair);
+    await runBoardSession({ vault, llm: dialogueLlm({ unanswerable: 'Founder-Market Fit' }) as never }, org, IDEA);
+    expect(asks()).toHaveLength(1);
+    expect(questionsAlreadyAsked(vault, chair)).toEqual(['what have you actually run before?']);
+
+    // A later cycle sits again and records the same open question. Before I3 the message id carried the
+    // session's own timestamp, so a fresh "The board needs 1 answer from you" landed every single cycle.
+    const later = await runBoardSession({ vault, llm: dialogueLlm({ unanswerable: 'Founder-Market Fit' }) as never }, org, IDEA);
+    expect(later.questions).toHaveLength(1);          // still open, and still recorded on the card
+    expect(asks()).toHaveLength(1);                   // …and still asked exactly once
+
+    // A different question is a different message, and it carries only what is new.
+    await runBoardSession({ vault, llm: dialogueLlm({ unanswerable: 'Problem Validation' }) as never }, org, { ...IDEA, text: `${IDEA.text}\n\nA third nursery asked.` });
+    expect(asks()).toHaveLength(1);                   // the same words, so the same question: still asked once
+  }, 30000);
+
+  it('keys the cabin message on the questions, not on the session that found them', () => {
+    const one = boardQuestionsMessageId('idea:meal-kits:abc', [`${OWNER_QUESTION} what have you run before?`]);
+    expect(boardQuestionsMessageId('idea:meal-kits:abc', ['what have you run before?'])).toBe(one);
+    expect(boardQuestionsMessageId('idea:meal-kits:abc', ['and who pays?'])).not.toBe(one);
+    expect(boardQuestionsMessageId('idea:spoons:abc', ['what have you run before?'])).not.toBe(one);
+  });
+});

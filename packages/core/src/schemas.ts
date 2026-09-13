@@ -239,6 +239,14 @@ export const InboxFrontmatter = z.looseObject({
   call: StoredCall.optional(),
   target: z.string().optional(),   // file path for brand_change / charter_change / file_change
   job: z.string().optional(),      // originating job id
+  /**
+   * SP8 §3 (ruling P8-6): a `founder_brief` whose `## Pressure test` the board has not held yet. The brief is
+   * filed by the discovery job's own tool call, so it reaches `00 Inbox/` before the board can sit on it; this
+   * says the document is not finished and the owner should not be asked to rule on it. The daemon clears it
+   * when the session's findings are written into the brief. Absent on every other kind, and on a vault whose
+   * `board_dialogue` is `brief` — there the discovery job's own section is the section.
+   */
+  board_pending: z.boolean().optional(),
 });
 export type InboxFrontmatter = z.infer<typeof InboxFrontmatter>;
 

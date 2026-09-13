@@ -124,4 +124,27 @@ describe('proposal.create checks a founder_brief against the vault before filing
       expect(briefsFiled()).toBe(0);
     });
   });
+
+  // SP8, ruling P8-6: under `board_dialogue: full` the brief the discovery job files is not finished — the
+  // board pressure-tests it and its findings become the `## Pressure test` section. A tool cannot hold a board
+  // session, so it says so and the daemon finishes the document before the owner is asked to rule on it.
+  describe('a brief the board has not sat on yet says so (SP8)', () => {
+    it('stamps board_pending on a full-dialogue vault, and never on a brief-dialogue one', async () => {
+      expect(vault.constitution().board_dialogue).toBe('full');
+      expect((await file(TRUE_BRIEF)).ok).toBe(true);
+      expect(listInbox(vault).find((n) => n.data.kind === 'founder_brief')!.data.board_pending).toBe(true);
+    });
+
+    it('leaves it off when the board holds the brief session it always held', async () => {
+      vault.writeText('Memory/constitution.md', vault.readText('Memory/constitution.md').replace(/^board_dialogue:.*$/m, 'board_dialogue: brief'), 'owner');
+      expect((await file(TRUE_BRIEF)).ok).toBe(true);
+      expect(listInbox(vault).find((n) => n.data.kind === 'founder_brief')!.data.board_pending).toBeUndefined();
+    });
+
+    it('marks nothing but the founder brief', async () => {
+      const r = await proposalCreate.handler({ kind: 'brand_change', title: 'A name', body: 'Call it X.', target: 'Brand/name.md' }, ctx());
+      expect(r.ok).toBe(true);
+      expect(listInbox(vault).find((n) => n.data.kind === 'brand_change')!.data.board_pending).toBeUndefined();
+    });
+  });
 });

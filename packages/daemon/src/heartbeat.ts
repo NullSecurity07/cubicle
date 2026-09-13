@@ -22,7 +22,7 @@ import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, ga
 import { seedFirstJobs, seedFirstStream } from './first-run.js';
 import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId, hasApprovedBrief, rejectionAsksForNewIdea } from './discovery.js';
 import { writeRunway, accrueModelCost, enqueueRunway, dormancyMessage, revivalMessage } from './money.js';
-import { runBoardDialogue, linkBoardTranscript, type BoardSessionOpts } from './board-dialogue.js';
+import { runBoardDialogue, linkBoardTranscript, runBriefBoardSession, type BoardSessionOpts } from './board-dialogue.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -452,7 +452,7 @@ export interface BoardMerge {
  * re-ask returns the idea rather than passing it by default.
  */
 export function mergeBoardVerdict(text: string, kind: BoardSubject['kind'] = 'plan'): BoardMerge {
-  if (kind !== 'idea') {
+  if (kind === 'plan') {
     const verdict = /^\s*verdict:\s*return\b/im.test(text) ? 'return' : 'pass';
     const findings = text.split('\n')
       .map((l) => l.trim().match(/^[-*]\s+(.+)$/)?.[1]?.trim())
@@ -474,15 +474,28 @@ export function unansweredMerge(m: BoardMerge): BoardMerge {
   return { ...m, verdict: 'return', findings: [PRESSURE_UNANSWERED, ...m.findings].slice(0, PRESSURE_MAX_FLAWS) };
 }
 
-/** What one board session judges: this cycle's plan, or one idea out of the funnel. */
+/**
+ * What one board session judges: this cycle's plan, one idea out of the funnel, or the founder brief.
+ *
+ * `plan` is the pre-mortem and is the odd one out — it asks for `VERDICT: pass | return` and reads as it always
+ * has. `idea` and `brief` are both the **pressure test** (ruling P8-6: the owner's ask is that the framework
+ * "asks itself and talks to itself", and the brief is where it matters most), so every branch below that is
+ * about the pressure test asks `kind !== 'plan'` rather than naming the two.
+ */
 export interface BoardSubject {
-  kind: 'plan' | 'idea';
+  kind: 'plan' | 'idea' | 'brief';
   /** What the advisors read. */
   text: string;
   /** One line naming what is being judged: the meeting agenda, the decision note and the whiteboard all use it. */
   title: string;
-  /** `Ideas/<slug>` for an idea session; absent for a plan. */
+  /** `Ideas/<slug>` for an idea session, `founder-brief` for the brief; absent for a plan. Filenames only. */
   slug?: string;
+  /**
+   * What identifies this subject *across* sessions, when the slug does not. The brief's is its proposal id — two
+   * briefs on one vault are two documents, and a re-run after a rejection must not inherit the last one's
+   * findings. Ideas and plans key on their slug and need none.
+   */
+  key?: string;
 }
 
 /**
@@ -523,7 +536,7 @@ export function advisorPrompt(s: BoardSubject): string {
     return `This cycle's plan:\n\n${s.text.slice(0, SUBJECT_CHARS)}\n\nImagine the cycle has already failed. Write at most three bullets: the failure mode you see and the one change that would prevent it. One line each, concrete, no preamble.`;
   }
   return [
-    'An idea the company is considering:',
+    s.kind === 'brief' ? 'The founder brief the company is about to plan against:' : 'An idea the company is considering:',
     '',
     s.text.slice(0, SUBJECT_CHARS),
     '',
@@ -533,7 +546,7 @@ export function advisorPrompt(s: BoardSubject): string {
     '',
     // `Docs/` is a memory-search directory, so naming the handbook is enough for an advisor to fetch it; the
     // path itself is core's one constant (`PRESSURE_HANDBOOK_PATH`) rather than a literal repeated here.
-    `Every flaw must be specific to this idea; no generic advice. The catalogue to hunt in is \`${PRESSURE_HANDBOOK_PATH}\`.`,
+    `Every flaw must be specific to this ${s.kind === 'brief' ? 'company' : 'idea'}; no generic advice. The catalogue to hunt in is \`${PRESSURE_HANDBOOK_PATH}\`.`,
   ].join('\n');
 }
 
@@ -544,7 +557,7 @@ export function advisorPrompt(s: BoardSubject): string {
  * pressure-test words. The plan branch is byte-identical to what it was before SP5b.
  */
 export function chairPrompt(s: BoardSubject, transcript: string): string {
-  if (s.kind !== 'idea') {
+  if (s.kind === 'plan') {
     return `You chair the board. Your advisors wrote:\n\n${transcript}\n\nMerge them into ONE verdict for the owner on this plan. First line exactly "VERDICT: pass" or "VERDICT: return". Then at most four bullets, each a failure mode this plan does not answer and the change that fixes it. Return the plan only if running it as written would waste the cycle; you cannot delay.`;
   }
   return [
@@ -552,7 +565,7 @@ export function chairPrompt(s: BoardSubject, transcript: string): string {
     '',
     transcript,
     '',
-    'Merge them into ONE verdict for the owner on this idea. The test is: would Paul Graham fund this in its current form? Write exactly this, in this order:',
+    `Merge them into ONE verdict for the owner on ${s.kind === 'brief' ? 'this founder brief' : 'this idea'}. The test is: would Paul Graham fund this in its current form? Write exactly this, in this order:`,
     '',
     ...chairFormat(),
   ].join('\n');
@@ -612,7 +625,8 @@ export function chairReaskPrompt(s: BoardSubject, transcript: string, why: strin
 
 /** The agenda line the board room shows while the session is open. */
 export function boardAgenda(s: BoardSubject): string {
-  return s.kind === 'plan' ? 'Pre-mortem: this cycle\'s plan' : `Idea review: ${s.title}`;
+  if (s.kind === 'plan') return 'Pre-mortem: this cycle\'s plan';
+  return s.kind === 'brief' ? `Pressure test: ${s.title}` : `Idea review: ${s.title}`;
 }
 
 /**
@@ -649,6 +663,12 @@ export interface BoardSessionResult extends BoardMerge {
   notePath: string;
   /** SP8 §3: what the board could not answer from the material and asked the owner instead. */
   questions: string[];
+  /**
+   * SP8 §3: the round findings, by part. The same five the `chairText` renders, kept structured because the
+   * founder brief's `## Pressure test` is written out of them in its own shape (bold lead-ins, not headings)
+   * and re-parsing the rendered page to get them back would be reading our own output. Empty on the brief path.
+   */
+  findingsByPart: Partial<Record<PressurePart, string>>;
 }
 
 export async function runBoardSession(
@@ -665,10 +685,10 @@ export async function runBoardSession(
   // with no board room must fail as "the board passed unreviewed", not as a TypeError inside the cycle (M5).
   // Nothing is emitted on this path either: no advisor walked to the table, so the room must not light up.
   const board = org.teams.board;
-  if (!board) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null, chairText: '', notePath: '', questions: [] };
+  if (!board) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null, chairText: '', notePath: '', questions: [], findingsByPart: {} };
   const advisors = [...new Set([board.lead, ...board.members])].filter((r) => org.roles[r]).slice(0, 3);
   // A board whose charters are all gone is the same as no board: nobody walks to the table (review of Task 7).
-  if (advisors.length === 0) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null, chairText: '', notePath: '', questions: [] };
+  if (advisors.length === 0) return { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null, advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null, chairText: '', notePath: '', questions: [], findingsByPart: {} };
   const leadTier = org.roles[board.lead]?.model_tier ?? 'medium';
   const tierFor = (roleId: string): ModelTier => org.roles[roleId]?.model_tier ?? leadTier;
   // The board room, on screen: the advisors walk to the table, the owner's chair fills, and the whiteboard says
@@ -685,7 +705,7 @@ export async function runBoardSession(
     notes.push(`### ${advisorName(vault, a)}\n${text ?? '(no answer: no model was available)'}`);
   }
   const transcript = notes.join('\n\n');
-  const chair = (prompt: string): Promise<string | null> => askAs(deps, board.lead, advisorSystem(vault, board.lead), prompt, s.kind === 'idea' ? CHAIR_IDEA_TOKENS : 600, leadTier);
+  const chair = (prompt: string): Promise<string | null> => askAs(deps, board.lead, advisorSystem(vault, board.lead), prompt, s.kind === 'plan' ? 600 : CHAIR_IDEA_TOKENS, leadTier);
   const merged = await chair(chairPrompt(s, transcript));
   // No answer at all is not a bad answer. With no model available the session falls open exactly as it did
   // before the pressure test existed, and `answered === 0` is what tells the owner nobody reviewed anything —
@@ -696,7 +716,7 @@ export async function runBoardSession(
   // The chair's own five parts, kept rather than dropped on the floor (ruling H3). Only on an idea, and only
   // when the answer was believed: the plan pre-mortem's record is byte-identical to what it always was, and a
   // refused answer is quoted back to the chair in the re-ask rather than filed as the board's verdict.
-  let chairText = s.kind === 'idea' && merged !== null && !merge.refused ? merged : '';
+  let chairText = s.kind !== 'plan' && merged !== null && !merge.refused ? merged : '';
   let calls = advisors.length + 1;
   let reasked = false;
   let chairLost: string | null = null;
@@ -716,7 +736,7 @@ export async function runBoardSession(
       chairText = second.refused ? '' : again;
     }
   }
-  const out: BoardSessionResult = { ...merge, advisors, transcript, answered, subject: s, calls, reasked, chairLost, chairText, notePath: '', questions: [] };
+  const out: BoardSessionResult = { ...merge, advisors, transcript, answered, subject: s, calls, reasked, chairLost, chairText, notePath: '', questions: [], findingsByPart: {} };
   vault.events.emit({
     type: 'meeting.closed', agent: board.lead,
     payload: {
@@ -1776,7 +1796,20 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           break;
         }
         if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
-        done(i, `discovery ${sub.data.status}`);
+        // The brief the job just filed is not finished until the board has pressure-tested it (ruling P8-6).
+        // Here, because this is the first moment the daemon holds the org, a model and a terminal discovery job
+        // at once — and because the owner must not be asked to adopt a brief whose `## Pressure test` is still
+        // the author's draft. A failure is a warning, never the cycle: the flag comes off inside the session so
+        // a brief can never be stranded behind a board that would not sit.
+        let briefBoard = '';
+        try {
+          const held = await runBriefBoardSession(deps, org);
+          if (held) briefBoard = `; the board pressure-tested the founder brief (${held.verdict}${held.questions.length ? `, ${held.questions.length} question(s) for you` : ''})`;
+        } catch (err) {
+          vault.events.emit({ type: 'daemon.warning', agent: ceo, job: jobId, payload: { where: 'discovery', message: `the board could not pressure-test the founder brief: ${(err as Error).message.slice(0, 200)}` } });
+        }
+        if (cancelled()) return { status: 'cancelled' };
+        done(i, `discovery ${sub.data.status}${briefBoard}`);
         break;
       }
       case 'ideas_board': {

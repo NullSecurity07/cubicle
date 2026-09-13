@@ -1,7 +1,7 @@
 # Pressure-test handbook
 
 How this company judges a startup idea: the Paul Graham / YC test, in the order it has to be run. The board
-runs it on every idea card; the founder brief takes it once. `Docs/ideas-handbook.md` is how an idea is scored
+runs it on every idea card, and on the founder brief before you are asked to adopt it. `Docs/ideas-handbook.md` is how an idea is scored
 and decided — this is how it is *judged*.
 
 The stance: skeptical but not cynical. Assume the idea is wrong and try to prove it. Whatever survives is worth
@@ -195,6 +195,6 @@ verbatim.
 ## Where this shows up
 
 - Every `Ideas/<slug>.md` card: the board's verdict, its rubric and its findings under `## The board`.
-- `Memory/founder-brief.md`: one `## Pressure test` section, the five parts, on the company as a whole.
+- `Memory/founder-brief.md`: one `## Pressure test` section — the board's own five findings on the company.
 - The owner's `idea_verdict` note in `00 Inbox/`, which is where the ruling is actually made.
 - `Meetings/<stamp>-board-<subject>.md`: the transcript, and a cabin message for anything it had to ask you.
