@@ -174,6 +174,14 @@ describe('FR-3: discovery never starts on a note that is only a reply to the CEO
     expect(currentDiscoveryStatus(vault, new Date('2026-09-13T09:05:00.000Z')).run).toBe(true);
   });
 
+  it('does not read a company name nobody just chose as material', () => {
+    // A scaffolded company that has always had a name: nothing was decided, so there is nothing new to read
+    // and no discovery job. Only a name the owner *approved* is a pick.
+    vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'PlateReady' }, body: n.body }), 'owner');
+    const s = currentDiscoveryStatus(vault, new Date('2026-09-13T09:05:00.000Z'));
+    expect(s.run).toBe(false);
+  });
+
   it('does not mistake the name proposal for an unpicked set of three ideas', () => {
     // The other `brand_change` on Brand/name.md: a name for an idea the owner typed, carrying a content fence.
     // Nobody is waiting on a pick here, and the checkpoint log must not say they are.

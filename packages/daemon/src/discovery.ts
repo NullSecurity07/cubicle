@@ -251,11 +251,17 @@ export interface OwnerPick { line: string; path: string }
  * (visible the moment the owner edits the note) and `Brand/name.md` once the dispatcher has written it.
  */
 export function ownerPick(vault: Vault): OwnerPick | null {
-  const picked = listInbox(vault).find((n) => n.data.kind === 'brand_change' && n.data.approved === true && n.data.chosen !== null && n.data.chosen !== undefined);
+  const proposals = listInbox(vault).filter((n) => n.data.kind === 'brand_change' && n.data.target === BRAND_NAME_PATH);
+  const picked = proposals.find((n) => n.data.approved === true && n.data.chosen !== null && n.data.chosen !== undefined);
   if (picked) {
     const line = picked.body.split('\n').map((l) => l.trim()).find((l) => new RegExp(`^${Number(picked.data.chosen)}\\.\\s`).test(l));
     if (line) return { line, path: picked.path };
   }
+  // The same decision after the dispatcher has written it into the note. Only when a proposal the owner
+  // approved is what put the name there: a name that was simply always in the vault — a scaffold, an owner's
+  // own edit — is not a decision anyone just made, and reading it as unread material would buy a research
+  // lifecycle off a file nobody touched.
+  if (!proposals.some((n) => n.data.approved === true)) return null;
   const brand = parseNote(vault.readTextOrNull(BRAND_NAME_PATH) ?? '');
   const name = String(brand.data.name ?? '').trim();
   if (!name) return null;
