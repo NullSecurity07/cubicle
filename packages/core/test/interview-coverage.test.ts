@@ -164,7 +164,11 @@ describe('what the owner reads, and what the transcript says', () => {
     expect(msg).toContain('1. Who is it for');
     expect(msg).toContain('2. What would have to be true');
     expect(msg).not.toContain('What are you building');
-    expect(msg).toContain('Reply "skip"');
+    // FR-6: the message no longer promises that whatever comes next closes the interview — an answer, or
+    // "skip", closes it, and it says so.
+    expect(msg).toContain('or reply "skip"');
+    expect(msg).toContain('leaves these open');
+    expect(msg).not.toContain('Whatever you say next closes this');
   });
 
   it('and reads exactly as it always did when all six are open', () => {

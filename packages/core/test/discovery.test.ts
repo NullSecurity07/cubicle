@@ -7,7 +7,7 @@ import type { Vault } from '../src/vault.js';
 import {
   DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF, LONG_PROMPT_CHARS,
   isLongPrompt, listDiscoveryInputs, discoveryDigest, hasFounderBrief,
-  INTERVIEW_QUESTIONS, renderInterviewAsk, renderInterviewAsked, interviewPhase, closeInterview, interviewAnswer, isSkip,
+  INTERVIEW_QUESTIONS, renderInterviewAsk, renderInterviewAsked, interviewPhase, closeInterview, interviewAnswer, isSkip, closesInterview,
   FOUNDER_BRIEF_SECTIONS, missingBriefSections, founderBriefTemplate, founderBriefProposalBody,
 } from '../src/discovery.js';
 
@@ -81,6 +81,26 @@ describe('the cabin interview (spec §1.4)', () => {
     expect(interviewPhase(asked)).toBe('asked');
     expect(interviewPhase(closeInterview(asked, 'We sell meal kits to nurseries.', '2026-09-11T11:00:00.000Z'))).toBe('answered');
     expect(interviewPhase(closeInterview(asked, 'skip', '2026-09-11T11:00:00.000Z'))).toBe('skipped');
+  });
+
+  it('promises only what FR-6 does: an answer or a skip closes it, a note to the CEO does not', () => {
+    const ask = renderInterviewAsk();
+    expect(ask).not.toContain('Whatever you say next closes this');
+    expect(ask).toContain('leaves these open');
+    expect(renderInterviewAsked('2026-09-13T10:00:00.000Z')).not.toContain('whatever it says');
+    expect(renderInterviewAsked('2026-09-13T10:00:00.000Z')).toContain('leaves it open');
+  });
+
+  it('closes on an answer or a skip, and on nothing else (finding F5, ruling FR-6)', () => {
+    expect(closesInterview('skip')).toBe(true);
+    expect(closesInterview('Nurseries.\nTwo already pay us.')).toBe(true);
+    expect(closesInterview('We sell meal kits to nurseries, two of them already pay us monthly.')).toBe(true);
+    // The first live run's message, which would have become the six answers.
+    expect(closesInterview('your text is only half')).toBe(false);
+    expect(closesInterview('')).toBe(false);
+    expect(closesInterview('surprise me')).toBe(false);
+    // A dozen words that end in a question mark are a question, not an answer.
+    expect(closesInterview('Can you tell me what the research office is going to do about this?')).toBe(false);
   });
 
   it('recognises a skip only as a whole answer, never as a word inside one', () => {

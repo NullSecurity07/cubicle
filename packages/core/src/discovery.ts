@@ -261,13 +261,37 @@ export function renderInterviewAsk(questions: readonly string[] = INTERVIEW_QUES
     '',
     ...questions.slice(0, 6).map((q, i) => `${i + 1}. ${q}`),
     '',
-    'Whatever you say next closes this, and goes into the founder brief the next plan is written against. Reply "skip" and I will work from what is already in the vault instead.',
+    // The message must not promise something the daemon no longer does (finding F5, ruling FR-6): the owner's
+    // *next* message no longer closes the interview whatever it says, because a complaint or a question would
+    // otherwise be filed as the six answers. Only an answer — or "skip" — closes it, and the message says so.
+    'Answer here in your own words, or reply "skip"; a question or a quick note to me leaves these open. What you answer goes into the founder brief the next plan is written against.',
   ].join('\n');
 }
 
 /** An owner reply that means "stop asking". Deliberately narrow: a one-word answer, not a word inside a sentence. */
 export function isSkip(text: string): boolean {
   return /^\s*(skip|no thanks|not now|later)\s*[.!]?\s*$/i.test(text);
+}
+
+/** How many words an answer on one line has to have before it is taken as the owner's answer to all six. */
+export const INTERVIEW_ANSWER_WORDS = 12;
+
+/**
+ * Whether what the owner just typed is an **answer**, and so closes the interview.
+ *
+ * The first live run's finding F5: the interview closed on the owner's next message whatever it said, so a
+ * complaint, a question or "your text is only half" would have been filed as the six answers and planned
+ * against. Ruling FR-6 draws the line in code rather than with a model call (a classifier costs a call, and
+ * the spec wants the interview to cost nothing): "skip" closes it; so does an answer — two non-empty lines, or
+ * a dozen words that are not a question. Anything else leaves the six questions open and gets an ordinary
+ * reply from the CEO that says so.
+ */
+export function closesInterview(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (isSkip(t)) return true;
+  if (t.split('\n').filter((l) => l.trim()).length >= 2) return true;
+  return t.split(/\s+/).filter(Boolean).length >= INTERVIEW_ANSWER_WORDS && !t.endsWith('?');
 }
 
 export type InterviewPhase = 'none' | 'asked' | 'answered' | 'skipped' | 'covered';
@@ -314,7 +338,7 @@ export function questionsAsked(message: string): string[] {
 export function renderInterviewAsked(at: string, questions: readonly string[] = INTERVIEW_QUESTIONS): string {
   return [
     '# Founder interview', '',
-    `_The CEO asked these on ${at.slice(0, 10)}. The owner answers in the cabin; the next message they send closes the interview, whatever it says._`, '',
+    `_The CEO asked these on ${at.slice(0, 10)}. The owner answers in the cabin; an answer — or "skip" — closes the interview, and a question or a quick note to the CEO leaves it open (ruling FR-6)._`, '',
     '## Questions', '',
     ...questions.slice(0, 6).map((q, i) => `${i + 1}. ${q}`),
     '',
