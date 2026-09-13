@@ -4,9 +4,16 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, loadOrg, listJobs, createProposal } from '@cubicle/core';
 import { seedFirstJobs, FIRST_JOB_TITLES } from '../src/index.js';
+import { adoptFounderBrief } from './helpers/brief.js';
 
 let dir: string; let vault: Vault;
-beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-firstrun-')); vault = (await scaffoldVault(dir)).vault; });
+beforeEach(async () => {
+  dir = mkdtempSync(path.join(tmpdir(), 'cubicle-firstrun-'));
+  vault = (await scaffoldVault(dir)).vault;
+  // The seeds are created on the first heartbeat *after* the owner adopts the founder brief (ruling P8-15), so
+  // a fixture about who they are assigned to needs a brief on file like any other company that has planned.
+  adoptFounderBrief(vault);
+});
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
 describe('the first-run seeds pick people by office and capability', () => {

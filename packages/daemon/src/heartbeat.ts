@@ -2378,10 +2378,20 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         const moneyFacts = { line: moneyLineOf(moneyNow), needsYou: moneyNeedsYou(moneyNow.report), dormant: moneyNow.report.dormant };
         // D8 seeds heartbeat #1 with a stream and the first jobs — but never for a company that has no money
         // to do them with. A dormant cycle writes its brief and nothing else.
-        const firstStream = moneyFacts.dormant ? null : seedFirstStream(vault);
+        //
+        // And never before the founder brief is adopted (ruling P8-15). These three seeds are real work — a
+        // site, an offer, a channel — and ruling S-1 makes every other plan in this cycle wait for the brief;
+        // the seeds were the one path around it. The live AltStack run did eighteen jobs off a pick the board
+        // had not yet judged (D2). They are created on the first heartbeat after adoption instead, which
+        // `seedFirstJobs` anchors on the brief's own write rather than on the idea.
+        const briefAdopted = hasApprovedBrief(vault);
+        const firstStream = moneyFacts.dormant || !briefAdopted ? null : seedFirstStream(vault);
         if (firstStream) updateJob(vault, jobId, {}, 'ceo', `- step ${i + 1} ${step}: created the first stream Streams/${firstStream}.md from the owner's idea`);
-        const seeded = moneyFacts.dormant ? [] : seedFirstJobs(vault, loadOrg(vault));
+        const seeded = moneyFacts.dormant || !briefAdopted ? [] : seedFirstJobs(vault, loadOrg(vault));
         if (seeded.length) updateJob(vault, jobId, {}, 'ceo', `- step ${i + 1} ${step}: seeded ${seeded.length} first job(s)`);
+        // One line, in the wording the four planning steps already use, so a cycle that seeded nothing says why
+        // once rather than twice (the stream and the jobs are the same wait).
+        if (!briefAdopted && !moneyFacts.dormant) updateJob(vault, jobId, {}, 'ceo', `- step ${i + 1} ${step}: first jobs and the first stream are ${WAITING_FOR_BRIEF}`);
         const runRel = state.runPath ?? `Runs/${stampForFilename(now())}.md`;
         if (!state.runPath) updateJob(vault, jobId, { links: [...job.links, `[[${runRel.replace(/\.md$/, '')}]]`] }, 'ceo');
         const queued = listJobs(vault, { status: 'queued' });

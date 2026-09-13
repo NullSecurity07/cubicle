@@ -107,8 +107,10 @@ describe('S-1: nothing is planned before the owner has adopted a founder brief',
       expect(stepOf(v, first.hb)).toBeUndefined();
       const log = readJob(v, first.hb)!.body;
       expect(log).toContain(WAITING_FOR_BRIEF);
-      // All four planning steps said it, not just the first.
-      expect(log.match(new RegExp(WAITING_FOR_BRIEF, 'g'))).toHaveLength(4);
+      // All four planning steps said it, not just the first — and the brief step says it a fifth time for the
+      // first-run seeds, which wait for the same document as every other plan (ruling P8-15).
+      expect(log.match(new RegExp(WAITING_FOR_BRIEF, 'g'))).toHaveLength(5);
+      expect(log).toContain(`first jobs and the first stream are ${WAITING_FOR_BRIEF}`);
 
       // And the owner is told, in the one document they read.
       const run = readFileSync(path.join(dir, v.list('Runs', { ext: '.md' }).sort().at(-1)!), 'utf8');

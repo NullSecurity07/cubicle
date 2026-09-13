@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, listStreams, readStream, createProposal, loadOrg, listJobs } from '@cubicle/core';
 import { seedFirstStream, firstStreamSpec, seedFirstJobs } from '../src/first-run.js';
+import { adoptFounderBrief } from './helpers/brief.js';
 
 let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-firststream-')); vault = (await scaffoldVault(dir)).vault; });
@@ -12,6 +13,8 @@ afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); 
 function idea(name: string, tagline: string, ownerNote: string): void {
   vault.writeText('Brand/name.md', `---\nname: ${name}\ntagline: ${tagline}\nurl: ""\n---\n# ${name}\n`, 'owner');
   createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'The idea', body: ownerNote }, 'owner');
+  // The brief the owner adopted from that idea: what `seedFirstJobs` anchors its once-only window on (P8-15).
+  adoptFounderBrief(vault);
 }
 
 describe('firstStreamSpec', () => {

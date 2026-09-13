@@ -1,6 +1,6 @@
 import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO, officeHolder, loadOrg, moneyReport, readLedger, HOUSE } from '@cubicle/core';
+import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, findInboxById, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO, officeHolder, loadOrg, moneyReport, readLedger, HOUSE } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown, type ModelBudget } from '@cubicle/router';
 import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, secretsGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter, type InboxFrontmatter } from '@cubicle/core';
@@ -324,7 +324,7 @@ export class Daemon {
     this.offEvents.push(this.vault.events.on('quota.updated', () => this.writeQuotaMd()));
 
     if (!this.overrides.disableWs) {
-      this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.answerOwnerNow('chat'); void this.runTick('chat'); }, onDecide: () => { void this.runTick('decide'); } });
+      this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.answerOwnerNow('chat'); void this.runTick('chat'); }, onDecide: (id) => { this.wakeForDecision(id); void this.runTick('decide'); } });
       const port = await this.ws.start();
       cfg.port = port; // port 0 binds an ephemeral port; downstream config, daemon.json, and events must see the real one
       this.log(`ws listening on ws://127.0.0.1:${port}`);
@@ -390,6 +390,28 @@ export class Daemon {
    * into the vault before any viewer could see the empty office (C1). The gate applies only to the very first
    * heartbeat — once one has completed the company is real, and every later trigger stands on its own.
    */
+  /**
+   * A decision taken in the office wakes the company exactly as the same decision saved in Obsidian would
+   * (ruling P8-14).
+   *
+   * `ownerDecide` writes the owner's flags *through the vault* and records the sha it wrote, so the watcher
+   * sees its own write and emits no `owner.edited` — by design, or every daemon write would look like the
+   * owner typing. The cost, found in the live AltStack run (D1): the owner picked one of the three ideas from
+   * the Decisions sheet, `inboxEditWakesHeartbeat` never ran, no heartbeat followed the pick, and discovery
+   * never started — the company sat on an approved idea until the six-hourly trigger.
+   *
+   * So the decide path asks the same question of the note it just decided, with the same predicate, and the
+   * two paths cannot drift: an approval still buys no cycle (the tick applies it in seconds), a rejection, an
+   * owner message, the adopted founder brief and the pick still do. `requestHeartbeat` is idempotent while one
+   * heartbeat is open, so a decision that also happens to reach the watcher costs one heartbeat, not two.
+   */
+  private wakeForDecision(id: string): void {
+    // Read the note as it stands now, before the tick resolves it — the same rule `inboxEditWakesHeartbeat`
+    // follows. A note that is gone wakes nothing.
+    const note = findInboxById(this.vault, id);
+    if (note && inboxEditWakesHeartbeat(this.vault, note.path)) this.requestHeartbeat(`decided ${id}`);
+  }
+
   requestHeartbeat(trigger: string): string | null {
     if (this.stopping) return null;
     if (!this.vault.events.last('heartbeat.completed') && !hasIdea(this.vault)) return null;

@@ -1,4 +1,4 @@
-import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, listDiscoveryInputs, parseNote, officeHolder, roleWithTool, researchLead, teamOf, leadOf, createStream, listStreams, streamSlug, ciConfigPath, type NewStream } from '@cubicle/core';
+import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, listDiscoveryInputs, parseNote, officeHolder, roleWithTool, researchLead, teamOf, leadOf, createStream, listStreams, streamSlug, ciConfigPath, hasFounderBrief, FOUNDER_BRIEF, type NewStream } from '@cubicle/core';
 
 /**
  * The three jobs a company must leave its first heartbeat with (spec §12): something on the web, something to
@@ -125,19 +125,53 @@ export function hasIdea(vault: Vault): boolean {
 }
 
 /**
- * Seed the first-run jobs on the first heartbeat that completes after the owner's idea. Returns the ids created
- * (possibly none).
+ * When the owner adopted the founder brief — the anchor the first-run seeds hang on (ruling P8-15), and `null`
+ * while no brief is adopted.
+ *
+ * `Memory/founder-brief.md` exists only because the owner approved a `founder_brief` proposal: it is not
+ * scaffolded, the `vault.write` tool refuses it by name, and the dispatcher's `founder_brief` case is the one
+ * path that writes it (see `hasApprovedBrief`). So the file's first write in the log *is* the adoption, and the
+ * proposal's `resolved_at` is the same moment recorded on the note — the fallback for a log that no longer
+ * reaches back that far.
+ *
+ * The epoch is the last resort, and it is deliberately the conservative one: with no evidence of when the brief
+ * was adopted, any completed heartbeat counts as having had it and nothing is seeded. Seeding twice would put a
+ * second "scaffold the site" on a company that has been running for weeks; seeding never leaves the leads'
+ * own plans, which is what later cycles run on anyway.
+ */
+export function briefAdoptedAt(vault: Vault): string | null {
+  if (!hasFounderBrief(vault)) return null;
+  for (const e of vault.events.query({ types: ['vault.wrote', 'owner.edited'] })) {
+    if (String((e.payload as { path?: string }).path ?? '') === FOUNDER_BRIEF) return e.ts;
+  }
+  const resolved = listInbox(vault)
+    .filter((n) => n.data.kind === 'founder_brief' && n.data.approved === true && !!n.data.resolved_at)
+    .map((n) => String(n.data.resolved_at))
+    .sort()[0];
+  return resolved ?? EPOCH;
+}
+
+/**
+ * Seed the first-run jobs on the first heartbeat that runs after the owner adopted the founder brief. Returns
+ * the ids created (possibly none).
  *
  * The guard used to be "no `heartbeat.completed` exists at all", which the startup heartbeat broke: that one
  * runs before the owner has typed anything, so all three seeds were spent on a nameless company and the
- * heartbeat that followed the idea then seeded nothing (C1). Anchoring the window to the idea instead keeps the
- * once-only guarantee — later cycles plan for themselves — while putting the seeds on the cycle they belong to.
+ * heartbeat that followed the idea then seeded nothing (C1). Anchoring the window to the *idea* fixed that and
+ * then broke on ruling S-1: every planning step now waits for the adopted brief, so the seeds — three real
+ * jobs, a site, an offer and a channel — were the one piece of work that ran ahead of it. The live AltStack run
+ * did eighteen jobs for an idea the board had not judged (D2).
+ *
+ * The brief's adoption is therefore the anchor (ruling P8-15). It keeps the once-only guarantee the idea anchor
+ * had — later cycles plan for themselves — and it is the only stamp that still works when the seeding cycle is
+ * a later heartbeat: with the idea as the anchor, the heartbeat that ran between the idea and the adoption
+ * would have suppressed the seeds for ever.
  *
  * A seed whose work a live job already covers is skipped, so a lead who planned the scaffold does not get a
  * second one.
  */
 export function seedFirstJobs(vault: Vault, org: Org): string[] {
-  const since = ideaAt(vault);
+  const since = briefAdoptedAt(vault);
   if (since === null) return [];
   if (vault.events.query({ types: ['heartbeat.completed'], from: since, limit: 1 }).length > 0) return [];
   const stream = listStreams(vault)[0]?.slug;
