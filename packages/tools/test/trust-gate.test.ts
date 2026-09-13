@@ -3,11 +3,17 @@ import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, recordTrustVerdict, trustState, trustCleared, TRUST_GATES, TRUST_LOOKBACK } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, phase6Tools, policyFor, type ToolContext } from '../src/index.js';
+import { parseToolsConfig, ToolRegistry, createRoleToolClient, phase3Tools, phase6Tools, policyFor, customerPath, type ToolContext } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 let dir: string; let vault: Vault;
-beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-trustgate-')); vault = (await scaffoldVault(dir)).vault; });
+beforeEach(async () => {
+  dir = mkdtempSync(path.join(tmpdir(), 'cubicle-trustgate-'));
+  vault = (await scaffoldVault(dir)).vault;
+  // Ruling S-3: `email.send` refuses an address no `Customers/` note sources. These tests are about the trust
+  // gates, so the recipients here are researched leads and the notes say where they were found.
+  for (const to of ['a@example.com', 'b@example.com']) vault.writeNote(customerPath(to), { email: to, source: `https://example.com/${to.split('@')[0]}` }, `# ${to}\n`, 'cmo');
+});
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
 const role = (id: string) => RoleFrontmatter.parse(parseNote(vault.readText(`Roles/${id}.md`)).data);

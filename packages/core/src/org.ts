@@ -393,6 +393,18 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
     for (const f of ORG_FIELDS) if (n.data[f] === undefined && t[f] !== undefined) patch[f] = t[f];
     if (Object.keys(patch).length) { vault.writeText(rel, stringifyNote({ ...n.data, ...patch }, n.body), 'daemon'); changed.push(rel); }
   }
+  // 4a. S-5: the board sits on the medium tier. Step 4 above fills only *missing* fields, so a vault scaffolded
+  //     while the skeptic was `strong` would keep the strong tier for ever — and one board session is four calls
+  //     on top of the plan, out of a free strong tier of 20 a day per model. Strong is for the CEO's plan and the
+  //     owner's replies. Only `strong` is moved down: a tier the owner set lower than medium is their choice.
+  const boardTeam = loadOrg(vault).teams.board;
+  for (const roleId of new Set(boardTeam ? [boardTeam.lead, ...boardTeam.members] : [])) {
+    const rel = `Roles/${roleId}.md`;
+    const n = vault.readNoteOrNull(rel);
+    if (!n || n.data.model_tier !== 'strong') continue;
+    vault.writeText(rel, stringifyNote({ ...n.data, model_tier: 'medium' }, n.body), 'daemon');
+    if (!changed.includes(rel)) changed.push(rel);
+  }
   // 5. constitution fields
   const c = vault.readTextOrNull('Memory/constitution.md') ?? '';
   let patched = c;

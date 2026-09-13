@@ -34,6 +34,9 @@ describe('email.send (mock)', () => {
       // leaving call is refused before it. Called directly, it still says so.
       expect(await emailSend.handler({ to: 'a@example.com', subject: 'hi', body: 'hello' } as never, ctxFor('cmo', 'job_e'))).toMatchObject({ ok: false, text: 'email.send requires an idempotency key (harness bug)' });
       clear('job_e:1:2');
+      // Ruling S-3: a recipient with no `Customers/` note saying where the address came from is refused before
+      // anything else. This one was researched, so the note says so and the send goes through.
+      vault.writeNote(customerPath('a@example.com'), { email: 'a@example.com', source: 'https://example.com/team' }, '# A\n', 'cmo');
       const r = await client.call('email.send', { to: 'a@example.com', subject: 'hi', body: 'hello there' }, { idempotencyKey: 'job_e:1:2' });
       expect(r.ok).toBe(true);
       expect(r.sideEffectKey).toBe('job_e:1:2');

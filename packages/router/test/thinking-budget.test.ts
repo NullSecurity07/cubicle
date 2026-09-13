@@ -75,10 +75,26 @@ describe('config: thinking', () => {
     expect(cfg.providers[1].models[0].thinking).toBe(false);
   });
 
-  it('config/providers.yaml marks the Gemini 3.x flash models as thinking, and nothing else', () => {
+  // Ruling S-5: every model that reasons before it answers, not only the Gemini flash ones. The live run of
+  // 2026-09-13 got empty replies at finish_reason "length" out of Gemma 4, gpt-oss 20b and 120b and the
+  // openrouter free reasoners — the same defect the flash models had, and the same one-flag fix. The two lists
+  // below are the whole file: a new model lands in one or the other, never in neither, so adding a reasoning
+  // model without its flag fails here rather than in a live run.
+  it('config/providers.yaml marks every reasoning model as thinking, and nothing else', () => {
     const shipped = loadProvidersConfig(path.join(repoRoot(), 'config', 'providers.yaml'), {});
-    const thinking = shipped.providers.flatMap((p) => p.models.filter((m) => m.thinking).map((m) => m.id)).sort();
-    expect(thinking).toEqual(['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash']);
+    const ids = (want: boolean) => shipped.providers.flatMap((p) => p.models.filter((m) => m.thinking === want).map((m) => m.id)).sort();
+    expect(ids(true)).toEqual([
+      'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash',
+      'gemma-4-26b-a4b-it', 'gemma-4-31b-it',
+      'google/gemma-4-31b-it:free', 'gpt-oss-120b',
+      'minimax/minimax-m2.7:free', 'nvidia/nemotron-3-super-120b-a12b:free',
+      'openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b', 'z-ai/glm-5.2:free',
+    ]);
+    // The rest: the Gemini lite models, one small openrouter model, and the local floor. None of them reason.
+    expect(ids(false)).toEqual([
+      'R4C3R/gemma-3-4b-it-heretic:q4_k_m', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite',
+      'liquid/lfm-2.5-2.6b:free', 'qwen2.5:7b',
+    ]);
   });
 });
 

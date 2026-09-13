@@ -32,6 +32,33 @@ describe('migrateOrg on a v0.1 vault (growth role, no teams) against the real te
   });
 });
 
+// Ruling S-5. Step 4 of the migration fills only *missing* org fields, so a vault scaffolded while the skeptic
+// was `strong` would keep the strong tier for ever: one board session is four calls on top of the plan, out of a
+// free strong tier of 20 a day per flash model, and the live run of 2026-09-13 had that tier gone by 10:51.
+describe('migrateOrg moves the board off the strong tier', () => {
+  it('rewrites a strong board advisor to medium, leaves the CEO alone, and is idempotent', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'cubicle-board-tier-'));
+    const vault = (await scaffoldVault(dir)).vault;
+    try {
+      // A vault written before the ruling: the skeptic chairs the board on the strong tier.
+      const rel = 'Roles/advisor_skeptic.md';
+      vault.writeText(rel, vault.readText(rel).replace(/^model_tier: .*$/m, 'model_tier: strong'), 'owner');
+      expect(loadOrg(vault).roles.advisor_skeptic.model_tier).toBe('strong');
+
+      const r = migrateOrg(vault, templateDir());
+      expect(r.changed).toContain(rel);
+      const org = loadOrg(vault);
+      expect(org.roles.advisor_skeptic.model_tier).toBe('medium');
+      expect(org.roles.advisor_investor.model_tier).toBe('medium');
+      expect(org.roles.advisor_customer.model_tier).toBe('medium');
+      // The strong tier is the CEO's plan and the owner's replies; nothing outside the board room moved.
+      expect(org.roles.ceo.model_tier).toBe('strong');
+      expect(org.roles.cto.model_tier).toBe('strong');
+      expect(migrateOrg(vault, templateDir()).changed).toEqual([]);
+    } finally { vault.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
 describe('migrateOrg constitution patch (missing max_roles anchor)', () => {
   it('a constitution with no max_roles: line migrates once, then the second run is a no-op', async () => {
     const dir2 = mkdtempSync(path.join(tmpdir(), 'cubicle-migrate-noanchor-'));

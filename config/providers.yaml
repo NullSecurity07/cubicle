@@ -12,8 +12,11 @@
 #
 #        The CFO reads prices to say what a cycle *would* have cost on a paid tier (Ledger/runway.md). A priced
 #        model is never counted as free-tier capacity when the model quota per division is allocated.
-# thinking: true on a model that reasons before it answers and bills that reasoning to the same output budget
-#        (every Gemini 3.x *flash* model; not the lite models, not gemma). For such a model the router ignores the
+# thinking: true on a model that reasons before it answers and bills that reasoning to the same output budget.
+#        That is every Gemini 3.x *flash* model, both Gemma 4 models, the gpt-oss pair on groq and cerebras,
+#        qwen3.8, and openrouter's gemma-4-31b / glm-5.2 / minimax-m2.7 / nemotron-3-super — the whole reasoning
+#        set (S-5: the live run of 2026-09-13 got empty replies at finish_reason "length" out of every one of
+#        them). Not the Gemini *lite* models and not liquid/lfm. For such a model the router ignores the
 #        caller's maxTokens as an output cap and sends max_output_tokens, because a small cap is eaten by the
 #        thinking and the answer comes back cut at finish_reason "length" — a live run got a 30-token half-sentence
 #        out of gemini-3.5-flash that way. maxTokens still counts in the prompt/quota estimate. Default: false.
@@ -38,17 +41,17 @@ providers:
       - { id: gemini-3.1-flash-lite, tier: cheap, tools: native, context: 1048576, max_prompt_tokens: 60000, max_output_tokens: 4096, limits: { rpm: 15, rpd: 500, tpm: 250000 }, note: "verified ok 2026-09-02" }
       # Gemma 4 on the Gemini API: 30 rpm / 14 400 rpd each but only 16K tokens per MINUTE, so prompts are capped small
       # and the router's tpm window keeps them to ~2 calls/min. A big pool for cheap/medium work once the flash quotas are spent.
-      - { id: gemma-4-31b-it, enabled: false, tier: medium, tools: native, context: 131072, max_prompt_tokens: 7000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 14400, tpm: 16000 }, note: "added 2026-09-10; tools ok but 56 s per call, so it stays off" }
-      - { id: gemma-4-26b-a4b-it, tier: cheap, tools: native, context: 131072, max_prompt_tokens: 7000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 14400, tpm: 16000 }, note: "added 2026-09-10 from the AI Studio rate-limit page" }
+      - { id: gemma-4-31b-it, enabled: false, thinking: true, tier: medium, tools: native, context: 131072, max_prompt_tokens: 7000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 14400, tpm: 16000 }, note: "added 2026-09-10; tools ok but 56 s per call, so it stays off" }
+      - { id: gemma-4-26b-a4b-it, thinking: true, tier: cheap, tools: native, context: 131072, max_prompt_tokens: 7000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 14400, tpm: 16000 }, note: "added 2026-09-10 from the AI Studio rate-limit page" }
 
   - id: groq
     # https://console.groq.com/docs/openai — free tier limits from https://console.groq.com/docs/rate-limits (2026-09-02)
     base_url: https://api.groq.com/openai/v1
     api_key_env: GROQ_API_KEY
     models:
-      - { id: openai/gpt-oss-120b, tier: medium, tools: native, context: 131072, max_prompt_tokens: 6000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 1000, tpm: 8000 } }
-      - { id: qwen/qwen3.8-27b,    tier: medium, tools: native, context: 131072, max_prompt_tokens: 6000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 1000, tpm: 8000 } }
-      - { id: openai/gpt-oss-20b,  tier: cheap,  tools: native, context: 131072, max_prompt_tokens: 6000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 1000, tpm: 8000 } }
+      - { id: openai/gpt-oss-120b, thinking: true, tier: medium, tools: native, context: 131072, max_prompt_tokens: 6000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 1000, tpm: 8000 } }
+      - { id: qwen/qwen3.8-27b,    thinking: true, tier: medium, tools: native, context: 131072, max_prompt_tokens: 6000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 1000, tpm: 8000 } }
+      - { id: openai/gpt-oss-20b,  thinking: true, tier: cheap,  tools: native, context: 131072, max_prompt_tokens: 6000, max_output_tokens: 2048, limits: { rpm: 30, rpd: 1000, tpm: 8000 } }
 
   - id: openrouter
     # :free models, 20 rpm / 50 rpd without purchased credits (https://openrouter.ai/docs/api-reference/limits, 2026-09-02).
@@ -58,10 +61,10 @@ providers:
     limits: { rpm: 20, rpd: 50 }        # account-wide, summed across models
     # `providers refresh` sets tier by context length and tools from supported_parameters — hand-edit tiers if a model disappoints.
     models:
-      - { id: "google/gemma-4-31b-it:free",               tier: medium, tools: native, context: 262144, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
-      - { id: "z-ai/glm-5.2:free",                        tier: medium, tools: native, context: 256000, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
-      - { id: "minimax/minimax-m2.7:free",                tier: medium, tools: native, context: 196608, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
-      - { id: "nvidia/nemotron-3-super-120b-a12b:free",   tier: medium, tools: native, context: 262144, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
+      - { id: "google/gemma-4-31b-it:free",               thinking: true, tier: medium, tools: native, context: 262144, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
+      - { id: "z-ai/glm-5.2:free",                        thinking: true, tier: medium, tools: native, context: 256000, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
+      - { id: "minimax/minimax-m2.7:free",                thinking: true, tier: medium, tools: native, context: 196608, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
+      - { id: "nvidia/nemotron-3-super-120b-a12b:free",   thinking: true, tier: medium, tools: native, context: 262144, max_prompt_tokens: 32000, limits: { rpm: 20, rpd: 50 } }
       - { id: "liquid/lfm-2.5-2.6b:free",                 tier: cheap,  tools: native, context: 65536,  max_prompt_tokens: 16000, limits: { rpm: 20, rpd: 50 } }
 
   - id: ollama
@@ -80,7 +83,7 @@ providers:
     base_url: https://api.cerebras.ai/v1
     api_key_env: CEREBRAS_API_KEY
     models:
-      - { id: gpt-oss-120b, tier: medium, tools: native, context: 131072, limits: { rpm: 5, tpm: 30000 } }
+      - { id: gpt-oss-120b, thinking: true, tier: medium, tools: native, context: 131072, limits: { rpm: 5, tpm: 30000 } }
 
   - id: xai
     enabled: false
