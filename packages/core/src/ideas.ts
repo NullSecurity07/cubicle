@@ -35,11 +35,13 @@ export function ideaSlug(title: string): string {
 /**
  * Where an idea came from. `intelligence` carries its sweep kind after a colon (`intelligence:competitive`);
  * `discovery` is the owner's own material, `pantry` is the idle-hours chat (SP5 writes those), `owner` is a
- * card the owner typed, and `board` is a pivot the chair proposed and the company will not act on until the
- * owner keeps it (ruling W3-2). Anything else is read as the job id that filed it — an idea with no provenance
- * cannot be checked, which is why `source` has no default.
+ * card the owner typed. Anything else is read as the job id that filed it — an idea with no provenance cannot
+ * be checked, which is why `source` has no default.
+ *
+ * `BOARD_IDEA_SOURCE` is deliberately **not** in here: `source` is a free string, and a pivot card is filed by
+ * a board session rather than by one of the four things this enum names.
  */
-export const IDEA_SOURCES = ['discovery', 'intelligence', 'pantry', 'owner', 'board'] as const;
+export const IDEA_SOURCES = ['discovery', 'intelligence', 'pantry', 'owner'] as const;
 export type IdeaSource = (typeof IDEA_SOURCES)[number];
 
 export function ideaSourceKind(source: string): IdeaSource | 'job' | 'unknown' {
