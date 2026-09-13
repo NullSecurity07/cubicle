@@ -91,10 +91,45 @@ export function isOwnerOwned(rel: string, extraNeverModify: string[] = []): bool
  */
 const WORKSPACE_GENERATED_RE = /^Workspace\/[^/]+\/(node_modules|dist|\.venv|\.cubicle-ci)(\/|$)/;
 
+/**
+ * The site's own build output and scaffold noise. `dist/` and `node_modules/` were here first; the rest is what
+ * a scaffolded Astro site leaves behind and what `Site/` used to be excluded wholesale for (ruling I4). Naming
+ * them one by one is what lets `Site/index.html` stay an owner-editable file.
+ */
+const SITE_GENERATED_RE = /^Site\/(dist|node_modules|\.astro|\.vscode|package-lock\.json|pnpm-lock\.yaml)(\/|$)/;
+
 export function isCachePath(rel: string): boolean {
   let p: string;
   try { p = normalizeRel(rel); } catch { return true; }
-  return CACHE_PREFIXES.some((pre) => p.startsWith(pre) || p === pre.slice(0, -1)) || p.startsWith('Site/dist/') || p === 'Site/dist' || p.startsWith('Site/node_modules/') || p === 'Site/node_modules' || WORKSPACE_GENERATED_RE.test(p);
+  return CACHE_PREFIXES.some((pre) => p.startsWith(pre) || p === pre.slice(0, -1)) || SITE_GENERATED_RE.test(p) || WORKSPACE_GENERATED_RE.test(p);
+}
+
+/**
+ * Areas whose writes are never the owner's: `Workspace/` is a job's working copy and `.cubicle/` is the
+ * daemon's own state. Both are written by shell commands and by tools that do not go through `vault.write`,
+ * so the watcher's `written_sha` bookkeeping cannot vouch for them, and every one of those writes looked like
+ * an owner edit — the second live run put "Owner edits" in the founder brief for files the company had just
+ * built (ruling S-7).
+ *
+ * `Site/` is deliberately **not** here (ruling I4). Both reconcile jobs tell the engineer "never revert owner
+ * edits under Site/", and the only way an engineer can know about such an edit is the owner-edit block the
+ * harness builds from `owner.edited`. Excluding the whole of `Site/` made that instruction unenforceable and
+ * let a reconcile overwrite a hand-written page with no record anywhere. The build output is excluded by name
+ * instead (`isCachePath`), and a `Site/` write that happened while a job's shell was running is attributed to
+ * that job in the heartbeat's own gather.
+ */
+export const NON_OWNER_PREFIXES = ['Workspace/', '.cubicle/'];
+
+/**
+ * True when a change at `rel` could be an owner edit at all. The one place that question is answered: the live
+ * watcher and the daemon's offline comment sweep must agree, or a file the watcher ignores comes back as an
+ * owner edit the next time the daemon starts.
+ */
+export function isOwnerEditablePath(rel: string): boolean {
+  let p: string;
+  try { p = normalizeRel(rel); } catch { return false; }
+  if (!p) return false;
+  return !NON_OWNER_PREFIXES.some((pre) => p.startsWith(pre) || p === pre.slice(0, -1));
 }
 
 /**

@@ -200,40 +200,102 @@ export function rejectionAsksForNewIdea(comment: string): boolean {
   return /\b(?:new idea|another idea|different idea|surprise)\b/i.test(comment);
 }
 
-/** Lines of a `founder_brief` proposal body that the CEO wrote, not the owner (see `briefRejectionComment`). */
+/** Lines the CEO wrote in a `founder_brief` note, never the owner (see `briefRejectionComment`). */
 const BRIEF_BOILERPLATE = [
   /^This is what I understood from what you gave me\./,
   /^\*\*Read from:\*\*$/,
-  /^-\s/,                                   // the "read from" source bullets
   /^Set `approved:/,
-  /^#{1,6}\s/,                              // the note title and any heading
   /^_(?:Resolved|Not applied)\b/,           // the dispatcher's own footers
-  /^-{3,}$/,
 ];
+
+/**
+ * A line that belongs to the *document* rather than to a note somebody typed underneath it: a heading, a
+ * bullet, a numbered item, a quote, a table row, a fence, a rule, or the bold lead-in the pressure test's five
+ * parts are written as. The owner's rejection comment is prose; the brief's last line never is.
+ */
+const BRIEF_STRUCTURE = /^(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|\||`{3,}|-{3,}$|\*\*)/;
+
+/** How many trailing lines may be read as the owner's note. A sentence or two, not a page. */
+const MAX_COMMENT_LINES = 12;
 
 /**
  * What the owner actually typed when they turned a founder brief down, from every place they can have typed it:
  * a `why`/`comment`/`reason` field in the frontmatter, a `%%cubicle: …%%` comment anywhere in the note, and —
- * the one the live run used — plain prose added to the note body around the brief.
+ * the one the live run used — a line or two added at the end of the note.
  *
- * The body is read by subtraction rather than by pattern: drop the `## Proposed content` fence (that is the
- * brief, not a comment), drop the owner comments (collected separately, and otherwise counted twice) and drop
- * every line the CEO itself wrote, which is a fixed list because `founderBriefProposalBody` is the only thing
- * that ever writes this note. Whatever survives is the owner's.
+ * **Read positively, never by subtraction** (ruling C1). The first cut of this dropped the fence, dropped the
+ * lines `founderBriefProposalBody` writes, and called whatever survived the owner's — on the premise that that
+ * function is the only thing that ever writes this note. It was not: a brief filed without the fence left the
+ * whole document standing, and the live rejection handed back a thousand characters of the company's own prose
+ * as the owner's words. `proposal.create` now enforces the fence, and this reads only what lies *after* the
+ * document either way:
+ *
+ * - with the fence: everything after the closing backticks, minus the CEO's two closing lines;
+ * - without one (a note filed by an older build): the trailing run of plain prose, stopping at the first line
+ *   that belongs to the document — which for the live note is `**Brutal Verdict:** WEAK. …`, one line above
+ *   the owner's sentence.
+ *
+ * And a last guard that holds whichever branch ran: a line that also appears verbatim higher up in the note is
+ * the brief quoting itself, not the owner, and is dropped.
  */
 export function briefRejectionComment(note: { data: Record<string, unknown>; body: string }): string {
+  return splitRejectedBrief(note).comment;
+}
+
+/**
+ * The two halves of a rejected `founder_brief` note: the document the company wrote, and what the owner typed
+ * under it. One split, because the halves are defined by each other — the comment is what the brief is not —
+ * and two readers with two ideas of where the line falls is how the live note came to be read as its own
+ * rejection (ruling C1). The dispatcher hands `brief` to the research office as material and `comment` to the
+ * chief executive as the instruction.
+ *
+ * `brief` is the fenced `## Proposed content` block when there is one (the shape `proposal.create` now enforces
+ * and the dispatcher adopts from), and otherwise everything above the owner's trailing note — so a brief filed
+ * by an older build is still handed over whole rather than as "(no readable brief)".
+ */
+export function splitRejectedBrief(note: { data: Record<string, unknown>; body: string }): { brief: string; comment: string } {
   const fields = ['why', 'comment', 'reason'].map((k) => String(note.data[k] ?? '').trim()).filter(Boolean);
   const comments = extractOwnerComments(note.body);
-  const fence = new RegExp('## Proposed content\\s*\\n+(`{3,})[a-z]*\\n[\\s\\S]*?\\n\\1[ \\t]*(?:\\n|$)', 'g');
-  const typed = note.body
-    .replace(fence, '\n')
-    .replace(/%%\s*cubicle:[\s\S]*?%%/g, '')
-    .split('\n')
+  // The dispatcher's own footers go on *after* whatever the owner typed, so they are cut before the walk
+  // rather than stopped at: left in place they are the last line of the note, and the walk would end on them
+  // one line short of the owner's sentence. A note can carry more than one (a refusal, then a resolution).
+  let text = note.body.replace(/%%\s*cubicle:[\s\S]*?%%/g, '');
+  for (let n = 0; n < 4; n++) {
+    const cut = text.replace(/\n*-{3,}[ \t]*\n_(?:Resolved|Not applied)[^\n]*_[ \t]*\n?\s*$/, '\n');
+    if (cut === text) break;
+    text = cut;
+  }
+  const fence = text.match(/## Proposed content\s*\n+(`{3,})[a-z]*\n([\s\S]*?)\n\1[ \t]*(?:\n|$)/);
+  let head: string;
+  let tail: string[];
+  if (fence) {
+    head = text.slice(0, fence.index! + fence[0].length);
+    tail = text.slice(head.length).split('\n');
+  } else {
+    // No fence: walk up from the end over plain prose and stop at the document.
+    const lines = text.split('\n');
+    let i = lines.length;
+    let kept = 0;
+    while (i > 0 && kept < MAX_COMMENT_LINES) {
+      const line = lines[i - 1].trim();
+      if (!line) { i--; continue; }                                   // blank lines cost nothing
+      if (BRIEF_STRUCTURE.test(line) || BRIEF_BOILERPLATE.some((re) => re.test(line))) break;
+      i--; kept++;
+    }
+    head = lines.slice(0, i).join('\n');
+    tail = lines.slice(i);
+  }
+  const typed = tail
     .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !BRIEF_BOILERPLATE.some((re) => re.test(l)))
+    .filter((l) => l.length > 0 && !BRIEF_BOILERPLATE.some((re) => re.test(l)) && !/^-{3,}$/.test(l))
+    .filter((l) => !head.includes(l))
     .join(' ')
     .trim();
-  return [...fields, ...comments, typed].filter(Boolean).join(' ').replace(/\s+/g, ' ').slice(0, 1000);
+  return {
+    // The title line the cabin prepends is the note's, not the brief's; everything after it is the document.
+    brief: (fence ? fence[2] : head.replace(/^#\s[^\n]*\r?\n?/, '')).trim(),
+    comment: [...fields, ...comments, typed].filter(Boolean).join(' ').replace(/\s+/g, ' ').slice(0, 1000),
+  };
 }
 
 /**
@@ -257,7 +319,33 @@ export function rejectionDiscoveryJobId(proposalId: string, comment: string): st
  * never revises an adopted brief (there is none — a rejected brief was never written), and its id comes from
  * the rejection rather than from the digest.
  */
-export function enqueueRejectionDiscovery(vault: Vault, org: Org, opts: { proposalId: string; comment: string; brief: string }): string {
+/**
+ * How much of the rejected brief the re-run's goal carries (ruling I2).
+ *
+ * The goal is prepended to **every** model turn of that job, and `max_prompt_tokens` is as low as 6000 on groq
+ * and 7000 on the gemma models — a 4 KB brief pasted whole (the live one is exactly that) costs a quarter of
+ * the budget on every turn, for ever. Four thousand characters is enough to see what was written and what the
+ * owner objected to; past that the goal names the note instead, and the job can `vault.read` it.
+ */
+export const REJECTED_BRIEF_CHARS = 4000;
+
+/** The rejected brief as the re-run's goal carries it: capped, fenced, and pointing at the note when it was cut. */
+export function rejectedBriefBlock(brief: string, proposalPath?: string): string[] {
+  const full = brief.trim();
+  const cut = full.length > REJECTED_BRIEF_CHARS;
+  const where = proposalPath ? `\`${proposalPath}\`` : 'the rejected `founder_brief` note in `00 Inbox/`';
+  if (!full) return [`The proposal carried no readable brief; read it yourself at ${where}.`];
+  return [
+    cut ? `The brief they turned down, its first ${REJECTED_BRIEF_CHARS} characters — the whole of it is at ${where}:` : `The brief they turned down, in full (it is also at ${where}):`,
+    '',
+    PROPOSED_CONTENT_FENCE,
+    full.slice(0, REJECTED_BRIEF_CHARS),
+    PROPOSED_CONTENT_FENCE,
+    ...(cut ? ['', `That is where it was cut. \`vault.read ${proposalPath ?? 'the note'}\` for the rest before you rewrite it.`] : []),
+  ];
+}
+
+export function enqueueRejectionDiscovery(vault: Vault, org: Org, opts: { proposalId: string; proposalPath?: string; comment: string; brief: string }): string {
   const research = officeHolder(org, 'research');
   const ceo = officeHolder(org, 'chief_executive');
   const deadline = new Date(Date.now() + DISCOVERY_DEADLINE_DAYS * 86_400_000).toISOString().slice(0, 10);
@@ -272,11 +360,7 @@ export function enqueueRejectionDiscovery(vault: Vault, org: Org, opts: { propos
       ? ['', 'They have asked for a different idea, not a better write-up of this one. The chief executive is putting three fresh ideas to them in `00 Inbox/`; read what they pick before you commit the brief to a direction.']
       : []),
     '',
-    'The brief they turned down, in full:',
-    '',
-    PROPOSED_CONTENT_FENCE,
-    opts.brief.trim() || '(the proposal carried no readable brief)',
-    PROPOSED_CONTENT_FENCE,
+    ...rejectedBriefBlock(opts.brief, opts.proposalPath),
   ].join('\n');
   return createJob(vault, {
     id: rejectionDiscoveryJobId(opts.proposalId, comment), type: 'discovery', priority: 1,

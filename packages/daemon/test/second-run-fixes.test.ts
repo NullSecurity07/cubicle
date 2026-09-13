@@ -3,13 +3,15 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  scaffoldVault, Vault, listJobs, listInbox, readJob, updateJob, createProposal, createJob,
+  scaffoldVault, Vault, listJobs, listInbox, readJob, updateJob, createProposal, createJob, parseNote,
   BRAND_NAME_PATH, DISCOVERY_INBOX, FOUNDER_BRIEF, PROPOSED_CONTENT_FENCE, ownerPick, createStream, listStreams,
+  isCachePath, isOwnerEditablePath, NON_OWNER_PREFIXES,
 } from '@cubicle/core';
 import { ToolRegistry, parseToolsConfig, phase3Tools } from '@cubicle/tools';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, answerRejectedBrief, inboxEditWakesHeartbeat, ownerEditAsksForWork, soleStreamForShip, WAITING_FOR_BRIEF, HEARTBEAT_STEPS } from '../src/index.js';
-import { hasApprovedBrief, briefRejectionComment, rejectionAsksForNewIdea, REJECTED_BRIEF_LABEL, rejectionDiscoveryJobId } from '../src/discovery.js';
+import { hasApprovedBrief, briefRejectionComment, rejectionAsksForNewIdea, REJECTED_BRIEF_LABEL, rejectionDiscoveryJobId, rejectedBriefBlock, REJECTED_BRIEF_CHARS } from '../src/discovery.js';
+import { siteShellWindows, isJobSiteWrite, SHELL_EDIT_WINDOW_MS } from '../src/heartbeat.js';
 import { adoptFounderBrief, ADOPTED_BRIEF } from './helpers/brief.js';
 import { noLocalModel } from './helpers/no-local-model.js';
 
@@ -180,6 +182,47 @@ function rejectABrief(comment: string): string {
 }
 
 describe('S-2: a rejected founder brief is an instruction, not a closed note', () => {
+  /**
+   * The note the whole wave was written against, byte for byte: `~/Vaults/Cubicle/00 Inbox/2026-09-13-1102-
+   * founder_brief-job_discovery_2a0dfa5dd86f_1_37.md`, copied read-only into `test/fixtures/`.
+   *
+   * It carries **no** `## Proposed content` fence — discovery filed the brief as the body — which is finding
+   * C1: the first reader worked by subtraction and handed back a thousand characters of the company's own
+   * prose as the owner's words, so `rejectionAsksForNewIdea` said false and the three fresh ideas they had
+   * asked for were never filed. Every assertion below is on those exact bytes.
+   */
+  const liveNote = () => parseNote(readFileSync(path.join(__dirname, 'fixtures/rejected-founder-brief.live.md'), 'utf8'));
+
+  it('reads the owner\'s sentence off the real, unfenced note — not the brief', () => {
+    const note = liveNote();
+    expect(note.body).not.toContain('## Proposed content');   // the shape that broke it
+    expect(briefRejectionComment({ data: note.data as Record<string, unknown>, body: note.body })).toBe('rejected make it better or get a new idea');
+    expect(rejectionAsksForNewIdea(briefRejectionComment({ data: note.data as Record<string, unknown>, body: note.body }))).toBe(true);
+  });
+
+  it('answers that note with three fresh ideas and a re-run keyed on what they said', async () => {
+    const note = liveNote();
+    const rel = `00 Inbox/2026-09-13-1102-founder_brief-live.md`;
+    vault.writeText(rel, readFileSync(path.join(__dirname, 'fixtures/rejected-founder-brief.live.md'), 'utf8'), 'daemon');
+    // The live note arrived already resolved; the dispatcher only visits open ones, so clear that and let the
+    // owner's "no" stand as the flag they set.
+    ownerEdit(rel, (t) => t.replace(/^resolved_at: .*$/m, 'resolved_at: null'));
+    const llm = surpriseAwareLlm();
+
+    expect(await dispatchProposals(dispatcherDeps(llm))).toBeGreaterThan(0);
+
+    const disc = discoveryJobs(vault);
+    expect(disc).toHaveLength(1);
+    expect(disc[0].id).toBe(rejectionDiscoveryJobId(String(note.data.id), 'rejected make it better or get a new idea'));
+    const goal = readJob(vault, disc[0].id)!.body;
+    expect(goal).toContain('rejected make it better or get a new idea');
+    expect(goal).toContain('Local Grant Scout');                       // the brief, as material
+    expect(goal).not.toContain('carried no readable brief');
+    // The clause the live run never reached: they asked for a different idea, so three are put to them.
+    expect(listInbox(vault).filter((n) => n.data.kind === 'brand_change')).toHaveLength(1);
+    expect(listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.to === 'owner')).toHaveLength(1);
+  });
+
   it('reads the comment out of the note body, the owner comments and the frontmatter', () => {
     expect(briefRejectionComment({ data: {}, body: `# What I understood\n\nThis is what I understood from what you gave me. It becomes \`x\`.\n\n**Read from:**\n- a.md\n\n## Proposed content\n\n${PROPOSED_CONTENT_FENCE}\n## What the company is\n\nMeal kits.\n${PROPOSED_CONTENT_FENCE}\n\nSet \`approved: true\` to adopt it.\n\nrejected make it better or get a new idea\n` }))
       .toBe('rejected make it better or get a new idea');
@@ -275,6 +318,32 @@ describe('S-2: a rejected founder brief is an instruction, not a closed note', (
     expect(discoveryJobs(vault)).toHaveLength(1);
     expect(listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.to === 'owner')).toHaveLength(1);
   });
+
+  it('carries the rejected brief capped, and names the note it was cut from (ruling I2)', () => {
+    const short = rejectedBriefBlock('## What the company is\n\nMeal kits.', '00 Inbox/x.md').join('\n');
+    expect(short).toContain('in full');
+    expect(short).toContain('`00 Inbox/x.md`');
+    expect(short).not.toContain('where it was cut');
+
+    const long = rejectedBriefBlock('x'.repeat(REJECTED_BRIEF_CHARS + 500), '00 Inbox/x.md').join('\n');
+    expect(long).toContain(`first ${REJECTED_BRIEF_CHARS} characters`);
+    expect(long).toContain('where it was cut');
+    expect(long).toContain('vault.read 00 Inbox/x.md');
+    // The cap is on the brief, so the whole block stays within a few hundred characters of it.
+    expect(long.length).toBeLessThan(REJECTED_BRIEF_CHARS + 600);
+    expect(long.split('x'.repeat(50)).length - 1).toBeGreaterThan(0);
+  });
+
+  it('the live rejection goal stays inside the cap', async () => {
+    const rel = `00 Inbox/2026-09-13-1102-founder_brief-live.md`;
+    vault.writeText(rel, readFileSync(path.join(__dirname, 'fixtures/rejected-founder-brief.live.md'), 'utf8'), 'daemon');
+    ownerEdit(rel, (t) => t.replace(/^resolved_at: .*$/m, 'resolved_at: null'));
+    await dispatchProposals(dispatcherDeps(surpriseAwareLlm()));
+    const goal = readJob(vault, discoveryJobs(vault)[0].id)!.body;
+    // The goal is prepended to every model turn of that job; `max_prompt_tokens` is 6000 on groq.
+    expect(goal.length).toBeLessThan(12_000);
+    expect(goal).toContain(rel);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------------
@@ -300,9 +369,18 @@ describe('S-4: an approval is applied on the tick; only a message or a rejection
     expect(inboxEditWakesHeartbeat(vault, approved)).toBe(false);
     expect(inboxEditWakesHeartbeat(vault, rejected)).toBe(true);
     expect(inboxEditWakesHeartbeat(vault, briefNo)).toBe(true);
-    // The one approval that wakes a cycle: it is the document ruling S-1 makes every planning step wait on.
+    // The two approvals that wake a cycle: the document every planning step waits on (S-1), and the pick that
+    // is the only thing that makes discovery runnable at all (ruling I1).
     expect(inboxEditWakesHeartbeat(vault, briefOk)).toBe(true);
     expect(inboxEditWakesHeartbeat(vault, briefOpen)).toBe(false);
+    const pickDone = note('b_pick', `kind: brand_change\nfrom: ceo\ntarget: ${BRAND_NAME_PATH}\napproved: true\nchosen: 1\n`);
+    const pickNo = note('b_pick_no', `kind: brand_change\nfrom: ceo\ntarget: ${BRAND_NAME_PATH}\napproved: false\n`);
+    const pickOpen = note('b_pick_open', `kind: brand_change\nfrom: ceo\ntarget: ${BRAND_NAME_PATH}\napproved: null\n`);
+    expect(inboxEditWakesHeartbeat(vault, pickDone)).toBe(true);
+    expect(inboxEditWakesHeartbeat(vault, pickNo)).toBe(true);
+    expect(inboxEditWakesHeartbeat(vault, pickOpen)).toBe(false);   // Obsidian saving mid-keystroke
+    // A brand_change that is not the pick — a palette, a voice note — is an ordinary approval and wakes none.
+    expect(inboxEditWakesHeartbeat(vault, note('b_pal', 'kind: brand_change\nfrom: ceo\ntarget: Brand/palette.md\napproved: true\n'))).toBe(false);
     expect(inboxEditWakesHeartbeat(vault, pending)).toBe(false);
     expect(inboxEditWakesHeartbeat(vault, brandOk)).toBe(false);
     expect(inboxEditWakesHeartbeat(vault, fromOwner)).toBe(true);
@@ -321,7 +399,8 @@ describe('S-4: an approval is applied on the tick; only a message or a rejection
     // keeps the pool from picking a heartbeat up: what is under test is which edits create one.
     vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } });
     const approved = note('p_ok', 'kind: plan_verdict\nfrom: ceo\nto: owner\napproved: true\n');
-    const brandOk = note('b_ok', 'kind: brand_change\nfrom: ceo\ntarget: Brand/name.md\napproved: true\n');
+    const brandOk = note('b_ok', 'kind: brand_change\nfrom: ceo\ntarget: Brand/palette.md\napproved: true\n');
+    const pick = note('b_pick', `kind: brand_change\nfrom: ceo\ntarget: ${BRAND_NAME_PATH}\napproved: true\nchosen: 1\n`);
     // `answered: true` on purpose: an unanswered owner note is a heartbeat trigger of its own (the tick's
     // catch-up sweep), and what is under test here is the *edit* rule, not that sweep.
     const message = note('m_own', 'kind: message\nfrom: owner\nto: ceo\nanswered: true\n', '# Any news?\n\nAny news?\n');
@@ -353,11 +432,16 @@ describe('S-4: an approval is applied on the tick; only a message or a rejection
 
       edited(rejected);
       expect(heartbeats()).toHaveLength(2);
+      updateJob(v, heartbeats().find((j) => j.status !== 'cancelled')!.id, { status: 'cancelled' }, 'daemon');
+
+      // Ruling I1: the pick is the event that makes discovery runnable, and nothing on the tick acts on it.
+      edited(pick);
+      expect(heartbeats()).toHaveLength(3);
+      updateJob(v, heartbeats().find((j) => j.status !== 'cancelled')!.id, { status: 'cancelled' }, 'daemon');
 
       // An edit outside the inbox still wakes one, as it always did.
-      updateJob(v, heartbeats().find((j) => j.status !== 'cancelled')!.id, { status: 'cancelled' }, 'daemon');
       v.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: 'Brand/name.md', area: 'Brand', deleted: false, wakes_heartbeat: true } });
-      expect(heartbeats()).toHaveLength(3);
+      expect(heartbeats()).toHaveLength(4);
     } finally { await d.stop(); }
   }, 120_000);
 
@@ -377,6 +461,69 @@ describe('S-4: an approval is applied on the tick; only a message or a rejection
       const { hb } = await cycle(v, scriptedLlm(), createHeartbeatJob(v, 'jobs completed'), { planMaxAgeDays: 3 });
       expect(readJob(v, hb)!.body).toContain('planning skipped');
       expect(planJobs(v)).toHaveLength(0);
+    } finally { v.close(); }
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------------------------------------
+
+describe('I4: a Site/ write is the owner\'s unless a job\'s shell was running', () => {
+  it('Site/ is owner-editable again, and only the build output is not', () => {
+    expect(NON_OWNER_PREFIXES).toEqual(['Workspace/', '.cubicle/']);
+    // The instruction both reconcile jobs carry has something to stand on again.
+    expect(isOwnerEditablePath('Site/src/pages/index.astro')).toBe(true);
+    expect(isOwnerEditablePath('Site/index.html')).toBe(true);
+    expect(isOwnerEditablePath('Workspace/site/src/x.ts')).toBe(false);
+    expect(isOwnerEditablePath('.cubicle/jobs/x.json')).toBe(false);
+    // …and the scaffold noise is excluded by name instead of by prefix.
+    for (const p of ['Site/dist/index.html', 'Site/node_modules/astro/x.js', 'Site/.astro/types.d.ts', 'Site/.vscode/settings.json', 'Site/package-lock.json', 'Site/pnpm-lock.yaml']) {
+      expect(isCachePath(p), p).toBe(true);
+    }
+    expect(isCachePath('Site/src/pages/index.astro')).toBe(false);
+    expect(isCachePath('Site/package.json')).toBe(false);
+  });
+
+  it('drops a Site/ edit that lands inside a running shell, and keeps one that does not', () => {
+    const at = (ms: number) => new Date(Date.parse('2026-09-13T10:00:00.000Z') + ms).toISOString();
+    const windows = [Date.parse(at(0))];
+    expect(isJobSiteWrite('Site/src/x.astro', at(1000), windows)).toBe(true);
+    expect(isJobSiteWrite('Site/src/x.astro', at(-1000), windows)).toBe(true);
+    expect(isJobSiteWrite('Site/src/x.astro', at(SHELL_EDIT_WINDOW_MS + 1000), windows)).toBe(false);
+    expect(isJobSiteWrite('Site/src/x.astro', at(1000), [])).toBe(false);
+    // Only Site/: an owner edit anywhere else is never a job's build output by timing alone.
+    expect(isJobSiteWrite('Brand/name.md', at(1000), windows)).toBe(false);
+  });
+
+  it('reads the windows off a job\'s shell, and never off ci.run (which cannot touch Site/)', () => {
+    vault.events.emit({ type: 'agent.tool_call', agent: 'backend_engineer', job: 'job_a', payload: { tool: 'shell.run', summary: 'npm run build' } });
+    vault.events.emit({ type: 'shell.output', agent: 'backend_engineer', job: 'job_a', payload: { session: 's', stream: 'stdout', text: 'built' } });
+    // Not a window: ci.run mounts Workspace/<stream> and nothing under Site/.
+    vault.events.emit({ type: 'shell.output', agent: 'backend_engineer', job: 'job_b', payload: { session: 's', stream: 'cmd', text: '$ ci.run site (test)' } });
+    // Not a window either: a tool call that is not a shell, and one with no job behind it.
+    vault.events.emit({ type: 'agent.tool_call', agent: 'ceo', job: 'job_c', payload: { tool: 'vault.write', summary: 'Site/x' } });
+    vault.events.emit({ type: 'shell.output', agent: 'daemon', job: null, payload: { session: 's', stream: 'info', text: 'proxy up' } });
+    expect(siteShellWindows(vault, null)).toHaveLength(2);
+  });
+
+  it('the heartbeat\'s gather attributes the build\'s writes to the job and keeps the owner\'s', async () => {
+    const v = Vault.open(dir);
+    try {
+      adoptFounderBrief(v);
+      const ship = createJob(v, { type: 'engineer.ship', title: 'Ship the site', assigned: 'backend_engineer', priority: 2, stream: 'site', goal: 'Ship it.' }, 'ceo');
+      // Explicit stamps, because what separates the two edits is *when* they happened, and a test that emitted
+      // both in the same millisecond would be asserting nothing.
+      const at = (ms: number) => new Date(Date.now() - 3600_000 + ms).toISOString();
+      // The build: a shell running, and the file it writes a second later.
+      v.events.emit({ type: 'shell.output', agent: 'backend_engineer', job: ship, ts: at(0), payload: { session: 's', stream: 'stdout', text: 'building…' } });
+      v.events.emit({ type: 'owner.edited', agent: 'owner', ts: at(1000), payload: { path: 'Site/src/pages/index.astro', area: 'Site', deleted: false, wakes_heartbeat: true } });
+      // The owner: a page they wrote by hand, a minute later, with no shell anywhere near it.
+      v.events.emit({ type: 'owner.edited', agent: 'owner', ts: at(60_000), payload: { path: 'Site/src/pages/about.astro', area: 'Site', deleted: false, wakes_heartbeat: true } });
+
+      const { hb } = await cycle(v, scriptedLlm());
+      const facts = JSON.parse(readJob(v, hb)!.body.match(/## Plan\s*\n+```json\n([\s\S]*?)\n```/)![1]);
+      expect(facts.ownerEdits).toContain('Site/src/pages/about.astro');
+      expect(facts.ownerEdits).not.toContain('Site/src/pages/index.astro');
+      expect(readJob(v, hb)!.body).toContain('1 Site/ write attributed to a running job');
     } finally { v.close(); }
   }, 60_000);
 });
