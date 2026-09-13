@@ -40,6 +40,12 @@ export interface InboxRow {
   pending?: boolean;
   /** what the owner said, as the daemon wrote it into the note */ approved?: boolean; chosen?: number;
   /** why the dispatcher would not apply it; the owner fixes what it names and decides again */ refused?: string | null;
+  /**
+   * The board has not finished pressure-testing this founder brief (SP8 ruling P8-6), so the document the owner
+   * would be adopting is half-written. Nothing to decide yet: the row says the board is sitting and the bar is
+   * closed until the argument is in. The approvals pill already leaves these out, on the daemon side.
+   */
+  board_pending?: boolean;
 }
 /** A resolved note: what the owner said and what the dispatcher did with it. */
 export interface DecidedRow { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean; chosen?: number; outcome: string }

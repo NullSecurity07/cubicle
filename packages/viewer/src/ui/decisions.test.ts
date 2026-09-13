@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { applySnapshot, emptyState, decideSent, decideAcked, decideFailed, type Snapshot, type InboxRow } from '../state.js';
 import { viewFor } from './surfaces.js';
-import { APPLYING_TEXT, COMMENT_REQUIRED, actionBar, commentRequired, decidableOf, decideStateFor, decisionKey, decisionsView, rowStateChip, verbsFor } from './decisions.js';
+import { APPLYING_TEXT, BOARD_SITTING, BOARD_SITTING_CHIP, COMMENT_REQUIRED, actionBar, commentRequired, decidableOf, decideStateFor, decisionKey, decisionsView, rowStateChip, verbsFor } from './decisions.js';
 import { THEMES, contrastRatio } from './tokens.js';
 import type { Ctx } from './content.js';
 
@@ -194,6 +194,21 @@ describe('a decision the dispatcher has not finished with', () => {
     expect(decideStateFor(refused, { status: 'applying', approved: true })).toMatchObject({ status: 'error' });
     // Nothing on either side: a plain, pressable bar.
     expect(decideStateFor(approveRow)).toBeUndefined();
+  });
+
+  it('a brief the board is still arguing has nothing to decide yet (ruling P8-6)', () => {
+    const sitting: InboxRow = { ...adoptRow, id: 'p9', board_pending: true };
+    const s = applySnapshot(emptyState(), snap({ inbox: [sitting] }));
+    expect(decideStateFor(sitting)).toMatchObject({ status: 'applying', message: BOARD_SITTING });
+    expect(rowStateChip(sitting)).toContain(BOARD_SITTING_CHIP);
+    expect(decisionsView(s).html).toContain(BOARD_SITTING);          // the row says why, on its second line
+    const html = viewFor('decision:p9', s, ctx).html;
+    expect(html).toContain(BOARD_SITTING);
+    expect(html).not.toContain(APPLYING_TEXT);                       // nothing is being applied: the board is sitting
+    expect(html).toMatch(/data-act="decide:yes"[^>]*disabled/);      // and the bar — and so A and R — is shut
+    expect(html).toMatch(/data-act="decide:no"[^>]*disabled/);
+    // The keyboard goes through the same effective state as the bar, so `A` cannot adopt a half-written brief.
+    expect(decideStateFor(sitting, { status: 'sending', approved: true })?.status).toBe('applying');
   });
 
   it('the chosen option comes back from the note when this session did not pick it', () => {

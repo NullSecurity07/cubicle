@@ -112,7 +112,7 @@ describe('layout tokens clear the elevation-0 controls', () => {
     expect(app).toMatch(/\.thread \{[^}]*mask-image: linear-gradient\(to bottom, transparent 0, #000 var\(--s5\)\)/);
   });
   it('the decision chips are quiet: one accent, spent on the pill and the primary action', () => {
-    expect(app).toMatch(/\.chip\.note, \.chip\.band, \.chip\.applying \{ color: var\(--text-2\); \}/);
+    expect(app).toMatch(/\.chip\.note, \.chip\.band, \.chip\.applying, \.chip\.sitting \{ color: var\(--text-2\); \}/);
   });
   it('the first-run card paints the level-2 scrim itself', () => {
     expect(app).toMatch(/#firstrun \{[^}]*background: var\(--scrim\)/);

@@ -17,6 +17,10 @@ import type { DecidedRow, Decidable, DecideState, InboxRow, State } from '../sta
 /** What the reader says between the click and the dispatcher applying the decision. */
 export const APPLYING_TEXT = 'Decided · applying…';
 
+/** A founder brief whose pressure test the board is still arguing: there is nothing to decide yet (ruling P8-6). */
+export const BOARD_SITTING = 'The board is arguing the pressure test — decide once it is in';
+export const BOARD_SITTING_CHIP = 'board sitting';
+
 /** Why a send back will not go: the company is told no and not why, which it cannot act on. */
 export const COMMENT_REQUIRED = 'Say why you are sending it back — the company acts on your comment.';
 
@@ -57,6 +61,9 @@ const bandChip = (n: InboxRow): string => (n.band ? chip('band', n.band) : '');
  * while a click is still in flight — before the daemon has written anything, there is nothing on the note to read.
  */
 export function decideStateFor(n: InboxRow, local?: DecideState): DecideState | undefined {
+  // First of all: while the board is still sitting there is nothing to decide, so the bar stays shut whatever
+  // else the note or this session says about it.
+  if (n.board_pending) return { status: 'applying', approved: false, message: BOARD_SITTING };
   if (local?.status === 'sending') return local;
   if (n.refused) return { status: 'error', approved: n.approved ?? false, chosen: n.chosen, message: n.refused };
   if (n.pending) return { status: 'applying', approved: n.approved ?? true, chosen: n.chosen };
@@ -64,13 +71,13 @@ export function decideStateFor(n: InboxRow, local?: DecideState): DecideState | 
 }
 
 /** The trailing chip on a *Needs you* row: nothing, unless the row is mid-flight or was refused. */
-export const rowStateChip = (n: InboxRow): string => (n.refused ? chip('failed', 'refused') : n.pending ? chip('applying', 'applying') : '');
+export const rowStateChip = (n: InboxRow): string => (n.board_pending ? chip('sitting', BOARD_SITTING_CHIP) : n.refused ? chip('failed', 'refused') : n.pending ? chip('applying', 'applying') : '');
 
 /** One row in *Needs you*. */
 export function needsRow(n: InboxRow, s: State): string {
   const small = [n.from ? who(s, n.from) : '', n.band_reason || n.board_verdict || n.target || ''].filter(Boolean).join(' · ');
   // A refused row says why on its own second line: it is the one thing the owner has to read before deciding again.
-  const line = n.refused ? `Refused: ${n.refused}` : n.pending ? 'Decided, being applied' : small || n.path.replace(/^00 Inbox\//, '');
+  const line = n.board_pending ? BOARD_SITTING : n.refused ? `Refused: ${n.refused}` : n.pending ? 'Decided, being applied' : small || n.path.replace(/^00 Inbox\//, '');
   return row({ left: chip('note', kindLabel(n.kind)), title: n.title, small: line, right: esc(fmtWhen(n.created)), open: decisionKind(n.id), actions: rowStateChip(n) || undefined });
 }
 
@@ -113,7 +120,7 @@ export function actionBar(n: InboxRow, o: { chosen?: number; st?: DecideState })
   const st = o.st;
   const busy = st?.status === 'sending' || st?.status === 'applying';
   const done = st?.status === 'done';
-  const line = done ? esc(st.outcome || (st.approved ? 'Approved.' : 'Rejected.')) : busy ? APPLYING_TEXT : st?.status === 'error' ? esc(st.message ?? 'The daemon could not record that.') : '';
+  const line = done ? esc(st.outcome || (st.approved ? 'Approved.' : 'Rejected.')) : busy ? esc(st.message ?? '') || APPLYING_TEXT : st?.status === 'error' ? esc(st.message ?? 'The daemon could not record that.') : '';
   const state = `<p class="state${st?.status === 'error' ? ' bad' : ''}" data-key="state" role="status" aria-live="polite">${line}</p>`;
   if (done) return `<div class="actionbar" data-key="actionbar">${state}</div>`;
   const dis = busy ? ' disabled' : '';
