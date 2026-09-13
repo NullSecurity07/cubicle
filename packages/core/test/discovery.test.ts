@@ -8,6 +8,7 @@ import {
   DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF, LONG_PROMPT_CHARS,
   isLongPrompt, listDiscoveryInputs, discoveryDigest, hasFounderBrief,
   INTERVIEW_QUESTIONS, renderInterviewAsk, renderInterviewAsked, interviewPhase, closeInterview, interviewAnswer, isSkip, closesInterview,
+  parseCeoAnswers, ceoAnswersFrom, unstatedAnswers, endorsesInterview, ownerAnsweredInterview, interviewAnswersSection, CEO_UNKNOWN,
   FOUNDER_BRIEF_SECTIONS, missingBriefSections, founderBriefTemplate, founderBriefProposalBody,
 } from '../src/discovery.js';
 
@@ -63,15 +64,46 @@ describe('the three discovery inputs (spec §1)', () => {
 });
 
 describe('the cabin interview (spec §1.4)', () => {
-  it('asks at most six questions in one message, and says how to skip', () => {
+  it('puts six questions and the CEO\'s own six answers in one message, and says how to skip (P8-13)', () => {
     expect(INTERVIEW_QUESTIONS.length).toBe(6);
     const ask = renderInterviewAsk();
-    expect(ask.match(/^\d+\. /gm)!.length).toBe(6);
+    expect(ask.match(/^\*\*\d+\. /gm)!.length).toBe(6);
+    expect(ask.match(/^\*\*CEO:\*\* /gm)!.length).toBe(6);
     expect(ask).toContain('skip');
-    expect(ask.split('\n')[0]).toMatch(/[Ss]ix questions/);
+    // The owner is not asked to answer: they are shown answers to add to (the live-run complaint).
+    expect(ask.split('\n')[0]).toBe('Here is how I would answer these six from what I have — add anything, correct me, or say go.');
     // T13-3: the plan is written in the same cycle these go out, so the message must not promise otherwise.
     expect(ask).not.toMatch(/[Bb]efore I plan/);
-    expect(ask.split('\n')[0]).toMatch(/starting from what you have already given me/);
+  });
+
+  it('carries the CEO\'s answers and their tags, and reads them back out of its own message (P8-13)', () => {
+    const answers = parseCeoAnswers([
+      '1. A weekly meal kit for nurseries. [from the idea]',
+      '2. Nursery managers; today they cook from scratch. [from the vault]',
+      '3. I do not know what already exists. [unstated]',
+      '4. Ten paying nurseries. [from the idea]',
+      '5. Nothing has been tried yet that I know of.',
+      '6. Nothing is off the table that anyone has told me. [unstated]',
+    ].join('\n'));
+    expect(answers.map((a) => a.tag)).toEqual(['from the idea', 'from the vault', 'unstated', 'from the idea', 'unstated', 'unstated']);
+    expect(answers[0].text).toBe('A weekly meal kit for nurseries.');
+    const ask = renderInterviewAsk(INTERVIEW_QUESTIONS, 0, answers);
+    expect(ask).toContain('**CEO:** A weekly meal kit for nurseries. [from the idea]');
+    expect(ask).toContain('[unstated]');
+    // The resume path reads the answers back off the message the owner can already see.
+    expect(ceoAnswersFrom(ask)).toEqual(answers);
+  });
+
+  it('fills in for a model that answered badly, or not at all (P8-13)', () => {
+    expect(parseCeoAnswers(null).every((a) => a.tag === 'unstated' && a.text === CEO_UNKNOWN)).toBe(true);
+    expect(unstatedAnswers(6)).toEqual(parseCeoAnswers(''));
+    const short = parseCeoAnswers('1) Meal kits. [from the idea]\n2) Nurseries.');
+    expect(short.length).toBe(6);
+    expect(short[0]).toEqual({ text: 'Meal kits.', tag: 'from the idea' });
+    expect(short[1]).toEqual({ text: 'Nurseries.', tag: 'unstated' });   // no tag → unstated
+    expect(short[5]).toEqual({ text: CEO_UNKNOWN, tag: 'unstated' });    // absent → unstated
+    // A stray seventh answer, and a number out of range, are dropped rather than shifting the rest.
+    expect(parseCeoAnswers('7. Nonsense. [from the idea]')[0].tag).toBe('unstated');
   });
 
   it('reads its own state out of the transcript, with no cache anywhere', () => {
@@ -83,12 +115,50 @@ describe('the cabin interview (spec §1.4)', () => {
     expect(interviewPhase(closeInterview(asked, 'skip', '2026-09-11T11:00:00.000Z'))).toBe('skipped');
   });
 
-  it('promises only what FR-6 does: an answer or a skip closes it, a note to the CEO does not', () => {
+  it('promises only what FR-6 and P8-13 do: an addition, a go or a skip closes it, a question does not', () => {
     const ask = renderInterviewAsk();
     expect(ask).not.toContain('Whatever you say next closes this');
-    expect(ask).toContain('leaves these open');
+    expect(ask).toContain('A question to me leaves this open.');
     expect(renderInterviewAsked('2026-09-13T10:00:00.000Z')).not.toContain('whatever it says');
     expect(renderInterviewAsked('2026-09-13T10:00:00.000Z')).toContain('leaves it open');
+  });
+
+  it('the owner\'s reply is an addition, a go, or a skip — never a replacement (P8-13)', () => {
+    const answers = parseCeoAnswers('1. Meal kits for nurseries. [from the idea]');
+    const asked = renderInterviewAsked('2026-09-13T10:00:00.000Z', INTERVIEW_QUESTIONS, answers);
+    expect(interviewPhase(asked)).toBe('asked');
+    expect(ownerAnsweredInterview(asked)).toBe(false);
+    expect(interviewAnswersSection(asked)).toContain('**CEO:** Meal kits for nurseries. [from the idea]');
+
+    const added = closeInterview(asked, 'Nurseries, not parents.\nTwo already pay us.', '2026-09-13T11:00:00.000Z');
+    expect(added).toContain('**You:** Nurseries, not parents.');
+    expect(added).toContain('**CEO:** Meal kits for nurseries. [from the idea]');   // never replaced
+    expect(interviewPhase(added)).toBe('answered');
+    expect(interviewAnswer(added)).toBe('Nurseries, not parents.\nTwo already pay us.');
+    expect(interviewAnswersSection(added)).toContain('**You:** Nurseries, not parents.');
+
+    const went = closeInterview(asked, 'go', '2026-09-13T11:00:00.000Z');
+    expect(went).toContain('## Endorsed');
+    expect(/^\*\*You:\*\*/m.test(went)).toBe(false);
+    expect(interviewPhase(went)).toBe('answered');
+    expect(ownerAnsweredInterview(went)).toBe(true);
+    expect(interviewAnswer(went)).toBe('');
+
+    const skipped = closeInterview(asked, 'skip', '2026-09-13T11:00:00.000Z');
+    expect(interviewPhase(skipped)).toBe('skipped');
+    expect(ownerAnsweredInterview(skipped)).toBe(false);
+    // A skipped transcript still carries the CEO's answers, and they stay out of the Answers material's tail.
+    expect(interviewAnswersSection(skipped)).toContain('**CEO:**');
+    expect(interviewAnswersSection(skipped)).not.toContain('skipped the interview');
+  });
+
+  it('closes on "go" and its short cousins, and on nothing that only contains them', () => {
+    for (const t of ['go', 'Go.', 'ok', 'OK!', 'looks right', 'Looks good', 'yes']) {
+      expect(endorsesInterview(t)).toBe(true);
+      expect(closesInterview(t)).toBe(true);
+    }
+    expect(endorsesInterview('go and ask the research office')).toBe(false);
+    expect(endorsesInterview('that is not right')).toBe(false);
   });
 
   it('closes on an answer or a skip, and on nothing else (finding F5, ruling FR-6)', () => {
@@ -117,6 +187,11 @@ describe('the cabin interview (spec §1.4)', () => {
     expect(answered).toContain(INTERVIEW_QUESTIONS[0]);
     expect(interviewAnswer(closeInterview(asked, 'skip'))).toBe('');
     expect(interviewAnswer(null)).toBe('');
+    // A transcript written before P8-13 still reads: `## Answers` is not `## Answer`.
+    const legacy = '# Founder interview\n\n## Questions\n\n1. x\n\n## Answer\n\n_2026-09-11_\n\nWe sell meal kits.\n';
+    expect(interviewPhase(legacy)).toBe('answered');
+    expect(interviewAnswer(legacy)).toBe('We sell meal kits.');
+    expect(interviewPhase(renderInterviewAsked('2026-09-11T10:00:00.000Z'))).toBe('asked');
   });
 });
 

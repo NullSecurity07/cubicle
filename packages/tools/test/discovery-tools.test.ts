@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   scaffoldVault, Vault, RoleFrontmatter, readIdea, DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF,
   renderInterviewAsked, renderInterviewCovered, closeInterview, loadOrg, hasFounderBrief, isDiscoveryMaterial, asksForSurprise,
+  INTERVIEW_QUESTIONS, parseCeoAnswers,
 } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools, vaultWrite, vaultAppend, type ToolContext } from '../src/index.js';
 import { discoveryInputs, ideaCard, fairShare, inOffice } from '../src/tools/discovery.js';
@@ -86,11 +87,27 @@ describe('discovery.inputs (spec §1)', () => {
   });
 
   it('says plainly when there is nothing, and when the owner skipped', async () => {
+    // A skipped self-interview still carries the CEO's own answers (ruling P8-13), and the tool says whose
+    // they are rather than letting the brief read them as the owner's.
     vault.writeText(INTERVIEW_PATH, closeInterview(renderInterviewAsked('2026-09-11T09:00:00.000Z'), 'skip'), 'ceo');
     const r = await discoveryInputs.handler({ max_chars: 60000 }, ctx('research_manager'));
-    expect(r.text).toContain('skipped the interview');
+    expect(r.text).toContain('The owner dropped the interview');
+    expect(r.text).toContain("every answer below is the CEO's own");
     expect(r.text).toContain('## What the owner has typed in the cabin\n_Nothing._');
-    expect((r.data as { sources: string[] }).sources).toEqual([]);
+    expect((r.data as { sources: string[] }).sources).toEqual([INTERVIEW_PATH]);
+  });
+
+  // Ruling P8-13. The transcript the brief is written from is the CEO's six answers plus whatever the owner
+  // added — with the tags, because the tags are the only thing that says whose word each line is.
+  it("hands the job the CEO's tagged answers and the owner's additions, and says which is which", async () => {
+    const asked = renderInterviewAsked('2026-09-13T09:00:00.000Z', INTERVIEW_QUESTIONS, parseCeoAnswers('1. A weekly meal-kit box for nurseries. [from the idea]\n3. Nothing exists yet. [unstated]'));
+    vault.writeText(INTERVIEW_PATH, closeInterview(asked, 'Nurseries, not parents.\nTwo already pay us.', '2026-09-13T10:00:00.000Z'), 'ceo');
+    const r = await discoveryInputs.handler({ max_chars: 60000 }, ctx('research_manager'));
+    expect(r.text).toContain('**CEO:** A weekly meal-kit box for nurseries. [from the idea]');
+    expect(r.text).toContain('**You:** Nurseries, not parents.');
+    expect(r.text).toContain("`**You:**` lines are the owner's own words");
+    expect((r.data as { sources: string[]; interview: string }).interview).toBe('answered');
+    expect((r.data as { sources: string[] }).sources).toContain(INTERVIEW_PATH);
   });
 
   // SP5b §5: nobody was asked, because the owner had already said all six in their own material. Reported as

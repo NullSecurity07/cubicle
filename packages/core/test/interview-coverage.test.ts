@@ -160,27 +160,29 @@ describe('a message the owner can already see decides what the transcript says',
 describe('what the owner reads, and what the transcript says', () => {
   it('the message says how many it is not asking, and why', () => {
     const msg = renderInterviewAsk([INTERVIEW_QUESTIONS[1], INTERVIEW_QUESTIONS[3]], 4);
-    expect(msg).toContain('you have answered 4 of my six questions');
+    expect(msg).toContain('You have answered 4 of my six questions');
     expect(msg).toContain('1. Who is it for');
     expect(msg).toContain('2. What would have to be true');
     expect(msg).not.toContain('What are you building');
-    // FR-6: the message no longer promises that whatever comes next closes the interview — an answer, or
-    // "skip", closes it, and it says so.
-    expect(msg).toContain('or reply "skip"');
-    expect(msg).toContain('leaves these open');
+    // FR-6 and P8-13: an addition, a "go" or a "skip" closes it; a question leaves it open, and it says so.
+    expect(msg).toContain('"skip" drops it');
+    expect(msg).toContain('A question to me leaves this open.');
     expect(msg).not.toContain('Whatever you say next closes this');
+    // The covered four are not put back to the owner — not even as the CEO's own answers.
+    expect(msg.match(/^\*\*CEO:\*\* /gm)!.length).toBe(2);
   });
 
-  it('and reads exactly as it always did when all six are open', () => {
+  it('and puts the CEO\'s own answer under each of the six when all six are open (P8-13)', () => {
     const msg = renderInterviewAsk();
-    expect(msg.startsWith('I am starting from what you have already given me. Six questions,')).toBe(true);
+    expect(msg.startsWith('Here is how I would answer these six from what I have')).toBe(true);
     for (const q of INTERVIEW_QUESTIONS) expect(msg).toContain(q);
+    expect(msg.match(/^\*\*CEO:\*\* /gm)!.length).toBe(6);
   });
 
   it('titles itself by the count', () => {
-    expect(interviewAskTitle(6)).toBe('Six questions, while I get started');
-    expect(interviewAskTitle(3)).toBe('Three questions, while I get started');
-    expect(interviewAskTitle(1)).toBe('One question, while I get started');
+    expect(interviewAskTitle(6)).toBe('Six questions, and how I would answer them');
+    expect(interviewAskTitle(3)).toBe('Three questions, and how I would answer them');
+    expect(interviewAskTitle(1)).toBe('One question, and how I would answer them');
   });
 
   it('all six covered is a fifth phase, not a skip the owner never chose (Decision 16)', () => {

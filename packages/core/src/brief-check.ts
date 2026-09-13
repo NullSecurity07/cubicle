@@ -1,7 +1,7 @@
 import type { Vault } from './vault.js';
 import { parseNote } from './frontmatter.js';
 import {
-  PRESSURE_TEST_SECTION, INTERVIEW_PATH, briefSectionBody, interviewPhase, listDiscoveryInputs,
+  PRESSURE_TEST_SECTION, INTERVIEW_PATH, briefSectionBody, ownerAnsweredInterview, listDiscoveryInputs,
 } from './discovery.js';
 import { readPressureVerdict, PRESSURE_VERDICTS } from './pressure.js';
 
@@ -23,7 +23,12 @@ import { readPressureVerdict, PRESSURE_VERDICTS } from './pressure.js';
 
 /** What the brief was written with, as the caller knows it. `briefCheckContext` reads both off the vault. */
 export interface BriefCheckContext {
-  /** The owner has actually answered the six interview questions (`## Answer` in the transcript). */
+  /**
+   * The **owner** has spoken in the interview: a `**You:**` addition, or an `## Endorsed` block where they read
+   * the CEO's six answers and said go (ruling P8-13). The CEO's own `## Answers` never set this — they are the
+   * company's reading of its own idea, and a brief that cited them as the owner's word would be rule 3's
+   * original lie with a new source.
+   */
   interviewAnswered: boolean;
   /** How many files the owner dropped in `Discovery/inbox/`. */
   inboxFiles: number;
@@ -38,7 +43,7 @@ export interface BriefCheck {
 /** The brief's own view of the vault, read off the vault. */
 export function briefCheckContext(vault: Vault): BriefCheckContext {
   return {
-    interviewAnswered: interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)) === 'answered',
+    interviewAnswered: ownerAnsweredInterview(vault.readTextOrNull(INTERVIEW_PATH)),
     inboxFiles: listDiscoveryInputs(vault).length,
   };
 }
@@ -108,8 +113,15 @@ const NO_NAME = /\bno name\b|\bno brand\b|\bnot (?:yet )?named\b|\bun-?named\b|\
 const INTERVIEW_MENTION = /discovery\/interview\.md|discovery interview|founder interview|\bthe interview\b/i;
 /** How a brief claims those questions were answered. */
 const ANSWERED_CLAIM = /\bresponses?\b|\banswers?\b|\banswered\b|\bthe founder said\b|\bthe owner said\b|\bthey (?:said|told us)\b/i;
-/** How a brief says they were not — again read on the same line, so "the interview has no answers" is fine. */
-const NOT_ANSWERED = /\bno answers?\b|\bnot answered\b|\bun-?answered\b|\bno responses?\b|\bnot yet\b|\bawaiting\b|\bstill open\b|\bquestions only\b|\bskipped\b|\bnobody answered\b|\bunstated\b|\bnone\b|\bno one has\b|\bhas no\b|\bempty\b/i;
+/**
+ * How a brief says they were not — again read on the same line, so "the interview has no answers" is fine.
+ *
+ * P8-13 added a second honest sentence this had to learn. The transcript is now a self-interview: the CEO
+ * answers the six itself and the owner adds to them, so the truthful line about an unendorsed transcript says
+ * *whose* answers they are ("the CEO's own answers", "not the owner's word", "the owner has not added to
+ * them") rather than that there are none. Without these the check fired on the one sentence it wants written.
+ */
+const NOT_ANSWERED = /\bno answers?\b|\bnot answered\b|\bun-?answered\b|\bno responses?\b|\bnot yet\b|\bawaiting\b|\bstill open\b|\bquestions only\b|\bskipped\b|\bnobody answered\b|\bunstated\b|\bnone\b|\bno one has\b|\bhas no\b|\bempty\b|\bself-interview\b|\bthe CEO'?s own\b|\bmy own answers\b|\bnot the owner'?s\b|\bthe owner has not\b|\bfrom the idea\b|\bunconfirmed\b|\bnot endorsed\b|\bhas not (?:added|confirmed|endorsed|corrected|replied)\b/i;
 
 /** The word a brief owes wherever the material establishes nothing. The owner's own word (ruling FR-4). */
 export const UNSTATED = 'unstated';
@@ -141,8 +153,10 @@ function quote(line: string): string {
  *    citation to a file nobody wrote is worse than no citation at all.
  * 2. **No name while `Brand/name.md` has none.** The one fact about the company that is trivially checkable,
  *    and the one the live run invented.
- * 3. **No answers while the interview has none**, and — with no inbox files either — a Founder-Market Fit that
- *    says `unstated` rather than a paragraph about a founder nobody has described.
+ * 3. **No owner answers while the owner has given none**, and — with no inbox files either — a Founder-Market
+ *    Fit that says `unstated` rather than a paragraph about a founder nobody has described. Since P8-13 the
+ *    transcript usually *does* hold answers; they are the CEO's, and citing them as the owner's is the same
+ *    fabrication the live run produced.
  * 4. **The pressure test ends on a verdict.** Read with `readPressureVerdict`, the one parser the board, the
  *    card and the handbook already agree on: `PIVOT REQUIRED` is two words and always was.
  */
@@ -167,7 +181,7 @@ export function checkFounderBrief(vault: Vault, briefMarkdown: string, ctx: Brie
   if (!ctx.interviewAnswered) {
     for (const line of md.split('\n')) {
       if (!INTERVIEW_MENTION.test(line) || !ANSWERED_CLAIM.test(line) || NOT_ANSWERED.test(line)) continue;
-      findings.push(`"${quote(line)}" — ${INTERVIEW_PATH} holds the six questions and no answers. Do not describe it as answered.`);
+      findings.push(`"${quote(line)}" — the owner has neither added to ${INTERVIEW_PATH} nor endorsed it: every answer in it is the CEO's own. Say whose answers they are, and do not describe the owner as having answered.`);
     }
     if (ctx.inboxFiles === 0) {
       const fit = founderFitText(briefSectionBody(md, PRESSURE_TEST_SECTION));

@@ -190,19 +190,19 @@ describe('the interview and the two fan-outs, against a real vault', () => {
   const ownerSays = (text: string, at = '2026-09-11T09:00:00.000Z') =>
     vault.writeText(`00 Inbox/${at.slice(0, 10)}-msg-${Math.random().toString(16).slice(2, 8)}.md`, `---\nid: msg_${Math.random().toString(16).slice(2, 8)}\nkind: message\nfrom: owner\nto: ceo\ncreated: ${at}\n---\n# x\n\n${text}\n`, 'owner');
 
-  it('asks once, writes the transcript, and sends the owner one message', () => {
-    const id = askInterview(vault, 'ceo', NOW);
+  it('asks once, writes the transcript, and sends the owner one message', async () => {
+    const id = await askInterview(vault, 'ceo', NOW);
     expect(id).not.toBeNull();
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
     const msg = listInbox(vault).find((n) => n.data.kind === 'message' && n.data.from === 'ceo');
     expect(msg!.body).toMatch(/[Ss]ix questions/);
-    expect(askInterview(vault, 'ceo', NOW)).toBeNull();       // never twice
+    expect(await askInterview(vault, 'ceo', NOW)).toBeNull();       // never twice
   });
 
   // Ruling FR-6: it closes on an *answer*, not on whatever comes next. A short note to the CEO leaves the six
   // questions open (finding F5 — "your text is only half" would otherwise have been filed as the answers).
-  it('closes the interview with the owner\'s answer, and leaves it open for anything else', () => {
-    askInterview(vault, 'ceo', NOW);
+  it('closes the interview with the owner\'s answer, and leaves it open for anything else', async () => {
+    await askInterview(vault, 'ceo', NOW);
     expect(captureInterviewAnswer(vault, 'and another thing', NOW)).toBe(false);   // not an answer: still open
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
     expect(captureInterviewAnswer(vault, 'We sell meal kits to nurseries, and two of them already pay us.', NOW)).toBe(true);
@@ -211,7 +211,7 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(captureInterviewAnswer(vault, 'Nurseries, not parents.\nTwo already pay us.', NOW)).toBe(false);   // already closed
   });
 
-  it('resumes a kill between the message and the transcript without asking twice', () => {
+  it('resumes a kill between the message and the transcript without asking twice', async () => {
     // The message is written first, so this is exactly the vault a crash in between leaves behind.
     createProposal(vault, {
       id: interviewMessageId('ceo'), kind: 'message', from: 'ceo', to: 'owner',
@@ -219,13 +219,13 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     }, 'ceo');
     expect(vault.readTextOrNull(INTERVIEW_PATH)).toBeNull();
 
-    expect(askInterview(vault, 'ceo', NOW)).toBeNull();                         // no second message
+    expect(await askInterview(vault, 'ceo', NOW)).toBeNull();                         // no second message
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('asked'); // the transcript is finished
     expect(listInbox(vault).filter((n) => n.data.id === interviewMessageId('ceo')).length).toBe(1);
   });
 
-  it('records a skip as a skip', () => {
-    askInterview(vault, 'ceo', NOW);
+  it('records a skip as a skip', async () => {
+    await askInterview(vault, 'ceo', NOW);
     captureInterviewAnswer(vault, 'skip', NOW);
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('skipped');
   });
@@ -324,7 +324,7 @@ describe('the interview and the two fan-outs, against a real vault', () => {
 
   // Ruling 1, against a real vault: the day the company starts is the day it is given the most, and none of it
   // waits for tomorrow. One line at 09:00, the interview answered at 09:30, "thanks" at 10:00, a file at 10:30.
-  it('reads the interview answer and a dropped file on the same day it read the first line', () => {
+  it('reads the interview answer and a dropped file on the same day it read the first line', async () => {
     const org = loadOrg(vault);
     const at = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
 
@@ -333,7 +333,7 @@ describe('the interview and the two fan-outs, against a real vault', () => {
     expect(listJobs(vault).filter((j) => j.type === 'discovery')).toHaveLength(1);
 
     // 09:30 — the owner answers the six questions. The richest material there is, and it is read today.
-    askInterview(vault, 'ceo', NOW);
+    await askInterview(vault, 'ceo', NOW);
     captureInterviewAnswer(vault, 'Nurseries, not parents.\nTwo already pay us.\nTen in three months.', new Date());
     const answered = currentDiscoveryStatus(vault);
     expect(answered.run).toBe(true);

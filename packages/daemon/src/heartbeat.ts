@@ -11,7 +11,7 @@ import {
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, type PressurePart,
   PRESSURE_CHAIR_SECTION, chairAnswerText,
   type PressureVerdict, type BoardRubric,
-  isLongPrompt, isSkip, asksForSurprise, interviewPhase, INTERVIEW_PATH, BRAND_NAME_PATH,
+  isLongPrompt, isSkip, asksForSurprise, endorsesInterview, interviewPhase, parseCeoAnswers, type CeoAnswer, INTERVIEW_PATH, BRAND_NAME_PATH,
   readLedger, moneyReport, moneyLine, moneyNeedsYou, money, HOUSE, LEDGER_PATH, DEFAULT_CURRENCY, type MoneyReport, type LedgerEntry,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
@@ -20,7 +20,7 @@ import { deployer, emailSender, analytics } from '@cubicle/tools';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
 import { seedFirstJobs, seedFirstStream } from './first-run.js';
-import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId, hasApprovedBrief, rejectionAsksForNewIdea } from './discovery.js';
+import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId, hasApprovedBrief, rejectionAsksForNewIdea, selfInterviewSubject, selfInterviewPrompt } from './discovery.js';
 import { writeRunway, accrueModelCost, enqueueRunway, dormancyMessage, revivalMessage } from './money.js';
 import { runBoardDialogue, linkBoardTranscript, runBriefBoardSession, type BoardSessionOpts } from './board-dialogue.js';
 
@@ -1306,6 +1306,30 @@ function release(vault: Vault, path: string, jobId?: string): void {
 }
 
 /**
+ * How much room the self-interview gets. Six answers of two sentences each, plus their tags, with slack for a
+ * model that restates the question first — long enough that the sixth answer is never the one that is cut.
+ */
+export const SELF_INTERVIEW_TOKENS = 900;
+
+/**
+ * The CEO answers the six founder questions **itself**, in one call, before they go to the owner (ruling
+ * P8-13).
+ *
+ * One call, not six: the six answers are one reading of one idea, and asking six times would both cost six
+ * times as much and let the answers contradict each other. Strong tier, because this is the company's own
+ * account of what it is for and the owner reads every word of it.
+ *
+ * It cannot fail loudly. `askAs` already returns null on any model failure and `parseCeoAnswers` turns null —
+ * and a malformed reply, and a short one — into `[unstated]` answers, so the worst case is a CEO that says it
+ * does not know and an owner who is invited to fill it in. That is a worse interview, not a missing one.
+ */
+async function ceoSelfInterview(deps: HeartbeatDeps, vault: Vault, ceo: string, questions: readonly string[]): Promise<CeoAnswer[]> {
+  const subject = selfInterviewSubject(vault);
+  const raw = await askAs(deps, ceo, ceoSystem(vault), selfInterviewPrompt({ ...subject, questions }), SELF_INTERVIEW_TOKENS, 'strong');
+  return parseCeoAnswers(raw, questions.length);
+}
+
+/**
  * The surprise path: three complete ideas filed as the `brand_change` the owner picks from, and the sentence
  * the CEO says about it. Returns `SURPRISE_FAILED` — and files nothing — when two asks did not produce three
  * whole lines (finding F1, ruling FR-2).
@@ -1399,10 +1423,13 @@ async function answerOne(deps: HeartbeatDeps, vault: Vault, m: OwnerMessage, bod
   // stripped text: `isSkip` is anchored to the whole string, so an owner who types `skip` (note body
   // `# skip\n\nskip`) would otherwise be recorded as having answered the six questions with "skip".
   const said = ownerSaid(body);
-  // An open interview is closed by an answer, or by "skip" — never by a question or a quick note (ruling
-  // FR-6; it used to close on whatever came next, so a complaint became the six answers). This is a vault
-  // write, not a model call: the interview must not cost a cycle's quota to conduct.
+  // An open interview is closed by an addition, by "go", or by "skip" — never by a question or a quick note
+  // (ruling FR-6; it used to close on whatever came next, so a complaint became the six answers). This is a
+  // vault write, not a model call: the interview must not cost a cycle's quota to conduct.
   const closedInterview = captureInterviewAnswer(vault, said, now());
+  // Which of the three ways it closed, so the CEO's reply says the true one. Read off the same predicates
+  // `closeInterview` branched on, rather than off the transcript, so the two can never describe it differently.
+  const interviewEnded = !closedInterview ? '' : isSkip(said) ? 'skipped' : endorsesInterview(said) ? 'endorsed' : 'added';
   const interviewStillOpen = !closedInterview && interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)) === 'asked';
   // A document, not a one-line idea: discovery reads it, and the CEO does not try to squeeze a company
   // name out of its first sentence.
@@ -1421,10 +1448,13 @@ async function answerOne(deps: HeartbeatDeps, vault: Vault, m: OwnerMessage, bod
     reply = `Got it. I proposed the name **${name}** (${tagline}) in 00 Inbox/ — approve or edit it. The CTO is planning the first jobs now.`;
   } else {
     const extra = [
-      closedInterview ? 'You had asked them six questions; their reply is now in Discovery/interview.md and the research office will read it.' : '',
-      // The owner has to be told, in the reply they are already reading, that the six questions are still
-      // waiting — nothing else will say it, and the interview no longer closes itself on this message (FR-6).
-      interviewStillOpen ? 'The six questions you sent them in the cabin are still open: what they just wrote is not an answer to them. End your reply with one line saying so — an answer in their own words, or "skip", is all you need.' : '',
+      interviewEnded === 'added' ? 'You had put your own answers to the six founder questions to them; what they just wrote is now added to Discovery/interview.md underneath those answers, and the research office will read both.' : '',
+      interviewEnded === 'endorsed' ? 'You had put your own answers to the six founder questions to them; they read them and said go, so Discovery/interview.md now records those answers as agreed and the research office will read them as such.' : '',
+      interviewEnded === 'skipped' ? 'They dropped the founder interview. Discovery/interview.md records that; your own answers in it stand as your reading of the idea, not as their word, and the research office will read them that way.' : '',
+      // The owner has to be told, in the reply they are already reading, that the six answers are still
+      // waiting on them — nothing else will say it, and the interview no longer closes itself on this message
+      // (FR-6). It is an invitation to correct, not a demand to answer (P8-13).
+      interviewStillOpen ? 'The six founder questions you answered yourself are still with them: what they just wrote is neither an addition nor a "go". End your reply with one line saying so — anything to add, any correction, or just "go", is all you need.' : '',
       longPrompt ? 'This is a long brief rather than a one-line idea: the research office is reading it in full and will file a founder brief for them to approve. Do not try to summarise it yourself.' : '',
     ].filter(Boolean).join(' ');
     reply = (await ask(deps, ceoSystem(vault), `The owner wrote:\n\n${body}\n\n${extra}\n\nReply briefly and concretely. If it is an instruction, say what you will do and enqueue nothing yourself (the divisions plan). If it is a question, answer it.`)) ?? 'Noted. (No model was available to draft a fuller reply; I will act on this next cycle.)';
@@ -1799,7 +1829,10 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           let status = currentDiscoveryStatus(vault, now());
           let asked: string | null = null;
           if (status.ask) {
-            asked = askInterview(vault, ceo, now());
+            // The one model call on this path (ruling P8-13): the CEO answers the six itself first, so what
+            // reaches the owner is answers to add to rather than questions to answer about an idea the
+            // company proposed. It cannot fail the ask — see `ceoSelfInterview`.
+            asked = await askInterview(vault, ceo, now(), (qs) => ceoSelfInterview(deps, vault, ceo, qs));
             status = currentDiscoveryStatus(vault, now());
           }
           const askedNote = asked ? `asked the founder interview (${asked})` : '';

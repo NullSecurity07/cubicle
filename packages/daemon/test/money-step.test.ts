@@ -109,11 +109,12 @@ describe('the money step (spec §5, §6)', () => {
     expect(outcome.status).toBe('blocked');                             // blocked on planning, not stopped
     expect(readJob(vault, id)!.body).toContain('USD 0.00 cash');
     expect(listInbox(vault).some((n) => (n.data as { money?: string }).money === 'dormant')).toBe(false);
-    // It is working: it wrote a plan job and parked on it. The heartbeat itself does not call a model to get
-    // that far — every step up to `company_plan` delegates or is arithmetic — so the honest assertion about
-    // this cycle's own spend is zero, and "it is working" is the queued plan job, not a call count.
+    // It is working: it wrote a plan job and parked on it. "It is working" is the queued plan job, not a call
+    // count — every step up to `company_plan` delegates or is arithmetic, with one exception since ruling
+    // P8-13: the first cycle's founder interview is a self-interview, and the CEO answers the six itself in
+    // one call before putting them to the owner. One, and only on the cycle that asks.
     expect(listJobs(vault).some((j) => j.type === 'company.plan')).toBe(true);
-    expect(calls).toBe(0);
+    expect(calls).toBe(1);
   });
 
   it('a company that has spent its capital stops at the money step and makes no model call at all', async () => {

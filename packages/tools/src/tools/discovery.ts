@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { defineTool } from '../registry.js';
 import {
   loadOrg, listInbox, officeHolder, teamOf, subtreeRoles, readJob, type Office, type Org, type Vault,
-  DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF, listDiscoveryInputs, interviewPhase, interviewAnswer, isLongPrompt, ownerSaid,
+  DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF, listDiscoveryInputs, interviewPhase, interviewAnswer, interviewAnswersSection, INTERVIEW_TAG_LEGEND, isLongPrompt, ownerSaid,
   isDiscoveryMaterial, ownerPick, OWNER_PICK_LABEL,
   INTERVIEW_QUESTIONS, hasFounderBrief,
   IdeaScoreInputs, missingScoreInputs, readIdea, updateIdea, writeIdeaCard, ideaSlug, ideaPath, renderScoreSection,
@@ -56,7 +56,11 @@ export const discoveryInputs = defineTool({
 
     const transcript = vault.readTextOrNull(INTERVIEW_PATH);
     const phase = interviewPhase(transcript);
-    const interviewText = phase === 'answered' ? interviewAnswer(transcript) : '';
+    // The transcript is a self-interview since ruling P8-13: the CEO's own six answers, each tagged, with the
+    // owner's `**You:**` additions under them. Both halves are material and both are returned — with the tags
+    // intact, because the tags are what tell the brief's author whose word each line is. A pre-P8-13
+    // transcript has no `## Answers` section, so the owner's `## Answer` body is still read the old way.
+    const interviewText = interviewAnswersSection(transcript) || (phase === 'answered' ? interviewAnswer(transcript) : '');
     const interviewParts = interviewText ? [{ path: INTERVIEW_PATH, text: interviewText }] : [];
 
     // Newest first: when the budget cannot cover every message, a tie in fairShare's stable sort resolves in
@@ -84,12 +88,18 @@ export const discoveryInputs = defineTool({
     const interviewBudgeted = interviewParts.map((p) => ({ ...p, budget: budgets[cursor++] }));
     const messageBudgeted = messageParts.map((p) => ({ ...p, budget: budgets[cursor++] }));
 
+    // Whose words the reader is about to read. Said out loud rather than left to the tags, because the one
+    // sentence a brief must not write is "the owner said" over an answer the CEO wrote (ruling P8-13).
+    const whoseAnswers = phase === 'answered' ? ''
+      : phase === 'skipped' ? '_The owner dropped the interview: every answer below is the CEO\'s own, and none of it is the owner\'s word._'
+        : '_The owner has not added to these or endorsed them yet: every answer below is the CEO\'s own, and none of it is the owner\'s word._';
+
     // The owner's pick is material, not merely the trigger that started this job (ruling FR-3b): after
     // "surprise me" the chosen line is the *only* thing that says what the company is for, and a brief written
     // without it in front of it is written from nothing. Outside the character budget — it is one line, and it
     // is the one line that must never be truncated.
     const pick = ownerPick(vault);
-    const sources = [...readable.map((f) => f.path), ...(phase === 'answered' ? [INTERVIEW_PATH] : []), ...(pick ? [pick.path] : []), ...(ownerMessages.length ? ['00 Inbox/ (owner messages)'] : [])];
+    const sources = [...readable.map((f) => f.path), ...(interviewText ? [INTERVIEW_PATH] : []), ...(pick ? [pick.path] : []), ...(ownerMessages.length ? ['00 Inbox/ (owner messages)'] : [])];
     const sections = [
       ...(pick ? [`## The idea the owner chose`, '', `${OWNER_PICK_LABEL}`, '', pick.line, '', `_From ${pick.path}. This is the company's starting point; everything below is what else they have given us._`, ''] : []),
       `## Files in ${DISCOVERY_INBOX}/ (${readable.length} readable${unreadable.length ? `, ${unreadable.length} unread` : ''})`,
@@ -102,8 +112,8 @@ export const discoveryInputs = defineTool({
       // `covered` is not "unanswered": nobody was asked, because the owner's own material had already answered
       // every question, and saying "not answered yet" about it would send the brief looking for words that
       // are sitting in the files and messages either side of this line (SP5b spec §5).
-      phase === 'answered'
-        ? renderDiscoveryBundle(interviewBudgeted)
+      interviewText
+        ? [`_${INTERVIEW_TAG_LEGEND}_`, ...(whoseAnswers ? ['', whoseAnswers] : []), '', renderDiscoveryBundle(interviewBudgeted)].join('\n')
         : phase === 'skipped'
           ? '_The owner skipped the interview. Work from everything else, and list what you would have asked under "What we do not know"._'
           : phase === 'covered'
