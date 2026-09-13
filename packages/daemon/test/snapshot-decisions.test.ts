@@ -9,7 +9,7 @@ import path from 'node:path';
 import { WebSocket } from 'ws';
 import {
   scaffoldVault, Vault, createProposal, findInboxById, stringifyNote, ownerDecide, nowIso,
-  FOUNDER_BRIEF, DM_THREAD_ID, type Turn,, BOARD_STILL_SITTING } from '@cubicle/core';
+  FOUNDER_BRIEF, DM_THREAD_ID, type Turn, BOARD_STILL_SITTING } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { buildSnapshot, WsServer, INBOX_BODY_MAX, DECIDED_ROWS, type Snapshot } from '../src/ws.js';
