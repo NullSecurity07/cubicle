@@ -9,8 +9,7 @@ import path from 'node:path';
 import { WebSocket } from 'ws';
 import {
   scaffoldVault, Vault, createProposal, findInboxById, stringifyNote, ownerDecide, nowIso,
-  FOUNDER_BRIEF, DM_THREAD_ID, type Turn,
-} from '@cubicle/core';
+  FOUNDER_BRIEF, DM_THREAD_ID, type Turn,, BOARD_STILL_SITTING } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { buildSnapshot, WsServer, INBOX_BODY_MAX, DECIDED_ROWS, type Snapshot } from '../src/ws.js';
@@ -267,7 +266,7 @@ describe('the decide and conversation.get ops', () => {
     await c.next('snapshot');
 
     c.sock.send(JSON.stringify({ op: 'decide', id, approved: true }));
-    expect(await c.next('error')).toMatchObject({ id, message: 'the board is still pressure-testing this brief; it will be ready to adopt in a moment, with the board's findings in it' });
+    expect(await c.next('error')).toMatchObject({ id, message: BOARD_STILL_SITTING });
     expect(findInboxById(vault, id)!.data.approved).toBeNull();
     expect(ticks).toEqual([]);
     c.close();
