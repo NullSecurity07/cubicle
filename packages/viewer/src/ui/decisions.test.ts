@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { applySnapshot, emptyState, decideSent, decideAcked, decideFailed, type Snapshot, type InboxRow } from '../state.js';
 import { viewFor } from './surfaces.js';
-import { APPLYING_TEXT, BOARD_SITTING, BOARD_SITTING_CHIP, COMMENT_REQUIRED, actionBar, commentRequired, decidableOf, decideStateFor, decisionKey, decisionsView, rowStateChip, verbsFor } from './decisions.js';
+import { APPLYING_TEXT, BOARD_SITTING, BOARD_SITTING_CHIP, COMMENT_REQUIRED, readerBody, proposedContent, actionBar, commentRequired, decidableOf, decideStateFor, decisionKey, decisionsView, rowStateChip, verbsFor } from './decisions.js';
 import { THEMES, contrastRatio } from './tokens.js';
 import type { Ctx } from './content.js';
 
@@ -65,6 +65,26 @@ describe('the decision reader and its action bar', () => {
     expect(reader).toContain('chip band');
     expect(reader).toContain('class="btn primary"');
     expect(decisionsView(s).html).not.toContain('chip kind');
+  });
+
+  it('reads a founder brief as the document it is, and a file change as the file it is', () => {
+    const FENCE = '`'.repeat(4);
+    // The `## Proposed content` fence is how a note carries the document; for the brief it *is* the document, and
+    // the owner is adopting it. A file change proposes a file, so its fence stays a fence.
+    const doc = '# Founder brief\n\n## What the company is\nMeal plans.\n\n## Pressure test\nWho pays?\n';
+    const note: InboxRow = { id: 'pb', kind: 'founder_brief', title: 'The founder brief', path: '00 Inbox/b.md', created: 'now', decidable: 'adopt', pressure: '## Pressure test\nWho pays?\n', body: `The board has finished with it.\n\n## Proposed content\n\n${FENCE}\n${doc}${FENCE}\n` };
+    expect(proposedContent(note.body!)).toBe(doc.replace(/\n$/, ''));
+    const shown = readerBody(note);
+    expect(shown).toContain('The board has finished with it.');
+    expect(shown).toContain('## What the company is');
+    expect(shown).not.toContain(FENCE);
+    const s2 = applySnapshot(emptyState(), snap({ inbox: [note] }));
+    const html = viewFor('decision:pb', s2, ctx).html;
+    expect(html).toContain('<h3>What the company is</h3>');   // rendered as the document, not as a code listing
+    expect(html).not.toContain('<pre>');
+    expect((html.match(/Pressure test/g) ?? []).length).toBe(1);   // the brief carries it, so no second section
+    const file: InboxRow = { ...note, id: 'pf', kind: 'file_change', body: `Write the note.\n\n## Proposed content\n\n${FENCE}\n# Overlay demo\n${FENCE}\n`, pressure: undefined };
+    expect(readerBody(file)).toContain(FENCE);
   });
 
   it('has one shape per decidable: approve, numbered options, adopt or send back', () => {

@@ -51,6 +51,28 @@ export function decisionKey(e: { key: string; ctrlKey?: boolean; metaKey?: boole
   return null;
 }
 
+/** The document inside a proposal's `## Proposed content` fence, or null — the dispatcher's own reader, in the page. */
+export function proposedContent(body: string): string | null {
+  const m = body.match(/## Proposed content\s*\n+(`{3,})[a-z]*\n([\s\S]*?)\n\1[ \t]*(?:\n|$)/);
+  return m ? m[2] : null;
+}
+
+/**
+ * What the reader shows of a note.
+ *
+ * A founder brief's proposed content is the document the owner is adopting — the fence is how the note carries it,
+ * not what it is — so the covering note is followed by the document itself, as prose. Every other kind keeps its
+ * fence: a `file_change` proposes a *file*, and a file is shown as a file, monospace and unwrapped.
+ */
+export function readerBody(n: Pick<InboxRow, 'kind' | 'body'>): string {
+  const body = n.body ?? '';
+  if (n.kind !== 'founder_brief') return body;
+  const doc = proposedContent(body);
+  if (!doc) return body;
+  const covering = body.split(/^## Proposed content\s*$/m)[0].trim();
+  return covering ? `${covering}\n\n${doc}` : doc;
+}
+
 const bandChip = (n: InboxRow): string => (n.band ? chip('band', n.band) : '');
 
 /**
@@ -149,10 +171,13 @@ export function decisionView(id: string, s: State, ctx: Ctx, ui: { choice?: Reco
   const st = decideStateFor(n, s.decisions[id]);
   const head = `<p>${chip('note', kindLabel(n.kind))} ${bandChip(n)} <span class="muted">${esc([n.from ? who(s, n.from) : '', fmtWhen(n.created)].filter(Boolean).join(' · '))}</span></p>`;
   const why = n.band_reason ? `<p class="hintline">${esc(n.band_reason)}</p>` : '';
-  const body = n.body ? `<div class="prose">${md(n.body)}</div>` : `<p class="muted">The note carries no body. Open it in Obsidian to read it in full.</p>`;
-  // The section titles the block, so the block's own `## Pressure test` heading would be the same words twice.
+  const shown = readerBody(n);
+  const body = shown ? `<div class="prose">${md(shown)}</div>` : `<p class="muted">The note carries no body. Open it in Obsidian to read it in full.</p>`;
+  // The section titles the block, so the block's own `## Pressure test` heading would be the same words twice —
+  // and a brief that carries the test inside the document it proposes does not need it printed a second time.
   const pressureBody = (n.pressure ?? '').replace(/^\s*#{1,3}\s*pressure test\s*\n+/i, '');
-  const pressure = pressureBody.trim() ? section('Pressure test', `<div class="prose">${md(pressureBody)}</div>`) : '';
+  const inBody = /^\s*#{1,3}\s*pressure test\s*$/im.test(shown);
+  const pressure = !inBody && pressureBody.trim() ? section('Pressure test', `<div class="prose">${md(pressureBody)}</div>`) : '';
   const verdict = n.board_verdict ? `<p class="hintline">The board: ${esc(n.board_verdict)}</p>` : '';
   return {
     mode: 'doc', icon: 'envelope', title: n.title, sub: path, link,
