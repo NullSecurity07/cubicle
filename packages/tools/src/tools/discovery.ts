@@ -3,6 +3,7 @@ import { defineTool } from '../registry.js';
 import {
   loadOrg, listInbox, officeHolder, teamOf, subtreeRoles, readJob, type Office, type Org, type Vault,
   DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF, listDiscoveryInputs, interviewPhase, interviewAnswer, isLongPrompt, ownerSaid,
+  isDiscoveryMaterial, ownerPick, OWNER_PICK_LABEL,
   INTERVIEW_QUESTIONS, hasFounderBrief,
   IdeaScoreInputs, missingScoreInputs, readIdea, updateIdea, writeIdeaCard, ideaSlug, ideaPath, renderScoreSection,
   renderEvidenceSection, sameIdeaTitle, missingScoreNote,
@@ -66,7 +67,11 @@ export const discoveryInputs = defineTool({
       // heading *anywhere* in the body — on a message that did not start with the cabin's title line, that was
       // a line of the owner's own writing, silently missing from the material the founder brief is written from.
       .map((n) => ({ at: n.data.created, path: n.path, text: ownerSaid(n.body) }))
-      .filter((m) => m.text)
+      // Ruling FR-3, the same predicate the daemon starts a job with (`isDiscoveryMaterial`, in core so the
+      // two sides cannot drift): "surprise me" is a request for ideas, "skip" a refusal to be interviewed, two
+      // words a reply. Handing any of them to a founder brief as though it were the owner's material is how
+      // the first live run's brief came to make claims no file supported (finding F3).
+      .filter((m) => isDiscoveryMaterial(m.text))
       .sort((a, b) => b.at.localeCompare(a.at));
     const messageParts = ownerMessages.map((m) => ({ path: `${m.path} (${m.at.slice(0, 10)})`, text: m.text }));
 
@@ -79,8 +84,14 @@ export const discoveryInputs = defineTool({
     const interviewBudgeted = interviewParts.map((p) => ({ ...p, budget: budgets[cursor++] }));
     const messageBudgeted = messageParts.map((p) => ({ ...p, budget: budgets[cursor++] }));
 
-    const sources = [...readable.map((f) => f.path), ...(phase === 'answered' ? [INTERVIEW_PATH] : []), ...(ownerMessages.length ? ['00 Inbox/ (owner messages)'] : [])];
+    // The owner's pick is material, not merely the trigger that started this job (ruling FR-3b): after
+    // "surprise me" the chosen line is the *only* thing that says what the company is for, and a brief written
+    // without it in front of it is written from nothing. Outside the character budget — it is one line, and it
+    // is the one line that must never be truncated.
+    const pick = ownerPick(vault);
+    const sources = [...readable.map((f) => f.path), ...(phase === 'answered' ? [INTERVIEW_PATH] : []), ...(pick ? [pick.path] : []), ...(ownerMessages.length ? ['00 Inbox/ (owner messages)'] : [])];
     const sections = [
+      ...(pick ? [`## The idea the owner chose`, '', `${OWNER_PICK_LABEL}`, '', pick.line, '', `_From ${pick.path}. This is the company's starting point; everything below is what else they have given us._`, ''] : []),
       `## Files in ${DISCOVERY_INBOX}/ (${readable.length} readable${unreadable.length ? `, ${unreadable.length} unread` : ''})`,
       readable.length
         ? renderDiscoveryBundle(fileBudgeted)
@@ -113,6 +124,7 @@ export const discoveryInputs = defineTool({
         files: inputs,
         interview: phase,
         messages: ownerMessages.length,
+        pick: pick?.line ?? null,
         long_prompt: ownerMessages.some((m) => isLongPrompt(m.text)),
       },
     };

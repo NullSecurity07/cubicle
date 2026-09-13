@@ -65,6 +65,26 @@ describe('discovery.inputs (spec §1)', () => {
     expect(d.long_prompt).toBe(false);
   });
 
+  // Ruling FR-3b. The first live run's job read the note that said "surprise me" and wrote a founder brief
+  // about a company nobody had described. The words "surprise me" are not material; the idea the owner picked
+  // out of the CEO's three is, and it is the only sentence that says what the company is for.
+  it('opens on the idea the owner picked, and never hands the job "surprise me"', async () => {
+    vault.writeText('00 Inbox/2026-09-13-msg-surprise.md', '---\nid: msg_sur\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-13T09:00:00.000Z\nanswered: true\n---\n# surprise me\n\nsurprise me\n\n## CEO\n\nI filed three ideas as a proposal in 00 Inbox/.\n', 'owner');
+    vault.writeText('00 Inbox/2026-09-13-msg-thanks.md', '---\nid: msg_th\nkind: message\nfrom: owner\nto: ceo\ncreated: 2026-09-13T09:02:00.000Z\n---\n# thanks\n\nthanks!\n', 'owner');
+    vault.writeText('00 Inbox/2026-09-13-prop-ideas.md', '---\nid: prop_ideas\nkind: brand_change\nfrom: ceo\ntarget: Brand/name.md\ncreated: 2026-09-13T09:00:01.000Z\napproved: true\nchosen: 2\n---\n# Three company ideas — pick one\n\n1. GreenCrate — meal kits for nurseries.\n2. Deskless — shift scheduling for cafes.\n3. Tinyletter Co — a newsletter for allotment holders.\n', 'ceo');
+
+    const r = await discoveryInputs.handler({ max_chars: 60000 }, ctx('research_manager'));
+    expect(r.text).toContain('The owner picked this idea from the CEO\'s three:');
+    expect(r.text).toContain('2. Deskless — shift scheduling for cafes.');
+    expect(r.text).not.toContain('GreenCrate');                    // the options they did not pick
+    expect(r.text).not.toMatch(/surprise me/i);                    // nor the words that asked for them
+    expect(r.text).not.toContain('thanks!');                       // nor two words of thanks
+    const d = r.data as { sources: string[]; messages: number; pick: string | null };
+    expect(d.pick).toBe('2. Deskless — shift scheduling for cafes.');
+    expect(d.sources).toContain('00 Inbox/2026-09-13-prop-ideas.md');
+    expect(d.messages).toBe(0);
+  });
+
   it('says plainly when there is nothing, and when the owner skipped', async () => {
     vault.writeText(INTERVIEW_PATH, closeInterview(renderInterviewAsked('2026-09-11T09:00:00.000Z'), 'skip'), 'ceo');
     const r = await discoveryInputs.handler({ max_chars: 60000 }, ctx('research_manager'));

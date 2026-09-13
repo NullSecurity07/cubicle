@@ -1,5 +1,7 @@
 import type { Vault } from './vault.js';
 import { sha256, nowIso } from './fs.js';
+import { parseNote } from './frontmatter.js';
+import { listInbox } from './proposals.js';
 import { PRESSURE_HANDBOOK_PATH } from './pressure.js';
 
 /**
@@ -89,6 +91,66 @@ export function discoveryDigest(vault: Vault, prompt = '', inputs: DiscoveryInpu
  */
 export function ownerSaid(body: string): string {
   return body.split(/^## CEO\s*$/m)[0].replace(/^#\s[^\n]*\r?\n?/, '').trim();
+}
+
+/** The company's name note — and the target of the `brand_change` proposal the CEO's three ideas are filed as. */
+export const BRAND_NAME_PATH = 'Brand/name.md';
+
+/** What the owner types when they want the CEO to propose the ideas. Not an idea itself — the ask for three. */
+export const SURPRISE_ME = /\bsurprise me\b/i;
+
+/** How many words the owner has to have written before a cabin note is something a research job could read. */
+export const MATERIAL_WORDS = 3;
+
+/**
+ * Whether one thing the owner typed is material a discovery job could read (ruling FR-3).
+ *
+ * Finding F3: the first live run started a full research lifecycle on the note that said "surprise me", and
+ * the brief it produced was fabricated — it had nothing to read, so it made claims about a name, an interview
+ * and a founder-market fit that no file supported. "surprise me" is a request for ideas, "skip" is a refusal
+ * to be interviewed, and two words to the CEO is a reply, not a brief. None of the three is something to
+ * research, and the two sides of the question — the daemon deciding whether to start a job, and the tool that
+ * hands the job its material — have to answer it the same way, which is why this lives here and not in either.
+ *
+ * The documented single-line path is untouched: a real one-line idea ("We sell meal kits to nurseries") is
+ * three words or more and matches neither trigger, so it still buys discovery on cycle one (spec §1.3, §5.5).
+ */
+export function isDiscoveryMaterial(said: string): boolean {
+  const t = said.trim();
+  if (!t) return false;
+  if (SURPRISE_ME.test(t) || isSkip(t)) return false;
+  return t.split(/\s+/).filter(Boolean).length >= MATERIAL_WORDS;
+}
+
+/** The chosen idea, and the file the owner's pick was read from. */
+export interface OwnerPick { line: string; path: string }
+
+/** How the picked idea is introduced wherever discovery reads it. One sentence, the owner's decision, verbatim. */
+export const OWNER_PICK_LABEL = "The owner picked this idea from the CEO's three:";
+
+/**
+ * The owner's pick, which **is** material (ruling FR-3, FR-3b): after "surprise me" the company has nothing to
+ * read until the owner chooses one of the three ideas, and the chosen line is the one sentence that says what
+ * the company is for. It is what starts discovery, and it is the first thing discovery reads.
+ *
+ * Two spellings of the same decision, in the order they appear: the approved `brand_change` carrying `chosen:`
+ * (visible the moment the owner edits the note) and `Brand/name.md` once the dispatcher has written it — the
+ * latter only when a proposal the owner approved is what put the name there. A name that was simply always in
+ * the vault (a scaffold, an owner's own edit) is not a decision anyone just made, and reading it as unread
+ * material would buy a research lifecycle off a file nobody touched.
+ */
+export function ownerPick(vault: Vault): OwnerPick | null {
+  const proposals = listInbox(vault).filter((n) => n.data.kind === 'brand_change' && n.data.target === BRAND_NAME_PATH);
+  const picked = proposals.find((n) => n.data.approved === true && n.data.chosen !== null && n.data.chosen !== undefined);
+  if (picked) {
+    const line = picked.body.split('\n').map((l) => l.trim()).find((l) => new RegExp(`^${Number(picked.data.chosen)}\\.\\s`).test(l));
+    if (line) return { line, path: picked.path };
+  }
+  if (!proposals.some((n) => n.data.approved === true)) return null;
+  const brand = parseNote(vault.readTextOrNull(BRAND_NAME_PATH) ?? '');
+  const name = String(brand.data.name ?? '').trim();
+  if (!name) return null;
+  return { line: [name, String(brand.data.tagline ?? '').trim()].filter(Boolean).join(' — '), path: BRAND_NAME_PATH };
 }
 
 /** True once the owner has approved a founder brief. Discovery never writes a second one unasked. */

@@ -1,16 +1,19 @@
 import {
   type Vault, type Org, type InterviewPhase, type ResearchRequest, type DiscoveryInput,
-  createJob, createProposal, findInboxById, listInbox, listJobs, jobPath, idFromKey, officeHolder, teamOf, listIdeas, parseNote,
+  createJob, createProposal, findInboxById, listInbox, listJobs, jobPath, idFromKey, officeHolder, teamOf, listIdeas,
   DISCOVERY_INBOX, FOUNDER_BRIEF, INTERVIEW_PATH, discoveryDigest, hasFounderBrief, founderBriefTemplate,
   interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, closesInterview, isSkip, listDiscoveryInputs, isLongPrompt,
-  ownerSaid, ideaPath, IDEA_SCORE_MAX,
+  ownerSaid, isDiscoveryMaterial, ownerPick, SURPRISE_ME, BRAND_NAME_PATH, OWNER_PICK_LABEL, type OwnerPick, ideaPath, IDEA_SCORE_MAX,
   INTERVIEW_QUESTIONS, openInterviewQuestions, interviewAskTitle, renderInterviewCovered, questionsAsked,
   PRESSURE_TEST_SECTION, PRESSURE_HANDBOOK_PATH,
 } from '@cubicle/core';
 
 // `ownerSaid` moved to core so the `discovery.inputs` tool cuts a cabin note the same way this module does
-// (whole-branch review, minor 2). Re-exported here because it was part of this module's surface first.
-export { ownerSaid };
+// (whole-branch review, minor 2). `isDiscoveryMaterial` and `ownerPick` moved for exactly that reason and one
+// more (ruling FR-3b): the tool that hands a discovery job its material must answer "is this material?" and
+// "what did the owner pick?" with the same code that decided to start the job. Re-exported here because they
+// were part of this module's surface first.
+export { ownerSaid, isDiscoveryMaterial, ownerPick, SURPRISE_ME, BRAND_NAME_PATH, OWNER_PICK_LABEL, type OwnerPick };
 
 /**
  * The discovery step: what the company reads before it plans anything, who is asked when there is nothing to
@@ -163,11 +166,15 @@ export function ideasNeedingEstimate<T extends { id: string; decision: string; s
  * founder brief must be proposed as, and the one rule that keeps the brief honest — every claim about what
  * already exists cites the file it came from.
  */
-export function discoveryGoal(opts: { founderBrief: string; briefTemplate: string; hasBrief: boolean; research: string }): string {
+export function discoveryGoal(opts: { founderBrief: string; briefTemplate: string; hasBrief: boolean; research: string; pick?: string | null }): string {
   return [
     opts.hasBrief
       ? `The owner has added new material since the founder brief was adopted. Read all of it, then propose an *edit* to ${opts.founderBrief} — never a second brief — and file cards for anything genuinely new.`
       : `This company does not know what it is for yet. Everything the owner has given us is in one call. Turn it into the founder brief they approve, and into one idea card per candidate.`,
+    // The pick is the whole brief when the owner said "surprise me" (ruling FR-3b): the job must open on the
+    // line they chose, not find it three sections into a tool's output — or not at all, which is how the first
+    // live run's job came to write a brief about a company nobody had described.
+    ...(opts.pick ? ['', `${OWNER_PICK_LABEL} **${opts.pick}**. That is what this company is; read everything else in the light of it, and never contradict it without saying so.`] : []),
     '',
     'Do, in this order:',
     '1. `discovery.inputs` — the files, the interview and the cabin messages. This is the whole brief; there is nothing else to go on.',
@@ -210,27 +217,6 @@ export function ownerPrompt(vault: Vault, since: string | null = null): string {
     .join('\n\n');
 }
 
-/** What the owner types when they want the CEO to propose the ideas. Not an idea itself — the ask for three. */
-export const SURPRISE_ME = /\bsurprise me\b/i;
-
-/**
- * Whether one thing the owner typed is material a discovery job could read (ruling FR-3).
- *
- * Finding F3: the first live run started a full research lifecycle on the note that said "surprise me", and the
- * brief it produced was fabricated — it had nothing to read, so it made claims about a name, an interview and a
- * founder-market fit that no file supported. "surprise me" is a request for ideas, "skip" is a refusal to be
- * interviewed, and two words to the CEO is a reply, not a brief. None of the three is something to research.
- *
- * The documented single-line path is untouched: a real one-line idea ("We sell meal kits to nurseries") is
- * three words or more and matches neither trigger, so it still buys discovery on cycle one (spec §1.3, §5.5).
- */
-export function isDiscoveryMaterial(said: string): boolean {
-  const t = said.trim();
-  if (!t) return false;
-  if (SURPRISE_ME.test(t) || isSkip(t)) return false;
-  return t.split(/\s+/).filter(Boolean).length >= 3;
-}
-
 /** The owner's cabin words, minus everything that is only a reply to the CEO. What discovery may read. */
 export function discoveryPrompt(vault: Vault, since: string | null = null): string {
   return listInbox(vault)
@@ -239,37 +225,6 @@ export function discoveryPrompt(vault: Vault, since: string | null = null): stri
     .filter(isDiscoveryMaterial)
     .join('\n\n');
 }
-
-/** The chosen idea, and the file the owner's pick was read from. */
-export interface OwnerPick { line: string; path: string }
-
-/**
- * The owner's pick, which **is** material (ruling FR-3): after "surprise me" the company has nothing to read
- * until the owner chooses one of the three ideas, and the chosen line is the one sentence discovery reads.
- *
- * Two spellings of the same fact, in the order they appear: the approved `brand_change` carrying `chosen:`
- * (visible the moment the owner edits the note) and `Brand/name.md` once the dispatcher has written it.
- */
-export function ownerPick(vault: Vault): OwnerPick | null {
-  const proposals = listInbox(vault).filter((n) => n.data.kind === 'brand_change' && n.data.target === BRAND_NAME_PATH);
-  const picked = proposals.find((n) => n.data.approved === true && n.data.chosen !== null && n.data.chosen !== undefined);
-  if (picked) {
-    const line = picked.body.split('\n').map((l) => l.trim()).find((l) => new RegExp(`^${Number(picked.data.chosen)}\\.\\s`).test(l));
-    if (line) return { line, path: picked.path };
-  }
-  // The same decision after the dispatcher has written it into the note. Only when a proposal the owner
-  // approved is what put the name there: a name that was simply always in the vault — a scaffold, an owner's
-  // own edit — is not a decision anyone just made, and reading it as unread material would buy a research
-  // lifecycle off a file nobody touched.
-  if (!proposals.some((n) => n.data.approved === true)) return null;
-  const brand = parseNote(vault.readTextOrNull(BRAND_NAME_PATH) ?? '');
-  const name = String(brand.data.name ?? '').trim();
-  if (!name) return null;
-  return { line: [name, String(brand.data.tagline ?? '').trim()].filter(Boolean).join(' — '), path: BRAND_NAME_PATH };
-}
-
-/** The company's name note — the target of the `brand_change` proposal the three ideas are filed as. */
-export const BRAND_NAME_PATH = 'Brand/name.md';
 
 /**
  * The three ideas are in the inbox and nobody has picked one: the company is waiting for the owner, not idle.
@@ -529,7 +484,7 @@ export function enqueueDiscovery(vault: Vault, org: Org, precomputed?: Discovery
     id: discoveryJobId(status.digest), type: 'discovery', priority: 1,
     title: hasBrief ? 'Read the new material and revise the founder brief' : 'Read what the owner gave us and write the founder brief',
     assigned: research, for: ceo, owner_role: ceo, team: teamOf(org, research)?.id,
-    goal: discoveryGoal({ founderBrief: FOUNDER_BRIEF, briefTemplate: founderBriefTemplate(), hasBrief, research: ceo }),
+    goal: discoveryGoal({ founderBrief: FOUNDER_BRIEF, briefTemplate: founderBriefTemplate(), hasBrief, research: ceo, pick: ownerPick(vault)?.line ?? null }),
     research: discoveryRequest({ ceo, hasBrief, deadline }),
     done_when: `${FOUNDER_BRIEF} is filed as a founder_brief proposal with all eight sections, including a ${PRESSURE_TEST_SECTION} that ends on one word, and every candidate idea it names is its own Ideas/<slug>.md card with evidence.`,
   }, 'daemon');
