@@ -85,6 +85,65 @@ describe('Snapshot.inbox carries the whole decision', () => {
   });
 });
 
+describe('a decided note keeps its row until the dispatcher is done with it (ruling P8-8)', () => {
+  it('the row stays, marked pending, carrying what the owner decided', () => {
+    const { id } = createProposal(vault, { kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Pick one', body: THREE }, 'ceo');
+    expect(row(buildSnapshot(vault), id)).toMatchObject({ pending: false, approved: null, chosen: null, refused: null });
+    expect(buildSnapshot(vault).pendingProposals).toBe(1);
+
+    ownerDecide(vault, id, { approved: true, chosen: 2 });
+
+    const snap = buildSnapshot(vault);
+    // Before this ruling the note was in neither list here, and the reader showed nothing at all.
+    expect(row(snap, id)).toMatchObject({ pending: true, approved: true, chosen: 2, refused: null });
+    expect(snap.decided.some((d) => d.id === id)).toBe(false);
+    // The pill is "N to approve": a decided note is off the owner's plate whatever the sheet still shows.
+    expect(snap.pendingProposals).toBe(0);
+  });
+
+  it('a note the dispatcher refuses keeps its row for good, with the refusal on it', async () => {
+    // `chosen: 4` names no option, so the dispatcher refuses it — and never resolves it. The hole this ruling
+    // is about was permanent for exactly this note.
+    const { id, path: rel } = createProposal(vault, { kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Pick one', body: THREE }, 'ceo');
+    vault.updateNote(rel, (n) => ({ data: { ...n.data, approved: true, chosen: 4 }, body: n.body }), 'owner');
+
+    expect(await dispatchProposals(deps())).toBe(0);
+
+    // `refuseNote` stamps no `resolved_at` and emits no `proposal.resolved`, and `retryDue` re-refuses every
+    // ten minutes without saying so again. The row is the only place the owner ever learns any of this.
+    const note = findInboxById(vault, id)!;
+    expect(note.data.resolved_at ?? null).toBeNull();
+    expect(vault.events.query({ types: ['proposal.resolved'] })).toHaveLength(0);
+
+    const snap = buildSnapshot(vault);
+    const r = row(snap, id);
+    expect(r.pending).toBe(true);
+    expect(r.approved).toBe(true);
+    expect(r.chosen).toBe(4);
+    expect(r.refused).toContain('chosen: 4 matches no option');
+    expect(r.body).toContain('_Not applied:');
+    expect(snap.decided.some((d) => d.id === id)).toBe(false);
+    expect(snap.pendingProposals).toBe(0);
+
+    // And it stays: a second pass changes nothing about what the owner is shown.
+    await dispatchProposals(deps());
+    expect(row(buildSnapshot(vault), id).refused).toContain('chosen: 4 matches no option');
+  });
+
+  it('and moves to decided once it is resolved', async () => {
+    const { id } = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'The plan', body: 'b' }, 'ceo');
+    ownerDecide(vault, id, { approved: true });
+    expect(buildSnapshot(vault).inbox.map((r) => r.id)).toContain(id);
+
+    await dispatchProposals(deps());
+
+    const snap = buildSnapshot(vault);
+    expect(snap.inbox).toHaveLength(0);
+    expect(snap.decided.map((d) => d.id)).toEqual([id]);
+    expect(snap.pendingProposals).toBe(0);
+  });
+});
+
 describe('Snapshot.decided is the owner\'s receipt', () => {
   it('carries the dispatcher\'s own footer as the outcome, newest first', async () => {
     const a = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'Plan A', body: 'a' }, 'ceo');
@@ -180,14 +239,21 @@ describe('the decide and conversation.get ops', () => {
     const c = await client(ws, port);
     await c.next('snapshot');
 
-    for (const bad of [{ op: 'decide' }, { op: 'decide', id }, { op: 'decide', id, approved: 'yes' }, { op: 'decide', id, approved: true, chosen: 'two' }, { op: 'decide', id, approved: true, comment: 7 }]) {
+    // Every error names the note it is about (review I4): the viewer routes it to the reader that sent it, and
+    // with no id it would fall back to the first pending decision — the wrong reader, with two in flight.
+    for (const bad of [{ op: 'decide', id }, { op: 'decide', id, approved: 'yes' }, { op: 'decide', id, approved: true, chosen: 'two' }, { op: 'decide', id, approved: true, comment: 7 }]) {
       c.sock.send(JSON.stringify(bad));
-      expect(String((await c.next('error')).message)).toMatch(/decide/);
+      const e = await c.next('error');
+      expect(String(e.message)).toMatch(/decide/);
+      expect(e.id).toBe(id);
     }
     c.sock.send(JSON.stringify({ op: 'decide', id: 'prop_nope', approved: true }));
-    expect(String((await c.next('error')).message)).toMatch(/no proposal/);
+    expect(await c.next('error')).toMatchObject({ id: 'prop_nope', message: expect.stringContaining('no proposal') });
     c.sock.send(JSON.stringify({ op: 'decide', id, approved: true, chosen: 1 }));
-    expect(String((await c.next('error')).message)).toMatch(/nothing to choose/);
+    expect(await c.next('error')).toMatchObject({ id, message: expect.stringContaining('nothing to choose') });
+    // Only a message that carried no usable id has none to give back.
+    c.sock.send(JSON.stringify({ op: 'decide' }));
+    expect(await c.next('error')).toMatchObject({ id: null, message: expect.stringContaining('decide needs id') });
 
     expect(findInboxById(vault, id)!.data.approved).toBeNull();
     expect(ticks).toEqual([]);
