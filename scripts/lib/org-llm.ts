@@ -5,9 +5,43 @@
  */
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
-import { DISCOVERY_INBOX, FOUNDER_BRIEF, founderBriefTemplate } from '@cubicle/core';
+import { DISCOVERY_INBOX, FOUNDER_BRIEF } from '@cubicle/core';
 
 export const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n\n### revenue\n- Find the first organic channel\n';
+
+/**
+ * The brief the scripted discovery job files. It used to be `founderBriefTemplate()` — the *empty* template,
+ * which the dispatcher has always refused on adoption and which `checkFounderBrief` now refuses at
+ * `proposal.create` (ruling FR-4), since a brief that is still the template is the one document guaranteed to
+ * say nothing true.
+ *
+ * So it is written out, and written *honestly*: the company has no name and the brief says so, the interview
+ * has not been answered and the brief says so, Founder-Market Fit is `unstated` because nothing establishes it,
+ * and the pressure test ends on a verdict. That is exactly the shape a real discovery job now has to produce,
+ * which is the point of a fixture.
+ */
+export const SCRIPTED_FOUNDER_BRIEF = [
+  '## What the company is', '',
+  'Meal kits for nurseries: a weekly box of ingredients and recipes, from what the owner dropped in the discovery inbox.', '',
+  '## Who it is for', '',
+  'Nursery managers who order lunch for 20–60 children a day and cook it on site.', '',
+  '## What already exists', '',
+  'Two nurseries already pay for a weekly box. The company has no name yet — Brand/name.md carries an empty name — and the founder interview has not been answered, so nothing is quoted from it here.', '',
+  '## What success looks like', '',
+  'Unstated: the owner has not said what three months from now would have to look like.', '',
+  '## Constraints', '',
+  'The free tier only, and no money out of pocket until a second nursery has paid twice.', '',
+  '## Candidate ideas', '',
+  '- the-idea-the-owner-described — a weekly meal-kit box for nurseries.', '',
+  '## What we do not know', '',
+  'Who the owner is, what a nursery spends on lunch today, and whether anybody has priced delivery.', '',
+  '## Pressure test', '',
+  '**Core Assumption:** nurseries will pay weekly for a box of food they currently buy and cook themselves.',
+  '**Three Fatal Flaws:** delivery has never been priced; the manager orders but the parents pay; allergen liability follows whoever supplies the food.',
+  '**Problem Validation:** a painkiller — two nurseries already pay, and the rest cook it on site every morning.',
+  '**Founder-Market Fit:** unstated — nothing the owner has given us says who they are or what they have run before.',
+  '**Brutal Verdict:** WEAK — delivery is unpriced and the second nursery has bought once.', '',
+].join('\n');
 
 export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boolean; ideaVerdict?: 'pass' | 'return'; ideaChair?: 'hedge-then-good' | 'hedge-then-refusal' | 'hedge-then-silence'; trustVerdict?: 'pass' | 'return'; outboundEmail?: Record<string, unknown> } = {}): Llm & { calls: Record<string, number> } {
   let vetoes = opts.vetoes ?? 1;
@@ -97,7 +131,7 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
           // The research half rides along, as a real discovery job's does "where your research supports a view":
           // without it the card can never be scored, so the board could never sit on it in the same cycle.
           { name: 'idea.card', args: { title: 'The idea the owner described', evidence: [DISCOVERY_INBOX], what_changed: 'The owner told us what they are building.', why_it_matters: 'It is the only candidate on the table.', research: { report: 'Research/the-idea/report.md', confidence: 'medium', summary: 'Two comparable services charge for this today.', evidence: 4, fit: 4 } } },
-          { name: 'proposal.create', args: { kind: 'founder_brief', target: FOUNDER_BRIEF, title: 'The founder brief', body: `## Proposed content\n\n\`\`\`\n${founderBriefTemplate()}\n\`\`\`\n` } },
+          { name: 'proposal.create', args: { kind: 'founder_brief', target: FOUNDER_BRIEF, title: 'The founder brief', body: `## Proposed content\n\n\`\`\`\n${SCRIPTED_FOUNDER_BRIEF}\n\`\`\`\n` } },
         ];
         return { ...base, parsedToolCalls: [calls[n] ?? { name: 'finish', args: { status: 'done', summary: 'the founder brief is with the owner' } }] };
       }
