@@ -7,7 +7,9 @@ this is the reasons.
 
 An idea is a candidate the company could pursue — not a decision. Every idea becomes one dossier,
 `Ideas/<slug>.md`, filed with `idea.card`. Ideas arrive from three places: **discovery** reads
-`Discovery/inbox/` (via `discovery.inputs`) and the founder interview when the owner drops in new material, and
+`Discovery/inbox/` (via `discovery.inputs`) and the founder interview — a transcript in which the CEO answered
+the six founder questions itself, tagged `[from the idea]`, `[from the vault]` or `[unstated]`, and the owner
+added to or corrected those answers — when the owner drops in new material, and
 proposes `Memory/founder-brief.md` alongside its cards; **intelligence** sweeps notice something changed in the
 world; and the owner can type one in directly. Wherever it came from, the source goes in the card so a reader
 can weigh it.
@@ -80,7 +82,8 @@ asking again.
 
 ## Tools
 
-- `discovery.inputs` — everything discovery has to go on: `Discovery/inbox/`, the founder interview, the
+- `discovery.inputs` — everything discovery has to go on: `Discovery/inbox/`, the founder interview (the
+  CEO's own tagged answers plus the owner's `**You:**` additions — attribute each to whoever said it), the
   owner's own words.
 - `idea.card` — file or update one dossier at `Ideas/<slug>.md`. Use it instead of `vault.write` so every card
   keeps the same shape.
