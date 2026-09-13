@@ -218,6 +218,63 @@ fn stop_daemon(app: &AppHandle) -> u128 {
     daemon::stop(&vault, &mut child)
 }
 
+/// Schemes the office window is allowed to load by itself. Anything else — `obsidian:` above all —
+/// WebKitGTK cannot render, and navigating to it blanks the window for good (SP8 §1, ruling P8-4).
+const OFFICE_SCHEMES: [&str; 4] = ["http", "https", "ws", "wss"];
+
+/// Schemes never worth handing to the desktop: they mean something only inside the page, and
+/// `javascript:` must never reach a shell command.
+const IN_PAGE_SCHEMES: [&str; 5] = ["about", "blob", "data", "javascript", "chrome-error"];
+
+/// The one hook the office page gets from the tray. It needs no Tauri API and so no capability
+/// grant: assigning `location` raises a navigation the guard below cancels and hands to the
+/// desktop, so the page stays exactly where it was. The page falls back to a clipboard toast when
+/// `window.__cubicle` is absent (a plain browser tab).
+const OPEN_EXTERNAL_SHIM: &str = r#"(function () {
+  var c = window.__cubicle || (window.__cubicle = {});
+  c.openExternal = function (url) {
+    if (typeof url !== 'string' || !url) return false;
+    try { window.location.href = url; return true; } catch (e) { return false; }
+  };
+})();"#;
+
+/// May the office window navigate to `url` itself? True only for the daemon's own origin over
+/// http/https/ws/wss; every other scheme, host or port belongs to the desktop. Pure, so the rule is
+/// testable without a webview.
+fn navigation_allowed(url: &str, office_origin: &str) -> bool {
+    let (Ok(target), Ok(origin)) = (url.parse::<tauri::Url>(), office_origin.parse::<tauri::Url>())
+    else {
+        return false;
+    };
+    if !OFFICE_SCHEMES.contains(&target.scheme()) {
+        return false;
+    }
+    target.host_str().is_some()
+        && target.host_str() == origin.host_str()
+        && target.port_or_known_default() == origin.port_or_known_default()
+}
+
+/// Is a cancelled navigation worth opening on the desktop? `obsidian:`, `mailto:`, an `https:` link
+/// somewhere else: yes. `about:blank`, `blob:`, `data:`, `javascript:`: no — dropped quietly.
+fn opens_on_the_desktop(url: &str) -> bool {
+    let Ok(parsed) = url.parse::<tauri::Url>() else { return false };
+    !IN_PAGE_SCHEMES.contains(&parsed.scheme())
+}
+
+/// Hand a URL the office cannot load to the desktop, reusing the tray's `xdg_open`. Off the calling
+/// thread: the navigation guard runs on GTK's main thread and `xdg_open` waits for the child.
+fn open_external(url: &str) {
+    if !opens_on_the_desktop(url) {
+        log(&format!("navigation to {url} cancelled"));
+        return;
+    }
+    let target = url.to_string();
+    std::thread::spawn(move || {
+        log(&format!("opening outside the office: {target}"));
+        xdg_open(&target);
+    });
+}
+
 fn open_office(app: &AppHandle) {
     let shell = app.state::<Shell>();
     let url = shell
@@ -237,10 +294,28 @@ fn open_office(app: &AppHandle) {
         let _ = win.set_focus();
         return;
     }
+    // The guard is installed once, on the window that lasts the whole session; the `navigate()`
+    // above reuses the same webview, so re-opening the office keeps it.
+    let origin = url.origin().ascii_serialization();
     let built = WebviewWindowBuilder::new(app, OFFICE, WebviewUrl::External(url))
         .title("CUBICLE — the office")
         .inner_size(1280.0, 800.0)
         .background_color(tauri::window::Color(0x0f, 0x11, 0x15, 0xff))
+        .initialization_script(OPEN_EXTERNAL_SHIM)
+        .on_navigation(move |url| {
+            let url = url.as_str();
+            if navigation_allowed(url, &origin) {
+                return true;
+            }
+            open_external(url);
+            false
+        })
+        // `target="_blank"` links — ui/markdown.ts marks every http link that way — come through
+        // WebKit's new-window path, not the navigation one. They belong on the desktop too.
+        .on_new_window(|url, _features| {
+            open_external(url.as_str());
+            tauri::webview::NewWindowResponse::Deny
+        })
         .build();
     if let Err(err) = built {
         log(&format!("could not open the office: {err}"));
@@ -494,6 +569,79 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const OFFICE_ORIGIN: &str = "http://127.0.0.1:7412";
+
+    #[test]
+    fn the_office_window_never_navigates_to_a_scheme_webkit_cannot_load() {
+        // The bug: clicking one of these blanked the window.
+        assert!(!navigation_allowed("obsidian://open?vault=Cubicle", OFFICE_ORIGIN));
+        assert!(!navigation_allowed(
+            "obsidian://open?vault=Cubicle&file=00%20Inbox%2Fnote.md",
+            OFFICE_ORIGIN
+        ));
+        assert!(!navigation_allowed("file:///home/u/Vaults/Cubicle/README.md", OFFICE_ORIGIN));
+        assert!(!navigation_allowed("mailto:someone@example.com", OFFICE_ORIGIN));
+        assert!(!navigation_allowed("javascript:alert(1)", OFFICE_ORIGIN));
+        assert!(!navigation_allowed("about:blank", OFFICE_ORIGIN));
+        assert!(!navigation_allowed("not a url at all", OFFICE_ORIGIN));
+    }
+
+    #[test]
+    fn the_office_navigates_within_the_daemons_own_origin() {
+        assert!(navigation_allowed("http://127.0.0.1:7412/?token=t0k&vault=acme", OFFICE_ORIGIN));
+        assert!(navigation_allowed("http://127.0.0.1:7412/site/?token=t0k", OFFICE_ORIGIN));
+        // The office subscribes to the daemon over a websocket on the same host and port.
+        assert!(navigation_allowed("ws://127.0.0.1:7412/events?token=t0k", OFFICE_ORIGIN));
+        assert!(navigation_allowed("wss://127.0.0.1:7412/events", OFFICE_ORIGIN));
+    }
+
+    #[test]
+    fn another_host_or_port_is_outside_the_office_even_over_http() {
+        assert!(!navigation_allowed("https://example.com", OFFICE_ORIGIN));
+        assert!(!navigation_allowed("http://example.com/docs", OFFICE_ORIGIN));
+        // The daemon itself is one port down; only the office port is ours.
+        assert!(!navigation_allowed("http://127.0.0.1:7411/op", OFFICE_ORIGIN));
+        // Same numbers, different host: localhost is not 127.0.0.1 to the url parser.
+        assert!(!navigation_allowed("http://localhost:7412/", OFFICE_ORIGIN));
+        // A default port still has to match the office's explicit one.
+        assert!(!navigation_allowed("http://127.0.0.1/", OFFICE_ORIGIN));
+    }
+
+    #[test]
+    fn a_default_port_origin_matches_the_implicit_port() {
+        assert!(navigation_allowed("https://cubicle.test/a", "https://cubicle.test"));
+        assert!(navigation_allowed("https://cubicle.test:443/a", "https://cubicle.test"));
+        assert!(!navigation_allowed("https://cubicle.test:8443/a", "https://cubicle.test"));
+        assert!(!navigation_allowed("http://cubicle.test/a", "https://cubicle.test"));
+    }
+
+    #[test]
+    fn a_broken_office_origin_allows_nothing() {
+        assert!(!navigation_allowed("http://127.0.0.1:7412/", "not-an-origin"));
+    }
+
+    #[test]
+    fn only_cancelled_navigations_that_mean_something_outside_reach_the_desktop() {
+        assert!(opens_on_the_desktop("obsidian://open?vault=Cubicle"));
+        assert!(opens_on_the_desktop("https://example.com"));
+        assert!(opens_on_the_desktop("mailto:someone@example.com"));
+        assert!(opens_on_the_desktop("file:///home/u/Vaults/Cubicle"));
+        // Never shelled out.
+        assert!(!opens_on_the_desktop("javascript:alert(1)"));
+        assert!(!opens_on_the_desktop("about:blank"));
+        assert!(!opens_on_the_desktop("data:text/html,<b>hi</b>"));
+        assert!(!opens_on_the_desktop("blob:http://127.0.0.1:7412/abc"));
+        assert!(!opens_on_the_desktop("nonsense"));
+    }
+
+    #[test]
+    fn the_open_external_shim_needs_no_tauri_api() {
+        // If this ever grows a `__TAURI__` call it needs a capability grant the office must not have.
+        assert!(!OPEN_EXTERNAL_SHIM.contains("__TAURI"));
+        assert!(OPEN_EXTERNAL_SHIM.contains("window.__cubicle"));
+        assert!(OPEN_EXTERNAL_SHIM.contains("openExternal"));
+    }
 
     #[test]
     fn the_tooltip_names_the_state_and_the_vault() {
