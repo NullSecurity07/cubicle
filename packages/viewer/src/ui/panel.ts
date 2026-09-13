@@ -27,6 +27,16 @@ export const presentationOf = (mode: ViewMode): Presentation => (mode === 'doc' 
 /** A duration token in ms (1 under reduced motion). */
 export const durMs = (token: string): number => { const v = getComputedStyle(document.documentElement).getPropertyValue(token).trim(); return v.endsWith('ms') ? parseFloat(v) : v.endsWith('s') ? parseFloat(v) * 1000 : 200; };
 
+/**
+ * How far the toast has to rise so it never covers a fixed action bar (ruling P8-12): the distance from the bottom
+ * of the viewport up to the top of the bar, plus a gap. 0 when no bar is on the screen, which is the usual case —
+ * the toast then keeps its own place above the time bar. Pure, so the arithmetic is tested without a DOM.
+ */
+export function toastLift(barTop: number | null, viewportH: number, gap = 12): number {
+  if (barTop === null || !Number.isFinite(barTop)) return 0;
+  return Math.max(0, Math.round(viewportH - barTop + gap));
+}
+
 export class Panel {
   readonly stack = new PanelStack();
   private layer = document.getElementById('layer')!;
@@ -135,6 +145,7 @@ export class Panel {
     this.layer.hidden = true; this.scrim.hidden = true; this.view = null; this.panel.classList.remove('chat', 'flip');
     clearTimeout(this.copyTimer); this.copyBtn.textContent = 'Copy';
     this.body.innerHTML = '';
+    this.liftToast();
     this.deps.onEmpty();
     this.returnTo?.focus?.(); this.returnTo = null;
   }
@@ -178,6 +189,7 @@ export class Panel {
     const thread = this.body.querySelector<HTMLElement>('[data-key="thread"]');
     if (thread && (fresh || threadPinned)) thread.scrollTop = thread.scrollHeight;
     this.jump.hidden = !(v.live && !this.atBottom());
+    this.liftToast();
     if (fresh) {
       // Land on the panel, which suppresses its own ring, and let Tab move in. Focusing the first control inside the
       // body instead painted an accent ring on the first segment of a fresh sheet: it read as pre-activated.
@@ -193,6 +205,13 @@ export class Panel {
     if (!r.width || !r.height) return;
     this.panel.classList.add('flip');
     this.panel.animate([{ transform: `translate(${o.x - r.x}px, ${o.y - r.y}px) scale(${o.w / r.width}, ${o.h / r.height})`, opacity: 0.4 }, { transform: 'none', opacity: 1 }], { duration: durMs('--d-reader'), easing: 'cubic-bezier(.2,.8,.2,1)' });
+  }
+
+  /** Publish the lift for `#toast` (one rule, in the stylesheet): a toast never covers a fixed action bar. */
+  private liftToast(): void {
+    const bar = this.layer.hidden ? null : this.body.querySelector<HTMLElement>('.actionbar');
+    const top = bar?.getBoundingClientRect?.().top ?? null;
+    document.documentElement.style.setProperty('--toast-lift', `${toastLift(top ?? null, window.innerHeight)}px`);
   }
 
   private atBottom(): boolean { return this.body.scrollHeight - this.body.scrollTop - this.body.clientHeight < 40; }

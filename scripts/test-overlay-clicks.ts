@@ -342,6 +342,15 @@ console.log('a Decisions row →', JSON.stringify(r7));
 if (r7.title !== 'Write the overlay demo note') fail(`the reader opened on "${r7.title}" instead of the decision`);
 if (!r7.bar.includes('decide:yes') || !r7.bar.includes('decide:no')) fail(`the reader has no action bar (controls: ${r7.bar.join(', ')})`);
 
+// 7a. A toast never covers a fixed action bar (ruling P8-12): it used to land on the comment field and half of
+//     the refusal button, in a delivered scene. The bar is measured, so a bar of any height is cleared.
+createProposal(d.vault, { kind: 'file_change', from: 'cto', target: 'Docs/overlay-toast.md', title: 'A second decision, raised while the reader is open', body: 'Raised so the office toasts over the open reader.\n\n## Proposed content\n\n```\n# Toast demo\n```\n' }, 'cto');
+await page.waitForSelector('#toast:not([hidden])', { timeout: 15_000 });
+const overBar = await boxOf('#toast');
+const readerBar = await boxOf('#panel-body .actionbar');
+console.log('the toast against the action bar \u2192', JSON.stringify({ toast: overBar, bar: readerBar }));
+if (overBar.y + overBar.h > readerBar.y) fail(`the toast (bottom ${Math.round(overBar.y + overBar.h)}) covers the action bar (top ${Math.round(readerBar.y)})`);
+
 // 7b. Approve: one `decide` frame, the daemon writes the owner's yes into the note, and the bar stops saying
 //     "applying" only when the dispatcher has resolved it. Either state is a pass — which one the run catches
 //     depends on whether the scripted daemon's `runTick('decide')` gets to the note inside the wait — but an
