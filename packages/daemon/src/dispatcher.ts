@@ -6,9 +6,10 @@ import {
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath, isClassifierUnavailable, classifierUnavailableNow } from '@cubicle/tools';
-import { PLAN_WAIT_BUDGET_MS } from './heartbeat.js';
+import { PLAN_WAIT_BUDGET_MS, soleStreamForShip } from './heartbeat.js';
 import { cancelPointlessTrustReviews, trustGatesForNote, retryOnNextPass } from './trust.js';
 import { applyHire, applyFire, applyReorg, charterDiffSection } from './evolution.js';
+import { splitRejectedBrief, enqueueRejectionDiscovery } from './discovery.js';
 import { isValidRoleId, isOwnerOwned, normalizeRel, isSecretPath } from '@cubicle/core';
 import { appendObservation } from '@cubicle/harness';
 
@@ -46,6 +47,17 @@ export interface DispatcherDeps {
   onFire?: (note: { path: string; data: InboxFrontmatter; body: string }) => Promise<string>;
   /** Called after a proposal is resolved so workers wake. */
   wake?: () => void;
+  /**
+   * Ruling S-2: the owner's "no" on a founder brief is an instruction, and somebody has to answer it in words.
+   * The dispatcher does the half that costs nothing — it reads the comment and queues the re-run — and hands
+   * this the half that needs a model: one short paragraph from the chief executive saying what the company will
+   * do, and the three fresh ideas when the comment asked for a different one.
+   *
+   * Optional because the dispatcher must never depend on an LLM to close a note: with no hook wired (every
+   * dispatcher-only test, and a daemon whose model is down) the rejection is still collected, the re-run is
+   * still queued and the note is still resolved — the owner simply gets no paragraph.
+   */
+  onBriefRejected?: (note: { path: string; data: InboxFrontmatter; body: string }, ctx: { comment: string; brief: string; discoveryJob: string }) => Promise<void> | void;
   onRoleHired?: (role: string) => void;
   onRoleFired?: (role: string) => void;
   /** How long a question may go unanswered before it escalates to the CEO; defaults to two heartbeat intervals. */
@@ -80,6 +92,13 @@ function fenced(body: string): string | null {
   const m = body.match(/## Proposed content\s*\n+(`{3,})[a-z]*\n([\s\S]*?)\n\1[ \t]*(?:\n|$)/);
   return m ? m[2] + (m[2].endsWith('\n') ? '' : '\n') : null;
 }
+
+/**
+ * The same block, for callers outside this module. The rejected-brief path (ruling S-2) has to hand the research
+ * office the brief the owner turned down, and it must be the *same* bytes the apply path would have written —
+ * a second reader with its own fence regex is how the two quietly drift apart.
+ */
+export function proposedContent(body: string): string | null { return fenced(body); }
 
 /**
  * Leave a proposal unresolved with a reason. The footer write is a system write (sha now matches), so the owner's
@@ -268,6 +287,41 @@ export async function executeStoredCall(deps: DispatcherDeps, note: { path: stri
 }
 
 /**
+ * A founder brief the owner turned down (ruling S-2). Three things happen, in the order that survives a kill:
+ *
+ * 1. the re-run is queued — deterministic id, so a replayed tick re-finds it rather than queueing a second;
+ * 2. the chief executive answers the comment in the owner's inbox, through `onBriefRejected`;
+ * 3. the note is resolved by the caller, saying which of the two got done.
+ *
+ * The queue comes first because it is the part that must not be lost: a model that is down (or a hook nobody
+ * wired) costs the owner a paragraph, and the company still reads their words on the next cycle. The answer is
+ * wrapped because a failing model call must not leave the note unresolved and re-dispatched every tick.
+ *
+ * Planning stays where ruling S-1 put it: there is no brief, so `hasApprovedBrief` is false and the heartbeat's
+ * four planning steps wait. Nothing here has to say so.
+ */
+async function rejectBrief(deps: DispatcherDeps, note: { path: string; data: InboxFrontmatter; body: string }, d: InboxFrontmatter): Promise<string> {
+  const vault = deps.vault;
+  // One split, not two readers: the comment is defined as what the brief is not (ruling C1), and `fenced()`
+  // alone returned null — and so "(no readable brief)" — for every brief filed before the fence was enforced.
+  const { brief, comment } = splitRejectedBrief(note);
+  let job: string;
+  try {
+    job = enqueueRejectionDiscovery(vault, loadOrg(vault), { proposalId: d.id, proposalPath: note.path, comment, brief });
+  } catch (err) {
+    vault.events.emit({ type: 'daemon.warning', payload: { where: 'dispatcher.founder_brief_rejected', proposal: d.id, message: `could not queue the re-run: ${String((err as Error).message ?? err).slice(0, 200)}` } });
+    return 'rejected; the re-run could not be queued';
+  }
+  let answered = false;
+  try {
+    if (deps.onBriefRejected) { await deps.onBriefRejected(note, { comment, brief, discoveryJob: job }); answered = true; }
+  } catch (err) {
+    vault.events.emit({ type: 'daemon.warning', payload: { where: 'dispatcher.founder_brief_rejected', proposal: d.id, message: `the CEO could not answer the rejection: ${String((err as Error).message ?? err).slice(0, 200)}` } });
+  }
+  return `rejected; discovery re-runs as ${job} on what you said${answered ? ', and the CEO has answered it in 00 Inbox/' : ''}`;
+}
+
+/**
  * R31: for every inbox note with `approved` set and no `resolved_at`, dispatch by kind, stamp `resolved_at`,
  * emit `proposal.resolved`. Also requeues blocked jobs whose wait condition is now satisfied.
  */
@@ -331,6 +385,11 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
       // is itself a decision (the owner parks the idea) rather than a refusal to act.
       if (d.approved === false && d.kind !== 'idea_verdict') {
         outcome = 'rejected';
+        // …except a founder brief, where "rejected" on its own was the whole of the live run's second failure
+        // (finding S1): the owner typed "rejected make it better or get a new idea" into the note, the company
+        // closed it without reading a word of that, planned anyway, and nobody ever went back to the brief.
+        // A rejection is a rewrite request, so it buys exactly what an approval buys — a job, and an answer.
+        if (d.kind === 'founder_brief') outcome = await rejectBrief(deps, note, d);
       } else {
         switch (d.kind) {
           case 'hire':
@@ -392,7 +451,19 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             outcome = `applied to ${target}`;
             if (target.startsWith('Brand/')) {
               const open = listJobs(vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'engineer.ship' && /reconcile site with brand/i.test(j.title));
-              if (!open) createJob(vault, { type: 'engineer.ship', title: 'Reconcile site with brand', assigned: resolveRole(loadOrg(vault), 'engineer'), priority: 2, goal: `${target} changed (owner approved a proposal). Read Brand/ and update Site/ to match. Never revert owner edits under Site/.` }, 'daemon');
+              // Ruling S-6b, and the same rule the heartbeat's own reconcile step applies (`soleStreamForShip`):
+              // an `engineer.ship` with no stream is refused by the CI gate *after* the work is done, so the
+              // stream is settled before the job exists. None or several to choose from and nothing is queued —
+              // the approval still applied, and the note's footer says why no job followed it.
+              if (!open) {
+                const s = soleStreamForShip(vault);
+                if (s.refuse) {
+                  outcome = `${outcome}; no reconcile job: ${s.refuse}`;
+                  vault.events.emit({ type: 'daemon.warning', payload: { where: 'dispatcher.reconcile_brand', proposal: d.id, message: s.refuse } });
+                } else {
+                  createJob(vault, { type: 'engineer.ship', title: 'Reconcile site with brand', assigned: resolveRole(loadOrg(vault), 'engineer'), priority: 2, stream: s.stream, goal: `${target} changed (owner approved a proposal). Read Brand/ and update Site/ to match. Never revert owner edits under Site/.` }, 'daemon');
+                }
+              }
             }
             break;
           }

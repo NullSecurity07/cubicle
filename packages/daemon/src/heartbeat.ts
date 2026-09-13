@@ -11,7 +11,7 @@ import {
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, type PressurePart,
   PRESSURE_CHAIR_SECTION, chairAnswerText,
   type PressureVerdict, type BoardRubric,
-  isLongPrompt, isSkip, asksForSurprise, interviewPhase, INTERVIEW_PATH,
+  isLongPrompt, isSkip, asksForSurprise, interviewPhase, INTERVIEW_PATH, BRAND_NAME_PATH,
   readLedger, moneyReport, moneyLine, moneyNeedsYou, money, HOUSE, LEDGER_PATH, DEFAULT_CURRENCY, type MoneyReport, type LedgerEntry,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
@@ -20,7 +20,7 @@ import { deployer, emailSender, analytics } from '@cubicle/tools';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
 import { seedFirstJobs, seedFirstStream } from './first-run.js';
-import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId } from './discovery.js';
+import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId, hasApprovedBrief, rejectionAsksForNewIdea } from './discovery.js';
 import { writeRunway, accrueModelCost, enqueueRunway, dormancyMessage, revivalMessage } from './money.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
@@ -214,6 +214,93 @@ export function rejectedPlanVerdict(vault: Vault): { path: string; data: InboxFr
     .filter((n) => n.data.kind === 'plan_verdict' && n.data.approved === false && !(n.data as { fanned_out?: string }).fanned_out)
     .sort((a, b) => (a.data.created < b.data.created ? 1 : -1))[0] ?? null;
 }
+
+/**
+ * Whether an owner edit under `00 Inbox/` is worth a whole heartbeat (ruling S-4).
+ *
+ * Finding S3: four heartbeats in twenty minutes, one per Obsidian save of a proposal, each one re-planning — a
+ * plan, two board sessions and a rewrite — and the free strong tier was gone by mid-morning. Every one of those
+ * saves was the owner *approving* something, which is the one inbox edit that needs no cycle at all: the
+ * dispatcher applies an approval on the very next tick, and the tick runs every few seconds.
+ *
+ * Three edits still wake one, and they are the three nothing else would act on. An owner **message** is the
+ * company being asked a question, and the cycle is what plans against it (the answer itself is a tick sweep —
+ * ruling FR-1 — so this is about the plan, not the reply). A **rejection** is a rewrite request: a turned-down
+ * plan verdict or founder brief has to reach the CEO, and no other trigger carries it.
+ *
+ * And the **founder brief either way**, which is the one approval that has to wake a cycle. Ruling S-1 makes
+ * every planning step wait on that document, so the click that adopts it is the moment the company can finally
+ * plan — and if it were treated like any other approval the first run would sit, brief in hand and nothing
+ * queued, until the six-hourly trigger came round. The tick applies the approval; only a heartbeat plans
+ * against it.
+ *
+ * Read off the note as it stands now rather than off the edit, because that is the state the woken cycle would
+ * act on. A note that has since been deleted wakes nothing.
+ */
+export function inboxEditWakesHeartbeat(vault: Vault, rel: string): boolean {
+  const note = listInbox(vault).find((n) => n.path === rel);
+  if (!note) return false;
+  const d = note.data;
+  if (d.kind === 'message') return d.from === 'owner';
+  if (d.kind === 'founder_brief') return d.approved !== null;
+  // …and the pick, for exactly the founder brief's reason (ruling I1). The three ideas the CEO files are a
+  // `brand_change` on `Brand/name.md`, and while they sit unpicked `discoveryStatus` refuses to run at all —
+  // "waiting for you to pick one of the three ideas". So the click that picks one is the event that makes
+  // discovery possible, and nothing on the tick acts on it: the dispatcher writes the name and stops there.
+  // In the live run the pick and the research job were four seconds apart, and that four seconds was the
+  // heartbeat this rule had taken away — recovery would otherwise have been the six-hourly trigger.
+  //
+  // `approved !== null`, not "any edit": Obsidian saves mid-keystroke, and an owner halfway through typing
+  // `chosen:` has not picked anything yet. A decision either way wakes a cycle — a rejected trio is the same
+  // silent drop ruling S-2 closed for briefs.
+  if (d.kind === 'brand_change' && d.target === BRAND_NAME_PATH) return d.approved !== null;
+  return d.kind === 'plan_verdict' && d.approved === false;
+}
+
+/**
+ * Whether an owner edit counts as "the owner asked for something" in the re-planning gate — the same question
+ * `inboxEditWakesHeartbeat` answers, asked of one path rather than of the wake.
+ *
+ * The two have to agree. The gate reads `ownerEdits` (every path the owner touched since the last cycle), and
+ * an approval is an owner edit under `00 Inbox/` like any other: without this, a cycle woken for some unrelated
+ * reason would still find the approval in that list and rewrite the plan the owner had just approved. Outside
+ * the inbox every owner edit still counts — a brand note, an idea card, a file dropped in `Discovery/inbox/`
+ * are all the owner saying something, and none of them is applied by a tick.
+ */
+export function ownerEditAsksForWork(vault: Vault, rel: string): boolean {
+  return rel.startsWith('00 Inbox/') ? inboxEditWakesHeartbeat(vault, rel) : true;
+}
+
+/**
+ * The stream an `engineer.ship` the daemon queues *itself* must carry (ruling S-6b).
+ *
+ * Finding S5: the reconcile-the-site job was created straight from `createJob` with no `stream`, did the whole
+ * job, and was then refused at the CI gate — which reads the stream to find the record that says the build is
+ * green (§17). The work was done and thrown away, which is the one outcome worth spending a queue slot to
+ * avoid, so the choice is made before the job exists rather than after.
+ *
+ * Exactly one stream is the only case that can be decided without a model: it is the stream. None means there
+ * is nothing to ship against at all, and several means picking one is a product decision the daemon has no
+ * standing to make — in both, nothing is queued and the caller says why, in the log the owner reads. The same
+ * rule `scheduler.request` applies to engineering job types, so a role asking for one and the daemon queueing
+ * one cannot disagree.
+ */
+export function soleStreamForShip(vault: Vault): { stream: string; refuse?: undefined } | { stream?: undefined; refuse: string } {
+  const streams = listStreams(vault);
+  if (streams.length === 1) return { stream: streams[0].slug };
+  return {
+    refuse: streams.length === 0
+      ? 'no stream exists to ship against, so it would fail the CI gate after doing the work; the product manager writes Streams/<slug>.md first'
+      : `${streams.length} streams exist (${streams.map((s) => s.slug).join(', ')}) and nothing here may choose between them; name one on a scheduler.request instead`,
+  };
+}
+
+/**
+ * What the four planning steps log when there is no adopted founder brief (ruling S-1). One string, exported,
+ * because it is the only thing a checkpoint log says about a cycle that planned nothing — the tests read it and
+ * so does the owner.
+ */
+export const WAITING_FOR_BRIEF = 'waiting for the founder brief';
 
 /** How much of Plans/plan.md the verdict note quotes: enough to rule on, short of pasting a whole cycle's plan. */
 const PLAN_EXCERPT_CHARS = 3000;
@@ -924,6 +1011,8 @@ interface Gathered {
   gathered_at?: string;
   elapsedHours: number;
   ownerEdits: string[];
+  /** `Site/` writes this window that a running job's shell made, not the owner (ruling I4). Reported, not planned on. */
+  attributedSiteWrites?: number;
   finished: { id: string; type: string; title: string; status: string; summary: string }[];
   mail: string[];
   analytics: string | null;
@@ -947,16 +1036,66 @@ export function lastGatheredAt(vault: Vault): string | null {
   return notes.length ? notes[notes.length - 1].created : null;
 }
 
+/**
+ * How close a `Site/` write has to be to a running shell before it is that job's output rather than the
+ * owner's. Five seconds: a build writes its files in a burst while the command is still producing output, and
+ * an owner typing in Obsidian is not within five seconds of a shell that is also writing the same tree.
+ */
+export const SHELL_EDIT_WINDOW_MS = 5000;
+
+/**
+ * The moments a job's shell was running against `Site/` (ruling I4).
+ *
+ * `shell.run` mounts `Site/` and a scratch dir; `ci.run` mounts one `Workspace/<stream>` and can touch nothing
+ * under `Site/` at all, so its `shell.output` marker is skipped rather than counted as a window. Both the tool
+ * call and the output lines are read, because a command that prints nothing still leaves the `agent.tool_call`
+ * and a long build leaves output all the way through it.
+ */
+export function siteShellWindows(vault: Vault, since: string | null): number[] {
+  const from = since ? new Date(Date.parse(since) - SHELL_EDIT_WINDOW_MS * 2).toISOString() : undefined;
+  const out: number[] = [];
+  for (const e of vault.events.query({ types: ['shell.output', 'agent.tool_call'], from })) {
+    if (!e.job) continue;
+    const p = e.payload as { tool?: unknown; text?: unknown };
+    if (e.type === 'agent.tool_call' && String(p.tool ?? '') !== 'shell.run') continue;
+    if (e.type === 'shell.output' && /^\$ ci\.run\b/.test(String(p.text ?? ''))) continue;
+    const t = Date.parse(e.ts);
+    if (Number.isFinite(t)) out.push(t);
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/**
+ * Whether this `owner.edited` is really a job's build output (ruling I4).
+ *
+ * `Site/` is owner-editable again — the reconcile jobs are told "never revert owner edits under Site/", and the
+ * only way an engineer ever learns of such an edit is the owner-edit block the harness builds from these
+ * events, so excluding the whole tree made that instruction unenforceable. The build output is excluded by
+ * name instead (`isCachePath`), and what a build writes *outside* those names — `Site/src/pages/index.astro`
+ * rewritten by an engineer's own `shell.run` — is separated here, by when it happened rather than by what it
+ * is. A `Site/` edit made while no shell was running is the owner's, and stays.
+ */
+export function isJobSiteWrite(path: string, ts: string, windows: readonly number[]): boolean {
+  if (!path.startsWith('Site/')) return false;
+  const t = Date.parse(ts);
+  if (!Number.isFinite(t)) return false;
+  return windows.some((w) => Math.abs(w - t) <= SHELL_EDIT_WINDOW_MS);
+}
+
 function gather(vault: Vault, now: Date, mail: string[], analytics: string | null): Gathered {
   const since = lastGatheredAt(vault);
   const elapsedHours = since ? (now.getTime() - Date.parse(since)) / 3600_000 : Infinity;
-  const ownerEdits = [...new Set(vault.events.query({ types: ['owner.edited'], from: since ?? undefined }).map((e) => String(e.payload.path)))];
+  const windows = siteShellWindows(vault, since);
+  const edits = vault.events.query({ types: ['owner.edited'], from: since ?? undefined });
+  const mine = edits.filter((e) => isJobSiteWrite(String(e.payload.path ?? ''), e.ts, windows));
+  const ownerEdits = [...new Set(edits.filter((e) => !mine.includes(e)).map((e) => String(e.payload.path)))];
+  const attributedSiteWrites = new Set(mine.map((e) => String(e.payload.path))).size;
   const finished = vault.events.query({ types: ['job.done', 'job.failed'], from: since ?? undefined })
     .filter((e) => e.job)
     .map((e) => { const j = readJob(vault, e.job!); return { id: e.job!, type: j?.data.type ?? '?', title: j?.data.title ?? '?', status: e.type === 'job.done' ? 'done' : 'failed', summary: String(e.payload.summary ?? e.payload.reason ?? '') }; })
     .filter((f) => f.type !== 'ceo.heartbeat');
   const ownerMessages = listInbox(vault).filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && (!since || String(n.data.created ?? '') > since)).length;
-  return { since, gathered_at: now.toISOString(), elapsedHours, ownerEdits, finished, mail, analytics, unansweredOwnerMessages: unansweredOwnerMessages(vault), ownerMessages };
+  return { since, gathered_at: now.toISOString(), elapsedHours, ownerEdits, attributedSiteWrites, finished, mail, analytics, unansweredOwnerMessages: unansweredOwnerMessages(vault), ownerMessages };
 }
 
 /**
@@ -1108,6 +1247,89 @@ function release(vault: Vault, path: string, jobId?: string): void {
   } catch { /* the note is gone, or unwritable: the claim expires on its own */ }
 }
 
+/**
+ * The surprise path: three complete ideas filed as the `brand_change` the owner picks from, and the sentence
+ * the CEO says about it. Returns `SURPRISE_FAILED` — and files nothing — when two asks did not produce three
+ * whole lines (finding F1, ruling FR-2).
+ *
+ * Lifted out of `answerOne` because ruling S-2 gives it a second caller: an owner who rejects the founder brief
+ * with "get a new idea" is asking for exactly this, and a second copy of the ask, the re-ask, the completeness
+ * check and the proposal body is a second place for the three ideas to stop being three.
+ *
+ * `propId` is the caller's, and is always derived from the thing being answered (the message id, the rejected
+ * proposal's id), so `createProposal`'s idempotent replay is what stops two callers filing two trios.
+ */
+async function proposeThreeIdeas(deps: HeartbeatDeps, vault: Vault, opts: { propId: string; jobId?: string }): Promise<string> {
+  let raw = await ask(deps, ceoSystem(vault), SURPRISE_ASK);
+  let ideas = completeIdeaLines(raw);
+  // One re-ask, with room for a model that thinks before it answers (finding F1). Beyond that the CEO says
+  // so rather than filing a proposal the owner cannot pick from.
+  if (ideas.length < 3) {
+    raw = await ask(deps, ceoSystem(vault), SURPRISE_ASK, SURPRISE_RETRY_TOKENS);
+    ideas = completeIdeaLines(raw);
+  }
+  if (ideas.length < 3) return SURPRISE_FAILED;
+  const three = ideas.join('\n');
+  createProposal(vault, { id: opts.propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${three}\n\nSet \`chosen: 1|2|3\` and \`approved: true\`; the chosen line's name becomes the company name.`, job: opts.jobId }, 'ceo');
+  return `I filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n${three}`;
+}
+
+/**
+ * What the chief executive says when the owner turns the founder brief down (ruling S-2 (a)).
+ *
+ * The rejection is answered where the owner will see it — a `message` note in `00 Inbox/`, the same shape the
+ * cabin interview uses — because the note they rejected is closed the moment the dispatcher stamps it, and the
+ * live run's owner got nothing at all back for "rejected make it better or get a new idea".
+ *
+ * One short paragraph, and it has to be true, so the facts are assembled here and the model only phrases them:
+ * their own words, the re-run that is already queued, and — when they asked for a different idea — the three
+ * fresh ones the CEO has just filed for them to pick from. A model that cannot answer costs the phrasing, never
+ * the message: the template below says the same things.
+ *
+ * Every id it derives comes from the rejected proposal, so a replayed tick re-finds this message and that trio
+ * rather than filing a second of either.
+ */
+export async function answerRejectedBrief(
+  deps: HeartbeatDeps,
+  note: { path: string; data: InboxFrontmatter; body: string },
+  ctx: { comment: string; brief: string; discoveryJob: string },
+  opts: { jobId?: string } = {},
+): Promise<string> {
+  const vault = deps.vault;
+  const ceo = officeHolder(loadOrg(vault), 'chief_executive');
+  const said = ctx.comment.trim();
+  // The surprise path, not a copy of it: an owner who says "get a new idea" is asking for the same three lines
+  // the cabin's "surprise me" files, and they must arrive in the same note shape or `ownerPick` will not read
+  // the pick back.
+  const trio = rejectionAsksForNewIdea(said)
+    ? await proposeThreeIdeas(deps, vault, { propId: idFromKey('prop', `brief-rejected-ideas:${note.data.id}`), jobId: opts.jobId })
+    : null;
+  const facts = [
+    said ? `They turned the founder brief down and said: "${said}".` : 'They turned the founder brief down without saying why.',
+    `The research office has already been given job ${ctx.discoveryJob}: it re-reads everything, including what they just said, and files a new founder brief for them to approve.`,
+    trio && trio !== SURPRISE_FAILED ? 'You have also filed three fresh company ideas in 00 Inbox/ for them to pick one of; the brief follows what they pick.' : '',
+    trio === SURPRISE_FAILED ? 'You tried to put three fresh ideas to them and the model would not produce three complete ones, so you will try again shortly.' : '',
+    'Nothing is planned until a brief is adopted.',
+  ].filter(Boolean).join(' ');
+  const drafted = await ask(deps, ceoSystem(vault), `The owner rejected the founder brief. Write ONE short paragraph to them, under 80 words, saying what the company will do about it. No headings, no bullets, no preamble. Say only what these facts say:\n\n${facts}`, 400);
+  const paragraph = drafted?.trim() || [
+    said ? `Understood — "${said}".` : 'Understood.',
+    `I have put the brief back to the research office as ${ctx.discoveryJob}: they re-read everything, your words included, and file a new one for you to approve.`,
+    trio && trio !== SURPRISE_FAILED ? 'Three fresh ideas are in 00 Inbox/ for you to pick from.' : '',
+    'Nothing is planned until a brief is adopted.',
+  ].filter(Boolean).join(' ');
+  const body = [
+    paragraph,
+    ...(trio ? ['', '---', '', trio] : []),
+  ].join('\n');
+  createProposal(vault, {
+    id: idFromKey('prop', `brief-rejected:${note.data.id}`), kind: 'message', from: ceo, to: 'owner',
+    title: 'About the founder brief you turned down', body, job: opts.jobId,
+  }, ceo);
+  vault.events.emit({ type: 'agent.spoke', agent: ceo, job: opts.jobId ?? null, payload: { to: 'owner', text: paragraph.slice(0, 280), proposal: note.data.id } });
+  return paragraph;
+}
+
 /** One message: the reply the CEO drafts for it, the proposal it may file, and the note it writes back. */
 async function answerOne(deps: HeartbeatDeps, vault: Vault, m: OwnerMessage, body: string, now: () => Date, jobId?: string): Promise<number> {
   const isFirstIdea = !(parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data.name as string) && !listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md');
@@ -1130,21 +1352,7 @@ async function answerOne(deps: HeartbeatDeps, vault: Vault, m: OwnerMessage, bod
   const propId = idFromKey('prop', `owner-answer:${m.id}`);
   let reply: string | null = null;
   if (surprise) {
-    let raw = await ask(deps, ceoSystem(vault), SURPRISE_ASK);
-    let ideas = completeIdeaLines(raw);
-    // One re-ask, with room for a model that thinks before it answers (finding F1). Beyond that the CEO says
-    // so rather than filing a proposal the owner cannot pick from.
-    if (ideas.length < 3) {
-      raw = await ask(deps, ceoSystem(vault), SURPRISE_ASK, SURPRISE_RETRY_TOKENS);
-      ideas = completeIdeaLines(raw);
-    }
-    if (ideas.length < 3) {
-      reply = SURPRISE_FAILED;
-    } else {
-      const three = ideas.join('\n');
-      createProposal(vault, { id: propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${three}\n\nSet \`chosen: 1|2|3\` and \`approved: true\`; the chosen line's name becomes the company name.`, job: jobId }, 'ceo');
-      reply = `I filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n${three}`;
-    }
+    reply = await proposeThreeIdeas(deps, vault, { propId, jobId });
     // "skip" is a refusal to be interviewed, not a business idea: naming the company after it would be
     // absurd, and it belongs in the general reply, which already says the interview was closed.
   } else if (isFirstIdea && !longPrompt && !isSkip(said)) {
@@ -1315,6 +1523,21 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
     return 'none recorded';
   };
 
+  /**
+   * Ruling S-1: nothing is planned before the owner has adopted a founder brief.
+   *
+   * The second live run planned two seconds after the owner typed "surprise me" — before a single idea card
+   * existed — and planned again after they rejected the brief the company had written. The design is
+   * discovery → board → plan, and the brief is the document every plan is written *against*: without one, the
+   * CEO is asked to plan for a company nobody has described yet, which is how that run's plan came to be about
+   * a company the owner had never mentioned.
+   *
+   * Only the four planning steps wait. Money, discovery, the ideas board and the weekly meeting keep running —
+   * the cycle that reads the owner's material and files the brief is the same cycle, and stopping it would
+   * deadlock the company on the document it is trying to write.
+   */
+  const planningWaitsForBrief = (): boolean => !hasApprovedBrief(vault);
+
   if (job.checkpoint_step > 0 && !state.finished) {
     const m = readJob(vault, jobId)?.body.match(/## Plan\s*\n+```json\n([\s\S]*?)\n```/);
     if (m) { try { const f = JSON.parse(m[1]); state = { ...state, since: f.since, gathered_at: f.gathered_at, elapsedHours: f.elapsedHours ?? Infinity, ownerEdits: f.ownerEdits ?? [], finished: f.finished ?? [], mail: [], analytics: f.analytics ?? null, unansweredOwnerMessages: [], ownerMessages: f.owner_messages_since ?? (f.owner_messages ?? []).length }; } catch { /* fall through with defaults */ } }
@@ -1375,7 +1598,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         state = { ...state, ...g, feedbackShas, commentBaselines }; saveState(state);
         // Persist the gathered facts in the job note so a cache wipe cannot change what later steps see.
         vault.updateNote(`Jobs/${jobId}.md`, (n) => ({ data: n.data, body: setSection(n.body, '## Plan', '```json\n' + JSON.stringify({ since: g.since, gathered_at: g.gathered_at, elapsedHours: Number.isFinite(g.elapsedHours) ? g.elapsedHours : null, ownerEdits: g.ownerEdits, finished: g.finished, mail: g.mail.length, analytics: g.analytics, owner_messages: g.unansweredOwnerMessages.map((m) => m.id), owner_messages_since: g.ownerMessages }, null, 2) + '\n```') }), 'ceo', { job: jobId });
-        done(i, `elapsed ${Number.isFinite(g.elapsedHours) ? g.elapsedHours.toFixed(1) + 'h' : 'first run'}; ${g.ownerEdits.length} owner edits; ${g.finished.length} jobs finished; ${g.mail.length} mails; ${g.unansweredOwnerMessages.length} owner messages`);
+        done(i, `elapsed ${Number.isFinite(g.elapsedHours) ? g.elapsedHours.toFixed(1) + 'h' : 'first run'}; ${g.ownerEdits.length} owner edits${g.attributedSiteWrites ? ` (${g.attributedSiteWrites} Site/ write${g.attributedSiteWrites === 1 ? '' : 's'} attributed to a running job)` : ''}; ${g.finished.length} jobs finished; ${g.mail.length} mails; ${g.unansweredOwnerMessages.length} owner messages`);
         break;
       }
       // The company's money, before anything is planned against it. Pure arithmetic: not one model call on
@@ -1442,10 +1665,15 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         if (touched.length) {
           const open = listJobs(vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'engineer.ship' && /reconcile site with brand/i.test(j.title));
           if (!open) {
+            // Ruling S-6b: a ship with no stream fails the CI gate *after* doing the work, so the stream is
+            // settled before the job exists. With none or several to choose from the cycle says so and queues
+            // nothing — the brand edit is still on file and the next cycle re-reads it.
+            const s = soleStreamForShip(vault);
+            if (s.refuse) { done(i, `owner edited ${touched.join(', ')} → no reconcile job: ${s.refuse}`); break; }
             const org = loadOrg(vault);
             const engOffice = officeHolder(org, 'engineering');
-            const id = createJob(vault, { type: 'engineer.ship', title: 'Reconcile site with brand', assigned: roleWithTool(org, teamOf(org, engOffice)?.id, 'deploy.site') ?? engOffice, priority: 2, goal: `The owner edited ${touched.join(', ')}. Read every file in Brand/ and update Site/ so it matches the brand kit. Never revert owner edits under Site/. Finish with the list of files you changed.` }, 'ceo');
-            done(i, `owner edited ${touched.join(', ')} → queued ${id}`);
+            const id = createJob(vault, { type: 'engineer.ship', title: 'Reconcile site with brand', assigned: roleWithTool(org, teamOf(org, engOffice)?.id, 'deploy.site') ?? engOffice, priority: 2, stream: s.stream, goal: `The owner edited ${touched.join(', ')}. Read every file in Brand/ and update Site/ so it matches the brand kit. Never revert owner edits under Site/. Finish with the list of files you changed.` }, 'ceo');
+            done(i, `owner edited ${touched.join(', ')} → queued ${id} on stream ${s.stream}`);
           } else done(i, 'reconcile job already open');
         } else done(i, 'no brand edits');
         break;
@@ -1636,6 +1864,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         break;
       }
       case 'company_plan': {
+        if (planningWaitsForBrief()) { done(i, WAITING_FOR_BRIEF); break; }
         // Await company.plan as a sub-job. First visit: create it and block. Second visit: it finished.
         if (!state.companyPlanJob) {
           // A plan already waiting for the owner blocks NEW work only (program design §4): do not write another
@@ -1667,7 +1896,13 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           // `ownerMessages` counts what the owner typed since the last cycle whether or not it has been
           // answered (ruling FR-1 made answering a tick sweep, so a message is usually answered before the
           // cycle that should re-plan against it ever gathers).
-          const ownerAsked = (state.ownerMessages ?? 0) > 0 || (state.unansweredOwnerMessages?.length ?? 0) > 0 || (state.ownerEdits?.length ?? 0) > 0 || /owner|forced/i.test(job.title);
+          // …but an **approval is not an ask** (ruling S-4). It is an owner edit under `00 Inbox/` like any
+          // other, and counting it here is how the second live run rewrote the plan the owner had just approved,
+          // four times in twenty minutes, for the price of the day's whole strong tier. `ownerEditAsksForWork`
+          // is the same predicate that decides whether the edit was worth waking a cycle for at all, so the two
+          // can never disagree: a plan is rewritten when it is stale, when the board returned it, or when a
+          // verdict was rejected — never because the owner said yes to something.
+          const ownerAsked = (state.ownerMessages ?? 0) > 0 || (state.unansweredOwnerMessages?.length ?? 0) > 0 || (state.ownerEdits ?? []).some((p) => ownerEditAsksForWork(vault, p)) || /owner|forced/i.test(job.title);
           // A turned-down plan is a rewrite request in its own right, whether the owner rejected it or the board
           // did on a silent owner — not something the gate should only notice because an owner edit happened to
           // land in the same window.
@@ -1717,6 +1952,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         break;
       }
       case 'board_premortem': {
+        if (planningWaitsForBrief()) { done(i, WAITING_FOR_BRIEF); break; }
         if (state.planSkipped || state.planWaiting) { done(i, 'board skipped — the plan was not rewritten'); break; }
         if (state.boardVerdict) { done(i, `board ${state.boardVerdict} (already run)`); break; }
         const org = loadOrg(vault);
@@ -1850,6 +2086,11 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           vault.updateNote(note.path, (n) => ({ data: { ...n.data, approved: outcome === 'approved', decision: band, decided_by: 'board', resolved_at: nowIso() }, body: n.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: the recommendation (${band}) stood after ${decidesAfterHours} h._\n` }), 'daemon');
           vault.events.emit({ type: 'proposal.resolved', agent: 'daemon', job: jobId, payload: { id: note.data.id, kind: 'idea_verdict', approved: outcome === 'approved', decision: band, outcome: `the board decided: ${band}` } });
         }
+        // Ruling S-1's gate belongs **here**, not at the top of the step: everything above is the ideas board's
+        // half of this step, and the board keeps running while the brief is being written (that is where the
+        // brief's candidate ideas come from). Only the plan verdict below waits — and with no brief there was
+        // no plan this cycle either, so there is nothing to rule on in any case.
+        if (planningWaitsForBrief()) { done(i, WAITING_FOR_BRIEF); break; }
         // No new plan this cycle means nothing to rule on: the plan the divisions are working from was already
         // approved, and `division_plans` skips on `planSkipped` before it ever looks at `state.verdict`.
         if (state.planSkipped) { done(i, 'no new plan to rule on'); break; }
@@ -1895,6 +2136,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         break;
       }
       case 'division_plans': {
+        if (planningWaitsForBrief()) { done(i, WAITING_FOR_BRIEF); break; }
         // The leads already planned against this plan last cycle and their jobs are the open work the gate saw.
         if (state.planSkipped && !state.divisionPlanJobs) { done(i, 'division plans skipped — no new plan to fan out'); break; }
         // A plan with no real objective files no verdict (see owner_verdict) — and the remedy for that must stop
@@ -2031,8 +2273,21 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         const calls = vault.events.query({ types: ['router.call'], from: state.since ?? undefined });
         const modelUse = modelUseRows({ calls: calls.length, downgraded: calls.filter((e) => isKeyProblemDowngrade(e.payload)).length }, deps.noCloudKeys?.() ?? false);
         const mocked = deps.env ? mockedServices(deps.env) : [];
+        // Ruling S-1 again, said to the owner rather than to the checkpoint log: four steps of this cycle did
+        // nothing, and the brief is the only place they would ever find out why. An open brief proposal is
+        // already the first row of `pending` above — this row would only repeat it — so this one names what is
+        // being waited for *instead*, in the discovery step's own words: the research office is writing it, or
+        // the company is waiting on them to pick an idea, or there is nothing to read yet.
+        const briefRow = ((): string | null => {
+          if (hasApprovedBrief(vault)) return null;
+          if (pending.some((p) => p.data.kind === 'founder_brief')) return null;
+          let why = 'the research office is writing the founder brief';
+          try { if (!openDiscoveryJob(vault)) why = currentDiscoveryStatus(vault, now()).why; } catch { /* the brief never fails over a status read */ }
+          return `- Nothing is planned until a founder brief is adopted — ${why}`;
+        })();
         const needsYou = [
           ...pending.map((p) => `- Approve or reject: ${p.body.split('\n')[0].replace(/^#\s*/, '')} (\`${p.path}\`)`),
+          ...(briefRow ? [briefRow] : []),
           ...blocked.filter((j) => j.blocked_on?.kind === 'message').map((j) => `- Answer ${j.assigned}'s question on job ${j.id}`),
           // A job that finished as blocked waits for the owner and nothing else requeues it (loop.ts / requeueUnblocked):
           // unlisted, it sat for a day while the brief said "nothing needs you".
@@ -2045,6 +2300,9 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         const facts = [
           `Elapsed: ${Number.isFinite(state.elapsedHours) ? state.elapsedHours!.toFixed(1) + ' h' : 'first heartbeat'}`,
           ...(state.planPending ? ['Planning: PENDING — the team plans have not finished this cycle; the previous plan stands.'] : []),
+          // Ahead of every other planning line, because when it is true none of them can be: the four planning
+          // steps did not run at all (ruling S-1), so "skipped", "paused" and "pending" would all be inventions.
+          ...(hasApprovedBrief(vault) ? [] : ['Planning: waiting for the founder brief — nothing is planned until you adopt one.']),
           // Its own line for the same reason the estimate one is: a discovery job that ran long delayed the
           // reading, not the planning, and the plan this cycle wrote was written without it.
           ...(state.discoveryPending ? ['Discovery: still running — your material was not read in time, so this cycle planned without it; the founder brief will follow.'] : []),

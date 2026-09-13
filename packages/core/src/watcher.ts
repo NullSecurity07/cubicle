@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'chokidar';
 import path from 'node:path';
 import type { Vault } from './vault.js';
-import { isCachePath } from './guard.js';
+import { isCachePath, isOwnerEditablePath } from './guard.js';
 import { TOMBSTONE } from './vault.js';
 
 export interface WatcherOptions {
@@ -48,6 +48,8 @@ export class VaultWatcher {
     const schedule = (p: string, deleted: boolean) => {
       const rel = path.relative(root, p).split(path.sep).join('/');
       if (!rel || isCachePath(rel)) return;
+      // Build output and job workspaces are the company's own writes, whatever wrote them (ruling S-7).
+      if (!isOwnerEditablePath(rel)) return;
       // Check this generation now: an agent write landing later in the window must not hide an owner edit.
       if (!deleted) { const cur = this.vault.currentSha(rel); const rec = this.vault.writtenSha(rel); if (cur !== null && (rec === null || rec !== cur)) this.ownerSeen.add(rel); }
       const prev = this.timers.get(rel);

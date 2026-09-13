@@ -31,6 +31,8 @@ offices:
   research: research_manager
   engineering: cto
 board_decides_after_hours: 0
+migrations:
+  - board-medium-tier-2026-09-13
 ```
 
 ## Notes
@@ -40,4 +42,5 @@ board_decides_after_hours: 0
 - `max_roles` caps headcount including the founding roster (33 active seats; the five Sales desks are placeholders until the sales pass).
 - `max_team_size` caps how many members a lead can hold before a `reorg` proposal is required; `auto_approve_reorg` gates whether that proposal needs the owner.
 - `offices` maps each office the daemon addresses to a role id: gates, escalation and planning ask for the office, so re-staffing a seat is an edit here, not a code change.
+- `migrations` records the one-time upgrades already applied to this vault; the daemon adds an id when it applies one and never applies that one again. Leave it alone.
 - `board_decides_after_hours` is off (`0`): a plan waits in `00 Inbox/` for your verdict for as long as it takes, and work you already approved keeps running while it waits — only new work stops. Set a number of hours to let the board's own verdict stand after that long, which is what an unattended overnight run wants.

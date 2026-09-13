@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { KNOWN_JOB_TYPES, officeHolder, isValidRoleId, isValidStreamSlug, listStreams, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, ENGINEERING_JOB_TYPES, RISK_GUIDANCE, RISK_LEVELS, missingRequestFields, incompleteRequestText, ResearchRequest, priorityScore, jobPriorityFor, type Org } from '@cubicle/core';
+import { KNOWN_JOB_TYPES, officeHolder, isValidRoleId, isValidStreamSlug, listStreams, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, ENGINEERING_JOB_TYPES, RISK_GUIDANCE, RISK_LEVELS, missingRequestFields, incompleteRequestText, ResearchRequest, priorityScore, jobPriorityFor, type Org, type Vault } from '@cubicle/core';
 
 /**
  * Job types an ordinary role may not schedule, and who may. Must cover every type `wipLoad` skips and every type
@@ -88,6 +88,21 @@ export function missingRiskText(type: string): string {
   return `${type} jobs must state a risk class. Set risk to one of: ${RISK_LEVELS.map((l) => `${l} (${RISK_GUIDANCE[l]})`).join('; ')}. Pick the highest level any part of the change touches.`;
 }
 
+/**
+ * The stream an engineering job serves, when the caller did not say. An `engineer.ship` with no stream does the
+ * whole change and then fails at the CI gate, which reads `Workspace/<stream>/.cubicle-ci/` — that is what
+ * happened in the second live run (ruling S-6). Decide it here, at the queue, where it costs nothing: exactly
+ * one stream is the obvious answer, several is a question only the caller can settle, none means the product
+ * manager has not written `Streams/<slug>.md` yet.
+ */
+export function defaultStreamFor(vault: Vault, type: string): { slug: string } | { refuse: string } | null {
+  if (!(ENGINEERING_JOB_TYPES as readonly string[]).includes(type)) return null;
+  const slugs = listStreams(vault).map((s) => s.slug);   // listStreams already skips `_template` and friends
+  if (slugs.length === 1) return { slug: slugs[0] };
+  if (slugs.length === 0) return { refuse: `a ${type} job must serve a stream, and none exists yet: the product manager creates Streams/<slug>.md first (name, outcome metric, owner team), then queue this job with stream: <slug>.` };
+  return { refuse: `a ${type} job must name the stream it serves — there are ${slugs.length}: ${slugs.join(', ')}. Set stream: <slug>. The CI gate reads Workspace/<stream>/.cubicle-ci/, so a job with no stream fails the gate after the work is done.` };
+}
+
 export const schedulerRequest = defineTool({
   name: 'scheduler.request',
   description: `Enqueue a job for a role. Leads schedule anyone in their subtree, members hand off to a teammate, the chief executive anyone; nobody schedules themselves — do your own work in this job. Types: ${KNOWN_JOB_TYPES.join(', ')} (or custom). A type: research job must carry the full \`research\` request (decision, decision owner, question, hypothesis or exploration, known evidence, unknowns, deadline, required confidence, potential decisions, portfolio, impact, uncertainty, cost of being wrong) — its priority comes from impact × uncertainty × cost of being wrong, not from \`priority\`. CEO/CTO may also set priority on existing jobs via reprioritize. Engineering types (${ENGINEERING_JOB_TYPES.join(', ')}) must also state risk: low (text, UI, minor fixes), medium (data, backend, new integrations), high (auth, money, destructive migrations, infrastructure).`,
@@ -167,6 +182,14 @@ export const schedulerRequest = defineTool({
     const lead = ctx.roleId === ceo || isLead(org, ctx.roleId);
     if (lead && !args.done_when?.trim()) return { ok: false, text: 'leads must give done_when: one sentence a stranger could check' };
     if ((ENGINEERING_JOB_TYPES as readonly string[]).includes(type) && !args.risk) return { ok: false, text: missingRiskText(type) };
+    // S-6: engineering work without a stream is refused (or defaulted) at the queue, not at the CI gate.
+    let stream = args.stream;
+    if (stream === undefined) {
+      const d = defaultStreamFor(ctx.vault, type);
+      if (d && 'refuse' in d) return { ok: false, text: d.refuse };
+      if (d) stream = d.slug;
+    }
+    const streamNote = args.stream === undefined && stream !== undefined ? ` on the only stream, ${stream}` : '';
     const owner_role = lead ? ctx.roleId : (leadOf(org, ctx.roleId) ?? ctx.roleId);
     const team = teamOf(org, args.assigned)?.id;
     const wantedId = ctx.idempotencyKey ? idFromKey('job', ctx.idempotencyKey) : undefined;
@@ -181,7 +204,7 @@ export const schedulerRequest = defineTool({
     // §29: a research job's place in the queue is its score, not whatever number the requester typed. The
     // project slug is left unset here — `research.start` derives it from the real job id and stores it.
     const priority = request ? jobPriorityFor(priorityScore(request)) : args.priority;
-    const id = ctx.scheduler.enqueue({ id: wantedId, type, title: args.title, assigned: args.assigned, goal: args.goal, priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: forRole, done_when: args.done_when, risk: args.risk, stream: args.stream, research: request });
-    return { ok: true, text: `queued ${id} for ${args.assigned}: ${args.title}${request ? ` (priority ${priority} from a score of ${priorityScore(request)})` : ''}`, data: { id } };
+    const id = ctx.scheduler.enqueue({ id: wantedId, type, title: args.title, assigned: args.assigned, goal: args.goal, priority, depends_on: args.depends_on, privacy: args.privacy, parent: ctx.jobId ?? undefined, links: ctx.jobId ? [`[[${ctx.jobId}]]`] : [], team, owner_role, for: forRole, done_when: args.done_when, risk: args.risk, stream, research: request });
+    return { ok: true, text: `queued ${id} for ${args.assigned}: ${args.title}${streamNote}${request ? ` (priority ${priority} from a score of ${priorityScore(request)})` : ''}`, data: { id, stream: stream ?? null } };
   },
 });

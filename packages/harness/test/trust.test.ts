@@ -7,7 +7,7 @@ import {
   recordTrustVerdict, TRUST_GATES, trustState,
 } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
-import { parseToolsConfig, ToolRegistry, phase3Tools, phase6Tools } from '@cubicle/tools';
+import { parseToolsConfig, ToolRegistry, phase3Tools, phase6Tools, customerPath } from '@cubicle/tools';
 import { runJob, vaultScheduler, type Llm, type HarnessDeps } from '../src/index.js';
 
 const cfgText = readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8');
@@ -21,7 +21,13 @@ for (const tool of ['email.send', 'social.post', 'browser.submit', 'stripe.payme
   if (pol) pol.trust_review = true;
 }
 let dir: string; let vault: Vault;
-beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-h-trust-')); vault = (await scaffoldVault(dir)).vault; });
+beforeEach(async () => {
+  dir = mkdtempSync(path.join(tmpdir(), 'cubicle-h-trust-'));
+  vault = (await scaffoldVault(dir)).vault;
+  // Ruling S-3: `email.send` refuses an address no `Customers/` note sources. This suite is about the review
+  // gates, so the recipient here is a researched lead and its note says where it was found.
+  vault.writeNote(customerPath(EMAIL.to), { email: EMAIL.to, source: 'https://nursery.example.com/contact' }, `# ${EMAIL.to}\n`, 'cmo');
+});
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
 type Step = { tool: string; args: Record<string, unknown> };

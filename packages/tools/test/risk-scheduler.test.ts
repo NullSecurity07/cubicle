@@ -75,12 +75,54 @@ describe('scheduler.request validates the stream slug (fix wave item 4 / C2)', (
     expect(r.text).toMatch(/No streams exist yet/);
   });
 
-  it('a well-formed slug is still accepted, and omitting stream is still fine', async () => {
+  it('a well-formed slug is still accepted, and a non-engineering job still needs no stream', async () => {
     const ok = await schedulerRequest.handler(ship({ risk: 'low', stream: 'checkout' }), ctxFor('dev_manager'));
     expect(ok.ok).toBe(true);
-    const none = await schedulerRequest.handler(ship({ risk: 'low', title: 'Another thing' }), ctxFor('dev_manager'));
+    const none = await schedulerRequest.handler({ type: 'custom', title: 'Another thing', assigned: 'frontend_engineer', goal: 'g', priority: 3, depends_on: [], done_when: 'It is done.' }, ctxFor('dev_manager'));
     expect(none.ok).toBe(true);
     expect(readJob(vault, (none.data as { id: string }).id)?.data.stream ?? null).toBeNull();
+  });
+});
+
+// Ruling S-6. The second live run queued an `engineer.ship` with no stream; the engineer did the whole change and
+// only then failed the CI gate, which reads `Workspace/<stream>/.cubicle-ci/`. The question is settled at the
+// queue now, where it costs nothing.
+describe('scheduler.request defaults the stream for engineering work (S-6)', () => {
+  const mkStream = (name: string) => createStream(vault, { name, problem: 'p', customers: 'c', outcome_metric: 'm', owner_team: 'dev', error_budget: 4 }, 'product_manager');
+
+  it('with exactly one stream it defaults to it and says so', async () => {
+    mkStream('Checkout');
+    const r = await schedulerRequest.handler(ship({ risk: 'low' }), ctxFor('dev_manager'));
+    expect(r.ok).toBe(true);
+    expect(r.text).toContain('on the only stream, checkout');
+    expect(readJob(vault, (r.data as { id: string }).id)?.data.stream).toBe('checkout');
+  });
+
+  it('with several streams it refuses and names them', async () => {
+    mkStream('Checkout'); mkStream('Onboarding');
+    const r = await schedulerRequest.handler(ship({ risk: 'low' }), ctxFor('dev_manager'));
+    expect(r.ok).toBe(false);
+    expect(r.text).toContain('checkout');
+    expect(r.text).toContain('onboarding');
+    expect(r.text).toMatch(/must name the stream/);
+    expect(listJobs(vault).filter((j) => j.type === 'engineer.ship')).toHaveLength(0);
+  });
+
+  it('with no stream at all it refuses and says who creates one', async () => {
+    const r = await schedulerRequest.handler(ship({ risk: 'low' }), ctxFor('dev_manager'));
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/the product manager creates Streams\/<slug>\.md first/);
+    expect(listJobs(vault).filter((j) => j.type === 'engineer.ship')).toHaveLength(0);
+  });
+
+  it('an explicit stream still wins, and a non-engineering type is untouched by all of this', async () => {
+    mkStream('Checkout'); mkStream('Onboarding');
+    const r = await schedulerRequest.handler(ship({ risk: 'low', stream: 'onboarding' }), ctxFor('dev_manager'));
+    expect(r.ok).toBe(true);
+    expect(readJob(vault, (r.data as { id: string }).id)?.data.stream).toBe('onboarding');
+    const custom = await schedulerRequest.handler({ type: 'growth.post', title: 'Write the launch post', assigned: 'cmo', goal: 'g', priority: 3, depends_on: [], done_when: 'It is posted.' }, ctxFor('cfo'));
+    expect(custom.ok, custom.text).toBe(true);
+    expect(readJob(vault, (custom.data as { id: string }).id)?.data.stream ?? null).toBeNull();
   });
 });
 

@@ -109,8 +109,11 @@ describe('the three advisors take the evaluator\'s three stances (spec §1)', ()
     expect(b).toMatch(/Mom Test/i);
   });
 
-  it('and nothing about the roster moved: same tiers, tools, desks, teams and permissions', () => {
-    expect(data('advisor_skeptic').model_tier).toBe('strong');
+  // Ruling S-5: the whole board sits on the medium tier. One session is three advisors plus the chair, and the
+  // free strong tier is 20 calls a day per flash model — it is kept for the CEO's plan and the owner's replies.
+  // The skeptic is the board's lead, so `runBoardSession`'s `leadTier` fallback rides on this too.
+  it('the whole board sits on the medium tier; tools, desks, teams and permissions are unmoved', () => {
+    expect(data('advisor_skeptic').model_tier).toBe('medium');
     expect(data('advisor_investor').model_tier).toBe('medium');
     expect(data('advisor_customer').model_tier).toBe('medium');
     for (const r of ['advisor_skeptic', 'advisor_investor', 'advisor_customer']) {

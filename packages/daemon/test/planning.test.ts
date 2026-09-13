@@ -8,6 +8,7 @@ import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE, runHeartbeat, createHeartbeatJob, planVerdictId, boardSubject, advisorPrompt, chairPrompt, boardAgenda } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
+import { adoptFounderBrief } from './helpers/brief.js';
 import { TEST_MS, eventProgress, waitForProgress } from './helpers/load.js';
 
 const root = path.resolve(__dirname, '../../..');
@@ -24,6 +25,9 @@ beforeEach(async () => {
   // Nobody is at the keyboard here and `board_decides_after_hours` ships off, so a plan would wait for the owner
   // for ever and no division would ever plan. Hand the board the ruling after a fraction of an hour instead.
   letTheBoardDecide(vault);
+  // Nothing is planned before the owner has adopted a founder brief (ruling S-1), and every case in this file is
+  // about the plan. The helper writes it exactly as the dispatcher writes it when the owner approves the proposal.
+  adoptFounderBrief(vault);
   // An engineer.ship cannot finish without a green CI record for its stream (§17), so the scripted dev plan
   // ships against this one. Nothing lives under Workspace/site, so the record never goes stale.
   createStream(vault, { slug: 'site', name: 'Site', problem: 'The company has no site.', customers: 'Everyone who hears about us', outcome_metric: 'a first cut exists', owner_team: 'dev' }, 'ceo');
@@ -310,24 +314,28 @@ describe('board pre-mortems are validated decision notes (D7)', () => {
 });
 
 describe('board advisors each speak at their own charter\'s model_tier (Task 4 review finding 1)', () => {
-  it('asks advisor_investor and advisor_customer at their charter\'s medium tier, never upgraded to the lead\'s strong (the charter is a ceiling, never a floor)', async () => {
+  // Ruling S-5: the whole board — chair included — sits on the medium tier. One session is four calls on top of
+  // the plan, and the free strong tier is 20 calls a day per flash model: it is the CEO's plan and the owner's
+  // replies that spend it. What this suite still guards is that each advisor speaks at its *own* charter's tier.
+  it('asks every advisor, and the chair, at the board\'s own medium tier rather than the strong one', async () => {
     const llm = tierRecordingLlm();
     const vault = Vault.open(dir);
     try {
       const org = loadOrg(vault);
       expect(org.roles.advisor_investor.model_tier).toBe('medium');
       expect(org.roles.advisor_customer.model_tier).toBe('medium');
-      expect(org.roles.advisor_skeptic.model_tier).toBe('strong');
+      expect(org.roles.advisor_skeptic.model_tier).toBe('medium');
+      expect(org.roles.ceo.model_tier).toBe('strong');   // the tier the board is not spending
       await runBoardSession({ vault, llm }, org, PLAN_TEXT);
       const advisorCalls = llm.calls.filter((c) => /Imagine the cycle has already failed/.test(c.prompt));
       const tierOf = (roleId: string) => advisorCalls.find((c) => c.roleId === roleId)?.tier;
       expect(tierOf('advisor_investor')).toBe('medium');
       expect(tierOf('advisor_customer')).toBe('medium');
-      expect(tierOf('advisor_skeptic')).toBe('strong');
-      // The chair's merge call is also the lead's own tier ('strong'), not some other default.
+      expect(tierOf('advisor_skeptic')).toBe('medium');
       const chairCall = llm.calls.find((c) => /VERDICT: pass/.test(c.prompt));
       expect(chairCall?.roleId).toBe('advisor_skeptic');
-      expect(chairCall?.tier).toBe('strong');
+      expect(chairCall?.tier).toBe('medium');
+      expect(llm.calls.some((c) => c.tier === 'strong')).toBe(false);
     } finally { vault.close(); }
   });
 
@@ -337,13 +345,18 @@ describe('board advisors each speak at their own charter\'s model_tier (Task 4 r
     try {
       const org = loadOrg(vault);
       // Simulate a role note with no model_tier of its own — org.roles is a plain in-memory object here, not
-      // backed by the file, so this does not touch the vault.
+      // backed by the file, so this does not touch the vault. The lead is given a distinct tier for the same
+      // reason: with the whole board on medium, a fallback to the lead and a fallback to the bare default look
+      // the same, and this test is about which one happened.
+      org.roles.advisor_skeptic = { ...org.roles.advisor_skeptic, model_tier: 'strong' };
       const { model_tier: _drop, ...withoutTier } = org.roles.advisor_investor;
       org.roles.advisor_investor = withoutTier as typeof org.roles.advisor_investor;
       await runBoardSession({ vault, llm }, org, PLAN_TEXT);
       const advisorCalls = llm.calls.filter((c) => /Imagine the cycle has already failed/.test(c.prompt));
       // advisor_investor has no tier of its own, so it falls back to the lead's ('strong'), not to a bare default.
       expect(advisorCalls.find((c) => c.roleId === 'advisor_investor')?.tier).toBe('strong');
+      // …and an advisor that does carry one keeps it.
+      expect(advisorCalls.find((c) => c.roleId === 'advisor_customer')?.tier).toBe('medium');
     } finally { vault.close(); }
   });
 });

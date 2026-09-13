@@ -2,7 +2,9 @@
 role: advisor_skeptic
 display: The Skeptic
 title: Board advisor — pre-mortems
-model_tier: strong
+# The board sits on the medium tier (ruling S-5). A board session is four calls on top of the plan, and the
+# free strong tier is 20 calls a day per flash model: it is kept for the CEO's plan and the owner's replies.
+model_tier: medium
 tools: [vault.read, vault.search, vault.list, vault.write, http.fetch, colleague.message, skills.load, skills.search, finish]
 approval_overrides: {}
 active: true

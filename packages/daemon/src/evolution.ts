@@ -4,7 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import {
   type Vault, type InboxFrontmatter, RoleFrontmatter, parseNote, stringifyNote, nowIso, createJob, listJobs, readJob, updateJob, cancelJob, isValidRoleId, repoRoot, extractOwnerComments, idFromKey,
-  loadOrg, leadOf, teamOf, resolveRole, incidentResponder, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, researchLead, officeHolder, roleWithTool, jobPath,
+  loadOrg, leadOf, teamOf, resolveRole, incidentResponder, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, isOwnerEditablePath, researchLead, officeHolder, roleWithTool, jobPath,
   RESEARCH_INDEX, upsertIndexRow, resultBlock, researchSlug, type ResearchRequest, type DeliveredResearch,
   readStream, budgetLines, listStreams, readFlags, expiredFlags,
 } from '@cubicle/core';
@@ -765,6 +765,7 @@ export function markCommentsDelivered(vault: Vault, gathered: Record<string, str
 export function collectOfflineOwnerComments(vault: Vault): string[] {
   const out: string[] = [];
   for (const { path: rel, added } of vault.commentsChangedSinceWritten()) {
+    if (!isOwnerEditablePath(rel)) continue;   // build output and job workspaces are never the owner's (ruling S-7)
     const area = rel.split('/')[0];
     vault.events.emit({ type: 'owner.edited', agent: 'owner', payload: { path: rel, area, deleted: false, offline: true, comments: added.length, wakes_heartbeat: HEARTBEAT_WAKE_AREAS.includes(area) } });
     out.push(rel);
