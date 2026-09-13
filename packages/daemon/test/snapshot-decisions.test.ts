@@ -267,7 +267,7 @@ describe('the decide and conversation.get ops', () => {
     await c.next('snapshot');
 
     c.sock.send(JSON.stringify({ op: 'decide', id, approved: true }));
-    expect(await c.next('error')).toMatchObject({ id, message: 'the board is still sitting on this brief; decide once its pressure test is in' });
+    expect(await c.next('error')).toMatchObject({ id, message: 'the board is still pressure-testing this brief; it will be ready to adopt in a moment, with the board's findings in it' });
     expect(findInboxById(vault, id)!.data.approved).toBeNull();
     expect(ticks).toEqual([]);
     c.close();

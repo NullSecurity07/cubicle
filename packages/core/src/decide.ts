@@ -1,4 +1,4 @@
-import { findInboxById } from './proposals.js';
+import { findInboxById, boardStillSitting, BOARD_STILL_SITTING } from './proposals.js';
 import { CHOSEN_DECISIONS } from './ideas.js';
 import { PRESSURE_TEST_SECTION } from './discovery.js';
 import type { Vault } from './vault.js';
@@ -124,12 +124,6 @@ export const OWNER_COMMENT_MAX = 4000;
  * Ruling R-T3-3: a founder brief whose board session has not finished is not the owner's to adopt yet — the
  * pressure test is half of what they would be deciding on, and §4 is that the brief takes it once.
  *
- * **Temporary, and deliberately module-private.** T3 lands `boardStillSitting(note)` and `BOARD_STILL_SITTING`
- * in core on the integration branch; this worktree has neither, so the flag is read inline here with the same
- * words, to be reconciled to the core export at merge. Nothing is exported under those names on purpose: two
- * exports of one symbol would meet as a broken barrel file rather than as a conflict anybody notices.
- */
-const BOARD_STILL_SITTING = 'the board is still sitting on this brief; decide once its pressure test is in';
 
 /**
  * Decide a proposal from inside CUBICLE, exactly as an Obsidian edit would.
@@ -149,7 +143,7 @@ export function ownerDecide(vault: Vault, id: string, d: OwnerDecision): OwnerDe
   const kind = note.data.kind;
   if (kind === 'message') throw new OwnerDecideError(`${id} is a message, not a decision`);
   if (note.data.resolved_at) throw new OwnerDecideError(`${id} was already decided (resolved ${note.data.resolved_at})`);
-  if (kind === 'founder_brief' && (note.data as { board_pending?: unknown }).board_pending === true) throw new OwnerDecideError(BOARD_STILL_SITTING);
+  if (boardStillSitting({ kind, ...(note.data as Record<string, unknown>) })) throw new OwnerDecideError(BOARD_STILL_SITTING);
   const options = proposalOptions(kind, note.body);
   const chosen = d.chosen === undefined || d.chosen === null ? null : Number(d.chosen);
   if (chosen !== null) {

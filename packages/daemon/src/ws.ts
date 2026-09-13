@@ -92,6 +92,10 @@ export interface Snapshot {
    * reason and never resolves it) that hole is permanent: the owner's decision would simply vanish from the
    * sheet. A decided-but-unresolved note keeps its row, marked `pending`, and carries the refusal when there is
    * one, so the sheet can say "applying…" and then say what went wrong.
+   *
+   * Whatever computes a row's `decidable`, it owes this row nothing but `core`'s own predicate: a row where
+   * `boardStillSitting(note.data)` holds has no decidable state at all, and the `decide` op refuses it with
+   * `BOARD_STILL_SITTING` (ruling R-T3-3) so a plain browser tab cannot decide what the office greys out.
    */
   inbox: {
     id: string; kind: string; title: string; path: string; created: string;

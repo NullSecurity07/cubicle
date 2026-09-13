@@ -33,6 +33,7 @@ import {
   chairFormat, ADVISOR_ASK, askAs, advisorSystem, SUBJECT_CHARS, CHAIR_IDEA_TOKENS,
   runBoardSession, writeBoardDecision, BOARD_UNREVIEWED_NOTE, BOARD_OPEN_QUESTIONS,
 } from './heartbeat.js';
+import { splitRejectedBrief } from './discovery.js';
 
 /** The five argued rounds plus the verdict. Six is a consequence of `PRESSURE_PARTS`, not a second opinion. */
 export const BOARD_DIALOGUE_ROUNDS = PRESSURE_PARTS.length + 1;
@@ -620,10 +621,20 @@ export function renderBriefPressureSection(
   ].join('\n');
 }
 
-/** The block the owner reads above the brief: what the board made of it, and what it had to ask them. */
-export function briefBoardBlock(o: { verdict: string; notePath: string; questions: string[] }): string {
+/**
+ * The block the owner reads above the brief: what the board made of it, and what it had to ask them.
+ *
+ * `unusable` is the one thing this block may never get wrong (ruling R-T3-2). When the board's section did not
+ * pass the brief's own truth check, the section below the fence is the research office's draft — and it can
+ * carry the other verdict outright — so a block claiming "its five findings are below" would have the owner
+ * reading two contradicting verdicts on one screen and adopting the wrong one as the board's.
+ */
+export function briefBoardBlock(o: { verdict: string; notePath: string; questions: string[]; unusable?: string; decidedEarly?: boolean }): string {
   return [
-    `The board pressure-tested this before you saw it and ruled **${o.verdict}**. Its five findings are the \`${PRESSURE_TEST_SECTION}\` section of the brief below, and the argument it took to get there is in [[${o.notePath.replace(/\.md$/, '')}]].`,
+    ...(o.decidedEarly ? [BRIEF_DECIDED_EARLY, ''] : []),
+    o.unusable
+      ? `The board pressure-tested this before you saw it and ruled **${o.verdict}**, but ${o.unusable}. The \`${PRESSURE_TEST_SECTION}\` section below is the research office's draft, not the board's findings — read the argument itself in [[${o.notePath.replace(/\.md$/, '')}]].`
+      : `The board pressure-tested this before you saw it and ruled **${o.verdict}**. Its five findings are the \`${PRESSURE_TEST_SECTION}\` section of the brief below, and the argument it took to get there is in [[${o.notePath.replace(/\.md$/, '')}]].`,
     ...(o.questions.length ? [
       '',
       BOARD_OPEN_QUESTIONS,
@@ -649,15 +660,51 @@ export function briefProposalBodyWithBoard(brief: string, board: string): string
   return at < 0 ? `${board}\n\n${body}` : `${body.slice(0, at)}${board}\n\n${body.slice(at)}`;
 }
 
-/** The `founder_brief` proposal the board still owes a pressure test, or null. */
+/**
+ * The `founder_brief` proposal the board still owes a pressure test, or null.
+ *
+ * **Unresolved, not unapproved.** The owner can set `approved: true` in Obsidian while the session is still
+ * owed, and the dispatcher skips that note precisely because the flag is on (ruling R-T3-3) — so requiring
+ * `approved === null` here would make the two rules deadlock each other: the board would never sit, the flag
+ * would never come off, and the approval would never be applied. A note that is actually *resolved* is another
+ * matter, and the write at the end of the session re-reads for exactly that.
+ */
 export function briefAwaitingBoard(vault: Vault): { id: string; path: string; body: string } | null {
-  const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief' && n.data.board_pending === true && n.data.approved === null && !n.data.resolved_at);
+  const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief' && n.data.board_pending === true && !n.data.resolved_at);
   return note ? { id: String(note.data.id), path: note.path, body: note.body } : null;
 }
 
 /** Take the flag off, so the owner is asked. Its own function because two paths do it for two reasons. */
 function clearBoardPending(vault: Vault, path: string): void {
   vault.updateNote(path, (n) => ({ data: { ...n.data, board_pending: false }, body: n.body }), 'daemon');
+}
+
+/**
+ * The brief's five parts with every part the truth check named replaced by the word it is asking for.
+ *
+ * Rule 3 of `checkFounderBrief` refuses a Founder-Market Fit that is anything but `unstated` while the
+ * interview is unanswered and `Discovery/inbox/` is empty — which is exactly the owner's "type an idea in the
+ * cabin and see what happens" first run, and exactly the round a chair is most likely to answer rather than ask
+ * about. The word the check wants is the word the board owes there anyway, so the fill is retried once with it
+ * before anything is thrown away (ruling R-T3-2).
+ */
+export function partsRefusedBy(findings: string[]): PressurePart[] {
+  const said = findings.join('\n');
+  return PRESSURE_PARTS.filter((p) => new RegExp(p.replace(/-/g, '[- ]'), 'i').test(said));
+}
+
+/**
+ * What the owner is told when they approved a brief the board was still rewriting.
+ *
+ * Their yes was given on a document they have not read: the `## Pressure test` under it is not the section they
+ * saw. So the approval is cleared rather than carried over — the note goes back to "Needs you" with this line
+ * on it, the pill counts it again, and the dispatcher has no flip to forge-check at all.
+ */
+export const BRIEF_DECIDED_EARLY = 'You approved this before the board finished; the pressure test has changed — read it and decide again.';
+
+/** What the owner is told above the fence when the board's own section could not be used. */
+export function briefBoardUnusable(check: string[]): string {
+  return `its findings could not be used because ${check.join(' ')}`;
 }
 
 /**
@@ -678,7 +725,7 @@ function clearBoardPending(vault: Vault, path: string): void {
  * that had passed it: a filled brief that fails goes back to the draft the author already got past the check,
  * with a warning, rather than reaching the owner unchecked.
  */
-export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promise<{ notePath: string; verdict: string; questions: string[] } | null> {
+export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promise<{ notePath: string; verdict: string; questions: string[]; used: boolean } | null> {
   const vault = deps.vault;
   if (vault.constitution().board_dialogue === 'brief') return null;
   const proposal = briefAwaitingBoard(vault);
@@ -690,20 +737,38 @@ export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promi
   // owner is asked. The flag comes off either way, or the brief would wait for a board that does not exist.
   if (!team || !chair) {
     clearBoardPending(vault, proposal.path);
-    vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { where: 'brief_board', reason: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the founder brief passed') } });
+    vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { where: 'brief_board', message: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the founder brief passed') } });
     return null;
   }
   const session = await runBoardSession(deps, org, {
     kind: 'brief', text: draft, title: BRIEF_SUBJECT_TITLE, slug: BRIEF_SUBJECT_SLUG, key: briefSubjectKey(draft),
   }, { decision: briefDecisionId(proposal.id) });
   const verdict = session.pressure ?? (session.verdict === 'pass' ? 'STRONG' : 'WEAK');
-  const filled = session.notePath
-    ? setSection(draft, PRESSURE_TEST_SECTION, renderBriefPressureSection(session.findingsByPart, verdict, session.notePath))
-    : draft;
-  // The same check `proposal.create` ran on the draft, run again on what the board made of it (ruling FR-4).
-  const check = checkFounderBrief(vault, filled, briefCheckContext(vault));
-  const brief = check.ok ? filled : draft;
-  if (!check.ok) {
+  const ctx = briefCheckContext(vault);
+  const fill = (findings: Partial<Record<PressurePart, string>>): string =>
+    setSection(draft, PRESSURE_TEST_SECTION, renderBriefPressureSection(findings, verdict, session.notePath));
+
+  // The same check `proposal.create` ran on the draft, run again on what the board made of it (ruling FR-4) —
+  // and then once more with the parts it named written as `unstated`, which is the word it is asking for and
+  // the word the board owes wherever the material establishes nothing (ruling R-T3-2).
+  let brief = session.notePath ? fill(session.findingsByPart) : draft;
+  let check = checkFounderBrief(vault, brief, ctx);
+  if (!check.ok && session.notePath) {
+    const refused = partsRefusedBy(check.findings);
+    if (refused.length) {
+      const trimmed = { ...session.findingsByPart };
+      for (const p of refused) trimmed[p] = UNSTATED;
+      const second = fill(trimmed);
+      const recheck = checkFounderBrief(vault, second, ctx);
+      if (recheck.ok) { brief = second; check = recheck; }
+    }
+  }
+  // Still refused: the draft stands, and **the note says so**. A block claiming the board's five findings are
+  // below the fence, over a section the research office wrote and a verdict that may be the other word, is the
+  // one thing worse than no board at all (ruling R-T3-2).
+  const unusable = check.ok ? '' : briefBoardUnusable(check.findings);
+  if (unusable) {
+    brief = draft;
     vault.events.emit({ type: 'daemon.warning', agent: chair, payload: { where: 'brief_board', message: `the board's pressure test did not pass the brief's own truth check, so the draft section stands: ${check.findings.join(' ')}`.slice(0, 400) } });
   }
   try {
@@ -712,7 +777,9 @@ export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promi
       chairLost: session.chairLost ?? undefined, cycle: proposal.id, inputs: [`[[${session.notePath.replace(/\.md$/, '')}]]`],
       unreviewedNote: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the founder brief passed'),
       noFindingsNote: 'The board found nothing in this brief likely to sink the company.',
-      context: `The board pressure-tested ${BRIEF_SUBJECT_TITLE} before the owner was asked to adopt it, one question at a time. The argument is in [[${session.notePath.replace(/\.md$/, '')}]]; its five findings are the \`${PRESSURE_TEST_SECTION}\` section of ${FOUNDER_BRIEF}.`,
+      context: unusable
+        ? `The board pressure-tested ${BRIEF_SUBJECT_TITLE} before the owner was asked to adopt it, one question at a time, and ruled ${verdict}. The argument is in [[${session.notePath.replace(/\.md$/, '')}]], but ${unusable} — so the \`${PRESSURE_TEST_SECTION}\` section of ${FOUNDER_BRIEF} is the research office's draft and not the board's findings.`
+        : `The board pressure-tested ${BRIEF_SUBJECT_TITLE} before the owner was asked to adopt it, one question at a time. The argument is in [[${session.notePath.replace(/\.md$/, '')}]]; its five findings are the \`${PRESSURE_TEST_SECTION}\` section of ${FOUNDER_BRIEF}.`,
       options: '- Adopt it: every plan is written against it\n- Send it back: the company writes it again from what the owner says',
       chosen: `The board's verdict on the brief as it stands: ${verdict}.`,
       why: 'The owner adopts the brief; the board only tells them what it is worth before they do.',
@@ -721,9 +788,25 @@ export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promi
       reviewDays: 30,
     });
   } catch { /* a record is never a reason to hold the brief back from the owner */ }
+  // Re-read before the one write that matters (ruling R-T3-3). The owner can set `approved:` in Obsidian while
+  // the session is in flight; the dispatcher skips the note while the flag is on, but a note that was resolved
+  // some other way must not have its body rewritten underneath the decision.
+  const now = listInbox(vault).find((n) => n.data.id === proposal.id);
+  if (!now || now.data.resolved_at) {
+    vault.events.emit({ type: 'daemon.warning', agent: chair, payload: { where: 'brief_board', message: `the founder brief was decided while the board was still sitting, so its findings were not written into it; they are in [[${session.notePath.replace(/\.md$/, '')}]]` } });
+    return { notePath: session.notePath, verdict, questions: session.questions, used: false };
+  }
+  // An approval set from Obsidian while the board was still rewriting the section was given on a document the
+  // owner has not read, so it is **cleared, not carried over**: the note goes back to undecided with
+  // `BRIEF_DECIDED_EARLY` above the fence, the pill counts it again, and the dispatcher has no flip to
+  // forge-check. What the owner typed underneath is theirs and is kept — `founderBriefProposalBody` rebuilds
+  // everything above the fence, so their paragraph is re-appended under it where the rejection path reads it.
+  const decidedEarly = now.data.approved !== null;
+  const comment = decidedEarly ? splitRejectedBrief({ data: now.data as Record<string, unknown>, body: now.body }).comment : '';
+  const body = briefProposalBodyWithBoard(brief, briefBoardBlock({ verdict, notePath: session.notePath, questions: session.questions, unusable, decidedEarly }));
   vault.updateNote(proposal.path, (n) => ({
-    data: { ...n.data, board_pending: false },
-    body: briefProposalBodyWithBoard(brief, briefBoardBlock({ verdict, notePath: session.notePath, questions: session.questions })),
+    data: { ...n.data, board_pending: false, ...(decidedEarly ? { approved: null, chosen: null } : {}) },
+    body: comment ? `${body.trimEnd()}\n\n${comment}\n` : body,
   }), chair);
-  return { notePath: session.notePath, verdict, questions: session.questions };
+  return { notePath: session.notePath, verdict, questions: session.questions, used: !unusable };
 }

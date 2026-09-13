@@ -1752,6 +1752,28 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
       case 'discovery': {
         const org = loadOrg(vault);
         const ceo = officeHolder(org, 'chief_executive');
+        /**
+         * The board's pressure test on a brief that is waiting for one (ruling P8-6), run **first** so that
+         * every cycle is a recovery pass (ruling R-T3-1).
+         *
+         * Held only at the bottom of this step, it was reachable on exactly one cycle — the one that resumed
+         * when the discovery job went terminal — and a brief that missed it was stuck for good: `board_pending`
+         * has no other writer, `briefProposalOpen` makes `status.run` false so every later cycle returns above
+         * it, and the owner is left with a note they cannot decide, no transcript, and no plan. So it runs
+         * before anything in this step can `break`, and it is a no-op when nothing is pending.
+         */
+        const pressureTestTheBrief = async (where: string): Promise<string> => {
+          try {
+            const held = await runBriefBoardSession(deps, org);
+            return held ? `; the board pressure-tested the founder brief (${held.verdict}${held.questions.length ? `, ${held.questions.length} question(s) for you` : ''})` : '';
+          } catch (err) {
+            // The flag stays on, which is what makes the next cycle try again rather than strand the note.
+            vault.events.emit({ type: 'daemon.warning', agent: ceo, job: jobId, payload: { where, message: `the board could not pressure-test the founder brief; it will try again next cycle: ${(err as Error).message.slice(0, 200)}` } });
+            return '';
+          }
+        };
+        const recovered = await pressureTestTheBrief('discovery.recovery');
+        if (cancelled()) return { status: 'cancelled' };
         if (!state.discoveryJob) {
           // A discovery job that is still being worked on means the company is reading right now, whatever the
           // cache says. Checked from the vault before anything else, because a kill in the one write between
@@ -1781,9 +1803,9 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
             status = currentDiscoveryStatus(vault, now());
           }
           const askedNote = asked ? `asked the founder interview (${asked})` : '';
-          if (!status.run) { done(i, [askedNote, status.why].filter(Boolean).join('; ')); break; }
+          if (!status.run) { done(i, [askedNote, status.why].filter(Boolean).join('; ') + recovered); break; }
           const id = enqueueDiscovery(vault, org, status);
-          if (!id) { done(i, [askedNote, status.why].filter(Boolean).join('; ')); break; }
+          if (!id) { done(i, [askedNote, status.why].filter(Boolean).join('; ') + recovered); break; }
           state = { ...state, discoveryJob: id }; saveState(state);
           return block(id, `waiting for discovery ${id}${askedNote ? `; ${askedNote}` : ''}`);
         }
@@ -1793,21 +1815,12 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           // make this cycle's brief say the team plans had not finished even after every one of them did.
           const w = waitForDiscovery(state.discoveryJob, (min) => `discovery ${state.discoveryJob} still ${sub?.data.status ?? 'missing'} after ${min} min — planning from what there is`);
           if (w) return w;
-          break;
+          break;   // `recovered` already ran: a brief left pending by an earlier cycle is finished either way
         }
         if (job.status !== 'running') updateJob(vault, jobId, { status: 'running', blocked_on: undefined }, 'ceo');
-        // The brief the job just filed is not finished until the board has pressure-tested it (ruling P8-6).
-        // Here, because this is the first moment the daemon holds the org, a model and a terminal discovery job
-        // at once — and because the owner must not be asked to adopt a brief whose `## Pressure test` is still
-        // the author's draft. A failure is a warning, never the cycle: the flag comes off inside the session so
-        // a brief can never be stranded behind a board that would not sit.
-        let briefBoard = '';
-        try {
-          const held = await runBriefBoardSession(deps, org);
-          if (held) briefBoard = `; the board pressure-tested the founder brief (${held.verdict}${held.questions.length ? `, ${held.questions.length} question(s) for you` : ''})`;
-        } catch (err) {
-          vault.events.emit({ type: 'daemon.warning', agent: ceo, job: jobId, payload: { where: 'discovery', message: `the board could not pressure-test the founder brief: ${(err as Error).message.slice(0, 200)}` } });
-        }
+        // …and again now the job has filed its brief, so the document is finished inside the cycle that wrote
+        // it rather than at the start of the next one. A no-op when the pass above already held the session.
+        const briefBoard = recovered || await pressureTestTheBrief('discovery');
         if (cancelled()) return { status: 'cancelled' };
         done(i, `discovery ${sub.data.status}${briefBoard}`);
         break;
