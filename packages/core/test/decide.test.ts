@@ -155,6 +155,28 @@ describe('ownerDecide writes the note the way an editor would', () => {
     expect(() => ownerDecide(vault, id, { approved: true })).toThrow(/already decided/);
   });
 
+  it('refuses a founder brief the board is still sitting on (ruling R-T3-3)', () => {
+    const { id, path: rel } = createProposal(vault, { kind: 'founder_brief', from: 'ceo', target: 'Memory/founder_brief.md', title: 'The brief', body: '## Proposed content\n\n```md\n# Brief\n```\n' }, 'ceo');
+    vault.updateNote(rel, (n) => ({ data: { ...n.data, board_pending: true }, body: n.body }), 'daemon');
+
+    // The pressure test is half of what the owner would be deciding on, so there is nothing to adopt yet.
+    expect(() => ownerDecide(vault, id, { approved: true })).toThrow(OwnerDecideError);
+    expect(() => ownerDecide(vault, id, { approved: true })).toThrow('the board is still sitting on this brief; decide once its pressure test is in');
+    // Sending it back is a decision on the brief too, and it is blocked for the same reason.
+    expect(() => ownerDecide(vault, id, { approved: false, comment: 'too vague' })).toThrow(/still sitting/);
+    expect(findInboxById(vault, id)!.data.approved).toBeNull();
+
+    // Once the board is off it, the same click lands.
+    vault.updateNote(rel, (n) => ({ data: { ...n.data, board_pending: false }, body: n.body }), 'daemon');
+    expect(ownerDecide(vault, id, { approved: true }).approved).toBe(true);
+  });
+
+  it('the flag blocks a founder brief and nothing else', () => {
+    const { id, path: rel } = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'The plan', body: 'b' }, 'ceo');
+    vault.updateNote(rel, (n) => ({ data: { ...n.data, board_pending: true }, body: n.body }), 'daemon');
+    expect(ownerDecide(vault, id, { approved: true }).approved).toBe(true);
+  });
+
   it('refuses a chosen that names no option, and one on a note with nothing to choose', () => {
     const { id } = createProposal(vault, { kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Pick one', body: THREE }, 'ceo');
     expect(() => ownerDecide(vault, id, { approved: true, chosen: 4 })).toThrow(/matches no option/);
