@@ -208,6 +208,7 @@ Body: freeform notes, appended to every expanded step's job goal.
 | `call` | object (optional) | stored tool call executed after approval (`spend`, `outbound_batch`, `file_change`) |
 | `target` | string (optional) | file a brand/charter/file change applies to (validated per kind) |
 | `job` | string (optional) |  |
+| `board_pending` | boolean (optional) | SP8: a `founder_brief` the board has not pressure-tested yet. The brief reaches the inbox from the discovery job's own tool call, so this says the `## Pressure test` section is not written and the owner should not be asked to rule on it; the daemon clears it when the board's findings are in the brief. Never set under `board_dialogue: brief` |
 
 ### Decision note (Decisions/*.md)
 

@@ -22,13 +22,16 @@
  */
 import {
   type Vault, type Org, type ModelTier, nowIso, stampForFilename, stringifyNote, idFromKey,
-  officeHolder, listInbox, createProposal, renderRubric,
+  officeHolder, listInbox, createProposal, renderRubric, setSection, sha256,
   PRESSURE_PARTS, type PressurePart, PRESSURE_HANDBOOK_PATH, BANNED_HEDGE, OWNER_QUESTION, isOwnerQuestion, hedges,
+  PRESSURE_TEST_SECTION, FOUNDER_BRIEF, founderBriefProposalBody, briefFromProposalBody, citedPaths,
+  checkFounderBrief, briefCheckContext, UNSTATED,
 } from '@cubicle/core';
 import {
   type HeartbeatDeps, type BoardSubject, type BoardMerge, type BoardSessionResult,
   boardSubject, boardAgenda, mergeBoardVerdict, unansweredMerge, chairReaskPrompt, chairLostNote,
   chairFormat, ADVISOR_ASK, askAs, advisorSystem, SUBJECT_CHARS, CHAIR_IDEA_TOKENS,
+  runBoardSession, writeBoardDecision, BOARD_UNREVIEWED_NOTE, BOARD_OPEN_QUESTIONS,
 } from './heartbeat.js';
 
 /** The five argued rounds plus the verdict. Six is a consequence of `PRESSURE_PARTS`, not a second opinion. */
@@ -74,7 +77,7 @@ function noBoard(s: BoardSubject): BoardSessionResult {
   return {
     verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null,
     advisors: [], transcript: '', answered: 0, subject: s, calls: 0, reasked: false, chairLost: null,
-    chairText: '', notePath: '', questions: [],
+    chairText: '', notePath: '', questions: [], findingsByPart: {},
   };
 }
 
@@ -83,9 +86,47 @@ function subjectSlug(s: BoardSubject): string {
   return s.slug ?? 'plan';
 }
 
-/** How a subject is recognised across sessions, so the re-run rule can find the last one. */
+/** The sections of a subject the **board itself** writes back, which must not count as the subject changing. */
+const BOARD_WRITTEN_SECTIONS = ['## The board', '## Score', PRESSURE_TEST_SECTION];
+
+/**
+ * What the board actually read, with its own writing taken out.
+ *
+ * The digest below is the whole of the re-run rule, so what goes into it decides what "the same subject" means.
+ * An idea card gains `## The board` and a re-rendered `## Score` from the session that judged it, and a brief
+ * gains its `## Pressure test` — digest those and every subject would look changed the moment it was judged,
+ * and no round would ever be reused. Digest without them and what is left is the material: the dossier, the
+ * evidence, the owner's own words.
+ */
+export function subjectMaterial(text: string): string {
+  const out: string[] = [];
+  let dropping = false;
+  for (const line of text.replace(/\r/g, '').split('\n')) {
+    if (/^## /.test(line)) dropping = BOARD_WRITTEN_SECTIONS.includes(line.trim());
+    if (!dropping) out.push(line);
+  }
+  return out.join('\n').trim();
+}
+
+/**
+ * How a subject is recognised across sessions, so the re-run rule can find the last one.
+ *
+ * **The content is part of the key** (review I2). Keyed on the kind and the slug alone, every cycle's plan was
+ * "the plan": cycle two found cycle one's session, reused all five rounds because each had reached a finding,
+ * made no advisor call at all and voted on today's plan over yesterday's argument. A session is reused only
+ * when the board would be reading the very same words — which is exactly when re-arguing would be waste, and
+ * exactly when the owner answering a question is the only thing that has changed.
+ *
+ * An explicit `key` wins, for a subject whose material the caller can identify better than its text can.
+ */
 export function boardSubjectKey(s: BoardSubject): string {
-  return s.kind === 'idea' ? `idea:${subjectSlug(s)}` : 'plan';
+  if (s.key) return s.key;
+  return `${s.kind}:${s.kind === 'plan' ? 'plan' : subjectSlug(s)}:${subjectDigest(s.text)}`;
+}
+
+/** The digest the key carries: short enough to read in frontmatter, long enough not to collide. */
+export function subjectDigest(text: string): string {
+  return sha256(subjectMaterial(text)).slice(0, 12);
 }
 
 /**
@@ -100,7 +141,7 @@ export function chairRoundPrompt(s: BoardSubject, o: {
   transcript: string;
   verdict: boolean;
 }): string {
-  const what = s.kind === 'idea' ? 'this idea' : 'this plan';
+  const what = s.kind === 'plan' ? 'this plan' : s.kind === 'brief' ? 'this founder brief' : 'this idea';
   const lines: string[] = [
     `You chair the board of this company. The board is pressure-testing ${what}, in the open, one question at a time.`,
     '',
@@ -128,7 +169,7 @@ export function chairRoundPrompt(s: BoardSubject, o: {
       '',
     );
   }
-  if (o.verdict && s.kind === 'idea') {
+  if (o.verdict && s.kind !== 'plan') {
     lines.push(
       `Then deliver the board's verdict on ${what}. The test is: would Paul Graham fund this in its current form? Write exactly this, in this order:`,
       '',
@@ -270,9 +311,34 @@ export function ownerSpokeSince(vault: Vault, since: string): boolean {
   return listInbox(vault).some((n) => n.data.kind === 'message' && n.data.from === 'owner' && String(n.data.created ?? '') > since);
 }
 
-/** The id of the one cabin message a session's questions go out as. Keyed on the session, so a replay is a no-op. */
-export function boardQuestionsMessageId(meetingId: string): string {
-  return idFromKey('msg', `board-questions:${meetingId}`);
+/**
+ * The id of the one cabin message a set of questions goes out as.
+ *
+ * Keyed on the **questions**, not on the session (review I3). Keyed on the session — whose id carries the
+ * timestamp it opened at — the same unanswered question arrived in the cabin as a brand-new "The board needs 1
+ * answer from you" every cycle the board sat, which is the company nagging. Keyed on the text, a question is
+ * asked once; when the board finds a different one, that is a different message.
+ */
+export function boardQuestionsMessageId(subjectKey: string, questions: string[]): string {
+  return idFromKey('msg', `board-questions:${subjectKey}:${sha256(questions.map(bareQuestion).join('\n')).slice(0, 12)}`);
+}
+
+/** A question without its marker, which is how it is written to the owner and how it is recognised again. */
+export function bareQuestion(q: string): string {
+  return q.replace(new RegExp(`^${OWNER_QUESTION}\\s*`, 'i'), '').trim();
+}
+
+/** The line a questions message opens on — its title, and the marker that finds it again in the inbox. */
+export const BOARD_QUESTIONS_TITLE_RE = /^#\s+The board needs \d+ answers? from you\s*$/m;
+
+/**
+ * Every question this chair has already put to the owner, read off the messages it sent. The notes are the
+ * record: nothing is cached, so a restarted daemon asks exactly what a running one would.
+ */
+export function questionsAlreadyAsked(vault: Vault, chair: string): string[] {
+  return listInbox(vault)
+    .filter((n) => n.data.kind === 'message' && n.data.from === chair && BOARD_QUESTIONS_TITLE_RE.test(n.body))
+    .flatMap((n) => [...n.body.matchAll(/^\d+\.[ \t]+(.+)$/gm)].map((m) => m[1].trim()));
 }
 
 /** What the owner is asked when the board could not answer a round from the material it had. */
@@ -389,7 +455,7 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
   const chairTurn = async (o: { close: PressurePart | null; open: PressurePart | null; challenge: string; verdict: boolean }): Promise<string | null> => {
     calls++;
     return askAs(deps, chair, advisorSystem(vault, chair), chairRoundPrompt(s, { ...o, transcript: transcriptSoFar() }),
-      o.verdict ? (s.kind === 'idea' ? CHAIR_IDEA_TOKENS : 600) : CHAIR_TURN_TOKENS, leadTier);
+      o.verdict ? (s.kind === 'plan' ? 600 : CHAIR_IDEA_TOKENS) : CHAIR_TURN_TOKENS, leadTier);
   };
 
   let closing: PressurePart | null = null;
@@ -433,13 +499,13 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
   let merge: BoardMerge = verdictTurn === null
     ? { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null }
     : mergeBoardVerdict(chairPage(), s.kind);
-  let chairText = s.kind === 'idea' && verdictTurn !== null && !merge.refused ? chairPage() : '';
+  let chairText = s.kind !== 'plan' && verdictTurn !== null && !merge.refused ? chairPage() : '';
   let reasked = false;
   let chairLost: string | null = null;
   if (merge.refused) {
     reasked = true;
     calls++;
-    const again = await askAs(deps, chair, advisorSystem(vault, chair), chairReaskPrompt(s, transcriptSoFar(), merge.refused), s.kind === 'idea' ? CHAIR_IDEA_TOKENS : 600, leadTier);
+    const again = await askAs(deps, chair, advisorSystem(vault, chair), chairReaskPrompt(s, transcriptSoFar(), merge.refused), s.kind === 'plan' ? 600 : CHAIR_IDEA_TOKENS, leadTier);
     if (again === null) {
       chairLost = chairLostNote(merge.refused);
       merge = { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null };
@@ -458,7 +524,7 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
     ...merge,
     advisors, transcript: turns.map((t) => `**Round ${t.round} — ${t.role}:** ${t.text}`).join('\n\n'),
     answered: answeredBy.size, subject: s, calls, reasked, chairLost, chairText,
-    notePath: rel, questions,
+    notePath: rel, questions, findingsByPart: findings,
   };
   vault.events.emit({
     type: 'meeting.closed', agent: chair,
@@ -468,14 +534,17 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
       decision: `VERDICT: ${out.pressure ?? out.verdict}`, path: rel, turns: turns.length, calls,
     },
   });
-  // One cabin message, from the chair, carrying everything the board could not know (spec §3). Keyed on the
-  // session, so a resumed cycle never asks the owner the same questions twice.
-  if (questions.length) {
+  // One cabin message, from the chair, carrying everything the board could not know (spec §3) — and only what
+  // it has not already asked (review I3). A question the owner has not answered yet is still open, and the
+  // board goes on recording it every session; asking it again every cycle is nagging, not diligence.
+  const asked = new Set(questionsAlreadyAsked(vault, chair));
+  const fresh = questions.filter((q) => !asked.has(bareQuestion(q)));
+  if (fresh.length) {
     try {
       createProposal(vault, {
-        id: boardQuestionsMessageId(meetingId), kind: 'message', from: chair, to: 'owner',
-        title: `The board needs ${questions.length} answer${questions.length === 1 ? '' : 's'} from you`,
-        body: boardQuestionsBody({ title: s.title, questions, notePath: rel, verdict: out.pressure ?? out.verdict }),
+        id: boardQuestionsMessageId(subjectKey, fresh), kind: 'message', from: chair, to: 'owner',
+        title: `The board needs ${fresh.length} answer${fresh.length === 1 ? '' : 's'} from you`,
+        body: boardQuestionsBody({ title: s.title, questions: fresh, notePath: rel, verdict: out.pressure ?? out.verdict }),
       }, chair);
     } catch { /* a question is worth asking, never worth stalling the cycle over */ }
   }
@@ -495,4 +564,166 @@ export function linkBoardTranscript(vault: Vault, notePath: string, decisionId: 
   try {
     vault.updateNote(notePath, (n) => ({ data: { ...n.data, decision: decisionId }, body: n.body }), by);
   } catch { /* the transcript is the record; a missing back-link is not worth a cycle */ }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// The founder brief's own pressure test (ruling P8-6)
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What the board is judging when it sits on the brief. The title reaches the meeting note, the agenda, the
+ * decision note and the owner's proposal, so it is written once.
+ */
+export const BRIEF_SUBJECT_TITLE = 'the founder brief';
+
+/** The filename slug a brief session's transcript takes: `Meetings/<stamp>-board-founder-brief.md`. */
+export const BRIEF_SUBJECT_SLUG = 'founder-brief';
+
+/**
+ * The subject key a brief session is found again by: the brief's own material (review I2). Not the proposal id —
+ * a brief re-filed word for word is the same document and deserves the argument it already got, and a brief
+ * rewritten after a rejection is a different one however it is filed.
+ */
+export function briefSubjectKey(draft: string): string { return `brief:${subjectDigest(draft)}`; }
+
+/** The `Decisions/` note a brief session writes, keyed on the proposal so a resumed cycle rewrites one note. */
+export function briefDecisionId(proposalId: string): string { return `board-brief-${proposalId}`; }
+
+/** A round finding flattened to one line of prose: the brief's five parts are bold lead-ins, not a list. */
+function oneLine(text: string): string {
+  return text.replace(/\r/g, '').split('\n')
+    .map((l) => l.trim().replace(/^(?:[-*+]|\d+[.)])\s+/, '').trim())
+    .filter(Boolean)
+    .join('; ');
+}
+
+/**
+ * The brief's `## Pressure test` section, written out of the board's five round findings and its verdict.
+ *
+ * Shaped for the two readers it has. `checkFounderBrief` runs `readPressureVerdict` over this section, so the
+ * verdict word leads the `**Brutal Verdict:**` line; and a round the board could not answer becomes
+ * `unstated — QUESTION FOR THE OWNER: …`, which is both the honest sentence and the word rule 3 of that check
+ * requires wherever nothing about the owner is established. The board never fills a gap with prose.
+ */
+export function renderBriefPressureSection(
+  findings: Partial<Record<PressurePart, string>>, verdict: string, notePath: string,
+): string {
+  const part = (p: PressurePart): string => {
+    const f = (findings[p] ?? '').trim();
+    const text = isOwnerQuestion(f) ? `${UNSTATED} — ${oneLine(f)}` : oneLine(f) || UNSTATED;
+    return p === 'Brutal Verdict' ? `**${p}:** ${verdict} — ${text}` : `**${p}:** ${text}`;
+  };
+  return [
+    ...PRESSURE_PARTS.map(part),
+    '',
+    `The board argued this out round by round in [[${notePath.replace(/\.md$/, '')}]].`,
+  ].join('\n');
+}
+
+/** The block the owner reads above the brief: what the board made of it, and what it had to ask them. */
+export function briefBoardBlock(o: { verdict: string; notePath: string; questions: string[] }): string {
+  return [
+    `The board pressure-tested this before you saw it and ruled **${o.verdict}**. Its five findings are the \`${PRESSURE_TEST_SECTION}\` section of the brief below, and the argument it took to get there is in [[${o.notePath.replace(/\.md$/, '')}]].`,
+    ...(o.questions.length ? [
+      '',
+      BOARD_OPEN_QUESTIONS,
+      '',
+      ...o.questions.map((q) => `- ${q.replace(new RegExp(`^${OWNER_QUESTION}\\s*`, 'i'), '')}`),
+      '',
+      'The verdict stands as given; answering these only changes what the board re-argues next time.',
+    ] : []),
+  ].join('\n');
+}
+
+/**
+ * The proposal body with the board's block above the document.
+ *
+ * **Above**, not below, and that is load-bearing: `splitRejectedBrief` reads everything *after* the fence as
+ * the owner's own words when they turn a brief down (ruling C1, and the live run that handed a thousand
+ * characters of the company's own prose back as the owner's). Anything the company added under the fence would
+ * be quoted to the research office as the rejection.
+ */
+export function briefProposalBodyWithBoard(brief: string, board: string): string {
+  const body = founderBriefProposalBody(brief, citedPaths(brief));
+  const at = body.indexOf('## Proposed content');
+  return at < 0 ? `${board}\n\n${body}` : `${body.slice(0, at)}${board}\n\n${body.slice(at)}`;
+}
+
+/** The `founder_brief` proposal the board still owes a pressure test, or null. */
+export function briefAwaitingBoard(vault: Vault): { id: string; path: string; body: string } | null {
+  const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief' && n.data.board_pending === true && n.data.approved === null && !n.data.resolved_at);
+  return note ? { id: String(note.data.id), path: note.path, body: note.body } : null;
+}
+
+/** Take the flag off, so the owner is asked. Its own function because two paths do it for two reasons. */
+function clearBoardPending(vault: Vault, path: string): void {
+  vault.updateNote(path, (n) => ({ data: { ...n.data, board_pending: false }, body: n.body }), 'daemon');
+}
+
+/**
+ * The board's pressure test on the founder brief (ruling P8-6).
+ *
+ * The owner's ask was that the framework asks itself and talks to itself, and the brief is where that matters
+ * most: it is the one document every plan is written against. So the same six-round dialogue that judges an
+ * idea judges the brief, its five round findings **become** the brief's `## Pressure test` section, and the
+ * proposal the owner adopts links the argument and names what the board could not know.
+ *
+ * It runs here rather than in `proposal.create` because a tool cannot hold a board session: the discovery job
+ * files the brief, `board_pending` says the document is not finished yet, and this — called from the
+ * heartbeat's `discovery` step, the first place the daemon has the org, a model and a finished discovery job
+ * all at once — finishes it before the owner is asked anything. `board_dialogue: brief` keeps the discovery
+ * job's own section and never sits.
+ *
+ * The truth check runs again on the filled brief, because the board has just rewritten a section of a document
+ * that had passed it: a filled brief that fails goes back to the draft the author already got past the check,
+ * with a warning, rather than reaching the owner unchecked.
+ */
+export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promise<{ notePath: string; verdict: string; questions: string[] } | null> {
+  const vault = deps.vault;
+  if (vault.constitution().board_dialogue === 'brief') return null;
+  const proposal = briefAwaitingBoard(vault);
+  if (!proposal) return null;
+  const team = org.teams.board;
+  const chair = team ? [...new Set([team.lead, ...team.members])].filter((r) => org.roles[r])[0] : undefined;
+  const draft = briefFromProposalBody(proposal.body);
+  // No board, no session — and no brief held hostage to one: the discovery job's own section stands and the
+  // owner is asked. The flag comes off either way, or the brief would wait for a board that does not exist.
+  if (!team || !chair) {
+    clearBoardPending(vault, proposal.path);
+    vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { where: 'brief_board', reason: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the founder brief passed') } });
+    return null;
+  }
+  const session = await runBoardSession(deps, org, {
+    kind: 'brief', text: draft, title: BRIEF_SUBJECT_TITLE, slug: BRIEF_SUBJECT_SLUG, key: briefSubjectKey(draft),
+  }, { decision: briefDecisionId(proposal.id) });
+  const verdict = session.pressure ?? (session.verdict === 'pass' ? 'STRONG' : 'WEAK');
+  const filled = session.notePath
+    ? setSection(draft, PRESSURE_TEST_SECTION, renderBriefPressureSection(session.findingsByPart, verdict, session.notePath))
+    : draft;
+  // The same check `proposal.create` ran on the draft, run again on what the board made of it (ruling FR-4).
+  const check = checkFounderBrief(vault, filled, briefCheckContext(vault));
+  const brief = check.ok ? filled : draft;
+  if (!check.ok) {
+    vault.events.emit({ type: 'daemon.warning', agent: chair, payload: { where: 'brief_board', message: `the board's pressure test did not pass the brief's own truth check, so the draft section stands: ${check.findings.join(' ')}`.slice(0, 400) } });
+  }
+  try {
+    writeBoardDecision(vault, briefDecisionId(proposal.id), {
+      verdict: session.verdict, findings: session.findings, decidedBy: chair, now: new Date(), answered: session.answered,
+      chairLost: session.chairLost ?? undefined, cycle: proposal.id, inputs: [`[[${session.notePath.replace(/\.md$/, '')}]]`],
+      unreviewedNote: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the founder brief passed'),
+      noFindingsNote: 'The board found nothing in this brief likely to sink the company.',
+      context: `The board pressure-tested ${BRIEF_SUBJECT_TITLE} before the owner was asked to adopt it, one question at a time. The argument is in [[${session.notePath.replace(/\.md$/, '')}]]; its five findings are the \`${PRESSURE_TEST_SECTION}\` section of ${FOUNDER_BRIEF}.`,
+      options: '- Adopt it: every plan is written against it\n- Send it back: the company writes it again from what the owner says',
+      chosen: `The board's verdict on the brief as it stands: ${verdict}.`,
+      why: 'The owner adopts the brief; the board only tells them what it is worth before they do.',
+      risksHeading: 'Most likely ways this company fails, and what would prevent each:',
+      epilogue: 'The owner rules; the board advises.',
+      reviewDays: 30,
+    });
+  } catch { /* a record is never a reason to hold the brief back from the owner */ }
+  vault.updateNote(proposal.path, (n) => ({
+    data: { ...n.data, board_pending: false },
+    body: briefProposalBodyWithBoard(brief, briefBoardBlock({ verdict, notePath: session.notePath, questions: session.questions })),
+  }), chair);
+  return { notePath: session.notePath, verdict, questions: session.questions };
 }

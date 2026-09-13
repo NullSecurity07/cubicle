@@ -43,7 +43,7 @@ export const SCRIPTED_FOUNDER_BRIEF = [
   '**Brutal Verdict:** WEAK — delivery is unpriced and the second nursery has bought once.', '',
 ].join('\n');
 
-export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boolean; ideaVerdict?: 'pass' | 'return'; ideaChair?: 'hedge-then-good' | 'hedge-then-refusal' | 'hedge-then-silence'; trustVerdict?: 'pass' | 'return'; outboundEmail?: Record<string, unknown> } = {}): Llm & { calls: Record<string, number> } {
+export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boolean; ideaVerdict?: 'pass' | 'return'; ideaChair?: 'hedge-then-good' | 'hedge-then-refusal' | 'hedge-then-silence'; trustVerdict?: 'pass' | 'return'; outboundEmail?: Record<string, unknown>; boardAsksOwner?: string } = {}): Llm & { calls: Record<string, number> } {
   let vetoes = opts.vetoes ?? 1;
   const plan = opts.plan ?? PLAN;
   const per = new Map<string, number>();
@@ -114,7 +114,10 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
         if (dialogueChair) {
           const close = last.match(/close the round on \*\*([^*]+)\*\*/)?.[1] ?? '';
           const open = last.match(/the question of \*\*([^*]+)\*\*/)?.[1] ?? '';
-          const finding = close ? `FINDING: ${PART[close] ?? `the board holds ${close} answered.`}\n\n` : '';
+          // SP8 §3: one round the material cannot answer, so the chair asks the owner instead of guessing.
+          const finding = !close ? ''
+            : close === opts.boardAsksOwner ? `QUESTION FOR THE OWNER: what have you actually run before?\n\n`
+            : `FINDING: ${PART[close] ?? `the board holds ${close} answered.`}\n\n`;
           if (/VERDICT: STRONG or WEAK or PIVOT REQUIRED/.test(last)) return { ...base, content: `${finding}${opts.ideaChair ? 'VERDICT: STRONG\nIt has potential, but the margins worry me.' : machineLines}` };
           if (/First line exactly "VERDICT: pass"/.test(last)) { const v = vetoes-- > 0; return { ...base, content: `${finding}${v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier'}` }; }
           return { ...base, content: `${finding}NEXT: On ${open}: what does this rest on, and how would we know it was false?` };

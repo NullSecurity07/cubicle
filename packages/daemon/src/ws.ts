@@ -110,6 +110,12 @@ export interface Snapshot {
     chosen: number | null;
     /** Why the dispatcher would not apply it — the `refused` the note carries — or null. */
     refused: string | null;
+    /**
+     * A `founder_brief` the board has not pressure-tested yet (ruling P8-6): the document is half-written, so it
+     * is listed — the owner can see the board is sitting on it — but must not be decidable, and it is not counted
+     * on the pill.
+     */
+    board_pending: boolean;
   }[];
   /** The last 20 notes the dispatcher closed — the Decisions sheet's *Decided* segment. */
   decided: { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean | null; chosen: number | null; outcome: string }[];
@@ -157,6 +163,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
         pending: n.data.approved !== null,
         approved: n.data.approved, chosen: n.data.chosen,
         refused: typeof d.refused === 'string' && d.refused ? d.refused : null,
+        board_pending: d.board_pending === true,
       };
     });
   // Newest first and few: *Decided* is the owner's receipt for what their clicks did, not the archive. The
@@ -213,7 +220,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
     plan: vault.readTextOrNull('Plans/plan.md') ?? '',
     // The pill is "N to approve", so it counts what still needs the owner — never a row that is only waiting
     // on the dispatcher. A decided note is off the owner's plate whatever the sheet still shows of it.
-    pendingProposals: inbox.filter((r) => !r.pending).length,
+    pendingProposals: inbox.filter((r) => !r.pending && !r.board_pending).length,
     brand, inbox, decided, chat, teams, offices: org.offices ?? {},
     conversations: listConversations(vault),
   };
