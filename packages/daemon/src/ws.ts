@@ -15,6 +15,10 @@ export interface WsDeps {
    * the next interval. The watcher cannot do it: `ownerDecide` writes through the vault and records the sha, so
    * the file never reads as an outside edit — which is the whole point (the guard has to be able to tell this
    * write apart from an Obsidian save), and the cost of it is that the tick has to be asked for by hand.
+   *
+   * The same silence cost the company a cycle (ruling P8-14): the decision the owner takes here is also the
+   * one an Obsidian save would have woken a heartbeat for, so the handler is given the note's `id` and the
+   * daemon puts it through `inboxEditWakesHeartbeat` before it ticks.
    */
   onDecide?: (id: string) => void;
   /** Shared secret; clients pass it as `?token=`. Generated when omitted and exposed via `token`. */
