@@ -175,7 +175,11 @@ function decide(id: string, approved: boolean, comment: string): void {
   if (commentRequired(d, approved) && !comment) { state = decideFailed(state, id, COMMENT_REQUIRED); refresh(); return; }
   state = decideSent(state, id, { approved, chosen });
   refresh();
-  if (!net.decide(id, { approved, chosen, comment })) { state = decideFailed(state, id, 'The daemon is not connected, so nothing was decided.'); refresh(); }
+  // `confirm` only on the yes, and only on a row the daemon marked (SP9 ruling W3-3): the button the owner pressed
+  // said "Adopt anyway", so the flag is what that button means. Sending it back never needs it — agreeing with the
+  // board is not overruling it — and the daemon decides whether the note needed one, not this.
+  const confirm = approved && !!note.needs_confirm;
+  if (!net.decide(id, { approved, chosen, comment, confirm })) { state = decideFailed(state, id, 'The daemon is not connected, so nothing was decided.'); refresh(); }
 }
 
 /** A control inside the open view was used (ui/panel.ts routes every `data-act` here). */

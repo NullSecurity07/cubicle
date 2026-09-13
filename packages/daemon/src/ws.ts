@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'node:crypto';
-import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, readLedger, moneyReport, money as moneyStr, ownerDecide, proposalOptions, decidableFor, pressureBlock, resolvedOutcome, listConversations, readConversation, type Decidable, type Thread, type Turn, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
+import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, readLedger, moneyReport, money as moneyStr, ownerDecide, proposalOptions, decidableFor, pressureBlock, noteVerdict, needsConfirm, resolvedOutcome, listConversations, readConversation, type Decidable, type Thread, type Turn, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
 import { budgetRows } from './money.js';
 
@@ -110,6 +110,17 @@ export interface Snapshot {
     band: string; band_reason: string; board_verdict: string;
     /** The `## Pressure test` block when the note carries one, so the argument is on screen with the button. */
     pressure: string;
+    /**
+     * The board's pressure-test verdict word on this note — `STRONG`, `WEAK`, `PIVOT REQUIRED` — or `''`.
+     * `board_verdict` above is the pass/return of the *session*; this is what the board actually thinks of the
+     * business, and the reader puts it in the action bar so the owner reads it on the same screen as the button.
+     */
+    verdict: string;
+    /**
+     * Adopting this one overrules the board, so the office asks twice (ruling W3-3): the primary button reads
+     * "Adopt anyway" and sends `confirm: true`, and a `decide` without it is refused by `ownerDecide`.
+     */
+    needs_confirm: boolean;
     decidable: Decidable;
     /** Decided and waiting on the dispatcher. `false` for a row that still needs the owner. */
     pending: boolean;
@@ -167,6 +178,11 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
         options: options.map((o) => ({ n: o.n, label: o.label })),
         band: str(d.band), band_reason: str(d.band_reason), board_verdict: str(d.board_verdict),
         pressure: pressureBlock(n.body),
+        // Both off the whole note, never off `cutBody`'s truncation: the verdict line is the last line of the
+        // pressure test, which on a founder brief is the last section inside the fence — the first thing a cap
+        // would take. A row that lost it would offer a plain "Adopt brief" over a PIVOT REQUIRED.
+        verdict: noteVerdict(n.body),
+        needs_confirm: needsConfirm(n.data.kind, n.body),
         decidable: decidableFor(n.data.kind, options),
         pending: n.data.approved !== null,
         approved: n.data.approved, chosen: n.data.chosen,
@@ -266,7 +282,7 @@ export class WsServer {
     wss.on('connection', (ws) => {
       ws.on('message', (raw) => {
         try {
-          let msg: { op?: string; from?: string; to?: string; text?: string; cursor?: number; id?: unknown; approved?: unknown; chosen?: unknown; comment?: unknown } = {};
+          let msg: { op?: string; from?: string; to?: string; text?: string; cursor?: number; id?: unknown; approved?: unknown; chosen?: unknown; comment?: unknown; confirm?: unknown } = {};
           try { msg = JSON.parse(String(raw).slice(0, 20_000)); } catch { return; }
           if (msg.op === 'snapshot') ws.send(JSON.stringify(buildSnapshot(this.deps.vault, this.deps.router)));
           else if (msg.op === 'replay' && msg.from) {
@@ -295,9 +311,14 @@ export class WsServer {
               refuse('decide: chosen must be a number');
             } else if (msg.comment !== undefined && typeof msg.comment !== 'string') {
               refuse('decide: comment must be a string');
+            } else if (msg.confirm !== undefined && typeof msg.confirm !== 'boolean') {
+              refuse('decide: confirm must be a boolean');
             } else {
               try {
-                ownerDecide(this.deps.vault, id, { approved: msg.approved, chosen: msg.chosen as number | null | undefined, comment: msg.comment as string | undefined });
+                // `confirm` is the owner saying yes over the board's verdict (ruling W3-3). It is passed straight
+                // through and never defaulted: `ownerDecide` is the one place that decides whether this note needs
+                // it, so a client that forgets it gets the refusal that names the verdict rather than a silent yes.
+                ownerDecide(this.deps.vault, id, { approved: msg.approved, chosen: msg.chosen as number | null | undefined, comment: msg.comment as string | undefined, confirm: msg.confirm as boolean | undefined });
               } catch (err) {
                 refuse(String((err as Error).message).slice(0, 200));
                 return;

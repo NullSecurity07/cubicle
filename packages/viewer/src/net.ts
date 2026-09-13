@@ -68,11 +68,16 @@ export class Net {
   }
 
   chat(text: string): boolean { return this.send({ op: 'chat', text }); }
-  /** The owner's yes or no on one inbox note (SP8 §1). `chosen` is a 1-based option; `comment` is filed as theirs. */
-  decide(id: string, o: { approved: boolean; chosen?: number; comment?: string }): boolean {
+  /**
+   * The owner's yes or no on one inbox note (SP8 §1). `chosen` is a 1-based option; `comment` is filed as theirs;
+   * `confirm` is "yes, over the board's verdict" and is required to adopt a brief the board would not stand behind
+   * (SP9 ruling W3-3) — sent only when the row says so, so a client that never sets it cannot adopt one by accident.
+   */
+  decide(id: string, o: { approved: boolean; chosen?: number; comment?: string; confirm?: boolean }): boolean {
     const msg: Record<string, unknown> = { op: 'decide', id, approved: o.approved };
     if (o.chosen !== undefined) msg.chosen = o.chosen;
     if (o.comment) msg.comment = o.comment;
+    if (o.confirm) msg.confirm = true;
     return this.send(msg);
   }
   /** Ask for one thread's turns in full; the reply drops whatever arrived live before it (state.ts). */

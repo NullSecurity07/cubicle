@@ -30,9 +30,22 @@ export const decisionKind = (id: string): string => `decision:${id}`;
 /** What the owner is being asked for. A note the daemon has not labelled is a plain yes or no. */
 export const decidableOf = (n: Pick<InboxRow, 'decidable' | 'options'>): Decidable => n.decidable ?? (n.options?.length ? 'choose' : 'approve');
 
-/** The verbs of one action bar: the yes and the no. `adopt` is the founder brief's pair. */
-export function verbsFor(d: Decidable): { yes: string; no: string } {
-  return d === 'adopt' ? { yes: 'Adopt brief', no: 'Send back' } : { yes: 'Approve', no: 'Reject' };
+/**
+ * The verbs of one action bar: the yes and the no. `adopt` is the founder brief's pair.
+ *
+ * `needsConfirm` changes one word and means one thing (SP9 ruling W3-3): the board ruled `WEAK` or `PIVOT REQUIRED`
+ * on this brief, so adopting it is overruling the board and the button says so. "Adopt anyway" is the whole of the
+ * second step — it is not a dialog and not a disabled button, because the owner rules and the board advises; it is
+ * the difference between a click and a decision.
+ */
+export function verbsFor(d: Decidable, needsConfirm = false): { yes: string; no: string } {
+  if (d !== 'adopt') return { yes: 'Approve', no: 'Reject' };
+  return { yes: needsConfirm ? 'Adopt anyway' : 'Adopt brief', no: 'Send back' };
+}
+
+/** What the bar says about a verdict the owner is about to overrule. Names the verdict; never argues with them. */
+export function verdictLine(verdict: string): string {
+  return `The board ruled ${verdict} on this brief. Adopting it is your call over theirs.`;
 }
 
 /** A send back with no comment is a dead end for the company: it is told no and not why. */
@@ -138,7 +151,11 @@ const optionChip = (o: { n: number; label: string }, chosen: number | undefined)
  */
 export function actionBar(n: InboxRow, o: { chosen?: number; st?: DecideState }): string {
   const d = decidableOf(n);
-  const v = verbsFor(d);
+  // A brief the board is still arguing has no verdict to overrule yet, whatever its draft section happens to say
+  // (ruling P8-6): the bar is shut, it says the board is sitting, and it must not also promise a ruling nobody
+  // has made. So `needs_confirm` only speaks once the argument is in.
+  const confirming = !!n.needs_confirm && !n.board_pending;
+  const v = verbsFor(d, confirming);
   const st = o.st;
   const busy = st?.status === 'sending' || st?.status === 'applying';
   const done = st?.status === 'done';
@@ -153,7 +170,9 @@ export function actionBar(n: InboxRow, o: { chosen?: number; st?: DecideState })
   const yesOff = dis || (d === 'choose' && !o.chosen ? ' disabled' : '');
   const yes = `<button class="btn primary" data-act="decide:yes"${yesOff}>${esc(v.yes)}<kbd>A</kbd></button>`;
   const no = `<button class="btn" data-act="decide:no"${dis}>${esc(v.no)}<kbd>R</kbd></button>`;
-  return `<div class="actionbar" data-key="actionbar">${opts}${state}<div class="acts">${comment}${no}${yes}</div></div>`;
+  // Above the buttons, so it is read before the click and not after it: the verdict the owner is about to overrule.
+  const verdict = confirming && n.verdict ? `<p class="hintline" data-key="verdict">${esc(verdictLine(n.verdict))}</p>` : '';
+  return `<div class="actionbar" data-key="actionbar">${opts}${verdict}${state}<div class="acts">${comment}${no}${yes}</div></div>`;
 }
 
 /** One decision, open: the note as written, the board's pressure test when there is one, and the action bar. */

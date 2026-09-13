@@ -8,6 +8,7 @@ import {
   nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
   ideaOpenToBoard, sweepIdeaRows, renderSweepIdeasSection, SWEEP_IDEAS_SECTION,
   FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
+  checkPlan, planObjectives, PLAN_IDEA_MARKER, fileBoardPivot, pressurePivot, productFixes, noteVerdict,
   readPressureVerdict, pressureToBoard, pressureFindings, renderRubric, renderBoardSection,
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, type PressurePart,
   PRESSURE_CHAIR_SECTION, chairAnswerText,
@@ -20,7 +21,7 @@ import { renderQuotaMarkdown, type ModelBudget, type Router } from '@cubicle/rou
 import { deployer, emailSender, analytics } from '@cubicle/tools';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
-import { seedFirstJobs, seedFirstStream } from './first-run.js';
+import { seedFirstJobs, seedFirstStream, briefAdoptedAt } from './first-run.js';
 import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId, hasApprovedBrief, rejectionAsksForNewIdea, selfInterviewSubject, selfInterviewPrompt } from './discovery.js';
 import { writeRunway, accrueModelCost, enqueueRunway, dormancyMessage, revivalMessage } from './money.js';
 import { runBoardDialogue, linkBoardTranscript, runBriefBoardSession, type BoardSessionOpts } from './board-dialogue.js';
@@ -915,6 +916,56 @@ export function keptIdeasGoalBlock(lines: string[]): string {
   return `Kept ideas — the only ideas this plan may draw on (spec §4; naming a parked or scrapped one gets the plan returned), each out of ${IDEA_SCORE_MAX}:\n${lines.map((l) => `- ${l}`).join('\n')}`;
 }
 
+/**
+ * The one rule the plan writer is held to in code (ruling W3-1), said to it in its own goal: every objective ends
+ * on the kept idea it serves.
+ *
+ * The prompt and `checkPlan` are deliberately the same rule twice. The prompt is how the CEO gets it right the
+ * first time and does not spend a rewrite on a format it was never shown; the check is what makes it true — the
+ * third live run had a prompt that said "kept ideas are the only ideas this plan may draw on" and got a plan about
+ * signed SBOM attestations anyway.
+ *
+ * With nothing kept there is nothing to name, so the rule says so rather than asking for a slug that cannot exist.
+ */
+export function planIdeaRule(kept: string[]): string {
+  if (!kept.length) return `No idea has been kept yet, so no objective can name one: plan from ${FOUNDER_BRIEF} alone this cycle, and keep every objective inside what it says.`;
+  return `HARD RULE: every objective bullet ends with "${PLAN_IDEA_MARKER} <slug>" naming the kept idea it serves — one of ${kept.map((k) => `\`${k}\``).join(', ')} — after its "stream:" if it has one. An objective that serves none of those, or that serves an idea the owner parked, scrapped or has not ruled on, is refused in code before the board sees it and the whole plan comes back to you. The board's findings are advice about the ideas the owner kept; they are never a licence to plan a different business.`;
+}
+
+/**
+ * The chair's proposed pivot, out of whatever this session produced — the verdict's own words on a
+ * `PIVOT REQUIRED`, or the `fix by …` clauses that change what the company sells.
+ *
+ * `pressurePivot` is asked first because it is the chair answering the question directly; a plan session has no
+ * pressure verdict at all and only ever reaches the fixes. Several fixes become one pivot, joined: they came out
+ * of one argument about one company, and three cards the owner has to rule on separately would be three-thirds of
+ * a decision.
+ */
+export function chairPivotText(o: { text: string; findings: readonly string[] }): string {
+  const said = pressurePivot(o.text ?? '');
+  if (said) return said;
+  const fixes = productFixes(o.findings ?? []);
+  return fixes.length ? fixes.join('; ') : '';
+}
+
+/**
+ * File the chair's pivot as a candidate idea card, or return `null` (ruling W3-2). Never throws: a card is how the
+ * owner gets asked, and failing to write one must not cost the cycle its plan.
+ */
+export function fileChairPivot(
+  vault: Vault,
+  o: { text: string; findings: readonly string[]; subject: string; transcript: string; by: string; now: Date },
+): string | null {
+  const pivot = chairPivotText(o);
+  if (!pivot || !o.transcript) return null;
+  try {
+    return fileBoardPivot(vault, { pivot, subject: o.subject, transcript: o.transcript, by: o.by, created: o.now.toISOString() });
+  } catch (err) {
+    vault.events.emit({ type: 'daemon.warning', agent: o.by, payload: { where: 'board_pivot', message: `the board proposed a pivot on ${o.subject} and it could not be filed as an idea card: ${(err as Error).message.slice(0, 200)}` } });
+    return null;
+  }
+}
+
 /** Stable per idea, so a resumed cycle rules on the note it already filed. */
 export function ideaVerdictKey(slug: string): string { return `idea-verdict:${slug}`; }
 
@@ -1413,6 +1464,80 @@ export async function answerRejectedBrief(
   return paragraph;
 }
 
+/**
+ * The verbs that make a message an **instruction** rather than a question, however it is punctuated. "Can you
+ * change the name?" ends in a question mark and is work; "what's happening?" is not.
+ */
+const INSTRUCTION_VERB_RE = /\b(do|make|build|change|stop|start|add|use|switch)\b/i;
+
+/** The spellings of "what is going on" that are a status question even without a question mark. */
+const STATUS_ASK_RE = /^(what'?s|whats|what is) (happening|going on|the status|up)|^status\b|^where are we|^update\??$/i;
+
+/**
+ * Is the owner asking what is happening? (Ruling W3-6.)
+ *
+ * Deterministic, and generous: the third live run's "WhAtS hppening rn?" is a typo away from every phrasing a
+ * pattern could list, and what it got back was three paragraphs of "governance teams are monitoring compliance
+ * and security protocols" and the founder interview's "just go" line (R3-5). So the second half of the test is
+ * shape rather than words — a question mark, and none of the verbs that ask for work — which catches the typo and
+ * every phrasing nobody thought of, while "change the name?" stays an instruction and gets the ordinary reply.
+ */
+export function isStatusQuestion(text: string): boolean {
+  const t = (text ?? '').trim();
+  if (!t) return false;
+  if (STATUS_ASK_RE.test(t)) return true;
+  return t.endsWith('?') && !INSTRUCTION_VERB_RE.test(t);
+}
+
+/** How many words the status answer gets. Five lines of plain English, and not one more. */
+export const STATUS_ANSWER_TOKENS = 400;
+
+/** What the status answer is allowed to say, and the only thing it is allowed to say. */
+export const STATUS_ANSWER_RULE = 'Answer in plain words, five lines at most, nothing that is not in the facts. No headings, no bullets, no preamble, no offer to do anything. If a fact is not here, do not mention it.';
+
+/**
+ * The facts a status question is answered from — the same ones the cycle's own brief is written from, gathered
+ * from the vault rather than from a cycle's cache so a question asked between two heartbeats is answered as
+ * truthfully as one asked inside one.
+ *
+ * Every line is a fact or it is absent. That is the whole of ruling W3-6: the model's job is to put these into
+ * English, never to fill a gap in them, and a company that cannot say what it is doing should say that instead of
+ * saying something.
+ */
+export function statusFacts(vault: Vault, now: Date): string[] {
+  const out: string[] = [];
+  // The adopted brief is the file, never a note: `hasApprovedBrief` is the same predicate the planning steps and
+  // the first-run seeds gate on, and the verdict is read off the document itself — a brief the owner edited before
+  // adopting carries their words, and quoting the proposal back would be quoting what the company wrote instead.
+  const adopted = hasApprovedBrief(vault);
+  const adoptedAt = briefAdoptedAt(vault);
+  const openBrief = listInbox(vault).find((n) => n.data.kind === 'founder_brief' && !n.data.resolved_at);
+  const verdict = adopted ? noteVerdict(vault.readTextOrNull(FOUNDER_BRIEF) ?? '') : openBrief ? noteVerdict(openBrief.body) : '';
+  out.push(adopted
+    ? `Founder brief: adopted${adoptedAt ? ` on ${adoptedAt.slice(0, 10)}` : ''}${verdict ? `, and the board's verdict on it was ${verdict}` : ''}. Every plan is written against it.`
+    : openBrief
+      ? `Founder brief: written and waiting for you to adopt or send back${verdict ? `; the board's verdict on it is ${verdict}` : ''}. Nothing is planned until you do.`
+      : 'Founder brief: none yet, and nothing is planned until one is adopted.');
+  const kept = keptIdeas(vault);
+  out.push(`Ideas you kept: ${kept.length ? kept.map((k) => `${k.title} (Ideas/${k.id})`).join('; ') : 'none yet'}.`);
+  const objectives = planObjectives(vault.readTextOrNull('Plans/plan.md') ?? '');
+  out.push(`Plan objectives: ${objectives.length ? objectives.map((o) => `${o.team} — ${o.text.split('\n')[0].replace(/\s+/g, ' ').slice(0, 140)}`).join(' | ') : 'the plan has none'}.`);
+  const jobs = listJobs(vault).filter((j) => !NON_WORK_TYPES.includes(j.type));
+  const running = jobs.filter((j) => j.status === 'running');
+  const blocked = jobs.filter((j) => j.status === 'blocked');
+  const since = new Date(now.getTime() - STATUS_DONE_WINDOW_MS).toISOString();
+  const done = jobs.filter((j) => j.status === 'done' && String(j.updated ?? '') >= since);
+  out.push(`Jobs running now: ${running.length ? running.map((j) => `${j.title} (${j.assigned})`).join('; ') : 'none'}.`);
+  out.push(`Jobs blocked: ${blocked.length ? blocked.map((j) => { const why = jobBlockers(vault, j.id); return `${j.title} — stopped on ${j.blocked_on?.kind ?? 'something'}${why ? `: ${why.slice(0, 120)}` : ''}`; }).join('; ') : 'none'}.`);
+  out.push(`Jobs finished in the last day: ${done.length ? done.map((j) => j.title).join('; ') : 'none'}.`);
+  const pending = listInbox(vault).filter((n) => n.data.kind !== 'message' && n.data.approved === null && !n.data.resolved_at);
+  out.push(`Waiting on you: ${pending.length ? pending.map((p) => `${p.data.kind} — ${p.body.split('\n')[0].replace(/^#\s*/, '')}`).join('; ') : 'nothing'}.`);
+  return out;
+}
+
+/** How far back "finished since the last cycle" reaches when nothing says when the last cycle was: one day. */
+export const STATUS_DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /** One message: the reply the CEO drafts for it, the proposal it may file, and the note it writes back. */
 async function answerOne(deps: HeartbeatDeps, vault: Vault, m: OwnerMessage, body: string, now: () => Date, jobId?: string): Promise<number> {
   const isFirstIdea = !(parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data.name as string) && !listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md');
@@ -1439,8 +1564,17 @@ async function answerOne(deps: HeartbeatDeps, vault: Vault, m: OwnerMessage, bod
   let reply: string | null = null;
   if (surprise) {
     reply = await proposeThreeIdeas(deps, vault, { propId, jobId });
-    // "skip" is a refusal to be interviewed, not a business idea: naming the company after it would be
-    // absurd, and it belongs in the general reply, which already says the interview was closed.
+    // A status question is answered from the vault and from nothing else (ruling W3-6), and it is asked **before**
+    // the first-idea branch on purpose: "what's happening?" as the owner's first message is a question, and naming
+    // the company after it would be the same mistake the interview line was.
+    //
+    // One model call, and only to phrase what `statusFacts` already established. The interview line is not here at
+    // all — not conditionally, not when the interview is open: the owner asked what is going on, and the answer to
+    // that is never a request for something from them.
+  } else if (isStatusQuestion(said)) {
+    const facts = statusFacts(vault, now()).join('\n');
+    reply = (await ask(deps, ceoSystem(vault), `The owner asked what is happening. These are the facts, and they are all you have:\n\n${facts}\n\n${STATUS_ANSWER_RULE}`, STATUS_ANSWER_TOKENS))
+      ?? `Here is where we are.\n\n${facts}`;
   } else if (isFirstIdea && !longPrompt && !isSkip(said)) {
     const r = await ask(deps, ceoSystem(vault), `The owner's business idea:\n\n${body}\n\nReply with exactly two lines:\nNAME: <a short, brandable company name>\nTAGLINE: <one sentence>`);
     const name = r?.match(/NAME:\s*(.+)/i)?.[1]?.trim() ?? 'Untitled Co';
@@ -1483,7 +1617,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; boardNote?: string; boardQuestions?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; researchJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; boardNote?: string; boardQuestions?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; researchJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; planRefused?: string[]; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -1973,9 +2107,16 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // note above are the record. A card that vanished between the stamp and the verdict note is reported,
         // not thrown — and the stranded-verdict sweep at the top of this step re-files the note if it comes back.
         const filed = fileIdeaVerdict(vault, idea.id, { from: ceo, job: jobId, findings: session.findings });
+        // Ruling W3-2: a `PIVOT REQUIRED` on this card proposes a *different* idea, and that idea is the owner's
+        // to keep or drop like any other — it is never something this card quietly becomes. The card the board just
+        // ruled on parks on its own verdict; the pivot is filed beside it and takes its own turn through the funnel.
+        const pivotedFrom = fileChairPivot(vault, {
+          text: [session.chairText, ...session.findings].filter(Boolean).join('\n'),
+          findings: session.findings, subject: `Ideas/${idea.id}`, transcript: session.notePath, by: board.lead, now: now(),
+        });
         state = { ...state, ideaJudged: idea.id }; saveState(state);
         if (!filed) vault.events.emit({ type: 'daemon.warning', agent: ceo, job: jobId, payload: { where: 'ideas_board', message: `the board ruled on Ideas/${idea.id} but the card could not be read back, so the owner has not been asked yet` } });
-        done(i, `board ${session.verdict} on ${idea.id}; ${filed ? `recommendation ${filed.band}, waiting for the owner` : 'the card could not be read back, so no verdict note was filed'}${refiledNote}`);
+        done(i, `board ${session.verdict} on ${idea.id}; ${filed ? `recommendation ${filed.band}, waiting for the owner` : 'the card could not be read back, so no verdict note was filed'}${pivotedFrom ? `; the chair's pivot is a candidate idea for you: Ideas/${pivotedFrom}` : ''}${refiledNote}`);
         break;
       }
       case 'meeting': {
@@ -2047,7 +2188,8 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           // What the plan is allowed to be about (spec §4). The kept cards carry their scores so the CEO can
           // tell a 58 from a 45, and the founder brief above them is what the whole company is for — a plan
           // written without it is a plan for some other company.
-          const kept = keptIdeasGoalBlock(keptIdeaLines(keptIdeas(vault)));
+          const keptCards = keptIdeas(vault);
+          const kept = keptIdeasGoalBlock(keptIdeaLines(keptCards));
           const brief = vault.readTextOrNull(FOUNDER_BRIEF);
           // The seat, not the id (final review I1): the job was already *assigned* by office, but it carried
           // `owner_role: 'ceo'` and a hard-coded `executive` team, which is what WIP and the job tree attribute
@@ -2055,7 +2197,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           const chief = officeHolder(org, 'chief_executive');
           const id = createJob(vault, {
             type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the board' : 'Write the company plan', assigned: chief, priority: 1, parent: jobId, team: teamOf(org, chief)?.id, owner_role: chief,
-            goal: `Write this cycle's objectives per division, not jobs.\n\nSituation:\n${situationSummary()}\n\nDivisions: ${teams}.\n\nStreams: ${streams}.\n\n${kept}${brief ? `\n\nThe founder brief (${FOUNDER_BRIEF}) is what this company is for. Read it before you plan; everything below serves it:\n\n${brief.slice(0, 2000)}` : ''}\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <division id>" subsection per division that has work this cycle (a bullet per objective; every objective for a product division ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); a division with nothing to do gets no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.${findings}`,
+            goal: `Write this cycle's objectives per division, not jobs.\n\nSituation:\n${situationSummary()}\n\nDivisions: ${teams}.\n\nStreams: ${streams}.\n\n${kept}${brief ? `\n\nThe founder brief (${FOUNDER_BRIEF}) is what this company is for. Read it before you plan; everything below serves it:\n\n${brief.slice(0, 2000)}` : ''}\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <division id>" subsection per division that has work this cycle (a bullet per objective; every objective for a product division ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); a division with nothing to do gets no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.\n\n${planIdeaRule(keptCards.map((i) => i.id))}${findings}`,
           }, 'ceo');
           // This cycle is the rewrite that rejection asked for, so spend the note — but only now that the
           // rewrite exists (Task 6 review, minor 5). Stamped before `createJob`, a kill in between left the
@@ -2108,10 +2250,18 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // to spot a slug in a wall of markdown will miss it, and this is the one rule the whole idea pipeline
         // exists to enforce. An undecided idea is carried into the session's findings instead (see below).
         const unkept = unkeptIdeasNamedIn(plan, listIdeas(vault));
-        const guardFindings = unkeptIdeaFindings(unkept);
+        // …and the other half of the same rule (ruling W3-1): not "does the plan name something we parked" but
+        // "does every objective say which kept idea it is for". The third live run passed the check above with
+        // flying colours — its plan named no idea at all, so there was nothing to catch, and the company spent a
+        // cycle selling signed SBOM attestations. `checkPlan` is core's, because the rule is about the vault's
+        // ideas and not about how a heartbeat is shaped, and it is read before any model call for the same reason
+        // the check above is.
+        const planCheck = checkPlan(vault, plan);
+        const guardFindings = [...unkeptIdeaFindings(unkept), ...planCheck.findings];
         // Whole budget here (no board findings to make room for), the board's share below.
         const guardOnlyFindings = planReturnFindings(guardFindings);
-        if (unkeptForcesReturn(unkept)) {
+        const guardReturns = unkeptForcesReturn(unkept) || !planCheck.ok;
+        if (guardReturns) {
           // The pre-mortem note the cycle owes, in the guard's own words: `writeBoardPremortemDecision` would
           // point the reader at a board job that does not exist and promise "the advisors' own words" nobody
           // spoke, so this fills the same shape through the factored writer and says what actually happened.
@@ -2121,11 +2271,11 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
               cycle: hbId, inputs: ['[[Plans/plan]]'],
               unreviewedNote: BOARD_UNREVIEWED_NOTE,
               noFindingsNote: 'The board found nothing in this plan likely to sink the cycle.',
-              context: `Pre-mortem for heartbeat ${hbId}: the plan drew on ${unkept.length} idea${unkept.length === 1 ? '' : 's'} the company did not keep, so it was returned before the board sat. No advisor was asked — this one is arithmetic, not judgement.`,
+              context: `Pre-mortem for heartbeat ${hbId}: ${guardFindings.length} objective${guardFindings.length === 1 ? '' : 's'} of this plan did not rest on an idea the owner kept, so it was returned before the board sat. No advisor was asked — this one is arithmetic, not judgement.`,
               options: '- Run the plan as the CEO wrote it\n- Return it to the CEO to rewrite before the owner rules on it',
               chosen: 'Return the plan to the CEO for one rewrite.',
-              why: 'A plan may only draw on ideas the company kept (spec §4); the company ruled on these already.',
-              risksHeading: 'The ideas this plan draws on that the company did not keep:',
+              why: `A plan may only draw on ideas the owner kept, and every objective says which one it serves (spec §4, \`${PLAN_IDEA_MARKER} <slug>\`).`,
+              risksHeading: 'What this plan does that the ideas the owner kept do not cover:',
               reviewDays: 7,
             });
           } catch { /* a note is a record, never a reason to stall the cycle */ }
@@ -2133,9 +2283,15 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           // the CEO rewrites against and what the owner reads is the capped list, the same budget the board's
           // own return gets: a plan naming twenty scrapped ideas must not become a twenty-bullet prompt.
           state = { ...state, boardVerdict: 'return', boardFindings: guardOnlyFindings }; saveState(state);
-          const out = returnPlan(guardOnlyFindings, 'unkept ideas');
+          const out = returnPlan(guardOnlyFindings, planCheck.ok ? 'unkept ideas' : 'objectives that serve no kept idea');
           if (out) return out;
-          done(i, `board returned: ${unkept.length} unkept idea(s), second time`);
+          // Twice. The plan is not run and the board is not asked (ruling W3-1): a CEO that cannot write a plan
+          // against the ideas the owner kept is not a thing another rewrite fixes, and the owner is the only one
+          // who can say what the company is for. The warning is the event trail; `planRefused` is what puts it in
+          // the brief's "What needs you", which is where the owner actually reads.
+          vault.events.emit({ type: 'daemon.warning', agent: board.lead, job: jobId, payload: { where: 'board_premortem', message: `the plan was returned twice and still does not rest on the ideas you kept, so the board was not asked and no new work was fanned out: ${guardOnlyFindings.join(' ')}`.slice(0, 600) } });
+          state = { ...state, planRefused: guardOnlyFindings }; saveState(state);
+          done(i, `plan refused: ${guardFindings.length} objective(s) serve no kept idea, second time — the owner has been named in the brief`);
           break;
         }
         const session = await runBoardSession(deps, org, plan, { decision: `premortem-${hbId}` });
@@ -2173,11 +2329,19 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // the board's own findings, never the other way round — see `planReturnFindings`.
         const boardFindings = planReturnFindings(guardFindings, session.findings);
         state = { ...state, boardJob, boardVerdict: session.verdict, boardFindings, boardNote: session.notePath, boardQuestions: session.questions }; saveState(state);
+        // Ruling W3-2: a "fix by …" that changes what the company sells is a **pivot**, and a pivot is the owner's
+        // to rule on. It goes on an idea card, sourced `board`, and the rewrite below still has to serve the ideas
+        // the owner kept — the third live run's plan was "aligned with the board's recommendations" into a
+        // business the owner had never seen, in one rewrite, with nobody asked.
+        const pivoted = fileChairPivot(vault, {
+          text: [session.chairText, ...session.findings].filter(Boolean).join('\n'),
+          findings: session.findings, subject: `this cycle's plan`, transcript: session.notePath, by: board.lead, now: now(),
+        });
         if (session.verdict === 'return') {
           const out = returnPlan(boardFindings, 'board return');
           if (out) return out;
         }
-        done(i, `board ${session.verdict}`);
+        done(i, `board ${session.verdict}${pivoted ? `; the chair's pivot is a candidate idea for you: Ideas/${pivoted}` : ''}`);
         break;
       }
       case 'owner_verdict': {
@@ -2423,6 +2587,11 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         const needsYou = [
           ...pending.map((p) => `- Approve or reject: ${p.body.split('\n')[0].replace(/^#\s*/, '')} (\`${p.path}\`)`),
           ...(briefRow ? [briefRow] : []),
+          // Ruling W3-1: the plan came back twice still not resting on anything the owner kept, so the board was
+          // not asked and nothing was fanned out. Nobody else says this — the "vetoed twice" note the CEO files is
+          // a `message`, and `pending` above deliberately leaves messages out — and a cycle that plans nothing and
+          // explains nothing is the one thing the brief exists to prevent.
+          ...(state.planRefused?.length ? [`- The plan was refused: its objectives do not rest on the ideas you kept. ${state.planRefused.slice(0, 2).join(' ')} Keep an idea (or tell the CEO what this company is for) and it will plan against that`] : []),
           ...blocked.filter((j) => j.blocked_on?.kind === 'message').map((j) => `- Answer ${j.assigned}'s question on job ${j.id}`),
           // A job that finished as blocked waits for the owner and nothing else requeues it (loop.ts / requeueUnblocked):
           // unlisted, it sat for a day while the brief said "nothing needs you".

@@ -684,7 +684,10 @@ describe('one board session, two subjects (spec §3)', () => {
 });
 
 describe('a plan may draw only on ideas the company kept (spec §4.2)', () => {
-  const planNaming = (slug: string) => `---\ncycle: 1\nupdated: ${new Date().toISOString()}\n---\n# Plan\n\n## Objectives\n\n### dev\n- Ship [[Ideas/${slug}]] this cycle\n`;
+  // The objective carries `idea: <slug>` as well as the wikilink, because ruling W3-1 holds every objective to
+  // naming the kept idea it serves: without the marker this plan is refused for *that* rather than for the idea
+  // being scrapped, and the "kept one through" half of the case below would never reach the advisors.
+  const planNaming = (slug: string) => `---\ncycle: 1\nupdated: ${new Date().toISOString()}\n---\n# Plan\n\n## Objectives\n\n### dev\n- Ship [[Ideas/${slug}]] this cycle. idea: ${slug}\n`;
   const hbState = (hbId: string) => JSON.parse(readFileSync(path.join(dir, '.cubicle/jobs', `${hbId}.heartbeat.json`), 'utf8'));
 
   it('the board returns a plan that draws on a scrapped idea before any advisor speaks, and lets a kept one through', async () => {

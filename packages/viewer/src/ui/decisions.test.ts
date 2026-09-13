@@ -231,6 +231,40 @@ describe('a decision the dispatcher has not finished with', () => {
     expect(decideStateFor(sitting, { status: 'sending', approved: true })?.status).toBe('applying');
   });
 
+  it('a brief the board would not stand behind reads "Adopt anyway", and says what it is (ruling W3-3)', () => {
+    const pivot: InboxRow = { ...adoptRow, id: 'pw', verdict: 'PIVOT REQUIRED', needs_confirm: true };
+    const s = applySnapshot(emptyState(), snap({ inbox: [pivot] }));
+    expect(verbsFor('adopt', true)).toEqual({ yes: 'Adopt anyway', no: 'Send back' });
+    const html = viewFor('decision:pw', s, ctx).html;
+    expect(html).toContain('>Adopt anyway<');
+    expect(html).not.toContain('>Adopt brief<');
+    // The verdict is in the bar, above the buttons, so it is read before the click and not after it.
+    expect(html).toContain('The board ruled PIVOT REQUIRED on this brief.');
+    expect(html.indexOf('data-key="verdict"')).toBeLessThan(html.indexOf('data-act="decide:yes"'));
+    // …and nothing is disabled: the owner rules, the board advises.
+    expect(html).not.toMatch(/data-act="decide:yes"[^>]*disabled/);
+    expect(html).toContain('>Send back<');
+  });
+
+  it('promises no verdict while the board is still arguing about it', () => {
+    // The draft section can carry a word the board has not ruled yet; the bar must not read it out as theirs.
+    const sitting: InboxRow = { ...adoptRow, id: 'pq', verdict: 'WEAK', needs_confirm: true, board_pending: true };
+    const html = viewFor('decision:pq', applySnapshot(emptyState(), snap({ inbox: [sitting] })), ctx).html;
+    expect(html).toContain(BOARD_SITTING);
+    expect(html).not.toContain('data-key="verdict"');
+    expect(html).not.toContain('>Adopt anyway<');
+  });
+
+  it('a brief the board passed is still one click, and says nothing about a verdict', () => {
+    const strong: InboxRow = { ...adoptRow, id: 'ps', verdict: 'STRONG', needs_confirm: false };
+    const html = viewFor('decision:ps', applySnapshot(emptyState(), snap({ inbox: [strong] })), ctx).html;
+    expect(html).toContain('>Adopt brief<');
+    expect(html).not.toContain('data-key="verdict"');
+    expect(verbsFor('adopt')).toEqual({ yes: 'Adopt brief', no: 'Send back' });
+    // `needs_confirm` is the founder brief's alone: nothing else has an adopt bar to relabel.
+    expect(verbsFor('approve', true)).toEqual({ yes: 'Approve', no: 'Reject' });
+  });
+
   it('the chosen option comes back from the note when this session did not pick it', () => {
     const chosenRow: InboxRow = { ...chooseRow, id: 'p8', pending: true, approved: true, chosen: 3 };
     const s = applySnapshot(emptyState(), snap({ inbox: [chosenRow] }));

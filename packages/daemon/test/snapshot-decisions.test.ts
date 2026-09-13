@@ -233,6 +233,36 @@ describe('the decide and conversation.get ops', () => {
     c.close();
   });
 
+  it('carries the verdict and needs_confirm on the row, and refuses an unconfirmed adoption (ruling W3-3)', async () => {
+    const brief = [
+      '# The founder brief', '', 'This is what I understood.', '', '## Proposed content', '', '````',
+      '## What the company is', '', 'AltStack — a directory of open-source alternatives.', '',
+      '## Pressure test', '', '**Core Assumption:** they pay for curation.',
+      '**Brutal Verdict:** PIVOT REQUIRED — the static directory captures no value; pivot to a deployment service.',
+      '````', '', 'Set `approved: true` to adopt it.',
+    ].join('\n');
+    const { id } = createProposal(vault, { kind: 'founder_brief', from: 'research_manager', target: FOUNDER_BRIEF, title: 'The founder brief', body: brief }, 'research_manager');
+    const c = await client(ws, port);
+    const snap = await c.next('snapshot') as { inbox: { id: string; verdict: string; needs_confirm: boolean; decidable: string }[] };
+    const row = snap.inbox.find((r) => r.id === id)!;
+    expect(row.decidable).toBe('adopt');
+    expect(row.verdict).toBe('PIVOT REQUIRED');
+    expect(row.needs_confirm).toBe(true);
+
+    // A plain browser tab cannot adopt it, and the refusal names the verdict the owner would be overruling.
+    c.sock.send(JSON.stringify({ op: 'decide', id, approved: true }));
+    expect(await c.next('error')).toMatchObject({ id, message: expect.stringContaining('PIVOT REQUIRED') });
+    expect(findInboxById(vault, id)!.data.approved).toBeNull();
+    expect(ticks).toEqual([]);
+
+    // "Adopt anyway" carries the flag, and then it is the owner's decision like any other.
+    c.sock.send(JSON.stringify({ op: 'decide', id, approved: true, confirm: true }));
+    expect(await c.next('decide.ack')).toMatchObject({ id });
+    expect(findInboxById(vault, id)!.data.approved).toBe(true);
+    expect(ticks).toEqual([id]);
+    c.close();
+  });
+
   it('answers a malformed decide, and a decide the vault refuses, without writing anything', async () => {
     const { id } = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'The plan', body: 'b' }, 'ceo');
     const c = await client(ws, port);
@@ -240,7 +270,7 @@ describe('the decide and conversation.get ops', () => {
 
     // Every error names the note it is about (review I4): the viewer routes it to the reader that sent it, and
     // with no id it would fall back to the first pending decision — the wrong reader, with two in flight.
-    for (const bad of [{ op: 'decide', id }, { op: 'decide', id, approved: 'yes' }, { op: 'decide', id, approved: true, chosen: 'two' }, { op: 'decide', id, approved: true, comment: 7 }]) {
+    for (const bad of [{ op: 'decide', id }, { op: 'decide', id, approved: 'yes' }, { op: 'decide', id, approved: true, chosen: 'two' }, { op: 'decide', id, approved: true, comment: 7 }, { op: 'decide', id, approved: true, confirm: 'yes' }]) {
       c.sock.send(JSON.stringify(bad));
       const e = await c.next('error');
       expect(String(e.message)).toMatch(/decide/);

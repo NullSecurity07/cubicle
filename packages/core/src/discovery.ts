@@ -463,10 +463,12 @@ export function closesInterview(text: string): boolean {
   return t.split(/\s+/).filter(Boolean).length >= INTERVIEW_ANSWER_WORDS && !t.endsWith('?');
 }
 
-export type InterviewPhase = 'none' | 'asked' | 'answered' | 'skipped' | 'covered';
+export type InterviewPhase = 'none' | 'asked' | 'answered' | 'skipped' | 'covered' | 'superseded';
 
 /** The heading that records "the owner read the CEO's answers and said go". */
 export const INTERVIEW_ENDORSED_HEADING = '## Endorsed';
+/** The heading that records "the founder brief was adopted, so there is nothing left to ask" (ruling W3-7). */
+export const INTERVIEW_SUPERSEDED_HEADING = '## Superseded';
 /** The heading the CEO's own six answers sit under, and the material discovery reads. */
 export const INTERVIEW_ANSWERS_HEADING = '## Answers';
 
@@ -497,8 +499,45 @@ export function interviewPhase(transcript: string | null): InterviewPhase {
   if (!transcript || !transcript.trim()) return 'none';
   if (/^## Already answered\b/m.test(transcript)) return 'covered';
   if (/^## Skipped\b/m.test(transcript)) return 'skipped';
+  // Before `answered`, and deliberately: a brief that was adopted closes the interview whatever the owner did or
+  // did not add to it, and the question every caller asks this is "is the company still waiting on them?". It is
+  // not. `ownerAnsweredInterview` is untouched by it — a transcript the owner never wrote in still has no line of
+  // theirs in it, and a brief may not cite the CEO's own answers as the owner's word (ruling P8-13).
+  if (interviewSuperseded(transcript)) return 'superseded';
   if (ownerAnsweredInterview(transcript)) return 'answered';
   return 'asked';
+}
+
+/** The founder brief was adopted while this interview was open, so it is closed (ruling W3-7). */
+export function interviewSuperseded(transcript: string | null): boolean {
+  return !!transcript && new RegExp(`^${INTERVIEW_SUPERSEDED_HEADING}\\b`, 'm').test(transcript);
+}
+
+/**
+ * The interview is over, one way or another: nobody is waiting on the owner and no reply should ask them for it.
+ *
+ * `none` is not closed (there is no interview yet) and neither is `asked` (the CEO's six answers are with them).
+ * Everything else is: they added, they endorsed, they skipped, their own material covered it, or the brief those
+ * answers fed has been adopted and the document is what the company plans against now.
+ */
+export function interviewClosed(phase: InterviewPhase): boolean {
+  return phase !== 'none' && phase !== 'asked';
+}
+
+/**
+ * Close an open interview because the founder brief was adopted (ruling W3-7), and return the new transcript — or
+ * `null` when there is nothing to close: no transcript at all, or one that is already closed.
+ *
+ * The third live run's R3-7: the brief was adopted at 12:56 and every CEO reply for the next seven hours still
+ * ended "Anything to add, any correction, or just 'go', is all you need" — asking the owner to add to a document
+ * the company had already finished acting on. The brief *is* the answer to the six questions; once it is adopted
+ * there is nothing for them to add to and nothing left to say about it.
+ */
+export function supersedeInterview(transcript: string | null, at = nowIso()): string | null {
+  if (!transcript || !transcript.trim()) return null;
+  const phase = interviewPhase(transcript);
+  if (phase === 'superseded' || phase === 'none') return null;
+  return `${transcript.trimEnd()}\n\n${INTERVIEW_SUPERSEDED_HEADING}\n\n_The founder brief was adopted on ${at.slice(0, 10)}; this interview is closed. What the company plans against is ${FOUNDER_BRIEF}._\n`;
 }
 
 /**
