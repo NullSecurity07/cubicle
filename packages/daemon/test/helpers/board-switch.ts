@@ -14,6 +14,16 @@ export function letTheBoardDecide(vault: Vault, hours = BOARD_DECIDES_AFTER_HOUR
   vault.writeText('Memory/constitution.md', vault.readText('Memory/constitution.md').replace(/^board_decides_after_hours:.*$/m, `board_decides_after_hours: ${hours}`), 'owner');
 }
 
+/**
+ * Hold the board's session the way it was held before SP8: three pre-mortems and one merge, four model calls,
+ * no transcript. `board_dialogue` ships `full` — the owner asked to read the argument — so a test that is about
+ * the *brief* session's shape (its call count, its advisor prompt, its tiers) has to say so, and a test that is
+ * about the company's behaviour rather than the board's mechanics can leave the default alone.
+ */
+export function holdTheBriefBoard(vault: Vault): void {
+  vault.writeText('Memory/constitution.md', vault.readText('Memory/constitution.md').replace(/^board_dialogue:.*$/m, 'board_dialogue: brief'), 'owner');
+}
+
 /** The newest event id: "has anything happened", straight off the live vault handle this helper is given. */
 const progressOf = (v: Vault) => () => v.events.query({ limit: 1, order: 'desc' })[0]?.id ?? -1;
 

@@ -68,10 +68,19 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
         // chair is identified by the phrase only its prompt carries ("this plan"; the idea's says "this idea").
         // Without that, an idea session would spend the scripted plan veto below.
         const planChair = /VERDICT: pass/.test(last) && /this plan/.test(last);
+        // SP8 §3: the same test, held as a dialogue. The chair's round turn closes the part just argued and
+        // opens the next; the verdict turn closes the last part and votes. The five parts the owner reads are
+        // the round findings, so the `PART` table below is what a full session files too — one round at a time
+        // instead of all five in one merge. Checked before `planChair`, whose phrases the dialogue's own plan
+        // verdict turn also carries.
+        const dialogueChair = /^You chair the board of this company\./.test(last);
+        const dialogueAdvisor = /The chair has asked, on \*\*/.test(last);
+        if (opts.boardSilent && (dialogueChair || dialogueAdvisor)) throw new Error('no model available');
+        if (dialogueAdvisor) return { ...base, content: 'Two nurseries already pay a caterer every term, so the pain is priced; nobody has quoted the 7am van.' };
         // `boardSilent` simulates "no model was available" for every board call (advisors and chair alike),
         // the same way askAs's catch does when deps.llm.chat throws — used to test the zero-advisors-answered path.
         if (opts.boardSilent && (/VERDICT: pass/.test(last) || /VERDICT: STRONG/.test(last) || /Imagine the cycle has already failed/.test(last) || /Pressure test it the way Paul Graham reads a YC application/.test(last))) throw new Error('no model available');
-        if (planChair) { const v = vetoes-- > 0; return { ...base, content: v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier' }; }
+        if (planChair && !dialogueChair) { const v = vetoes-- > 0; return { ...base, content: v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier' }; }
         if (/Imagine the cycle has already failed/.test(last)) return { ...base, content: '- the plan names no metric — add one\n- nobody owns the deploy — name them' };
         // The board sitting on an idea (SP3, re-shaped by SP5b): the chair's merge prompt asks for one of the
         // three pressure-test words where the plan's asks for pass/return, and the advisors are asked to
@@ -80,16 +89,36 @@ export function orgLlm(opts: { vetoes?: number; plan?: string; boardSilent?: boo
         // words `readPressureVerdict` accepts, rubric line and all, so a scripted run exercises the real parse.
         // The five parts in full, not just the two machine lines and the flaws: the chair's whole answer is kept
         // now (ruling H3), so the scripted chair has to write the whole answer for a scripted run to exercise it.
-        const fiveParts = (assumption: string, flaw: string, validation: string, verdict: string): string => [
-          '## Core Assumption', assumption, '',
-          '## Three Fatal Flaws', `- ${flaw}`, '',
-          '## Problem Validation', validation, '',
-          '## Founder-Market Fit', 'The owner ran a nursery kitchen for six years.', '',
-          '## Brutal Verdict', verdict,
-        ].join('\n');
-        const ideaMerge = opts.ideaVerdict === 'return'
-          ? `VERDICT: PIVOT REQUIRED\nRUBRIC: core assumption 1, fatal flaws 1, pain 1, founder fit 1, why now 1\nWEDGE: the one nursery chain that already orders together\n\n${fiveParts('Nurseries buy food centrally, not per site.', 'nobody has priced delivery', 'A vitamin at the single site: the cook already shops on the way in.', 'Attack the chain, not the site.')}`
-          : `VERDICT: STRONG\nRUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1\n\n${fiveParts('Nurseries will pay 40 a week to stop planning meals.', 'watch the free tier', 'A painkiller: they already pay a caterer every term.', 'Build the cheap test this week.')}`;
+        //
+        // Written as a table keyed on the part because SP8's dialogue reaches the same five findings one round
+        // at a time: the brief chair merges them in one call, the full chair rules on one per round, and both
+        // have to land the same words on the card or a scripted run would be testing the script.
+        const PART: Record<string, string> = opts.ideaVerdict === 'return' ? {
+          'Core Assumption': 'Nurseries buy food centrally, not per site.',
+          'Three Fatal Flaws': '- nobody has priced delivery',
+          'Problem Validation': 'A vitamin at the single site: the cook already shops on the way in.',
+          'Founder-Market Fit': 'The owner ran a nursery kitchen for six years.',
+          'Brutal Verdict': 'Attack the chain, not the site.',
+        } : {
+          'Core Assumption': 'Nurseries will pay 40 a week to stop planning meals.',
+          'Three Fatal Flaws': '- watch the free tier',
+          'Problem Validation': 'A painkiller: they already pay a caterer every term.',
+          'Founder-Market Fit': 'The owner ran a nursery kitchen for six years.',
+          'Brutal Verdict': 'Build the cheap test this week.',
+        };
+        const PARTS = ['Core Assumption', 'Three Fatal Flaws', 'Problem Validation', 'Founder-Market Fit', 'Brutal Verdict'];
+        const machineLines = opts.ideaVerdict === 'return'
+          ? 'VERDICT: PIVOT REQUIRED\nRUBRIC: core assumption 1, fatal flaws 1, pain 1, founder fit 1, why now 1\nWEDGE: the one nursery chain that already orders together'
+          : 'VERDICT: STRONG\nRUBRIC: core assumption 2, fatal flaws 1, pain 2, founder fit 1, why now 1';
+        const ideaMerge = `${machineLines}\n\n${PARTS.map((p) => `## ${p}\n${PART[p]}`).join('\n\n')}`;
+        if (dialogueChair) {
+          const close = last.match(/close the round on \*\*([^*]+)\*\*/)?.[1] ?? '';
+          const open = last.match(/the question of \*\*([^*]+)\*\*/)?.[1] ?? '';
+          const finding = close ? `FINDING: ${PART[close] ?? `the board holds ${close} answered.`}\n\n` : '';
+          if (/VERDICT: STRONG or WEAK or PIVOT REQUIRED/.test(last)) return { ...base, content: `${finding}${opts.ideaChair ? 'VERDICT: STRONG\nIt has potential, but the margins worry me.' : machineLines}` };
+          if (/First line exactly "VERDICT: pass"/.test(last)) { const v = vetoes-- > 0; return { ...base, content: `${finding}${v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier'}` }; }
+          return { ...base, content: `${finding}NEXT: On ${open}: what does this rest on, and how would we know it was false?` };
+        }
         // The chair's one re-ask (SP5b). It repeats the whole format the first ask gave, so it matches the idea
         // chair's own discriminator too and must be tested FIRST; "That answer was not usable" is the phrase
         // only it carries. `hedge-then-silence` throws the way `askAs`'s catch sees a model that has gone away.

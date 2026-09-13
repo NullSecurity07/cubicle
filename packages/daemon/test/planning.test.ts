@@ -7,7 +7,7 @@ import type { Llm } from '@cubicle/harness';
 import type { RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { Daemon, defaultConfig, HEARTBEAT_STEPS, planIsSubstantive, firstOpenJob, parseObjectiveSections, mergeBoardVerdict, runBoardSession, writeBoardPremortemDecision, BOARD_UNREVIEWED_NOTE, runHeartbeat, createHeartbeatJob, planVerdictId, boardSubject, advisorPrompt, chairPrompt, boardAgenda } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
-import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
+import { holdTheBriefBoard, letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
 import { adoptFounderBrief } from './helpers/brief.js';
 import { TEST_MS, eventProgress, waitForProgress } from './helpers/load.js';
 
@@ -198,8 +198,10 @@ describe('two-level planning (spec §3)', () => {
       expect(v.events.count('team.planned')).toBe(2);
       // Only the cycle that wrote the plan holds a board session; the one that fans it out finds the verdict note
       // open and skips straight past, so a waiting plan costs one session per plan, not one per heartbeat.
-      expect(llm.calls.advisor_investor ?? 0).toBeLessThanOrEqual(2);
-      expect(llm.calls.advisor_customer ?? 0).toBeLessThanOrEqual(2);
+      // Two plans here (the board returns the first), and an advisor answers one round of each of the five parts
+      // per session (SP8 §3), so ten is both sessions in full and eleven would be a third one.
+      expect(llm.calls.advisor_investor ?? 0).toBeLessThanOrEqual(10);
+      expect(llm.calls.advisor_customer ?? 0).toBeLessThanOrEqual(10);
       // Task 9 review finding 2 (busy loop when team_plans re-blocks on an already-finished ids[0]) is covered
       // directly by the firstOpenJob unit tests above — job.blocked events are only emitted by block()/blockMany(),
       // which team_plans calls at most once regardless, so an event count here would not have caught the bug.
@@ -292,7 +294,8 @@ describe('board pre-mortems are validated decision notes (D7)', () => {
       for (const h of SECTIONS) expect(note.body).toContain(h);
       expect(listDecisions(v).map((x) => x.path)).toContain(rel);
       const board = listJobs(v).find((j) => j.type === 'board.premortem')!;
-      expect(readJob(v, board.id)!.body).toContain('### The Skeptic');
+      // The record of what was said, in the shape the dialogue writes it (SP8 §3): a round, a speaker, a turn.
+      expect(readJob(v, board.id)!.body).toContain('Round 1 — advisor_skeptic');
       expect(readJob(v, board.id)!.body).not.toContain('Decisions/');
     } finally { v.close(); await d.stop(); }
   }, TEST_MS);
@@ -321,6 +324,7 @@ describe('board advisors each speak at their own charter\'s model_tier (Task 4 r
     const llm = tierRecordingLlm();
     const vault = Vault.open(dir);
     try {
+      holdTheBriefBoard(vault);
       const org = loadOrg(vault);
       expect(org.roles.advisor_investor.model_tier).toBe('medium');
       expect(org.roles.advisor_customer.model_tier).toBe('medium');
@@ -343,6 +347,7 @@ describe('board advisors each speak at their own charter\'s model_tier (Task 4 r
     const llm = tierRecordingLlm();
     const vault = Vault.open(dir);
     try {
+      holdTheBriefBoard(vault);
       const org = loadOrg(vault);
       // Simulate a role note with no model_tier of its own — org.roles is a plain in-memory object here, not
       // backed by the file, so this does not touch the vault. The lead is given a distinct tier for the same
@@ -366,6 +371,7 @@ describe('board advisors are de-duplicated (Task 4 review MINOR 4)', () => {
     const llm = tierRecordingLlm();
     const vault = Vault.open(dir);
     try {
+      holdTheBriefBoard(vault);
       const org = loadOrg(vault);
       org.teams.board = { ...org.teams.board, members: [org.teams.board.lead, ...org.teams.board.members] };
       const session = await runBoardSession({ vault, llm }, org, PLAN_TEXT);
@@ -623,10 +629,14 @@ describe('one board session, two subjects (spec §3)', () => {
     expect(advisorPrompt(huge).length).toBeLessThan(5000);
   });
 
+  // The pre-SP8 session's event shape, pinned: `board_dialogue: brief` still holds it, and the office keys the
+  // board room on exactly these two events whichever way the vault is set. SP8's own dialogue is covered in
+  // `board-dialogue.test.ts`, where the participants include the CEO and the turns are six rounds deep.
   it('lights the board room for the plan pre-mortem as well as for an idea (spec §6.1)', async () => {
     const llm = tierRecordingLlm();
     const vault = Vault.open(dir);
     try {
+      holdTheBriefBoard(vault);
       const org = loadOrg(vault);
       await runBoardSession({ vault, llm }, org, PLAN_TEXT);
       const opened = vault.events.query({ types: ['meeting.opened'] }).at(-1)!;

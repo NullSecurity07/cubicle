@@ -435,6 +435,13 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
   if (patched && !/^board_decides_after_hours:/m.test(patched)) {
     patched = patched.replace(/^```ya?ml\s*\n/m, (m) => `${m}board_decides_after_hours: 0\n`);
   }
+  // SP8 §3: the board argues in the open. `full` is the default because the owner asked to read the argument,
+  // and a vault written before SP8 gets it for the same reason — self-extinguishing (the key now exists), so
+  // no marker in `migrations:`. An owner who wants the old four-call session sets `brief` and this never
+  // touches it again.
+  if (patched && !/^board_dialogue:/m.test(patched)) {
+    patched = patched.replace(/^```ya?ml\s*\n/m, (m) => `${m}board_dialogue: full\n`);
+  }
   // 7. S-5: the board sits on the medium tier. One board session is four calls on top of the plan, out of a free
   //    strong tier of 20 a day per model, so strong is kept for the CEO's plan and the owner's replies. Step 4
   //    above fills only *missing* fields, so a vault scaffolded while the skeptic was `strong` would keep it.

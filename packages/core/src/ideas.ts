@@ -233,6 +233,15 @@ export const IdeaFrontmatter = z.looseObject({
    */
   board_pressure: z.string().default(''),
   board_rubric: BoardRubric.nullable().default(null),
+  /**
+   * SP8 §3. `Meetings/<stamp>-board-<slug>.md` — the transcript of the session that judged it, and the
+   * questions that session could not answer from the material. Both live on the card for the same reason the
+   * rubric does: `fileIdeaVerdict` rebuilds the owner's note from the card after a kill, so the link the owner
+   * follows to read the argument has to come from the card and not from a session variable. Empty on a card
+   * judged by the `brief` board, which holds no dialogue and files no transcript.
+   */
+  board_transcript: z.string().default(''),
+  board_questions: z.array(z.string()).default([]),
 });
 export type IdeaFrontmatter = z.infer<typeof IdeaFrontmatter>;
 
