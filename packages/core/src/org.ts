@@ -276,6 +276,25 @@ export function can(org: Org, role: string, action: Action, target?: string): bo
 
 const ORG_FIELDS = ['team', 'reports_to', 'title', 'persona', 'permissions'] as const;
 
+/**
+ * The id of the one-time step that took the board off the free strong tier (ruling S-5). It lives in the
+ * constitution's `migrations:` list once applied, which is what stops it from running a second time.
+ */
+export const BOARD_MEDIUM_TIER_MIGRATION = 'board-medium-tier-2026-09-13';
+
+/**
+ * Add a migration id to the constitution's `migrations:` list, creating the key inside the yaml block when it is
+ * not there. Textual, like every other constitution patch in `migrateOrg`: the owner's comments, ordering and
+ * hand edits survive, which re-serialising the parsed block would not.
+ */
+export function recordMigration(text: string, id: string): string {
+  if (!text) return text;
+  if (new RegExp(`^[ \\t]*-[ \\t]*${id}[ \\t]*$`, 'm').test(text)) return text;
+  if (/^migrations:[ \t]*\[[ \t]*\][ \t]*$/m.test(text)) return text.replace(/^migrations:[ \t]*\[[ \t]*\][ \t]*$/m, `migrations:\n  - ${id}`);
+  if (/^migrations:[ \t]*$/m.test(text)) return text.replace(/^migrations:[ \t]*$/m, (m) => `${m}\n  - ${id}`);
+  return text.replace(/^```ya?ml\s*\n/m, (m) => `${m}migrations:\n  - ${id}\n`);
+}
+
 /** Bring a pre-org vault up to the default org. Idempotent: returns the list of paths it wrote. */
 export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
   const changed: string[] = [];
@@ -393,18 +412,6 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
     for (const f of ORG_FIELDS) if (n.data[f] === undefined && t[f] !== undefined) patch[f] = t[f];
     if (Object.keys(patch).length) { vault.writeText(rel, stringifyNote({ ...n.data, ...patch }, n.body), 'daemon'); changed.push(rel); }
   }
-  // 4a. S-5: the board sits on the medium tier. Step 4 above fills only *missing* fields, so a vault scaffolded
-  //     while the skeptic was `strong` would keep the strong tier for ever — and one board session is four calls
-  //     on top of the plan, out of a free strong tier of 20 a day per model. Strong is for the CEO's plan and the
-  //     owner's replies. Only `strong` is moved down: a tier the owner set lower than medium is their choice.
-  const boardTeam = loadOrg(vault).teams.board;
-  for (const roleId of new Set(boardTeam ? [boardTeam.lead, ...boardTeam.members] : [])) {
-    const rel = `Roles/${roleId}.md`;
-    const n = vault.readNoteOrNull(rel);
-    if (!n || n.data.model_tier !== 'strong') continue;
-    vault.writeText(rel, stringifyNote({ ...n.data, model_tier: 'medium' }, n.body), 'daemon');
-    if (!changed.includes(rel)) changed.push(rel);
-  }
   // 5. constitution fields
   const c = vault.readTextOrNull('Memory/constitution.md') ?? '';
   let patched = c;
@@ -427,6 +434,25 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
   }
   if (patched && !/^board_decides_after_hours:/m.test(patched)) {
     patched = patched.replace(/^```ya?ml\s*\n/m, (m) => `${m}board_decides_after_hours: 0\n`);
+  }
+  // 7. S-5: the board sits on the medium tier. One board session is four calls on top of the plan, out of a free
+  //    strong tier of 20 a day per model, so strong is kept for the CEO's plan and the owner's replies. Step 4
+  //    above fills only *missing* fields, so a vault scaffolded while the skeptic was `strong` would keep it.
+  //
+  //    This one is gated on a marker rather than on the value it changes, unlike every step above it. Those are
+  //    self-extinguishing — a role renamed stays renamed — while "lower strong to medium" is a condition the
+  //    owner can make true again by raising an advisor back to strong, and this ran at every daemon start and
+  //    would have quietly undone them (review I3). So it lowers once, records its id, and never looks again.
+  if (!vault.constitution().migrations.includes(BOARD_MEDIUM_TIER_MIGRATION)) {
+    const boardTeam = loadOrg(vault).teams.board;
+    for (const roleId of new Set(boardTeam ? [boardTeam.lead, ...boardTeam.members] : [])) {
+      const rel = `Roles/${roleId}.md`;
+      const n = vault.readNoteOrNull(rel);
+      if (!n || n.data.model_tier !== 'strong') continue;   // a tier the owner set below medium is their choice
+      vault.writeText(rel, stringifyNote({ ...n.data, model_tier: 'medium' }, n.body), 'daemon');
+      if (!changed.includes(rel)) changed.push(rel);
+    }
+    patched = recordMigration(patched, BOARD_MEDIUM_TIER_MIGRATION);
   }
   if (patched !== c) { vault.writeText('Memory/constitution.md', patched, 'daemon'); changed.push('Memory/constitution.md'); }
   if (changed.length) vault.events.emit({ type: 'org.changed', agent: 'daemon', payload: { reason: 'migration', changed } });

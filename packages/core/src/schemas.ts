@@ -261,6 +261,13 @@ export const Constitution = z.object({
    * advises; only the owner rules, unless the owner says otherwise.
    */
   board_decides_after_hours: z.number().min(0).default(0),
+  /**
+   * One-time migrations this vault has already had applied, by id. A step that *lowers* a value the owner may
+   * legitimately raise again cannot be gated on the value itself — it would silently undo the owner on every
+   * daemon start — so it is gated on its id appearing here (review I3). Steps that are self-extinguishing (a
+   * rename, a file that now exists) need no marker and have none.
+   */
+  migrations: z.array(z.string()).default([]),
 });
 export type Constitution = z.infer<typeof Constitution>;
 
