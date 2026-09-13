@@ -305,6 +305,9 @@ a.vaultlink:hover { color: var(--text); }
 .trow .when { margin-left: auto; color: var(--text-3); font-size: var(--fs-caption); white-space: nowrap; }
 .trow .last { color: var(--text-2); font-size: var(--fs-footnote); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chips { display: flex; flex-wrap: wrap; gap: 3px; }
+/* A note's kind and its band are facts about it, not things asking to be pressed: amber on this screen is the
+   approvals pill and the one primary action, and nothing else (whole-branch review). */
+.chip.note, .chip.band, .chip.applying { color: var(--text-2); }
 /* A participant wears their own colour, one step deeper than their sprite's ring so `--on-tint` reads on it
    (ui/messages.ts `chipTint`, asserted in both themes). */
 .chip.who { color: var(--on-tint); border-color: transparent; font-weight: 500; }
@@ -317,7 +320,7 @@ a.vaultlink:hover { color: var(--text); }
 .tconv .chead .muted { margin-left: auto; font-size: var(--fs-caption); color: var(--text-3); }
 .tconv > .chips { padding: 0 var(--s4) var(--s2); }
 .tconv .empty { margin: auto var(--s4); }
-.thread { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: var(--s3); padding: var(--s3) var(--s4); }
+.thread { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: var(--s3); padding: var(--s3) var(--s4); scroll-padding-top: var(--s5); -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--s5)); mask-image: linear-gradient(to bottom, transparent 0, #000 var(--s5)); }
 .thread .msg.them { align-self: flex-start; }
 .thread .msg .who .dot { width: 7px; height: 7px; }
 .composer { display: flex; gap: var(--s2); padding: var(--s3) var(--s4); border-top: 1px solid var(--hairline); }

@@ -8,7 +8,7 @@ import { Panel, SURPRISE_ME, type Origin } from './ui/panel.js';
 import { TopBar } from './ui/bar.js';
 import { applyTheme, currentTheme, themeFromQuery, THEMES } from './ui/tokens.js';
 import { emptyUi, vaultPathOf, type Ctx } from './ui/content.js';
-import { COMMENT_REQUIRED, commentRequired, decidableOf, decisionKey } from './ui/decisions.js';
+import { COMMENT_REQUIRED, commentRequired, decidableOf, decideStateFor, decisionKey } from './ui/decisions.js';
 import { MESSAGES, roomThread } from './ui/messages.js';
 import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
@@ -167,7 +167,7 @@ const commentNow = (): string => document.querySelector<HTMLInputElement>('#pane
 function decide(id: string, approved: boolean, comment: string): void {
   const note = state.inbox.find((n) => n.id === id);
   if (!note) return;
-  const status = state.decisions[id]?.status;
+  const status = decideStateFor(note, state.decisions[id])?.status;
   if (status === 'sending' || status === 'applying') return;
   const d = decidableOf(note);
   const chosen = d === 'choose' ? ui.choice[id] : undefined;

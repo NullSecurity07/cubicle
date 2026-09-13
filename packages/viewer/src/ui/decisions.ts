@@ -47,12 +47,31 @@ export function decisionKey(e: { key: string; ctrlKey?: boolean; metaKey?: boole
   return null;
 }
 
-const bandChip = (n: InboxRow): string => (n.band ? chip('kind', n.band) : '');
+const bandChip = (n: InboxRow): string => (n.band ? chip('band', n.band) : '');
+
+/**
+ * What the bar should say about a row, from the note itself and from whatever this session has just sent.
+ *
+ * The note is the truth the owner can reload into: a decided-but-unresolved row comes back `pending`, and one the
+ * dispatcher would not apply comes back `refused` (SP8 ruling P8-8). This session's own state only outranks it
+ * while a click is still in flight — before the daemon has written anything, there is nothing on the note to read.
+ */
+export function decideStateFor(n: InboxRow, local?: DecideState): DecideState | undefined {
+  if (local?.status === 'sending') return local;
+  if (n.refused) return { status: 'error', approved: n.approved ?? false, chosen: n.chosen, message: n.refused };
+  if (n.pending) return { status: 'applying', approved: n.approved ?? true, chosen: n.chosen };
+  return local;
+}
+
+/** The trailing chip on a *Needs you* row: nothing, unless the row is mid-flight or was refused. */
+export const rowStateChip = (n: InboxRow): string => (n.refused ? chip('failed', 'refused') : n.pending ? chip('applying', 'applying') : '');
 
 /** One row in *Needs you*. */
 export function needsRow(n: InboxRow, s: State): string {
   const small = [n.from ? who(s, n.from) : '', n.band_reason || n.board_verdict || n.target || ''].filter(Boolean).join(' · ');
-  return row({ left: chip('kind', kindLabel(n.kind)), title: n.title, small: small || n.path.replace(/^00 Inbox\//, ''), right: esc(fmtWhen(n.created)), open: decisionKind(n.id) });
+  // A refused row says why on its own second line: it is the one thing the owner has to read before deciding again.
+  const line = n.refused ? `Refused: ${n.refused}` : n.pending ? 'Decided, being applied' : small || n.path.replace(/^00 Inbox\//, '');
+  return row({ left: chip('note', kindLabel(n.kind)), title: n.title, small: line, right: esc(fmtWhen(n.created)), open: decisionKind(n.id), actions: rowStateChip(n) || undefined });
 }
 
 /** One row in *Decided*: what you said, and what the company did with it. */
@@ -120,8 +139,8 @@ export function decisionView(id: string, s: State, ctx: Ctx, ui: { choice?: Reco
       + `<p class="hintline">${esc(done!.outcome || 'Recorded.')}</p>`;
     return { mode: 'doc', icon: 'envelope', title: done!.title, sub: path, html: body, link };
   }
-  const st = s.decisions[id];
-  const head = `<p>${chip('kind', kindLabel(n.kind))} ${bandChip(n)} <span class="muted">${esc([n.from ? who(s, n.from) : '', fmtWhen(n.created)].filter(Boolean).join(' · '))}</span></p>`;
+  const st = decideStateFor(n, s.decisions[id]);
+  const head = `<p>${chip('note', kindLabel(n.kind))} ${bandChip(n)} <span class="muted">${esc([n.from ? who(s, n.from) : '', fmtWhen(n.created)].filter(Boolean).join(' · '))}</span></p>`;
   const why = n.band_reason ? `<p class="hintline">${esc(n.band_reason)}</p>` : '';
   const body = n.body ? `<div class="prose">${md(n.body)}</div>` : `<p class="muted">The note carries no body. Open it in Obsidian to read it in full.</p>`;
   // The section titles the block, so the block's own `## Pressure test` heading would be the same words twice.
@@ -130,7 +149,7 @@ export function decisionView(id: string, s: State, ctx: Ctx, ui: { choice?: Reco
   const verdict = n.board_verdict ? `<p class="hintline">The board: ${esc(n.board_verdict)}</p>` : '';
   return {
     mode: 'doc', icon: 'envelope', title: n.title, sub: path, link,
-    html: head + why + body + pressure + verdict + actionBar(n, { chosen: ui.choice?.[id], st }),
+    html: head + why + body + pressure + verdict + actionBar(n, { chosen: ui.choice?.[id] ?? n.chosen, st }),
     copy: n.body ?? '',
   };
 }

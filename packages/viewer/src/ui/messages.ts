@@ -125,7 +125,7 @@ export function messagesView(s: State, _ctx: Ctx, ui: MessagesUi = {}): View {
     ? list.map((t) => threadRow(s, t, open, now)).join('')
     : emptyHtml('chat', s.conversations.length ? 'No conversation matches' : 'No conversations yet', s.conversations.length ? 'Try a name or a subject.' : 'Meetings, messages and pantry chats appear here as they happen.');
   const html = `<div class="panes" data-key="panes">`
-    + `<div class="tlist" data-key="tlist"><input class="search" data-key="search" type="search" autocomplete="off" aria-label="Search conversations" placeholder="Search conversations" /><div class="trows">${rowsHtml}</div></div>`
+    + `<div class="tlist" data-key="tlist"><input class="search" data-key="search" type="search" autocomplete="off" aria-label="Search conversations" placeholder="Search conversations" value="${esc(search)}" /><div class="trows">${rowsHtml}</div></div>`
     + conversationPane(s, open, now)
     + `</div>`;
   return {
