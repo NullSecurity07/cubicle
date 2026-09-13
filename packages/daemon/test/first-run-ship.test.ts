@@ -10,6 +10,7 @@ import { parseToolsConfig, ToolRegistry, phase3Tools, phase5Tools, hasDocker, ha
 import { runJob, vaultScheduler, shipRefusal, type Llm } from '@cubicle/harness';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { seedFirstStream, seedFirstJobs } from '../src/first-run.js';
+import { adoptFounderBrief } from './helpers/brief.js';
 import { WorkerPool } from '../src/workers.js';
 
 const root = path.resolve(__dirname, '../../..');
@@ -23,6 +24,9 @@ beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-firstrun-')); vault = (await scaffoldVault(dir)).vault;
   // The owner types an idea: the one thing that starts a company (spec §12).
   createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'The idea', body: 'A tiny shop that sells one good notebook.' }, 'owner');
+  // …and adopts the founder brief the company wrote from it: the first jobs are seeded on the heartbeat after
+  // that, never off the idea alone (ruling P8-15).
+  adoptFounderBrief(vault);
 });
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
