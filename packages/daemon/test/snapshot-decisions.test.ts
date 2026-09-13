@@ -260,6 +260,19 @@ describe('the decide and conversation.get ops', () => {
     c.close();
   });
 
+  it('refuses a brief the board is still sitting on, naming the note (ruling R-T3-3)', async () => {
+    const { id, path: rel } = createProposal(vault, { kind: 'founder_brief', from: 'ceo', target: FOUNDER_BRIEF, title: 'The founder brief', body: `## Proposed content\n\n\`\`\`md\n${ADOPTED_BRIEF}\`\`\`\n` }, 'ceo');
+    vault.updateNote(rel, (n) => ({ data: { ...n.data, board_pending: true }, body: n.body }), 'daemon');
+    const c = await client(ws, port);
+    await c.next('snapshot');
+
+    c.sock.send(JSON.stringify({ op: 'decide', id, approved: true }));
+    expect(await c.next('error')).toMatchObject({ id, message: 'the board is still sitting on this brief; decide once its pressure test is in' });
+    expect(findInboxById(vault, id)!.data.approved).toBeNull();
+    expect(ticks).toEqual([]);
+    c.close();
+  });
+
   it('an unknown op is still ignored, and never answered', async () => {
     const c = await client(ws, port);
     await c.next('snapshot');
