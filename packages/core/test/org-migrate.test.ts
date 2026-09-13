@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, templateDir } from '../src/template.js';
-import { loadOrg, migrateOrg } from '../src/org.js';
+import { loadOrg, migrateOrg, recordMigration, BOARD_MEDIUM_TIER_MIGRATION } from '../src/org.js';
 import { createJob, listJobs } from '../src/jobs.js';
 import { charter, makeLegacyVault } from './legacy-vault.js';
 
@@ -35,16 +35,22 @@ describe('migrateOrg on a v0.1 vault (growth role, no teams) against the real te
 // Ruling S-5. Step 4 of the migration fills only *missing* org fields, so a vault scaffolded while the skeptic
 // was `strong` would keep the strong tier for ever: one board session is four calls on top of the plan, out of a
 // free strong tier of 20 a day per flash model, and the live run of 2026-09-13 had that tier gone by 10:51.
-describe('migrateOrg moves the board off the strong tier', () => {
-  it('rewrites a strong board advisor to medium, leaves the CEO alone, and is idempotent', async () => {
+describe('migrateOrg moves the board off the strong tier, once', () => {
+  /** A vault from before the ruling: the skeptic chairs the board on strong, and nothing is marked applied. */
+  async function preRulingVault() {
     const dir = mkdtempSync(path.join(tmpdir(), 'cubicle-board-tier-'));
     const vault = (await scaffoldVault(dir)).vault;
-    try {
-      // A vault written before the ruling: the skeptic chairs the board on the strong tier.
-      const rel = 'Roles/advisor_skeptic.md';
-      vault.writeText(rel, vault.readText(rel).replace(/^model_tier: .*$/m, 'model_tier: strong'), 'owner');
-      expect(loadOrg(vault).roles.advisor_skeptic.model_tier).toBe('strong');
+    const rel = 'Roles/advisor_skeptic.md';
+    vault.writeText(rel, vault.readText(rel).replace(/^model_tier: .*$/m, 'model_tier: strong'), 'owner');
+    vault.writeText('Memory/constitution.md', vault.readText('Memory/constitution.md').replace(/^migrations:\n(?:\s+-.*\n)*/m, ''), 'owner');
+    expect(vault.constitution().migrations).toEqual([]);
+    return { dir, vault, rel };
+  }
 
+  it('rewrites a strong board advisor to medium, leaves the CEO alone, and is idempotent', async () => {
+    const { dir, vault, rel } = await preRulingVault();
+    try {
+      expect(loadOrg(vault).roles.advisor_skeptic.model_tier).toBe('strong');
       const r = migrateOrg(vault, templateDir());
       expect(r.changed).toContain(rel);
       const org = loadOrg(vault);
@@ -54,8 +60,50 @@ describe('migrateOrg moves the board off the strong tier', () => {
       // The strong tier is the CEO's plan and the owner's replies; nothing outside the board room moved.
       expect(org.roles.ceo.model_tier).toBe('strong');
       expect(org.roles.cto.model_tier).toBe('strong');
+      // The step records itself, and the second run is a no-op.
+      expect(vault.constitution().migrations).toContain(BOARD_MEDIUM_TIER_MIGRATION);
       expect(migrateOrg(vault, templateDir()).changed).toEqual([]);
     } finally { vault.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  // Review I3: this step *lowers* a value, so gating it on the value itself would mean re-applying it at every
+  // daemon start — silently undoing an owner who decided their board is worth the strong tier after all.
+  it('never runs twice: an owner who raises an advisor back to strong afterwards keeps it', async () => {
+    const { dir, vault, rel } = await preRulingVault();
+    try {
+      migrateOrg(vault, templateDir());
+      expect(loadOrg(vault).roles.advisor_skeptic.model_tier).toBe('medium');
+      // The owner, later, decides the chair is worth the strong tier.
+      vault.writeText(rel, vault.readText(rel).replace(/^model_tier: .*$/m, 'model_tier: strong'), 'owner');
+      const again = migrateOrg(vault, templateDir());
+      expect(again.changed).not.toContain(rel);
+      expect(loadOrg(vault).roles.advisor_skeptic.model_tier).toBe('strong');
+      // …and a third start does not creep up on it either.
+      migrateOrg(vault, templateDir());
+      expect(loadOrg(vault).roles.advisor_skeptic.model_tier).toBe('strong');
+      expect(vault.constitution().migrations.filter((m) => m === BOARD_MEDIUM_TIER_MIGRATION)).toHaveLength(1);
+    } finally { vault.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('a freshly scaffolded vault ships the marker, so the step never touches it at all', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'cubicle-board-fresh-'));
+    const vault = (await scaffoldVault(dir)).vault;
+    try {
+      expect(vault.constitution().migrations).toContain(BOARD_MEDIUM_TIER_MIGRATION);
+      vault.writeText('Roles/advisor_customer.md', vault.readText('Roles/advisor_customer.md').replace(/^model_tier: .*$/m, 'model_tier: strong'), 'owner');
+      migrateOrg(vault, templateDir());
+      expect(loadOrg(vault).roles.advisor_customer.model_tier).toBe('strong');
+    } finally { vault.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('recordMigration creates the key, appends to an existing list, and adds nothing twice', () => {
+    const base = '# C\n\n```yaml\nmax_roles: 40\n```\n';
+    const once = recordMigration(base, 'step-a');
+    expect(once).toContain('migrations:\n  - step-a');
+    expect(recordMigration(once, 'step-a')).toBe(once);
+    const twice = recordMigration(once, 'step-b');
+    expect(twice).toMatch(/migrations:\n  - step-b\n  - step-a/);
+    expect(recordMigration('# C\n\n```yaml\nmigrations: []\n```\n', 'step-a')).toContain('migrations:\n  - step-a');
   });
 });
 
