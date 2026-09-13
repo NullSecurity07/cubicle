@@ -38,6 +38,28 @@ export const BANNED_HEDGE = 'it has potential but';
  */
 const BANNED_HEDGE_RE = /it\s+has\s+potential\s*,?\s*but\b/i;
 
+/**
+ * Whether a stretch of text hedges in the one way the owner banned. Exported because the board's dialogue
+ * (SP8 §3) uses the same net as a **challenge trigger**: an advisor who answers a round with "it has potential,
+ * but…" is pressed on it by the chair rather than merely refused at the end, which is the whole point of
+ * holding the argument in the open. One regex, so what refuses a chair and what provokes one cannot drift.
+ */
+export function hedges(text: string): boolean {
+  return BANNED_HEDGE_RE.test(text ?? '');
+}
+
+/**
+ * What the chair writes instead of a finding when the material does not answer the round's question (SP8 §3).
+ * The board may not guess: an unanswerable question goes to the owner, in these words, and the same words are
+ * what the cabin message, the owner's proposal and the next session's re-run rule all look for.
+ */
+export const OWNER_QUESTION = 'QUESTION FOR THE OWNER:';
+
+/** True when a round's finding is a question for the owner rather than a finding. */
+export function isOwnerQuestion(finding: string): boolean {
+  return finding.trimStart().toUpperCase().startsWith(OWNER_QUESTION);
+}
+
 /** The owner-facing half of the test, in the vault. Task 3's prompts point the chair at it. */
 export const PRESSURE_HANDBOOK_PATH = 'Docs/pressure-test-handbook.md';
 

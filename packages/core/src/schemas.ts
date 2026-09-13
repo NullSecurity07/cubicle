@@ -262,6 +262,16 @@ export const Constitution = z.object({
    */
   board_decides_after_hours: z.number().min(0).default(0),
   /**
+   * How the board holds a pressure test (SP8 §3). `full` is the dialogue the owner reads: the chair states each
+   * of the five questions in its own words, the other two advisors answer it in turn, and the chair rules on
+   * each round in the open — six rounds, one transcript note, at most 17 model calls. `brief` is the four-call
+   * session the board ran before SP8: three pre-mortems and one merge, with nothing to read but the merge.
+   *
+   * It is a switch and not a tier: a vault that cannot spend 17 calls on one idea sets `brief` and loses the
+   * argument, not the verdict — both paths end on the same `readPressureVerdict` parse.
+   */
+  board_dialogue: z.enum(['full', 'brief']).default('full'),
+  /**
    * One-time migrations this vault has already had applied, by id. A step that *lowers* a value the owner may
    * legitimately raise again cannot be gated on the value itself — it would silently undo the owner on every
    * daemon start — so it is gated on its id appearing here (review I3). Steps that are self-extinguishing (a

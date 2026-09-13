@@ -1,6 +1,7 @@
 export * from './config.js';
 export * from './daemon.js';
 export * from './heartbeat.js';
+export * from './board-dialogue.js';
 export * from './first-run.js';
 export * from './dispatcher.js';
 export * from './trust.js';

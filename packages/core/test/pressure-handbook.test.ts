@@ -78,7 +78,11 @@ describe('Docs/pressure-test-handbook.md (spec §1)', () => {
   it('is short enough that an agent will read it', () => {
     const lines = md.split('\n').length;
     expect(lines).toBeGreaterThan(100);
-    expect(lines).toBeLessThan(190);
+    // 190 until SP8 §3, which owed the handbook one more thing an agent has to know: how the board actually
+    // holds the test now (six rounds, one chair, two advisors answering in turn) and the rule that stops it
+    // guessing — `QUESTION FOR THE OWNER:` and what happens to the rounds that asked. Seventeen lines, and the
+    // cap moves by twenty rather than by "whatever it needs", because the point of the cap is that it bites.
+    expect(lines).toBeLessThan(210);
   });
 });
 
