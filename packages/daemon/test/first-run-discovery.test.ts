@@ -439,25 +439,25 @@ describe('the first cycle reads, then judges, then plans (spec §5.1)', () => {
 });
 
 describe('the CEO asks only what the owner has not already said (spec §5)', () => {
-  it('asks all six when the vault is empty, exactly as it always did', () => {
-    const id = askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'));
+  it('asks all six when the vault is empty, exactly as it always did', async () => {
+    const id = await askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'));
     expect(id).toBeTruthy();
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
     const msg = listInbox(vault).find((n) => n.data.id === id)!;
     // The title is the note's `# ` line: `createProposal` writes it into the body, not the frontmatter.
-    expect(msg.body.split('\n')[0]).toBe('# Six questions, while I get started');
+    expect(msg.body.split('\n')[0]).toBe('# Six questions, and how I would answer them');
     for (const q of INTERVIEW_QUESTIONS) expect(msg.body).toContain(q);
   });
 
-  it('asks three of six when the owner\'s cabin message answered the other three', () => {
+  it('asks three of six when the owner\'s cabin message answered the other three', async () => {
     createProposal(vault, {
       kind: 'message', from: 'owner', to: 'ceo', title: 'what we are doing',
       body: 'We are building a weekly meal-kit box. The product is a Saturday delivery.\n\nWe already have a waitlist of 90 people and the domain.\n\nWe tried a Facebook group and it did not work, so we abandoned it.',
     }, 'owner');
-    const id = askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'))!;
+    const id = (await askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z')))!;
     const msg = listInbox(vault).find((n) => n.data.id === id)!;
-    expect(msg.body.split('\n')[0]).toBe('# Three questions, while I get started');
-    expect(msg.body).toContain('you have answered 3 of my six questions');
+    expect(msg.body.split('\n')[0]).toBe('# Three questions, and how I would answer them');
+    expect(msg.body).toContain('You have answered 3 of my six questions');
     expect(msg.body).toContain(INTERVIEW_QUESTIONS[1]);
     expect(msg.body).not.toContain(INTERVIEW_QUESTIONS[0]);
     // The transcript records the three it asked, so the owner's answer closes exactly those.
@@ -467,30 +467,30 @@ describe('the CEO asks only what the owner has not already said (spec §5)', () 
     expect(t).not.toContain(INTERVIEW_QUESTIONS[2]);
   });
 
-  it('reads the inbox files as well as the cabin', () => {
+  it('reads the inbox files as well as the cabin', async () => {
     vault.writeText(`${DISCOVERY_INBOX}/notes.md`, 'It is for independent nursery managers. Today they use a shared spreadsheet.', 'owner');
     expect(interviewMaterial(vault).text).toContain('nursery managers');
-    expect(askInterview(vault, 'ceo', new Date())).toBeTruthy();
+    expect(await askInterview(vault, 'ceo', new Date())).toBeTruthy();
     expect(vault.readText(INTERVIEW_PATH)).not.toContain(INTERVIEW_QUESTIONS[1]);
   });
 
   // Preflight G2: the gate used to refuse to interview any vault that held a file at all, which made this
   // route unreachable in a live run. A dropped file is material, and the questions it answers are not asked.
-  it('asks exactly three when an inbox file answers the other three', () => {
+  it('asks exactly three when an inbox file answers the other three', async () => {
     vault.writeText(`${DISCOVERY_INBOX}/pitch.md`, [
       'We are building a weekly meal-kit box. The product is a Saturday delivery of five prepped dinners.',
       'We already have a waitlist of 90 people and the domain.',
       'We tried a Facebook group first and it did not work, so we abandoned it.',
     ].join('\n\n'), 'owner');
-    const id = askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'))!;
+    const id = (await askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z')))!;
     const msg = listInbox(vault).find((n) => n.data.id === id)!;
-    expect(msg.body.split('\n')[0]).toBe('# Three questions, while I get started');
-    expect(msg.body).toContain('you have answered 3 of my six questions');
+    expect(msg.body.split('\n')[0]).toBe('# Three questions, and how I would answer them');
+    expect(msg.body).toContain('You have answered 3 of my six questions');
     for (const i of [1, 3, 5]) expect(msg.body).toContain(INTERVIEW_QUESTIONS[i]);
     for (const i of [0, 2, 4]) expect(msg.body).not.toContain(INTERVIEW_QUESTIONS[i]);
   });
 
-  it('asks nothing at all when an adopted founder brief answers all six (Decision 16)', () => {
+  it('asks nothing at all when an adopted founder brief answers all six (Decision 16)', async () => {
     vault.writeText(FOUNDER_BRIEF, [
       '## What the company is', '', 'A weekly meal-kit box delivered to nurseries before seven in the morning, priced per child.', '',
       '## Who it is for', '', 'Independent nursery managers running twenty to sixty places, who plan menus on a shared spreadsheet.', '',
@@ -503,7 +503,7 @@ describe('the CEO asks only what the owner has not already said (spec §5)', () 
       '## Pressure test', '', 'Core Assumption: nurseries buy food centrally. Brutal Verdict: WEAK.', '',
     ].join('\n'), 'owner');
 
-    expect(askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'))).toBeNull();
+    expect(await askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'))).toBeNull();
     const t = vault.readText(INTERVIEW_PATH);
     expect(interviewPhase(t)).toBe('covered');
     expect(t).toContain('already answered all 6 questions');
@@ -514,7 +514,7 @@ describe('the CEO asks only what the owner has not already said (spec §5)', () 
 
   // Review T4, Important 2. Coverage made both writes material-dependent, which turned the one-write gap
   // between the message and the transcript from harmless into two ways to strand the owner.
-  it('a kill after the message resumes into the transcript, and never into `covered`', () => {
+  it('a kill after the message resumes into the transcript, and never into `covered`', async () => {
     // Exactly the vault a kill in that gap leaves: the CEO's three questions are in the inbox, no transcript.
     const open = [INTERVIEW_QUESTIONS[1], INTERVIEW_QUESTIONS[3], INTERVIEW_QUESTIONS[5]];
     createProposal(vault, {
@@ -534,7 +534,7 @@ describe('the CEO asks only what the owner has not already said (spec §5)', () 
       '## What we do not know', '', 'Whether a nursery kitchen will reheat what we send, which decides the packaging.', '',
     ].join('\n'), 'owner');
 
-    expect(askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'))).toBeNull();   // no second message
+    expect(await askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'))).toBeNull();   // no second message
     const t = vault.readText(INTERVIEW_PATH);
     // Not `covered`: the owner is looking at a message, and only an `asked` transcript can be closed by their
     // reply — `captureInterviewAnswer` would otherwise never record it, whatever they typed.
@@ -543,7 +543,7 @@ describe('the CEO asks only what the owner has not already said (spec §5)', () 
     expect(listInbox(vault).filter((n) => n.data.id === interviewMessageId('ceo'))).toHaveLength(1);
   });
 
-  it('the resumed transcript records the questions the owner is reading, not the ones still open', () => {
+  it('the resumed transcript records the questions the owner is reading, not the ones still open', async () => {
     // `createProposal` replays idempotently and does *not* rewrite the body, so a resume that re-derived the
     // open questions would record one set and leave the owner reading another.
     const open = [INTERVIEW_QUESTIONS[1], INTERVIEW_QUESTIONS[3], INTERVIEW_QUESTIONS[5]];
@@ -554,7 +554,7 @@ describe('the CEO asks only what the owner has not already said (spec §5)', () 
     // Material arrives that answers one of the three the owner was actually asked.
     vault.writeText(`${DISCOVERY_INBOX}/notes.md`, 'It is for independent nursery managers. Today they use a shared spreadsheet.', 'owner');
 
-    askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'));
+    await askInterview(vault, 'ceo', new Date('2026-09-12T09:00:00.000Z'));
     const t = vault.readText(INTERVIEW_PATH);
     for (const q of open) expect(t).toContain(q);                       // all three, including the covered one
     expect(t).not.toContain(INTERVIEW_QUESTIONS[0]);                    // and none the message did not carry

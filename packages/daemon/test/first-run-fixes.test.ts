@@ -325,9 +325,9 @@ describe('FR-3: discovery never starts on a note that is only a reply to the CEO
   // filed three ideas, and before picking one they complained about the CEO's truncated reply. Five words that
   // describe nothing bought a research lifecycle, while the pick that would have said what the company is sat
   // in the inbox.
-  it('a complaint typed before the pick is not the company\'s material', () => {
+  it('a complaint typed before the pick is not the company\'s material', async () => {
     afterSurprise(vault);
-    askInterview(vault, 'ceo', new Date('2026-09-13T09:03:00.000Z'));
+    await askInterview(vault, 'ceo', new Date('2026-09-13T09:03:00.000Z'));
     ownerSays(vault, 'your text i only hAlf', '2026-09-13T09:04:00.000Z');
 
     const waiting = currentDiscoveryStatus(vault, new Date('2026-09-13T09:05:00.000Z'));
@@ -368,8 +368,8 @@ describe('FR-3: discovery never starts on a note that is only a reply to the CEO
     expect(s.why).not.toMatch(/pick one of the three/);
   });
 
-  it('is unchanged by a skip: the interview closes and the company reads what it has', () => {
-    askInterview(vault, 'ceo', new Date('2026-09-13T09:00:00.000Z'));
+  it('is unchanged by a skip: the interview closes and the company reads what it has', async () => {
+    await askInterview(vault, 'ceo', new Date('2026-09-13T09:00:00.000Z'));
     ownerSays(vault, 'skip');
     expect(captureInterviewAnswer(vault, 'skip', new Date('2026-09-13T09:01:00.000Z'))).toBe(true);
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('skipped');
@@ -401,23 +401,23 @@ describe('FR-6: the interview stays open until the owner answers it', () => {
     // A company that already has a name, so the note takes the general branch — which is where the owner was
     // when they wrote "your text is only half" on the first live run.
     vault.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'GreenCrate' }, body: n.body }), 'owner');
-    askInterview(vault, 'ceo', NOW);
+    await askInterview(vault, 'ceo', NOW);
     const p = ownerSays(vault, 'your text is only half');
     const llm = scriptedLlm();                                  // echoes the prompt, so the reply carries the brief
     await answerOwnerMessages({ vault, llm }, vault, unansweredOwnerMessages(vault), { jobId: 'job_test' });
 
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
     expect(vault.readText(INTERVIEW_PATH)).not.toContain('only half');
-    expect(ceoSection(vault, p)).toMatch(/six questions[^]*still open/);
+    expect(ceoSection(vault, p)).toMatch(/six founder questions[^]*still with them/);
   });
 
-  it('an answer closes it, and so does a skip', () => {
-    askInterview(vault, 'ceo', NOW);
+  it('an answer closes it, and so does a skip', async () => {
+    await askInterview(vault, 'ceo', NOW);
     expect(captureInterviewAnswer(vault, 'Nurseries, not parents.\nTwo already pay us.\nTen in three months.', NOW)).toBe(true);
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('answered');
 
     vault.writeText(INTERVIEW_PATH, '', 'daemon');
-    askInterview(vault, 'ceo', NOW);
+    await askInterview(vault, 'ceo', NOW);
     expect(captureInterviewAnswer(vault, 'skip', NOW)).toBe(true);
     expect(interviewPhase(vault.readTextOrNull(INTERVIEW_PATH))).toBe('skipped');
   });

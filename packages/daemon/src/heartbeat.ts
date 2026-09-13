@@ -1449,8 +1449,8 @@ async function answerOne(deps: HeartbeatDeps, vault: Vault, m: OwnerMessage, bod
   } else {
     const extra = [
       interviewEnded === 'added' ? 'You had put your own answers to the six founder questions to them; what they just wrote is now added to Discovery/interview.md underneath those answers, and the research office will read both.' : '',
-      interviewEnded === 'endorsed' ? 'You had put your own answers to the six founder questions to them; they read them and said go, so those answers now stand as agreed and the research office will read them as such.' : '',
-      interviewEnded === 'skipped' ? 'They dropped the founder interview. Your own answers stand as your reading of the idea, not as their word, and the research office will read them that way.' : '',
+      interviewEnded === 'endorsed' ? 'You had put your own answers to the six founder questions to them; they read them and said go, so Discovery/interview.md now records those answers as agreed and the research office will read them as such.' : '',
+      interviewEnded === 'skipped' ? 'They dropped the founder interview. Discovery/interview.md records that; your own answers in it stand as your reading of the idea, not as their word, and the research office will read them that way.' : '',
       // The owner has to be told, in the reply they are already reading, that the six answers are still
       // waiting on them — nothing else will say it, and the interview no longer closes itself on this message
       // (FR-6). It is an invitation to correct, not a demand to answer (P8-13).

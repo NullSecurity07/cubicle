@@ -338,7 +338,7 @@ export interface CeoAnswer { text: string; tag: InterviewTag }
 export const CEO_UNKNOWN = 'I do not know this yet — nothing we have says it, and I am not going to guess.';
 
 /** The legend every reader of the transcript gets, so a tag is never read as the owner's word. */
-export const INTERVIEW_TAG_LEGEND = 'Answers tagged [unstated] are unknown; answers tagged [from the idea] are the CEO\'s own reading of the idea, not the owner\'s word; answers tagged [from the vault] rest on a file or a message; **You:** lines are the owner\'s.';
+export const INTERVIEW_TAG_LEGEND = 'Answers tagged [unstated] are unknown; answers tagged [from the idea] are the CEO\'s own reading of the idea, not the owner\'s word; answers tagged [from the vault] rest on a file or a message; `**You:**` lines are the owner\'s own words.';
 
 /** How long one answer may run in the transcript. One line each, the same as the owner is asked for. */
 export const CEO_ANSWER_CHARS = 600;
