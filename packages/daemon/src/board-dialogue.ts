@@ -60,6 +60,12 @@ export const BOARD_FINDINGS_SECTION = '## Findings';
 /** What a carried-over round says in the transcript, so a reader can tell an argument from a reuse. */
 export const REUSED_NOTE = 'Carried over from the session of';
 
+/** What a caller knows about the session before it starts, and the note has to carry the moment it closes. */
+export interface BoardSessionOpts {
+  /** The id of the `Decisions/` note this session's caller will write: `board-<slug>`, `premortem-<heartbeat>`. */
+  decision?: string;
+}
+
 /** One turn as it is written to the note and emitted. */
 export interface BoardTurn { round: number; role: string; text: string }
 
@@ -237,10 +243,12 @@ function findingsSection(findings: Partial<Record<PressurePart, string>>): strin
 export function parseFindingsSection(body: string): Partial<Record<PressurePart, string>> {
   const section = (body.split(new RegExp(`^${BOARD_FINDINGS_SECTION}[ \\t]*$`, 'm'))[1] ?? '').split(/^## /m)[0];
   const out: Partial<Record<PressurePart, string>> = {};
-  for (const part of PRESSURE_PARTS) {
-    const m = section.match(new RegExp(`^### ${part}[ \\t]*$([\\s\\S]*?)(?=^### |$)`, 'm'));
-    const text = (m?.[1] ?? '').trim();
-    if (text && text !== '(not reached)') out[part] = text;
+  for (const chunk of section.split(/^### /m).slice(1)) {
+    const nl = chunk.indexOf('\n');
+    const name = (nl < 0 ? chunk : chunk.slice(0, nl)).trim() as PressurePart;
+    const text = (nl < 0 ? '' : chunk.slice(nl + 1)).trim();
+    if (!PRESSURE_PARTS.includes(name)) continue;
+    if (text && text !== '(not reached)') out[name] = text;
   }
   return out;
 }
@@ -287,8 +295,14 @@ export function boardQuestionsBody(o: { title: string; questions: string[]; note
  *
  * Returns the same shape the brief session does, plus `notePath` (the transcript) and `questions` (what the
  * board had to ask the owner), so both paths are interchangeable to every caller.
+ *
+ * `opts.decision` is the id of the `Decisions/` note the caller is about to write. It is taken up front rather
+ * than patched in afterwards because the conversations index reads an **open** thread as one with no `decision`
+ * in its frontmatter: a note that reached `status: done` and gained its decision one write later would show, in
+ * between, as a board still sitting. Both call sites know the id before the session starts — it is derived from
+ * the idea's slug or the heartbeat's — so there is no reason for that gap to exist.
  */
-export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: string | BoardSubject): Promise<BoardSessionResult> {
+export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: string | BoardSubject, opts: BoardSessionOpts = {}): Promise<BoardSessionResult> {
   const vault = deps.vault;
   const s = boardSubject(subject);
   const board = org.teams.board;
@@ -349,14 +363,18 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
   };
   const transcriptSoFar = () => turns.map((t) => `${t.role}: ${t.text}`).join('\n\n').slice(-TRANSCRIPT_CHARS);
 
-  vault.events.emit({ type: 'meeting.opened', agent: chair, payload: { id: meetingId, room: 'board', participants, agenda: boardAgenda(s), subject: s.kind, title: s.title, path: rel } });
-  vault.writeText(rel, render('in_progress'), chair, { generated: true });
-
   // What this session may keep from the last one on the same subject (spec §3, "Questions to the owner"): a
   // round is re-run when its question has an answer in the vault, and reused verbatim when it does not. A round
   // that reached a finding is never re-run — the board already answered it, and paying for that twice is how a
   // company spends a day's quota re-litigating the argument it won yesterday.
+  //
+  // Read **before** this session's own note exists, because that note is on the same subject and newer than
+  // every other: looked up afterwards, a session would find itself, reuse nothing, and re-argue the lot.
   const prior = priorBoardDialogue(vault, subjectKey);
+
+  vault.events.emit({ type: 'meeting.opened', agent: chair, payload: { id: meetingId, room: 'board', participants, agenda: boardAgenda(s), subject: s.kind, title: s.title, path: rel } });
+  vault.writeText(rel, render('in_progress'), chair, { generated: true });
+
   const answered = prior ? ownerSpokeSince(vault, prior.opened) : false;
   const reuse: Partial<Record<PressurePart, string>> = {};
   if (prior) {
@@ -434,7 +452,7 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
   }
 
   const questions = PRESSURE_PARTS.map((p) => findings[p] ?? '').filter((f) => isOwnerQuestion(f));
-  vault.writeText(rel, render('done'), chair, { generated: true });
+  vault.writeText(rel, render('done', opts.decision), chair, { generated: true });
 
   const out: BoardSessionResult = {
     ...merge,
@@ -465,13 +483,15 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
 }
 
 /**
- * Point a finished transcript at the `Decisions/` note the session produced (spec §3: the note ends with status
- * `done` and a `decision`). Separate from the session because the decision note is written by the caller, after
- * the session returns — the meeting note and the decision note are each other's inputs, and one of them has to
- * be written second.
+ * Point a finished transcript at the `Decisions/` note the session produced, for a note that does not already
+ * carry it. The session itself closes with the id its caller handed it (`BoardSessionOpts.decision`), because
+ * "no `decision` in the frontmatter" is how the conversations index reads a board that is still sitting.
  */
 export function linkBoardTranscript(vault: Vault, notePath: string, decisionId: string, by: string): void {
   if (!notePath || !decisionId) return;
+  // Normally a no-op: `runBoardDialogue` was handed the same id and closed the note with it. This is the
+  // recovery path — a session written by an older build, or one whose caller only learned the id afterwards.
+  if (vault.readNoteOrNull(notePath)?.data.decision === decisionId) return;
   try {
     vault.updateNote(notePath, (n) => ({ data: { ...n.data, decision: decisionId }, body: n.body }), by);
   } catch { /* the transcript is the record; a missing back-link is not worth a cycle */ }

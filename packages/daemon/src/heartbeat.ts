@@ -22,7 +22,7 @@ import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, ga
 import { seedFirstJobs, seedFirstStream } from './first-run.js';
 import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId, hasApprovedBrief, rejectionAsksForNewIdea } from './discovery.js';
 import { writeRunway, accrueModelCost, enqueueRunway, dormancyMessage, revivalMessage } from './money.js';
-import { runBoardDialogue, linkBoardTranscript } from './board-dialogue.js';
+import { runBoardDialogue, linkBoardTranscript, type BoardSessionOpts } from './board-dialogue.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -652,14 +652,14 @@ export interface BoardSessionResult extends BoardMerge {
 }
 
 export async function runBoardSession(
-  deps: HeartbeatDeps, org: Org, subject: string | BoardSubject,
+  deps: HeartbeatDeps, org: Org, subject: string | BoardSubject, opts: BoardSessionOpts = {},
 ): Promise<BoardSessionResult> {
   const vault = deps.vault;
   // SP8 §3. `full` is the default and holds the argument in the open; `brief` is everything below this line,
   // byte for byte what the board did before SP8. The switch is read here rather than at either call site so
   // that every caller — the ideas board, the plan pre-mortem, a test calling this directly — gets the same
   // session shape whichever way the vault is set.
-  if (vault.constitution().board_dialogue !== 'brief') return runBoardDialogue(deps, org, subject);
+  if (vault.constitution().board_dialogue !== 'brief') return runBoardDialogue(deps, org, subject, opts);
   const s = boardSubject(subject);
   // Its one caller guards on `org.teams.board` first, but this is exported and tests call it directly: an org
   // with no board room must fail as "the board passed unreviewed", not as a TypeError inside the cycle (M5).
@@ -1837,7 +1837,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // beside these is already wrapped.
         const card = readIdea(vault, idea.id);
         if (!card) { done(i, `board skipped: Ideas/${idea.id} disappeared before the session${refiledNote}`); break; }
-        const session = await runBoardSession(deps, org, { kind: 'idea', text: `# ${card.data.title}\n\n${card.body}`, title: card.data.title, slug: idea.id });
+        const session = await runBoardSession(deps, org, { kind: 'idea', text: `# ${card.data.title}\n\n${card.body}`, title: card.data.title, slug: idea.id }, { decision: `board-${idea.id}` });
         if (cancelled()) return { status: 'cancelled' };
         // The record, closed in the same tick and depending on this heartbeat so no worker picks it up.
         const boardJob = createJob(vault, {
@@ -2056,7 +2056,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           done(i, `board returned: ${unkept.length} unkept idea(s), second time`);
           break;
         }
-        const session = await runBoardSession(deps, org, plan);
+        const session = await runBoardSession(deps, org, plan, { decision: `premortem-${hbId}` });
         if (cancelled()) return { status: 'cancelled' };
         // The job note is the record of the session, not a unit of work: it is created with `depends_on` on this
         // heartbeat (so no worker can pick it up while the heartbeat runs) and closed in the same tick. Its id is

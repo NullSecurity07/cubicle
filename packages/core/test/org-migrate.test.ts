@@ -35,6 +35,25 @@ describe('migrateOrg on a v0.1 vault (growth role, no teams) against the real te
 // Ruling S-5. Step 4 of the migration fills only *missing* org fields, so a vault scaffolded while the skeptic
 // was `strong` would keep the strong tier for ever: one board session is four calls on top of the plan, out of a
 // free strong tier of 20 a day per flash model, and the live run of 2026-09-13 had that tier gone by 10:51.
+describe('migrateOrg adds board_dialogue (SP8 §3)', () => {
+  it('a constitution written before SP8 gains `board_dialogue: full`, and an owner who set `brief` keeps it', async () => {
+    const { dir, vault } = await makeLegacyVault();
+    try {
+      const rel = 'Memory/constitution.md';
+      vault.writeText(rel, vault.readText(rel).replace(/^board_dialogue:.*\n/m, ''), 'owner');
+      expect(vault.readText(rel)).not.toMatch(/^board_dialogue:/m);
+      migrateOrg(vault, templateDir());
+      // The owner asked to read the argument, so a vault that predates the switch is given the dialogue.
+      expect(vault.readText(rel)).toMatch(/^board_dialogue: full$/m);
+      expect(vault.constitution().board_dialogue).toBe('full');
+      // …and the step is self-extinguishing: an owner who turns it down is not overruled on the next start.
+      vault.writeText(rel, vault.readText(rel).replace(/^board_dialogue:.*$/m, 'board_dialogue: brief'), 'owner');
+      migrateOrg(vault, templateDir());
+      expect(vault.constitution().board_dialogue).toBe('brief');
+    } finally { vault.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
 describe('migrateOrg moves the board off the strong tier, once', () => {
   /** A vault from before the ruling: the skeptic chairs the board on strong, and nothing is marked applied. */
   async function preRulingVault() {
