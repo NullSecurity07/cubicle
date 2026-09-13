@@ -246,6 +246,15 @@ describe('a decision the dispatcher has not finished with', () => {
     expect(html).toContain('>Send back<');
   });
 
+  it('promises no verdict while the board is still arguing about it', () => {
+    // The draft section can carry a word the board has not ruled yet; the bar must not read it out as theirs.
+    const sitting: InboxRow = { ...adoptRow, id: 'pq', verdict: 'WEAK', needs_confirm: true, board_pending: true };
+    const html = viewFor('decision:pq', applySnapshot(emptyState(), snap({ inbox: [sitting] })), ctx).html;
+    expect(html).toContain(BOARD_SITTING);
+    expect(html).not.toContain('data-key="verdict"');
+    expect(html).not.toContain('>Adopt anyway<');
+  });
+
   it('a brief the board passed is still one click, and says nothing about a verdict', () => {
     const strong: InboxRow = { ...adoptRow, id: 'ps', verdict: 'STRONG', needs_confirm: false };
     const html = viewFor('decision:ps', applySnapshot(emptyState(), snap({ inbox: [strong] })), ctx).html;

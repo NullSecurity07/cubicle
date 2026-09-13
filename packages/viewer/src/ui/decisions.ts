@@ -151,7 +151,11 @@ const optionChip = (o: { n: number; label: string }, chosen: number | undefined)
  */
 export function actionBar(n: InboxRow, o: { chosen?: number; st?: DecideState }): string {
   const d = decidableOf(n);
-  const v = verbsFor(d, !!n.needs_confirm);
+  // A brief the board is still arguing has no verdict to overrule yet, whatever its draft section happens to say
+  // (ruling P8-6): the bar is shut, it says the board is sitting, and it must not also promise a ruling nobody
+  // has made. So `needs_confirm` only speaks once the argument is in.
+  const confirming = !!n.needs_confirm && !n.board_pending;
+  const v = verbsFor(d, confirming);
   const st = o.st;
   const busy = st?.status === 'sending' || st?.status === 'applying';
   const done = st?.status === 'done';
@@ -167,7 +171,7 @@ export function actionBar(n: InboxRow, o: { chosen?: number; st?: DecideState })
   const yes = `<button class="btn primary" data-act="decide:yes"${yesOff}>${esc(v.yes)}<kbd>A</kbd></button>`;
   const no = `<button class="btn" data-act="decide:no"${dis}>${esc(v.no)}<kbd>R</kbd></button>`;
   // Above the buttons, so it is read before the click and not after it: the verdict the owner is about to overrule.
-  const verdict = n.needs_confirm && n.verdict ? `<p class="hintline" data-key="verdict">${esc(verdictLine(n.verdict))}</p>` : '';
+  const verdict = confirming && n.verdict ? `<p class="hintline" data-key="verdict">${esc(verdictLine(n.verdict))}</p>` : '';
   return `<div class="actionbar" data-key="actionbar">${opts}${verdict}${state}<div class="acts">${comment}${no}${yes}</div></div>`;
 }
 
