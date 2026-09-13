@@ -269,7 +269,10 @@ export class WsServer {
             }
           } else if (msg.op === 'conversation.get') {
             if (typeof msg.id !== 'string' || !msg.id) ws.send(JSON.stringify({ op: 'error', message: 'conversation.get needs id (string)' }));
-            else ws.send(JSON.stringify({ op: 'conversation', id: msg.id, turns: readConversation(this.deps.vault, msg.id) satisfies Turn[] }));
+            else {
+              const turns: Turn[] = readConversation(this.deps.vault, msg.id);
+              ws.send(JSON.stringify({ op: 'conversation', id: msg.id, turns }));
+            }
           }
         } catch (err) {
           try { ws.send(JSON.stringify({ op: 'error', message: String((err as Error).message).slice(0, 200) })); } catch { /* closed */ }

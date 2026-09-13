@@ -36,6 +36,13 @@ export interface Thread {
 export const CONVERSATIONS_MAX = 60;
 /** How much of the closing turn a thread row carries. The full text comes from `readConversation`. */
 export const THREAD_PREVIEW_CHARS = 280;
+/**
+ * How many turns of one thread are kept — the **newest**. `Messages/<role>.md` is append-only and nothing ever
+ * trims it, so a pair that has worked together for a month is the one conversation that could put megabytes on
+ * the wire. The thread's `turns` count stays honest (it counts what was said, not what is carried); it is the
+ * reading of it that stops at the last five hundred.
+ */
+export const THREAD_TURNS_MAX = 500;
 /** The owner ↔ CEO thread. There is exactly one, so its id is a constant. */
 export const DM_THREAD_ID = 'dm:owner-ceo';
 
@@ -66,7 +73,7 @@ function threadOf(base: Omit<Thread, 'last' | 'turns'>, turns: Turn[]): Conversa
       last: last ? { who: last.who, text: last.text.replace(/\s+/g, ' ').slice(0, THREAD_PREVIEW_CHARS), at: last.at } : null,
       turns: turns.length,
     },
-    turns,
+    turns: turns.slice(-THREAD_TURNS_MAX),
   };
 }
 

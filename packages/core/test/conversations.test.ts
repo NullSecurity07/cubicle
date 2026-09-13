@@ -7,7 +7,7 @@ import type { Vault } from '../src/vault.js';
 import { stringifyNote } from '../src/frontmatter.js';
 import { createProposal } from '../src/proposals.js';
 import { pantryNote } from '../src/pantry.js';
-import { listConversations, readConversation, agentThreadId, DM_THREAD_ID, CONVERSATIONS_MAX, type Thread } from '../src/conversations.js';
+import { listConversations, readConversation, agentThreadId, DM_THREAD_ID, CONVERSATIONS_MAX, THREAD_TURNS_MAX, type Thread } from '../src/conversations.js';
 
 let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-convo-')); vault = (await scaffoldVault(dir)).vault; });
@@ -167,6 +167,19 @@ describe('the index', () => {
     for (let i = 1; i < list.length; i++) expect(list[i - 1].updated >= list[i].updated).toBe(true);
     // Capped in the list, still readable by id: a thread the owner opened is a thread they want to read.
     expect(readConversation(vault, 'meeting:meet_0')).toHaveLength(1);
+  });
+
+  it('keeps the newest turns of a long thread, and still counts them all', () => {
+    for (let i = 0; i < THREAD_TURNS_MAX + 10; i++) {
+      const at = new Date(Date.parse('2026-09-13T00:00:00.000Z') + i * 1000).toISOString();
+      vault.appendText('Messages/cto.md', `\n## ${at} from dev_manager (fyi) <!-- id:msg_${i} -->\n\nline ${i}\n`, 'dev_manager');
+    }
+    const id = agentThreadId('cto', 'dev_manager');
+    expect(find(id).turns).toBe(THREAD_TURNS_MAX + 10);        // what was said
+    const turns = readConversation(vault, id);
+    expect(turns).toHaveLength(THREAD_TURNS_MAX);              // what is carried: the newest
+    expect(turns[turns.length - 1].text).toBe(`line ${THREAD_TURNS_MAX + 9}`);
+    expect(turns[0].text).toBe('line 10');
   });
 
   it('an id nobody wrote reads as no turns rather than throwing', () => {
