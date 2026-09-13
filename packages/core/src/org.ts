@@ -5,6 +5,7 @@ import type { Vault } from './vault.js';
 import { parseNote, stringifyNote } from './frontmatter.js';
 import { listJobs, updateJob } from './jobs.js';
 import { nowIso } from './fs.js';
+import { PRESSURE_HANDBOOK_PATH } from './pressure.js';
 
 export interface Org { teams: Record<string, TeamFrontmatter>; roles: Record<string, RoleFrontmatter>; offices?: Record<string, string> }
 export type Action = Permission;
@@ -280,6 +281,21 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
   const changed: string[] = [];
   const copyMissing = (rel: string) => { if (!vault.exists(rel) && existsSync(path.join(tpl, rel))) { vault.writeText(rel, readFileSync(path.join(tpl, rel), 'utf8'), 'daemon'); changed.push(rel); } };
   const copyDir = (relDir: string) => { const abs = path.join(tpl, relDir); if (!existsSync(abs)) return; for (const f of readdirSync(abs)) { const rel = `${relDir}/${f}`; if (statSync(path.join(abs, f)).isDirectory()) copyDir(rel); else copyMissing(rel); } };
+  /** A template doc the live vault must track by *content*, not merely have. Nothing is written when it matches. */
+  const refreshDoc = (rel: string) => {
+    const src = path.join(tpl, rel);
+    if (!existsSync(src)) return;
+    const want = readFileSync(src, 'utf8');
+    const have = vault.readTextOrNull(rel);
+    if (have === null || have === want) return;   // `copyMissing` handles absent; equal is nothing to do
+    if (vault.isOwnerChanged(rel)) {
+      const archiveRel = `${path.posix.dirname(rel)}/archive/${path.posix.basename(rel, '.md')}-${nowIso().slice(0, 10)}.md`;
+      vault.writeText(archiveRel, have, 'daemon');
+      changed.push(archiveRel);
+    }
+    vault.writeText(rel, want, 'daemon');
+    changed.push(rel);
+  };
   // 1. growth → head_of_growth
   if (vault.exists('Roles/growth.md') && !vault.exists('Roles/head_of_growth.md')) {
     const n = parseNote(vault.readText('Roles/growth.md'));
@@ -342,6 +358,13 @@ export function migrateOrg(vault: Vault, tpl: string): { changed: string[] } {
   }
   // 3. teams, processes, docs, the research area and hireable charters that are simply missing
   copyDir('Teams'); copyDir('Processes'); copyDir('Docs'); copyDir('Roles/_hireable');
+  // 3a. The pressure-test handbook is the one doc the company is told to read *before it judges anything*, and
+  //     `copyMissing` above only ever copies it once: a live vault scaffolded before the wording changed keeps
+  //     the old handbook for ever, and the board goes on being told to answer "in one word" while the handbook
+  //     lists a two-word verdict (ruling FR-5). Compared by content, so a vault already on the current text is
+  //     untouched and the migration stays idempotent; an owner-edited copy is archived first, the same contract
+  //     the tower migration gives Teams/ and Processes/, so their words are never silently lost.
+  refreshDoc(PRESSURE_HANDBOOK_PATH);
   copyDir('Research'); copyDir('Ideas'); copyDir('Discovery'); copyDir('Ledger'); copyDir('Pantry'); copyMissing('Metrics/research.md');
   // 3b. The v2 stopgap: division notes listed their rooms' leads as members so a lead could reach them before the
   //     team tree existed. `can(schedule)` walks the tree now, and a doubly-listed lead breaks team size and

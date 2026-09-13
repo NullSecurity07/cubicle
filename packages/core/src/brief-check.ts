@@ -1,0 +1,174 @@
+import type { Vault } from './vault.js';
+import { parseNote } from './frontmatter.js';
+import {
+  PRESSURE_TEST_SECTION, INTERVIEW_PATH, briefSectionBody, interviewPhase, listDiscoveryInputs,
+} from './discovery.js';
+import { readPressureVerdict, PRESSURE_VERDICTS } from './pressure.js';
+
+/**
+ * The founder brief, checked against the vault before anybody is asked to approve it.
+ *
+ * In the owner's first live run the research manager wrote a brief that read beautifully and was not true: it
+ * said the owner had picked an idea (they had asked to be surprised), it named a brand the company does not
+ * have (`Brand/name.md` carries an empty `name`), it described `Discovery/interview.md` as a set of structured
+ * responses (it holds six questions and no answers), and it wrote a Founder-Market Fit paragraph out of
+ * nothing at all. Every one of those claims is checkable by reading the vault, and none of them was checked:
+ * the brief was proposed to the owner, and the reviewer passed its citations unread.
+ *
+ * So this is the half a program can check — deterministic, no model call, no network. It never judges whether
+ * the brief is *good*; it judges whether the four things it says about files are things those files say. What
+ * it finds goes back to the author as tool output, in their own words, so the brief is fixed before the owner
+ * ever sees it (ruling FR-4).
+ */
+
+/** What the brief was written with, as the caller knows it. `briefCheckContext` reads both off the vault. */
+export interface BriefCheckContext {
+  /** The owner has actually answered the six interview questions (`## Answer` in the transcript). */
+  interviewAnswered: boolean;
+  /** How many files the owner dropped in `Discovery/inbox/`. */
+  inboxFiles: number;
+}
+
+export interface BriefCheck {
+  ok: boolean;
+  /** One line per false or unsupported claim, each naming the file and the sentence. Empty when `ok`. */
+  findings: string[];
+}
+
+/** The brief's own view of the vault, read off the vault. */
+export function briefCheckContext(vault: Vault): BriefCheckContext {
+  return {
+    interviewAnswered: interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)) === 'answered',
+    inboxFiles: listDiscoveryInputs(vault).length,
+  };
+}
+
+/**
+ * The brief out of a `proposal.create` body — the same `## Proposed content` fence the dispatcher adopts from,
+ * so what is checked here is exactly the bytes that would become `Memory/founder-brief.md`. A body with no
+ * fence is checked as written: a brief that forgot its fence is still a brief making claims.
+ */
+export function briefFromProposalBody(body: string): string {
+  const m = body.match(/## Proposed content\s*\n+(`{3,})[a-z]*\n([\s\S]*?)\n\1[ \t]*(?:\n|$)/);
+  return m ? m[2] : body;
+}
+
+/**
+ * A backticked token that is a claim about a **file**: it has a directory in it and it ends in an extension.
+ *
+ * Both halves keep this from firing on things that are not citations. Without the slash, every tool name the
+ * brief mentions (`idea.card`, `http.fetch`) would be looked up as a path; without the extension, every
+ * directory (`Discovery/inbox`) would be. A token carrying `<` — `Ideas/<slug>.md` — is the template's own
+ * placeholder and names no file either.
+ */
+function citedPaths(md: string): string[] {
+  const out = new Set<string>();
+  for (const m of md.matchAll(/`([^`\n]+)`/g)) {
+    const t = m[1].trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9 _./-]*$/.test(t)) continue;
+    if (!t.includes('/') || !/\.[A-Za-z0-9]{1,5}$/.test(t)) continue;
+    out.add(t);
+  }
+  return [...out];
+}
+
+/** The company's name, as `Brand/name.md` actually carries it. '' when the file is missing or the field empty. */
+function brandName(vault: Vault): string {
+  const t = vault.readTextOrNull('Brand/name.md');
+  if (t === null) return '';
+  return String((parseNote(t).data as { name?: unknown }).name ?? '').trim();
+}
+
+/** How a brief says the company has a name. The live run wrote all three of these. */
+const NAME_CLAIM = [/\bname is\b/i, /\bname\s*&\s*brand\b/i, /\bbrand name\b/i];
+
+/**
+ * How a brief says the opposite. A line that names the absence is the line this check *wants* — "Name & Brand:
+ * none yet" carries a claim cue and is the honest sentence — so the negation is read on the same line and wins.
+ */
+const NO_NAME = /\bno name\b|\bno brand\b|\bnot (?:yet )?named\b|\bun-?named\b|\bnameless\b|\bempty\b|\bnone\b|\bnot been (?:chosen|picked|decided|set)\b|\byet to be\b|\bunstated\b|\bno company name\b|\bdoes not have a name\b|\bhas no\b/i;
+
+/** How a brief refers to the six questions, however it spells them. */
+const INTERVIEW_MENTION = /discovery\/interview\.md|discovery interview|founder interview|\bthe interview\b/i;
+/** How a brief claims those questions were answered. */
+const ANSWERED_CLAIM = /\bresponses?\b|\banswers?\b|\banswered\b|\bthe founder said\b|\bthe owner said\b|\bthey (?:said|told us)\b/i;
+/** How a brief says they were not — again read on the same line, so "the interview has no answers" is fine. */
+const NOT_ANSWERED = /\bno answers?\b|\bnot answered\b|\bun-?answered\b|\bno responses?\b|\bnot yet\b|\bawaiting\b|\bstill open\b|\bquestions only\b|\bskipped\b|\bnobody answered\b|\bunstated\b|\bnone\b|\bno one has\b|\bhas no\b|\bempty\b/i;
+
+/** The word a brief owes wherever the material establishes nothing. The owner's own word (ruling FR-4). */
+export const UNSTATED = 'unstated';
+
+/** The other four parts of the pressure test, plus the chair's machine lines: where Founder-Market Fit ends. */
+const AFTER_FOUNDER_FIT = /Brutal Verdict|Core Assumption|Three Fatal Flaws|Problem Validation|\bVERDICT\b|\bRUBRIC\b|\bWEDGE\b/i;
+
+/** What the brief wrote for Founder-Market Fit, or null when the section names no such part. */
+function founderFitText(section: string): string | null {
+  const label = section.match(/Founder[\s-]?Market Fit/i);
+  if (label?.index === undefined) return null;
+  const after = section.slice(label.index + label[0].length);
+  const end = after.search(AFTER_FOUNDER_FIT);
+  return end < 0 ? after : after.slice(0, end);
+}
+
+/** One line of a brief, trimmed of its list marker and emphasis, short enough to quote back. */
+function quote(line: string): string {
+  const t = line.trim().replace(/^(?:[-*+]|\d+[.)])\s+/, '').replace(/[*_`]/g, '').trim();
+  return t.length > 120 ? `${t.slice(0, 120)}…` : t;
+}
+
+/**
+ * Check a founder brief against the vault it claims to be written from.
+ *
+ * Four rules, each one a claim the first live run actually got wrong:
+ *
+ * 1. **Every cited file exists.** A brief's authority is that it names where each claim came from, so a
+ *    citation to a file nobody wrote is worse than no citation at all.
+ * 2. **No name while `Brand/name.md` has none.** The one fact about the company that is trivially checkable,
+ *    and the one the live run invented.
+ * 3. **No answers while the interview has none**, and — with no inbox files either — a Founder-Market Fit that
+ *    says `unstated` rather than a paragraph about a founder nobody has described.
+ * 4. **The pressure test ends on a verdict.** Read with `readPressureVerdict`, the one parser the board, the
+ *    card and the handbook already agree on: `PIVOT REQUIRED` is two words and always was.
+ */
+export function checkFounderBrief(vault: Vault, briefMarkdown: string, ctx: BriefCheckContext): BriefCheck {
+  const md = (briefMarkdown ?? '').replace(/\r/g, '');
+  const findings: string[] = [];
+
+  // 1. every cited path exists
+  for (const p of citedPaths(md)) {
+    if (!vault.exists(p)) findings.push(`the brief cites \`${p}\`, and there is no such file in the vault: cite a file you actually read with vault.read, or drop the claim.`);
+  }
+
+  // 2. a name the company does not have
+  if (!brandName(vault)) {
+    for (const line of briefSectionBody(md, '## What already exists').split('\n')) {
+      if (!NAME_CLAIM.some((re) => re.test(line)) || NO_NAME.test(line)) continue;
+      findings.push(`"${quote(line)}" — Brand/name.md carries an empty \`name\`, so the company has no name yet. Say that instead of naming one.`);
+    }
+  }
+
+  // 3. an interview nobody answered
+  if (!ctx.interviewAnswered) {
+    for (const line of md.split('\n')) {
+      if (!INTERVIEW_MENTION.test(line) || !ANSWERED_CLAIM.test(line) || NOT_ANSWERED.test(line)) continue;
+      findings.push(`"${quote(line)}" — ${INTERVIEW_PATH} holds the six questions and no answers. Do not describe it as answered.`);
+    }
+    if (ctx.inboxFiles === 0) {
+      const fit = founderFitText(briefSectionBody(md, PRESSURE_TEST_SECTION));
+      if (fit !== null && !new RegExp(`\\b${UNSTATED}\\b`, 'i').test(fit)) {
+        findings.push(`the Pressure test's Founder-Market Fit says "${quote(fit)}" — with no interview answers and nothing in Discovery/inbox/, nothing about this owner is established. Write "${UNSTATED}".`);
+      }
+    }
+  }
+
+  // 4. the pressure test ends on a verdict
+  const section = briefSectionBody(md, PRESSURE_TEST_SECTION);
+  if (!section) {
+    findings.push(`the brief has no written ${PRESSURE_TEST_SECTION} section: write the five parts and end on the verdict line — ${PRESSURE_VERDICTS.join(', ')}.`);
+  } else {
+    const read = readPressureVerdict(section);
+    if (!read.ok) findings.push(`the ${PRESSURE_TEST_SECTION} does not end on a verdict — ${read.reason}. End it on the verdict line: one of ${PRESSURE_VERDICTS.join(', ')} (two words is fine; PIVOT REQUIRED is two words), then the reasons.`);
+  }
+
+  return { ok: findings.length === 0, findings };
+}

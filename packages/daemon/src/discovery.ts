@@ -162,7 +162,15 @@ export function discoveryGoal(opts: { founderBrief: string; briefTemplate: strin
     '',
     opts.briefTemplate,
     '',
-    `Rules: every claim about what already exists cites the file it came from. Where the owner's material and the interview disagree, say so rather than picking one. Never invent a customer, a number or a date. \`${PRESSURE_TEST_SECTION}\` is the Paul Graham test on the company as a whole — read \`${PRESSURE_HANDBOOK_PATH}\` first, write the five parts in order, end on one word of STRONG, WEAK or PIVOT REQUIRED, and never write "it has potential, but". Put the same five parts in your research report. The report goes to ${opts.research}; the brief goes to the owner.`,
+    `Rules: every claim about what already exists cites the file it came from. Where the owner's material and the interview disagree, say so rather than picking one. Never invent a customer, a number or a date.`,
+    '',
+    // The truth rules, from the owner's first live run: the brief that went to them claimed a brand the company
+    // does not have, an interview nobody had answered, and an idea the owner never picked — each of which the
+    // vault contradicts in one line. `checkFounderBrief` refuses all three at `proposal.create`; this is the
+    // same rule said once, up front, so the author writes the honest brief instead of being returned one.
+    `Say only what a file says. If \`Brand/name.md\` has no name, say the company has no name yet. If the interview has no answers, do not describe it as answered and write "unstated" for Founder-Market Fit and for anything the material does not establish. Never infer that the owner chose an idea from their asking to be surprised. \`proposal.create\` checks all of this against the vault before it files anything, and hands you back what it found.`,
+    '',
+    `\`${PRESSURE_TEST_SECTION}\` is the Paul Graham test on the company as a whole — read \`${PRESSURE_HANDBOOK_PATH}\` first, write the five parts in order, and end on the verdict line: the verdict first — STRONG, WEAK or PIVOT REQUIRED — then the reasons. Never write "it has potential, but". Put the same five parts in your research report. The report goes to ${opts.research}; the brief goes to the owner.`,
   ].join('\n');
 }
 
@@ -430,7 +438,7 @@ export function enqueueDiscovery(vault: Vault, org: Org, precomputed?: Discovery
     assigned: research, for: ceo, owner_role: ceo, team: teamOf(org, research)?.id,
     goal: discoveryGoal({ founderBrief: FOUNDER_BRIEF, briefTemplate: founderBriefTemplate(), hasBrief, research: ceo }),
     research: discoveryRequest({ ceo, hasBrief, deadline }),
-    done_when: `${FOUNDER_BRIEF} is filed as a founder_brief proposal with all eight sections, including a ${PRESSURE_TEST_SECTION} that ends on one word, and every candidate idea it names is its own Ideas/<slug>.md card with evidence.`,
+    done_when: `${FOUNDER_BRIEF} is filed as a founder_brief proposal with all eight sections, including a ${PRESSURE_TEST_SECTION} that ends on the verdict line (STRONG, WEAK or PIVOT REQUIRED), and every candidate idea it names is its own Ideas/<slug>.md card with evidence.`,
   }, 'daemon');
 }
 
