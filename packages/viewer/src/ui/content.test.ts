@@ -42,13 +42,13 @@ describe('drawer and document views', () => {
     expect(v.mode).toBe('doc'); expect(v.copy).toBe(PLAN); expect(v.link).toContain('obsidian://open?vault=Cubicle&file=Plans%2Fplan');
     expect(viewFor('newsstand', s, ctx).title).toBe(briefTitle('Runs/2026-09-03-1016.md'));
   });
-  it('post office lists pending proposals as rows with a kind chip and an Obsidian link', () => {
+  it('the post office is the Decisions sheet: a row per pending note, opening its reader (SP8 §1)', () => {
     const v = viewFor('postoffice', s, ctx);
-    expect(v.mode).toBe('drawer');
+    expect(v.mode).toBe('drawer'); expect(v.title).toBe('Decisions');
     expect(v.html).toContain('Name the company: PlateReady');
     expect(v.html).toContain(kindLabel('brand_change'));
-    expect(v.html).toContain('obsidian://open?vault=Cubicle&amp;file=00%20Inbox%2F2026-09-03-1016-brand_change-idea');
-    expect(viewFor('postoffice', emptyState(), ctx).html).toContain('Nothing waiting for you');
+    expect(v.html).toContain('data-open="decision:p1"');
+    expect(viewFor('postoffice', emptyState(), ctx).html).toContain('Nothing needs you');
   });
   it('queue and vault rows open job documents; job docs link to the note', () => {
     expect(viewFor('noticeboard', s, ctx).html).toContain('data-open="job:job_a"');
@@ -182,9 +182,9 @@ describe('tower views (plan 3)', () => {
     // A pane holds a scrollable list; without a tab stop a keyboard user can reach the tabs but not their content.
     expect((h.match(/tabindex="0"/g) ?? []).length).toBe(2);
   });
-  it('the post office splits Needs you from Mail and keeps the Obsidian link', () => {
+  it('the post office splits Needs you from Decided', () => {
     const v = viewFor('postoffice', s, ctx);
-    expect(v.html).toContain('data-seg="needs"'); expect(v.html).toContain('data-seg="mail"');
+    expect(v.html).toContain('data-seg="needs"'); expect(v.html).toContain('data-seg="decided"');
     expect(v.html).toContain('Name the company: PlateReady');
     expect(v.icon).toBe('envelope');
   });

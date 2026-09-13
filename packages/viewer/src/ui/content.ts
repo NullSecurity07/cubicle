@@ -22,14 +22,39 @@ export interface View {
   /** which realtime viewer this is (`mode: 'viewer'` only). The stylesheet sizes the two differently: the browser
    *  box is capped to the frame's own aspect so nothing is dead black beside it, the terminal grows with its output. */
   viewer?: 'browser' | 'terminal';
+  /** a sheet that needs the room for two panes (Messages): the stylesheet widens it and the panes split themselves */
+  wide?: boolean;
 }
+/**
+ * The sheet's own state: what the owner has picked inside a view that has not been sent anywhere yet. It is not
+ * company state — nothing here survives a reload — so it rides with the context rather than through the reducer,
+ * and every builder stays a pure function of (State, Ctx).
+ */
+export interface UiState {
+  /** the open conversation in Messages */ thread: string | null;
+  /** the Messages search box */ search: string;
+  /** decision id → the option chip the owner has selected */ choice: Record<string, number>;
+}
+export const emptyUi = (): UiState => ({ thread: null, search: '', choice: {} });
+
 export interface Ctx {
   frames: Record<string, string>; tokenQuery: string; vaultName: string;
+  /** what the owner has picked inside the open sheet (see `UiState`) */ ui?: UiState;
   /** measured frame rate per browser stream (main.ts) */ fps?: Record<string, number>;
   /** floor number → division label from `scene.floorSummary()` */ floorLabels?: Record<number, string>;
 }
 
 export const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+
+/**
+ * The vault-relative path an `obsidian:` URL points at, or '' — what the page copies to the clipboard when there is
+ * no Tauri shell to hand the URL to. Kept beside `obsidianUrl`, which is the function it has to undo.
+ */
+export function vaultPathOf(url: string): string {
+  const m = /[?&]file=([^&]*)/.exec(url);
+  if (!m) return '';
+  try { return `${decodeURIComponent(m[1])}.md`; } catch { return `${m[1]}.md`; }
+}
 
 /** obsidian://open link for a vault file when the vault name is known (`?vault=`), else ''. */
 export function obsidianUrl(vaultName: string, file: string): string {
@@ -192,15 +217,8 @@ export function queueView(s: State): View {
   return { mode: 'drawer', title: 'Queue', sub: `${open.length} open · ${review.length} in review`, html, icon: 'clipboard' };
 }
 
-/** Post office: what needs the owner, then the mail log. */
-export function postOfficeView(s: State, ctx: Ctx): View {
-  const needs = s.inbox.length
-    ? rows(s.inbox.map((n) => row({ left: chip('kind', kindLabel(n.kind)), title: n.title, small: n.path.replace(/^00 Inbox\//, ''), right: ctx.vaultName ? `<a href="${esc(obsidianUrl(ctx.vaultName, n.path))}">Open</a>` : esc(fmtWhen(n.created)) })))
-      + `<p class="hintline">Approve or reject each one in 00 Inbox/ by setting approved: true or false.</p>`
-    : emptyHtml('envelope', 'Nothing waiting for you', 'Proposals that need your approval appear here.');
-  const mail = s.mail.length ? byDay(s.mail.slice(-40).reverse(), (m) => row({ title: m.text, right: esc(fmtTime(m.ts)) })) : emptyHtml('envelope', 'No mail yet');
-  return { mode: 'drawer', title: 'Post office', sub: s.inbox.length ? `${s.inbox.length} to approve` : 'nothing to approve', html: segmented([{ id: 'needs', label: 'Needs you', count: s.inbox.length, html: needs }, { id: 'mail', label: 'Mail', html: mail }]), icon: 'envelope' };
-}
+/* The post office's sheet is `ui/decisions.ts` since SP8: the owner approves in the office rather than being sent
+   to edit frontmatter in Obsidian. The mail log moved with it. */
 
 /**
  * The bank: the company's money first, the free tier underneath.

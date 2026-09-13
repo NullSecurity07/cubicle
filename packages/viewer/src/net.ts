@@ -1,4 +1,4 @@
-import type { CubicleEvent, Snapshot } from './state.js';
+import type { CubicleEvent, Snapshot, ThreadTurn } from './state.js';
 
 export interface NetHandlers {
   onSnapshot(s: Snapshot): void;
@@ -7,6 +7,12 @@ export interface NetHandlers {
   onReplay(r: { events: CubicleEvent[]; cursor: number; total: number; done: boolean; from: string; to?: string }): void;
   onStatus(connected: boolean, detail: string): void;
   onChatAck?(id: string): void;
+  /** the daemon has written the owner's decision and is applying it (SP8 §1) */
+  onDecideAck?(id: string): void;
+  /** one thread's turns, in full (SP8 §2) */
+  onConversation?(id: string, turns: ThreadTurn[]): void;
+  /** an `error` reply: `id` is the decision it refused, where the daemon named one */
+  onError?(message: string, id: string | null): void;
 }
 
 /** Resolve the daemon WS URL + token: ?ws= & ?token= in the page URL, else defaults (daemon port 7411 next to the viewer's 7412). */
@@ -42,6 +48,9 @@ export class Net {
       else if (msg.op === 'frame') this.h.onFrame(msg as unknown as { streamId: string; seq: number; jpegBase64: string });
       else if (msg.op === 'replay') this.h.onReplay(msg as unknown as { events: CubicleEvent[]; cursor: number; total: number; done: boolean; from: string; to?: string });
       else if (msg.op === 'chat.ack') this.h.onChatAck?.(String(msg.id));
+      else if (msg.op === 'decide.ack') this.h.onDecideAck?.(String(msg.id));
+      else if (msg.op === 'conversation') this.h.onConversation?.(String(msg.id), Array.isArray(msg.turns) ? (msg.turns as ThreadTurn[]) : []);
+      else if (msg.op === 'error') this.h.onError?.(String(msg.message ?? 'the daemon refused that'), msg.id === undefined ? null : String(msg.id));
     };
     ws.onclose = (ev) => { this.h.onStatus(false, ev.code === 1006 && !this.token ? 'daemon offline or token missing (open the URL printed by cubicle start)' : `disconnected (${ev.code})`); this.retry(); };
     ws.onerror = () => { /* onclose follows */ };
@@ -59,6 +68,15 @@ export class Net {
   }
 
   chat(text: string): boolean { return this.send({ op: 'chat', text }); }
+  /** The owner's yes or no on one inbox note (SP8 §1). `chosen` is a 1-based option; `comment` is filed as theirs. */
+  decide(id: string, o: { approved: boolean; chosen?: number; comment?: string }): boolean {
+    const msg: Record<string, unknown> = { op: 'decide', id, approved: o.approved };
+    if (o.chosen !== undefined) msg.chosen = o.chosen;
+    if (o.comment) msg.comment = o.comment;
+    return this.send(msg);
+  }
+  /** Ask for one thread's turns in full; the reply drops whatever arrived live before it (state.ts). */
+  conversation(id: string): boolean { return this.send({ op: 'conversation.get', id }); }
   /** Ask for a day's events. Queued (never dropped) when the socket is still connecting, else the deep link is lost. */
   replay(from: string, to?: string, cursor = 0): boolean {
     const msg = { op: 'replay', from, to, cursor };

@@ -263,9 +263,69 @@ details.pinned .prose { padding: 0 var(--s4) var(--s3); }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: var(--s2) var(--s4); align-items: center; }
 kbd { display: inline-block; min-width: 22px; padding: 1px 6px; text-align: center; font: 600 var(--fs-caption)/1.5 var(--mono); color: var(--text); background: var(--surface-3); border: 1px solid var(--hairline-2); border-bottom-width: 2px; border-radius: 4px; }
 
+/* ---- decisions (SP8 §1): the reader's fixed action bar ---- */
+/* The bar is part of the document but never scrolls out of it: the owner can always see what they are being asked
+   for. Negative margins take it to the reader's own edges; the state line above the buttons is the live region. */
+.actionbar { position: sticky; bottom: calc(var(--s4) * -1); z-index: 1; display: grid; gap: var(--s2); margin: var(--s5) calc(var(--s4) * -1) calc(var(--s4) * -1); padding: var(--s3) var(--s4); background: var(--surface-1); border-top: 1px solid var(--hairline); }
+.actionbar .acts { display: flex; align-items: center; gap: var(--s2); }
+.actionbar .comment { flex: 1; min-width: 0; }
+.actionbar .state { margin: 0; min-height: 1.2em; color: var(--text-2); font-size: var(--fs-footnote); }
+.actionbar .state.bad { color: var(--bad); }
+.opts { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.opt { display: inline-flex; align-items: center; gap: var(--s2); min-height: var(--hit); padding: 0 var(--s3); border: 1px solid var(--hairline-2); border-radius: var(--r-s); font-size: var(--fs-subhead); color: var(--text); text-align: left; }
+.opt:hover { background: var(--surface-3); }
+.opt .n { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-3); }
+/* One accent: the chosen option is filled with it, exactly like a selected segment. */
+.opt[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.opt[aria-pressed="true"] .n { color: inherit; opacity: .75; }
+/* The key that does the same thing, on the button that does it. Inside an amber fill it borrows the ink, never the
+   surface colours a free-standing <kbd> carries. */
+.btn kbd { margin-left: var(--s2); min-width: 0; padding: 0 4px; background: transparent; border-color: currentColor; border-bottom-width: 1px; color: inherit; opacity: .7; }
+/* "Open in Obsidian" stays reachable everywhere and asks for nothing: quiet text, never the link blue that would
+   make a second primary action of it (SP8 §1). It never navigates — ui/panel.ts intercepts the scheme. */
+a.vaultlink { color: var(--text-2); text-decoration: underline; text-underline-offset: 2px; }
+a.vaultlink:hover { color: var(--text); }
+
+/* ---- messages (SP8 §2): the thread list and one conversation ---- */
+#layer[data-presentation="sheet"][data-wide] #panel { width: min(980px, 78vw); }
+/* The split is a property of the sheet's own width, not of the window's: at 880 px it has room for a list and a
+   conversation side by side, and under it they stack. */
+#panel { container-type: inline-size; }
+#panel .body:has(> .panes) { padding: 0; overflow: hidden; }
+.panes { display: grid; grid-template-columns: 1fr; height: 100%; min-height: 0; }
+@container (min-width: 880px) { .panes { grid-template-columns: 320px 1fr; } .tlist { border-right: 1px solid var(--hairline); border-bottom: 0; } }
+.tlist { display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-bottom: 1px solid var(--hairline); }
+.tlist .search { margin: var(--s3) var(--s3) var(--s2); }
+.trows { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; padding: 0 var(--s2) var(--s3); }
+.trow { display: grid; gap: 3px; padding: var(--s2) var(--s3); border-radius: var(--r-s); text-align: left; transition: background var(--d-micro); }
+.trow:hover { background: var(--surface-3); }
+.trow[aria-current="true"] { background: var(--surface-3); box-shadow: inset 2px 0 0 var(--accent); }
+.trow .top { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+.trow .tt { font-weight: 600; font-size: var(--fs-subhead); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trow .when { margin-left: auto; color: var(--text-3); font-size: var(--fs-caption); white-space: nowrap; }
+.trow .last { color: var(--text-2); font-size: var(--fs-footnote); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 3px; }
+/* A participant wears their own colour, one step deeper than their sprite's ring so `--on-tint` reads on it
+   (ui/messages.ts `chipTint`, asserted in both themes). */
+.chip.who { color: var(--on-tint); border-color: transparent; font-weight: 500; }
+.chip.who.owner { background: var(--surface-3); color: var(--text); border-color: var(--hairline-2); }
+.chip.who.more { background: var(--surface-3); color: var(--text-2); border-color: var(--hairline-2); }
+.dot.live { background: var(--accent); animation: pulse var(--d-pulse) ease-in-out infinite alternate; }
+.tconv { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.tconv .chead { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s4) var(--s1); }
+.tconv .chead b { font-size: var(--fs-headline); font-weight: var(--fw-headline); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tconv .chead .muted { margin-left: auto; font-size: var(--fs-caption); color: var(--text-3); }
+.tconv > .chips { padding: 0 var(--s4) var(--s2); }
+.tconv .empty { margin: auto var(--s4); }
+.thread { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: var(--s3); padding: var(--s3) var(--s4); }
+.thread .msg.them { align-self: flex-start; }
+.thread .msg .who .dot { width: 7px; height: 7px; }
+.composer { display: flex; gap: var(--s2); padding: var(--s3) var(--s4); border-top: 1px solid var(--hairline); }
+.composer input { flex: 1; min-width: 0; }
+
 /* Motion with intent: under `prefers-reduced-motion` the duration tokens drop to 1 ms; these three are not
    driven by a token, so they are turned off here instead (the caret stays lit, the LIVE badge stays solid). */
 @media (prefers-reduced-motion: reduce) {
   #panel .body { scroll-behavior: auto; }
-  .badge.live, pre.term .caret { animation: none; }
+  .badge.live, .dot.live, pre.term .caret { animation: none; }
 }

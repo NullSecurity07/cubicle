@@ -3,7 +3,13 @@ export function inline(src: string): string { return esc(src).replace(/\*\*(.+?)
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
-/** Tiny markdown → HTML: frontmatter stripped, headings, bullets, fences, bold, inline code, links, [[wikilinks]]. */
+/**
+ * Tiny markdown → HTML: frontmatter stripped, headings, bullets, fences, bold, inline code, links, [[wikilinks]].
+ *
+ * An `obsidian:` link is rendered as a secondary affordance (`.vaultlink`) and carries `data-obsidian`: the panel's
+ * delegated handler never lets one navigate — a scheme the office window cannot load blanks it (SP8 ruling P8-4) —
+ * and hands it to the shell, or copies the note's path.
+ */
 export function md(src: string): string {
   const text = src.replace(/^---\n[\s\S]*?\n---\n?/, '');
   const out: string[] = [];
@@ -11,7 +17,7 @@ export function md(src: string): string {
   for (const raw of text.split('\n')) {
     if (raw.startsWith('```')) { if (inList) { out.push('</ul>'); inList = false; } inCode = !inCode; out.push(inCode ? '<pre>' : '</pre>'); continue; }
     if (inCode) { out.push(esc(raw)); continue; }
-    const line = esc(raw).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\[\[([^\]]+)\]\]/g, '<i>$1</i>').replace(/\[([^\]]+)\]\(((?:https?|obsidian):[^)\s]+)\)/g, (_m, t: string, u: string) => `<a href="${u.replace(/"/g, '%22')}"${u.startsWith('http') ? ' target="_blank" rel="noopener"' : ''}>${t}</a>`);
+    const line = esc(raw).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\[\[([^\]]+)\]\]/g, '<i>$1</i>').replace(/\[([^\]]+)\]\(((?:https?|obsidian):[^)\s]+)\)/g, (_m, t: string, u: string) => `<a href="${u.replace(/"/g, '%22')}"${u.startsWith('http') ? ' target="_blank" rel="noopener"' : ' class="vaultlink" data-obsidian="1"'}>${t}</a>`);
     const h = line.match(/^(#{1,3})\s+(.*)$/);
     const li = line.match(/^\s*[-*]\s+(.*)$/);
     if (li) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${li[1]}</li>`); continue; }
