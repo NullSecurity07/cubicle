@@ -96,8 +96,22 @@ export function ownerSaid(body: string): string {
 /** The company's name note — and the target of the `brand_change` proposal the CEO's three ideas are filed as. */
 export const BRAND_NAME_PATH = 'Brand/name.md';
 
-/** What the owner types when they want the CEO to propose the ideas. Not an idea itself — the ask for three. */
+/** The phrase itself. Never tested against a whole note on its own — see `asksForSurprise`. */
 export const SURPRISE_ME = /\bsurprise me\b/i;
+
+/**
+ * Whether this note is the owner asking the CEO to propose the three ideas.
+ *
+ * **Anchored**, and in one place (whole-branch review, Important 3). The cabin tested it anchored — a line that
+ * is only the phrase, or the phrase in the last three lines — while the material filter tested it bare, so a
+ * 547-word founder brief that happened to describe *"a 'surprise me' button that picks a gift at random"* was
+ * not a surprise request to the CEO (it took the long-brief branch and was promised a reading) and was not
+ * material to discovery either: the owner's richest material, discarded without a word. One predicate, used by
+ * both, is what stops the two drifting again.
+ */
+export function asksForSurprise(body: string): boolean {
+  return /^\s*#?.*surprise me\s*$/im.test(body) || SURPRISE_ME.test(body.split('\n').slice(-3).join('\n'));
+}
 
 /** How many words the owner has to have written before a cabin note is something a research job could read. */
 export const MATERIAL_WORDS = 3;
@@ -118,7 +132,9 @@ export const MATERIAL_WORDS = 3;
 export function isDiscoveryMaterial(said: string): boolean {
   const t = said.trim();
   if (!t) return false;
-  if (SURPRISE_ME.test(t) || isSkip(t)) return false;
+  // A document is never "only a reply to the CEO", whatever phrases it happens to contain (review, Important 3).
+  if (isLongPrompt(t)) return true;
+  if (asksForSurprise(t) || isSkip(t)) return false;
   return t.split(/\s+/).filter(Boolean).length >= MATERIAL_WORDS;
 }
 

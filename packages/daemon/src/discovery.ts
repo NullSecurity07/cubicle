@@ -3,7 +3,7 @@ import {
   createJob, createProposal, findInboxById, listInbox, listJobs, jobPath, idFromKey, officeHolder, teamOf, listIdeas,
   DISCOVERY_INBOX, FOUNDER_BRIEF, INTERVIEW_PATH, discoveryDigest, hasFounderBrief, founderBriefTemplate,
   interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, closesInterview, isSkip, listDiscoveryInputs, isLongPrompt,
-  ownerSaid, isDiscoveryMaterial, ownerPick, SURPRISE_ME, BRAND_NAME_PATH, OWNER_PICK_LABEL, type OwnerPick, ideaPath, IDEA_SCORE_MAX,
+  ownerSaid, isDiscoveryMaterial, ownerPick, asksForSurprise, SURPRISE_ME, BRAND_NAME_PATH, OWNER_PICK_LABEL, type OwnerPick, ideaPath, IDEA_SCORE_MAX,
   INTERVIEW_QUESTIONS, openInterviewQuestions, interviewAskTitle, renderInterviewCovered, questionsAsked,
   PRESSURE_TEST_SECTION, PRESSURE_HANDBOOK_PATH,
 } from '@cubicle/core';
@@ -13,7 +13,7 @@ import {
 // more (ruling FR-3b): the tool that hands a discovery job its material must answer "is this material?" and
 // "what did the owner pick?" with the same code that decided to start the job. Re-exported here because they
 // were part of this module's surface first.
-export { ownerSaid, isDiscoveryMaterial, ownerPick, SURPRISE_ME, BRAND_NAME_PATH, OWNER_PICK_LABEL, type OwnerPick };
+export { ownerSaid, isDiscoveryMaterial, ownerPick, asksForSurprise, SURPRISE_ME, BRAND_NAME_PATH, OWNER_PICK_LABEL, type OwnerPick };
 
 /**
  * The discovery step: what the company reads before it plans anything, who is asked when there is nothing to
@@ -116,11 +116,17 @@ export function discoveryStatus(o: {
     // interview still gets one: §1.8 — the company must be able to start from a single line, or from nothing.
     // `covered` is the owner's material having answered all six (spec §5): like `skipped`, it means the
     // interview is closed and there is something to read — never that the company is still waiting.
+    // Three ideas filed and unpicked comes first, before anything the owner has merely *typed* (whole-branch
+    // review, Important 2). Their real follow-up in the live run — "your text i only hAlf", a complaint about
+    // the CEO's truncated reply — is five words and cleared the material floor, so the company bought a
+    // research lifecycle off a note that described nothing while the pick it was waiting for sat in the inbox.
+    // While the ideas are unpicked and there is no file and no answered interview, the pick is the material.
+    const onlyTyped = !isSubstantive(o.unread) && o.inputs === 0 && !['answered', 'covered'].includes(o.interview);
+    if (o.pickPending && onlyTyped) return status(false, 'waiting for you to pick one of the three ideas; the one you choose is what discovery reads');
     const anything = isSubstantive(o.unread) || o.unread.anyPrompt || o.inputs > 0 || ['answered', 'skipped', 'covered'].includes(o.interview);
     if (anything) return status(true, ask ? 'reading what the owner gave us, and asking the interview as well — only the questions it does not already answer' : 'first discovery over the owner\'s material');
-    // Nothing to read *and* three ideas waiting to be picked: that is not an idle company, it is a company
-    // waiting on the owner, and the checkpoint log must say which (finding F3 — discovery ran on the
-    // "surprise me" note itself and fabricated a brief rather than waiting for the pick).
+    // Nothing to read at all, and three ideas waiting: that is not an idle company, it is a company waiting on
+    // the owner, and the checkpoint log must say which (finding F3).
     if (o.pickPending) return status(false, 'waiting for you to pick one of the three ideas; the one you choose is what discovery reads');
     if (ask) return status(false, 'nothing to read yet: asking the founder interview');
     if (o.interview === 'asked') return status(false, 'the founder interview is waiting for an answer');

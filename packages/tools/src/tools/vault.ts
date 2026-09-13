@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { isOwnerOwned, createProposal, OwnerOwnedPathError, isSecretPath, parseNote, idFromKey, UnsafePathError, LEDGER_DIR } from '@cubicle/core';
+import { isOwnerOwned, createProposal, OwnerOwnedPathError, isSecretPath, parseNote, idFromKey, UnsafePathError, LEDGER_DIR, FOUNDER_BRIEF } from '@cubicle/core';
 import { policyFor, proposalKindFor } from '../registry.js';
 
 const MAX_READ = 60_000;
@@ -57,6 +57,13 @@ export const vaultSearch = defineTool({
 function agentWriteRestriction(rel: string, content: string, ctx: Parameters<typeof vaultRead.handler>[1]): string | null {
   if (rel.startsWith('00 Inbox/')) return '00 Inbox/ is written only via proposal.create';
   if (rel.startsWith('Messages/')) return 'Messages/ is written only via colleague.message';
+  // The founder brief is the owner's to adopt, and the only road to it runs through the check in
+  // `proposal.create` (ruling FR-4). The live run took the other road: the discovery job wrote this file
+  // directly 49 seconds *before* it filed the proposal, so the unchecked brief — three fabricated claims — was
+  // in the vault whatever the owner then decided, and `hasFounderBrief` told every later plan the company had
+  // one. The dispatcher still writes it on approval (`dispatcher.ts`, the `founder_brief` case): that is
+  // `vault.writeText` as the daemon, not this tool, so nothing legitimate loses access.
+  if (rel === FOUNDER_BRIEF) return `${FOUNDER_BRIEF} is adopted by the owner, never written directly: file the whole brief with proposal.create kind=founder_brief (target ${FOUNDER_BRIEF}, the brief inside a "## Proposed content" fence). The daemon writes this file when they approve it.`;
   if (rel === LEDGER_DIR || rel.startsWith(`${LEDGER_DIR}/`)) {
     // `ledger.record` is on every role's tool list (phase3Tools), and the spec is neutral about who may use it —
     // §1 says `who` is "the role id that recorded it". Sending the caller to the finance office was an errand it

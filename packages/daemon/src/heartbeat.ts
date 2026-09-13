@@ -11,7 +11,7 @@ import {
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, type PressurePart,
   PRESSURE_CHAIR_SECTION, chairAnswerText,
   type PressureVerdict, type BoardRubric,
-  isLongPrompt, isSkip, interviewPhase, INTERVIEW_PATH,
+  isLongPrompt, isSkip, asksForSurprise, interviewPhase, INTERVIEW_PATH,
   readLedger, moneyReport, moneyLine, moneyNeedsYou, money, HOUSE, LEDGER_PATH, DEFAULT_CURRENCY, type MoneyReport, type LedgerEntry,
 } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
@@ -1010,6 +1010,15 @@ export function unansweredOwnerMessages(vault: Vault): OwnerMessage[] {
     .map((n) => ({ path: n.path, id: n.data.id, created: n.data.created, body: n.body }));
 }
 
+/**
+ * How long a claim on an owner message stands before another caller takes the note over.
+ *
+ * Long enough for the slowest reply anyone has seen (a strong-tier call on the "surprise me" path ran 1–30 s
+ * in the owner's live run), short enough that a process killed mid-answer does not strand the note: the next
+ * caller past this window answers it.
+ */
+export const ANSWER_CLAIM_MS = 5 * 60_000;
+
 /** The three-ideas ask. Sent twice at most: once on the prompt budget, once with room for a thinking model. */
 const SURPRISE_ASK = 'The owner wants you to surprise them. Propose exactly three one-line business ideas a two-person team can start this week with a static website and email, all free to run. Format: a numbered list "1. <name> — <one sentence>". Write all three lines in full and write nothing else.';
 /** The re-ask's ceiling. Generous on purpose: the first run's reply was cut off mid-sentence at the default. */
@@ -1051,8 +1060,13 @@ export function ideaLineComplete(line: string): boolean {
  * a heartbeat was open. The owner types into a chat window; a chat window that goes quiet for ten minutes is
  * broken, whatever the company is doing behind it.
  *
- * It is idempotent on the note's `answered` flag and every id it derives comes from the *message*, never from
- * the caller, so the two callers cannot file two proposals for one message whichever of them runs first.
+ * Every id it derives comes from the *message*, never from the caller, so no two callers can file two
+ * proposals for one message whichever of them runs first — and the note is **claimed before the model call**,
+ * not after it (whole-branch review, Important 1). Reading `answered` and writing it either side of a 30 s
+ * model call left a window the cabin and the cycle both walked into: `onChat` starts a reply *and* requests a
+ * heartbeat, and `answer_owner` is step 3 of 13 with no model call ahead of it, so the cycle reached the same
+ * note while the cabin was still waiting on the model. The owner saw the CEO answer twice and the company paid
+ * twice. The claim is stamped with no `await` between the read and the write, which is what makes it a claim.
  */
 export async function answerOwnerMessages(
   deps: HeartbeatDeps,
@@ -1066,63 +1080,97 @@ export async function answerOwnerMessages(
   for (const m of msgs) {
     const note = vault.readNoteOrNull(m.path);
     if (!note || note.data.answered) continue;
-    const body = note.body;
-    const isFirstIdea = !(parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data.name as string) && !listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md');
-    const surprise = /^\s*#?.*surprise me\s*$/im.test(body) || /\bsurprise me\b/i.test(body.split('\n').slice(-3).join('\n'));
-    // What the owner typed, without the `# title` line the cabin prepends. The interview has to read the
-    // stripped text: `isSkip` is anchored to the whole string, so an owner who types `skip` (note body
-    // `# skip\n\nskip`) would otherwise be recorded as having answered the six questions with "skip".
-    const said = ownerSaid(body);
-    // An open interview is closed by an answer, or by "skip" — never by a question or a quick note (ruling
-    // FR-6; it used to close on whatever came next, so a complaint became the six answers). This is a vault
-    // write, not a model call: the interview must not cost a cycle's quota to conduct.
-    const closedInterview = captureInterviewAnswer(vault, said, now());
-    const interviewStillOpen = !closedInterview && interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)) === 'asked';
-    // A document, not a one-line idea: discovery reads it, and the CEO does not try to squeeze a company
-    // name out of its first sentence.
-    const longPrompt = isLongPrompt(body);
-    const propId = idFromKey('prop', `owner-answer:${m.id}`);
-    let reply: string | null = null;
-    if (surprise) {
-      let raw = await ask(deps, ceoSystem(vault), SURPRISE_ASK);
-      let ideas = completeIdeaLines(raw);
-      // One re-ask, with room for a model that thinks before it answers (finding F1). Beyond that the CEO says
-      // so rather than filing a proposal the owner cannot pick from.
-      if (ideas.length < 3) {
-        raw = await ask(deps, ceoSystem(vault), SURPRISE_ASK, SURPRISE_RETRY_TOKENS);
-        ideas = completeIdeaLines(raw);
-      }
-      if (ideas.length < 3) {
-        reply = SURPRISE_FAILED;
-      } else {
-        const three = ideas.join('\n');
-        createProposal(vault, { id: propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${three}\n\nSet \`chosen: 1|2|3\` and \`approved: true\`; the chosen line's name becomes the company name.`, job: jobId }, 'ceo');
-        reply = `I filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n${three}`;
-      }
-      // "skip" is a refusal to be interviewed, not a business idea: naming the company after it would be
-      // absurd, and it belongs in the general reply, which already says the interview was closed.
-    } else if (isFirstIdea && !longPrompt && !isSkip(said)) {
-      const r = await ask(deps, ceoSystem(vault), `The owner's business idea:\n\n${body}\n\nReply with exactly two lines:\nNAME: <a short, brandable company name>\nTAGLINE: <one sentence>`);
-      const name = r?.match(/NAME:\s*(.+)/i)?.[1]?.trim() ?? 'Untitled Co';
-      const tagline = r?.match(/TAGLINE:\s*(.+)/i)?.[1]?.trim() ?? '';
-      createProposal(vault, { id: propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: `Name the company: ${name}`, body: `## Proposed content\n\n\`\`\`\n---\nname: "${name.replace(/"/g, "'")}"\ntagline: "${tagline.replace(/"/g, "'")}"\nurl: ""\n---\n# ${name}\n\n${tagline}\n\`\`\`\n\nSet \`approved: true\` to adopt.`, job: jobId }, 'ceo');
-      reply = `Got it. I proposed the name **${name}** (${tagline}) in 00 Inbox/ — approve or edit it. The CTO is planning the first jobs now.`;
-    } else {
-      const extra = [
-        closedInterview ? 'You had asked them six questions; their reply is now in Discovery/interview.md and the research office will read it.' : '',
-        // The owner has to be told, in the reply they are already reading, that the six questions are still
-        // waiting — nothing else will say it, and the interview no longer closes itself on this message (FR-6).
-        interviewStillOpen ? 'The six questions you sent them in the cabin are still open: what they just wrote is not an answer to them. End your reply with one line saying so — an answer in their own words, or "skip", is all you need.' : '',
-        longPrompt ? 'This is a long brief rather than a one-line idea: the research office is reading it in full and will file a founder brief for them to approve. Do not try to summarise it yourself.' : '',
-      ].filter(Boolean).join(' ');
-      reply = (await ask(deps, ceoSystem(vault), `The owner wrote:\n\n${body}\n\n${extra}\n\nReply briefly and concretely. If it is an instruction, say what you will do and enqueue nothing yourself (the divisions plan). If it is a question, answer it.`)) ?? 'Noted. (No model was available to draft a fuller reply; I will act on this next cycle.)';
+    // Somebody else is on this one, and has not been gone long enough to have died: leave it to them.
+    const claimed = Date.parse(String(note.data.answering ?? ''));
+    if (Number.isFinite(claimed) && now().getTime() - claimed < ANSWER_CLAIM_MS) continue;
+    claim(vault, m.path, now().toISOString(), jobId);
+    try {
+      answered += await answerOne(deps, vault, m, note.body, now, jobId);
+    } catch (err) {
+      // The claim is cleared on the way out so the note is not stranded until the window expires. The error is
+      // the caller's — the tick's sweep and the cabin's own catch both turn it into a `daemon.warning`.
+      release(vault, m.path, jobId);
+      throw err;
     }
-    // Persist the defaults listInbox derived for an owner-typed note (id/created/from/to) so later ticks see a stable, complete note.
-    vault.updateNote(m.path, (n) => ({ data: { ...n.data, id: m.id, created: m.created, from: 'owner', to: 'ceo', answered: true }, body: setSection(n.body, '## CEO', reply!) }), 'ceo', { job: jobId });
-    vault.events.emit({ type: 'agent.spoke', agent: 'ceo', job: jobId, payload: { to: 'owner', text: reply!.slice(0, 280), id: m.id } });
-    answered++;
   }
   return answered;
+}
+
+/** Stamp the note as being answered right now. Never inside an `await`: see `answerOwnerMessages`. */
+function claim(vault: Vault, path: string, at: string, jobId?: string): void {
+  vault.updateNote(path, (n) => ({ data: { ...n.data, answering: at }, body: n.body }), 'ceo', { job: jobId });
+}
+
+/** Drop the claim, leaving the note exactly as it was for whoever comes next. */
+function release(vault: Vault, path: string, jobId?: string): void {
+  try {
+    vault.updateNote(path, (n) => { const { answering: _claim, ...rest } = n.data as Record<string, unknown>; return { data: rest, body: n.body }; }, 'ceo', { job: jobId });
+  } catch { /* the note is gone, or unwritable: the claim expires on its own */ }
+}
+
+/** One message: the reply the CEO drafts for it, the proposal it may file, and the note it writes back. */
+async function answerOne(deps: HeartbeatDeps, vault: Vault, m: OwnerMessage, body: string, now: () => Date, jobId?: string): Promise<number> {
+  const isFirstIdea = !(parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data.name as string) && !listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === 'Brand/name.md');
+  // The same predicate `isDiscoveryMaterial` uses, from core: the cabin and discovery must agree about what a
+  // request for three ideas looks like, or a brief that merely mentions the phrase is dropped by one and
+  // promised a reading by the other (whole-branch review, Important 3).
+  const surprise = asksForSurprise(body);
+  // What the owner typed, without the `# title` line the cabin prepends. The interview has to read the
+  // stripped text: `isSkip` is anchored to the whole string, so an owner who types `skip` (note body
+  // `# skip\n\nskip`) would otherwise be recorded as having answered the six questions with "skip".
+  const said = ownerSaid(body);
+  // An open interview is closed by an answer, or by "skip" — never by a question or a quick note (ruling
+  // FR-6; it used to close on whatever came next, so a complaint became the six answers). This is a vault
+  // write, not a model call: the interview must not cost a cycle's quota to conduct.
+  const closedInterview = captureInterviewAnswer(vault, said, now());
+  const interviewStillOpen = !closedInterview && interviewPhase(vault.readTextOrNull(INTERVIEW_PATH)) === 'asked';
+  // A document, not a one-line idea: discovery reads it, and the CEO does not try to squeeze a company
+  // name out of its first sentence.
+  const longPrompt = isLongPrompt(body);
+  const propId = idFromKey('prop', `owner-answer:${m.id}`);
+  let reply: string | null = null;
+  if (surprise) {
+    let raw = await ask(deps, ceoSystem(vault), SURPRISE_ASK);
+    let ideas = completeIdeaLines(raw);
+    // One re-ask, with room for a model that thinks before it answers (finding F1). Beyond that the CEO says
+    // so rather than filing a proposal the owner cannot pick from.
+    if (ideas.length < 3) {
+      raw = await ask(deps, ceoSystem(vault), SURPRISE_ASK, SURPRISE_RETRY_TOKENS);
+      ideas = completeIdeaLines(raw);
+    }
+    if (ideas.length < 3) {
+      reply = SURPRISE_FAILED;
+    } else {
+      const three = ideas.join('\n');
+      createProposal(vault, { id: propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${three}\n\nSet \`chosen: 1|2|3\` and \`approved: true\`; the chosen line's name becomes the company name.`, job: jobId }, 'ceo');
+      reply = `I filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n${three}`;
+    }
+    // "skip" is a refusal to be interviewed, not a business idea: naming the company after it would be
+    // absurd, and it belongs in the general reply, which already says the interview was closed.
+  } else if (isFirstIdea && !longPrompt && !isSkip(said)) {
+    const r = await ask(deps, ceoSystem(vault), `The owner's business idea:\n\n${body}\n\nReply with exactly two lines:\nNAME: <a short, brandable company name>\nTAGLINE: <one sentence>`);
+    const name = r?.match(/NAME:\s*(.+)/i)?.[1]?.trim() ?? 'Untitled Co';
+    const tagline = r?.match(/TAGLINE:\s*(.+)/i)?.[1]?.trim() ?? '';
+    createProposal(vault, { id: propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: `Name the company: ${name}`, body: `## Proposed content\n\n\`\`\`\n---\nname: "${name.replace(/"/g, "'")}"\ntagline: "${tagline.replace(/"/g, "'")}"\nurl: ""\n---\n# ${name}\n\n${tagline}\n\`\`\`\n\nSet \`approved: true\` to adopt.`, job: jobId }, 'ceo');
+    reply = `Got it. I proposed the name **${name}** (${tagline}) in 00 Inbox/ — approve or edit it. The CTO is planning the first jobs now.`;
+  } else {
+    const extra = [
+      closedInterview ? 'You had asked them six questions; their reply is now in Discovery/interview.md and the research office will read it.' : '',
+      // The owner has to be told, in the reply they are already reading, that the six questions are still
+      // waiting — nothing else will say it, and the interview no longer closes itself on this message (FR-6).
+      interviewStillOpen ? 'The six questions you sent them in the cabin are still open: what they just wrote is not an answer to them. End your reply with one line saying so — an answer in their own words, or "skip", is all you need.' : '',
+      longPrompt ? 'This is a long brief rather than a one-line idea: the research office is reading it in full and will file a founder brief for them to approve. Do not try to summarise it yourself.' : '',
+    ].filter(Boolean).join(' ');
+    reply = (await ask(deps, ceoSystem(vault), `The owner wrote:\n\n${body}\n\n${extra}\n\nReply briefly and concretely. If it is an instruction, say what you will do and enqueue nothing yourself (the divisions plan). If it is a question, answer it.`)) ?? 'Noted. (No model was available to draft a fuller reply; I will act on this next cycle.)';
+  }
+  // Persist the defaults listInbox derived for an owner-typed note (id/created/from/to) so later ticks see a
+  // stable, complete note — and drop the claim in the same write that makes it unnecessary.
+  vault.updateNote(m.path, (n) => {
+    const { answering: _claim, ...rest } = n.data as Record<string, unknown>;
+    return { data: { ...rest, id: m.id, created: m.created, from: 'owner', to: 'ceo', answered: true }, body: setSection(n.body, '## CEO', reply!) };
+  }, 'ceo', { job: jobId });
+  vault.events.emit({ type: 'agent.spoke', agent: 'ceo', job: jobId, payload: { to: 'owner', text: reply!.slice(0, 280), id: m.id } });
+  return 1;
 }
 
 /**
