@@ -33,6 +33,14 @@ export const ModelConfig = z.object({
   max_output_tokens: z.number().int().min(16).default(4096),
   limits: ModelLimits.default({ rpm: 0, rpd: 0, tpm: 0, tpd: 0 }),
   enabled: z.boolean().default(true),
+  /**
+   * True for a model that reasons before it answers and bills that reasoning to the *same* output budget
+   * (the Gemini 3.x flash models do). For those, `maxTokens` on a request is only a prompt-estimate hint:
+   * the router sends the model's full `max_output_tokens` as the cap, because a small cap is spent on
+   * thinking and the visible answer comes back cut at `finish_reason: length` — the owner's first live run
+   * got a 30-token half-sentence out of gemini-3.5-flash that way. Defaults to false.
+   */
+  thinking: z.boolean().default(false),
   /** Cents per million tokens. No `price:` means the model is free and costs 0. */
   price: ModelPrice.optional(),
   note: z.string().optional(),
