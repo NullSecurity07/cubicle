@@ -6,10 +6,11 @@ import {
   childTeams, subtreeRoles, divisionTeams, divisionOf,
   budgetLines, GATE_JOB_TYPES,
   nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
+  ideaOpenToBoard, sweepIdeaRows, renderSweepIdeasSection, SWEEP_IDEAS_SECTION,
   FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
   checkPlan, planObjectives, PLAN_IDEA_MARKER, fileBoardPivot, pressurePivot, productFixes, noteVerdict,
   readPressureVerdict, pressureToBoard, pressureFindings, renderRubric, renderBoardSection,
-  PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, type PressurePart,
+  PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, PRESSURE_REFUSAL_NO_WEDGE, type PressurePart,
   PRESSURE_CHAIR_SECTION, chairAnswerText,
   type PressureVerdict, type BoardRubric,
   isLongPrompt, isSkip, asksForSurprise, endorsesInterview, interviewPhase, parseCeoAnswers, type CeoAnswer, INTERVIEW_PATH, BRAND_NAME_PATH,
@@ -20,7 +21,7 @@ import { renderQuotaMarkdown, type ModelBudget, type Router } from '@cubicle/rou
 import { deployer, emailSender, analytics } from '@cubicle/tools';
 import { writeQueueMd } from './queue-md.js';
 import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, gatheredCommentBaselines, markCommentsDelivered } from './evolution.js';
-import { seedFirstJobs, seedFirstStream, briefAdoptedAt } from './first-run.js';
+import { seedFirstJobs, seedFirstStream, briefAdoptedOn } from './first-run.js';
 import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId, hasApprovedBrief, rejectionAsksForNewIdea, selfInterviewSubject, selfInterviewPrompt } from './discovery.js';
 import { writeRunway, accrueModelCost, enqueueRunway, dormancyMessage, revivalMessage } from './money.js';
 import { runBoardDialogue, linkBoardTranscript, runBriefBoardSession, type BoardSessionOpts } from './board-dialogue.js';
@@ -463,6 +464,14 @@ export function mergeBoardVerdict(text: string, kind: BoardSubject['kind'] = 'pl
   }
   const read = readPressureVerdict(text);
   if (!read.ok) return { verdict: 'return', findings: [read.reason], pressure: null, rubric: null, refused: read.reason };
+  // A pivot that names nothing to pivot *to* is refused like a hedge, and gets the same one re-ask (review of
+  // the run-3 wave, Important 2). `chairFormat` asks for the WEDGE line on exactly this verdict, and until this
+  // nothing checked: a chair that answered `VERDICT: PIVOT REQUIRED` and stopped left the owner told their
+  // company does not work, with nothing filed and nothing said. Read through `pressurePivot`, which is the same
+  // function ruling W3-2 files the idea card from — so what is enforced here is what is used there.
+  if (read.verdict === 'PIVOT REQUIRED' && !pressurePivot(text)) {
+    return { verdict: 'return', findings: [PRESSURE_REFUSAL_NO_WEDGE], pressure: null, rubric: null, refused: PRESSURE_REFUSAL_NO_WEDGE };
+  }
   return { verdict: pressureToBoard(read.verdict), findings: pressureFindings(read), pressure: read.verdict, rubric: read.rubric, refused: null };
 }
 
@@ -559,7 +568,11 @@ export function advisorPrompt(s: BoardSubject): string {
  */
 export function chairPrompt(s: BoardSubject, transcript: string): string {
   if (s.kind === 'plan') {
-    return `You chair the board. Your advisors wrote:\n\n${transcript}\n\nMerge them into ONE verdict for the owner on this plan. First line exactly "VERDICT: pass" or "VERDICT: return". Then at most four bullets, each a failure mode this plan does not answer and the change that fixes it. Return the plan only if running it as written would waste the cycle; you cannot delay.`;
+    // "fix by" is asked for in those words on purpose (review of the run-3 wave, Important 1): `productFixes`
+    // reads the clause after it to decide whether the chair has proposed a *different business*, which ruling
+    // W3-2 then puts to the owner as an idea card. On the third live run the chair wrote `**Fix:** …` instead
+    // and the whole route was a silent no-op. The parser now reads both spellings; the prompt asks for the one.
+    return `You chair the board. Your advisors wrote:\n\n${transcript}\n\nMerge them into ONE verdict for the owner on this plan. First line exactly "VERDICT: pass" or "VERDICT: return". Then at most four bullets, each a failure mode this plan does not answer and the change that fixes it, each written as "<subject>: <what fails>; fix by <what to do instead>" — those exact words, "fix by", and the subject is one word (Demand, Distribution, Economics, Execution, …). Return the plan only if running it as written would waste the cycle; you cannot delay.`;
   }
   return [
     'You chair the board. Your advisors wrote:',
@@ -584,7 +597,7 @@ export function chairFormat(): string[] {
   return [
     `VERDICT: ${PRESSURE_VERDICTS.join(' or ')} — one of those three, and nothing else on that line.`,
     `RUBRIC: ${RUBRIC_DIMENSIONS.map((d) => `${RUBRIC_LABEL[d]} <0-2>`).join(', ')} — out of ${RUBRIC_MAX}.`,
-    'WEDGE: <the narrowest useful slice, and the most desperate users to aim it at> — on PIVOT REQUIRED only; leave the line out otherwise.',
+    'WEDGE: <the narrowest useful slice, and the most desperate users to aim it at> — REQUIRED whenever your verdict is PIVOT REQUIRED, and left out otherwise. A pivot with no wedge says the company should change but not to what, and is refused.',
     '',
     'Then the five parts, in this order, under these headings:',
     '',
@@ -733,6 +746,13 @@ export async function runBoardSession(
       merge = { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null };
     } else {
       const second = mergeBoardVerdict(again, s.kind);
+      // Said out loud, because nothing else would say it: the board ruled that this company should change and
+      // would not say what to (review of the run-3 wave, Important 2). Ruling W3-2 files the chair's pivot as an
+      // idea card, and on this path there is no pivot to file — so the owner is left with a returned idea and no
+      // proposal, which looks exactly like a board that simply said no.
+      if (second.refused === PRESSURE_REFUSAL_NO_WEDGE) {
+        vault.events.emit({ type: 'daemon.warning', agent: board.lead, payload: { where: 'board_session', message: `the board ruled PIVOT REQUIRED on "${s.title}" (${s.kind} session ${meetingId}) and named no wedge twice running, so there is no pivot to put to you as a candidate idea` } });
+      }
       merge = second.refused ? unansweredMerge(second) : second;
       chairText = second.refused ? '' : again;
     }
@@ -1554,11 +1574,13 @@ export function statusFacts(vault: Vault, now: Date): string[] {
   // the first-run seeds gate on, and the verdict is read off the document itself — a brief the owner edited before
   // adopting carries their words, and quoting the proposal back would be quoting what the company wrote instead.
   const adopted = hasApprovedBrief(vault);
-  const adoptedAt = briefAdoptedAt(vault);
+  // `briefAdoptedOn`, never `briefAdoptedAt`: the latter answers a comparison and falls back to the epoch, which
+  // printed as a fact reads "adopted on 1970-01-01". When the log no longer knows, say that.
+  const adoptedAt = briefAdoptedOn(vault);
   const openBrief = listInbox(vault).find((n) => n.data.kind === 'founder_brief' && !n.data.resolved_at);
   const verdict = adopted ? noteVerdict(vault.readTextOrNull(FOUNDER_BRIEF) ?? '') : openBrief ? noteVerdict(openBrief.body) : '';
   out.push(adopted
-    ? `Founder brief: adopted${adoptedAt ? ` on ${adoptedAt.slice(0, 10)}` : ''}${verdict ? `, and the board's verdict on it was ${verdict}` : ''}. Every plan is written against it.`
+    ? `Founder brief: adopted ${adoptedAt ? `on ${adoptedAt.slice(0, 10)}` : '(date unknown)'}${verdict ? `, and the board's verdict on it was ${verdict}` : ''}. Every plan is written against it.`
     : openBrief
       ? `Founder brief: written and waiting for you to adopt or send back${verdict ? `; the board's verdict on it is ${verdict}` : ''}. Nothing is planned until you do.`
       : 'Founder brief: none yet, and nothing is planned until one is adopted.');
@@ -2078,7 +2100,9 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // new one; the proposal id is derived from the slug, so a cycle that already filed it does nothing.
         const refiled: string[] = [];
         for (const c of listIdeas(vault)) {
-          if (c.board_verdict === null || c.decision !== 'undecided') continue;
+          // `ideaOpenToBoard` rather than the bare `undecided` flag, so the one card that is judged while
+          // *decided* — a sweep card the owner promoted with `decision: keep` (ruling W3-5) — is recovered too.
+          if (c.board_verdict === null || !ideaOpenToBoard(c)) continue;
           if (findInboxById(vault, idFromKey('prop', ideaVerdictKey(c.id)))) continue;
           const r = fileIdeaVerdict(vault, c.id, { from: ceo, job: jobId, findings: cardBoardFindings(readIdea(vault, c.id)?.body ?? '') });
           if (!r?.filed) continue;
@@ -2665,7 +2689,13 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         const fallback = `## What happened\n- ${state.finished?.length ? state.finished.map((f) => `${f.title}: ${f.status}`).join('\n- ') : 'Nothing finished since the last heartbeat.'}\n\n## What's next\n- ${queued.length ? queued.map((j) => `${j.assigned}: ${j.title}`).join('\n- ') : 'Waiting on the plan.'}\n\n## What needs you\n${needsYou.length ? needsYou.join('\n') : '- Nothing right now.'}`;
         const org = loadOrg(vault);
         const nextActionPerTeam = Object.values(org.teams).map((t) => `- ${t.id}: ${queued.find((j) => j.team === t.id)?.title ?? 'nothing queued'}`).join('\n');
-        const content = stringifyNote({ heartbeat: hbId, at: nowIso(), elapsed_hours: Number.isFinite(state.elapsedHours) ? Number(state.elapsedHours!.toFixed(1)) : null, trigger: job.title }, `# Since you were away\n\n${drafted ?? fallback}\n\n## Next action per team\n\n${nextActionPerTeam}\n\n---\n_Facts used:_\n\n\`\`\`\n${facts}\n\`\`\`\n`);
+        // Ruling W3-5: the board never sits on a card the owner has not seen, so an intelligence sweep's own
+        // cards surface here and nowhere else — title, one line of why, and how to have the board look at one.
+        // Written deterministically from the cards, below the drafted brief, because the model is told not to
+        // invent anything and these are not facts about the cycle: they are a list the owner acts on or ignores.
+        const sweepRows = sweepIdeaRows(vault);
+        const sweepSection = sweepRows.length ? `${SWEEP_IDEAS_SECTION}\n\n${renderSweepIdeasSection(sweepRows)}\n\n` : '';
+        const content = stringifyNote({ heartbeat: hbId, at: nowIso(), elapsed_hours: Number.isFinite(state.elapsedHours) ? Number(state.elapsedHours!.toFixed(1)) : null, trigger: job.title }, `# Since you were away\n\n${drafted ?? fallback}\n\n${sweepSection}## Next action per team\n\n${nextActionPerTeam}\n\n---\n_Facts used:_\n\n\`\`\`\n${facts}\n\`\`\`\n`);
         vault.writeText(runRel, content, 'ceo', { job: jobId });
         state = { ...state, runPath: runRel }; saveState(state);
         writeQueueMd(vault);

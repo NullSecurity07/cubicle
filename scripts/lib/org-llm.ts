@@ -10,6 +10,29 @@ import { DISCOVERY_INBOX, FOUNDER_BRIEF } from '@cubicle/core';
 export const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n\n### revenue\n- Find the first organic channel\n';
 
 /**
+ * Every objective in a plan ends on the kept idea it serves (ruling W3-1), leaving the plan otherwise exactly as
+ * the caller wrote it — its headers, its `process:` lines, its sections for teams that hold no planning round.
+ *
+ * Applied to whatever plan this fixture is about to write, and that is the point. Written as an opt-in, whether
+ * the scripted CEO obeyed the rule it is being tested under depended on whether `board_decides_after_hours`
+ * happened to elapse between the board session and the plan step of the same cycle — about a second, under
+ * `letTheBoardDecide`. Fast machine: nothing kept yet, no marker needed, `checkPlan` says nothing. Loaded
+ * machine: the idea is kept a step before the plan, the plan names it nowhere, and the guard returns it — a
+ * second `company.plan` job in whichever case happened to be slow that run. A fixture whose company obeys the
+ * rule cannot flip on the clock.
+ *
+ * A bullet that already names an idea, and a bullet that is a job link rather than an objective, are left alone.
+ */
+export function nameKeptIdea(plan: string, kept: string | undefined): string {
+  if (!kept) return plan;
+  return plan.split('\n').map((line) => {
+    const m = /^([ \t]*[-*+][ \t]+)(\S.*)$/.exec(line);
+    if (!m || /\bidea:/i.test(m[2]) || /^(?:\[\[)?Jobs\//i.test(m[2].trim())) return line;
+    return `${m[1]}${m[2].trimEnd()} — idea: [[Ideas/${kept}]]`;
+  }).join('\n');
+}
+
+/**
  * The brief the scripted discovery job files. It used to be `founderBriefTemplate()` — the *empty* template,
  * which the dispatcher has always refused on adoption and which `checkFounderBrief` now refuses at
  * `proposal.create` (ruling FR-4), since a brief that is still the template is the one document guaranteed to
@@ -96,9 +119,10 @@ export function orgLlm(opts: {
    */
   ownerReplies?: boolean;
   /**
-   * Write a plan whose every objective names the kept idea the goal listed (ruling W3-1). The slug comes out of
-   * the `Kept ideas — …` block in the plan job's own goal, so the fixture cannot name an idea the company has
-   * not kept. Falls back to `plan` when the goal lists none.
+   * Kept for the call sites that set it; it does nothing. Naming the kept idea is what this scripted CEO always
+   * does now (ruling W3-1) — see the `company.plan` branch for why it cannot be optional.
+   *
+   * @deprecated
    */
   planKeptIdea?: boolean;
   /**
@@ -280,15 +304,10 @@ export function orgLlm(opts: {
       if (jobType === 'company.plan') {
         // Ruling W3-1: every objective names the idea it serves, and the only ideas it may name are the ones the
         // goal's `Kept ideas` block lists. Read from the goal rather than from a constant, so the fixture cannot
-        // invent a kept idea — and so a run where the board kept nothing falls back to the plain plan.
-        const kept = opts.planKeptIdea ? [...jobMsg.matchAll(/\[\[Ideas\/([a-z0-9][a-z0-9-]*)\]\]/g)].map((m) => m[1])[0] : undefined;
-        const text = kept ? [
-          '---', 'cycle: 1', '---', '# Plan', '', '## Objectives', '',
-          '### dev',
-          `- Ship the first cut of Site/ so a visitor can say what we sell — idea: [[Ideas/${kept}]]`, '',
-          '### revenue',
-          `- Find the first organic channel and publish three things on it — idea: [[Ideas/${kept}]]`, '',
-        ].join('\n') : plan;
+        // invent a kept idea — and so a run where the board kept nothing writes the plan unchanged. See
+        // `nameKeptIdea` for why this is not an option a caller turns on.
+        const kept = [...jobMsg.matchAll(/\[\[Ideas\/([a-z0-9][a-z0-9-]*)\]\]/g)].map((m) => m[1])[0];
+        const text = nameKeptIdea(plan, kept);
         return { ...base, parsedToolCalls: [n === 0 ? { name: 'vault.write', args: { path: 'Plans/plan.md', content: text } } : { name: 'finish', args: { status: 'done', summary: 'objectives written' } }] };
       }
       // Discovery (SP3): read everything once, file one candidate card, propose the founder brief, finish. The
