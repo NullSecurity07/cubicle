@@ -10,7 +10,7 @@
  * which is the whole difference between a person crossing an office and a token crossing a board.
  */
 import { PERSON_H, type Pt, type View } from './iso.js';
-import { ACCENT, type AccentName, type Light, MATERIAL as M, OUTFIT, type OutfitName, TOOL, rgba } from './materials.js';
+import { ACCENT, type AccentName, type Light, MATERIAL as M, OUTFIT, type OutfitName, TOOL, divisionChip, rgba } from './materials.js';
 import { type Person, type Facing, type Pose, drawPerson, personFoot, personFrom } from './characters.js';
 import { type G, bubble as drawBubble, plate, roundRect, UI_FONT } from './shapes.js';
 import { shadowVec } from './props.js';
@@ -331,14 +331,8 @@ export class Body {
 /** Which way a chair at a table looks. */
 function seatFacing(s: Seat): Facing { return s.facing; }
 
-/** A division's chip colour, for the name plate. */
-const ACCENT_OF: Record<string, string> = {
-  executive: '#6B788F', board: '#6B788F', technology: '#5A68BC', revenue: '#C08834', operations: '#6F8C74', security: '#6F8C74', other: '#8E8577',
-};
-
 /** Drawn glyphs, never emoji: a headless or minimal system has no emoji font, and the office must still read. */
 const TOOL_GLYPH: Record<string, string> = { browser: 'W', terminal: '>', envelope: 'M', doc: 'D', chart: '%', chat: '…' };
-const TOOL_FILL: Record<string, string> = { browser: '#3C6BC4', terminal: '#3B4048', envelope: '#B4553F', doc: '#8B5E3B', chart: '#4F7A55', chat: '#6A5BA8' };
 
 /** Break a line to fit `max` screen px, at most three lines, with an ellipsis where it runs out. */
 export function wrap(g: G, text: string, size: number, max: number, maxLines = 3): string[] {

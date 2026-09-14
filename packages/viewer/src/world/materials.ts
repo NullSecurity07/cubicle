@@ -127,6 +127,31 @@ export const ACCENT: Record<AccentName, { base: string; rug: string; chip: strin
   neutral: { base: '#A79C8C', rug: '#EDE7DC', chip: '#8E8577', ink: '#4E483F' },
 };
 
+/**
+ * Which accent a division wears, and which a zone wears. These two tables are the only place the campus decides
+ * that Technology is indigo — the name plate over a person, the rug under a zone, the rail tab and the Org sheet
+ * all read them, so none of them can drift from the others.
+ *
+ * Dev, QA and Research share indigo because they are one division; the pantry, lobby and lounge are neutral
+ * because they belong to nobody. That is five colours over eleven zones, not four: the four division accents plus
+ * the neutral the shared rooms wear.
+ */
+export const DIVISION_ACCENT: Record<string, AccentName> = {
+  executive: 'slate', board: 'slate', technology: 'indigo', revenue: 'amber',
+  operations: 'sage', security: 'sage', other: 'neutral',
+};
+export const ZONE_ACCENT: Record<string, AccentName> = {
+  boardroom: 'slate', ceo_office: 'slate', meetingroom: 'slate', ops: 'sage',
+  pantry: 'neutral', lobby: 'neutral', lounge: 'neutral',
+  research: 'indigo', dev: 'indigo', qa: 'indigo', sales: 'amber',
+};
+export const accentOfDivision = (id: string): AccentName => DIVISION_ACCENT[id] ?? 'neutral';
+export const accentOfZone = (id: string): AccentName => ZONE_ACCENT[id] ?? 'neutral';
+/** The chip a division's people wear on their name plate, and the dot they are on the minimap. */
+export const divisionChip = (id: string): string => ACCENT[accentOfDivision(id)].chip;
+/** The chip a zone's desk plates and rail tab wear. */
+export const zoneChip = (accent: AccentName): string => ACCENT[accent].chip;
+
 /** Outfit families. Distinct silhouette + colour per role family, so a glance at the campus reads as an org. */
 export const OUTFIT = {
   chief: { shirt: '#3E4657', trouser: '#2E343F' },

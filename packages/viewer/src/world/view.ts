@@ -18,7 +18,7 @@
  *    furniture by the same `x + y` depth key, which is what lets someone walk behind a partition.
  */
 import { type Cell, type Pt, type Rect, type View, PERSON_H, quad } from './iso.js';
-import { type Light, lampStrength, lightAt, rgba } from './materials.js';
+import { type AccentName, type Light, MATERIAL as M, divisionChip, lampStrength, lightAt, rgba, zoneChip } from './materials.js';
 import { type G, plate } from './shapes.js';
 import type { Drawable } from './props.js';
 import {
@@ -373,9 +373,9 @@ export class CampusView {
       const at = v.p(d.at.x, d.at.y, 0.9);
       const r = Math.max(20, 2.1 * v.cw);
       const grad = g.createRadialGradient(at.x, at.y, 0, at.x, at.y, r);
-      grad.addColorStop(0, rgba('#FFC878', 0.4 * k));
-      grad.addColorStop(0.5, rgba('#FFB661', 0.16 * k));
-      grad.addColorStop(1, rgba('#FFB661', 0));
+      grad.addColorStop(0, rgba(M.lamp, 0.4 * k));
+      grad.addColorStop(0.5, rgba(M.lampDeep, 0.16 * k));
+      grad.addColorStop(1, rgba(M.lampDeep, 0));
       g.fillStyle = grad;
       g.beginPath(); g.arc(at.x, at.y, r, 0, Math.PI * 2); g.fill();
     }
@@ -384,8 +384,8 @@ export class CampusView {
       const at = v.p(s.axis === 'x' ? s.x + s.len / 2 : s.x, s.axis === 'x' ? s.y : s.y + s.len / 2, s.z + s.h / 2);
       const r = Math.max(24, 2.4 * v.cw);
       const grad = g.createRadialGradient(at.x, at.y, 0, at.x, at.y, r);
-      grad.addColorStop(0, rgba('#8FB4E8', 0.22 * k));
-      grad.addColorStop(1, rgba('#8FB4E8', 0));
+      grad.addColorStop(0, rgba(M.screenGlow, 0.22 * k));
+      grad.addColorStop(1, rgba(M.screenGlow, 0));
       g.fillStyle = grad;
       g.beginPath(); g.arc(at.x, at.y, r, 0, Math.PI * 2); g.fill();
     }
@@ -412,7 +412,7 @@ export class CampusView {
 
   private paintMinimap(): void {
     if (!this.minimap) return;
-    drawMinimap(this.minimap, this.map, this.camera, [...this.bodies.values()].map((b) => ({ x: b.at.x, y: b.at.y, colour: b.view.state === 'offline' ? '#6B6558' : ACCENT_DOT[b.view.division] ?? '#8E8577' })));
+    drawMinimap(this.minimap, this.map, this.camera, [...this.bodies.values()].map((b) => ({ x: b.at.x, y: b.at.y, colour: b.view.state === 'offline' ? M.offline : divisionChip(b.view.division) })));
   }
 
   /* ---- what the screens are showing ------------------------------------------------------------------- */
@@ -540,9 +540,9 @@ export class CampusView {
       const rects = [z.rect, ...(z.id === 'boardroom' ? [this.map.zoneById.ceo_office?.rect, this.map.zoneById.meetingroom?.rect] : [])].filter(Boolean) as Rect[];
       const agents = [...this.bodies.values()]
         .filter((b) => b.view.state !== 'offline' && rects.some((r) => inRect(r, b.at)))
-        .map((b) => ({ role: b.view.role, color: ACCENT_DOT[b.view.division] ?? '#8E8577', state: b.view.state }));
+        .map((b) => ({ role: b.view.role, color: divisionChip(b.view.division), state: b.view.state }));
       const meetings = Object.values(s.meetings).filter((mt) => mt.open && rooms.has(mt.room === 'board' ? 'boardroom' : mt.room === 'meeting' ? 'meetingroom' : mt.room)).length;
-      out.push({ id: z.id, label: z.rail!.label, accent: z.accent, color: ACCENT_DOT_ZONE[z.accent] ?? '#8E8577', agents, meetings });
+      out.push({ id: z.id, label: z.rail!.label, accent: z.accent, color: zoneChip(z.accent), agents, meetings });
     }
     return out;
   }
@@ -602,10 +602,6 @@ export class CampusView {
 }
 
 const KEYS = new Set(['w', 'a', 's', 'd', 'W', 'A', 'S', 'D', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
-const ACCENT_DOT: Record<string, string> = {
-  executive: '#6B788F', board: '#6B788F', technology: '#5A68BC', revenue: '#C08834', operations: '#6F8C74', security: '#6F8C74', other: '#8E8577',
-};
-const ACCENT_DOT_ZONE: Record<string, string> = { slate: '#6B788F', indigo: '#5A68BC', amber: '#C08834', sage: '#6F8C74', neutral: '#8E8577' };
 
 const pad = (r: Rect, n: number): Rect => ({ x0: r.x0 - n, y0: r.y0 - n, x1: r.x1 + n, y1: r.y1 + n });
 const centre = (r: Rect): Cell => ({ x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 });
@@ -639,5 +635,5 @@ export function inPoly(pts: Pt[], x: number, y: number): boolean {
 
 /** A desk plate, for a desk nobody is sitting at. */
 function plateFor(g: G, at: Pt, name: string, accent: string): void {
-  plate(g, at, name, { size: 10, chip: ACCENT_DOT_ZONE[accent] ?? '#8E8577', alpha: 0.78 });
+  plate(g, at, name, { size: 10, chip: zoneChip(accent as AccentName), alpha: 0.78 });
 }

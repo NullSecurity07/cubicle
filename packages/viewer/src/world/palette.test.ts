@@ -28,7 +28,9 @@ describe('zone tints', () => {
     ]);
     expect(zoneTint('dev')).toBe(zoneTint('qa'));
     expect(zoneTint('dev')).toBe(zoneTint('research'));
-    expect(new Set(Object.values(ZONE_TINT)).size).toBe(4);
+    // Five, not four. SP9 gives the four divisions an accent each and the rooms that belong to nobody — the
+    // pantry, the lobby, the lounge — the neutral. Four would mean the pantry wearing a division's colour.
+    expect(new Set(Object.values(ZONE_TINT)).size).toBe(5);
   });
   it('the executive suite is one tint across its three rooms, and an unknown zone falls back rather than throwing', () => {
     expect(zoneTint('ceo_office')).toBe(zoneTint('boardroom'));
@@ -98,12 +100,16 @@ describe('families and role palettes', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// One palette drives Phaser and CSS (the spec's consistency rule). This is the lint that keeps it true: no colour
-// literal may appear in `world/` or `scenes/` outside the palette itself and the two pixel drawers, which paint
-// from palettes handed to them. Three raw ambers and about thirty other hexes had drifted out of the table.
+// One palette drives the world and CSS (the spec's consistency rule). This is the lint that keeps it true: no
+// colour literal may appear in `world/` outside the two palette tables themselves.
+//
+// SP9 moved both ends of this rule. `scenes/` is gone with the Phaser tower, so the walk covers `world/` alone;
+// the two pixel drawers it used to excuse are gone with the tileset, and in their place `world/materials.ts`
+// holds the campus materials while `world/palette.ts` holds what the chrome reads. Everything else — the vector
+// renderers, the minimap, the bodies — derives its colours from those two and names none of its own.
 // ---------------------------------------------------------------------------------------------------------------
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..');
-const ALLOWED = new Set(['world/palette.ts', 'world/tiles-draw.ts', 'world/sprite-draw.ts']);
+const ALLOWED = new Set(['world/palette.ts', 'world/materials.ts']);
 
 function walk(dir: string, rel = ''): string[] {
   return readdirSync(join(SRC, dir, rel), { withFileTypes: true }).flatMap((e) => {
@@ -116,7 +122,7 @@ function walk(dir: string, rel = ''): string[] {
 describe('one palette', () => {
   it('has no colour literal outside palette.ts and the two pixel drawers', () => {
     const offenders: string[] = [];
-    for (const file of [...walk('world'), ...walk('scenes')]) {
+    for (const file of walk('world')) {
       if (ALLOWED.has(file)) continue;
       readFileSync(join(SRC, file), 'utf8').split('\n').forEach((line, i) => {
         if (line.includes('palette-lint: ignore')) return;

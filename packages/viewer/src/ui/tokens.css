@@ -29,8 +29,9 @@
   /* The time bar's own height (32 px of control + 2 × --s1 of padding) plus the --s3 it is inset by and an --s3 gap.
      #layer stops here, so no presentation can ever be laid over the Live/Replay control. */
   --time-h: 64px;
-  /* What the minimap chrome reserves at the bottom right: 12 px inset + a 160 px camera + the M toggle above it.
-     The sheet stops here (app.css), so an open sheet never buries the map. Mirrors OfficeScene's `mmH`/12. */
+  /* What the minimap chrome reserves at the bottom right: --s3 above the time bar + the 116 px campus thumbnail
+     + --s1 + the M toggle above it, and a little air. The sheet stops here (app.css), so an open sheet never
+     buries the map. ui/tokens.test.ts holds this against ui/minimap.ts's MINIMAP_H. */
   --minimap-h: 176px;
   /* How far #toast rises so it never covers a reader's fixed action bar; written by ui/panel.ts, 0 when there
      is no bar on the screen. */

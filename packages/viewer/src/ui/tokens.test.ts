@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { MINIMAP_H } from './minimap.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { THEMES, contrastRatio, cssVars, themeFromQuery, hexNum } from './tokens.js';
@@ -93,8 +94,10 @@ describe('layout tokens clear the elevation-0 controls', () => {
   it('--time-h covers the time bar: --s1 twice plus a --hit control, plus its --s3 inset and an --s3 gap', () => {
     expect(px('time-h')).toBeGreaterThanOrEqual(px('hit') + 2 * px('s1') + px('s3'));
   });
-  it('--minimap-h covers the 160 px minimap camera, its 12 px inset and the M toggle above it', () => {
-    expect(px('minimap-h')).toBeGreaterThanOrEqual(12 + 160 + px('hit'));
+  it('--minimap-h covers the campus thumbnail, its --s3 inset, and the M toggle --s1 above it', () => {
+    // 160 px was the tower's minimap camera. The campus thumbnail is MINIMAP_H, read from the module rather than
+    // restated, so shrinking the thumbnail without shrinking the reserve shows up here.
+    expect(px('minimap-h')).toBeGreaterThanOrEqual(px('s3') + MINIMAP_H + px('s1') + px('hit'));
   });
   it('#layer stops at the time bar rather than at the viewport floor', () => {
     expect(app).toMatch(/#layer \{[^}]*inset: var\(--bar-h\) 0 var\(--time-h\) var\(--rail-w\)/);

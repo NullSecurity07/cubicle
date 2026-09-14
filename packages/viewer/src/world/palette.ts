@@ -2,6 +2,8 @@
  * The one palette. Phaser reads it directly; plan 3's ui/tokens.ts turns the same numbers into CSS variables.
  * Pure: no Phaser, no DOM. Every colour is a `#rrggbb` string; `hexToInt` converts for Phaser tints.
  */
+import { ACCENT, DIVISION_ACCENT, ZONE_ACCENT, accentOfDivision, accentOfZone } from './materials.js';
+
 export type Family = 'chief' | 'advisor' | 'manager' | 'member' | 'owner';
 export interface RolePalette { shirt: string; shirtDark: string; accent: string; hair: string; skin: string; trousers: string; ring: string }
 
@@ -113,22 +115,19 @@ export const PALETTE = {
 
 /**
  * The tint a zone shows in the chrome: its own accent from the campus palette, so the rail tab, the minimap rug
- * and the desk chips in that zone are all one colour. There are only four accents and eleven zones — Dev, QA and
- * Research share indigo because they are one division — so the rail's own labels do the telling apart.
+ * and the desk chips in that zone are all one colour. Derived from `materials.ts` rather than restated here —
+ * the accents are written once, in the table the world draws from.
  */
-export const ZONE_TINT: Record<string, string> = {
-  boardroom: '#78849A', ceo_office: '#78849A', meetingroom: '#78849A',
-  ops: '#7E9A80', pantry: '#A79C8C', lobby: '#A79C8C', lounge: '#A79C8C',
-  research: '#6472C4', dev: '#6472C4', qa: '#6472C4', sales: '#D49A4C',
-};
-export const zoneTint = (id: string): string => ZONE_TINT[id] ?? '#A79C8C';
+export const ZONE_TINT: Record<string, string> = Object.fromEntries(
+  Object.entries(ZONE_ACCENT).map(([id, a]) => [id, ACCENT[a].base]),
+);
+export const zoneTint = (id: string): string => ACCENT[accentOfZone(id)].base;
 
-/** The same four accents, keyed by the division a team belongs to — what the Org sheet groups by. */
-export const DIVISION_TINT: Record<string, string> = {
-  executive: '#78849A', board: '#78849A', technology: '#6472C4', revenue: '#D49A4C',
-  operations: '#7E9A80', security: '#7E9A80', other: '#A79C8C',
-};
-export const divisionTint = (id: string): string => DIVISION_TINT[id] ?? DIVISION_TINT.other;
+/** The same accents, keyed by the division a team belongs to — what the Org sheet groups by. */
+export const DIVISION_TINT: Record<string, string> = Object.fromEntries(
+  Object.entries(DIVISION_ACCENT).map(([id, a]) => [id, ACCENT[a].base]),
+);
+export const divisionTint = (id: string): string => ACCENT[accentOfDivision(id)].base;
 
 /** chief: title starts with "Chief" or the role is the CEO; advisor: on the board; manager: leads a team; else member. */
 export function familyOf(role: string, o: { title?: string; team?: string; isLead?: boolean }): Exclude<Family, 'owner'> {
