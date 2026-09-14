@@ -57,17 +57,19 @@ const root = path.resolve(__dirname, '../../..');
 /**
  * The whole journey's model budget.
  *
- * **Measured: 106 calls**, on 2026-09-13, for the whole story from "surprise me" to work on the board. Where they
- * go: act 1's surprise ask and self-interview; act 2's discovery job, the brief's board session (≤ 17), the
- * estimate, the idea's board session (≤ 17) and four standing-intelligence sweeps; act 3's plan and its
- * pre-mortem (≤ 17); act 4's two division plans, the work they queued and its gates.
+ * **Measured: 176 calls**, on 2026-09-14 (twice, the same count), for the whole story from "surprise me" to work
+ * on the board. Where they go: act 1's surprise ask and self-interview; act 2's discovery job, the brief's board
+ * session (≤ 17), the estimates, the idea's board session (≤ 17), the chair's pivot card and the promoted sweep
+ * card (a session each, ≤ 17) and four standing-intelligence sweeps; act 3's plan and its pre-mortem (≤ 17); act
+ * 4's two division plans, the work they queued and its gates, the weekly review the extra cycles reach, and the
+ * status question (one call). It was 106 on 2026-09-13, before the pivot, the promotion and the status ask.
  *
- * Pinned at 160 — a little over 1.5× — because the point of pinning it is to notice a *regression*: a step that
+ * Pinned at 230 — about 1.3× — because the point of pinning it is to notice a *regression*: a step that
  * started re-asking, a session that stopped reusing its rounds, an interview asked twice. It is not meant to
  * fail the suite over one extra retry or one extra gate. A run that needs more than this is spending an owner's
  * free tier on something nobody asked for, and that is worth a red test.
  */
-const CALL_BUDGET = 160;
+const CALL_BUDGET = 230;
 
 /** The board's one unanswerable round in this journey, so exactly one question reaches the owner. */
 const ASKS_THE_OWNER = 'Founder-Market Fit';
@@ -94,8 +96,8 @@ beforeEach(async () => {
   dir = mkdtempSync(path.join(tmpdir(), 'cubicle-journey-'));
   const { vault } = await scaffoldVault(dir);
   // Nobody is at the keyboard for the *idea* verdict, and the board has to be allowed to rule on it or the plan
-  // could never name a kept idea. The plan verdict is still the owner's: the note is filed and decided inside
-  // the same second, long before this switch elapses on it.
+  // could never name a kept idea. The plan verdict is still the owner's: the journey rules on it as soon as the
+  // note is filed, before any wait that could let this switch elapse on it.
   letTheBoardDecide(vault);
   noLocalModel(vault);
   vault.close();
@@ -427,6 +429,9 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     await waitFor(() => jobsOf('company.plan').length === 1, 'the company plan');
     await waitFor(() => jobsOf('company.plan').every((j) => ['done', 'failed', 'cancelled'].includes(j.status)), 'the plan to be written');
     await waitFor(() => rows('plan_verdict').length === 1, 'the plan verdict the owner rules on');
+    // The cycle that planned, read now: the pokes below run cycles of their own, and "nothing seeded a second
+    // time, however many cycles have run since" is measured from here.
+    const planningCycle = cycles();
 
     const plan = v.readText('Plans/plan.md');
     const kept = listIdeas(v).filter((i) => i.decision === 'keep').map((i) => i.id);
@@ -451,6 +456,18 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     // the next cycle the company was selling something else, with nobody asked. So the plan on disk must still be
     // exactly what the CEO wrote and what the owner is about to approve — and the fix must become a card instead.
     expect(v.readText('Plans/plan.md'), 'the board did not rewrite the plan').toBe(plan);
+
+    // The owner approves the plan the moment it is put to them, and before waiting on anything else: the board's
+    // stand-in switch is about a second in this vault (see `letTheBoardDecide`), and every poke below spends
+    // more than that. Read the verdict row here and rule on it now, or the clock rules first and the assertion
+    // that the owner did — the one this act is about — reads `board`.
+    const verdict = rows('plan_verdict')[0];
+    office.decide(verdict.id, { approved: true });
+    await office.next((m) => m.op === 'decide.ack' && m.id === verdict.id, 'the plan approval');
+    await waitFor(() => findInboxById(v, verdict.id)!.data.approved === true, 'the approval to land on the note');
+    // The owner ruled, not the clock: `board_decides_after_hours` never got to stand in for them here.
+    expect((findInboxById(v, verdict.id)!.data as { approved_by?: string }).approved_by).toBe('owner');
+
     const planPivot = listIdeas(v).find((i) => i.source === BOARD_IDEA_SOURCE && i.evidence.includes(premortem.rel));
     if (planPivot) {
       expect(planPivot.decision, 'the pivot is the owner\'s to keep, not the plan\'s to become').toBe('undecided');
@@ -470,20 +487,17 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     expect(listStreams(v)).toHaveLength(1);
     const stream = listStreams(v)[0].slug;
     expect(seeds().every((j) => j.stream === stream)).toBe(true);
-    const planningCycle = cycles();
 
     // =======================================================================================================
     // Act 4 — the owner approves the plan, and the divisions plan against it.
     // =======================================================================================================
-    const verdict = rows('plan_verdict')[0];
-    office.decide(verdict.id, { approved: true });
-    await office.next((m) => m.op === 'decide.ack' && m.id === verdict.id, 'the plan approval');
-    await waitFor(() => findInboxById(v, verdict.id)!.data.approved === true, 'the approval to land on the note');
-    // The owner ruled, not the clock: `board_decides_after_hours` never got to stand in for them here.
-    expect((findInboxById(v, verdict.id)!.data as { approved_by?: string }).approved_by).toBe('owner');
-
     await planUntilFannedOut(d, v, 2);
-    expect(jobsOf('division.plan').map((j) => j.assigned).sort()).toEqual(['cfo', 'cto']);
+    // The heartbeat's own fan-out: one plan per division, by its lead. The journey has run enough cycles by now
+    // for the weekly review to have expanded too, and its step 2 files a `division.plan` per division for the
+    // week ahead — the company on its schedule, not a second fan-out — so count the plans the heartbeat parented.
+    const heartbeatIds = new Set(jobsOf('ceo.heartbeat').map((j) => j.id));
+    const fannedOut = jobsOf('division.plan').filter((j) => !!j.parent && heartbeatIds.has(j.parent));
+    expect(fannedOut.map((j) => j.assigned).sort()).toEqual(['cfo', 'cto']);
     // Work the leads queued, on the stream this company has.
     const scheduled = listJobs(v).filter((j) => j.type === 'engineer.ship' && !seeds().some((s) => s.id === j.id));
     expect(scheduled.length, 'the CTO scheduled work').toBeGreaterThan(0);
@@ -587,7 +601,11 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
 
     // Every idea the board ever sat on was one the owner had seen: their own pick, the board's own pivot out of
     // an argument they were shown, or the sweep card they promoted themselves. Nothing else (ruling W3-5).
-    const seen = new Set(listIdeas(v).filter((i) => i.source !== 'intelligence' || i.decision === 'keep').map((i) => i.title));
+    // A promoted card does not stay `keep`: once the board has sat on it, `closeIdeaVerdicts` writes the board's
+    // own band over the owner's promotion (park, more often than not). The one sweep card the board may have seen
+    // is the one this journey promoted by hand in Act 2, so it is named here rather than read off a field that
+    // the ruling itself has since rewritten.
+    const seen = new Set(listIdeas(v).filter((i) => i.source !== 'intelligence' || i.decision === 'keep' || i.title === SWEEP_CARD).map((i) => i.title));
     for (const n of boardNotes('idea')) expect([...seen], `the board sat on "${n.data.title}"`).toContain(String(n.data.title));
 
     // The budget, measured and pinned, and said out loud on the way past: a journey whose cost nobody reads is a
