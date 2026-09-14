@@ -9,8 +9,10 @@
  *
  * **The rules it plays by.**
  * - Everything the owner does goes through the two ops the office sends: `chat` and `decide`. Nothing here
- *   writes a note, flips an `approved:` flag or calls a heartbeat step directly. A test that edited the vault
- *   to move the story on would have proved the story and not the surfaces, which is precisely how D1 survived.
+ *   flips an `approved:` flag or calls a heartbeat step directly. A test that edited the vault to move the story
+ *   on would have proved the story and not the surfaces, which is precisely how D1 survived. The **one** raw
+ *   write is promoting a sweep card with `decision: keep` (ruling W3-5): the Decisions sheet has no row for a
+ *   card nobody has been asked about, so Obsidian is the surface, and the ruling's own instruction says so.
  * - Every assertion is something the owner could read: a note in the vault, a row in the snapshot, a file that
  *   exists. Nothing asserts on a cache file or an internal call.
  * - The model is `orgLlm` (`scripts/lib/org-llm.ts`), scripted for every prompt this journey reaches. Where a
@@ -29,7 +31,7 @@
  * green journey cannot quietly mean "it routed around the ruling".
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
@@ -37,7 +39,8 @@ import {
   scaffoldVault, Vault, listJobs, listInbox, listStreams, listIdeas, findInboxById, parseNote, readJob,
   interviewPhase, ceoAnswersFrom, INTERVIEW_QUESTIONS, INTERVIEW_PATH, FOUNDER_BRIEF, BRAND_NAME_PATH,
   PRESSURE_TEST_SECTION, briefSectionBody, briefFromProposalBody, checkFounderBrief, briefCheckContext,
-  readPressureVerdict, unkeptIdeasNamedIn, GATE_JOB_TYPES, checkPlan, planObjectives,
+  readPressureVerdict, unkeptIdeasNamedIn, GATE_JOB_TYPES, checkPlan, planObjectives, readIdea,
+  BOARD_IDEA_SOURCE, productFixes,
 } from '@cubicle/core';
 import {
   Daemon, defaultConfig, buildSnapshot, completeIdeaLines, FIRST_JOB_TITLES, WAITING_FOR_BRIEF,
@@ -47,7 +50,7 @@ import {
 import { orgLlm, THREE_IDEAS, SIX_CEO_ANSWERS } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
 import { noLocalModel } from './helpers/no-local-model.js';
-import { TEST_MS, eventProgress, waitForProgress } from './helpers/load.js';
+import { TEST_MS, eventProgress, waitForProgress, loadScale } from './helpers/load.js';
 
 const root = path.resolve(__dirname, '../../..');
 
@@ -70,6 +73,16 @@ const CALL_BUDGET = 160;
 const ASKS_THE_OWNER = 'Founder-Market Fit';
 /** What the standing-intelligence sweeps file: a card the owner has never seen (ruling W3-5). */
 const SWEEP_CARD = 'Publish the allergen matrix as a free tool';
+/** The card the scripted discovery job files — the idea the owner actually picked, and the one the plan serves. */
+const DISCOVERY_CARD = 'The idea the owner described';
+/**
+ * The plan chair's one business finding (ruling W3-2). Written in the `**Fix:**` spelling the third live run's
+ * board actually used — not `fix by …` — because that is the spelling the company has to honour, and a fixture
+ * that used the one the parser already knew would test the parser against itself.
+ */
+const PLAN_FIX = 'Demand: nobody has confirmed a single nursery buys food centrally. **Fix:** sell to the forty-site chain that already orders together, not to single sites';
+/** The silence the transcript records where an advisor did not answer — `runBoardDialogue`'s own words. */
+const NO_ANSWER = '(no answer: no model was available)';
 
 let dir: string;
 let disposed = false;
@@ -137,12 +150,16 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
       vetoes: 0,                       // the board passes the plan first time: this journey is not about the veto
       surpriseIdeas: THREE_IDEAS,
       selfInterview: SIX_CEO_ANSWERS,
-      briefVerdict: 'WEAK',            // so adopting it is the two-step decision of ruling W3-3
+      // PIVOT REQUIRED, not WEAK: it is still the two-step adoption of ruling W3-3, and it is the one verdict
+      // that also makes the board propose a different company — which is what ruling W3-2 is about.
+      briefVerdict: 'PIVOT REQUIRED',
       boardAsksOwner: ASKS_THE_OWNER,
       ownerReplies: true,
       planKeptIdea: true,
       shipStream: null,                // the only stream this company has is the one its first cycle seeded
       intelligenceCard: SWEEP_CARD,
+      planChairFix: PLAN_FIX,
+      silentAdvisor: DISCOVERY_CARD,   // one advisor call on the idea session comes back empty
     });
     const d = new Daemon(
       defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, {
@@ -176,6 +193,34 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
         .filter((n) => n.data.room === 'board' && n.data.subject === subject);
     const brandName = () => String(parseNote(v.readTextOrNull(BRAND_NAME_PATH) ?? '').data.name ?? '');
     const brief = () => listInbox(v).filter((n) => n.data.kind === 'founder_brief');
+    /** The note the owner rules on for one card — open or already closed, because the board closes these itself. */
+    const ideaVerdictFor = (slug: string) => listInbox(v).find((n) => n.data.kind === 'idea_verdict' && n.data.target === `Ideas/${slug}.md`) ?? null;
+    /**
+     * Wait for something that needs another cycle, asking for one while we wait.
+     *
+     * The cadence is off in this vault so that every cycle is one somebody asked for — which is what makes the
+     * "a decision wakes the company" assertions mean anything, and also means nothing else will ever turn the
+     * funnel's crank. In a live company the six-hourly trigger does this; here the test does. `requestHeartbeat`
+     * returns the open heartbeat instead of creating a second one, so asking repeatedly is safe.
+     */
+    const pokeUntil = async (pred: () => boolean, what: string): Promise<void> => {
+      const poke = setInterval(() => { if (!pred()) d.requestHeartbeat(`waiting for ${what}`); }, 500);
+      // Asking is itself a write, so the vault is never silent while this runs and the stall detector can never
+      // fire — the same reason `planUntilFannedOut` carries its own ceiling. What a funnel that has stopped looks
+      // like is the cards and the open jobs, so the failure says both rather than only that it waited.
+      const deadline = Date.now() + 120_000 * loadScale();
+      try {
+        while (!pred()) {
+          if (disposed) throw new Error('torn down while still waiting');
+          if (Date.now() > deadline) {
+            const cards = listIdeas(v).map((i) => `${i.id}[${i.source}/${i.decision}/score ${i.score}/board ${i.board_verdict}]`).join(' ');
+            const open = listJobs(v).filter((j) => !['done', 'cancelled'].includes(j.status)).map((j) => `${j.type}=${j.status}`).join(' ');
+            throw new Error(`waited for ${what}\n  ideas: ${cards}\n  open jobs: ${open}`);
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      } finally { clearInterval(poke); }
+    };
     /** A ruling still on another branch: the journey took the current path and says which. */
     const inFlight: string[] = [];
 
@@ -274,7 +319,7 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     // The board's own round findings are the brief's pressure test, and it ends on a verdict word.
     expect(pressure).toContain('Nurseries will pay 40 a week to stop planning meals.');
     expect(pressure).toContain(session.rel.replace(/\.md$/, ''));
-    expect(readPressureVerdict(pressure)).toMatchObject({ ok: true, verdict: 'WEAK' });
+    expect(readPressureVerdict(pressure)).toMatchObject({ ok: true, verdict: 'PIVOT REQUIRED' });
     // …and it passes the check that refused the first live run's beautiful, false brief.
     expect(checkFounderBrief(v, draft, briefCheckContext(v))).toMatchObject({ ok: true, findings: [] });
 
@@ -294,7 +339,57 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     // The board sat on the idea the owner picked, and on nothing else: a card the sweeps found is the company's
     // own reading, not the owner's, and it must not be judged unpromoted (ruling W3-5).
     const judged = boardNotes('idea').map((n) => String(n.data.title));
+    expect(judged).toContain(DISCOVERY_CARD);
     expect(judged).not.toContain(SWEEP_CARD);
+
+    // Ruling W3-2, the brief half: a board that says PIVOT REQUIRED has proposed a *different company*, and the
+    // company's answer is a card the owner rules on — never a brief, a plan or a name that quietly becomes it.
+    const pivots = () => listIdeas(v).filter((i) => i.source === BOARD_IDEA_SOURCE);
+    expect(pivots(), 'the chair\'s pivot on the brief, as one candidate card').toHaveLength(1);
+    const briefPivot = pivots()[0];
+    expect(briefPivot.evidence, 'the pivot cites the argument it came out of').toContain(session.rel);
+    expect(briefPivot.decision).toBe('undecided');
+    expect(readIdea(v, briefPivot.id)!.body).toContain('Nothing is planned against this until you keep it.');
+    // …and the brief itself still describes the company the owner picked. The pivot is an offer, not an edit.
+    expect(draft).toContain('Meal kits for nurseries');
+
+    // The failure this journey injects: one advisor turn on the idea session came back with nothing at all.
+    // The session has to survive it — the owner's idea does not stop being judged because one model call was
+    // empty — and the transcript has to *say* so rather than close the gap with something nobody said.
+    const ideaSession = boardNotes('idea').find((n) => n.data.title === DISCOVERY_CARD)!;
+    expect(ideaSession.body, 'the transcript records the silence instead of inventing a turn').toContain(NO_ANSWER);
+    expect(Number(ideaSession.data.calls)).toBeLessThanOrEqual(BOARD_DIALOGUE_MAX_CALLS);
+    expect(ideaSession.data.status).toBe('done');
+    for (let r = 1; r <= BOARD_DIALOGUE_ROUNDS; r++) expect(ideaSession.body).toContain(`**Round ${r} — `);
+    // Two advisors and a chair sat; one call of theirs was lost, so the board is not "unreviewed" either.
+    expect(v.events.query({ types: ['daemon.warning'] }).filter((e) => e.payload.where === 'ideas_board' && /nobody|no advisor/i.test(String(e.payload.reason ?? ''))))
+      .toEqual([]);
+    // If a retry ever lands, the transcript says so and this asserts it instead of the silence above.
+    if (/asked again|retried/i.test(ideaSession.body)) expect(ideaSession.body).toMatch(/asked again|retried/i);
+    else inFlight.push('an advisor whose call comes back empty is not asked again; the transcript records the silence');
+
+    // The owner is asked about the pivot like any other candidate: it is researched, priced and put to the board
+    // on its own turn, and what reaches them is an `idea_verdict` note — not a plan that changed underneath them.
+    // Poking for cycles is what the six-hourly trigger does in a live company; the cadence is off here so that
+    // every other cycle in this vault is one the owner asked for.
+    await pokeUntil(() => !!readIdea(v, briefPivot.id)?.data.board_verdict, 'the board to sit on the chair\'s pivot');
+    await pokeUntil(() => !!ideaVerdictFor(briefPivot.id), 'the pivot\'s verdict to reach the owner');
+    expect(boardNotes('idea').filter((n) => n.data.title === briefPivot.title), 'one session on the pivot').toHaveLength(1);
+
+    // Ruling W3-5's other half: a card nobody asked for becomes a candidate the moment the owner says so. They
+    // promote it the way the brief tells them to — `decision: keep` on the card, in Obsidian — which is a write
+    // the daemon never made, and the only owner surface there is for this (the Decisions sheet has no row for a
+    // card nobody has been asked about; that is the whole point of the ruling).
+    const sweep = listIdeas(v).find((i) => i.title === SWEEP_CARD)!;
+    expect(sweep.source.startsWith('intelligence'), 'the sweep filed it, not the owner').toBe(true);
+    expect(sweep.board_verdict, 'and the board had not touched it').toBeNull();
+    const sweepAbs = path.join(dir, `Ideas/${sweep.id}.md`);
+    writeFileSync(sweepAbs, readFileSync(sweepAbs, 'utf8').replace(/^decision: .*$/m, 'decision: keep'));
+    expect(readIdea(v, sweep.id)!.data.decision).toBe('keep');
+
+    await pokeUntil(() => !!readIdea(v, sweep.id)?.data.board_verdict, 'the board to sit on the promoted sweep card');
+    await pokeUntil(() => !!ideaVerdictFor(sweep.id), 'the promoted card\'s verdict to reach the owner');
+    expect(boardNotes('idea').filter((n) => n.data.title === SWEEP_CARD), 'one session on the promoted card').toHaveLength(1);
 
     // =======================================================================================================
     // Act 3 — the owner reads the six answers and says "go", then adopts the brief.
@@ -309,7 +404,7 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     // Ruling W3-3: the board called this brief WEAK, so "Adopt" is "Adopt anyway" and the op must carry `confirm`.
     expect(snapshot().inbox.find((r) => r.id === briefNote.data.id)!.decidable).toBe('adopt');
     const briefRow = snapshot().inbox.find((r) => r.id === briefNote.data.id)!;
-    expect(briefRow.verdict, 'the row carries the verdict the owner would be overruling').toBe('WEAK');
+    expect(briefRow.verdict, 'the row carries the verdict the owner would be overruling').toBe('PIVOT REQUIRED');
     expect(briefRow.needs_confirm).toBe(true);
     office.decide(briefNote.data.id, { approved: true });
     const answer = await office.next((m) => (m.op === 'error' && m.id === briefNote.data.id) || (m.op === 'decide.ack' && m.id === briefNote.data.id), 'the daemon to answer the adoption');
@@ -345,8 +440,30 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     for (const o of objectives) expect(kept).toContain(o.idea);
     expect(checkPlan(v, plan), 'the plan the board is about to sit on passes the validator').toMatchObject({ ok: true, findings: [] });
     expect(unkeptIdeasNamedIn(plan, listIdeas(v))).toEqual([]);
+    // The idea the *owner* picked, and not the pivot the board would rather the company sold.
+    const discoveryIdea = listIdeas(v).find((i) => i.title === DISCOVERY_CARD)!;
+    for (const o of objectives) expect(o.idea, 'the plan serves the owner\'s idea, not the board\'s').toBe(discoveryIdea.id);
 
-    expectOneSession('plan', 'the pre-mortem on this cycle\'s plan');
+    const premortem = expectOneSession('plan', 'the pre-mortem on this cycle\'s plan');
+
+    // Ruling W3-2, the plan half. The board found something about the *business* and said how to fix it. That is
+    // the third live run's defect in one line: the CEO "aligned the plan with the board's recommendations" and by
+    // the next cycle the company was selling something else, with nobody asked. So the plan on disk must still be
+    // exactly what the CEO wrote and what the owner is about to approve — and the fix must become a card instead.
+    expect(v.readText('Plans/plan.md'), 'the board did not rewrite the plan').toBe(plan);
+    const planPivot = listIdeas(v).find((i) => i.source === BOARD_IDEA_SOURCE && i.evidence.includes(premortem.rel));
+    if (planPivot) {
+      expect(planPivot.decision, 'the pivot is the owner\'s to keep, not the plan\'s to become').toBe('undecided');
+      expect(readIdea(v, planPivot.id)!.body).toContain('forty-site chain');
+      await pokeUntil(() => !!ideaVerdictFor(planPivot.id), 'the plan pivot\'s verdict to reach the owner');
+    } else {
+      // `productFixes` reads `… fix by <what to do instead>` and not yet the `**Fix:**` spelling the live run's
+      // board actually used, so the chair's business fix is still only a finding on the plan verdict note. It is
+      // on the owner's screen either way — this asserts that much — and becomes a card once the spelling lands.
+      expect(productFixes([PLAN_FIX]), 'the fix the chair wrote is not read as a pivot yet').toEqual([]);
+      expect(findInboxById(v, rows('plan_verdict')[0].id)!.body).toContain('forty-site chain');
+      inFlight.push('W3-2 (`**Fix:**` spelling): a business fix written that way is not yet filed as a pivot card');
+    }
 
     // The first jobs and the first stream arrive on the first heartbeat after adoption, and never again (P8-15).
     await waitFor(() => seeds().length === 3, 'the three first jobs');
@@ -407,6 +524,33 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     for (const t of threads.filter((t) => t.kind === 'pantry')) expect(t.turns).toBeGreaterThan(0);
 
     // =======================================================================================================
+    // Act 4b — "what's happening?" (ruling W3-6).
+    //
+    // The third live run's owner typed "WhAtS hppening rn?" and got three paragraphs about governance teams
+    // monitoring compliance protocols, followed by the founder interview's "just go" line. So: the typo verbatim,
+    // and the answer has to be the company's own facts and nothing else.
+    // =======================================================================================================
+    const STATUS_ASK = 'WhAtS hppening rn?';
+    office.chat(STATUS_ASK);
+    await office.next((m) => m.op === 'chat.ack', 'the cabin to take the status question');
+    await waitFor(() => ceoReplyTo(STATUS_ASK) !== '', 'the CEO to say what is happening');
+    const status = ceoReplyTo(STATUS_ASK);
+
+    // What it must say: the verdict on the brief the whole company is planning against, and the work that plan
+    // actually names. Both are facts `statusFacts` reads off the vault; neither was in the live run's answer.
+    expect(status, 'the answer names the board\'s verdict on the brief').toContain('PIVOT REQUIRED');
+    const firstObjective = planObjectives(v.readText('Plans/plan.md'))[0];
+    expect(status, 'the answer names what the plan is actually doing').toContain(firstObjective.text.split(/\s+—\s+|\n/)[0].slice(0, 30));
+    // What it must not be: an essay, a request, or a date nobody has. `1970` is the epoch a missing timestamp
+    // falls back to, and an owner told their brief was adopted in 1970 has been told something false.
+    const statusLines = status.split('\n').filter((l) => l.trim());
+    expect(statusLines.length, `five lines at most, not ${statusLines.length}`).toBeLessThanOrEqual(5);
+    expect(statusLines.length, 'and not one line of nothing').toBeGreaterThanOrEqual(3);
+    expect(status).not.toMatch(/just "?go"?|say go/i);
+    expect(status).not.toContain('1970');
+    expect(status.length, 'a status answer is read at a glance').toBeLessThan(1200);
+
+    // =======================================================================================================
     // Act 5 — the story, read across the whole run.
     // =======================================================================================================
     // No proposal was filed twice for one job. This is ruling W3-4 generalised: a second note for the same job,
@@ -441,24 +585,22 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     // … and once the interview is closed, nothing asks them to say "go" again (ruling W3-7).
     expect(ceoReplyTo('go')).not.toMatch(/just "?go"?|say go/i);
 
-    // The budget, measured and pinned. See CALL_BUDGET.
+    // Every idea the board ever sat on was one the owner had seen: their own pick, the board's own pivot out of
+    // an argument they were shown, or the sweep card they promoted themselves. Nothing else (ruling W3-5).
+    const seen = new Set(listIdeas(v).filter((i) => i.source !== 'intelligence' || i.decision === 'keep').map((i) => i.title));
+    for (const n of boardNotes('idea')) expect([...seen], `the board sat on "${n.data.title}"`).toContain(String(n.data.title));
+
+    // The budget, measured and pinned, and said out loud on the way past: a journey whose cost nobody reads is a
+    // budget that drifts a call at a time until the pin is the only thing holding it. See CALL_BUDGET.
     const calls = Object.values(llm.calls).reduce((a, b) => a + b, 0);
+    process.stdout.write(`\njourney: ${calls} model calls (budget ${CALL_BUDGET})\n`);
     expect(calls, `the journey spent ${calls} model calls`).toBeLessThan(CALL_BUDGET);
     expect(calls, 'a journey that spends nothing has not happened').toBeGreaterThan(20);
 
-    // The sweeps did file their card, so the assertion in act 2 was about something real.
-    expect(listIdeas(v).some((i) => i.title === SWEEP_CARD && i.source.startsWith('intelligence'))).toBe(true);
-    expect(listIdeas(v).find((i) => i.title === SWEEP_CARD)!.board_verdict).toBeNull();
-
-    // One line, on purpose: which of W3-1..W3-7 this run had to take the pre-ruling path for. A reviewer reading
-    // a green journey needs to know whether it was green because the rulings landed or because it routed around
-    // them, and an `it.todo` marker cannot say which of the two happened on this branch.
-    // eslint-disable-next-line no-console
-    // One line, on purpose, and straight to the stream rather than through `console` (which the reporter keeps to
-    // itself on a passing file): which of W3-1..W3-7 this run had to take the pre-ruling path for. A reviewer
-    // reading a green journey needs to know whether it was green because the rulings landed or because it routed
-    // around them, and an `it.todo` marker cannot say which of the two happened on this branch.
-    if (inFlight.length) process.stdout.write(`\njourney: rulings not on this branch yet — ${inFlight.join('; ')}\n`);
+    // Straight to the stream rather than through `console` (which the reporter keeps to itself on a passing
+    // file): what this run had to take the pre-ruling path for. A reviewer reading a green journey needs to know
+    // whether it was green because the rulings landed or because it routed around them.
+    if (inFlight.length) process.stdout.write(`journey: not on this branch yet — ${inFlight.join('; ')}\n`);
 
     office.close();
   }, TEST_MS);

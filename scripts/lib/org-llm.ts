@@ -115,7 +115,20 @@ export function orgLlm(opts: {
    * them to promote and never put in front of the board.
    */
   intelligenceCard?: string;
+  /**
+   * One bullet the **plan** chair adds to its verdict, for a journey that needs ruling W3-2's other half: a
+   * board finding whose fix changes what the company sells is a pivot, and a pivot is an idea card the owner
+   * rules on — never a licence for the CEO to rewrite the business.
+   */
+  planChairFix?: string;
+  /**
+   * The first advisor turn on a session whose subject title contains this string comes back **empty**, once.
+   * `askAs` reads an empty completion as a model that was not there, which is the commonest real failure in a
+   * board session and the one a journey should prove the company survives.
+   */
+  silentAdvisor?: string;
 } = {}): Llm & { calls: Record<string, number> } {
+  let silenced = false;
   let vetoes = opts.vetoes ?? 1;
   const plan = opts.plan ?? PLAN;
   const shipStream = opts.shipStream === undefined ? 'site' : opts.shipStream;
@@ -158,6 +171,16 @@ export function orgLlm(opts: {
             open ? 'Anything to add, any correction, or just "go", is all I need.' : '',
           ].filter(Boolean).join(' ') };
         }
+        // "What's happening?" (ruling W3-6). The model's whole job here is to put the facts it was handed into
+        // English, so the fixture does exactly that and nothing else: five of the fact lines, each trimmed, in the
+        // order they arrived. It cannot name a date, a verdict or an objective the daemon did not give it — which
+        // is what makes the journey's assertions about this reply assertions about `statusFacts`.
+        if (opts.ownerReplies && /^The owner asked what is happening\./.test(last)) {
+          const fact = (label: string) => last.match(new RegExp(`^${label}: (.*)$`, 'm'))?.[1]?.slice(0, 180).trim();
+          const lines = ['Founder brief', 'Ideas you kept', 'Plan objectives', 'Jobs running now', 'Waiting on you']
+            .map((l) => { const f = fact(l); return f ? `${l}: ${f}` : ''; }).filter(Boolean);
+          return { ...base, content: lines.join('\n') };
+        }
         // The "since you were away" brief. Built from the fact lines the prompt carries — the three headings the
         // heartbeat validates, and the facts verbatim underneath — so the note the owner reads cannot contain
         // anything the cycle did not report.
@@ -182,11 +205,21 @@ export function orgLlm(opts: {
         const dialogueChair = /^You chair the board of this company\./.test(last);
         const dialogueAdvisor = /The chair has asked, on \*\*/.test(last);
         if (opts.boardSilent && (dialogueChair || dialogueAdvisor)) throw new Error('no model available');
-        if (dialogueAdvisor) return { ...base, content: 'Two nurseries already pay a caterer every term, so the pain is priced; nobody has quoted the 7am van.' };
+        if (dialogueAdvisor) {
+          // The injected failure: one advisor call comes back with nothing at all. Not an exception — an empty
+          // completion, which is what a truncated or refused answer looks like from here and what `askAs` turns
+          // into `null`. Once, so the rest of the session is the ordinary path.
+          if (opts.silentAdvisor && !silenced && last.includes(opts.silentAdvisor)) { silenced = true; return { ...base, content: '' }; }
+          return { ...base, content: 'Two nurseries already pay a caterer every term, so the pain is priced; nobody has quoted the 7am van.' };
+        }
         // `boardSilent` simulates "no model was available" for every board call (advisors and chair alike),
         // the same way askAs's catch does when deps.llm.chat throws — used to test the zero-advisors-answered path.
         if (opts.boardSilent && (/VERDICT: pass/.test(last) || /VERDICT: STRONG/.test(last) || /Imagine the cycle has already failed/.test(last) || /Pressure test it the way Paul Graham reads a YC application/.test(last))) throw new Error('no model available');
-        if (planChair && !dialogueChair) { const v = vetoes-- > 0; return { ...base, content: v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier' }; }
+        // The plan chair's verdict, plus — when the caller asked for one — a finding whose fix changes what the
+        // company sells. `productFixes` is what reads it, and it is the only route ruling W3-2 has on a plan
+        // session: a plan verdict is pass/return and carries no pressure verdict for `pressurePivot` to find.
+        const planFix = opts.planChairFix ? `\n- ${opts.planChairFix}` : '';
+        if (planChair && !dialogueChair) { const v = vetoes-- > 0; return { ...base, content: (v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier') + planFix }; }
         if (/Imagine the cycle has already failed/.test(last)) return { ...base, content: '- the plan names no metric — add one\n- nobody owns the deploy — name them' };
         // The board sitting on an idea (SP3, re-shaped by SP5b): the chair's merge prompt asks for one of the
         // three pressure-test words where the plan's asks for pass/return, and the advisors are asked to
@@ -231,7 +264,7 @@ export function orgLlm(opts: {
             : close === opts.boardAsksOwner ? `QUESTION FOR THE OWNER: what have you actually run before?\n\n`
             : `FINDING: ${PART[close] ?? `the board holds ${close} answered.`}\n\n`;
           if (/VERDICT: STRONG or WEAK or PIVOT REQUIRED/.test(last)) return { ...base, content: `${finding}${opts.ideaChair ? 'VERDICT: STRONG\nIt has potential, but the margins worry me.' : machineLines}` };
-          if (/First line exactly "VERDICT: pass"/.test(last)) { const v = vetoes-- > 0; return { ...base, content: `${finding}${v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier'}` }; }
+          if (/First line exactly "VERDICT: pass"/.test(last)) { const v = vetoes-- > 0; return { ...base, content: `${finding}${v ? 'VERDICT: return\n- growth objective has no metric' : 'VERDICT: pass\n- watch the free tier'}${planFix}` }; }
           return { ...base, content: `${finding}NEXT: On ${open}: what does this rest on, and how would we know it was false?` };
         }
         // The chair's one re-ask (SP5b). It repeats the whole format the first ask gave, so it matches the idea
@@ -308,6 +341,20 @@ export function orgLlm(opts: {
           { name: 'proposal.create', args: { kind: 'founder_brief', target: FOUNDER_BRIEF, title: 'The founder brief', body: `## Proposed content\n\n\`\`\`\n${SCRIPTED_FOUNDER_BRIEF}\n\`\`\`\n` } },
         ];
         return { ...base, parsedToolCalls: [calls[n] ?? { name: 'finish', args: { status: 'done', summary: 'the founder brief is with the owner' } }] };
+      }
+      // The research half of one card (`researchHalfGoal`): the two numbers the research office owns, and the
+      // report behind them. Identified by the one sentence only that goal opens on, so an ordinary `research`
+      // job — a division lead's question, a follow-up measure — still takes the generic finish below.
+      //
+      // Deliberately modest numbers. A card the *company* noticed or the board proposed has to be able to reach
+      // the board without outscoring the idea the owner actually picked, or the plan's `keptIdeas` order would
+      // change underneath the journey and every later assertion would be about a different company.
+      if (jobType === 'research' && /Answer the research half of/.test(jobMsg)) {
+        const slug = jobMsg.match(/slug: "([a-z0-9-]+)"/)?.[1];
+        if (n === 0 && slug) {
+          return { ...base, parsedToolCalls: [{ name: 'idea.card', args: { title: jobMsg.match(/— "([^"]+)" —/)?.[1] ?? slug, slug, research: { report: `Research/${slug}/report.md`, confidence: 'low', summary: 'One comparable exists and nobody has paid for it yet.', evidence: 2, fit: 2 } } }] };
+        }
+        return { ...base, parsedToolCalls: [{ name: 'finish', args: { status: 'done', summary: slug ? `read up on ${slug}` : 'no card named' } }] };
       }
       // Pricing one card (SP3 §5.3): the CFO reads the slug out of its own goal — `estimateGoal` writes
       // `slug: "<id>"` — and answers the two numbers only the finance office may write. With this the scripted
