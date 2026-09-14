@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { advisorPrompt, chairPrompt, chairReaskPrompt, mergeBoardVerdict, unansweredMerge, boardSubject, ideaVerdictBody, cardBoardFindings, cardBoardChair } from '../src/heartbeat.js';
-import { PRESSURE_UNANSWERED, BANNED_HEDGE, PRESSURE_HANDBOOK_PATH, PRESSURE_NO_FLAWS, renderBoardSection, chairAnswerText, PRESSURE_CHAIR_CHARS } from '@cubicle/core';
+import { PRESSURE_UNANSWERED, BANNED_HEDGE, PRESSURE_HANDBOOK_PATH, PRESSURE_NO_FLAWS, PRESSURE_REFUSAL_NO_WEDGE, renderBoardSection, chairAnswerText, PRESSURE_CHAIR_CHARS } from '@cubicle/core';
 
 const PLAN_TEXT = '# Plan\n\n## Objectives\n\n### dev\n- ship the first cut\n';
 const IDEA = { kind: 'idea' as const, text: '# Meal kits\n\n## Score\n\n46 of 60', title: 'Meal kits for nurseries', slug: 'meal-kits' };
@@ -59,6 +59,26 @@ describe('the idea session takes the five-part shape and order (spec §2)', () =
     const pivot = mergeBoardVerdict(`VERDICT: PIVOT REQUIRED\n${flaws('the payer is not the user')}\nWEDGE: the 40-site chain`, 'idea');
     expect(pivot.verdict).toBe('return');
     expect(pivot.findings[0]).toContain('the 40-site chain');
+  });
+
+  it('a pivot that names nothing to pivot to is refused, and gets the one re-ask a hedge gets', () => {
+    // Review of the run-3 wave, Important 2: ruling W3-2 puts the chair's pivot to the owner as a candidate idea
+    // card, and a bare "PIVOT REQUIRED" leaves nothing to file and nothing said. It is the same failure as the
+    // banned hedge one step later — the company is told it does not work and offered no alternative.
+    const flaws = (b: string): string => `## Three Fatal Flaws\n- ${b}`;
+    const bare = mergeBoardVerdict(`VERDICT: PIVOT REQUIRED\n${flaws('the payer is not the user')}`, 'idea');
+    expect(bare.refused).toBe(PRESSURE_REFUSAL_NO_WEDGE);
+    expect(bare.verdict).toBe('return');
+    expect(bare.pressure).toBeNull();
+    // Either half satisfies it: the WEDGE line the format asks for, or reasons written after the verdict word.
+    expect(mergeBoardVerdict(`VERDICT: PIVOT REQUIRED\n${flaws('x')}\nWEDGE: the 40-site chains`, 'idea').refused).toBeNull();
+    expect(mergeBoardVerdict(`VERDICT: PIVOT REQUIRED — sell the deployment service, not the directory\n${flaws('x')}`, 'idea').refused).toBeNull();
+    // STRONG and WEAK propose nothing and are not asked to: neither is touched by this.
+    expect(mergeBoardVerdict(`VERDICT: WEAK\n${flaws('x')}`, 'idea').refused).toBeNull();
+    expect(mergeBoardVerdict(`VERDICT: STRONG\n${flaws('x')}`, 'idea').refused).toBeNull();
+    // …and the chair is told, in the format both the ask and the re-ask carry.
+    expect(chairPrompt(IDEA, 't')).toContain('REQUIRED whenever your verdict is PIVOT REQUIRED');
+    expect(chairReaskPrompt(IDEA, 't', 'why')).toContain('REQUIRED whenever your verdict is PIVOT REQUIRED');
   });
 
   it('a verdict with no flaws section says so, rather than reading as a clean bill of health', () => {

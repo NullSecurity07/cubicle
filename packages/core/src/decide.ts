@@ -1,6 +1,7 @@
 import { findInboxById, boardStillSitting, BOARD_STILL_SITTING } from './proposals.js';
 import { CHOSEN_DECISIONS } from './ideas.js';
 import { PRESSURE_TEST_SECTION } from './discovery.js';
+import { readPressureVerdict } from './pressure.js';
 import type { Vault } from './vault.js';
 
 /** Who a decision made inside CUBICLE is written as. The dispatcher's owner guard reads exactly this name. */
@@ -85,6 +86,48 @@ export function pressureBlock(body: string): string {
 }
 
 /**
+ * The board's pressure-test verdict on what a note proposes — `STRONG`, `WEAK`, `PIVOT REQUIRED` — or `''`.
+ *
+ * Read off the `## Pressure test` block with the one parser the board, the card and the handbook already share,
+ * rather than off a frontmatter field: the brief's verdict word lives inside the document the owner is adopting
+ * (`briefBoardBlock` prints it in prose above the fence, and the section itself ends on the verdict line), and a
+ * second copy in the frontmatter would be a second thing to keep true.
+ */
+export function noteVerdict(body: string): string {
+  const block = pressureBlock(body ?? '');
+  if (!block) return '';
+  const read = readPressureVerdict(block);
+  return read.ok ? read.verdict : '';
+}
+
+/**
+ * The verdicts an adoption has to be confirmed over (ruling W3-3). `STRONG` is the board saying yes; the other
+ * two are it saying this company does not work as written, and adopting anyway is a thing the owner should have
+ * to mean.
+ */
+export const CONFIRM_VERDICTS = ['WEAK', 'PIVOT REQUIRED'] as const;
+
+/**
+ * Does adopting this note need `confirm: true`?
+ *
+ * The third live run's R3-4: the board ruled `PIVOT REQUIRED` on the founder brief, asked the owner five
+ * questions nobody answered, and the brief was adopted with one click that looked exactly like adopting a brief
+ * the board had passed. It is not a block — the owner rules, the board advises — it is the difference between a
+ * click and a decision.
+ *
+ * Only the founder brief: it is the one document every later plan is written against, and the only kind whose
+ * `decidable` is `adopt`. A reader with no verdict on the note needs nothing.
+ */
+export function needsConfirm(kind: string, body: string): boolean {
+  return kind === 'founder_brief' && (CONFIRM_VERDICTS as readonly string[]).includes(noteVerdict(body));
+}
+
+/** Why the vault would not adopt it without `confirm`. Names the verdict, because that is what is being overruled. */
+export function confirmMessage(verdict: string): string {
+  return `the board ruled ${verdict} on this founder brief: adopting it anyway is a decision, so send \`confirm: true\` with it (the office button reads "Adopt anyway")`;
+}
+
+/**
  * The dispatcher's `_Resolved …_` footer, in the owner's words rather than the file's: what actually happened
  * when the approval was applied. The **last** footer wins — a note can carry a refusal and then a resolution —
  * and the stamp is skipped as one unbroken token, because an ISO timestamp is full of colons.
@@ -108,6 +151,12 @@ export interface OwnerDecision {
   chosen?: number | null;
   /** What the owner typed. Appended as a trailing paragraph — the shape the rejection path already reads. */
   comment?: string;
+  /**
+   * "Yes, over the board's verdict" (ruling W3-3). Required to adopt a founder brief the board ruled `WEAK` or
+   * `PIVOT REQUIRED` on, and meaningless everywhere else. Not stored on the note: what it guards is the click,
+   * and once the flag is set the adoption is the owner's like any other.
+   */
+  confirm?: boolean;
 }
 
 export interface OwnerDecided { id: string; path: string; kind: string; approved: boolean; chosen: number | null; comment: string }
@@ -146,6 +195,11 @@ export function ownerDecide(vault: Vault, id: string, d: OwnerDecision): OwnerDe
   if (kind === 'message') throw new OwnerDecideError(`${id} is a message, not a decision`);
   if (note.data.resolved_at) throw new OwnerDecideError(`${id} was already decided (resolved ${note.data.resolved_at})`);
   if (boardStillSitting({ kind, ...(note.data as Record<string, unknown>) })) throw new OwnerDecideError(BOARD_STILL_SITTING);
+  // Ruling W3-3, and only on the way *in*: adopting a brief the board would not stand behind takes a second,
+  // deliberate word. Sending it back needs no confirmation — agreeing with the board is not overruling it — and
+  // an approval set in Obsidian is applied as it always was, because Obsidian is the owner's own hand and there
+  // is no button there to relabel.
+  if (d.approved && needsConfirm(kind, note.body) && !d.confirm) throw new OwnerDecideError(confirmMessage(noteVerdict(note.body)));
   const options = proposalOptions(kind, note.body);
   const chosen = d.chosen === undefined || d.chosen === null ? null : Number(d.chosen);
   if (chosen !== null) {

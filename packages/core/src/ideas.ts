@@ -37,6 +37,9 @@ export function ideaSlug(title: string): string {
  * `discovery` is the owner's own material, `pantry` is the idle-hours chat (SP5 writes those), `owner` is a
  * card the owner typed. Anything else is read as the job id that filed it — an idea with no provenance cannot
  * be checked, which is why `source` has no default.
+ *
+ * `BOARD_IDEA_SOURCE` is deliberately **not** in here: `source` is a free string, and a pivot card is filed by
+ * a board session rather than by one of the four things this enum names.
  */
 export const IDEA_SOURCES = ['discovery', 'intelligence', 'pantry', 'owner'] as const;
 export type IdeaSource = (typeof IDEA_SOURCES)[number];
@@ -277,12 +280,97 @@ export function keptIdeas(vault: Vault): IdeaFrontmatter[] {
 }
 
 /**
- * The highest-scoring idea the board has not sat on yet: scored (both offices have answered), no verdict, not
- * already decided. One per cycle is what the board session costs — four model calls — so the cycle spends them
- * on the best candidate rather than the oldest.
+ * The sources whose cards the owner has necessarily seen: their own material (`discovery`), a card they typed
+ * (`owner`), the idle-hours chat they read (`pantry`), and the pivot a board session proposed to them
+ * (`board`, ruling W3-2). Compared on the head segment, so `intelligence:competitive` is read as
+ * `intelligence` — and nothing else in the enum has one.
+ *
+ * `board` is deliberately matched here by name rather than added to `IDEA_SOURCES`: `source` is a free string
+ * (an unrecognised value is read as the job that filed it), so this list can say what the owner has seen
+ * without the schema having to grow a value first.
+ */
+export const OWNER_SEEN_IDEA_SOURCES = ['discovery', 'owner', 'pantry', 'board'] as const;
+
+/** True for a card nobody asked for: a sweep noticed it and filed it (`source: intelligence:*`). */
+function sweepSourced(source: string): boolean {
+  return !(OWNER_SEEN_IDEA_SOURCES as readonly string[]).includes(source.split(':')[0].trim().toLowerCase());
+}
+
+/**
+ * Whether the owner has laid eyes on this idea (ruling W3-5): it came from their own material, their own
+ * typing, the pantry, or a board pivot they were asked about — or they promoted a sweep card by marking it
+ * `keep`.
+ */
+export function ownerHasSeenIdea(idea: { source: string; decision: string }): boolean {
+  return !sweepSourced(idea.source) || idea.decision === 'keep';
+}
+
+/**
+ * Whether the company may spend the board's time — and the two offices' scoring calls — on this card.
+ *
+ * Ruling W3-5, out of the third live run: an intelligence sweep filed *Persistent Agent Memory Integration*, it
+ * was scored, it reached the board, sixteen model calls were spent arguing it and the owner was asked about
+ * engineering hours for something nobody had ever mentioned to them. A card the owner has never seen is not a
+ * candidate; it is a note. So an **undecided** card is a candidate only when it came from somewhere the owner
+ * has seen, and a **sweep** card becomes one only once they mark it `decision: keep` — which on such a card
+ * reads "have the board look at this", not "we are doing it", and is why a promoted card stays a candidate
+ * until the board has actually sat on it (`board_verdict`, checked by the callers that have it).
+ */
+export function ideaOpenToBoard(idea: { source: string; decision: string }): boolean {
+  return idea.decision === 'undecided' ? !sweepSourced(idea.source) : idea.decision === 'keep' && sweepSourced(idea.source);
+}
+
+/**
+ * The highest-scoring idea the board has not sat on yet: scored (both offices have answered), no verdict, and
+ * open to the board at all (`ideaOpenToBoard` — the owner has seen it). One per cycle is what the board session
+ * costs — up to seventeen model calls — so the cycle spends them on the best candidate rather than the oldest.
  */
 export function nextIdeaForBoard(vault: Vault): IdeaFrontmatter | null {
-  return listIdeas(vault).find((i) => i.score !== null && i.board_verdict === null && i.decision === 'undecided') ?? null;
+  return listIdeas(vault).find((i) => i.score !== null && i.board_verdict === null && ideaOpenToBoard(i)) ?? null;
+}
+
+/**
+ * The cards nobody asked for and the owner has not promoted — what the brief lists under "Ideas the sweep
+ * found" so they are visible without being expensive. A card the owner has already parked or scrapped is
+ * finished business and is not listed again.
+ *
+ * "The sweep" is the common case and the heading's word, but the rule is provenance, not the sweep: a card some
+ * *other* job filed on its own initiative carries that job's id as its `source`, which `OWNER_SEEN_IDEA_SOURCES`
+ * does not name — so it is equally unrequested, and belongs on the same list for the same reason.
+ */
+export function sweepIdeas(vault: Vault): IdeaFrontmatter[] {
+  return listIdeas(vault).filter((i) => i.decision === 'undecided' && !ownerHasSeenIdea(i));
+}
+
+/**
+ * The first real line of a card's `## Why it might matter` — the one line the brief has room for. The
+ * placeholder a fresh card carries (`_Not stated._`) is italics-only and is not a reason, so it is dropped
+ * rather than quoted as one.
+ */
+export function ideaWhyLine(body: string): string {
+  const section = (body.split(/^## Why it might matter[ \t]*$/m)[1] ?? '').split(/^## /m)[0];
+  const line = section.split('\n').map((l) => l.trim()).find((l) => l && !/^_.*_$/.test(l)) ?? '';
+  return line.replace(/^[-*+]\s+/, '').slice(0, 200);
+}
+
+/** The heading the brief lists unpromoted sweep cards under (ruling W3-5). */
+export const SWEEP_IDEAS_SECTION = '## Ideas the sweep found';
+
+/** How the owner promotes one, with `<slug>` still to be filled in. One sentence, said the same way everywhere. */
+export const IDEA_PROMOTE_HINT = 'to have the board look at it, set `decision: keep` on Ideas/<slug>.md or say so to the CEO';
+
+/** Title, one-line why, and the promote instruction, for each sweep card the brief lists. */
+export function sweepIdeaRows(vault: Vault): { id: string; title: string; why: string }[] {
+  return sweepIdeas(vault).map((i) => ({ id: i.id, title: i.title, why: ideaWhyLine(readIdea(vault, i.id)?.body ?? '') }));
+}
+
+/** The brief's `## Ideas the sweep found` section: what it noticed, and what to do if the owner wants it judged. */
+export function renderSweepIdeasSection(rows: { id: string; title: string; why: string }[]): string {
+  return [
+    'Nobody asked for these: the company noticed them while it was doing something else, and the board does not sit on one until you say so.',
+    '',
+    ...rows.map((r) => `- **${r.title}** — ${r.why || 'the card gives no reason yet'} ([[${ideaPath(r.id).replace(/\.md$/, '')}]]) — ${IDEA_PROMOTE_HINT.replace('<slug>', r.id)}`),
+  ].join('\n');
 }
 
 export interface NewIdea {
@@ -345,6 +433,61 @@ export function writeIdeaCard(vault: Vault, idea: NewIdea, by: string): string {
   ].join('\n');
   vault.writeText(ideaPath(slug), stringifyNote(data as Record<string, unknown>, body), by);
   return slug;
+}
+
+/**
+ * What a pivot card records as its provenance — one constant, because nothing else may spell it. Deliberately
+ * not a member of `IDEA_SOURCES` (see there); `OWNER_SEEN_IDEA_SOURCES` matches it by name, so a pivot the owner
+ * was shown reaches the board like a card they typed.
+ */
+export const BOARD_IDEA_SOURCE = 'board';
+
+/** How much of one pivot becomes a card title. Long enough to read as an idea, short enough to be a filename. */
+export const PIVOT_TITLE_CHARS = 70;
+
+/**
+ * A title for the pivot the chair proposed: what it wants the company to do instead, not what it said was wrong.
+ *
+ * "Pivot from a newsletter **to** a high-intent, affiliate-driven deployment service" carries its proposal after
+ * the `to`, so that is looked for first; a fix-by clause is already nothing but the proposal, so its own first
+ * clause stands. Falls back to naming the subject, which is honest and never empty: a card whose title is the
+ * first seventy characters of a complaint would be filed under the wrong name for ever.
+ */
+export function pivotTitle(pivot: string, subject: string): string {
+  const to = pivot.match(/\bpivot(?:ing|ed)?\s+(?:away\s+)?(?:from\s+[\s\S]{1,160}?\s+)?to\s+([^.;\n]{4,160})/i)?.[1];
+  const head = (to ?? pivot.split(/[.;\n]/)[0] ?? '').replace(/\s+/g, ' ').trim().replace(/^[-–—:,]+\s*/, '');
+  const cut = head.length > PIVOT_TITLE_CHARS ? `${head.slice(0, PIVOT_TITLE_CHARS).replace(/\s+\S*$/, '')}…` : head;
+  return cut.length >= 8 ? cut.replace(/^./, (c) => c.toUpperCase()) : `Board pivot on ${subject}`;
+}
+
+/**
+ * File the chair's proposed pivot as a candidate idea card (ruling W3-2), or return `null` when there is nothing
+ * to file and the slug of the card that already covers it when there is.
+ *
+ * This is what the company does with "PIVOT REQUIRED" instead of acting on it: the pivot becomes a card like any
+ * other, sourced `board`, with the transcript as its evidence, and it waits for the owner to keep it. The plan
+ * goes on serving the ideas the owner already kept until then.
+ *
+ * **Idempotent on the transcript path**, not on the title: one session proposes one pivot, and the chair's words
+ * for it change between two readings of the same meeting (a resumed cycle, a re-filed verdict). The transcript
+ * is the one thing that identifies the session, so a card already carrying it as evidence *is* this pivot.
+ */
+export function fileBoardPivot(
+  vault: Vault,
+  o: { pivot: string; subject: string; transcript: string; by: string; created?: string },
+): string | null {
+  const pivot = (o.pivot ?? '').replace(/\s+/g, ' ').trim();
+  if (!pivot || !o.transcript) return null;
+  const already = listIdeas(vault).find((c) => c.source === BOARD_IDEA_SOURCE && c.evidence.includes(o.transcript));
+  if (already) return already.id;
+  return writeIdeaCard(vault, {
+    title: pivotTitle(pivot, o.subject),
+    source: BOARD_IDEA_SOURCE,
+    evidence: [o.transcript],
+    created: o.created,
+    what_changed: `The board pressure-tested ${o.subject} and proposed a pivot rather than the business as it stands. Nothing is planned against this until you keep it.`,
+    why_it_matters: `The chair's own words: ${pivot}`,
+  }, o.by);
 }
 
 /**

@@ -152,6 +152,19 @@ export function briefAdoptedAt(vault: Vault): string | null {
 }
 
 /**
+ * The same answer, for anybody who is going to **print** it: `null` when the log no longer knows, never the
+ * epoch (review of the run-3 wave, Important 3).
+ *
+ * `briefAdoptedAt`'s epoch is a comparison's answer — "treat every completed heartbeat as having had the brief"
+ * — and it is the right one there. Read as a date it says the owner adopted the founder brief on 1 January 1970,
+ * and the status answer's whole premise (ruling W3-6) is that every line of it is a fact.
+ */
+export function briefAdoptedOn(vault: Vault): string | null {
+  const at = briefAdoptedAt(vault);
+  return !at || at === EPOCH ? null : at;
+}
+
+/**
  * Seed the first-run jobs on the first heartbeat that runs after the owner adopted the founder brief. Returns
  * the ids created (possibly none).
  *
@@ -173,7 +186,17 @@ export function briefAdoptedAt(vault: Vault): string | null {
 export function seedFirstJobs(vault: Vault, org: Org): string[] {
   const since = briefAdoptedAt(vault);
   if (since === null) return [];
-  if (vault.events.query({ types: ['heartbeat.completed'], from: since, limit: 1 }).length > 0) return [];
+  // The window closes on the first heartbeat that *gathered* with the brief and then completed — not on the
+  // first `heartbeat.completed` after the write. The owner adopts whenever they like, and on a live daemon a
+  // cycle takes minutes: the one in flight at that moment gathered before the brief existed, told its brief
+  // step to wait, and still completes after the adoption. Counting it closed the window before anything was
+  // seeded, and the company started with a stream and no work (the journey's stall at "the three first jobs").
+  // A completed event with no `gathered_at` (an older log) keeps the conservative reading: it counts.
+  const seededAlready = vault.events.query({ types: ['heartbeat.completed'], from: since }).some((e) => {
+    const gathered = (e.payload as { gathered_at?: unknown }).gathered_at;
+    return typeof gathered !== 'string' || gathered >= since;
+  });
+  if (seededAlready) return [];
   const stream = listStreams(vault)[0]?.slug;
   // A cancelled or failed job is not going to produce anything, so it cannot stand in for a seed.
   const titles = listJobs(vault).filter((j) => !DEAD.includes(j.status)).map((j) => j.title);
