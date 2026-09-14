@@ -43,6 +43,16 @@ describe('pressurePivot', () => {
   });
 });
 
+/**
+ * The *other* spelling the same live board used, verbatim from the 18:27 plan session — the one the first cut of
+ * `productFixes` read as nothing at all, so the whole of ruling W3-2 was a silent no-op on that session.
+ */
+const LIVE_FIX_COLON_FINDINGS = [
+  '**Failure Mode (Economics):** The plan assumes a market for "signed attestations" where none exists; buyers currently treat this as a zero-cost compliance checkbox. **Fix:** Pivot to selling an insurance-backed remediation service for a specific, high-cost supply-chain failure mode.',
+  '**Failure Mode (Distribution):** The plan relies on manual cold-outreach to maintainers who have no incentive to adopt a new, unproven standard. **Fix:** Partner with an existing security-focused CI/CD platform to embed the solution as a native, value-added plugin.',
+  '**Failure Mode (Execution):** The plan focuses on "verification protocols" (engineering) rather than "Cost of Non-Compliance" (sales). **Fix:** Replace the engineering-heavy objectives with a requirement to secure three Letters of Intent (LOIs) from CISOs.',
+];
+
 describe('productFixes', () => {
   it('takes the fixes that change what the company sells and leaves the one about how it works', () => {
     const fixes = productFixes(LIVE_PLAN_FINDINGS);
@@ -50,6 +60,16 @@ describe('productFixes', () => {
     expect(fixes[0]).toContain('commercial compliance needs');
     expect(fixes.join(' ')).toContain('signed SBOM attestation');
     expect(fixes.join(' ')).not.toContain('20-maintainer manual validation test');
+  });
+
+  it('reads the chair\'s other spelling too — `**Fix:** …` after a bolded failure mode', () => {
+    const fixes = productFixes(LIVE_FIX_COLON_FINDINGS);
+    expect(fixes).toHaveLength(2);
+    expect(fixes[0]).toContain('insurance-backed remediation service');
+    expect(fixes[1]).toContain('security-focused CI/CD platform');
+    // The subject is read out of `**Failure Mode (Execution):**`, not off the first word of the line, so the
+    // process fix is still left where it belongs — in the next plan.
+    expect(fixes.join(' ')).not.toContain('Letters of Intent');
   });
 
   it('reads nothing out of a finding that proposes nothing', () => {

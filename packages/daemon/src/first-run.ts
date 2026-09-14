@@ -152,6 +152,19 @@ export function briefAdoptedAt(vault: Vault): string | null {
 }
 
 /**
+ * The same answer, for anybody who is going to **print** it: `null` when the log no longer knows, never the
+ * epoch (review of the run-3 wave, Important 3).
+ *
+ * `briefAdoptedAt`'s epoch is a comparison's answer — "treat every completed heartbeat as having had the brief"
+ * — and it is the right one there. Read as a date it says the owner adopted the founder brief on 1 January 1970,
+ * and the status answer's whole premise (ruling W3-6) is that every line of it is a fact.
+ */
+export function briefAdoptedOn(vault: Vault): string | null {
+  const at = briefAdoptedAt(vault);
+  return !at || at === EPOCH ? null : at;
+}
+
+/**
  * Seed the first-run jobs on the first heartbeat that runs after the owner adopted the founder brief. Returns
  * the ids created (possibly none).
  *

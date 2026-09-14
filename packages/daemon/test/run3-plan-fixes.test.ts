@@ -27,7 +27,8 @@ import type { Llm } from '@cubicle/harness';
 import {
   runHeartbeat, createHeartbeatJob, HEARTBEAT_STEPS,
   answerOwnerMessages, unansweredOwnerMessages, isStatusQuestion, statusFacts,
-  chairPivotText, fileChairPivot, planIdeaRule, dispatchProposals,
+  chairPivotText, fileChairPivot, planIdeaRule, dispatchProposals, chairPrompt, boardSubject,
+  briefAdoptedAt, briefAdoptedOn,
 } from '../src/index.js';
 import { adoptFounderBrief } from './helpers/brief.js';
 import { noLocalModel } from './helpers/no-local-model.js';
@@ -199,6 +200,14 @@ describe('W3-2: the chair proposes a pivot; the owner rules on it', () => {
     expect(chairPivotText({ text: '**Brutal Verdict:** STRONG — the pain is real.', findings: [] })).toBe('');
   });
 
+  it('asks the plan chair for the one phrase it reads back', () => {
+    // Review of the run-3 wave, Important 1: the parser now takes both spellings, and the prompt asks for the
+    // one — a machine line nobody is asked for is a machine line that arrives in some other shape.
+    const p = chairPrompt(boardSubject('# Plan\n\n## Objectives\n\n### dev\n- ship it\n'), 'advisors said things');
+    expect(p).toContain('fix by');
+    expect(p).toContain('those exact words');
+  });
+
   it('files the SBOM pivot as a candidate card, once per session, and never plans against it', async () => {
     adoptFounderBrief(vault);
     keepIdea('altstack', 'AltStack: open-source SaaS alternatives');
@@ -257,6 +266,19 @@ describe('W3-6: "WhAtS hppening rn?"', () => {
     expect(facts).toContain('Publish 20 alternative pages');
     expect(facts).toContain('Scaffold the site');
     expect(facts).toContain('Pay for the domain');
+  });
+
+  it('never says the brief was adopted on 1 January 1970', async () => {
+    // Review of the run-3 wave, Important 3: `briefAdoptedAt` falls back to the epoch so that a company with no
+    // record of the adoption seeds nothing — the right answer for a comparison, and a lie printed as a date.
+    adoptFounderBrief(vault, ALTSTACK_BRIEF);
+    // A vault whose log no longer reaches the write and whose proposal is gone: the epoch path exactly.
+    vault.db.prepare("DELETE FROM events WHERE type IN ('vault.wrote', 'owner.edited')").run();
+    expect(briefAdoptedAt(vault)).toBe('1970-01-01T00:00:00.000Z');
+    expect(briefAdoptedOn(vault)).toBeNull();
+    const facts = statusFacts(vault, new Date()).join('\n');
+    expect(facts).toContain('Founder brief: adopted (date unknown)');
+    expect(facts).not.toContain('1970');
   });
 
   it('answers from those facts and never asks the owner to say "go"', async () => {
