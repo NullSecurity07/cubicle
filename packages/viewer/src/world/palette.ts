@@ -3,7 +3,6 @@
  * Pure: no Phaser, no DOM. Every colour is a `#rrggbb` string; `hexToInt` converts for Phaser tints.
  */
 export type Family = 'chief' | 'advisor' | 'manager' | 'member' | 'owner';
-export interface FloorPalette { n: 1 | 2 | 3 | 4; hue: number; carpet: string; carpetAlt: string; skirting: string; lamp: string; tab: string; floor: string; floorAlt: string; speckle: string }
 export interface RolePalette { shirt: string; shirtDark: string; accent: string; hair: string; skin: string; trousers: string; ring: string }
 
 const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
@@ -112,18 +111,24 @@ export const PALETTE = {
   owner: '#2b2f3a',
 } as const;
 
-const FLOOR_HUES: Record<1 | 2 | 3 | 4, { hue: number; carpetS: number; carpetL: number; skirt: [number, number]; lamp: [number, number]; tab: [number, number]; floor: string; floorAlt: string; speckle: string }> = {
-  1: { hue: 272, carpetS: 0.22, carpetL: 0.58, skirt: [0.40, 0.40], lamp: [0.60, 0.70], tab: [0.55, 0.55], floor: '#5a3d27', floorAlt: '#6b4a30', speckle: '#4a3120' },   // dark plank + purple runner
-  2: { hue: 216, carpetS: 0.24, carpetL: 0.60, skirt: [0.45, 0.42], lamp: [0.60, 0.72], tab: [0.60, 0.55], floor: '#c9a878', floorAlt: '#d6b98a', speckle: '#b5925f' },   // light oak + blue carpet tiles
-  3: { hue: 150, carpetS: 0.20, carpetL: 0.58, skirt: [0.40, 0.36], lamp: [0.55, 0.68], tab: [0.50, 0.45], floor: '#c4c2bb', floorAlt: '#cfcdc6', speckle: '#b0aea6' },   // pale concrete + green carpet
-  4: { hue: 325, carpetS: 0.30, carpetL: 0.62, skirt: [0.55, 0.44], lamp: [0.70, 0.72], tab: [0.75, 0.55], floor: '#d8d2c8', floorAlt: '#e0dbd2', speckle: '#8c8f99' },   // terrazzo speckle + magenta rugs. Hue 30 was the accent's own family (R2-M3); 4 landed on `bad`, so F4's room signs read as error badges
+/**
+ * The tint a zone shows in the chrome: its own accent from the campus palette, so the rail tab, the minimap rug
+ * and the desk chips in that zone are all one colour. There are only four accents and eleven zones — Dev, QA and
+ * Research share indigo because they are one division — so the rail's own labels do the telling apart.
+ */
+export const ZONE_TINT: Record<string, string> = {
+  boardroom: '#78849A', ceo_office: '#78849A', meetingroom: '#78849A',
+  ops: '#7E9A80', pantry: '#A79C8C', lobby: '#A79C8C', lounge: '#A79C8C',
+  research: '#6472C4', dev: '#6472C4', qa: '#6472C4', sales: '#D49A4C',
 };
+export const zoneTint = (id: string): string => ZONE_TINT[id] ?? '#A79C8C';
 
-export function floorPalette(n: number): FloorPalette {
-  const k = (Math.max(1, Math.min(4, Math.round(n))) as 1 | 2 | 3 | 4);
-  const f = FLOOR_HUES[k];
-  return { n: k, hue: f.hue, carpet: hsl(f.hue, f.carpetS, f.carpetL), carpetAlt: hsl(f.hue, f.carpetS, f.carpetL - 0.04), skirting: hsl(f.hue, f.skirt[0], f.skirt[1]), lamp: hsl(f.hue, f.lamp[0], f.lamp[1]), tab: hsl(f.hue, f.tab[0], f.tab[1]), floor: f.floor, floorAlt: f.floorAlt, speckle: f.speckle };
-}
+/** The same four accents, keyed by the division a team belongs to — what the Org sheet groups by. */
+export const DIVISION_TINT: Record<string, string> = {
+  executive: '#78849A', board: '#78849A', technology: '#6472C4', revenue: '#D49A4C',
+  operations: '#7E9A80', security: '#7E9A80', other: '#A79C8C',
+};
+export const divisionTint = (id: string): string => DIVISION_TINT[id] ?? DIVISION_TINT.other;
 
 /** chief: title starts with "Chief" or the role is the CEO; advisor: on the board; manager: leads a team; else member. */
 export function familyOf(role: string, o: { title?: string; team?: string; isLead?: boolean }): Exclude<Family, 'owner'> {

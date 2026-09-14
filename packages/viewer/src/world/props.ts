@@ -1,5 +1,5 @@
 /**
- * SP9 concept — the prop library.
+ * The prop library.
  *
  * Every object in the campus is a `Drawable`: a depth key, an optional shadow pass and a draw pass. The scene
  * collects them, sweeps all the shadows into one blurred layer, then draws the objects back-to-front by `d = x + y`.
@@ -8,13 +8,19 @@
  * renderer unchanged.
  */
 import { type Pt, type Rect, type View, centre } from './iso.js';
-import { ACCENT, type AccentName, type Light, MATERIAL as M, dim, lit, mix, rgba, shade, warm } from './palette.js';
+import { ACCENT, type AccentName, type Light, MATERIAL as M, dim, lit, mix, rgba, shade, warm } from './materials.js';
 import { type Axis, type G, type PanelSpec, MONO_FONT, UI_FONT, faceQuad, faceText, fillPoly, glow, isoBox, isoSlab, panel, plate, roundRect, twoTone } from './shapes.js';
 import * as swept from './shapes.js';
 
 export interface Drawable {
   /** painter's depth on the single plane */
   d: number;
+  /**
+   * The grid footprint and height this prop paints inside, so the renderer can drop what the camera cannot see.
+   * At room zoom four fifths of the campus is off screen; without this the frame pays for all of it.
+   */
+  bounds?: Rect;
+  hz?: number;
   /**
    * Floor dressing — rugs, walkways, the pools under the windows. It is painted *before* the shadow layer, because
    * a shadow that falls on a rug and is then covered by that rug is no shadow at all.
@@ -37,6 +43,7 @@ export function boxProp(r: Rect, z: number, h: number, base: string, o: { radius
   const c = centre(r);
   return {
     d: c.x + c.y,
+    bounds: r, hz: z + h,
     shadow(g, v, light) {
       if (o.noShadow) return;
       const { dx, dy } = shadowVec(v, light, z + h);
@@ -55,6 +62,7 @@ export function rug(r: Rect, accent: AccentName, o: { radius?: number; alpha?: n
   const a = ACCENT[accent];
   return {
     d: -1000 + (r.x0 + r.y0) * 0.001,
+    bounds: r, hz: 0,
     floor: true,
     draw(g, v) {
       g.save();
@@ -74,6 +82,7 @@ export function rug(r: Rect, accent: AccentName, o: { radius?: number; alpha?: n
 export function path(r: Rect, o: { radius?: number } = {}): Drawable {
   return {
     d: -900 + (r.x0 + r.y0) * 0.001,
+    bounds: r, hz: 0,
     floor: true,
     draw(g, v) { isoSlab(g, v, r, M.path, mix(M.path, M.floor, 0.55), o.radius ?? 18); },
   };
@@ -108,6 +117,7 @@ export function desk(x: number, y: number, w = 2.5, d = 1.3, o: DeskOpts = { acc
   const far = (o.side ?? 'far') === 'far';
   return {
     d: c.x + c.y,
+    bounds: { x0: r.x0 - 0.2, y0: r.y0 - 0.5, x1: r.x1 + 0.2, y1: r.y1 + 0.6 }, hz: TOP_Z + 0.8,
     shadow(g, v, light) {
       const s = shadowVec(v, light, TOP_Z + 0.1);
       swept.sweepShadow(g, quadOf(v, r), s.dx, s.dy, light.shadowAlpha, light.shadowTint);
@@ -124,7 +134,7 @@ export function desk(x: number, y: number, w = 2.5, d = 1.3, o: DeskOpts = { acc
       const my = far ? y + 0.42 : y + d - 0.32;
       isoBox(g, v, { x0: mx + 0.34, y0: my - 0.06, x1: mx + 0.56, y1: my + 0.06, z: zt, h: 0.14 }, M.charcoal, { r: 2 });
       panel(g, v, { x: mx, y: my, axis: 'x', len: 0.98, z: zt + 0.12, h: 0.54 },
-        far ? mix(M.charcoal, '#8A929C', 0.22) : shade(M.charcoal, -0.02),
+        far ? mix(M.charcoal, M.monitorLit, 0.22) : shade(M.charcoal, -0.02),
         { thick: 0.07, r: Math.max(2, 3 * v.z) });
       if (!far) {
         // read over their shoulder: the lit face of the screen
@@ -140,19 +150,19 @@ export function desk(x: number, y: number, w = 2.5, d = 1.3, o: DeskOpts = { acc
         if (v.z > 0.42) {
           for (let i = 0; i < 3; i++) {
             faceText(g, v.p(mx + 0.16, my - 0.014, zt + 0.5 - i * 0.1), 'x', ['const brief =', '  await plan()', 'ok · 12 passing'][i],
-              { size: Math.max(4.5, 6.4 * v.z * 1.6), colour: rgba(i === 2 ? '#8FD6A0' : M.screenInk, 0.8), weight: 400, font: MONO_FONT });
+              { size: Math.max(4.5, 6.4 * v.z * 1.6), colour: rgba(i === 2 ? M.pass : M.screenInk, 0.8), weight: 400, font: MONO_FONT });
           }
         }
-        glow(g, { x: b.x + b.w / 2, y: b.y + b.h / 2 }, Math.max(b.w, b.h) * 0.8, '#8FB4E8', light.name === 'dusk' ? 0.2 : 0.08);
+        glow(g, { x: b.x + b.w / 2, y: b.y + b.h / 2 }, Math.max(b.w, b.h) * 0.8, M.screenGlow, light.name === 'dusk' ? 0.2 : 0.08);
       }
       // keyboard, on the occupant's side
       const ky = far ? y + d - 0.5 : y + 0.24;
-      isoBox(g, v, { x0: x + w * 0.2, y0: ky, x1: x + w * 0.2 + 0.88, y1: ky + 0.26, z: zt, h: 0.035 }, '#D9D4CB', { r: 2 });
+      isoBox(g, v, { x0: x + w * 0.2, y0: ky, x1: x + w * 0.2 + 0.88, y1: ky + 0.26, z: zt, h: 0.035 }, M.keyboard, { r: 2 });
       if (o.mug !== false) {
         const p = v.p(x + w - 0.42, far ? y + d - 0.38 : y + 0.38, zt);
         const rw = 0.16 * v.cw * 0.5;
         roundRect(g, p.x - rw * 0.5, p.y - 0.2 * v.cz, rw, 0.2 * v.cz, rw * 0.28);
-        g.fillStyle = twoTone(g, { x: p.x - rw * 0.5, y: p.y - 0.2 * v.cz, w: rw, h: 0.2 * v.cz }, lit('#E8E1D4'), dim('#E8E1D4'));
+        g.fillStyle = twoTone(g, { x: p.x - rw * 0.5, y: p.y - 0.2 * v.cz, w: rw, h: 0.2 * v.cz }, lit(M.mug), dim(M.mug));
         g.fill();
       }
       if (o.papers) {
@@ -183,6 +193,7 @@ export function chair(x: number, y: number, facing: 'se' | 'sw' | 'ne' | 'nw' = 
   const backNorth = facing === 'se' || facing === 'sw';
   return {
     d: c.x + c.y - 0.02,
+    bounds: { x0: x - 0.1, y0: y - 0.1, x1: x + 0.82, y1: y + 0.82 }, hz: 1.0,
     shadow(g, v, light) {
       const s = shadowVec(v, light, 0.5);
       swept.sweepShadow(g, quadOf(v, { x0: x + 0.1, y0: y + 0.1, x1: x + 0.62, y1: y + 0.62 }), s.dx, s.dy, light.shadowAlpha * 0.85, light.shadowTint);
@@ -218,9 +229,9 @@ function lampAt(g: G, v: View, x: number, y: number, z: number, light: Light): v
     { x: head.x + 0.26 * v.cw, y: head.y - 0.02 * v.cz },
     { x: head.x + 0.3 * v.cw, y: head.y + 0.14 * v.cz },
     { x: head.x, y: head.y + 0.14 * v.cz },
-  ], 3 * v.z, lit(light.lamps ? '#F2E3C4' : '#D8D2C6'), dim(light.lamps ? '#E4CE9E' : '#BEB8AC'));
+  ], 3 * v.z, lit(light.lamps ? M.shadeOn : M.shadeOff), dim(light.lamps ? M.shadeOnWarm : M.shadeOffWarm));
   if (light.lamps) {
-    glow(g, { x: head.x + 0.15 * v.cw, y: head.y + 0.2 * v.cz }, 1.5 * v.cw, '#FFC878', 0.5);
+    glow(g, { x: head.x + 0.15 * v.cw, y: head.y + 0.2 * v.cz }, 1.5 * v.cw, M.lamp, 0.5);
   }
 }
 
@@ -234,6 +245,10 @@ export function glassWall(s: PanelSpec, accent: AccentName = 'neutral'): Drawabl
   const along = s.axis === 'x' ? { x: s.x + s.len / 2, y: s.y } : { x: s.x, y: s.y + s.len / 2 };
   return {
     d: along.x + along.y - 0.04,
+    bounds: s.axis === 'x'
+      ? { x0: s.x - 0.2, y0: s.y - 0.3, x1: s.x + s.len + 0.2, y1: s.y + 0.3 }
+      : { x0: s.x - 0.3, y0: s.y - 0.2, x1: s.x + 0.3, y1: s.y + s.len + 0.2 },
+    hz: (s.z ?? 0) + s.h,
     shadow(g, v, light) {
       const sh = shadowVec(v, light, s.h * 0.55);
       const foot: Rect = s.axis === 'x'
@@ -252,14 +267,14 @@ export function glassWall(s: PanelSpec, accent: AccentName = 'neutral'): Drawabl
       grad.addColorStop(1, rgba(mix(M.glass, a.base, 0.3), 0.3));
       g.fillStyle = grad;
       g.fill();
-      g.strokeStyle = rgba('#FFFFFF', light.name === 'dusk' ? 0.24 : 0.34);
+      g.strokeStyle = rgba(M.white, light.name === 'dusk' ? 0.24 : 0.34);
       g.lineWidth = Math.max(1, 1.1 * v.z);
       g.stroke();
       // a raking streak, one per pane
       g.save();
       swept.roundPoly(g, face, Math.max(2, 5 * v.z));
       g.clip();
-      g.strokeStyle = rgba('#FFFFFF', 0.34);
+      g.strokeStyle = rgba(M.white, 0.34);
       g.lineWidth = Math.max(1.5, 4.5 * v.z);
       g.beginPath();
       g.moveTo(b.x + b.w * 0.1, b.y + b.h);
@@ -299,6 +314,7 @@ export function shelf(x: number, y: number, w = 3, d = 0.75, accent: AccentName 
   const a = ACCENT[accent];
   return {
     d: c.x + c.y,
+    bounds: { x0: r.x0 - 0.1, y0: r.y0 - 0.1, x1: r.x1 + 0.1, y1: r.y1 + 0.1 }, hz: 1.05,
     shadow(g, v, light) {
       const s = shadowVec(v, light, 0.78);
       swept.sweepShadow(g, quadOf(v, r), s.dx, s.dy, light.shadowAlpha, light.shadowTint);
@@ -311,7 +327,7 @@ export function shelf(x: number, y: number, w = 3, d = 0.75, accent: AccentName 
       g.lineWidth = Math.max(1, 1.2 * v.z);
       g.beginPath(); g.moveTo(p0.x, p0.y); g.lineTo(p1.x, p1.y); g.stroke();
       // files on top
-      const colours = [a.chip, M.paper, shade(a.base, 0.16), '#D9CFBE', a.chip];
+      const colours = [a.chip, M.paper, shade(a.base, 0.16), M.file, a.chip];
       for (let i = 0; i < Math.max(2, Math.floor(w * 1.4)); i++) {
         const bx = x + 0.25 + i * 0.42;
         if (bx + 0.3 > x + w - 0.2) break;
@@ -325,6 +341,7 @@ export function shelf(x: number, y: number, w = 3, d = 0.75, accent: AccentName 
 export function plant(x: number, y: number, size = 1): Drawable {
   return {
     d: x + y,
+    bounds: { x0: x - 0.6 * size, y0: y - 0.6 * size, x1: x + 0.6 * size, y1: y + 0.6 * size }, hz: 1.4 * size,
     shadow(g, v, light) {
       const s = shadowVec(v, light, 0.55 * size);
       swept.sweepShadow(g, quadOf(v, { x0: x - 0.28, y0: y - 0.28, x1: x + 0.28, y1: y + 0.28 }), s.dx, s.dy, light.shadowAlpha * 0.8, light.shadowTint);
@@ -356,6 +373,7 @@ export function plant(x: number, y: number, size = 1): Drawable {
 export function stool(x: number, y: number, colour: string = M.walnutPale): Drawable {
   return {
     d: x + y - 0.01,
+    bounds: { x0: x - 0.4, y0: y - 0.4, x1: x + 0.4, y1: y + 0.4 }, hz: 0.7,
     shadow(g, v, light) {
       const s = shadowVec(v, light, 0.56);
       swept.sweepShadow(g, quadOf(v, { x0: x - 0.22, y0: y - 0.22, x1: x + 0.22, y1: y + 0.22 }), s.dx, s.dy, light.shadowAlpha * 0.8, light.shadowTint);
@@ -374,6 +392,7 @@ export function stool(x: number, y: number, colour: string = M.walnutPale): Draw
 export function highTable(x: number, y: number): Drawable {
   return {
     d: x + y - 0.02,
+    bounds: { x0: x - 0.65, y0: y - 0.65, x1: x + 0.65, y1: y + 0.65 }, hz: 1.1,
     shadow(g, v, light) {
       const s = shadowVec(v, light, 1.0);
       swept.sweepShadow(g, quadOf(v, { x0: x - 0.34, y0: y - 0.34, x1: x + 0.34, y1: y + 0.34 }), s.dx, s.dy, light.shadowAlpha * 0.85, light.shadowTint);
@@ -392,6 +411,7 @@ export function highTable(x: number, y: number): Drawable {
 export function floorLamp(x: number, y: number): Drawable {
   return {
     d: x + y,
+    bounds: { x0: x - 0.4, y0: y - 0.4, x1: x + 0.4, y1: y + 0.4 }, hz: 2.0,
     shadow(g, v, light) {
       const s = shadowVec(v, light, 1.5);
       swept.sweepShadow(g, quadOf(v, { x0: x - 0.2, y0: y - 0.2, x1: x + 0.2, y1: y + 0.2 }), s.dx, s.dy, light.shadowAlpha * 0.7, light.shadowTint);
@@ -402,14 +422,14 @@ export function floorLamp(x: number, y: number): Drawable {
       g.strokeStyle = shade(M.charcoal, 0.1);
       g.lineWidth = Math.max(1.2, 2.4 * v.z);
       g.beginPath(); g.moveTo(foot.x, foot.y); g.lineTo(head.x, head.y); g.stroke();
-      const shade0 = light.lamps ? '#F6E7C6' : '#E6E0D2';
+      const shade0 = light.lamps ? M.floorShadeOn : M.floorShadeOff;
       fillPoly(g, [
         { x: head.x - 0.19 * v.cw, y: head.y },
         { x: head.x + 0.19 * v.cw, y: head.y },
         { x: head.x + 0.26 * v.cw, y: head.y + 0.42 * v.cz },
         { x: head.x - 0.26 * v.cw, y: head.y + 0.42 * v.cz },
       ], 4 * v.z, lit(shade0), dim(shade0));
-      if (light.lamps) glow(g, { x: head.x, y: head.y + 0.5 * v.cz }, 2.4 * v.cw, '#FFC878', 0.4);
+      if (light.lamps) glow(g, { x: head.x, y: head.y + 0.5 * v.cz }, 2.4 * v.cw, M.lamp, 0.4);
     },
   };
 }
@@ -423,6 +443,7 @@ export function boardTable(r: Rect): Drawable {
   const c = centre(r);
   return {
     d: c.x + c.y,
+    bounds: r, hz: 0.9,
     shadow(g, v, light) {
       const s = shadowVec(v, light, 0.78);
       swept.sweepShadow(g, quadOf(v, r), s.dx, s.dy, light.shadowAlpha, light.shadowTint);
@@ -439,8 +460,8 @@ export function boardTable(r: Rect): Drawable {
       g.clip();
       const b = swept.bbox(face);
       const grad = g.createLinearGradient(b.x, b.y, b.x + b.w * 0.7, b.y + b.h);
-      grad.addColorStop(0, rgba('#FFFFFF', 0.16));
-      grad.addColorStop(0.55, rgba('#FFFFFF', 0));
+      grad.addColorStop(0, rgba(M.white, 0.16));
+      grad.addColorStop(0.55, rgba(M.white, 0));
       g.fillStyle = grad;
       g.fill();
       g.restore();
@@ -453,13 +474,14 @@ export function counter(r: Rect): Drawable {
   const c = centre(r);
   return {
     d: c.x + c.y,
+    bounds: { x0: r.x0 - 0.1, y0: r.y0 - 0.1, x1: r.x1 + 0.1, y1: r.y1 + 0.1 }, hz: 1.45,
     shadow(g, v, light) {
       const s = shadowVec(v, light, 1.0);
       swept.sweepShadow(g, quadOf(v, r), s.dx, s.dy, light.shadowAlpha, light.shadowTint);
     },
     draw(g, v) {
       isoBox(g, v, { ...r, z: 0, h: 0.92 }, M.walnut, { r: Math.max(2, 4 * v.z) });
-      isoBox(g, v, { x0: r.x0 - 0.06, y0: r.y0 - 0.06, x1: r.x1 + 0.06, y1: r.y1 + 0.06, z: 0.92, h: 0.09 }, '#E7E0D2', { r: Math.max(2, 5 * v.z), topColour: '#F3EDE1' });
+      isoBox(g, v, { x0: r.x0 - 0.06, y0: r.y0 - 0.06, x1: r.x1 + 0.06, y1: r.y1 + 0.06, z: 0.92, h: 0.09 }, M.stone, { r: Math.max(2, 5 * v.z), topColour: M.stoneTop });
       // cupboard lines
       const n = Math.max(2, Math.round((r.x1 - r.x0) / 1.1));
       for (let i = 1; i < n; i++) {
@@ -471,13 +493,13 @@ export function counter(r: Rect): Drawable {
       }
       const zt = 1.01;
       // a kettle, a jar, two mugs
-      isoBox(g, v, { x0: r.x0 + 0.4, y0: r.y0 + 0.25, x1: r.x0 + 0.85, y1: r.y0 + 0.7, z: zt, h: 0.38 }, '#9BA3AD', { r: Math.max(2, 5 * v.z) });
-      isoBox(g, v, { x0: r.x0 + 1.1, y0: r.y0 + 0.3, x1: r.x0 + 1.42, y1: r.y0 + 0.62, z: zt, h: 0.3 }, '#D9C59B', { r: Math.max(2, 4 * v.z) });
+      isoBox(g, v, { x0: r.x0 + 0.4, y0: r.y0 + 0.25, x1: r.x0 + 0.85, y1: r.y0 + 0.7, z: zt, h: 0.38 }, M.kettle, { r: Math.max(2, 5 * v.z) });
+      isoBox(g, v, { x0: r.x0 + 1.1, y0: r.y0 + 0.3, x1: r.x0 + 1.42, y1: r.y0 + 0.62, z: zt, h: 0.3 }, M.jar, { r: Math.max(2, 4 * v.z) });
       for (let i = 0; i < 3; i++) {
         const p = v.p(r.x0 + 1.9 + i * 0.34, r.y0 + 0.45, zt);
         const w = 0.18 * v.cw * 0.5;
         roundRect(g, p.x - w / 2, p.y - 0.22 * v.cz, w, 0.22 * v.cz, w * 0.3);
-        g.fillStyle = twoTone(g, { x: p.x - w / 2, y: p.y - 0.22 * v.cz, w, h: 0.22 * v.cz }, lit(i === 1 ? '#C9805E' : '#EFE9DD'), dim(i === 1 ? '#C9805E' : '#EFE9DD'));
+        g.fillStyle = twoTone(g, { x: p.x - w / 2, y: p.y - 0.22 * v.cz, w, h: 0.22 * v.cz }, lit(i === 1 ? M.mugWarm : M.mugPale), dim(i === 1 ? M.mugWarm : M.mugPale));
         g.fill();
       }
     },
@@ -491,7 +513,7 @@ export function counter(r: Rect): Drawable {
 export interface ScreenSpec extends PanelSpec {
   /** the name that goes on the plate under it */
   name: string;
-  /** the one line of content the concept promises */
+  /** the one line of content the screen carries */
   line: string;
   accent?: AccentName;
   kind?: 'screen' | 'board' | 'paper';
@@ -499,6 +521,15 @@ export interface ScreenSpec extends PanelSpec {
   plateBelow?: boolean;
   /** the plaster pier behind the panel; off only where it already hangs on a solid wall */
   pier?: boolean;
+  /**
+   * What the surface is actually showing right now: the last few lines the daemon sent, and — for the billboard —
+   * the browser frame itself. A screen with live content is the thing the office is for; a screen with a stand-in
+   * line is one nothing has happened on yet.
+   */
+  lines?: string[];
+  image?: CanvasImageSource | null;
+  /** a stream is open on it: the small pulse in the corner */
+  live?: boolean;
 }
 
 /**
@@ -510,10 +541,14 @@ export function screen(s: ScreenSpec): Drawable {
   const along = s.axis === 'x' ? { x: s.x + s.len / 2, y: s.y } : { x: s.x, y: s.y + s.len / 2 };
   const acc = ACCENT[s.accent ?? 'neutral'];
   const kind = s.kind ?? 'screen';
-  const body = kind === 'screen' ? M.screen : kind === 'board' ? M.board : '#E9DFC8';
+  const body = kind === 'screen' ? M.screen : kind === 'board' ? M.board : M.notice;
   const ink = kind === 'screen' ? M.screenInk : M.ink;
   return {
     d: along.x + along.y + 0.02,
+    bounds: s.axis === 'x'
+      ? { x0: s.x - 0.6, y0: s.y - 0.6, x1: s.x + s.len + 0.6, y1: s.y + 0.6 }
+      : { x0: s.x - 0.6, y0: s.y - 0.6, x1: s.x + 0.6, y1: s.y + s.len + 0.6 },
+    hz: (s.z ?? 0) + s.h + 1.2,
     draw(g, v, light) {
       // The pier the screen hangs on. Without it a panel in a gap between two partitions floats in mid-air, which is
       // the one thing a viewer notices before anything else in the picture.
@@ -548,20 +583,59 @@ export function screen(s: ScreenSpec): Drawable {
         faceText(g, at, s.axis, text, { size, colour, weight, font, maxWidth: maxW, ...(letter ? { letter } : {}) });
       };
       const size = Math.max(8.5, Math.min(17, s.h * v.cz * 0.28));
+      // A live browser frame, laid into the panel's own plane. The face is a sheared parallelogram, so the frame is
+      // drawn through the same shear the text uses rather than pasted flat over it — a rectangle of screenshot on
+      // an isometric wall is the one thing that makes a drawn office look like a mock-up.
+      if (s.image) {
+        g.save();
+        swept.roundPoly(g, face, Math.max(2, 4 * v.z));
+        g.clip();
+        const a = s.axis === 'x' ? v.p(s.x + 0.1, s.y - 0.011, (s.z ?? 0) + s.h - 0.08) : v.p(s.x - 0.011, s.y + s.len - 0.1, (s.z ?? 0) + s.h - 0.08);
+        g.translate(a.x, a.y);
+        g.transform(1, s.axis === 'x' ? 0.5 : -0.5, 0, 1, 0, 0);
+        const fw = (s.len - 0.2) * v.cw * 0.5, fh = (s.h - 0.16) * v.cz;
+        try { g.drawImage(s.image, 0, 0, Math.max(1, fw), Math.max(1, fh)); } catch { /* a frame that has not decoded yet */ }
+        g.restore();
+        g.save();
+        swept.roundPoly(g, face, Math.max(2, 4 * v.z));
+        g.clip();
+        const sh = g.createLinearGradient(b.x, b.y, b.x + b.w * 0.4, b.y + b.h);
+        sh.addColorStop(0, rgba(M.white, 0.14));
+        sh.addColorStop(1, rgba(M.frameShade, 0.2));
+        g.fillStyle = sh;
+        g.fillRect(b.x, b.y, b.w, b.h);
+        g.restore();
+      }
       // At overview zoom the name lives *in* the panel: ten more plates over the campus would be ten more things
       // between the owner and the office. Close in, the name moves out onto a plate and the panel is all content.
       const close = v.z > 0.7;
-      if (!close) {
+      const content = s.lines && s.lines.length ? s.lines : [s.line];
+      if (s.image) { /* the frame is the content */ }
+      else if (!close) {
         inFace(0.68, s.name.toUpperCase(), size * 0.72, rgba(kind === 'screen' ? acc.base : acc.ink, 0.95), 700, UI_FONT, `${(size * 0.09).toFixed(2)}px`);
-        inFace(0.32, s.line, size * 0.94, kind === 'screen' ? ink : M.ink, kind === 'screen' ? 500 : 600, kind === 'screen' ? MONO_FONT : UI_FONT);
+        inFace(0.32, content[content.length - 1], size * 0.94, kind === 'screen' ? ink : M.ink, kind === 'screen' ? 500 : 600, kind === 'screen' ? MONO_FONT : UI_FONT);
       } else {
-        inFace(0.56, s.line, size, kind === 'screen' ? ink : M.ink, kind === 'screen' ? 500 : 600, kind === 'screen' ? MONO_FONT : UI_FONT);
-        inFace(0.3, kind === 'screen' ? '· · · · · · · · · · · ·' : '— — — — — —', size * 0.85,
-          rgba(kind === 'screen' ? M.screenDim : M.ink, 0.45), 400, kind === 'screen' ? MONO_FONT : UI_FONT);
+        // close in the panel is all content: as many of the lines as the face has room for, newest at the bottom
+        const rows = Math.max(1, Math.min(content.length, Math.floor((s.h * v.cz) / (size * 1.5))));
+        const show = content.slice(-rows);
+        show.forEach((text, i) => {
+          const f = 0.78 - (i * (size * 1.45)) / Math.max(1, s.h * v.cz);
+          if (f < 0.08) return;
+          inFace(f, text, size, kind === 'screen' ? (i === show.length - 1 ? ink : rgba(ink, 0.72)) : M.ink,
+            kind === 'screen' ? 500 : 600, kind === 'screen' ? MONO_FONT : UI_FONT);
+        });
+      }
+      if (s.live) {
+        const dot = { x: b.x + b.w - Math.max(4, 7 * v.z), y: b.y + Math.max(4, 7 * v.z) };
+        g.beginPath();
+        g.arc(dot.x, dot.y, Math.max(1.6, 2.6 * v.z), 0, Math.PI * 2);
+        g.fillStyle = M.attention;
+        g.fill();
+        glow(g, dot, Math.max(6, 14 * v.z), M.attention, 0.5);
       }
       if (kind === 'screen') {
         const c = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
-        glow(g, c, Math.max(b.w, b.h) * 0.75, '#8FB4E8', light.name === 'dusk' ? 0.16 : 0.07);
+        glow(g, c, Math.max(b.w, b.h) * 0.75, M.screenGlow, light.name === 'dusk' ? 0.16 : 0.07);
       }
       if (close) {
         const foot = s.axis === 'x' ? v.p(s.x + s.len / 2, s.y + 0.5, 0) : v.p(s.x - 0.5, s.y + s.len / 2, 0);
@@ -611,14 +685,14 @@ export function curtainWall(span: number, axis: Axis, o: { thick?: number; h?: n
         swept.roundPoly(g, face, Math.max(2, 3 * v.z));
         g.clip();
         const refl = g.createLinearGradient(b.x, b.y + b.h, b.x + b.w * 0.55, b.y);
-        refl.addColorStop(0, rgba('#FFFFFF', 0));
-        refl.addColorStop(0.55, rgba('#FFFFFF', 0.16));
-        refl.addColorStop(1, rgba('#FFFFFF', 0));
+        refl.addColorStop(0, rgba(M.white, 0));
+        refl.addColorStop(0.55, rgba(M.white, 0.16));
+        refl.addColorStop(1, rgba(M.white, 0));
         g.fillStyle = refl;
         g.fillRect(b.x, b.y, b.w, b.h);
         g.restore();
         // the reveal: a bright inner edge where the frame meets the glass
-        g.strokeStyle = rgba('#FFFFFF', 0.42);
+        g.strokeStyle = rgba(M.white, 0.42);
         g.lineWidth = Math.max(1, 1.3 * v.z);
         g.stroke();
         // mullions

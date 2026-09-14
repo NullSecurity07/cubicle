@@ -1,83 +1,50 @@
 import { describe, it, expect } from 'vitest';
-import { tickLayout, minimapPointToWorld, layoutKey, chromeVisibility, minimapWanted, BUILDING_ROWS, FLOOR_ROWS } from './minimap.js';
+import { chromeVisibility, minimapWanted, MINIMAP_W, MINIMAP_H } from './minimap.js';
+import { minimapToGrid, thumbZoom, viewportQuad } from '../world/minimap-draw.js';
+import { Camera } from '../world/camera.js';
 
-describe('minimap chrome', () => {
-  // The brief pinned 52 building rows and four 26 px ticks in a 104 px camera. The map says otherwise: BUILDING is
-  // rows 2..54 inclusive = 53, because the four 13-row floors share a slab row each (4 x 13 + 1). Geometry wins, so a
-  // floor is 13/53 of the camera, the ticks sit slightly tighter, and the last one ends one row short of the bottom.
-  it('lays four equal floor ticks from F4 at the top to F1 at the bottom, in floor colours', () => {
-    const ticks = tickLayout(106, { 1: '#a', 2: '#b', 3: '#c', 4: '#d' });
-    expect(ticks.map((t) => t.floor)).toEqual([4, 3, 2, 1]);
-    expect(ticks[0]).toEqual({ floor: 4, top: 0, height: 26, color: '#d' });
-    expect(ticks[3]).toEqual({ floor: 1, top: 78, height: 26, color: '#a' });
+const CAMPUS = { width: 52, height: 36 };
+
+describe('the minimap thumbnail', () => {
+  it('fits the whole campus in its box, with air to spare', () => {
+    const z = thumbZoom(CAMPUS, MINIMAP_W, MINIMAP_H);
+    expect(z).toBeGreaterThan(0);
+    expect((CAMPUS.width + CAMPUS.height) * 32 * z).toBeLessThanOrEqual(MINIMAP_W);
+    expect((CAMPUS.width + CAMPUS.height) * 16 * z).toBeLessThanOrEqual(MINIMAP_H);
   });
-  it('sizes a tick as one floor out of the whole building, leaving the shared slab row over', () => {
-    expect(BUILDING_ROWS).toBe(53);
-    expect(BUILDING_ROWS - 4 * FLOOR_ROWS).toBe(1);
-    const ticks = tickLayout(530, {});
-    expect(ticks.map((t) => t.height)).toEqual([130, 130, 130, 130]);
-    expect(ticks.map((t) => t.top)).toEqual([0, 130, 260, 390]);
-    expect(ticks[3].top + ticks[3].height).toBe(520);   // 10 px, one row, left under F1
+  it('a click in the middle of the thumbnail is the middle of the campus', () => {
+    const c = minimapToGrid(MINIMAP_W / 2, MINIMAP_H / 2, CAMPUS, MINIMAP_W, MINIMAP_H);
+    // the projection is shifted down a little to leave room for the back walls, so the middle lands a touch short
+    expect(c.x + c.y).toBeCloseTo(CAMPUS.width / 2 + CAMPUS.height / 2, 0);
   });
-  it('maps a click in the minimap to the world point under it', () => {
-    expect(minimapPointToWorld(60, 65, { scrollX: 64, scrollY: 32, zoom: 0.125 })).toEqual({ x: 544, y: 552 });
+  it('clicking to the right of the middle moves along +x, and below it along both', () => {
+    const mid = minimapToGrid(MINIMAP_W / 2, MINIMAP_H / 2, CAMPUS, MINIMAP_W, MINIMAP_H);
+    const right = minimapToGrid(MINIMAP_W / 2 + 20, MINIMAP_H / 2, CAMPUS, MINIMAP_W, MINIMAP_H);
+    expect(right.x).toBeGreaterThan(mid.x);
+    expect(right.y).toBeLessThan(mid.y);
+    const down = minimapToGrid(MINIMAP_W / 2, MINIMAP_H / 2 + 20, CAMPUS, MINIMAP_W, MINIMAP_H);
+    expect(down.x).toBeGreaterThan(mid.x);
+    expect(down.y).toBeGreaterThan(mid.y);
+  });
+  it('the viewport quad is the four screen corners of the main camera, in grid cells', () => {
+    const cam = new Camera({ w: 1280, h: 800, bounds: { x0: 0, y0: 0, x1: 52, y1: 36 } });
+    cam.panTo({ x: 26, y: 18 }, { zoom: 1, now: true });
+    const q = viewportQuad(cam);
+    expect(q).toHaveLength(4);
+    // top-left of the screen is the smallest x + y on the floor; bottom-right the largest
+    expect(q[0].x + q[0].y).toBeLessThan(q[2].x + q[2].y);
   });
 });
 
-/** M10: `layout()` wrote four inline styles and morphed four ticks every beat, hidden or not. */
-describe('the chrome lays itself out only when something moved', () => {
-  const cam = { x: 1114, y: 628, width: 154, height: 160 };
-  const colours = { 1: '#a', 2: '#b', 3: '#c', 4: '#d' };
-  it('is the same key for the same window and the same floors', () => {
-    expect(layoutKey(cam, colours)).toBe(layoutKey({ ...cam }, { ...colours }));
+describe('when the strip belongs on the screen', () => {
+  it('is away at the campus overview and back once the camera is closer', () => {
+    expect(minimapWanted(0.42, 0.42)).toBe(false);
+    expect(minimapWanted(0.5, 0.42)).toBe(false);
+    expect(minimapWanted(0.9, 0.42)).toBe(true);
   });
-  it('changes when the window moves, which is the case it exists for', () => {
-    expect(layoutKey({ ...cam, x: 1115 }, colours)).not.toBe(layoutKey(cam, colours));
-    expect(layoutKey({ ...cam, height: 161 }, colours)).not.toBe(layoutKey(cam, colours));
-  });
-  it('changes when a floor is repainted, so the ticks are not stuck on the old hue', () => {
-    expect(layoutKey(cam, { ...colours, 3: '#z' })).not.toBe(layoutKey(cam, colours));
-  });
-  it('covers all four floors, including one the scene has not reported yet', () => {
-    expect(layoutKey(cam, { 1: '#a' })).toBe(layoutKey(cam, { 1: '#a' }));
-    expect(layoutKey(cam, { 1: '#a' })).not.toBe(layoutKey(cam, colours));
-  });
-});
-
-/**
- * Visual QA R-M8: the tower elevation puts the minimap away, because at that fit it is the same picture as the
- * main view with a viewport rectangle over all of it. The first cut of that had the two controls the wrong way
- * round — the "Map" button appeared when the *scene* hid the strip, and never when the owner did, so `M` was a
- * one-way door for anyone using the mouse.
- */
-describe('which minimap control is on the screen', () => {
-  it('shows the strip and no button while the strip is up', () => {
-    expect(chromeVisibility(true, true)).toEqual({ strip: true, showBtn: false });
-  });
-  it('offers the way back only when the owner is the one who hid it', () => {
-    expect(chromeVisibility(false, false)).toEqual({ strip: false, showBtn: true });
-  });
-  it('says nothing when the elevation hid it: it comes back by itself', () => {
-    expect(chromeVisibility(false, true)).toEqual({ strip: false, showBtn: false });
+  it('the Map button only offers to undo a minimap the owner hid themselves', () => {
+    expect(chromeVisibility(true, null)).toEqual({ strip: true, showBtn: false });
     expect(chromeVisibility(false, null)).toEqual({ strip: false, showBtn: false });
-  });
-});
-
-/**
- * Visual QA R2-M4: at a room elevation the strip is a picture of a room laid over the room itself — it covered a
- * third of the notice board in `08-board` and desk names in `11-terminal` and `14-sales`.
- */
-describe('where the minimap belongs', () => {
-  it('is up at the floor elevation and nowhere else', () => {
-    expect(minimapWanted(1, 1)).toBe(true);
-    expect(minimapWanted(0.5, 1)).toBe(false);   // the tower fit: the same picture as the main view
-    expect(minimapWanted(2, 1)).toBe(false);
-    expect(minimapWanted(3, 1)).toBe(false);
-    expect(minimapWanted(4, 1)).toBe(false);
-  });
-  it('follows the floor elevation rather than a hard-coded zoom: a narrow window fits a floor at 2', () => {
-    expect(minimapWanted(2, 2)).toBe(true);
-    expect(minimapWanted(1, 2)).toBe(true);
-    expect(minimapWanted(3, 2)).toBe(false);
+    expect(chromeVisibility(false, false)).toEqual({ strip: false, showBtn: true });
   });
 });

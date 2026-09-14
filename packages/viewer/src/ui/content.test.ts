@@ -152,7 +152,6 @@ describe('tower views (plan 3)', () => {
     { id: 'j_done', type: 'growth.post', title: 'Launch post', assigned: 'cmo', status: 'done', priority: 4, checkpoint_step: 3, updated: '2026-09-11T07:00:00.000Z', team: 'revenue' },
   ] };
   const tower = applySnapshot(emptyState(), towerSnap);
-  const tctx: Ctx = { ...ctx, floorLabels: { 1: 'Executive', 2: 'Departments', 3: 'Assurance', 4: 'Leadership' } };
 
   it('empty states carry a pixel icon, a title and a hint', () => {
     const h = emptyHtml('envelope', 'Nothing waiting for you', 'Proposals appear here.');
@@ -216,15 +215,17 @@ describe('tower views (plan 3)', () => {
     expect(dayLabel(localNoon(3), localNow)).toBe('Today');
     expect(dayLabel(localNoon(2), localNow)).toBe('Yesterday');
   });
-  it('the org sheet groups by division (floor), then team, with a Locate button per role', () => {
-    const v = viewFor('org', tower, tctx);
-    const lead = v.html.indexOf('Leadership'), dept = v.html.indexOf('Departments');
-    expect(lead).toBeGreaterThan(-1); expect(dept).toBeGreaterThan(lead);         // F4 first, F2 below
-    expect(v.html.indexOf('Technology')).toBeLessThan(v.html.indexOf('Dev'));      // parent before child
+  it('the org sheet groups by division, then team, with a Locate button per role', () => {
+    const v = viewFor('org', tower, ctx);
+    // No floors to stack any more: a team's division is the root of its `parent` chain, and each division is one
+    // block with its own accent — so Dev appears under Technology and never in a second numbered group.
+    expect(v.html.indexOf('Technology')).toBeLessThan(v.html.indexOf('Dev'));
+    expect(v.html).toContain('--division-technology');
+    expect(v.html).toContain('--division-revenue');
+    expect(v.html).not.toContain('Floor ');
     expect(v.html).toContain('data-open="agent:backend_engineer"');
     expect(v.html).toContain('data-locate="agent:backend_engineer"');
     expect(v.html).toMatch(/2 open/);                                              // dev: running + in_review
-    expect(viewFor('org', tower, ctx).html).toContain('Floor 4');                  // no labels supplied → numbered
   });
   it('the bank shows stat tiles and a meter per model with the cooling time', () => {
     const cooling = applySnapshot(emptyState(), { ...snap, quota: [{ provider: 'gemini', model: 'gemini-3.5-flash', rpm_used: 2, rpd_used: 95, tpm_used: 0, cooling_until: '2026-09-03T14:02:00.000Z', limits: { rpm: 10, rpd: 100, tpm: 0 } }] });

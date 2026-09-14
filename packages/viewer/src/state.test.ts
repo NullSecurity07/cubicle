@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { boardSessionOpen } from './world/owner.js';
 import { boardHeadline } from './ui/board.js';
 import { applyConversation, conversationTurns, decideAcked, decideFailed, decideSent, LIVE_TURNS, pairThreadId, emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, overseerRole, vetoRole, statusText, CHECKING_TEXT, WAITING_TEXT, type Snapshot } from './state.js';
 
@@ -89,14 +88,12 @@ describe('viewer state machine (spec §10)', () => {
     let s = emptyState();
     s = applyEvent(s, { ts: '2026-09-11T10:00:00.000Z', type: 'meeting.opened', agent: 'advisor_skeptic', job: null, payload: { id: 'm1', room: 'board', participants: ['advisor_skeptic'], subject: 'idea', title: 'Meal kits' } });
     expect(s.meetings.m1).toMatchObject({ open: true, at: '2026-09-11T10:00:00.000Z' });
-    expect(boardSessionOpen(s.meetings, Date.parse('2026-09-11T10:05:00.000Z'))).toBe(true);
 
     // Nineteen minutes later the board is still sitting; twenty-one minutes later it is not.
     const still = applyEvent(s, { ts: '2026-09-11T10:19:00.000Z', type: 'job.done', agent: 'cto', job: 'job_x', payload: {} });
     expect(still.meetings.m1.open).toBe(true);
     const after = applyEvent(still, { ts: '2026-09-11T10:21:00.000Z', type: 'job.done', agent: 'cto', job: 'job_x', payload: {} });
     expect(after.meetings.m1.open).toBe(false);
-    expect(boardSessionOpen(after.meetings, Date.parse('2026-09-11T10:21:00.000Z'))).toBe(false);
     expect(boardHeadline(after.board, Date.parse('2026-09-11T10:21:00.000Z'))).toBeNull();
 
     // A meeting in any other room is not the board's business and is left alone.

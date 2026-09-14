@@ -1,12 +1,12 @@
 /** One shortcut table drives the key handler and the "?" sheet. Escape belongs to the panel (ui/panel.ts). */
 import type { View } from './content.js';
 
-export type Action = 'floor1' | 'floor2' | 'floor3' | 'floor4' | 'lobby' | 'fit' | 'talk' | 'messages' | 'queue' | 'brief' | 'plan' | 'org' | 'pause' | 'prev' | 'next' | 'minimap' | 'help' | 'quickopen';
+export type Action = 'zone1' | 'zone2' | 'zone3' | 'zone4' | 'zone5' | 'zone6' | 'zone7' | 'lobby' | 'fit' | 'talk' | 'messages' | 'queue' | 'brief' | 'plan' | 'org' | 'pause' | 'prev' | 'next' | 'minimap' | 'help' | 'quickopen';
 /** `back` is listed for the sheet only: Escape is handled by the panel itself. */
 export const SHORTCUTS: { keys: string; action: Action | 'back'; label: string }[] = [
-  { keys: '1 2 3 4', action: 'floor1', label: 'Go to floor 1–4' },
+  { keys: '1 … 7', action: 'zone1', label: 'Go to a zone' },
   { keys: 'L', action: 'lobby', label: 'Go to the lobby' },
-  { keys: '0', action: 'fit', label: 'Fit the whole tower' },
+  { keys: '0', action: 'fit', label: 'Fit the whole campus' },
   { keys: 'T', action: 'talk', label: 'Talk to the CEO' },
   { keys: 'C', action: 'messages', label: 'Messages' },
   { keys: 'Q', action: 'queue', label: 'Queue' },
@@ -20,7 +20,7 @@ export const SHORTCUTS: { keys: string; action: Action | 'back'; label: string }
   { keys: '?', action: 'help', label: 'This sheet' },
   { keys: 'Esc', action: 'back', label: 'Back one level' },
 ];
-const PLAIN: Record<string, Action> = { '1': 'floor1', '2': 'floor2', '3': 'floor3', '4': 'floor4', l: 'lobby', '0': 'fit', t: 'talk', c: 'messages', q: 'queue', b: 'brief', p: 'plan', o: 'org', ' ': 'pause', ArrowLeft: 'prev', ArrowRight: 'next', m: 'minimap', '?': 'help', '/': 'quickopen' };
+const PLAIN: Record<string, Action> = { '1': 'zone1', '2': 'zone2', '3': 'zone3', '4': 'zone4', '5': 'zone5', '6': 'zone6', '7': 'zone7', l: 'lobby', '0': 'fit', t: 'talk', c: 'messages', q: 'queue', b: 'brief', p: 'plan', o: 'org', ' ': 'pause', ArrowLeft: 'prev', ArrowRight: 'next', m: 'minimap', '?': 'help', '/': 'quickopen' };
 
 /** The action for a key event, or null. `typing` = the event target is a text field (then only Ctrl/Cmd+K counts). */
 export function shortcutFor(e: { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean }, typing: boolean): Action | null {

@@ -1,5 +1,5 @@
 /**
- * SP9 concept — the campus palette.
+ * The campus palette.
  *
  * One warm light at the top-left, one restrained set of materials, one calm accent per division. Every colour is a
  * `#rrggbb` string so the same table can feed canvas, Phaser tints and CSS custom properties later; nothing here
@@ -85,6 +85,35 @@ export const MATERIAL = {
   ink: '#2C2A27',
   /** the plates labels sit on */
   plate: '#FFFFFF',
+  /** pure white and pure black: highlights, rims, the shadow a plate casts */
+  white: '#FFFFFF', black: '#000000',
+  /** the ink a bubble is set in, and the quieter ink a thought is */
+  bubbleInk: '#25231F', thoughtInk: '#5A5348', actionInk: '#F2EEE6', actionFill: '#1D1B18',
+  /** small objects on a desk or a counter */
+  keyboard: '#D9D4CB', mug: '#E8E1D4', mugWarm: '#C9805E', mugPale: '#EFE9DD',
+  kettle: '#9BA3AD', jar: '#D9C59B', stone: '#E7E0D2', stoneTop: '#F3EDE1', file: '#D9CFBE',
+  /** a monitor's lit bezel, the green of a passing test, the cool glow a screen throws */
+  monitorLit: '#8A929C', pass: '#8FD6A0', screenGlow: '#8FB4E8', glassLens: '#DCE8F0', spectacle: '#2E3238',
+  /** eyes, and the warm rim a dusk lays along a shoulder */
+  eye: '#2A2320', rimDusk: '#FFD9A8',
+  /** lamp shades, lit and unlit, and the pool they throw */
+  shadeOn: '#F2E3C4', shadeOff: '#D8D2C6', shadeOnWarm: '#E4CE9E', shadeOffWarm: '#BEB8AC',
+  floorShadeOn: '#F6E7C6', floorShadeOff: '#E6D0A8', lamp: '#FFC878', lampDeep: '#FFB661',
+  /** the noticeboard's cork-coloured paper */
+  notice: '#E9DFC8',
+  /** the bloom over the ground: warm at dusk, cool by day, and the city's own at night */
+  bloomDusk: '#FF9E52', bloomDay: '#8FB4D8', bloomNight: '#3A4A86',
+  /** the one accent the chrome spends on attention — a live stream's pulse, and nothing else in the world */
+  attention: '#E6A93C',
+  /** the shade that seats a live frame into its bezel */
+  frameShade: '#0A0C12',
+  /** a failed job's badge, and someone who has gone offline */
+  bad: '#C0392B', offline: '#6B6558',
+} as const;
+
+/** The letter-chip over someone's head while a tool is running: one colour per family, and never the accent. */
+export const TOOL = {
+  browser: '#3C6BC4', terminal: '#3B4048', envelope: '#B4553F', doc: '#8B5E3B', chart: '#4F7A55', chat: '#6A5BA8',
 } as const;
 
 export type AccentName = 'indigo' | 'sage' | 'amber' | 'slate' | 'neutral';
@@ -152,6 +181,23 @@ export const DAY: Light = {
   bounce: '#8EA8C4', bounceAlpha: 0.05,
 };
 
+/**
+ * Night. The campus is lit from inside now: the multiply goes deep and cool, the windows are dark glass with the
+ * city behind them, and the only warm things in the frame are the desk lamps and the screens. Shadows shorten and
+ * soften, because the light is overhead and local rather than raking in from one window wall.
+ */
+export const NIGHT: Light = {
+  name: 'night',
+  mulFrom: '#8E90B4', mulTo: '#4C4E70', mulAlpha: 0.62,
+  washFrom: '#5A6AA8', washTo: '#2A2E4A', washAlpha: 0.08,
+  groundFrom: '#080A12', groundTo: '#12131E',
+  shadowLen: 0.85, shadowAlpha: 0.3, shadowTint: '#12121F',
+  skyHigh: '#0A0E22', sky: '#15193A', skyLow: '#2A2E55', glassGlow: 0.18,
+  poolAlpha: 0.06, poolTint: '#7C8CC8',
+  lamps: true,
+  bounce: '#7E8CC0', bounceAlpha: 0.06,
+};
+
 export const DUSK: Light = {
   name: 'dusk',
   mulFrom: '#FFDCA8', mulTo: '#A896BC', mulAlpha: 0.56,
@@ -163,3 +209,55 @@ export const DUSK: Light = {
   lamps: true,
   bounce: '#6B5C93', bounceAlpha: 0.08,
 };
+
+
+/** Every stop the hour ramps through, in order. */
+const RAMP: { at: number; light: Light }[] = [
+  { at: 0, light: NIGHT }, { at: 6.5, light: NIGHT }, { at: 8.5, light: DAY },
+  { at: 16.5, light: DAY }, { at: 19, light: DUSK }, { at: 21, light: NIGHT }, { at: 24, light: NIGHT },
+];
+
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+/**
+ * The light at an hour, as one record.
+ *
+ * Every field is interpolated, colours included, so 18:20 is not "day" and not "dusk" but the campus twenty
+ * minutes before the sunset it is heading into. The tower's three buckets made the office change palette in one
+ * frame at a boundary nobody could see coming; a ramp is what an office at a window actually does.
+ */
+export function lightAt(hour: number): Light {
+  const h = ((hour % 24) + 24) % 24;
+  let i = 0;
+  while (i < RAMP.length - 2 && RAMP[i + 1].at <= h) i++;
+  const a = RAMP[i], b = RAMP[i + 1];
+  const t = b.at === a.at ? 0 : Math.max(0, Math.min(1, (h - a.at) / (b.at - a.at)));
+  if (t <= 0) return a.light;
+  if (t >= 1) return b.light;
+  const A = a.light, B = b.light;
+  const c = (k: 'mulFrom' | 'mulTo' | 'washFrom' | 'washTo' | 'groundFrom' | 'groundTo' | 'shadowTint' | 'skyHigh' | 'sky' | 'skyLow' | 'poolTint' | 'bounce'): string => mix(A[k], B[k], t);
+  const n = (k: 'mulAlpha' | 'washAlpha' | 'shadowLen' | 'shadowAlpha' | 'glassGlow' | 'poolAlpha' | 'bounceAlpha'): number => lerp(A[k], B[k], t);
+  return {
+    name: t < 0.5 ? A.name : B.name,
+    mulFrom: c('mulFrom'), mulTo: c('mulTo'), mulAlpha: n('mulAlpha'),
+    washFrom: c('washFrom'), washTo: c('washTo'), washAlpha: n('washAlpha'),
+    groundFrom: c('groundFrom'), groundTo: c('groundTo'),
+    shadowLen: n('shadowLen'), shadowAlpha: n('shadowAlpha'), shadowTint: c('shadowTint'),
+    skyHigh: c('skyHigh'), sky: c('sky'), skyLow: c('skyLow'), glassGlow: n('glassGlow'),
+    poolAlpha: n('poolAlpha'), poolTint: c('poolTint'),
+    // Lamps come on with the dusk rather than at a stroke of the clock, and they are the one thing that cannot be
+    // half on: the ramp turns them on as soon as either end of the step wants them and the sun is past its best.
+    lamps: A.lamps || B.lamps ? (A.lamps ? true : t > 0.25) : false,
+    bounce: c('bounce'), bounceAlpha: n('bounceAlpha'),
+  };
+}
+
+/** How strongly the desk lamps and screens burn at this hour: 0 by day, 1 after dark. */
+export function lampStrength(hour: number): number {
+  const h = ((hour % 24) + 24) % 24;
+  if (h >= 8.5 && h < 17) return 0;
+  if (h >= 17 && h < 19) return (h - 17) / 2;
+  if (h >= 19 || h < 6) return 1;
+  if (h >= 6 && h < 8.5) return 1 - (h - 6) / 2.5;
+  return 1;
+}

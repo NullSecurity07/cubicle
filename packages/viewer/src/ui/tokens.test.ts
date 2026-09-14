@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { THEMES, contrastRatio, cssVars, themeFromQuery, hexNum } from './tokens.js';
-import { floorPalette } from '../world/palette.js';
+import { ZONE_TINT } from '../world/palette.js';
 import { DUR } from '../world/motion.js';
-import { floorDeep } from './rail.js';
+import { deepen } from './rail.js';
 
 const SURFACES = ['bg', 'surface1', 'surface2', 'surface3'] as const;
 const TEXTS = ['text', 'text2', 'text3'] as const;
@@ -34,8 +34,8 @@ describe('contrast (WCAG 2.1)', () => {
     it(`${mode}: the viewer chrome's quiet text reads on the terminal background`, () => {
       expect(contrastRatio(c.termText2, c.termBg), 'termText2 on termBg').toBeGreaterThanOrEqual(4.5);
     });
-    it(`${mode}: text on a floor tint reads on all four deepened tints`, () => {
-      for (const n of [1, 2, 3, 4]) expect(contrastRatio(c.onTint, floorDeep(n)), `onTint on F${n}`).toBeGreaterThanOrEqual(4.5);
+    it(`${mode}: text on a zone tint reads on every deepened accent`, () => {
+      for (const [id, tint] of Object.entries(ZONE_TINT)) expect(contrastRatio(c.onTint, deepen(tint)), `onTint on ${id}`).toBeGreaterThanOrEqual(4.5);
     });
     it(`${mode}: the accent as text reads on the surface the approvals pill sits on`, () => {
       // I4's ruling: the primary button keeps the amber fill and the pill yields to accent text on a surface.
@@ -45,11 +45,11 @@ describe('contrast (WCAG 2.1)', () => {
 });
 
 describe('css variables', () => {
-  it('emits one custom property per token plus the four floor tabs from the shared palette', () => {
+  it('emits one custom property per token plus a zone and a division tint from the shared palette', () => {
     const v = cssVars('dark');
-    for (const name of ['--bg', '--surface-1', '--surface-2', '--surface-3', '--hairline', '--hairline-2', '--text', '--text-2', '--text-3', '--accent', '--accent-ink', '--accent-text', '--ok', '--warn', '--bad', '--info', '--term-bg', '--term-text', '--term-prompt', '--term-text-2', '--term-line', '--term-line-2', '--on-tint', '--paper', '--glass', '--scrim', '--shadow-1', '--shadow-2', '--floor-1', '--floor-2', '--floor-3', '--floor-4']) expect(v[name], name).toBeTruthy();
-    expect(v['--floor-1']).toBe(floorPalette(1).tab);
-    expect(v['--floor-4']).toBe(floorPalette(4).tab);
+    for (const name of ['--bg', '--surface-1', '--surface-2', '--surface-3', '--hairline', '--hairline-2', '--text', '--text-2', '--text-3', '--accent', '--accent-ink', '--accent-text', '--ok', '--warn', '--bad', '--info', '--term-bg', '--term-text', '--term-prompt', '--term-text-2', '--term-line', '--term-line-2', '--on-tint', '--paper', '--glass', '--scrim', '--shadow-1', '--shadow-2', '--zone-dev', '--zone-sales', '--zone-ops', '--zone-boardroom', '--division-technology', '--division-revenue']) expect(v[name], name).toBeTruthy();
+    expect(v['--zone-dev']).toBe(ZONE_TINT.dev);
+    expect(v['--zone-sales']).toBe(ZONE_TINT.sales);
     expect(cssVars('light')['--text']).not.toBe(v['--text']);
   });
   it('reads ?theme= and falls back to system', () => {

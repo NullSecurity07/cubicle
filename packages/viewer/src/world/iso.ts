@@ -1,5 +1,5 @@
 /**
- * SP9 concept — the projection.
+ * The projection.
  *
  * One isometric plane, 2:1. A cell is 64 x 32 screen px at zoom 1 and a unit of height is 34 px, which puts a person
  * (1.65 units) at 56 px — the figure height the spec asks for at room zoom.

@@ -1,69 +1,68 @@
 import { describe, it, expect } from 'vitest';
-import { railHtml, deepen, floorDeep, deepChanges, type FloorInfo } from './rail.js';
+import { railHtml, deepen, deepChanges, type ZoneInfo } from './rail.js';
 import { contrastRatio } from './tokens.js';
-import { floorPalette } from '../world/palette.js';
+import { ZONE_TINT, zoneTint } from '../world/palette.js';
 
-const summary: FloorInfo[] = [
-  { floor: 1, label: 'Executive', color: '#8d6bb3', agents: [{ role: 'ceo', color: '#e03030', state: 'working' }], meetings: 0 },
-  { floor: 2, label: 'Departments', color: '#5a86c8', agents: [{ role: 'a', color: '#111111', state: 'working' }, { role: 'b', color: '#222222', state: 'talking' }, { role: 'c', color: '#333333', state: 'walking' }, { role: 'd', color: '#444444', state: 'working' }, { role: 'e', color: '#555555', state: 'idle_at_desk' }], meetings: 0 },
-  { floor: 3, label: 'Assurance', color: '#4f9a72', agents: [], meetings: 0 },
-  { floor: 4, label: 'Leadership', color: '#d9863a', agents: [{ role: 'cto', color: '#666666', state: 'idle_at_desk' }], meetings: 1 },
+const summary: ZoneInfo[] = [
+  { id: 'boardroom', label: 'Executive', accent: 'slate', color: zoneTint('boardroom'), agents: [{ role: 'ceo', color: '#6B788F', state: 'working' }], meetings: 1 },
+  { id: 'pantry', label: 'Pantry', accent: 'neutral', color: zoneTint('pantry'), agents: [], meetings: 0 },
+  { id: 'dev', label: 'Dev', accent: 'indigo', color: zoneTint('dev'), agents: [
+    { role: 'a', color: '#111111', state: 'working' }, { role: 'b', color: '#222222', state: 'talking' },
+    { role: 'c', color: '#333333', state: 'walking' }, { role: 'd', color: '#444444', state: 'working' },
+    { role: 'e', color: '#555555', state: 'idle_at_desk' },
+  ], meetings: 0 },
+  { id: 'qa', label: 'QA', accent: 'indigo', color: zoneTint('qa'), agents: [], meetings: 0 },
+  { id: 'research', label: 'Research', accent: 'indigo', color: zoneTint('research'), agents: [], meetings: 0 },
+  { id: 'sales', label: 'Sales', accent: 'amber', color: zoneTint('sales'), agents: [], meetings: 0 },
+  { id: 'ops', label: 'Ops', accent: 'sage', color: zoneTint('ops'), agents: [], meetings: 0 },
 ];
 
-describe('floor rail', () => {
-  it('lists F4 down to F1 then the lobby, marks the current floor, colours the bar per floor', () => {
-    const html = railHtml(summary, 2, false, { 4: ['Technology', 'Revenue'], 2: ['Dev', 'Sales'] });
-    const order = [...html.matchAll(/data-floor="(\d)"/g)].map((m) => m[1]);
-    expect(order).toEqual(['4', '3', '2', '1', '0']);
-    expect(html).toContain('data-floor="2" style="--floor:#5a86c8" aria-current="true"');
-    expect(html).toContain('data-floor="4" style="--floor:#d9863a" aria-current="false"');
-    expect(html).toContain('class="tab lobby"');
+describe('the zone rail', () => {
+  it('puts Campus first, then the seven zones in the spec’s order, and marks the current one', () => {
+    const html = railHtml(summary, 'dev', { ops: ['Operations'], dev: ['Technology'] });
+    const order = [...html.matchAll(/data-zone="([a-z_]+)"/g)].map((m) => m[1]);
+    expect(order).toEqual(['campus', 'boardroom', 'pantry', 'dev', 'qa', 'research', 'sales', 'ops']);
+    expect(html).toContain('data-zone="dev" style="--zone:#6472C4" aria-current="true"');
+    expect(html).toContain('data-zone="campus" aria-current="false"');
   });
-  it('shows at most three activity dots per floor, only for agents doing something', () => {
-    const html = railHtml(summary, 1, false, {});
-    const f2 = html.slice(html.indexOf('data-floor="2"'), html.indexOf('data-floor="1"'));
-    expect((f2.match(/<i style="background:#/g) ?? []).length).toBe(3);
-    const f4 = html.slice(html.indexOf('data-floor="4"'), html.indexOf('data-floor="3"'));
-    expect(f4).not.toContain('<i style="background:');
+  it('shows at most three activity dots per zone, only for people doing something', () => {
+    const html = railHtml(summary, 'campus', {});
+    const dev = html.slice(html.indexOf('data-zone="dev"'), html.indexOf('data-zone="qa"'));
+    expect((dev.match(/<i style="background:#/g) ?? []).length).toBe(3);
+    const qa = html.slice(html.indexOf('data-zone="qa"'), html.indexOf('data-zone="research"'));
+    expect(qa).not.toContain('<i style="background:');
   });
-  it('the tooltip names the divisions on the floor; the lobby is current when the camera sits in the F1 corridor', () => {
-    const html = railHtml(summary, 1, true, { 4: ['Technology', 'Revenue'] });
-    expect(html).toContain('title="F4 Leadership: Technology, Revenue"');
-    expect(html).toContain('title="F3 Assurance"');
-    expect(html).toContain('data-floor="0" aria-current="true"');
-    expect(html).toContain('data-floor="1" style="--floor:#8d6bb3" aria-current="false"');
+  it('the tooltip names the divisions in the zone and the key that reaches it', () => {
+    const html = railHtml(summary, 'campus', { ops: ['Operations'] });
+    expect(html).toContain('title="Ops: Operations (7)"');
+    expect(html).toContain('title="Executive (1)"');
+    expect(html).toContain('aria-label="Executive, 1 active, 1 meeting"');
   });
-  it('escapes labels', () => { expect(railHtml([{ ...summary[0], label: '<b>' }], 1, false, {})).not.toContain('<b>'); });
+  it('escapes labels', () => { expect(railHtml([{ ...summary[0], label: '<b>' }], 'campus', {})).not.toContain('<b>'); });
 });
 
-// The ruling on Task 6's report: white on the raw F4 orange is ~3:1. The current tab fills with `deepen(tint)`
-// instead, which Rail publishes as `--floor-<n>-deep`; white on it must clear 4.5:1 on every floor.
-describe('the current tab reads on every floor colour', () => {
-  it('deepens each floor tint until white text reaches 4.5:1', () => {
-    for (const f of summary) expect(contrastRatio('#ffffff', deepen(f.color)), `F${f.floor} ${f.label}`).toBeGreaterThanOrEqual(4.5);
-    for (const n of [1, 2, 3, 4]) expect(contrastRatio('#ffffff', floorDeep(n)), `palette F${n}`).toBeGreaterThanOrEqual(4.5);
+describe('the current tab reads on every zone colour', () => {
+  it('deepens each zone tint until white text reaches 4.5:1', () => {
+    for (const z of summary) expect(contrastRatio('#ffffff', deepen(z.color)), z.label).toBeGreaterThanOrEqual(4.5);
+    for (const [id, tint] of Object.entries(ZONE_TINT)) expect(contrastRatio('#ffffff', deepen(tint)), id).toBeGreaterThanOrEqual(4.5);
   });
   it('the raw tints it replaces would not have passed', () => {
-    expect(contrastRatio('#ffffff', floorPalette(4).tab)).toBeLessThan(4.5);
-    expect(floorDeep(4)).toBe(deepen(floorPalette(4).tab));
+    expect(contrastRatio('#ffffff', zoneTint('sales'))).toBeLessThan(4.5);
   });
 });
 
-/** M10: `update()` runs twice a second off the rAF loop and wrote four custom properties every beat regardless. */
-describe('the rail writes a floor fill only when it moves', () => {
-  it('reports every floor the first time and nothing on an unchanged beat', () => {
+/** `update()` runs twice a second off the rAF loop; a beat that changes nothing must write nothing. */
+describe('the rail writes a zone fill only when it moves', () => {
+  it('reports every zone the first time and nothing on an unchanged beat', () => {
     const first = deepChanges({}, summary);
-    expect(Object.keys(first).map(Number).sort()).toEqual([1, 2, 3, 4]);
-    expect(first[4]).toBe(deepen('#d9863a'));
+    expect(Object.keys(first).sort()).toEqual(['boardroom', 'dev', 'ops', 'pantry', 'qa', 'research', 'sales']);
+    expect(first.sales).toBe(deepen(zoneTint('sales')));
     expect(deepChanges(first, summary)).toEqual({});
   });
-  it('reports just the floor whose tint changed', () => {
+  it('reports just the zone whose tint changed, and one it has never seen', () => {
     const prev = deepChanges({}, summary);
-    const repainted = summary.map((f) => (f.floor === 3 ? { ...f, color: '#123456' } : f));
-    expect(deepChanges(prev, repainted)).toEqual({ 3: deepen('#123456') });
-  });
-  it('reports a floor it has never seen, so a fifth floor is not left unpainted', () => {
-    const prev = deepChanges({}, summary);
-    expect(deepChanges(prev, [...summary, { floor: 5, color: '#654321' }])).toEqual({ 5: deepen('#654321') });
+    const repainted = summary.map((z) => (z.id === 'qa' ? { ...z, color: '#123456' } : z));
+    expect(deepChanges(prev, repainted)).toEqual({ qa: deepen('#123456') });
+    expect(deepChanges(prev, [...summary, { id: 'lounge', color: '#654321' }])).toEqual({ lounge: deepen('#654321') });
   });
 });

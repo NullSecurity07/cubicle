@@ -41,7 +41,6 @@ export interface Ctx {
   frames: Record<string, string>; tokenQuery: string; vaultName: string;
   /** what the owner has picked inside the open sheet (see `UiState`) */ ui?: UiState;
   /** measured frame rate per browser stream (main.ts) */ fps?: Record<string, number>;
-  /** floor number → division label from `scene.floorSummary()` */ floorLabels?: Record<number, string>;
 }
 
 export const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -187,18 +186,28 @@ export const isTeamOpen = (s: State, teamId: string): number => Object.values(s.
 /** Org by division (= floor, F4 down to F1), then team (parents before children), a Locate per role. */
 export function orgView(s: State, ctx: Ctx): View {
   if (!s.teams.length) return { mode: 'drawer', title: 'Org', html: emptyHtml('chat', 'No teams yet', 'Start the daemon once to create the default org.') };
-  const floorOf = (t: TeamView): number => t.floor ?? s.teams.find((p) => p.id === t.parent)?.floor ?? 0;
-  const floors = [...new Set(s.teams.map(floorOf))].sort((a, b) => b - a);
+  // The org groups by division now, not by floor: the campus is one plane, and a division is what a team belongs
+  // to. The root of a team's `parent` chain is its division; a team with no parent is its own.
+  const rootOf = (t: TeamView): TeamView => {
+    let cur = t;
+    const seen = new Set<string>([t.id]);
+    for (;;) {
+      const parent = cur.parent ? s.teams.find((p) => p.id === cur.parent) : undefined;
+      if (!parent || seen.has(parent.id)) return cur;
+      seen.add(parent.id);
+      cur = parent;
+    }
+  };
+  const divisions = [...new Map(s.teams.map((t) => [rootOf(t).id, rootOf(t)])).values()];
   const teamHtml = (t: TeamView): string => {
     const lead = row({ left: chip('kind', 'Lead'), title: who(s, t.lead), small: t.mission, open: `agent:${t.lead}`, actions: locate(t.lead) });
     const members = t.members.map((m) => row({ title: who(s, m), small: roleTitle(s, m), open: `agent:${m}`, actions: locate(m) }));
     return section(t.name, rows([lead, ...members]), `${isTeamOpen(s, t.id)} open`);
   };
-  const html = floors.map((f) => {
-    const here = s.teams.filter((t) => floorOf(t) === f);
-    const ordered = [...here.filter((t) => !t.parent || !here.some((p) => p.id === t.parent)), ...here.filter((t) => t.parent && here.some((p) => p.id === t.parent))];
-    const label = f ? ctx.floorLabels?.[f] ?? `Floor ${f}` : 'Elsewhere';
-    return `<div class="division" style="--division:var(--floor-${f || 1})"><h2 class="division-title">${esc(label)}</h2>${ordered.map(teamHtml).join('')}</div>`;
+  const html = divisions.map((d) => {
+    const here = s.teams.filter((t) => rootOf(t).id === d.id);
+    const ordered = [...here.filter((t) => t.id === d.id), ...here.filter((t) => t.id !== d.id)];
+    return `<div class="division" style="--division:var(--division-${esc(d.id)}, var(--division-other))"><h2 class="division-title">${esc(d.name)}</h2>${ordered.map(teamHtml).join('')}</div>`;
   }).join('');
   return { mode: 'drawer', title: 'Org', sub: `${s.teams.length} teams`, html };
 }

@@ -1,5 +1,5 @@
 /**
- * SP9 concept — the character painter.
+ * The character painter.
  *
  * One function draws every person in the campus, at any size, from a small record. The figure is a real silhouette
  * rather than a sprite: soft-cornered head, tapered torso, capsule limbs, a hair shape and glasses per person, and
@@ -10,7 +10,7 @@
  * above 34 px. Nothing is ever drawn at a size where it would turn into noise.
  */
 import { type Pt } from './iso.js';
-import { HAIR, type Light, type OutfitName, OUTFIT, SKIN, dim, lit, mix, rgba, shade, top, warm } from './palette.js';
+import { HAIR, type Light, MATERIAL as M, type OutfitName, OUTFIT, SKIN, dim, lit, mix, rgba, shade, top, warm } from './materials.js';
 import { type G, fillPoly, roundRect, twoTone } from './shapes.js';
 
 export type Facing = 'se' | 'sw' | 'ne' | 'nw';
@@ -30,9 +30,15 @@ export interface Person {
   phase?: number;
   /** a lanyard, tie or scarf: the one saturated note on an otherwise calm figure */
   tag?: string;
+  /** eyes shut this frame */
+  blink?: boolean;
+  /** mouth open: the half of a talk cycle where the speaker is mid-word */
+  talk?: boolean;
+  /** brows down and mouth flat (worried), up (happy), one brow up (puzzled) — the reducer's mood, drawn */
+  mood?: 'neutral' | 'happy' | 'worried' | 'puzzled' | 'asleep' | 'thinking';
 }
 
-/** A deterministic person from an id — the concept has no daemon behind it, and it must not flicker between runs. */
+/** A deterministic person from an id — a role keeps the same face from one run to the next. */
 export function personFrom(id: string, outfit: OutfitName, pose: Pose, facing: Facing, over: Partial<Person> = {}): Person {
   let h = 0;
   for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
@@ -149,7 +155,7 @@ export function drawPerson(g: G, at: Pt, h: number, p: Person, light: Light): vo
 
   // ---- arms -------------------------------------------------------------------------------------------------
   const armW = h * 0.082;
-  const sleeve = mix(shirt, '#000000', 0.06);
+  const sleeve = mix(shirt, M.black, 0.06);
   const handY = seated ? hip - h * 0.03 : hip + h * 0.05;
   if (seated) {
     // reaching to a desk or a table in front: forearm along the facing
@@ -264,24 +270,59 @@ export function drawPerson(g: G, at: Pt, h: number, p: Person, light: Light): vo
     const eyeY = hy + headH * 0.55;
     const ex = hx + headW * (sx > 0 ? 0.34 : 0.24);
     const e = Math.max(1, headW * 0.1);
-    g.fillStyle = rgba('#2A2320', 0.82);
-    roundRect(g, ex, eyeY, e, e * 1.15, e * 0.4); g.fill();
-    roundRect(g, ex + headW * 0.3, eyeY, e, e * 1.15, e * 0.4); g.fill();
-    if (h > 40) {
-      g.strokeStyle = rgba(shade(skin, -0.22), 0.8);
-      g.lineWidth = Math.max(1, headW * 0.055);
+    const shut = p.blink || p.mood === 'asleep';
+    g.fillStyle = rgba(M.eye, 0.82);
+    if (shut) {
+      // two short strokes, not two dots: a closed eye at this size is a line, and a dot that merely got smaller
+      // reads as a smaller open eye rather than as a blink.
+      g.strokeStyle = rgba(M.eye, 0.8);
+      g.lineWidth = Math.max(1, e * 0.8);
       g.lineCap = 'round';
       g.beginPath();
-      g.moveTo(ex + headW * 0.05, hy + headH * 0.78);
-      g.lineTo(ex + headW * 0.3, hy + headH * 0.78);
+      g.moveTo(ex, eyeY + e * 0.6); g.lineTo(ex + e, eyeY + e * 0.6);
+      g.moveTo(ex + headW * 0.3, eyeY + e * 0.6); g.lineTo(ex + headW * 0.3 + e, eyeY + e * 0.6);
       g.stroke();
+    } else {
+      roundRect(g, ex, eyeY, e, e * 1.15, e * 0.4); g.fill();
+      roundRect(g, ex + headW * 0.3, eyeY, e, e * 1.15, e * 0.4); g.fill();
+    }
+    if (h > 40) {
+      // the brows carry the mood; the mouth carries whether they are speaking
+      const worry = p.mood === 'worried' || p.mood === 'puzzled';
+      if (worry || p.mood === 'happy') {
+        g.strokeStyle = rgba(M.eye, 0.5);
+        g.lineWidth = Math.max(1, headW * 0.05);
+        g.lineCap = 'round';
+        const by = hy + headH * 0.44;
+        g.beginPath();
+        g.moveTo(ex - headW * 0.02, by + (worry ? headW * 0.05 : -headW * 0.02));
+        g.lineTo(ex + e + headW * 0.02, by + (worry ? -headW * 0.02 : -headW * 0.04));
+        g.moveTo(ex + headW * 0.28, by + (p.mood === 'puzzled' ? -headW * 0.06 : worry ? -headW * 0.02 : -headW * 0.04));
+        g.lineTo(ex + headW * 0.32 + e, by + (worry ? headW * 0.05 : -headW * 0.02));
+        g.stroke();
+      }
+      g.strokeStyle = rgba(shade(skin, -0.26), 0.85);
+      g.lineWidth = Math.max(1, headW * 0.055);
+      g.lineCap = 'round';
+      if (p.talk) {
+        roundRect(g, ex + headW * 0.08, hy + headH * 0.72, headW * 0.22, headH * 0.13, headH * 0.05);
+        g.fillStyle = rgba(shade(skin, -0.3), 0.85);
+        g.fill();
+      } else {
+        g.beginPath();
+        const my = hy + headH * 0.78;
+        g.moveTo(ex + headW * 0.05, my + (p.mood === 'worried' ? headW * 0.03 : 0));
+        if (p.mood === 'happy') g.quadraticCurveTo(ex + headW * 0.18, my + headW * 0.07, ex + headW * 0.3, my);
+        else g.lineTo(ex + headW * 0.3, my + (p.mood === 'worried' ? headW * 0.03 : 0));
+        g.stroke();
+      }
     }
   }
   if (p.glasses && !away && h > 20) {
     const gy = hy + headH * 0.46;
     const gw = headW * 0.34, gh = headH * 0.26;
     const gx = hx + headW * (sx > 0 ? 0.26 : 0.1);
-    g.strokeStyle = rgba('#2E3238', 0.78);
+    g.strokeStyle = rgba(M.spectacle, 0.78);
     g.lineWidth = Math.max(1, headW * 0.06);
     roundRect(g, gx, gy, gw, gh, gh * 0.35); g.stroke();
     roundRect(g, gx + gw + headW * 0.09, gy, gw, gh, gh * 0.35); g.stroke();
@@ -290,14 +331,14 @@ export function drawPerson(g: G, at: Pt, h: number, p: Person, light: Light): vo
     g.lineTo(gx + gw + headW * 0.09, gy + gh * 0.45);
     g.stroke();
     roundRect(g, gx, gy, gw, gh, gh * 0.35);
-    g.fillStyle = rgba('#DCE8F0', 0.2); g.fill();
+    g.fillStyle = rgba(M.glassLens, 0.2); g.fill();
     roundRect(g, gx + gw + headW * 0.09, gy, gw, gh, gh * 0.35);
-    g.fillStyle = rgba('#DCE8F0', 0.2); g.fill();
+    g.fillStyle = rgba(M.glassLens, 0.2); g.fill();
   }
 
   // a warm rim on the lit shoulder, only where it will be seen
   if (h > 30) {
-    g.strokeStyle = rgba(light.name === 'dusk' ? '#FFD9A8' : '#FFFFFF', light.name === 'dusk' ? 0.3 : 0.22);
+    g.strokeStyle = rgba(light.name === 'dusk' ? M.rimDusk : M.white, light.name === 'dusk' ? 0.3 : 0.22);
     g.lineWidth = Math.max(1, h * 0.016);
     g.beginPath();
     g.moveTo(X(-shW + lean), Y(shoulderY + h * 0.05));

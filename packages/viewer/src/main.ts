@@ -1,7 +1,6 @@
 import './ui/tokens.css';
 import './ui/app.css';
-import Phaser from 'phaser';
-import { OfficeScene } from './scenes/OfficeScene.js';
+import { CampusView } from './world/view.js';
 import { Net, resolveWs } from './net.js';
 import { applyConversation, decideAcked, decideFailed, decideSent, emptyState, applyEvent, applySnapshot, tick, withFrameSeq, type State, type CubicleEvent, type Snapshot, type ThreadTurn } from './state.js';
 import { Panel, SURPRISE_ME, type Origin } from './ui/panel.js';
@@ -12,18 +11,16 @@ import { COMMENT_REQUIRED, commentRequired, decidableOf, decideStateFor, decisio
 import { MESSAGES, roomThread } from './ui/messages.js';
 import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
-import { TILE } from './world/tileset.js';
 import { withMotion, reducedMotion } from './world/motion.js';
-import { ElevatorView, toViewState, emptyViewState } from './world/elevator-view.js';
 import { announce, announcementFor, coachMark, toast } from './ui/notify.js';
 import { FirstRun } from './ui/firstrun.js';
 import { QuickOpen, quickItems } from './ui/quickopen.js';
 import { bindKeys, keysView } from './ui/keys.js';
-import { Rail, LOBBY_ROW } from './ui/rail.js';
+import { Rail } from './ui/rail.js';
 import { MinimapChrome, minimapWanted } from './ui/minimap.js';
-import { floorZoom } from './world/camera.js';
-import { floorPalette } from './world/palette.js';
-import { DUR, EASE, dur } from './world/motion.js';
+import { fitZoom } from './world/camera.js';
+import { minimapToGrid } from './world/minimap-draw.js';
+import { slabOf } from './world/paint.js';
 
 applyTheme(themeFromQuery(location.search));   // before the first paint: no white flash on load or theme switch
 const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
@@ -40,12 +37,12 @@ const vaultName = new URLSearchParams(location.search).get('vault') ?? '';
 const ui = emptyUi();
 const ctx: Ctx = { frames, tokenQuery: token ? `?token=${encodeURIComponent(token)}` : '', vaultName, fps, ui };
 
-const scene = new OfficeScene();
-const game = new Phaser.Game({ type: Phaser.AUTO, parent: 'game', backgroundColor: THEMES[currentTheme()].colors.bg, pixelArt: true, roundPixels: true, scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' }, scene: [scene] });
-// Click isolation (see scripts/test-overlay-clicks.ts): a press that starts on any HTML element — bar, rail, panel,
-// scrim, time bar, minimap chrome, toast, first-run card, quick open — never reaches Phaser's window listeners.
-// Releases still reach Phaser, so a drag let go over the HTML layer ends cleanly (the pointer's `isDown` clears).
-for (const type of ['mousedown', 'touchstart'] as const) document.addEventListener(type, (e) => { if (!(e.target as Element).closest?.('#game')) e.stopPropagation(); });
+// The office owns one canvas inside #game, and every pointer listener is on that canvas rather than on the window.
+// Click isolation is then structural (see scripts/test-overlay-clicks.ts): a press on the bar, the rail, a sheet,
+// the scrim, the time bar, the minimap, a toast or a card is a press on an HTML element, and the canvas under it
+// never hears about it at all.
+const scene = new CampusView(document.getElementById('game')!);
+void THEMES; void currentTheme;
 // Where the last press on the office happened: a level-2 presentation grows from there ("Depth": deeper levels grow from the click).
 let lastPress: Origin | null = null;
 document.getElementById('game')!.addEventListener('pointerdown', (e) => { lastPress = { x: e.clientX - 80, y: e.clientY - 50, w: 160, h: 100 }; });
@@ -86,12 +83,8 @@ function rebuildReplayTo(index: number): void {
   refresh();
 }
 
-let elevatorView: ElevatorView | null = null;
-/** The one view-state object the rAF loop fills and hands to the elevator view (see `toViewState`). */
-const elevatorViewState = emptyViewState();
 function viewOf(kind: string): ReturnType<typeof viewFor> {
   if (kind === 'keys') return keysView();              // the shortcut sheet is the one kind with no data behind it
-  try { ctx.floorLabels ??= Object.fromEntries(scene.floorSummary().map((f) => [f.floor, f.label])); } catch { /* the scene has not created its world yet */ }
   return viewFor(kind, state, ctx);
 }
 const panel = new Panel({ viewOf, onOpen: (kind) => open(kind), onLocate: (target) => scene.focusOn(target), onEmpty: () => scene.restoreZoom(), onChat: (text) => sendChat(text), onAction: (act, o) => onAction(act, o), onVaultLink: (url) => openVaultLink(url) });
@@ -105,35 +98,34 @@ scene.hooks = {
   hour: () => time.hour(new Date()),
   clock: () => (state.mode === 'replay' ? replayClockAt(time.index) : Date.now()),
   onSurfaceClick(kind) { open(kind, lastPress ?? undefined); },
-  onAgentClick(role) { open(role === 'ceo' ? 'cabin' : `agent:${role}`, lastPress ?? undefined); },   // the CEO sprite is the owner's channel
-  makeCar(sc, geo) { elevatorView = new ElevatorView(sc, geo.shaft, geo.floors); return elevatorView.car; },
-  elevatorIgnorables: () => elevatorView?.ignorables() ?? [],
-  // a scene restart (or the game shutting down) must not leave a destroyed car's frame loop still polling it
-  onSceneShutdown() { elevatorView?.destroy(); elevatorView = null; },
+  onAgentClick(role) { open(role === 'ceo' ? 'cabin' : `agent:${role}`, lastPress ?? undefined); },   // the CEO is the owner's channel
 };
+void scene.start().then(() => { rail.update(); minimap.layout(); }).catch((err) => { console.error('[office] the map did not load', err); toast('The office map did not load.'); });
 
-// ---- floor rail and minimap chrome ----------------------------------------------------------------------------
-// The rail reads the scene every refresh (cheap: it morphs). The chrome is HTML laid over the Phaser minimap camera,
-// which only exists after `create`, so `layout()` also runs on a slow beat in the loop until the camera turns up.
-/** The scene reports an agent's colour as a Phaser int; the rail's view type is `#rrggbb`, so convert on the way in. */
-const agentHex = (n: number): string => `#${(n >>> 0).toString(16).padStart(6, '0')}`;
+// ---- zone rail and minimap chrome ------------------------------------------------------------------------------
+// The rail reads the renderer every refresh (cheap: it morphs). The minimap is an HTML frame around a canvas the
+// renderer draws the campus thumbnail into.
 const rail = new Rail({
-  summary: () => scene.floorSummary().map((f) => ({ ...f, agents: f.agents.map((a) => ({ ...a, color: agentHex(a.color) })) })),
-  currentFloor: () => scene.currentFloor(),
-  inLobby: () => scene.currentFloor() === 1 && (scene.cameras?.main?.midPoint.y ?? 0) / TILE >= LOBBY_ROW,
-  divisions: () => { const d: Record<number, string[]> = {}; for (const t of state.teams) if (t.floor && !t.parent) (d[t.floor] ??= []).push(t.name); return d; },
-  onFloor: (n) => scene.focusFloor(n),
-  onLobby: () => scene.focusOn('noticeboard'),
+  summary: () => scene.zoneSummary(),
+  currentZone: () => scene.currentZone(),
+  divisions: () => {
+    const d: Record<string, string[]> = {};
+    for (const t of state.teams) if (t.room && !t.parent) (d[zoneOfRoom(t.room)] ??= []).push(t.name);
+    return d;
+  },
+  onZone: (id) => scene.focusZone(id),
 });
+/** Which rail zone a team's room belongs to, so the Org's divisions land on the tab that holds them. */
+function zoneOfRoom(room: string): string {
+  const z = scene.map?.rooms[room]?.zone;
+  return z === 'ceo_office' || z === 'meetingroom' ? 'boardroom' : z ?? room;
+}
 const minimap = new MinimapChrome({
-  // `scrollX/scrollY` here is the camera's top-left *in world space*, which on a zoomed camera is `worldView`, not
-  // the raw scroll (Phaser keeps scroll unzoomed: worldView.x = scrollX + width/2 - width/zoom/2).
-  camera: () => { const c = scene.cameras?.getCamera('minimap'); return c ? { x: c.x, y: c.y, width: c.width, height: c.height, scrollX: c.worldView.x, scrollY: c.worldView.y, zoom: c.zoom } : null; },
-  colours: () => ({ 1: floorPalette(1).tab, 2: floorPalette(2).tab, 3: floorPalette(3).tab, 4: floorPalette(4).tab }),
-  onPan: (wx, wy) => scene.cameras.main.pan(wx, wy, dur(DUR.minimapPan), EASE.sine),
-  onToggle: (visible) => scene.cameras.getCamera('minimap')?.setVisible(visible),
+  attach: (canvas) => scene.attachMinimap(canvas),
+  onPan: (px, py, w, h) => { const c = minimapToGrid(px, py, scene.map, w, h); scene.camera.panTo(c); },
+  onToggle: () => undefined,
 });
-scene.hooks.onFloorChange = () => rail.update();
+scene.hooks.onZoneChange = () => rail.update();
 window.addEventListener('resize', () => minimap.layout());
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -233,21 +225,22 @@ const quick = new QuickOpen({ items: () => quickItems(state), onPick: (kind) => 
 /** `__cubicle.setHour` mirrored: the scene tints by it, and the time bar's sun/moon must read the same hour. */
 let hourOverride: number | null = null;
 
-/** `M` goes to the chrome above, which owns both the HTML frame and the Phaser minimap camera's visibility. */
+/** `M` goes to the chrome above, which owns the frame and the canvas the thumbnail is drawn into. */
 const minimapHook: { toggle(): void } = { toggle: () => minimap.toggle() };
+/** `1`-`7` are the rail's own order, read from the rail so the two can never disagree. */
+const zoneKey = (n: number) => (): void => { const id = rail.order()[n - 1]; if (id) scene.focusZone(id); };
 
 bindKeys({
-  floor1: () => scene.focusFloor(1), floor2: () => scene.focusFloor(2), floor3: () => scene.focusFloor(3), floor4: () => scene.focusFloor(4),
-  // `0` fits the whole tower. One implementation, in the scene: this used to be a second, instant one here,
-  // and the scene's own `keys.ZERO` fired on the same keypress, so the two fights over the camera were visible.
-  lobby: () => scene.focusOn('noticeboard'), fit: () => scene.fitTower(),
+  zone1: zoneKey(1), zone2: zoneKey(2), zone3: zoneKey(3), zone4: zoneKey(4), zone5: zoneKey(5), zone6: zoneKey(6), zone7: zoneKey(7),
+  // `0` frames the whole campus, which is what the rail's Campus tab does — one implementation, in the renderer.
+  lobby: () => scene.focusZone('lobby'), fit: () => scene.focusZone('campus'),
   talk: () => open('cabin'), messages: () => open(MESSAGES), queue: () => open('noticeboard'), brief: () => open('newsstand'), plan: () => open('whiteboard'), org: () => open('org'),
   pause: () => time.togglePlay(), prev: () => time.step(-1), next: () => time.step(1),
   minimap: () => minimapHook.toggle(), help: () => open('keys'), quickopen: () => quick.open(),
 // The two aria-modal cards own the keyboard while they are up: one Tab out of their text field used to leave `T`
-// opening the cabin sheet underneath and `1`-`4` flying the camera behind them.
-// A decision reader owns the keyboard too: `1`-`4` would otherwise fly the camera while the owner is picking
-// between four numbered options, and `A`/`R` are the two buttons in front of them.
+// opening the cabin sheet underneath and `1`-`7` flying the camera behind them.
+// A decision reader owns the keyboard too: `1`-`7` would otherwise fly the camera while the owner is picking
+// between numbered options, and `A`/`R` are the two buttons in front of them.
 }, () => firstRun.visible || quick.visible || (panel.current?.startsWith('decision:') ?? false));
 
 // `A` approve/adopt, `R` reject/send back, `1`-`9` pick an option — only while a decision is open, never while the
@@ -353,17 +346,20 @@ const shellHooks = (window as unknown as { __cubicle?: Record<string, unknown> }
   ...shellHooks,
   get state() { return state; },
   agents: () => scene.debugAgents(), anchors: () => scene.debugAnchors(), desks: () => scene.debugDesks(), stand: (name: string) => scene.debugStand(name), surfaces: () => debugSurfaces(), open,
-  // Both drop the floor pin: they are the console driving the camera by hand, exactly like a drag or the wheel.
-  // Both hand the camera back — `test-overlay-clicks.ts` waits on `zoom(z).panEffect` — and both drop the floor
-  // pin: they are the console driving the camera by hand, exactly like a drag or the wheel.
-  zoom: (z: number) => { scene.unpinFloor(); return scene.cameras.main.setZoom(z); },
-  center: (tx: number, ty: number) => { scene.unpinFloor(); return scene.cameras.main.centerOn(tx * TILE, ty * TILE); },
-  floor: (n: number) => scene.focusFloor(n), currentFloor: () => scene.currentFloor(), elevator: () => scene.elevator.state(), route: (role: string, target: string) => scene.debugRoute(role, target),
+  // The camera, as the console and the harnesses drive it. Both set it outright rather than easing, and both hand
+  // back where it ended up, so a test can assert the frame it is about to photograph instead of guessing at it.
+  zoom: (z: number) => scene.setZoom(z),
+  center: (x: number, y: number) => scene.centerOn(x, y),
+  zone: (id?: string) => (id ? (scene.focusZone(id), scene.currentZone()) : scene.currentZone()),
+  zones: () => scene.zoneSummary().map((z) => z.id),
+  project: (x: number, y: number, z?: number) => scene.project(x, y, z),
+  screenBox: (kind: string) => scene.screenBox(kind),
+  route: (role: string, target: string) => scene.debugRoute(role, target),
   theme: (mode: 'dark' | 'light' | 'system') => applyTheme(mode),
   stack: () => panel.stack.entries(),
   // Visual-check hooks (screenshot script, spec F35): freeze the clock and read the loop's frame rate.
   setHour: (h: number | null) => { hourOverride = h; scene.setHourOverride(h); },   // the time bar icon follows the office tint
-  fps: () => Math.round(game.loop.actualFps),
+  fps: () => Math.round(scene.fps()),
   // A pushed frame can belong to a stream the daemon never announced (the screenshot script injects one), and a frame
   // with no surface behind it has nothing bound to draw it. Register the surface first, then let the frame land.
   pushFrame: (id: string, dataUrl: string) => { if (!state.surfaces[id]) { state = applyEvent(state, { ts: new Date().toISOString(), type: 'browser.session_started', agent: null, job: null, payload: { session: id } }); refresh(); } onFrameData(id, dataUrl); },
@@ -375,21 +371,17 @@ let last = performance.now();
 let lastLayout = 0;
 function loop(now: number): void {
   const dt = now - last; last = now;
-  // The minimap camera moves with the window; the rail's lobby tab follows a drag inside F1, which fires no floor change.
+  // The rail's dots follow a drag inside one zone, which fires no zone change.
   if (now - lastLayout > 500) {
     lastLayout = now;
-    // The strip belongs at the floor elevation and nowhere else: below it the tower fit shows the same picture as
-    // the main view (visual QA R-M8), above it the strip covers the room it is a picture of (R2-M4).
-    const cam = scene.cameras?.main;
-    minimap.setVisible(cam ? minimapWanted(cam.zoom, floorZoom(window.innerWidth, window.innerHeight)) : true, true);
+    // The strip belongs close in and nowhere else: at the campus overview the main view *is* the minimap, with a
+    // viewport rectangle drawn over all of it, which says nothing.
+    if (scene.map) minimap.setVisible(minimapWanted(scene.camera.zoom, fitZoom(slabOf(scene.map), window.innerWidth, window.innerHeight, 3.4)), true);
     minimap.layout();
     rail.update();
   }
   time.tick(dt, new Date(), hourOverride);
   if (state.mode === 'live') state = tick(state, Date.now());
-  // doors and digits follow the engine every frame; `toViewState` writes into one reused object so the loop
-  // allocates nothing per frame (its riders array is already reference-cached inside elevator-view.ts)
-  if (elevatorView && scene.scene.isActive()) elevatorView.setState(toViewState(scene.elevator.state(), TILE, elevatorViewState));
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

@@ -1,5 +1,5 @@
 /**
- * SP9 concept — the shape library.
+ * The shape library.
  *
  * Everything in the campus is built from five primitives: a rounded polygon, a two-tone fill, a swept shadow, an
  * extruded iso box and an upright panel. Nothing here knows what a desk is; `props.ts` and `characters.ts` compose
@@ -11,7 +11,7 @@
  *    the bottom-right, so a flat shape still has a lit side without anyone painting a highlight by hand.
  */
 import { type Pt, type Rect, type View, quad } from './iso.js';
-import { dim, lit, rgba, top, warm } from './palette.js';
+import { MATERIAL as M, dim, lit, rgba, top, warm } from './materials.js';
 
 export type G = CanvasRenderingContext2D;
 
@@ -241,7 +241,7 @@ export function contact(g: G, at: Pt, rx: number, ry: number, alpha: number, tin
  */
 export function plate(g: G, at: Pt, text: string, o: { size?: number; chip?: string; ink?: string; sub?: string; alpha?: number; align?: 'centre' | 'left' } = {}): { w: number; h: number } {
   const size = o.size ?? 12;
-  const ink = o.ink ?? '#2C2A27';
+  const ink = o.ink ?? M.ink;
   const padX = Math.round(size * 0.75), padY = Math.round(size * 0.42);
   g.save();
   g.font = `600 ${size}px ${UI_FONT}`;
@@ -293,7 +293,7 @@ export function plate(g: G, at: Pt, text: string, o: { size?: number; chip?: str
  */
 export function bubble(g: G, at: Pt, lines: string[], o: { size?: number; max?: number; tail?: 'left' | 'right'; ink?: string; tint?: string } = {}): void {
   const size = o.size ?? 12.5;
-  const ink = o.ink ?? '#25231F';
+  const ink = o.ink ?? M.bubbleInk;
   const padX = Math.round(size * 0.92), padY = Math.round(size * 0.62);
   const lh = Math.round(size * 1.32);
   g.save();

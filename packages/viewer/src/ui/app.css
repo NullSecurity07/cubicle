@@ -50,25 +50,29 @@ input::placeholder { color: var(--text-3); }
 #coach { position: absolute; left: calc(var(--rail-w) + var(--s4)); bottom: calc(var(--time-h) + var(--s3)); padding: var(--s2) var(--s3); border-radius: var(--r); color: var(--text-2); z-index: 9; pointer-events: none; transition: opacity var(--d-reader) var(--ease-in); }
 #coach.fade { opacity: 0; }
 
-/* ---- floor rail (elevation 0) ---- */
-#rail { position: absolute; left: 0; top: var(--bar-h); bottom: 0; width: var(--rail-w); display: flex; flex-direction: column; align-items: stretch; gap: var(--s1); padding: var(--s3) var(--s1); border-width: 0 1px 0 0; border-radius: 0; z-index: 9; }
-#rail .tab { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; min-height: 44px; padding: var(--s1) 0; border-radius: var(--r-s); color: var(--text-2); font-size: var(--fs-subhead); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* ---- zone rail (elevation 0) ---- */
+/* Campus first, then the seven zones in the spec's order. The rail is 96 px wide because the zones have names —
+   "Executive", "Research" — and a rail of single letters needed a tooltip to explain every one of them. */
+#rail { position: absolute; left: 0; top: var(--bar-h); bottom: 0; width: var(--rail-w); display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: var(--s3) var(--s2); border-width: 0 1px 0 0; border-radius: 0; z-index: 9; }
+#rail .tab { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 40px; padding: var(--s2) var(--s1); border-radius: var(--r-s); color: var(--text-2); font-size: var(--fs-caption); font-weight: 600; letter-spacing: .005em; }
 #rail .tab:hover { background: var(--surface-3); color: var(--text); }
-#rail .tab .bar { width: 18px; height: 3px; border-radius: 2px; background: var(--floor, var(--text-3)); }
-/* The lobby tab's own caption (visual QA M2): a letter alone needed a tooltip to explain it. */
-#rail .tab .cap { font-size: 9px; font-weight: 600; line-height: 1; letter-spacing: 0.02em; color: inherit; opacity: 0.75; }
-/* The current tab fills with the floor's tint deepened one lightness step (Rail publishes --floor-<n>-deep from the
-   colour that floor renders with) so white reads at 4.5:1 on all four, orange F4 included; the lobby has no tint. */
-#rail .tab[data-floor="1"] { --tab-deep: var(--floor-1-deep); }
-#rail .tab[data-floor="2"] { --tab-deep: var(--floor-2-deep); }
-#rail .tab[data-floor="3"] { --tab-deep: var(--floor-3-deep); }
-#rail .tab[data-floor="4"] { --tab-deep: var(--floor-4-deep); }
+#rail .tab .n { line-height: 1.1; text-align: center; }
+#rail .tab .bar { width: 22px; height: 3px; border-radius: 2px; background: var(--zone, var(--text-3)); }
+/* The current tab fills with its zone's own accent deepened one lightness step (Rail publishes --zone-<id>-deep
+   from the colour that zone renders with) so white on it reads at 4.5:1 on all seven. */
+#rail .tab[data-zone="boardroom"] { --tab-deep: var(--zone-boardroom-deep); }
+#rail .tab[data-zone="pantry"] { --tab-deep: var(--zone-pantry-deep); }
+#rail .tab[data-zone="dev"] { --tab-deep: var(--zone-dev-deep); }
+#rail .tab[data-zone="qa"] { --tab-deep: var(--zone-qa-deep); }
+#rail .tab[data-zone="research"] { --tab-deep: var(--zone-research-deep); }
+#rail .tab[data-zone="sales"] { --tab-deep: var(--zone-sales-deep); }
+#rail .tab[data-zone="ops"] { --tab-deep: var(--zone-ops-deep); }
 #rail .tab[aria-current="true"] { background: var(--tab-deep, var(--surface-3)); color: var(--on-tint); }
 #rail .tab[aria-current="true"] .bar { background: color-mix(in srgb, var(--on-tint) 60%, transparent); }
-#rail .tab.lobby[aria-current="true"] { background: var(--surface-3); color: var(--text); box-shadow: inset 0 0 0 1px var(--hairline-2); }
-#rail .tab.lobby[aria-current="true"] .bar { background: var(--text-2); }
+#rail .tab.campus { margin-bottom: var(--s2); }
+#rail .tab.campus[aria-current="true"] { background: var(--surface-3); color: var(--text); box-shadow: inset 0 0 0 1px var(--hairline-2); }
+#rail .tab.campus[aria-current="true"] .bar { background: var(--text-2); }
 #rail .tab .dots { display: flex; gap: 2px; height: 4px; } #rail .tab .dots i { width: 4px; height: 4px; border-radius: 50%; }
-#rail .tab.lobby { margin-top: auto; }
 
 /* ---- scrim + layer (elevations 1 and 2) ---- */
 #scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 19; animation: fade var(--d-open) var(--ease-out); }
@@ -235,9 +239,8 @@ details.pinned .prose { padding: 0 var(--s4) var(--s3); }
 #time #replay-hint { white-space: nowrap; }
 
 /* ---- minimap chrome ---- */
-#minimap-chrome { position: absolute; z-index: 9; pointer-events: none; border: 1px solid var(--hairline-2); border-radius: var(--r-s); box-shadow: var(--shadow-2); outline: 4px solid var(--surface-1); outline-offset: 0; }
-#minimap-chrome .ticks { position: absolute; left: -6px; top: 0; bottom: 0; width: 4px; }
-#minimap-chrome .tick { position: absolute; left: 0; width: 4px; border-radius: 2px; }
+#minimap-chrome { position: absolute; right: var(--s4); bottom: calc(var(--time-h) + var(--s3)); z-index: 9; pointer-events: none; background: var(--surface-1); border: 1px solid var(--hairline-2); border-radius: var(--r); box-shadow: var(--shadow-1); overflow: hidden; }
+#minimap-chrome canvas.mm { position: absolute; inset: 0; }
 #minimap-chrome .click { position: absolute; inset: 0; pointer-events: auto; cursor: pointer; }
 #minimap-chrome .toggle { position: absolute; right: -1px; top: calc(var(--hit) * -1 - var(--s1)); pointer-events: auto; width: var(--hit); height: var(--hit); min-height: var(--hit); border-radius: var(--r-s); color: var(--text-2); font-size: var(--fs-caption); font-weight: 600; }
 #minimap-toggle-hidden { position: absolute; right: var(--s3); bottom: var(--s3); z-index: 9; }
