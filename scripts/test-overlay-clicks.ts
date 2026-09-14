@@ -1,9 +1,17 @@
 /**
- * The HTML layer (bar, rail, sheet, reader, viewer, scrim, time bar, minimap chrome, toast) sits over the Phaser
- * office. A press that starts on it must not reach the office: Phaser's window-level listeners (`input.windowEvents`)
- * hit-test off-canvas presses against the scene, so without the guard in viewer/src/main.ts a click in the Queue
- * sheet opened whatever surface was drawn beneath it. Releases must still reach Phaser, so a drag let go over the
- * sheet ends (`isDown` clears).
+ * The HTML layer (bar, rail, sheet, reader, viewer, scrim, time bar, minimap chrome, toast) sits over the office
+ * canvas. A press that starts on it must not reach the office: the campus renderer hit-tests every press against
+ * the zones, screens and people under it, so a click in the Queue sheet must not open whatever is drawn beneath.
+ * Releases must still be handled, so a drag let go over the sheet ends rather than leaving the camera stuck to the
+ * cursor.
+ *
+ * SP9 re-scened this. The tower was a Phaser scene with window-level input listeners, which is what made the leak
+ * possible in the first place and what the original gate instrumented (`gameobjectdown` / `pointerdownoutside`).
+ * The campus draws to a plain canvas and binds its listeners to that element, so the gate reads the office through
+ * its own hit test instead: `__cubicle.hitAt(x, y)` says what the office has under a point, a listener on the canvas
+ * records every press that actually arrived there, and `dragging()` / `settled()` replace Phaser's pointer and
+ * tween flags. The claims are the same ones; only the instrument changed. There is no floor rail, so the rail check
+ * presses a zone tab and asserts the camera went to that zone.
  *
  * Runs a daemon on a temp vault, opens the built viewer in headless Chromium, parks the whiteboard under each HTML
  * element in turn, and clicks. Prints PASS: / FAIL: and exits non-zero on failure.
@@ -24,6 +32,7 @@ import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig } from '@cubicle/daemon';
 
 type Hit = { ev: string; x: number; y: number; go?: string; domTarget?: string };
+type OfficeHit = { kind: string; id: string } | null;
 type Rect = { x: number; y: number; w: number; h: number };
 type Point = { x: number; y: number };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -78,13 +87,12 @@ if (await page.waitForSelector('#firstrun:not([hidden])', { timeout: 15_000 }).t
 }
 
 /**
- * The zoom the helpers below hold the main camera at. 3 is what `open(kind)` itself zooms to, and it is also the
- * lowest step at which the whiteboard can reach the rail: the camera stops at the map bounds, and at zoom 2 the
- * board's screen x bottoms out around 256 — far right of the rail's x ≈ 22.
+ * The zoom the helpers below hold the main camera at. Close enough that the whiteboard is a wide target — its face
+ * is about 190 px across at this zoom — and far enough out that the camera's own clamp (the centre may leave the
+ * campus by three cells, no more) still lets the board reach every corner of the 1280 x 800 frame.
  */
-const ZOOM = 3;
-/** `__cubicle.zoom(z)` sets the zoom and hands back the main camera; it is the only way in to the camera and scene. */
-const camSettled = () => page.waitForFunction((z) => { const c = (window as unknown as Win).__cubicle.zoom(z); return !c.panEffect.isRunning && !c.zoomEffect.isRunning; }, ZOOM, { timeout: 10_000 });
+const ZOOM = 2.4;
+const camSettled = () => page.waitForFunction(() => (window as unknown as Win).__cubicle.settled() as boolean, undefined, { timeout: 10_000 });
 const framePainted = () => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
 const presentation = () => page.evaluate(() => { const l = document.getElementById('layer')!; return l.hidden ? null : l.dataset.presentation ?? null; });
 const panelTitle = () => page.evaluate(() => document.getElementById('panel-title')!.textContent?.trim() ?? null);
@@ -92,61 +100,85 @@ const hits = () => page.evaluate(() => { const w = window as unknown as Win; con
 const boxOf = async (selector: string): Promise<Rect> => { const b = (await page.locator(selector).boundingBox())!; if (!b) throw new Error(`setup: ${selector} has no box`); return { x: b.x, y: b.y, w: b.width, h: b.height }; };
 const centre = (r: Rect): Point => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
 const underIs = (p: Point, closest: string) => page.evaluate(({ p, closest }) => !!document.elementFromPoint(p.x, p.y)?.closest(closest), { p, closest });
-await camSettled();
+/** What the office itself has under a screen point — its own hit test, run without pressing anything. */
+const officeAt = (p: Point): Promise<OfficeHit> => page.evaluate(({ x, y }) => (window as unknown as Win).__cubicle.hitAt(x, y) as OfficeHit, p) as Promise<OfficeHit>;
 
 const failures: string[] = [];
 const fail = (msg: string) => { failures.push(msg); console.log(`FAIL: ${msg}`); };
 
-// What Phaser makes of each press: the game object it hit, and the DOM element the raw event actually targeted.
-// Nothing in here may be a *named* function (an inner `const f = () => …` included): tsx compiles those to a call
-// on an `__name` helper that exists in Node and not in the page, so the whole callback throws on arrival.
-await page.evaluate((z) => {
+/**
+ * Every press that actually reached the office canvas, with what the office had under it.
+ *
+ * This is the whole instrument. The campus binds its pointer handlers to the canvas element, so an event that the
+ * HTML layer swallowed never arrives here at all and `__hits` stays empty — which is exactly the claim each check
+ * below makes. Recorded in the capture phase so it sees the press before the renderer's own listener does, and a
+ * renderer that stopped listening would still be caught by the `pres`/`title` half of each check.
+ *
+ * Nothing in here may be a *named* function (an inner `const f = () => …` included): tsx compiles those to a call
+ * on an `__name` helper that exists in Node and not in the page, so the whole callback throws on arrival.
+ */
+await page.evaluate(() => {
   const w = window as unknown as Win;
-  const scene = w.__cubicle.zoom(z).scene;
   w.__hits = [];
-  scene.input.on('gameobjectdown', (p: { x: number; y: number; event?: Event }, go: { type: string }) => w.__hits.push({ ev: 'gameobjectdown', x: p.x, y: p.y, go: go.type, domTarget: (p.event?.target as Element | undefined)?.id || (p.event?.target as Element | undefined)?.tagName }));
-  scene.input.on('pointerdownoutside', (p: { x: number; y: number; event?: Event }) => w.__hits.push({ ev: 'pointerdownoutside', x: p.x, y: p.y, domTarget: (p.event?.target as Element | undefined)?.id || (p.event?.target as Element | undefined)?.tagName }));
-}, ZOOM);
+  const canvas = document.querySelector('#game canvas') as HTMLCanvasElement | null;
+  if (!canvas) throw new Error('setup: the office has no canvas');
+  for (const ev of ['pointerdown', 'pointerup']) {
+    canvas.addEventListener(ev, (e) => {
+      const pe = e as PointerEvent;
+      const r = canvas.getBoundingClientRect();
+      const hit = w.__cubicle.hitAt(pe.clientX - r.left, pe.clientY - r.top) as OfficeHit;
+      w.__hits.push({ ev, x: Math.round(pe.clientX), y: Math.round(pe.clientY), go: hit ? `${hit.kind}:${hit.id}` : undefined, domTarget: (pe.target as Element | undefined)?.id || (pe.target as Element | undefined)?.tagName });
+    }, true);
+  }
+});
+/** A press that reached the office with something of the office's under it. */
+const reachedOffice = (hs: Hit[]): boolean => hs.some((h) => h.ev === 'pointerdown' && !!h.go);
 
 /**
- * Pan so the whiteboard's hit box lies under `target` (a screen point inside `box`), then return the point to press
- * inside both. Throws rather than failing a check: a press that never had a game object beneath it would pass every
+ * Pan so the whiteboard's face lies under `target` (a screen point inside `box`), then return the point to press
+ * inside both. Throws rather than failing a check: a press that never had the board beneath it would pass every
  * assertion below while proving nothing.
+ *
+ * Iterative, not a single solve: `screenBox` measures the board's face, which stands 1.1 cells off the floor, while
+ * `toGrid` unprojects onto the floor plane — so one step lands a few pixels out and the next closes it. Three steps
+ * are enough at any zoom this script uses; the loop stops as soon as the board's centre is within two pixels.
  */
 async function parkWhiteboardUnder(target: Point, box: Rect, what: string, closest: string): Promise<Point> {
-  await camSettled();
-  await page.evaluate(({ W, H, target, z }) => {
-    const cam = (window as unknown as Win).__cubicle.zoom(z);
-    const b = cam.scene.surfaces.get('whiteboard').bg.getBounds();
-    cam.centerOn(b.centerX + (W / 2 - target.x) / z, b.centerY + (H / 2 - target.y) / z);
-  }, { W, H, target, z: ZOOM });
-  // `worldView` is recomputed in the camera's pre-render, so where the board *landed* can only be read after a frame.
+  await page.evaluate((z) => { (window as unknown as Win).__cubicle.zoom(z); }, ZOOM);
+  let geo: { x: number; y: number; w: number; h: number; cx: number; cy: number } | null = null;
+  for (let i = 0; i < 4; i++) {
+    await framePainted();
+    geo = await page.evaluate(() => (window as unknown as Win).__cubicle.screenBox('whiteboard') as { x: number; y: number; w: number; h: number; cx: number; cy: number } | null);
+    if (!geo) throw new Error('setup: the campus has no whiteboard screen');
+    const dx = geo.cx - target.x, dy = geo.cy - target.y;
+    if (Math.abs(dx) <= 2 && Math.abs(dy) <= 2) break;
+    await page.evaluate(({ dx, dy, W, H }) => {
+      const c = (window as unknown as Win).__cubicle;
+      const cell = c.toGrid(W / 2 + dx, H / 2 + dy) as { x: number; y: number };
+      c.center(cell.x, cell.y);
+    }, { dx, dy, W, H });
+  }
   await framePainted();
-  const geo = await page.evaluate((z) => {
-    const cam = (window as unknown as Win).__cubicle.zoom(z);
-    const b = cam.scene.surfaces.get('whiteboard').bg.getBounds();
-    const wv = cam.worldView;
-    return { x: (b.x - wv.x) * z, y: (b.y - wv.y) * z, w: b.width * z, h: b.height * z };
-  }, ZOOM);
+  geo = await page.evaluate(() => (window as unknown as Win).__cubicle.screenBox('whiteboard') as { x: number; y: number; w: number; h: number; cx: number; cy: number });
   const ix0 = Math.max(geo.x, box.x), ix1 = Math.min(geo.x + geo.w, box.x + box.w);
   const iy0 = Math.max(geo.y, box.y), iy1 = Math.min(geo.y + geo.h, box.y + box.h);
-  if (ix1 <= ix0 || iy1 <= iy0) throw new Error(`setup: whiteboard ${JSON.stringify(geo)} is not under ${what} ${JSON.stringify(box)} (the camera stops at the map bounds)`);
+  if (ix1 <= ix0 || iy1 <= iy0) throw new Error(`setup: the whiteboard ${JSON.stringify(geo)} is not under ${what} ${JSON.stringify(box)} (the camera stops three cells past the campus edge)`);
   const p = { x: Math.round((ix0 + ix1) / 2), y: Math.round((iy0 + iy1) / 2) };
-  const onBoard = await page.evaluate(({ p, z }) => { const cam = (window as unknown as Win).__cubicle.zoom(z); const wp = cam.getWorldPoint(p.x, p.y); return cam.scene.surfaces.get('whiteboard').bg.getBounds().contains(wp.x, wp.y) as boolean; }, { p, z: ZOOM });
-  if (!onBoard) throw new Error(`setup: Phaser does not place the whiteboard under (${p.x},${p.y})`);
+  const on = await officeAt(p);
+  if (on?.kind !== 'screen' || on.id !== 'whiteboard') throw new Error(`setup: the office does not place the whiteboard under (${p.x},${p.y}) — it has ${JSON.stringify(on)}`);
   if (!(await underIs(p, closest))) throw new Error(`setup: expected ${what} (${closest}) on top at (${p.x},${p.y})`);
   return p;
 }
 
-/** A spot on the canvas with nothing interactive under it, so a drag can start without opening a surface or an agent. */
+/** A spot on the canvas with nothing clickable under it, so a drag can start without opening a surface. */
 async function emptyOfficePoint(): Promise<Point> {
-  for (let y = 140; y <= 620; y += 80) for (let x = 90; x <= 620; x += 90) {
+  for (let y = 140; y <= 620; y += 60) for (let x = 130; x <= 1150; x += 70) {
     const p = { x, y };
     if (!(await underIs(p, '#game'))) continue;
-    await page.mouse.move(p.x, p.y);
-    await framePainted();
-    const clear = await page.evaluate((z) => { const sc = (window as unknown as Win).__cubicle.zoom(z).scene; return sc.input.hitTestPointer(sc.input.activePointer).length === 0; }, ZOOM);
-    if (clear) return p;
+    // Not an agent and not a screen: either would open a panel if the drag were ever mistaken for a click. The bare
+    // floor between the zones is what this is looking for, and there is plenty of it on one open plane.
+    const on = await officeAt(p);
+    if (on === null) return p;
   }
   throw new Error('setup: no empty spot on the office to start a drag from');
 }
@@ -162,7 +194,7 @@ await page.mouse.click(p1.x, p1.y);
 await page.waitForTimeout(300);
 const r1 = { hits: await hits(), pres: await presentation(), title: await panelTitle() };
 console.log('click in the sheet over the whiteboard →', JSON.stringify(r1));
-if (r1.hits.some((h) => h.ev === 'gameobjectdown')) fail('a press on the sheet reached a game object beneath it');
+if (reachedOffice(r1.hits)) fail('a press on the sheet reached the office beneath it');
 if (r1.pres !== 'sheet') fail(`the presentation changed to ${r1.pres} from a click inside the sheet`);
 if (r1.title !== 'Queue') fail(`the sheet changed to "${r1.title}" from a click inside it`);
 
@@ -179,40 +211,41 @@ await parkWhiteboardUnder(p1, body, 'the sheet body', '#panel');
 await hits();
 await page.mouse.up();
 await page.waitForTimeout(200);
-const r2 = { ...(await page.evaluate((z) => ({ isDown: (window as unknown as Win).__cubicle.zoom(z).scene.input.activePointer.isDown as boolean }), ZOOM)), hits: await hits(), pres: await presentation(), title: await panelTitle() };
+const r2 = { isDown: await page.evaluate(() => (window as unknown as Win).__cubicle.dragging() as boolean), hits: await hits(), pres: await presentation(), title: await panelTitle() };
 console.log('drag from the office, release over the sheet →', JSON.stringify(r2));
-if (r2.isDown) fail('after releasing over the sheet the pointer is still down (drag would keep panning)');
-if (r2.hits.some((h) => h.ev === 'gameobjectdown')) fail('a drag that started on the office hit a game object when released over the sheet');
+if (r2.isDown) fail('after releasing over the sheet the office is still dragging (the camera would keep following the cursor)');
+if (r2.hits.some((h) => h.ev === 'pointerdown' && !!h.go)) fail('a drag that started on the office pressed something when released over the sheet');
 if (r2.pres !== 'sheet' || r2.title !== 'Queue') fail(`releasing a drag over the sheet opened ${r2.pres} "${r2.title}"`);
 
 // 3. Clicks on the office itself still work and open the reader; Escape closes it.
 await page.evaluate(() => document.getElementById('panel-close')!.click());
 await page.waitForFunction(() => document.getElementById('layer')!.hidden, undefined, { timeout: 10_000 });
 await camSettled();
-await page.evaluate((z) => { const cam = (window as unknown as Win).__cubicle.zoom(z); cam.scene.input.activePointer.reset(); const b = cam.scene.surfaces.get('whiteboard').bg.getBounds(); cam.centerOn(b.centerX, b.centerY); }, ZOOM);
-await framePainted();
+await parkWhiteboardUnder({ x: W / 2, y: H / 2 }, { x: 0, y: 0, w: W, h: H }, 'the middle of the office', '#game');
 await hits();
 await page.mouse.click(W / 2, H / 2);
 await page.waitForTimeout(500);
 const r3 = { hits: await hits(), pres: await presentation(), title: await panelTitle() };
 console.log('click on the whiteboard in the office →', JSON.stringify(r3));
-if (!r3.hits.some((h) => h.ev === 'gameobjectdown' && h.domTarget === 'CANVAS')) fail('a click on the office no longer reaches the whiteboard');
+if (!r3.hits.some((h) => h.ev === 'pointerdown' && h.go === 'screen:whiteboard')) fail('a click on the office no longer reaches the whiteboard');
 if (r3.pres !== 'reader' || r3.title !== 'Plan') fail(`clicking the whiteboard opened ${r3.pres} "${r3.title}" instead of the Plan reader`);
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
 if ((await presentation()) !== null) fail('Escape did not close the reader');
 
-// 4. The rail: a press on the F3 tab over the whiteboard switches floors and never reaches the office.
-const tab3 = await boxOf('#rail [data-floor="3"]');
-const p4 = await parkWhiteboardUnder(centre(tab3), tab3, 'the F3 tab', '#rail');
+// 4. The zone rail: a press on the Dev tab over the whiteboard frames the Dev studio and never reaches the office.
+//    The floor rail is gone with the tower — there is one plane — so the tab under test is a zone, and what it has
+//    to do is take the camera there.
+const devTab = await boxOf('#rail [data-zone="dev"]');
+const p4 = await parkWhiteboardUnder(centre(devTab), devTab, 'the Dev tab', '#rail');
 await hits();
 await page.mouse.click(p4.x, p4.y);
 await page.waitForTimeout(300);
 await camSettled();
-const r4 = { hits: await hits(), floor: await page.evaluate(() => (window as unknown as Win).__cubicle.currentFloor() as number), pres: await presentation() };
-console.log('click on the F3 rail tab over the whiteboard →', JSON.stringify(r4));
-if (r4.hits.some((h) => h.ev === 'gameobjectdown')) fail('a press on the rail reached a game object beneath it');
-if (r4.floor !== 3) fail(`the rail tab did not take the camera to floor 3 (currentFloor = ${r4.floor})`);
+const r4 = { hits: await hits(), zone: await page.evaluate(() => (window as unknown as Win).__cubicle.zone() as string), pres: await presentation() };
+console.log('click on the Dev rail tab over the whiteboard →', JSON.stringify(r4));
+if (reachedOffice(r4.hits)) fail('a press on the rail reached the office beneath it');
+if (r4.zone !== 'dev') fail(`the rail tab did not take the camera to the Dev studio (zone = ${r4.zone})`);
 if (r4.pres !== null) fail('a press on the rail opened a panel');
 
 // 4b. The reader: the one level-2 presentation with a scrollable document under it. A press inside its body must
@@ -227,7 +260,7 @@ await page.mouse.click(p4b.x, p4b.y);
 await page.waitForTimeout(300);
 const r4b = { hits: await hits(), pres: await presentation(), title: await panelTitle() };
 console.log('click in the reader over the whiteboard →', JSON.stringify(r4b));
-if (r4b.hits.some((h) => h.ev === 'gameobjectdown')) fail('a press on the reader reached a game object beneath it');
+if (reachedOffice(r4b.hits)) fail('a press on the reader reached the office beneath it');
 if (r4b.pres !== 'reader') fail(`the presentation changed to ${r4b.pres} from a click inside the reader`);
 if (r4b.title !== 'Plan') fail(`the reader changed to "${r4b.title}" from a click inside it`);
 await page.keyboard.press('Escape');
@@ -261,7 +294,7 @@ await page.mouse.click(p5.x, p5.y);
 await page.waitForTimeout(300);
 const r5 = { hits: await hits(), pres: await presentation() };
 console.log('click in the viewer over the whiteboard →', JSON.stringify(r5));
-if (r5.hits.some((h) => h.ev === 'gameobjectdown')) fail('a press on the viewer reached a game object beneath it');
+if (reachedOffice(r5.hits)) fail('a press on the viewer reached the office beneath it');
 if (r5.pres !== 'viewer') fail(`the viewer changed to ${r5.pres} from a click inside it`);
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
@@ -284,7 +317,7 @@ await page.mouse.click(p6.x, p6.y);
 await page.waitForTimeout(300);
 const r6 = { hits: await hits(), pres: await presentation() };
 console.log('click on the toast over the whiteboard →', JSON.stringify(r6));
-if (r6.hits.some((h) => h.ev === 'gameobjectdown')) fail('a press on the toast reached a game object beneath it');
+if (reachedOffice(r6.hits)) fail('a press on the toast reached the office beneath it');
 if (r6.pres !== null) fail('a press on the toast text opened a panel');
 
 
@@ -429,5 +462,5 @@ await page.waitForFunction(() => document.getElementById('layer')!.hidden, undef
 await browser.close();
 await d.stop();
 if (failures.length) { console.log(`FAIL: ${failures.length} check(s) failed`); process.exit(1); }
-console.log('PASS: presses on the sheet, reader, rail, viewer and toast stay on the HTML layer; releases and office clicks still reach Phaser; a real proposal opens its reader and Approve decides it on the wire; the board transcript in the vault opens as a thread; an obsidian: link hands off without navigating');
+console.log('PASS: presses on the sheet, reader, rail, viewer and toast stay on the HTML layer; releases and office clicks still reach the campus; the zone rail takes the camera to Dev; a real proposal opens its reader and Approve decides it on the wire; the board transcript in the vault opens as a thread; an obsidian: link hands off without navigating');
 process.exit(0);

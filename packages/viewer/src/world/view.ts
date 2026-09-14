@@ -597,6 +597,12 @@ export class CampusView {
     for (const p of face) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
     return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
   }
+  /** What the office has under a screen point, without clicking it — the overlay gate's hit test. */
+  hitAt(px: number, py: number): { kind: 'agent' | 'screen' | 'zone'; id: string } | null { return this.pick(px, py); }
+  /** Whether a pointer is down on the canvas and carrying the camera. The overlay gate asserts this clears. */
+  isDragging(): boolean { return this.dragging; }
+  /** Whether the camera has finished easing to where it was sent. Every harness waits on this before it measures. */
+  isSettled(): boolean { return this.camera.settled; }
   /** The grid cell at a screen point, for the minimap and the harness. */
   toGrid(px: number, py: number): Cell { return this.camera.toGrid(px, py); }
 }

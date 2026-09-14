@@ -354,6 +354,12 @@ const shellHooks = (window as unknown as { __cubicle?: Record<string, unknown> }
   zones: () => scene.zoneSummary().map((z) => z.id),
   project: (x: number, y: number, z?: number) => scene.project(x, y, z),
   screenBox: (kind: string) => scene.screenBox(kind),
+  // The overlay gate's three: what the office would hit at a point, whether a drag is live, and whether the camera
+  // has stopped. None of them changes anything — they are how a harness reads the office without clicking it.
+  hitAt: (x: number, y: number) => scene.hitAt(x, y),
+  toGrid: (x: number, y: number) => scene.toGrid(x, y),
+  dragging: () => scene.isDragging(),
+  settled: () => scene.isSettled(),
   route: (role: string, target: string) => scene.debugRoute(role, target),
   theme: (mode: 'dark' | 'light' | 'system') => applyTheme(mode),
   stack: () => panel.stack.entries(),
