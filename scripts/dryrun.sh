@@ -17,6 +17,8 @@ case "${1:-status}" in
     mkdir -p "$V/.cubicle/run" "$V/.cubicle/logs"
     if [[ -f "$PIDF" ]] && kill -0 "$(cat "$PIDF")" 2>/dev/null; then echo "already running (pid $(cat "$PIDF"))"; exit 0; fi
     set -a; [[ -f .env ]] && . ./.env; set +a
+    # The owner's standing rule: the local model is theirs to lend. Cloud only unless DRYRUN_OLLAMA=1.
+    [[ "${DRYRUN_OLLAMA:-0}" = 1 ]] || export CUBICLE_DISABLE_PROVIDERS="${CUBICLE_DISABLE_PROVIDERS:-ollama}"
     CUBICLE_VAULT="$V" nohup node --import tsx/esm --conditions=development packages/daemon/src/cli.ts start "$V" --port "$PORT" >"$V/.cubicle/logs/daemon.log" 2>&1 &
     echo $! >"$PIDF"; sleep 4
     kill -0 "$(cat "$PIDF")" 2>/dev/null && echo "dry-run daemon pid $(cat "$PIDF") on port $PORT; office: $(grep -o 'http://127.0.0.1:[0-9]*/?token=[a-f0-9]*' "$V/.cubicle/logs/daemon.log" | tail -1)" || { tail -20 "$V/.cubicle/logs/daemon.log"; exit 1; } ;;
