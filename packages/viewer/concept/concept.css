@@ -1,0 +1,30 @@
+/* packages/viewer/concept/concept.css — what the concept adds to the product's own stylesheet: the zone rail that
+   replaces the floor rail, and the canvas the campus is painted on. Everything else on the screen is app.css. */
+
+:root {
+  /* the rail carries words now, not floor numbers */
+  --rail-w: 72px;
+}
+
+#stage { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+
+#rail { gap: 2px; padding: var(--s3) 5px; }
+#rail .ztab {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  min-height: 44px; padding: 7px 0 6px; border-radius: var(--r-s);
+  color: var(--text-2); font-size: 9.5px; font-weight: 600; letter-spacing: 0.015em; line-height: 1;
+}
+#rail .ztab .bar { width: 20px; height: 3px; border-radius: 2px; background: var(--zc, var(--text-3)); }
+#rail .ztab .n { font-size: 8.5px; font-weight: 600; opacity: 0.6; font-variant-numeric: tabular-nums; }
+#rail .ztab:hover { background: var(--surface-3); color: var(--text); }
+#rail .ztab[aria-current="true"] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--zc) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--zc) 48%, transparent);
+}
+#rail .ztab[aria-current="true"] .bar { background: var(--zc); }
+#rail .ztab.all { margin-bottom: var(--s2); }
+#rail .ztab.all .bar { background: linear-gradient(90deg, #78849A, #6472C4 34%, #7E9A80 67%, #D49A4C); }
+
+/* the sun/moon is a vector now: the pixel glyphs went out with the pixel tower */
+#time #sunmoon svg { display: block; }

@@ -335,8 +335,8 @@ export function nextIdeaForBoard(vault: Vault): IdeaFrontmatter | null {
  * finished business and is not listed again.
  *
  * "The sweep" is the common case and the heading's word, but the rule is provenance, not the sweep: a card some
- * *other* job filed on its own initiative (`source` is that job's id — see `provenanceFor`) is equally
- * unrequested, and belongs on the same list for the same reason.
+ * *other* job filed on its own initiative carries that job's id as its `source`, which `OWNER_SEEN_IDEA_SOURCES`
+ * does not name — so it is equally unrequested, and belongs on the same list for the same reason.
  */
 export function sweepIdeas(vault: Vault): IdeaFrontmatter[] {
   return listIdeas(vault).filter((i) => i.decision === 'undecided' && !ownerHasSeenIdea(i));
@@ -435,7 +435,11 @@ export function writeIdeaCard(vault: Vault, idea: NewIdea, by: string): string {
   return slug;
 }
 
-/** What a pivot card records as its provenance. `IDEA_SOURCES` knows the word; nothing else may spell it. */
+/**
+ * What a pivot card records as its provenance — one constant, because nothing else may spell it. Deliberately
+ * not a member of `IDEA_SOURCES` (see there); `OWNER_SEEN_IDEA_SOURCES` matches it by name, so a pivot the owner
+ * was shown reaches the board like a card they typed.
+ */
 export const BOARD_IDEA_SOURCE = 'board';
 
 /** How much of one pivot becomes a card title. Long enough to read as an idea, short enough to be a filename. */

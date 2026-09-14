@@ -274,4 +274,22 @@ describe('P8-15: the first stream and the first jobs wait for the adopted founde
     expect(seedFirstJobs(vault, loadOrg(vault))).toEqual([]);
     expect(listInbox(vault).filter((n) => n.data.kind === 'founder_brief')).toEqual([]);
   });
+
+  it('a heartbeat that gathered before the adoption and completed after it does not stop the seeding', () => {
+    // The owner adopts the brief while a heartbeat is in flight — the ordinary case on a live daemon, where a
+    // cycle takes minutes and the owner clicks whenever they like. That cycle gathered before the brief existed,
+    // so its brief step said "waiting for the founder brief" and seeded nothing; its `heartbeat.completed`
+    // nonetheless lands *after* the brief's write, and a guard that only asks "did any heartbeat complete since
+    // the adoption?" reads it as the seeding cycle. The first cycle that actually gathered with the brief then
+    // seeds nothing, and the company starts with a stream and no work — the journey's stall at "the three first
+    // jobs".
+    const gatheredBefore = new Date(Date.now() - 5_000).toISOString();
+    adoptFounderBrief(vault);
+    vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'in-flight', gathered_at: gatheredBefore } });
+    expect(seedFirstJobs(vault, loadOrg(vault)), 'the in-flight cycle never saw the brief, so the next one seeds').toHaveLength(3);
+    // And the cycle that did seed — gathered after the adoption — is the one that closes the window for good.
+    vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seeded', gathered_at: nowIso() } });
+    for (const j of listJobs(vault)) if (FIRST_JOB_TITLES.includes(j.title as never)) vault.updateNote(`Jobs/${j.id}.md`, (n) => ({ data: { ...n.data, status: 'cancelled' }, body: n.body }), 'daemon');
+    expect(seedFirstJobs(vault, loadOrg(vault)), 'once only').toEqual([]);
+  });
 });

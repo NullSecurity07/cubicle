@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  renderInterviewAsked, closeInterview, supersedeInterview, interviewPhase, interviewClosed,
+  renderInterviewAsked, closeInterview, supersedeInterview, interviewPhase,
   interviewSuperseded, ownerAnsweredInterview, INTERVIEW_SUPERSEDED_HEADING,
 } from '../src/discovery.js';
 
@@ -18,7 +18,6 @@ describe('the interview closes when the brief is adopted (ruling W3-7)', () => {
     const closed = supersedeInterview(ASKED)!;
     expect(interviewSuperseded(closed)).toBe(true);
     expect(interviewPhase(closed)).toBe('superseded');
-    expect(interviewClosed(interviewPhase(closed))).toBe(true);
     // The CEO answered the six itself; a brief may not cite those as the owner's word (ruling P8-13).
     expect(ownerAnsweredInterview(closed)).toBe(false);
   });
@@ -38,11 +37,16 @@ describe('the interview closes when the brief is adopted (ruling W3-7)', () => {
     expect(supersedeInterview('   ')).toBeNull();
   });
 
-  it('leaves an open interview open, and an unasked one unasked', () => {
-    expect(interviewClosed(interviewPhase(ASKED))).toBe(false);
-    expect(interviewClosed(interviewPhase(null))).toBe(false);
-    // The three endings that already closed it stay closed.
-    expect(interviewClosed(interviewPhase(closeInterview(ASKED, 'skip')))).toBe(true);
-    expect(interviewClosed(interviewPhase(closeInterview(ASKED, 'go')))).toBe(true);
+  it('leaves a transcript that already records why it ended exactly as it is', () => {
+    // A skip and an endorsement each already say how the interview ended, and `interviewPhase` reads the first
+    // heading it finds — a second note under the first would be a line nobody ever reads.
+    const skipped = closeInterview(ASKED, 'skip');
+    expect(supersedeInterview(skipped)).toBeNull();
+    expect(interviewPhase(skipped)).toBe('skipped');
+    // An endorsement is the owner having spoken, so the adoption does stamp it: what ended that interview and
+    // what the company now plans against are two different facts, and the transcript should carry both.
+    const endorsed = closeInterview(ASKED, 'go');
+    expect(interviewPhase(endorsed)).toBe('answered');
+    expect(supersedeInterview(endorsed)).toContain(INTERVIEW_SUPERSEDED_HEADING);
   });
 });

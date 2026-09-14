@@ -36,7 +36,11 @@ const progressOf = (v: Vault) => () => v.events.query({ limit: 1, order: 'desc' 
 export async function planUntilFannedOut(d: Daemon, v: Vault, expected: number): Promise<void> {
   const progress = progressOf(v);
   await waitForProgress(() => v.events.count('heartbeat.completed') >= 1, { progress, what: 'the first heartbeat' });
-  const divisionPlans = () => listJobs(v).filter((j) => j.type === 'division.plan');
+  // Only the heartbeat's own fan-out: a lead's division plan files jobs of the same type for the week ahead, and
+  // those are neither what `expected` counts nor what `team.planned` is emitted for (the heartbeat records the
+  // plans it parented, see `emitPlanned`). Counting them made the wait below unreachable once a lead had planned.
+  const heartbeats = () => new Set(listJobs(v).filter((j) => j.type === 'ceo.heartbeat').map((j) => j.id));
+  const divisionPlans = () => { const hb = heartbeats(); return listJobs(v).filter((j) => j.type === 'division.plan' && !!j.parent && hb.has(j.parent)); };
   // Keep asking for another heartbeat while we wait. This is the one loop here that cannot be purely
   // stall-driven: asking is itself a write, so the vault is never silent while it runs, and the stall detector
   // would never fire. The ceiling is read from the load *now* rather than at import, which is the flake this
