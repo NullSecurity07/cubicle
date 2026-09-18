@@ -317,7 +317,7 @@ const PLAN_EXCERPT_CHARS = 3000;
  * pre-mortem decision note because this is the one place the owner is being asked to rule, and a verdict asked
  * for without the case against it is not a decision.
  */
-export function planVerdictBody(opts: { board: 'pass' | 'return'; findings: string[]; plan: string; decidesAfterHours: number; transcript?: string; questions?: string[] }): string {
+export function planVerdictBody(opts: { board: 'pass' | 'return'; findings: string[]; plan: string; decidesAfterHours: number; transcript?: string; questions?: string[]; pivot?: string }): string {
   const findings = opts.findings.length
     ? opts.findings.map((f) => `- ${f}`).join('\n')
     : '- The board raised nothing that would sink the cycle.';
@@ -330,7 +330,10 @@ export function planVerdictBody(opts: { board: 'pass' | 'return'; findings: stri
   const deadline = opts.decidesAfterHours > 0
     ? `; after ${opts.decidesAfterHours} h the board's verdict stands (\`board_decides_after_hours\` in Memory/constitution.md)`
     : '';
-  return `The board ${opts.board === 'pass' ? 'passed' : 'returned'} this plan.\n\n${findings}${transcript}${questions}\n\n## The plan\n\n${opts.plan.slice(0, PLAN_EXCERPT_CHARS)}\n\nSet \`approved: true\` to let the divisions plan against it, or \`approved: false\` to send it back. Work already approved keeps running while you decide${deadline}.`;
+  // Ruling W4-2: the board asked for a different product and the CEO wrote the plan it was asked to write.
+  // That disagreement is real and it is the owner's, so it is stated with both options in it.
+  const disagree = opts.pivot ? `\n\n${planPivotDisagreement(opts.pivot)}` : '';
+  return `The board ${opts.board === 'pass' ? 'passed' : 'returned'} this plan.\n\n${findings}${disagree}${transcript}${questions}\n\n## The plan\n\n${opts.plan.slice(0, PLAN_EXCERPT_CHARS)}\n\nSet \`approved: true\` to let the divisions plan against it, or \`approved: false\` to send it back. Work already approved keeps running while you decide${deadline}.`;
 }
 
 /**
@@ -1695,7 +1698,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
   let job = read().data;
   if (job.status === 'cancelled') return { status: 'cancelled' };
   const stateRel = `.cubicle/jobs/${jobId}.heartbeat.json`;
-  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; boardNote?: string; boardQuestions?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; researchJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; planRefused?: string[]; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
+  const loadState = (): Partial<Gathered & { discoveryJob?: string; companyPlanJob?: string; boardJob?: string; boardVerdict?: 'pass' | 'return'; boardFindings?: string[]; boardNote?: string; boardQuestions?: string[]; vetoes?: number; planWaiting?: string; verdictProposal?: string; verdict?: 'approved' | 'rejected' | 'pending'; divisionPlanJobs?: string[]; runPath?: string; heartbeatId: string; planPending?: boolean; discoveryPending?: boolean; estimateJobs?: string[]; researchJobs?: string[]; estimatesPending?: boolean; ideaJudged?: string; planSkipped?: { planDate: string; open: number }; planRefused?: string[]; vetoedIdeas?: string[]; pivotCard?: string; feedbackShas?: string[]; commentBaselines?: Record<string, string[]> }> => { try { return JSON.parse(vault.readTextOrNull(stateRel) ?? '{}'); } catch { return {}; } };
   const saveState = (s: object) => { const { atomicWriteSync } = require_core(); atomicWriteSync(vault.abs(stateRel), JSON.stringify(s, null, 2)); };
   let state = loadState();
   const hbId = jobId;
@@ -2320,7 +2323,10 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           vault.events.emit({ type: 'plan.vetoed', agent: board.lead, job: jobId, payload: { findings, vetoes, reason } });
           if (vetoes === 1) {
             // One rewrite, then the owner rules on whatever the CEO produced: the board cannot stall the company.
-            state = { ...state, vetoes, companyPlanJob: undefined, boardJob: undefined, boardVerdict: undefined }; saveState(state);
+            // Ruling W4-2: what the vetoed plan served is remembered here, because the rewrite has to serve the
+            // same ideas — a return answers findings about the ideas the owner kept and is never a licence to
+            // plan a different business (the live run took it as one, four pivots deep).
+            state = { ...state, vetoes, vetoedIdeas: planIdeaSlugs(plan), companyPlanJob: undefined, boardJob: undefined, boardVerdict: undefined }; saveState(state);
             updateJob(vault, jobId, { status: 'queued', checkpoint_step: i - 1, blocked_on: undefined }, 'ceo', `- step ${i + 1} board_premortem: returned (${reason}); rewriting the plan`);
             return { status: 'requeued', attempt: job.attempt };
           }
@@ -2340,10 +2346,14 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // ideas and not about how a heartbeat is shaped, and it is read before any model call for the same reason
         // the check above is.
         const planCheck = checkPlan(vault, plan);
-        const guardFindings = [...unkeptIdeaFindings(unkept), ...planCheck.findings];
+        // …and, on a rewrite, the third half of it (ruling W4-2): the plan the board returned served some set of
+        // kept ideas, and the plan that comes back may not have reached for a new one. Read before any model
+        // call, like both checks above, and for the same reason.
+        const rewriteCheck = checkPlanRewrite(plan, state.vetoedIdeas ?? []);
+        const guardFindings = [...unkeptIdeaFindings(unkept), ...planCheck.findings, ...rewriteCheck.findings];
         // Whole budget here (no board findings to make room for), the board's share below.
         const guardOnlyFindings = planReturnFindings(guardFindings);
-        const guardReturns = unkeptForcesReturn(unkept) || !planCheck.ok;
+        const guardReturns = unkeptForcesReturn(unkept) || !planCheck.ok || !rewriteCheck.ok;
         if (guardReturns) {
           // The pre-mortem note the cycle owes, in the guard's own words: `writeBoardPremortemDecision` would
           // point the reader at a board job that does not exist and promise "the advisors' own words" nobody
@@ -2366,7 +2376,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           // the CEO rewrites against and what the owner reads is the capped list, the same budget the board's
           // own return gets: a plan naming twenty scrapped ideas must not become a twenty-bullet prompt.
           state = { ...state, boardVerdict: 'return', boardFindings: guardOnlyFindings }; saveState(state);
-          const out = returnPlan(guardOnlyFindings, planCheck.ok ? 'unkept ideas' : 'objectives that serve no kept idea');
+          const out = returnPlan(guardOnlyFindings, !rewriteCheck.ok ? 'the rewrite changed what the company sells' : planCheck.ok ? 'unkept ideas' : 'objectives that serve no kept idea');
           if (out) return out;
           // Twice. The plan is not run and the board is not asked (ruling W3-1): a CEO that cannot write a plan
           // against the ideas the owner kept is not a thing another rewrite fixes, and the owner is the only one
@@ -2420,6 +2430,8 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           text: [session.chairText, ...session.findings].filter(Boolean).join('\n'),
           findings: session.findings, subject: `this cycle's plan`, transcript: session.notePath, by: board.lead, now: now(),
         });
+        // Ruling W4-2: the owner's plan verdict names the pivot so the disagreement is theirs to settle.
+        if (pivoted) { state = { ...state, pivotCard: pivoted }; saveState(state); }
         if (session.verdict === 'return') {
           const out = returnPlan(boardFindings, 'board return');
           if (out) return out;
