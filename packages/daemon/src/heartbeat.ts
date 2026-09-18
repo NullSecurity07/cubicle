@@ -640,7 +640,7 @@ export function chairReaskPrompt(s: BoardSubject, transcript: string, why: strin
   return [
     `That answer was not usable: ${why}.`,
     '',
-    `Answer again on "${s.title}", from the same advisors' notes. The first line must be exactly "VERDICT: " followed by one of ${PRESSURE_VERDICTS.join(', ')} and nothing else, then the RUBRIC line, then the WEDGE line if you are pivoting, then the five parts. Decide. In full, the form your answer owes:`,
+    `Answer again on "${s.title}", from the same advisors' notes. The first line must be exactly "VERDICT: " followed by one of ${PRESSURE_VERDICTS.join(', ')} and nothing else, then the RUBRIC line, then the WEDGE and PIVOT TITLE lines if you are pivoting, then the five parts. Decide. In full, the form your answer owes:`,
     '',
     ...chairFormat(),
     '',

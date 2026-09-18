@@ -446,19 +446,86 @@ export const BOARD_IDEA_SOURCE = 'board';
 /** How much of one pivot becomes a card title. Long enough to read as an idea, short enough to be a filename. */
 export const PIVOT_TITLE_CHARS = 70;
 
+/** The line the chair is asked to write on a pivot, so the card's title is the chair's own naming of it. */
+export const PIVOT_TITLE_LABEL = 'PIVOT TITLE:';
+const PIVOT_TITLE_LINE_RE = /^[ \t]*(?:>[ \t]*)*(?:#{1,6}[ \t]*)?(?:[-*+][ \t]+)?[*_`]*[ \t]*pivot[ \t]+title[*_`]*[ \t]*[:\-–—][ \t]*(.+)$/im;
+
 /**
- * A title for the pivot the chair proposed: what it wants the company to do instead, not what it said was wrong.
+ * Verbs a board writes a chore with. A title that opens on one of these is an action item, not an opening: the
+ * owner was asked "Keep, park or scrap: Secure at least one anchor customer who has documented a ≥$500 monthly
+ * bill spike", which is a task somebody could be given and not a business anybody could rule on.
+ */
+const PIVOT_VERB_RE = /^(?:secure|build|ship|launch|create|develop|define|target|focus|pivot|shift|move|switch|transition|acquire|find|get|win|sell|offer|deliver|validate|test|explore|pursue|establish|position|reposition|start|stop|add|remove|automate|implement|improve|increase|reduce|expand|narrow|refocus|prioritis|prioriz|convert|onboard|reach|attack|serve)\w*\s+/i;
+
+/** The little words a clause may open on once its verb is gone: "at least one anchor customer" → the customer. */
+const PIVOT_LEAD_RE = /^(?:at\s+least\s+|at\s+most\s+)?(?:a|an|the|one|to|for|towards?|on|into|onto|our|its|their)\s+/i;
+
+/** How a wedge separates who it is for from what they are sold: "<customer>, targeted via <product>". */
+const WEDGE_SPLIT_RE = /,?\s+(?:targeted\s+via|targeted\s+with|reached\s+via|reached\s+through|served\s+(?:by|with)|sold\s+(?:via|through)|via|using|through|with)\s+/i;
+
+/** How a fix names its customer: "<product> for <customer>", "<product> to <customer>". */
+const PIVOT_FOR_RE = /^([\s\S]{4,120}?)\s+(?:for|to|aimed\s+at|targeting)\s+([\s\S]{4,160})$/i;
+
+/**
+ * A machine label a clause may still carry when it is read straight off the chair's answer rather than through
+ * `pressurePivot`. Stripped here so both routes give the same title.
+ */
+const PIVOT_LABEL_RE = /^(?:wedge|pivot\s+title|verdict|finding)[ \t]*[:\-–—][ \t]*/i;
+
+/** One clause, trimmed of its label, leading verb and article, with its first letter left as the author wrote it. */
+function nounPhrase(clause: string): string {
+  return clause.replace(/\s+/g, ' ').trim()
+    .replace(PIVOT_LABEL_RE, '')
+    .replace(/^[-–—:,*_`]+\s*/, '')
+    .replace(PIVOT_VERB_RE, '')
+    .replace(PIVOT_LEAD_RE, '')
+    .replace(/[.,;:*_`]+$/, '')
+    .trim();
+}
+
+/** A title cut to a filename's worth of words, with its first letter raised. */
+function asTitle(text: string): string {
+  const one = text.replace(/\s+/g, ' ').trim();
+  const cut = one.length > PIVOT_TITLE_CHARS ? `${one.slice(0, PIVOT_TITLE_CHARS).replace(/\s+\S*$/, '')}…` : one;
+  return cut.replace(/^./, (c) => c.toUpperCase());
+}
+
+/**
+ * A title for the pivot the chair proposed: **a product and a customer**, never a verb phrase (ruling W4-7).
  *
- * "Pivot from a newsletter **to** a high-intent, affiliate-driven deployment service" carries its proposal after
- * the `to`, so that is looked for first; a fix-by clause is already nothing but the proposal, so its own first
- * clause stands. Falls back to naming the subject, which is honest and never empty: a card whose title is the
- * first seventy characters of a complaint would be filed under the wrong name for ever.
+ * The second dry-run filed two good cards under two bad names — `Ideas/secure-at-least-one-anchor-customer-who-has-docu.md`
+ * and `Ideas/automated-stripe-webhook-replay-protection.md` — and then asked the owner "Keep, park or scrap:
+ * Secure at least one anchor customer who has documented a ≥$500 monthly bill spike". Filing the card was
+ * right; the title was a chore off a to-do list, and an opening is what the owner is being asked to rule on.
+ *
+ * Three readings, in order. The chair's own `PIVOT TITLE:` line wins, because it is the one asked for and the
+ * chair is the only party that knows what it meant. Otherwise the clause is split into who it is for and what
+ * they are sold — a wedge writes the customer first ("…founders whose checkout exceeds 4 seconds, targeted via
+ * a 60-second Loom audit"), a fix writes the product first ("a remediation retainer for teams with a bill
+ * spike") — and comes back as "<product> for <customer>". Failing that, the leading verb comes off so what is
+ * left is at least a thing and not an instruction.
  */
 export function pivotTitle(pivot: string, subject: string): string {
-  const to = pivot.match(/\bpivot(?:ing|ed)?\s+(?:away\s+)?(?:from\s+[\s\S]{1,160}?\s+)?to\s+([^.;\n]{4,160})/i)?.[1];
-  const head = (to ?? pivot.split(/[.;\n]/)[0] ?? '').replace(/\s+/g, ' ').trim().replace(/^[-–—:,]+\s*/, '');
-  const cut = head.length > PIVOT_TITLE_CHARS ? `${head.slice(0, PIVOT_TITLE_CHARS).replace(/\s+\S*$/, '')}…` : head;
-  return cut.length >= 8 ? cut.replace(/^./, (c) => c.toUpperCase()) : `Board pivot on ${subject}`;
+  const said = (pivot ?? '').replace(/\r/g, '');
+  const asked = said.match(PIVOT_TITLE_LINE_RE)?.[1]?.trim();
+  if (asked && nounPhrase(asked).length >= 8) return asTitle(nounPhrase(asked));
+
+  const to = said.match(/\bpivot(?:ing|ed)?\s+(?:away\s+)?(?:from\s+[\s\S]{1,160}?\s+)?to\s+([^.;\n]{4,160})/i)?.[1];
+  const clause = (to ?? said.split(/[.;\n]/).map((l) => l.trim()).find((l) => l.length > 8) ?? '').trim();
+  if (!clause) return `Board pivot on ${subject}`;
+
+  // A wedge: the customer is named first and the thing they are sold comes after the connector.
+  const wedge = clause.split(WEDGE_SPLIT_RE);
+  if (wedge.length > 1) {
+    const customer = nounPhrase(wedge[0]);
+    const product = nounPhrase(wedge.slice(1).join(' '));
+    if (customer.length >= 4 && product.length >= 4) return asTitle(`${product} for ${customer}`);
+  }
+  // A fix: the product is named first, its customer after "for".
+  const phrase = nounPhrase(clause);
+  const split = phrase.match(PIVOT_FOR_RE);
+  if (split) return asTitle(`${split[1].trim()} for ${split[2].trim()}`);
+  return phrase.length >= 8 ? asTitle(phrase) : `Board pivot on ${subject}`;
 }
 
 /**
@@ -486,7 +553,9 @@ export function fileBoardPivot(
     source: BOARD_IDEA_SOURCE,
     evidence: [o.transcript],
     created: o.created,
-    what_changed: `The board pressure-tested ${o.subject} and proposed a pivot rather than the business as it stands. Nothing is planned against this until you keep it.`,
+    // Ruling W4-7: the chair's own sentence is the first line of the card, above the explanation of what a
+    // pivot card is — the owner reads what the board is proposing before they read why they are being asked.
+    what_changed: `${pivot}\n\nThe board pressure-tested ${o.subject} and proposed this rather than the business as it stands. Nothing is planned against it until you keep it.`,
     why_it_matters: `The chair's own words: ${pivot}`,
   }, o.by);
 }
