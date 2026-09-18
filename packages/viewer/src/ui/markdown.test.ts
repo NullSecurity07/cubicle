@@ -20,12 +20,15 @@ describe('the reader\'s markdown (W5-3)', () => {
   });
 
   it('renders _italics_ as italics, and leaves snake_case alone', () => {
-    expect(md('_Resolved at nine: applied to Brand/name.md_')).toContain('<i>Resolved at nine: applied to Brand/name.md</i>');
-    expect(md('She said _no_.')).toContain('<i>no</i>');
-    // Identifiers are not emphasis: an owner reading about `score_inputs` or a file must see the words as typed.
+    // `<em>`, because `<i>` is this reader's wikilink and `.prose i` is upright by design.
+    expect(md('_Resolved at nine: applied to Brand/name.md_')).toContain('<em>Resolved at nine: applied to Brand/name.md</em>');
+    expect(md('She said _no_.')).toContain('<em>no</em>');
+    expect(md('[[Ideas/meal-kits]]')).toContain('<i>Ideas/meal-kits</i>');
+    // Identifiers are not emphasis: an owner reading about `score_inputs` or a job id must see them as typed.
     expect(md('score_inputs and effort_value')).toContain('score_inputs and effort_value');
-    expect(md('score_inputs and effort_value')).not.toContain('<i>');
-    expect(md('a_b_c')).not.toContain('<i>');
+    expect(md('score_inputs and effort_value')).not.toContain('<em>');
+    expect(md('a_b_c')).not.toContain('<em>');
+    expect(md('[speed](https://a.example/_b_)')).not.toContain('<em>');
   });
 
   it('escapes first, so a note can never write HTML into the office', () => {

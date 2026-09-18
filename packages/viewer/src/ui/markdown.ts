@@ -10,6 +10,9 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
  * `job_20260918_c70b39` and a URL's own underscores are printed as they were typed, and only a run of text the
  * note really wrapped becomes italic. `*` is left to `**bold**`, which is the only star this reader has ever
  * rendered. Run over already-escaped text, so `_<b>_` is still shown, never obeyed.
+ *
+ * `<em>`, not `<i>`: `<i>` is this reader's [[wikilink]], and `.prose i` is deliberately *not* italic. Two
+ * meanings need two tags, or rendering the emphasis would have printed it upright.
  */
 const EM = /(^|[\s(["'>])_([^_`\n]+)_(?=$|[\s.,;:!?)\]"'<])/g;
 
@@ -32,7 +35,7 @@ export function md(src: string): string {
     if (raw.startsWith('```')) { if (inList) { out.push('</ul>'); inList = false; } inCode = !inCode; out.push(inCode ? '<pre>' : '</pre>'); continue; }
     if (inCode) { out.push(esc(raw)); continue; }
     if (RULE.test(raw)) { if (inList) { out.push('</ul>'); inList = false; } out.push('<hr>'); continue; }
-    const line = esc(raw).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(EM, '$1<i>$2</i>').replace(/\[\[([^\]]+)\]\]/g, '<i>$1</i>').replace(/\[([^\]]+)\]\(((?:https?|obsidian):[^)\s]+)\)/g, (_m, t: string, u: string) => `<a href="${u.replace(/"/g, '%22')}"${u.startsWith('http') ? ' target="_blank" rel="noopener"' : ' class="vaultlink" data-obsidian="1"'}>${t}</a>`);
+    const line = esc(raw).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(EM, '$1<em>$2</em>').replace(/\[\[([^\]]+)\]\]/g, '<i>$1</i>').replace(/\[([^\]]+)\]\(((?:https?|obsidian):[^)\s]+)\)/g, (_m, t: string, u: string) => `<a href="${u.replace(/"/g, '%22')}"${u.startsWith('http') ? ' target="_blank" rel="noopener"' : ' class="vaultlink" data-obsidian="1"'}>${t}</a>`);
     const h = line.match(/^(#{1,3})\s+(.*)$/);
     const li = line.match(/^\s*[-*]\s+(.*)$/);
     if (li) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${li[1]}</li>`); continue; }
