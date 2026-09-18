@@ -126,7 +126,9 @@ describe('review gates (spec §3)', () => {
     const quality = listJobs(vault).find((j) => j.type === 'research.review')!;
     expect(quality.assigned).not.toBe('research_manager');
     expect(vault.readNoteOrNull('Teams/research.md')!.data.members).toContain(quality.assigned); // another research role, per the brief's fallback order
-    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => String(e.payload.message).includes("the job's own author"))).toBe(true);
+    // Ruling W4-12: the roster decides this when the gate is resolved, so there is nothing to warn about. The
+    // 2026-09-14 run logged three of these warnings, which is three times the roster said "review your own work".
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => String(e.payload.message).includes("the job's own author"))).toBe(false);
     // M2: the reviewer is told which bar to judge against — the gate criteria measure evidence against the
     // requester's required confidence, which was not on the gate job before.
     const body = readJob(vault, quality.id)!.body;

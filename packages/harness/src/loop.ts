@@ -3,7 +3,7 @@ import path from 'node:path';
 import {
   type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
   readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
-  loadGates, gatesForRisk, criteriaFor, gateAssignee, gateTier, normaliseGateResult, type GateTable,
+  loadGates, gatesForRisk, criteriaFor, gateAssignee, gateTier, otherEyesFor, normaliseGateResult, type GateTable,
   loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
   trustReviewsFor, trustDecision, trustVerdictFor, recordTrustVerdict, CLASSIFIER_UNAVAILABLE_HOLD,
@@ -329,18 +329,6 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     return { status: finalStatus === 'in_review' ? 'done' : finalStatus, result } as JobOutcome;
   };
 
-  /**
-   * The room a gate's name points at, with the `office:`/`team:` prefix stripped. Gates are named by office
-   * (`office:operations.verify`) or by room (`team:qa.review`); the pre-office names (`qa.review`) carry the
-   * room id bare. Everything downstream of the assignee — the second-pair-of-eyes search, above all — wants
-   * that bare id, not the prefixed one.
-   */
-  const gateRoom = (gate: string): string => {
-    const dot = gate.lastIndexOf('.');
-    const head = dot === -1 ? gate : gate.slice(0, dot);
-    return head.replace(/^(?:office|team):/, '');
-  };
-
   /** True when `gate` is the QA review, under its office-era name or the pre-office one. */
   const isQaGate = (gate: string) => gate === 'team:qa.review' || gate === 'qa.review';
   /** True when `gate` is the security review, under either name. */
@@ -348,21 +336,12 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   /** True when `gate` is the operations verification (`office:operations.verify` / `coo.verify`). */
   const isVerifyGate = (gate: string) => gate.endsWith('.verify');
 
-  /**
-   * A gate is a second pair of eyes (spec §4), so nobody reviews their own work. When the resolved assignee is
-   * the job's own author — the shape `research.review` has by default, since both the `research` job and its
-   * gate resolve to the research team's lead — hand the gate to someone else, in the brief's order: an active
-   * member of the gate's team (the research lead's team for `research.review`), then that lead's own lead (the
-   * COO for Research), then the CEO. Returns null when the author is genuinely the only person who could look.
-   */
-  const secondPairOfEyes = (gate: string, assignee: string, author: string): string | null => {
-    const team = org.teams[gateRoom(gate)] ?? teamOf(org, assignee);
-    const candidates = [...(team?.members ?? []), team?.lead ?? '', leadOf(org, assignee) ?? '', officeHolder(org, 'chief_executive')];
-    return candidates.find((c) => c && c !== author && org.roles[c]) ?? null;
-  };
-
   /** Create the review job for one gate of `parent`. */
   const enqueueGate = (gate: string, parent: JobFrontmatter, result: JobResult): void => {
+    // `gateAssignee` has already excluded the author (ruling W4-12): a gate is a second pair of eyes (spec §4),
+    // and `research.review` resolves to the research room's lead, who is also who most `research` jobs are
+    // assigned to. That used to be caught here, after the fact, with a `daemon.warning` per occurrence — three
+    // of them in the 2026-09-14 run. There is nothing left to warn about.
     let assignee = resolveRole(org, gateAssignee(gate, parent, org));
     // The named assignee may have no active worker (role fired/deactivated, or a `for`/owner_role naming an
     // unknown role): fall back to its lead so the parent never sits in_review forever (F1).
@@ -372,17 +351,9 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       events.emit({ type: 'daemon.warning', agent: roleId, job: parent.id, payload: { where: 'enqueueGate', message: `gate ${gate} assignee "${assignee}" has no active worker; reassigned to ${fallback}` } });
       assignee = fallback;
     }
-    // C1/M9: the author is not their own reviewer. research_manager both authors `research` jobs and leads the
-    // team `research.review` resolves to, and `requester.review` falls back to the same lead when the decision
-    // owner went inactive — either way the gate would have been a self-review and the spec's quality gate would
-    // do nothing.
-    if (assignee === parent.assigned) {
-      const other = secondPairOfEyes(gate, assignee, parent.assigned);
-      if (other) {
-        events.emit({ type: 'daemon.warning', agent: roleId, job: parent.id, payload: { where: 'enqueueGate', message: `gate ${gate} resolved to the job's own author ${assignee}; reassigned to ${other}` } });
-        assignee = other;
-      }
-    }
+    // …and once more after `resolveRole` and the inactive-worker fallback, both of which can land back on the
+    // author by a route `gateAssignee` never saw. Silent: this is the roster being applied, not an incident.
+    if (assignee === parent.assigned) assignee = otherEyesFor(gate, assignee, parent.assigned, org) ?? assignee;
     const criteria = criteriaFor(gates, parent.type);
     // The gate's *own* criteria, when it has one (research.review's §35 checklist, team:qa.review's "cite a file").
     // `gates[gate]` is read directly rather than through criteriaFor so a gate with no entry stays silent
