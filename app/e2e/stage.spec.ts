@@ -278,8 +278,14 @@ test('a browser card can be added; only a wired person can drive it, and never t
   await send(page, 'build', '/tool browse {"action":"open","url":"http://127.0.0.1:7431/api/stage"}');
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('cannot be opened');
 
+  await card.hover();
+  await card.getByRole('button', { name: 'Show window' }).click();
+  await expect(card.getByRole('button', { name: 'Window shown' })).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).cards[0].headed).toBe(true);
+
   await page.reload();
   await expect(page.locator('.react-flow__node-browser')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node-browser').getByRole('button', { name: 'Window shown' })).toBeVisible();
 });
 
 test('an email waits for the founder, who can edit it, then it goes; saying no sends nothing', async ({ page }) => {

@@ -217,3 +217,7 @@ div.msg--assistant { white-space: normal; display: flex; flex-direction: column;
 .approval button:disabled { opacity: 0.4; cursor: default; }
 
 div.msg--assistant:has(.approval) { align-self: stretch; max-width: none; }
+.browser__window { flex: none; border: 1px solid var(--card-border); border-radius: 7px; padding: 3px 8px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; opacity: 0; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
+.card:hover .browser__window, .browser__window.is-on, .browser__window:focus-visible { opacity: 1; }
+.browser__window:hover { color: var(--text); }
+.browser__window.is-on { color: #f0b35a; border-color: rgba(240, 179, 90, 0.5); }

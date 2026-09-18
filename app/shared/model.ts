@@ -4,7 +4,8 @@ export type Box = { x: number; y: number; w: number; h: number };
 export type Room = Box & { id: string; name: string; role: string; accent: string; brief: string; model?: string };
 export type Doc = Box & { id: string; title: string };
 // Resource cards that are not docs. `browser` is a live browser a wired person can drive.
-export type Card = Box & { id: string; kind: 'browser' };
+// `headed` shows the card's Chrome as a real window, for the founder to sign in or pass a human check by hand.
+export type Card = Box & { id: string; kind: 'browser'; headed?: boolean };
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };
 export type Usage = { input: number; output: number };

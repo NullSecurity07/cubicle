@@ -65,6 +65,8 @@ export function createStore(dir: string) {
 
   return {
     filesDir,
+    // Each browser card keeps its own Chrome profile here, so accounts made for a person's use stay signed in.
+    browserProfile: (id: string) => join(dir, 'browsers', safe(id)),
     loadStage,
     // Cards that left the stage keep their files, in trash: the founder's words are never deleted.
     async saveStage(stage: Stage) {
@@ -74,6 +76,7 @@ export function createStore(dir: string) {
       const moves = [
         ...gone(before.rooms, stage.rooms).map((room) => chatPath(room.id)),
         ...gone(before.docs, stage.docs).map((doc) => docPath(doc.id)),
+        ...gone(before.cards ?? [], stage.cards ?? []).map((card) => join(dir, 'browsers', card.id)),
       ];
       await write(stagePath, JSON.stringify(stage, null, 2));
       await queue;

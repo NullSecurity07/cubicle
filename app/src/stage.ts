@@ -5,7 +5,7 @@ export type RoomData = Omit<Room, keyof Box | 'id'>;
 export type DocData = Omit<Doc, keyof Box | 'id'>;
 export type RoomNodeType = Node<RoomData, 'room'>;
 export type DocNodeType = Node<DocData, 'doc'>;
-export type BrowserNodeType = Node<Record<string, never>, 'browser'>;
+export type BrowserNodeType = Node<{ headed?: boolean }, 'browser'>;
 export type StageNode = RoomNodeType | DocNodeType | BrowserNodeType;
 
 export const HANDLE_IDS = ['l', 'r', 't', 'b'] as const;
@@ -24,7 +24,7 @@ export function toFlow(stage: Stage): { nodes: StageNode[]; edges: Edge[] } {
   const nodes: StageNode[] = [
     ...stage.rooms.map(({ id, x, y, w, h, ...data }): RoomNodeType => ({ id, type: 'room', position: { x, y }, width: w, height: h, data, ...CARD })),
     ...stage.docs.map(({ id, x, y, w, h, ...data }): DocNodeType => ({ id, type: 'doc', position: { x, y }, width: w, height: h, data, ...CARD })),
-    ...(stage.cards ?? []).map(({ id, x, y, w, h, kind }): BrowserNodeType => ({ id, type: kind, position: { x, y }, width: w, height: h, data: {}, ...CARD })),
+    ...(stage.cards ?? []).map(({ id, x, y, w, h, kind, headed }): BrowserNodeType => ({ id, type: kind, position: { x, y }, width: w, height: h, data: headed ? { headed } : {}, ...CARD })),
   ];
   const edges = stage.wires.map((wire): Edge => ({ id: wire.id, source: wire.from, sourceHandle: wire.fromHandle, target: wire.to, targetHandle: wire.toHandle, ...WIRE }));
   return { nodes, edges };
@@ -38,7 +38,7 @@ export function fromFlow(nodes: StageNode[], edges: Edge[]): Stage {
   return {
     rooms: nodes.filter((node): node is RoomNodeType => node.type === 'room').map((node) => ({ id: node.id, ...node.data, ...box(node) })),
     docs: nodes.filter((node): node is DocNodeType => node.type === 'doc').map((node) => ({ id: node.id, ...node.data, ...box(node) })),
-    cards: nodes.filter((node): node is BrowserNodeType => node.type === 'browser').map((node): Card => ({ id: node.id, kind: 'browser', ...box(node) })),
+    cards: nodes.filter((node): node is BrowserNodeType => node.type === 'browser').map((node): Card => ({ id: node.id, kind: 'browser', ...(node.data.headed ? { headed: true } : {}), ...box(node) })),
     wires: edges.map((edge) => ({ id: edge.id, from: edge.source, fromHandle: edge.sourceHandle ?? 'r', to: edge.target, toHandle: edge.targetHandle ?? 'l' })),
   };
 }

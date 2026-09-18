@@ -27,7 +27,7 @@ const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner) : createBrowser(realRunner(), process.env.STAGE_NO_READER === '1' ? null : jinaReader);
 const approvals = createApprovals();
-const tools = [...docTools, ...fileTools, ...webTools(browser), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir)];
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir)];
 const clients = fake ? [fakeClient] : realClients();
 const busy = new Set<string>();
 
@@ -113,7 +113,16 @@ createServer(async (req, res) => {
     const watched = /^\/api\/browsers\/([^/]+)$/.exec(path)?.[1];
     if (watched && req.method === 'GET') {
       if (!(await store.loadStage()).cards?.some((card) => card.id === watched && card.kind === 'browser')) return json(res, 404, { error: 'unknown browser' });
-      return json(res, 200, await browser.watch(browserSession(watched)));
+      const card = (await store.loadStage()).cards!.find((one) => one.id === watched)!;
+      return json(res, 200, await browser.watch(browserSession(watched), { profile: store.browserProfile(watched), headed: !!card.headed }));
+    }
+    // "Show window" changed: Chrome reads that only at start, so end the session and start it again the new way.
+    const restarted = /^\/api\/browsers\/([^/]+)\/restart$/.exec(path)?.[1];
+    if (restarted && req.method === 'POST') {
+      const card = (await store.loadStage()).cards?.find((one) => one.id === restarted && one.kind === 'browser');
+      if (!card) return json(res, 404, { error: 'unknown browser' });
+      await browser.close(browserSession(restarted));
+      return json(res, 200, await browser.watch(browserSession(restarted), { profile: store.browserProfile(restarted), headed: !!card.headed }));
     }
     if (doc && req.method === 'GET') return json(res, 200, { text: await store.readDoc(doc) });
     if (doc && req.method === 'PUT') { await store.writeDoc(doc, String((await body(req)).text ?? '')); return json(res, 200, { ok: true }); }

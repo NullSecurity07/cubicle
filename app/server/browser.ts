@@ -2,8 +2,11 @@ import { execFile, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+// How a browser card's Chrome starts: `profile` is a folder that keeps its logins between runs, `headed` opens a real
+// window on the founder's desktop. Both take effect when the session starts, so changing them means closing it first.
+export type Launch = { profile?: string; headed?: boolean };
 // Runs one agent-browser command in a named session and returns what it printed.
-export type Runner = (session: string, args: string[]) => Promise<string>;
+export type Runner = (session: string, args: string[], launch?: Launch) => Promise<string>;
 export type SearchHit = { title: string; url: string; snippet: string };
 export type Browser = ReturnType<typeof createBrowser>;
 
@@ -46,7 +49,8 @@ export const ENGINES = [
 // A site that answers with a human check instead of its page. The person must hear that plainly, or it will guess the content.
 const WALL = /prove your humanity|verify (that )?you('| a)re (a )?human|are you a robot|unusual traffic|complete the (following )?challenge|checking your browser|just a moment|access denied|attention required|enable javascript and cookies|captcha/i;
 export const walled = (title: string, text: string) => WALL.test(title) || (text.length < 1200 && WALL.test(text));
-export const WALL_NOTE = 'This site asked for a human check and did not show its page. Do not guess what it says. Tell the founder it is behind a bot wall; another source may have the same facts.';
+export const WALL_NOTE = 'This site asked for a human check and did not show its page. Do not guess what it says, and do not try to pass the check. Tell the founder it is behind a bot wall; another source may have the same facts.';
+export const CARD_WALL_NOTE = 'On a browser card the founder can press "Show window", pass the check or sign in by hand, and you carry on from there.';
 const THIN = 400;
 
 const READ_PAGE = `JSON.stringify((()=>{const pick=document.querySelector("article")||document.querySelector("main")||document.querySelector("[role=main]")||document.body;return{title:document.title,url:location.href,text:(pick.innerText||"").replace(/\\n{3,}/g,"\\n\\n").trim()}})())`;
@@ -68,8 +72,9 @@ export function realRunner(env: NodeJS.ProcessEnv = process.env): Runner {
   const chrome = env.AGENT_BROWSER_EXECUTABLE_PATH ?? CHROMES.find((path) => existsSync(path));
   let agent = env.AGENT_BROWSER_USER_AGENT;
   if (!agent && chrome) { try { agent = honestUserAgent(execFileSync(chrome, ['--version'], { encoding: 'utf8', timeout: 5000 })); } catch { /* keep the default */ } }
-  return (session, args) => new Promise((done, fail) => {
-    execFile(bin, ['--session', session, ...args], { timeout: 45_000, maxBuffer: 8_000_000, env: { ...env, ...(chrome ? { AGENT_BROWSER_EXECUTABLE_PATH: chrome } : {}), ...(agent ? { AGENT_BROWSER_USER_AGENT: agent } : {}) } },
+  return (session, args, launch) => new Promise((done, fail) => {
+    const how = { ...(launch?.profile ? { AGENT_BROWSER_PROFILE: launch.profile } : {}), ...(launch?.headed ? { AGENT_BROWSER_HEADED: '1' } : {}) };
+    execFile(bin, ['--session', session, ...args], { timeout: 45_000, maxBuffer: 8_000_000, env: { ...env, ...(chrome ? { AGENT_BROWSER_EXECUTABLE_PATH: chrome } : {}), ...(agent ? { AGENT_BROWSER_USER_AGENT: agent } : {}), ...how } },
       (error, stdout, stderr) => (error ? fail(new Error((stderr || stdout || error.message).trim().slice(0, 300))) : done(stdout)));
   });
 }
@@ -97,6 +102,7 @@ export const jinaReader: Reader = async (url) => {
 };
 
 export function createBrowser(run: Runner, reader: Reader | null = null) {
+  const outer = run;
   // Each session is a Chrome tab set with its own memory; only a few run at once, the rest wait their turn.
   let active = 0;
   const waiting: (() => void)[] = [];
@@ -151,7 +157,8 @@ export function createBrowser(run: Runner, reader: Reader | null = null) {
       return blocks.join('\n\n---\n\n');
     },
     // One step in a browser card's lasting session, answered with the page as a compact tree of refs.
-    async act(session: string, action: string, input: { url?: string; ref?: string; text?: string; key?: string; direction?: string }): Promise<string> {
+    async act(session: string, action: string, input: { url?: string; ref?: string; text?: string; key?: string; direction?: string }, launch?: Launch): Promise<string> {
+      const go: Runner = (name, args) => run(name, args, launch);
       const need = (value: string | undefined, name: string) => { if (!value?.trim()) throw new Error(`"${name}" is missing for ${action}`); return value.trim(); };
       const ref = () => { const value = need(input.ref, 'ref'); return value.startsWith('@') ? value : `@${value}`; };
       const steps: Record<string, () => string[]> = {
@@ -166,17 +173,18 @@ export function createBrowser(run: Runner, reader: Reader | null = null) {
       if (!steps[action]) throw new Error(`unknown action "${action}". Use one of: ${Object.keys(steps).join(', ')}`);
       return slot(async () => {
         const args = steps[action]();
-        if (args.length) await run(session, args);
-        const address = (await run(session, ['get', 'url']).catch(() => '')).trim();
+        if (args.length) await go(session, args);
+        const address = (await go(session, ['get', 'url']).catch(() => '')).trim();
         if (address && !/^about:/.test(address)) webUrl(address);
-        const tree = (await run(session, ['snapshot', '-i'])).trim();
-        const title = (await run(session, ['get', 'title']).catch(() => '')).trim();
-        if (walled(title, tree.length < 1200 ? tree : '')) return `Now at ${address}\n${WALL_NOTE} The founder can see the check in the browser card.`;
+        const tree = (await go(session, ['snapshot', '-i'])).trim();
+        const title = (await go(session, ['get', 'title']).catch(() => '')).trim();
+        if (walled(title, tree.length < 1200 ? tree : '')) return `Now at ${address}\n${WALL_NOTE} ${CARD_WALL_NOTE}`;
         return `Now at ${address || 'a blank page'}\n${tree.length > SNAPSHOT_CHARS ? `${tree.slice(0, SNAPSHOT_CHARS)}\n… (cut; scroll or open a more specific page)` : tree || '(nothing to interact with)'}`;
       });
     },
     // Where a browser card can watch its session live. Opens the session if nobody has used it yet.
-    async watch(session: string): Promise<{ port: number; url: string }> {
+    async watch(session: string, launch?: Launch): Promise<{ port: number; url: string }> {
+      const run: Runner = (name, args) => outer(name, args, launch);
       let status = await run(session, ['stream', 'status']).catch(() => '');
       if (!/ws:\/\//.test(status)) { await run(session, ['open', 'about:blank']); status = await run(session, ['stream', 'status']).catch(() => ''); }
       if (!/ws:\/\//.test(status)) status = await run(session, ['stream', 'enable']);

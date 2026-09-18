@@ -93,6 +93,18 @@ describe('browser', () => {
     expect(text).toContain('Failed: addresses on this machine');
   });
 
+  it('starts a card with its own lasting profile, and with a window only when the founder asked for one', async () => {
+    const launches: unknown[] = [];
+    const run: Runner = async (session, args, launch) => { launches.push(launch); return fakeRunner(session, args); };
+    const browser = createBrowser(run);
+    await browser.act('card-b1', 'look', {}, { profile: '/w/browsers/b1', headed: true });
+    await browser.watch('card-b1', { profile: '/w/browsers/b1' });
+    expect(launches.every((launch, index) => (launch as { profile: string }).profile === '/w/browsers/b1' || index < 0)).toBe(true);
+    expect(launches.some((launch) => (launch as { headed?: boolean }).headed)).toBe(true);
+    await browser.search(['x']);
+    expect(launches.at(-1)).toBeUndefined();
+  });
+
   it('turns a step into a command and answers with the page tree', async () => {
     const seen: string[][] = [];
     const run: Runner = async (session, args) => { seen.push(args); return fakeRunner(session, args); };
