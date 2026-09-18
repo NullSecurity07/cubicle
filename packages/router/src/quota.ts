@@ -10,6 +10,12 @@ export interface QuotaStatus {
   tpd_used: number;
   cooling_until: string | null;
   limits: { rpm: number; rpd: number; tpm: number; tpd: number };
+  /**
+   * This provider declares an `api_key_env` and this router's environment does not set it, so nothing here can
+   * be called at all (ruling W4-13). `Metrics/quota.md` listed all five openrouter models as "ok" on a day when
+   * `OPENROUTER_API_KEY` was empty; "ok 0/250" reads as an idle cloud tier, which is the opposite of the truth.
+   */
+  missing_key?: boolean;
 }
 
 /**
@@ -21,6 +27,49 @@ export class QuotaTracker {
   constructor(private db: Db, private now: () => Date = () => new Date()) {}
 
   private calls = 0;
+
+  /**
+   * Calls dialled but not yet recorded, per provider+model (ruling W4-13).
+   *
+   * `Metrics/quota.md` showed gemini-3.7-flash at "21/20" calls a day, past a limit `hasHeadroom` checks on
+   * every single call — because the check and the `record` are two steps with a whole HTTP round trip between
+   * them. The daemon runs several role workers at once: two of them reading 19/20 both pass, both dial, and the
+   * day ends at 21. The provider's own 429 is what stops it, which is the thing the quota table exists to avoid
+   * paying for.
+   *
+   * A reservation closes that window. `reserve` is taken before the request goes out and released when the call
+   * is recorded (or abandoned), and `hasHeadroom` counts reservations as though they had already landed. It is
+   * in-process because the daemon is one process; a second daemon on the same vault would still race, and the
+   * database's own counts remain the truth for everything the owner reads.
+   */
+  private inFlight = new Map<string, number>();
+
+  private key(provider: string, model: string): string { return `${provider}/${model}`; }
+
+  /** Take a slot for a call about to be dialled. Returns the release, which is safe to call more than once. */
+  reserve(provider: string, model: string): () => void {
+    const k = this.key(provider, model);
+    this.inFlight.set(k, (this.inFlight.get(k) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const n = (this.inFlight.get(k) ?? 1) - 1;
+      if (n > 0) this.inFlight.set(k, n); else this.inFlight.delete(k);
+    };
+  }
+
+  /** Calls dialled against this model and not yet recorded. */
+  reserved(provider: string, model: string): number {
+    return this.inFlight.get(this.key(provider, model)) ?? 0;
+  }
+
+  /** Calls dialled against this whole provider and not yet recorded — the provider-wide limits count them too. */
+  private reservedForProvider(provider: string): number {
+    let n = 0;
+    for (const [k, v] of this.inFlight) if (k.startsWith(`${provider}/`)) n += v;
+    return n;
+  }
 
   record(provider: string, model: string, promptTokens: number, completionTokens: number, ok = true): void {
     this.db.prepare('INSERT INTO quota_calls(ts, provider, model, prompt_tokens, completion_tokens, ok) VALUES (?, ?, ?, ?, ?, ?)')
@@ -77,22 +126,28 @@ export class QuotaTracker {
     };
   }
 
-  /** True when the next call (with an estimated token cost) fits inside every configured limit. A limit of 0 means unlimited. */
+  /**
+   * True when the next call (with an estimated token cost) fits inside every configured limit. A limit of 0
+   * means unlimited. Calls already dialled and not yet recorded count as though they had landed — see
+   * `inFlight` for the "21/20" this closes.
+   */
   hasHeadroom(provider: string, m: ModelConfig, estimatedTokens: number, providerCfg?: Pick<ProviderConfig, 'limits' | 'day_reset_tz'>): { ok: boolean; reason?: string } {
     if (this.coolingUntil(provider, m.id)) return { ok: false, reason: 'cooling' };
     const tz = providerCfg?.day_reset_tz ?? 'UTC';
     const s = this.status(provider, m, tz);
     const L = m.limits;
-    if (L.rpm && s.rpm_used + 1 > L.rpm) return { ok: false, reason: 'rpm' };
-    if (L.rpd && s.rpd_used + 1 > L.rpd) return { ok: false, reason: 'rpd' };
+    const held = this.reserved(provider, m.id);
+    if (L.rpm && s.rpm_used + held + 1 > L.rpm) return { ok: false, reason: 'rpm' };
+    if (L.rpd && s.rpd_used + held + 1 > L.rpd) return { ok: false, reason: 'rpd' };
     if (L.tpm && s.tpm_used + estimatedTokens > L.tpm) return { ok: false, reason: 'tpm' };
     if (L.tpd && s.tpd_used + estimatedTokens > L.tpd) return { ok: false, reason: 'tpd' };
     const P = providerCfg?.limits;
     if (P) {
       const pm = this.window(provider, null, 60_000);
       const pd = this.windowSince(provider, null, QuotaTracker.dayStart(this.now(), tz).toISOString());
-      if (P.rpm && pm.calls + 1 > P.rpm) return { ok: false, reason: 'provider rpm' };
-      if (P.rpd && pd.calls + 1 > P.rpd) return { ok: false, reason: 'provider rpd' };
+      const heldHere = this.reservedForProvider(provider);
+      if (P.rpm && pm.calls + heldHere + 1 > P.rpm) return { ok: false, reason: 'provider rpm' };
+      if (P.rpd && pd.calls + heldHere + 1 > P.rpd) return { ok: false, reason: 'provider rpd' };
       if (P.tpm && pm.tokens + estimatedTokens > P.tpm) return { ok: false, reason: 'provider tpm' };
       if (P.tpd && pd.tokens + estimatedTokens > P.tpd) return { ok: false, reason: 'provider tpd' };
     }

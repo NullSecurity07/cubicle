@@ -133,10 +133,23 @@ export function listJobs(vault: Vault, filter: { status?: JobStatus | JobStatus[
   return out.sort((a, b) => a.priority - b.priority || a.created.localeCompare(b.created));
 }
 
-/** Patch job frontmatter fields (and optionally append to a section) atomically. */
+/** The statuses that mean a job has come to rest: nothing is waiting on anything any more. */
+const FINISHED = ['done', 'failed', 'cancelled'];
+
+/**
+ * Patch job frontmatter fields (and optionally append to a section) atomically.
+ *
+ * A job that finishes loses its `blocked_on` (ruling W4-13). `job_20260914_b88c4b` in the dry run was
+ * `status: done` and still carried `blocked_on: {kind: quota, …}` in its frontmatter, because `blocked_on` is
+ * only ever *set* — by the tool that blocked, by the fan-out that parked a heartbeat — and nothing took it off
+ * on the way out. Everything that reads a job's frontmatter to say what the company is waiting for then counted
+ * a finished job among the blocked, which is how the office board came to show more blocked jobs than it had.
+ * A patch that names `blocked_on` itself is left alone; this only clears what nobody spoke for.
+ */
 export function updateJob(vault: Vault, id: string, patch: Partial<JobFrontmatter>, by: string, appendLog?: string): JobFrontmatter {
+  const clearsBlock = patch.status !== undefined && FINISHED.includes(patch.status) && !('blocked_on' in patch);
   const note = vault.updateNote<Record<string, unknown>>(jobPath(id), (n) => {
-    const data = { ...n.data, ...patch, updated: nowIso() };
+    const data = { ...n.data, ...patch, updated: nowIso(), ...(clearsBlock ? { blocked_on: undefined } : {}) };
     let body = n.body;
     if (appendLog) body = appendToSection(body, '## Checkpoint log', appendLog);
     return { data, body };

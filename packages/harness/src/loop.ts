@@ -277,7 +277,10 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     const nextGate = result.status === 'done' && !isGateJob ? chain[gateIndex] : undefined;
     const finalStatus: JobStatus = result.status === 'done' ? (nextGate ? 'in_review' : 'done') : result.status === 'blocked' ? 'blocked' : 'failed';
     vault.updateNote(`Jobs/${jobId}.md`, (n) => ({
-      data: { ...n.data, status: finalStatus, checkpoint_step: step, updated: nowIso(), ...(result.status === 'blocked' ? { blocked_on: { kind: 'owner', id: jobId, since: nowIso() } } : {}) },
+      // …and a job that is not blocked no longer says it is (ruling W4-13). `blocked_on` was only ever set —
+      // `job_20260914_b88c4b` finished `status: done` still carrying `blocked_on: {kind: quota}` — so every
+      // reader that counts what the company is waiting for counted a finished job among the blocked.
+      data: { ...n.data, status: finalStatus, checkpoint_step: step, updated: nowIso(), blocked_on: result.status === 'blocked' ? { kind: 'owner', id: jobId, since: nowIso() } : undefined },
       body: setSection(n.body, '## Result', '```json\n' + JSON.stringify(result, null, 2) + '\n```'),
     }), roleId, { job: jobId });
     if (finalStatus === 'in_review') {

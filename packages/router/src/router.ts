@@ -1,6 +1,6 @@
 import type { EventLog, ModelTier } from '@cubicle/core';
 import { TIER_RANK, type ModelConfig, type ProviderConfig, type ProvidersFile } from './config.js';
-import { QuotaTracker, estimateTokens } from './quota.js';
+import { QuotaTracker, estimateTokens, type QuotaStatus } from './quota.js';
 import { chatOnce, apiKeyFor, RateLimitedError, ProviderError, type ChatRequest, type ChatResult, type ChatMessage } from './client.js';
 import { buildJsonToolInstruction, parseJsonToolReply, type ToolSchema } from './jsontools.js';
 
@@ -224,6 +224,11 @@ export class Router {
       // the provider is the model's own `max_output_tokens`; `chat.maxTokens` stays what it always was for the
       // prompt and quota estimate above, a hint about how long the answer should be.
       const maxTokens = c.model.thinking ? c.model.max_output_tokens : Math.min(chat.maxTokens ?? c.model.max_output_tokens, c.model.max_output_tokens);
+      // The slot is taken before the request goes out and released once it is recorded, so a second worker
+      // reading the same table between the check above and the `record` below cannot spend the same call twice
+      // (ruling W4-13; `Metrics/quota.md` showed gemini-3.7-flash at 21/20). Released in `finally`, because a
+      // throw that never reaches a `record` must not leave the slot held for the rest of the day.
+      const release = this.quota.reserve(c.provider.id, c.model.id);
       try {
         const res = await chatOnce(c.provider, c.model.id, { ...chat, messages, tools: nativeTools, maxTokens, responseFormatJson: useJsonTools && chat.responseFormatJson !== false ? false : chat.responseFormatJson }, this.env);
         this.quota.record(c.provider.id, c.model.id, res.usage.prompt_tokens, res.usage.completion_tokens, true);
@@ -320,6 +325,8 @@ export class Router {
           continue;
         }
         throw err;
+      } finally {
+        release();
       }
     }
     if (lastEmpty) return lastEmpty;
@@ -332,12 +339,20 @@ export class Router {
     this.events.emit({ type: 'quota.updated', payload: { ...s } });
   }
 
-  /** Snapshot of every enabled model's quota status, for the bank and Metrics/quota.md. */
-  quotaSnapshot(): ReturnType<QuotaTracker['status']>[] {
-    const out = [];
+  /**
+   * Snapshot of every enabled model's quota status, for the bank and Metrics/quota.md.
+   *
+   * Each row says whether its provider has a key (ruling W4-13). `availableProviders` drops a keyless provider
+   * silently, which is right for routing and wrong for the owner: on 2026-09-14 all five openrouter models read
+   * "ok" in `Metrics/quota.md` while `OPENROUTER_API_KEY` was empty, and "ok 0/250" is what an idle cloud tier
+   * looks like too. The daemon already warns at start; this is the same fact where the owner goes to look.
+   */
+  quotaSnapshot(): QuotaStatus[] {
+    const out: QuotaStatus[] = [];
     for (const p of this.config.providers) {
       if (!p.enabled) continue;
-      for (const m of p.models) if (m.enabled) out.push(this.quota.status(p.id, m, p.day_reset_tz));
+      const missing_key = !!p.api_key_env && apiKeyFor(p, this.env) === null;
+      for (const m of p.models) if (m.enabled) out.push({ ...this.quota.status(p.id, m, p.day_reset_tz), missing_key });
     }
     return out;
   }

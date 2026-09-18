@@ -140,3 +140,43 @@ describe('cancelJob (spec §11: a cancel is always visible)', () => {
     expect(vault.events.count('job.cancelled')).toBe(0);
   });
 });
+
+/**
+ * Ruling W4-13: a job that has come to rest is not waiting for anything.
+ *
+ * `job_20260914_b88c4b` in the dry-run vault is `status: done` and still carries `blocked_on: {kind: quota, …}`
+ * in its frontmatter. `blocked_on` was only ever set — by the tool that blocked, by the fan-out that parked a
+ * heartbeat — and nothing took it off on the way out, so every reader that counts what the company is waiting
+ * for counted a finished job among the blocked.
+ */
+describe('blocked_on is cleared when a job finishes (W4-13)', () => {
+  const block = () => ({ kind: 'quota' as const, id: 'gemini-3.5-flash', since: '2026-09-14T08:00:00.000Z' });
+
+  it('done, failed and cancelled all leave the job unblocked', () => {
+    for (const status of ['done', 'failed'] as const) {
+      const id = createJob(vault, { type: 'custom', title: `T ${status}`, assigned: 'coo', goal: 'g' }, 'ceo');
+      updateJob(vault, id, { status: 'blocked', blocked_on: block() }, 'coo');
+      expect(readJob(vault, id)!.data.blocked_on).toBeTruthy();
+      updateJob(vault, id, { status }, 'coo');
+      expect(readJob(vault, id)!.data.blocked_on).toBeUndefined();
+      // …and off the note itself, not merely undefined in the parsed shape.
+      expect(vault.readTextOrNull(`Jobs/${id}.md`)).not.toContain('blocked_on');
+    }
+    const c = createJob(vault, { type: 'custom', title: 'T cancel', assigned: 'coo', goal: 'g' }, 'ceo');
+    updateJob(vault, c, { status: 'blocked', blocked_on: block() }, 'coo');
+    expect(cancelJob(vault, c, 'ceo', 'the owner changed their mind')).toBe(true);
+    expect(readJob(vault, c)!.data.blocked_on).toBeUndefined();
+  });
+
+  it('a job that is still open keeps what it is waiting for, and an explicit block always wins', () => {
+    const id = createJob(vault, { type: 'custom', title: 'Still going', assigned: 'coo', goal: 'g' }, 'ceo');
+    updateJob(vault, id, { status: 'blocked', blocked_on: block() }, 'coo');
+    updateJob(vault, id, { checkpoint_step: 3 }, 'coo');
+    expect(readJob(vault, id)!.data.blocked_on).toMatchObject({ kind: 'quota' });
+    updateJob(vault, id, { status: 'running' }, 'coo');
+    expect(readJob(vault, id)!.data.blocked_on).toMatchObject({ kind: 'quota' });
+    // A patch that names blocked_on itself is left alone, whatever the status says.
+    updateJob(vault, id, { status: 'done', blocked_on: block() }, 'coo');
+    expect(readJob(vault, id)!.data.blocked_on).toMatchObject({ kind: 'quota' });
+  });
+});
