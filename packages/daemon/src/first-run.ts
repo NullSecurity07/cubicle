@@ -1,4 +1,4 @@
-import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, listDiscoveryInputs, parseNote, officeHolder, roleWithTool, researchLead, teamOf, leadOf, createStream, listStreams, streamSlug, ciConfigPath, hasFounderBrief, FOUNDER_BRIEF, type NewStream } from '@cubicle/core';
+import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, listDiscoveryInputs, parseNote, officeHolder, roleWithTool, researchLead, teamOf, leadOf, createStream, listStreams, streamSlug, ciConfigPath, hasFounderBrief, ownerSaid, ownerPick, isDiscoveryMaterial, FOUNDER_BRIEF, type NewStream } from '@cubicle/core';
 
 /**
  * The three jobs a company must leave its first heartbeat with (spec §12): something on the web, something to
@@ -209,16 +209,33 @@ export function seedFirstJobs(vault: Vault, org: Org): string[] {
   return out;
 }
 
+/** "2. SpeedAudit — A free performance diagnostic service…" → the sentence, without the numbering or the bold. */
+function pickedIdeaLine(line: string): string {
+  return line.trim().replace(/^\d+[.)]\s*/, '').replace(/\*\*/g, '').trim();
+}
+
 /**
- * The first stream, from whatever the owner actually gave us. The problem is their words — the note they typed,
- * or the brand tagline when they typed nothing — and the two fields only a person can answer are written as
- * questions addressed to the product manager, never as "TBD": a stream note is read by an agent, and "TBD" is
- * an instruction to skip the field.
+ * The first stream, from whatever the owner actually gave us. The two fields only a person can answer are
+ * written as questions addressed to the product manager, never as "TBD": a stream note is read by an agent, and
+ * "TBD" is an instruction to skip the field.
+ *
+ * The problem is the owner's **own words and nothing else** (ruling W4-9). `Streams/speedaudit.md` in the
+ * 2026-09-14 run carried, as its problem: "surprise me I filed three ideas as a proposal in 00 Inbox/. Pick one
+ * with `chosen:` … 3. Ghostwriter Hunt — … a simple static submission f" — the owner's two words, the CEO's
+ * reply to them, all three ideas, and a cut mid-word at 600 characters. Everything after the note's `## CEO`
+ * heading is the company talking to itself, so `ownerSaid` takes it off.
+ *
+ * What is left is often "surprise me", which is a request for ideas and not a problem statement — the same
+ * thing `isDiscoveryMaterial` already refuses to start a research job on. In that case the problem is `picked`:
+ * the idea the owner chose from the CEO's three, title and one-liner, which is the one sentence that says what
+ * this company is for.
  */
-export function firstStreamSpec(brand: { name?: string; tagline?: string }, ownerText: string): NewStream {
+export function firstStreamSpec(brand: { name?: string; tagline?: string }, ownerText: string, picked?: string | null): NewStream {
   const name = (brand.name ?? '').trim() || 'First product';
-  const said = ownerText.trim().split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).join(' ').slice(0, 600);
-  const problem = said || `${(brand.tagline ?? '').trim() || name} — the owner has not written the problem in their own words yet. The product manager asks them, in one sentence, what goes wrong for the customer today.`;
+  const said = ownerSaid(ownerText).split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).join(' ').slice(0, 600);
+  const own = isDiscoveryMaterial(said) ? said : '';
+  const problem = own || (picked ?? '').trim()
+    || `${(brand.tagline ?? '').trim() || name} — the owner has not written the problem in their own words yet. The product manager asks them, in one sentence, what goes wrong for the customer today.`;
   return {
     name,
     problem,
@@ -268,7 +285,9 @@ export function seedFirstStream(vault: Vault): string | null {
   if (listStreams(vault).length > 0) return null;
   const brand = parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data as { name?: string; tagline?: string };
   const ownerNote = listInbox(vault).find((n) => n.data.kind === 'message' && n.data.from === 'owner')?.body ?? '';
-  const spec = firstStreamSpec(brand, ownerNote.replace(/^#.*$/m, ''));
+  // The idea the owner picked from the CEO's three, for an owner whose own note was "surprise me" (W4-9).
+  const pick = ownerPick(vault);
+  const spec = firstStreamSpec(brand, ownerNote, pick ? pickedIdeaLine(pick.line) : null);
   const slug = createStream(vault, { ...spec, slug: streamSlug(spec.name) }, 'ceo');
   // `createStream` already wrote `Streams/<slug>.md` through the vault, which announced it with a `vault.wrote`
   // carrying the sha. A second, sha-less emit here said nothing new and doubled the event the office reads.
