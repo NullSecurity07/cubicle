@@ -142,7 +142,39 @@ describe('the layout on the wire', () => {
     await waitFor(() => a.msgs.some((m) => m.op === 'layout.changed'), 'layout.changed');
     const changed = a.msgs.filter((m) => m.op === 'layout.changed').at(-1) as { layout: CampusLayout };
     expect(changed.layout.nodes.cto).toEqual({ x: 44, y: 8 });
+    expect(changed).not.toHaveProperty('origin');   // nobody's write: every office applies it (W6-15)
+    expect(changed).not.toHaveProperty('seq');
     a.ws.close();
+  });
+
+  /**
+   * Ruling W6-15. Whose write an answer is about, and which one of theirs.
+   *
+   * A window with several `layout.set` in flight gets an echo of every one of them, oldest first, and each is a
+   * whole floor — so the early ones are the office as it was two gestures ago. The daemon does not order them
+   * and does not need to; it stamps the answers with what the sender said, and that is enough for the sender to
+   * tell its own backlog from news. Nothing is read into the stamp here, so a client that sends none is served
+   * exactly as before.
+   */
+  it('says whose layout.set an ack and a change are about, and which one', async () => {
+    const a = await open(), b = await open();
+    const was = layoutNow();
+    a.ws.send(JSON.stringify({ op: 'layout.set', nodes: { ...was.nodes, cto: { x: 9, y: 6 } }, connections: was.connections, origin: 'office-aaa', seq: 7 }));
+    await waitFor(() => a.msgs.some((m) => m.op === 'layout.ack'), 'layout.ack');
+    expect(a.msgs.find((m) => m.op === 'layout.ack')).toMatchObject({ origin: 'office-aaa', seq: 7, dropped: [] });
+    // the same stamp reaches every office, so the other window can see the change is not its own
+    await waitFor(() => b.msgs.some((m) => m.op === 'layout.changed'), 'layout.changed elsewhere');
+    const seen = b.msgs.find((m) => m.op === 'layout.changed') as { origin: string; seq: number; layout: CampusLayout };
+    expect(seen).toMatchObject({ origin: 'office-aaa', seq: 7 });
+    expect(seen.layout.nodes.cto).toEqual({ x: 9, y: 6 });
+
+    // a stamp that is not one is left off rather than passed on: `undefined` in the answer would read as "yours"
+    a.ws.send(JSON.stringify({ op: 'layout.set', nodes: was.nodes, connections: was.connections, origin: 42, seq: 'soon' }));
+    await waitFor(() => a.msgs.filter((m) => m.op === 'layout.ack').length > 1, 'the second ack');
+    const bare = a.msgs.filter((m) => m.op === 'layout.ack').at(-1)!;
+    expect(bare).not.toHaveProperty('origin');
+    expect(bare).not.toHaveProperty('seq');
+    a.ws.close(); b.ws.close();
   });
 
   /**

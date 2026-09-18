@@ -271,6 +271,11 @@ export const needsYouCount = (s: Pick<State, 'inbox' | 'pendingProposals'>): num
  * It arrives as its own op rather than through the event stream — the floor is one note as it stands, with no
  * history to replay — so it needs a reducer of its own. Never merged with what this office drew: the daemon has
  * already validated it, which is exactly what makes it the thing that springs a refused drag back.
+ *
+ * Replacing the floor whole is only safe on a floor that is still news, and deciding that is `net.ts`'s (ruling
+ * W6-15): the echo of a `layout.set` this window has already built on never gets this far. Five things put down
+ * in a second are five whole floors on the wire, and the first of them, applied late, is the office as it was
+ * four gestures ago.
  */
 export const applyLayoutChanged = (s: State, layout: unknown): State => ({ ...s, layout: asLayout(layout) });
 
