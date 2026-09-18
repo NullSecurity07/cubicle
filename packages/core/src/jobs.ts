@@ -256,6 +256,54 @@ export const GATE_JOB_TYPES: readonly string[] = [
   'qa.review', 'security.review', 'coo.verify',
 ];
 
+/** A gate job's type, under the office-era name or the pre-office one, or the `<room>.review` / `<office>.verify` shape. */
+export function isGateJobType(jobType: string): boolean {
+  return GATE_JOB_TYPES.includes(jobType) || /\.(review|verify)$/.test(jobType);
+}
+
+/**
+ * The verb a reviewer reaches for when it means "send this back", anywhere in its summary. Deliberately loose —
+ * "returned", "I am returning this", "return it to the author" all count — because what is being recovered is
+ * the reviewer's intent from a field it should never have used.
+ */
+const SAYS_RETURNED = /\breturn(?:ed|ing|s)?\b/i;
+
+/**
+ * A gate job's `finish` result, normalised before anything acts on it (ruling W4-6).
+ *
+ * `Jobs/job_20260914_3ac2f4.md` in the 2026-09-14 run: `finish({"status":"failed", …})` with
+ * `"findings": []` and the summary "The job is returned because Site/src/pages/index.astro … contains default
+ * Astro placeholder content." The gate instruction asks for `verdict: return` with findings naming a file; the
+ * reviewer said exactly that in prose and put it in the wrong field. Nine seconds later another job passed the
+ * same gate, and the owner was left with a permanent red failure nobody had to act on.
+ *
+ * Two rules, and both are about what a review is allowed to look like when it is over:
+ *
+ *  - a gate job whose summary says it **returned** the work, with no findings of its own, *is* a return: status
+ *    done, `verdict: return`, and the summary becomes the one finding, because that sentence is the finding.
+ *  - a gate job may never come to rest red **and silent**. Whatever else it says, its findings fall back to its
+ *    blockers, then to its summary, then to a line saying the review did not happen — so the author always has
+ *    something to act on and the parent's return always carries a reason.
+ *
+ * Everything else is left exactly as the reviewer wrote it: a pass, a return that named its findings, a failure
+ * that listed blockers.
+ */
+export function normaliseGateResult<T extends { status: 'done' | 'failed' | 'blocked'; summary?: string; blockers?: string[]; findings?: string[]; verdict?: 'pass' | 'return' }>(jobType: string, result: T): T {
+  if (!isGateJobType(jobType)) return result;
+  const red = result.status === 'failed' || (result.status === 'done' && result.verdict === 'return');
+  if (!red) return result;
+  const summary = (result.summary ?? '').trim();
+  const findings = (result.findings ?? []).map((f) => f.trim()).filter(Boolean);
+  const filled = findings.length ? findings
+    : (result.blockers ?? []).map((b) => b.trim()).filter(Boolean).length ? (result.blockers ?? []).map((b) => b.trim()).filter(Boolean)
+    : summary ? [summary]
+    : ['the reviewer finished without saying what was wrong'];
+  const meantReturn = result.status === 'failed' && !findings.length && SAYS_RETURNED.test(summary);
+  return meantReturn
+    ? { ...result, status: 'done' as const, verdict: 'return' as const, findings: filled }
+    : { ...result, findings: filled };
+}
+
 /** `chain` is the job's gate list (`gatesForRisk(table, job.type, job.risk)`); `depsDone` separates backlog from ready. */
 export function stageOf(job: Pick<JobFrontmatter, 'status' | 'gate_index' | 'depends_on'>, chain: string[], depsDone = true): KanbanStage {
   switch (job.status) {

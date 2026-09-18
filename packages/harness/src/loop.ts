@@ -3,7 +3,7 @@ import path from 'node:path';
 import {
   type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
   readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
-  loadGates, gatesForRisk, criteriaFor, gateAssignee, gateTier, type GateTable,
+  loadGates, gatesForRisk, criteriaFor, gateAssignee, gateTier, normaliseGateResult, type GateTable,
   loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
   trustReviewsFor, trustDecision, trustVerdictFor, recordTrustVerdict, CLASSIFIER_UNAVAILABLE_HOLD,
@@ -265,8 +265,13 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     try { return JobResult.parse(JSON.parse(raw)); } catch { return JobResult.parse({ status: 'done' }); }
   };
 
-  const finishWith = async (result: JobResult, step: number): Promise<JobOutcome> => {
+  const finishWith = async (rawResult: JobResult, step: number): Promise<JobOutcome> => {
     const isGateJob = /\.(review|verify)$/.test(job.type) && !!job.parent;
+    // Ruling W4-6, before the status is written or anything reads the Result block: a reviewer that said in
+    // prose it was *returning* the work put that in `status: failed` with no findings, and the owner got a
+    // permanent red job. `normaliseGateResult` recovers the verdict from the sentence, and refuses to let a
+    // gate come to rest red and silent. See its doc comment for the job that motivated it.
+    const result = normaliseGateResult(job.type, rawResult);
     const chain = gatesForRisk(gates, job.type, job.risk);
     const gateIndex = Number(job.gate_index ?? 0);
     const nextGate = result.status === 'done' && !isGateJob ? chain[gateIndex] : undefined;
