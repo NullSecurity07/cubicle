@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 
 import path from 'node:path';
 import {
   type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
-  readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
+  readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob, idFromKey,
   loadGates, gatesForRisk, criteriaFor, gateAssignee, gateTier, otherEyesFor, normaliseGateResult, type GateTable,
   loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
@@ -360,6 +360,13 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     // instead of inheriting the `custom` fallback meant for the job under review.
     const gateCriteria = gates[gate]?.criteria ?? '';
     deps.scheduler.enqueue({
+      // One review per (job, gate, attempt), and the id says so (ruling W4-10). The 2026-09-14 run filed two
+      // `requester.review` jobs for the same Shopify research question: a gate re-enqueued — by a resumed cycle,
+      // by `applyVerdict` running twice over one checkpoint — minted a fresh random id each time, and the
+      // requester was asked to review the same report twice. `createJob` returns the existing note for an id it
+      // has already written, so a re-run now lands on the review that is already open. The attempt is in the key
+      // because a returned job comes back as attempt 2 and genuinely owes that gate a second look.
+      id: idFromKey('job', `gate:${parent.id}:${gate}:${parent.attempt}`),
       type: gate, title: `${isVerifyGate(gate) ? 'Verify' : 'Review'}: ${parent.title}`, assigned: assignee, priority: 4, parent: parent.id, links: [`[[${parent.id}]]`], privacy: parent.privacy,
       // A review runs at the gate's tier — medium unless `config/gates.yaml` says otherwise — not at the
       // reviewer's charter tier. Reviewers are leads and office holders, so without this every gate was a

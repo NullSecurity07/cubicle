@@ -9,7 +9,7 @@
  * anyone could act on.
  */
 import { describe, it, expect } from 'vitest';
-import { normaliseGateResult, isGateJobType, GATE_JOB_TYPES } from '../src/jobs.js';
+import { normaliseGateResult, isGateJobType, coversTitle, sameWorkAs, GATE_JOB_TYPES } from '../src/jobs.js';
 
 /** The exact summary the live reviewer wrote into `status: failed`. */
 const LIVE_SUMMARY = "The job is returned because the Site/src/pages/index.astro file does not contain the brand name, palette, or voice as required by the job's 'Done when' criteria. It currently contains default Astro placeholder content. Please update the content to reflect the SpeedAudit brand.";
@@ -63,5 +63,36 @@ describe('normaliseGateResult (W4-6)', () => {
     // An `engineer.ship` that returns its own work in prose is not a gate and is not touched.
     const ship = result({ status: 'failed', summary: 'I am returning this to the backlog.' });
     expect(normaliseGateResult('engineer.ship', ship)).toEqual(ship);
+  });
+});
+
+/**
+ * Ruling W4-10: one piece of work, one queue slot.
+ *
+ * The 2026-09-14 dry run queued `Implement Stripe Webhook Replay Protection` (type custom, blocked) beside
+ * `Implement Stripe webhook replay protection and rate limiting` (type engineer.ship, queued): the same work
+ * under two ids, on two desks, holding two queue slots. No exact-title comparison could have caught it.
+ */
+describe('coversTitle / sameWorkAs (W4-10)', () => {
+  const A = 'Implement Stripe Webhook Replay Protection';
+  const B = 'Implement Stripe webhook replay protection and rate limiting';
+
+  it('catches the live duplicate pair, in either order and whatever the casing', () => {
+    expect(coversTitle(A, B)).toBe(true);
+    expect(sameWorkAs(A, B)).toBe(true);
+    expect(sameWorkAs(B, A)).toBe(true);
+  });
+
+  it('leaves genuinely different work alone', () => {
+    expect(sameWorkAs('Implement Stripe webhook replay protection', 'Price the enterprise tier')).toBe(false);
+    expect(sameWorkAs('Research competitors', 'Research the first organic channel')).toBe(false);
+    expect(sameWorkAs('Build the URL scanner', 'Build the pricing page')).toBe(false);
+  });
+
+  it('a title too short to have said anything never claims another job\'s work', () => {
+    expect(coversTitle('Research', 'Research the first organic channel')).toBe(false);
+    expect(coversTitle('Ship it', 'Ship the staging branch')).toBe(false);
+    // …but a three-word title extended is the same work: that is the whole point.
+    expect(coversTitle('Scaffold Site/ from Brand/ (v2)', 'Scaffold Site/ from Brand/ (first cut)')).toBe(true);
   });
 });

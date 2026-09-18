@@ -256,6 +256,40 @@ export const GATE_JOB_TYPES: readonly string[] = [
   'qa.review', 'security.review', 'coo.verify',
 ];
 
+/** The words of a title, lowercased. */
+function titleWords(title: string): string[] {
+  return title.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+/** The first three words of a title, lowercased — how one piece of work decides another already covers it. */
+function titleKey(title: string): string {
+  return titleWords(title).slice(0, 3).join(' ');
+}
+
+/**
+ * True when an existing job is already the piece of work `wanted` describes: its own first three words are
+ * `wanted`'s first three words. "Scaffold Site/ from Brand/ (v2)" covers "Scaffold Site/ from Brand/ (first
+ * cut)"; "Research competitors" does not cover "Research the first organic channel".
+ *
+ * The match is one-directional on purpose. A title with fewer than three words has not said enough to claim
+ * another's work — a job called "Research" would otherwise silently cancel every research seed — so it never
+ * covers one.
+ *
+ * Three words, not the whole title, because the 2026-09-14 run queued "Implement Stripe Webhook Replay
+ * Protection" (custom, blocked) beside "Implement Stripe webhook replay protection and rate limiting"
+ * (engineer.ship, queued): the same work under two ids, two teams and two queue slots, which an exact-title
+ * comparison could never catch (ruling W4-10).
+ */
+export function coversTitle(existing: string, wanted: string): boolean {
+  if (titleWords(existing).length < 3) return false;
+  return titleKey(existing).startsWith(titleKey(wanted));
+}
+
+/** Either title claiming the other's work — what a queue asks before it opens a second slot for one job. */
+export function sameWorkAs(a: string, b: string): boolean {
+  return coversTitle(a, b) || coversTitle(b, a);
+}
+
 /** A gate job's type, under the office-era name or the pre-office one, or the `<room>.review` / `<office>.verify` shape. */
 export function isGateJobType(jobType: string): boolean {
   return GATE_JOB_TYPES.includes(jobType) || /\.(review|verify)$/.test(jobType);

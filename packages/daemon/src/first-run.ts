@@ -1,4 +1,4 @@
-import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, listDiscoveryInputs, parseNote, officeHolder, roleWithTool, researchLead, teamOf, leadOf, createStream, listStreams, streamSlug, ciConfigPath, hasFounderBrief, ownerSaid, ownerPick, isDiscoveryMaterial, FOUNDER_BRIEF, type NewStream } from '@cubicle/core';
+import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, listDiscoveryInputs, parseNote, officeHolder, roleWithTool, researchLead, teamOf, leadOf, createStream, listStreams, streamSlug, ciConfigPath, hasFounderBrief, ownerSaid, ownerPick, isDiscoveryMaterial, coversTitle, FOUNDER_BRIEF, type NewStream } from '@cubicle/core';
 
 /**
  * The three jobs a company must leave its first heartbeat with (spec §12): something on the web, something to
@@ -14,29 +14,12 @@ export const FIRST_JOB_TITLES = [
   'Research the first organic channel',
 ] as const;
 
-/** The words of a title, lowercased. */
-function words(title: string): string[] {
-  return title.trim().toLowerCase().split(/\s+/).filter(Boolean);
-}
-
-/** The first three words of a title, lowercased — how a seed decides some job already covers it. */
-function titleKey(title: string): string {
-  return words(title).slice(0, 3).join(' ');
-}
-
 /**
- * True when an existing job is already the piece of work `seed` describes: its own first three words are the
- * seed's first three words. "Scaffold Site/ from Brand/ (v2)" covers the site seed; "Research competitors" does
- * not cover the channel seed.
- *
- * The match is one-directional on purpose. A title with fewer than three words has not said enough to claim a
- * seed's work — a job called "Research" would otherwise silently cancel the channel seed — so it never covers
- * one.
+ * True when an existing job is already the piece of work `seed` describes. Core's, because the queue asks the
+ * same question of every job a lead schedules (ruling W4-10) and the two must not drift: a seed skipped here
+ * and a division plan refused there have to mean the same thing by "already covered".
  */
-function covers(existing: string, seed: string): boolean {
-  if (words(existing).length < 3) return false;
-  return titleKey(existing).startsWith(titleKey(seed));
-}
+const covers = coversTitle;
 
 function specs(org: Org, stream?: string): NewJob[] {
   // Who builds and who sells is a capability question, not a name: the first active charter in the division that

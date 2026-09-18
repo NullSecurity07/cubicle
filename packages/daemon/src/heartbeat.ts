@@ -2474,7 +2474,11 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // keyed on the round (`vetoes`), so a crash-resume rewrites the same note while the one allowed rewrite
         // gets a second one — two sessions, two records.
         const boardJob = createJob(vault, {
-          id: idFromKey('job', `board:${hbId}:${state.vetoes ?? 0}`), type: 'board.premortem', title: `Board pre-mortem for ${hbId}`,
+          // Two sessions for one heartbeat are by design — the board returns the plan once, the CEO rewrites it,
+          // the board sits again — but the 2026-09-14 run filed both under one title and the owner read two
+          // identical rows (ruling W4-10). The second one says which plan it read.
+          id: idFromKey('job', `board:${hbId}:${state.vetoes ?? 0}`), type: 'board.premortem',
+          title: (state.vetoes ?? 0) > 0 ? `Board pre-mortem after the rewrite for ${hbId}` : `Board pre-mortem for ${hbId}`,
           assigned: board.lead, priority: 1, parent: jobId, team: board.id, owner_role: ceo,
           depends_on: [jobId], links: [`[[${jobId}]]`],
           goal: `The board read Plans/plan.md for heartbeat ${hbId} and merged ${session.advisors.length} pre-mortems into one verdict.`,
