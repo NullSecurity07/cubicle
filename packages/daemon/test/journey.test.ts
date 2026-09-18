@@ -529,7 +529,12 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     expect(facts).toMatch(/^Queued next: .+$/m);
     expect(facts).toMatch(/^Needs owner: .+$/m);
     expect(facts).not.toMatch(/^Needs owner: nothing$/m);
-    expect(facts).toContain(`Plan: ${plan.slice(0, 40)}`);
+    // Ruling W6-9: the plan's objectives, one line each — never `Plans/plan.md` pasted whole with its fences,
+    // which is how the third live run's `_Facts used:_` block ended.
+    expect(facts).toMatch(/^Plan objectives: .+$/m);
+    for (const o of planObjectives(plan)) expect(facts).toContain(`${o.team} — ${o.text.split('\n')[0].slice(0, 40)}`);
+    expect(facts).not.toContain('Plan: ---');
+    expect(facts).not.toContain('# Plan');
 
     // Every conversation the company has had, in the Messages view: the cabin, and the board arguing in the open.
     const threads = snapshot().conversations;

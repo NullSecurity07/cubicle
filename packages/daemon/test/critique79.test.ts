@@ -23,9 +23,10 @@ describe('charter_change is pinned to identity fields and cannot escalate (B1)',
     const newRole = '---\nrole: support\ndisplay: Support\nmodel_tier: cheap\ntools: [vault.read]\n---\n# c\n';
     const p1 = createProposal(vault, { kind: 'charter_change', from: 'cmo', target: 'Roles/support.md', title: 'x', body: `## Proposed content\n\n\`\`\`markdown\n${newRole}\`\`\`` }, 'cmo');
     ownerEdit(p1.path, (t) => t.replace('approved: null', 'approved: true'));
-    expect(await dispatchProposals(deps())).toBe(0);
+    // One action: the refusal closes the note (ruling W6-1), where it used to be left open for a ten-minute retry.
+    expect(await dispatchProposals(deps())).toBe(1);
     expect(vault.exists('Roles/support.md')).toBe(false);
-    expect(findInboxById(vault, p1.id)!.body).toContain('Not applied');
+    expect(findInboxById(vault, p1.id)!.body).toContain('not applied — charter_change may only edit an existing role');
     const cur = RoleFrontmatter.parse(parseNote(vault.readText('Roles/backend_engineer.md')).data);
     const evil = `---\nrole: ceo\ndisplay: Boss\nmodel_tier: strong\ntools: [shell.run, email.send, deploy.site]\napproval_overrides: {}\nactive: false\nhired: "x"\nsprite: ceo\ndesk: ceo\n---\n# short\n`;
     const p2 = createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/backend_engineer.md', title: 'x', body: `## Proposed content\n\n\`\`\`markdown\n${evil}\`\`\`` }, 'cto');
@@ -39,7 +40,9 @@ describe('charter_change is pinned to identity fields and cannot escalate (B1)',
     const widened = `---\nrole: cmo\ndisplay: CMO\nmodel_tier: medium\ntools: [vault.read, shell.run]\n---\n# tiny\n`;
     createProposal(vault, { kind: 'charter_change', from: 'cmo', target: 'Roles/cmo.md', title: 'x', body: `## Proposed content\n\n\`\`\`markdown\n${widened}\`\`\`` }, 'cmo');
     createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/cmo.md', title: 'x', body: `## Proposed content\n\n\`\`\`markdown\n${widened}\`\`\`` }, 'cto');
-    expect(await dispatchProposals(deps())).toBe(0);
+    // The CMO's is not auto-approvable at all and is simply skipped; the CTO's is, and is refused for widening
+    // the tools — which is one closed note (ruling W6-1), not nothing.
+    expect(await dispatchProposals(deps())).toBe(1);
     expect(vault.readText('Roles/cmo.md')).not.toContain('shell.run');
     const ok = `---\nrole: cmo\ndisplay: CMO\nmodel_tier: medium\ntools: [vault.read, vault.write, finish]\n---\n# tighter charter\n`;
     createProposal(vault, { kind: 'charter_change', from: 'cto', target: 'Roles/cmo.md', title: 'x', body: `## Proposed content\n\n\`\`\`markdown\n${ok}\`\`\`` }, 'cto');
@@ -49,8 +52,8 @@ describe('charter_change is pinned to identity fields and cannot escalate (B1)',
   });
 });
 
-describe('hire with a minimal CEO charter; failures keep the approval (B2)', () => {
-  it('a charter without hired/sprite/desk is accepted; capacity failures leave the note unresolved', async () => {
+describe('hire with a minimal CEO charter; a capacity failure is an answer (B2, as W6-1 leaves it)', () => {
+  it('a charter without hired/sprite/desk is accepted; a full company closes the note and says so', async () => {
     const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'cmo', goal: 'g' }, 'cto');
     const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'cmo', goal: 'g' }, 'cto');
     updateJob(vault, j1, { status: 'blocked', blocked_on: { kind: 'owner', id: 'x', since: 'now' } }, 'daemon');
@@ -59,14 +62,19 @@ describe('hire with a minimal CEO charter; failures keep the approval (B2)', () 
     setConst('max_roles: 40', 'max_roles: 33');   // 33 active seats: the next hire is one too many
     const p = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'Hire Support', body: `[[${j1}]] [[${j2}]]\n\n\`\`\`markdown\n${minimal}\`\`\`` }, 'ceo');
     ownerEdit(p.path, (t) => t.replace('approved: null', 'approved: true'));
-    expect(await dispatchProposals(deps())).toBe(0);
-    expect(findInboxById(vault, p.id)!.data.resolved_at).toBeNull();
-    expect(findInboxById(vault, p.id)!.body).toContain('max_roles');
-    setConst('max_roles: 33', 'max_roles: 40');
-    expect(await dispatchProposals(deps())).toBe(0); // refused notes retry when the owner edits them again (or after 10 min)
-    ownerEdit(p.path, (t) => t + '\nplease retry\n');
-    expect(await dispatchProposals(deps())).toBe(1); // same approval, now applied
+    // B2 used to keep the approval open and retry it every ten minutes. Ruling W6-1 ends that: a refused side
+    // effect is an answer, so the note closes with the reason on it and the owner is never left watching a
+    // spinner for a decision that already died. Raising the cap takes a fresh proposal.
+    expect(await dispatchProposals(deps())).toBe(1);
     expect(findInboxById(vault, p.id)!.data.resolved_at).toBeTruthy();
+    expect(findInboxById(vault, p.id)!.data.approved).toBe(true);   // what the owner did is still on the record
+    expect(findInboxById(vault, p.id)!.body).toContain('max_roles');
+    expect(await dispatchProposals(deps())).toBe(0); // closed is closed: nothing retries it
+    setConst('max_roles: 33', 'max_roles: 40');
+    const again = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'Hire Support', body: `[[${j1}]] [[${j2}]]\n\n\`\`\`markdown\n${minimal}\`\`\`` }, 'ceo');
+    ownerEdit(again.path, (t) => t.replace('approved: null', 'approved: true'));
+    expect(await dispatchProposals(deps())).toBe(1); // the same hire, with room for it now
+    expect(findInboxById(vault, again.id)!.data.resolved_at).toBeTruthy();
     const r = RoleFrontmatter.parse(parseNote(vault.readText('Roles/support.md')).data);
     expect(r.desk).toBe('sales_1');   // the sales room's first free member desk
     expect(r.sprite).toBe('support'); expect(r.hired).toBeTruthy();
