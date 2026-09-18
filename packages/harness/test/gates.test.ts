@@ -64,6 +64,42 @@ describe('review gates (spec §3)', () => {
     await runJob(deps(finishing({ status: 'done', summary: 'still no', verdict: 'return', findings: ['still no title'] })), qa.id);
     expect(readJob(vault, id)!.data.status).toBe('failed');
   });
+  // Ruling W4-6, pinned on `Jobs/job_20260914_3ac2f4.md` from the 2026-09-14 dry run: the reviewer wrote its
+  // verdict into the wrong field — `finish({status: "failed"})`, findings `[]`, and a summary that begins "The
+  // job is returned because …". A return rendered as a permanent red job with nothing to act on.
+  it('a gate that says in its summary it returned the work is filed as a return, not a red failure (W4-6)', async () => {
+    const id = createJob(vault, { type: 'engineer.ship', stream: 'checkout', title: 'Build', assigned: 'backend_engineer', goal: 'g', team: 'dev', owner_role: 'dev_manager' }, 'dev_manager');
+    await runJob(deps(finishing({ status: 'done', summary: 'built' })), id);
+    const qa = listJobs(vault).find((j) => j.type === 'team:qa.review')!;
+    const summary = "The job is returned because the Site/src/pages/index.astro file does not contain the brand name, palette, or voice as required by the job's 'Done when' criteria.";
+    await runJob(deps(finishing({ status: 'failed', summary })), qa.id);
+
+    // The review itself: done with a verdict, and the sentence it wrote is the finding.
+    const review = readJob(vault, qa.id)!;
+    expect(review.data.status).toBe('done');
+    expect(review.body).toContain('"verdict": "return"');
+    expect(review.body).toContain(summary);
+    // …and the author gets it as a return, with the reason, exactly as a well-formed `verdict: return` would.
+    const back = readJob(vault, id)!;
+    expect(back.data.status).toBe('queued');
+    expect(back.data.returns).toEqual({ 'team:qa.review': 1 });
+    expect(back.body).toContain(summary);
+    expect(vault.events.count('review.returned')).toBe(1);
+    expect(vault.events.query({ types: ['job.failed'] }).some((e) => e.job === qa.id)).toBe(false);
+  });
+
+  it('a gate that genuinely failed stays failed, but never with empty findings (W4-6)', async () => {
+    const id = createJob(vault, { type: 'engineer.ship', stream: 'checkout', title: 'Build', assigned: 'backend_engineer', goal: 'g', team: 'dev', owner_role: 'dev_manager' }, 'dev_manager');
+    await runJob(deps(finishing({ status: 'done', summary: 'built' })), id);
+    const qa = listJobs(vault).find((j) => j.type === 'team:qa.review')!;
+    await runJob(deps(finishing({ status: 'failed', summary: 'I could not read the CI record.' })), qa.id);
+    const review = readJob(vault, qa.id)!;
+    expect(review.data.status).toBe('failed');
+    expect(review.body).toContain('I could not read the CI record.');
+    expect(review.body).not.toContain('"findings": []');
+    expect(readJob(vault, id)!.data.status).toBe('queued');   // a failed gate still returns the parent
+  });
+
   it('research passes research.review before the requester; ungated types finish directly; blocked/failed skip gates', async () => {
     const r = createJob(vault, { type: 'research', title: 'R', assigned: 'researcher', goal: 'g', for: 'cfo', owner_role: 'cfo' }, 'cfo');
     await runJob(deps(finishing({ status: 'done', summary: 'report' })), r);
@@ -90,7 +126,9 @@ describe('review gates (spec §3)', () => {
     const quality = listJobs(vault).find((j) => j.type === 'research.review')!;
     expect(quality.assigned).not.toBe('research_manager');
     expect(vault.readNoteOrNull('Teams/research.md')!.data.members).toContain(quality.assigned); // another research role, per the brief's fallback order
-    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => String(e.payload.message).includes("the job's own author"))).toBe(true);
+    // Ruling W4-12: the roster decides this when the gate is resolved, so there is nothing to warn about. The
+    // 2026-09-14 run logged three of these warnings, which is three times the roster said "review your own work".
+    expect(vault.events.query({ types: ['daemon.warning'] }).some((e) => String(e.payload.message).includes("the job's own author"))).toBe(false);
     // M2: the reviewer is told which bar to judge against — the gate criteria measure evidence against the
     // requester's required confidence, which was not on the gate job before.
     const body = readJob(vault, quality.id)!.body;

@@ -234,9 +234,16 @@ describe('live-run failures: team ids, duplicate titles, finish aliases', () => 
     const dup = await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: '  define target   SEGMENTS ', assigned: 'backend_engineer', goal: 'other', done_when: 'x', risk: 'low' });
     expect(dup.ok).toBe(false);
     expect(dup.text).toBe(`a job with this title is already open for backend_engineer: ${id} (queued). Wait for it, or give the new job a different title if it really is different work`);
-    // same title for someone else, or a different title, is fine
-    expect((await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'frontend_engineer', goal: 'g', done_when: 'x', risk: 'low' })).ok).toBe(true);
-    expect((await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments v2', assigned: 'backend_engineer', goal: 'g', done_when: 'x', risk: 'low' })).ok).toBe(true);
+    // Ruling W4-10 widened this: the same work on somebody else's desk, and the same work under a longer
+    // title, are both still one piece of work. The 2026-09-14 run queued "Implement Stripe Webhook Replay
+    // Protection" (custom, blocked) beside "Implement Stripe webhook replay protection and rate limiting"
+    // (engineer.ship, queued) — two ids, two teams, two queue slots, one job.
+    const other = await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'frontend_engineer', goal: 'g', done_when: 'x', risk: 'low' });
+    expect(other.ok).toBe(false);
+    expect(other.text).toContain(`this is the work ${id} is already open for (queued, backend_engineer)`);
+    expect((await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments v2', assigned: 'backend_engineer', goal: 'g', done_when: 'x', risk: 'low' })).ok).toBe(false);
+    // …and genuinely different work, said in the first three words, still goes through.
+    expect((await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Price the enterprise tier', assigned: 'frontend_engineer', goal: 'g', done_when: 'x', risk: 'low' })).ok).toBe(true);
     // once the first is closed the title is free again
     updateJob(vault, id, { status: 'done' }, 'dev_manager');
     expect((await call('scheduler.request', 'dev_manager', { type: 'engineer.ship', title: 'Define Target Segments', assigned: 'backend_engineer', goal: 'g', done_when: 'x', risk: 'low' })).ok).toBe(true);

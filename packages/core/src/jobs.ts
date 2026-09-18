@@ -133,10 +133,23 @@ export function listJobs(vault: Vault, filter: { status?: JobStatus | JobStatus[
   return out.sort((a, b) => a.priority - b.priority || a.created.localeCompare(b.created));
 }
 
-/** Patch job frontmatter fields (and optionally append to a section) atomically. */
+/** The statuses that mean a job has come to rest: nothing is waiting on anything any more. */
+const FINISHED = ['done', 'failed', 'cancelled'];
+
+/**
+ * Patch job frontmatter fields (and optionally append to a section) atomically.
+ *
+ * A job that finishes loses its `blocked_on` (ruling W4-13). `job_20260914_b88c4b` in the dry run was
+ * `status: done` and still carried `blocked_on: {kind: quota, …}` in its frontmatter, because `blocked_on` is
+ * only ever *set* — by the tool that blocked, by the fan-out that parked a heartbeat — and nothing took it off
+ * on the way out. Everything that reads a job's frontmatter to say what the company is waiting for then counted
+ * a finished job among the blocked, which is how the office board came to show more blocked jobs than it had.
+ * A patch that names `blocked_on` itself is left alone; this only clears what nobody spoke for.
+ */
 export function updateJob(vault: Vault, id: string, patch: Partial<JobFrontmatter>, by: string, appendLog?: string): JobFrontmatter {
+  const clearsBlock = patch.status !== undefined && FINISHED.includes(patch.status) && !('blocked_on' in patch);
   const note = vault.updateNote<Record<string, unknown>>(jobPath(id), (n) => {
-    const data = { ...n.data, ...patch, updated: nowIso() };
+    const data = { ...n.data, ...patch, updated: nowIso(), ...(clearsBlock ? { blocked_on: undefined } : {}) };
     let body = n.body;
     if (appendLog) body = appendToSection(body, '## Checkpoint log', appendLog);
     return { data, body };
@@ -255,6 +268,88 @@ export const GATE_JOB_TYPES: readonly string[] = [
   // work count for the rest of its life, or renaming the gates would retroactively make old reviews "work".
   'qa.review', 'security.review', 'coo.verify',
 ];
+
+/** The words of a title, lowercased. */
+function titleWords(title: string): string[] {
+  return title.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+/** The first three words of a title, lowercased — how one piece of work decides another already covers it. */
+function titleKey(title: string): string {
+  return titleWords(title).slice(0, 3).join(' ');
+}
+
+/**
+ * True when an existing job is already the piece of work `wanted` describes: its own first three words are
+ * `wanted`'s first three words. "Scaffold Site/ from Brand/ (v2)" covers "Scaffold Site/ from Brand/ (first
+ * cut)"; "Research competitors" does not cover "Research the first organic channel".
+ *
+ * The match is one-directional on purpose. A title with fewer than three words has not said enough to claim
+ * another's work — a job called "Research" would otherwise silently cancel every research seed — so it never
+ * covers one.
+ *
+ * Three words, not the whole title, because the 2026-09-14 run queued "Implement Stripe Webhook Replay
+ * Protection" (custom, blocked) beside "Implement Stripe webhook replay protection and rate limiting"
+ * (engineer.ship, queued): the same work under two ids, two teams and two queue slots, which an exact-title
+ * comparison could never catch (ruling W4-10).
+ */
+export function coversTitle(existing: string, wanted: string): boolean {
+  if (titleWords(existing).length < 3) return false;
+  return titleKey(existing).startsWith(titleKey(wanted));
+}
+
+/** Either title claiming the other's work — what a queue asks before it opens a second slot for one job. */
+export function sameWorkAs(a: string, b: string): boolean {
+  return coversTitle(a, b) || coversTitle(b, a);
+}
+
+/** A gate job's type, under the office-era name or the pre-office one, or the `<room>.review` / `<office>.verify` shape. */
+export function isGateJobType(jobType: string): boolean {
+  return GATE_JOB_TYPES.includes(jobType) || /\.(review|verify)$/.test(jobType);
+}
+
+/**
+ * The verb a reviewer reaches for when it means "send this back", anywhere in its summary. Deliberately loose —
+ * "returned", "I am returning this", "return it to the author" all count — because what is being recovered is
+ * the reviewer's intent from a field it should never have used.
+ */
+const SAYS_RETURNED = /\breturn(?:ed|ing|s)?\b/i;
+
+/**
+ * A gate job's `finish` result, normalised before anything acts on it (ruling W4-6).
+ *
+ * `Jobs/job_20260914_3ac2f4.md` in the 2026-09-14 run: `finish({"status":"failed", …})` with
+ * `"findings": []` and the summary "The job is returned because Site/src/pages/index.astro … contains default
+ * Astro placeholder content." The gate instruction asks for `verdict: return` with findings naming a file; the
+ * reviewer said exactly that in prose and put it in the wrong field. Nine seconds later another job passed the
+ * same gate, and the owner was left with a permanent red failure nobody had to act on.
+ *
+ * Two rules, and both are about what a review is allowed to look like when it is over:
+ *
+ *  - a gate job whose summary says it **returned** the work, with no findings of its own, *is* a return: status
+ *    done, `verdict: return`, and the summary becomes the one finding, because that sentence is the finding.
+ *  - a gate job may never come to rest red **and silent**. Whatever else it says, its findings fall back to its
+ *    blockers, then to its summary, then to a line saying the review did not happen — so the author always has
+ *    something to act on and the parent's return always carries a reason.
+ *
+ * Everything else is left exactly as the reviewer wrote it: a pass, a return that named its findings, a failure
+ * that listed blockers.
+ */
+export function normaliseGateResult<T extends { status: 'done' | 'failed' | 'blocked'; summary?: string; blockers?: string[]; findings?: string[]; verdict?: 'pass' | 'return' }>(jobType: string, result: T): T {
+  if (!isGateJobType(jobType)) return result;
+  const red = result.status === 'failed' || (result.status === 'done' && result.verdict === 'return');
+  if (!red) return result;
+  const summary = (result.summary ?? '').trim();
+  const findings = (result.findings ?? []).map((f) => f.trim()).filter(Boolean);
+  const filled = findings.length ? findings
+    : (result.blockers ?? []).map((b) => b.trim()).filter(Boolean).length ? (result.blockers ?? []).map((b) => b.trim()).filter(Boolean)
+    : summary ? [summary]
+    : ['the reviewer finished without saying what was wrong'];
+  const meantReturn = result.status === 'failed' && !findings.length && SAYS_RETURNED.test(summary);
+  return meantReturn
+    ? { ...result, status: 'done' as const, verdict: 'return' as const, findings: filled }
+    : { ...result, findings: filled };
+}
 
 /** `chain` is the job's gate list (`gatesForRisk(table, job.type, job.risk)`); `depsDone` separates backlog from ready. */
 export function stageOf(job: Pick<JobFrontmatter, 'status' | 'gate_index' | 'depends_on'>, chain: string[], depsDone = true): KanbanStage {

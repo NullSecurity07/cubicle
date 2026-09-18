@@ -1,0 +1,72 @@
+/* One stylesheet, no build step, no dependency. Every colour is a token on :root so a change to Brand/palette.md
+   is a change to these six lines and nothing else. Replace the values; keep the names. */
+:root {
+  --ink: #16191d;
+  --paper: #fdfdfb;
+  --muted: #5a6068;
+  --accent: #2f5d50;
+  --accent-ink: #ffffff;
+  --rule: #e3e3dd;
+  --measure: 34rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #eceef0;
+    --paper: #16191d;
+    --muted: #a3a9b1;
+    --accent: #7fc0ad;
+    --accent-ink: #10231e;
+    --rule: #2a2f36;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ink: #eceef0;
+  --paper: #16191d;
+  --muted: #a3a9b1;
+  --accent: #7fc0ad;
+  --accent-ink: #10231e;
+  --rule: #2a2f36;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 16px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 1rem/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+main, .band { max-width: var(--measure); margin: 0 auto; }
+
+.band { padding: 1.5rem 0; border-bottom: 1px solid var(--rule); }
+footer.band { border-bottom: 0; border-top: 1px solid var(--rule); color: var(--muted); }
+
+.mark { margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+.tagline { margin: 0.25rem 0 0; color: var(--muted); }
+
+section { padding: 2rem 0; }
+.hero { padding-top: 3rem; }
+
+h1 { margin: 0 0 0.75rem; font-size: clamp(1.75rem, 5vw, 2.5rem); line-height: 1.15; letter-spacing: -0.02em; }
+h2 { margin: 0 0 0.5rem; font-size: 1.25rem; letter-spacing: -0.01em; }
+.lede { margin: 0 0 1.5rem; color: var(--muted); font-size: 1.0625rem; }
+
+ul { margin: 0; padding-left: 1.1rem; }
+li { margin-bottom: 0.4rem; }
+
+.cta {
+  display: inline-block;
+  padding: 0.65rem 1.25rem;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+.cta:hover { filter: brightness(1.08); }
+.cta:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }

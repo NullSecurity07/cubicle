@@ -148,23 +148,125 @@ export function mockedServicesRow(mocked: ('deploy' | 'email' | 'analytics')[]):
 }
 
 /**
- * Model use over the heartbeat window, from `router.call` events: a fact line always, and a "What needs you" row
- * when the team ran mostly on the local floor — at least 5 calls, at least half of them downgraded (a one-off
- * cascade is noise; a whole cycle on ollama is news). `noCloudKeys` picks the cause: the live run this fixes had
- * no key at all, which Metrics/quota.md ("ok 0/250") could not distinguish from an idle cloud tier.
+ * One `router.downgraded` event, read rather than assumed: which model was asked for first, which one actually
+ * answered, and why the first could not.
+ *
+ * The event carries `tried` — `["gemini/gemini-3.5-flash (429)", …]`, in the order the cascade walked them — so
+ * both halves of "fell back from X to Y" are on the record and neither has to be guessed at. `chosen_tier` says
+ * whether the model that answered was on the local floor, which is the one claim the old brief made without
+ * ever checking it.
  */
-export function modelUseRows(use: { calls: number; downgraded: number }, noCloudKeys: boolean): { fact: string; needsYou: string | null } {
-  const fact = `Model use: ${use.calls} calls, ${use.downgraded} downgraded to local`;
-  if (use.calls < 5 || use.downgraded * 2 < use.calls) return { fact, needsYou: null };
-  const reason = noCloudKeys ? 'no cloud provider has an API key' : 'cloud models were rate-limited or cooling';
-  return { fact, needsYou: `- The team ran mostly on the local model (${use.downgraded} of ${use.calls} calls downgraded): ${reason}. Check API keys in .env (\`cubicle doctor\`) and Metrics/quota.md` };
+export interface ModelFallback {
+  /** The model the call asked for first, or null when the event's `tried` list did not say. */
+  from: string | null;
+  /** The model that answered. */
+  to: string;
+  /** Why the first one could not, in the owner's words. */
+  why: string;
+  /** The model that answered runs on this machine. */
+  local: boolean;
+  /** A provider refused its API key (401). The one downgrade the owner can actually fix in `.env`. */
+  keyProblem: boolean;
+}
+
+/** `"gemini/gemini-3.5-flash (429)"` → `"gemini-3.5-flash"`; anything else → null. */
+function triedModel(entry: string): string | null {
+  const head = entry.trim().split(/\s+\(/)[0];
+  const slash = head.indexOf('/');
+  const model = slash === -1 ? head : head.slice(slash + 1);
+  return model.trim() || null;
+}
+
+/** Reasons a `tried` entry can carry, in the words the brief uses. First match wins, worst first. */
+const TRIED_REASONS: [RegExp, string][] = [
+  [/\(401\)$/, 'the provider refused its API key'],
+  [/\((?:429|cooling)\)$/, 'rate limit'],
+  [/\((?:provider )?(?:rpm|rpd|tpm|tpd)\)$/, 'rate limit'],
+  [/\((?:502|503|529)\)$/, 'the provider was overloaded'],
+  [/\(too big:[^)]*\)$/, 'the prompt was over its cap'],
+];
+
+/**
+ * A `router.downgraded` payload as a fact, or null when the payload is not one (a trimmed log, an older build).
+ */
+export function modelFallback(payload: { model?: unknown; tried?: unknown; reason?: unknown; chosen_tier?: unknown }): ModelFallback | null {
+  const to = typeof payload.model === 'string' ? payload.model.trim() : '';
+  if (!to) return null;
+  const tried = Array.isArray(payload.tried) ? payload.tried.map((t) => String(t)) : [];
+  const keyProblem = tried.some((t) => /\(401\)$/.test(t.trim()));
+  const why = payload.reason === 'division budget'
+    ? "the division's own model budget"
+    : TRIED_REASONS.find(([re]) => tried.some((t) => re.test(t.trim())))?.[1] ?? 'no stronger model had headroom';
+  return { from: tried.length ? triedModel(tried[0]) : null, to, why, local: payload.chosen_tier === 'local', keyProblem };
+}
+
+/** The commonest (from → to → why) route among a window's fallbacks, and how many took it. */
+function commonestFallback(falls: ModelFallback[]): { fall: ModelFallback; count: number } | null {
+  const byRoute = new Map<string, { fall: ModelFallback; count: number }>();
+  for (const f of falls) {
+    const key = `${f.from ?? ''}>${f.to}>${f.why}`;
+    const hit = byRoute.get(key);
+    if (hit) hit.count++; else byRoute.set(key, { fall: f, count: 1 });
+  }
+  return [...byRoute.values()].sort((a, b) => b.count - a.count)[0] ?? null;
 }
 
 /**
- * Whether a `router.call` event's downgrade counts toward `modelUseRows`'s "check your API keys" row. A division
- * that spent its own model budget (`reason: 'division budget'`) is working as designed — never stopped, just
- * cheaper — and must not be read as a keys or quota outage. Only a `cascade` downgrade (nothing at the asked-for
- * tier had headroom) is evidence of that.
+ * Model use over the heartbeat window: a fact line always, and a "What needs you" row only when the owner has
+ * something to fix.
+ *
+ * Both halves of this were false in the 2026-09-14 run (defect 4). The vault held 572 `router.call` events, all
+ * gemini or groq and **not one** on ollama, and all 68 `router.downgraded` were `reason: cascade`, cloud to
+ * cloud — and the brief told the owner "9 model calls made; 6 downgraded to local (cloud rate-limited/cooling)"
+ * and "Check API keys in .env … cloud models are rate-limited, forcing local fallback." Two invented facts and a
+ * chore, from a hard-coded string and a predicate that excluded only `division budget`.
+ *
+ * So the line now names what the events name (ruling W4-4): the model asked for, the model that answered, and
+ * the reason the cascade recorded — "6 calls fell back from gemini-3.5-flash to gemini-3.1-flash-lite (rate
+ * limit)". And the keys advice appears only for a keys problem: no cloud provider has a key at all
+ * (`noCloudKeys`), or a provider answered 401. A cascade between two cloud models is the router doing its job;
+ * there is nothing in `.env` to fix and the owner must not be sent looking.
+ *
+ * The threshold on the row is unchanged — at least 5 calls, at least half downgraded — because a one-off
+ * cascade is noise and a whole cycle of them is news.
+ */
+export function modelUseRows(use: { calls: number; downgraded: number; fallbacks?: ModelFallback[] }, noCloudKeys: boolean): { fact: string; needsYou: string | null } {
+  const falls = use.fallbacks ?? [];
+  const top = commonestFallback(falls);
+  const route = top ? `${top.count} fell back ${top.fall.from ? `from ${top.fall.from} ` : ''}to ${top.fall.to} (${top.fall.why})` : `${use.downgraded} downgraded`;
+  const others = falls.length - (top?.count ?? 0);
+  const fact = use.downgraded === 0 && !falls.length
+    ? `Model use: ${use.calls} calls, none downgraded`
+    : `Model use: ${use.calls} calls; ${route}${others > 0 ? `, and ${others} on other routes` : ''}`;
+  if (use.calls < 5 || use.downgraded * 2 < use.calls) return { fact, needsYou: null };
+  // The only two downgrades `.env` can fix. Everything else — a cascade, a cooling model, a division that spent
+  // its own budget — is the company working, and saying "check your API keys" about it is a false chore.
+  const badKey = falls.some((f) => f.keyProblem);
+  if (!noCloudKeys && !badKey) return { fact, needsYou: null };
+  const cause = noCloudKeys ? 'no cloud provider has an API key' : 'a provider refused its API key';
+  return { fact, needsYou: `- The team ran on fallback models for ${use.downgraded} of ${use.calls} calls: ${cause}. Check API keys in .env (\`cubicle doctor\`) and Metrics/quota.md` };
+}
+
+/**
+ * The window's model-use facts, read off the log: `router.call` for how much was spent and how much of it fell
+ * back, `router.downgraded` for what it fell back *from* and *to* (only that event carries `tried`).
+ */
+export function modelUseFacts(vault: Vault, since?: string): { calls: number; downgraded: number; fallbacks: ModelFallback[] } {
+  const calls = vault.events.query({ types: ['router.call'], from: since });
+  return {
+    calls: calls.length,
+    downgraded: calls.filter((e) => isKeyProblemDowngrade(e.payload)).length,
+    fallbacks: vault.events.query({ types: ['router.downgraded'], from: since }).map((e) => modelFallback(e.payload)).filter((f): f is ModelFallback => f !== null),
+  };
+}
+
+/**
+ * Whether a `router.call` event's downgrade counts as the company having been pushed off the model it asked for.
+ *
+ * A division that spent its own model budget (`reason: 'division budget'`) is working as designed — never
+ * stopped, just cheaper — and has never been counted here. Nothing else is excluded: a cloud-to-cloud cascade is
+ * a real downgrade and the brief says so, in `modelUseRows`, naming both models. What it no longer does is imply
+ * a cause; that is `modelUseRows`'s job now, and it reads `router.downgraded` to do it.
  */
 export function isKeyProblemDowngrade(payload: { downgraded?: unknown; reason?: unknown }): boolean {
   return payload.downgraded === true && payload.reason !== 'division budget';
@@ -2422,7 +2524,11 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // keyed on the round (`vetoes`), so a crash-resume rewrites the same note while the one allowed rewrite
         // gets a second one — two sessions, two records.
         const boardJob = createJob(vault, {
-          id: idFromKey('job', `board:${hbId}:${state.vetoes ?? 0}`), type: 'board.premortem', title: `Board pre-mortem for ${hbId}`,
+          // Two sessions for one heartbeat are by design — the board returns the plan once, the CEO rewrites it,
+          // the board sits again — but the 2026-09-14 run filed both under one title and the owner read two
+          // identical rows (ruling W4-10). The second one says which plan it read.
+          id: idFromKey('job', `board:${hbId}:${state.vetoes ?? 0}`), type: 'board.premortem',
+          title: (state.vetoes ?? 0) > 0 ? `Board pre-mortem after the rewrite for ${hbId}` : `Board pre-mortem for ${hbId}`,
           assigned: board.lead, priority: 1, parent: jobId, team: board.id, owner_role: ceo,
           depends_on: [jobId], links: [`[[${jobId}]]`],
           goal: `The board read Plans/plan.md for heartbeat ${hbId} and merged ${session.advisors.length} pre-mortems into one verdict.`,
@@ -2672,10 +2778,9 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // A migration (spec §1) happened since the previous heartbeat: flag it once so the owner notices the new
         // teams/charters instead of finding out from a stray diff (F10).
         const migrated = vault.events.query({ types: ['org.changed'], from: state.since ?? undefined }).some((e) => e.payload.reason === 'migration');
-        // Same window as the other facts (since the previous gather): how much of the cycle ran on the local floor,
-        // and which outbound services only pretended. Both were invisible in a live run's briefs for three days.
-        const calls = vault.events.query({ types: ['router.call'], from: state.since ?? undefined });
-        const modelUse = modelUseRows({ calls: calls.length, downgraded: calls.filter((e) => isKeyProblemDowngrade(e.payload)).length }, deps.noCloudKeys?.() ?? false);
+        // Same window as the other facts (since the previous gather): which models the cycle actually ran on, and
+        // which outbound services only pretended. Both were invisible in a live run's briefs for three days.
+        const modelUse = modelUseRows(modelUseFacts(vault, state.since ?? undefined), deps.noCloudKeys?.() ?? false);
         const mocked = deps.env ? mockedServices(deps.env) : [];
         // Ruling S-1 again, said to the owner rather than to the checkpoint log: four steps of this cycle did
         // nothing, and the brief is the only place they would ever find out why. An open brief proposal is

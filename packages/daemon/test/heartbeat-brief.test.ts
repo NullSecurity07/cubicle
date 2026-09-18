@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault, Vault, listJobs, createJob, updateJob, createProposal, loadOrg, createStream, writeCiRecord, writeIdeaCard, readIdea } from '@cubicle/core';
 import { estimateJobId, researchJobId } from '../src/discovery.js';
 import type { Llm } from '@cubicle/harness';
-import { Daemon, defaultConfig, mockedServices, mockedServicesRow, modelUseRows, isKeyProblemDowngrade, planningGate, divisionPlanGoal } from '../src/index.js';
+import { Daemon, defaultConfig, mockedServices, mockedServicesRow, modelUseRows, modelFallback, modelUseFacts, isKeyProblemDowngrade, planningGate, divisionPlanGoal } from '../src/index.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
 import { letTheBoardDecide, planUntilFannedOut } from './helpers/board-switch.js';
 import { adoptFounderBrief } from './helpers/brief.js';
@@ -83,18 +83,76 @@ const factsOf = (brief: string) => brief.split('_Facts used:_')[1] ?? '';
 const today = new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => new Date(Date.now() - n * 86400_000).toISOString().slice(0, 10);
 const planOn = (updated: string) => `---\nupdated: "${updated}"\ncycle: 3\n---\n# Plan\n\n## Objectives\n\n### dev\n- Ship the staging branch\n\n### revenue\n- Run the second outreach iteration\n\n### security\n- Verify the outreach iteration\n`;
-const seedRouterCalls = (v: Vault, downgraded: number, cloud: number) => {
-  for (let i = 0; i < downgraded; i++) v.events.emit({ type: 'router.call', agent: 'ceo', payload: { provider: 'ollama', model: 'qwen2.5:7b', tier: 'local', tokens: { prompt_tokens: 1, completion_tokens: 1 }, tools: 'json', downgraded: true } });
+/**
+ * A window of router traffic: `downgraded` calls that fell back to the local floor and `cloud` that did not.
+ * Each fallback emits both events the brief reads — the `router.call` that counts the spend and the
+ * `router.downgraded` that says what it fell back from. `tried` is the cascade's own reason string, so a case
+ * can seed the rate-limited cascade (the common one) or a provider that refused its key.
+ */
+const seedRouterCalls = (v: Vault, downgraded: number, cloud: number, tried = 'gemini/gemini-3.5-flash (429)') => {
+  for (let i = 0; i < downgraded; i++) {
+    v.events.emit({ type: 'router.call', agent: 'ceo', payload: { provider: 'ollama', model: 'qwen2.5:7b', tier: 'local', tokens: { prompt_tokens: 1, completion_tokens: 1 }, tools: 'json', downgraded: true, reason: 'cascade' } });
+    v.events.emit({ type: 'router.downgraded', agent: 'ceo', payload: { requested_tier: 'strong', chosen_tier: 'local', provider: 'ollama', model: 'qwen2.5:7b', tried: [tried], reason: 'cascade' } });
+  }
   for (let i = 0; i < cloud; i++) v.events.emit({ type: 'router.call', agent: 'ceo', payload: { provider: 'gemini', model: 'gemini-3.5-flash', tier: 'strong', tokens: { prompt_tokens: 1, completion_tokens: 1 }, tools: 'native', downgraded: false } });
 };
 
-describe('degraded-mode row (the team ran on the local model)', () => {
-  it('modelUseRows: a fact line always; a needs-you row only from 5 calls with at least half downgraded, naming the cause', () => {
-    expect(modelUseRows({ calls: 0, downgraded: 0 }, false)).toEqual({ fact: 'Model use: 0 calls, 0 downgraded to local', needsYou: null });
-    expect(modelUseRows({ calls: 4, downgraded: 4 }, true).needsYou).toBeNull();         // too few calls to call it a pattern
-    expect(modelUseRows({ calls: 10, downgraded: 4 }, true).needsYou).toBeNull();        // under half
-    expect(modelUseRows({ calls: 6, downgraded: 3 }, true).needsYou).toBe('- The team ran mostly on the local model (3 of 6 calls downgraded): no cloud provider has an API key. Check API keys in .env (`cubicle doctor`) and Metrics/quota.md');
-    expect(modelUseRows({ calls: 6, downgraded: 6 }, false).needsYou).toBe('- The team ran mostly on the local model (6 of 6 calls downgraded): cloud models were rate-limited or cooling. Check API keys in .env (`cubicle doctor`) and Metrics/quota.md');
+/**
+ * A `router.downgraded` payload in the shape the live router writes, taken verbatim from the 2026-09-14 vault
+ * (`.cubicle/events/2026-09-14.jsonl`): every one of that day's 68 was `reason: cascade`, gemini to gemini, and
+ * not one call in the whole run reached ollama.
+ */
+const CASCADE = { requested_tier: 'strong', chosen_tier: 'cheap', provider: 'gemini', model: 'gemini-3.1-flash-lite', tried: ['gemini/gemini-3.5-flash (429)', 'gemini/gemini-3.7-flash (503)'], reason: 'cascade' };
+
+describe('degraded-mode row (which models the cycle actually ran on)', () => {
+  const badKey = (n: number) => Array.from({ length: n }, () => modelFallback({ ...CASCADE, chosen_tier: 'local', provider: 'ollama', model: 'qwen2.5:7b', tried: ['gemini/gemini-3.5-flash (401)'] })!);
+  const cascades = (n: number) => Array.from({ length: n }, () => modelFallback(CASCADE)!);
+
+  // Ruling W4-4. The brief used to hard-code "downgraded to local" and then advise the owner to check their
+  // API keys, on a day when every downgrade was gemini → gemini and no key was involved at all.
+  it('modelFallback reads the event instead of assuming: which model was asked for, which answered, and why', () => {
+    expect(modelFallback(CASCADE)).toEqual({ from: 'gemini-3.5-flash', to: 'gemini-3.1-flash-lite', why: 'rate limit', local: false, keyProblem: false });
+    expect(modelFallback({ ...CASCADE, tried: ['gemini/gemini-3.5-flash (401)'] })!.keyProblem).toBe(true);
+    expect(modelFallback({ ...CASCADE, tried: ['gemini/gemini-3.5-flash (503)'] })!.why).toBe('the provider was overloaded');
+    expect(modelFallback({ ...CASCADE, reason: 'division budget' })!.why).toBe("the division's own model budget");
+    expect(modelFallback({ ...CASCADE, chosen_tier: 'local' })!.local).toBe(true);
+    expect(modelFallback({ ...CASCADE, tried: [] })!.from).toBeNull();
+    expect(modelFallback({ model: '' })).toBeNull();
+  });
+
+  it('modelUseRows names the real fallback route, and never claims a local floor nobody ran on', () => {
+    expect(modelUseRows({ calls: 0, downgraded: 0 }, false)).toEqual({ fact: 'Model use: 0 calls, none downgraded', needsYou: null });
+    // The exact shape of the 2026-09-14 lie, told truthfully.
+    expect(modelUseRows({ calls: 9, downgraded: 6, fallbacks: cascades(6) }, false).fact)
+      .toBe('Model use: 9 calls; 6 fell back from gemini-3.5-flash to gemini-3.1-flash-lite (rate limit)');
+    expect(modelUseRows({ calls: 9, downgraded: 6, fallbacks: cascades(6) }, false).fact).not.toContain('local');
+    // More than one route in the window: the commonest is named, the rest are counted.
+    const mixed = [...cascades(4), ...badKey(1)];
+    expect(modelUseRows({ calls: 9, downgraded: 5, fallbacks: mixed }, false).fact)
+      .toBe('Model use: 9 calls; 4 fell back from gemini-3.5-flash to gemini-3.1-flash-lite (rate limit), and 1 on other routes');
+  });
+
+  it('the "check your API keys" row appears only for a keys problem', () => {
+    // A whole cycle of cloud-to-cloud cascades is the router doing its job. Nothing in .env fixes it.
+    expect(modelUseRows({ calls: 9, downgraded: 6, fallbacks: cascades(6) }, false).needsYou).toBeNull();
+    expect(modelUseRows({ calls: 4, downgraded: 4, fallbacks: badKey(4) }, true).needsYou).toBeNull();     // too few calls to call it a pattern
+    expect(modelUseRows({ calls: 10, downgraded: 4, fallbacks: badKey(4) }, true).needsYou).toBeNull();    // under half
+    expect(modelUseRows({ calls: 6, downgraded: 3, fallbacks: [] }, true).needsYou).toBe('- The team ran on fallback models for 3 of 6 calls: no cloud provider has an API key. Check API keys in .env (`cubicle doctor`) and Metrics/quota.md');
+    expect(modelUseRows({ calls: 6, downgraded: 6, fallbacks: badKey(6) }, false).needsYou).toBe('- The team ran on fallback models for 6 of 6 calls: a provider refused its API key. Check API keys in .env (`cubicle doctor`) and Metrics/quota.md');
+  });
+
+  it('modelUseFacts reads both events: router.call for the spend, router.downgraded for the route', () => {
+    const v = Vault.open(dir);
+    try {
+      v.events.emit({ type: 'router.call', agent: 'ceo', payload: { provider: 'gemini', model: 'gemini-3.1-flash-lite', tier: 'cheap', downgraded: true, reason: 'cascade' } });
+      v.events.emit({ type: 'router.call', agent: 'ceo', payload: { provider: 'gemini', model: 'gemini-3.1-flash-lite', tier: 'cheap', downgraded: true, reason: 'division budget' } });
+      v.events.emit({ type: 'router.call', agent: 'ceo', payload: { provider: 'gemini', model: 'gemini-3.5-flash', tier: 'strong', downgraded: false } });
+      v.events.emit({ type: 'router.downgraded', agent: 'ceo', payload: CASCADE });
+      const facts = modelUseFacts(v);
+      expect(facts.calls).toBe(3);
+      expect(facts.downgraded).toBe(1);                                   // the division-budget demotion is not one
+      expect(facts.fallbacks).toEqual([{ from: 'gemini-3.5-flash', to: 'gemini-3.1-flash-lite', why: 'rate limit', local: false, keyProblem: false }]);
+    } finally { v.close(); }
   });
 
   it('a heartbeat whose window was mostly downgraded router.call events puts the row in the brief, with the no-key reason when no cloud provider has a key', async () => {
@@ -105,12 +163,12 @@ describe('degraded-mode row (the team ran on the local model)', () => {
     try {
       await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       const facts = factsOf(lastBrief(v));
-      expect(facts).toContain('Model use: 6 calls, 5 downgraded to local');
-      expect(facts).toContain('(5 of 6 calls downgraded): no cloud provider has an API key');
+      expect(facts).toContain('Model use: 6 calls; 5 fell back from gemini-3.5-flash to qwen2.5:7b');
+      expect(facts).toContain('for 5 of 6 calls: no cloud provider has an API key');
     } finally { v.close(); await d.stop(); }
   }, TEST_MS);
 
-  it('with cloud keys present the same pattern is blamed on rate limits / cooling; a mostly-cloud window adds no row', async () => {
+  it('with cloud keys present a rate-limited cascade names both models and asks the owner for nothing (W4-4)', async () => {
     const seed = Vault.open(dir); seedRouterCalls(seed, 3, 3); seed.close();
     const d = daemonFor(orgLlm({ vetoes: 0 }), { ...NO_KEYS, GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q', OPENROUTER_API_KEY: 'o' });
     await d.start();
@@ -118,7 +176,8 @@ describe('degraded-mode row (the team ran on the local model)', () => {
     try {
       await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       const facts = factsOf(lastBrief(v));
-      expect(facts).toContain('(3 of 6 calls downgraded): cloud models were rate-limited or cooling');
+      expect(facts).toContain('3 fell back from gemini-3.5-flash to qwen2.5:7b (rate limit)');
+      expect(facts).not.toContain('Check API keys in .env');
     } finally { v.close(); await d.stop(); }
     const seed2 = Vault.open(dir); seedRouterCalls(seed2, 1, 9); seed2.close();
     const d2 = daemonFor(orgLlm({ vetoes: 0 }), { ...NO_KEYS, GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q', OPENROUTER_API_KEY: 'o' });
@@ -128,8 +187,8 @@ describe('degraded-mode row (the team ran on the local model)', () => {
       d2.requestHeartbeat('test');
       await waitFor(() => v2.events.count('heartbeat.completed') >= 2);
       const facts = factsOf(lastBrief(v2));
-      expect(facts).toContain('Model use: 10 calls, 1 downgraded to local');
-      expect(facts).not.toContain('ran mostly on the local model');
+      expect(facts).toContain('Model use: 10 calls; 1 fell back from gemini-3.5-flash to qwen2.5:7b');
+      expect(facts).not.toContain('Check API keys in .env');
     } finally { v2.close(); await d2.stop(); }
   }, TEST_MS);
 
@@ -152,8 +211,8 @@ describe('degraded-mode row (the team ran on the local model)', () => {
     try {
       await waitFor(() => v.events.count('heartbeat.completed') >= 1);
       const facts = factsOf(lastBrief(v));
-      expect(facts).toContain('Model use: 6 calls, 0 downgraded to local');
-      expect(facts).not.toContain('ran mostly on the local model');
+      expect(facts).toContain('Model use: 6 calls, none downgraded');
+      expect(facts).not.toContain('Check API keys in .env');
     } finally { v.close(); await d.stop(); }
   }, TEST_MS);
 });

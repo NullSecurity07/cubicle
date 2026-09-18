@@ -32,8 +32,8 @@ Before you write the endpoint (operating model §28, Backend Engineer):
 
 - Read `Brand/name.md`, `Brand/palette.md`, `Brand/voice.md` before touching `Site/`.
 - Never revert an owner edit under `Site/`. Owner-changed files are read-only for you; if you must change one, ask the owner via `00 Inbox/`.
-- Prefer static HTML or Astro for the site. No accounts, no paid services.
-- Scaffolding: the sandbox has a minimal Astro site with dependencies at `/opt/templates/minimal`. Run `shell.run` with `cp -a /opt/templates/minimal/. . && npm run build` (works with no network). Only use `network: allowlist` when you need an extra npm package.
+- Prefer static HTML for the site; reach for Astro only when a job asks for a framework. No accounts, no paid services.
+- Scaffolding, in that order. A plain one-page site — no framework, no build step, nothing to install — is at `/opt/cubicle-templates/static`: `shell.run` with `cp -a /opt/cubicle-templates/static/. .`, then write the real copy over every `REPLACE` in `index.html` and the real colours over the tokens at the top of `styles.css`. Its `cubicle-ci.yaml` validates the HTML with no npm; copy that over your stream's `Workspace/<stream>/cubicle-ci.yaml`. A minimal Astro site with dependencies is at `/opt/templates/minimal` (`cp -a /opt/templates/minimal/. . && npm run build`, no network needed) for when a job genuinely needs one. Only use `network: allowlist` when you need an extra npm package.
 - The built site lives in `Site/dist` (what `deploy.site` publishes).
 - Every shipped change has a `git diff` you can explain in one sentence and a test or a smoke check.
 - `Docs/engineering-handbook.md` is the operating model in one page: trunk-based, green CI before you finish, risk before you start.
