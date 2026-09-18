@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { edgeTypes } from './edges';
+import { nodeTypes } from './nodes';
 import { HANDLE_IDS, WIRE, stageEdges, stageNodes } from './stage';
 
 describe('stage data', () => {
@@ -36,5 +38,12 @@ describe('stage data', () => {
     for (const node of stageNodes) {
       if (node.type === 'room') expect(node.data.image).toMatch(/^\/rooms\/[a-z]+\.webp$/);
     }
+  });
+});
+
+describe('type registration', () => {
+  it('registers every node type and edge type the stage uses', () => {
+    for (const node of stageNodes) expect(nodeTypes).toHaveProperty(node.type);
+    for (const edge of stageEdges) expect(edgeTypes).toHaveProperty(edge.type!);
   });
 });
