@@ -285,6 +285,12 @@ describe('FR-2: three ideas, or an honest answer — never half of one', () => {
     const reply = ceoSection(vault, p);
     expect(reply.split('\n').filter((l) => /^\d+\.\s/.test(l)).length).toBe(3);
     expect(reply).toContain('Tinyletter Co');
+    // W5-3(a): the reply is a chat bubble in the office, beside three clickable cards and an Approve button.
+    // It said "Pick one with `chosen:` and `approved: true`" — frontmatter, for a screen that has neither.
+    expect(reply).toContain('Pick one in Decisions.');
+    expect(reply).not.toMatch(/chosen:|approved: true|00 Inbox/);
+    // The note itself keeps the Obsidian wording: it is the same decision, read in a text editor.
+    expect(props[0].body).toContain('Set `chosen: 1|2|3` and `approved: true`');
   });
 
   it('files nothing and says so when two asks do not produce three ideas', async () => {

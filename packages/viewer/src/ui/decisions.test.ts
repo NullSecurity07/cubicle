@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { applySnapshot, emptyState, decideSent, decideAcked, decideFailed, type Snapshot, type InboxRow } from '../state.js';
 import { viewFor } from './surfaces.js';
-import { APPLYING_TEXT, BOARD_SITTING, BOARD_SITTING_CHIP, COMMENT_REQUIRED, actionBar, commentRequired, decidableOf, decideStateFor, decisionKey, decisionsView, mailWithoutRows, overrulesBoard, planFirst, proposedContent, readerBody, rowStateChip, verbsFor, withoutFileInstructions } from './decisions.js';
+import { APPLYING_TEXT, BOARD_SITTING, BOARD_SITTING_CHIP, COMMENT_REQUIRED, actionBar, commentRequired, decidableOf, decideStateFor, decisionKey, decisionsView, mailWithoutRows, overrulesBoard, planFirst, proposedContent, readerBody, rowStateChip, verbsFor, withoutFileInstructions, withoutResolutionFooter } from './decisions.js';
 import { THEMES, contrastRatio } from './tokens.js';
 import type { Ctx } from './content.js';
 
@@ -334,6 +334,26 @@ describe('the reader after the dry-run (2026-09-14)', () => {
     expect(v.title).toBe('Founder brief');
     expect(v.html).toContain('adopted at Memory/founder-brief.md');
     expect(v.html).toContain('The wedge is speed.');
+  });
+
+  it('says the outcome once — the ribbon has it, so the note\'s own footer goes (W5-3)', () => {
+    // Dry-run 3's resolved pick, verbatim. The dispatcher appends its footer to the note so Obsidian shows what
+    // happened; the office already has the Approved ribbon, and printing both put the same sentence — plus a
+    // literal `---` and a pair of underscores — under a card that had just said it.
+    const footer = '\n\n---\n_Resolved 2026-09-18T09:21:08.008Z: applied to Brand/name.md; no reconcile job: no stream exists to ship against_\n';
+    const body = `# Three company ideas — pick one\n\n1. SponsorMatch — sponsors for newsletters.\n2. PageSpeedAudit — a free weekly audit.\n3. RemoteJunior — entry-level remote roles.${footer}`;
+    expect(withoutResolutionFooter(body)).toBe(body.slice(0, body.indexOf('\n\n---\n')));
+    // Refused notes carry the same chrome, and the bar is already saying why.
+    expect(withoutResolutionFooter('Pay the invoice.\n\n---\n_Not applied: the cap is USD 50. Ask the CFO._\n')).toBe('Pay the invoice.');
+    // Anything the note itself wrote in italics, or a rule it drew on purpose, is left where it is.
+    expect(withoutResolutionFooter('One\n\n---\n\nTwo')).toBe('One\n\n---\n\nTwo');
+
+    const decided = { id: 'd2', kind: 'brand_change', title: 'Three company ideas — pick one', path: '00 Inbox/x.md', created: 'c', resolved_at: '2026-09-18T09:21:08.008Z', approved: true, chosen: 2, outcome: 'applied to Brand/name.md', body };
+    const html = viewFor('decision:d2', applySnapshot(emptyState(), snap({ inbox: [], decided: [decided] })), ctx).html;
+    expect((html.match(/applied to Brand\/name\.md/g) ?? []).length).toBe(1);
+    expect(html).not.toContain('_Resolved');
+    expect(html).not.toContain('<p>---</p>');
+    expect(html).toContain('PageSpeedAudit');
   });
 
   it('never lists the same decision as a row and as mail', () => {

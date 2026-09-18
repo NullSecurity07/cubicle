@@ -413,7 +413,9 @@ export function soleStreamForShip(vault: Vault): { stream: string; refuse?: unde
   if (streams.length === 1) return { stream: streams[0].slug };
   return {
     refuse: streams.length === 0
-      ? 'no stream exists to ship against, so it would fail the CI gate after doing the work; the product manager writes Streams/<slug>.md first'
+      // In plain words, because this sentence is printed on the owner's own decision note, under the ribbon
+      // that says it was approved (W5-3(c)). A path with a placeholder in it is the company talking to itself.
+      ? 'no stream exists to ship against, so it would fail the CI gate after doing the work; the product manager sets up the product stream first'
       : `${streams.length} streams exist (${streams.map((s) => s.slug).join(', ')}) and nothing here may choose between them; name one on a scheduler.request instead`,
   };
 }
@@ -1615,7 +1617,11 @@ async function proposeThreeIdeas(deps: HeartbeatDeps, vault: Vault, opts: { prop
   if (ideas.length < 3) return SURPRISE_FAILED;
   const three = ideas.join('\n');
   createProposal(vault, { id: opts.propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${three}\n\nSet \`chosen: 1|2|3\` and \`approved: true\`; the chosen line's name becomes the company name.`, job: opts.jobId }, 'ceo');
-  return `I filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n${three}`;
+  // Two readers, two sentences (W5-3(a)). The note above is read in Obsidian, where editing the frontmatter is
+  // how the owner answers it, so it says so. This is the chat bubble in the cabin, where the same three ideas
+  // are already sitting on the Decisions sheet as three cards with an Approve button under them — and dry-run 3
+  // put "Pick one with `chosen:` and `approved: true`" right beside them.
+  return `I filed three ideas for you. Pick one in Decisions.\n\n${three}`;
 }
 
 /**

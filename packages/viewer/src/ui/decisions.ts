@@ -90,8 +90,25 @@ export function proposedContent(body: string): string | null {
  * not what it is — so the covering note is followed by the document itself, as prose. Every other kind keeps its
  * fence: a `file_change` proposes a *file*, and a file is shown as a file, monospace and unwrapped.
  */
+/**
+ * The dispatcher's own closing line, taken off the note the reader shows (W5-3).
+ *
+ * `dispatcher.ts` appends `\n\n---\n_Resolved <when>: <outcome>_` — or `_Not applied: <why>_` — so that a note
+ * read in Obsidian says what became of it. In the office that sentence is already on the screen: the Approved
+ * ribbon carries the same `outcome`, and the action bar carries the same refusal. Dry-run 3 printed both, with
+ * the `---` and the underscores showing, so the owner read one decision as two.
+ *
+ * Anchored to the end of the note and to the dispatcher's two words, so a rule the note drew itself and
+ * anything it wrote in italics stay exactly where they are.
+ */
+const RESOLUTION_FOOTER = /\n+(?:[ \t]*-{3,}[ \t]*\n+)?_(?:Resolved|Not applied)\b[^\n]*_[ \t]*\n*$/;
+
+export function withoutResolutionFooter(body: string): string {
+  return body.replace(RESOLUTION_FOOTER, '');
+}
+
 export function readerBody(n: Pick<InboxRow, 'kind' | 'body' | 'options'>): string {
-  const body = withoutFileInstructions(n.body ?? '', !!n.options?.length);
+  const body = withoutFileInstructions(withoutResolutionFooter(n.body ?? ''), !!n.options?.length);
   if (n.kind === 'plan_verdict') return planFirst(body);
   if (n.kind !== 'founder_brief') return body;
   const doc = proposedContent(body);
