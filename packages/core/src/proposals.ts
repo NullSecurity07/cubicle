@@ -24,6 +24,52 @@ export interface NewProposal {
 
 export const INBOX = '00 Inbox';
 
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// What the owner is told to do about a proposal (ruling W6-7)
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Where the owner actually decides. Named once so no body can point them anywhere else. */
+export const OWNER_INSTRUCTION_SURFACE = 'Decisions';
+
+/**
+ * The one sentence a proposal body ends on, per kind — in the words of the screen the owner is looking at.
+ *
+ * The third dry-run's `idea_verdict` ended "To overrule the recommendation, set `chosen: 1` for keep, `2` for
+ * park or `3` for scrap and `approved: true`" — Obsidian frontmatter surgery, printed underneath three buttons
+ * that already do exactly that. The office reader filtered the line out of what it displayed, which is a patch
+ * over the note rather than a fix to it: the note is the document, it is what a rejection quotes back, and every
+ * new proposal kind had to remember to be filtered.
+ *
+ * So the instruction is written once, here, in the only vocabulary the owner shares with the product: the name
+ * of the buttons and the name of the screen. Nothing in this table may name a frontmatter field — `ownerSetsNoField`
+ * is the test of that, and it is run over every kind.
+ */
+export function ownerInstruction(kind: string): string {
+  switch (kind) {
+    case 'idea_verdict': return `Choose Keep, Park or Scrap in ${OWNER_INSTRUCTION_SURFACE}.`;
+    case 'founder_brief': return `Adopt it or send it back in ${OWNER_INSTRUCTION_SURFACE}; sending it back asks the company to write it again.`;
+    case 'plan_verdict': return `Approve it or send it back in ${OWNER_INSTRUCTION_SURFACE}. Work already approved keeps running while you decide.`;
+    case 'brand_change': return `Pick one in ${OWNER_INSTRUCTION_SURFACE}; the name you choose becomes the company's.`;
+    // One kind, two screens: three lines to choose between, and a single name to adopt. `brand_change_name` is
+    // not a proposal kind — a caller may pass a finer key than the kind when the kind alone would say the wrong
+    // thing, and every key still has to answer `namesAFieldToEdit` with false.
+    case 'brand_change_name': return `Approve or reject the name in ${OWNER_INSTRUCTION_SURFACE}.`;
+    case 'hire': return `Approve or reject the hire in ${OWNER_INSTRUCTION_SURFACE}.`;
+    case 'message': return `Answer in ${OWNER_INSTRUCTION_SURFACE}, or say it to whoever asked.`;
+    default: return `Approve or reject it in ${OWNER_INSTRUCTION_SURFACE}.`;
+  }
+}
+
+/**
+ * Whether a body tells the owner to go and edit a field — "set `approved: true`", "change `chosen:` to 2".
+ *
+ * The sweep ruling W6-7 asks for, as a predicate rather than a review: every body the company writes is held to
+ * it in test, so the next proposal kind cannot quietly reintroduce the instruction the office replaced.
+ */
+export function namesAFieldToEdit(body: string): boolean {
+  return /\b(set|edit|change|write|put|add)\b[^\n]{0,80}`?\b(chosen|approved|decision|status|resolved_at)`?\s*:/i.test(body ?? '');
+}
+
 /**
  * The readable tail of a proposal's filename, from its id.
  *

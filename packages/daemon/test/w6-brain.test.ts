@@ -10,7 +10,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createProposal, ownerDecide, readIdea, listIdeas, keptIdeas, BRAND_NAME_PATH } from '@cubicle/core';
+import {
+  scaffoldVault, Vault, createProposal, ownerDecide, readIdea, listIdeas, keptIdeas, BRAND_NAME_PATH, ownerInstruction, OWNER_INSTRUCTION_SURFACE, founderBriefProposalBody,
+} from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { dispatchProposals } from '../src/index.js';
@@ -66,6 +68,35 @@ describe('W6-5: the owner’s pick is kept, on the surprise path too', () => {
     await dispatchProposals(deps());
     expect(listIdeas(vault).map((i) => i.id)).toEqual(['pagespeedaudit']);
     expect(readIdea(vault, 'pagespeedaudit')!.data.decided_at).toBe(at);
+  });
+});
+
+describe('W6-7: no frontmatter instructions in a proposal body', () => {
+  const kinds = ['idea_verdict', 'plan_verdict', 'founder_brief', 'brand_change', 'hire', 'file_change'] as const;
+
+  it('renders the office sentence for every kind, and never a field to edit', () => {
+    for (const kind of kinds) {
+      const said = ownerInstruction(kind);
+      expect(said).not.toMatch(/`?(chosen|approved)`?\s*:/i);
+      expect(said).toContain(OWNER_INSTRUCTION_SURFACE);
+    }
+    expect(ownerInstruction('idea_verdict')).toBe('Choose Keep, Park or Scrap in Decisions.');
+  });
+
+  it('is what the idea verdict the dry-run filed now ends on', () => {
+    const body = ideaVerdictBody({
+      slug: 'pagespeedaudit', title: 'PageSpeedAudit', score: 53, band: 'park',
+      reason: '53/60 would keep, but the board returned it.', board: 'return', findings: [],
+      research: '', estimate: '', decidesAfterHours: 24,
+    });
+    expect(body).not.toMatch(/set\s+`?(chosen|approved)`?\s*:/i);
+    expect(body).toContain(ownerInstruction('idea_verdict'));
+  });
+
+  it('is what the founder brief proposal ends on', () => {
+    const body = founderBriefProposalBody('## What the company is\n\nPageSpeedAudit.', []);
+    expect(body).not.toMatch(/set\s+`?(chosen|approved)`?\s*:/i);
+    expect(body).toContain(ownerInstruction('founder_brief'));
   });
 });
 

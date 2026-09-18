@@ -13,7 +13,7 @@ import {
   readPressureVerdict, pressureToBoard, pressureFindings, renderRubric, renderBoardSection,
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, PRESSURE_REFUSAL_NO_WEDGE, type PressurePart,
   PRESSURE_CHAIR_SECTION, chairAnswerText, PIVOT_TITLE_LABEL,
-  EVIDENCE_RULE, asBoardOpinion,
+  EVIDENCE_RULE, asBoardOpinion, ownerInstruction,
   isJobDump, whatHappenedSection, whatHappenedProse, WRITTEN_WITHOUT_MODEL,
   type PressureVerdict, type BoardRubric,
   isLongPrompt, isSkip, asksForSurprise, endorsesInterview, interviewPhase, parseCeoAnswers, type CeoAnswer, INTERVIEW_PATH, BRAND_NAME_PATH,
@@ -450,7 +450,9 @@ export function planVerdictBody(opts: { board: 'pass' | 'return'; findings: stri
   // Ruling W4-2: the board asked for a different product and the CEO wrote the plan it was asked to write.
   // That disagreement is real and it is the owner's, so it is stated with both options in it.
   const disagree = opts.pivot ? `\n\n${planPivotDisagreement(opts.pivot)}` : '';
-  return `The board ${opts.board === 'pass' ? 'passed' : 'returned'} this plan.\n\n${findings}${disagree}${transcript}${questions}\n\n## The plan\n\n${opts.plan.slice(0, PLAN_EXCERPT_CHARS)}\n\nSet \`approved: true\` to let the divisions plan against it, or \`approved: false\` to send it back. Work already approved keeps running while you decide${deadline}.`;
+  // Ruling W6-7: one helper writes what the owner does about a proposal, in the words of the screen they are
+  // reading it on — never the name of a frontmatter field they would have to go and edit in Obsidian.
+  return `The board ${opts.board === 'pass' ? 'passed' : 'returned'} this plan.\n\n${findings}${disagree}${transcript}${questions}\n\n## The plan\n\n${opts.plan.slice(0, PLAN_EXCERPT_CHARS)}\n\n${ownerInstruction('plan_verdict')}${deadline ? ` The board's verdict stands after ${opts.decidesAfterHours} h (\`board_decides_after_hours\` in Memory/constitution.md).` : ''}`;
 }
 
 /**
@@ -1694,7 +1696,7 @@ async function proposeThreeIdeas(deps: HeartbeatDeps, vault: Vault, opts: { prop
   }
   if (ideas.length < 3) return SURPRISE_FAILED;
   const three = ideas.join('\n');
-  createProposal(vault, { id: opts.propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${three}\n\nSet \`chosen: 1|2|3\` and \`approved: true\`; the chosen line's name becomes the company name.`, job: opts.jobId }, 'ceo');
+  createProposal(vault, { id: opts.propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${three}\n\n${ownerInstruction('brand_change')}`, job: opts.jobId }, 'ceo');
   return `I filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n${three}`;
 }
 
@@ -1871,7 +1873,7 @@ async function answerOne(deps: HeartbeatDeps, vault: Vault, m: OwnerMessage, bod
     const r = await ask(deps, ceoSystem(vault), `The owner's business idea:\n\n${body}\n\nReply with exactly two lines:\nNAME: <a short, brandable company name>\nTAGLINE: <one sentence>`);
     const name = r?.match(/NAME:\s*(.+)/i)?.[1]?.trim() ?? 'Untitled Co';
     const tagline = r?.match(/TAGLINE:\s*(.+)/i)?.[1]?.trim() ?? '';
-    createProposal(vault, { id: propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: `Name the company: ${name}`, body: `## Proposed content\n\n\`\`\`\n---\nname: "${name.replace(/"/g, "'")}"\ntagline: "${tagline.replace(/"/g, "'")}"\nurl: ""\n---\n# ${name}\n\n${tagline}\n\`\`\`\n\nSet \`approved: true\` to adopt.`, job: jobId }, 'ceo');
+    createProposal(vault, { id: propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: `Name the company: ${name}`, body: `## Proposed content\n\n\`\`\`\n---\nname: "${name.replace(/"/g, "'")}"\ntagline: "${tagline.replace(/"/g, "'")}"\nurl: ""\n---\n# ${name}\n\n${tagline}\n\`\`\`\n\n${ownerInstruction('brand_change_name')}`, job: jobId }, 'ceo');
     reply = `Got it. I proposed the name **${name}** (${tagline}) in 00 Inbox/ — approve or edit it. The CTO is planning the first jobs now.`;
   } else {
     const extra = [

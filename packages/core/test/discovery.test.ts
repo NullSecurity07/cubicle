@@ -11,6 +11,7 @@ import {
   parseCeoAnswers, ceoAnswersFrom, unstatedAnswers, endorsesInterview, ownerAnsweredInterview, interviewAnswersSection, CEO_UNKNOWN,
   FOUNDER_BRIEF_SECTIONS, missingBriefSections, founderBriefTemplate, founderBriefProposalBody,
 } from '../src/discovery.js';
+import { ownerInstruction, namesAFieldToEdit } from '../src/proposals.js';
 
 let dir: string;
 let vault: Vault;
@@ -212,7 +213,9 @@ describe('the founder brief (spec §1.7)', () => {
     expect(body).toContain('## Proposed content');
     expect(body).toContain('```\n## What the company is\n\nMeal kits.\n```');
     expect(body).toContain('- Discovery/inbox/pitch.md');
-    expect(body).toContain('`approved: true`');
+    // Ruling W6-7: the note says where the owner decides, never which field to edit.
+    expect(body).toContain(ownerInstruction('founder_brief'));
+    expect(namesAFieldToEdit(body)).toBe(false);
     expect(founderBriefProposalBody('x', [])).toContain('nothing but this conversation');
   });
 });

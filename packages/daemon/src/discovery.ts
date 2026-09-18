@@ -7,7 +7,7 @@ import {
   INTERVIEW_QUESTIONS, openInterviewQuestions, interviewAskTitle, renderInterviewCovered, questionsAsked,
   type CeoAnswer, unstatedAnswers, ceoAnswersFrom, INTERVIEW_TAG_LEGEND, INTERVIEW_TAGS,
   PRESSURE_TEST_SECTION, PRESSURE_HANDBOOK_PATH,
-  parseNote, sha256, extractOwnerComments, PROPOSED_CONTENT_FENCE,
+  parseNote, sha256, extractOwnerComments, PROPOSED_CONTENT_FENCE, ownerInstruction,
 } from '@cubicle/core';
 
 // `ownerSaid` moved to core so the `discovery.inputs` tool cuts a cabin note the same way this module does
@@ -209,7 +209,8 @@ export function rejectionAsksForNewIdea(comment: string): boolean {
 const BRIEF_BOILERPLATE = [
   /^This is what I understood from what you gave me\./,
   /^\*\*Read from:\*\*$/,
-  /^Set `approved:/,
+  /^Set `approved:/,                        // the instruction this note carried before ruling W6-7
+  new RegExp(`^${ownerInstruction('founder_brief').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
   /^_(?:Resolved|Not applied)\b/,           // the dispatcher's own footers
 ];
 

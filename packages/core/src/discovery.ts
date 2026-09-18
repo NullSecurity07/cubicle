@@ -1,7 +1,7 @@
 import type { Vault } from './vault.js';
 import { sha256, nowIso } from './fs.js';
 import { parseNote } from './frontmatter.js';
-import { listInbox } from './proposals.js';
+import { listInbox, ownerInstruction } from './proposals.js';
 import { PRESSURE_HANDBOOK_PATH } from './pressure.js';
 
 /**
@@ -712,7 +712,7 @@ export const PROPOSED_CONTENT_FENCE = '````';
 export function founderBriefProposalBody(brief: string, sources: string[]): string {
   const src = sources.length ? sources.map((s) => `- ${s}`).join('\n') : '- (nothing but this conversation)';
   return [
-    `This is what I understood from what you gave me. It becomes \`${FOUNDER_BRIEF}\`, and every plan is written against it, so it is worth reading closely — edit the block below if I got anything wrong.`,
+    `This is what I understood from what you gave me. It becomes \`${FOUNDER_BRIEF}\`, and every plan is written against it, so it is worth reading closely.`,
     '',
     '**Read from:**',
     src,

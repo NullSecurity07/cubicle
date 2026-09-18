@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { advisorPrompt, chairPrompt, chairReaskPrompt, mergeBoardVerdict, unansweredMerge, boardSubject, ideaVerdictBody, cardBoardFindings, cardBoardChair } from '../src/heartbeat.js';
-import { PRESSURE_UNANSWERED, BANNED_HEDGE, PRESSURE_HANDBOOK_PATH, PRESSURE_NO_FLAWS, PRESSURE_REFUSAL_NO_WEDGE, renderBoardSection, chairAnswerText, PRESSURE_CHAIR_CHARS } from '@cubicle/core';
+import { PRESSURE_UNANSWERED, BANNED_HEDGE, PRESSURE_HANDBOOK_PATH, PRESSURE_NO_FLAWS, PRESSURE_REFUSAL_NO_WEDGE, renderBoardSection, chairAnswerText, PRESSURE_CHAIR_CHARS, ownerInstruction } from '@cubicle/core';
 
 const PLAN_TEXT = '# Plan\n\n## Objectives\n\n### dev\n- ship the first cut\n';
 const IDEA = { kind: 'idea' as const, text: '# Meal kits\n\n## Score\n\n46 of 60', title: 'Meal kits for nurseries', slug: 'meal-kits' };
@@ -186,7 +186,7 @@ describe('the idea session takes the five-part shape and order (spec §2)', () =
     });
     expect(body).toContain('#### Founder-Market Fit');
     expect(body).toContain('The owner ran a nursery kitchen for six years.');
-    expect(body).toContain('Set `approved: true`');
+    expect(body).toContain(ownerInstruction('idea_verdict'));
   });
 
   it('a runaway chair is cut rather than dropped, and a silent one adds nothing', () => {
