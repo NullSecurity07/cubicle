@@ -1,0 +1,72 @@
+- generic [ref=e1]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - strong [ref=e6]: SpeedAudit
+      - generic [ref=e53]: A free performance diagnostic service delivering three manual, actionable website speed fixes directly to founders' inboxes to pitch deep-dive optimization consulting.
+    - navigation "Company" [ref=e7]:
+      - button "3 proposals need you" [ref=e345] [cursor=pointer]: 3 to approve
+      - button "Messages" [ref=e9] [cursor=pointer]
+      - button "Brief" [ref=e10] [cursor=pointer]
+      - button "Plan" [ref=e11] [cursor=pointer]
+      - button "Queue" [ref=e12] [cursor=pointer]
+      - button "Org" [ref=e13] [cursor=pointer]
+      - button "Talk to the CEO" [ref=e14] [cursor=pointer]
+  - navigation "Floors" [ref=e15]:
+    - button "Floor 4, Chiefs, 0 active" [ref=e346] [cursor=pointer]:
+      - generic [ref=e17]: F4
+    - button "Floor 3, Assurance, 0 active" [ref=e233] [cursor=pointer]:
+      - generic [ref=e20]: F3
+    - button "Floor 2, Teams, 1 active" [active] [ref=e347] [cursor=pointer]:
+      - generic [ref=e23]: F2
+    - button "Floor 1, Executive, 1 active" [ref=e266] [cursor=pointer]:
+      - generic [ref=e26]: F1
+    - button "Lobby and street" [ref=e28] [cursor=pointer]:
+      - generic [ref=e29]: L
+      - generic [ref=e30]: Lobby
+  - complementary [ref=e350]:
+    - generic [ref=e269]:
+      - generic [ref=e68]:
+        - heading "Decisions" [level=2] [ref=e351]
+        - paragraph [ref=e83]: 3 need you
+      - button "Copy" [ref=e84] [cursor=pointer]
+      - button "Close" [ref=e85] [cursor=pointer]
+    - generic [ref=e107]:
+      - tablist [ref=e365]:
+        - tab "Needs you 3" [selected] [ref=e366] [cursor=pointer]:
+          - text: Needs you
+          - generic [ref=e367]: "3"
+        - tab "Decided 3" [ref=e368] [cursor=pointer]:
+          - text: Decided
+          - generic [ref=e369]: "3"
+      - tabpanel "Needs you 3" [ref=e370]:
+        - generic [ref=e371]:
+          - 'button "idea verdict Keep, park or scrap: SpeedAudit — Free Website Performance Diagnostics & Consulting Upsell CEO · 53/60 would keep, but the board returned it, so it parks until its findings are answered. 14 Sept 12:01" [ref=e373] [cursor=pointer]':
+            - generic [ref=e374]: idea verdict
+            - generic [ref=e375]:
+              - text: "Keep, park or scrap: SpeedAudit — Free Website Performance Diagnostics & Consulting Upsell"
+              - generic [ref=e376]: CEO · 53/60 would keep, but the board returned it, so it parks until its findings are answered.
+            - generic [ref=e377]: 14 Sept 12:01
+          - 'button "idea verdict Keep, park or scrap: E-commerce founders doing $10k–$50k/month on Shopify whose checkout… CEO · 48/60 would keep, but the board returned it, so it parks until its findings are answered. 10:38" [ref=e379] [cursor=pointer]':
+            - generic [ref=e380]: idea verdict
+            - generic [ref=e381]:
+              - text: "Keep, park or scrap: E-commerce founders doing $10k–$50k/month on Shopify whose checkout…"
+              - generic [ref=e382]: CEO · 48/60 would keep, but the board returned it, so it parks until its findings are answered.
+            - generic [ref=e383]: 10:38
+          - 'button "idea verdict Keep, park or scrap: Secure at least one anchor customer who has documented a ≥$500… CEO · 52/60 would keep, but the board returned it, so it parks until its findings are answered. 10:52" [ref=e385] [cursor=pointer]':
+            - generic [ref=e386]: idea verdict
+            - generic [ref=e387]:
+              - text: "Keep, park or scrap: Secure at least one anchor customer who has documented a ≥$500…"
+              - generic [ref=e388]: CEO · 52/60 would keep, but the board returned it, so it parks until its findings are answered.
+            - generic [ref=e389]: 10:52
+      - generic [ref=e390]:
+        - heading "Mail" [level=3] [ref=e391]
+        - generic [ref=e394]:
+          - generic [ref=e395]: "approval needed: Keep, park or scrap: Secure at least one anchor customer who has documented a ≥$500…"
+          - generic [ref=e396]: 10:52
+  - generic [ref=e32]:
+    - tablist "Live or replay" [ref=e33]:
+      - tab "Live" [selected] [ref=e34] [cursor=pointer]
+      - tab "Replay" [ref=e36] [cursor=pointer]
+    - img "Daytime" [ref=e38]
+    - generic [ref=e48]: 10:57:34
+  - generic [ref=e51]: "Needs you: Keep, park or scrap: Secure at least one anchor customer who has documented a ≥$500…"

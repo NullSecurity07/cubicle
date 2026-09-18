@@ -1,0 +1,60 @@
+- generic [ref=f1e1]:
+  - banner [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - strong [ref=f1e7]: SpeedAudit
+      - generic [ref=f1e8]: A free performance diagnostic service delivering three manual, actionable website speed fixes directly to founders' inboxes to pitch deep-dive optimization consulting.
+    - navigation "Company" [ref=f1e9]:
+      - button "2 proposals need you" [ref=f1e134] [cursor=pointer]: 2 to approve
+      - button "Messages" [ref=f1e11] [cursor=pointer]
+      - button "Brief" [ref=f1e12] [cursor=pointer]
+      - button "Plan" [ref=f1e13] [cursor=pointer]
+      - button "Queue" [ref=f1e14] [cursor=pointer]
+      - button "Org" [ref=f1e15] [cursor=pointer]
+      - button "Talk to the CEO" [ref=f1e16] [cursor=pointer]
+  - navigation "Floors" [ref=f1e17]:
+    - button "Floor 4, Chiefs, 0 active" [ref=f1e18] [cursor=pointer]:
+      - generic [ref=f1e19]: F4
+    - button "Floor 3, Assurance, 0 active" [ref=f1e21] [cursor=pointer]:
+      - generic [ref=f1e22]: F3
+    - button "Floor 2, Teams, 1 active" [ref=f1e135] [cursor=pointer]:
+      - generic [ref=f1e25]: F2
+    - button "Floor 1, Executive, 1 active" [ref=f1e137] [cursor=pointer]:
+      - generic [ref=f1e31]: F1
+    - button "Lobby and street" [ref=f1e33] [cursor=pointer]:
+      - generic [ref=f1e34]: L
+      - generic [ref=f1e35]: Lobby
+  - complementary [ref=f1e140]:
+    - generic [ref=f1e141]:
+      - generic [ref=f1e60]:
+        - heading "CEO" [level=2] [ref=f1e142]
+        - paragraph [ref=f1e63]: SpeedAudit · A free performance diagnostic service delivering three manual, actionable website speed fixes directly to founders' inboxes to pitch deep-dive optimization consulting.
+      - button "Close" [ref=f1e65] [cursor=pointer]
+    - generic [ref=f1e87]:
+      - group [ref=f1e144]:
+        - generic "Brief · 12:01" [ref=f1e145] [cursor=pointer]
+      - generic [ref=f1e146]: Today
+      - generic [ref=f1e147]:
+        - generic [ref=f1e148]:
+          - generic [ref=f1e149]: You
+          - generic [ref=f1e150]: 11:52
+        - generic [ref=f1e151]: surprise me
+      - generic [ref=f1e152]:
+        - generic [ref=f1e153]:
+          - generic [ref=f1e154]: CEO
+          - generic [ref=f1e155]: 11:52
+        - generic [ref=f1e156]:
+          - text: I filed three ideas as a proposal in 00 Inbox/. Pick one with
+          - code [ref=f1e157]: "chosen:"
+          - text: and
+          - code [ref=f1e158]: "approved: true"
+          - text: . 1. SponsorDeck — A curated matchmaking service connecting niche newsletter creators with relevant software sponsors via direct weekly email introductions. 2. SpeedAudit — A free performance diagnostic service delivering three manual, actionable website speed fixes directly to founders' inboxes to pitch deep-dive optimization consulting. 3. Ghostwriter Hunt — A weekly email digest matching busy executive founders with vetted, platform-specific ghostwriters using a simple static submission form.
+    - generic [ref=f1e159]:
+      - textbox "Message your CEO" [active] [ref=f1e160]
+      - button "Send" [ref=f1e161] [cursor=pointer]
+  - generic [ref=f1e37]:
+    - tablist "Live or replay" [ref=f1e38]:
+      - tab "Live" [selected] [ref=f1e39] [cursor=pointer]
+      - tab "Replay" [ref=f1e41] [cursor=pointer]
+    - img "Daytime" [ref=f1e43]
+    - generic [ref=f1e53]: 12:01:41
+  - generic [ref=f1e56]: Brief written

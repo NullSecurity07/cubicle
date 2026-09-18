@@ -626,7 +626,9 @@ describe('one board session, two subjects (spec §3)', () => {
 
   it('truncates a very long subject rather than blowing the prompt budget', () => {
     const huge = { kind: 'idea' as const, text: 'x'.repeat(9000), title: 'Huge', slug: 'huge' };
-    expect(advisorPrompt(huge).length).toBeLessThan(5000);
+    // 5500, not 5000: ruling W4-1 puts a fixed ~450 characters of evidence rule in every advisor prompt, and
+    // what this test is about is the subject being cut to `SUBJECT_CHARS` rather than pasted in whole.
+    expect(advisorPrompt(huge).length).toBeLessThan(5500);
   });
 
   // The pre-SP8 session's event shape, pinned: `board_dialogue: brief` still holds it, and the office keys the

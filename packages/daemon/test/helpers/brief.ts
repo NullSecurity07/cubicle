@@ -1,4 +1,4 @@
-import { FOUNDER_BRIEF, PRESSURE_TEST_SECTION, type Vault } from '@cubicle/core';
+import { FOUNDER_BRIEF, PRESSURE_TEST_SECTION, writeIdeaCard, updateIdea, nowIso, type Vault } from '@cubicle/core';
 
 /**
  * An adopted founder brief, written exactly the way the dispatcher's `founder_brief` case writes one: the
@@ -28,6 +28,26 @@ export const ADOPTED_BRIEF = [
  * proposal, and writing it as the owner would leave an `owner.edited` event that the re-planning gate reads as
  * "the owner asked for something".
  */
-export function adoptFounderBrief(vault: Vault, brief = ADOPTED_BRIEF): void {
+export function adoptFounderBrief(vault: Vault, brief = ADOPTED_BRIEF, opts: { keep?: boolean } = {}): void {
   vault.writeText(FOUNDER_BRIEF, brief, 'daemon');
+  if (opts.keep !== false) keepTheIdea(vault);
+}
+
+/** The card the brief's `## Candidate ideas` names, and the slug every fixture that plans is written against. */
+export const KEPT_IDEA = 'meal-kits';
+
+/**
+ * The idea the owner kept, for every fixture whose subject is the plan.
+ *
+ * Ruling W4-5 made this a precondition of planning, for the same reason ruling S-1 made the brief one: with no
+ * kept idea the company writes no plan, because everything a plan can be about is something the owner agreed
+ * to. A real owner has agreed to something by the time a plan exists — `keepOwnerPick` writes their pick onto
+ * the card on the first morning — so a fixture that plans has to look like that company and not like one that
+ * found a way round the gate. Pass `{ keep: false }` to `adoptFounderBrief` for a test whose subject is the
+ * gate itself.
+ */
+export function keepTheIdea(vault: Vault, slug = KEPT_IDEA, title = 'Meal kits for nurseries'): string {
+  writeIdeaCard(vault, { slug, title, source: 'discovery', evidence: ['the owner picked it'] }, 'daemon');
+  updateIdea(vault, slug, { decision: 'keep', decided_by: 'owner', decided_at: nowIso(), status: 'accepted' }, 'daemon');
+  return slug;
 }

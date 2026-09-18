@@ -1,0 +1,12 @@
+[     265ms] [LOG] %c %c %c %c %c Phaser v3.90.0 (WebGL | Web Audio) %c https://phaser.io/v390 background: #ff0000 background: #ffff00 background: #00ff00 background: #00ffff color: #ffffff; background: #000000 background: transparent @ http://127.0.0.1:7601/assets/index-BRt12Yoe.js:0
+[  530224ms] TypeError: Cannot read properties of null (reading 'glTexture')
+    at initialize.get [as glTexture] (http://127.0.0.1:7601/assets/index-BRt12Yoe.js:64:73217)
+    at initialize.batchSprite (http://127.0.0.1:7601/assets/index-BRt12Yoe.js:28:48569)
+    at e.99517.e.exports [as renderWebGL] (http://127.0.0.1:7601/assets/index-BRt12Yoe.js:8:76907)
+    at e.72249.e.exports [as renderWebGL] (http://127.0.0.1:7601/assets/index-BRt12Yoe.js:8:46203)
+    at initialize.render (http://127.0.0.1:7601/assets/index-BRt12Yoe.js:28:27817)
+    at initialize.render (http://127.0.0.1:7601/assets/index-BRt12Yoe.js:1:49610)
+    at initialize.render (http://127.0.0.1:7601/assets/index-BRt12Yoe.js:64:6843)
+    at initialize.render (http://127.0.0.1:7601/assets/index-BRt12Yoe.js:63:22646)
+    at initialize.step (http://127.0.0.1:7601/assets/index-BRt12Yoe.js:1:77455)
+    at initialize.step (http://127.0.0.1:7601/assets/index-BRt12Yoe.js:1:81646)

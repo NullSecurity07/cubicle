@@ -2,8 +2,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 
 import path from 'node:path';
 import {
   type Vault, type EventLog, type JobFrontmatter, type JobStatus, type RoleFrontmatter, JobResult, InboxFrontmatter,
-  readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob,
-  loadGates, gatesForRisk, criteriaFor, gateAssignee, gateTier, type GateTable,
+  readJob, updateJob, setSection, appendToSection, createProposal, findInboxById, nowIso, parseNote, RoleFrontmatter as RoleSchema, createJob, idFromKey,
+  loadGates, gatesForRisk, criteriaFor, gateAssignee, gateTier, otherEyesFor, normaliseGateResult, type GateTable,
   loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
   trustReviewsFor, trustDecision, trustVerdictFor, recordTrustVerdict, CLASSIFIER_UNAVAILABLE_HOLD,
@@ -269,14 +269,22 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     try { return JobResult.parse(JSON.parse(raw)); } catch { return JobResult.parse({ status: 'done' }); }
   };
 
-  const finishWith = async (result: JobResult, step: number): Promise<JobOutcome> => {
+  const finishWith = async (rawResult: JobResult, step: number): Promise<JobOutcome> => {
     const isGateJob = /\.(review|verify)$/.test(job.type) && !!job.parent;
+    // Ruling W4-6, before the status is written or anything reads the Result block: a reviewer that said in
+    // prose it was *returning* the work put that in `status: failed` with no findings, and the owner got a
+    // permanent red job. `normaliseGateResult` recovers the verdict from the sentence, and refuses to let a
+    // gate come to rest red and silent. See its doc comment for the job that motivated it.
+    const result = normaliseGateResult(job.type, rawResult);
     const chain = gatesForRisk(gates, job.type, job.risk);
     const gateIndex = Number(job.gate_index ?? 0);
     const nextGate = result.status === 'done' && !isGateJob ? chain[gateIndex] : undefined;
     const finalStatus: JobStatus = result.status === 'done' ? (nextGate ? 'in_review' : 'done') : result.status === 'blocked' ? 'blocked' : 'failed';
     vault.updateNote(`Jobs/${jobId}.md`, (n) => ({
-      data: { ...n.data, status: finalStatus, checkpoint_step: step, updated: nowIso(), ...(result.status === 'blocked' ? { blocked_on: { kind: 'owner', id: jobId, since: nowIso() } } : {}) },
+      // …and a job that is not blocked no longer says it is (ruling W4-13). `blocked_on` was only ever set —
+      // `job_20260914_b88c4b` finished `status: done` still carrying `blocked_on: {kind: quota}` — so every
+      // reader that counts what the company is waiting for counted a finished job among the blocked.
+      data: { ...n.data, status: finalStatus, checkpoint_step: step, updated: nowIso(), blocked_on: result.status === 'blocked' ? { kind: 'owner', id: jobId, since: nowIso() } : undefined },
       body: setSection(n.body, '## Result', '```json\n' + JSON.stringify(result, null, 2) + '\n```'),
     }), roleId, { job: jobId });
     if (finalStatus === 'in_review') {
@@ -328,18 +336,6 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     return { status: finalStatus === 'in_review' ? 'done' : finalStatus, result } as JobOutcome;
   };
 
-  /**
-   * The room a gate's name points at, with the `office:`/`team:` prefix stripped. Gates are named by office
-   * (`office:operations.verify`) or by room (`team:qa.review`); the pre-office names (`qa.review`) carry the
-   * room id bare. Everything downstream of the assignee — the second-pair-of-eyes search, above all — wants
-   * that bare id, not the prefixed one.
-   */
-  const gateRoom = (gate: string): string => {
-    const dot = gate.lastIndexOf('.');
-    const head = dot === -1 ? gate : gate.slice(0, dot);
-    return head.replace(/^(?:office|team):/, '');
-  };
-
   /** True when `gate` is the QA review, under its office-era name or the pre-office one. */
   const isQaGate = (gate: string) => gate === 'team:qa.review' || gate === 'qa.review';
   /** True when `gate` is the security review, under either name. */
@@ -347,21 +343,12 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
   /** True when `gate` is the operations verification (`office:operations.verify` / `coo.verify`). */
   const isVerifyGate = (gate: string) => gate.endsWith('.verify');
 
-  /**
-   * A gate is a second pair of eyes (spec §4), so nobody reviews their own work. When the resolved assignee is
-   * the job's own author — the shape `research.review` has by default, since both the `research` job and its
-   * gate resolve to the research team's lead — hand the gate to someone else, in the brief's order: an active
-   * member of the gate's team (the research lead's team for `research.review`), then that lead's own lead (the
-   * COO for Research), then the CEO. Returns null when the author is genuinely the only person who could look.
-   */
-  const secondPairOfEyes = (gate: string, assignee: string, author: string): string | null => {
-    const team = org.teams[gateRoom(gate)] ?? teamOf(org, assignee);
-    const candidates = [...(team?.members ?? []), team?.lead ?? '', leadOf(org, assignee) ?? '', officeHolder(org, 'chief_executive')];
-    return candidates.find((c) => c && c !== author && org.roles[c]) ?? null;
-  };
-
   /** Create the review job for one gate of `parent`. */
   const enqueueGate = (gate: string, parent: JobFrontmatter, result: JobResult): void => {
+    // `gateAssignee` has already excluded the author (ruling W4-12): a gate is a second pair of eyes (spec §4),
+    // and `research.review` resolves to the research room's lead, who is also who most `research` jobs are
+    // assigned to. That used to be caught here, after the fact, with a `daemon.warning` per occurrence — three
+    // of them in the 2026-09-14 run. There is nothing left to warn about.
     let assignee = resolveRole(org, gateAssignee(gate, parent, org));
     // The named assignee may have no active worker (role fired/deactivated, or a `for`/owner_role naming an
     // unknown role): fall back to its lead so the parent never sits in_review forever (F1).
@@ -371,23 +358,22 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
       events.emit({ type: 'daemon.warning', agent: roleId, job: parent.id, payload: { where: 'enqueueGate', message: `gate ${gate} assignee "${assignee}" has no active worker; reassigned to ${fallback}` } });
       assignee = fallback;
     }
-    // C1/M9: the author is not their own reviewer. research_manager both authors `research` jobs and leads the
-    // team `research.review` resolves to, and `requester.review` falls back to the same lead when the decision
-    // owner went inactive — either way the gate would have been a self-review and the spec's quality gate would
-    // do nothing.
-    if (assignee === parent.assigned) {
-      const other = secondPairOfEyes(gate, assignee, parent.assigned);
-      if (other) {
-        events.emit({ type: 'daemon.warning', agent: roleId, job: parent.id, payload: { where: 'enqueueGate', message: `gate ${gate} resolved to the job's own author ${assignee}; reassigned to ${other}` } });
-        assignee = other;
-      }
-    }
+    // …and once more after `resolveRole` and the inactive-worker fallback, both of which can land back on the
+    // author by a route `gateAssignee` never saw. Silent: this is the roster being applied, not an incident.
+    if (assignee === parent.assigned) assignee = otherEyesFor(gate, assignee, parent.assigned, org) ?? assignee;
     const criteria = criteriaFor(gates, parent.type);
     // The gate's *own* criteria, when it has one (research.review's §35 checklist, team:qa.review's "cite a file").
     // `gates[gate]` is read directly rather than through criteriaFor so a gate with no entry stays silent
     // instead of inheriting the `custom` fallback meant for the job under review.
     const gateCriteria = gates[gate]?.criteria ?? '';
     deps.scheduler.enqueue({
+      // One review per (job, gate, attempt), and the id says so (ruling W4-10). The 2026-09-14 run filed two
+      // `requester.review` jobs for the same Shopify research question: a gate re-enqueued — by a resumed cycle,
+      // by `applyVerdict` running twice over one checkpoint — minted a fresh random id each time, and the
+      // requester was asked to review the same report twice. `createJob` returns the existing note for an id it
+      // has already written, so a re-run now lands on the review that is already open. The attempt is in the key
+      // because a returned job comes back as attempt 2 and genuinely owes that gate a second look.
+      id: idFromKey('job', `gate:${parent.id}:${gate}:${parent.attempt}`),
       type: gate, title: `${isVerifyGate(gate) ? 'Verify' : 'Review'}: ${parent.title}`, assigned: assignee, priority: 4, parent: parent.id, links: [`[[${parent.id}]]`], privacy: parent.privacy,
       // A review runs at the gate's tier — medium unless `config/gates.yaml` says otherwise — not at the
       // reviewer's charter tier. Reviewers are leads and office holders, so without this every gate was a

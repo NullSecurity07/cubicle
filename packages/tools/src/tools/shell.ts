@@ -2,6 +2,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { repoRoot } from '@cubicle/core';
 import { defineTool, type ToolContext } from '../registry.js';
 import { fileURLToPath } from 'node:url';
 
@@ -80,10 +81,38 @@ export function proxyDenials(since = '5m'): string[] {
 
 export interface RunResult { code: number | null; output: string; timedOut: boolean; mode: 'docker' | 'local' }
 
+/**
+ * Where the repo's own `config/templates/` is mounted inside the sandbox, read-only (ruling W4-8).
+ *
+ * The site seed's goal says "Keep it static and boring — no framework, no build step the owner has to learn",
+ * and the only template the sandbox offered was `/opt/templates/minimal`: Astro with an npm build. The engineer
+ * copied it, which is the sensible thing to do with the only template there is, and the job cost five CI
+ * failures, a step_limit, three attempts and 25 steps. A static template has to be as easy to reach as the
+ * Astro one, so it is mounted beside it rather than described in prose the model has to act on.
+ */
+export const TEMPLATES_MOUNT = '/opt/cubicle-templates';
+
+/** The static one-page site template, where an agent finds it: index.html, styles.css, cubicle-ci.yaml. */
+export const STATIC_TEMPLATE = `${TEMPLATES_MOUNT}/static`;
+
+/** The repo directory behind {@link TEMPLATES_MOUNT}. */
+export function templatesDir(): string {
+  return path.join(repoRoot(), 'config', 'templates');
+}
+
+/** The read-only templates mount, for any tool that gives an agent a shell. */
+export function templatesMount(): { src: string; dst: string; ro: true } {
+  return { src: templatesDir(), dst: TEMPLATES_MOUNT, ro: true };
+}
+
 export interface SandboxOptions {
   command: string;
-  /** Host directories to bind into the container, in order. The first is not special; `workdir` picks the cwd. */
-  mounts: { src: string; dst: string }[];
+  /**
+   * Host directories to bind into the container, in order. The first is not special; `workdir` picks the cwd.
+   * `ro` binds read-only — for a directory the agent must be able to read but must not be able to change, such
+   * as the repo's own `config/templates` (ruling W4-8); it is also the one that must not be created if missing.
+   */
+  mounts: { src: string; dst: string; ro?: boolean }[];
   workdir: string;
   network: 'none' | 'allowlist';
   timeoutMs: number;
@@ -123,13 +152,16 @@ export async function sandboxExec(ctx: ToolContext, opts: SandboxOptions): Promi
   // vault root is the owner's own, trusted install location and may itself contain a comma, `=`, or other
   // punctuation with no attacker involved at all. `mountField` below escapes the full, already-safe path
   // correctly for Docker's parser instead of rejecting it outright.
-  for (const m of mounts) mkdirSync(m.src, { recursive: true });
+  // A writable mount is created if missing (the job's scratch, a fresh Workspace). A read-only one is something
+  // that already exists on the host: create it and the sandbox gets an empty directory where a template should be.
+  for (const m of mounts) if (!m.ro) mkdirSync(m.src, { recursive: true });
+  const usable = mounts.filter((m) => !m.ro || existsSync(m.src));
   const onOutput = (chunk: string, stream: 'stdout' | 'stderr') => ctx.events.emit({ type: 'shell.output', agent: ctx.roleId, job: ctx.jobId, payload: { session, stream, text: chunk.slice(0, 4000) } });
 
   if (hasDocker() && hasSandboxImage()) {
     const cname = `cubicle-${session}`.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 60);
     const args = ['run', '--rm', '--init', '--name', cname];
-    for (const m of mounts) args.push('--mount', `type=bind,${mountField('src', m.src)},${mountField('dst', m.dst)}`);
+    for (const m of usable) args.push('--mount', `type=bind,${mountField('src', m.src)},${mountField('dst', m.dst)}${m.ro ? ',readonly' : ''}`);
     args.push('-w', workdir,
       '--memory', '2g', '--cpus', '2', '--pids-limit', '512', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:exec',
       '-e', 'HOME=/work/scratch', '-e', 'CI=1', '-e', 'npm_config_update_notifier=false', '-e', 'npm_config_cache=/work/scratch/.npm');
@@ -169,7 +201,7 @@ export async function sandboxExec(ctx: ToolContext, opts: SandboxOptions): Promi
   const env: NodeJS.ProcessEnv = { PATH: '/usr/bin:/bin', HOME: '/work/scratch', TMPDIR: '/tmp', CI: '1', LANG: 'C.UTF-8', CUBICLE_SANDBOX: 'local' };
   const bw = ['--ro-bind', '/usr', '/usr', '--ro-bind', '/etc', '/etc', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/sbin', '/sbin',
     '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp'];
-  for (const m of mounts) bw.push('--bind', m.src, m.dst);
+  for (const m of usable) bw.push(m.ro ? '--ro-bind' : '--bind', m.src, m.dst);
   bw.push('--chdir', workdir, '--unshare-all', '--die-with-parent', '--new-session', '--clearenv');
   for (const [k, v] of Object.entries(env)) bw.push('--setenv', k, String(v));
   const r = await runProcess('bwrap', [...bw, 'bash', '-c', command], { timeoutMs, onOutput });
@@ -190,7 +222,7 @@ export function sitePathHint(command: string, cwd: 'Site' | 'scratch', ok: boole
 
 export const shellRun = defineTool({
   name: 'shell.run',
-  description: 'Run a shell command in the sandbox. cwd is /work/Site = the vault\'s Site/ folder, so use paths relative to it (astro.config.mjs, not Site/astro.config.mjs); nothing else of the vault is mounted (use vault.read for that). Scratch is at /work/scratch (cwd="scratch"); a ready Astro template with deps is at /opt/templates/minimal (cp -a /opt/templates/minimal/. . && npm run build). No network unless network="allowlist" (npm registry, GitHub, jsDelivr only). 5-minute limit.',
+  description: `Run a shell command in the sandbox. cwd is /work/Site = the vault's Site/ folder, so use paths relative to it (astro.config.mjs, not Site/astro.config.mjs); nothing else of the vault is mounted (use vault.read for that). Scratch is at /work/scratch (cwd="scratch"). Two templates, both read-only and both offline: a plain static one-page site — no framework, no build step, no node_modules — at ${TEMPLATES_MOUNT}/static (cp -a ${TEMPLATES_MOUNT}/static/. . and then edit index.html and styles.css; its cubicle-ci.yaml validates the HTML with no npm), and a ready Astro template with deps at /opt/templates/minimal (cp -a /opt/templates/minimal/. . && npm run build). Use the static one unless the job asks for a framework. No network unless network="allowlist" (npm registry, GitHub, jsDelivr only). 5-minute limit.`,
   schema: {
     command: z.string().describe('bash command line'),
     cwd: z.enum(['Site', 'scratch']).default('Site'),
@@ -210,7 +242,7 @@ export const shellRun = defineTool({
     for (const rel of ctx.vault.list('Site', { recursive: true })) if (ctx.vault.isOwnerChanged(rel)) { try { protectedFiles.set(rel, readFileSync(ctx.vault.abs(rel))); } catch { /* unreadable */ } }
     const exec = await sandboxExec(ctx, {
       command,
-      mounts: [{ src: siteDir, dst: '/work/Site' }, { src: scratchDir, dst: '/work/scratch' }],
+      mounts: [{ src: siteDir, dst: '/work/Site' }, { src: scratchDir, dst: '/work/scratch' }, templatesMount()],
       workdir: cwd === 'Site' ? '/work/Site' : '/work/scratch',
       network, timeoutMs, session: sessionId,
     });

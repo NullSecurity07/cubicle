@@ -1,4 +1,5 @@
-import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, listDiscoveryInputs, parseNote, officeHolder, roleWithTool, researchLead, teamOf, leadOf, createStream, listStreams, streamSlug, ciConfigPath, hasFounderBrief, FOUNDER_BRIEF, type NewStream } from '@cubicle/core';
+import { STATIC_TEMPLATE } from '@cubicle/tools';
+import { type Vault, type Org, type NewJob, createJob, listJobs, listInbox, listDiscoveryInputs, parseNote, officeHolder, roleWithTool, researchLead, teamOf, leadOf, createStream, listStreams, streamSlug, ciConfigPath, hasFounderBrief, ownerSaid, ownerPick, isDiscoveryMaterial, coversTitle, FOUNDER_BRIEF, type NewStream } from '@cubicle/core';
 
 /**
  * The three jobs a company must leave its first heartbeat with (spec §12): something on the web, something to
@@ -14,29 +15,12 @@ export const FIRST_JOB_TITLES = [
   'Research the first organic channel',
 ] as const;
 
-/** The words of a title, lowercased. */
-function words(title: string): string[] {
-  return title.trim().toLowerCase().split(/\s+/).filter(Boolean);
-}
-
-/** The first three words of a title, lowercased — how a seed decides some job already covers it. */
-function titleKey(title: string): string {
-  return words(title).slice(0, 3).join(' ');
-}
-
 /**
- * True when an existing job is already the piece of work `seed` describes: its own first three words are the
- * seed's first three words. "Scaffold Site/ from Brand/ (v2)" covers the site seed; "Research competitors" does
- * not cover the channel seed.
- *
- * The match is one-directional on purpose. A title with fewer than three words has not said enough to claim a
- * seed's work — a job called "Research" would otherwise silently cancel the channel seed — so it never covers
- * one.
+ * True when an existing job is already the piece of work `seed` describes. Core's, because the queue asks the
+ * same question of every job a lead schedules (ruling W4-10) and the two must not drift: a seed skipped here
+ * and a division plan refused there have to mean the same thing by "already covered".
  */
-function covers(existing: string, seed: string): boolean {
-  if (words(existing).length < 3) return false;
-  return titleKey(existing).startsWith(titleKey(seed));
-}
+const covers = coversTitle;
 
 function specs(org: Org, stream?: string): NewJob[] {
   // Who builds and who sells is a capability question, not a name: the first active charter in the division that
@@ -51,7 +35,7 @@ function specs(org: Org, stream?: string): NewJob[] {
     {
       type: 'engineer.ship', title: FIRST_JOB_TITLES[0], assigned: engineer, priority: 2,
       team: org.roles[engineer]?.team, owner_role: engineeringOwner === 'owner' ? engOffice : engineeringOwner,
-      goal: 'The company has no site yet. Read Brand/name.md, Brand/palette.md and Brand/voice.md, then build the first cut of Site/: one page that says what the company does, who it is for, and how to get in touch. Keep it static and boring — no framework, no build step the owner has to learn. Do not invent claims the brand notes do not support.\n\nBefore you finish: this is an engineer.ship, so it cannot report success without a green CI run newer than every source file in its stream (operating model §17). The stream starts with a placeholder pipeline in Workspace/<stream>/cubicle-ci.yaml; read it, replace the placeholder step with whatever actually checks this change, then call ci.run({ stream: "<the job\'s stream>" }) and finish on green.',
+      goal: `The company has no site yet. Read Brand/name.md, Brand/palette.md and Brand/voice.md, then build the first cut of Site/: one page that says what the company does, who it is for, and how to get in touch. Keep it static and boring — no framework, no build step the owner has to learn. Do not invent claims the brand notes do not support.\n\nStart from the static template, which is exactly that page with nothing to install: \`${STATIC_TEMPLATE}/\` in the sandbox holds index.html, styles.css and cubicle-ci.yaml. Copy these, then edit — \`shell.run({ command: "cp -a ${STATIC_TEMPLATE}/. .", cwd: "Site" })\` and write the real copy over every REPLACE in index.html and the real colours over the tokens at the top of styles.css. Do NOT copy /opt/templates/minimal: that is Astro and npm, which is the build step this job is told not to have.\n\nBefore you finish: this is an engineer.ship, so it cannot report success without a green CI run newer than every source file in its stream (operating model §17). Put the template's pipeline in place of the stream's placeholder one — read \`${STATIC_TEMPLATE}/cubicle-ci.yaml\` with shell.run and vault.write it to Workspace/<the job's stream>/cubicle-ci.yaml — then call ci.run({ stream: "<the job's stream>" }) and finish on green. It checks the HTML with no npm and fails while any REPLACE is left in the page.`,
       done_when: 'Site/index.html exists, uses the name, palette and voice from Brand/, has no broken links, says what the company sells and to whom, and ci.run on the job\'s stream is green.',
       stream, risk: 'low',
     },
@@ -209,16 +193,33 @@ export function seedFirstJobs(vault: Vault, org: Org): string[] {
   return out;
 }
 
+/** "2. SpeedAudit — A free performance diagnostic service…" → the sentence, without the numbering or the bold. */
+function pickedIdeaLine(line: string): string {
+  return line.trim().replace(/^\d+[.)]\s*/, '').replace(/\*\*/g, '').trim();
+}
+
 /**
- * The first stream, from whatever the owner actually gave us. The problem is their words — the note they typed,
- * or the brand tagline when they typed nothing — and the two fields only a person can answer are written as
- * questions addressed to the product manager, never as "TBD": a stream note is read by an agent, and "TBD" is
- * an instruction to skip the field.
+ * The first stream, from whatever the owner actually gave us. The two fields only a person can answer are
+ * written as questions addressed to the product manager, never as "TBD": a stream note is read by an agent, and
+ * "TBD" is an instruction to skip the field.
+ *
+ * The problem is the owner's **own words and nothing else** (ruling W4-9). `Streams/speedaudit.md` in the
+ * 2026-09-14 run carried, as its problem: "surprise me I filed three ideas as a proposal in 00 Inbox/. Pick one
+ * with `chosen:` … 3. Ghostwriter Hunt — … a simple static submission f" — the owner's two words, the CEO's
+ * reply to them, all three ideas, and a cut mid-word at 600 characters. Everything after the note's `## CEO`
+ * heading is the company talking to itself, so `ownerSaid` takes it off.
+ *
+ * What is left is often "surprise me", which is a request for ideas and not a problem statement — the same
+ * thing `isDiscoveryMaterial` already refuses to start a research job on. In that case the problem is `picked`:
+ * the idea the owner chose from the CEO's three, title and one-liner, which is the one sentence that says what
+ * this company is for.
  */
-export function firstStreamSpec(brand: { name?: string; tagline?: string }, ownerText: string): NewStream {
+export function firstStreamSpec(brand: { name?: string; tagline?: string }, ownerText: string, picked?: string | null): NewStream {
   const name = (brand.name ?? '').trim() || 'First product';
-  const said = ownerText.trim().split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).join(' ').slice(0, 600);
-  const problem = said || `${(brand.tagline ?? '').trim() || name} — the owner has not written the problem in their own words yet. The product manager asks them, in one sentence, what goes wrong for the customer today.`;
+  const said = ownerSaid(ownerText).split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).join(' ').slice(0, 600);
+  const own = isDiscoveryMaterial(said) ? said : '';
+  const problem = own || (picked ?? '').trim()
+    || `${(brand.tagline ?? '').trim() || name} — the owner has not written the problem in their own words yet. The product manager asks them, in one sentence, what goes wrong for the customer today.`;
   return {
     name,
     problem,
@@ -268,7 +269,9 @@ export function seedFirstStream(vault: Vault): string | null {
   if (listStreams(vault).length > 0) return null;
   const brand = parseNote(vault.readTextOrNull('Brand/name.md') ?? '').data as { name?: string; tagline?: string };
   const ownerNote = listInbox(vault).find((n) => n.data.kind === 'message' && n.data.from === 'owner')?.body ?? '';
-  const spec = firstStreamSpec(brand, ownerNote.replace(/^#.*$/m, ''));
+  // The idea the owner picked from the CEO's three, for an owner whose own note was "surprise me" (W4-9).
+  const pick = ownerPick(vault);
+  const spec = firstStreamSpec(brand, ownerNote, pick ? pickedIdeaLine(pick.line) : null);
   const slug = createStream(vault, { ...spec, slug: streamSlug(spec.name) }, 'ceo');
   // `createStream` already wrote `Streams/<slug>.md` through the vault, which announced it with a `vault.wrote`
   // carrying the sha. A second, sha-less emit here said nothing new and doubled the event the office reads.

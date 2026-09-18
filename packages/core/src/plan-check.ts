@@ -1,5 +1,5 @@
 import type { Vault } from './vault.js';
-import { IDEA_SLUG_SRC, listIdeas, keptIdeas, type IdeaDecision } from './ideas.js';
+import { IDEA_SLUG_SRC, listIdeas, keptIdeas, readIdea, ideaPath, BOARD_IDEA_SOURCE, type IdeaDecision } from './ideas.js';
 
 /**
  * Does the company plan only serve ideas the owner kept? (Spec §4, ruling W3-1.)
@@ -87,6 +87,114 @@ export function planObjectives(plan: string): PlanObjective[] {
   return out;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Does the plan still sell what the card says? (Ruling W4-2)
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The sections of an idea card the **board** and the arithmetic wrote, which are never the card's own account
+ * of the product.
+ *
+ * Load-bearing, and the whole reason this check works. `## The board` carries the chair's pivot verbatim — on
+ * the live run, `Ideas/speedaudit.md` held "WEDGE: E-commerce founders doing $10k–$50k/month on Shopify…" and
+ * four `Fix:` clauses proposing a different business. Match an objective against *that* and the drift launders
+ * itself: the plan pivots, the board's own words are on the card, and the card agrees with the plan about a
+ * product the owner never picked.
+ */
+const CARD_WRITTEN_SECTIONS = ['## The board', '## Score', '## Decision'];
+
+/** The card as its author described the product: the title, and the body with the board's sections dropped. */
+export function ideaProductText(vault: Vault, slug: string): string {
+  const card = readIdea(vault, slug);
+  if (!card) return '';
+  const out: string[] = [card.data.title];
+  let dropping = false;
+  for (const line of card.body.replace(/\r/g, '').split('\n')) {
+    if (/^## /.test(line)) dropping = CARD_WRITTEN_SECTIONS.includes(line.trim());
+    if (!dropping) out.push(line);
+  }
+  return out.join('\n');
+}
+
+/**
+ * Words that say **how** a company works rather than **what** it sells, and are therefore no evidence that an
+ * objective and a card are about the same thing.
+ *
+ * Calibrated against the live run, not guessed at. Every word in here appears both in the drifted technology
+ * objective ("Ship a zero-install, read-only public URL scanner with automated Stripe webhook replay
+ * protection and static snapshot analysis, complete with automated tests and a green CI record") and somewhere
+ * in `Ideas/speedaudit.md` — `automated`, `tests`, `zero`, `complete`, `record` — so a rule that counted them
+ * would have found the plan and the card in perfect agreement about two different businesses.
+ */
+const PLAN_FILLER = new Set([
+  'ship', 'build', 'builds', 'launch', 'deliver', 'create', 'develop', 'define', 'secure', 'verify', 'reconcile',
+  'maintain', 'ensure', 'establish', 'complete', 'execute', 'review', 'audit', 'implement', 'improve', 'increase',
+  'reduce', 'validate', 'measure', 'report', 'deploy', 'enable', 'support', 'provide', 'with', 'that', 'this',
+  'from', 'into', 'their', 'them', 'they', 'have', 'been', 'will', 'while', 'when', 'where', 'which', 'what',
+  'initial', 'baseline', 'first', 'second', 'third', 'across', 'using', 'than', 'then', 'only', 'also', 'more',
+  'most', 'less', 'least', 'week', 'month', 'year', 'quarter', 'cycle', 'plan', 'objective', 'stream', 'idea',
+  'team', 'work', 'jobs', 'test', 'tests', 'testing', 'automated', 'automation', 'record', 'green', 'zero',
+  'metric', 'number', 'outcome', 'process', 'target', 'goal', 'each', 'every', 'some', 'over', 'under', 'after',
+  'before', 'between', 'through', 'during', 'against', 'about', 'above', 'below', 'again', 'further', 'once',
+  'here', 'there', 'whose', 'being', 'does', 'doing', 'could', 'should', 'would', 'might', 'must', 'shall',
+  // …and the plumbing. These name how software is delivered, never what a company sells, and an objective made
+  // only of them ("Ship the staging branch") is engineering housekeeping in service of whatever is on the card.
+  'staging', 'branch', 'site', 'page', 'landing', 'repo', 'repository', 'pipeline', 'infrastructure',
+  'environment', 'dashboard', 'docs', 'documentation', 'readme', 'backlog', 'ticket', 'sprint', 'release',
+  'version', 'migration', 'schema', 'config', 'setup', 'scaffold', 'prototype', 'draft', 'copy', 'content',
+]);
+
+/** How short a word may be and still say what a company sells. `URL` and `API` are three letters and generic. */
+const PRODUCT_WORD_MIN = 4;
+
+/**
+ * The words of a stretch of text that could name a product, folded so a plural and its singular are one word.
+ * Both sides of the comparison are folded the same way, so `diagnostics` on the card answers `diagnostic` in
+ * the objective and neither side has to guess the other's grammar.
+ */
+export function productWords(text: string): string[] {
+  const out = new Set<string>();
+  for (const raw of (text ?? '').toLowerCase().replace(/\b(?:idea|stream|process):\s*\S+/g, ' ').split(/[^a-z0-9]+/)) {
+    if (raw.length < PRODUCT_WORD_MIN) continue;
+    const word = raw.length > PRODUCT_WORD_MIN && raw.endsWith('s') ? raw.slice(0, -1) : raw;
+    if (PLAN_FILLER.has(raw) || PLAN_FILLER.has(word)) continue;
+    out.add(word);
+  }
+  return [...out];
+}
+
+/**
+ * The verbs that promise a **thing**, and the only objectives the product check applies to.
+ *
+ * The drift is always in what the company builds. "Get 200 newsletter subscribers" and "Secure the first 3
+ * pilot users" are distribution and revenue work that legitimately names no product — asking them to repeat
+ * the card's nouns would refuse half of every honest plan — whereas "Ship a zero-install, read-only public URL
+ * scanner" is a promise to build something, and what it builds has to be the thing on the card.
+ */
+const BUILD_VERB_RE = /^(?:ship|build|launch|develop|create|implement|release)\b/i;
+
+/** True for an objective that promises to build something, which is the one kind this check can judge. */
+export function promisesAProduct(text: string): boolean {
+  return BUILD_VERB_RE.test((text ?? '').trim().replace(/^[-*+]\s+/, ''));
+}
+
+/** Where an objective stops naming the thing and starts naming how it will be done. */
+const PRODUCT_TAIL_RE = /\s+(?:with|by|for|to|that|while|using|through|across|and|complete)\s|,\s*complete\b|\b(?:idea|stream|process):/i;
+
+/**
+ * The product an objective says it will produce: the object of its leading verb, up to the first word that
+ * turns the sentence into a method. "Ship a zero-install, read-only public URL scanner with automated Stripe
+ * webhook replay protection" is a promise about a scanner; everything after `with` is how.
+ *
+ * Quoted in the finding so the CEO reads what its own bullet named, beside the card it claimed to serve.
+ */
+export function objectiveProduct(text: string): string {
+  const one = (text ?? '').replace(/\s+/g, ' ').trim().replace(/^[-*+]\s+/, '');
+  const body = one.replace(/^(?:\w+)\s+/, (m) => (/^(?:ship|build|launch|deliver|create|develop|define|secure|verify|reconcile|maintain|ensure|establish|execute|review|audit|implement|improve|increase|reduce|validate|measure|deploy|enable|support|provide)\s+$/i.test(m) ? '' : m));
+  const cut = body.split(PRODUCT_TAIL_RE)[0].trim().replace(/[.,;:]+$/, '');
+  return cut || one;
+}
+
 /** How much of an objective a finding quotes back: enough for the CEO to find the bullet, not the whole bullet. */
 export const PLAN_QUOTE_CHARS = 90;
 
@@ -106,6 +214,13 @@ export interface PlanCheck {
 }
 
 /**
+ * What the company says — in the checkpoint log, in the brief and in the plan's own refusal — on a cycle with
+ * nothing kept (ruling W4-5). One sentence, written once, because the owner reads it in three places and they
+ * have to be the same sentence.
+ */
+export const NOTHING_PLANNED = 'no idea is kept yet, so nothing is planned';
+
+/**
  * Check a written plan against the ideas the company kept.
  *
  * Two ways an objective fails, and the finding names the objective either way so the CEO can fix the bullet
@@ -116,32 +231,97 @@ export interface PlanCheck {
  * 2. **It names an idea nobody kept** — parked, scrapped, still undecided, or no card at all. Each gets its own
  *    sentence, because "we parked that" and "there is no such card" are different mistakes.
  *
- * With **no kept ideas at all** the check passes and says nothing. That is not a loophole: on the cycle after the
- * founder brief is adopted there is often nothing kept yet (the board rules on one card a cycle), the plan writer
- * is told to plan from the brief in exactly that case, and a check that demanded a slug that cannot exist would
- * return every plan for ever and stop the company before it started.
+ * With **no kept idea at all** the check refuses everything (ruling W4-5). It used to pass and say nothing, on
+ * the reasoning that the cycle after the brief is adopted has nothing kept yet — and that exemption is exactly
+ * how the second dry-run planned for four days against five cards all reading `decision: undecided`, with every
+ * plan passing a check that never looked at one. The owner's pick is a keep now (`keepOwnerPick`), so there is
+ * something kept from the first morning; with genuinely nothing kept the company writes no plan and says so.
  */
 export function checkPlan(vault: Vault, planMd: string): PlanCheck {
   const objectives = planObjectives(planMd);
   if (!objectives.length) return { ok: true, findings: [] };
   const all = listIdeas(vault);
   const kept = keptIdeas(vault).map((i) => i.id);
-  if (!kept.length) return { ok: true, findings: [] };
+  if (!kept.length) return { ok: false, findings: [`The plan states ${objectives.length} objective${objectives.length === 1 ? '' : 's'} and ${NOTHING_PLANNED}: no objective can say which idea it serves. Keep an idea — pick one of the CEO's, or set \`decision: keep\` on a card — and the next plan is written against it.`] };
   const decisions = new Map<string, IdeaDecision>(all.map((i) => [i.id.toLowerCase(), i.decision]));
+  const fromBoard = new Set(all.filter((i) => i.source.split(':')[0].trim().toLowerCase() === BOARD_IDEA_SOURCE).map((i) => i.id.toLowerCase()));
   const findings: string[] = [];
+  /**
+   * Findings that do not refuse.
+   *
+   * An idea the owner has not ruled on yet is the state every card starts in, and returning a plan for one
+   * would deadlock the cycle it is filed in — the same asymmetry `unkeptForcesReturn` keeps, said once more
+   * here so the two halves of the guard cannot disagree. The CEO and the owner still read it.
+   *
+   * **Except a card the board filed** (ruling W3-2). That one is a pivot the chair proposed and the owner has
+   * not taken: an objective serving it is the company changing what it sells on the board's say-so, which is
+   * the whole failure this wave exists to stop. Undecided there means "nobody agreed to this", not "nobody has
+   * got round to it yet".
+   */
+  let soft = 0;
   for (const o of objectives) {
     if (!o.idea) {
       findings.push(`The objective "${quote(o.text)}" under \`### ${o.team}\` names no idea. End every objective with \`${PLAN_IDEA_MARKER} <slug>\` naming the kept idea it serves — the ideas the owner kept are ${keptList(kept)}.`);
       continue;
     }
-    if (kept.some((k) => k.toLowerCase() === o.idea)) continue;
+    if (kept.some((k) => k.toLowerCase() === o.idea)) {
+      // Rule 3 (ruling W4-2). Naming a kept idea is not serving it: the live run's technology objective ended
+      // `stream: speedaudit` and shipped a zero-install URL scanner with Stripe webhook replay protection,
+      // which is not what the SpeedAudit card says the company sells. An objective and the card it serves have
+      // to share at least one word that names a product — not a word about how the work is done.
+      if (!promisesAProduct(o.text)) continue;
+      const card = productWords(ideaProductText(vault, o.idea));
+      if (!card.length) continue;   // a card with no prose yet cannot refute anything
+      const said = productWords(o.text);
+      // "Ship the first cut" names nothing this can weigh. An objective with no product word of its own is
+      // vague, which is a different complaint from planning a different business, and not this rule's to make.
+      if (!said.length || said.some((w) => card.includes(w))) continue;
+      findings.push(`The objective "${quote(o.text)}" under \`### ${o.team}\` serves \`${PLAN_IDEA_MARKER} ${o.idea}\`, but nothing it names is on that card: it is about "${quote(objectiveProduct(o.text))}", and [[${ideaPath(o.idea).replace(/\.md$/, '')}]] is about "${quote(readIdea(vault, o.idea)?.data.title ?? o.idea)}". A plan may not change what the company sells. If the board wants a different product, the owner keeps its pivot card first.`);
+      continue;
+    }
     const decision = decisions.get(o.idea);
     const what = decision === undefined
       ? `which is not an idea card at all (there is no \`Ideas/${o.idea}.md\`)`
       : decision === 'undecided'
         ? 'which the owner has not ruled on yet'
         : `which the company ${decision === 'scrap' ? 'scrapped' : 'parked'}`;
+    if (decision === 'undecided' && !fromBoard.has(o.idea)) soft++;
     findings.push(`The objective "${quote(o.text)}" under \`### ${o.team}\` serves \`${PLAN_IDEA_MARKER} ${o.idea}\`, ${what}. A plan may only draw on ideas the owner kept: ${keptList(kept)}.`);
   }
+  return { ok: findings.length === soft, findings };
+}
+
+/** The `idea:` slugs a plan's objectives serve, lower-cased and deduplicated, in the order they appear. */
+export function planIdeaSlugs(planMd: string): string[] {
+  return [...new Set(planObjectives(planMd).map((o) => o.idea).filter((s): s is string => !!s))];
+}
+
+/**
+ * Does the rewrite the board asked for serve the same ideas the plan it returned did? (Ruling W4-2.)
+ *
+ * `plan.vetoed` at 07:32, `job_20260914_7b93ca` "Rewrite the plan after the board", and by 13:02 the technology
+ * objective had gone from "Ship the initial SpeedAudit diagnostic service baseline" to "Ship a zero-install,
+ * read-only public URL scanner with automated Stripe webhook replay protection". No return, no owner decision.
+ * A board return is a request to answer findings about the ideas the owner kept; it is never a licence to plan
+ * a different business, and a rewrite that reaches for a new slug has taken it as one.
+ *
+ * **Only an added slug is refused, never a dropped one.** A CEO that answers a finding by cutting an objective
+ * has done what it was asked; refusing that too would leave a rewrite with no legal move and stall the company
+ * behind a plan nobody can write. Adding is the drift direction, and the CEO can always avoid it.
+ */
+export function checkPlanRewrite(planMd: string, vetoed: readonly string[]): PlanCheck {
+  if (!vetoed.length) return { ok: true, findings: [] };
+  const was = new Set(vetoed.map((s) => s.toLowerCase()));
+  const findings = planIdeaSlugs(planMd).filter((s) => !was.has(s)).map((s) =>
+    `The rewritten plan serves \`${PLAN_IDEA_MARKER} ${s}\`, which the plan the board returned did not: it served ${keptList([...was])}. A rewrite answers the board's findings about the ideas the owner kept; it does not change what the company sells. If the board wants a different product, the owner keeps its pivot card first.`);
   return { ok: findings.length === 0, findings };
+}
+
+/**
+ * What the owner is told on the plan verdict when the board asked for a different product and the CEO wrote the
+ * plan it was asked to write anyway (ruling W4-2). The disagreement is real and it is theirs to settle, so it
+ * is said in one sentence with both options in it rather than resolved by whichever of the two wrote last.
+ */
+export function planPivotDisagreement(pivotSlug: string): string {
+  return `The board and the CEO disagree: approve the plan as written, or keep the pivot card [[${ideaPath(pivotSlug).replace(/\.md$/, '')}]].`;
 }

@@ -1,0 +1,46 @@
+- generic [active] [ref=f2e1]:
+  - banner [ref=f2e4]:
+    - generic [ref=f2e5]:
+      - strong [ref=f2e7]: SpeedAudit
+      - generic [ref=f2e8]: A free performance diagnostic service delivering three manual, actionable website speed fixes directly to founders' inboxes to pitch deep-dive optimization consulting.
+    - navigation "Company" [ref=f2e9]:
+      - button "1 proposals need you" [ref=f2e219] [cursor=pointer]: 1 to approve
+      - button "Messages" [ref=f2e11] [cursor=pointer]
+      - button "Brief" [ref=f2e12] [cursor=pointer]
+      - button "Plan" [ref=f2e13] [cursor=pointer]
+      - button "Queue" [ref=f2e14] [cursor=pointer]
+      - button "Org" [ref=f2e15] [cursor=pointer]
+      - button "Talk to the CEO" [ref=f2e16] [cursor=pointer]
+  - navigation "Floors" [ref=f2e17]:
+    - button "Floor 4, Chiefs, 0 active" [ref=f2e18] [cursor=pointer]:
+      - generic [ref=f2e19]: F4
+    - button "Floor 3, Assurance, 0 active" [ref=f2e21] [cursor=pointer]:
+      - generic [ref=f2e22]: F3
+    - button "Floor 2, Teams, 1 active" [ref=f2e220] [cursor=pointer]:
+      - generic [ref=f2e25]: F2
+    - button "Floor 1, Executive, 1 active" [ref=f2e221] [cursor=pointer]:
+      - generic [ref=f2e31]: F1
+    - button "Lobby and street" [ref=f2e33] [cursor=pointer]:
+      - generic [ref=f2e34]: L
+      - generic [ref=f2e35]: Lobby
+  - dialog [ref=f2e119]:
+    - banner [ref=f2e120]:
+      - button "Back" [ref=f2e121] [cursor=pointer]
+      - generic [ref=f2e59]:
+        - navigation "Breadcrumb" [ref=f2e132]:
+          - button "Decisions" [ref=f2e224] [cursor=pointer]
+        - heading "founder_brief" [level=2] [ref=f2e145]
+        - paragraph [ref=f2e74]: 00 Inbox/2026-09-14-1158-founder_brief-job_discovery_5b630aff8263_1_26.md
+      - button "Copy" [ref=f2e75] [cursor=pointer]
+      - button "Close" [ref=f2e76] [cursor=pointer]
+    - generic [ref=f2e98]:
+      - paragraph [ref=f2e159]:
+        - generic [ref=f2e160]: Approved
+        - text: founder brief · 12:13
+      - paragraph [ref=f2e249]: founder brief adopted at Memory/founder-brief.md
+  - generic [ref=f2e37]:
+    - tablist "Live or replay" [ref=f2e38]:
+      - tab "Live" [selected] [ref=f2e39] [cursor=pointer]
+      - tab "Replay" [ref=f2e41] [cursor=pointer]
+    - img "Daytime" [ref=f2e43]
+    - generic [ref=f2e53]: 12:13:13

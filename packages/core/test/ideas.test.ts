@@ -146,7 +146,8 @@ describe('the board sits only on ideas the owner has seen (ruling W3-5)', () => 
     for (const source of ['discovery', 'owner', 'pantry', 'board']) {
       expect(ownerHasSeenIdea({ source, decision: 'undecided' }), source).toBe(true);
       expect(ideaOpenToBoard({ source, decision: 'undecided' }), source).toBe(true);
-      // A kept card of the owner's own is not a board candidate: that decision has already been taken.
+      // A kept card of the owner's own is not a board candidate: that decision has already been taken, and
+      // `ideas_board` runs before `company_plan`, so their own card is judged while it is still undecided.
       expect(ideaOpenToBoard({ source, decision: 'keep' }), source).toBe(false);
     }
     expect(ownerHasSeenIdea({ source: 'intelligence:competitive', decision: 'undecided' })).toBe(false);

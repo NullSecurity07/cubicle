@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault } from '../src/template.js';
 import type { Vault } from '../src/vault.js';
 import { writeIdeaCard, updateIdea } from '../src/ideas.js';
-import { checkPlan, planObjectives, PLAN_IDEA_MARKER } from '../src/plan-check.js';
+import { checkPlan, planObjectives, PLAN_IDEA_MARKER, NOTHING_PLANNED } from '../src/plan-check.js';
 
 let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-plan-check-')); vault = (await scaffoldVault(dir)).vault; });
@@ -108,11 +108,14 @@ describe('checkPlan', () => {
     expect(r.findings[1]).toContain('not an idea card at all');
   });
 
-  it('says nothing at all when the company has kept no idea yet — there is no slug to name', () => {
-    // The cycle after the founder brief is adopted usually has nothing kept: the board rules on one card a cycle.
-    // A check that returned every plan here would stop the company before it started.
+  it('refuses the whole plan when the company has kept no idea yet (ruling W4-5)', () => {
+    // It used to pass and say nothing, on the reasoning that the cycle after the brief is adopted has nothing
+    // kept. That exemption is how the second dry-run planned for four days against five undecided cards, every
+    // plan passing a check that never looked at one. With nothing kept the company writes no plan and says so.
     writeIdeaCard(vault, { slug: 'altstack', title: 'AltStack', source: 'discovery' }, 'daemon');
-    expect(checkPlan(vault, LIVE_PLAN)).toEqual({ ok: true, findings: [] });
+    const r = checkPlan(vault, LIVE_PLAN);
+    expect(r.ok).toBe(false);
+    expect(r.findings[0]).toContain(NOTHING_PLANNED);
   });
 
   it('says nothing about a plan with no objectives — there is nothing to check', () => {

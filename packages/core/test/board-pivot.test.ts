@@ -79,7 +79,23 @@ describe('productFixes', () => {
 
 describe('pivotTitle', () => {
   it('names what the board wants instead, not what it said was wrong', () => {
-    expect(pivotTitle(pressurePivot(LIVE_BRIEF_TEST), 'the founder brief')).toBe('A high-intent, affiliate-driven deployment service');
+    // Ruling W4-7: the article comes off with the verb, so the title is a thing and never an instruction.
+    expect(pivotTitle(pressurePivot(LIVE_BRIEF_TEST), 'the founder brief')).toBe('High-intent, affiliate-driven deployment service');
+  });
+
+  it('never titles a card with a verb phrase, and names the customer the wedge aimed at (W4-7)', () => {
+    // Both live cases. The chore the owner was asked to rule on — `Ideas/secure-at-least-one-anchor-customer…`
+    // — and the wedge the chair actually wrote on `Ideas/speedaudit.md`.
+    expect(pivotTitle('Secure at least one anchor customer who has documented a ≥$500 monthly bill spike', 'this cycle\'s plan'))
+      .toBe('Anchor customer who has documented a ≥$500 monthly bill spike');
+    expect(pivotTitle('WEDGE: E-commerce founders doing $10k–$50k/month on Shopify whose checkout mobile load times exceed 4 seconds, targeted via a 60-second personalized Loom screen-recording audit', 'Ideas/speedaudit'))
+      // A product, then who it is for — cut to a filename's worth of words, not to the first clause of a complaint.
+      .toBe('60-second personalized Loom screen-recording audit for E-commerce…');
+  });
+
+  it("uses the chair's own PIVOT TITLE line when it wrote one (W4-7)", () => {
+    const said = 'VERDICT: PIVOT REQUIRED\nWEDGE: teams with a documented bill spike\nPIVOT TITLE: Anchor-customer pilots for teams with a documented bill spike';
+    expect(pivotTitle(said, 'the founder brief')).toBe('Anchor-customer pilots for teams with a documented bill spike');
   });
 
   it('falls back to naming the subject rather than titling a card with a complaint', () => {
@@ -97,7 +113,9 @@ describe('fileBoardPivot', () => {
     expect(card.data.decision).toBe('undecided');
     expect(card.data.evidence).toEqual([live.transcript]);
     expect(card.body).toContain('affiliate-driven deployment service');
-    expect(card.body).toContain('Nothing is planned against this until you keep it.');
+    expect(card.body).toContain('Nothing is planned against it until you keep it.');
+    // Ruling W4-7: the chair's own sentence is the first line of the card's prose.
+    expect(card.body.split('## What changed')[1].trim().split('\n')[0]).toBe(live.pivot);
   });
 
   it('is idempotent on the transcript, not on the words: one session, one card', () => {

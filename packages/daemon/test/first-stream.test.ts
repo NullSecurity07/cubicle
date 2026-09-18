@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listStreams, readStream, createProposal, loadOrg, listJobs } from '@cubicle/core';
+import { scaffoldVault, Vault, listStreams, readStream, createProposal, loadOrg, listJobs, findInboxById, nowIso, BRAND_NAME_PATH } from '@cubicle/core';
 import { seedFirstStream, firstStreamSpec, seedFirstJobs } from '../src/first-run.js';
 import { adoptFounderBrief } from './helpers/brief.js';
 
@@ -35,6 +35,39 @@ describe('firstStreamSpec', () => {
   });
 });
 
+/**
+ * Ruling W4-9. `Streams/speedaudit.md` in the 2026-09-14 dry run, verbatim in its `problem:` field: the owner's
+ * two words, the CEO's whole reply to them, all three ideas, and a cut mid-word at 600 characters —
+ * "surprise me I filed three ideas as a proposal in 00 Inbox/. Pick one with `chosen:` … a simple static
+ * submission f". Everything after the note's `## CEO` heading is the company talking to itself.
+ */
+describe('firstStreamSpec: the owner\'s own words, and the idea they picked (W4-9)', () => {
+  /** The owner note exactly as the cabin writes it, reply section and all. */
+  const LIVE_NOTE = `# surprise me\n\nsurprise me\n\n## CEO\n\nI filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n1. SponsorDeck — A curated matchmaking service connecting niche newsletter creators with relevant software sponsors.\n2. SpeedAudit — A free performance diagnostic service delivering three manual, actionable website speed fixes to founders' inboxes.\n3. Ghostwriter Hunt — A weekly email digest matching busy executive founders with vetted ghostwriters.\n`;
+  const PICK = "SpeedAudit — A free performance diagnostic service delivering three manual, actionable website speed fixes to founders' inboxes.";
+
+  it('the CEO reply is not the problem, and neither is "surprise me": the picked idea is', () => {
+    const s = firstStreamSpec({ name: 'SpeedAudit', tagline: 'Three fixes, free' }, LIVE_NOTE, PICK);
+    expect(s.problem).toBe(PICK);
+    expect(s.problem).not.toContain('I filed three ideas');
+    expect(s.problem).not.toContain('SponsorDeck');
+    expect(s.problem).not.toContain('Ghostwriter Hunt');
+    expect(s.problem).not.toContain('chosen:');
+    expect(s.problem).not.toMatch(/surprise me/i);
+  });
+
+  it('an owner who wrote a real problem keeps it, and still loses the reply section', () => {
+    const note = "# the idea\n\nSmall agencies waste two days a month reconciling invoices by hand.\n\n## CEO\n\nNoted. I will plan against that.\n";
+    const s = firstStreamSpec({ name: 'Ledgerly', tagline: 't' }, note, PICK);
+    expect(s.problem).toBe('Small agencies waste two days a month reconciling invoices by hand.');
+    expect(s.problem).not.toContain('Noted');
+  });
+
+  it('with neither words nor a pick it falls back to the tagline, never to the chat log', () => {
+    expect(firstStreamSpec({ name: 'Ledgerly', tagline: 'Books that close themselves' }, LIVE_NOTE, null).problem).toContain('Books that close themselves');
+  });
+});
+
 describe('seedFirstStream', () => {
   it('does nothing before the owner has an idea', () => {
     expect(seedFirstStream(vault)).toBeNull();
@@ -49,6 +82,20 @@ describe('seedFirstStream', () => {
     expect(s.data.owner_team).toBe('dev');
     expect(s.data.repo_path).toBe('Workspace/ledgerly');
     expect(s.data.problem).toContain('reconciling invoices');
+  });
+
+  it('an owner who said "surprise me" gets the idea they picked as the problem, not the chat log (W4-9)', () => {
+    vault.writeText(BRAND_NAME_PATH, '---\nname: SpeedAudit\ntagline: Three fixes, free\nurl: ""\n---\n# SpeedAudit\n', 'owner');
+    createProposal(vault, { kind: 'message', from: 'owner', to: 'ceo', title: 'surprise me', body: "# surprise me\n\nsurprise me\n\n## CEO\n\nI filed three ideas as a proposal in 00 Inbox/. Pick one with `chosen:` and `approved: true`.\n\n1. SponsorDeck — matchmaking for newsletters.\n2. SpeedAudit — A free performance diagnostic service delivering three manual website speed fixes.\n3. Ghostwriter Hunt — a weekly digest.\n" }, 'owner');
+    const trio = createProposal(vault, { kind: 'brand_change', from: 'ceo', to: 'owner', target: BRAND_NAME_PATH, title: 'Three company ideas — pick one', body: '1. SponsorDeck — matchmaking for newsletters.\n2. SpeedAudit — A free performance diagnostic service delivering three manual website speed fixes.\n3. Ghostwriter Hunt — a weekly digest.\n' }, 'ceo');
+    const note = findInboxById(vault, trio.id)!;
+    vault.updateNote(note.path, (n) => ({ data: { ...n.data, approved: true, chosen: 2, resolved_at: nowIso() }, body: n.body }), 'owner');
+    adoptFounderBrief(vault);
+
+    const s = readStream(vault, seedFirstStream(vault)!)!;
+    expect(s.data.problem).toBe('SpeedAudit — A free performance diagnostic service delivering three manual website speed fixes.');
+    expect(s.data.problem).not.toContain('I filed three ideas');
+    expect(s.data.problem).not.toContain('SponsorDeck');
   });
 
   it('is once-only: a second call with a stream already there adds nothing', () => {
@@ -70,12 +117,17 @@ describe('seedFirstStream', () => {
   });
 });
 
-describe('the company plan names streams', () => {
-  it('the CEO is told to attach a stream to every objective', async () => {
+describe('the company plan names the kept idea, not a stream', () => {
+  it('the CEO is told to end every objective on the idea it serves (W4-5)', async () => {
+    // It used to be asked for a trailing `stream: <slug>` too, and the second dry-run's plan carried
+    // " stream: speedaudit" appended to the prose with no `idea:` anywhere. A stream is a fact about a job; an
+    // objective says which idea the owner kept it serves, and the jobs a division lead queues still name theirs.
     const { HEARTBEAT_STEPS } = await import('../src/heartbeat.js');
     expect(HEARTBEAT_STEPS).toContain('company_plan');
     const src = (await import('node:fs')).readFileSync(path.resolve(__dirname, '../src/heartbeat.ts'), 'utf8');
-    expect(src).toMatch(/stream: <slug>/);
+    expect(src).not.toMatch(/objective for a product division ends with "stream: <slug>"/);
+    expect(src).toMatch(/never a trailing "stream:"/);
     expect(src).toMatch(/Streams\//);
+    expect(src).toMatch(/naming its stream and its risk/);
   });
 });

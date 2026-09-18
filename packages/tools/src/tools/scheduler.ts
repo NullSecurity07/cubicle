@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { KNOWN_JOB_TYPES, officeHolder, isValidRoleId, isValidStreamSlug, listStreams, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, ENGINEERING_JOB_TYPES, RISK_GUIDANCE, RISK_LEVELS, missingRequestFields, incompleteRequestText, ResearchRequest, priorityScore, jobPriorityFor, type Org, type Vault } from '@cubicle/core';
+import { KNOWN_JOB_TYPES, sameWorkAs, officeHolder, isValidRoleId, isValidStreamSlug, listStreams, idFromKey, loadOrg, can, isLead, teamOf, leadOf, readJob, listJobs, researchLead, ENGINEERING_JOB_TYPES, RISK_GUIDANCE, RISK_LEVELS, missingRequestFields, incompleteRequestText, ResearchRequest, priorityScore, jobPriorityFor, type Org, type Vault } from '@cubicle/core';
 
 /**
  * Job types an ordinary role may not schedule, and who may. Must cover every type `wipLoad` skips and every type
@@ -176,7 +176,8 @@ export const schedulerRequest = defineTool({
       const known = listStreams(ctx.vault).map((s) => s.slug);
       return { ok: false, text: `${JSON.stringify(args.stream)} is not a stream slug. Use the slug from the Streams/<slug>.md note — lower-case letters, digits and hyphens only, starting with a letter or digit, at most 48 characters. ${known.length ? `Known streams: ${known.join(', ')}.` : 'No streams exist yet; the product manager creates Streams/<slug>.md first.'} Omit stream if this job serves none.` };
     }
-    const allowed = systemTypes(org)[type];
+    const system = systemTypes(org);
+    const allowed = system[type];
     if (allowed && !allowed.includes(ctx.roleId)) return { ok: false, text: `job type ${type} is reserved for the daemon${allowed.length ? ` / ${allowed.join(', ')}` : ''}` };
     const ceo = officeHolder(org, 'chief_executive');
     const lead = ctx.roleId === ceo || isLead(org, ctx.roleId);
@@ -198,8 +199,19 @@ export const schedulerRequest = defineTool({
     // exempt because the daemon schedules e.g. team.plan every cycle; a replayed step keeps its own job.
     if (!allowed) {
       const title = normTitle(args.title);
-      const dup = listJobs(ctx.vault, { status: [...OPEN_STATUSES], assigned: args.assigned }).find((j) => j.id !== wantedId && normTitle(j.title) === title);
+      // A system type is never what a lead is re-queueing: the daemon schedules a `division.plan` every cycle
+      // and every gate is titled after the job it reviews, so counting those as "already open work" would
+      // refuse a lead the one job their plan is for.
+      const open = listJobs(ctx.vault, { status: [...OPEN_STATUSES] }).filter((j) => j.id !== wantedId && !system[j.type]);
+      const dup = open.find((j) => j.assigned === args.assigned && normTitle(j.title) === title);
       if (dup) return { ok: false, text: `a job with this title is already open for ${args.assigned}: ${dup.id} (${dup.status}). Wait for it, or give the new job a different title if it really is different work` };
+      // …and the same work under another title, or on somebody else's desk (ruling W4-10). The 2026-09-14 run
+      // queued "Implement Stripe Webhook Replay Protection" (custom, blocked) beside "Implement Stripe webhook
+      // replay protection and rate limiting" (engineer.ship, queued): one piece of work, two ids, two teams and
+      // two queue slots. Two jobs whose first three words are the same are the same work until somebody says
+      // otherwise, and the way to say otherwise is in those three words.
+      const same = open.find((j) => sameWorkAs(j.title, args.title));
+      if (same) return { ok: false, text: `this is the work ${same.id} is already open for (${same.status}, ${same.assigned}): "${same.title}". Wait for it, hand this job's extra scope to that one with colleague.message, or — if it genuinely is different work — say what makes it different in the first three words of the title` };
     }
     // §29: a research job's place in the queue is its score, not whatever number the requester typed. The
     // project slug is left unset here — `research.start` derives it from the real job id and stores it.

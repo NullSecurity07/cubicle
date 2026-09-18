@@ -23,6 +23,8 @@ export * from './ideas.js';
 export * from './pressure.js';
 export * from './brief-check.js';
 export * from './plan-check.js';
+export * from './board-evidence.js';
+export * from './brief-quality.js';
 export * from './trust.js';
 export * from './money.js';
 export * from './streams.js';

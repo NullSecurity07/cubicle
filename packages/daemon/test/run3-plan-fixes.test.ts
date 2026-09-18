@@ -20,7 +20,7 @@ import path from 'node:path';
 import {
   scaffoldVault, Vault, createJob, createProposal, listJobs, listIdeas, readIdea, writeIdeaCard, updateIdea,
   renderInterviewAsked, interviewPhase, INTERVIEW_PATH, FOUNDER_BRIEF, hasFounderBrief,
-  BOARD_IDEA_SOURCE, checkPlan, updateJob, readJob,
+  BOARD_IDEA_SOURCE, checkPlan, updateJob, readJob, NOTHING_PLANNED,
 } from '@cubicle/core';
 import { ToolRegistry, parseToolsConfig } from '@cubicle/tools';
 import type { Llm } from '@cubicle/harness';
@@ -179,7 +179,9 @@ describe('W3-1: the plan the board talked the CEO into is returned before the bo
     expect(planIdeaRule(['altstack'])).toContain('idea: <slug>');
     expect(planIdeaRule(['altstack'])).toContain('`altstack`');
     expect(planIdeaRule(['altstack'])).toContain('never a licence to plan a different business');
-    expect(planIdeaRule([])).toContain(FOUNDER_BRIEF);
+    // Ruling W4-5: with nothing kept there is nothing to plan, and the goal says that rather than pointing the
+    // CEO at the brief — a plan written against the brief alone is a plan nobody has agreed to.
+    expect(planIdeaRule([])).toContain(NOTHING_PLANNED);
     expect(planIdeaRule([])).not.toContain('idea: <slug>');
   });
 });

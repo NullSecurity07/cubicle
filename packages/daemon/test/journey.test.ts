@@ -351,7 +351,9 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     const briefPivot = pivots()[0];
     expect(briefPivot.evidence, 'the pivot cites the argument it came out of').toContain(session.rel);
     expect(briefPivot.decision).toBe('undecided');
-    expect(readIdea(v, briefPivot.id)!.body).toContain('Nothing is planned against this until you keep it.');
+    expect(readIdea(v, briefPivot.id)!.body).toContain('Nothing is planned against it until you keep it.');
+    // Ruling W4-7: the card's title names an opening, never a chore, and the chair's own sentence leads the body.
+    expect(briefPivot.title).not.toMatch(/^(?:Secure|Build|Ship|Target|Pivot|Focus|Launch)\b/i);
     // …and the brief itself still describes the company the owner picked. The pivot is an offer, not an edit.
     expect(draft).toContain('Meal kits for nurseries');
 

@@ -5,6 +5,7 @@ import { stringifyNote } from './frontmatter.js';
 import { setSection } from './jobs.js';
 import { nowIso } from './fs.js';
 import { renderRubric, BoardRubric, chairAnswerText, PRESSURE_CHAIR_SECTION } from './pressure.js';
+import { ownerPick, OWNER_PICK_LABEL, hasFounderBrief, FOUNDER_BRIEF } from './discovery.js';
 
 /**
  * The idea dossier: something the company *could* do, with everything anyone needs to rule on it in one note.
@@ -445,19 +446,86 @@ export const BOARD_IDEA_SOURCE = 'board';
 /** How much of one pivot becomes a card title. Long enough to read as an idea, short enough to be a filename. */
 export const PIVOT_TITLE_CHARS = 70;
 
+/** The line the chair is asked to write on a pivot, so the card's title is the chair's own naming of it. */
+export const PIVOT_TITLE_LABEL = 'PIVOT TITLE:';
+const PIVOT_TITLE_LINE_RE = /^[ \t]*(?:>[ \t]*)*(?:#{1,6}[ \t]*)?(?:[-*+][ \t]+)?[*_`]*[ \t]*pivot[ \t]+title[*_`]*[ \t]*[:\-–—][ \t]*(.+)$/im;
+
 /**
- * A title for the pivot the chair proposed: what it wants the company to do instead, not what it said was wrong.
+ * Verbs a board writes a chore with. A title that opens on one of these is an action item, not an opening: the
+ * owner was asked "Keep, park or scrap: Secure at least one anchor customer who has documented a ≥$500 monthly
+ * bill spike", which is a task somebody could be given and not a business anybody could rule on.
+ */
+const PIVOT_VERB_RE = /^(?:secure|build|ship|launch|create|develop|define|target|focus|pivot|shift|move|switch|transition|acquire|find|get|win|sell|offer|deliver|validate|test|explore|pursue|establish|position|reposition|start|stop|add|remove|automate|implement|improve|increase|reduce|expand|narrow|refocus|prioritis|prioriz|convert|onboard|reach|attack|serve)\w*\s+/i;
+
+/** The little words a clause may open on once its verb is gone: "at least one anchor customer" → the customer. */
+const PIVOT_LEAD_RE = /^(?:at\s+least\s+|at\s+most\s+)?(?:a|an|the|one|to|for|towards?|on|into|onto|our|its|their)\s+/i;
+
+/** How a wedge separates who it is for from what they are sold: "<customer>, targeted via <product>". */
+const WEDGE_SPLIT_RE = /,?\s+(?:targeted\s+via|targeted\s+with|reached\s+via|reached\s+through|served\s+(?:by|with)|sold\s+(?:via|through)|via|using|through|with)\s+/i;
+
+/** How a fix names its customer: "<product> for <customer>", "<product> to <customer>". */
+const PIVOT_FOR_RE = /^([\s\S]{4,120}?)\s+(?:for|to|aimed\s+at|targeting)\s+([\s\S]{4,160})$/i;
+
+/**
+ * A machine label a clause may still carry when it is read straight off the chair's answer rather than through
+ * `pressurePivot`. Stripped here so both routes give the same title.
+ */
+const PIVOT_LABEL_RE = /^(?:wedge|pivot\s+title|verdict|finding)[ \t]*[:\-–—][ \t]*/i;
+
+/** One clause, trimmed of its label, leading verb and article, with its first letter left as the author wrote it. */
+function nounPhrase(clause: string): string {
+  return clause.replace(/\s+/g, ' ').trim()
+    .replace(PIVOT_LABEL_RE, '')
+    .replace(/^[-–—:,*_`]+\s*/, '')
+    .replace(PIVOT_VERB_RE, '')
+    .replace(PIVOT_LEAD_RE, '')
+    .replace(/[.,;:*_`]+$/, '')
+    .trim();
+}
+
+/** A title cut to a filename's worth of words, with its first letter raised. */
+function asTitle(text: string): string {
+  const one = text.replace(/\s+/g, ' ').trim();
+  const cut = one.length > PIVOT_TITLE_CHARS ? `${one.slice(0, PIVOT_TITLE_CHARS).replace(/\s+\S*$/, '')}…` : one;
+  return cut.replace(/^./, (c) => c.toUpperCase());
+}
+
+/**
+ * A title for the pivot the chair proposed: **a product and a customer**, never a verb phrase (ruling W4-7).
  *
- * "Pivot from a newsletter **to** a high-intent, affiliate-driven deployment service" carries its proposal after
- * the `to`, so that is looked for first; a fix-by clause is already nothing but the proposal, so its own first
- * clause stands. Falls back to naming the subject, which is honest and never empty: a card whose title is the
- * first seventy characters of a complaint would be filed under the wrong name for ever.
+ * The second dry-run filed two good cards under two bad names — `Ideas/secure-at-least-one-anchor-customer-who-has-docu.md`
+ * and `Ideas/automated-stripe-webhook-replay-protection.md` — and then asked the owner "Keep, park or scrap:
+ * Secure at least one anchor customer who has documented a ≥$500 monthly bill spike". Filing the card was
+ * right; the title was a chore off a to-do list, and an opening is what the owner is being asked to rule on.
+ *
+ * Three readings, in order. The chair's own `PIVOT TITLE:` line wins, because it is the one asked for and the
+ * chair is the only party that knows what it meant. Otherwise the clause is split into who it is for and what
+ * they are sold — a wedge writes the customer first ("…founders whose checkout exceeds 4 seconds, targeted via
+ * a 60-second Loom audit"), a fix writes the product first ("a remediation retainer for teams with a bill
+ * spike") — and comes back as "<product> for <customer>". Failing that, the leading verb comes off so what is
+ * left is at least a thing and not an instruction.
  */
 export function pivotTitle(pivot: string, subject: string): string {
-  const to = pivot.match(/\bpivot(?:ing|ed)?\s+(?:away\s+)?(?:from\s+[\s\S]{1,160}?\s+)?to\s+([^.;\n]{4,160})/i)?.[1];
-  const head = (to ?? pivot.split(/[.;\n]/)[0] ?? '').replace(/\s+/g, ' ').trim().replace(/^[-–—:,]+\s*/, '');
-  const cut = head.length > PIVOT_TITLE_CHARS ? `${head.slice(0, PIVOT_TITLE_CHARS).replace(/\s+\S*$/, '')}…` : head;
-  return cut.length >= 8 ? cut.replace(/^./, (c) => c.toUpperCase()) : `Board pivot on ${subject}`;
+  const said = (pivot ?? '').replace(/\r/g, '');
+  const asked = said.match(PIVOT_TITLE_LINE_RE)?.[1]?.trim();
+  if (asked && nounPhrase(asked).length >= 8) return asTitle(nounPhrase(asked));
+
+  const to = said.match(/\bpivot(?:ing|ed)?\s+(?:away\s+)?(?:from\s+[\s\S]{1,160}?\s+)?to\s+([^.;\n]{4,160})/i)?.[1];
+  const clause = (to ?? said.split(/[.;\n]/).map((l) => l.trim()).find((l) => l.length > 8) ?? '').trim();
+  if (!clause) return `Board pivot on ${subject}`;
+
+  // A wedge: the customer is named first and the thing they are sold comes after the connector.
+  const wedge = clause.split(WEDGE_SPLIT_RE);
+  if (wedge.length > 1) {
+    const customer = nounPhrase(wedge[0]);
+    const product = nounPhrase(wedge.slice(1).join(' '));
+    if (customer.length >= 4 && product.length >= 4) return asTitle(`${product} for ${customer}`);
+  }
+  // A fix: the product is named first, its customer after "for".
+  const phrase = nounPhrase(clause);
+  const split = phrase.match(PIVOT_FOR_RE);
+  if (split) return asTitle(`${split[1].trim()} for ${split[2].trim()}`);
+  return phrase.length >= 8 ? asTitle(phrase) : `Board pivot on ${subject}`;
 }
 
 /**
@@ -485,7 +553,9 @@ export function fileBoardPivot(
     source: BOARD_IDEA_SOURCE,
     evidence: [o.transcript],
     created: o.created,
-    what_changed: `The board pressure-tested ${o.subject} and proposed a pivot rather than the business as it stands. Nothing is planned against this until you keep it.`,
+    // Ruling W4-7: the chair's own sentence is the first line of the card, above the explanation of what a
+    // pivot card is — the owner reads what the board is proposing before they read why they are being asked.
+    what_changed: `${pivot}\n\nThe board pressure-tested ${o.subject} and proposed this rather than the business as it stands. Nothing is planned against it until you keep it.`,
     why_it_matters: `The chair's own words: ${pivot}`,
   }, o.by);
 }
@@ -511,6 +581,108 @@ export function updateIdea(
   const data = IdeaFrontmatter.parse({ ...merged, id: slug });
   vault.writeText(ideaPath(slug), stringifyNote(data as Record<string, unknown>, body), by);
   return data;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// The idea the owner picked is the idea the owner kept (ruling W4-5)
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What a picked line names: the company, before the CEO's dash and without the CEO's numbering.
+ * `2. SpeedAudit — Free website speed fixes` is a decision about SpeedAudit.
+ */
+export function pickedIdeaName(line: string): string {
+  return (line ?? '').replace(/^\s*\d+[.)]\s*/, '').split(/\s+[—–-]\s+|:\s+/)[0].trim();
+}
+
+/** A picked name shorter than this is not enough to find a card by without matching half the vault. */
+const PICK_NAME_MIN = 4;
+
+/**
+ * Mark the idea the owner picked as **kept, by them** — and return its slug, or null (ruling W4-5).
+ *
+ * Every one of the five cards in the second dry-run read `decision: undecided`, including SpeedAudit, which
+ * the owner had chosen by name on the first morning. So `keptIdeas` was empty, `checkPlan` passed every plan
+ * vacuously, and the company spent four days planning against nothing anybody had agreed to. The owner's pick
+ * *is* a decision; it was simply never written onto the card, because the pick is made before the card exists
+ * (the `brand_change` resolved at 06:25 and the discovery job filed `Ideas/speedaudit.md` at 06:27).
+ *
+ * So it is applied where both are on disk rather than at the moment of the click, and it is idempotent: only
+ * an **undecided** card the owner has seen is touched, so a later park or scrap of theirs is never undone by a
+ * cycle that ran afterwards.
+ */
+export function keepOwnerPick(vault: Vault, by = 'daemon', now = new Date()): string | null {
+  const chose = pickedCard(vault);
+  const card = chose ?? briefCard(vault);
+  if (!card || card.idea.decision !== 'undecided') return null;
+  const at = now.toISOString();
+  updateIdea(vault, card.idea.id, { decision: 'keep', decided_by: 'owner', decided_at: at, status: 'accepted' }, by, {
+    heading: '## Decision',
+    content: `**keep** — the owner, ${at.slice(0, 10)}. ${card.why}`,
+  });
+  return card.idea.id;
+}
+
+/**
+ * A card the owner's own decision could be about: their material, their typing, the idle-hours chat — never a
+ * pivot the board proposed. Ruling W3-2 exists so that a `PIVOT REQUIRED` becomes a card the owner *keeps*, and
+ * a keep applied on their behalf here would be the company taking that decision for them after all.
+ */
+function theirsToKeep(idea: IdeaFrontmatter): boolean {
+  return ownerHasSeenIdea(idea) && idea.source.split(':')[0].trim().toLowerCase() !== BOARD_IDEA_SOURCE;
+}
+
+/** The card the owner's `chosen:` line names, if the CEO offered them three and they took one. */
+function pickedCard(vault: Vault): { idea: IdeaFrontmatter; why: string } | null {
+  const pick = ownerPick(vault);
+  if (!pick) return null;
+  const name = pickedIdeaName(pick.line);
+  if (name.length < PICK_NAME_MIN) return null;
+  const want = ideaSlug(name);
+  const idea = listIdeas(vault).find((i) => theirsToKeep(i)
+    && (i.id === want || sameIdeaTitle(i.title, name) || ideaSlug(i.title).startsWith(want)));
+  return idea ? { idea, why: `${OWNER_PICK_LABEL} ${pick.line.replace(/^\s*\d+[.)]\s*/, '')}` } : null;
+}
+
+/**
+ * The card the founder brief the owner adopted names — the other half of the same decision.
+ *
+ * The pick is how an owner who said "surprise me" chooses; an owner who typed their own idea into
+ * `Discovery/inbox/` never sees three lines to choose from, and the document they *do* sign is the brief. Its
+ * `## Candidate ideas` names the card discovery filed off their material, and adopting it is them saying this
+ * is what the company is for. Without this the commonest first run has no kept idea at all and — under the
+ * same ruling's gate — would never plan anything.
+ *
+ * Only an owner-seen card, and only the one the brief actually names: a sweep's card is not made theirs by
+ * being filed the same week.
+ */
+function briefCard(vault: Vault): { idea: IdeaFrontmatter; why: string } | null {
+  if (!hasFounderBrief(vault)) return null;
+  // The first morning only. Once anything is kept the brief has done this job, and a card filed afterwards is
+  // a later idea the owner rules on themselves — not something adopting the brief a week ago agreed to.
+  if (keptIdeas(vault).length) return null;
+  const brief = vault.readTextOrNull(FOUNDER_BRIEF) ?? '';
+  const section = (brief.split(/^## Candidate ideas[ \t]*$/m)[1] ?? '').split(/^## /m)[0];
+  const why = `The owner adopted [[${FOUNDER_BRIEF.replace(/\.md$/, '')}]], which is written against this idea.`;
+  // The section is read in every spelling the template has ever asked for: a wikilink, a path, and the bare
+  // slug `Processes/discovery.md` asks for by name. An `_underscored_` word is emphasis, not a slug.
+  const named = new Set([...ideasNamedIn(section), ...[...section.matchAll(new RegExp(`(?<![A-Za-z0-9_/-])(${IDEA_SLUG_SRC})(?![A-Za-z0-9_/-])`, 'gi'))].map((m) => m[1].toLowerCase())]);
+  const seen = listIdeas(vault).filter((i) => theirsToKeep(i) && i.decision === 'undecided');
+  const idea = seen.find((i) => named.has(i.id.toLowerCase()))
+    // …and failing that, the one card the owner's own material produced. Only when there is exactly one: with
+    // two, which of them the brief is written against is a question only the owner can answer.
+    ?? (seen.length === 1 ? seen[0] : undefined);
+  return idea ? { idea, why } : null;
+}
+
+/** What an idea verdict tells the owner about a card they kept themselves and the board would now park. */
+export function ownerKeptNote(band: IdeaBand): string {
+  return `You kept this; the board would ${band} it. Your decision stands unless you change it here.`;
+}
+
+/** True for a card the **owner** kept: the one decision no later board session may write over (ruling W4-5). */
+export function ownerKept(idea: { decision: IdeaDecision; decided_by: string }): boolean {
+  return idea.decision === 'keep' && idea.decided_by === 'owner';
 }
 
 /** One line per idea for a plan goal: what it is, what it scored, and where to read it. */

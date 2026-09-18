@@ -152,7 +152,7 @@ const RUBRIC_LINE_RE = labelLine(`${LINE_LEAD}rubric`, '.*', 'im');
 const WEDGE_LINE_RE = labelLine(`${LINE_LEAD}wedge`, '.+', 'im');
 
 /** A machine line the chair was asked to write. Never a flaw, wherever it appears. */
-const MACHINE_LINE_RE = new RegExp(`^(?:${LINE_LEAD}(?:rubric|wedge)|${VERDICT_LEAD_LABEL})[*_\`]*[ \\t]*${DELIM}`, 'i');
+const MACHINE_LINE_RE = new RegExp(`^(?:${LINE_LEAD}(?:rubric|wedge|pivot[ \\t]+title)|${VERDICT_LEAD_LABEL})[*_\`]*[ \\t]*${DELIM}`, 'i');
 
 /** A blockquote marker. */
 const QUOTE_RE = /^[ \t]*(?:>[ \t]?)+/;
