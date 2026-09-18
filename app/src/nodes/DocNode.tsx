@@ -1,17 +1,25 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useRef, useState } from 'react';
 import { getDoc, putDoc } from '../api';
+import { listen } from '../bus';
 import type { DocNodeType } from '../stage';
 import { CardActions, Frame } from './Frame';
 
 export function DocNode({ id, data, selected }: NodeProps<DocNodeType>) {
   const [text, setText] = useState<string | null>(null);
   const [saved, setSaved] = useState(true);
+  const [fresh, setFresh] = useState(false);
   const { updateNodeData } = useReactFlow();
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => { getDoc(id).then(setText).catch(() => setText('')); }, [id]);
   useEffect(() => () => clearTimeout(timer.current), []);
+  // A person rewrote this doc: show their version, and drop any save of ours that would undo it.
+  useEffect(() => listen('effect', (effect) => {
+    if (effect.kind !== 'doc-changed' || effect.id !== id) return;
+    clearTimeout(timer.current);
+    getDoc(id).then((next) => { setText(next); setSaved(true); setFresh(true); setTimeout(() => setFresh(false), 1600); }).catch(() => {});
+  }), [id]);
 
   function edit(next: string) {
     setText(next);
@@ -25,10 +33,10 @@ export function DocNode({ id, data, selected }: NodeProps<DocNodeType>) {
       <header className="card__header card__header--doc">
         <svg className="doc-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5L12.5 5v9.5h-8.5zM9 1.5V5h3.5M6 8.5h4.5M6 11h4.5" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" strokeLinecap="round" /></svg>
         <input className="card__title-input nodrag" aria-label="Doc title" value={data.title} onChange={(event) => updateNodeData(id, { title: event.target.value })} />
-        <div className="card__saved">{saved ? '' : 'saving…'}</div>
+        <div className="card__saved">{fresh ? 'updated' : saved ? '' : 'saving…'}</div>
         <CardActions id={id} what={`"${data.title || 'this doc'}"`} />
       </header>
-      <textarea className="doc nodrag nowheel" spellCheck={false} value={text ?? ''} disabled={text === null} onChange={(event) => edit(event.target.value)} />
+      <textarea className={`doc nodrag nowheel${fresh ? ' doc--fresh' : ''}`} spellCheck={false} value={text ?? ''} disabled={text === null} onChange={(event) => edit(event.target.value)} />
     </Frame>
   );
 }

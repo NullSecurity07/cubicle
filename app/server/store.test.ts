@@ -28,21 +28,30 @@ describe('store', () => {
 
   it('appends chat messages in order and starts empty', async () => {
     expect(await store.readChat('marketing')).toEqual([]);
-    await store.appendChat('marketing', { role: 'user', text: 'hi', at: 1 });
-    await store.appendChat('marketing', { role: 'assistant', text: 'hello', at: 2, provider: 'fake' });
+    await store.appendChat('marketing', { id: 'm', role: 'user', text: 'hi', at: 1 });
+    await store.appendChat('marketing', { id: 'm', role: 'assistant', text: 'hello', at: 2, provider: 'fake' });
     expect((await store.readChat('marketing')).map((m) => m.text)).toEqual(['hi', 'hello']);
+  });
+
+  it('gives ids to conversations saved before messages had them, once', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(join(dir, 'rooms'), { recursive: true });
+    await writeFile(join(dir, 'rooms', 'build.json'), JSON.stringify([{ role: 'user', text: 'old', at: 1 }]));
+    const [first] = await store.readChat('build');
+    expect(first.id).toMatch(/^m-/);
+    expect((await store.readChat('build'))[0].id).toBe(first.id);
   });
 
   it('refuses ids that could leave the workspace', async () => {
     await expect(store.readDoc('../secret')).rejects.toThrow(/id/);
-    await expect(store.appendChat('a/b', { role: 'user', text: 'x', at: 1 })).rejects.toThrow(/id/);
+    await expect(store.appendChat('a/b', { id: 'm', role: 'user', text: 'x', at: 1 })).rejects.toThrow(/id/);
   });
 });
 
 describe('store, removing cards', () => {
   it('moves the files of removed cards to trash instead of deleting them', async () => {
     const stage = await store.loadStage();
-    await store.appendChat('marketing', { role: 'user', text: 'keep me', at: 1 });
+    await store.appendChat('marketing', { id: 'm', role: 'user', text: 'keep me', at: 1 });
     await store.saveStage({ ...stage, rooms: stage.rooms.filter((room) => room.id !== 'marketing'), docs: [], wires: [] });
     expect(await store.readChat('marketing')).toEqual([]);
     expect(await store.readDoc('brand-doc')).toBe('');

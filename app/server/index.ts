@@ -1,16 +1,25 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
-import type { ChatEvent, Stage } from '../shared/model.ts';
+import { newMessageId, type ChatEvent, type Stage } from '../shared/model.ts';
+import { runTurn } from './loop.ts';
 import { buildMessages, wiredDocIds } from './prompt.ts';
-import { fakeClient, realClients, streamReply } from './providers.ts';
+import { fakeClient, promptSize, realClients } from './providers.ts';
+import { route } from './router.ts';
 import { readStatic } from './static.ts';
 import { createStore } from './store.ts';
+import { docTools } from './tools/docs.ts';
+import { fileTools } from './tools/files.ts';
+import { createUsage } from './usage.ts';
 
 const root = resolve(import.meta.dirname, '../..');
 try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: only the fake model will work */ }
 
 const port = Number(process.env.STAGE_API_PORT ?? 7421);
-const store = createStore(process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace'));
+const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
+const store = createStore(workspace);
+const usage = createUsage(resolve(workspace, 'usage.json'));
+await usage.load();
+const tools = [...docTools, ...fileTools];
 const clients = process.env.STAGE_FAKE_MODEL === '1' ? [fakeClient] : realClients();
 const busy = new Set<string>();
 
@@ -41,15 +50,29 @@ async function chat(roomId: string, text: string, res: ServerResponse) {
   busy.add(roomId);
 
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-  const send = (event: ChatEvent) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+  const send = (event: ChatEvent) => !res.writableEnded && res.write(`data: ${JSON.stringify(event)}\n\n`);
+  // The founder pressing Stop closes the request; the turn ends there and what was said is kept.
+  const stop = new AbortController();
+  res.on('close', () => stop.abort());
   try {
-    await store.appendChat(roomId, { role: 'user', text, at: Date.now() });
+    await store.appendChat(roomId, { id: newMessageId(), role: 'user', text, at: Date.now() });
     const docs: Record<string, string> = {};
     for (const id of wiredDocIds(stage, roomId)) docs[id] = await store.readDoc(id);
-    const messages = buildMessages(stage, roomId, docs, await store.readChat(roomId));
-    const reply = await streamReply(messages, (token) => send({ token }), clients);
-    await store.appendChat(roomId, { role: 'assistant', text: reply.text, at: Date.now(), provider: reply.provider });
-    send({ done: true, provider: reply.provider });
+    const messages = buildMessages(stage, roomId, docs, await store.readChat(roomId), tools.map((tool) => tool.name));
+    const room = stage.rooms.find((candidate) => candidate.id === roomId)!;
+    const { order, notice } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true });
+    if (notice) send({ notice });
+    const reply = await runTurn({
+      messages, tools, clients: order, usage, signal: stop.signal,
+      context: { stage, roomId, store, granted: new Map() },
+      events: { token: (token) => send({ token }), tool: (tool) => send({ tool }) },
+    });
+    const message = {
+      id: newMessageId(), role: 'assistant' as const, text: reply.text, at: Date.now(), provider: reply.provider, model: reply.model,
+      usage: reply.usage, ...(reply.tools.length ? { tools: reply.tools } : {}), ...(reply.stopped ? { stopped: true } : {}),
+    };
+    if (reply.text.trim() || reply.tools.length) await store.appendChat(roomId, message);
+    send({ done: true, message });
   } catch (error) {
     send({ error: (error as Error).message });
   } finally {
@@ -68,6 +91,7 @@ createServer(async (req, res) => {
     if (path === '/api/stage' && req.method === 'PUT') { await store.saveStage((await body(req)) as Stage); return json(res, 200, { ok: true }); }
     if (doc && req.method === 'GET') return json(res, 200, { text: await store.readDoc(doc) });
     if (doc && req.method === 'PUT') { await store.writeDoc(doc, String((await body(req)).text ?? '')); return json(res, 200, { ok: true }); }
+    if (path === '/api/models' && req.method === 'GET') return json(res, 200, usage.info(clients));
     if (room && req.method === 'GET') return json(res, 200, await store.readChat(room));
     if (room && req.method === 'POST') {
       const text = String((await body(req)).text ?? '').trim();

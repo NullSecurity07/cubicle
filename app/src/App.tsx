@@ -4,14 +4,16 @@ import {
 } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getStage, putStage } from './api';
+import { listen } from './bus';
 import { Dock } from './Dock';
 import { edgeTypes } from './edges';
 import { nodeTypes } from './nodes';
-import { WIRE, fromFlow, toFlow, type StageNode } from './stage';
+import { freeSpot } from './place';
+import { CARD, WIRE, fromFlow, toFlow, type StageNode } from './stage';
 import { SyncContext } from './sync';
 
 function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
-  const [nodes, , onNodesChange] = useNodesState<StageNode>(initial.nodes);
+  const [nodes, setNodes, onNodesChange] = useNodesState<StageNode>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
   const [connecting, setConnecting] = useState(false);
   const lastSaved = useRef(JSON.stringify(fromFlow(initial.nodes, initial.edges)));
@@ -35,6 +37,18 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
     const timer = setTimeout(() => void save(), 400);
     return () => clearTimeout(timer);
   }, [nodes, edges, save]);
+
+  // A person made a doc: its card lands beside them, already wired.
+  useEffect(() => listen('effect', (effect) => {
+    if (effect.kind !== 'doc-created') return;
+    const room = latest.current.nodes.find((node) => node.id === effect.roomId);
+    if (!room || latest.current.nodes.some((node) => node.id === effect.id)) return;
+    const [width, height] = [340, 300];
+    const beside = { x: room.position.x + (room.width ?? 380) + 80, y: room.position.y };
+    const position = freeSpot(latest.current.nodes, beside, width, height);
+    setNodes((current) => [...current, { id: effect.id, type: 'doc', position, width, height, data: { title: effect.title }, ...CARD }]);
+    setEdges((current) => [...current, { id: `${effect.roomId}-${effect.id}`, source: effect.roomId, sourceHandle: 'r', target: effect.id, targetHandle: 'l', ...WIRE }]);
+  }), [setNodes, setEdges]);
 
   return (
     <SyncContext.Provider value={save}>

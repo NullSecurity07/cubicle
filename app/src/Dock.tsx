@@ -1,33 +1,52 @@
 import { Panel, useReactFlow } from '@xyflow/react';
+import { useEffect, useState } from 'react';
+import type { ModelInfo } from '../shared/model';
+import { getModels } from './api';
+import { listen } from './bus';
+import { freeSpot } from './place';
 import type { StageNode } from './stage';
 import { CARD } from './stage';
 
 const PALETTE = ['#ee8a72', '#4e8cff', '#f0b35a', '#6fcf97', '#b58cff', '#5fc9d6'];
 const newId = (kind: string) => `${kind}-${Math.random().toString(36).slice(2, 8)}`;
 
-const GAP = 40;
-
-// The centre of the view if it is free; otherwise the nearest free place in widening rings around it.
-function freeSpot(nodes: StageNode[], start: { x: number; y: number }, width: number, height: number) {
-  const hits = (x: number, y: number) => nodes.some((node) => {
-    const w = node.width ?? node.measured?.width ?? 0;
-    const h = node.height ?? node.measured?.height ?? 0;
-    return x < node.position.x + w + GAP && x + width + GAP > node.position.x && y < node.position.y + h + GAP && y + height + GAP > node.position.y;
-  });
-  for (let ring = 0; ring <= 6; ring += 1) {
-    for (let row = -ring; row <= ring; row += 1) {
-      for (let column = -ring; column <= ring; column += 1) {
-        if (Math.max(Math.abs(row), Math.abs(column)) !== ring) continue;
-        const x = start.x + column * (width + GAP);
-        const y = start.y + row * (height + GAP);
-        if (!hits(x, y)) return { x, y };
-      }
-    }
-  }
-  return start;
+// One ring per model provider: how much of today's free quota is left. Amber under a fifth, red when gone.
+function Quota() {
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const load = () => { getModels().then(setModels).catch(() => {}); };
+    load();
+    return listen('usage', load);
+  }, []);
+  if (!models.length) return null;
+  const tone = (left: number) => (left <= 0.05 ? 'out' : left < 0.2 ? 'low' : 'fine');
+  return (
+    <div className="quota">
+      <button type="button" className="quota__rings" aria-label="Model usage today" aria-expanded={open} title="Model usage today" onClick={() => setOpen(!open)}>
+        {models.map((model) => (
+          <svg key={model.name} viewBox="0 0 20 20" className={`ring ring--${tone(model.left)}`} role="img" aria-label={`${model.name}: ${Math.round(model.left * 100)}% left`}>
+            <circle cx="10" cy="10" r="7" className="ring__track" />
+            <circle cx="10" cy="10" r="7" pathLength={100} strokeDasharray={`${Math.round(model.left * 100)} 100`} transform="rotate(-90 10 10)" />
+          </svg>
+        ))}
+      </button>
+      {open && (
+        <div className="quota__detail" role="dialog" aria-label="Model usage today">
+          {models.map((model) => (
+            <div key={model.name} className="quota__row">
+              <span className={`quota__dot ring--${tone(model.left)}`} />
+              <span className="quota__name">{model.name}<small>{model.model}</small></span>
+              <span className="quota__numbers">{Math.round(model.left * 100)}% left<small>{model.requests} replies · {model.tokens.toLocaleString()} tokens · $0</small></span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
-// The only chrome on the stage: add a person, add a doc. New cards land at the centre of the view.
+// The only chrome on the stage: add a person, add a doc, and today's model usage. New cards land at the centre of the view.
 export function Dock() {
   const { getNodes, setNodes, screenToFlowPosition, setCenter, getZoom } = useReactFlow<StageNode>();
 
@@ -52,6 +71,7 @@ export function Dock() {
       <button type="button" aria-label="Add doc" title="Add doc" onClick={() => add('doc')}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 2.5h6L15 6v11.5H5.5zM11.5 2.5V6H15M8 10h4.5M8 13h4.5" /></svg>
       </button>
+      <Quota />
     </Panel>
   );
 }
