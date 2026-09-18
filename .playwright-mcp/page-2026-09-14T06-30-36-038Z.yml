@@ -1,0 +1,77 @@
+- generic [ref=f1e1]:
+  - banner [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - strong [ref=f1e7]: SpeedAudit
+      - generic [ref=f1e8]: A free performance diagnostic service delivering three manual, actionable website speed fixes directly to founders' inboxes to pitch deep-dive optimization consulting.
+    - navigation "Company" [ref=f1e9]:
+      - button "1 proposals need you" [ref=f1e10] [cursor=pointer]: 1 to approve
+      - button "Messages" [ref=f1e11] [cursor=pointer]
+      - button "Brief" [ref=f1e12] [cursor=pointer]
+      - button "Plan" [ref=f1e13] [cursor=pointer]
+      - button "Queue" [ref=f1e14] [cursor=pointer]
+      - button "Org" [ref=f1e15] [cursor=pointer]
+      - button "Talk to the CEO" [ref=f1e16] [cursor=pointer]
+  - navigation "Floors" [ref=f1e17]:
+    - button "Floor 4, Chiefs, 0 active" [ref=f1e18] [cursor=pointer]:
+      - generic [ref=f1e19]: F4
+    - button "Floor 3, Assurance, 0 active" [ref=f1e21] [cursor=pointer]:
+      - generic [ref=f1e22]: F3
+    - button "Floor 2, Teams, 2 active" [ref=f1e24] [cursor=pointer]:
+      - generic [ref=f1e25]: F2
+    - button "Floor 1, Executive, 0 active" [ref=f1e30] [cursor=pointer]:
+      - generic [ref=f1e31]: F1
+    - button "Lobby and street" [ref=f1e33] [cursor=pointer]:
+      - generic [ref=f1e34]: L
+      - generic [ref=f1e35]: Lobby
+  - dialog [active] [ref=f1e58]:
+    - banner [ref=f1e59]:
+      - generic [ref=f1e60]:
+        - heading "Brief · 11:52" [level=2] [ref=f1e61]
+        - paragraph [ref=f1e63]: Runs/2026-09-14-1152.md
+      - button "Copy" [ref=f1e64] [cursor=pointer]
+      - button "Close" [ref=f1e65] [cursor=pointer]
+    - generic [ref=f1e87]:
+      - heading "Since you were away" [level=2] [ref=f1e88]
+      - heading "What happened" [level=3] [ref=f1e89]
+      - list [ref=f1e90]:
+        - listitem [ref=f1e91]: Started the first heartbeat.
+        - listitem [ref=f1e92]: Recorded $0.00 cash, $0.00 a day burn, and no spending.
+        - listitem [ref=f1e93]: Made 4 model calls, with 1 downgraded to local.
+        - listitem [ref=f1e94]: Confirmed deploy live, email mock, and analytics live, with email simulated and no customers reached.
+        - listitem [ref=f1e95]: Received no owner edits, finished no jobs, and queued nothing next.
+      - heading "What's next" [level=3] [ref=f1e96]
+      - list [ref=f1e97]:
+        - listitem [ref=f1e98]:
+          - text: Await the owner's choice of one of the three company ideas in
+          - code [ref=f1e99]: 00 Inbox/2026-09-14-1152-brand_change-owner_answer_msg_20260914_bc02ea.md
+          - text: .
+        - listitem [ref=f1e100]: Adopt the chosen founder brief so discovery can begin and the CTO can write the first plan.
+      - heading "What needs you" [level=3] [ref=f1e101]
+      - list [ref=f1e102]:
+        - listitem [ref=f1e103]: Approve or reject one of the three company ideas awaiting your selection.
+      - heading "Next action per team" [level=3] [ref=f1e104]
+      - list [ref=f1e105]:
+        - listitem [ref=f1e106]: "board: nothing queued"
+        - listitem [ref=f1e107]: "dev: nothing queued"
+        - listitem [ref=f1e108]: "executive: nothing queued"
+        - listitem [ref=f1e109]: "operations: nothing queued"
+        - listitem [ref=f1e110]: "qa: nothing queued"
+        - listitem [ref=f1e111]: "research: nothing queued"
+        - listitem [ref=f1e112]: "revenue: nothing queued"
+        - listitem [ref=f1e113]: "sales: nothing queued"
+        - listitem [ref=f1e114]: "security: nothing queued"
+        - listitem [ref=f1e115]: "technology: nothing queued"
+      - paragraph [ref=f1e116]: "---"
+      - paragraph [ref=f1e117]: _Facts used:_
+      - generic [ref=f1e118]: "Elapsed: first heartbeat Planning: waiting for the founder brief — nothing is planned until you adopt one. Money: USD 0.00 cash, USD 0.00 a day burn, not spending (nothing has cost anything yet) Model use: 4 calls, 1 downgraded to local Outbound services: deploy live, email mock, analytics live Owner edits: none Finished jobs: none Queued next: nothing Blocked: none Needs owner: - Approve or reject: Three company ideas — pick one (`00 Inbox/2026-09-14-1152-brand_change-owner_answer_msg_20260914_bc02ea.md`) | - Nothing is planned until a founder brief is adopted — waiting for you to pick one of the three ideas; the one you choose is what discovery reads | - Email is simulated (no BREVO_* keys): nothing has reached a customer. See SETUP.md Plan: --- updated: \"\" cycle: 0 --- # Plan _No plan yet. The CTO writes the first plan during heartbeat #1._ ## Objective ## This cycle ## Next ## Risks"
+      - generic [ref=f1e119]:
+        - heading "Decision feed" [level=3] [ref=f1e120]
+        - generic [ref=f1e121]:
+          - generic [ref=f1e132]: Nothing decided yet
+          - generic [ref=f1e133]: Decisions, proposals and guardrail hits appear here.
+  - generic [ref=f1e37]:
+    - tablist "Live or replay" [ref=f1e38]:
+      - tab "Live" [selected] [ref=f1e39] [cursor=pointer]
+      - tab "Replay" [ref=f1e41] [cursor=pointer]
+    - img "Daytime" [ref=f1e43]
+    - generic [ref=f1e53]: 12:00:36

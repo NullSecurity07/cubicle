@@ -1,0 +1,50 @@
+- generic [ref=e1]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - strong [ref=e7]: Your company
+      - generic [ref=e8]: No name yet. Tell the CEO your idea.
+    - navigation "Company" [ref=e9]:
+      - button "Messages" [ref=e10] [cursor=pointer]
+      - button "Brief" [ref=e11] [cursor=pointer]
+      - button "Plan" [ref=e12] [cursor=pointer]
+      - button "Queue" [ref=e13] [cursor=pointer]
+      - button "Org" [ref=e14] [cursor=pointer]
+      - button "Talk to the CEO" [ref=e15] [cursor=pointer]
+  - navigation "Floors" [ref=e16]:
+    - button "Floor 4, Chiefs, 0 active" [ref=e17] [cursor=pointer]:
+      - generic [ref=e18]: F4
+    - button "Floor 3, Assurance, 0 active" [ref=e20] [cursor=pointer]:
+      - generic [ref=e21]: F3
+    - button "Floor 2, Teams, 0 active" [ref=e23] [cursor=pointer]:
+      - generic [ref=e24]: F2
+    - button "Floor 1, Executive, 1 active" [ref=e68] [cursor=pointer]:
+      - generic [ref=e27]: F1
+    - button "Lobby and street" [ref=e29] [cursor=pointer]:
+      - generic [ref=e30]: L
+      - generic [ref=e31]: Lobby
+  - generic: Drag to pan, scroll to zoom, click anything in the office. Press ? for shortcuts.
+  - complementary [ref=e71]:
+    - generic [ref=e72]:
+      - generic [ref=e73]:
+        - heading "CEO" [level=2] [ref=e74]
+        - paragraph [ref=e76]: Tell the CEO what to build, or say "surprise me"
+      - button "Close" [ref=e77] [cursor=pointer]
+    - generic [ref=e99]:
+      - generic [ref=e100]: Today
+      - generic [ref=e101]:
+        - generic [ref=e102]:
+          - generic [ref=e103]: You
+          - generic [ref=e104]: 11:52
+        - generic [ref=e105]: surprise me
+    - generic [ref=e106]:
+      - textbox "Message your CEO" [active] [ref=e107]
+      - button "Send" [ref=e108] [cursor=pointer]
+  - generic [ref=e33]:
+    - tablist "Live or replay" [ref=e34]:
+      - tab "Live" [selected] [ref=e35] [cursor=pointer]
+      - tab "Replay" [ref=e37] [cursor=pointer]
+    - img "Daytime" [ref=e39]
+    - generic [ref=e49]: 11:52:22
+  - generic:
+    - generic [aria-hidden] [ref=e50] [cursor=pointer]
+    - button "Hide minimap (M)" [ref=e51] [cursor=pointer]: M

@@ -1,0 +1,120 @@
+- generic [ref=f2e1]:
+  - banner [ref=f2e4]:
+    - generic [ref=f2e5]:
+      - strong [ref=f2e7]: SpeedAudit
+      - generic [ref=f2e8]: A free performance diagnostic service delivering three manual, actionable website speed fixes directly to founders' inboxes to pitch deep-dive optimization consulting.
+    - navigation "Company" [ref=f2e9]:
+      - button "2 proposals need you" [ref=f2e10] [cursor=pointer]: 2 to approve
+      - button "Messages" [ref=f2e11] [cursor=pointer]
+      - button "Brief" [ref=f2e12] [cursor=pointer]
+      - button "Plan" [ref=f2e13] [cursor=pointer]
+      - button "Queue" [ref=f2e14] [cursor=pointer]
+      - button "Org" [ref=f2e15] [cursor=pointer]
+      - button "Talk to the CEO" [ref=f2e16] [cursor=pointer]
+  - navigation "Floors" [ref=f2e17]:
+    - button "Floor 4, Chiefs, 0 active" [ref=f2e18] [cursor=pointer]:
+      - generic [ref=f2e19]: F4
+    - button "Floor 3, Assurance, 0 active" [ref=f2e21] [cursor=pointer]:
+      - generic [ref=f2e22]: F3
+    - button "Floor 2, Teams, 2 active" [ref=f2e24] [cursor=pointer]:
+      - generic [ref=f2e25]: F2
+    - button "Floor 1, Executive, 0 active" [ref=f2e30] [cursor=pointer]:
+      - generic [ref=f2e31]: F1
+    - button "Lobby and street" [ref=f2e33] [cursor=pointer]:
+      - generic [ref=f2e34]: L
+      - generic [ref=f2e35]: Lobby
+  - dialog [active] [ref=f2e119]:
+    - banner [ref=f2e120]:
+      - button "Back" [ref=f2e121] [cursor=pointer]
+      - generic [ref=f2e59]:
+        - navigation "Breadcrumb" [ref=f2e132]:
+          - button "Decisions" [ref=f2e133] [cursor=pointer]
+        - heading "founder_brief" [level=2] [ref=f2e145]
+        - paragraph [ref=f2e74]: 00 Inbox/2026-09-14-1158-founder_brief-job_discovery_5b630aff8263_1_26.md
+      - button "Copy" [ref=f2e75] [cursor=pointer]
+      - button "Close" [ref=f2e76] [cursor=pointer]
+    - generic [ref=f2e98]:
+      - paragraph [ref=f2e159]:
+        - generic [ref=f2e160]: founder brief
+        - text: Head of Research · 11:58
+      - generic [ref=f2e161]:
+        - paragraph [ref=f2e162]:
+          - text: This is what I understood from what you gave me. It becomes
+          - code [ref=f2e163]: Memory/founder-brief.md
+          - text: ", and every plan is written against it, so it is worth reading closely — edit the block below if I got anything wrong."
+        - paragraph [ref=f2e164]: "Read from:"
+        - list [ref=f2e165]:
+          - listitem [ref=f2e166]: 00 Inbox/2026-09-14-1152-brand_change-owner_answer_msg_20260914_bc02ea.md
+          - listitem [ref=f2e167]: Brand/name.md
+          - listitem [ref=f2e168]: Discovery/interview.md
+        - paragraph [ref=f2e169]:
+          - text: The board pressure-tested this before you saw it and ruled PIVOT REQUIRED. Its five findings are the
+          - code [ref=f2e170]: "## Pressure test"
+          - text: section of the brief below, and the argument it took to get there is in Meetings/2026-09-14-1158-board-founder-brief.
+        - heading "What the board could not answer" [level=3] [ref=f2e171]
+        - list [ref=f2e172]:
+          - listitem [ref=f2e173]: What conversion rate from free manual audits to paid deep‑dive consulting do you expect, and on what data or prior tests is that estimate based?
+        - paragraph [ref=f2e174]: The verdict stands as given; answering these only changes what the board re-argues next time.
+        - heading "What the company is" [level=3] [ref=f2e175]
+        - paragraph [ref=f2e176]:
+          - text: "SpeedAudit is a free performance diagnostic service delivering three manual, actionable website speed fixes directly to founders' inboxes to pitch deep-dive optimization consulting. This concept was selected by the owner from the CEO's three proposals (Source:"
+          - code [ref=f2e177]: 00 Inbox/2026-09-14-1152-brand_change-owner_answer_msg_20260914_bc02ea.md
+          - text: ).
+        - heading "Who it is for" [level=3] [ref=f2e178]
+        - paragraph [ref=f2e179]: Founders and small-to-medium business owners of content, SaaS, or e-commerce websites experiencing low conversion rates or high bounce rates due to slow page load speeds, who lack dedicated frontend/performance engineering teams and want concrete, actionable fixes rather than generic automated reports.
+        - heading "What already exists" [level=3] [ref=f2e180]
+        - list [ref=f2e181]:
+          - listitem [ref=f2e182]:
+            - text: "Idea selection: Owner selected SpeedAudit from the CEO's proposals (Source:"
+            - code [ref=f2e183]: 00 Inbox/2026-09-14-1152-brand_change-owner_answer_msg_20260914_bc02ea.md
+            - text: ).
+          - listitem [ref=f2e184]:
+            - text: "Brand files:"
+            - code [ref=f2e185]: Brand/name.md
+            - text: lists name as SpeedAudit and tagline as "Turn slow pages into fast sales".
+          - listitem [ref=f2e186]:
+            - text: "Discovery inputs: Cabin messages and interview transcripts in"
+            - code [ref=f2e187]: Discovery/inbox/
+            - text: and
+            - code [ref=f2e188]: Discovery/interview.md
+            - text: .
+        - heading "What success looks like" [level=3] [ref=f2e189]
+        - paragraph [ref=f2e190]: Unstated in the provided materials; the first plan has to ask.
+        - heading "Constraints" [level=3] [ref=f2e191]
+        - list [ref=f2e192]:
+          - listitem [ref=f2e193]: Constitution rules apply (max roles, banned tactics, etc.).
+          - listitem [ref=f2e194]: Financial and time constraints are unstated beyond standard bootstrap boundaries.
+        - heading "Candidate ideas" [level=3] [ref=f2e195]
+        - list [ref=f2e196]:
+          - listitem [ref=f2e197]:
+            - code [ref=f2e198]: speedaudit
+            - text: (SpeedAudit — Free performance diagnostic service delivering three manual, actionable website speed fixes directly to founders' inboxes to pitch deep-dive optimization consulting).
+        - heading "What we do not know" [level=3] [ref=f2e199]
+        - list [ref=f2e200]:
+          - listitem [ref=f2e201]: Specific revenue targets, pricing models for the optimization consulting, and CAC/LTV unit economics.
+          - listitem [ref=f2e202]: Exact operational capacity for delivering *manual* audits at scale before automation is required.
+        - heading "Pressure test" [level=3] [ref=f2e203]
+        - paragraph [ref=f2e204]: "Core Assumption: unstated — QUESTION FOR THE OWNER: What conversion rate from free manual audits to paid deep‑dive consulting do you expect, and on what data or prior tests is that estimate based?"
+        - paragraph [ref=f2e205]: "Three Fatal Flaws: The model fails because manual delivery caps volume at 80 audits/month, while free automated tools and cheap contractors satisfy the immediate need, driving conversion below the 2% breakeven threshold.; Manual Scaling Bottleneck: Two engineering hours per audit limits capacity to ~80 leads/month; fix by automating the diagnostic layer to reduce manual effort to under 30 minutes.; Conversion Deficit: Founders implement free fixes via plugins or freelancers, ignoring the $5,000 upsell; fix by gating the third fix behind a paid \"implementation guarantee\" or productized service.; Tool Substitution: PageSpeed Insights provides identical metrics for free, neutralizing the \"manual\" value prop; fix by focusing exclusively on business-impact metrics (revenue lost) that automated tools cannot calculate."
+        - paragraph [ref=f2e206]: "Problem Validation: Slow page load is a low-priority technical annoyance rather than a revenue-critical crisis; founders currently treat it as a commodity problem solved by cheap plugins and automated tools, rendering a manual audit service redundant."
+        - paragraph [ref=f2e207]: "Founder-Market Fit: unstated"
+        - paragraph [ref=f2e208]: "Brutal Verdict: PIVOT REQUIRED — The manual audit model is fatally bottlenecked by scaling limits and commodity substitution, demanding a pivot to an automated, high-margin software wedge with native distribution."
+        - paragraph [ref=f2e209]: The board argued this out round by round in Meetings/2026-09-14-1158-board-founder-brief.
+      - generic [ref=f2e210]:
+        - paragraph [ref=f2e211]: The board ruled PIVOT REQUIRED on this brief. Adopting it is your call over theirs.
+        - status [ref=f2e212]
+        - generic [ref=f2e213]:
+          - textbox "Why you are sending it back" [ref=f2e214]:
+            - /placeholder: Why are you sending it back?
+          - button "Send back R" [ref=f2e215] [cursor=pointer]:
+            - text: Send back
+            - generic [ref=f2e216]: R
+          - button "Adopt anyway A" [ref=f2e217] [cursor=pointer]:
+            - text: Adopt anyway
+            - generic [ref=f2e218]: A
+  - generic [ref=f2e37]:
+    - tablist "Live or replay" [ref=f2e38]:
+      - tab "Live" [selected] [ref=f2e39] [cursor=pointer]
+      - tab "Replay" [ref=f2e41] [cursor=pointer]
+    - img "Daytime" [ref=f2e43]
+    - generic [ref=f2e53]: 12:13:02

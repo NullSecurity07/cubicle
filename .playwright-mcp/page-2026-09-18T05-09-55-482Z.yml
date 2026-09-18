@@ -1,0 +1,66 @@
+- generic [ref=e1]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - strong [ref=e6]: SpeedAudit
+      - generic [ref=e53]: A free performance diagnostic service delivering three manual, actionable website speed fixes directly to founders' inboxes to pitch deep-dive optimization consulting.
+    - navigation "Company" [ref=e7]:
+      - button "3 proposals need you" [ref=e8] [cursor=pointer]: 3 to approve
+      - button "Messages" [ref=e9] [cursor=pointer]
+      - button "Brief" [ref=e10] [cursor=pointer]
+      - button "Plan" [ref=e11] [cursor=pointer]
+      - button "Queue" [ref=e12] [cursor=pointer]
+      - button "Org" [ref=e13] [cursor=pointer]
+      - button "Talk to the CEO" [ref=e14] [cursor=pointer]
+  - navigation "Floors" [ref=e15]:
+    - button "Floor 4, Chiefs, 0 active" [ref=e16] [cursor=pointer]:
+      - generic [ref=e17]: F4
+    - button "Floor 3, Assurance, 0 active" [ref=e19] [cursor=pointer]:
+      - generic [ref=e20]: F3
+    - button "Floor 2, Teams, 1 active" [ref=e60] [cursor=pointer]:
+      - generic [ref=e23]: F2
+    - button "Floor 1, Executive, 3 active, 1 meeting" [ref=e61] [cursor=pointer]:
+      - generic [ref=e26]: F1
+    - button "Lobby and street" [ref=e28] [cursor=pointer]:
+      - generic [ref=e29]: L
+      - generic [ref=e30]: Lobby
+  - complementary [active] [ref=e66]:
+    - generic [ref=e67]:
+      - generic [ref=e68]:
+        - heading "Decisions" [level=2] [ref=e69]
+        - paragraph [ref=e83]: 3 need you
+      - button "Copy" [ref=e84] [cursor=pointer]
+      - button "Close" [ref=e85] [cursor=pointer]
+    - generic [ref=e107]:
+      - tablist [ref=e108]:
+        - tab "Needs you 3" [selected] [ref=e109] [cursor=pointer]:
+          - text: Needs you
+          - generic [ref=e110]: "3"
+        - tab "Decided 2" [ref=e111] [cursor=pointer]:
+          - text: Decided
+          - generic [ref=e112]: "2"
+      - tabpanel "Needs you 3" [ref=e113]:
+        - generic [ref=e114]:
+          - 'button "idea verdict Keep, park or scrap: SpeedAudit — Free Website Performance Diagnostics & Consulting Upsell CEO · 53/60 would keep, but the board returned it, so it parks until its findings are answered. 14 Sept 12:01" [ref=e116] [cursor=pointer]':
+            - generic [ref=e117]: idea verdict
+            - generic [ref=e118]:
+              - text: "Keep, park or scrap: SpeedAudit — Free Website Performance Diagnostics & Consulting Upsell"
+              - generic [ref=e119]: CEO · 53/60 would keep, but the board returned it, so it parks until its findings are answered.
+            - generic [ref=e120]: 14 Sept 12:01
+          - button "plan verdict Approve this cycle's plan CEO · return 14 Sept 13:11" [ref=e122] [cursor=pointer]:
+            - generic [ref=e123]: plan verdict
+            - generic [ref=e124]:
+              - text: Approve this cycle's plan
+              - generic [ref=e125]: CEO · return
+            - generic [ref=e126]: 14 Sept 13:11
+          - 'button "idea verdict Keep, park or scrap: E-commerce founders doing $10k–$50k/month on Shopify whose checkout… CEO · 48/60 would keep, but the board returned it, so it parks until its findings are answered. 10:38" [ref=e128] [cursor=pointer]':
+            - generic [ref=e129]: idea verdict
+            - generic [ref=e130]:
+              - text: "Keep, park or scrap: E-commerce founders doing $10k–$50k/month on Shopify whose checkout…"
+              - generic [ref=e131]: CEO · 48/60 would keep, but the board returned it, so it parks until its findings are answered.
+            - generic [ref=e132]: 10:38
+  - generic [ref=e32]:
+    - tablist "Live or replay" [ref=e33]:
+      - tab "Live" [selected] [ref=e34] [cursor=pointer]
+      - tab "Replay" [ref=e36] [cursor=pointer]
+    - img "Daytime" [ref=e38]
+    - generic [ref=e48]: 10:39:55
