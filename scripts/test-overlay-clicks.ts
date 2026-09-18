@@ -612,6 +612,36 @@ if (!hired.titles.some((t) => /support/i.test(t))) fail(`the hire never reached 
 if (hired.seated) fail('the office seated the new hire before the owner decided it');
 await page.evaluate(() => { const el = document.getElementById('hire'); if (el) el.hidden = true; });
 
+// 9e2. The office, as a list. A canvas has no accessibility tree of its own, so the one thing that can be
+//      asserted about this is that the outline is really in the page, really names the room, and that its
+//      buttons are the same ones the pointer presses — a `data-open` the panel already routes.
+const outline = await page.evaluate(() => {
+  const el = document.getElementById('office-a11y');
+  if (!el) return null;
+  const buttons = [...el.querySelectorAll('button[data-open]')].map((b) => ({ open: (b as HTMLElement).dataset.open ?? '', text: (b.textContent ?? '').slice(0, 60) }));
+  return { headings: [...el.querySelectorAll('h2')].map((h) => h.textContent ?? ''), buttons, label: el.getAttribute('aria-label') };
+}) as { headings: string[]; buttons: { open: string; text: string }[]; label: string | null } | null;
+console.log('the office as a list →', JSON.stringify({ label: outline?.label, headings: outline?.headings, buttons: outline?.buttons.length, first: outline?.buttons.slice(0, 3) }));
+if (!outline) fail('the office canvas has no accessibility tree beside it');
+else {
+  if (!outline.headings.includes('People')) fail(`the outline does not name the people (it has ${JSON.stringify(outline.headings)})`);
+  if (!outline.headings.includes('Screens')) fail('the outline does not name the screens on the walls');
+  if (outline.buttons.length < 5) fail(`the outline has ${outline.buttons.length} buttons, which is not an office`);
+  const person = outline.buttons.find((b) => b.open.startsWith('agent:'));
+  if (!person) fail('nobody in the office can be reached from the outline');
+  else {
+    // And it works: pressing it opens exactly what clicking that person in the room opens. Activated the way a
+    // keyboard activates it — `.sr-only` is a one-pixel clip, so a pointer cannot reach it and Playwright will
+    // not pretend otherwise.
+    await page.$eval(`#office-a11y button[data-open="${person.open}"]`, (el) => (el as HTMLElement).click());
+    await page.waitForTimeout(500);
+    const opened = await presentation();
+    if (!opened) fail(`pressing ${person.open} in the outline opened nothing`);
+    await page.evaluate(() => document.getElementById('panel-close')?.click());
+    await page.waitForTimeout(300);
+  }
+}
+
 // 9f. A drag that starts on the sheet never reaches the office. The one gesture SP9b added that the HTML layer
 //     could leak: a press-move-release inside a sheet parked over a desk must move neither the camera nor the desk.
 await page.evaluate(() => (window as unknown as Win).__cubicle.open('noticeboard'));
@@ -651,5 +681,5 @@ if (placed.ok && !Object.keys(reloaded.nodes).some((k) => reloaded.nodes[k].kind
 await browser.close();
 await d.stop();
 if (failures.length) { console.log(`FAIL: ${failures.length} check(s) failed`); process.exit(1); }
-console.log('PASS: presses on the sheet, reader, rail, viewer and toast stay on the HTML layer; releases and office clicks still reach the campus; the zone rail takes the camera to Dev; a real proposal opens its reader and Approve decides it on the wire; the board transcript in the vault opens as a thread; an obsidian: link hands off without navigating; a desk dragged, a line drawn and cut, a note dropped from the dock and a hire filed all reach Office/campus.md, a drag on the sheet reaches nothing, and the office comes back as it was left');
+console.log('PASS: presses on the sheet, reader, rail, viewer and toast stay on the HTML layer; releases and office clicks still reach the campus; the zone rail takes the camera to Dev; a real proposal opens its reader and Approve decides it on the wire; the board transcript in the vault opens as a thread; an obsidian: link hands off without navigating; a desk dragged, a line drawn and cut, a note dropped from the dock and a hire filed all reach Office/campus.md, a drag on the sheet reaches nothing, the office publishes itself as a list that names the people and the screens and whose buttons open what the pointer opens, and the office comes back as it was left');
 process.exit(0);
