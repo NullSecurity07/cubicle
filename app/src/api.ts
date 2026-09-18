@@ -12,6 +12,7 @@ export const putStage = (stage: Stage) => request('/api/stage', put(stage));
 export const getDoc = (id: string) => request<{ text: string }>(`/api/docs/${id}`).then((doc) => doc.text);
 export const putDoc = (id: string, text: string) => request(`/api/docs/${id}`, put({ text }));
 export const getModels = () => request<ModelInfo[]>('/api/models');
+export const getBrowser = (id: string) => request<{ port: number; url: string }>(`/api/browsers/${id}`);
 export const getChat = (roomId: string) => request<ChatMessage[]>(`/api/rooms/${roomId}/chat`);
 
 // Posts one message and feeds every server-sent event to onEvent until the stream ends. Aborting the signal stops the reply.

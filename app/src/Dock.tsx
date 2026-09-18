@@ -50,14 +50,15 @@ function Quota() {
 export function Dock() {
   const { getNodes, setNodes, screenToFlowPosition, setCenter, getZoom } = useReactFlow<StageNode>();
 
-  function add(kind: 'room' | 'doc') {
+  function add(kind: 'room' | 'doc' | 'browser') {
     const nodes = getNodes();
-    const [width, height] = kind === 'room' ? [380, 440] : [340, 300];
+    const [width, height] = kind === 'room' ? [380, 440] : kind === 'browser' ? [560, 353] : [340, 300];
     const centre = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
     const position = freeSpot(nodes, { x: Math.round(centre.x - width / 2), y: Math.round(centre.y - height / 2) }, width, height);
     const rooms = nodes.filter((node) => node.type === 'room').length;
     const node: StageNode = kind === 'room'
       ? { id: newId('room'), type: 'room', position, width, height, selected: true, data: { name: '', role: '', brief: '', accent: PALETTE[rooms % PALETTE.length] }, ...CARD }
+      : kind === 'browser' ? { id: newId('browser'), type: 'browser', position, width, height, selected: true, data: {}, ...CARD }
       : { id: newId('doc'), type: 'doc', position, width, height, selected: true, data: { title: 'Untitled doc' }, ...CARD };
     setNodes((current) => [...current.map((other) => ({ ...other, selected: false })), node]);
     void setCenter(position.x + width / 2, position.y + height / 2, { zoom: getZoom(), duration: 350 });
@@ -70,6 +71,9 @@ export function Dock() {
       </button>
       <button type="button" aria-label="Add doc" title="Add doc" onClick={() => add('doc')}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 2.5h6L15 6v11.5H5.5zM11.5 2.5V6H15M8 10h4.5M8 13h4.5" /></svg>
+      </button>
+      <button type="button" aria-label="Add browser" title="Add browser" onClick={() => add('browser')}>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2" /><path d="M2.8 10h14.4M10 2.800c2.400 2.300 2.400 12.100 0 14.400M10 2.800c-2.400 2.300-2.400 12.100 0 14.400" /></svg>
       </button>
       <Quota />
     </Panel>

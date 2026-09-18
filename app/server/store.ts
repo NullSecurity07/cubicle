@@ -67,7 +67,7 @@ export function createStore(dir: string) {
     loadStage,
     // Cards that left the stage keep their files, in trash: the founder's words are never deleted.
     async saveStage(stage: Stage) {
-      for (const card of [...stage.rooms, ...stage.docs]) safe(card.id);
+      for (const card of [...stage.rooms, ...stage.docs, ...(stage.cards ?? [])]) safe(card.id);
       const before = await loadStage();
       const gone = (was: { id: string }[], now: { id: string }[]) => was.filter((card) => !now.some((kept) => kept.id === card.id));
       const moves = [

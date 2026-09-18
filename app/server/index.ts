@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { newMessageId, type ChatEvent, type Stage } from '../shared/model.ts';
+import { createBrowser, fakeRunner, realRunner } from './browser.ts';
 import { runTurn } from './loop.ts';
 import { buildMessages, wiredDocIds } from './prompt.ts';
 import { fakeClient, promptSize, realClients } from './providers.ts';
@@ -9,6 +10,7 @@ import { readStatic } from './static.ts';
 import { createStore } from './store.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
+import { browserSession, webTools } from './tools/web.ts';
 import { createUsage } from './usage.ts';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -19,7 +21,8 @@ const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
 const store = createStore(workspace);
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
-const tools = [...docTools, ...fileTools];
+const browser = createBrowser(process.env.STAGE_FAKE_MODEL === '1' ? fakeRunner : realRunner());
+const tools = [...docTools, ...fileTools, ...webTools(browser)];
 const clients = process.env.STAGE_FAKE_MODEL === '1' ? [fakeClient] : realClients();
 const busy = new Set<string>();
 
@@ -88,7 +91,18 @@ createServer(async (req, res) => {
     const room = /^\/api\/rooms\/([^/]+)\/chat$/.exec(path)?.[1];
 
     if (path === '/api/stage' && req.method === 'GET') return json(res, 200, await store.loadStage());
-    if (path === '/api/stage' && req.method === 'PUT') { await store.saveStage((await body(req)) as Stage); return json(res, 200, { ok: true }); }
+    if (path === '/api/stage' && req.method === 'PUT') {
+      const [before, next] = [await store.loadStage(), (await body(req)) as Stage];
+      await store.saveStage(next);
+      // A browser card that left the stage takes its Chrome session with it.
+      for (const card of before.cards ?? []) if (!next.cards?.some((kept) => kept.id === card.id)) void browser.close(browserSession(card.id));
+      return json(res, 200, { ok: true });
+    }
+    const watched = /^\/api\/browsers\/([^/]+)$/.exec(path)?.[1];
+    if (watched && req.method === 'GET') {
+      if (!(await store.loadStage()).cards?.some((card) => card.id === watched && card.kind === 'browser')) return json(res, 404, { error: 'unknown browser' });
+      return json(res, 200, await browser.watch(browserSession(watched)));
+    }
     if (doc && req.method === 'GET') return json(res, 200, { text: await store.readDoc(doc) });
     if (doc && req.method === 'PUT') { await store.writeDoc(doc, String((await body(req)).text ?? '')); return json(res, 200, { ok: true }); }
     if (path === '/api/models' && req.method === 'GET') return json(res, 200, usage.info(clients));

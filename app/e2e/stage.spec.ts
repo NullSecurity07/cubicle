@@ -27,7 +27,7 @@ test.beforeEach(async ({ page }) => {
 
 test('shows two rooms and a doc, one wire, a dock with usage rings and nothing else', async ({ page }) => {
   await expect(page.locator('.react-flow__node')).toHaveCount(3);
-  await expect(page.locator('.dock button')).toHaveCount(3);
+  await expect(page.locator('.dock button')).toHaveCount(4);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(node(page, 'marketing')).toContainText('Maya');
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue(/# Brand/);
@@ -161,6 +161,7 @@ test('a doc can be added, named, written and removed', async ({ page }) => {
 });
 
 const send = async (page: Page, room: string, text: string) => {
+  await expect(node(page, room).locator('.status--idle')).toBeVisible();
   await node(page, room).locator('.ask textarea').fill(text);
   await node(page, room).locator('.ask textarea').press('Enter');
 };
@@ -238,4 +239,45 @@ test('the dock shows today\'s model usage and a person can be pinned to a model'
   await node(page, 'marketing').getByRole('button', { name: 'Done' }).click();
   await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).rooms[0].model).toBe('fake');
   await expect(await ask(page, 'marketing', 'again')).toContainText('Maya here');
+});
+
+test('a person searches and reads the web, several at once', async ({ page }) => {
+  await send(page, 'marketing', '/tool web_search {"queries":["calm software","founder tools"]}');
+  const reply = node(page, 'marketing').locator('.msg--assistant').last();
+  await expect(reply.locator('.chip--ok summary')).toHaveText('Searched 2 queries at once');
+  await expect(reply).toContainText('https://example.com/');
+  await send(page, 'marketing', '/tool web_fetch {"urls":["https://example.com"]}');
+  await expect(node(page, 'marketing').locator('.chip--ok summary').last()).toHaveText('Read https://example.com');
+});
+
+test('a browser card can be added; only a wired person can drive it, and never to this machine', async ({ page }) => {
+  await send(page, 'build', '/tool browse {"action":"open","url":"https://example.com"}');
+  await expect(node(page, 'build').locator('.chip--fail').last()).toBeVisible();
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('no browser card is connected');
+
+  await page.getByRole('button', { name: 'Add browser' }).click();
+  const card = page.locator('.react-flow__node-browser');
+  await expect(card).toContainText('Wire a person to this browser');
+  const id = (await card.getAttribute('data-id'))!;
+  const wires = await page.locator('.react-flow__edge').count();
+  await page.waitForTimeout(600); // the view glides to the new card; handles sit still after that
+  // Earlier journeys leave cards around, so the two ends may not share the screen: zoom out from an empty corner until they do.
+  const inView = async (target: ReturnType<typeof handle>) => { const box = await target.boundingBox(); return !!box && box.x > 10 && box.y > 10 && box.x < 1580 && box.y < 980; };
+  for (let tries = 0; tries < 6 && !((await inView(handle(page, 'build', 'l'))) && (await inView(handle(page, id, 'l')))); tries += 1) {
+    await page.mouse.move(6, 6);
+    await page.mouse.wheel(0, 400);
+    await page.waitForTimeout(250);
+  }
+  await drag(page, centre((await handle(page, 'build', 'l').boundingBox())!), centre((await handle(page, id, 'l').boundingBox())!), 20);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(wires + 1);
+  await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).cards?.length).toBe(1);
+
+  await send(page, 'build', '/tool browse {"action":"open","url":"https://example.com"}');
+  await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Browsed open https://example.com');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('[ref=e1]');
+  await send(page, 'build', '/tool browse {"action":"open","url":"http://127.0.0.1:7431/api/stage"}');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('cannot be opened');
+
+  await page.reload();
+  await expect(page.locator('.react-flow__node-browser')).toHaveCount(1);
 });

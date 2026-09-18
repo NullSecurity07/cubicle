@@ -75,6 +75,23 @@ describe('runTurn', () => {
     expect(result.tools[2].result).toBe('notes/a.md');
   });
 
+  it('caps a costly tool per turn and tells the person to move on', async () => {
+    const { run } = await setup();
+    const { webTools } = await import('./tools/web.ts');
+    const { createBrowser, fakeRunner } = await import('./browser.ts');
+    const search = webTools(createBrowser(fakeRunner))[0];
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const result = await runTurn({
+      messages: [{ role: 'user', content: 'go' }], tools: [search], usage: createUsage(null),
+      clients: [scripted([...Array.from({ length: 4 }, () => [{ name: 'web_search', args: { queries: ['x'] } }]), 'enough'])],
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: () => {}, tool: () => {} },
+    });
+    expect(result.tools.map((tool) => tool.ok)).toEqual([true, true, true, false]);
+    expect(result.tools[3].result).toMatch(/already ran 3 times/);
+    void run;
+  });
+
   it('reports bad arguments and unknown tools instead of throwing', async () => {
     const { run } = await setup();
     const result = await run(scripted([[{ name: 'fly', args: {} }, { name: 'write_doc', args: { doc: 'Brand doc' } }], 'hm']));

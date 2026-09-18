@@ -1,3 +1,4 @@
 allowBuilds:
+  agent-browser: false
   esbuild: true
   sharp: true

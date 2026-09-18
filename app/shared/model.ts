@@ -3,11 +3,13 @@ export type Box = { x: number; y: number; w: number; h: number };
 // `model` is a name from server/models.json; absent or 'auto' lets the server choose.
 export type Room = Box & { id: string; name: string; role: string; accent: string; brief: string; model?: string };
 export type Doc = Box & { id: string; title: string };
+// Resource cards that are not docs. `browser` is a live browser a wired person can drive.
+export type Card = Box & { id: string; kind: 'browser' };
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
-export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[] };
+export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };
 export type Usage = { input: number; output: number };
 // What a tool run changed on the stage, for the client to mirror.
-export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string };
+export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string };
 // One tool call inside a reply. `ok` is absent while the tool is still running.
 export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; ok?: boolean; result?: string; effect?: ToolEffect };
 export type ChatMessage = {
@@ -34,6 +36,7 @@ export const seedStage: Stage = {
   ],
   docs: [{ id: 'brand-doc', title: 'Brand doc', x: 520, y: 40, w: 340, h: 300 }],
   wires: [{ id: 'marketing-brand-doc', from: 'marketing', fromHandle: 'r', to: 'brand-doc', toHandle: 'l' }],
+  cards: [],
 };
 
 export const seedDocs: Record<string, string> = {
