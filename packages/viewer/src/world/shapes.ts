@@ -36,6 +36,90 @@ export function roundPoly(g: G, pts: Pt[], r: number): void {
   g.closePath();
 }
 
+/**
+ * The same rounded polygon as `roundPoly`, as points instead of arcs — for the one path that is used as a *clip*.
+ *
+ * A clip whose path is straight-edged and convex is one Chromium can apply to every draw analytically. One `arcTo`
+ * in it and the whole world pass goes through a mask instead: the campus measured 28 fps with the rounded hull as
+ * its clip and 60 with the identical hull left square, at four milliseconds of JavaScript either way — the thirty
+ * milliseconds were the browser masking two hundred blits. So the corners are walked as short chords here: the
+ * shape the owner sees is the same to a quarter of a pixel, and the clip is back on the fast path.
+ *
+ * `r` is clamped exactly as `roundPoly` clamps it, and each corner keeps its arc's own tangent points, so a hull
+ * pathed either way covers the same pixels.
+ */
+export function roundPolyPoints(pts: Pt[], r: number, step = Math.PI / 15): Pt[] {
+  const n = pts.length;
+  if (n < 3) return [...pts];
+  let shortest = Infinity;
+  for (let i = 0; i < n; i++) shortest = Math.min(shortest, len(pts[i], pts[(i + 1) % n]));
+  const rr = Math.max(0, Math.min(r, shortest / 2));
+  const out: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const c = pts[i], p = pts[(i - 1 + n) % n], q = pts[(i + 1) % n];
+    const lp = len(c, p), lq = len(c, q);
+    if (rr <= 0 || lp === 0 || lq === 0) { out.push(c); continue; }
+    const u = { x: (p.x - c.x) / lp, y: (p.y - c.y) / lp };
+    const w = { x: (q.x - c.x) / lq, y: (q.y - c.y) / lq };
+    // The half-angle at the corner. A straight run (three points on a line) has no corner to round.
+    const cosA = Math.max(-1, Math.min(1, u.x * w.x + u.y * w.y));
+    const a = Math.acos(cosA);
+    if (!(a > 1e-4 && a < Math.PI - 1e-4)) { out.push(c); continue; }
+    const half = a / 2;
+    const t = Math.min(rr / Math.tan(half), lp / 2, lq / 2);
+    const rad = t * Math.tan(half);
+    const bx = u.x + w.x, by = u.y + w.y;
+    const bl = Math.hypot(bx, by) || 1;
+    const o = { x: c.x + (bx / bl) * (rad / Math.sin(half)), y: c.y + (by / bl) * (rad / Math.sin(half)) };
+    const A = { x: c.x + u.x * t, y: c.y + u.y * t };
+    const B = { x: c.x + w.x * t, y: c.y + w.y * t };
+    const a0 = Math.atan2(A.y - o.y, A.x - o.x);
+    const a1 = Math.atan2(B.y - o.y, B.x - o.x);
+    let sweep = a1 - a0;
+    while (sweep > Math.PI) sweep -= Math.PI * 2;
+    while (sweep < -Math.PI) sweep += Math.PI * 2;
+    const steps = Math.max(1, Math.ceil(Math.abs(sweep) / step));
+    for (let k = 0; k <= steps; k++) {
+      const ang = a0 + (sweep * k) / steps;
+      out.push({ x: o.x + Math.cos(ang) * rad, y: o.y + Math.sin(ang) * rad });
+    }
+  }
+  return out;
+}
+
+/**
+ * How far from each corner the rounding reaches, in the same units as the points.
+ *
+ * The tangent length: past it the rounded outline and the square one are the same line, which is what lets a
+ * caller touch only the corners and leave every straight run of the edge exactly as it was drawn.
+ */
+export function roundPolyReach(pts: Pt[], r: number): number[] {
+  const n = pts.length;
+  if (n < 3) return pts.map(() => 0);
+  let shortest = Infinity;
+  for (let i = 0; i < n; i++) shortest = Math.min(shortest, len(pts[i], pts[(i + 1) % n]));
+  const rr = Math.max(0, Math.min(r, shortest / 2));
+  return pts.map((c, i) => {
+    const p = pts[(i - 1 + n) % n], q = pts[(i + 1) % n];
+    const lp = len(c, p), lq = len(c, q);
+    if (rr <= 0 || lp === 0 || lq === 0) return 0;
+    const u = { x: (p.x - c.x) / lp, y: (p.y - c.y) / lp };
+    const w = { x: (q.x - c.x) / lq, y: (q.y - c.y) / lq };
+    const a = Math.acos(Math.max(-1, Math.min(1, u.x * w.x + u.y * w.y)));
+    if (!(a > 1e-4 && a < Math.PI - 1e-4)) return 0;
+    return Math.min(rr / Math.tan(a / 2), lp / 2, lq / 2);
+  });
+}
+
+/** Path a polygon that is already a list of points: `moveTo`, `lineTo`, closed. */
+export function polyPath(g: G, pts: Pt[]): void {
+  if (pts.length < 3) return;
+  g.beginPath();
+  g.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+  g.closePath();
+}
+
 export function roundRect(g: G, x: number, y: number, w: number, h: number, r: number): void {
   const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
   g.beginPath();

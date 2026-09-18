@@ -12,9 +12,9 @@
  * Nothing here owns a canvas or a camera; `view.ts` does. This file turns map data into `Drawable`s and knows the
  * order they go in, which is what makes both the live renderer and the minimap thumbnail able to use it.
  */
-import { type Rect, type View, quad } from './iso.js';
+import { type Pt, type Rect, type View, quad } from './iso.js';
 import { ACCENT, type AccentName, type Light, MATERIAL as M, mix, rgba, shade, warm } from './materials.js';
-import { type G, fillPoly, hull, plate, roundPoly } from './shapes.js';
+import { type G, fillPoly, hull, plate, polyPath, roundPoly, roundPolyPoints, roundPolyReach } from './shapes.js';
 import {
   type Drawable, boardTable, chair, counter, curtainWall, desk, floorLamp, glassWall, highTable, path, plant, rug,
   screen, shelf, stool, windowPools,
@@ -117,6 +117,7 @@ export function nameOf(label: string, kind: string): string {
 /* the passes                                                                                                */
 /* -------------------------------------------------------------------------------------------------------- */
 
+
 /** Path the campus slab: the floor plate and nothing standing on it. */
 export function slabPath(g: G, v: View, m: CampusMap): void {
   roundPoly(g, quad(v, slabOf(m)), 26 * v.z);
@@ -128,11 +129,104 @@ export function slabPath(g: G, v: View, m: CampusMap): void {
  * Clipping to the floor quad alone looks right until something stands near a back wall, because a wall at `y = 0`
  * rises off the top edge of that quad and is cut away — which is how the curtain wall, the whiteboard and every
  * window came to be missing from the first renders while every desk in the middle of the floor survived.
+ *
+ * Six points, and the count matters: everything below is about keeping the clip that comes out of it that small.
  */
-export function campusClip(g: G, v: View, m: CampusMap, headUnits = 4.4): void {
+export function campusHull(v: View, m: CampusMap, headUnits = 4.4): Pt[] {
   const base = quad(v, slabOf(m));
   const lift = headUnits * v.cz;
-  roundPoly(g, hull([...base, ...base.map((p) => ({ x: p.x, y: p.y - lift }))]), 22 * v.z);
+  return hull([...base, ...base.map((p) => ({ x: p.x, y: p.y - lift }))]);
+}
+
+/**
+ * What the campus may paint into, as a clip.
+ *
+ * The silhouette itself, with no corner rounding, because a canvas clip is only cheap while its path stays under
+ * nine edges. Chromium clips a small convex polygon inside the shader that draws each thing; one edge more and it
+ * builds a mask texture and applies it to every draw instead. The campus makes about two hundred draws a frame,
+ * and the rounded hull that used to be this clip cost thirty milliseconds a frame of pure mask work — 28 fps where
+ * the same office with a six-edge clip holds 60, at four milliseconds of JavaScript either way.
+ *
+ * The rounding is not lost: `campusTrim` paints the rounded corners back after the world pass, over a sliver
+ * instead of over the whole office.
+ */
+export function campusClip(g: G, v: View, m: CampusMap, headUnits = 4.4): void {
+  polyPath(g, campusHull(v, m, headUnits));
+}
+
+/** How far the silhouette's corners are rounded, in canvas pixels. */
+export const campusRound = (v: View): number => 22 * v.z;
+
+/**
+ * The silhouette with its corners rounded, as a clip — for the two passes that are a handful of draws each.
+ *
+ * The hour and the lamps paint three or four things between them, so the mask this path costs is paid three or
+ * four times rather than two hundred, and they keep the soft corner the office has always had.
+ */
+export function campusClipRound(g: G, v: View, m: CampusMap, headUnits = 4.4): void {
+  polyPath(g, roundPolyPoints(campusHull(v, m, headUnits), campusRound(v)));
+}
+
+/**
+ * Is the whole canvas inside the rounded silhouette?
+ *
+ * When it is — which is every framing closer than the campus fit — no clip can cut a pixel and no corner is on the
+ * screen to round, so the office draws with no clip at all. Convex hull, so a corner of the canvas is inside it
+ * when it is inside every edge; the test is made against the hull pulled in by the corner radius, which is the
+ * most the rounding can take off, so it says no before it says a wrong yes.
+ */
+export function campusCovers(v: View, m: CampusMap, headUnits = 4.4): boolean {
+  const h = campusHull(v, m, headUnits);
+  if (h.length < 3) return false;
+  const inset = campusRound(v);
+  let area = 0;
+  for (let i = 0; i < h.length; i++) { const a = h[i], b = h[(i + 1) % h.length]; area += a.x * b.y - b.x * a.y; }
+  const sign = area >= 0 ? 1 : -1;
+  const { w, h: ch } = v.cam;
+  const corners: Pt[] = [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: ch }, { x: 0, y: ch }];
+  for (let i = 0; i < h.length; i++) {
+    const a = h[i], b = h[(i + 1) % h.length];
+    const ex = b.x - a.x, ey = b.y - a.y;
+    const el = Math.hypot(ex, ey);
+    if (el === 0) continue;
+    for (const c of corners) {
+      // how far inside this edge the corner sits, once the winding is normalised
+      const depth = (sign * (ex * (c.y - a.y) - ey * (c.x - a.x))) / el;
+      if (depth < inset) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Everything the rounded silhouette would have cut and the square one let through: the canvas with the rounded
+ * hull punched out of it, to be clipped `evenodd`.
+ *
+ * Repainting the ground through this after the world pass leaves exactly the frame the rounded clip drew — the
+ * ground is the only thing under that sliver, and it is painted from the same numbers both times.
+ */
+export function campusTrim(g: G, v: View, m: CampusMap, headUnits = 4.4): void {
+  const h = campusHull(v, m, headUnits);
+  const r = campusRound(v);
+  // Outside the rounded silhouette...
+  g.beginPath();
+  g.rect(0, 0, v.cam.w, v.cam.h);
+  const pts = roundPolyPoints(h, r);
+  g.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+  g.closePath();
+  g.clip('evenodd');
+  // ...and within reach of a corner. Past that the two outlines are the same line, and repainting a straight run
+  // of an edge that is already right costs it its antialiasing: the office grew a dark hairline along the whole
+  // front of the slab the first time this trimmed everything outside the rounded shape.
+  const reach = roundPolyReach(h, r);
+  g.beginPath();
+  for (let i = 0; i < h.length; i++) {
+    const s = reach[i] + 2;
+    if (s <= 2) continue;
+    g.rect(h[i].x - s, h[i].y - s, s * 2, s * 2);
+  }
+  g.clip();
 }
 
 /** Pass 1: the ground the slab floats on, and the slab itself. */
@@ -165,8 +259,7 @@ export function paintGround(g: G, v: View, m: CampusMap, light: Light): void {
 export function paintHour(g: G, v: View, m: CampusMap, light: Light): void {
   const { w, h } = v.cam;
   g.save();
-  campusClip(g, v, m);
-  g.clip();
+  if (!campusCovers(v, m)) { campusClipRound(g, v, m); g.clip(); }
   const mul = g.createLinearGradient(w * 0.1, 0, w * 0.85, h);
   mul.addColorStop(0, light.mulFrom);
   mul.addColorStop(0.42, mix(light.mulFrom, light.mulTo, 0.3));

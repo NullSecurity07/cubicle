@@ -25,7 +25,7 @@ import {
   type CampusMap, type Router, type Seat, inRect, makeRouter, parseCampus, railZoneAt, rectOf, standAt, zoneAt,
 } from './campus.js';
 import { Camera, CHROME, ROOM_ZOOM, fitZoom, nameLabelVisible, worldTextVisible } from './camera.js';
-import { type ScreenContent, buildProps, buildScreens, campusClip, deskDrawables, paintGround, paintHour, paintZonePlates, propDrawables, slabOf } from './paint.js';
+import { type ScreenContent, buildProps, buildScreens, campusClip, campusClipRound, campusCovers, campusTrim, deskDrawables, paintGround, paintHour, paintZonePlates, propDrawables, slabOf } from './paint.js';
 import { Body, type BodyContext } from './people.js';
 import { drawMinimap } from './minimap-draw.js';
 import {
@@ -549,8 +549,10 @@ export class CampusView {
     lap('sort');
 
     g.save();
-    campusClip(g, v, this.map);
-    g.clip();
+    // Closer in than the campus fit the silhouette is bigger than the canvas, so there is nothing for a clip to cut
+    // and none of its corners are on the screen: the office draws with no clip and no trim at all.
+    const covered = campusCovers(v, this.map);
+    if (!covered) { campusClip(g, v, this.map); g.clip(); }
     // Every plate this frame claims its box out of one book, so two names can never land on top of each other.
     // Cleared here, before the first thing that draws a plate, which is a screen in the pass below. The book is
     // told the free area first — inside the canvas, clear of the zone rail and the two bars — and the minimap is
@@ -576,6 +578,16 @@ export class CampusView {
     if (!floorDone) this.paintFloorMarks(g, v);
     this.paintLifted(g, v, light);
     g.restore();
+    // The silhouette's rounded corners, given back. The clip above is square so that two hundred blits stay on the
+    // browser's fast path; the ground is painted a second time over the sliver between the two shapes, which is the
+    // only place the two frames could differ and is a few hundred pixels of it.
+    if (!covered) {
+      g.save();
+      campusTrim(g, v, this.map);
+      g.clip('evenodd');
+      paintGround(g, v, this.map, light);
+      g.restore();
+    }
     t.world += performance.now() - mark; mark = performance.now();
 
     paintHour(g, v, this.map, light);
@@ -681,8 +693,7 @@ export class CampusView {
       if (b.view.state === 'working' || b.view.state === 'talking') busy.push({ x: b.at.x, y: b.at.y });
     }
     g.save();
-    campusClip(g, v, this.map);
-    g.clip();
+    if (!campusCovers(v, this.map)) { campusClipRound(g, v, this.map); g.clip(); }
     g.globalCompositeOperation = 'screen';
     for (const d of this.map.decor) {
       if (d.kind !== 'lamp') continue;
