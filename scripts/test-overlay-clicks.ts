@@ -459,8 +459,197 @@ else {
 await page.evaluate(() => document.getElementById('panel-close')!.click());
 await page.waitForFunction(() => document.getElementById('layer')!.hidden, undefined, { timeout: 10_000 });
 
+/* ============================================================================================================ */
+/* 9. The office the owner arranges (SP9b)                                                                       */
+/*                                                                                                              */
+/* The claims here are the owner's own sentences: a desk they drag is still there after a reload, a line they    */
+/* draw is on the wire and in the note, one they cut is gone, a note from the dock lands on the floor, and a     */
+/* hire from the dock arrives in Decisions. Driven through `__cubicle`, which is the pointer's own calls — the   */
+/* renderer's methods, not a second path — so what passes here is what a hand does.                              */
+/* ============================================================================================================ */
+
+/** The note as the office holds it. */
+const officeLayout = () => page.evaluate(() => (window as unknown as Win).__cubicle.layout() as { nodes: Record<string, { x?: number; y?: number; kind?: string }>; connections: { from: string; to: string; kind: string }[] });
+const layoutFrames = async (): Promise<Record<string, unknown>[]> => (await sentOps()).filter((m) => m.op === 'layout.set');
+/** `Office/campus.md` on disk, which is the only copy that survives the page. */
+const campusNote = (): string => { try { return readFileSync(path.join(dir, 'Office/campus.md'), 'utf8'); } catch (e) { return `unreadable: ${String(e).slice(0, 120)}`; } };
+
+// 9a. Drag a desk. A cell is looked for rather than assumed: the campus may be re-generated, and a drag onto a
+//     taken spot is refused by design, which would read as "dragging is broken" instead of "that spot is taken".
+const dragged = await page.evaluate(() => {
+  const c = (window as unknown as Win).__cubicle;
+  const id = 'cto';
+  const was = c.nodeBox(id) as { cx: number; cy: number } | null;
+  if (!was) return { id, ok: false, why: 'the campus has no cto desk' };
+  const from = c.desks()[id] as { tx: number; ty: number } | undefined;
+  const base = from ?? { tx: 10, ty: 10 };
+  for (let r = 1; r <= 12; r++) {
+    for (const d of [[r, 0], [0, r], [-r, 0], [0, -r], [r, r], [-r, -r]]) {
+      const to = { x: base.tx + d[0], y: base.ty + d[1] };
+      if (c.drag(id, to)) return { id, ok: true, to, why: '' };
+    }
+  }
+  return { id, ok: false, why: 'every spot tried was taken' };
+}) as { id: string; ok: boolean; to?: { x: number; y: number }; why: string };
+await page.waitForTimeout(400);
+const afterDrag = await officeLayout();
+const landed = afterDrag.nodes[dragged.id];
+const dragFrames = await layoutFrames();
+console.log('drag the CTO desk →', JSON.stringify({ dragged, node: afterDrag.nodes[dragged.id], frames: dragFrames.length }));
+if (!dragged.ok) fail(`the CTO desk could not be dragged: ${dragged.why}`);
+else {
+  // A drag names where the thing's *middle* lands and the note records its footprint's near corner, so the claim
+  // is not a coordinate but a round trip: the desk has an entry, it is on the half-cell grid, and section 9g
+  // asserts the office hands back this same entry after a reload.
+  if (!landed) fail('a dragged desk left no entry in the office note');
+  else if (landed.x === undefined || landed.y === undefined) fail(`the note's entry for the desk has no position: ${JSON.stringify(landed)}`);
+  else if (landed.x * 2 !== Math.round(landed.x * 2) || landed.y * 2 !== Math.round(landed.y * 2)) fail(`the desk landed off the half-cell grid at ${JSON.stringify(landed)}`);
+  if (!dragFrames.length) fail('a drag sent no layout.set to the daemon');
+  const note = campusNote();
+  if (!new RegExp(`^\\s*${dragged.id}:`, 'm').test(note)) fail(`Office/campus.md does not name the desk that moved: ${note.split('\n---')[0].replace(/\n/g, ' | ').slice(0, 200)}`);
+}
+
+// 9b–9c. A line drawn and a line cut. The pair is chosen in the page: the migration already wires the room and
+//        the reporting lines, and connecting two desks that are connected is not a test of anything.
+const wiring = await page.evaluate(() => {
+  const c = (window as unknown as Win).__cubicle;
+  const ids = Object.keys(c.desks() as Record<string, unknown>).sort();
+  const lay = c.layout() as { connections: { from: string; to: string }[] };
+  for (const a of ids) {
+    for (const b of ids) {
+      if (a === b) continue;
+      let already = false;
+      for (const cn of lay.connections) if ((cn.from === a && cn.to === b) || (cn.from === b && cn.to === a)) already = true;
+      if (already) continue;
+      return { a, b, connected: c.connect(a, b) as boolean };
+    }
+  }
+  return { a: '', b: '', connected: false };
+}) as { a: string; b: string; connected: boolean };
+await page.waitForTimeout(300);
+const afterConnect = await officeLayout();
+const hasLine = (l: { connections: { from: string; to: string }[] }, a: string, b: string): boolean => l.connections.some((c) => (c.from === a && c.to === b) || (c.from === b && c.to === a));
+console.log('connect two desks →', JSON.stringify({ ...wiring, lines: afterConnect.connections.length }));
+if (!wiring.a) fail('every pair of desks on the campus is already wired, so connect could not be tested');
+else {
+  if (!wiring.connected) fail(`connecting ${wiring.a} and ${wiring.b} was refused`);
+  if (!hasLine(afterConnect, wiring.a, wiring.b)) fail(`the note has no line between ${wiring.a} and ${wiring.b}`);
+  const peer = afterConnect.connections.find((c) => (c.from === wiring.a && c.to === wiring.b) || (c.from === wiring.b && c.to === wiring.a));
+  if (peer && peer.kind !== 'peer') fail(`a line between two desks came out as ${peer.kind}, not peer`);
+  if (!campusNote().includes(wiring.b)) fail('Office/campus.md does not carry the line that was drawn');
+
+  const cut = await page.evaluate(({ a, b }) => (window as unknown as Win).__cubicle.disconnect(a, b) as boolean, wiring) as boolean;
+  await page.waitForTimeout(300);
+  const afterCut = await officeLayout();
+  console.log('cut it again →', JSON.stringify({ cut, lines: afterCut.connections.length }));
+  if (!cut) fail(`cutting the line between ${wiring.a} and ${wiring.b} was refused`);
+  if (hasLine(afterCut, wiring.a, wiring.b)) fail('the line is still in the note after it was cut');
+}
+
+// 9d. The dock puts a sticky note on the floor: the dock opens, the glyph is armed and dropped, and what lands is
+//     a thing the office can find under the pointer — not just a line in a file.
+const placed = await page.evaluate(() => {
+  const c = (window as unknown as Win).__cubicle;
+  c.dock(true);
+  const open = !document.getElementById('dock')!.hidden;
+  const from = c.desks().cto as { tx: number; ty: number } | undefined;
+  const base = from ?? { tx: 10, ty: 10 };
+  for (let r = 2; r <= 14; r++) {
+    for (const d of [[r, 0], [0, r], [-r, 0], [0, -r], [r, r]]) {
+      const at = { x: base.tx + d[0], y: base.ty + d[1] };
+      if (c.place('note', at, { body: 'Ask the CFO about runway' })) return { open, at, ok: true };
+    }
+  }
+  return { open, ok: false, at: null };
+}) as { open: boolean; ok: boolean; at: { x: number; y: number } | null };
+await page.waitForTimeout(400);
+const afterPlace = await officeLayout();
+const noteIds = Object.keys(afterPlace.nodes).filter((k) => afterPlace.nodes[k].kind === 'note');
+const noteBox = noteIds.length ? await page.evaluate((id) => (window as unknown as Win).__cubicle.nodeBox(id), noteIds[0]) : null;
+console.log('a sticky note from the dock →', JSON.stringify({ placed, noteIds, noteBox }));
+if (!placed.open) fail('the dock did not open');
+if (!placed.ok) fail('a sticky note could not be put down anywhere on the campus');
+else {
+  if (!noteIds.length) fail('a note placed from the dock left no entry in the office note');
+  if (!noteBox) fail('the note is in the layout but the office draws nothing there');
+  if (!campusNote().includes('note_1')) fail('Office/campus.md does not carry the note that was added');
+}
+await page.evaluate(() => (window as unknown as Win).__cubicle.dock(false));
+
+// 9e. A hire from the dock: the sheet, the op, and the proposal the owner then decides. The desk stays a ghost —
+//     the office must not seat anybody on a hire nobody has approved.
+const pendingBefore = await page.evaluate(() => (window as unknown as Win).__cubicle.state.pendingProposals as number);
+const hireTeam = await page.evaluate(() => {
+  const teams = (window as unknown as Win).__cubicle.state.teams as { id: string }[];
+  return teams.length ? teams[0].id : '';
+}) as string;
+if (!hireTeam) fail('the company has no team for a hire to join');
+await page.evaluate((team) => {
+  const c = (window as unknown as Win).__cubicle;
+  const from = c.desks().cto as { tx: number; ty: number } | undefined;
+  const base = from ?? { tx: 10, ty: 10 };
+  c.hire({ x: base.tx + 3, y: base.ty + 3 }, { role: 'support', display: 'Head of Support', team });
+}, hireTeam);
+await page.waitForTimeout(600);
+const hireFrames = (await sentOps()).filter((m) => m.op === 'hire.propose');
+const ghost = await page.evaluate(() => (window as unknown as Win).__cubicle.hiring());
+// The proposal arrives in the snapshot the daemon rebuilds from the vault, so this waits on the inbox rather than
+// on a timer: it is the row the owner will click in Decisions that is being claimed, not the frame that asked.
+let hired: { inbox: number; titles: string[]; seated: boolean } = { inbox: 0, titles: [], seated: false };
+for (let i = 0; i < 40; i++) {
+  hired = await page.evaluate(() => {
+    const s = (window as unknown as Win).__cubicle.state;
+    return { inbox: (s.inbox ?? []).length, titles: (s.inbox ?? []).map((n: { title: string }) => n.title), seated: !!s.agents.support };
+  });
+  if (hired.titles.some((t) => /support/i.test(t))) break;
+  await page.waitForTimeout(250);
+}
+console.log('hire from the dock →', JSON.stringify({ frames: hireFrames, ghost, hired, pendingBefore }));
+if (hireFrames.length !== 1) fail(`the hire sheet sent ${hireFrames.length} hire.propose frames`);
+else if (hireFrames[0].role !== 'support' || !hireFrames[0].at) fail(`the hire frame is wrong: ${JSON.stringify(hireFrames[0])}`);
+if (!ghost) fail('no ghost desk stands where the hire was asked for');
+if (!hired.titles.some((t) => /support/i.test(t))) fail(`the hire never reached Decisions (the inbox holds ${JSON.stringify(hired.titles)})`);
+if (hired.seated) fail('the office seated the new hire before the owner decided it');
+await page.evaluate(() => { const el = document.getElementById('hire'); if (el) el.hidden = true; });
+
+// 9f. A drag that starts on the sheet never reaches the office. The one gesture SP9b added that the HTML layer
+//     could leak: a press-move-release inside a sheet parked over a desk must move neither the camera nor the desk.
+await page.evaluate(() => (window as unknown as Win).__cubicle.open('noticeboard'));
+await page.waitForFunction(() => document.getElementById('layer')!.dataset.presentation === 'sheet', undefined, { timeout: 10_000 });
+await camSettled();
+const sheetBox = await boxOf('#panel-body');
+const pDrag = await parkWhiteboardUnder({ x: sheetBox.x + sheetBox.w * 0.4, y: sheetBox.y + sheetBox.h * 0.45 }, sheetBox, 'the sheet body', '#panel');
+const beforeDrag = await officeLayout();
+await hits();
+await page.mouse.move(pDrag.x, pDrag.y);
+await page.mouse.down();
+for (const step of [12, 26, 44, 60]) await page.mouse.move(pDrag.x + step, pDrag.y + step * 0.6);
+await page.mouse.up();
+await page.waitForTimeout(400);
+const r9f = { hits: await hits(), pres: await presentation(), layout: await officeLayout(), dragging: await page.evaluate(() => (window as unknown as Win).__cubicle.dragging() as boolean) };
+console.log('a drag inside the sheet over the office →', JSON.stringify({ hits: r9f.hits, pres: r9f.pres, dragging: r9f.dragging }));
+if (reachedOffice(r9f.hits)) fail('a drag started on the sheet reached the office beneath it');
+if (r9f.pres !== 'sheet') fail(`a drag inside the sheet changed the presentation to ${r9f.pres}`);
+if (r9f.dragging) fail('a drag inside the sheet left the office holding something');
+if (JSON.stringify(r9f.layout) !== JSON.stringify(beforeDrag)) fail('a drag inside the sheet changed the office layout');
+await page.evaluate(() => document.getElementById('panel-close')!.click());
+await page.waitForFunction(() => document.getElementById('layer')!.hidden, undefined, { timeout: 10_000 });
+
+// 9g. And the one the owner will check first: reload, and the office is as they left it. This is the round trip
+//     through `Office/campus.md` — the page is thrown away, so what comes back came off the disk.
+await page.reload({ waitUntil: 'load' });
+await page.waitForFunction(() => { const c = (window as unknown as Win).__cubicle; return c?.state.connected && Object.keys(c.state.agents).length > 0; }, undefined, { timeout: 30_000 });
+await page.waitForFunction(() => Object.keys(((window as unknown as Win).__cubicle.layout() as { nodes: Record<string, unknown> }).nodes).length > 0, undefined, { timeout: 15_000 }).catch(() => undefined);
+const reloaded = await officeLayout();
+console.log('after a reload →', JSON.stringify({ desk: reloaded.nodes[dragged.id], notes: Object.keys(reloaded.nodes).filter((k) => reloaded.nodes[k].kind === 'note') }));
+if (dragged.ok && landed) {
+  const back = reloaded.nodes[dragged.id];
+  if (!back || back.x !== landed.x || back.y !== landed.y) fail(`the CTO desk came back at ${JSON.stringify(back)} instead of ${JSON.stringify(landed)}`);
+}
+if (placed.ok && !Object.keys(reloaded.nodes).some((k) => reloaded.nodes[k].kind === 'note')) fail('the sticky note was gone after a reload');
+
 await browser.close();
 await d.stop();
 if (failures.length) { console.log(`FAIL: ${failures.length} check(s) failed`); process.exit(1); }
-console.log('PASS: presses on the sheet, reader, rail, viewer and toast stay on the HTML layer; releases and office clicks still reach the campus; the zone rail takes the camera to Dev; a real proposal opens its reader and Approve decides it on the wire; the board transcript in the vault opens as a thread; an obsidian: link hands off without navigating');
+console.log('PASS: presses on the sheet, reader, rail, viewer and toast stay on the HTML layer; releases and office clicks still reach the campus; the zone rail takes the camera to Dev; a real proposal opens its reader and Approve decides it on the wire; the board transcript in the vault opens as a thread; an obsidian: link hands off without navigating; a desk dragged, a line drawn and cut, a note dropped from the dock and a hire filed all reach Office/campus.md, a drag on the sheet reaches nothing, and the office comes back as it was left');
 process.exit(0);

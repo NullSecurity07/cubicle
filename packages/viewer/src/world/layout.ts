@@ -91,6 +91,27 @@ export function occupiedBy(map: CampusMap, rect: Rect, exceptId = ''): string | 
     const r: Rect = s.axis === 'x' ? { x0: s.x, y0: s.y - 0.3, x1: s.x + s.len, y1: s.y + 0.3 } : { x0: s.x - 0.3, y0: s.y, x1: s.x + 0.3, y1: s.y + s.len };
     if (overlaps(rect, r)) return s.kind;
   }
+  // And the floor itself, which is the daemon's own rule (`rectFree`): a partition, a wall stub or a pier is
+  // blocked on the walk grid and named by nothing above, so without this the office draws a legal drop on a cell
+  // the daemon then refuses — the owner's thing springs back and nothing on the screen said why.
+  // The mover's own footprint is skipped, by the cells the grid actually holds it in rather than by its corners:
+  // a desk is painted into the grid where it stands, and a desk cannot be in its own way.
+  const own = exceptId ? anchorOf(map, exceptId)?.rect ?? null : null;
+  const cells = (r: Rect): { gx0: number; gx1: number; gy0: number; gy1: number } => ({
+    gx0: Math.max(0, Math.floor(r.x0 * map.walk)), gx1: Math.min((map.grid[0]?.length ?? 0) - 1, Math.floor(r.x1 * map.walk - 1e-6)),
+    gy0: Math.max(0, Math.floor(r.y0 * map.walk)), gy1: Math.min(map.grid.length - 1, Math.floor(r.y1 * map.walk - 1e-6)),
+  });
+  const mine = own ? cells(own) : null;
+  const box = cells(rect);
+  for (let gy = box.gy0; gy <= box.gy1; gy++) {
+    const row = map.grid[gy];
+    if (!row) continue;
+    for (let gx = box.gx0; gx <= box.gx1; gx++) {
+      if (!row[gx]) continue;
+      if (mine && gx >= mine.gx0 && gx <= mine.gx1 && gy >= mine.gy0 && gy <= mine.gy1) continue;
+      return 'the wall';
+    }
+  }
   return null;
 }
 

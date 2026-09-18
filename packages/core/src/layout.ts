@@ -139,11 +139,11 @@ export function validateLayout(map: CampusMap, org: Org, input: unknown): { layo
   const rawConns = Array.isArray(raw.connections) ? raw.connections : [];
 
   const propIds = new Set(map.props.map((p) => p.id));
-  /** The floor each accepted resource takes, so the note cannot stack two of them on one spot. */
-  const taken: number[][] = map.grid.map((row) => row.map(() => 0));
   const nodes: Record<string, LayoutNode> = {};
   /** Desk placements that passed everything but the collision check, which needs all of them at once. */
   const placing: { id: string; line: string; rect: Rect }[] = [];
+  /** Things that stand on the floor — props and what the owner added — judged once the desks have settled. */
+  const standing: { id: string; line: string; rect: Rect; node: LayoutNode }[] = [];
 
   for (const [rawId, value] of Object.entries(rawNodes)) {
     const id = map.desks[rawId] ? rawId : deskOf(org, rawId);
@@ -192,18 +192,17 @@ export function validateLayout(map: CampusMap, org: Org, input: unknown): { layo
     // drops — a kiosk that fits in the office's ghost and is then rejected here is the two-parsers bug again.
     const at: Rect = n.kind ? resourceRect(n.kind, { x: n.x!, y: n.y! }) : { x0: n.x!, y0: n.y!, x1: n.x! + 0.5, y1: n.y! + 0.5 };
     if (!within(map, at)) { dropped.push({ line, reason: 'that spot is off the campus' }); continue; }
-    if (!rectFree(map.grid, map.walk, at) || !rectFree(taken, map.walk, at)) { dropped.push({ line, reason: 'that spot is taken' }); continue; }
-    // Each thing takes the floor it stands on as it is accepted, so two kiosks written onto the same cells in one
-    // note is the second one refused rather than both of them standing inside each other.
-    if (n.kind) paintRect(taken, map.walk, at, 1);
-    nodes[id] = prop ? { x: n.x, y: n.y } : {
-      kind: n.kind, x: n.x, y: n.y,
-      ...(n.zone && map.zoneById[n.zone] ? { zone: n.zone } : {}),
-      ...(n.label ? { label: n.label } : {}),
-      ...(n.body ? { body: n.body } : {}),
-      ...(n.path ? { path: n.path } : {}),
-      ...(n.tool ? { tool: n.tool } : {}),
-    };
+    standing.push({
+      id, line, rect: at,
+      node: prop ? { x: n.x, y: n.y } : {
+        kind: n.kind, x: n.x, y: n.y,
+        ...(n.zone && map.zoneById[n.zone] ? { zone: n.zone } : {}),
+        ...(n.label ? { label: n.label } : {}),
+        ...(n.body ? { body: n.body } : {}),
+        ...(n.path ? { path: n.path } : {}),
+        ...(n.tool ? { tool: n.tool } : {}),
+      },
+    });
   }
 
   // The desks, all at once: every desk that is moving or going leaves its old footprint first, so a rearrangement
@@ -217,6 +216,16 @@ export function validateLayout(map: CampusMap, org: Org, input: unknown): { layo
     if (!rectFree(grid, map.walk, rect)) { dropped.push({ line, reason: 'that spot is taken' }); paintRect(grid, map.walk, map.desks[id].rect, 1); continue; }
     paintRect(grid, map.walk, rect, 1);
     nodes[id] = { x: rect.x0, y: rect.y0 };
+  }
+
+  // Then what stands on the floor, against the floor as this write leaves it — not as the template had it. A note
+  // dropped on the cells a desk has just vacated in the same payload is a legal drop, and judging it against the
+  // template grid refused exactly what the office had drawn as free. Each accepted thing takes its own floor, so
+  // two kiosks written onto one spot is the second one refused rather than both standing inside each other.
+  for (const { id, line, rect, node } of standing) {
+    if (!rectFree(grid, map.walk, rect)) { dropped.push({ line, reason: 'that spot is taken' }); continue; }
+    paintRect(grid, map.walk, rect, 1);
+    nodes[id] = node;
   }
 
   const isDesk = (id: string): boolean => !!map.desks[id] && !nodes[id]?.removed;

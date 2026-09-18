@@ -11,8 +11,12 @@ import {
 const BASE: CampusMap = parseCampus(JSON.parse(readFileSync(fileURLToPath(new URL('../../../../config/world/office.json', import.meta.url)), 'utf8')));
 const NAMES: Record<string, string> = { cto: 'CTO', backend_engineer: 'Backend engineer', ceo: 'CEO' };
 const nameOf = (id: string): string => NAMES[id] ?? id;
-/** A free patch of floor in the lobby walkway, well away from every desk. */
-const FREE = { x: 24, y: 21 };
+/**
+ * A free patch of floor in the lobby, well away from every desk — and free on the walk grid, which is what the
+ * daemon measures a drop against: at 24, 21 a desk-sized footprint reaches the research partition, so a drop
+ * there was one the office drew and the daemon refused.
+ */
+const FREE = { x: 20, y: 20 };
 
 describe('moving something', () => {
   it('writes the desk\'s new corner and says whose desk it was', () => {

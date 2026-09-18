@@ -81,6 +81,29 @@ describe('validateLayout', () => {
     expect(Object.keys(swap.layout.nodes).sort()).toEqual(['cfo', 'cto']);
   });
 
+  it('judges what stands on the floor against the floor this write leaves, not the one it found', () => {
+    // The owner drags the CTO's desk away and drops a note where it stood, in one gesture and one payload. The
+    // office drew that as free, so the daemon refusing it would spring the note back for no reason the owner
+    // could see. Their old cells are the ones the note is measured against.
+    const cto = map.desks.cto;
+    const middle = { x: (cto.rect.x0 + cto.rect.x1) / 2, y: (cto.rect.y0 + cto.rect.y1) / 2 };
+    const onTop = validateLayout(map, org, { nodes: { note_1: { kind: 'note', x: middle.x, y: middle.y } } });
+    expect(onTop.dropped[0].reason).toBe('that spot is taken');
+    const after = validateLayout(map, org, {
+      nodes: { cto: { x: 20, y: 20 }, note_1: { kind: 'note', x: middle.x, y: middle.y } },
+    });
+    expect(after.dropped).toEqual([]);
+    expect(Object.keys(after.layout.nodes).sort()).toEqual(['cto', 'note_1']);
+  });
+
+  it('refuses two things dropped on one spot, the second one', () => {
+    const two = validateLayout(map, org, {
+      nodes: { note_1: { kind: 'note', x: 21, y: 20 }, note_2: { kind: 'note', x: 21.2, y: 20 } },
+    });
+    expect(Object.keys(two.layout.nodes)).toEqual(['note_1']);
+    expect(two.dropped[0].reason).toBe('that spot is taken');
+  });
+
   it('a desk keeps the size the campus gave it', () => {
     const { layout, dropped } = validateLayout(map, org, { nodes: { cto: { x: 9, y: 6, w: 40, d: 40 } } });
     expect(layout.nodes.cto).toEqual({ x: 9, y: 6 });

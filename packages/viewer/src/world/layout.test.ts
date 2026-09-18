@@ -176,6 +176,18 @@ describe('anchors and hit geometry', () => {
     expect(occupiedBy(m, resourceRect('browser', { x: 24, y: 21 }))).toBe('note_1');
     expect(occupiedBy(m, resourceRect('browser', { x: 24, y: 21 }), 'note_1')).toBeNull();
   });
+
+  it('calls a spot taken when the floor itself is blocked, which is what the daemon measures', () => {
+    // A partition, a pier and a wall stub are named by nothing on the campus but are blocked on the walk grid.
+    // Without this the office draws a legal drop and the daemon refuses it, and the owner's thing springs back
+    // with nothing on the screen having said why. The desk-sized box below reaches the research partition.
+    const d = MAP.desks.cto;
+    const w = d.rect.x1 - d.rect.x0, depth = d.rect.y1 - d.rect.y0;
+    expect(occupiedBy(MAP, { x0: 24, y0: 21, x1: 24 + w, y1: 21 + depth })).toBe('the wall');
+    expect(occupiedBy(MAP, { x0: 20, y0: 20, x1: 20 + w, y1: 20 + depth })).toBeNull();
+    // and no desk is walled in by its own footprint, however its corners fall between the walk grid's sub-cells
+    for (const desk of Object.values(MAP.desks)) expect(occupiedBy(MAP, desk.rect, desk.id)).not.toBe('the wall');
+  });
 });
 
 describe('connections', () => {

@@ -427,7 +427,10 @@ const net = new Net(url, token, {
     if (state.mode === 'live') liveState = state;
     replayBase = emptyState();
     // seed roles from the live snapshot so sprites exist even before their first event of the day
-    if (liveState) replayBase = { ...replayBase, agents: Object.fromEntries(Object.entries(liveState.agents).map(([k, v]) => [k, { ...v, state: 'idle_at_desk' as const, job: null, tool: null, bubble: null, target: null, badge: null, checking: null }])), plan: liveState.plan, latestRun: liveState.latestRun, quota: liveState.quota, brand: liveState.brand };
+    // …and the floor itself. `Office/campus.md` has no event history — it is one note, as it stands — so the
+    // replay is played out in the office the owner has now. Without this, opening a replay put every desk they
+    // moved back where the template had it and took everything they added off the floor, for the whole day.
+    if (liveState) replayBase = { ...replayBase, agents: Object.fromEntries(Object.entries(liveState.agents).map(([k, v]) => [k, { ...v, state: 'idle_at_desk' as const, job: null, tool: null, bubble: null, target: null, badge: null, checking: null }])), plan: liveState.plan, latestRun: liveState.latestRun, quota: liveState.quota, brand: liveState.brand, layout: liveState.layout };
     replayCheckpoints = []; replayState = null; replayCursor = 0;
     time.setReplay(replayBuffer);
     rebuildReplayTo(0);
