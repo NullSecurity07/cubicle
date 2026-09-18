@@ -5,7 +5,7 @@ import {
   interviewPhase, renderInterviewAsk, renderInterviewAsked, closeInterview, closesInterview, isSkip, listDiscoveryInputs, isLongPrompt,
   ownerSaid, isDiscoveryMaterial, ownerPick, asksForSurprise, SURPRISE_ME, BRAND_NAME_PATH, OWNER_PICK_LABEL, type OwnerPick, ideaPath, IDEA_SCORE_MAX,
   INTERVIEW_QUESTIONS, openInterviewQuestions, interviewAskTitle, renderInterviewCovered, questionsAsked,
-  type CeoAnswer, unstatedAnswers, ceoAnswersFrom, INTERVIEW_TAG_LEGEND, INTERVIEW_TAGS,
+  type CeoAnswer, unstatedAnswers, withoutIdeaClaims, ceoAnswersFrom, INTERVIEW_TAG_LEGEND, INTERVIEW_TAGS,
   PRESSURE_TEST_SECTION, PRESSURE_HANDBOOK_PATH,
   parseNote, sha256, extractOwnerComments, PROPOSED_CONTENT_FENCE, ownerInstruction,
 } from '@cubicle/core';
@@ -93,6 +93,11 @@ export function discoveryStatus(o: {
   interview: InterviewPhase;
   /** The three ideas are in the inbox, unpicked: the company is waiting for the owner and must say so. */
   pickPending?: boolean;
+  /**
+   * The owner asked to be surprised and has not picked yet, so there is no idea for the CEO to interview
+   * itself about (defect W5-1). See `awaitingSurprisePick`.
+   */
+  surprisePending?: boolean;
   unread: UnreadMaterial;
   /** Discovery has run at least once before (there is a `discovery` job in the log). */
   everRun: boolean;
@@ -109,7 +114,15 @@ export function discoveryStatus(o: {
   // questions go out whenever nobody has been asked yet, and `askInterview` sends only the ones the founder
   // brief, the inbox files and the owner's cabin text have not already answered — or, when they answer all
   // six, sends nothing at all and records the `covered` phase.
-  const ask = o.interview === 'none';
+  // …with one thing it is still about: **whether there is anything to be interviewed about at all.** After
+  // "surprise me" the company has no idea until the owner picks one, and dry-run 3 asked anyway — 68 seconds
+  // early, about a company nobody had proposed, every answer tagged `[from the idea]` (defect W5-1). The ask is
+  // not cancelled, it waits: the pick wakes a cycle, and that cycle asks the six about the idea they chose.
+  // Narrow on purpose — it only holds while the vault is otherwise empty, so an owner whose surprise never
+  // produced three ideas, and who then typed one themselves, is interviewed about what they typed.
+  const nothingToBeAskedAbout = !o.unread.anyPrompt && o.inputs === 0;
+  const waitingForPick = !!o.surprisePending && nothingToBeAskedAbout;
+  const ask = o.interview === 'none' && !waitingForPick;
   const status = (run: boolean, why: string): DiscoveryStatus => ({ run, ask, why });
   if (o.alreadyRun) return status(false, 'discovery has already read this material');
 
@@ -130,6 +143,7 @@ export function discoveryStatus(o: {
     // Nothing to read at all, and three ideas waiting: that is not an idle company, it is a company waiting on
     // the owner, and the checkpoint log must say which (finding F3).
     if (o.pickPending) return status(false, 'waiting for you to pick one of the three ideas; the one you choose is what discovery reads');
+    if (waitingForPick) return status(false, 'waiting for the three ideas and for you to pick one; the CEO answers the six questions about the idea you choose');
     if (ask) return status(false, 'nothing to read yet: asking the founder interview');
     if (o.interview === 'asked') return status(false, 'the founder interview is waiting for an answer');
     return status(false, 'nothing to read yet');
@@ -471,6 +485,22 @@ export function pickPending(vault: Vault): boolean {
 }
 
 /**
+ * The owner asked the CEO to surprise them and has not chosen one of the three ideas yet (defect W5-1).
+ *
+ * Wider than `pickPending` on purpose, and it has to be: the three ideas take a model call to write, so for the
+ * seven seconds of dry-run 3 — and for ever, when the surprise ask fails — "surprise me" is in the inbox with
+ * no proposal behind it. Both windows are the same fact for the interview: there is no idea, and the CEO must
+ * not answer six questions about one.
+ *
+ * It ends the moment `ownerPick` reads a decision, which is the same sentence discovery is handed, so the
+ * interview and the founder brief are about the same idea or about neither.
+ */
+export function awaitingSurprisePick(vault: Vault): boolean {
+  if (ownerPick(vault)) return false;
+  return listInbox(vault).some((n) => n.data.kind === 'message' && n.data.from === 'owner' && asksForSurprise(ownerSaid(n.body)));
+}
+
+/**
  * The statuses that mean a discovery job is still *reading*. `in_review` is deliberately not one of them: by
  * then the job has filed its founder brief and its cards and is waiting on a reviewer, so there is nothing
  * left for the cycle to wait for — and holding the whole company behind a gate is how one slow review costs
@@ -603,6 +633,10 @@ export async function askInterview(vault: Vault, ceo: string, now: Date, self?: 
   let answers: readonly CeoAnswer[] = unstatedAnswers(open.length);
   if (self) { try { answers = await self(open); } catch { /* the ask never fails over a model */ } }
   if (answers.length !== open.length) answers = [...answers, ...unstatedAnswers(open.length)].slice(0, open.length);
+  // The second gate of W5-1, and the one that holds wherever the ask comes from: `[from the idea]` with no idea
+  // in the vault is a false citation, and dry-run 3 produced three of them from a prompt that said in as many
+  // words that nothing had been written down. Checked here, against the vault, rather than trusted to the model.
+  if (!selfInterviewSubject(vault).idea) answers = withoutIdeaClaims(answers);
   createProposal(vault, {
     id, kind: 'message', from: ceo, to: 'owner',
     title: interviewAskTitle(open.length), body: renderInterviewAsk(open, INTERVIEW_QUESTIONS.length - open.length, answers),
@@ -715,6 +749,7 @@ export function currentDiscoveryStatus(vault: Vault, now = new Date()): Discover
       inputs: inputs.length,
       interview,
       pickPending: pickPending(vault),
+      surprisePending: awaitingSurprisePick(vault),
       unread: {
         newInput: inputs.some((f) => unread(f.path)),
         newInterview: interview === 'answered' && unread(INTERVIEW_PATH),

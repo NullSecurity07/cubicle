@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { boardHeadline } from './ui/board.js';
-import { applyConversation, conversationTurns, decideAcked, decideFailed, decideSent, LIVE_TURNS, pairThreadId, emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, overseerRole, vetoRole, statusText, CHECKING_TEXT, WAITING_TEXT, type Snapshot } from './state.js';
+import { applyConversation, applyLayoutChanged, conversationTurns, decideAcked, decideFailed, decideSent, LIVE_TURNS, pairThreadId, emptyState, applySnapshot, applyEvent, tick, toolIcon, targetFor, actionVerb, withFrameSeq, SLEEP_AFTER_MS, divisionOf, OVERSEER, VETO_ROLE, overseerRole, vetoRole, statusText, CHECKING_TEXT, WAITING_TEXT, type Snapshot } from './state.js';
 
 const role = (o: Partial<Snapshot['roles'][number]> & { role: string }) => ({ display: o.role, sprite: o.role, desk: o.role, active: true, ...o });
 
@@ -519,5 +519,27 @@ describe('conversations', () => {
     s = applyConversation(s, 'meeting:m2', [{ who: 'ceo', at: at('11:00:00'), text: 'turn 0' }]);
     expect(conversationTurns(s, 'meeting:m2')).toEqual([{ who: 'ceo', at: at('11:00:00'), text: 'turn 0' }]);
     expect(s.live['meeting:m2']).toBeUndefined();
+  });
+});
+
+/**
+ * W6-13. The office the owner is looking at must follow a save in Obsidian without a reload, and must spring
+ * back from a drag the daemon refused. Both arrive as one `layout.changed`, which is the daemon's own word:
+ * never merged with what the office drew, and a new object every time so `syncLayout` redraws.
+ */
+describe('layout.changed (W6-13)', () => {
+  it('replaces the office the viewer draws, whole', () => {
+    let s = applySnapshot(emptyState(), { ...snap, layout: { version: 1, nodes: { cto: { x: 30, y: 20 } }, connections: [] } });
+    expect(s.layout.nodes.cto).toEqual({ x: 30, y: 20 });
+    const before = s.layout;
+    s = applyLayoutChanged(s, { version: 1, nodes: { cto: { x: 44, y: 8 } }, connections: [{ from: 'cto', to: 'station_browser', kind: 'access' }] });
+    expect(s.layout.nodes.cto).toEqual({ x: 44, y: 8 });           // the hand edit, live
+    expect(s.layout.connections).toHaveLength(1);
+    expect(s.layout).not.toBe(before);                             // a new object, so the office redraws
+  });
+
+  it('takes nothing on trust: a frame that is not a layout empties the office rather than throwing', () => {
+    const s = applyLayoutChanged(applySnapshot(emptyState(), snap), { nodes: { cto: 'nope' }, connections: 'nope' });
+    expect(s.layout).toEqual({ version: 1, nodes: {}, connections: [] });
   });
 });

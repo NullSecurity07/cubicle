@@ -538,6 +538,10 @@ describe('S-6b: a ship the daemon queues itself carries a stream, or is not queu
 
   it('picks the only stream, and refuses to choose when there is none or several', () => {
     expect(soleStreamForShip(vault).refuse).toContain('no stream exists');
+    // W5-3(c): this sentence is printed on the owner's own decision note, under the Approved ribbon. It said
+    // "the product manager writes Streams/<slug>.md first" — a path and a placeholder, in the office.
+    expect(soleStreamForShip(vault).refuse).toContain('the product manager sets up the product stream first');
+    expect(soleStreamForShip(vault).refuse).not.toMatch(/Streams\/|<slug>|\.md/);
     aStream('site');
     expect(soleStreamForShip(vault)).toEqual({ stream: 'site' });
     aStream('app');

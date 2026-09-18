@@ -12,7 +12,7 @@
 import type { Ctx, View } from './content.js';
 import { chip, emptyHtml, esc, fmtWhen, humanTitle, kindLabel, obsidianUrl, row, rows, section, segmented, who } from './content.js';
 import { md } from './markdown.js';
-import type { DecidedRow, Decidable, DecideState, InboxRow, State } from '../state.js';
+import { inFlight, needsYouCount, type DecidedRow, type Decidable, type DecideState, type InboxRow, type State } from '../state.js';
 
 /** What the reader says between the click and the dispatcher applying the decision. */
 export const APPLYING_TEXT = 'Decided · applying…';
@@ -84,6 +84,23 @@ export function proposedContent(body: string): string | null {
 }
 
 /**
+ * The dispatcher's own closing line, taken off the note the reader shows (W5-3).
+ *
+ * `dispatcher.ts` appends `\n\n---\n_Resolved <when>: <outcome>_` — or `_Not applied: <why>_` — so that a note
+ * read in Obsidian says what became of it. In the office that sentence is already on the screen: the Approved
+ * ribbon carries the same `outcome`, and the action bar carries the same refusal. Dry-run 3 printed both, with
+ * the `---` and the underscores showing, so the owner read one decision as two.
+ *
+ * Anchored to the end of the note and to the dispatcher's two words, so a rule the note drew itself and
+ * anything it wrote in italics stay exactly where they are.
+ */
+const RESOLUTION_FOOTER = /\n+(?:[ \t]*-{3,}[ \t]*\n+)?_(?:Resolved|Not applied)\b[^\n]*_[ \t]*\n*$/;
+
+export function withoutResolutionFooter(body: string): string {
+  return body.replace(RESOLUTION_FOOTER, '');
+}
+
+/**
  * What the reader shows of a note.
  *
  * A founder brief's proposed content is the document the owner is adopting — the fence is how the note carries it,
@@ -91,7 +108,7 @@ export function proposedContent(body: string): string | null {
  * fence: a `file_change` proposes a *file*, and a file is shown as a file, monospace and unwrapped.
  */
 export function readerBody(n: Pick<InboxRow, 'kind' | 'body' | 'options'>): string {
-  const body = withoutFileInstructions(n.body ?? '', !!n.options?.length);
+  const body = withoutFileInstructions(withoutResolutionFooter(n.body ?? ''), !!n.options?.length);
   if (n.kind === 'plan_verdict') return planFirst(body);
   if (n.kind !== 'founder_brief') return body;
   const doc = proposedContent(body);
@@ -197,11 +214,15 @@ export function decisionsView(s: State): View {
   // company sent, not something anyone has to decide. Absent — which is the usual case — it takes no room at all.
   const mailRows = mailWithoutRows(s.mail, [...s.inbox.map((n) => n.title), ...s.decided.map((d) => d.title)]);
   const mail = mailRows.length ? section('Mail', rows(mailRows.slice(-20).reverse().map((m) => row({ title: m.text, right: esc(fmtWhen(m.ts)) })))) : '';
+  // One count, worked out once (ruling W6-12b): a row the owner has decided, or one the board is still arguing,
+  // is not waiting on them. Both keep their place in the list — the sheet says what became of a decision — but
+  // neither is counted here, on the pill, or on the wall screen, because all three read `needsYouCount`.
+  const mine = needsYouCount(s), waiting = inFlight(s).length;
   return {
     mode: 'drawer', icon: 'envelope', title: 'Decisions',
-    sub: s.inbox.length ? `${s.inbox.length} need${s.inbox.length === 1 ? 's' : ''} you` : 'nothing needs you',
+    sub: [mine ? `${mine} need${mine === 1 ? 's' : ''} you` : 'nothing needs you', waiting ? `${waiting} being applied` : ''].filter(Boolean).join(' · '),
     html: segmented([
-      { id: 'needs', label: 'Needs you', count: s.inbox.length, html: needs },
+      { id: 'needs', label: 'Needs you', count: mine, html: needs },
       { id: 'decided', label: 'Decided', count: s.decided.length, html: decided },
     ]) + mail,
   };

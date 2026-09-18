@@ -249,6 +249,31 @@ export function conversationTurns(s: Pick<State, 'turns' | 'live'>, id: string):
   return [...(s.turns[id] ?? []), ...(s.live[id] ?? [])];
 }
 
+/**
+ * The open decisions that still need the owner — and the one place that number is worked out (ruling W6-12b).
+ *
+ * The header pill read `data-count="1"` while the sheet beside it said "2 need you" and the wall screen said
+ * "2 to approve": three counts of one thing, from three expressions. A row the owner has already decided is
+ * waiting on the dispatcher, and a founder brief the board is still arguing has nothing to decide yet (rulings
+ * P8-8, P8-6); neither is on the owner's plate, and both keep their row on the sheet so the decision is not lost
+ * to the eye. `pendingProposals` — the daemon's own count of exactly this filter — is the fallback for a
+ * snapshot that carries no inbox at all.
+ */
+export const needsYou = (s: Pick<State, 'inbox'>): InboxRow[] => s.inbox.filter((n) => !n.pending && !n.board_pending);
+/** Open rows that are not the owner's to decide: decided and being applied, or still with the board. */
+export const inFlight = (s: Pick<State, 'inbox'>): InboxRow[] => s.inbox.filter((n) => n.pending || n.board_pending);
+/** The number every surface prints. See `needsYou`. */
+export const needsYouCount = (s: Pick<State, 'inbox' | 'pendingProposals'>): number => (s.inbox.length ? needsYou(s).length : s.pendingProposals);
+
+/**
+ * A `layout.changed` landed: the daemon's word on the office, whole (ruling W6-13).
+ *
+ * It arrives as its own op rather than through the event stream — the floor is one note as it stands, with no
+ * history to replay — so it needs a reducer of its own. Never merged with what this office drew: the daemon has
+ * already validated it, which is exactly what makes it the thing that springs a refused drag back.
+ */
+export const applyLayoutChanged = (s: State, layout: unknown): State => ({ ...s, layout: asLayout(layout) });
+
 /** A `conversation` reply landed: it is the whole thread, so the live buffer it replaces is dropped. */
 export function applyConversation(s: State, id: string, turns: ThreadTurn[]): State {
   const live = { ...s.live };

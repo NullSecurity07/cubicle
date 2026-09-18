@@ -413,7 +413,9 @@ export function soleStreamForShip(vault: Vault): { stream: string; refuse?: unde
   if (streams.length === 1) return { stream: streams[0].slug };
   return {
     refuse: streams.length === 0
-      ? 'no stream exists to ship against, so it would fail the CI gate after doing the work; the product manager writes Streams/<slug>.md first'
+      // In plain words, because this sentence is printed on the owner's own decision note, under the ribbon
+      // that says it was approved (W5-3(c)). A path with a placeholder in it is the company talking to itself.
+      ? 'no stream exists to ship against, so it would fail the CI gate after doing the work; the product manager sets up the product stream first'
       : `${streams.length} streams exist (${streams.map((s) => s.slug).join(', ')}) and nothing here may choose between them; name one on a scheduler.request instead`,
   };
 }
@@ -1697,7 +1699,11 @@ async function proposeThreeIdeas(deps: HeartbeatDeps, vault: Vault, opts: { prop
   if (ideas.length < 3) return SURPRISE_FAILED;
   const three = ideas.join('\n');
   createProposal(vault, { id: opts.propId, kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Three company ideas — pick one', body: `${three}\n\n${ownerInstruction('brand_change')}`, job: opts.jobId }, 'ceo');
-  return `I filed three ideas as a proposal in 00 Inbox/. Pick one with \`chosen:\` and \`approved: true\`.\n\n${three}`;
+  // One sentence, two readers (W5-3(a), then W6-7). The note and this chat bubble used to say different things
+  // — the note told the owner to edit `chosen:` and `approved:` because that is how Obsidian answers it, the
+  // bubble named the screen — and the note is read in the office too, beside three cards with an Approve button
+  // under them. So both now name the screen, out of the same helper.
+  return `I filed three ideas for you. ${ownerInstruction('brand_change')}\n\n${three}`;
 }
 
 /**

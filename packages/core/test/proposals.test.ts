@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault } from '../src/template.js';
 import { Vault } from '../src/vault.js';
-import { listInbox, createProposal, filenameTail } from '../src/proposals.js';
+import { listInbox, createProposal, filenameTail, noteTitle } from '../src/proposals.js';
 import { idFromKey } from '../src/fs.js';
 
 let dir: string;
@@ -106,5 +106,33 @@ describe('what a proposal is called on disk', () => {
       expect(v.readText(b.path)).toContain('lunch');
       expect(listInbox(v).filter((n) => n.data.kind === 'idea_verdict')).toHaveLength(2);
     } finally { v.close(); rmSync(dir2, { recursive: true, force: true }); }
+  });
+});
+
+/**
+ * Ruling W6-15. A proposal carries a whole document inside a `## Proposed content` fence, and that document has
+ * headings of its own. `/^#\s+(.+)$/m` over the body found one of them the moment the note lost its own heading,
+ * and the company's founding document reached the owner called "Proposed content".
+ */
+describe('noteTitle', () => {
+  const FOUR = '`'.repeat(4);
+  it('takes the note\u2019s own heading, never one from inside a fence', () => {
+    const body = `Read it closely.\n\n## Proposed content\n\n${FOUR}\n# Proposed content\n\n## What the company is\n\nx\n${FOUR}\n`;
+    expect(noteTitle(`# Founder Brief: PageSpeedAudit\n\n${body}`, 'founder_brief')).toBe('Founder Brief: PageSpeedAudit');
+    expect(noteTitle(body, 'founder_brief')).toBe('Founder brief');
+  });
+  it('closes a fence only on one as long as the one that opened it', () => {
+    // a ```` fence holding a ``` one: the inner fence is content, and so is every heading beside it
+    expect(noteTitle(`${FOUR}\n\`\`\`\n# Inner\n\`\`\`\n# Still inside\n${FOUR}\n# Mine\n`, 'plan_verdict')).toBe('Mine');
+  });
+  it('says what the note is when it has no heading at all', () => {
+    expect(noteTitle('', 'idea_verdict')).toBe('Idea verdict');
+    expect(noteTitle('just prose\n', 'hire')).toBe('Hire');
+    expect(noteTitle('## Only a subheading\n', 'spend')).toBe('Spend');
+  });
+  it('is what createProposal writes, for every note it writes', () => {
+    const { path: rel } = createProposal(vault, { kind: 'hire', from: 'owner', title: 'Hire Performance Auditor', body: 'a charter' }, 'owner');
+    const n = listInbox(vault).find((x) => x.path === rel)!;
+    expect(noteTitle(n.body, n.data.kind)).toBe('Hire Performance Auditor');
   });
 });

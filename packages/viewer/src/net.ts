@@ -17,13 +17,23 @@ export interface NetHandlers {
    * The daemon's reply to a `layout.set` (SP9b): the lines it would not take, each with the reason. An empty
    * list is a clean write. A daemon that has never heard of `layout.set` simply never sends this, which is why
    * the viewer keeps what it drew rather than waiting for an acknowledgement that is not coming.
+   *
+   * `sentence` and `kept` are ruling W6-2: what the line was left at, and the one sentence that says so — the
+   * same one the note's "Couldn't apply" section carries. The floor that came back is in `layout.changed`.
    */
-  onLayoutAck?(dropped: { line: string; reason: string }[]): void;
+  onLayoutAck?(dropped: { line: string; reason: string; sentence?: string; kept?: string }[]): void;
   /**
    * The daemon filed the dock's hire (SP9b): `id` is the proposal the owner now decides in Decisions. The desk
    * stays a ghost until they do — a hire is the owner's, not the office's.
    */
   onHireAck?(id: string): void;
+  /**
+   * The office moved, and the daemon is telling every open one (SP9b, ruling W6-13). It follows a `layout.set`
+   * from any window and a save of `Office/campus.md` in Obsidian, and it is the daemon's *validated* floor — so
+   * it is also what springs a refused drag back. It is an op of its own, not an `event`: the floor is one note
+   * as it stands, with no history to replay, so it never goes near the event stream.
+   */
+  onLayoutChanged?(layout: unknown): void;
 }
 
 /** Resolve the daemon WS URL + token: ?ws= & ?token= in the page URL, else defaults (daemon port 7411 next to the viewer's 7412). */
@@ -61,7 +71,8 @@ export class Net {
       else if (msg.op === 'chat.ack') this.h.onChatAck?.(String(msg.id));
       else if (msg.op === 'decide.ack') this.h.onDecideAck?.(String(msg.id));
       else if (msg.op === 'conversation') this.h.onConversation?.(String(msg.id), Array.isArray(msg.turns) ? (msg.turns as ThreadTurn[]) : []);
-      else if (msg.op === 'layout.ack') this.h.onLayoutAck?.(Array.isArray(msg.dropped) ? (msg.dropped as { line: string; reason: string }[]) : []);
+      else if (msg.op === 'layout.ack') this.h.onLayoutAck?.(Array.isArray(msg.dropped) ? (msg.dropped as { line: string; reason: string; sentence?: string }[]) : []);
+      else if (msg.op === 'layout.changed') this.h.onLayoutChanged?.(msg.layout);
       else if (msg.op === 'hire.ack') this.h.onHireAck?.(String(msg.id));
       else if (msg.op === 'error') this.h.onError?.(String(msg.message ?? 'the daemon refused that'), msg.id === undefined ? null : String(msg.id));
     };

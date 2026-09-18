@@ -108,6 +108,38 @@ export function createProposal(vault: Vault, p: NewProposal, by: string): { id: 
 }
 
 /**
+ * What a note is called on every screen the owner sees it on — the row, the reader, the wall, the outline.
+ *
+ * `createProposal` writes `# <title>` as the note's first line, so the heading *is* the title. The catch is that
+ * a proposal also carries a whole document inside a `## Proposed content` fence, and that document has headings
+ * of its own: when the board's rewrite took the covering note's heading away, a plain `/^#\s+(.+)$/m` fell
+ * through the body and into the fence, and the company's founding document reached the owner called **Proposed
+ * content** — in the reader's header, in its accessible name, and then as line 1 of `Memory/founder-brief.md`
+ * (ruling W6-15). Anything inside a fence belongs to the document, not to the note, so it is never read here.
+ *
+ * With no heading of its own the note is named for what it *is*: "Founder brief" tells the owner something,
+ * and a placeholder lifted off a page inside it tells them something false.
+ */
+export function noteTitle(body: string, kind = ''): string {
+  let fence = '';
+  for (const line of (body ?? '').split('\n')) {
+    const f = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (f) {
+      // A fence closes on the same character, at least as long as the one that opened it; anything else inside
+      // it is content (a ```` fence holds a ``` one, which is how a brief carries fenced markdown of its own).
+      if (!fence) fence = f[1];
+      else if (f[1][0] === fence[0] && f[1].length >= fence.length) fence = '';
+      continue;
+    }
+    if (fence) continue;
+    const h = /^#\s+(.+)$/.exec(line);
+    if (h && h[1].trim()) return h[1].trim();
+  }
+  const words = kind.replace(/[_-]+/g, ' ').trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : kind;
+}
+
+/**
  * Fill in what an owner typing a note in Obsidian will not: `id` (stable, derived from the path), `created`
  * (file mtime), `from: owner`, and `to: ceo` for owner-authored notes. Agent notes written by createProposal
  * already carry every field and pass through unchanged.

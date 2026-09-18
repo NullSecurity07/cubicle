@@ -28,13 +28,18 @@ export class TopBar {
     this.tagline.textContent = cutWords(this.said, Math.max(24, Math.floor(window.innerWidth / 16)));
     this.tagline.title = this.said;
   }
-  /** Nothing to approve is the absence of the pill, not a grey "0 to approve" parked beside the primary button. */
+  /**
+   * Nothing to approve is the absence of the pill, not a grey "0 to approve" parked beside the primary button.
+   *
+   * `n` is `needsYouCount` and nothing else (ruling W6-12b) — the pill read 1 while the sheet beside it read 2.
+   * The label is the pill's own words plus the noun, counted: "1 proposals need you" was on screen all run.
+   */
   setPending(n: number): void {
     this.pending.hidden = n === 0;
     if (!n) return;
     this.pending.textContent = n === 1 ? '1 to approve' : `${n} to approve`;
     this.pending.dataset.count = String(n);
-    this.pending.setAttribute('aria-label', `${n} proposals need you`);
+    this.pending.setAttribute('aria-label', n === 1 ? '1 decision needs you' : `${n} decisions need you`);
   }
   /**
    * The socket's own state, and only when it is worth saying.
