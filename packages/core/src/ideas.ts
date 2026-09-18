@@ -5,6 +5,7 @@ import { stringifyNote } from './frontmatter.js';
 import { setSection } from './jobs.js';
 import { nowIso } from './fs.js';
 import { renderRubric, BoardRubric, chairAnswerText, PRESSURE_CHAIR_SECTION } from './pressure.js';
+import { ownerPick, OWNER_PICK_LABEL } from './discovery.js';
 
 /**
  * The idea dossier: something the company *could* do, with everything anyone needs to rule on it in one note.
@@ -511,6 +512,61 @@ export function updateIdea(
   const data = IdeaFrontmatter.parse({ ...merged, id: slug });
   vault.writeText(ideaPath(slug), stringifyNote(data as Record<string, unknown>, body), by);
   return data;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// The idea the owner picked is the idea the owner kept (ruling W4-5)
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What a picked line names: the company, before the CEO's dash and without the CEO's numbering.
+ * `2. SpeedAudit — Free website speed fixes` is a decision about SpeedAudit.
+ */
+export function pickedIdeaName(line: string): string {
+  return (line ?? '').replace(/^\s*\d+[.)]\s*/, '').split(/\s+[—–-]\s+|:\s+/)[0].trim();
+}
+
+/** A picked name shorter than this is not enough to find a card by without matching half the vault. */
+const PICK_NAME_MIN = 4;
+
+/**
+ * Mark the idea the owner picked as **kept, by them** — and return its slug, or null (ruling W4-5).
+ *
+ * Every one of the five cards in the second dry-run read `decision: undecided`, including SpeedAudit, which
+ * the owner had chosen by name on the first morning. So `keptIdeas` was empty, `checkPlan` passed every plan
+ * vacuously, and the company spent four days planning against nothing anybody had agreed to. The owner's pick
+ * *is* a decision; it was simply never written onto the card, because the pick is made before the card exists
+ * (the `brand_change` resolved at 06:25 and the discovery job filed `Ideas/speedaudit.md` at 06:27).
+ *
+ * So it is applied where both are on disk rather than at the moment of the click, and it is idempotent: only
+ * an **undecided** card the owner has seen is touched, so a later park or scrap of theirs is never undone by a
+ * cycle that ran afterwards.
+ */
+export function keepOwnerPick(vault: Vault, by = 'daemon', now = new Date()): string | null {
+  const pick = ownerPick(vault);
+  if (!pick) return null;
+  const name = pickedIdeaName(pick.line);
+  if (name.length < PICK_NAME_MIN) return null;
+  const want = ideaSlug(name);
+  const card = listIdeas(vault).find((i) => ownerHasSeenIdea(i)
+    && (i.id === want || sameIdeaTitle(i.title, name) || ideaSlug(i.title).startsWith(want)));
+  if (!card || card.decision !== 'undecided') return null;
+  const at = now.toISOString();
+  updateIdea(vault, card.id, { decision: 'keep', decided_by: 'owner', decided_at: at, status: 'accepted' }, by, {
+    heading: '## Decision',
+    content: `**keep** — the owner, ${at.slice(0, 10)}. ${OWNER_PICK_LABEL} ${pick.line.replace(/^\s*\d+[.)]\s*/, '')}`,
+  });
+  return card.id;
+}
+
+/** What an idea verdict tells the owner about a card they kept themselves and the board would now park. */
+export function ownerKeptNote(band: IdeaBand): string {
+  return `You kept this; the board would ${band} it. Your decision stands unless you change it here.`;
+}
+
+/** True for a card the **owner** kept: the one decision no later board session may write over (ruling W4-5). */
+export function ownerKept(idea: { decision: IdeaDecision; decided_by: string }): boolean {
+  return idea.decision === 'keep' && idea.decided_by === 'owner';
 }
 
 /** One line per idea for a plan goal: what it is, what it scored, and where to read it. */

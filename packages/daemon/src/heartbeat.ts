@@ -960,8 +960,8 @@ export function keptIdeasGoalBlock(lines: string[]): string {
  * With nothing kept there is nothing to name, so the rule says so rather than asking for a slug that cannot exist.
  */
 export function planIdeaRule(kept: string[]): string {
-  if (!kept.length) return `No idea has been kept yet, so no objective can name one: plan from ${FOUNDER_BRIEF} alone this cycle, and keep every objective inside what it says.`;
-  return `HARD RULE: every objective bullet ends with "${PLAN_IDEA_MARKER} <slug>" naming the kept idea it serves — one of ${kept.map((k) => `\`${k}\``).join(', ')} — after its "stream:" if it has one (a wikilink, \`${PLAN_IDEA_MARKER} [[Ideas/<slug>]]\`, reads the same). An objective that serves none of those, or that serves an idea the owner parked, scrapped or has not ruled on, is refused in code before the board sees it and the whole plan comes back to you. The board's findings are advice about the ideas the owner kept; they are never a licence to plan a different business.`;
+  if (!kept.length) return `${NOTHING_PLANNED}: there is nothing for this plan to serve, and it should not have been asked for. Write nothing and say so.`;
+  return `HARD RULE: every objective bullet ends with "${PLAN_IDEA_MARKER} <slug>" and nothing after it, naming the kept idea it serves — one of ${kept.map((k) => `\`${k}\``).join(', ')} (a wikilink, \`${PLAN_IDEA_MARKER} [[Ideas/<slug>]]\`, reads the same). Write no "stream:" on an objective: the marker an objective carries is the idea it serves, and the ideas the owner kept are the only ideas this plan may be about. The objective must also describe what that card describes — an objective whose product is not on the card is refused in code, whatever the board said. An objective that serves none of those, or that serves an idea the owner parked, scrapped or has not ruled on, is refused in code before the board sees it and the whole plan comes back to you. The board's findings are advice about the ideas the owner kept; they are never a licence to plan a different business.`;
 }
 
 /**
@@ -1030,14 +1030,23 @@ export function closeIdeaVerdicts(vault: Vault, o: { now: Date; decidesAfterHour
     // that says what happened to the idea, matching the card.
     const band = ((note.data as { band?: string }).band ?? 'park') as IdeaBand;
     const slug = String(note.data.target ?? '').slice('Ideas/'.length).replace(/\.md$/, '');
-    if (slug && readIdea(vault, slug)) {
+    const card = slug ? readIdea(vault, slug) : null;
+    // Ruling W4-5: a board park or scrap never writes over a keep the **owner** made. The board advises and
+    // the owner rules, and a recommendation standing "because nobody answered" must not quietly reverse an
+    // answer they already gave. The note still closes — the record is what the board would have done — and it
+    // says which of the two decisions is the company's.
+    const kept = !!card && ownerKept(card.data);
+    if (card && !kept) {
       updateIdea(vault, slug, { decision: band, decided_by: 'board', decided_at: nowIso(), status: band === 'scrap' ? 'rejected' : band === 'keep' ? 'accepted' : 'triaged' }, 'daemon', {
         heading: '## Decision',
         content: `**${band}** — the board, ${nowIso().slice(0, 10)}. The owner did not rule within ${o.decidesAfterHours} h, so the recommendation stood (\`board_decides_after_hours\`).`,
       });
     }
-    vault.updateNote(note.path, (n) => ({ data: { ...n.data, approved: outcome === 'approved', decision: band, decided_by: 'board', resolved_at: nowIso() }, body: n.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: the recommendation (${band}) stood after ${o.decidesAfterHours} h._\n` }), 'daemon');
-    vault.events.emit({ type: 'proposal.resolved', agent: 'daemon', job: o.jobId, payload: { id: note.data.id, kind: 'idea_verdict', approved: outcome === 'approved', decision: band, outcome: `the board decided: ${band}` } });
+    const resolution = kept
+      ? `${ownerKeptNote(band)} The card is unchanged.`
+      : `the recommendation (${band}) stood after ${o.decidesAfterHours} h.`;
+    vault.updateNote(note.path, (n) => ({ data: { ...n.data, approved: outcome === 'approved', decision: kept ? 'keep' : band, decided_by: kept ? 'owner' : 'board', resolved_at: nowIso() }, body: n.body.trimEnd() + `\n\n---\n_Resolved ${nowIso()}: ${resolution}_\n` }), 'daemon');
+    vault.events.emit({ type: 'proposal.resolved', agent: 'daemon', job: o.jobId, payload: { id: note.data.id, kind: 'idea_verdict', approved: outcome === 'approved', decision: kept ? 'keep' : band, outcome: kept ? `the owner kept this; the board would ${band} it` : `the board decided: ${band}` } });
     closed++;
   }
   return closed;
@@ -1066,6 +1075,8 @@ export interface IdeaVerdictFacts {
   research: string;
   estimate: string;
   decidesAfterHours: number;
+  /** Ruling W4-5: the owner kept this card themselves, and the board's band is only advice about it. */
+  ownerKept?: boolean;
 }
 
 /**
@@ -1082,6 +1093,9 @@ export function ideaVerdictBody(f: IdeaVerdictFacts): string {
     `**${f.title}** — [[Ideas/${f.slug}]]`,
     '',
     `Recommendation: **${f.band}**. ${f.reason}`,
+    // Ruling W4-5: read first, above the arithmetic, because it is the one line that says the decision is
+    // already made and this note is the board asking them to think again rather than telling them the answer.
+    ...(f.ownerKept && f.band !== 'keep' ? ['', ownerKeptNote(f.band)] : []),
     '',
     `- Research: ${f.research || 'none linked'}`,
     `- Cost: ${f.estimate || 'not estimated'}`,
@@ -1841,6 +1855,14 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
    * deadlock the company on the document it is trying to write.
    */
   const planningWaitsForBrief = (): boolean => !hasApprovedBrief(vault);
+  /**
+   * Ruling W4-5: with no kept idea the company writes no plan. Everything a plan can be about is an idea the
+   * owner agreed to, so a plan written with nothing kept is the company deciding for them — which is what the
+   * second dry-run did for four days against five cards all reading `decision: undecided`. The owner's pick is
+   * itself a keep (`keepOwnerPick`, run below), so this is a real "nobody has agreed to anything yet" and not
+   * the ordinary state of a young company.
+   */
+  const planningWaitsForIdea = (): boolean => keptIdeas(vault).length === 0;
 
   if (job.checkpoint_step > 0 && !state.finished) {
     const m = readJob(vault, jobId)?.body.match(/## Plan\s*\n+```json\n([\s\S]*?)\n```/);
@@ -2211,6 +2233,11 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
       }
       case 'company_plan': {
         if (planningWaitsForBrief()) { done(i, WAITING_FOR_BRIEF); break; }
+        // Ruling W4-5, and **before** the gate below reads `keptIdeas`: the idea the owner picked by name is
+        // the idea the owner kept. Run here as well as in `owner_verdict` so the cycle that learns it is the
+        // cycle that plans against it, rather than the one after.
+        try { keepOwnerPick(vault, 'daemon', now()); } catch { /* a pick is never a reason to stall a cycle */ }
+        if (planningWaitsForIdea()) { done(i, NOTHING_PLANNED); break; }
         // Before a word of the plan is written: what did the company decide about its ideas? An idea verdict the
         // owner never came back to is closed here rather than four steps later (ruling W3-1) — otherwise the plan
         // is written against an empty `keptIdeas` while a kept idea sits one step away, which is exactly how a
@@ -2283,7 +2310,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           const chief = officeHolder(org, 'chief_executive');
           const id = createJob(vault, {
             type: 'company.plan', title: state.vetoes ? 'Rewrite the plan after the board' : 'Write the company plan', assigned: chief, priority: 1, parent: jobId, team: teamOf(org, chief)?.id, owner_role: chief,
-            goal: `Write this cycle's objectives per division, not jobs.\n\nSituation:\n${situationSummary()}\n\nDivisions: ${teams}.\n\nStreams: ${streams}.\n\n${kept}${brief ? `\n\nThe founder brief (${FOUNDER_BRIEF}) is what this company is for. Read it before you plan; everything below serves it:\n\n${brief.slice(0, 2000)}` : ''}\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <division id>" subsection per division that has work this cycle (a bullet per objective; every objective for a product division ends with "stream: <slug>" naming a note under Streams/, and states an outcome with a number rather than a feature list; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); a division with nothing to do gets no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.\n\n${planIdeaRule(keptCards.map((i) => i.id))}${findings}`,
+            goal: `Write this cycle's objectives per division, not jobs.\n\nSituation:\n${situationSummary()}\n\nDivisions: ${teams}.\n\nStreams: ${streams}.\n\n${kept}${brief ? `\n\nThe founder brief (${FOUNDER_BRIEF}) is what this company is for. Read it before you plan; everything below serves it:\n\n${brief.slice(0, 2000)}` : ''}\n\nDo: (1) vault.read Plans/plan.md, Memory/lessons.md, the latest Runs/ note, Docs/engineering-handbook.md and Docs/tech-radar.md if present; (2) rewrite Plans/plan.md via vault.write with "# Plan", "## Objectives" and one "### <division id>" subsection per division that has work this cycle (a bullet per objective; every objective states an outcome with a number rather than a feature list and ends with the idea marker below — never a trailing "stream:", which is a fact about a job and not about an objective; add a line "process: <name>" under an objective that needs a cross-team pipeline from Processes/); a division with nothing to do gets no section; (3) finish with a one-paragraph summary. If one role can do it, don't split it.\n\n${planIdeaRule(keptCards.map((i) => i.id))}${findings}`,
           }, 'ceo');
           // This cycle is the rewrite that rejection asked for, so spend the note — but only now that the
           // rewrite exists (Task 6 review, minor 5). Stamped before `createJob`, a kill in between left the
@@ -2305,6 +2332,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
       }
       case 'board_premortem': {
         if (planningWaitsForBrief()) { done(i, WAITING_FOR_BRIEF); break; }
+        if (planningWaitsForIdea()) { done(i, NOTHING_PLANNED); break; }
         if (state.planSkipped || state.planWaiting) { done(i, 'board skipped — the plan was not rewritten'); break; }
         if (state.boardVerdict) { done(i, `board ${state.boardVerdict} (already run)`); break; }
         const org = loadOrg(vault);
@@ -2441,6 +2469,10 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
       }
       case 'owner_verdict': {
         const decidesAfterHours = vault.constitution().board_decides_after_hours;
+        // Ruling W4-5, before anything else rules on an idea: the card the owner picked by name on the first
+        // morning is the card they kept. It is applied here rather than at the click because the pick is made
+        // minutes before the discovery job files the card; idempotent, so the cycles that follow are no-ops.
+        try { keepOwnerPick(vault, 'daemon', now()); } catch { /* a pick is never a reason to stall a cycle */ }
         // The idea half of this step (see `closeIdeaVerdicts`), and it runs before every early exit below: a
         // cycle whose plan was skipped or had nothing to rule on still has to close the idea notes it filed, or
         // an unattended night would leave them open for ever. `company_plan` has already run the same sweep for
@@ -2451,6 +2483,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // brief's candidate ideas come from). Only the plan verdict below waits — and with no brief there was
         // no plan this cycle either, so there is nothing to rule on in any case.
         if (planningWaitsForBrief()) { done(i, WAITING_FOR_BRIEF); break; }
+        if (planningWaitsForIdea()) { done(i, NOTHING_PLANNED); break; }
         // No new plan this cycle means nothing to rule on: the plan the divisions are working from was already
         // approved, and `division_plans` skips on `planSkipped` before it ever looks at `state.verdict`.
         if (state.planSkipped) { done(i, 'no new plan to rule on'); break; }
@@ -2497,6 +2530,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
       }
       case 'division_plans': {
         if (planningWaitsForBrief()) { done(i, WAITING_FOR_BRIEF); break; }
+        if (planningWaitsForIdea()) { done(i, NOTHING_PLANNED); break; }
         // The leads already planned against this plan last cycle and their jobs are the open work the gate saw.
         if (state.planSkipped && !state.divisionPlanJobs) { done(i, 'division plans skipped — no new plan to fan out'); break; }
         // A plan with no real objective files no verdict (see owner_verdict) — and the remedy for that must stop
@@ -2658,6 +2692,8 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         const needsYou = [
           ...pending.map((p) => `- Approve or reject: ${p.body.split('\n')[0].replace(/^#\s*/, '')} (\`${p.path}\`)`),
           ...(briefRow ? [briefRow] : []),
+          // Ruling W4-5: the one action that restarts a company with nothing kept, in the place they read.
+          ...(hasApprovedBrief(vault) && keptIdeas(vault).length === 0 ? [`- ${NOTHING_PLANNED} — keep one of the idea cards (\`decision: keep\`, or rule on a "Keep, park or scrap" note) and the company plans against it`] : []),
           // Ruling W3-1: the plan came back twice still not resting on anything the owner kept, so the board was
           // not asked and nothing was fanned out. Nobody else says this — the "vetoed twice" note the CEO files is
           // a `message`, and `pending` above deliberately leaves messages out — and a cycle that plans nothing and
@@ -2678,6 +2714,10 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           // Ahead of every other planning line, because when it is true none of them can be: the four planning
           // steps did not run at all (ruling S-1), so "skipped", "paused" and "pending" would all be inventions.
           ...(hasApprovedBrief(vault) ? [] : ['Planning: waiting for the founder brief — nothing is planned until you adopt one.']),
+          // Ruling W4-5, in the same place and for the same reason: the four planning steps did nothing, and
+          // the brief is where the owner finds out why. Below the brief line, because with no brief there is
+          // no idea either and the brief is the thing to do first.
+          ...(hasApprovedBrief(vault) && keptIdeas(vault).length === 0 ? [`Planning: ${NOTHING_PLANNED} — keep an idea and the next cycle plans against it.`] : []),
           // Its own line for the same reason the estimate one is: a discovery job that ran long delayed the
           // reading, not the planning, and the plan this cycle wrote was written without it.
           ...(state.discoveryPending ? ['Discovery: still running — your material was not read in time, so this cycle planned without it; the founder brief will follow.'] : []),

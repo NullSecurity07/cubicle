@@ -70,12 +70,17 @@ describe('seedFirstStream', () => {
   });
 });
 
-describe('the company plan names streams', () => {
-  it('the CEO is told to attach a stream to every objective', async () => {
+describe('the company plan names the kept idea, not a stream', () => {
+  it('the CEO is told to end every objective on the idea it serves (W4-5)', async () => {
+    // It used to be asked for a trailing `stream: <slug>` too, and the second dry-run's plan carried
+    // " stream: speedaudit" appended to the prose with no `idea:` anywhere. A stream is a fact about a job; an
+    // objective says which idea the owner kept it serves, and the jobs a division lead queues still name theirs.
     const { HEARTBEAT_STEPS } = await import('../src/heartbeat.js');
     expect(HEARTBEAT_STEPS).toContain('company_plan');
     const src = (await import('node:fs')).readFileSync(path.resolve(__dirname, '../src/heartbeat.ts'), 'utf8');
-    expect(src).toMatch(/stream: <slug>/);
+    expect(src).not.toMatch(/objective for a product division ends with "stream: <slug>"/);
+    expect(src).toMatch(/never a trailing "stream:"/);
     expect(src).toMatch(/Streams\//);
+    expect(src).toMatch(/naming its stream and its risk/);
   });
 });

@@ -71,7 +71,8 @@ function track<T extends Daemon>(d: T): T {
 }
 
 /** The CEO's objectives for the cycle: only the Dev room has work, so only the CTO's division gets a division.plan. */
-const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/\n';
+// Ruling W3-1/W4-5: every objective names the idea the owner kept, which is what `adoptFounderBrief` keeps.
+const PLAN = '---\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### dev\n- Scaffold the site from Brand/ idea: meal-kits\n';
 
 /**
  * Role-aware scripted LLM for the two-level planning cycle: the CEO writes the company plan, the board always

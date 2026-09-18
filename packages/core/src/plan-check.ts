@@ -209,6 +209,13 @@ export interface PlanCheck {
 }
 
 /**
+ * What the company says — in the checkpoint log, in the brief and in the plan's own refusal — on a cycle with
+ * nothing kept (ruling W4-5). One sentence, written once, because the owner reads it in three places and they
+ * have to be the same sentence.
+ */
+export const NOTHING_PLANNED = 'no idea is kept yet, so nothing is planned';
+
+/**
  * Check a written plan against the ideas the company kept.
  *
  * Two ways an objective fails, and the finding names the objective either way so the CEO can fix the bullet
@@ -219,17 +226,18 @@ export interface PlanCheck {
  * 2. **It names an idea nobody kept** — parked, scrapped, still undecided, or no card at all. Each gets its own
  *    sentence, because "we parked that" and "there is no such card" are different mistakes.
  *
- * With **no kept ideas at all** the check passes and says nothing. That is not a loophole: on the cycle after the
- * founder brief is adopted there is often nothing kept yet (the board rules on one card a cycle), the plan writer
- * is told to plan from the brief in exactly that case, and a check that demanded a slug that cannot exist would
- * return every plan for ever and stop the company before it started.
+ * With **no kept idea at all** the check refuses everything (ruling W4-5). It used to pass and say nothing, on
+ * the reasoning that the cycle after the brief is adopted has nothing kept yet — and that exemption is exactly
+ * how the second dry-run planned for four days against five cards all reading `decision: undecided`, with every
+ * plan passing a check that never looked at one. The owner's pick is a keep now (`keepOwnerPick`), so there is
+ * something kept from the first morning; with genuinely nothing kept the company writes no plan and says so.
  */
 export function checkPlan(vault: Vault, planMd: string): PlanCheck {
   const objectives = planObjectives(planMd);
   if (!objectives.length) return { ok: true, findings: [] };
   const all = listIdeas(vault);
   const kept = keptIdeas(vault).map((i) => i.id);
-  if (!kept.length) return { ok: true, findings: [] };
+  if (!kept.length) return { ok: false, findings: [`The plan states ${objectives.length} objective${objectives.length === 1 ? '' : 's'} and ${NOTHING_PLANNED}: no objective can say which idea it serves. Keep an idea — pick one of the CEO's, or set \`decision: keep\` on a card — and the next plan is written against it.`] };
   const decisions = new Map<string, IdeaDecision>(all.map((i) => [i.id.toLowerCase(), i.decision]));
   const findings: string[] = [];
   for (const o of objectives) {
