@@ -153,9 +153,19 @@ export async function applyHire(vault: Vault, note: { path: string; data: InboxF
   }
   if (!isValidRoleId(role.role)) return `invalid role id ${role.role}`;
   if (vault.exists(`Roles/${role.role}.md`)) return `role ${role.role} already exists`;
-  const linked = [...new Set((note.body.match(/\[\[(job_[^\]|]+)/g) ?? []).map((m) => m.slice(2)))];
-  const justified = linked.filter((id) => { const j = readJob(vault, id); return !!j && (['blocked', 'failed'].includes(j.data.status) || j.data.attempt > 1); });
-  if (justified.length < 2) return `hire needs links to at least 2 distinct blocked, failed or retried jobs (found ${justified.length} of ${linked.length} linked)`;
+  // The evidence rule is a rule for the *company* (ruling W6-1 (a)): a role the company asks itself to create
+  // has to point at work that stalled for want of it, or it hires to fill an org chart. The owner is the
+  // authority and owes nobody evidence — they dropped a desk on the floor and said who sits at it — so a hire
+  // they proposed themselves is exempt. `from` is trustworthy here: agents cannot write `00 Inbox/` at all, and
+  // `from: 'owner'` is set by the office's own `hire.propose`.
+  if (note.data.from !== 'owner') {
+    const linked = [...new Set((note.body.match(/\[\[(job_[^\]|]+)/g) ?? []).map((m) => m.slice(2)))];
+    const justified = linked.filter((id) => { const j = readJob(vault, id); return !!j && (['blocked', 'failed'].includes(j.data.status) || j.data.attempt > 1); });
+    // Plain words, because this sentence is what the owner reads on the note after their click (ruling W6-1 (b)).
+    // The counts come after it, for whoever has to go and look; "2 distinct blocked, failed or retried jobs
+    // (found 0 of 0 linked)" was the whole of what the live run told them.
+    if (justified.length < 2) return `a hire proposed by the company needs two jobs that were blocked for lack of this role; ${linked.length ? `of the ${linked.length} job${linked.length === 1 ? '' : 's'} linked here, ${justified.length} qualif${justified.length === 1 ? 'ies' : 'y'}` : 'this one links none'}`;
+  }
   const active = activeRoles(vault).filter((r) => r.active).length;
   if (active >= c.max_roles) return `max_roles (${c.max_roles}) reached`;
   // F2: a charter naming a team joins it — otherwise reportsOf(lead) never sees the hire and the lead can't

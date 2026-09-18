@@ -138,8 +138,14 @@ export interface Snapshot {
      */
     board_pending: boolean;
   }[];
-  /** The last 20 notes the dispatcher closed — the Decisions sheet's *Decided* segment. */
-  decided: { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean | null; chosen: number | null; outcome: string; body: string }[];
+  /**
+   * The last 20 notes the dispatcher closed — the Decisions sheet's *Decided* segment.
+   *
+   * `refused` is set when the note was closed **because the side effect was refused** (ruling W6-1): the owner
+   * approved, the company could not do it, and the row is a receipt for that rather than for a success. It is
+   * the same sentence `outcome` carries, split out so a reader can badge the row without parsing prose.
+   */
+  decided: { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean | null; chosen: number | null; outcome: string; refused: string | null; body: string }[];
   /** Every conversation in the vault, newest first — the Messages view's thread list. */
   conversations: Thread[];
   /** Owner ↔ CEO conversation from 00 Inbox/ message notes (oldest first) — the cabin thread. */
@@ -215,6 +221,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
       id: n.data.id, kind: n.data.kind, title: (n.body.match(/^#\s+(.+)$/m)?.[1] ?? n.data.kind).trim(), path: n.path, created: n.data.created,
       resolved_at: str(n.data.resolved_at), approved: n.data.approved, chosen: n.data.chosen,
       outcome: resolvedOutcome(n.body),
+      refused: typeof (n.data as Record<string, unknown>).refused === 'string' && (n.data as Record<string, unknown>).refused ? String((n.data as Record<string, unknown>).refused) : null,
       // The note the owner decided, so the reader can keep showing it under the outcome instead of emptying: the
       // first thing anyone does after adopting a brief is read the brief they adopted. Capped, because these
       // ride on every snapshot and *Decided* is a receipt, not the archive — `00 Inbox/` is the archive.
@@ -385,7 +392,12 @@ export class WsServer {
               const charter = stringifyNote({ role, display, team, tools: [] }, `# Charter\n\n${display} joins ${org.teams[team].name}.\n`);
               const { id } = createProposal(this.deps.vault, {
                 kind: 'hire', from: 'owner', title: `Hire ${display}`,
-                body: `The owner put a desk in the ${org.teams[team].name} room and asked for ${display} to sit at it.\n\nFill in the tools this charter needs, and link the work that justifies the hire, before approving.\n\n\`\`\`markdown\n${charter}\`\`\`\n`,
+                // What will be checked when the button is pressed, said before it is pressed (ruling W6-1 (c)).
+                // The live run's reader told the owner to "link the work that justifies the hire" with nothing
+                // in the GUI to link anything with — and then refused the hire for a rule it had never named.
+                // A hire the owner asked for owes no such evidence, so the note says so, and names the two
+                // conditions that can still stop it.
+                body: `The owner put a desk in the ${org.teams[team].name} room and asked for ${display} to sit at it.\n\nYou asked for this hire yourself, so it needs no justifying jobs — approve it and ${display} is hired. It can only fail if the room has no free desk left, or the company is already at the headcount your constitution allows.\n\nFill in the tools this charter needs before approving; an empty list means ${display} can do nothing but talk.\n\n\`\`\`markdown\n${charter}\`\`\`\n`,
                 at,
               }, 'owner');
               ws.send(JSON.stringify({ op: 'hire.ack', id }));

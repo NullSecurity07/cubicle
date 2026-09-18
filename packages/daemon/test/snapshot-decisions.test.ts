@@ -100,33 +100,33 @@ describe('a decided note keeps its row until the dispatcher is done with it (rul
     expect(snap.pendingProposals).toBe(0);
   });
 
-  it('a note the dispatcher refuses keeps its row for good, with the refusal on it', async () => {
-    // `chosen: 4` names no option, so the dispatcher refuses it — and never resolves it. The hole this ruling
-    // is about was permanent for exactly this note.
+  it('a note the dispatcher refuses is closed, with the refusal on it (ruling W6-1)', async () => {
+    // `chosen: 4` names no option, so the dispatcher refuses it. Under P8-8 the note was left open for a retry
+    // and kept its *Needs you* row for good; W6-1 ends that — a refused side effect is an answer, so the note
+    // resolves and the row becomes a receipt. The hole P8-8 was about (a decided note in neither list) stays
+    // closed either way: the row is in `decided` from the moment the dispatcher is done with it.
     const { id, path: rel } = createProposal(vault, { kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Pick one', body: THREE }, 'ceo');
     vault.updateNote(rel, (n) => ({ data: { ...n.data, approved: true, chosen: 4 }, body: n.body }), 'owner');
 
-    expect(await dispatchProposals(deps())).toBe(0);
+    expect(await dispatchProposals(deps())).toBe(1);
 
-    // `refuseNote` stamps no `resolved_at` and emits no `proposal.resolved`, and `retryDue` re-refuses every
-    // ten minutes without saying so again. The row is the only place the owner ever learns any of this.
     const note = findInboxById(vault, id)!;
-    expect(note.data.resolved_at ?? null).toBeNull();
-    expect(vault.events.query({ types: ['proposal.resolved'] })).toHaveLength(0);
+    expect(note.data.resolved_at).toBeTruthy();
+    expect(vault.events.query({ types: ['proposal.resolved'] })).toHaveLength(1);
 
     const snap = buildSnapshot(vault);
-    const r = row(snap, id);
-    expect(r.pending).toBe(true);
-    expect(r.approved).toBe(true);
-    expect(r.chosen).toBe(4);
-    expect(r.refused).toContain('chosen: 4 matches no option');
-    expect(r.body).toContain('_Not applied:');
-    expect(snap.decided.some((d) => d.id === id)).toBe(false);
+    expect(snap.inbox.some((r) => r.id === id)).toBe(false);
+    const d = snap.decided.find((x) => x.id === id)!;
+    expect(d.approved).toBe(true);
+    expect(d.chosen).toBe(4);
+    expect(d.refused).toContain('chosen: 4 matches no option');
+    expect(d.outcome).toContain('not applied');
+    expect(d.body).toContain('_Resolved ');
     expect(snap.pendingProposals).toBe(0);
 
-    // And it stays: a second pass changes nothing about what the owner is shown.
+    // And it stays: a second pass neither re-refuses it nor re-opens it.
     await dispatchProposals(deps());
-    expect(row(buildSnapshot(vault), id).refused).toContain('chosen: 4 matches no option');
+    expect(buildSnapshot(vault).decided.find((x) => x.id === id)!.refused).toContain('chosen: 4 matches no option');
   });
 
   it('and moves to decided once it is resolved', async () => {
