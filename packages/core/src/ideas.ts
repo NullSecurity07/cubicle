@@ -412,6 +412,14 @@ export function renderEvidenceSection(evidence: string[]): string {
  */
 export function writeIdeaCard(vault: Vault, idea: NewIdea, by: string): string {
   let slug = idea.slug ? ideaSlug(idea.slug) : ideaSlug(idea.title);
+  // Ruling W6-5, and only when the caller did not name a slug: the owner's pick is already on disk under the
+  // name they chose, and the card the discovery job is filing now is that same company under a fuller title.
+  // Filed as a second dossier it would be scored, judged and decided on its own while the kept one sat beside
+  // it — so it is folded into theirs, which keeps the decision they made and takes the content this call brings.
+  if (!idea.slug) {
+    const covered = pickCardCovering(vault, idea.title);
+    if (covered && covered !== slug) return foldIntoPick(vault, covered, idea, by);
+  }
   if (vault.exists(ideaPath(slug))) {
     const existing = readIdea(vault, slug);
     if (existing && sameIdeaTitle(existing.data.title, idea.title)) return slug;
@@ -599,7 +607,8 @@ export function pickedIdeaName(line: string): string {
 const PICK_NAME_MIN = 4;
 
 /**
- * Mark the idea the owner picked as **kept, by them** — and return its slug, or null (ruling W4-5).
+ * Mark the idea the owner picked as **kept, by them** — filing the card first when nobody else has — and return
+ * its slug, or null (rulings W4-5, W6-5).
  *
  * Every one of the five cards in the second dry-run read `decision: undecided`, including SpeedAudit, which
  * the owner had chosen by name on the first morning. So `keptIdeas` was empty, `checkPlan` passed every plan
@@ -607,12 +616,18 @@ const PICK_NAME_MIN = 4;
  * *is* a decision; it was simply never written onto the card, because the pick is made before the card exists
  * (the `brand_change` resolved at 06:25 and the discovery job filed `Ideas/speedaudit.md` at 06:27).
  *
- * So it is applied where both are on disk rather than at the moment of the click, and it is idempotent: only
- * an **undecided** card the owner has seen is touched, so a later park or scrap of theirs is never undone by a
- * cycle that ran afterwards.
+ * The third dry-run is why the card is now **filed here** rather than waited for: the owner picked PageSpeedAudit
+ * at 09:21 and the card still read `decision: undecided` eight hours later, because the keep only ever ran where
+ * both the pick and somebody else's card were already on disk. A decision that depends on another office
+ * finishing first is not a decision. So the pick writes its own card out of the line the owner chose, and the
+ * card discovery files afterwards folds into it (`writeIdeaCard`) instead of opening a second dossier.
+ *
+ * Idempotent from either direction, and it never rules twice: only an **undecided** card the owner has seen is
+ * touched, so a later park or scrap of theirs is never undone by a cycle that ran afterwards, and a second call
+ * with the card already kept returns null rather than re-filing anything.
  */
 export function keepOwnerPick(vault: Vault, by = 'daemon', now = new Date()): string | null {
-  const chose = pickedCard(vault);
+  const chose = pickedCard(vault) ?? filePickedCard(vault, by, now);
   const card = chose ?? briefCard(vault);
   if (!card || card.idea.decision !== 'undecided') return null;
   const at = now.toISOString();
@@ -621,6 +636,70 @@ export function keepOwnerPick(vault: Vault, by = 'daemon', now = new Date()): st
     content: `**keep** — the owner, ${at.slice(0, 10)}. ${card.why}`,
   });
   return card.idea.id;
+}
+
+/**
+ * The card the owner's pick deserves and nobody has written, filed out of the line they chose — or null when
+ * they have not picked, or when a card for it already exists (`pickedCard` found none, so any card that matches
+ * the name is one they already ruled on and is theirs to leave alone).
+ *
+ * The title is their own sentence, minus the CEO's numbering: the whole line, because "SpeedAudit" alone names
+ * a company and the rest of the line says what it sells, and that is the one description of the business the
+ * vault has at this moment. `source: owner` because they chose it — `OWNER_SEEN_IDEA_SOURCES` has to agree that
+ * they have seen it, and nothing else in the enum is true of a line the owner picked off a list.
+ */
+function filePickedCard(vault: Vault, by: string, now: Date): { idea: IdeaFrontmatter; why: string } | null {
+  const pick = ownerPick(vault);
+  if (!pick) return null;
+  const name = pickedIdeaName(pick.line);
+  if (name.length < PICK_NAME_MIN) return null;
+  const line = pick.line.replace(/^\s*\d+[.)]\s*/, '').trim();
+  // A card under this exact slug that `pickedCard` did not return is one the owner has already decided (or one
+  // the sweep filed and they have not seen); either way filing over it is not this function's business.
+  if (vault.exists(ideaPath(ideaSlug(name)))) return null;
+  const slug = writeIdeaCard(vault, {
+    slug: ideaSlug(name), title: line, source: 'owner', evidence: [pick.path],
+    what_changed: `${OWNER_PICK_LABEL} ${line}`,
+    why_it_matters: 'The owner chose it. Everything the company does from here is written against this line until they say otherwise.',
+    created: now.toISOString(),
+  }, by);
+  const idea = readIdea(vault, slug);
+  return idea ? { idea: idea.data, why: `${OWNER_PICK_LABEL} ${line}` } : null;
+}
+
+/**
+ * The slug of the card the owner picked that a title about to be filed is the same company as — or null.
+ *
+ * Narrow on purpose (ruling W6-5). It matches only a card the **owner kept** whose slug is exactly its own name
+ * slugified, which is the shape `filePickedCard` writes and nothing else does; and it compares the *name* half
+ * of both titles, since the pick is "PageSpeedAudit — a free weekly audit…" and the research office's card is
+ * "PageSpeedAudit — Free weekly audits leading to manual optimization over email". One company, two sentences.
+ */
+function pickCardCovering(vault: Vault, title: string): string | null {
+  const name = pickedIdeaName(title);
+  if (name.length < PICK_NAME_MIN) return null;
+  const card = listIdeas(vault).find((i) => ownerKept(i)
+    && i.id === ideaSlug(pickedIdeaName(i.title))
+    && sameIdeaTitle(pickedIdeaName(i.title), name));
+  return card?.id ?? null;
+}
+
+/**
+ * Take what a second filing of the owner's own idea brought — its evidence and its two prose sections — onto the
+ * card they already kept, and give back that card's slug.
+ *
+ * The **title is not taken**: the owner's own words name the company, and the research office's paraphrase of
+ * them is not a reason to rename the thing they chose. Everything else is content rather than identity, so it
+ * lands where the offices expect to find it.
+ */
+function foldIntoPick(vault: Vault, slug: string, idea: NewIdea, by: string): string {
+  const cur = readIdea(vault, slug);
+  if (!cur) return slug;
+  const evidence = [...new Set([...cur.data.evidence, ...(idea.evidence ?? [])])];
+  updateIdea(vault, slug, { evidence }, by, { heading: '## Evidence', content: renderEvidenceSection(evidence) });
+  if (idea.what_changed?.trim()) updateIdea(vault, slug, {}, by, { heading: '## What changed', content: idea.what_changed.trim() });
+  if (idea.why_it_matters?.trim()) updateIdea(vault, slug, {}, by, { heading: '## Why it might matter', content: idea.why_it_matters.trim() });
+  return slug;
 }
 
 /**
