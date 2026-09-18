@@ -318,12 +318,7 @@ export function ownerHasSeenIdea(idea: { source: string; decision: string }): bo
  * until the board has actually sat on it (`board_verdict`, checked by the callers that have it).
  */
 export function ideaOpenToBoard(idea: { source: string; decision: string }): boolean {
-  // A **kept** card is a candidate whatever filed it (ruling W4-5). It used to be one only when a sweep had
-  // filed it, on the reading that the owner's own card reaches the board while it is still undecided — and
-  // once their pick is written onto that card as a keep on the first morning, that reading would have taken
-  // the owner's own idea off the board's table for ever. Every caller checks `board_verdict === null`, so a
-  // kept card is judged once and not again.
-  return idea.decision === 'undecided' ? !sweepSourced(idea.source) : idea.decision === 'keep';
+  return idea.decision === 'undecided' ? !sweepSourced(idea.source) : idea.decision === 'keep' && sweepSourced(idea.source);
 }
 
 /**
@@ -663,6 +658,9 @@ function pickedCard(vault: Vault): { idea: IdeaFrontmatter; why: string } | null
  */
 function briefCard(vault: Vault): { idea: IdeaFrontmatter; why: string } | null {
   if (!hasFounderBrief(vault)) return null;
+  // The first morning only. Once anything is kept the brief has done this job, and a card filed afterwards is
+  // a later idea the owner rules on themselves — not something adopting the brief a week ago agreed to.
+  if (keptIdeas(vault).length) return null;
   const brief = vault.readTextOrNull(FOUNDER_BRIEF) ?? '';
   const section = (brief.split(/^## Candidate ideas[ \t]*$/m)[1] ?? '').split(/^## /m)[0];
   const why = `The owner adopted [[${FOUNDER_BRIEF.replace(/\.md$/, '')}]], which is written against this idea.`;

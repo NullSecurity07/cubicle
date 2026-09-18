@@ -58,7 +58,12 @@ async function until(v: Vault, pred: () => boolean, ms: number, what: string): P
  * it the way Obsidian does, with a raw write the vault API never saw so `isOwnerChanged` reads it as theirs.
  */
 async function ownerAdoptsTheBrief(v: Vault): Promise<void> {
-  await until(v, () => listInbox(v).some((n) => n.data.kind === 'founder_brief' && n.data.approved === null), 180_000, 'no founder brief proposal');
+  // Not merely "the proposal exists": the board is still rewriting its `## Pressure test` when the discovery
+  // job files it, and an approval given in that window is **cleared** rather than carried over (ruling R-T3-3)
+  // — the owner would be saying yes to a document they have not read. The office marks such a note as still
+  // sitting and the owner waits; so does this, or the fixture's one click lands in the gap and is thrown away.
+  await until(v, () => listInbox(v).some((n) => n.data.kind === 'founder_brief' && n.data.approved === null
+    && (n.data as { board_pending?: boolean }).board_pending !== true), 180_000, 'no founder brief proposal');
   expect(listJobs(v).some((j) => j.type === 'company.plan')).toBe(false);
   const rel = listInbox(v).find((n) => n.data.kind === 'founder_brief')!.path;
   const abs = path.join(dir, rel);
