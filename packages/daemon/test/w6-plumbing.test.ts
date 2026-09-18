@@ -24,7 +24,8 @@ import {
 } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
-import { dispatchProposals, buildSnapshot, writeQueueMd } from '../src/index.js';
+import { renderQuotaMarkdown, quotaRowStatus } from '@cubicle/router';
+import { dispatchProposals, buildSnapshot, writeQueueMd, statusFacts, agoInWords, blockedInWords, planObjectiveLines } from '../src/index.js';
 
 let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-w6-')); vault = (await scaffoldVault(dir)).vault; });
@@ -160,5 +161,124 @@ describe('W6-1: approving a proposal always ends somewhere the owner can read', 
     const body = findInboxById(vault, id)!.body;
     expect(body).toContain('needs no justifying jobs');
     expect(body).not.toContain('link the work that justifies the hire');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// W6-3 / W6-8 / W6-9 — the status answer and the run brief are true about the present
+// ---------------------------------------------------------------------------------------------------------
+
+describe('W6-3: the status answer is true about the present', () => {
+  const writePlan = (body: string) => vault.writeText('Plans/plan.md', `---\nupdated: "${nowIso().slice(0, 10)}"\ncycle: 1\n---\n${body}`, 'ceo');
+
+  /** The live plan, objective for objective, including the `idea:` marker that runs into the sentence. */
+  const LIVE_PLAN = [
+    '# Plan', '', '## Objectives', '',
+    '### technology',
+    '- Ship the initial page speed audit engine prototype with a sequential queue idea: [[Ideas/pagespeedaudit]]', '',
+    '### operations',
+    '- Verify zero-error onboarding flow and infrastructure stability idea: [[Ideas/pagespeedaudit]]', '',
+    '### revenue',
+    '- Secure 50 pre-committed signups from agency and indie hacker sites idea: [[Ideas/pagespeedaudit]]', '',
+  ].join('\n');
+
+  it("reads the objectives off Plans/plan.md as it stands, with core's own parser", () => {
+    writePlan(LIVE_PLAN);
+    const facts = statusFacts(vault, new Date()).join('\n');
+    expect(facts).not.toContain('Plan objectives: the plan has none');
+    expect(facts).toContain('technology — Ship the initial page speed audit engine prototype');
+    expect(facts).toContain('operations —');
+    expect(facts).toContain('revenue —');
+  });
+
+  it("never says nothing is running while the company's own cycle is running and blocked", () => {
+    // The live moment: a `ceo.heartbeat` marked blocked 3.7 seconds earlier and a `company.plan` running. Both
+    // are NON_WORK_TYPES, so the answer the owner got to "what's happening right now" was "there are no running
+    // or blocked jobs" — the one checkably false thing in the run.
+    const hb = createJob(vault, { type: 'ceo.heartbeat', title: 'Heartbeat (startup after 2.3 h away)', assigned: 'ceo', goal: 'g' }, 'daemon');
+    const plan = createJob(vault, { type: 'company.plan', title: 'Write the company plan', assigned: 'ceo', goal: 'g' }, 'daemon');
+    updateJob(vault, hb, { status: 'blocked', blocked_on: { kind: 'job', id: plan, since: nowIso() } }, 'daemon');
+    updateJob(vault, plan, { status: 'running' }, 'daemon');
+
+    const facts = statusFacts(vault, new Date()).join('\n');
+    expect(facts).toContain('Write the company plan');
+    expect(facts).toContain('Heartbeat (startup after 2.3 h away)');
+    // The company's own work is still reported separately — the owner asked what is happening, not how much
+    // was shipped — but "none" may never be the whole of either line while something is open.
+    expect(facts).not.toMatch(/Jobs running now: none\.$/m);
+    expect(facts).not.toMatch(/Jobs blocked: none\.$/m);
+  });
+
+  it("says a quota block in the owner's words, not the machine's", () => {
+    const j = createJob(vault, { type: 'discovery', title: 'Read what the owner gave us', assigned: 'research_manager', goal: 'g' }, 'daemon');
+    updateJob(vault, j, { status: 'blocked', blocked_on: { kind: 'quota', id: 'all-providers', since: nowIso() } }, 'daemon');
+
+    const facts = statusFacts(vault, new Date()).join('\n');
+    expect(facts).toContain('Read what the owner gave us — waiting for model quota');
+    expect(facts).not.toContain('stopped on quota');
+  });
+
+  it('mentions the last decision the owner took, and how long ago', () => {
+    const { id } = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'The plan for this cycle', body: 'b' }, 'ceo');
+    ownerDecide(vault, id, { approved: true });
+    const rel = findInboxById(vault, id)!.path;
+    vault.updateNote(rel, (n) => ({ data: { ...n.data, resolved_at: new Date(Date.now() - 4 * 60_000).toISOString() }, body: n.body }), 'daemon');
+
+    const facts = statusFacts(vault, new Date()).join('\n');
+    expect(facts).toContain('The last thing you decided: The plan for this cycle — you approved it 4 minutes ago.');
+  });
+
+  it("and never reports the constitution's own auto-approval as the owner's decision", () => {
+    const { id } = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'Auto', body: 'b' }, 'ceo');
+    vault.updateNote(findInboxById(vault, id)!.path, (n) => ({ data: { ...n.data, approved: true, approved_by: 'constitution', resolved_at: nowIso() }, body: n.body }), 'daemon');
+    expect(statusFacts(vault, new Date()).join('\n')).not.toContain('The last thing you decided');
+  });
+
+  it('agoInWords is a sentence, not a log line', () => {
+    expect(agoInWords(3_000)).toBe('just now');
+    expect(agoInWords(60_000)).toBe('1 minute ago');
+    expect(agoInWords(4 * 60_000)).toBe('4 minutes ago');
+    expect(agoInWords(3 * 3600_000)).toBe('3 hours ago');
+    expect(agoInWords(5 * 24 * 3600_000)).toBe('5 days ago');
+  });
+});
+
+describe('W6-8 / W6-9: quota and the run brief tell the same truth', () => {
+  it('a model at any of its limits is not "ok"', () => {
+    const limits = { rpm: 15, rpd: 500, tpm: 250_000, tpd: 0 };
+    const base = { provider: 'gemini', model: 'gemini-3.5-flash-lite', rpm_used: 0, rpd_used: 0, tpm_used: 0, tpd_used: 0, cooling_until: null, limits };
+    // The live row: 15/15 calls a minute, 161/500 a day — refused by `hasHeadroom` on every call, printed "ok".
+    expect(quotaRowStatus({ ...base, rpm_used: 15, rpd_used: 161, tpm_used: 52_691 })).toBe('at its minute limit');
+    expect(quotaRowStatus({ ...base, rpd_used: 500 })).toBe('out for today');
+    expect(quotaRowStatus({ ...base, rpd_used: 20, limits: { ...limits, rpd: 20 } })).toBe('out for today');
+    expect(quotaRowStatus({ ...base, tpm_used: 250_000 })).toBe('at its token-a-minute limit');
+    expect(quotaRowStatus({ ...base, rpd_used: 460 })).toBe('nearly out');
+    expect(quotaRowStatus({ ...base, rpd_used: 10 })).toBe('ok');
+    expect(quotaRowStatus({ ...base, cooling_until: '2026-09-18T11:57:14.000Z' })).toContain('cooling until');
+    expect(quotaRowStatus({ ...base, missing_key: true })).toBe('no key');
+  });
+
+  it('and the note says a job is stopped for want of one', () => {
+    const md = renderQuotaMarkdown([], new Date(), [{ id: 'job_discovery_af6f903cc2a7', title: 'Read what the owner gave us', since: '2026-09-18T09:31:54.026Z' }]);
+    expect(md).toContain('1 job is stopped waiting for model quota');
+    expect(md).toContain('job_discovery_af6f903cc2a7');
+    expect(renderQuotaMarkdown([], new Date())).not.toContain('stopped waiting for model quota');
+  });
+
+  it('blockedInWords says why, in words', () => {
+    expect(blockedInWords({ kind: 'quota', id: 'all-providers', since: nowIso() })).toBe('waiting for model quota');
+    expect(blockedInWords({ kind: 'message', id: 'msg_1', since: nowIso() })).toContain('colleague');
+    expect(blockedInWords({ kind: 'owner', id: 'j', since: nowIso() })).toContain('waiting for you');
+    expect(blockedInWords(undefined)).toBe('stopped');
+  });
+
+  it('the facts block carries the objectives one line each, never Plans/plan.md whole', () => {
+    vault.writeText('Plans/plan.md', '---\nupdated: "2026-09-18"\ncycle: 1\n---\n# Plan\n\n## Objectives\n\n### technology\n- Ship the audit engine idea: [[Ideas/pagespeedaudit]]\n', 'ceo');
+    const lines = planObjectiveLines(vault);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe('technology — Ship the audit engine idea: [[Ideas/pagespeedaudit]]');
+    expect(lines.join('\n')).not.toContain('---');
+    expect(lines.join('\n')).not.toContain('cycle:');
+    expect(lines.join('')).not.toContain('# Plan');
   });
 });

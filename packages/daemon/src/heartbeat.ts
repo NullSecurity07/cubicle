@@ -1732,23 +1732,105 @@ export function statusFacts(vault: Vault, now: Date): string[] {
       : 'Founder brief: none yet, and nothing is planned until one is adopted.');
   const kept = keptIdeas(vault);
   out.push(`Ideas you kept: ${kept.length ? kept.map((k) => `${k.title} (Ideas/${k.id})`).join('; ') : 'none yet'}.`);
-  const objectives = planObjectives(vault.readTextOrNull('Plans/plan.md') ?? '');
-  out.push(`Plan objectives: ${objectives.length ? objectives.map((o) => `${o.team} — ${o.text.split('\n')[0].replace(/\s+/g, ' ').slice(0, 140)}`).join(' | ') : 'the plan has none'}.`);
-  const jobs = listJobs(vault).filter((j) => !NON_WORK_TYPES.includes(j.type));
-  const running = jobs.filter((j) => j.status === 'running');
-  const blocked = jobs.filter((j) => j.status === 'blocked');
+  // Read off the file as it stands this second, with core's own parser (ruling W6-3) — the same `planObjectives`
+  // the run brief's facts use, so the cabin and the brief cannot give the owner two different answers.
+  const objectives = planObjectiveLines(vault);
+  out.push(`Plan objectives: ${objectives.length ? objectives.join(' | ') : 'the plan has none'}.`);
+  // **Every** job note, read here and now, and the house's own work counted rather than filtered away (ruling
+  // W6-3). The live run answered "there are no running or blocked jobs" 3.7 seconds after the CEO's own cycle
+  // was marked blocked and with its plan job running, because both are `NON_WORK_TYPES` — a filter that is
+  // right for "how much work did the company get through" and flatly wrong for "what is happening right now".
+  // The division stays, because the two are not the same news: the company's own work is what the owner cares
+  // about, and the cycle running behind it is why the queue looks still.
+  const all = listJobs(vault);
+  const work = all.filter((j) => !NON_WORK_TYPES.includes(j.type));
+  const house = all.filter((j) => NON_WORK_TYPES.includes(j.type));
+  const houseClause = (status: string): string => {
+    const h = house.filter((j) => j.status === status);
+    return h.length ? ` The company's own ${status === 'running' ? 'cycle work is running' : 'cycle work is waiting'}: ${h.map((j) => `${j.title} (${j.assigned})`).join('; ')}.` : '';
+  };
+  const running = work.filter((j) => j.status === 'running');
+  const blocked = work.filter((j) => j.status === 'blocked');
   const since = new Date(now.getTime() - STATUS_DONE_WINDOW_MS).toISOString();
-  const done = jobs.filter((j) => j.status === 'done' && String(j.updated ?? '') >= since);
-  out.push(`Jobs running now: ${running.length ? running.map((j) => `${j.title} (${j.assigned})`).join('; ') : 'none'}.`);
-  out.push(`Jobs blocked: ${blocked.length ? blocked.map((j) => { const why = jobBlockers(vault, j.id); return `${j.title} — stopped on ${j.blocked_on?.kind ?? 'something'}${why ? `: ${why.slice(0, 120)}` : ''}`; }).join('; ') : 'none'}.`);
+  const done = work.filter((j) => j.status === 'done' && String(j.updated ?? '') >= since);
+  const blockedWhy = (j: JobFrontmatter) => { const why = jobBlockers(vault, j.id); return `${j.title} — ${blockedInWords(j.blocked_on)}${why ? `: ${why.slice(0, 120)}` : ''}`; };
+  out.push(`Jobs running now: ${running.length ? running.map((j) => `${j.title} (${j.assigned})`).join('; ') : 'none'}.${houseClause('running')}`);
+  out.push(`Jobs blocked: ${blocked.length ? blocked.map(blockedWhy).join('; ') : 'none'}.${houseClause('blocked')}`);
   out.push(`Jobs finished in the last day: ${done.length ? done.map((j) => j.title).join('; ') : 'none'}.`);
   const pending = listInbox(vault).filter((n) => n.data.kind !== 'message' && n.data.approved === null && !n.data.resolved_at);
   out.push(`Waiting on you: ${pending.length ? pending.map((p) => `${p.data.kind} — ${p.body.split('\n')[0].replace(/^#\s*/, '')}`).join('; ') : 'nothing'}.`);
+  const last = lastOwnerDecision(vault);
+  if (last) out.push(`The last thing you decided: ${last.what} — ${last.approved ? 'you approved it' : 'you turned it down'} ${agoInWords(now.getTime() - Date.parse(last.at))}.`);
   return out;
+}
+
+/** How long ago, for a sentence rather than a log line: "4 minutes ago", "2 hours ago", "just now". */
+export function agoInWords(ms: number): string {
+  const mins = Math.round(ms / 60_000);
+  if (!Number.isFinite(mins) || mins < 1) return 'just now';
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * The most recent decision the owner took, or null. Read off `00 Inbox/` rather than the event log, because the
+ * note is what survives a rebuild — and `approved_by` is stamped by the one thing that writes an owner decision
+ * (`ownerDecide`), so a proposal the constitution auto-approved is never reported back as theirs.
+ */
+export function lastOwnerDecision(vault: Vault, at = 'resolved_at'): { what: string; at: string; approved: boolean } | null {
+  const rows = listInbox(vault)
+    .filter((n) => n.data.kind !== 'message' && n.data.approved !== null && !!n.data.resolved_at && (n.data as Record<string, unknown>).approved_by === 'owner')
+    .sort((a, b) => String(b.data[at as 'resolved_at']).localeCompare(String(a.data[at as 'resolved_at'])));
+  const n = rows[0];
+  return n ? { what: (n.body.match(/^#\s+(.+)$/m)?.[1] ?? n.data.kind).trim(), at: String(n.data.resolved_at), approved: n.data.approved === true } : null;
 }
 
 /** How far back "finished since the last cycle" reaches when nothing says when the last cycle was: one day. */
 export const STATUS_DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** How much of one objective a fact line carries. A sentence, not a paragraph. */
+const OBJECTIVE_LINE_MAX = 160;
+
+/**
+ * The plan's objectives, one line each: `<division> — <objective>` (ruling W6-9). One reader, `planObjectives`,
+ * shared with the status answer, so the brief and the cabin cannot disagree about whether the plan has any.
+ */
+export function planObjectiveLines(vault: Vault): string[] {
+  return planObjectives(vault.readTextOrNull('Plans/plan.md') ?? '')
+    .map((o) => `${o.team} — ${o.text.split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, OBJECTIVE_LINE_MAX)}`);
+}
+
+/**
+ * Why a job is stopped, in the owner's words (ruling W6-8).
+ *
+ * `blocked_on.kind` is five machine words — `quota`, `message`, `job`, `proposal`, `owner` — and "stopped on
+ * quota" is not a sentence for anybody. The one that matters most is the first: a company that has run out of
+ * free model calls is stopped for a reason the owner can actually do something about, and the live run told
+ * them instead that their material "was not processed in time".
+ */
+/**
+ * The jobs stopped for want of a model right now, for `Metrics/quota.md` (ruling W6-8). The router writes that
+ * note and has no vault, so the fact has to be carried to it.
+ */
+export function quotaBlockedJobs(vault: Vault): { id: string; title: string; since: string }[] {
+  return listJobs(vault, { status: 'blocked' })
+    .filter((j) => j.blocked_on?.kind === 'quota')
+    .map((j) => ({ id: j.id, title: j.title, since: String(j.blocked_on?.since ?? j.updated) }));
+}
+
+export function blockedInWords(on: JobFrontmatter['blocked_on'] | undefined): string {
+  switch (on?.kind) {
+    case 'quota': return 'waiting for model quota';
+    case 'message': return 'waiting for an answer from a colleague';
+    case 'job': return `waiting for ${on.id}`;
+    case 'proposal': return 'waiting for your decision';
+    case 'owner': return 'stopped and waiting for you';
+    default: return 'stopped';
+  }
+}
 
 /** One message: the reply the CEO drafts for it, the proposal it may file, and the note it writes back. */
 async function answerOne(deps: HeartbeatDeps, vault: Vault, m: OwnerMessage, body: string, now: () => Date, jobId?: string): Promise<number> {
@@ -2840,7 +2922,15 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           ...(hasApprovedBrief(vault) && keptIdeas(vault).length === 0 ? [`Planning: ${NOTHING_PLANNED} — keep an idea and the next cycle plans against it.`] : []),
           // Its own line for the same reason the estimate one is: a discovery job that ran long delayed the
           // reading, not the planning, and the plan this cycle wrote was written without it.
-          ...(state.discoveryPending ? ['Discovery: still running — your material was not read in time, so this cycle planned without it; the founder brief will follow.'] : []),
+          // Ruling W6-8: "not read in time" is true of a job that is merely slow and a euphemism for one that is
+          // stopped. A discovery job blocked on quota has not run out of time, it has run out of free model
+          // calls, and the owner is the only one who can do anything about that.
+          ...(state.discoveryPending ? [(() => {
+            const d = state.discoveryJob ? readJob(vault, state.discoveryJob)?.data : null;
+            return d?.status === 'blocked'
+              ? `Discovery: stopped, not slow — the job reading your material is ${blockedInWords(d.blocked_on)}, so this cycle planned without it; the founder brief follows when it can run.`
+              : 'Discovery: still running — your material was not read in time, so this cycle planned without it; the founder brief will follow.';
+          })()] : []),
           // Its own line, and never the planning one: an estimate the finance office has not returned delays the
           // board session, not the plan, and a brief that said "Planning: PENDING" about it would be wrong. The
           // board reads at most one card a cycle and on this path may have read none, so the line names the card
@@ -2862,9 +2952,15 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           `Owner edits: ${state.ownerEdits?.length ? state.ownerEdits.join(', ') : 'none'}`,
           `Finished jobs: ${state.finished?.length ? state.finished.map((f) => `${f.title} (${f.status})`).join('; ') : 'none'}`,
           `Queued next: ${queued.map((j) => `${j.assigned}: ${j.title}`).join('; ') || 'nothing'}`,
-          `Blocked: ${blocked.map((j) => `${j.id} on ${j.blocked_on?.kind ?? '?'}`).join('; ') || 'none'}`,
+          // Ruling W6-8: `<job> on quota` is the machine's word for it, and the prose written from it came out
+          // as "the initial materials were not processed in time" — a euphemism for "we ran out of free model
+          // calls", which is the one thing the owner could have fixed.
+          `Blocked: ${blocked.map((j) => `${j.title} [${j.id}] (${blockedInWords(j.blocked_on)})`).join('; ') || 'none'}`,
           `Needs owner: ${needsYou.length ? needsYou.join(' | ') : 'nothing'}`,
-          `Plan: ${(vault.readTextOrNull('Plans/plan.md') ?? '').slice(0, 1500)}`,
+          // Ruling W6-9: the objectives, one line each — not `Plans/plan.md` pasted whole with its YAML fences,
+          // which is what the live run's `_Facts used:_` block ended on. The facts block is read by the owner as
+          // well as by the model, and a file dump is neither a fact nor prose.
+          `Plan objectives: ${planObjectiveLines(vault).join(' | ') || 'none yet'}`,
         ].join('\n');
         // A dormant company spends nothing, and that includes the strong-tier call this draft costs. The
         // template fallback below already says everything a stopped company has to say.
@@ -2888,7 +2984,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         vault.writeText(runRel, content, 'ceo', { job: jobId });
         state = { ...state, runPath: runRel }; saveState(state);
         writeQueueMd(vault);
-        if (deps.router) vault.writeText('Metrics/quota.md', renderQuotaMarkdown(deps.router.quotaSnapshot(), now()), 'daemon', { generated: true });
+        if (deps.router) vault.writeText('Metrics/quota.md', renderQuotaMarkdown(deps.router.quotaSnapshot(), now(), quotaBlockedJobs(vault)), 'daemon', { generated: true });
         done(i, `wrote ${runRel}`);
         break;
       }

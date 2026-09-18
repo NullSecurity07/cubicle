@@ -11,7 +11,7 @@ import { dispatchProposals } from './dispatcher.js';
 import { sweepTrustReviews } from './trust.js';
 import { budgetForRole, budgetRows } from './money.js';
 import { WsServer } from './ws.js';
-import { createHeartbeatJob, answerOwnerMessages, unansweredOwnerMessages, answerRejectedBrief, inboxEditWakesHeartbeat, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
+import { createHeartbeatJob, answerOwnerMessages, unansweredOwnerMessages, answerRejectedBrief, inboxEditWakesHeartbeat, quotaBlockedJobs, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
 import { captureResearchDeliveries, enqueueResearchFollowUps, enqueueExperimentReviews, maybeEnqueueCharterCompression, maybeEnqueueIntelligence, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions, maybeFlagLessons } from './evolution.js';
@@ -599,7 +599,7 @@ export class Daemon {
   }
 
   private writeQuotaMd(): void {
-    try { this.vault.writeText('Metrics/quota.md', renderQuotaMarkdown(this.router.quotaSnapshot()), 'daemon', { generated: true }); } catch { /* ignore */ }
+    try { this.vault.writeText('Metrics/quota.md', renderQuotaMarkdown(this.router.quotaSnapshot(), new Date(), quotaBlockedJobs(this.vault)), 'daemon', { generated: true }); } catch { /* ignore */ }
   }
 
   /** Graceful stop: no new jobs, wait up to shutdownMs for in-flight steps, close everything. */
