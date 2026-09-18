@@ -8,7 +8,7 @@ import {
   DISCOVERY_INBOX, INTERVIEW_PATH, FOUNDER_BRIEF, LONG_PROMPT_CHARS,
   isLongPrompt, listDiscoveryInputs, discoveryDigest, hasFounderBrief,
   INTERVIEW_QUESTIONS, renderInterviewAsk, renderInterviewAsked, interviewPhase, closeInterview, interviewAnswer, isSkip, closesInterview,
-  parseCeoAnswers, ceoAnswersFrom, unstatedAnswers, endorsesInterview, ownerAnsweredInterview, interviewAnswersSection, CEO_UNKNOWN,
+  parseCeoAnswers, ceoAnswersFrom, unstatedAnswers, withoutIdeaClaims, endorsesInterview, ownerAnsweredInterview, interviewAnswersSection, CEO_UNKNOWN,
   FOUNDER_BRIEF_SECTIONS, missingBriefSections, founderBriefTemplate, founderBriefProposalBody,
 } from '../src/discovery.js';
 
@@ -104,6 +104,28 @@ describe('the cabin interview (spec §1.4)', () => {
     expect(short[5]).toEqual({ text: CEO_UNKNOWN, tag: 'unstated' });    // absent → unstated
     // A stray seventh answer, and a number out of range, are dropped rather than shifting the rest.
     expect(parseCeoAnswers('7. Nonsense. [from the idea]')[0].tag).toBe('unstated');
+  });
+
+  it('takes back every "[from the idea]" claim when there is no idea to read (W5-1)', () => {
+    // Dry-run 3: asked before the owner had picked, the CEO described a company nobody had proposed and cited
+    // the idea for it. With no idea in the vault the claim is false, so the claim *and* the sentence go.
+    const invented = parseCeoAnswers([
+      '1. A service that compiles markdown folders into static newsletters. [from the idea]',
+      '2. Independent technical writers. [from the idea]',
+      '3. Nothing exists yet except a blank vault. [from the vault]',
+      '4. Five paying customers. [from the idea]',
+      '5. It is unstated what has been tried. [unstated]',
+      '6. It is unstated what is off the table. [unstated]',
+    ].join('\n'));
+    const grounded = withoutIdeaClaims(invented);
+    expect(grounded.map((a) => a.tag)).toEqual(['unstated', 'unstated', 'from the vault', 'unstated', 'unstated', 'unstated']);
+    expect(grounded.filter((a) => a.text === CEO_UNKNOWN)).toHaveLength(3);
+    expect(grounded.map((a) => a.text).join(' ')).not.toMatch(/newsletter|technical writers|paying customers/);
+    // What rests on the vault, and what already said "I do not know", is left exactly as it was.
+    expect(grounded[2]).toEqual(invented[2]);
+    expect(grounded[4]).toEqual(invented[4]);
+    // And with an idea to read, nothing is taken at all — the caller decides, this only does the taking.
+    expect(withoutIdeaClaims(unstatedAnswers(6))).toEqual(unstatedAnswers(6));
   });
 
   it('reads its own state out of the transcript, with no cache anywhere', () => {
