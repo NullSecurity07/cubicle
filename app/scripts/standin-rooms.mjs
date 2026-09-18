@@ -37,7 +37,7 @@ function person(x, y, z, color, seated = false) {
     + `<circle cx="${px}" cy="${py - body - 30}" r="31" fill="#e9c9ab"/>`;
 }
 
-const shell = (inner) => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><rect width="100%" height="100%" fill="#101114"/>`
+const shell = (inner) => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">`
   + poly([[0, 0, 0], [0, 6, 0], [0, 6, 3.3], [0, 0, 3.3]], '#bdb5a9')
   + poly([[0, 0, 0], [6, 0, 0], [6, 0, 3.3], [0, 0, 3.3]], '#cec7bb')
   + poly([[0, 0, 0], [6, 0, 0], [6, 6, 0], [0, 6, 0]], '#e1dacf')
