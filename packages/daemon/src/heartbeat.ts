@@ -6,12 +6,15 @@ import {
   childTeams, subtreeRoles, divisionTeams, divisionOf,
   budgetLines, GATE_JOB_TYPES,
   nextIdeaForBoard, listIdeas, readIdea, updateIdea, ideaBand, bandReason, ideaPath, renderScoreSection, type IdeaBand,
+  keepOwnerPick, ownerKept, ownerKeptNote, NOTHING_PLANNED,
   ideaOpenToBoard, sweepIdeaRows, renderSweepIdeasSection, SWEEP_IDEAS_SECTION,
   FOUNDER_BRIEF, keptIdeas, keptIdeaLines, unkeptIdeasNamedIn, IDEA_SCORE_MAX, type IdeaDecision,
-  checkPlan, planObjectives, PLAN_IDEA_MARKER, fileBoardPivot, pressurePivot, productFixes, noteVerdict,
+  checkPlan, checkPlanRewrite, planIdeaSlugs, planPivotDisagreement, planObjectives, PLAN_IDEA_MARKER, fileBoardPivot, pressurePivot, productFixes, noteVerdict,
   readPressureVerdict, pressureToBoard, pressureFindings, renderRubric, renderBoardSection,
   PRESSURE_VERDICTS, BANNED_HEDGE, RUBRIC_DIMENSIONS, RUBRIC_LABEL, RUBRIC_MAX, PRESSURE_UNANSWERED, PRESSURE_MAX_FLAWS, PRESSURE_HANDBOOK_PATH, PRESSURE_PARTS, PRESSURE_REFUSAL_NO_WEDGE, type PressurePart,
-  PRESSURE_CHAIR_SECTION, chairAnswerText,
+  PRESSURE_CHAIR_SECTION, chairAnswerText, PIVOT_TITLE_LABEL,
+  EVIDENCE_RULE, asBoardOpinion,
+  isJobDump, whatHappenedSection, whatHappenedProse, WRITTEN_WITHOUT_MODEL,
   type PressureVerdict, type BoardRubric,
   isLongPrompt, isSkip, asksForSurprise, endorsesInterview, interviewPhase, parseCeoAnswers, type CeoAnswer, INTERVIEW_PATH, BRAND_NAME_PATH,
   readLedger, moneyReport, moneyLine, moneyNeedsYou, money, HOUSE, LEDGER_PATH, DEFAULT_CURRENCY, type MoneyReport, type LedgerEntry,
@@ -557,6 +560,8 @@ export function advisorPrompt(s: BoardSubject): string {
     // `Docs/` is a memory-search directory, so naming the handbook is enough for an advisor to fetch it; the
     // path itself is core's one constant (`PRESSURE_HANDBOOK_PATH`) rather than a literal repeated here.
     `Every flaw must be specific to this ${s.kind === 'brief' ? 'company' : 'idea'}; no generic advice. The catalogue to hunt in is \`${PRESSURE_HANDBOOK_PATH}\`.`,
+    // Ruling W4-1a: the `brief` board holds no dialogue, but it writes the same findings to the same owner.
+    EVIDENCE_RULE,
   ].join('\n');
 }
 
@@ -598,12 +603,17 @@ export function chairFormat(): string[] {
     `VERDICT: ${PRESSURE_VERDICTS.join(' or ')} — one of those three, and nothing else on that line.`,
     `RUBRIC: ${RUBRIC_DIMENSIONS.map((d) => `${RUBRIC_LABEL[d]} <0-2>`).join(', ')} — out of ${RUBRIC_MAX}.`,
     'WEDGE: <the narrowest useful slice, and the most desperate users to aim it at> — REQUIRED whenever your verdict is PIVOT REQUIRED, and left out otherwise. A pivot with no wedge says the company should change but not to what, and is refused.',
+    // Ruling W4-7: the pivot becomes a card the owner rules on, and the chair is the only party that knows
+    // what it meant by its own wedge. Asked for in the shape the card needs, so the title names a business
+    // the owner could rule on rather than a task somebody could be given.
+    `${PIVOT_TITLE_LABEL} <product> for <customer> — on the same verdict, the wedge named as an opening: what is sold, and who to. A product and a customer, never a verb. "Anchor-customer pilots for teams with a documented bill spike", not "Secure an anchor customer".`,
     '',
     'Then the five parts, in this order, under these headings:',
     '',
     ...PRESSURE_PARTS.map((part) => `## ${part}${CHAIR_HEADING[part]}`),
     '',
     `Be direct. Never write "${BANNED_HEDGE}" — it is a way of not deciding. You cannot delay, and you do not decide: the owner does.`,
+    EVIDENCE_RULE,
   ];
 }
 
@@ -1156,10 +1166,12 @@ export function fileIdeaVerdict(
     target: ideaPath(slug), title: `Keep, park or scrap: ${card.data.title}`,
     body: ideaVerdictBody({
       slug, title: card.data.title, score, band, reason, board,
-      findings: opts.findings,
+      // Ruling W4-1c: a finding that points at no note the vault holds is the board's reading, not a fact.
+      findings: opts.findings.map((f) => asBoardOpinion(vault, f)),
       pressure: card.data.board_pressure || undefined, rubric: card.data.board_rubric, chair: cardBoardChair(card.body),
       transcript: card.data.board_transcript, questions: card.data.board_questions,
       research: card.data.research, estimate: card.data.estimate,
+      ownerKept: ownerKept(card.data),
       decidesAfterHours: vault.constitution().board_decides_after_hours,
     }),
   }, opts.from);
@@ -2446,7 +2458,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           const { id, path: rel } = createProposal(vault, {
             id: planVerdictId(hbId), kind: 'plan_verdict', from: ceo, to: 'owner', job: jobId,
             title: `Approve this cycle's plan`,
-            body: planVerdictBody({ board, findings: state.boardFindings ?? [], plan, decidesAfterHours, transcript: state.boardNote, questions: state.boardQuestions }),
+            body: planVerdictBody({ board, findings: (state.boardFindings ?? []).map((f) => asBoardOpinion(vault, f)), plan, decidesAfterHours, transcript: state.boardNote, questions: state.boardQuestions, pivot: state.pivotCard }),
           }, ceo);
           // The board's verdict lives on the note, not in cache state: a later heartbeat rules on this plan after
           // a restart, and it must know what the board actually said.

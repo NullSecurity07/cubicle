@@ -26,7 +26,9 @@ import {
   PRESSURE_PARTS, type PressurePart, PRESSURE_HANDBOOK_PATH, BANNED_HEDGE, OWNER_QUESTION, isOwnerQuestion, hedges,
   PRESSURE_TEST_SECTION, FOUNDER_BRIEF, founderBriefProposalBody, briefFromProposalBody, citedPaths,
   checkFounderBrief, briefCheckContext, UNSTATED,
+  EVIDENCE_RULE, annotateUnresolvedRefs, isOpinion, withheldTurn, withheldNote, asBoardOpinion,
 } from '@cubicle/core';
+import { classifyBannedTactic } from '@cubicle/tools';
 import {
   type HeartbeatDeps, type BoardSubject, type BoardMerge, type BoardSessionResult,
   boardSubject, boardAgenda, mergeBoardVerdict, unansweredMerge, chairReaskPrompt, chairLostNote,
@@ -72,6 +74,35 @@ export interface BoardSessionOpts {
 
 /** One turn as it is written to the note and emitted. */
 export interface BoardTurn { round: number; role: string; text: string }
+
+/**
+ * Whether this turn invented its evidence, judged by the constitution's own `banned_tactics` classifier
+ * (ruling W4-1b). `fabricated testimonials` is in `Memory/constitution.md` and always has been; the board room
+ * was the one place in the company where outbound text's strictest rule was never applied.
+ *
+ * Asked only of a turn that is **opinion** — it makes a claim and cites no note the vault holds. A turn that
+ * links its evidence has said where to check it, and one that claims nothing has nothing to fabricate, so
+ * neither is worth a model call. That is what keeps the check inside a cycle's budget: it costs at most one
+ * cheap call per unbacked advisor turn, charged to the house like every other constitution check.
+ *
+ * **Fails open**, which is the opposite of the outbound path and deliberate. Refusing to send an unchecked
+ * email costs one email; withholding an unchecked board turn would silently hollow out the argument the owner
+ * is about to read, every time a classifier was rate-limited. A turn nobody could check stays in the
+ * transcript, where the annotations above it still say which of its references do not exist.
+ */
+async function inventedEvidence(deps: HeartbeatDeps, text: string): Promise<boolean> {
+  const vault = deps.vault;
+  if (!deps.router || !text.trim()) return false;
+  if (!isOpinion(vault, text)) return false;
+  const tactics = vault.constitution().banned_tactics;
+  if (!tactics.length) return false;
+  try {
+    const res = await classifyBannedTactic(deps.router, text, tactics, {
+      warn: (message) => vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { where: 'board_evidence', message } }),
+    });
+    return res.verdict === 'violation';
+  } catch { return false; }
+}
 
 /** The empty session: no board room, or a board whose charters are all gone. Identical to the brief path's. */
 function noBoard(s: BoardSubject): BoardSessionResult {
@@ -141,6 +172,8 @@ export function chairRoundPrompt(s: BoardSubject, o: {
   challenge: string;
   transcript: string;
   verdict: boolean;
+  /** Ruling W4-1: the advisors whose turn the constitution's classifier withheld from this round. */
+  withheld?: readonly string[];
 }): string {
   const what = s.kind === 'plan' ? 'this plan' : s.kind === 'brief' ? 'this founder brief' : 'this idea';
   const lines: string[] = [
@@ -154,6 +187,11 @@ export function chairRoundPrompt(s: BoardSubject, o: {
     '',
     o.transcript || '(nothing yet: you speak first)',
     '',
+    // Ruling W4-1. The chair is the one whose findings reach the owner, so it is told the rule before it rules,
+    // and told which advisors it has not heard from and why.
+    EVIDENCE_RULE,
+    '',
+    ...(o.withheld?.length ? [withheldNote(o.withheld), ''] : []),
   ];
   if (o.close) {
     if (o.challenge) lines.push(`Your advisors did not settle that round: ${o.challenge}. Say so in one sentence, to them, by name, before you rule — this is the one challenge that round gets.`, '');
@@ -202,6 +240,7 @@ export function advisorRoundPrompt(s: BoardSubject, part: PressurePart, question
     question,
     '',
     `Answer that question and nothing else, in at most ${ADVISOR_TURN_WORDS} words. Concrete and specific to this subject — a mechanism, a number, a name, not a category. No preamble and no headings. If you disagree with what an advisor said above, say so and say why. Decide: never write "${BANNED_HEDGE}".`,
+    EVIDENCE_RULE,
     `The catalogue to hunt in is \`${PRESSURE_HANDBOOK_PATH}\`.`,
   ].join('\n');
 }
@@ -428,6 +467,23 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
     vault.writeText(rel, render('in_progress'), chair, { generated: true });
     vault.events.emit({ type: 'meeting.turn', agent: role, payload: { id: meetingId, round, text: text.slice(0, TURN_EVENT_CHARS) } });
   };
+  /**
+   * One turn, checked before anybody reads it (ruling W4-1b): every reference the vault does not hold is marked
+   * `(no such note)` where it was made, and an advisor turn that trips the constitution's classifier is replaced
+   * by the one line saying so. The **checked** text is what is written, emitted, shown to the next speaker and
+   * returned — there is no path by which the raw turn reaches the transcript, the owner or the chair.
+   *
+   * The chair's own turns are annotated but never withheld: they are a merge of material this has already
+   * vetted, and they carry the machine lines (`VERDICT`, `RUBRIC`, `WEDGE`) the whole verdict pipeline parses.
+   */
+  const speak = async (round: number, role: string, text: string): Promise<{ text: string; withheld: boolean }> => {
+    const checked = annotateUnresolvedRefs(vault, text);
+    const withheld = role !== chair && await inventedEvidence(deps, checked);
+    const out = withheld ? withheldTurn(role) : checked;
+    if (withheld) vault.events.emit({ type: 'daemon.warning', agent: role, payload: { where: 'board_evidence', message: `${withheldTurn(role)} — the turn is not in the transcript and the chair was told it did not speak` } });
+    say(round, role, out);
+    return { text: out, withheld };
+  };
   const transcriptSoFar = () => turns.map((t) => `${t.role}: ${t.text}`).join('\n\n').slice(-TRANSCRIPT_CHARS);
 
   // What this session may keep from the last one on the same subject (spec §3, "Questions to the owner"): a
@@ -453,7 +509,7 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
     }
   }
 
-  const chairTurn = async (o: { close: PressurePart | null; open: PressurePart | null; challenge: string; verdict: boolean }): Promise<string | null> => {
+  const chairTurn = async (o: { close: PressurePart | null; open: PressurePart | null; challenge: string; verdict: boolean; withheld: readonly string[] }): Promise<string | null> => {
     calls++;
     return askAs(deps, chair, advisorSystem(vault, chair), chairRoundPrompt(s, { ...o, transcript: transcriptSoFar() }),
       o.verdict ? (s.kind === 'plan' ? 600 : CHAIR_IDEA_TOKENS) : CHAIR_TURN_TOKENS, leadTier);
@@ -461,6 +517,7 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
 
   let closing: PressurePart | null = null;
   let challenge = '';
+  let withheld: string[] = [];
   for (let i = 0; i < PRESSURE_PARTS.length; i++) {
     const part = PRESSURE_PARTS[i];
     const round = i + 1;
@@ -469,28 +526,34 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
       say(round, chair, `${REUSED_NOTE} ${prior!.opened.slice(0, 10)} — the board's answer has not changed.\n\n${FINDING_LABEL} ${reuse[part]}`);
       continue;
     }
-    const turn = await chairTurn({ close: closing, open: part, challenge, verdict: false });
+    const turn = await chairTurn({ close: closing, open: part, challenge, verdict: false, withheld });
     if (turn) answeredBy.add(chair);
-    say(round, chair, turn ?? '(no answer: no model was available)');
-    if (closing) findings[closing] = turn ? findingIn(turn) : `${OWNER_QUESTION} the board had no model to answer this with.`;
+    const spoken = await speak(round, chair, turn ?? '(no answer: no model was available)');
+    if (closing) findings[closing] = turn ? findingIn(spoken.text) : `${OWNER_QUESTION} the board had no model to answer this with.`;
     closing = part;
     challenge = '';
-    const question = turn ? questionIn(turn, part) : `${part} — ${ADVISOR_ASK[part]}`;
+    withheld = [];
+    const question = turn ? questionIn(spoken.text, part) : `${part} — ${ADVISOR_ASK[part]}`;
     const said: { role: string; text: string }[] = [];
     for (const a of others) {
       calls++;
       const text = await askAs(deps, a, advisorSystem(vault, a), advisorRoundPrompt(s, part, question, transcriptSoFar()), ADVISOR_TURN_TOKENS, tierFor(a));
       if (text) answeredBy.add(a);
-      say(round, a, text ?? '(no answer: no model was available)');
-      said.push({ role: a, text: text ?? '' });
+      const advisorTurn = await speak(round, a, text ?? '(no answer: no model was available)');
+      // A withheld turn is not an answer, so it settles nothing and provokes no challenge: the chair is told
+      // the advisor did not speak, and reading the withholding line back as a position would be the invention
+      // arriving by another door.
+      if (advisorTurn.withheld) withheld.push(a);
+      else said.push({ role: a, text: text ?? '' });
     }
     challenge = challengeReason(said);
   }
 
   // Round six: the chair closes the last round it argued and delivers the verdict in today's `chairFormat`.
-  const verdictTurn = await chairTurn({ close: closing, open: null, challenge, verdict: true });
-  if (verdictTurn) answeredBy.add(chair);
-  say(BOARD_DIALOGUE_ROUNDS, chair, verdictTurn ?? '(no answer: no model was available)');
+  const rawVerdictTurn = await chairTurn({ close: closing, open: null, challenge, verdict: true, withheld });
+  if (rawVerdictTurn) answeredBy.add(chair);
+  const verdictTurn = rawVerdictTurn === null ? null : (await speak(BOARD_DIALOGUE_ROUNDS, chair, rawVerdictTurn)).text;
+  if (rawVerdictTurn === null) say(BOARD_DIALOGUE_ROUNDS, chair, '(no answer: no model was available)');
   if (closing) findings[closing] = verdictTurn ? findingIn(verdictTurn) : `${OWNER_QUESTION} the board had no model to answer this with.`;
 
   // The verdict is read exactly as the brief session's is, off a page whose five parts are the round findings
@@ -511,10 +574,10 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
       chairLost = chairLostNote(merge.refused);
       merge = { verdict: 'pass', findings: [], pressure: null, rubric: null, refused: null };
     } else {
-      say(BOARD_DIALOGUE_ROUNDS, chair, again);
-      const second = mergeBoardVerdict(`${partsText(findings)}\n\n${again}`, s.kind);
+      const spoken = (await speak(BOARD_DIALOGUE_ROUNDS, chair, again)).text;
+      const second = mergeBoardVerdict(`${partsText(findings)}\n\n${spoken}`, s.kind);
       merge = second.refused ? unansweredMerge(second) : second;
-      chairText = second.refused ? '' : `${partsText(findings)}\n\n${again}`;
+      chairText = second.refused ? '' : `${partsText(findings)}\n\n${spoken}`;
     }
   }
 
@@ -784,7 +847,8 @@ export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promi
   }
   try {
     writeBoardDecision(vault, briefDecisionId(proposal.id), {
-      verdict: session.verdict, findings: session.findings, decidedBy: chair, now: new Date(), answered: session.answered,
+      // Ruling W4-1c: what reaches the owner says whether the board could point at anything.
+      verdict: session.verdict, findings: session.findings.map((f) => asBoardOpinion(vault, f)), decidedBy: chair, now: new Date(), answered: session.answered,
       chairLost: session.chairLost ?? undefined, cycle: proposal.id, inputs: [`[[${session.notePath.replace(/\.md$/, '')}]]`],
       unreviewedNote: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the founder brief passed'),
       noFindingsNote: 'The board found nothing in this brief likely to sink the company.',
