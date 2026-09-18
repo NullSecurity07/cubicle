@@ -6,6 +6,8 @@ import { THEMES, contrastRatio, cssVars, themeFromQuery, hexNum } from './tokens
 import { ZONE_TINT } from '../world/palette.js';
 import { DUR } from '../world/motion.js';
 import { deepen } from './rail.js';
+import { ACCENT, MATERIAL as M, contrast, floorAt, lightAt, onFloorInk } from '../world/materials.js';
+import { EDGE_ALPHA, EDGE_INK, EDGE_SELECTED, PORT_FILL } from '../world/edges.js';
 
 const SURFACES = ['bg', 'surface1', 'surface2', 'surface3'] as const;
 const TEXTS = ['text', 'text2', 'text3'] as const;
@@ -122,5 +124,64 @@ describe('layout tokens clear the elevation-0 controls', () => {
   });
   it('no literal hex or rgba is left in the viewer chrome', () => {
     for (const literal of ['rgba(212,218,232', 'rgba(255,255,255,.08)', 'rgba(255,255,255,.1)', 'rgba(255,255,255,.15)', 'background: #000', 'background: #fff', 'color: #fff']) expect(app, literal).not.toContain(literal);
+  });
+});
+
+/**
+ * The campus's own contrast (SP9b).
+ *
+ * The chrome above has two themes; the office has twenty-four hours, and they are the same problem. A line on the
+ * floor, a port ring and a message travelling a line are things the owner has to be able to *see* at every one of
+ * them — not only at the hour the screenshots happen to be taken at.
+ *
+ * Two different claims, because the office paints them in two different places:
+ *  - a **resting line** lies under the hour's multiply, like the floor it is on. Both are darkened together, so
+ *    what can be asserted is the material claim: the ink, at its own alpha, against the floor it is drawn on.
+ *  - a **control** — the selected line's casing, a port's rim and hairline, the ⓧ chip — is painted *over* the
+ *    hour, the way the desk lamps are, so it is asserted against the floor as that hour actually leaves it.
+ */
+describe('the campus at every hour (SP9b)', () => {
+  /** A colour at `alpha` over another, both `#rrggbb`. */
+  const over = (fg: string, alpha: number, bg: string): string => {
+    const f = parseInt(fg.slice(1), 16), b = parseInt(bg.slice(1), 16);
+    const ch = (sh: number): string => Math.round((((f >> sh) & 255) * alpha) + (((b >> sh) & 255) * (1 - alpha))).toString(16).padStart(2, '0');
+    return `#${ch(16)}${ch(8)}${ch(0)}`;
+  };
+  /** Every hour on the clock, at quarter-hour steps: the ramp is continuous, so nothing may fail between stops. */
+  const HOURS = Array.from({ length: 96 }, (_, i) => i / 4);
+
+  it('a resting line reads on the floor it lies on', () => {
+    expect(contrast(over(EDGE_INK, EDGE_ALPHA, M.floor), M.floor)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('a selected line\u2019s casing reads on the floor at every hour', () => {
+    for (const h of HOURS) {
+      const light = lightAt(h);
+      expect(contrast(onFloorInk(light), floorAt(light)), `casing at ${h}h`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('a port\u2019s ring reads on the disc it is drawn on, whatever the division', () => {
+    for (const [name, a] of Object.entries(ACCENT)) expect(contrast(a.chip, PORT_FILL), `${name} port ring`).toBeGreaterThanOrEqual(3);
+  });
+
+  it('a port\u2019s disc is held off the floor by its hairline at every hour', () => {
+    for (const h of HOURS) {
+      const light = lightAt(h);
+      expect(contrast(onFloorInk(light), floorAt(light)), `port hairline at ${h}h`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('the \u24e7 chip\u2019s glyph reads on the chip, and the chip on its own rim', () => {
+    expect(contrast(M.actionFill, EDGE_SELECTED)).toBeGreaterThanOrEqual(3);
+    expect(contrast(M.actionFill, M.attention)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('the accent is the one loud thing: a selected line is told from a resting one', () => {
+    // the casing alone separates them, whichever way round the hour has put it
+    for (const h of [9, 12, 19, 23]) {
+      const light = lightAt(h);
+      expect(contrast(onFloorInk(light), over(EDGE_INK, EDGE_ALPHA, M.floor)), `selected vs resting at ${h}h`).toBeGreaterThanOrEqual(2);
+    }
   });
 });

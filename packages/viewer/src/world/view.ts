@@ -18,16 +18,30 @@
  *    furniture by the same `x + y` depth key, which is what lets someone walk behind a partition.
  */
 import { type Cell, type Pt, type Rect, type View, PERSON_H, quad } from './iso.js';
-import { type AccentName, type Light, MATERIAL as M, divisionChip, lampStrength, lightAt, rgba, zoneChip } from './materials.js';
-import { type G, PLATES, plate } from './shapes.js';
+import { ACCENT, type AccentName, type Light, MATERIAL as M, divisionChip, lampStrength, lightAt, rgba, zoneChip } from './materials.js';
+import { type G, PLATES, hull, plate } from './shapes.js';
 import type { Drawable } from './props.js';
 import {
   type CampusMap, type Router, type Seat, inRect, makeRouter, parseCampus, railZoneAt, rectOf, standAt, zoneAt,
 } from './campus.js';
 import { Camera, CHROME, ROOM_ZOOM, fitZoom, nameLabelVisible, worldTextVisible } from './camera.js';
-import { type ScreenContent, buildProps, buildScreens, campusClip, paintGround, paintHour, paintZonePlates, slabOf } from './paint.js';
+import { type ScreenContent, buildProps, buildScreens, campusClip, deskDrawables, paintGround, paintHour, paintZonePlates, propDrawables, slabOf } from './paint.js';
 import { Body, type BodyContext } from './people.js';
 import { drawMinimap } from './minimap-draw.js';
+import {
+  type Anchor, type LayoutNode, type NodeKind, type OfficeLayout, type ResourceKind, type ToolName, anchorOf,
+  applyLayout, connectionKind, edgeEnds, edgeId, emptyLayout, liveConnections, occupiedBy, resourceRect,
+} from './layout.js';
+import {
+  type DockKind, type Step, Edits, NUDGE, SPOT_TAKEN, addResource, connect as connectStep,
+  disconnect as disconnectStep, moveThing, moveZone, removeThing, resizeZone,
+} from './editing.js';
+import {
+  type Pulse, PORT_HIT, PULSE_MS, drawCutChip, drawEdge, drawHandle, drawPort, drawPulse, drawRubberBand,
+  drawTargetGlow, edgeCurve, edgeHit, pointOn, portAt, pulseT, shouldPulse,
+} from './edges.js';
+import { RESOURCE_H, drawGhost, drawLiftShadow, resourceProp } from './resources.js';
+import { MOTION, motionOff } from './motion.js';
 import type { State } from '../state.js';
 
 export interface ViewHooks {
@@ -41,7 +55,57 @@ export interface ViewHooks {
   onAgentClick(role: string): void;
   /** the camera moved into another zone (the zone rail highlights it) */
   onZoneChange?(id: string): void;
+  /**
+   * The owner changed the office. The whole note goes over, every time: `layout.set` is idempotent by contract, and
+   * a viewer that sent diffs would have to agree with the daemon about what it had already sent.
+   */
+  onLayoutChange?(layout: OfficeLayout): void;
+  /** One sentence about what just happened, for the toast. */
+  say?(text: string): void;
+  /** What is selected now, for the plate that hangs beside it; null when nothing is. */
+  onSelect?(sel: Selection | null): void;
+  /** The owner dropped an Agent on the floor: a hire, at this spot. */
+  onHire?(at: Cell): void;
+  /** How the owner would say who this is — a role id is not a name. */
+  nameOf?(id: string): string;
 }
+
+/** What the owner has picked, as the HTML plate beside it needs to read it. */
+export interface Selection {
+  id: string;
+  kind: NodeKind | 'edge';
+  label: string;
+  sub: string;
+  actions: ('connect' | 'rename' | 'remove')[];
+  /** where the plate hangs, in canvas pixels */
+  at: Pt;
+}
+
+/** What the office has under a screen point. `agent`, `screen` and `zone` are what they always were. */
+export type Hit =
+  | { kind: 'agent' | 'screen' | 'zone' | 'zonePlate' | 'port' | 'cut'; id: string }
+  | { kind: 'handle'; id: string; corner: number }
+  | { kind: 'thing'; id: string; node: NodeKind }
+  | { kind: 'edge'; id: string; a: string; b: string };
+
+/** What the owner is carrying: a thing lifted off the floor, or a zone being moved or stretched. */
+type Drag =
+  | { kind: 'camera' }
+  | { kind: 'thing'; id: string; node: NodeKind; grab: Cell }
+  | { kind: 'zone'; id: string; grab: Cell }
+  | { kind: 'handle'; id: string; corner: number }
+  | { kind: 'wire'; from: string };
+
+/** A thing in the air: where it would land, whether it may, and the drawables to paint there. */
+interface Lift { id: string; node: NodeKind; base: Rect; rect: Rect; from: Rect; blocked: boolean; draw: Drawable[]; spring: number }
+
+/** How far a lifted thing rises off the floor, in screen pixels, and how long it takes to spring back. */
+const LIFT_PX = 2;
+const SPRING_MS = 180;
+/** How far the pointer must travel before a press on a thing becomes a drag rather than a click. */
+const DRAG_SLOP = 6;
+/** How big a zone's corner handle is, in screen pixels. */
+const HANDLE_R = 7;
 
 export interface ZoneSummary {
   id: string; label: string; accent: string; color: string;
@@ -102,6 +166,41 @@ export class CampusView {
   private minimapEvery = 0;
   hooks!: ViewHooks;
 
+  /* ---- the office as the owner arranged it (SP9b) ---- */
+  /** the template campus, as `office.json` has it; never changed, so a note can always be undone back to it */
+  private base!: CampusMap;
+  /** `Office/campus.md`, the undo stack, and what has been sent but must not be drawn yet */
+  readonly edits = new Edits();
+  /** what `this.map` was last built from, so a repaint is paid for only when the note actually changed */
+  private builtFrom = '';
+  /** the thing or line the owner has picked */
+  private picked: string | null = null;
+  /** what is under the pointer right now: a thing's id, or an `edge:` id */
+  private over: string | null = null;
+  private drag: Drag | null = null;
+  /** where the press went down, so six pixels of travel can tell a drag from a click */
+  private downAt: Pt | null = null;
+  private downHit: Hit | null = null;
+  /** the pointer, in canvas pixels, whenever it is over the office */
+  private pointer: Pt | null = null;
+  /** the thing in the air, while it is in the air and while it springs back */
+  private lift: Lift | null = null;
+  /**
+   * The keyboard's own route to a connection: Connect on the selection plate, then a click on the other end.
+   * Everything a drag from a port can do has to be doable without one.
+   */
+  private connectFrom: string | null = null;
+  /** a zone being moved or stretched: where it would land */
+  private zoneGhost: Rect | null = null;
+  /** something picked out of the dock and not yet put down */
+  private placing: { kind: DockKind; extra: Partial<LayoutNode>; label: string } | null = null;
+  /** messages travelling their lines */
+  private pulses: Pulse[] = [];
+  /** where each zone's plate landed this frame, so a click on the plate can find it */
+  private plateBoxes: Record<string, { x: number; y: number; w: number; h: number }> = {};
+  /** where the selected line's ⓧ chip landed this frame */
+  private cutChip: { x: number; y: number; r: number } | null = null;
+
   constructor(private parent: HTMLElement) {
     this.canvas = document.createElement('canvas');
     this.canvas.id = 'office-canvas';
@@ -114,9 +213,8 @@ export class CampusView {
   /** Load the map, build the furniture, start the loop. */
   async start(url = '/office.json'): Promise<void> {
     const res = await fetch(url);
-    this.map = parseCampus(await res.json());
-    this.router = makeRouter(this.map);
-    this.props = buildProps(this.map).sort((a, b) => a.d - b.d);
+    this.base = parseCampus(await res.json());
+    this.rebuild();
     const slab = slabOf(this.map);
     this.camera = new Camera({ w: this.parent.clientWidth || 1280, h: this.parent.clientHeight || 800, bounds: slab });
     this.camera.frame(slab, { head: 3.4, now: true });
@@ -148,39 +246,61 @@ export class CampusView {
     this.camera?.resize(w, h);
   }
 
+  /**
+   * The pointer, and what it is allowed to mean.
+   *
+   * One press can become four things, and which one it is is not known when the button goes down: a click on a
+   * person, a camera pan, a thing lifted off the floor, or a line drawn out of a port. So the press records what
+   * was under it and nothing else happens until either the pointer travels `DRAG_SLOP` — which makes it a drag of
+   * whatever was under it — or the button comes up, which makes it a click. A port and a zone handle are the two
+   * exceptions: both are small, deliberate targets, and waiting six pixels on them only makes them feel loose.
+   */
   private bind(): void {
     const c = this.canvas;
+    const at = (e: PointerEvent): Pt => { const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+
     c.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       c.setPointerCapture(e.pointerId);
+      const p = at(e);
+      this.pointer = p;
       this.dragging = true; this.dragMoved = 0; this.dragFrom = { x: e.clientX, y: e.clientY };
+      this.downAt = p;
+      this.downHit = this.pick(p.x, p.y);
+      // a port and a handle start their drag on the press: they are small and aimed at on purpose
+      if (this.downHit?.kind === 'port') this.drag = { kind: 'wire', from: this.downHit.id };
+      else if (this.downHit?.kind === 'handle') { this.drag = { kind: 'handle', id: this.downHit.id, corner: this.downHit.corner }; this.zoneGhost = { ...this.map.zoneById[this.downHit.id].rect }; }
     });
+
     c.addEventListener('pointermove', (e) => {
-      const r = c.getBoundingClientRect();
+      const p = at(e);
+      this.pointer = p;
       if (this.dragging && this.dragFrom) {
         const dx = e.clientX - this.dragFrom.x, dy = e.clientY - this.dragFrom.y;
         this.dragFrom = { x: e.clientX, y: e.clientY };
         this.dragMoved += Math.abs(dx) + Math.abs(dy);
-        this.camera.nudge(dx, dy);
+        if (!this.drag && this.dragMoved > DRAG_SLOP) this.startDrag();
+        if (this.drag?.kind === 'camera') { this.camera.nudge(dx, dy); return; }
+        if (this.drag) { this.dragTo(p); return; }
         return;
       }
-      const hit = this.pick(e.clientX - r.left, e.clientY - r.top);
-      const role = hit?.kind === 'agent' ? hit.id : null;
-      if (role !== this.hovered) { this.hovered = role; c.style.cursor = hit ? 'pointer' : 'grab'; }
+      this.hover(p);
     });
+
     const end = (e: PointerEvent): void => {
       if (!this.dragging) return;
       this.dragging = false;
       if (c.hasPointerCapture(e.pointerId)) c.releasePointerCapture(e.pointerId);
-      if (this.dragMoved > 6) return;                       // a drag, not a click
-      const r = c.getBoundingClientRect();
-      const hit = this.pick(e.clientX - r.left, e.clientY - r.top);
-      if (hit?.kind === 'agent') this.hooks.onAgentClick(hit.id);
-      else if (hit?.kind === 'screen') this.hooks.onSurfaceClick(hit.id);
-      else if (hit?.kind === 'zone') this.hooks.onSurfaceClick(hit.id);
+      const p = at(e);
+      const drag = this.drag;
+      this.drag = null;
+      if (drag && drag.kind !== 'camera') { this.dropDrag(drag, p); return; }
+      if (this.dragMoved > DRAG_SLOP) return;                 // a pan, not a click
+      this.click(p);
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
+    c.addEventListener('pointerleave', () => { if (!this.dragging) this.pointer = null; });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       const r = c.getBoundingClientRect();
@@ -193,6 +313,122 @@ export class CampusView {
     window.addEventListener('blur', () => this.keys.clear());
   }
 
+  /** What is under the pointer, and what the cursor should say about it. */
+  private hover(p: Pt): void {
+    const hit = this.pick(p.x, p.y);
+    const role = hit?.kind === 'agent' ? hit.id : null;
+    const over = hit && (hit.kind === 'thing' || hit.kind === 'edge' || hit.kind === 'port') ? hit.id : null;
+    if (role !== this.hovered || over !== this.over) {
+      this.hovered = role;
+      this.over = over;
+      this.canvas.style.cursor = hit?.kind === 'port' ? 'crosshair' : hit?.kind === 'handle' ? 'nwse-resize'
+        : hit?.kind === 'thing' || hit?.kind === 'zonePlate' ? 'grab' : hit ? 'pointer' : 'grab';
+    }
+    if (this.placing) this.canvas.style.cursor = 'copy';
+  }
+
+  /** Six pixels of travel: the press was about whatever it was on. */
+  private startDrag(): void {
+    const h = this.downHit;
+    if (h?.kind === 'thing') {
+      this.drag = { kind: 'thing', id: h.id, node: h.node, grab: this.camera.toGrid(this.downAt!.x, this.downAt!.y) };
+      this.beginLift(h.id, h.node);
+      this.canvas.style.cursor = 'grabbing';
+      return;
+    }
+    if (h?.kind === 'zonePlate') {
+      this.drag = { kind: 'zone', id: h.id, grab: this.camera.toGrid(this.downAt!.x, this.downAt!.y) };
+      this.zoneGhost = { ...this.map.zoneById[h.id].rect };
+      this.canvas.style.cursor = 'grabbing';
+      return;
+    }
+    this.drag = { kind: 'camera' };
+  }
+
+  /** The pointer moved with something in hand. */
+  private dragTo(p: Pt): void {
+    const cell = this.camera.toGrid(p.x, p.y);
+    const d = this.drag;
+    if (!d) return;
+    if (d.kind === 'thing' && this.lift) {
+      const a = anchorOf(this.map, d.id);
+      if (!a) return;
+      const want = { x: a.at.x + (cell.x - d.grab.x), y: a.at.y + (cell.y - d.grab.y) };
+      this.aimLift(want);
+    } else if (d.kind === 'zone') {
+      const z = this.map.zoneById[d.id];
+      const dx = snapHalf(cell.x - d.grab.x), dy = snapHalf(cell.y - d.grab.y);
+      this.zoneGhost = { x0: z.rect.x0 + dx, y0: z.rect.y0 + dy, x1: z.rect.x1 + dx, y1: z.rect.y1 + dy };
+    } else if (d.kind === 'handle') {
+      const z = this.map.zoneById[d.id];
+      const fx = d.corner === 1 || d.corner === 2 ? z.rect.x0 : z.rect.x1;
+      const fy = d.corner === 2 || d.corner === 3 ? z.rect.y0 : z.rect.y1;
+      this.zoneGhost = { x0: Math.min(fx, snapHalf(cell.x)), y0: Math.min(fy, snapHalf(cell.y)), x1: Math.max(fx, snapHalf(cell.x)), y1: Math.max(fy, snapHalf(cell.y)) };
+    }
+  }
+
+  /** The button came up with something in hand. */
+  private dropDrag(d: Drag, p: Pt): void {
+    this.canvas.style.cursor = 'grab';
+    if (d.kind === 'thing') {
+      const l = this.lift;
+      this.lift = null;
+      if (!l) return;
+      if (l.blocked) { this.springBack(l); this.say(SPOT_TAKEN); return; }
+      const to = l.node === 'desk' ? { x: l.rect.x0, y: l.rect.y0 } : { x: (l.rect.x0 + l.rect.x1) / 2, y: (l.rect.y0 + l.rect.y1) / 2 };
+      this.step(moveThing(this.map, this.edits.layout, d.id, to, this.nameOf));
+      return;
+    }
+    if (d.kind === 'zone') {
+      const g = this.zoneGhost;
+      this.zoneGhost = null;
+      if (g) this.step(moveZone(this.map, this.edits.layout, d.id, { x: g.x0, y: g.y0 }));
+      return;
+    }
+    if (d.kind === 'handle') {
+      const g = this.zoneGhost;
+      this.zoneGhost = null;
+      if (g) this.step(resizeZone(this.map, this.edits.layout, d.id, g));
+      return;
+    }
+    if (d.kind === 'wire') {
+      const hit = this.pick(p.x, p.y);
+      const to = hit?.kind === 'thing' || hit?.kind === 'port' ? hit.id : null;
+      if (!to || to === d.from) return;                                    // dropped on the floor: nothing happens
+      if (!connectionKind(this.map, d.from, to)) return;
+      // already wired: the owner is pointing at the line they mean, so select it rather than saying nothing
+      if (this.edits.layout.connections.some((cn) => (cn.from === d.from && cn.to === to) || (cn.from === to && cn.to === d.from))) { this.select(edgeId(d.from, to)); return; }
+      this.step(connectStep(this.map, this.edits.layout, d.from, to, this.nameOf));
+    }
+  }
+
+  /** A press that did not travel: a click. */
+  private click(p: Pt): void {
+    if (this.placing) { this.placeAt(this.camera.toGrid(p.x, p.y)); return; }
+    const hit = this.pick(p.x, p.y);
+    if (this.connectFrom) {
+      const from = this.connectFrom;
+      this.connectFrom = null;
+      const to = hit && (hit.kind === 'thing' || hit.kind === 'port') ? hit.id : hit?.kind === 'agent' ? this.map.desks[this.hooks.getState().agents[hit.id]?.desk ?? '']?.id ?? null : null;
+      if (to && to !== from && connectionKind(this.map, from, to)) { this.connectIds(from, to); return; }
+      this.say('Nothing to connect there.');
+      return;
+    }
+    if (hit?.kind === 'cut') { const ends = edgeEnds(hit.id); if (ends) this.step(disconnectStep(this.edits.layout, ends[0], ends[1])); this.select(null); return; }
+    if (hit?.kind === 'agent') {
+      // Second click on the person at a selected desk focuses them, as it always did; the first selects the desk.
+      this.select(null);
+      this.hooks.onAgentClick(hit.id);
+      return;
+    }
+    if (hit?.kind === 'screen') { this.select(null); this.hooks.onSurfaceClick(hit.id); return; }
+    if (hit?.kind === 'thing') { this.select(this.picked === hit.id ? null : hit.id); return; }
+    if (hit?.kind === 'edge') { this.select(this.picked === hit.id ? null : hit.id); return; }
+    if (hit?.kind === 'zonePlate') { this.select(this.picked === hit.id ? null : hit.id); return; }
+    if (hit?.kind === 'zone') { this.select(null); this.hooks.onSurfaceClick(hit.id); return; }
+    this.select(null);
+  }
+
   /* ---- the frame -------------------------------------------------------------------------------------- */
 
   private frame(now: number): void {
@@ -203,16 +439,20 @@ export class CampusView {
     if (this.frameTimes.length > 30) this.frameTimes.shift();
     if (this.canvas.width !== Math.round(this.parent.clientWidth * this.dpr)) this.resize();
 
-    // WASD / arrows, at a constant screen speed whatever the zoom
+    // The arrow keys fly the camera, at a constant screen speed whatever the zoom — unless something is selected,
+    // in which case they nudge it half a cell and the app never sends them here at all (`keyDown`). WASD went
+    // with SP9b: `D` is the dock's now, and three of the four keys without the fourth is worse than none.
     let kx = 0, ky = 0;
-    if (this.keys.has('a') || this.keys.has('A') || this.keys.has('ArrowLeft')) kx += 1;
-    if (this.keys.has('d') || this.keys.has('D') || this.keys.has('ArrowRight')) kx -= 1;
-    if (this.keys.has('w') || this.keys.has('W') || this.keys.has('ArrowUp')) ky += 1;
-    if (this.keys.has('s') || this.keys.has('S') || this.keys.has('ArrowDown')) ky -= 1;
+    if (this.keys.has('ArrowLeft')) kx += 1;
+    if (this.keys.has('ArrowRight')) kx -= 1;
+    if (this.keys.has('ArrowUp')) ky += 1;
+    if (this.keys.has('ArrowDown')) ky -= 1;
     if (kx || ky) this.camera.nudge(kx * 540 * dt, ky * 540 * dt);
 
     this.camera.step(dt);
     this.tick(dt);
+    this.stepLift(dt);
+    if (this.pulses.length) { const now = this.hooks.clock(); this.pulses = this.pulses.filter((p) => now - p.at <= PULSE_MS); }
     this.render();
     if (this.minimap && ++this.minimapEvery % 4 === 0) this.paintMinimap();
   }
@@ -275,6 +515,7 @@ export class CampusView {
     const light = lightAt(this.hour());
     const lightKey = `${light.name}|${Math.round(this.hour() * 4)}`;
     if (lightKey !== this.lightKey) { this.lightKey = lightKey; this.sprites.clear(); }
+    this.cutChip = null;
     const t = this.timing;
     let mark = performance.now();
     const lap = (k: keyof Timing): void => { const n = performance.now(); t[k] += n - mark; mark = n; };
@@ -305,11 +546,20 @@ export class CampusView {
       PLATES.block(mm.left - 8, mm.top - CHROME.hit - 12, mm.width + 16, mm.height + CHROME.hit + 20);
     }
     let budget = REBUILD_BUDGET;
+    // The floor dressing is painted first (its depth key is under -800), then everything the owner drew on the
+    // floor — the lines, the pulses travelling them, the landing ghost — then everything that stands. A line
+    // over a person's feet would be the one thing in the picture that is not a room.
+    let floorDone = false;
+    const lifted = this.lift?.id ?? null;
     for (const it of items) {
+      if (!floorDone && !(it.kind === 'prop' && it.prop!.floor)) { floorDone = true; this.paintFloorMarks(g, v); }
       if (it.kind === 'body') { it.body!.shadow(g, v, light); it.body!.draw(g, v, light); continue; }
       if (it.kind === 'screen') { const s0 = performance.now(); it.prop!.draw(g, v, light); t.screens += performance.now() - s0; continue; }
+      if (lifted && it.prop!.owner === lifted) continue;             // it is in the air; it is drawn below
       budget -= this.blit(g, v, light, it.prop!, budget > 0) ? 1 : 0;
     }
+    if (!floorDone) this.paintFloorMarks(g, v);
+    this.paintLifted(g, v, light);
     g.restore();
     t.world += performance.now() - mark; mark = performance.now();
 
@@ -320,8 +570,11 @@ export class CampusView {
     // pass 5: UI type, in screen space, over everything
     const ctx: BodyContext = { speaker: null, selected: this.selected, hovered: this.hovered };
     if (worldTextVisible(cam.zoom)) for (const b of this.bodies.values()) b.drawLabel(g, v, ctx);
-    paintZonePlates(g, v, this.map, { current: this.zoneNow });
+    this.plateBoxes = paintZonePlates(g, v, this.map, { current: this.zoneNow, selected: this.picked });
     if (nameLabelVisible(cam.zoom)) this.paintDeskPlates(g, v);
+    // pass 6: the handles the owner reaches for — a zone's corners, a thing's port, a line's ⓧ, and the message
+    // travelling its line. Controls, not scenery, so they are drawn over the hour rather than under it.
+    this.paintMarksOverHour(g, v, light);
     lap('labels');
     t.frames += 1;
   }
@@ -512,29 +765,511 @@ export class CampusView {
     return null;
   }
 
+  /* ---- the office as the owner arranged it (SP9b) ------------------------------------------------------ */
+
+  /**
+   * Rebuild the campus from the template plus the note.
+   *
+   * The template is never edited, so this is always `applyLayout(base, note)` from scratch: an office that has
+   * been dragged about for an hour is the same object as one loaded from the same note cold, which is the only
+   * way "reload and it is still there" can be true rather than nearly true.
+   *
+   * It costs one parse of the note, one router and one pass over the props. That is a few milliseconds, and it is
+   * paid when the owner drops something — never on a frame.
+   */
+  private rebuild(): void {
+    const key = JSON.stringify(this.edits.layout);
+    if (key === this.builtFrom && this.map) return;
+    this.builtFrom = key;
+    const before = this.map;
+    this.map = applyLayout(this.base, this.edits.layout);
+    this.router = makeRouter(this.map);
+    this.props = buildProps(this.map).sort((a, b) => a.d - b.d);
+    this.sprites.clear();
+    this.stale.length = 0;
+    if (this.camera) this.camera.bounds = slabOf(this.map);
+    // Whoever's desk moved gets up and walks to it. Everyone else keeps whatever they were doing: a note that
+    // moved one desk must not send the whole company back to their chairs.
+    if (before) for (const b of this.bodies.values()) {
+      const was = before.desks[b.view.desk]?.seat, now = this.map.desks[b.view.desk]?.seat;
+      b.remap(this.map, this.router, !!was !== !!now || (!!was && !!now && (was.x !== now.x || was.y !== now.y)));
+    }
+  }
+
+  /** How the owner would say who this is. */
+  private nameOf = (id: string): string => this.hooks.nameOf?.(id) ?? this.map.resources[id]?.label ?? this.map.zoneById[id]?.label ?? id;
+  private say(text: string): void { this.hooks.say?.(text); }
+
+  /** One step the owner took: remember it, redraw the office, say what happened, tell the daemon. */
+  private step(s: Step | null): void {
+    if (!s) { this.say(SPOT_TAKEN); return; }
+    const send = this.edits.apply(s);
+    this.rebuild();
+    this.say(s.said);
+    this.hooks.onLayoutChange?.(send);
+    this.refreshSelection();
+  }
+
+  /** The daemon's word on the office — from the snapshot or from `layout.changed`. Never undoable: it is true. */
+  setLayout(layout: OfficeLayout): void {
+    this.edits.accept(layout);
+    this.rebuild();
+    this.refreshSelection();
+  }
+  /** The note as the office holds it. */
+  layout(): OfficeLayout { return this.edits.layout; }
+
+  /** Go back one step. Returns whether there was one. */
+  undoLayout(): boolean {
+    const send = this.edits.undo();
+    if (!send) return false;
+    this.rebuild();
+    this.say('Undone.');
+    this.hooks.onLayoutChange?.(send);
+    this.refreshSelection();
+    return true;
+  }
+
+  /* ---- selection --------------------------------------------------------------------------------------- */
+
+  select(id: string | null): void {
+    this.picked = id;
+    this.hooks.onSelect?.(id ? this.selectionFor(id) : null);
+  }
+  /** What is picked, or null. */
+  selected2(): string | null { return this.picked; }
+
+  private refreshSelection(): void {
+    if (!this.picked) return;
+    const sel = this.selectionFor(this.picked);
+    if (!sel) { this.select(null); return; }
+    this.hooks.onSelect?.(sel);
+  }
+
+  /**
+   * Where the plate beside the selection hangs, in canvas pixels: the top-right of what is selected. Read every
+   * frame by the chrome, because the camera moves and the plate has to move with the thing it is about.
+   */
+  selectionAnchor(): Pt | null {
+    if (!this.picked) return null;
+    const v = this.camera.view();
+    const ends = edgeEnds(this.picked);
+    if (ends) {
+      const a = anchorOf(this.map, ends[0]), b = anchorOf(this.map, ends[1]);
+      if (!a || !b) return null;
+      const mid = pointOn(edgeCurve(a.at, b.at), 0.5);
+      return v.p(mid.x, mid.y, 0.4);
+    }
+    const a = anchorOf(this.map, this.picked);
+    if (!a) return null;
+    return v.p(a.rect.x1, a.rect.y0, a.kind === 'zone' ? 0 : 1.1);
+  }
+
+  private selectionFor(id: string): Selection | null {
+    const ends = edgeEnds(id);
+    if (ends) {
+      const [x, y] = ends;
+      const cn = liveConnections(this.map, this.edits.layout).find((c) => (c.from === x && c.to === y) || (c.from === y && c.to === x));
+      if (!cn) return null;
+      const label = cn.kind === 'peer' ? `${this.nameOf(cn.from)} and ${this.nameOf(cn.to)}` : `${this.nameOf(cn.from)} → ${this.nameOf(cn.to)}`;
+      return { id, kind: 'edge', label, sub: cn.kind === 'peer' ? 'Can message each other' : 'Can use this', actions: ['remove'], at: { x: 0, y: 0 } };
+    }
+    const a = anchorOf(this.map, id);
+    if (!a) return null;
+    if (a.kind === 'zone') return { id, kind: 'zone', label: a.label, sub: 'Zone', actions: ['rename'], at: { x: 0, y: 0 } };
+    if (a.kind === 'desk') return { id, kind: 'desk', label: this.nameOf(id), sub: 'Desk', actions: ['connect', 'remove'], at: { x: 0, y: 0 } };
+    if (a.kind === 'resource') { const r = this.map.resources[id]; return { id, kind: 'resource', label: r.label, sub: SUB_OF[r.kind], actions: ['connect', 'rename', 'remove'], at: { x: 0, y: 0 } }; }
+    return { id, kind: 'prop', label: a.label, sub: 'Prop', actions: ['remove'], at: { x: 0, y: 0 } };
+  }
+
+  /* ---- the actions, however they were asked for -------------------------------------------------------- */
+
+  /** Take the selected thing away. A desk goes through a fire proposal; anything else goes at once. */
+  removeSelected(): boolean {
+    const id = this.picked;
+    if (!id) return false;
+    const ends = edgeEnds(id);
+    if (ends) { this.step(disconnectStep(this.edits.layout, ends[0], ends[1])); this.select(null); return true; }
+    const s = removeThing(this.map, this.edits.layout, id, this.nameOf);
+    if (!s) return false;
+    this.step(s);
+    this.select(null);
+    return true;
+  }
+
+  /** Give the selected thing another name. Only what the owner put there, and the zones, have one to give. */
+  renameSelected(text: string): boolean {
+    const id = this.picked;
+    const label = text.trim();
+    if (!id || !label) return false;
+    const a = anchorOf(this.map, id);
+    if (!a || (a.kind !== 'resource' && a.kind !== 'zone')) return false;
+    const next = { ...this.edits.layout, nodes: { ...this.edits.layout.nodes, [id]: { ...this.edits.layout.nodes[id], label } } };
+    this.step({ layout: next, said: `Renamed it ${label}.` });
+    return true;
+  }
+
+  /** Connect was pressed on the selection plate: the next click on a thing is the other end. */
+  armConnect(id: string): void { this.connectFrom = id; }
+  /** Whether a connection is waiting for its other end. */
+  connecting(): string | null { return this.connectFrom; }
+
+  /**
+   * Move a thing to a cell outright — the console's and the harness's route to a drag.
+   *
+   * The same step the pointer takes, so a test that drags a desk is testing what the owner's hand does and not a
+   * second implementation of it. Returns false when the spot is taken, which is what the pointer is told too.
+   */
+  dragTo2(id: string, to: Cell): boolean {
+    const a = anchorOf(this.map, id);
+    if (!a) return false;
+    if (a.kind === 'zone') { const z = moveZone(this.map, this.edits.layout, id, to); if (!z) return false; this.step(z); return true; }
+    const at = a.kind === 'desk' ? { x: to.x - (a.rect.x1 - a.rect.x0) / 2, y: to.y - (a.rect.y1 - a.rect.y0) / 2 } : to;
+    const s = moveThing(this.map, this.edits.layout, id, at, this.nameOf);
+    if (!s) { this.say(SPOT_TAKEN); return false; }
+    this.step(s);
+    return true;
+  }
+
+  /** Wire two things together by id — the Org sheet's route, and `__cubicle.connect`. */
+  connectIds(a: string, b: string): boolean {
+    const s = connectStep(this.map, this.edits.layout, a, b, this.nameOf);
+    if (!s) return false;
+    this.step(s);
+    return true;
+  }
+  disconnectIds(a: string, b: string): boolean {
+    const s = disconnectStep(this.edits.layout, a, b);
+    if (!s) return false;
+    this.step(s);
+    return true;
+  }
+
+  /** An arrow key with something selected: half a cell, along the plane. */
+  nudgeSelected(key: string): boolean {
+    const n = NUDGE[key];
+    if (!n || !this.picked) return false;
+    const a = anchorOf(this.map, this.picked);
+    if (!a) return false;
+    if (a.kind === 'zone') { this.step(moveZone(this.map, this.edits.layout, this.picked, { x: a.rect.x0 + n.x, y: a.rect.y0 + n.y })); return true; }
+    const to = a.kind === 'desk' ? { x: a.rect.x0 + n.x, y: a.rect.y0 + n.y } : { x: a.at.x + n.x, y: a.at.y + n.y };
+    this.step(moveThing(this.map, this.edits.layout, this.picked, to, this.nameOf));
+    return true;
+  }
+
+  /**
+   * The keyboard, for everything the owner can do to the office.
+   *
+   * Handed the event by the app rather than listening itself: the sheets, the first-run card and the quick-open
+   * palette all own the keyboard while they are up, and the office must not be arranging itself behind them.
+   */
+  keyDown(e: { key: string; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }): boolean {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) return this.undoLayout();
+    if (e.ctrlKey || e.metaKey || !this.map) return false;
+    if (e.key === 'Escape') {
+      if (this.connectFrom) { this.connectFrom = null; return true; }
+      if (this.placing) { this.cancelPlacing(); return true; }
+      if (this.lift) { const l = this.lift; this.lift = null; this.drag = null; this.dragging = false; this.springBack(l); return true; }
+      if (this.zoneGhost) { this.zoneGhost = null; this.drag = null; this.dragging = false; return true; }
+      if (this.picked) { this.select(null); return true; }
+      return false;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && this.picked) return this.removeSelected();
+    if (NUDGE[e.key] && this.picked) return this.nudgeSelected(e.key);
+    return false;
+  }
+
+  /* ---- the dock's placement flow ------------------------------------------------------------------------ */
+
+  /** Something picked out of the dock and not yet put down. The next click on the floor places it. */
+  arm(kind: DockKind, extra: Partial<LayoutNode> = {}, label = ''): void {
+    this.placing = { kind, extra, label: label || String(kind) };
+    this.select(null);
+    this.canvas.style.cursor = 'copy';
+  }
+  cancelPlacing(): void { this.placing = null; this.canvas.style.cursor = 'grab'; }
+  /** What is being placed, for the dock to keep its glyph lit. */
+  placingKind(): DockKind | null { return this.placing?.kind ?? null; }
+
+  /** Put the armed thing down at a cell. */
+  placeAt(cell: Cell): boolean {
+    const p = this.placing;
+    if (!p) return false;
+    this.cancelPlacing();
+    if (p.kind === 'agent') { this.hooks.onHire?.({ x: snapHalf(cell.x), y: snapHalf(cell.y) }); return true; }
+    const s = addResource(this.map, this.edits.layout, p.kind, cell, p.extra);
+    if (!s) { this.say(SPOT_TAKEN); return false; }
+    this.step(s);
+    this.select(s.id);
+    return true;
+  }
+
+  /** The dock dropped a glyph on the office at a screen point (the drag route, rather than click-then-click). */
+  dropFromDock(px: number, py: number): boolean {
+    if (!this.placing) return false;
+    return this.placeAt(this.camera.toGrid(px, py));
+  }
+
+  /* ---- the pulse --------------------------------------------------------------------------------------- */
+
+  /**
+   * A message travelled a line. The one memorable motion in the office, and the only thing that moves on the
+   * floor: everything else on it is a diagram that stays still.
+   */
+  pulse(from: string, to: string): void {
+    const wired = !!this.map && this.edits.layout.connections.some((c) => (c.from === from && c.to === to) || (c.from === to && c.to === from));
+    if (!shouldPulse(wired, motionOff())) return;
+    this.pulses.push({ from, to, at: this.hooks.clock() });
+    if (this.pulses.length > 24) this.pulses.shift();
+  }
+
+  /* ---- the thing in the air ----------------------------------------------------------------------------- */
+
+  private beginLift(id: string, node: NodeKind): void {
+    const a = anchorOf(this.map, id);
+    if (!a) return;
+    this.lift = { id, node, base: { ...a.rect }, rect: { ...a.rect }, from: { ...a.rect }, blocked: false, draw: this.drawablesAt(id, node, a.rect), spring: 0 };
+  }
+
+  /** The pointer moved: where would it land, and may it. */
+  private aimLift(want: Pt): void {
+    const l = this.lift;
+    if (!l) return;
+    const w = l.base.x1 - l.base.x0, d = l.base.y1 - l.base.y0;
+    // A desk snaps its own corner, so a row of desks lines up; anything else snaps the point it is centred on,
+    // which is the point the owner is pointing at.
+    const x0 = l.node === 'desk' ? snapHalf(want.x - w / 2) : snapHalf(want.x) - w / 2;
+    const y0 = l.node === 'desk' ? snapHalf(want.y - d / 2) : snapHalf(want.y) - d / 2;
+    if (x0 === l.rect.x0 && y0 === l.rect.y0) return;
+    l.rect = { x0, y0, x1: x0 + w, y1: y0 + d };
+    l.blocked = !!occupiedBy(this.map, l.rect, l.id);
+    l.draw = this.drawablesAt(l.id, l.node, l.rect);
+  }
+
+  /** The thing goes back where it came from, over 180 ms. Under reduced motion it is simply back. */
+  private springBack(l: Lift): void {
+    if (motionOff() || (l.rect.x0 === l.base.x0 && l.rect.y0 === l.base.y0)) { this.lift = null; return; }
+    this.lift = { ...l, from: { ...l.rect }, spring: 1 };
+  }
+
+  private stepLift(dt: number): void {
+    const l = this.lift;
+    if (!l || l.spring <= 0) return;
+    l.spring -= (dt * 1000) / Math.max(1, SPRING_MS * MOTION.scale);
+    if (l.spring <= 0) { this.lift = null; return; }
+    const k = 1 - (1 - (1 - l.spring)) ** 3;
+    l.rect = { x0: mix1(l.from.x0, l.base.x0, k), y0: mix1(l.from.y0, l.base.y0, k), x1: mix1(l.from.x1, l.base.x1, k), y1: mix1(l.from.y1, l.base.y1, k) };
+    l.draw = this.drawablesAt(l.id, l.node, l.rect);
+  }
+
+  /** The same object, built at a rectangle that is not the one the map has it at. */
+  private drawablesAt(id: string, node: NodeKind, rect: Rect): Drawable[] {
+    if (node === 'desk') {
+      const d = this.map.desks[id];
+      if (!d) return [];
+      const dx = rect.x0 - d.rect.x0, dy = rect.y0 - d.rect.y0;
+      return deskDrawables({ ...d, rect, seat: { x: d.seat.x + dx, y: d.seat.y + dy } });
+    }
+    if (node === 'resource') {
+      const r = this.map.resources[id];
+      return r ? [resourceProp({ ...r, rect, at: { x: (rect.x0 + rect.x1) / 2, y: (rect.y0 + rect.y1) / 2 } })] : [];
+    }
+    const p = this.map.props.find((q) => q.id === id);
+    return p ? propDrawables({ ...p, rect, at: { x: p.at.x + (rect.x0 - p.rect.x0), y: p.at.y + (rect.y0 - p.rect.y0) } }) : [];
+  }
+
+  /* ---- what the floor carries --------------------------------------------------------------------------- */
+
+  /**
+   * The lines, and whatever the owner is in the middle of doing.
+   *
+   * A resting line is scenery: it lies on the floor under everything that stands and the hour's multiply reaches
+   * it, exactly as it reaches the floor it is drawn on. The selected line, the pulses and the ports are not
+   * scenery but controls, so they are drawn over the hour instead (`paintMarksOverHour`) and hold their contrast
+   * at noon and at midnight alike.
+   */
+  private paintFloorMarks(g: G, v: View): void {
+    const sel = this.selectedEdge();
+    for (const cn of liveConnections(this.map, this.edits.layout)) {
+      const a = anchorOf(this.map, cn.from), b = anchorOf(this.map, cn.to);
+      if (!a || !b) continue;
+      if (!this.rectOnScreen(v, a.rect) && !this.rectOnScreen(v, b.rect)) continue;
+      if (edgeId(cn.from, cn.to) === sel) continue;
+      drawEdge(g, v, edgeCurve(a.at, b.at), { kind: cn.kind, hovered: edgeId(cn.from, cn.to) === this.over });
+    }
+    if (this.drag?.kind === 'wire' && this.pointer) this.paintWire(g, v, this.drag.from, this.pointer);
+    if (this.lift && this.lift.spring <= 0) drawGhost(g, v, this.lift.rect, this.lift.blocked);
+    if (this.zoneGhost) drawGhost(g, v, this.zoneGhost, false);
+    if (this.placing && this.pointer) {
+      const cell = this.camera.toGrid(this.pointer.x, this.pointer.y);
+      const rect = this.placing.kind === 'agent'
+        ? { x0: snapHalf(cell.x) - 1.25, y0: snapHalf(cell.y) - 0.65, x1: snapHalf(cell.x) + 1.25, y1: snapHalf(cell.y) + 0.65 }
+        : resourceRect(this.placing.kind, { x: snapHalf(cell.x), y: snapHalf(cell.y) });
+      drawGhost(g, v, rect, !!occupiedBy(this.map, rect));
+    }
+  }
+
+  /** The rubber band out of a port, and the things it could legally land on. */
+  private paintWire(g: G, v: View, fromId: string, at: Pt): void {
+    const from = anchorOf(this.map, fromId);
+    if (!from) return;
+    const hit = this.pick(at.x, at.y);
+    const over = hit && (hit.kind === 'thing' || hit.kind === 'port') ? hit.id : null;
+    const ok = !!over && !!connectionKind(this.map, fromId, over);
+    for (const cand of [...Object.values(this.map.desks), ...Object.values(this.map.resources)]) {
+      if (cand.id === fromId || !connectionKind(this.map, fromId, cand.id) || !this.rectOnScreen(v, cand.rect)) continue;
+      drawTargetGlow(g, v, cand.rect, { soft: cand.id !== over });
+    }
+    drawRubberBand(g, v, portAt(from.rect), ok && over ? anchorOf(this.map, over)!.at : this.camera.toGrid(at.x, at.y), ok);
+  }
+
+  /** The thing the owner is holding, lifted two pixels off the floor with a bigger shadow under it. */
+  private paintLifted(g: G, v: View, light: Light): void {
+    const l = this.lift;
+    if (!l) return;
+    drawLiftShadow(g, v, l.rect, light);
+    g.save();
+    g.translate(0, -LIFT_PX);
+    for (const d of l.draw) { d.shadow?.(g, v, light); d.draw(g, v, light); }
+    g.restore();
+  }
+
+  /** The `edge:` id that is selected, or null. */
+  private selectedEdge(): string | null { return this.picked && this.picked.startsWith('edge:') ? this.picked : null; }
+
+  /**
+   * The controls the office puts on the floor: the selected line and its ⓧ, the messages travelling, the ports
+   * and a zone's corner handles.
+   *
+   * All of it after the hour's multiply, for the reason the lamps are: a control that the evening can hide is not
+   * a control. `ui/tokens.test.ts` holds each of them at 3:1 against the floor at noon, at dusk and at midnight.
+   */
+  private paintMarksOverHour(g: G, v: View, light: Light): void {
+    const now = this.hooks.clock();
+    const sel = this.selectedEdge();
+    for (const cn of liveConnections(this.map, this.edits.layout)) {
+      const a = anchorOf(this.map, cn.from), b = anchorOf(this.map, cn.to);
+      if (!a || !b) continue;
+      const id = edgeId(cn.from, cn.to);
+      const hasPulse = this.pulses.some((p) => (p.from === cn.from && p.to === cn.to) || (p.from === cn.to && p.to === cn.from));
+      if (id !== sel && !hasPulse) continue;
+      if (!this.rectOnScreen(v, a.rect) && !this.rectOnScreen(v, b.rect)) continue;
+      const c = edgeCurve(a.at, b.at);
+      if (id === sel) { drawEdge(g, v, c, { kind: cn.kind, selected: true, light }); this.cutChip = drawCutChip(g, v, c, light); }
+      for (const p of this.pulses) {
+        if (!((p.from === cn.from && p.to === cn.to) || (p.from === cn.to && p.to === cn.from))) continue;
+        const t = pulseT(p, now);
+        if (t !== null) drawPulse(g, v, p.from === cn.from ? c : { from: c.to, ctrl: c.ctrl, to: c.from }, t, light);
+      }
+    }
+    const z = this.picked ? this.map.zoneById[this.picked] : null;
+    if (z) for (const c of quad(v, this.zoneGhost ?? z.rect, 0)) drawHandle(g, c, ACCENT[z.accent].chip);
+    if (this.drag?.kind === 'thing' || this.drag?.kind === 'zone' || this.drag?.kind === 'camera') return;
+    const seen = new Set<string>();
+    for (const id of [this.drag?.kind === 'wire' ? this.drag.from : null, this.over, this.picked]) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const a = anchorOf(this.map, id);
+      if (!a || (a.kind !== 'desk' && a.kind !== 'resource')) continue;
+      drawPort(g, v, portAt(a.rect), ACCENT[a.accent].chip, { active: this.drag?.kind === 'wire' && this.drag.from === id, light });
+    }
+  }
+
+  /** Is any of this footprint in the frame? Forty lines and forty rings are not worth drawing off screen. */
+  private rectOnScreen(v: View, r: Rect): boolean {
+    const q = quad(v, r, 0);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of q) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    return x1 > -80 && x0 < v.cam.w + 80 && y1 > -80 && y0 < v.cam.h + 80;
+  }
+
   /* ---- picking ---------------------------------------------------------------------------------------- */
 
-  /** What is under a screen point: the nearest person, else a screen, else the zone the floor belongs to. */
-  pick(px: number, py: number): { kind: 'agent' | 'screen' | 'zone'; id: string } | null {
+  /**
+   * What is under a screen point.
+   *
+   * The order is the whole of the rule, and it is the order of what the owner meant: the two chrome targets a
+   * selection puts on the screen (a zone's handles, a line's ⓧ) come first because they exist only while
+   * something is selected and are aimed at deliberately; then a port, but only on the thing the pointer is
+   * already on, so a ring nobody can see cannot be grabbed by accident; then people, who always win, as they
+   * always did; then the screens on the walls; then the things on the floor, nearest the camera first; then the
+   * lines; then a zone's plate, and last the zone floor itself, which is what a press on open floor pans.
+   */
+  pick(px: number, py: number): Hit | null {
     const v = this.camera.view();
+    if (this.cutChip && Math.hypot(px - this.cutChip.x, py - this.cutChip.y) <= this.cutChip.r) return { kind: 'cut', id: this.picked! };
+    const handle = this.handleAt(v, px, py);
+    if (handle) return handle;
+    const port = this.portAtPoint(v, px, py);
+    if (port) return { kind: 'port', id: port };
+
     const h = PERSON_H * v.cz;
-    let best: { kind: 'agent'; id: string; d: number } | null = null;
+    let best: { id: string; d: number } | null = null;
     for (const [role, b] of this.bodies) {
       if (!b.visible()) continue;
       const at = v.p(b.at.x, b.at.y, 0);
       if (px < at.x - h * 0.28 || px > at.x + h * 0.28 || py < at.y - h * 1.06 || py > at.y + h * 0.1) continue;
-      if (!best || b.depth > best.d) best = { kind: 'agent', id: role, d: b.depth };
+      if (!best || b.depth > best.d) best = { id: role, d: b.depth };
     }
     if (best) return { kind: 'agent', id: best.id };
+
     for (const s of Object.values(this.map.screens)) {
       const face = s.axis === 'x'
         ? [v.p(s.x, s.y, s.z + s.h), v.p(s.x + s.len, s.y, s.z + s.h), v.p(s.x + s.len, s.y, s.z), v.p(s.x, s.y, s.z)]
         : [v.p(s.x, s.y + s.len, s.z + s.h), v.p(s.x, s.y, s.z + s.h), v.p(s.x, s.y, s.z), v.p(s.x, s.y + s.len, s.z)];
       if (inPoly(face, px, py)) return { kind: 'screen', id: s.kind };
     }
+
+    let thing: { id: string; node: NodeKind; d: number } | null = null;
+    const tryBox = (id: string, node: NodeKind, r: Rect, hz: number): void => {
+      if (!boxHit(v, r, hz, px, py)) return;
+      const d = r.x1 + r.y1;
+      if (!thing || d > thing.d) thing = { id, node, d };
+    };
+    for (const r of Object.values(this.map.resources)) tryBox(r.id, 'resource', r.rect, RESOURCE_H[r.kind]);
+    for (const d of Object.values(this.map.desks)) tryBox(d.id, 'desk', d.rect, 0.72);
+    for (const p of this.map.props) if (DRAGGABLE_PROPS.has(p.kind)) tryBox(p.id, 'prop', p.rect, 0.9);
+    if (thing) { const t = thing as { id: string; node: NodeKind }; return { kind: 'thing', id: t.id, node: t.node }; }
+
+    for (const cn of liveConnections(this.map, this.edits.layout)) {
+      const a = anchorOf(this.map, cn.from), b = anchorOf(this.map, cn.to);
+      if (!a || !b) continue;
+      if (edgeHit(v, edgeCurve(a.at, b.at), px, py)) return { kind: 'edge', id: edgeId(cn.from, cn.to), a: cn.from, b: cn.to };
+    }
+
+    for (const [id, box] of Object.entries(this.plateBoxes)) {
+      if (px >= box.x && px <= box.x + box.w && py >= box.y && py <= box.y + box.h) return { kind: 'zonePlate', id };
+    }
+
     const cell = this.camera.toGrid(px, py);
     const z = zoneAt(this.map, cell);
     return z ? { kind: 'zone', id: z.id } : null;
+  }
+
+  /** A corner handle of the selected zone, in screen space. */
+  private handleAt(v: View, px: number, py: number): Hit | null {
+    const z = this.picked ? this.map.zoneById[this.picked] : null;
+    if (!z) return null;
+    const cs = quad(v, z.rect, 0);
+    for (let i = 0; i < 4; i++) if (Math.hypot(px - cs[i].x, py - cs[i].y) <= HANDLE_R + 4) return { kind: 'handle', id: z.id, corner: i };
+    return null;
+  }
+
+  /**
+   * The port ring under the pointer, if there is one.
+   *
+   * Only on the thing the pointer is already over or the thing that is selected: a ring that is not drawn must
+   * not be grabbable, or every desk corner on the campus would quietly stop the camera from panning.
+   */
+  private portAtPoint(v: View, px: number, py: number): string | null {
+    for (const id of [this.over, this.picked]) {
+      if (!id) continue;
+      const a = anchorOf(this.map, id);
+      if (!a || (a.kind !== 'desk' && a.kind !== 'resource')) continue;
+      const p = v.p(portAt(a.rect).x, portAt(a.rect).y, 0.02);
+      if (Math.hypot(px - p.x, py - p.y) <= PORT_HIT) return id;
+    }
+    return null;
   }
 
   /* ---- the camera, as the rest of the app drives it --------------------------------------------------- */
@@ -637,6 +1372,25 @@ export class CampusView {
   }
   /** Where a grid cell lands on the screen — the click harness parks a target under a chrome element with it. */
   project(x: number, y: number, z = 0): Pt { return this.camera.toScreen(x, y, z); }
+  /**
+   * The screen box a node occupies — a desk, a zone, a resource or a prop.
+   *
+   * The harnesses need this to press on a *thing* rather than on the person sitting at it: `desks()` hands back
+   * where somebody sits, and people win every hit test, so a press there is a press on them.
+   */
+  nodeBox(id: string): { x: number; y: number; w: number; h: number; cx: number; cy: number } | null {
+    const a = anchorOf(this.map, id);
+    if (!a) return null;
+    const v = this.camera.view();
+    const hz = a.kind === 'desk' ? 0.72 : a.kind === 'resource' ? RESOURCE_H[this.map.resources[id].kind] : 0;
+    const pts = [...quad(v, a.rect, 0), ...quad(v, a.rect, hz)];
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    // the middle of the floor quad, not of the whole silhouette: that is the top of the thing, where nobody stands
+    const c = v.p((a.rect.x0 + a.rect.x1) / 2, (a.rect.y0 + a.rect.y1) / 2, hz * 0.5);
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, cx: c.x, cy: c.y };
+  }
+
   /** The screen box a screen surface occupies, for the click harness. */
   screenBox(kind: string): { x: number; y: number; w: number; h: number; cx: number; cy: number } | null {
     const s = this.map.screens[kind];
@@ -650,7 +1404,7 @@ export class CampusView {
     return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
   }
   /** What the office has under a screen point, without clicking it — the overlay gate's hit test. */
-  hitAt(px: number, py: number): { kind: 'agent' | 'screen' | 'zone'; id: string } | null { return this.pick(px, py); }
+  hitAt(px: number, py: number): Hit | null { return this.pick(px, py); }
   /** Let the idle wander off for a coffee, or hold them at their desks. The shot harness holds them. */
   setCoffee(on: boolean): boolean { this.coffee = on; return this.coffee; }
   /** Whether a pointer is down on the canvas and carrying the camera. The overlay gate asserts this clears. */
@@ -666,7 +1420,25 @@ const LAMP_REACH = 4.5;
 
 interface Timing { ground: number; sort: number; world: number; screens: number; light: number; labels: number; frames: number }
 
-const KEYS = new Set(['w', 'a', 's', 'd', 'W', 'A', 'S', 'D', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+const KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+
+/** Half a cell, which is what everything in the office snaps to. */
+const snapHalf = (v: number): number => Math.round(v * 2) / 2;
+const mix1 = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+/**
+ * The dressing the owner may pick up. A partition, a walkway or a window is part of the building; a plant, a
+ * stool, a lamp or a shelf is furniture, and furniture moves.
+ */
+const DRAGGABLE_PROPS = new Set(['plant', 'stool', 'floorlamp', 'shelf', 'hightable', 'chair']);
+
+/** What the plate beside a selected thing calls it. */
+const SUB_OF: Record<string, string> = { browser: 'Browser', doc: 'Document', note: 'Sticky note', site: 'Site', station: 'Tool station' };
+
+/** Is a screen point inside the silhouette of a box standing on the floor? Floor quad and top quad, hulled. */
+function boxHit(v: View, r: Rect, hz: number, px: number, py: number): boolean {
+  return inPoly(hull([...quad(v, r, 0), ...quad(v, r, hz)]), px, py);
+}
 
 const pad = (r: Rect, n: number): Rect => ({ x0: r.x0 - n, y0: r.y0 - n, x1: r.x1 + n, y1: r.y1 + n });
 const centre = (r: Rect): Cell => ({ x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 });

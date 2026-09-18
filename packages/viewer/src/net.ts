@@ -13,6 +13,12 @@ export interface NetHandlers {
   onConversation?(id: string, turns: ThreadTurn[]): void;
   /** an `error` reply: `id` is the decision it refused, where the daemon named one */
   onError?(message: string, id: string | null): void;
+  /**
+   * The daemon's reply to a `layout.set` (SP9b): the lines it would not take, each with the reason. An empty
+   * list is a clean write. A daemon that has never heard of `layout.set` simply never sends this, which is why
+   * the viewer keeps what it drew rather than waiting for an acknowledgement that is not coming.
+   */
+  onLayoutAck?(dropped: { line: string; reason: string }[]): void;
 }
 
 /** Resolve the daemon WS URL + token: ?ws= & ?token= in the page URL, else defaults (daemon port 7411 next to the viewer's 7412). */
@@ -50,6 +56,7 @@ export class Net {
       else if (msg.op === 'chat.ack') this.h.onChatAck?.(String(msg.id));
       else if (msg.op === 'decide.ack') this.h.onDecideAck?.(String(msg.id));
       else if (msg.op === 'conversation') this.h.onConversation?.(String(msg.id), Array.isArray(msg.turns) ? (msg.turns as ThreadTurn[]) : []);
+      else if (msg.op === 'layout.ack') this.h.onLayoutAck?.(Array.isArray(msg.dropped) ? (msg.dropped as { line: string; reason: string }[]) : []);
       else if (msg.op === 'error') this.h.onError?.(String(msg.message ?? 'the daemon refused that'), msg.id === undefined ? null : String(msg.id));
     };
     ws.onclose = (ev) => { this.h.onStatus(false, ev.code === 1006 && !this.token ? 'daemon offline or token missing (open the URL printed by cubicle start)' : `disconnected (${ev.code})`); this.retry(); };
@@ -89,6 +96,11 @@ export class Net {
     this.pendingReplay = msg;
     return false;
   }
+  /**
+   * The office as the owner has arranged it, whole (SP9b). Idempotent by contract: the viewer never sends a diff,
+   * because a diff would need the two ends to agree about what had already arrived.
+   */
+  layout(nodes: Record<string, unknown>, connections: unknown[]): boolean { return this.send({ op: 'layout.set', nodes, connections }); }
   snapshot(): boolean { return this.send({ op: 'snapshot' }); }
   close(): void { this.closed = true; this.pendingReplay = null; this.ws?.close(); }
 }

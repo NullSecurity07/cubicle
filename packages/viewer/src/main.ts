@@ -6,7 +6,7 @@ import { applyConversation, decideAcked, decideFailed, decideSent, emptyState, a
 import { Panel, SURPRISE_ME, type Origin } from './ui/panel.js';
 import { TopBar } from './ui/bar.js';
 import { applyTheme, currentTheme, themeFromQuery, THEMES } from './ui/tokens.js';
-import { emptyUi, vaultPathOf, type Ctx } from './ui/content.js';
+import { emptyUi, vaultPathOf, who, type Ctx } from './ui/content.js';
 import { COMMENT_REQUIRED, commentRequired, decidableOf, decideStateFor, decisionKey } from './ui/decisions.js';
 import { MESSAGES, roomThread } from './ui/messages.js';
 import { viewFor, SURFACES } from './ui/surfaces.js';
@@ -19,6 +19,11 @@ import { bindKeys, keysView } from './ui/keys.js';
 import { Rail } from './ui/rail.js';
 import { MinimapChrome, minimapWanted } from './ui/minimap.js';
 import { fitZoom } from './world/camera.js';
+import { Dock } from './ui/dock.js';
+import { SelectionPlate } from './ui/selection.js';
+import type { Selection } from './world/view.js';
+import type { DockKind } from './world/editing.js';
+import type { LayoutNode, OfficeLayout, ToolName } from './world/layout.js';
 import { minimapToGrid } from './world/minimap-draw.js';
 import { slabOf } from './world/paint.js';
 
@@ -99,6 +104,14 @@ scene.hooks = {
   clock: () => (state.mode === 'replay' ? replayClockAt(time.index) : Date.now()),
   onSurfaceClick(kind) { open(kind, lastPress ?? undefined); },
   onAgentClick(role) { open(role === 'ceo' ? 'cabin' : `agent:${role}`, lastPress ?? undefined); },   // the CEO is the owner's channel
+  // SP9b. The office is the owner's to rearrange: every change goes to the daemon as the whole note, and every
+  // change says one sentence about itself. A daemon that does not answer changes nothing here — the office keeps
+  // what it drew, which is what makes the viewer usable against a daemon that has not learnt `layout.set` yet.
+  onLayoutChange(next) { sendLayout(next); },
+  say(text) { toast(text); announce(text); },
+  onSelect(sel) { plate.show(sel); plate.place(scene.selectionAnchor()); dock.clear(); },
+  onHire(at) { hireAt(at); },
+  nameOf: (id) => who(state, id),
 };
 void scene.start().then(() => { rail.update(); minimap.layout(); }).catch((err) => { console.error('[office] the map did not load', err); toast('The office map did not load.'); });
 
@@ -128,6 +141,67 @@ const minimap = new MinimapChrome({
 scene.hooks.onZoneChange = () => rail.update();
 window.addEventListener('resize', () => minimap.layout());
 // ---------------------------------------------------------------------------------------------------------------
+
+// ---- the office the owner arranges (SP9b) ----------------------------------------------------------------------
+// The renderer owns the note and the undo stack; this is the wiring: what goes over the socket, what the two
+// pieces of chrome do, and the one place a hire is asked for.
+
+/** The whole note, every time. A socket that is down is not an error here: the office keeps what it drew. */
+function sendLayout(next: OfficeLayout): void {
+  net.layout(next.nodes as Record<string, unknown>, next.connections);
+}
+
+/**
+ * The owner dropped an Agent on the floor.
+ *
+ * There is no hire sheet yet (SP9b step 4 leaves it to the hire flow the daemon already has), so this goes down
+ * the path that exists: the CEO's own thread, with the sentence pre-written and the spot in it. The owner reads
+ * it, names the role and the team, and sends — and the hire comes back as a proposal in Decisions, like every
+ * other hire. When the sheet lands, this is the one call that changes.
+ */
+function hireAt(at: { x: number; y: number }): void {
+  open('cabin', undefined, { zoom: false });
+  panel.prefillComposer(`Hire a <role> for <team> — their desk goes at ${at.x}, ${at.y} in the office.`);
+  toast('Tell the CEO who to hire. The desk spot is already in the message.');
+}
+
+const plate = new SelectionPlate({
+  onConnect(id) { scene.armConnect(id); toast('Now click what to connect it to.'); },
+  onRemove(id) { scene.select(id); scene.removeSelected(); },
+  onRename(id, name) { scene.select(id); scene.renameSelected(name); },
+  onDismiss() { scene.select(null); },
+});
+const dock = new Dock({
+  onArm(kind, extra) { scene.arm(kind as DockKind, (extra ?? {}) as Partial<LayoutNode>, extra?.label ?? ''); },
+  onDrop(x, y) { scene.dropFromDock(x, y); dock.clear(); },
+  onCancel() { scene.cancelPlacing(); },
+  // The notes a Document board may show: the plan, the latest brief, the runs and the ideas the office knows about.
+  notes: () => knownNotes(),
+});
+
+/** What the snapshot knows about the vault, as a picker's worth of notes. */
+function knownNotes(): { path: string; label: string }[] {
+  const out: { path: string; label: string }[] = [];
+  if (state.plan) out.push({ path: 'Plans/plan.md', label: 'Plan' });
+  if (state.latestRun?.path) out.push({ path: state.latestRun.path, label: 'Latest brief' });
+  for (const n of state.inbox.slice(0, 4)) if (n.path) out.push({ path: n.path, label: n.title || n.kind });
+  for (const d of state.decided.slice(0, 3)) if (d.path) out.push({ path: d.path, label: d.title || d.kind });
+  return out;
+}
+
+/**
+ * The office's own keys, ahead of the app's.
+ *
+ * Escape, Delete and the arrows mean something different when the owner has a desk picked, so the renderer is
+ * asked first and the app's table only sees what it did not want. Nothing reaches either while a sheet, the
+ * first-run card or the quick-open palette owns the keyboard.
+ */
+window.addEventListener('keydown', (e) => {
+  if (firstRun.visible || quick.visible || panel.current) return;
+  const el = e.target as HTMLElement | null;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  if (scene.keyDown(e)) e.preventDefault();
+}, true);
 
 /**
  * The single entry for opening anything: a surface, a room, `agent:<role>`, `job:<id>`, `org`. Pushes onto the
@@ -180,6 +254,16 @@ function onAction(act: string, o: { comment: string; text: string }): void {
   if (act.startsWith('search:')) { ui.search = act.slice(7); refresh(); return; }
   if (act.startsWith('thread:')) { const id = act.slice(7); ui.thread = id; net.conversation(id); refresh(); return; }
   if (act === 'send') { if (o.text) { sendChat(o.text); panel.clearComposer(); } return; }
+  // The Org sheet's own route to a connection, for anyone who is not using a pointer (SP9b).
+  if (act.startsWith('disconnect:')) { const [a, b] = act.slice(11).split('|'); scene.disconnectIds(a, b); refresh(); return; }
+  if (act === 'connect:add') {
+    const from = document.querySelector<HTMLSelectElement>('#panel-body select[data-key="conn-from"]')?.value ?? '';
+    const to = document.querySelector<HTMLSelectElement>('#panel-body select[data-key="conn-to"]')?.value ?? '';
+    if (!from || !to || from === to) { toast('Pick two different things to connect.'); return; }
+    if (!scene.connectIds(from, to)) toast('Those two cannot be connected.');
+    refresh();
+    return;
+  }
   if (!cur.startsWith('decision:')) return;
   const id = cur.slice('decision:'.length);
   if (act.startsWith('choose:')) { ui.choice[id] = Number(act.slice(7)); refresh(); return; }
@@ -199,7 +283,21 @@ function openVaultLink(url: string): void {
     .catch(() => toast(`The note is at ${path}`));
 }
 
+/**
+ * The office is redrawn from the daemon's note only when the daemon has said something about it.
+ *
+ * `applySnapshot` hands back the *same* layout object when the snapshot carried none, so identity is the signal:
+ * a daemon that has never heard of `Office/campus.md` cannot quietly undo what the owner just dragged.
+ */
+let layoutShown: OfficeLayout | null = null;
+function syncLayout(): void {
+  if (state.layout === layoutShown) return;
+  layoutShown = state.layout;
+  scene.setLayout(state.layout);
+}
+
 function refresh(): void {
+  syncLayout();
   if (panel.current) panel.update(panel.current, viewOf(panel.current));
   rail.update();
   bar.setPending(state.pendingProposals);
@@ -237,6 +335,7 @@ bindKeys({
   talk: () => open('cabin'), messages: () => open(MESSAGES), queue: () => open('noticeboard'), brief: () => open('newsstand'), plan: () => open('whiteboard'), org: () => open('org'),
   pause: () => time.togglePlay(), prev: () => time.step(-1), next: () => time.step(1),
   minimap: () => minimapHook.toggle(), help: () => open('keys'), quickopen: () => quick.open(),
+  dock: () => dock.toggle(),
 // The two aria-modal cards own the keyboard while they are up: one Tab out of their text field used to leave `T`
 // opening the cabin sheet underneath and `1`-`7` flying the camera behind them.
 // A decision reader owns the keyboard too: `1`-`7` would otherwise fly the camera while the owner is picking
@@ -301,6 +400,8 @@ const net = new Net(url, token, {
     if (e.type === 'proposal.created' && e.payload.kind !== 'message') toast(said!, { action: { label: 'Open', open: 'postoffice' } });
     if (e.type === 'deploy.done') toast(said!, { action: { label: 'See it', open: 'workshop' } });
     if (e.type === 'browser.frame' && !frames[String(e.payload.session)]) frames[String(e.payload.session)] = `/screens/${String(e.payload.path).replace('.cubicle/screens/', '')}${ctx.tokenQuery}`;
+    // One message, travelling the line that lets it be sent (SP9b). The renderer drops it where there is no line.
+    if (e.type === 'agent.spoke' && e.agent && typeof e.payload.to === 'string') scene.pulse(e.agent, String(e.payload.to));
     if (state.staleSnapshot) { state = { ...state, staleSnapshot: false }; net.snapshot(); } // plan / brief / inbox changed on disk → refresh text
     refresh();
   },
@@ -326,6 +427,15 @@ const net = new Net(url, token, {
     toast(message);
   },
   onStatus(ok, detail) { state = { ...state, connected: ok }; bar.setConn(ok, ok ? 'live' : detail); },
+  /**
+   * The daemon would not take part of the note. It has already broadcast what it *did* take, so the office is
+   * right; all that is left is to say which line was dropped and why, in the daemon's own words.
+   */
+  onLayoutAck(dropped) {
+    if (!dropped.length) return;
+    const first = dropped[0];
+    toast(dropped.length === 1 ? `${first.reason} (${first.line})` : `${dropped.length} changes were not kept — the first: ${first.reason}`);
+  },
 });
 net.connect();
 
@@ -373,6 +483,27 @@ const shellHooks = (window as unknown as { __cubicle?: Record<string, unknown> }
   pushFrame: (id: string, dataUrl: string) => { if (!state.surfaces[id]) { state = applyEvent(state, { ts: new Date().toISOString(), type: 'browser.session_started', agent: null, job: null, payload: { session: id } }); refresh(); } onFrameData(id, dataUrl); },
   /** What the sheet has picked (the open thread, the search, a chosen option) — read and driven by the click test. */
   ui: () => ui,
+  // ---- the office the owner arranges (SP9b) ----
+  // Everything a pointer can do to the campus, as one call each, so the harnesses can drive it without a mouse.
+  /** The note as the office holds it. */
+  layout: () => scene.layout(),
+  /** Drag a thing to a grid cell, as if the owner had picked it up and dropped it there. */
+  drag: (fromId: string, to: { x: number; y: number }) => scene.dragTo2(fromId, to),
+  /** Where a thing is on the screen: a desk, a zone, a resource or a prop. */
+  nodeBox: (id: string) => scene.nodeBox(id),
+  /** Pick something: a desk, a zone, a resource, or `edge:a|b`. `null` picks nothing. */
+  select: (id: string | null) => { scene.select(id); return scene.selected2(); },
+  /** Show or hide the dock; with no argument it toggles. */
+  dock: (on?: boolean) => (on === undefined ? dock.toggle() : dock.setVisible(on)),
+  /** Take something out of the dock and put it down in one call. */
+  place: (kind: string, at: { x: number; y: number }, extra?: Record<string, unknown>) => { scene.arm(kind as DockKind, (extra ?? {}) as Partial<LayoutNode>); return scene.placeAt(at); },
+  connect: (a: string, b: string) => scene.connectIds(a, b),
+  disconnect: (a: string, b: string) => scene.disconnectIds(a, b),
+  /** Take the selected thing, or a named one, off the campus. */
+  remove: (id?: string) => { if (id) scene.select(id); return scene.removeSelected(); },
+  undo: () => scene.undoLayout(),
+  /** Send one message down its line, for the shot harness to photograph. */
+  pulse: (from: string, to: string) => scene.pulse(from, to),
 };
 
 let last = performance.now();
@@ -388,6 +519,7 @@ function loop(now: number): void {
     minimap.layout();
     rail.update();
   }
+  plate.place(scene.selectionAnchor());
   time.tick(dt, new Date(), hourOverride);
   if (state.mode === 'live') state = tick(state, Date.now());
   requestAnimationFrame(loop);

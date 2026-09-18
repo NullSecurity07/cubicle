@@ -117,6 +117,20 @@ export class Panel {
 
   /** Empty the composer after a send: the app has the text, and the field must not keep offering to send it again. */
   clearComposer(): void { const el = this.body.querySelector<HTMLInputElement>('input[data-key="composer"]'); if (el) el.value = ''; }
+  /**
+   * Put a sentence in the composer for the owner to finish and send.
+   *
+   * The cabin's own field is the one the CEO reads, so a request the office wants to make on the owner's behalf —
+   * a hire dropped out of the dock (SP9b) — is written there rather than sent for them. The caret lands at the
+   * first placeholder, which is the word they have to replace.
+   */
+  prefillComposer(text: string): void {
+    const el = this.body.querySelector<HTMLInputElement>('input[data-key="composer"]') ?? this.input;
+    el.value = text;
+    el.focus();
+    const at = text.indexOf('<');
+    if (at >= 0) el.setSelectionRange(at, text.indexOf('>', at) + 1);
+  }
 
   get current(): string | null { return this.stack.current()?.kind ?? null; }
   isModal(): boolean { const p = this.stack.current()?.presentation; return p === 'reader' || p === 'viewer'; }

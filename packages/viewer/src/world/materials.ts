@@ -281,6 +281,41 @@ export function lightAt(hour: number): Light {
   };
 }
 
+/** WCAG relative luminance of a `#rrggbb`, 0 black to 1 white. */
+export function luminance(hex: string): number {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (v: number): number => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * ch((n >> 16) & 255) + 0.7152 * ch((n >> 8) & 255) + 0.0722 * ch(n & 255);
+}
+
+/** WCAG 2.1 contrast between two `#rrggbb`. The campus's own, so the palette can be held to it under test. */
+export function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * The floor, as it actually is at this hour.
+ *
+ * `paintHour` lays one multiply over the whole campus, so the off-white the floor is made of is not the colour
+ * anything on the floor is seen against: at midnight it is a dark blue-grey, and a line drawn dark enough to read
+ * at noon disappears into it. Taken at the far end of the multiply's gradient — the part of the floor furthest
+ * from the light — because that is where anything drawn on it has the least to work with.
+ */
+export function floorAt(light: Light): string {
+  const n = parseInt(MATERIAL.floor.slice(1), 16), m = parseInt(light.mulTo.slice(1), 16);
+  const ch = (sh: number): number => { const f = (n >> sh) & 255, t = (f * ((m >> sh) & 255)) / 255; return f + (t - f) * light.mulAlpha; };
+  return `#${hex2(ch(16) / 255)}${hex2(ch(8) / 255)}${hex2(ch(0) / 255)}`;
+}
+
+/**
+ * The ink that reads on the floor at this hour: the campus's own dark by day and dusk, white once the office is
+ * lit from inside. Everything the owner is meant to be able to *use* rather than look at — a selected line's
+ * casing, a port's rim — is drawn in it, over the hour rather than under it, so it holds at 3:1 at every hour.
+ * `ui/tokens.test.ts` asserts exactly that.
+ */
+export const onFloorInk = (light: Light): string => (luminance(floorAt(light)) > 0.2 ? MATERIAL.ink : MATERIAL.white);
+
 /** How strongly the desk lamps and screens burn at this hour: 0 by day, 1 after dark. */
 export function lampStrength(hour: number): number {
   const h = ((hour % 24) + 24) % 24;

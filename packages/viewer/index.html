@@ -11,7 +11,7 @@
       body { margin: 0; height: 100%; overflow: hidden; }
       #game { position: absolute; inset: 0; }
       [hidden] { display: none !important; }
-      #layer, #rail, #minimap-chrome, #toast, #coach { visibility: hidden; }  /* until the stylesheet is in */
+      #layer, #rail, #minimap-chrome, #toast, #coach, #dock, #selection { visibility: hidden; }  /* until the stylesheet is in */
     </style>
   </head>
   <body>
@@ -63,6 +63,10 @@
       <span id="clock" class="footnote"></span>
       <span id="replay-hint" class="caption dim replay-only">Space plays · arrows step</span>
     </div>
+    <!-- SP9b: the dock is what the owner adds things from (D), and the plate is what they do to the one thing they
+         have picked. Both are HTML over the canvas, so a press on either is never a press on the office. -->
+    <div id="dock" class="glass" hidden></div>
+    <div id="selection" class="glass" hidden></div>
     <div id="minimap-chrome" hidden></div>
     <div id="toast" hidden></div>
     <div id="announcer" aria-live="polite" class="sr-only"></div>

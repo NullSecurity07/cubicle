@@ -1,5 +1,6 @@
 /** Viewer state: a pure reducer over daemon events + snapshots. No persistence — the viewer is disposable (spec §10). */
 import { familyOf, type Family } from './world/palette.js';
+import { type OfficeLayout, asLayout, emptyLayout } from './world/layout.js';
 import { boardOpened, boardClosed, BOARD_SESSION_MAX_MS, type BoardState } from './ui/board.js';
 import { pantryOpened, pantryTurn, pantryClosed, pantryStale, PANTRY_SESSION_MAX_MS, type PantryState } from './ui/pantry.js';
 export type AgentState = 'idle_at_desk' | 'working' | 'walking' | 'talking' | 'error' | 'blocked' | 'entering' | 'leaving' | 'offline';
@@ -77,7 +78,13 @@ export interface MoneyView {
   budgets: { division: string; used: number; quota: number }[];
   entries: { at: string; kind: string; amount: string; mode: string; who: string; why: string }[];
 }
-export interface Snapshot { op: 'snapshot'; at: string; roles: { role: string; display: string; sprite: string; desk: string; active: boolean; title?: string; team?: string; reports_to?: string }[]; jobs: JobView[]; surfaces: { streamKind: string; streamId: string; lastFrame?: string; active: boolean }[]; quota: QuotaView[]; latestRun: { path: string; body: string } | null; plan: string; pendingProposals: number; brand?: BrandView; inbox?: InboxRow[]; /** the last 20 resolved notes */ decided?: DecidedRow[]; /** the conversation index, newest first */ conversations?: Thread[]; chat?: ChatMsg[]; teams?: TeamView[]; offices?: Record<string, string>; /** Optional: an older daemon omits it. */ money?: MoneyView | null }
+export interface Snapshot { op: 'snapshot'; at: string; roles: { role: string; display: string; sprite: string; desk: string; active: boolean; title?: string; team?: string; reports_to?: string }[]; jobs: JobView[]; surfaces: { streamKind: string; streamId: string; lastFrame?: string; active: boolean }[]; quota: QuotaView[]; latestRun: { path: string; body: string } | null; plan: string; pendingProposals: number; brand?: BrandView; inbox?: InboxRow[]; /** the last 20 resolved notes */ decided?: DecidedRow[]; /** the conversation index, newest first */ conversations?: Thread[]; chat?: ChatMsg[]; teams?: TeamView[]; offices?: Record<string, string>; /** Optional: an older daemon omits it. */ money?: MoneyView | null;
+  /**
+   * `Office/campus.md` — what the owner moved, added and wired (SP9b). Optional, and deliberately so: a daemon
+   * that has never heard of it leaves the office exactly as the template draws it, and whatever this viewer has
+   * arranged locally stays arranged rather than being wiped by the next snapshot.
+   */
+  layout?: unknown }
 
 export interface State {
   connected: boolean;
@@ -120,6 +127,12 @@ export interface State {
   firstRun: boolean;
   /** Set when plan/brief text changed on disk; the client re-requests the snapshot. */
   staleSnapshot?: boolean;
+  /**
+   * The office as the owner arranged it. Replaced only by the daemon — a snapshot carrying one, or
+   * `layout.changed` — so its identity is the signal the viewer watches: the same object means nothing the
+   * daemon said has changed, and whatever the owner is in the middle of doing is left alone.
+   */
+  layout: OfficeLayout;
 }
 
 /**
@@ -133,7 +146,7 @@ export function withFrameSeq(s: State, id: string, seq?: number): State {
   return { ...s, frames: { ...s.frames, [id]: { ...cur, seq: seq ?? cur.seq + 1 } } };
 }
 
-export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], money: null, latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], offices: {}, inbox: [], decided: [], conversations: [], turns: {}, live: {}, decisions: {}, chat: [], terminal: [], mail: [], feed: [], meetings: {}, board: null, pantry: null, frames: {}, lastEventTs: null, deploys: [], firstRun: false });
+export const emptyState = (): State => ({ connected: false, mode: 'live', now: Date.now(), agents: {}, jobs: {}, surfaces: {}, quota: [], money: null, latestRun: null, plan: '', pendingProposals: 0, brand: { name: '', tagline: '', url: '' }, teams: [], offices: {}, inbox: [], decided: [], conversations: [], turns: {}, live: {}, decisions: {}, chat: [], terminal: [], mail: [], feed: [], meetings: {}, board: null, pantry: null, frames: {}, lastEventTs: null, deploys: [], firstRun: false, layout: emptyLayout() });
 
 /** Who walks over when a job fails: the operations office. */
 export function overseerRole(st: Pick<State, 'offices'>): string { return st.offices?.operations ?? OVERSEER; }
@@ -218,7 +231,7 @@ export function applySnapshot(s: State, snap: Snapshot): State {
   for (const su of Array.isArray(snap.surfaces) ? snap.surfaces : []) surfaces[su.streamId] = { streamKind: su.streamKind as SurfaceView['streamKind'], streamId: su.streamId, lastFrame: su.lastFrame, active: su.active };
   const frames: State['frames'] = {};
   for (const id of Object.keys(surfaces)) if (s.frames[id]) frames[id] = s.frames[id];
-  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, money: snap.money ?? null, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, teams: snap.teams ?? [], offices: snap.offices ?? {}, inbox: snap.inbox ?? [], decided: snap.decided ?? [], conversations: snap.conversations ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, firstRun, staleSnapshot: false };
+  return { ...s, agents, jobs, surfaces, frames, quota: snap.quota, money: snap.money ?? null, latestRun: snap.latestRun, plan: snap.plan, pendingProposals: snap.pendingProposals, brand: snap.brand ?? { name: '', tagline: '', url: '' }, teams: snap.teams ?? [], offices: snap.offices ?? {}, inbox: snap.inbox ?? [], decided: snap.decided ?? [], conversations: snap.conversations ?? [], chat: snap.chat ? mergeChat(snap.chat, s.chat) : s.chat, connected: true, firstRun, staleSnapshot: false, layout: snap.layout === undefined ? s.layout : asLayout(snap.layout) };
 }
 
 /**
@@ -434,6 +447,9 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'guardrail.deferred': { const ag = a(e.agent); if (ag) { ag.checking = null; ag.bubble = { kind: 'thought', text: `${WAITING_TEXT}…`, until: nowMs + BUBBLE_MS }; feel(ag, 'thinking', BUBBLE_MS); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `${WAITING_TEXT}: ${String(p.reason ?? '')}` }]; break; }
     case 'guardrail.blocked': { const ag = a(e.agent); if (ag) { ag.checking = null; ag.bubble = { kind: 'thought', text: `not allowed: ${String(p.reason ?? 'blocked')}`.slice(0, 120), until: nowMs + BUBBLE_MS }; feel(ag, 'worried'); emote(ag, '!', 4000); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `guardrail: ${String(p.reason ?? '')}` }]; break; }
     case 'owner.edited': st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `you edited ${String(p.path)}` }]; break;
+    // The office moved: the owner dragged something in another window, or edited `Office/campus.md` in Obsidian.
+    // The daemon has already validated it, so this is the truth and it replaces whatever was here.
+    case 'layout.changed': st.layout = asLayout(p.layout); break;
     case 'vault.wrote': { const pth = String(p.path ?? ''); if (pth.startsWith('Decisions/') && !p.deleted) st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `decision recorded: ${pth.replace(/^Decisions\//, '').replace(/\.md$/, '')} (${String(e.agent ?? '')})` }]; if ((pth === 'Plans/plan.md' || pth.startsWith('Runs/') || pth.startsWith('Ledger/')) && p.generated !== true) st.staleSnapshot = true; break; }
     default: break;
   }
