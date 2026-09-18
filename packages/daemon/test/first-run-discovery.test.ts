@@ -420,10 +420,19 @@ describe('the first cycle reads, then judges, then plans (spec §5.1)', () => {
       expect(disc.status).toBe('done');
       expect(estimate).toBeTruthy();
       expect(session).toBeTruthy();
-      // In order, and all of it before the plan: read, price, judge, ask, then plan.
+      // In order, and all of it before the plan: read, judge, price, ask, then plan.
+      //
+      // Ruling W6-4 moved the sitting, not the shape. The board used to sit twice on one company — once on the
+      // founder brief and again on the card it was written against, ten minutes and sixteen calls later, with a
+      // different customer and a different rubric — so the brief sitting is now *the* sitting, and its verdict
+      // is stamped on the card. It therefore happens where the brief happens, which is before the finance
+      // office prices anything; the board reads the brief either way, and no price was ever in front of it.
       expect(disc.created < estimate.created).toBe(true);
-      expect(estimate.created <= session.created).toBe(true);
+      expect(disc.created <= session.created).toBe(true);
       expect(session.created <= plan.created).toBe(true);
+      expect(estimate.created <= plan.created).toBe(true);
+      // And it sat once: no second session on the same company.
+      expect(jobs.filter((j) => j.type === 'board.session')).toHaveLength(1);
 
       // The card carries both halves and a score, and the board's verdict is on it.
       const cards = v.list('Ideas', { ext: '.md' }).filter((p) => !p.endsWith('_template.md'));

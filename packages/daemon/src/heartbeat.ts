@@ -27,7 +27,7 @@ import { collectOwnerFeedback, markFeedbackDelivered, preferenceFeedbackShas, ga
 import { seedFirstJobs, seedFirstStream, briefAdoptedOn } from './first-run.js';
 import { currentDiscoveryStatus, askInterview, enqueueDiscovery, openDiscoveryJob, captureInterviewAnswer, ownerSaid, enqueueEstimates, enqueueResearchHalf, estimateJobId, hasApprovedBrief, rejectionAsksForNewIdea, selfInterviewSubject, selfInterviewPrompt } from './discovery.js';
 import { writeRunway, accrueModelCost, enqueueRunway, dormancyMessage, revivalMessage } from './money.js';
-import { runBoardDialogue, linkBoardTranscript, runBriefBoardSession, type BoardSessionOpts } from './board-dialogue.js';
+import { runBoardDialogue, linkBoardTranscript, runBriefBoardSession, priorBoardSitting, type BoardSessionOpts } from './board-dialogue.js';
 
 function collectOwnerFeedbackSafe(vault: Vault, since?: string) {
   try { return collectOwnerFeedback(vault, since); } catch { return []; }
@@ -629,6 +629,13 @@ export interface BoardSubject {
    * findings. Ideas and plans key on their slug and need none.
    */
   key?: string;
+  /**
+   * The **company** this sitting is about, as an idea slug, when it is about one (ruling W6-4). A brief session
+   * carries the slug of the card the brief is written against, so the sitting on the brief and the sitting on
+   * that card are recognisably two sittings on one subject rather than two unrelated verdicts. `key` stays what
+   * it was: what the *material* was, which is what the round-reuse rule needs. Absent for a plan.
+   */
+  about?: string;
 }
 
 /**
@@ -813,6 +820,8 @@ export interface BoardSessionResult extends BoardMerge {
    * and re-parsing the rendered page to get them back would be reading our own output. Empty on the brief path.
    */
   findingsByPart: Partial<Record<PressurePart, string>>;
+  /** Ruling W6-4: the sitting this one followed on the same company, when there was one. */
+  priorSitting?: PriorSitting;
 }
 
 export async function runBoardSession(
@@ -1172,6 +1181,28 @@ export function closeIdeaVerdicts(vault: Vault, o: { now: Date; decidesAfterHour
 /** Stable per idea, so a resumed cycle rules on the note it already filed. */
 export function ideaVerdictKey(slug: string): string { return `idea-verdict:${slug}`; }
 
+/**
+ * An earlier board sitting on the same subject, as the next one is handed it (ruling W6-4).
+ *
+ * Read off the earlier session's own `Meetings/` note, so a restarted daemon hands over exactly what a running
+ * one would. `changed` is the chair's own account of why this sitting differs from that one, and is empty until
+ * a chair has been asked the question.
+ */
+export interface PriorSitting {
+  /** ISO stamp the earlier session opened at. */
+  opened: string;
+  /** Its pressure verdict word: STRONG, WEAK or PIVOT REQUIRED. */
+  verdict: string;
+  /** Its rubric, already rendered (`4/10 — core assumption 0, …`), or ''. */
+  rubric: string;
+  /** The wedge it named, or ''. */
+  wedge: string;
+  /** `Meetings/<stamp>-board-<slug>.md`. */
+  path: string;
+  /** What the later chair said had changed, when it said anything. */
+  changed?: string;
+}
+
 /** What the owner is being asked to rule on, and everything the ruling should be made from. */
 export interface IdeaVerdictFacts {
   slug: string;
@@ -1194,6 +1225,8 @@ export interface IdeaVerdictFacts {
   decidesAfterHours: number;
   /** Ruling W4-5: the owner kept this card themselves, and the board's band is only advice about it. */
   ownerKept?: boolean;
+  /** Ruling W6-4: the earlier sitting on this subject, when there was one. */
+  priorSitting?: PriorSitting;
 }
 
 /**
@@ -1204,8 +1237,12 @@ export interface IdeaVerdictFacts {
 export function ideaVerdictBody(f: IdeaVerdictFacts): string {
   const findings = f.findings.length ? f.findings.map((x) => `- ${x}`).join('\n') : '- The board raised nothing that would sink this.';
   const deadline = f.decidesAfterHours > 0
-    ? `; after ${f.decidesAfterHours} h the recommendation stands (\`board_decides_after_hours\` in Memory/constitution.md)`
+    ? ` If you say nothing for ${f.decidesAfterHours} h the recommendation stands (\`board_decides_after_hours\` in Memory/constitution.md).`
     : '';
+  // Ruling W6-4: the board contradicted itself ten minutes apart and the owner was handed only the second
+  // verdict. When this sitting says something different from the last one on the same subject, both are on the
+  // note — with what the chair said changed, when it said anything.
+  const twice = priorSittingLine(f.priorSitting, f.pressure ?? (f.board === 'pass' ? 'STRONG' : 'WEAK'), f.rubric ?? null);
   return [
     `**${f.title}** — [[Ideas/${f.slug}]]`,
     '',
@@ -1218,6 +1255,7 @@ export function ideaVerdictBody(f: IdeaVerdictFacts): string {
     `- Cost: ${f.estimate || 'not estimated'}`,
     `- Board: ${f.board === 'pass' ? 'passed' : 'returned'}`,
     ...(f.pressure ? [`- Pressure test: ${f.pressure}${f.rubric ? ` · rubric ${renderRubric(f.rubric)}` : ''}`] : []),
+    ...(twice ? [`- ${twice}`] : []),
     // The argument itself, one click away: the owner reads how the board got here before they rule on it
     // (SP8 §3). Absent on a card the `brief` board judged, which held no dialogue and wrote no transcript.
     ...(f.transcript ? [`- Transcript: [[${f.transcript.replace(/\.md$/, '')}]]`] : []),
@@ -1231,8 +1269,31 @@ export function ideaVerdictBody(f: IdeaVerdictFacts): string {
     // founder-market fit — are the reason the board was asked at all (ruling H3).
     ...(f.chair?.trim() ? ['', PRESSURE_CHAIR_SECTION, '', chairAnswerText(f.chair)] : []),
     '',
-    `Set \`approved: true\` to take the recommendation (**${f.band}**), or \`approved: false\` to park it and tell me why. To overrule the recommendation, set \`chosen: 1\` for keep, \`2\` for park or \`3\` for scrap and \`approved: true\`${deadline}.`,
+    // Ruling W6-7: the buttons are the instruction. The recommendation is named so the owner knows what taking
+    // it would mean, and nothing here asks them to go and edit a field the screen already sets.
+    `The recommendation is **${f.band}**. ${ownerInstruction('idea_verdict')}${deadline}`,
   ].join('\n');
+}
+
+/**
+ * What the owner is told when the board has now sat twice on the same subject and said two different things
+ * (ruling W6-4) — or `''` when it has not, or when the second sitting confirmed the first.
+ *
+ * Both verdicts, in the order they were reached, with the chair's own account of what changed when it gave one.
+ * The third dry-run ruled `PIVOT REQUIRED` at 4/10 on the founder brief and `PIVOT REQUIRED` at 1/10 on the same
+ * idea ten minutes later — different customer, different wedge — and the owner was handed the second alone, with
+ * nothing to say the first had ever happened.
+ */
+export function priorSittingLine(prior: PriorSitting | undefined, verdict: string, rubric: BoardRubric | null): string {
+  if (!prior?.verdict) return '';
+  // The score alone on this line: the full rubric is two lines up, and the sentence is about the two verdicts
+  // disagreeing, not about which of five dimensions moved.
+  const score = (r: string): string => r.split(' — ')[0].trim();
+  const now = `${verdict}${rubric ? ` (${score(renderRubric(rubric))})` : ''}`;
+  const was = `${prior.verdict}${prior.rubric ? ` (${score(prior.rubric)})` : ''}`;
+  if (was === now) return `The board sat twice and said the same thing both times: ${now}. The first sitting is in [[${prior.path.replace(/\.md$/, '')}]].`;
+  const why = prior.changed?.trim() ? ` because ${prior.changed.trim().replace(/\.$/, '')}` : '';
+  return `The board sat twice: first ${was} on ${prior.opened.slice(0, 10)}, then ${now}${why}. The first sitting is in [[${prior.path.replace(/\.md$/, '')}]].`;
 }
 
 /** The heading the open questions sit under, on both proposals the owner rules on (SP8 §3). */
@@ -1283,10 +1344,15 @@ function withChair(body: string, chair: string): string {
  * whenever the first call landed. Returns null for a card the board has not judged.
  */
 export function fileIdeaVerdict(
-  vault: Vault, slug: string, opts: { from: string; job?: string; findings: string[] },
+  vault: Vault, slug: string, opts: { from: string; job?: string; findings: string[]; priorSitting?: PriorSitting },
 ): { id: string; path: string; band: IdeaBand; filed: boolean } | null {
   const card = readIdea(vault, slug);
   if (!card || card.data.board_verdict === null) return null;
+  // Ruling W6-4 made a second route to a stamped card — the board judging the company at the founder brief,
+  // before either office has priced the card — and `bandReason` on an unscored one reads "0/60 → scrap". The
+  // owner is not asked to scrap an idea nobody has scored: the note waits for the arithmetic, and the stranded-
+  // verdict sweep files it on the first cycle the card has a score.
+  if (card.data.score === null) return null;
   const board = card.data.board_verdict;
   const score = card.data.score ?? 0;
   const value = card.data.score_inputs.value ?? 3;
@@ -1306,6 +1372,9 @@ export function fileIdeaVerdict(
       transcript: card.data.board_transcript, questions: card.data.board_questions,
       research: card.data.research, estimate: card.data.estimate,
       ownerKept: ownerKept(card.data),
+      // Ruling W6-4. The session hands its own prior over (it alone knows what the chair said had changed);
+      // rebuilt from the card after a kill, the sitting before this one is still found on disk, minus that line.
+      priorSitting: opts.priorSitting ?? priorBoardSitting(vault, slug, card.data.board_transcript) ?? undefined,
       decidesAfterHours: vault.constitution().board_decides_after_hours,
     }),
   }, opts.from);
@@ -2326,13 +2395,15 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         // The session happened whatever the card does next: the `board.session` job note and the `Decisions/`
         // note above are the record. A card that vanished between the stamp and the verdict note is reported,
         // not thrown — and the stranded-verdict sweep at the top of this step re-files the note if it comes back.
-        const filed = fileIdeaVerdict(vault, idea.id, { from: ceo, job: jobId, findings: session.findings });
+        const filed = fileIdeaVerdict(vault, idea.id, { from: ceo, job: jobId, findings: session.findings, priorSitting: session.priorSitting });
         // Ruling W3-2: a `PIVOT REQUIRED` on this card proposes a *different* idea, and that idea is the owner's
         // to keep or drop like any other — it is never something this card quietly becomes. The card the board just
         // ruled on parks on its own verdict; the pivot is filed beside it and takes its own turn through the funnel.
         const pivotedFrom = fileChairPivot(vault, {
           text: [session.chairText, ...session.findings].filter(Boolean).join('\n'),
           findings: session.findings, subject: `Ideas/${idea.id}`, transcript: session.notePath, by: board.lead, now: now(),
+          // Ruling W6-6: the card's own product is what a pivot has to differ from to be one.
+          product: card.data.title,
         });
         state = { ...state, ideaJudged: idea.id }; saveState(state);
         if (!filed) vault.events.emit({ type: 'daemon.warning', agent: ceo, job: jobId, payload: { where: 'ideas_board', message: `the board ruled on Ideas/${idea.id} but the card could not be read back, so the owner has not been asked yet` } });

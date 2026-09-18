@@ -14,6 +14,8 @@ import { scaffoldVault, Vault, createProposal, ownerDecide, readIdea, listIdeas,
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { dispatchProposals } from '../src/index.js';
+import { priorSittingBlock } from '../src/board-dialogue.js';
+import { ideaVerdictBody } from '../src/heartbeat.js';
 
 const root = path.resolve(__dirname, '../../..');
 
@@ -64,6 +66,33 @@ describe('W6-5: the owner’s pick is kept, on the surprise path too', () => {
     await dispatchProposals(deps());
     expect(listIdeas(vault).map((i) => i.id)).toEqual(['pagespeedaudit']);
     expect(readIdea(vault, 'pagespeedaudit')!.data.decided_at).toBe(at);
+  });
+});
+
+describe('W6-4: the board does not contradict itself across sittings', () => {
+  it('hands a second sitting the first’s verdict and wedge, and asks it to confirm or say what changed', () => {
+    const block = priorSittingBlock({
+      opened: '2026-09-18T11:36:34.509Z', verdict: 'PIVOT REQUIRED', rubric: '4/10',
+      wedge: 'founders of high-traffic SaaS landing pages', path: 'Meetings/2026-09-18-1706-board-founder-brief.md',
+    });
+    expect(block).toContain('PIVOT REQUIRED');
+    expect(block).toContain('4/10');
+    expect(block).toContain('founders of high-traffic SaaS landing pages');
+    expect(block).toContain('2026-09-18');
+    expect(block.toLowerCase()).toContain('what changed');
+  });
+
+  it('shows both verdicts in the note the owner rules on when they differ', () => {
+    const body = ideaVerdictBody({
+      slug: 'pagespeedaudit', title: 'PageSpeedAudit', score: 53, band: 'park',
+      reason: 'the board returned it.', board: 'return', findings: [], research: '', estimate: '',
+      decidesAfterHours: 24, pressure: 'WEAK', rubric: { core_assumption: 0, fatal_flaws: 0, pain: 1, founder_fit: 0, why_now: 0 },
+      priorSitting: { opened: '2026-09-18T11:36:34.509Z', verdict: 'PIVOT REQUIRED', rubric: '4/10', wedge: '', path: 'Meetings/2026-09-18-1706-board-founder-brief.md', changed: 'the card now names e-commerce merchants, not indie founders' },
+    });
+    expect(body).toContain('The board sat twice');
+    expect(body).toContain('PIVOT REQUIRED (4/10)');
+    expect(body).toContain('WEAK (1/10)');
+    expect(body).toContain('e-commerce merchants');
   });
 });
 

@@ -22,15 +22,16 @@
  */
 import {
   type Vault, type Org, type ModelTier, nowIso, stampForFilename, stringifyNote, idFromKey,
-  officeHolder, listInbox, createProposal, renderRubric, setSection, sha256,
+  officeHolder, listInbox, createProposal, createJob, renderRubric, setSection, sha256,
   PRESSURE_PARTS, type PressurePart, PRESSURE_HANDBOOK_PATH, BANNED_HEDGE, OWNER_QUESTION, isOwnerQuestion, hedges,
   PRESSURE_TEST_SECTION, FOUNDER_BRIEF, founderBriefProposalBody, briefFromProposalBody, citedPaths,
-  checkFounderBrief, briefCheckContext, UNSTATED,
+  checkFounderBrief, briefCheckContext, UNSTATED, withFounderBriefTitle, founderBriefTitle,
+  briefIdeaSlug, readIdea, updateIdea, renderBoardSection, ideaPath, pressurePivot,
   EVIDENCE_RULE, annotateUnresolvedRefs, isOpinion, withheldTurn, withheldNote, asBoardOpinion,
 } from '@cubicle/core';
 import { classifyBannedTactic } from '@cubicle/tools';
 import {
-  type HeartbeatDeps, type BoardSubject, type BoardMerge, type BoardSessionResult,
+  type HeartbeatDeps, type BoardSubject, type BoardMerge, type BoardSessionResult, type PriorSitting,
   boardSubject, boardAgenda, mergeBoardVerdict, unansweredMerge, chairReaskPrompt, chairLostNote,
   chairFormat, ADVISOR_ASK, askAs, advisorSystem, SUBJECT_CHARS, CHAIR_IDEA_TOKENS,
   runBoardSession, writeBoardDecision, BOARD_UNREVIEWED_NOTE, BOARD_OPEN_QUESTIONS, fileChairPivot,
@@ -174,6 +175,10 @@ export function chairRoundPrompt(s: BoardSubject, o: {
   verdict: boolean;
   /** Ruling W4-1: the advisors whose turn the constitution's classifier withheld from this round. */
   withheld?: readonly string[];
+  /** Ruling W6-14: what the advisors agreed on, when they did. Never set together with `challenge`. */
+  agreement?: string;
+  /** Ruling W6-4: the last sitting on this subject, which this one confirms or contradicts out loud. */
+  prior?: PriorSitting | null;
 }): string {
   const what = s.kind === 'plan' ? 'this plan' : s.kind === 'brief' ? 'this founder brief' : 'this idea';
   const lines: string[] = [
@@ -345,6 +350,68 @@ export function priorBoardDialogue(vault: Vault, subjectKey: string): { opened: 
   return { opened: String(top.note!.data.opened ?? ''), path: top.rel, findings: parseFindingsSection(top.note!.body) };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// The board does not contradict itself across sittings (ruling W6-4)
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What a sitting was **about** — the company subject, not the document it was read off.
+ *
+ * `subject_key` is the material's digest, and it is right for the re-run rule: a brief and the idea card it is
+ * written against are two different pages and hash differently. But to the owner they are one company, and the
+ * third dry-run proved it: the board ruled PIVOT REQUIRED at 4/10 on the founder brief at 17:06 and PIVOT
+ * REQUIRED at 1/10 on the same company's idea card at 17:16, naming a different customer and a different wedge,
+ * and nothing anywhere connected the two. `about` is that connection — the idea slug the sitting was ultimately
+ * about — and it is written into the transcript's own frontmatter so the next sitting can find it.
+ */
+export function sittingAbout(s: BoardSubject): string {
+  return s.about ?? (s.kind === 'idea' ? (s.slug ?? '') : '');
+}
+
+/**
+ * The last finished board sitting on the same company, or null — its verdict, its rubric and the wedge it named.
+ *
+ * Read off the transcript's frontmatter rather than re-parsed out of its prose: the session writes those three
+ * facts when it closes, so a restarted daemon hands the next chair exactly what a running one would.
+ */
+export function priorBoardSitting(vault: Vault, about: string, exclude = ''): PriorSitting | null {
+  if (!about) return null;
+  const found = vault.list('Meetings', { ext: '.md' })
+    .map((rel) => ({ rel, note: vault.readNoteOrNull(rel) }))
+    .filter((x) => x.note && x.note.data.room === 'board' && x.note.data.about === about && x.rel !== exclude
+      && String(x.note.data.verdict ?? '').trim())
+    .sort((a, b) => String(b.note!.data.opened ?? '').localeCompare(String(a.note!.data.opened ?? '')));
+  const top = found[0];
+  if (!top) return null;
+  return {
+    opened: String(top.note!.data.opened ?? ''), path: top.rel,
+    verdict: String(top.note!.data.verdict ?? ''), rubric: String(top.note!.data.rubric ?? ''),
+    wedge: String(top.note!.data.wedge ?? ''),
+  };
+}
+
+/** The line a chair writes when its verdict differs from the last sitting's. Parsed back off its turn. */
+export const CHANGED_LABEL = 'CHANGED:';
+
+/** What the later chair said had changed since the earlier sitting, out of its verdict turn. */
+export function changedIn(turn: string): string {
+  return (turn ?? '').replace(/\r/g, '').match(new RegExp(`^[ \\t]*[*_\`]*[ \\t]*${CHANGED_LABEL.replace(':', '')}[*_\`]*[ \\t]*:[ \\t]*(.+)$`, 'im'))?.[1]?.trim() ?? '';
+}
+
+/**
+ * What the chair is told about the sitting that came before it: the whole of ruling W6-4's first half.
+ *
+ * The board is not forbidden to change its mind — the material changes, and a board that cannot is not thinking.
+ * It is forbidden to change its mind *silently*, which is what leaves the owner holding two verdicts and no idea
+ * that the first exists.
+ */
+export function priorSittingBlock(prior: PriorSitting): string {
+  return [
+    `This board has already sat on this subject, on ${prior.opened.slice(0, 10)}. It ruled **${prior.verdict}**${prior.rubric ? ` (rubric ${prior.rubric})` : ''}${prior.wedge ? `, with the wedge: ${prior.wedge}` : ''}. The whole argument is in \`${prior.path}\`.`,
+    `Confirm that verdict or overturn it — either is a real answer — but say which. If your verdict or your wedge differs from that one, write a line \`${CHANGED_LABEL} <what changed since then, and why it changes the answer>\`. The owner reads both verdicts, so an unexplained reversal reads as a board that does not know its own mind.`,
+  ].join(' ');
+}
+
 /** Whether the owner has said anything in the cabin since a stamp — "the question has an answer in the vault". */
 export function ownerSpokeSince(vault: Vault, since: string): boolean {
   if (!since) return false;
@@ -438,10 +505,13 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
   const answeredBy = new Set<string>();
   let calls = 0;
 
+  // Ruling W6-4: what this sitting ruled, written where the next one on the same company will look for it.
+  let ruled: { verdict: string; rubric: string; wedge: string } = { verdict: '', rubric: '', wedge: '' };
   const frontmatter = (status: 'in_progress' | 'done', decision?: string) => ({
     id: meetingId, room: 'board', opened, facilitator: chair, participants, status,
     ...(decision ? { decision } : {}),
-    subject: s.kind, subject_key: subjectKey, title: s.title, calls,
+    subject: s.kind, subject_key: subjectKey, about: sittingAbout(s), title: s.title, calls,
+    ...(ruled.verdict ? { verdict: ruled.verdict, rubric: ruled.rubric, wedge: ruled.wedge } : {}),
   });
   const render = (status: 'in_progress' | 'done', decision?: string) => stringifyNote(frontmatter(status, decision), [
     `# Board: ${s.title}`,
@@ -494,6 +564,10 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
   // Read **before** this session's own note exists, because that note is on the same subject and newer than
   // every other: looked up afterwards, a session would find itself, reuse nothing, and re-argue the lot.
   const prior = priorBoardDialogue(vault, subjectKey);
+  // Ruling W6-4, and read at the same moment and for the same reason: the last verdict on this *company*,
+  // whatever document carried it. Excluding this session's own note, which is already on disk by the time the
+  // verdict round asks for it.
+  const priorVerdict = priorBoardSitting(vault, sittingAbout(s), rel);
 
   vault.events.emit({ type: 'meeting.opened', agent: chair, payload: { id: meetingId, room: 'board', participants, agenda: boardAgenda(s), subject: s.kind, title: s.title, path: rel } });
   vault.writeText(rel, render('in_progress'), chair, { generated: true });
@@ -582,6 +656,13 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
   }
 
   const questions = PRESSURE_PARTS.map((p) => findings[p] ?? '').filter((f) => isOwnerQuestion(f));
+  // Ruling W6-4: this sitting's own verdict, rubric and wedge go into its transcript's frontmatter, which is
+  // where the next sitting on the same company reads them from.
+  ruled = {
+    verdict: merge.pressure ?? (merge.verdict === 'pass' ? 'STRONG' : 'WEAK'),
+    rubric: merge.rubric ? renderRubric(merge.rubric) : '',
+    wedge: pressurePivot(chairText || (verdictTurn ?? '')),
+  };
   vault.writeText(rel, render('done', opts.decision), chair, { generated: true });
 
   const out: BoardSessionResult = {
@@ -589,6 +670,9 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
     advisors, transcript: turns.map((t) => `**Round ${t.round} — ${t.role}:** ${t.text}`).join('\n\n'),
     answered: answeredBy.size, subject: s, calls, reasked, chairLost, chairText,
     notePath: rel, questions, findingsByPart: findings,
+    // What the owner has to be shown beside this verdict when the two differ (ruling W6-4), with the chair's
+    // own account of what changed attached to it.
+    priorSitting: priorVerdict ? { ...priorVerdict, changed: changedIn(chairText || (verdictTurn ?? '')) } : undefined,
   };
   vault.events.emit({
     type: 'meeting.closed', agent: chair,
@@ -803,13 +887,35 @@ export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promi
     vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { where: 'brief_board', message: BOARD_UNREVIEWED_NOTE.replace('the plan passed', 'the founder brief passed') } });
     return null;
   }
+  // Ruling W6-4: a sitting on the brief is a sitting on the company the brief is about, and the card that names
+  // that company is what connects this verdict to the next one.
+  const aboutIdea = briefIdeaSlug(vault, draft);
   const session = await runBoardSession(deps, org, {
     kind: 'brief', text: draft, title: BRIEF_SUBJECT_TITLE, slug: BRIEF_SUBJECT_SLUG, key: briefSubjectKey(draft),
+    about: aboutIdea || BRIEF_SUBJECT_SLUG,
   }, { decision: briefDecisionId(proposal.id) });
   const verdict = session.pressure ?? (session.verdict === 'pass' ? 'STRONG' : 'WEAK');
   const ctx = briefCheckContext(vault);
+  // Ruling W3-2, before the brief is rewritten and whatever the truth check makes of the section: a board that
+  // says PIVOT REQUIRED has proposed a different company, and the company's answer is an idea card the owner
+  // rules on. The pivot is read out of the verdict the chair actually wrote (`session.pressure` is only the
+  // word), so it is filed even when the findings could not be used — what the owner is being offered is the
+  // chair's proposal, not the section it would have gone into. Idempotent on the transcript, so a retried cycle
+  // files one card.
+  const card = aboutIdea ? readIdea(vault, aboutIdea) : null;
+  const pivotCard = session.notePath ? fileChairPivot(vault, {
+    text: [session.chairText, ...session.findings].filter(Boolean).join('\n'),
+    findings: session.findings, subject: BRIEF_SUBJECT_TITLE, transcript: session.notePath, by: chair, now: new Date(),
+    // Ruling W6-6: the company's own product is what a pivot has to differ from. Without one the title test
+    // still refuses a wedge that names nothing but a customer.
+    product: card?.data.title ?? '',
+  }) : null;
+  // Ruling W6-6, the other half: a wedge that narrows the customer for the same product is not a card, and it is
+  // not nothing either — it is the most actionable sentence in the verdict. It goes where the owner reads the
+  // board's findings, which is the brief's own pressure test.
+  const wedge = verdict === 'PIVOT REQUIRED' && !pivotCard ? pressurePivot(session.chairText) : '';
   const fill = (findings: Partial<Record<PressurePart, string>>): string =>
-    setSection(draft, PRESSURE_TEST_SECTION, renderBriefPressureSection(findings, verdict, session.notePath));
+    setSection(draft, PRESSURE_TEST_SECTION, renderBriefPressureSection(findings, verdict, session.notePath, wedge));
 
   // The same check `proposal.create` ran on the draft, run again on what the board made of it (ruling FR-4) —
   // and then once more with the parts it named written as `unstated`, which is the word it is asking for and
@@ -829,24 +935,33 @@ export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promi
   // Still refused: the draft stands, and **the note says so**. A block claiming the board's five findings are
   // below the fence, over a section the research office wrote and a verdict that may be the other word, is the
   // one thing worse than no board at all (ruling R-T3-2).
-  // Ruling W3-2, before the brief is rewritten and whatever the truth check makes of the section: a board that
-  // says PIVOT REQUIRED has proposed a different company, and the company's answer is an idea card the owner rules
-  // on. The pivot is read out of the verdict the chair actually wrote (`session.pressure` is only the word), so it
-  // is filed even when the findings could not be used — what the owner is being offered is the chair's proposal,
-  // not the section it would have gone into. Idempotent on the transcript, so a retried cycle files one card.
-  if (session.notePath) {
-    fileChairPivot(vault, {
-      text: [session.chairText, ...session.findings].filter(Boolean).join('\n'),
-      findings: session.findings, subject: BRIEF_SUBJECT_TITLE, transcript: session.notePath, by: chair, now: new Date(),
-    });
-  }
   const unusable = check.ok ? '' : briefBoardUnusable(check.findings);
   if (unusable) {
     brief = draft;
     vault.events.emit({ type: 'daemon.warning', agent: chair, payload: { where: 'brief_board', message: `the board's pressure test did not pass the brief's own truth check, so the draft section stands: ${check.findings.join(' ')}`.slice(0, 400) } });
   }
+  // The same record an idea sitting leaves (ruling W6-4). The brief board judges the company, its verdict now
+  // stands as *the* verdict on that company's card, and a sitting that decides that much with no job note is a
+  // sitting the owner cannot find in the Queue. Closed in the same tick, depending on nothing, so no worker
+  // picks it up.
+  if (session.notePath) {
+    try {
+      const boardJob = createJob(vault, {
+        id: idFromKey('job', `board-brief:${proposal.id}`), type: 'board.session', title: `Board: ${BRIEF_SUBJECT_TITLE}`,
+        assigned: chair, priority: 1, team: team.id,
+        links: [`[[${session.notePath.replace(/\.md$/, '')}]]`, ...(card ? [`[[${ideaPath(card.data.id).replace(/\.md$/, '')}]]`] : [])],
+        goal: `The board pressure-tested ${BRIEF_SUBJECT_TITLE} before the owner was asked to adopt it, and merged ${session.advisors.length} advisors into one verdict.`,
+      }, chair);
+      vault.updateNote(`Jobs/${boardJob}.md`, (n) => ({
+        data: { ...n.data, status: 'done', checkpoint_step: 1, updated: nowIso() },
+        body: setSection(setSection(n.body, '## Advisors', session.transcript), '## Result', '```json\n' + JSON.stringify({ status: 'done', summary: `board ${session.verdict} on the founder brief`, verdict: session.verdict, findings: session.findings }, null, 2) + '\n```'),
+      }), chair, { job: boardJob });
+      vault.events.emit({ type: 'job.done', agent: chair, job: boardJob, payload: { type: 'board.session', summary: `board ${session.verdict}`, verdict: session.verdict } });
+    } catch { /* the record is never a reason to hold the brief back from the owner */ }
+  }
+  let decisionRel = '';
   try {
-    writeBoardDecision(vault, briefDecisionId(proposal.id), {
+    decisionRel = writeBoardDecision(vault, briefDecisionId(proposal.id), {
       // Ruling W4-1c: what reaches the owner says whether the board could point at anything.
       verdict: session.verdict, findings: session.findings.map((f) => asBoardOpinion(vault, f)), decidedBy: chair, now: new Date(), answered: session.answered,
       chairLost: session.chairLost ?? undefined, cycle: proposal.id, inputs: [`[[${session.notePath.replace(/\.md$/, '')}]]`],
@@ -863,6 +978,28 @@ export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promi
       reviewDays: 30,
     });
   } catch { /* a record is never a reason to hold the brief back from the owner */ }
+  // Ruling W6-4, and the whole of its second half: **this sitting counts.** The board has just pressure-tested
+  // the company, so the card that names that company carries its verdict — which is why the ideas board no
+  // longer sits on it again ten minutes later with a different customer and a different rubric, and why the
+  // card stops claiming "The board has not sat on this yet" after it has.
+  if (card && card.data.board_verdict === null && session.notePath) {
+    try {
+      updateIdea(vault, card.data.id, {
+        board_verdict: session.verdict, board_decision: decisionRel,
+        board_pressure: verdict, board_rubric: session.rubric, board_transcript: session.notePath,
+        board_questions: session.questions,
+      }, chair, {
+        heading: '## The board',
+        content: renderBoardSection({
+          verdict: session.verdict, advisors: session.advisors.length, date: new Date().toISOString().slice(0, 10),
+          decision: decisionRel, findings: session.findings,
+          pressure: session.pressure, rubric: session.rubric, chair: session.chairText,
+        }),
+      });
+    } catch (err) {
+      vault.events.emit({ type: 'daemon.warning', agent: chair, payload: { where: 'brief_board', message: `the board judged the company but [[${ideaPath(card.data.id).replace(/\.md$/, '')}]] could not be stamped with its verdict: ${(err as Error).message.slice(0, 200)}` } });
+    }
+  }
   // Re-read before the one write that matters (ruling R-T3-3). The owner can set `approved:` in Obsidian while
   // the session is in flight; the dispatcher skips the note while the flag is on, but a note that was resolved
   // some other way must not have its body rewritten underneath the decision.

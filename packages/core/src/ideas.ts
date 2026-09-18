@@ -741,17 +741,39 @@ function briefCard(vault: Vault): { idea: IdeaFrontmatter; why: string } | null 
   // a later idea the owner rules on themselves — not something adopting the brief a week ago agreed to.
   if (keptIdeas(vault).length) return null;
   const brief = vault.readTextOrNull(FOUNDER_BRIEF) ?? '';
-  const section = (brief.split(/^## Candidate ideas[ \t]*$/m)[1] ?? '').split(/^## /m)[0];
   const why = `The owner adopted [[${FOUNDER_BRIEF.replace(/\.md$/, '')}]], which is written against this idea.`;
-  // The section is read in every spelling the template has ever asked for: a wikilink, a path, and the bare
-  // slug `Processes/discovery.md` asks for by name. An `_underscored_` word is emphasis, not a slug.
-  const named = new Set([...ideasNamedIn(section), ...[...section.matchAll(new RegExp(`(?<![A-Za-z0-9_/-])(${IDEA_SLUG_SRC})(?![A-Za-z0-9_/-])`, 'gi'))].map((m) => m[1].toLowerCase())]);
   const seen = listIdeas(vault).filter((i) => theirsToKeep(i) && i.decision === 'undecided');
-  const idea = seen.find((i) => named.has(i.id.toLowerCase()))
-    // …and failing that, the one card the owner's own material produced. Only when there is exactly one: with
-    // two, which of them the brief is written against is a question only the owner can answer.
-    ?? (seen.length === 1 ? seen[0] : undefined);
+  const idea = cardBriefNames(brief, seen);
   return idea ? { idea, why } : null;
+}
+
+/**
+ * The card out of `candidates` that a brief is written against, or undefined.
+ *
+ * The section is read in every spelling the template has ever asked for: a wikilink, a path, and the bare slug
+ * `Processes/discovery.md` asks for by name. An `_underscored_` word is emphasis, not a slug. Failing all of
+ * them, the one candidate there is — only when there is exactly one: with two, which of them the brief is
+ * written against is a question only the owner can answer.
+ */
+function cardBriefNames(brief: string, candidates: IdeaFrontmatter[]): IdeaFrontmatter | undefined {
+  const section = (brief.split(/^## Candidate ideas[ \t]*$/m)[1] ?? '').split(/^## /m)[0];
+  const named = new Set([...ideasNamedIn(section), ...[...section.matchAll(new RegExp(`(?<![A-Za-z0-9_/-])(${IDEA_SLUG_SRC})(?![A-Za-z0-9_/-])`, 'gi'))].map((m) => m[1].toLowerCase())]);
+  return candidates.find((i) => named.has(i.id.toLowerCase())) ?? (candidates.length === 1 ? candidates[0] : undefined);
+}
+
+/**
+ * The idea the founder brief is about, as a slug — what a board sitting on the brief is **ultimately** sitting
+ * on (ruling W6-4), and `''` when the vault holds no card that answers the question.
+ *
+ * The idea the owner kept wins over anything the prose names: after "surprise me" that card *is* the company,
+ * and a brief is only ever a longer way of saying so. Takes the brief as text rather than reading the adopted
+ * file, because the sitting that needs this happens while the brief is still a draft in a proposal.
+ */
+export function briefIdeaSlug(vault: Vault, brief: string): string {
+  const kept = listIdeas(vault).filter((i) => ownerKept(i) && theirsToKeep(i));
+  if (kept.length === 1) return kept[0].id;
+  const seen = listIdeas(vault).filter((i) => theirsToKeep(i));
+  return cardBriefNames(brief ?? '', kept.length ? kept : seen)?.id ?? '';
 }
 
 /** What an idea verdict tells the owner about a card they kept themselves and the board would now park. */
