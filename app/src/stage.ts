@@ -17,7 +17,7 @@ export const WIRE = {
 } satisfies Pick<Edge, 'type' | 'markerEnd'>;
 
 // Cards move by their header only, so text inside a card can be selected and scrolled.
-const CARD = { dragHandle: '.card__header', deletable: false } as const;
+export const CARD = { dragHandle: '.card__header', deletable: false } as const;
 
 export function toFlow(stage: Stage): { nodes: StageNode[]; edges: Edge[] } {
   const nodes: StageNode[] = [

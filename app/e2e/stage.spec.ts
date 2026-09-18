@@ -22,10 +22,12 @@ async function ask(page: Page, room: string, text: string) {
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await expect(node(page, 'marketing')).toBeVisible();
 });
 
-test('shows two rooms and a doc, one wire, and nothing else', async ({ page }) => {
+test('shows two rooms and a doc, one wire, a dock and nothing else', async ({ page }) => {
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await expect(page.locator('.dock button')).toHaveCount(2);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(node(page, 'marketing')).toContainText('Maya');
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue(/# Brand/);
@@ -61,7 +63,8 @@ test('typing, scrolling and dragging inside a card never move the canvas', async
 });
 
 test('layout, doc text and conversation survive a reload', async ({ page }) => {
-  const header = centre((await node(page, 'brand-doc').locator('.card__header').boundingBox())!);
+  const bar = (await node(page, 'brand-doc').locator('.card__header').boundingBox())!;
+  const header = { x: bar.x + bar.width * 0.8, y: bar.y + bar.height / 2 }; // the empty part of the header, right of the title
   await drag(page, header, { x: header.x + 90, y: header.y + 40 });
   await node(page, 'brand-doc').locator('textarea.doc').fill('We sell calm.');
   await ask(page, 'marketing', 'remember me');
@@ -100,4 +103,59 @@ test('screenshots and frame rate', async ({ page }, info) => {
   console.log(`drag fps: ${fps.toFixed(1)}`);
   info.annotations.push({ type: 'fps', description: fps.toFixed(1) });
   expect(fps).toBeGreaterThan(30);
+});
+
+const stageNow = async (page: Page) => (await page.request.get('/api/stage')).json();
+
+test('a person can be added, talked to, edited and removed', async ({ page }) => {
+  await page.getByRole('button', { name: 'Add person' }).click();
+  const card = page.locator('.react-flow__node', { has: page.locator('form.setup') });
+  await expect(card.getByRole('button', { name: 'Done' })).toBeDisabled();
+  await card.getByLabel('Name').fill('Rio');
+  await card.getByLabel('Role').fill('Sales');
+  await card.getByLabel('What they do for you').fill('Finds the first ten customers.');
+  await card.getByRole('button', { name: 'Done' }).click();
+
+  const rio = page.locator('.react-flow__node', { hasText: 'Rio' });
+  await rio.locator('.ask textarea').fill('who first');
+  await rio.locator('.ask textarea').press('Enter');
+  await expect(rio.locator('.msg--assistant').last()).toContainText('Rio here');
+  await expect.poll(async () => (await stageNow(page)).rooms.map((room: { name: string }) => room.name)).toContain('Rio');
+
+  await page.reload();
+  await expect(rio.locator('.msg--user').last()).toHaveText('who first');
+  await rio.locator('.card__header').hover();
+  await rio.getByRole('button', { name: 'Edit' }).click();
+  await rio.getByLabel('Name').fill('Ria');
+  await rio.getByRole('button', { name: 'Done' }).click();
+  const ria = page.locator('.react-flow__node', { hasText: 'Ria' });
+  await expect(ria.locator('.card__name')).toContainText('Ria · Sales');
+
+  await ria.locator('.card__header').hover();
+  await ria.getByRole('button', { name: 'Remove' }).first().click();
+  await ria.getByRole('alertdialog').getByRole('button', { name: 'Keep' }).click();
+  await expect(ria).toBeVisible();
+  await ria.getByRole('button', { name: 'Remove' }).first().click();
+  await ria.getByRole('alertdialog').getByRole('button', { name: 'Remove' }).click();
+  await expect(ria).toHaveCount(0);
+  await expect.poll(async () => (await stageNow(page)).rooms.length).toBe(2);
+  await page.reload();
+  await expect(page.locator('.react-flow__node', { hasText: 'Ria' })).toHaveCount(0);
+});
+
+test('a doc can be added, named, written and removed', async ({ page }) => {
+  const docsBefore = (await stageNow(page)).docs.length;
+  await page.getByRole('button', { name: 'Add doc' }).click();
+  const title = page.locator('input.card__title-input[value="Untitled doc"]');
+  await title.fill('Pricing');
+  const card = page.locator('.react-flow__node', { has: page.locator('input.card__title-input[value="Pricing"]') });
+  await card.locator('textarea.doc').fill('Nine dollars a month.');
+  await expect.poll(async () => (await stageNow(page)).docs.map((doc: { title: string }) => doc.title)).toContain('Pricing');
+
+  await page.reload();
+  await expect(card.locator('textarea.doc')).toHaveValue('Nine dollars a month.');
+  await card.locator('.card__header').hover();
+  await card.getByRole('button', { name: 'Remove' }).first().click();
+  await card.getByRole('alertdialog').getByRole('button', { name: 'Remove' }).click();
+  await expect.poll(async () => (await stageNow(page)).docs.length).toBe(docsBefore);
 });

@@ -38,3 +38,24 @@ describe('store', () => {
     await expect(store.appendChat('a/b', { role: 'user', text: 'x', at: 1 })).rejects.toThrow(/id/);
   });
 });
+
+describe('store, removing cards', () => {
+  it('moves the files of removed cards to trash instead of deleting them', async () => {
+    const stage = await store.loadStage();
+    await store.appendChat('marketing', { role: 'user', text: 'keep me', at: 1 });
+    await store.saveStage({ ...stage, rooms: stage.rooms.filter((room) => room.id !== 'marketing'), docs: [], wires: [] });
+    expect(await store.readChat('marketing')).toEqual([]);
+    expect(await store.readDoc('brand-doc')).toBe('');
+    const { readdir, readFile } = await import('node:fs/promises');
+    const trashed = await readdir(join(dir, 'trash'));
+    expect(trashed.some((name) => name.endsWith('-marketing.json'))).toBe(true);
+    expect(trashed.some((name) => name.endsWith('-brand-doc.md'))).toBe(true);
+    const chat = trashed.find((name) => name.endsWith('-marketing.json'))!;
+    expect(await readFile(join(dir, 'trash', chat), 'utf8')).toContain('keep me');
+  });
+
+  it('refuses a stage whose ids could leave the workspace', async () => {
+    const stage = await store.loadStage();
+    await expect(store.saveStage({ ...stage, docs: [{ ...stage.docs[0], id: '../x' }] })).rejects.toThrow(/id/);
+  });
+});

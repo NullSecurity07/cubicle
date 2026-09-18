@@ -4,9 +4,11 @@ import {
 } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getStage, putStage } from './api';
+import { Dock } from './Dock';
 import { edgeTypes } from './edges';
 import { nodeTypes } from './nodes';
 import { WIRE, fromFlow, toFlow, type StageNode } from './stage';
+import { SyncContext } from './sync';
 
 function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
   const [nodes, , onNodesChange] = useNodesState<StageNode>(initial.nodes);
@@ -19,19 +21,23 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
     [setEdges],
   );
 
-  // Layout, sizes and wires save themselves shortly after they stop changing.
+  // Layout, sizes and wires save themselves shortly after they stop changing; `save` can also be called at once.
+  const latest = useRef({ nodes, edges });
+  latest.current = { nodes, edges };
+  const save = useCallback(async () => {
+    const stage = fromFlow(latest.current.nodes, latest.current.edges);
+    const text = JSON.stringify(stage);
+    if (text === lastSaved.current) return;
+    lastSaved.current = text;
+    await putStage(stage);
+  }, []);
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const stage = fromFlow(nodes, edges);
-      const text = JSON.stringify(stage);
-      if (text === lastSaved.current) return;
-      lastSaved.current = text;
-      void putStage(stage);
-    }, 400);
+    const timer = setTimeout(() => void save(), 400);
     return () => clearTimeout(timer);
-  }, [nodes, edges]);
+  }, [nodes, edges, save]);
 
   return (
+    <SyncContext.Provider value={save}>
     <ReactFlow
       nodes={nodes}
       edges={edges}
@@ -53,7 +59,9 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
       proOptions={{ hideAttribution: true }}
     >
       <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="rgba(255, 255, 255, 0.24)" bgColor="transparent" />
+      <Dock />
     </ReactFlow>
+    </SyncContext.Provider>
   );
 }
 
