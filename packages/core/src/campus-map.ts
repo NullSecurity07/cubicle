@@ -349,7 +349,14 @@ export function resourceRect(kind: ResourceKind, at: Pt): Rect {
 }
 
 export const RESOURCE_LABEL: Record<ResourceKind, string> = { browser: 'Browser', doc: 'Document', note: 'Note', site: 'Site', station: 'Tool' };
-export const STATION_LABEL: Record<StationFamily, string> = { browser: 'Browser', email: 'Email', deploy: 'Deploy', analytics: 'Analytics', memory: 'Memory' };
+/**
+ * What each station's plate says.
+ *
+ * The browser family's station is "Web", not "Browser": a browser *kiosk* is one of the five things the owner
+ * can put on the floor, and a campus with a kiosk labelled Browser beside a station labelled Browser is a campus
+ * telling the owner that two different objects are the same thing.
+ */
+export const STATION_LABEL: Record<StationFamily, string> = { browser: 'Web', email: 'Email', deploy: 'Deploy', analytics: 'Analytics', memory: 'Memory' };
 
 /**
  * What a thing the owner added is called when the note does not say — the name on its plate in the office and in

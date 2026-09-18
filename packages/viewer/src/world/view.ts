@@ -586,6 +586,9 @@ export class CampusView {
     const ctx: BodyContext = { speaker: null, selected: this.selected, hovered: this.hovered };
     if (worldTextVisible(cam.zoom)) for (const b of this.bodies.values()) b.drawLabel(g, v, ctx);
     this.plateBoxes = paintZonePlates(g, v, this.map, { current: this.zoneNow, selected: this.picked });
+    // What the owner added is named before the furniture that was always there: the crowd book is first-come, and
+    // a kiosk they put in the lobby ten seconds ago is the thing they are looking for.
+    if (worldTextVisible(cam.zoom)) this.paintResourcePlates(g, v);
     if (nameLabelVisible(cam.zoom)) this.paintDeskPlates(g, v);
     // pass 6: the handles the owner reaches for — a zone's corners, a thing's port, a line's ⓧ, and the message
     // travelling its line. Controls, not scenery, so they are drawn over the hour rather than under it.
@@ -708,6 +711,21 @@ export class CampusView {
   }
 
   /** The desk plates, close in: whose desk this is, under the desk's own front edge. */
+  /**
+   * The name over each thing the owner added, in the label pass.
+   *
+   * Over the thing's own middle rather than a corner of its footprint (visual QA SP9b-4), at the same weight a
+   * desk plate wears, and — like every other plate — through the one crowd book, so a name never lands on top of
+   * another name. Two rows of headroom: a thing the owner put there is named before the room's own furniture is.
+   */
+  private paintResourcePlates(g: G, v: View): void {
+    for (const r of Object.values(this.map.resources)) {
+      if (!this.rectOnScreen(v, r.rect)) continue;
+      const c = { x: (r.rect.x0 + r.rect.x1) / 2, y: (r.rect.y0 + r.rect.y1) / 2 };
+      plate(g, v.p(c.x, c.y, RESOURCE_H[r.kind] + 0.45), r.label, { size: 11, chip: ACCENT[r.accent].chip, alpha: 0.93, lift: 2 });
+    }
+  }
+
   private paintDeskPlates(g: G, v: View): void {
     const s = this.hooks.getState();
     const byDesk: Record<string, string> = {};
@@ -1159,7 +1177,10 @@ export class CampusView {
       if (!a || !b) continue;
       if (!this.rectOnScreen(v, a.rect) && !this.rectOnScreen(v, b.rect)) continue;
       if (id === sel) continue;
-      drawEdge(g, v, edgeCurve(a.at, b.at), { kind: cn.kind, hovered: id === this.over });
+      // Every line on the screen is there because the owner is looking at one of its ends, so it is an answer to
+      // a question they just asked, not scenery: it is drawn at the brighter weight. The exception is a wire out
+      // of a port, when the whole floor is shown as context and the context must not shout.
+      drawEdge(g, v, edgeCurve(a.at, b.at), { kind: cn.kind, hovered: this.drag?.kind !== 'wire' });
     }
     if (this.drag?.kind === 'wire' && this.pointer) this.paintWire(g, v, this.drag.from, this.pointer);
     if (this.lift && this.lift.spring <= 0) drawGhost(g, v, this.lift.rect, this.lift.blocked);
@@ -1212,6 +1233,13 @@ export class CampusView {
   private paintMarksOverHour(g: G, v: View, light: Light): void {
     const now = this.hooks.clock();
     const sel = this.selectedEdge();
+    // Where the thing in the air would land, over the thing itself.
+    //
+    // The footprint is drawn on the floor at the landing cell and the thing is drawn two pixels above it, so a
+    // desk — which stands 0.72 of a cell high — covered its own ghost completely and the scene read as an office
+    // at rest with one desk in an odd place. The outline goes over the top: it is a mark about where something
+    // is going, and a mark you cannot see is not one.
+    if (this.lift && this.lift.spring <= 0) drawGhost(g, v, this.lift.rect, this.lift.blocked, { outlineOnly: true });
     // What the ghost desk is waiting on, said over the hour: on the campus's own pale floor a white plate under
     // the multiply is a plate nobody can see, and this one is the whole point of the ghost.
     if (this.hiring && v.z > 0.6) {

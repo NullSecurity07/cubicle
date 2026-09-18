@@ -678,8 +678,17 @@ try {
   // 18b: the five things themselves, close enough to see what each one is. A kiosk that reads as a grey box at a
   // zone fit is a kiosk nobody will recognise, and this is the only scene that can say otherwise.
   await cub((c) => c.select(null));
-  await cub((c) => c.zoom(2.1));
+  await cub((c) => c.zoom(1.75));
   await cub((c) => c.center(21, 15));
+  // All five in one frame, and every one of them named: a scene that shows three of the five things the spec is
+  // about is a scene that cannot answer the question it was taken for.
+  const named = await cub((c) => {
+    const out: Record<string, boolean> = {};
+    for (const id of ['browser_1', 'doc_1', 'note_1', 'site_1', 'station_deploy']) out[id] = !!c.nodeBox(id);
+    return out;
+  });
+  console.log('18b in frame:', JSON.stringify(named));
+  for (const [id, ok] of Object.entries(named)) if (!ok) fail(`18b: ${id} is not on the campus`);
   await shot('18b-resources', 900);
 
   // 19: a desk in the air. A real press and a real drag, because the lift, the ghost and the red tint are what the

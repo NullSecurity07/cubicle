@@ -41,12 +41,11 @@ export function resourceProp(r: ResourceNode): Drawable {
         case 'site': drawSiteScreen(g, v, light, r); break;
         case 'station': drawStation(g, v, light, r); break;
       }
-      // The name goes on a plate close in, exactly as a screen's does, so a kiosk and the terminal are named by the
-      // same object and the campus has one way of saying what a thing is. Over the thing's own middle: hung off a
-      // corner of the footprint it drifted up and to the left of whatever it was naming (visual QA SP9b-4).
-      if (v.z > 0.7) {
-        plate(g, v.p(c.x, c.y, RESOURCE_H[r.kind] + 0.45), r.label, { size: 11, chip: ACCENT[r.accent].chip, alpha: 0.93, lift: 1 });
-      }
+      // The name is *not* drawn here. A prop is blitted from a cache whose rebuild is rationed per frame, so a
+      // plate drawn inside one appeared or vanished depending on whether the tile behind it had been rebuilt that
+      // frame — three of the five things the owner added were unnamed in one render and named in the next. The
+      // names are painted in the label pass with the desk plates (`paintResourcePlates`), in screen space, every
+      // frame, against the one plate book.
     },
   };
 }
@@ -370,12 +369,14 @@ function drawStation(g: G, v: View, light: Light, r: ResourceNode): void {
  * in the accent where it may land and in red where something is already there. It is the whole of the answer to
  * "can I drop it here", and it is on the floor rather than on the thing, because the thing is in the air.
  */
-export function drawGhost(g: G, v: View, rect: Rect, blocked: boolean): void {
+export function drawGhost(g: G, v: View, rect: Rect, blocked: boolean, o: { outlineOnly?: boolean } = {}): void {
   const pts = quadOf(v, rect, 0);
   g.save();
   roundPoly(g, pts, 6 * v.z);
-  g.fillStyle = rgba(blocked ? M.bad : M.attention, blocked ? 0.16 : 0.13);
-  g.fill();
+  if (!o.outlineOnly) {
+    g.fillStyle = rgba(blocked ? M.bad : M.attention, blocked ? 0.16 : 0.13);
+    g.fill();
+  }
   g.setLineDash([Math.max(4, 7 * v.z), Math.max(3, 5 * v.z)]);
   g.strokeStyle = rgba(blocked ? M.bad : M.attention, 0.85);
   g.lineWidth = Math.max(1.4, 2 * v.z);
