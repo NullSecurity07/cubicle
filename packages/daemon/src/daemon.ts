@@ -400,16 +400,21 @@ export class Daemon {
    * the Decisions sheet, `inboxEditWakesHeartbeat` never ran, no heartbeat followed the pick, and discovery
    * never started — the company sat on an approved idea until the six-hourly trigger.
    *
-   * So the decide path asks the same question of the note it just decided, with the same predicate, and the
-   * two paths cannot drift: an approval still buys no cycle (the tick applies it in seconds), a rejection, an
-   * owner message, the adopted founder brief and the pick still do. `requestHeartbeat` is idempotent while one
-   * heartbeat is open, so a decision that also happens to reach the watcher costs one heartbeat, not two.
+   * **Every** decision, not the subset `inboxEditWakesHeartbeat` wakes on (ruling W4-3). That predicate exists
+   * to keep Obsidian from spending a cycle per keystroke, and it is still the rule for the *watcher*; the decide
+   * path is one deliberate click on one note, which no save storm can produce. Filtering it cost the 2026-09-18
+   * dry run its afternoon: the owner approved the plan at 05:10:32Z, and because an approval "buys no cycle"
+   * nothing read it — the heartbeat that would have fanned the division plans out had already aborted with
+   * "planning paused — the plan is waiting for your verdict", and the next trigger was six hours away. Zero
+   * division plans, zero heartbeats, an empty queue, until the owner typed in the cabin by chance.
+   *
+   * `requestHeartbeat` is idempotent while one heartbeat is open — it returns the open one rather than making a
+   * second — so a decision that also reaches the watcher, or a run of decisions in one sitting, costs one
+   * heartbeat, not one each.
    */
   private wakeForDecision(id: string): void {
-    // Read the note as it stands now, before the tick resolves it — the same rule `inboxEditWakesHeartbeat`
-    // follows. A note that is gone wakes nothing.
-    const note = findInboxById(this.vault, id);
-    if (note && inboxEditWakesHeartbeat(this.vault, note.path)) this.requestHeartbeat(`decided ${id}`);
+    // Read the note as it stands now, before the tick resolves it. A note that is gone wakes nothing.
+    if (findInboxById(this.vault, id)) this.requestHeartbeat(`decided ${id}`);
   }
 
   requestHeartbeat(trigger: string): string | null {

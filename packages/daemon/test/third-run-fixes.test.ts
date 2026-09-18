@@ -127,19 +127,41 @@ describe('P8-14: a decision taken through the office wakes the company as an Obs
     sock.close();
   }, 60_000);
 
-  it('approving a plan verdict wakes nothing: the tick applies an approval within seconds (ruling S-4)', async () => {
+  // Ruling W4-3 supersedes the S-4 reading this case used to pin ("approving a plan verdict wakes nothing").
+  // The 2026-09-18 dry run approved the plan at 05:10:32Z and the company did nothing at all for fifteen
+  // minutes: the heartbeat that would have fanned the division plans out had already run and aborted with
+  // "planning paused — the plan is waiting for your verdict", and no trigger reads an approval. Every owner
+  // decision taken in the office now asks for a cycle.
+  it('approving a plan verdict wakes a cycle — nothing else reads that approval (ruling W4-3)', async () => {
     const { d, sock, seen } = await daemonUp();
-    // An idea on file, so nothing here is refused by the §12 gate: what keeps the company asleep is the *kind*
-    // of decision, not the state of the vault.
+    // An idea on file, so nothing here is refused by the §12 gate.
     createProposal(d.vault, { kind: 'brand_change', from: 'ceo', to: 'owner', target: BRAND_NAME_PATH, title: 'A name', body: 'Northwind.' }, 'ceo');
     const { id } = createProposal(d.vault, { kind: 'plan_verdict', from: 'ceo', to: 'owner', title: "Approve this cycle's plan", body: '1. bet one\n2. bet two' }, 'ceo');
 
     decide(sock, id, true);
     await waitUntil(() => seen.some((m) => m.op === 'decide.ack'), 'the ack');
-    await d.runTick('settle');
+    await waitUntil(() => heartbeats(d.vault).length === 1, 'the heartbeat the approval asked for');
 
     expect(findInboxById(d.vault, id)!.data.approved).toBe(true);
-    expect(heartbeats(d.vault)).toEqual([]);
+    expect(heartbeats(d.vault)[0].title).toBe(`Heartbeat (decided ${id})`);
+    sock.close();
+  }, 60_000);
+
+  // …and the plain approval the S-4 ruling was actually about — a `brand_change` on a palette, applied by the
+  // dispatcher on the next tick — wakes one too, because the office decide path is one deliberate click and
+  // not Obsidian saving mid-keystroke. `inboxEditWakesHeartbeat` still guards the *watcher*.
+  it('any decision taken in the office wakes one cycle, and only one (ruling W4-3)', async () => {
+    const { d, sock, seen } = await daemonUp();
+    createProposal(d.vault, { kind: 'brand_change', from: 'ceo', to: 'owner', target: BRAND_NAME_PATH, title: 'A name', body: 'Northwind.' }, 'ceo');
+    const palette = createProposal(d.vault, { kind: 'brand_change', from: 'ceo', to: 'owner', target: 'Brand/palette.md', title: 'A palette', body: 'ink and bone.' }, 'ceo');
+    const verdict = createProposal(d.vault, { kind: 'plan_verdict', from: 'ceo', to: 'owner', title: 'Approve the plan', body: '1. bet one' }, 'ceo');
+
+    decide(sock, palette.id, true);
+    await waitUntil(() => heartbeats(d.vault).length === 1, 'the heartbeat the palette decision asked for');
+    decide(sock, verdict.id, true);
+    await waitUntil(() => seen.filter((m) => m.op === 'decide.ack').length === 2, 'both acks');
+    await d.runTick('settle');
+    expect(heartbeats(d.vault)).toHaveLength(1);
     sock.close();
   }, 60_000);
 
