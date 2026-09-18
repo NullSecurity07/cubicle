@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
-import { isOwnerOwned, createProposal, OwnerOwnedPathError, isSecretPath, parseNote, idFromKey, UnsafePathError, LEDGER_DIR, FOUNDER_BRIEF } from '@cubicle/core';
+import { isOwnerOwned, createProposal, OwnerOwnedPathError, isSecretPath, parseNote, idFromKey, UnsafePathError, LEDGER_DIR, FOUNDER_BRIEF, ownerInstruction } from '@cubicle/core';
 import { policyFor, proposalKindFor } from '../registry.js';
 
 const MAX_READ = 60_000;
@@ -107,7 +107,7 @@ async function guardedWrite(rawPath: string, content: string, append: boolean, c
       from: ctx.roleId, target: path, job: ctx.jobId ?? undefined,
       call: { tool: 'vault.write', args: { path, content: proposed }, idempotency_key: key, job: ctx.jobId ?? undefined, role: ctx.roleId },
       title: `Proposed change to ${path}`,
-      body: `${ctx.roleId} wants to ${append ? 'append to' : 'rewrite'} \`${path}\`.\n\n## Proposed content\n\n${fence}\n${proposed}\n${fence}\n\nSet \`approved: true\` to apply (the daemon applies \`call.args.content\`).`,
+      body: `${ctx.roleId} wants to ${append ? 'append to' : 'rewrite'} \`${path}\`.\n\n## Proposed content\n\n${fence}\n${proposed}\n${fence}\n\n${ownerInstruction('file_change')}`,
     }, ctx.roleId);
     return { ok: true, text: `proposed: ${path} is owner-owned; filed proposal ${id} at ${p} for the owner to approve`, data: { status: 'proposed', proposal: id } };
   }

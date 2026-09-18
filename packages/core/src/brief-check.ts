@@ -75,6 +75,22 @@ export function hasProposedContentFence(body: string): boolean {
 }
 
 /**
+ * The same proposal body with a different document inside its fence, and everything the author wrote around
+ * that fence left exactly as it was.
+ *
+ * Its one caller re-titles a founder brief (ruling W6-12), which is a change to the document and not to the
+ * covering note above it. A body with no fence comes back untouched: there is nothing to swap, and rebuilding
+ * it is `founderBriefProposalBody`'s job.
+ */
+export function withProposedContent(body: string, content: string): string {
+  const m = body.match(PROPOSED_CONTENT_RE);
+  if (!m) return body;
+  const at = body.indexOf(m[0]);
+  const swapped = m[0].replace(`\n${m[2]}\n`, `\n${content.trim()}\n`);
+  return body.slice(0, at) + swapped + body.slice(at + m[0].length);
+}
+
+/**
  * A backticked token that is a claim about a **file**: it has a directory in it and it ends in an extension.
  *
  * Both halves keep this from firing on things that are not citations. Without the slash, every tool name the

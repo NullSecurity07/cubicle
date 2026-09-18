@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, updateJob, readJob, listInbox, loadOrg, officeHolder, INTERVIEW_PATH, interviewPhase } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, updateJob, readJob, listInbox, loadOrg, officeHolder, INTERVIEW_PATH, interviewPhase, ownerInstruction, namesAFieldToEdit } from '@cubicle/core';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig } from '../src/index.js';
 import { answerOwnerMessages, unansweredOwnerMessages, completeIdeaLines, createHeartbeatJob, SURPRISE_FAILED, SURPRISE_RETRY_TOKENS } from '../src/heartbeat.js';
@@ -289,8 +289,10 @@ describe('FR-2: three ideas, or an honest answer — never half of one', () => {
     // It said "Pick one with `chosen:` and `approved: true`" — frontmatter, for a screen that has neither.
     expect(reply).toContain('Pick one in Decisions.');
     expect(reply).not.toMatch(/chosen:|approved: true|00 Inbox/);
-    // The note itself keeps the Obsidian wording: it is the same decision, read in a text editor.
-    expect(props[0].body).toContain('Set `chosen: 1|2|3` and `approved: true`');
+    // …and so does the note (ruling W6-7, which took W5-3(a) the rest of the way). The note is read in the
+    // office too — it *is* what the Decisions reader shows — so one helper writes the sentence for both.
+    expect(props[0].body).toContain(ownerInstruction('brand_change'));
+    expect(namesAFieldToEdit(props[0].body)).toBe(false);
   });
 
   it('files nothing and says so when two asks do not produce three ideas', async () => {

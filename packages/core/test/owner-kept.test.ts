@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  scaffoldVault, Vault, createProposal, writeIdeaCard, readIdea, keptIdeas, listInbox, BRAND_NAME_PATH, FOUNDER_BRIEF,
+  scaffoldVault, Vault, createProposal, writeIdeaCard, readIdea, keptIdeas, listIdeas, listInbox, BRAND_NAME_PATH, FOUNDER_BRIEF,
   keepOwnerPick, pickedIdeaName, ownerKept, ownerKeptNote,
   isJobDump, whatHappenedSection, whatHappenedProse, WRITTEN_WITHOUT_MODEL,
 } from '../src/index.js';
@@ -31,7 +31,6 @@ describe("the idea the owner picked is the idea the owner kept (W4-5)", () => {
 
   it('keeps the card the discovery job files minutes after the pick', () => {
     // The live sequence: the `brand_change` resolved at 06:25 and `Ideas/speedaudit.md` was filed at 06:27.
-    expect(keepOwnerPick(vault)).toBeNull();
     writeIdeaCard(vault, { title: 'SpeedAudit — Free Website Performance Diagnostics & Consulting Upsell', source: 'discovery' }, 'research_manager');
     expect(keepOwnerPick(vault)).toBe('speedaudit-free-website-performance-diagnostics');
     const card = readIdea(vault, 'speedaudit-free-website-performance-diagnostics')!;
@@ -48,6 +47,42 @@ describe("the idea the owner picked is the idea the owner kept (W4-5)", () => {
     expect(keepOwnerPick(vault)).toBeNull();
   });
 
+  // ── W6-5: the pick files the card itself, at resolve time, whatever order discovery files one ──────────
+  it('files the card the moment the pick resolves, with no card on disk at all', () => {
+    // Dry-run 3: the owner picked PageSpeedAudit at 09:21 and the card was still `decision: undecided` at
+    // 17:16. Nothing was wrong with the keep — there was nothing on disk to keep.
+    expect(keepOwnerPick(vault)).toBe('speedaudit');
+    const card = readIdea(vault, 'speedaudit')!;
+    expect(card.data.decision).toBe('keep');
+    expect(card.data.decided_by).toBe('owner');
+    expect(card.data.source).toBe('owner');
+    expect(card.data.title).toBe('SpeedAudit — free website speed fixes, then a paid deep dive.');
+    expect(card.data.evidence.some((e) => e.startsWith('00 Inbox/'))).toBe(true);
+    expect(keepOwnerPick(vault)).toBeNull();
+  });
+
+  it("folds the discovery job's later card into the one the pick filed, rather than opening a second dossier", () => {
+    expect(keepOwnerPick(vault)).toBe('speedaudit');
+    const slug = writeIdeaCard(vault, {
+      title: 'SpeedAudit — Free Website Performance Diagnostics & Consulting Upsell',
+      source: 'discovery', evidence: ['Discovery/inbox/notes.md'], why_it_matters: 'Every landing page is slow.',
+    }, 'research_manager');
+    expect(slug).toBe('speedaudit');
+    expect(listIdeas(vault).map((i) => i.id)).toEqual(['speedaudit']);
+    const card = readIdea(vault, 'speedaudit')!;
+    expect(card.data.decision).toBe('keep');
+    expect(card.data.decided_by).toBe('owner');
+    expect(card.data.evidence).toContain('Discovery/inbox/notes.md');
+    expect(card.body).toContain('Every landing page is slow.');
+  });
+
+  it('files nothing when the owner never picked', () => {
+    const { path: rel } = listInbox(vault)[0];
+    vault.updateNote(rel, (n) => ({ data: { ...n.data, approved: null, chosen: null }, body: n.body }), 'owner');
+    expect(keepOwnerPick(vault)).toBeNull();
+    expect(listIdeas(vault)).toEqual([]);
+  });
+
   it('keeps the card the adopted brief is written against when the owner never picked from three', async () => {
     // The commonest first run: the owner typed their idea into `Discovery/inbox/` and was never offered three
     // lines to choose from, so the document they sign is the brief. Without this there is no kept idea at all
@@ -61,6 +96,9 @@ describe("the idea the owner picked is the idea the owner kept (W4-5)", () => {
   });
 
   it("never keeps a pivot the board proposed: that one is theirs to rule on (W3-2)", () => {
+    // No pick, so the brief is the only route to a keep — and a board card is not on it.
+    const { path: rel } = listInbox(vault)[0];
+    vault.updateNote(rel, (n) => ({ data: { ...n.data, approved: null, chosen: null }, body: n.body }), 'owner');
     writeIdeaCard(vault, { slug: 'anchor-pilots', title: 'Anchor-customer pilots', source: 'board' }, 'daemon');
     vault.writeText(FOUNDER_BRIEF, '## Candidate ideas\n\n- anchor-pilots\n', 'daemon');
     expect(keepOwnerPick(vault)).toBeNull();

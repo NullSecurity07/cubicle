@@ -4,7 +4,7 @@ import {
   FOUNDER_BRIEF, missingBriefSections, readIdea, updateIdea, ideaBand, bandReason, ideaOutcome, IDEA_SLUG_SRC, IDEA_DECISIONS, LEDGER_PATH, type IdeaBand, type IdeaDecision,
   INTERVIEW_PATH, supersedeInterview,
   trustDecision, TRUST_PENDING_HOLD, CLASSIFIER_UNAVAILABLE_HOLD, type TrustDecision,
-  decidedByOwner, numberedOptions, proposedContentBlock, boardStillSitting,
+  decidedByOwner, numberedOptions, proposedContentBlock, boardStillSitting, keepOwnerPick, BRAND_NAME_PATH,
 } from '@cubicle/core';
 import { createRoleToolClient, resolveMode, type ToolRegistry, type ToolsConfig, type ToolContext, type SchedulerApi } from '@cubicle/tools';
 import { findAnswer, messagePath, isClassifierUnavailable, classifierUnavailableNow } from '@cubicle/tools';
@@ -506,6 +506,14 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             }
             vault.writeText(target, content, 'daemon', { job: d.job ?? null });
             outcome = `applied to ${target}`;
+            // Ruling W6-5: the pick **is** the decision, so it is written the moment it is applied rather than
+            // whenever a later heartbeat happens to look. `keepOwnerPick` files the card when nobody else has
+            // and is idempotent, so the heartbeat's own calls stay exactly as they are and do nothing twice.
+            // Wrapped: a card is how the owner's choice is recorded, never a reason to fail applying their name.
+            if (d.kind === 'brand_change' && target === BRAND_NAME_PATH) {
+              try { keepOwnerPick(vault, 'daemon'); }
+              catch (err) { vault.events.emit({ type: 'daemon.warning', payload: { where: 'dispatcher.owner_pick', proposal: d.id, message: `the name was applied but the idea the owner picked could not be kept: ${String((err as Error).message ?? err).slice(0, 200)}` } }); }
+            }
             if (target.startsWith('Brand/')) {
               const open = listJobs(vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'engineer.ship' && /reconcile site with brand/i.test(j.title));
               // Ruling S-6b, and the same rule the heartbeat's own reconcile step applies (`soleStreamForShip`):

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, loadOrg, listJobs, listInbox, readJob, updateJob, readIdea, writeIdeaCard, updateIdea, listDecisions, DecisionFrontmatter, createProposal, PRESSURE_UNANSWERED } from '@cubicle/core';
+import { scaffoldVault, Vault, loadOrg, listJobs, listInbox, readJob, updateJob, readIdea, writeIdeaCard, updateIdea, listDecisions, DecisionFrontmatter, createProposal, PRESSURE_UNANSWERED, ownerInstruction, namesAFieldToEdit } from '@cubicle/core';
 import { ideaVerdictKey, ideaVerdictBody, writeBoardSessionDecision, HEARTBEAT_STEPS, NON_WORK_TYPES, PLAN_WAIT_BUDGET_MS, runHeartbeat, createHeartbeatJob, runBoardSession, chairPrompt, CHAIR_IDEA_TOKENS, BOARD_JOB_CHAIR_SECTION } from '../src/index.js';
 import { estimateJobId, researchJobId } from '../src/discovery.js';
 import { orgLlm } from '../../../scripts/lib/org-llm.js';
@@ -48,9 +48,11 @@ describe('the owner rules on an idea (spec §3.5)', () => {
     expect(body).toContain('- nobody has priced delivery');
     expect(body).toContain('Research/meal-kits/report.md');
     expect(body).toContain('Two weeks of one engineer.');
-    expect(body).toContain('`chosen: 1`');
+    // Ruling W6-7: the note names the screen the owner decides on, never the field they would have to edit.
+    expect(body).toContain(ownerInstruction('idea_verdict'));
+    expect(namesAFieldToEdit(body)).toBe(false);
     expect(body).not.toContain('board_decides_after_hours');            // the switch is off: no deadline line
-    expect(ideaVerdictBody({ ...facts, decidesAfterHours: 12 })).toContain('after 12 h the recommendation stands');
+    expect(ideaVerdictBody({ ...facts, decidesAfterHours: 12 })).toContain('If you say nothing for 12 h the recommendation stands');
     expect(ideaVerdictBody({ ...facts, findings: [], research: '', estimate: '' })).toContain('nothing that would sink this');
   });
 });

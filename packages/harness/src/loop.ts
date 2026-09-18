@@ -7,7 +7,7 @@ import {
   loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
   trustReviewsFor, trustDecision, trustVerdictFor, recordTrustVerdict, CLASSIFIER_UNAVAILABLE_HOLD,
-  loadCampusMap, readLayout,
+  loadCampusMap, readLayout, ownerInstruction,
 } from '@cubicle/core';
 import { NoModelAvailableError, TIER_RANK, type ModelBudget, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -697,7 +697,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
         const kind = proposalKindFor(deps.toolsConfig, toolName);
         const { id } = createProposal(vault, {
           kind, from: roleId, job: jobId, title: `${roleId} asks to run ${toolName}`,
-          body: `Job [[${jobId}]] (${job.title}) wants to call \`${toolName}\`:\n\n\`\`\`json\n${JSON.stringify(args, null, 2)}\n\`\`\`\n\nSet \`approved: true\` to run it, \`approved: false\` to refuse.${trustBody}`,
+          body: `Job [[${jobId}]] (${job.title}) wants to call \`${toolName}\`:\n\n\`\`\`json\n${JSON.stringify(args, null, 2)}\n\`\`\`\n\n${ownerInstruction(kind)}${trustBody}`,
           call: { tool: toolName, args, idempotency_key: key, job: jobId, role: roleId },
         }, roleId);
         updateJob(vault, jobId, { status: 'blocked', approval: 'pending', checkpoint_step: step, blocked_on: { kind: 'proposal', id, since: nowIso() } }, roleId, `- step ${step}: ${toolName} awaits owner approval (${id})`);
@@ -710,7 +710,7 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
         const kind = proposalKindFor(deps.toolsConfig, toolName);
         const { id } = createProposal(vault, {
           kind, from: roleId, job: jobId, title: `${roleId} proposes ${toolName}`,
-          body: `Job [[${jobId}]] (${job.title}) proposes to run \`${toolName}\`:\n\n\`\`\`json\n${JSON.stringify(args, null, 2)}\n\`\`\`\n\nSet \`approved: true\` and the daemon runs it once.${trustBody}`,
+          body: `Job [[${jobId}]] (${job.title}) proposes to run \`${toolName}\`:\n\n\`\`\`json\n${JSON.stringify(args, null, 2)}\n\`\`\`\n\n${ownerInstruction(kind)} It runs once, when you do.${trustBody}`,
           call: { tool: toolName, args, idempotency_key: key, job: jobId, role: roleId },
         }, roleId);
         const text = `proposed: ${toolName} was filed as proposal ${id} for the owner; it runs after approval. Continue with the rest of the job.`;

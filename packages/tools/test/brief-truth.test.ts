@@ -103,19 +103,25 @@ describe('proposal.create checks a founder_brief against the vault before filing
       expect(r.ok).toBe(true);
       const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief')!;
       expect(hasProposedContentFence(note.body)).toBe(true);
-      // The bytes inside the fence are the brief the author wrote, unchanged — that is what gets adopted.
-      expect(briefFromProposalBody(note.body).trim()).toBe(TRUE_BRIEF.trim());
+      // The bytes inside the fence are the brief the author wrote — that is what gets adopted — under the
+      // title ruling W6-12 gives it, because the H1 of the company's founding document is not the author's to
+      // choose (the third dry-run's author titled it "Proposed content").
+      const inside = briefFromProposalBody(note.body).trim();
+      expect(inside.split('\n')[0]).toBe('# Founder brief');
+      expect(inside).toContain(TRUE_BRIEF.trim());
       // …and the wrapper says where it was read from, taken from the brief's own citations.
       expect(note.body).toContain('**Read from:**');
       expect(note.body).toContain('Discovery/interview.md');
     });
 
-    it('leaves a brief that already carries the fence exactly as it is', async () => {
+    it('leaves the covering note of a brief that already carries the fence exactly as it is', async () => {
       const body = founderBriefProposalBody(TRUE_BRIEF, ['Discovery/interview.md']);
       const r = await proposalCreate.handler({ kind: 'founder_brief', title: 'What I understood', body, target: FOUNDER_BRIEF }, ctx());
       expect(r.ok).toBe(true);
       const note = listInbox(vault).find((n) => n.data.kind === 'founder_brief')!;
-      expect(note.body).toContain(body.trim());
+      // Everything around the fence is the author's and is untouched; only the document inside it is titled.
+      expect(note.body).toContain(body.split('## Proposed content')[0].trim());
+      expect(briefFromProposalBody(note.body).trim()).toBe(`# Founder brief\n\n${TRUE_BRIEF.trim()}`);
     });
 
     it('a brief the check refuses is not wrapped and not filed', async () => {

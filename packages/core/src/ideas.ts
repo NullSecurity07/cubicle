@@ -412,6 +412,14 @@ export function renderEvidenceSection(evidence: string[]): string {
  */
 export function writeIdeaCard(vault: Vault, idea: NewIdea, by: string): string {
   let slug = idea.slug ? ideaSlug(idea.slug) : ideaSlug(idea.title);
+  // Ruling W6-5, and only when the caller did not name a slug: the owner's pick is already on disk under the
+  // name they chose, and the card the discovery job is filing now is that same company under a fuller title.
+  // Filed as a second dossier it would be scored, judged and decided on its own while the kept one sat beside
+  // it — so it is folded into theirs, which keeps the decision they made and takes the content this call brings.
+  if (!idea.slug) {
+    const covered = pickCardCovering(vault, idea.title);
+    if (covered && covered !== slug) return foldIntoPick(vault, covered, idea, by);
+  }
   if (vault.exists(ideaPath(slug))) {
     const existing = readIdea(vault, slug);
     if (existing && sameIdeaTitle(existing.data.title, idea.title)) return slug;
@@ -460,8 +468,16 @@ const PIVOT_VERB_RE = /^(?:secure|build|ship|launch|create|develop|define|target
 /** The little words a clause may open on once its verb is gone: "at least one anchor customer" → the customer. */
 const PIVOT_LEAD_RE = /^(?:at\s+least\s+|at\s+most\s+)?(?:a|an|the|one|to|for|towards?|on|into|onto|our|its|their)\s+/i;
 
-/** How a wedge separates who it is for from what they are sold: "<customer>, targeted via <product>". */
-const WEDGE_SPLIT_RE = /,?\s+(?:targeted\s+via|targeted\s+with|reached\s+via|reached\s+through|served\s+(?:by|with)|sold\s+(?:via|through)|via|using|through|with)\s+/i;
+/**
+ * How a wedge separates who it is for from what they are sold: "<customer>, targeted via <product>".
+ *
+ * A bare `with` is **not** one of them (ruling W6-6). "e-commerce stores with a documented, recent revenue drop
+ * correlated to Core Web Vitals failures" is one customer described in a relative clause, and splitting it there
+ * read the description as the product: the third dry-run filed
+ * `Ideas/documented-recent-revenue-drop-directly-correlat.md` and asked the owner to keep or scrap it. The
+ * qualified spellings — "targeted with", "served with" — say what the author meant and are kept.
+ */
+const WEDGE_SPLIT_RE = /,?\s+(?:targeted\s+via|targeted\s+with|reached\s+via|reached\s+through|served\s+(?:by|with)|sold\s+(?:via|through)|via|using|through)\s+/i;
 
 /** How a fix names its customer: "<product> for <customer>", "<product> to <customer>". */
 const PIVOT_FOR_RE = /^([\s\S]{4,120}?)\s+(?:for|to|aimed\s+at|targeting)\s+([\s\S]{4,160})$/i;
@@ -529,6 +545,56 @@ export function pivotTitle(pivot: string, subject: string): string {
 }
 
 /**
+ * The product half of a pivot — what would be **sold** that is not sold today — or `null` when the chair named
+ * only a customer (ruling W6-6).
+ *
+ * A wedge is an instruction to aim the same product at fewer, more desperate people; a pivot is an instruction
+ * to sell something else. The third dry-run's chair wrote `WEDGE: founders of high-traffic SaaS landing pages
+ * (>100 k visits/month) who have just missed a Core Web Vitals threshold`, and that sentence — an audience
+ * segment, with no product in it anywhere — was filed as `Ideas/founders-of-high-traffic-saas-landing-pages-100`,
+ * scored, researched, priced and put to the owner as a business to keep or scrap. It is not a business. It is
+ * who the business is for.
+ *
+ * So the product is read out of the title the pivot would carry, which `pivotTitle` already writes as
+ * `<product> for <customer>` (ruling W4-7): everything before the connector. A title with no connector at all
+ * is a product on its own ("AuditToolkit"); a title whose product half is the company's current product is the
+ * same product narrowed, which is a wedge again.
+ */
+export function pivotProduct(pivot: string, subject: string): string | null {
+  const title = pivotTitle(pivot, subject);
+  if (title.startsWith('Board pivot on ')) return null;
+  const split = title.match(PIVOT_FOR_RE);
+  const product = (split ? split[1] : title).trim();
+  // "Founders of…", "Merchants who…", "Teams with…": a clause that opens on the people is not a product, however
+  // long it is. The connector test above cannot see this one, because the customer was never split off anything.
+  if (!product || CUSTOMER_LEAD_RE.test(product)) return null;
+  return product;
+}
+
+/** How a clause that names **people** opens. A pivot title that starts here named a customer, not a product. */
+const CUSTOMER_LEAD_RE = /^(?:founders?|owners?|operators?|merchants?|customers?|users?|buyers?|teams?|companies|businesses|startups?|agencies|agency|shops?|stores?|sellers?|marketers?|developers?|engineers?|managers?|people|anyone|everyone|those|indie\b|solo\b|small\b|mid[- ]market|enterprise)\b/i;
+
+/** What the board is told it proposed when its pivot narrows the customer and keeps the product (W6-6). */
+export const PIVOT_IS_A_WEDGE = 'the board narrowed the customer for the same product, which is a wedge and not a different company';
+
+/**
+ * Whether a pivot proposes a **different product** from the one the subject already sells — the one test a
+ * pivot has to pass before it costs the owner a decision and the company four jobs (ruling W6-6).
+ *
+ * Two ways to fail: the pivot names no product at all (a wedge), or it names the product the subject is already
+ * about. Compared on `sameIdeaTitle`'s terms and on containment, because "PageSpeedAudit" and "PageSpeedAudit
+ * for e-commerce merchants" are one product with two audiences.
+ */
+export function pivotNamesAProduct(pivot: string, subject: { title: string }): string | null {
+  const product = pivotProduct(pivot, subject.title);
+  if (!product) return null;
+  const now = pickedIdeaName(subject.title);
+  const norm = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  if (now && (sameIdeaTitle(product, now) || norm(product).startsWith(`${norm(now)} `) || norm(now).startsWith(`${norm(product)} `))) return null;
+  return product;
+}
+
+/**
  * File the chair's proposed pivot as a candidate idea card (ruling W3-2), or return `null` when there is nothing
  * to file and the slug of the card that already covers it when there is.
  *
@@ -542,10 +608,13 @@ export function pivotTitle(pivot: string, subject: string): string {
  */
 export function fileBoardPivot(
   vault: Vault,
-  o: { pivot: string; subject: string; transcript: string; by: string; created?: string },
+  o: { pivot: string; subject: string; transcript: string; by: string; created?: string; product?: string },
 ): string | null {
   const pivot = (o.pivot ?? '').replace(/\s+/g, ' ').trim();
   if (!pivot || !o.transcript) return null;
+  // Ruling W6-6. A wedge belongs in the pressure test the owner reads, not in a dossier that pulls a research
+  // job, an estimate job and two review gates behind it.
+  if (!pivotNamesAProduct(pivot, { title: o.product ?? '' })) return null;
   const already = listIdeas(vault).find((c) => c.source === BOARD_IDEA_SOURCE && c.evidence.includes(o.transcript));
   if (already) return already.id;
   return writeIdeaCard(vault, {
@@ -599,7 +668,8 @@ export function pickedIdeaName(line: string): string {
 const PICK_NAME_MIN = 4;
 
 /**
- * Mark the idea the owner picked as **kept, by them** — and return its slug, or null (ruling W4-5).
+ * Mark the idea the owner picked as **kept, by them** — filing the card first when nobody else has — and return
+ * its slug, or null (rulings W4-5, W6-5).
  *
  * Every one of the five cards in the second dry-run read `decision: undecided`, including SpeedAudit, which
  * the owner had chosen by name on the first morning. So `keptIdeas` was empty, `checkPlan` passed every plan
@@ -607,12 +677,18 @@ const PICK_NAME_MIN = 4;
  * *is* a decision; it was simply never written onto the card, because the pick is made before the card exists
  * (the `brand_change` resolved at 06:25 and the discovery job filed `Ideas/speedaudit.md` at 06:27).
  *
- * So it is applied where both are on disk rather than at the moment of the click, and it is idempotent: only
- * an **undecided** card the owner has seen is touched, so a later park or scrap of theirs is never undone by a
- * cycle that ran afterwards.
+ * The third dry-run is why the card is now **filed here** rather than waited for: the owner picked PageSpeedAudit
+ * at 09:21 and the card still read `decision: undecided` eight hours later, because the keep only ever ran where
+ * both the pick and somebody else's card were already on disk. A decision that depends on another office
+ * finishing first is not a decision. So the pick writes its own card out of the line the owner chose, and the
+ * card discovery files afterwards folds into it (`writeIdeaCard`) instead of opening a second dossier.
+ *
+ * Idempotent from either direction, and it never rules twice: only an **undecided** card the owner has seen is
+ * touched, so a later park or scrap of theirs is never undone by a cycle that ran afterwards, and a second call
+ * with the card already kept returns null rather than re-filing anything.
  */
 export function keepOwnerPick(vault: Vault, by = 'daemon', now = new Date()): string | null {
-  const chose = pickedCard(vault);
+  const chose = pickedCard(vault) ?? filePickedCard(vault, by, now);
   const card = chose ?? briefCard(vault);
   if (!card || card.idea.decision !== 'undecided') return null;
   const at = now.toISOString();
@@ -621,6 +697,70 @@ export function keepOwnerPick(vault: Vault, by = 'daemon', now = new Date()): st
     content: `**keep** — the owner, ${at.slice(0, 10)}. ${card.why}`,
   });
   return card.idea.id;
+}
+
+/**
+ * The card the owner's pick deserves and nobody has written, filed out of the line they chose — or null when
+ * they have not picked, or when a card for it already exists (`pickedCard` found none, so any card that matches
+ * the name is one they already ruled on and is theirs to leave alone).
+ *
+ * The title is their own sentence, minus the CEO's numbering: the whole line, because "SpeedAudit" alone names
+ * a company and the rest of the line says what it sells, and that is the one description of the business the
+ * vault has at this moment. `source: owner` because they chose it — `OWNER_SEEN_IDEA_SOURCES` has to agree that
+ * they have seen it, and nothing else in the enum is true of a line the owner picked off a list.
+ */
+function filePickedCard(vault: Vault, by: string, now: Date): { idea: IdeaFrontmatter; why: string } | null {
+  const pick = ownerPick(vault);
+  if (!pick) return null;
+  const name = pickedIdeaName(pick.line);
+  if (name.length < PICK_NAME_MIN) return null;
+  const line = pick.line.replace(/^\s*\d+[.)]\s*/, '').trim();
+  // A card under this exact slug that `pickedCard` did not return is one the owner has already decided (or one
+  // the sweep filed and they have not seen); either way filing over it is not this function's business.
+  if (vault.exists(ideaPath(ideaSlug(name)))) return null;
+  const slug = writeIdeaCard(vault, {
+    slug: ideaSlug(name), title: line, source: 'owner', evidence: [pick.path],
+    what_changed: `${OWNER_PICK_LABEL} ${line}`,
+    why_it_matters: 'The owner chose it. Everything the company does from here is written against this line until they say otherwise.',
+    created: now.toISOString(),
+  }, by);
+  const idea = readIdea(vault, slug);
+  return idea ? { idea: idea.data, why: `${OWNER_PICK_LABEL} ${line}` } : null;
+}
+
+/**
+ * The slug of the card the owner picked that a title about to be filed is the same company as — or null.
+ *
+ * Narrow on purpose (ruling W6-5). It matches only a card the **owner kept** whose slug is exactly its own name
+ * slugified, which is the shape `filePickedCard` writes and nothing else does; and it compares the *name* half
+ * of both titles, since the pick is "PageSpeedAudit — a free weekly audit…" and the research office's card is
+ * "PageSpeedAudit — Free weekly audits leading to manual optimization over email". One company, two sentences.
+ */
+function pickCardCovering(vault: Vault, title: string): string | null {
+  const name = pickedIdeaName(title);
+  if (name.length < PICK_NAME_MIN) return null;
+  const card = listIdeas(vault).find((i) => ownerKept(i)
+    && i.id === ideaSlug(pickedIdeaName(i.title))
+    && sameIdeaTitle(pickedIdeaName(i.title), name));
+  return card?.id ?? null;
+}
+
+/**
+ * Take what a second filing of the owner's own idea brought — its evidence and its two prose sections — onto the
+ * card they already kept, and give back that card's slug.
+ *
+ * The **title is not taken**: the owner's own words name the company, and the research office's paraphrase of
+ * them is not a reason to rename the thing they chose. Everything else is content rather than identity, so it
+ * lands where the offices expect to find it.
+ */
+function foldIntoPick(vault: Vault, slug: string, idea: NewIdea, by: string): string {
+  const cur = readIdea(vault, slug);
+  if (!cur) return slug;
+  const evidence = [...new Set([...cur.data.evidence, ...(idea.evidence ?? [])])];
+  updateIdea(vault, slug, { evidence }, by, { heading: '## Evidence', content: renderEvidenceSection(evidence) });
+  if (idea.what_changed?.trim()) updateIdea(vault, slug, {}, by, { heading: '## What changed', content: idea.what_changed.trim() });
+  if (idea.why_it_matters?.trim()) updateIdea(vault, slug, {}, by, { heading: '## Why it might matter', content: idea.why_it_matters.trim() });
+  return slug;
 }
 
 /**
@@ -662,17 +802,39 @@ function briefCard(vault: Vault): { idea: IdeaFrontmatter; why: string } | null 
   // a later idea the owner rules on themselves — not something adopting the brief a week ago agreed to.
   if (keptIdeas(vault).length) return null;
   const brief = vault.readTextOrNull(FOUNDER_BRIEF) ?? '';
-  const section = (brief.split(/^## Candidate ideas[ \t]*$/m)[1] ?? '').split(/^## /m)[0];
   const why = `The owner adopted [[${FOUNDER_BRIEF.replace(/\.md$/, '')}]], which is written against this idea.`;
-  // The section is read in every spelling the template has ever asked for: a wikilink, a path, and the bare
-  // slug `Processes/discovery.md` asks for by name. An `_underscored_` word is emphasis, not a slug.
-  const named = new Set([...ideasNamedIn(section), ...[...section.matchAll(new RegExp(`(?<![A-Za-z0-9_/-])(${IDEA_SLUG_SRC})(?![A-Za-z0-9_/-])`, 'gi'))].map((m) => m[1].toLowerCase())]);
   const seen = listIdeas(vault).filter((i) => theirsToKeep(i) && i.decision === 'undecided');
-  const idea = seen.find((i) => named.has(i.id.toLowerCase()))
-    // …and failing that, the one card the owner's own material produced. Only when there is exactly one: with
-    // two, which of them the brief is written against is a question only the owner can answer.
-    ?? (seen.length === 1 ? seen[0] : undefined);
+  const idea = cardBriefNames(brief, seen);
   return idea ? { idea, why } : null;
+}
+
+/**
+ * The card out of `candidates` that a brief is written against, or undefined.
+ *
+ * The section is read in every spelling the template has ever asked for: a wikilink, a path, and the bare slug
+ * `Processes/discovery.md` asks for by name. An `_underscored_` word is emphasis, not a slug. Failing all of
+ * them, the one candidate there is — only when there is exactly one: with two, which of them the brief is
+ * written against is a question only the owner can answer.
+ */
+function cardBriefNames(brief: string, candidates: IdeaFrontmatter[]): IdeaFrontmatter | undefined {
+  const section = (brief.split(/^## Candidate ideas[ \t]*$/m)[1] ?? '').split(/^## /m)[0];
+  const named = new Set([...ideasNamedIn(section), ...[...section.matchAll(new RegExp(`(?<![A-Za-z0-9_/-])(${IDEA_SLUG_SRC})(?![A-Za-z0-9_/-])`, 'gi'))].map((m) => m[1].toLowerCase())]);
+  return candidates.find((i) => named.has(i.id.toLowerCase())) ?? (candidates.length === 1 ? candidates[0] : undefined);
+}
+
+/**
+ * The idea the founder brief is about, as a slug — what a board sitting on the brief is **ultimately** sitting
+ * on (ruling W6-4), and `''` when the vault holds no card that answers the question.
+ *
+ * The idea the owner kept wins over anything the prose names: after "surprise me" that card *is* the company,
+ * and a brief is only ever a longer way of saying so. Takes the brief as text rather than reading the adopted
+ * file, because the sitting that needs this happens while the brief is still a draft in a proposal.
+ */
+export function briefIdeaSlug(vault: Vault, brief: string): string {
+  const kept = listIdeas(vault).filter((i) => ownerKept(i) && theirsToKeep(i));
+  if (kept.length === 1) return kept[0].id;
+  const seen = listIdeas(vault).filter((i) => theirsToKeep(i));
+  return cardBriefNames(brief ?? '', kept.length ? kept : seen)?.id ?? '';
 }
 
 /** What an idea verdict tells the owner about a card they kept themselves and the board would now park. */

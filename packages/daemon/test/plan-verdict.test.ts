@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, listInbox, listJobs, createJob, readJob, createProposal, findInboxById, updateJob } from '@cubicle/core';
+import { scaffoldVault, Vault, listInbox, listJobs, createJob, readJob, createProposal, findInboxById, updateJob, ownerInstruction } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler, type Llm } from '@cubicle/harness';
 import { verdictOutcome, openPlanVerdict, rejectedPlanVerdict, planVerdictId, planVerdictBody, dispatchProposals, runHeartbeat, createHeartbeatJob, HEARTBEAT_STEPS } from '../src/index.js';
@@ -73,8 +73,8 @@ describe('the owner rules on the plan (program design §4)', () => {
     expect(body).toContain('- The revenue objective has no number.');
     expect(body).toContain('- Nobody owns the site.');
     expect(body).toContain('### dev');
-    expect(body).toContain('approved: true');
-    expect(body).toContain('after 6 h the board');
+    expect(body).toContain(ownerInstruction('plan_verdict'));
+    expect(body).toContain("The board's verdict stands after 6 h");
     // With the switch off nothing promises the owner a deadline that will never come.
     expect(planVerdictBody({ board: 'pass', findings: [], plan: '# Plan', decidesAfterHours: 0 })).not.toMatch(/board's verdict stands/);
     expect(planVerdictBody({ board: 'pass', findings: [], plan: '# Plan', decidesAfterHours: 0 })).toContain('The board passed this plan');

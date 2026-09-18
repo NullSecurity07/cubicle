@@ -267,7 +267,9 @@ describe('the pieces the dialogue is built out of', () => {
     expect(challengeReason([{ role: 'a', text: 'The pain is real.' }, { role: 'b', text: 'Agreed, it is real.' }])).toBe('');
     expect(hedges(`${BANNED_HEDGE} the margins worry me`)).toBe(true);
     expect(challengeReason([{ role: 'a', text: `${BANNED_HEDGE} the margins worry me` }, { role: 'b', text: 'no' }])).toContain('hedged');
-    expect(challengeReason([{ role: 'a', text: 'I disagree with the investor.' }, { role: 'b', text: 'fine' }])).toContain('disagree');
+    // Ruling W6-14: the word "disagree" inside a sentence is not a disagreement — two advisors who reached the
+    // same verdict settled the round, whatever they disagreed with on the way there.
+    expect(challengeReason([{ role: 'a', text: 'I disagree with the investor.' }, { role: 'b', text: 'fine' }])).toBe('');
     expect(challengeReason([{ role: 'a', text: 'This is STRONG.' }, { role: 'b', text: 'This is WEAK.' }])).toContain('different verdicts');
   });
 
