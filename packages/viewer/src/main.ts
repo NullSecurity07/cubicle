@@ -21,6 +21,7 @@ import { MinimapChrome, minimapWanted } from './ui/minimap.js';
 import { fitZoom } from './world/camera.js';
 import { Dock } from './ui/dock.js';
 import { SelectionPlate } from './ui/selection.js';
+import { HireSheet } from './ui/hire.js';
 import type { Selection } from './world/view.js';
 import type { DockKind } from './world/editing.js';
 import type { LayoutNode, CampusLayout, StationFamily } from './world/layout.js';
@@ -152,17 +153,27 @@ function sendLayout(next: CampusLayout): void {
 }
 
 /**
- * The owner dropped an Agent on the floor.
+ * The owner dropped an Agent on the floor: the hire sheet, over the spot they dropped it.
  *
- * There is no hire sheet yet (SP9b step 4 leaves it to the hire flow the daemon already has), so this goes down
- * the path that exists: the CEO's own thread, with the sentence pre-written and the spot in it. The owner reads
- * it, names the role and the team, and sends — and the hire comes back as a proposal in Decisions, like every
- * other hire. When the sheet lands, this is the one call that changes.
+ * The drop has already said where, so the card asks the three things only the owner can answer and sends
+ * `hire.propose`. What comes back is an ordinary proposal in Decisions — nobody but the owner adds a person to
+ * the company — and the desk stands as a ghost marked "Hiring…" until that decision is made.
  */
+const hireSheet = new HireSheet({
+  teams: () => state.teams.map((t) => ({ id: t.id, name: t.name })),
+  onHire(req) {
+    hiringId = null;
+    if (!net.hire(req.role, req.display, req.team, req.at)) { scene.setHiring(null); toast('The office is offline — nothing was sent.'); return; }
+    scene.setHiring(req.at, `Hiring ${req.display}`);
+  },
+  onCancel() { scene.setHiring(null); },
+});
+/** The proposal the ghost desk is waiting on, so the ghost goes when that one is decided and not on any other. */
+let hiringId: string | null = null;
+
 function hireAt(at: { x: number; y: number }): void {
-  open('cabin', undefined, { zoom: false });
-  panel.prefillComposer(`Hire a <role> for <team> — their desk goes at ${at.x}, ${at.y} in the office.`);
-  toast('Tell the CEO who to hire. The desk spot is already in the message.');
+  scene.setHiring(at);
+  hireSheet.show(at, scene.zoneLabelAt(at));
 }
 
 const plate = new SelectionPlate({
@@ -402,6 +413,10 @@ const net = new Net(url, token, {
     if (e.type === 'browser.frame' && !frames[String(e.payload.session)]) frames[String(e.payload.session)] = `/screens/${String(e.payload.path).replace('.cubicle/screens/', '')}${ctx.tokenQuery}`;
     // One message, travelling the line that lets it be sent (SP9b). The renderer drops it where there is no line.
     if (e.type === 'agent.spoke' && e.agent && typeof e.payload.to === 'string') scene.pulse(e.agent, String(e.payload.to));
+    // The ghost desk stands until the hire it is waiting on is decided — either way round, because a rejected
+    // hire must leave nothing on the floor.
+    if (e.type === 'proposal.resolved' && hiringId && String(e.payload.id ?? '') === hiringId) { hiringId = null; scene.setHiring(null); }
+    if (e.type === 'role.hired') scene.setHiring(null);
     if (state.staleSnapshot) { state = { ...state, staleSnapshot: false }; net.snapshot(); } // plan / brief / inbox changed on disk → refresh text
     refresh();
   },
@@ -419,6 +434,7 @@ const net = new Net(url, token, {
     bar.setConn(true, `replay · ${replayBuffer.length} events`);
   },
   onDecideAck(id) { state = decideAcked(state, id); refresh(); },
+  onHireAck(id) { hiringId = id; toast('Hire proposed — approve it in Decisions.'); announce('Hire proposed — approve it in Decisions.'); },
   onConversation(id, turns) { state = applyConversation(state, id, turns as ThreadTurn[]); refresh(); },
   // An error the daemon ties to a decision belongs in that reader's own state line; anything else is a toast.
   onError(message, id) {
@@ -504,6 +520,20 @@ const shellHooks = (window as unknown as { __cubicle?: Record<string, unknown> }
   undo: () => scene.undoLayout(),
   /** Send one message down its line, for the shot harness to photograph. */
   pulse: (from: string, to: string) => scene.pulse(from, to),
+  /** The hire sheet, as the dock opens it: the spot, then the three answers. */
+  hire: (at: { x: number; y: number }, req?: { role: string; display: string; team: string }) => {
+    hireAt(at);
+    if (!req) return true;
+    const f = document.querySelector<HTMLFormElement>('#hire form');
+    if (!f) return false;
+    f.querySelector<HTMLInputElement>('#hire-name')!.value = req.display;
+    f.querySelector<HTMLInputElement>('#hire-role')!.value = req.role;
+    f.querySelector<HTMLSelectElement>('#hire-team')!.value = req.team;
+    f.requestSubmit();
+    return true;
+  },
+  /** Where the ghost desk stands, or null when no hire is waiting. */
+  hiring: () => scene.hiringAt(),
 };
 
 let last = performance.now();

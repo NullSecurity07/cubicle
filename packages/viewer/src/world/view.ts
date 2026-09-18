@@ -192,6 +192,12 @@ export class CampusView {
   private connectFrom: string | null = null;
   /** a zone being moved or stretched: where it would land */
   private zoneGhost: Rect | null = null;
+  /**
+   * The desk the owner asked for and the company has not decided on yet: a ghost footprint with "Hiring…" over
+   * it. It stands from the moment the sheet is sent until the proposal is resolved, so the office shows the spot
+   * is spoken for without pretending somebody sits there.
+   */
+  private hiring: { rect: Rect; label: string } | null = null;
   /** something picked out of the dock and not yet put down */
   private placing: { kind: DockKind; extra: Partial<LayoutNode>; label: string } | null = null;
   /** messages travelling their lines */
@@ -991,6 +997,20 @@ export class CampusView {
   /** What is being placed, for the dock to keep its glyph lit. */
   placingKind(): DockKind | null { return this.placing?.kind ?? null; }
 
+  /**
+   * The spot a hire was asked for, or `null` once it is decided.
+   *
+   * A desk's own footprint, so the ghost is the size of the thing that would arrive. It is not in the note: a
+   * proposal is the company's business, not the floor's, and a rejected hire must leave nothing behind.
+   */
+  setHiring(at: Cell | null, label = 'Hiring…'): void {
+    this.hiring = at ? { rect: { x0: at.x - 1.25, y0: at.y - 0.65, x1: at.x + 1.25, y1: at.y + 0.65 }, label } : null;
+  }
+  hiringAt(): Rect | null { return this.hiring?.rect ?? null; }
+
+  /** The name of the room a cell falls in, for a sheet that has to say where the owner just dropped something. */
+  zoneLabelAt(at: Cell): string | null { return this.map ? zoneAt(this.map, at)?.label ?? null : null; }
+
   /** Put the armed thing down at a cell. */
   placeAt(cell: Cell): boolean {
     const p = this.placing;
@@ -1100,6 +1120,11 @@ export class CampusView {
     if (this.drag?.kind === 'wire' && this.pointer) this.paintWire(g, v, this.drag.from, this.pointer);
     if (this.lift && this.lift.spring <= 0) drawGhost(g, v, this.lift.rect, this.lift.blocked);
     if (this.zoneGhost) drawGhost(g, v, this.zoneGhost, false);
+    if (this.hiring) {
+      drawGhost(g, v, this.hiring.rect, false);
+      const c = { x: (this.hiring.rect.x0 + this.hiring.rect.x1) / 2, y: (this.hiring.rect.y0 + this.hiring.rect.y1) / 2 };
+      if (v.z > 0.6) plate(g, v.p(c.x, c.y, 0.9), this.hiring.label, { size: 11, alpha: 0.9, lift: 1 });
+    }
     if (this.placing && this.pointer) {
       const cell = this.camera.toGrid(this.pointer.x, this.pointer.y);
       const rect = this.placing.kind === 'agent'

@@ -262,6 +262,17 @@ details.pinned .prose { padding: 0 var(--s4) var(--s3); }
 #firstrun .row-actions { display: flex; gap: var(--s2); justify-content: flex-end; }
 #firstrun .caption { color: var(--text-2); }
 #firstrun.collapse .card { animation: collapse var(--d-reader) var(--ease-in) forwards; }
+
+/* the hire sheet — the dock's Agent, dropped on the floor. Same card as the first-run one, over the office. */
+#hire { position: absolute; inset: 0; z-index: 26; display: flex; align-items: center; justify-content: center; padding: var(--s6); background: var(--scrim); }
+#hire .card { width: min(420px, 100%); padding: var(--s6); display: grid; gap: var(--s3); background: var(--surface-1); border: 1px solid var(--hairline-2); border-radius: var(--r-l); box-shadow: var(--shadow-2); animation: reader-in var(--d-reader) var(--ease-out); }
+#hire h1 { margin: 0; font-size: var(--fs-title2); font-weight: var(--fw-title2); line-height: var(--lh-title2); letter-spacing: -0.01em; }
+#hire .field { display: grid; gap: var(--s1); }
+#hire .field > span { color: var(--text-2); font-size: var(--fs-caption); }
+#hire .field input, #hire .field select { width: 100%; }
+#hire #hire-role { font-family: var(--mono); }
+#hire .row-actions { display: flex; gap: var(--s2); justify-content: flex-end; margin-top: var(--s1); }
+#hire .caption { color: var(--text-2); margin: 0; }
 @keyframes collapse { to { transform: translate(40vw, -30vh) scale(.2); opacity: 0; } }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: var(--s2) var(--s4); align-items: center; }
 kbd { display: inline-block; min-width: 22px; padding: 1px 6px; text-align: center; font: 600 var(--fs-caption)/1.5 var(--mono); color: var(--text); background: var(--surface-3); border: 1px solid var(--hairline-2); border-bottom-width: 2px; border-radius: 4px; }
