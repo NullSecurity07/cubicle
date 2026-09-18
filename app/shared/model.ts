@@ -10,8 +10,8 @@ export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] 
 export type Usage = { input: number; output: number };
 // What a tool run changed on the stage, for the client to mirror.
 export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string };
-// One tool call inside a reply. `ok` is absent while the tool is still running.
-export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; ok?: boolean; result?: string; effect?: ToolEffect };
+// One tool call inside a reply. `ok` is absent while the tool is still running; `waiting` means it needs the founder's yes first.
+export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; waiting?: boolean; ok?: boolean; result?: string; effect?: ToolEffect };
 export type ChatMessage = {
   id: string; role: 'user' | 'assistant'; text: string; at: number;
   provider?: string; model?: string; usage?: Usage; tools?: ToolEvent[]; stopped?: boolean;

@@ -281,3 +281,32 @@ test('a browser card can be added; only a wired person can drive it, and never t
   await page.reload();
   await expect(page.locator('.react-flow__node-browser')).toHaveCount(1);
 });
+
+test('an email waits for the founder, who can edit it, then it goes; saying no sends nothing', async ({ page }) => {
+  await send(page, 'marketing', '/tool send_email {"to":"lead@example.com","subject":"Hello","body":"Hi there"}');
+  const room = node(page, 'marketing');
+  const ask = room.getByRole('group', { name: 'Send this email?' });
+  await expect(ask).toBeVisible();
+  await expect(room.locator('.card__doing')).toHaveText('needs your OK');
+  await ask.getByLabel('Subject').fill('Hello from Cubicle');
+  await ask.getByRole('button', { name: 'Send' }).click();
+  const chip = room.locator('.chip--ok').last();
+  await expect(chip.locator('summary')).toHaveText('Emailed lead@example.com');
+  await expect(room.locator('.msg--assistant').last()).toContainText('Sent from person@agentmail.test.');
+  await chip.locator('summary').click();
+  await expect(chip.locator('pre')).toContainText('Hello from Cubicle');
+
+  await send(page, 'marketing', '/tool send_email {"to":"lead@example.com","subject":"Again","body":"Second"}');
+  await room.getByRole('group', { name: 'Send this email?' }).getByRole('button', { name: "Don't" }).click();
+  await expect(room.locator('.chip--fail summary').last()).toContainText('Could not');
+  await expect(room.locator('.msg--assistant').last()).toContainText('founder said no');
+});
+
+test('code runs only after the founder reads it, in the sandbox', async ({ page }) => {
+  await send(page, 'build', '/tool run_code {"language":"javascript","code":"console.log(6 * 7)"}');
+  const ask = node(page, 'build').getByRole('group', { name: 'Run this code?' });
+  await expect(ask.getByLabel('Code')).toHaveValue('console.log(6 * 7)');
+  await ask.getByRole('button', { name: 'Run' }).click();
+  await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Ran javascript code');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Tool said: 42');
+});

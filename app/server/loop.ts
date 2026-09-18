@@ -1,6 +1,7 @@
 import type { ToolEvent, Usage } from '../shared/model.ts';
 import type { ModelMessage } from './prompt.ts';
 import { complete, retryAfter, type Failure, type ModelClient } from './providers.ts';
+import type { Answer } from './approvals.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
 import type { UsageBook } from './usage.ts';
 
@@ -15,6 +16,8 @@ export type TurnResult = { text: string; tools: ToolEvent[]; provider: string; m
 export async function runTurn(input: {
   messages: ModelMessage[]; tools: Tool[]; context: ToolContext; clients: ModelClient[];
   usage: UsageBook; events: TurnEvents; signal?: AbortSignal;
+  // Asks the founder about one outward call. Absent (nobody is there to ask) means no.
+  approve?: (event: ToolEvent, signal?: AbortSignal) => Promise<Answer>;
 }): Promise<TurnResult> {
   const { tools, context, usage, events, signal } = input;
   const messages = [...input.messages];
@@ -57,8 +60,18 @@ export async function runTurn(input: {
     for (const call of turn.calls) {
       let args: Record<string, unknown> = {};
       try { args = call.args.trim() ? JSON.parse(call.args) : {}; } catch { /* runTool reports it */ }
+      const tool = tools.find((candidate) => candidate.name === call.name);
+      let rawArgs = call.args;
+      let refusal = tool?.ready?.() ?? null;
+      if (!refusal && tool?.approval) {
+        events.tool({ id: call.id, name: call.name, args, waiting: true });
+        const answer = input.approve ? await input.approve({ id: call.id, name: call.name, args }, signal) : { ok: false };
+        if (!answer.ok) refusal = signal?.aborted ? 'Stopped by the founder.' : 'The founder said no to this. Do not try it again; ask what they want changed.';
+        // The founder may have edited what goes out. Only fields the person proposed can change; nothing new is added.
+        else if (answer.args) { args = { ...args, ...Object.fromEntries(Object.entries(answer.args).filter(([key, value]) => key in args && typeof value === typeof args[key])) }; rawArgs = JSON.stringify(args); }
+      }
       events.tool({ id: call.id, name: call.name, args });
-      const ran = await runTool(tools, call.name, call.args, context);
+      const ran = refusal ? { text: refusal, ok: false, args, effect: undefined } : await runTool(tools, call.name, rawArgs, context);
       const event: ToolEvent = { id: call.id, name: call.name, args: ran.args, ok: ran.ok, result: ran.text.slice(0, RESULT_CHARS), effect: ran.effect };
       done.push(event);
       events.tool(event);

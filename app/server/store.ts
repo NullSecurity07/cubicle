@@ -64,6 +64,7 @@ export function createStore(dir: string) {
   }
 
   return {
+    filesDir,
     loadStage,
     // Cards that left the stage keep their files, in trash: the founder's words are never deleted.
     async saveStage(stage: Stage) {

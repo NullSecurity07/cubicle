@@ -13,6 +13,7 @@ export const getDoc = (id: string) => request<{ text: string }>(`/api/docs/${id}
 export const putDoc = (id: string, text: string) => request(`/api/docs/${id}`, put({ text }));
 export const getModels = () => request<ModelInfo[]>('/api/models');
 export const getBrowser = (id: string) => request<{ port: number; url: string }>(`/api/browsers/${id}`);
+export const answerApproval = (id: string, ok: boolean, args?: Record<string, string>) => request(`/api/approvals/${encodeURIComponent(id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok, args }) });
 export const getChat = (roomId: string) => request<ChatMessage[]>(`/api/rooms/${roomId}/chat`);
 
 // Posts one message and feeds every server-sent event to onEvent until the stream ends. Aborting the signal stops the reply.

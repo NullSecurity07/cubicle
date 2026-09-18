@@ -12,7 +12,7 @@ export function RoomNode({ id, data, selected }: NodeProps<RoomNodeType>) {
   const [editing, setEditing] = useState(false);
   const { updateNodeData } = useReactFlow();
   const setup = editing || !data.name;
-  const doing = status === 'thinking' ? 'working…' : status === 'error' ? 'could not reply' : lastAsk ?? 'Ready when you are';
+  const doing = status === 'waiting' ? 'needs your OK' : status === 'thinking' ? 'working…' : status === 'error' ? 'could not reply' : lastAsk ?? 'Ready when you are';
 
   return (
     <Frame selected={!!selected} minWidth={300} minHeight={280}>

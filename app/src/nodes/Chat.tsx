@@ -5,7 +5,7 @@ import { emit } from '../bus';
 import { useFlushStage } from '../sync';
 import { Message } from './Message';
 
-export type Status = 'idle' | 'thinking' | 'error';
+export type Status = 'idle' | 'thinking' | 'waiting' | 'error';
 type Live = { text: string; tools: ToolEvent[] };
 
 // The conversation with one person: the log, the reply as it streams (words and tool chips), and the ask box.
@@ -53,6 +53,7 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
         if ('error' in event) throw new Error(event.error);
         if ('done' in event) { finished = true; if (event.message.text.trim() || event.message.tools) setMessages((current) => [...current, event.message]); }
         setLive({ ...now });
+        if ('tool' in event) report(now.tools.some((tool) => tool.waiting) ? 'waiting' : 'thinking', asked);
       }, stop.current.signal);
       report('idle', asked);
     } catch (error) {

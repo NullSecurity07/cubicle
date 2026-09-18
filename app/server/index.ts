@@ -1,8 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { newMessageId, type ChatEvent, type Stage } from '../shared/model.ts';
+import { createApprovals } from './approvals.ts';
 import { createBrowser, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { runTurn } from './loop.ts';
+import { createMail, fakeMailHttp } from './mail.ts';
 import { buildMessages, wiredDocIds } from './prompt.ts';
 import { fakeClient, promptSize, realClients } from './providers.ts';
 import { route } from './router.ts';
@@ -10,6 +12,7 @@ import { readStatic } from './static.ts';
 import { createStore } from './store.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
+import { outwardTools } from './tools/outward.ts';
 import { browserSession, webTools } from './tools/web.ts';
 import { createUsage } from './usage.ts';
 
@@ -17,13 +20,15 @@ const root = resolve(import.meta.dirname, '../..');
 try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: only the fake model will work */ }
 
 const port = Number(process.env.STAGE_API_PORT ?? 7421);
+const fake = process.env.STAGE_FAKE_MODEL === '1';
 const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
 const store = createStore(workspace);
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
-const browser = process.env.STAGE_FAKE_MODEL === '1' ? createBrowser(fakeRunner) : createBrowser(realRunner(), process.env.STAGE_NO_READER === '1' ? null : jinaReader);
-const tools = [...docTools, ...fileTools, ...webTools(browser)];
-const clients = process.env.STAGE_FAKE_MODEL === '1' ? [fakeClient] : realClients();
+const browser = fake ? createBrowser(fakeRunner) : createBrowser(realRunner(), process.env.STAGE_NO_READER === '1' ? null : jinaReader);
+const approvals = createApprovals();
+const tools = [...docTools, ...fileTools, ...webTools(browser), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir)];
+const clients = fake ? [fakeClient] : realClients();
 const busy = new Set<string>();
 
 // Started by the desktop shell: leave when the shell does, even if it was killed.
@@ -67,6 +72,7 @@ async function chat(roomId: string, text: string, res: ServerResponse) {
     if (notice) send({ notice });
     const reply = await runTurn({
       messages, tools, clients: order, usage, signal: stop.signal,
+      approve: (event, signal) => approvals.ask(event.id, signal),
       context: { stage, roomId, store, granted: new Map() },
       events: { token: (token) => send({ token }), tool: (tool) => send({ tool }), notice: (text) => send({ notice: text }) },
     });
@@ -97,6 +103,12 @@ createServer(async (req, res) => {
       // A browser card that left the stage takes its Chrome session with it.
       for (const card of before.cards ?? []) if (!next.cards?.some((kept) => kept.id === card.id)) void browser.close(browserSession(card.id));
       return json(res, 200, { ok: true });
+    }
+    const asked = /^\/api\/approvals\/([\w.:-]{1,120})$/.exec(path)?.[1];
+    if (asked && req.method === 'POST') {
+      const answer = await body(req);
+      const known = approvals.answer(asked, { ok: answer.ok === true, args: answer.args && typeof answer.args === 'object' ? answer.args : undefined });
+      return json(res, known ? 200 : 404, known ? { ok: true } : { error: 'nothing is waiting under that id' });
     }
     const watched = /^\/api\/browsers\/([^/]+)$/.exec(path)?.[1];
     if (watched && req.method === 'GET') {

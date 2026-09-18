@@ -8,7 +8,8 @@ import type { Store } from '../store.ts';
 export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number> };
 export type ToolResult = { text: string; effect?: ToolEffect };
 // `perTurn` stops a person from looping on a costly tool: past it, the tool answers with a nudge to use what it has.
-export type Tool = ToolSpec & { perTurn?: number; run(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> };
+// `approval` makes the turn wait for the founder's yes. `ready` returns why the tool cannot work yet, before anyone is asked.
+export type Tool = ToolSpec & { perTurn?: number; approval?: boolean; ready?: () => string | null; run(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> };
 
 export const text = (args: Record<string, unknown>, key: string, max = 200_000) => {
   const value = args[key];
