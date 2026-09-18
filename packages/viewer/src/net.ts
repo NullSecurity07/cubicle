@@ -32,6 +32,9 @@ export interface NetHandlers {
    * from any window and a save of `Office/campus.md` in Obsidian, and it is the daemon's *validated* floor — so
    * it is also what springs a refused drag back. It is an op of its own, not an `event`: the floor is one note
    * as it stands, with no history to replay, so it never goes near the event stream.
+   *
+   * Only the floors that are still news reach here: the echo of a `layout.set` this window has already built on
+   * is dropped by `Net` before it can rewind anything (ruling W6-15).
    */
   onLayoutChanged?(layout: unknown): void;
 }
@@ -52,6 +55,22 @@ export class Net {
   private backoff = 1000;
   /** A replay asked for before the socket was open (the `?replay=` deep link, a reconnect); sent once it opens. */
   private pendingReplay: Record<string, unknown> | null = null;
+  /**
+   * Who this window is on the wire, and how far its floor has got (ruling W6-15).
+   *
+   * `layout.set` carries the whole floor, and the daemon echoes every one of them back to the sender as well as
+   * to the other offices. Five drops in a second are five sets in flight, and the echo of the first one is a
+   * floor with only the first thing on it — applied, it rewinds the four the owner has already made, and the
+   * *next* edit is then built on that older floor and sent, which destroys them for real. So each set is stamped
+   * with this window's id and a number that only goes up, the daemon says both back, and an echo of a set this
+   * window has already moved past is not news: it is dropped here rather than rewinding the office.
+   *
+   * `origin` is deliberately not the token or anything the daemon knows: it is one window, not one vault, and a
+   * second window of the same office has to count as somebody else.
+   */
+  readonly origin: string = `office-${Math.random().toString(36).slice(2, 10)}`;
+  /** The `seq` of the last `layout.set` that actually went out. Nothing older than this can still be news. */
+  private sentSeq = 0;
   constructor(private url: string, private token: string | null, private h: NetHandlers) {}
 
   connect(): void {
@@ -71,13 +90,25 @@ export class Net {
       else if (msg.op === 'chat.ack') this.h.onChatAck?.(String(msg.id));
       else if (msg.op === 'decide.ack') this.h.onDecideAck?.(String(msg.id));
       else if (msg.op === 'conversation') this.h.onConversation?.(String(msg.id), Array.isArray(msg.turns) ? (msg.turns as ThreadTurn[]) : []);
-      else if (msg.op === 'layout.ack') this.h.onLayoutAck?.(Array.isArray(msg.dropped) ? (msg.dropped as { line: string; reason: string; sentence?: string }[]) : []);
-      else if (msg.op === 'layout.changed') this.h.onLayoutChanged?.(msg.layout);
+      else if (msg.op === 'layout.ack') { if (!this.overtaken(msg)) this.h.onLayoutAck?.(Array.isArray(msg.dropped) ? (msg.dropped as { line: string; reason: string; sentence?: string }[]) : []); }
+      else if (msg.op === 'layout.changed') { if (!this.overtaken(msg)) this.h.onLayoutChanged?.(msg.layout); }
       else if (msg.op === 'hire.ack') this.h.onHireAck?.(String(msg.id));
       else if (msg.op === 'error') this.h.onError?.(String(msg.message ?? 'the daemon refused that'), msg.id === undefined ? null : String(msg.id));
     };
     ws.onclose = (ev) => { this.h.onStatus(false, ev.code === 1006 && !this.token ? 'daemon offline or token missing (open the URL printed by cubicle start)' : `disconnected (${ev.code})`); this.retry(); };
     ws.onerror = () => { /* onclose follows */ };
+  }
+
+  /**
+   * Is this answer about a floor this window has already sent past? (ruling W6-15)
+   *
+   * Only ever true of this window's own writes. A change stamped by another office, or by no one at all — an
+   * owner's save of `Office/campus.md`, and every daemon that has not learnt the stamp — is the truth about the
+   * floor and is always applied; the next edit here is built on it, so nothing has to be re-sent.
+   */
+  private overtaken(msg: Record<string, unknown>): boolean {
+    if (msg.origin !== this.origin) return false;
+    return typeof msg.seq === 'number' && msg.seq < this.sentSeq;
   }
 
   private retry(): void {
@@ -116,8 +147,17 @@ export class Net {
   /**
    * The office as the owner has arranged it, whole (SP9b). Idempotent by contract: the viewer never sends a diff,
    * because a diff would need the two ends to agree about what had already arrived.
+   *
+   * Stamped with this window and a rising `seq` (ruling W6-15) so that the daemon's echo can be told from news.
+   * The count moves only when the write actually went out: a set the socket swallowed has no echo coming, and a
+   * gap in the count would silence the echo of the next one that does.
    */
-  layout(nodes: Record<string, unknown>, connections: unknown[]): boolean { return this.send({ op: 'layout.set', nodes, connections }); }
+  layout(nodes: Record<string, unknown>, connections: unknown[]): boolean {
+    const seq = this.sentSeq + 1;
+    if (!this.send({ op: 'layout.set', nodes, connections, origin: this.origin, seq })) return false;
+    this.sentSeq = seq;
+    return true;
+  }
   /** The dock's Agent flow: a desk on the floor and who should sit at it. What comes back is a proposal id. */
   hire(role: string, display: string, team: string, at?: { x: number; y: number }): boolean {
     return this.send({ op: 'hire.propose', role, display, team, ...(at ? { at } : {}) });

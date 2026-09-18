@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { Net, type NetHandlers } from './net.js';
+import { Edits } from './world/editing.js';
+import { emptyLayout, type CampusLayout, type LayoutNode } from './world/layout.js';
 
 /** Minimal stand-in for the browser WebSocket: starts CONNECTING, opens only when the test says so. */
 class FakeWs {
@@ -123,6 +125,158 @@ describe('Net decide and conversation.get', () => {
     expect(err).toEqual(['bad frame', null]);                 // an error the daemon ties to nothing
     ws.onmessage!({ data: JSON.stringify({ op: 'conversation', id: 'x' }) });
     expect(turns).toEqual([]);                                // a reply with no turns is an empty thread, not a crash
+    net.close();
+  });
+});
+
+/**
+ * W6-15: the owner puts five things down in a second, and the daemon's answers arrive late.
+ *
+ * Every `layout.set` is the whole floor, and the daemon echoes each one back to the sender as `layout.changed`.
+ * So the echo of the first drop is a floor with only the first thing on it, and it lands *after* the owner has
+ * drawn four more. Applied, it rewinds those four — and the sixth gesture, a line between two things, is then
+ * built on that rewound floor and sent, which takes the four off the office for real. The office-shot's wired
+ * campus lost exactly the middle three that way: the first drop and the last survived and nothing else did.
+ *
+ * The office here is the real `Edits` stack — the same one `view.ts` holds — so what is under test is the thing
+ * that actually breaks: what the *next* edit is built on.
+ */
+describe('the office floor with several writes in flight (W6-15)', () => {
+  const RESOURCES: [string, LayoutNode][] = [
+    ['browser_1', { kind: 'browser', x: 18, y: 15 }],
+    ['doc_1', { kind: 'doc', x: 21.5, y: 13.5, path: 'Plans/plan.md', label: 'Plan' }],
+    ['note_1', { kind: 'note', x: 24, y: 13.5, body: 'Ask the CFO about runway' }],
+    ['site_1', { kind: 'site', x: 19, y: 16.5 }],
+    ['station_deploy', { kind: 'station', x: 23, y: 16.5, tool: 'deploy' }],
+  ];
+
+  /** One `layout.set` off the wire, as the daemon would echo it back: this floor, stamped as it was sent. */
+  const echoOf = (raw: string): string => {
+    const m = JSON.parse(raw) as { nodes: Record<string, LayoutNode>; connections: unknown[]; origin: string; seq: number };
+    return JSON.stringify({ op: 'layout.changed', layout: { version: 1, nodes: m.nodes, connections: m.connections }, origin: m.origin, seq: m.seq });
+  };
+
+  /** An office wired to a fake socket: the floor it holds, the sets it sent, and the socket to feed echoes to. */
+  function office(): { edits: Edits; net: Net; ws: FakeWs; put: (id: string, node: LayoutNode) => void } {
+    withFakeWs();
+    const edits = new Edits(emptyLayout());
+    const net = new Net('ws://127.0.0.1:7521', 'tok', {
+      ...handlers(),
+      onLayoutChanged(layout) { edits.accept(layout as CampusLayout); },
+    });
+    net.connect();
+    const ws = FakeWs.instances[0];
+    ws.open();
+    const put = (id: string, node: LayoutNode): void => {
+      const send = edits.apply({ layout: { ...edits.layout, nodes: { ...edits.layout.nodes, [id]: node } }, said: '' });
+      net.layout(send.nodes as Record<string, unknown>, send.connections);
+    };
+    return { edits, net, ws, put };
+  }
+
+  it('stamps every layout.set with this window and a number that only goes up', () => {
+    const { net, ws, put } = office();
+    for (const [id, node] of RESOURCES) put(id, node);
+    const sets = ws.sent.slice(1).map((s) => JSON.parse(s) as { op: string; origin: string; seq: number });
+    expect(sets.map((s) => s.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(new Set(sets.map((s) => s.origin))).toEqual(new Set([net.origin]));
+    net.close();
+  });
+
+  it('keeps all five when the echoes land late, and builds the next edit on the whole floor', () => {
+    const { edits, net, ws, put } = office();
+    for (const [id, node] of RESOURCES) put(id, node);
+    const echoes = ws.sent.slice(1).map(echoOf);
+
+    // The first answer comes back now — a floor with one thing on it, four gestures out of date.
+    ws.onmessage!({ data: echoes[0] });
+    expect(Object.keys(edits.layout.nodes)).toEqual(RESOURCES.map(([id]) => id));
+
+    // The sixth gesture: the owner draws a line. What it sends is the floor the office is holding, and that is
+    // the write that used to delete the middle three.
+    const send = edits.apply({ layout: { ...edits.layout, connections: [{ from: 'dev_manager', to: 'doc_1', kind: 'access' }] }, said: '' });
+    net.layout(send.nodes as Record<string, unknown>, send.connections);
+    const line = JSON.parse(ws.sent.at(-1)!) as { nodes: Record<string, LayoutNode>; seq: number };
+    expect(Object.keys(line.nodes)).toEqual(RESOURCES.map(([id]) => id));
+    expect(line.seq).toBe(6);
+
+    // The rest of the backlog drains. None of it is news, so none of it rewinds anything.
+    for (const e of echoes.slice(1)) ws.onmessage!({ data: e });
+    expect(Object.keys(edits.layout.nodes)).toEqual(RESOURCES.map(([id]) => id));
+    expect(edits.layout.connections).toEqual([{ from: 'dev_manager', to: 'doc_1', kind: 'access' }]);
+    net.close();
+  });
+
+  it('applies the newest of its own echoes, so a refused drop still springs back', () => {
+    const seen: CampusLayout[] = [];
+    const dropped: { line: string; reason: string }[][] = [];
+    withFakeWs();
+    const net = new Net('ws://127.0.0.1:7521', 'tok', {
+      ...handlers(),
+      onLayoutChanged(layout) { seen.push(layout as CampusLayout); },
+      onLayoutAck(d) { dropped.push(d); },
+    });
+    net.connect();
+    const ws = FakeWs.instances[0];
+    ws.open();
+    net.layout({ cto: { x: 44, y: 8 } }, []);
+    net.layout({ cto: { x: 0, y: 0 } }, []);                   // a drag into a wall, sent before the first is answered
+    // The stale answer says nothing; the latest one carries the refusal and the floor to spring back to.
+    ws.onmessage!({ data: JSON.stringify({ op: 'layout.ack', dropped: [], origin: net.origin, seq: 1 }) });
+    ws.onmessage!({ data: JSON.stringify({ op: 'layout.changed', layout: { version: 1, nodes: { cto: { x: 44, y: 8 } }, connections: [] }, origin: net.origin, seq: 1 }) });
+    expect(seen).toEqual([]);
+    expect(dropped).toEqual([]);
+    ws.onmessage!({ data: JSON.stringify({ op: 'layout.ack', dropped: [{ line: 'nodes.cto', reason: 'that spot is taken' }], origin: net.origin, seq: 2 }) });
+    ws.onmessage!({ data: JSON.stringify({ op: 'layout.changed', layout: { version: 1, nodes: { cto: { x: 44, y: 8 } }, connections: [] }, origin: net.origin, seq: 2 }) });
+    expect(dropped).toEqual([[{ line: 'nodes.cto', reason: 'that spot is taken' }]]);
+    expect(seen).toEqual([{ version: 1, nodes: { cto: { x: 44, y: 8 } }, connections: [] }]);
+    net.close();
+  });
+
+  it('always applies a floor that is somebody else\'s — another window, or a save in Obsidian', () => {
+    const seen: CampusLayout[] = [];
+    withFakeWs();
+    const net = new Net('ws://127.0.0.1:7521', 'tok', { ...handlers(), onLayoutChanged(layout) { seen.push(layout as CampusLayout); } });
+    net.connect();
+    const ws = FakeWs.instances[0];
+    ws.open();
+    net.layout({ cto: { x: 44, y: 8 } }, []);
+    net.layout({ cto: { x: 9, y: 6 } }, []);
+    const other = { version: 1, nodes: { cto: { x: 1, y: 1 } }, connections: [] };
+    ws.onmessage!({ data: JSON.stringify({ op: 'layout.changed', layout: other, origin: 'office-somebody', seq: 1 }) });
+    ws.onmessage!({ data: JSON.stringify({ op: 'layout.changed', layout: other }) });   // pushLayout: nobody's write
+    expect(seen).toEqual([other, other]);
+    net.close();
+  });
+
+  it('follows a daemon that has never heard of the stamp, exactly as before', () => {
+    const seen: CampusLayout[] = [];
+    withFakeWs();
+    const net = new Net('ws://127.0.0.1:7521', 'tok', { ...handlers(), onLayoutChanged(layout) { seen.push(layout as CampusLayout); } });
+    net.connect();
+    const ws = FakeWs.instances[0];
+    ws.open();
+    net.layout({ cto: { x: 44, y: 8 } }, []);
+    net.layout({ cto: { x: 9, y: 6 } }, []);
+    const old = { version: 1, nodes: { cto: { x: 44, y: 8 } }, connections: [] };
+    ws.onmessage!({ data: JSON.stringify({ op: 'layout.changed', layout: old }) });
+    expect(seen).toEqual([old]);
+    net.close();
+  });
+
+  it('does not count a set the socket swallowed, so the next one is still heard', () => {
+    withFakeWs();
+    const seen: CampusLayout[] = [];
+    const net = new Net('ws://127.0.0.1:7521', 'tok', { ...handlers(), onLayoutChanged(layout) { seen.push(layout as CampusLayout); } });
+    net.connect();
+    const ws = FakeWs.instances[0];
+    expect(net.layout({ cto: { x: 44, y: 8 } }, [])).toBe(false);   // still connecting
+    ws.open();
+    expect(net.layout({ cto: { x: 9, y: 6 } }, [])).toBe(true);
+    expect((JSON.parse(ws.sent.at(-1)!) as { seq: number }).seq).toBe(1);
+    const floor = { version: 1, nodes: { cto: { x: 9, y: 6 } }, connections: [] };
+    ws.onmessage!({ data: JSON.stringify({ op: 'layout.changed', layout: floor, origin: net.origin, seq: 1 }) });
+    expect(seen).toEqual([floor]);
     net.close();
   });
 });

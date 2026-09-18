@@ -320,7 +320,7 @@ export class WsServer {
     wss.on('connection', (ws) => {
       ws.on('message', (raw) => {
         try {
-          let msg: { op?: string; from?: string; to?: string; text?: string; cursor?: number; id?: unknown; approved?: unknown; chosen?: unknown; comment?: unknown; confirm?: unknown; nodes?: unknown; connections?: unknown; role?: unknown; display?: unknown; team?: unknown; at?: unknown } = {};
+          let msg: { op?: string; from?: string; to?: string; text?: string; cursor?: number; id?: unknown; approved?: unknown; chosen?: unknown; comment?: unknown; confirm?: unknown; nodes?: unknown; connections?: unknown; origin?: unknown; seq?: unknown; role?: unknown; display?: unknown; team?: unknown; at?: unknown } = {};
           try { msg = JSON.parse(String(raw).slice(0, 200_000)); } catch { return; }
           if (msg.op === 'snapshot') ws.send(JSON.stringify(buildSnapshot(this.deps.vault, this.deps.router)));
           else if (msg.op === 'replay' && msg.from) {
@@ -369,9 +369,19 @@ export class WsServer {
           } else if (msg.op === 'layout.set') {
             // The office sends the whole state, so this is idempotent and a reconnect cannot half-apply a drag.
             // A payload missing either half is refused rather than read as "the owner emptied the office".
+            //
+            // `origin` and `seq` are the sender's own stamp (ruling W6-15) and are echoed back untouched on both
+            // answers. The daemon reads nothing into them — it does not order writes by them and does not refuse
+            // a set that carries none — they exist so that a window with several sets in flight can tell the echo
+            // of a floor it has already built on from a floor that is news. Whole-floor writes stay last-writer-
+            // wins here, which is what makes that telling the client's job and not this one's.
             if (!msg.nodes || typeof msg.nodes !== 'object' || Array.isArray(msg.nodes) || !Array.isArray(msg.connections)) {
               ws.send(JSON.stringify({ op: 'error', message: 'layout.set needs nodes (object) and connections (array)' }));
             } else {
+              const stamp = {
+                ...(typeof msg.origin === 'string' && msg.origin ? { origin: msg.origin } : {}),
+                ...(typeof msg.seq === 'number' && Number.isFinite(msg.seq) ? { seq: msg.seq } : {}),
+              };
               const org = loadOrg(this.deps.vault);
               // Against the last good floor, so a drag the campus refuses springs back to where the thing was
               // rather than taking it off the office altogether (ruling W6-2).
@@ -381,8 +391,8 @@ export class WsServer {
               warnDropped(this.deps.vault, dropped, 'layout.set');
               // The sender learns what would not stick — it has a thing in its hand to spring back — and every
               // office, this one included, is told what the floor now is.
-              ws.send(JSON.stringify({ op: 'layout.ack', dropped }));
-              this.broadcast({ op: 'layout.changed', layout });
+              ws.send(JSON.stringify({ op: 'layout.ack', dropped, ...stamp }));
+              this.broadcast({ op: 'layout.changed', layout, ...stamp });
             }
           } else if (msg.op === 'hire.propose') {
             // The dock's Agent flow: the owner drops a desk on the floor and says who sits at it. What comes
@@ -443,6 +453,9 @@ export class WsServer {
    * The read is against `lastGood()` (ruling W6-2): a line the campus refuses keeps the value it had, the note
    * is rewritten with that value and gains a "Couldn't apply" section naming it, and the warning carries the
    * same sentence to every open office. Editing a coordinate into a wall used to delete the desk outright.
+   *
+   * It carries no `origin` and no `seq` (ruling W6-15) because it is nobody's write on the wire — so no office
+   * can mistake it for its own echo, and every one of them applies it.
    */
   pushLayout(): CampusLayout {
     const org = loadOrg(this.deps.vault);
