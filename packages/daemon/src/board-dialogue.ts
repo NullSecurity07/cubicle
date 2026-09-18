@@ -754,7 +754,7 @@ function oneLine(text: string): string {
  * requires wherever nothing about the owner is established. The board never fills a gap with prose.
  */
 export function renderBriefPressureSection(
-  findings: Partial<Record<PressurePart, string>>, verdict: string, notePath: string,
+  findings: Partial<Record<PressurePart, string>>, verdict: string, notePath: string, wedge = '',
 ): string {
   const part = (p: PressurePart): string => {
     const f = (findings[p] ?? '').trim();
@@ -763,10 +763,17 @@ export function renderBriefPressureSection(
   };
   return [
     ...PRESSURE_PARTS.map(part),
+    // Ruling W6-6: a wedge narrows who the same product is for. That is pressure on the brief, not a second
+    // company, so it is written here — where the owner reads what the board made of their brief — and is not
+    // filed as an idea card for them to keep or scrap.
+    ...(wedge.trim() ? ['', `**Wedge:** ${oneLine(wedge)} — the same product, aimed at fewer and more desperate people. ${WEDGE_NOT_A_CARD}`] : []),
     '',
     `The board argued this out round by round in [[${notePath.replace(/\.md$/, '')}]].`,
   ].join('\n');
 }
+
+/** Why a wedge is in the brief rather than in `Ideas/` — said to the owner, in the section that carries it. */
+export const WEDGE_NOT_A_CARD = 'Nothing has been filed against it: narrowing the customer is a change to this brief, not a different company to rule on.';
 
 /**
  * The block the owner reads above the brief: what the board made of it, and what it had to ask them.

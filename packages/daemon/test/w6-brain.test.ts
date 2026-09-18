@@ -14,8 +14,8 @@ import { scaffoldVault, Vault, createProposal, ownerDecide, readIdea, listIdeas,
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { dispatchProposals } from '../src/index.js';
-import { priorSittingBlock } from '../src/board-dialogue.js';
-import { ideaVerdictBody } from '../src/heartbeat.js';
+import { priorSittingBlock, renderBriefPressureSection, WEDGE_NOT_A_CARD } from '../src/board-dialogue.js';
+import { ideaVerdictBody, chairPivotText } from '../src/heartbeat.js';
 
 const root = path.resolve(__dirname, '../../..');
 
@@ -69,6 +69,22 @@ describe('W6-5: the owner’s pick is kept, on the surprise path too', () => {
   });
 });
 
+describe('W6-6: the wedge goes in the pressure test, not in Ideas/', () => {
+  it('writes it into the brief’s own section, saying nothing was filed against it', () => {
+    const section = renderBriefPressureSection(
+      { 'Brutal Verdict': 'the pain is thin' }, 'PIVOT REQUIRED', 'Meetings/2026-09-18-1706-board-founder-brief.md',
+      'founders of high-traffic SaaS landing pages who have just missed a Core Web Vitals threshold',
+    );
+    expect(section).toContain('**Wedge:**');
+    expect(section).toContain('high-traffic SaaS landing pages');
+    expect(section).toContain(WEDGE_NOT_A_CARD);
+  });
+
+  it('says nothing about a wedge when the board did not name one', () => {
+    expect(renderBriefPressureSection({}, 'WEAK', 'Meetings/x.md')).not.toContain('**Wedge:**');
+  });
+});
+
 describe('W6-4: the board does not contradict itself across sittings', () => {
   it('hands a second sitting the first’s verdict and wedge, and asks it to confirm or say what changed', () => {
     const block = priorSittingBlock({
@@ -96,3 +112,17 @@ describe('W6-4: the board does not contradict itself across sittings', () => {
   });
 });
 
+describe('W6-6: a wedge is not an idea', () => {
+  const CHAIR = [
+    'VERDICT: PIVOT REQUIRED',
+    'RUBRIC: core assumption 0, fatal flaws 2, pain 1, founder fit 1, why now 0 — out of 10.',
+    'WEDGE: founders of high-traffic SaaS landing pages (>100 k visits/month) who have just missed a Core Web Vitals threshold.',
+    'PIVOT TITLE: AuditToolkit for high-traffic SaaS landing pages',
+  ].join('\n');
+
+  it('carries the chair’s PIVOT TITLE line through to whatever files the card', () => {
+    // Dry-run 3 filed `Ideas/founders-of-high-traffic-saas-landing-pages-100` — the wedge — because the title
+    // line never reached `pivotTitle`.
+    expect(chairPivotText({ text: CHAIR, findings: [] })).toContain('AuditToolkit');
+  });
+});

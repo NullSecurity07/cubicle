@@ -1101,9 +1101,20 @@ export function planIdeaRule(kept: string[]): string {
  */
 export function chairPivotText(o: { text: string; findings: readonly string[] }): string {
   const said = pressurePivot(o.text ?? '');
-  if (said) return said;
+  // Ruling W6-6, and the reason the third dry-run filed an audience segment as an idea: `pressurePivot` returns
+  // the wedge when the chair wrote its reasoning under the machine lines, and the `PIVOT TITLE:` line — the one
+  // thing in the answer that names a product, and the line `pivotTitle` reads first — was left behind with the
+  // rest of the verdict block. It is carried through here, ahead of the pivot, so the card is titled with the
+  // opening the chair proposed rather than with the customer it proposed aiming at.
+  const titled = titleLineIn(o.text ?? '');
+  if (said) return titled && !said.includes(titled) ? `${PIVOT_TITLE_LABEL} ${titled}\n${said}` : said;
   const fixes = productFixes(o.findings ?? []);
   return fixes.length ? fixes.join('; ') : '';
+}
+
+/** The chair's own `PIVOT TITLE:` line, or ''. Read here so `chairPivotText` can carry it beside the pivot. */
+function titleLineIn(text: string): string {
+  return text.replace(/\r/g, '').match(/^[ \t]*(?:>[ \t]*)*(?:#{1,6}[ \t]*)?(?:[-*+][ \t]+)?[*_`]*[ \t]*pivot[ \t]+title[*_`]*[ \t]*[:\-–—][ \t]*(.+)$/im)?.[1]?.trim() ?? '';
 }
 
 /**
@@ -1112,12 +1123,12 @@ export function chairPivotText(o: { text: string; findings: readonly string[] })
  */
 export function fileChairPivot(
   vault: Vault,
-  o: { text: string; findings: readonly string[]; subject: string; transcript: string; by: string; now: Date },
+  o: { text: string; findings: readonly string[]; subject: string; transcript: string; by: string; now: Date; product?: string },
 ): string | null {
   const pivot = chairPivotText(o);
   if (!pivot || !o.transcript) return null;
   try {
-    return fileBoardPivot(vault, { pivot, subject: o.subject, transcript: o.transcript, by: o.by, created: o.now.toISOString() });
+    return fileBoardPivot(vault, { pivot, subject: o.subject, transcript: o.transcript, by: o.by, created: o.now.toISOString(), product: o.product });
   } catch (err) {
     vault.events.emit({ type: 'daemon.warning', agent: o.by, payload: { where: 'board_pivot', message: `the board proposed a pivot on ${o.subject} and it could not be filed as an idea card: ${(err as Error).message.slice(0, 200)}` } });
     return null;
@@ -2649,6 +2660,9 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         const pivoted = fileChairPivot(vault, {
           text: [session.chairText, ...session.findings].filter(Boolean).join('\n'),
           findings: session.findings, subject: `this cycle's plan`, transcript: session.notePath, by: board.lead, now: now(),
+          // Ruling W6-6: the plan serves the ideas the owner kept, so their product is what a pivot must differ
+          // from. With several kept there is no single product to compare against and the title test stands alone.
+          product: keptIdeas(vault).length === 1 ? keptIdeas(vault)[0].title : '',
         });
         // Ruling W4-2: the owner's plan verdict names the pivot so the disagreement is theirs to settle.
         if (pivoted) { state = { ...state, pivotCard: pivoted }; saveState(state); }

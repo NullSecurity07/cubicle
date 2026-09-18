@@ -468,8 +468,16 @@ const PIVOT_VERB_RE = /^(?:secure|build|ship|launch|create|develop|define|target
 /** The little words a clause may open on once its verb is gone: "at least one anchor customer" → the customer. */
 const PIVOT_LEAD_RE = /^(?:at\s+least\s+|at\s+most\s+)?(?:a|an|the|one|to|for|towards?|on|into|onto|our|its|their)\s+/i;
 
-/** How a wedge separates who it is for from what they are sold: "<customer>, targeted via <product>". */
-const WEDGE_SPLIT_RE = /,?\s+(?:targeted\s+via|targeted\s+with|reached\s+via|reached\s+through|served\s+(?:by|with)|sold\s+(?:via|through)|via|using|through|with)\s+/i;
+/**
+ * How a wedge separates who it is for from what they are sold: "<customer>, targeted via <product>".
+ *
+ * A bare `with` is **not** one of them (ruling W6-6). "e-commerce stores with a documented, recent revenue drop
+ * correlated to Core Web Vitals failures" is one customer described in a relative clause, and splitting it there
+ * read the description as the product: the third dry-run filed
+ * `Ideas/documented-recent-revenue-drop-directly-correlat.md` and asked the owner to keep or scrap it. The
+ * qualified spellings — "targeted with", "served with" — say what the author meant and are kept.
+ */
+const WEDGE_SPLIT_RE = /,?\s+(?:targeted\s+via|targeted\s+with|reached\s+via|reached\s+through|served\s+(?:by|with)|sold\s+(?:via|through)|via|using|through)\s+/i;
 
 /** How a fix names its customer: "<product> for <customer>", "<product> to <customer>". */
 const PIVOT_FOR_RE = /^([\s\S]{4,120}?)\s+(?:for|to|aimed\s+at|targeting)\s+([\s\S]{4,160})$/i;
@@ -537,6 +545,56 @@ export function pivotTitle(pivot: string, subject: string): string {
 }
 
 /**
+ * The product half of a pivot — what would be **sold** that is not sold today — or `null` when the chair named
+ * only a customer (ruling W6-6).
+ *
+ * A wedge is an instruction to aim the same product at fewer, more desperate people; a pivot is an instruction
+ * to sell something else. The third dry-run's chair wrote `WEDGE: founders of high-traffic SaaS landing pages
+ * (>100 k visits/month) who have just missed a Core Web Vitals threshold`, and that sentence — an audience
+ * segment, with no product in it anywhere — was filed as `Ideas/founders-of-high-traffic-saas-landing-pages-100`,
+ * scored, researched, priced and put to the owner as a business to keep or scrap. It is not a business. It is
+ * who the business is for.
+ *
+ * So the product is read out of the title the pivot would carry, which `pivotTitle` already writes as
+ * `<product> for <customer>` (ruling W4-7): everything before the connector. A title with no connector at all
+ * is a product on its own ("AuditToolkit"); a title whose product half is the company's current product is the
+ * same product narrowed, which is a wedge again.
+ */
+export function pivotProduct(pivot: string, subject: string): string | null {
+  const title = pivotTitle(pivot, subject);
+  if (title.startsWith('Board pivot on ')) return null;
+  const split = title.match(PIVOT_FOR_RE);
+  const product = (split ? split[1] : title).trim();
+  // "Founders of…", "Merchants who…", "Teams with…": a clause that opens on the people is not a product, however
+  // long it is. The connector test above cannot see this one, because the customer was never split off anything.
+  if (!product || CUSTOMER_LEAD_RE.test(product)) return null;
+  return product;
+}
+
+/** How a clause that names **people** opens. A pivot title that starts here named a customer, not a product. */
+const CUSTOMER_LEAD_RE = /^(?:founders?|owners?|operators?|merchants?|customers?|users?|buyers?|teams?|companies|businesses|startups?|agencies|agency|shops?|stores?|sellers?|marketers?|developers?|engineers?|managers?|people|anyone|everyone|those|indie\b|solo\b|small\b|mid[- ]market|enterprise)\b/i;
+
+/** What the board is told it proposed when its pivot narrows the customer and keeps the product (W6-6). */
+export const PIVOT_IS_A_WEDGE = 'the board narrowed the customer for the same product, which is a wedge and not a different company';
+
+/**
+ * Whether a pivot proposes a **different product** from the one the subject already sells — the one test a
+ * pivot has to pass before it costs the owner a decision and the company four jobs (ruling W6-6).
+ *
+ * Two ways to fail: the pivot names no product at all (a wedge), or it names the product the subject is already
+ * about. Compared on `sameIdeaTitle`'s terms and on containment, because "PageSpeedAudit" and "PageSpeedAudit
+ * for e-commerce merchants" are one product with two audiences.
+ */
+export function pivotNamesAProduct(pivot: string, subject: { title: string }): string | null {
+  const product = pivotProduct(pivot, subject.title);
+  if (!product) return null;
+  const now = pickedIdeaName(subject.title);
+  const norm = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  if (now && (sameIdeaTitle(product, now) || norm(product).startsWith(`${norm(now)} `) || norm(now).startsWith(`${norm(product)} `))) return null;
+  return product;
+}
+
+/**
  * File the chair's proposed pivot as a candidate idea card (ruling W3-2), or return `null` when there is nothing
  * to file and the slug of the card that already covers it when there is.
  *
@@ -550,10 +608,13 @@ export function pivotTitle(pivot: string, subject: string): string {
  */
 export function fileBoardPivot(
   vault: Vault,
-  o: { pivot: string; subject: string; transcript: string; by: string; created?: string },
+  o: { pivot: string; subject: string; transcript: string; by: string; created?: string; product?: string },
 ): string | null {
   const pivot = (o.pivot ?? '').replace(/\s+/g, ' ').trim();
   if (!pivot || !o.transcript) return null;
+  // Ruling W6-6. A wedge belongs in the pressure test the owner reads, not in a dossier that pulls a research
+  // job, an estimate job and two review gates behind it.
+  if (!pivotNamesAProduct(pivot, { title: o.product ?? '' })) return null;
   const already = listIdeas(vault).find((c) => c.source === BOARD_IDEA_SOURCE && c.evidence.includes(o.transcript));
   if (already) return already.id;
   return writeIdeaCard(vault, {

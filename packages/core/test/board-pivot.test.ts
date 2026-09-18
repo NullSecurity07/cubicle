@@ -5,7 +5,7 @@ import path from 'node:path';
 import { scaffoldVault } from '../src/template.js';
 import type { Vault } from '../src/vault.js';
 import { pressurePivot, productFixes } from '../src/pressure.js';
-import { fileBoardPivot, pivotTitle, listIdeas, readIdea, BOARD_IDEA_SOURCE } from '../src/ideas.js';
+import { fileBoardPivot, pivotTitle, pivotProduct, pivotNamesAProduct, listIdeas, readIdea, BOARD_IDEA_SOURCE } from '../src/ideas.js';
 
 let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-pivot-')); vault = (await scaffoldVault(dir)).vault; });
@@ -129,5 +129,36 @@ describe('fileBoardPivot', () => {
   it('files nothing when the board proposed nothing', () => {
     expect(fileBoardPivot(vault, { ...live, pivot: '' })).toBeNull();
     expect(listIdeas(vault)).toEqual([]);
+  });
+
+  // ── W6-6: a wedge is not an idea ───────────────────────────────────────────────────────────────────────
+  describe('a wedge is not an idea (W6-6)', () => {
+    /** Dry-run 3, the 17:06 sitting: an audience segment, filed as `Ideas/founders-of-high-traffic-saas-…`. */
+    const WEDGE = 'founders of high-traffic SaaS landing pages (>100 k visits/month) who have just missed a Core Web Vitals threshold and cannot afford agency rates';
+
+    it('reads no product out of a wedge that names only a customer', () => {
+      expect(pivotProduct(WEDGE, 'the founder brief')).toBeNull();
+      expect(pivotNamesAProduct(WEDGE, { title: 'PageSpeedAudit — free weekly audits' })).toBeNull();
+    });
+
+    it('files no card for it, so no research or estimate job follows one', () => {
+      expect(fileBoardPivot(vault, { ...live, pivot: WEDGE, product: 'PageSpeedAudit — free weekly audits' })).toBeNull();
+      expect(listIdeas(vault)).toEqual([]);
+    });
+
+    it('files no card when the pivot names the product the company already sells', () => {
+      const same = 'PageSpeedAudit for e-commerce merchants with a documented revenue drop';
+      expect(pivotNamesAProduct(same, { title: 'PageSpeedAudit — free weekly audits' })).toBeNull();
+      expect(fileBoardPivot(vault, { ...live, pivot: same, product: 'PageSpeedAudit — free weekly audits' })).toBeNull();
+    });
+
+    it('still files the card when the chair proposed a different product', () => {
+      const real = 'PIVOT TITLE: Automated speed-fix implementation for e-commerce stores with documented revenue drops';
+      // "Automated" comes off with the leading verb, as W4-7 asks: the title is a thing, never an instruction.
+      expect(pivotNamesAProduct(real, { title: 'PageSpeedAudit — free weekly audits' })).toContain('Speed-fix implementation');
+      const slug = fileBoardPivot(vault, { ...live, pivot: real, product: 'PageSpeedAudit — free weekly audits' });
+      expect(slug).toBeTruthy();
+      expect(readIdea(vault, slug!)!.data.title).toContain('Speed-fix implementation');
+    });
   });
 });
