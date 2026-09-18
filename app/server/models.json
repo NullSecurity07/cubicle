@@ -1,7 +1,7 @@
 [
   { "name": "groq", "baseURL": "https://api.groq.com/openai/v1", "keyEnv": "GROQ_API_KEY", "model": "openai/gpt-oss-120b", "maxPromptChars": 18000, "maxTokens": 2048, "tools": true, "limits": { "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000 }, "extra": { "reasoning_effort": "low" } },
   { "name": "cerebras", "baseURL": "https://api.cerebras.ai/v1", "keyEnv": "CEREBRAS_API_KEY", "model": "gpt-oss-120b", "maxPromptChars": 120000, "maxTokens": 4096, "tools": true, "limits": { "rpm": 30, "rpd": 14400, "tpm": 60000, "tpd": 1000000 }, "extra": { "reasoning_effort": "low" } },
-  { "name": "gemini", "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai", "keyEnv": "GEMINI_API_KEY", "model": "gemini-3.5-flash-lite", "maxPromptChars": 400000, "maxTokens": 4096, "tools": true, "limits": { "rpm": 15, "rpd": 1000, "tpm": 250000 } },
+  { "name": "gemini", "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai", "keyEnv": "GEMINI_API_KEY", "model": "gemini-3.5-flash-lite", "maxPromptChars": 400000, "maxTokens": 4096, "tools": true, "callSignature": "skip_thought_signature_validator", "limits": { "rpm": 15, "rpd": 1000, "tpm": 250000 } },
   { "name": "mistral", "baseURL": "https://api.mistral.ai/v1", "keyEnv": "MISTRAL_API_KEY", "model": "mistral-small-latest", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "streamUsage": false, "limits": { "rpm": 60, "tpm": 500000 } },
   { "name": "openrouter", "baseURL": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY", "model": "z-ai/glm-5.2:free", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "limits": { "rpm": 20, "rpd": 50 } }
 ]

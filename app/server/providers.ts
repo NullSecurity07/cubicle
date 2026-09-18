@@ -29,6 +29,20 @@ export const promptSize = (messages: ModelMessage[]) => messages.reduce((sum, me
   return sum + message.content.length + calls;
 }, 0);
 
+const MAX_WAIT = 8000;
+const sleep = (milliseconds: number, signal?: AbortSignal) => new Promise<void>((done) => {
+  const timer = setTimeout(done, milliseconds);
+  signal?.addEventListener('abort', () => { clearTimeout(timer); done(); }, { once: true });
+});
+
+// Milliseconds a provider asked us to wait after a 429, if it said.
+export function retryAfter(error: unknown): number | undefined {
+  const { status, headers } = error as { status?: number; headers?: Headers };
+  if (status !== 429) return undefined;
+  const seconds = Number(headers?.get?.('retry-after'));
+  return seconds > 0 ? seconds * 1000 : undefined;
+}
+
 // Tries each client in order. Moves on when one throws before saying anything, answers with nothing,
 // or cannot hold the prompt. A reply cut off mid-stream is kept: the founder has already seen it.
 export async function complete(
@@ -45,15 +59,21 @@ export async function complete(
       text += token;
       options.onToken(token);
     };
-    try {
-      const turn = await client.step(messages, { ...options, onToken });
-      if (text.trim() || turn.calls.length) return { ...turn, text, client };
-      failures.push(`${client.name}: empty reply`);
-    } catch (error) {
-      if (options.signal?.aborted) return { text, calls: [], client };
-      if (text.trim()) return { text, calls: [], client };
-      onFailure({ client, error: error as Error });
-      failures.push(`${client.name}: ${(error as Error).message}`);
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const turn = await client.step(messages, { ...options, onToken });
+        if (text.trim() || turn.calls.length) return { ...turn, text, client };
+        failures.push(`${client.name}: empty reply`);
+      } catch (error) {
+        if (options.signal?.aborted) return { text, calls: [], client };
+        if (text.trim()) return { text, calls: [], client };
+        // A per-minute limit that clears in a few seconds is worth waiting out once; anything longer goes to the next model.
+        const wait = retryAfter(error);
+        if (attempt === 1 && wait !== undefined && wait <= MAX_WAIT) { await sleep(wait + 300, options.signal); continue; }
+        onFailure({ client, error: error as Error });
+        failures.push(`${client.name}: ${(error as Error).message}`);
+      }
+      break;
     }
   }
   throw new Error(`no provider answered — ${failures.join('; ')}`);
@@ -71,7 +91,36 @@ export function readQuota(headers: Headers): Quota | undefined {
   return Object.values(quota).some((value) => value !== undefined) ? quota : undefined;
 }
 
-type Entry = (typeof models)[number] & { streamUsage?: boolean; extra?: Record<string, unknown>; limits?: Limits };
+// A turn can change provider half way. Tool calls made by another provider carry no signature, which Gemini insists on,
+// so it gets the stand-in Google documents for that case; every other provider gets the calls without Google's extras.
+export function portable(messages: ModelMessage[], signature?: string): ModelMessage[] {
+  return messages.map((message) => {
+    if (message.role !== 'assistant' || !message.tool_calls) return message;
+    return {
+      ...message,
+      tool_calls: message.tool_calls.map(({ extra_content, ...call }) => (
+        signature ? { ...call, extra_content: extra_content ?? { google: { thought_signature: signature } } } : call
+      )),
+    };
+  });
+}
+
+type CallPart = { index?: number; id?: string; function?: { name?: string; arguments?: string }; extra_content?: unknown };
+
+// Folds streamed pieces of tool calls into whole calls. Most providers number the pieces; Gemini sends each call
+// whole and unnumbered, so a piece with an id and no number starts a new call.
+export function collectCalls(calls: ToolCall[], parts: CallPart[]) {
+  for (const part of parts) {
+    const index = part.index ?? (part.id || !calls.length ? calls.length : calls.length - 1);
+    const call = (calls[index] ??= { id: '', name: '', args: '' });
+    if (part.id) call.id = part.id;
+    if (part.function?.name) call.name += part.function.name;
+    if (part.function?.arguments) call.args += part.function.arguments;
+    if (part.extra_content !== undefined) call.extra = part.extra_content;
+  }
+}
+
+type Entry = (typeof models)[number] & { streamUsage?: boolean; callSignature?: string; extra?: Record<string, unknown>; limits?: Limits };
 
 export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[] {
   return (models as Entry[]).filter((entry) => env[entry.keyEnv]).map((entry) => {
@@ -82,7 +131,8 @@ export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[]
       maxPromptChars: entry.maxPromptChars,
       tools: entry.tools,
       limits: entry.limits ?? {},
-      async step(messages, { tools, signal, onToken }) {
+      async step(history, { tools, signal, onToken }) {
+        const messages = portable(history, entry.callSignature);
         const { data: stream, response } = await api.chat.completions.create({
           model: entry.model, messages, stream: true, max_tokens: entry.maxTokens,
           ...(entry.streamUsage === false ? {} : { stream_options: { include_usage: true } }),
@@ -96,14 +146,7 @@ export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[]
           if (chunk.usage) usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
           const delta = chunk.choices[0]?.delta;
           if (delta?.content) onToken(delta.content);
-          for (const part of delta?.tool_calls ?? []) {
-            const call = (calls[part.index] ??= { id: '', name: '', args: '' });
-            if (part.id) call.id = part.id;
-            if (part.function?.name) call.name += part.function.name;
-            if (part.function?.arguments) call.args += part.function.arguments;
-            const extra = (part as { extra_content?: unknown }).extra_content;
-            if (extra !== undefined) call.extra = extra;
-          }
+          collectCalls(calls, delta?.tool_calls ?? []);
         }
         return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || `call-${index}` })), usage, quota: readQuota(response.headers) };
       },

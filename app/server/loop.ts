@@ -1,13 +1,13 @@
 import type { ToolEvent, Usage } from '../shared/model.ts';
 import type { ModelMessage } from './prompt.ts';
-import { complete, type Failure, type ModelClient } from './providers.ts';
+import { complete, retryAfter, type Failure, type ModelClient } from './providers.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
 import type { UsageBook } from './usage.ts';
 
 const MAX_STEPS = 8;
 const RESULT_CHARS = 6000;
 
-export type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void };
+export type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void; notice?(text: string): void };
 export type TurnResult = { text: string; tools: ToolEvent[]; provider: string; model: string; usage: Usage; stopped: boolean };
 
 // One turn of one person: ask the model, run the tools it calls, hand the results back, until it answers in words.
@@ -23,12 +23,13 @@ export async function runTurn(input: {
   const total: Usage = { input: 0, output: 0 };
   let text = '';
   let answered: ModelClient | undefined;
+  const failed: string[] = [];
 
+  // When the model that should have answered could not, the founder hears which one stepped in and why.
   const onFailure = ({ client, error }: Failure) => {
     const status = (error as { status?: number }).status;
-    if (status !== 429) return;
-    const wait = Number((error as { headers?: Headers }).headers?.get?.('retry-after'));
-    usage.cool(client.name, wait > 0 ? wait * 1000 : undefined);
+    failed.push(`${client.name} could not answer (${status === 429 ? 'free limit reached' : (error.message || 'error').slice(0, 120)})`);
+    if (status === 429) usage.cool(client.name, retryAfter(error));
   };
 
   for (let step = 1; step <= MAX_STEPS && !signal?.aborted; step += 1) {
@@ -40,6 +41,7 @@ export async function runTurn(input: {
       onToken: (token) => { const piece = first ? gap + token : token; first = false; text += piece; events.token(piece); },
     }, clients, onFailure);
 
+    if (failed.length) events.notice?.(`${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
     usage.record(turn.client.name, turn.usage, turn.quota);
     total.input += turn.usage?.input ?? 0;
     total.output += turn.usage?.output ?? 0;

@@ -46,7 +46,10 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     'Reply in short markdown: brief paragraphs, lists where they help, a table only for real comparisons.',
     toolNames.length
       ? `You can act with these tools: ${toolNames.join(', ')}. Use one when the founder asks for the work itself, not for advice about it. `
-        + 'You may change only the documents connected to your room; name a document by its title. After a tool runs, say in one or two lines what changed.'
+        + 'You may change only the documents connected to your room; name a document by its title. '
+        + 'The founder sees a receipt for every tool call, and work without a receipt did not happen: never write that you saved, created or changed '
+        + 'something unless that tool call ran in this turn and succeeded. When a request has several parts, make every tool call first, '
+        + 'then say in one or two lines what changed.'
       : '',
     wired.length
       ? `The founder has connected these documents to your room. Treat them as what the founder wants you to know.\n\n${wired.join('\n\n')}`

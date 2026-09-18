@@ -90,6 +90,23 @@ describe('runTurn', () => {
     expect(result.text).toBe('done');
   });
 
+  it('tells the founder when another model had to step in', async () => {
+    const { run } = await setup();
+    const notices: string[] = [];
+    const broken: ModelClient = { ...scripted([]), name: 'gemini', async step() { throw Object.assign(new Error('Too Many Requests'), { status: 429 }); } };
+    const usage = createUsage(null);
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const result = await runTurn({
+      messages: [{ role: 'user', content: 'go' }], tools: [], clients: [broken, scripted(['hello'])], usage,
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(text) },
+    });
+    expect(result.provider).toBe('script');
+    expect(notices).toEqual(['gemini could not answer (free limit reached), so script answers.']);
+    expect(usage.hot(broken, 10)).toBe(true);
+    void run;
+  });
+
   it('stops between steps when the founder stops it, keeping what was said', async () => {
     const { run } = await setup();
     const stop = new AbortController();

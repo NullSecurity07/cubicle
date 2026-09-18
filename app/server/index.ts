@@ -65,7 +65,7 @@ async function chat(roomId: string, text: string, res: ServerResponse) {
     const reply = await runTurn({
       messages, tools, clients: order, usage, signal: stop.signal,
       context: { stage, roomId, store, granted: new Map() },
-      events: { token: (token) => send({ token }), tool: (tool) => send({ tool }) },
+      events: { token: (token) => send({ token }), tool: (tool) => send({ tool }), notice: (text) => send({ notice: text }) },
     });
     const message = {
       id: newMessageId(), role: 'assistant' as const, text: reply.text, at: Date.now(), provider: reply.provider, model: reply.model,
