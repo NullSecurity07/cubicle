@@ -8,7 +8,7 @@
  * The registry used to sit in `world/` and import the view builders back out of `ui/content.ts`, which was a
  * real import cycle held together only by every read happening inside a closure.
  */
-import type { State } from '../state.js';
+import { needsYou, needsYouCount, type State } from '../state.js';
 import type { Headline } from './headlines.js';
 import { cut, planBits, briefBits } from './headlines.js';
 import { boardHeadline } from './board.js';
@@ -125,7 +125,9 @@ for (const def of [
   },
   {
     kind: 'postoffice', streamKind: 'list', streamId: () => 'inbox',
-    headline: (s) => { const n = s.inbox.length || s.pendingProposals; return { head: n ? `${n} to approve` : 'Nothing to approve', short: n ? String(n) : 'Clear', lines: n ? s.inbox.slice(0, 3).map((p) => cut(`${kindLabel(p.kind)}: ${p.title}`, 28)) : ['Proposals land here', 'for your yes or no'], badge: n ? String(n) : undefined }; },
+    // The same count as the pill and the sheet (ruling W6-12b), and the same rows under it: the wall used to
+    // read `s.inbox.length`, which counts decisions the owner has already taken.
+    headline: (s) => { const rows = needsYou(s), n = needsYouCount(s); return { head: n ? `${n} to approve` : 'Nothing to approve', short: n ? String(n) : 'Clear', lines: n ? rows.slice(0, 3).map((p) => cut(`${kindLabel(p.kind)}: ${p.title}`, 28)) : ['Proposals land here', 'for your yes or no'], badge: n ? String(n) : undefined }; },
     view: (s) => decisionsView(s),
   },
   {

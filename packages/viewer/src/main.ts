@@ -2,7 +2,7 @@ import './ui/tokens.css';
 import './ui/app.css';
 import { CampusView } from './world/view.js';
 import { Net, resolveWs } from './net.js';
-import { applyConversation, applyLayoutChanged, decideAcked, decideFailed, decideSent, emptyState, applyEvent, applySnapshot, tick, withFrameSeq, type State, type CubicleEvent, type Snapshot, type ThreadTurn } from './state.js';
+import { applyConversation, applyLayoutChanged, needsYouCount, decideAcked, decideFailed, decideSent, emptyState, applyEvent, applySnapshot, tick, withFrameSeq, type State, type CubicleEvent, type Snapshot, type ThreadTurn } from './state.js';
 import { Panel, SURPRISE_ME, type Origin } from './ui/panel.js';
 import { TopBar } from './ui/bar.js';
 import { applyTheme, currentTheme, themeFromQuery, THEMES } from './ui/tokens.js';
@@ -323,7 +323,7 @@ function refresh(): void {
   outline.update(state);
   if (panel.current) panel.update(panel.current, viewOf(panel.current));
   rail.update();
-  bar.setPending(state.pendingProposals);
+  bar.setPending(needsYouCount(state));
   bar.setBrand(state.brand.name, state.brand.tagline);
 }
 
