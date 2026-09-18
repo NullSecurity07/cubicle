@@ -109,6 +109,10 @@ export interface DeskOpts {
 
 const TOP_Z = 0.62;
 
+
+/** What a desk monitor shows. Three short lines, so the face can hold them at any zoom the camera reaches. */
+const MONITOR_LINES = ['const brief =', '  await plan()', 'ok · 12 passing'] as const;
+
 /** A desk: walnut top, two slim legs, a monitor on its stand and an accent chip on the front edge. */
 export function desk(x: number, y: number, w = 2.5, d = 1.3, o: DeskOpts = { accent: 'neutral' }): Drawable {
   const r: Rect = { x0: x, y0: y, x1: x + w, y1: y + d };
@@ -132,6 +136,28 @@ export function desk(x: number, y: number, w = 2.5, d = 1.3, o: DeskOpts = { acc
       // the monitor: mounted on the edge away from the occupant, so it is turned towards them
       const mx = x + w * 0.3;
       const my = far ? y + 0.42 : y + d - 0.32;
+      /**
+       * The keyboard, the mug and the papers, on the occupant's side of the desk.
+       *
+       * Drawn before the monitor on a near-side desk and after it on a far-side one, because on a near-side desk
+       * the occupant's side is the *back* of the picture: painting the keyboard last laid a white slab straight
+       * across the lit screen in every Dev and Revenue desk in the frame (visual QA S9-9).
+       */
+      const loose = (): void => {
+        const ky = far ? y + d - 0.5 : y + 0.24;
+        isoBox(g, v, { x0: x + w * 0.2, y0: ky, x1: x + w * 0.2 + 0.88, y1: ky + 0.26, z: zt, h: 0.035 }, M.keyboard, { r: 2 });
+        if (o.mug !== false) {
+          const p = v.p(x + w - 0.42, far ? y + d - 0.38 : y + 0.38, zt);
+          const rw = 0.16 * v.cw * 0.5;
+          roundRect(g, p.x - rw * 0.5, p.y - 0.2 * v.cz, rw, 0.2 * v.cz, rw * 0.28);
+          g.fillStyle = twoTone(g, { x: p.x - rw * 0.5, y: p.y - 0.2 * v.cz, w: rw, h: 0.2 * v.cz }, lit(M.mug), dim(M.mug));
+          g.fill();
+        }
+        if (o.papers) {
+          isoBox(g, v, { x0: x + 0.22, y0: far ? y + d - 0.62 : y + 0.2, x1: x + 1.0, y1: far ? y + d - 0.2 : y + 0.62, z: zt, h: 0.02 }, M.paper, { r: 2 });
+        }
+      };
+      if (!far) loose();
       isoBox(g, v, { x0: mx + 0.34, y0: my - 0.06, x1: mx + 0.56, y1: my + 0.06, z: zt, h: 0.14 }, M.charcoal, { r: 2 });
       panel(g, v, { x: mx, y: my, axis: 'x', len: 0.98, z: zt + 0.12, h: 0.54 },
         far ? mix(M.charcoal, M.monitorLit, 0.22) : shade(M.charcoal, -0.02),
@@ -148,26 +174,25 @@ export function desk(x: number, y: number, w = 2.5, d = 1.3, o: DeskOpts = { acc
         g.fillStyle = grad;
         g.fill();
         if (v.z > 0.42) {
+          // Three lines inside a face 0.82 cells wide and 0.4 tall. The size comes from the face, not from the
+          // camera: it used to be `6.4 * v.z * 1.6`, which at a zone fit set a 26 px terminal on a 68 px screen and
+          // laid the overflow out across the desk and the floor beside it (visual QA S9-3). Clipped as well, so a
+          // line that still does not fit is cut at the bezel rather than escaping it.
+          g.save();
+          swept.roundPoly(g, face, Math.max(1.5, 2.5 * v.z));
+          g.clip();
+          const faceH = 0.4 * v.cz, faceW = 0.74 * 32 * v.z;
+          const step = faceH / 3.4;
+          const size = Math.max(3.6, Math.min(step * 0.86, faceW / 7.2));
           for (let i = 0; i < 3; i++) {
-            faceText(g, v.p(mx + 0.16, my - 0.014, zt + 0.5 - i * 0.1), 'x', ['const brief =', '  await plan()', 'ok · 12 passing'][i],
-              { size: Math.max(4.5, 6.4 * v.z * 1.6), colour: rgba(i === 2 ? M.pass : M.screenInk, 0.8), weight: 400, font: MONO_FONT });
+            faceText(g, v.p(mx + 0.12, my - 0.014, zt + 0.19 + (0.4 * (2.5 - i)) / 3.4), 'x', MONITOR_LINES[i],
+              { size, colour: rgba(i === 2 ? M.pass : M.screenInk, 0.8), weight: 400, font: MONO_FONT, maxWidth: faceW });
           }
+          g.restore();
         }
         glow(g, { x: b.x + b.w / 2, y: b.y + b.h / 2 }, Math.max(b.w, b.h) * 0.8, M.screenGlow, light.name === 'dusk' ? 0.2 : 0.08);
       }
-      // keyboard, on the occupant's side
-      const ky = far ? y + d - 0.5 : y + 0.24;
-      isoBox(g, v, { x0: x + w * 0.2, y0: ky, x1: x + w * 0.2 + 0.88, y1: ky + 0.26, z: zt, h: 0.035 }, M.keyboard, { r: 2 });
-      if (o.mug !== false) {
-        const p = v.p(x + w - 0.42, far ? y + d - 0.38 : y + 0.38, zt);
-        const rw = 0.16 * v.cw * 0.5;
-        roundRect(g, p.x - rw * 0.5, p.y - 0.2 * v.cz, rw, 0.2 * v.cz, rw * 0.28);
-        g.fillStyle = twoTone(g, { x: p.x - rw * 0.5, y: p.y - 0.2 * v.cz, w: rw, h: 0.2 * v.cz }, lit(M.mug), dim(M.mug));
-        g.fill();
-      }
-      if (o.papers) {
-        isoBox(g, v, { x0: x + 0.22, y0: far ? y + d - 0.62 : y + 0.2, x1: x + 1.0, y1: far ? y + d - 0.2 : y + 0.62, z: zt, h: 0.02 }, M.paper, { r: 2 });
-      }
+      if (far) loose();
       if (o.lamp && v.z > 0.38) lampAt(g, v, x + w - 0.3, y + 0.32, zt, light);
       // the accent chip on the front edge, so a division reads even without its label
       if (v.z > 0.44) {
@@ -573,16 +598,35 @@ export function screen(s: ScreenSpec): Drawable {
       grad.addColorStop(1, kind === 'screen' ? shade(body, -0.02) : shade(body, -0.03));
       g.fillStyle = grad;
       g.fill();
-      // the line of content, laid into the face
-      /** Text in the panel's own plane, `f` of the way up the inner face, fitted to what the face can hold. */
-      const maxW = (s.len - 0.56) * 32 * v.z;
-      const inFace = (f: number, text: string, size: number, colour: string, weight: number, font: string, letter?: string): void => {
-        const at = s.axis === 'x'
-          ? v.p(s.x + 0.28, s.y - 0.014, (s.z ?? 0) + s.h * f)
-          : v.p(s.x - 0.014, s.y + s.len - 0.28, (s.z ?? 0) + s.h * f);
+      // What the panel says is laid out inside the panel, in the panel's own units, and clipped to it.
+      //
+      // Two things went wrong in the first campus render and both are fixed here (visual QA S9-2). Each line used
+      // to be fitted to the face's width on its own, so a short line and a long one on the same screen came out at
+      // two different sizes and the screen read as broken; and the baselines were fractions of the panel's height
+      // with no allowance for a glyph, so a line near the top climbed out through the frame. Now one size serves
+      // the whole panel — the largest that fits the widest line *and* the rows the face has room for — the
+      // baselines are laid out from the face's own box in screen pixels, and the whole block is clipped to the
+      // face, so nothing a screen is handed can ever end up on the floor beside it.
+      const faceH = Math.max(1, (s.h - 0.16) * v.cz);
+      const maxW = Math.max(8, (s.len - 0.5) * 32 * v.z);
+      const bottom = (s.z ?? 0) + 0.08;
+      /** Text in the panel's own plane, `px` screen pixels up from the foot of the inner face. */
+      const inFaceAt = (px: number, text: string, size: number, colour: string, weight: number, font: string, letter?: string): void => {
+        const gz = bottom + px / v.cz;
+        const at = s.axis === 'x' ? v.p(s.x + 0.25, s.y - 0.014, gz) : v.p(s.x - 0.014, s.y + s.len - 0.25, gz);
         faceText(g, at, s.axis, text, { size, colour, weight, font, maxWidth: maxW, ...(letter ? { letter } : {}) });
       };
-      const size = Math.max(8.5, Math.min(17, s.h * v.cz * 0.28));
+      /** The one size this panel sets everything in: the largest that fits the widest line and `rows` rows. */
+      const fitAll = (lines: string[], rows: number, font: string, weight: number): number => {
+        let size = Math.min(17, (faceH / (rows + 0.5)) * 0.8);
+        g.save();
+        g.font = `${weight} 100px ${font}`;
+        let widest = 1;
+        for (const t of lines) widest = Math.max(widest, g.measureText(t).width / 100);
+        g.restore();
+        if (widest * size > maxW) size = maxW / widest;
+        return Math.max(5, size);
+      };
       // A live browser frame, laid into the panel's own plane. The face is a sheared parallelogram, so the frame is
       // drawn through the same shear the text uses rather than pasted flat over it — a rectangle of screenshot on
       // an isometric wall is the one thing that makes a drawn office look like a mock-up.
@@ -610,20 +654,32 @@ export function screen(s: ScreenSpec): Drawable {
       // between the owner and the office. Close in, the name moves out onto a plate and the panel is all content.
       const close = v.z > 0.7;
       const content = s.lines && s.lines.length ? s.lines : [s.line];
+      const bodyFont = kind === 'screen' ? MONO_FONT : UI_FONT;
+      const bodyWeight = kind === 'screen' ? 500 : 600;
       if (s.image) { /* the frame is the content */ }
-      else if (!close) {
-        inFace(0.68, s.name.toUpperCase(), size * 0.72, rgba(kind === 'screen' ? acc.base : acc.ink, 0.95), 700, UI_FONT, `${(size * 0.09).toFixed(2)}px`);
-        inFace(0.32, content[content.length - 1], size * 0.94, kind === 'screen' ? ink : M.ink, kind === 'screen' ? 500 : 600, kind === 'screen' ? MONO_FONT : UI_FONT);
-      } else {
-        // close in the panel is all content: as many of the lines as the face has room for, newest at the bottom
-        const rows = Math.max(1, Math.min(content.length, Math.floor((s.h * v.cz) / (size * 1.5))));
-        const show = content.slice(-rows);
-        show.forEach((text, i) => {
-          const f = 0.78 - (i * (size * 1.45)) / Math.max(1, s.h * v.cz);
-          if (f < 0.08) return;
-          inFace(f, text, size, kind === 'screen' ? (i === show.length - 1 ? ink : rgba(ink, 0.72)) : M.ink,
-            kind === 'screen' ? 500 : 600, kind === 'screen' ? MONO_FONT : UI_FONT);
-        });
+      else {
+        g.save();
+        swept.roundPoly(g, face, Math.max(2, 4 * v.z));
+        g.clip();
+        if (!close) {
+          // Far out the name lives *in* the panel: ten more plates over the campus would be ten more things between
+          // the owner and the office. One line of content under it, and no more — at this size a second is a smear.
+          const size = fitAll([s.name.toUpperCase(), content[content.length - 1]], 2.2, UI_FONT, 600);
+          inFaceAt(faceH * 0.56, s.name.toUpperCase(), size * 0.78, rgba(kind === 'screen' ? acc.base : acc.ink, 0.95), 700, UI_FONT, `${(size * 0.09).toFixed(2)}px`);
+          inFaceAt(faceH * 0.18, content[content.length - 1], size, kind === 'screen' ? ink : M.ink, bodyWeight, bodyFont);
+        } else {
+          // Close in the panel is all content: as many lines as the face has room for, newest at the bottom.
+          const rows = Math.max(1, Math.min(content.length, Math.floor(faceH / 13)));
+          const show = content.slice(-rows);
+          const size = fitAll(show, rows, bodyFont, bodyWeight);
+          const step = size * 1.42;
+          show.forEach((text, i) => {
+            const px = faceH * 0.14 + (show.length - 1 - i) * step;
+            if (px + size > faceH) return;
+            inFaceAt(px, text, size, kind === 'screen' ? (i === show.length - 1 ? ink : rgba(ink, 0.72)) : M.ink, bodyWeight, bodyFont);
+          });
+        }
+        g.restore();
       }
       if (s.live) {
         const dot = { x: b.x + b.w - Math.max(4, 7 * v.z), y: b.y + Math.max(4, 7 * v.z) };
@@ -640,7 +696,7 @@ export function screen(s: ScreenSpec): Drawable {
       if (close) {
         const foot = s.axis === 'x' ? v.p(s.x + s.len / 2, s.y + 0.5, 0) : v.p(s.x - 0.5, s.y + s.len / 2, 0);
         const head = s.axis === 'x' ? v.p(s.x + s.len / 2, s.y, (s.z ?? 0) + s.h + 0.82) : v.p(s.x, s.y + s.len / 2, (s.z ?? 0) + s.h + 0.82);
-        plate(g, s.plateBelow ? foot : head, s.name, { size: 11.5, chip: acc.chip, alpha: 0.93 });
+        plate(g, s.plateBelow ? foot : head, s.name, { size: 11.5, chip: acc.chip, alpha: 0.93, lift: 1 });
       }
     },
   };

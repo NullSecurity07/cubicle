@@ -19,7 +19,7 @@
  */
 import { type Cell, type Pt, type Rect, type View, PERSON_H, quad } from './iso.js';
 import { type AccentName, type Light, MATERIAL as M, divisionChip, lampStrength, lightAt, rgba, zoneChip } from './materials.js';
-import { type G, plate } from './shapes.js';
+import { type G, PLATES, plate } from './shapes.js';
 import type { Drawable } from './props.js';
 import {
   type CampusMap, type Router, type Seat, inRect, makeRouter, parseCampus, railZoneAt, rectOf, standAt, zoneAt,
@@ -86,6 +86,12 @@ export class CampusView {
   private dragFrom: Pt | null = null;
   private keys = new Set<string>();
   private zoneNow = '';
+  /**
+   * Whether an idle person may wander off for a coffee. On in the product — an office where nobody ever leaves
+   * their desk is a screensaver. Off in the shot harness, where a run takes minutes and the pantry quietly
+   * collected a dozen people who were meant to be in the scene being photographed (visual QA S9-7).
+   */
+  coffee = true;
   private prevZoom: number | null = null;
   private pendingFocus: { name: string; zoom: boolean } | null = null;
   private images = new Map<string, HTMLImageElement>();
@@ -233,7 +239,7 @@ export class CampusView {
     for (const [role, v] of Object.entries(s.agents)) {
       let b = this.bodies.get(role);
       if (!b) {
-        b = new Body(v, { map: this.map, router: this.router, seatFor: (r, room) => this.takeSeat(room) });
+        b = new Body(v, { map: this.map, router: this.router, seatFor: (r, room) => this.takeSeat(room), roll: () => (this.coffee ? Math.random() : 1) });
         this.bodies.set(role, b);
       }
       if (v.target && this.map.seats[v.target] && !b.seat) b.seat = this.takeSeat(v.target);
@@ -269,10 +275,14 @@ export class CampusView {
     const light = lightAt(this.hour());
     const lightKey = `${light.name}|${Math.round(this.hour() * 4)}`;
     if (lightKey !== this.lightKey) { this.lightKey = lightKey; this.sprites.clear(); }
+    const t = this.timing;
+    let mark = performance.now();
+    const lap = (k: keyof Timing): void => { const n = performance.now(); t[k] += n - mark; mark = n; };
 
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     g.clearRect(0, 0, cam.w, cam.h);
     paintGround(g, v, this.map, light);
+    lap('ground');
 
     // pass 3: the world, back to front. Furniture from the bitmap cache, people live, screens live.
     const items: { d: number; kind: 'prop' | 'body' | 'screen'; prop?: Drawable; body?: Body }[] = [];
@@ -280,26 +290,54 @@ export class CampusView {
     for (const s of buildScreens(this.map, (k) => this.screenContent(k))) if (this.onScreen(v, s)) items.push({ d: s.d, kind: 'screen', prop: s });
     for (const b of this.bodies.values()) if (b.visible()) items.push({ d: b.depth, kind: 'body', body: b });
     items.sort((a, b) => a.d - b.d);
+    lap('sort');
 
     g.save();
     campusClip(g, v, this.map);
     g.clip();
+    // Every plate this frame claims its box out of one book, so two names can never land on top of each other.
+    // Cleared here, before the first thing that draws a plate, which is a screen in the pass below. The book is
+    // told the free area first — inside the canvas, clear of the zone rail and the two bars — and the minimap is
+    // blocked out of it, so nothing a plate says ever ends up half under a piece of chrome.
+    PLATES.clear({ x0: CHROME.left + 6, y0: CHROME.top + 6, x1: cam.w - 6, y1: cam.h - CHROME.bottom - 6 });
+    if (this.minimap && this.minimap.clientWidth > 0) {
+      const mm = this.minimap.getBoundingClientRect();
+      PLATES.block(mm.left - 8, mm.top - CHROME.hit - 12, mm.width + 16, mm.height + CHROME.hit + 20);
+    }
     let budget = REBUILD_BUDGET;
     for (const it of items) {
       if (it.kind === 'body') { it.body!.shadow(g, v, light); it.body!.draw(g, v, light); continue; }
-      if (it.kind === 'screen') { it.prop!.draw(g, v, light); continue; }
+      if (it.kind === 'screen') { const s0 = performance.now(); it.prop!.draw(g, v, light); t.screens += performance.now() - s0; continue; }
       budget -= this.blit(g, v, light, it.prop!, budget > 0) ? 1 : 0;
     }
     g.restore();
+    t.world += performance.now() - mark; mark = performance.now();
 
     paintHour(g, v, this.map, light);
     this.paintLamps(g, v);
+    lap('light');
 
     // pass 5: UI type, in screen space, over everything
     const ctx: BodyContext = { speaker: null, selected: this.selected, hovered: this.hovered };
     if (worldTextVisible(cam.zoom)) for (const b of this.bodies.values()) b.drawLabel(g, v, ctx);
     paintZonePlates(g, v, this.map, { current: this.zoneNow });
     if (nameLabelVisible(cam.zoom)) this.paintDeskPlates(g, v);
+    lap('labels');
+    t.frames += 1;
+  }
+
+  /**
+   * Where the frame went, in milliseconds summed since the last read.
+   *
+   * The spec carries a frame-rate budget, and a budget nobody can attribute is a number to argue about: this says
+   * which pass to look at. `__cubicle.profile()` divides by the frame count and clears.
+   */
+  private timing: Timing = { ground: 0, sort: 0, world: 0, screens: 0, light: 0, labels: 0, frames: 0 };
+  profile(): Record<string, number> {
+    const t = this.timing, n = Math.max(1, t.frames);
+    const out = { frames: t.frames, fps: Math.round(this.fps()), ground: +(t.ground / n).toFixed(2), sort: +(t.sort / n).toFixed(2), world: +(t.world / n).toFixed(2), screens: +(t.screens / n).toFixed(2), light: +(t.light / n).toFixed(2), labels: +(t.labels / n).toFixed(2), props: this.props.length, sprites: this.sprites.size };
+    this.timing = { ground: 0, sort: 0, world: 0, screens: 0, light: 0, labels: 0, frames: 0 };
+    return out;
   }
 
   /** Is any of this object's screen box inside the viewport? */
@@ -364,17 +402,26 @@ export class CampusView {
   private paintLamps(g: G, v: View): void {
     const k = lampStrength(this.hour());
     if (k <= 0.01) return;
+    // Where somebody is working or talking. A lamp near one of them burns; the rest of the campus keeps a low
+    // stand-by glow, so an office after dark says at a glance who is still in it rather than lighting forty empty
+    // desks at equal brightness.
+    const busy: Pt[] = [];
+    for (const b of this.bodies.values()) {
+      if (b.view.state === 'working' || b.view.state === 'talking') busy.push({ x: b.at.x, y: b.at.y });
+    }
     g.save();
     campusClip(g, v, this.map);
     g.clip();
     g.globalCompositeOperation = 'screen';
     for (const d of this.map.decor) {
       if (d.kind !== 'lamp') continue;
+      const lit = busy.some((p) => Math.hypot(p.x - d.at.x, p.y - d.at.y) < LAMP_REACH);
+      const strength = k * (lit ? 1 : 0.34);
       const at = v.p(d.at.x, d.at.y, 0.9);
-      const r = Math.max(20, 2.1 * v.cw);
+      const r = Math.max(20, (lit ? 2.4 : 1.7) * v.cw);
       const grad = g.createRadialGradient(at.x, at.y, 0, at.x, at.y, r);
-      grad.addColorStop(0, rgba(M.lamp, 0.4 * k));
-      grad.addColorStop(0.5, rgba(M.lampDeep, 0.16 * k));
+      grad.addColorStop(0, rgba(M.lamp, 0.46 * strength));
+      grad.addColorStop(0.5, rgba(M.lampDeep, 0.18 * strength));
       grad.addColorStop(1, rgba(M.lampDeep, 0));
       g.fillStyle = grad;
       g.beginPath(); g.arc(at.x, at.y, r, 0, Math.PI * 2); g.fill();
@@ -403,9 +450,14 @@ export class CampusView {
       // the plate goes on the desk's far edge, never over the person sitting at it
       const at = v.p((d.rect.x0 + d.rect.x1) / 2, d.side === 'far' ? d.rect.y1 + 0.5 : d.rect.y0 - 0.5, 0);
       if (at.x < -80 || at.x > v.cam.w + 80 || at.y < -30 || at.y > v.cam.h + 30) continue;
-      // the body already carries the name where someone is at the desk; the plate is for an empty one
-      const here = [...this.bodies.values()].some((b) => b.view.desk === d.id && Math.hypot(b.at.x - d.seat.x, b.at.y - d.seat.y) < 0.8);
-      if (here) continue;
+      // The body carries the name wherever the body is, so a desk plate is for a desk whose owner is not in the
+      // frame at all. It used to yield only while they were sitting at it, which put "The Skeptic" on the desk and
+      // "The Skeptic" on the advisor at the board table, in the same picture (visual QA S9-6).
+      const owner = [...this.bodies.values()].find((b) => b.view.desk === d.id);
+      if (owner && owner.visible()) {
+        const p = v.p(owner.at.x, owner.at.y, 0);
+        if (p.x > -60 && p.x < v.cam.w + 60 && p.y > -30 && p.y < v.cam.h + 30) continue;
+      }
       plateFor(g, at, name, d.accent);
     }
   }
@@ -599,6 +651,8 @@ export class CampusView {
   }
   /** What the office has under a screen point, without clicking it — the overlay gate's hit test. */
   hitAt(px: number, py: number): { kind: 'agent' | 'screen' | 'zone'; id: string } | null { return this.pick(px, py); }
+  /** Let the idle wander off for a coffee, or hold them at their desks. The shot harness holds them. */
+  setCoffee(on: boolean): boolean { this.coffee = on; return this.coffee; }
   /** Whether a pointer is down on the canvas and carrying the camera. The overlay gate asserts this clears. */
   isDragging(): boolean { return this.dragging; }
   /** Whether the camera has finished easing to where it was sent. Every harness waits on this before it measures. */
@@ -606,6 +660,11 @@ export class CampusView {
   /** The grid cell at a screen point, for the minimap and the harness. */
   toGrid(px: number, py: number): Cell { return this.camera.toGrid(px, py); }
 }
+
+/** How far a lamp reaches for somebody to be working under it, in cells. Two desks and the walkway between them. */
+const LAMP_REACH = 4.5;
+
+interface Timing { ground: number; sort: number; world: number; screens: number; light: number; labels: number; frames: number }
 
 const KEYS = new Set(['w', 'a', 's', 'd', 'W', 'A', 'S', 'D', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 
@@ -641,5 +700,5 @@ export function inPoly(pts: Pt[], x: number, y: number): boolean {
 
 /** A desk plate, for a desk nobody is sitting at. */
 function plateFor(g: G, at: Pt, name: string, accent: string): void {
-  plate(g, at, name, { size: 10, chip: zoneChip(accent as AccentName), alpha: 0.78 });
+  plate(g, at, name, { size: 10, chip: zoneChip(accent as AccentName), alpha: 0.78, lift: 2 });
 }

@@ -280,7 +280,7 @@ export class Body {
     const foot = v.p(this.at.x, this.at.y, 0);
     const selected = ctx.selected === this.view.role || ctx.hovered === this.view.role;
     if (nameLabelVisible(zoom) || selected) {
-      plate(g, { x: foot.x, y: foot.y + 13 }, this.view.display, { size: 10.5, chip: divisionChip(this.view.division), alpha: selected ? 0.98 : 0.86 });
+      plate(g, { x: foot.x, y: foot.y + 13 }, this.view.display, { size: 10.5, chip: divisionChip(this.view.division), alpha: selected ? 0.98 : 0.86, lift: selected ? 0 : 3, crowd: selected ? false : undefined });
     }
     if (!worldTextVisible(zoom)) return;
     const chips: { text: string; fill: string; ink: string }[] = [];
@@ -301,14 +301,15 @@ export class Body {
       }
     }
     const b = this.view.bubble;
-    if (b) this.drawBubbleAt(g, { x: head.x, y: head.y - (chips.length ? 22 : 6) }, b);
+    if (b) this.drawBubbleAt(g, { x: head.x, y: head.y - (chips.length ? 22 : 6) }, b, v);
   }
 
-  private drawBubbleAt(g: G, at: Pt, b: Bubble): void {
+  private drawBubbleAt(g: G, at: Pt, b: Bubble, v: View): void {
     const text = b.kind === 'thought' && !b.text ? '· · ·' : b.text;
     const lines = wrap(g, text, 13, 230);
     drawBubble(g, at, lines, {
       size: 12.5,
+      within: { w: v.cam.w, h: v.cam.h },
       tail: this.facing === 'se' || this.facing === 'ne' ? 'left' : 'right',
       ...(b.kind === 'action' ? { tint: rgba(M.actionFill, 0.92), ink: M.actionInk } : {}),
       ...(b.kind === 'thought' ? { tint: rgba(M.paper, 0.95), ink: M.thoughtInk } : {}),

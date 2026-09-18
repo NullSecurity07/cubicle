@@ -359,6 +359,7 @@ const shellHooks = (window as unknown as { __cubicle?: Record<string, unknown> }
   hitAt: (x: number, y: number) => scene.hitAt(x, y),
   toGrid: (x: number, y: number) => scene.toGrid(x, y),
   dragging: () => scene.isDragging(),
+  coffee: (on: boolean) => scene.setCoffee(on),
   settled: () => scene.isSettled(),
   route: (role: string, target: string) => scene.debugRoute(role, target),
   theme: (mode: 'dark' | 'light' | 'system') => applyTheme(mode),
@@ -366,6 +367,7 @@ const shellHooks = (window as unknown as { __cubicle?: Record<string, unknown> }
   // Visual-check hooks (screenshot script, spec F35): freeze the clock and read the loop's frame rate.
   setHour: (h: number | null) => { hourOverride = h; scene.setHourOverride(h); },   // the time bar icon follows the office tint
   fps: () => Math.round(scene.fps()),
+  profile: () => scene.profile(),
   // A pushed frame can belong to a stream the daemon never announced (the screenshot script injects one), and a frame
   // with no surface behind it has nothing bound to draw it. Register the surface first, then let the frame land.
   pushFrame: (id: string, dataUrl: string) => { if (!state.surfaces[id]) { state = applyEvent(state, { ts: new Date().toISOString(), type: 'browser.session_started', agent: null, job: null, payload: { session: id } }); refresh(); } onFrameData(id, dataUrl); },

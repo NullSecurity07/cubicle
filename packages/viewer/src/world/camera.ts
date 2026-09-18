@@ -17,7 +17,9 @@ import { MOTION } from './motion.js';
  * (`--bar-h` and `--time-h`), and the zone rail down the left edge (`--rail-w`). `camera.test.ts` holds these
  * against ui/tokens.css.
  */
-export const CHROME = { top: 52, bottom: 64, left: 96 } as const;
+/** What the HTML layer takes out of the canvas: the top bar, the time bar, the zone rail, and a control's
+ *  own height (the minimap's M toggle sits `hit` above it). The camera frames inside this, and so do the plates. */
+export const CHROME = { top: 52, bottom: 64, left: 96, hit: 32 } as const;
 /** A little air inside the free area, so a fit never ends hard against the chrome. */
 export const GUTTER = 18;
 

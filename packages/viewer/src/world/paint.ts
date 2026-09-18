@@ -187,6 +187,7 @@ export function paintZonePlates(g: G, v: View, m: CampusMap, o: { current?: stri
       size: Math.max(11, Math.min(13.5, 10 + v.z * 3.4)),
       chip: accentChip(z.accent),
       alpha: o.current && o.current === z.id ? 0.98 : 0.92,
+      lift: 2,
     });
   }
 }

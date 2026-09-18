@@ -236,10 +236,56 @@ export function contact(g: G, at: Pt, rx: number, ry: number, alpha: number, tin
 }
 
 /**
+ * Where the labels went this frame, so the next one can get out of the way.
+ *
+ * Everything that names something in the campus lands on the same plate: a screen, a zone, a desk, a person. Drawn
+ * where each of them sits, they pile up — the first render had "Vault" over "CFO" over "Billboard" over "CISO" in
+ * one corner of Operations, and two "Backend Engineer" plates crossing each other in Dev (visual QA S9-6). So each
+ * plate claims the box it is about to fill; a plate that finds the box taken lifts by its own height and tries
+ * again, and one that cannot find room in `lift` tries is not drawn at all. A missing name is a smaller lie than
+ * two names on top of each other, and the camera moves, so it comes back.
+ *
+ * One book per renderer, cleared at the top of every frame. Draw order is priority: whoever asks first, keeps it.
+ */
+export class Plates {
+  private boxes: { x: number; y: number; w: number; h: number }[] = [];
+  /** Where a plate may land: inside the canvas, clear of the rail and the two bars. */
+  private area = { x0: -1e6, y0: -1e6, x1: 1e6, y1: 1e6 };
+  clear(area?: { x0: number; y0: number; x1: number; y1: number }): void {
+    this.boxes.length = 0;
+    if (area) this.area = area;
+  }
+  /** Reserve a rectangle nothing may be drawn under — the minimap, say. Top-left coordinates. */
+  block(x: number, y: number, w: number, h: number): void { this.boxes.push({ x: x + w / 2, y: y + h / 2, w, h }); }
+  /** Claim a box centred on (x, y). Returns where it ended up, or null when there is no room. */
+  claim(x: number, y: number, w: number, h: number, lift: number): { x: number; y: number } | null {
+    for (let i = 0; i <= lift; i++) {
+      const yy = y - i * (h + 3);
+      // Whole, or not at all. A plate half under the zone rail reads as a name the label budget cut off, which is
+      // a bug report; the same plate absent reads as a zone the camera has not reached, which is the truth.
+      if (x - w / 2 < this.area.x0 || x + w / 2 > this.area.x1 || yy - h / 2 < this.area.y0 || yy + h / 2 > this.area.y1) continue;
+      let clear = true;
+      for (const b of this.boxes) {
+        if (Math.abs(b.x - x) * 2 < b.w + w - 2 && Math.abs(b.y - yy) * 2 < b.h + h - 2) { clear = false; break; }
+      }
+      if (clear) { this.boxes.push({ x, y: yy, w, h }); return { x, y: yy }; }
+    }
+    return null;
+  }
+}
+
+/** The one book the campus draws against. `view.ts` clears it once a frame, before anything is painted. */
+export const PLATES = new Plates();
+
+/**
  * A label on a soft plate: UI type, never sheared, never scaled by the camera. Labels are chrome that happens to
  * sit in the world — they stay crisp at every zoom, which is the whole reason they are drawn in screen space.
+ *
+ * `lift` is how many of its own heights the plate may rise to find clear space; 0 means it will not move but still
+ * yields to a plate already there. Pass `crowd: false` for a plate that must always be drawn — a bubble's speaker,
+ * an owner's own selection — which then takes its space and lets the rest work round it.
  */
-export function plate(g: G, at: Pt, text: string, o: { size?: number; chip?: string; ink?: string; sub?: string; alpha?: number; align?: 'centre' | 'left' } = {}): { w: number; h: number } {
+export function plate(g: G, at: Pt, text: string, o: { size?: number; chip?: string; ink?: string; sub?: string; alpha?: number; align?: 'centre' | 'left'; lift?: number; crowd?: boolean } = {}): { w: number; h: number } {
   const size = o.size ?? 12;
   const ink = o.ink ?? M.ink;
   const padX = Math.round(size * 0.75), padY = Math.round(size * 0.42);
@@ -251,8 +297,15 @@ export function plate(g: G, at: Pt, text: string, o: { size?: number; chip?: str
   const chipW = o.chip ? size * 0.5 + size * 0.45 : 0;
   const w = Math.round(tw + sw + chipW + padX * 2);
   const h = Math.round(size + padY * 2);
-  const x = o.align === 'left' ? at.x : at.x - w / 2;
-  const y = at.y - h / 2;
+  const cx = o.align === 'left' ? at.x + w / 2 : at.x;
+  let cy = at.y;
+  if (o.crowd !== false) {
+    const spot = PLATES.claim(cx, cy, w, h, o.lift ?? 0);
+    if (!spot) { g.restore(); return { w: 0, h: 0 }; }
+    cy = spot.y;
+  }
+  const x = cx - w / 2;
+  const y = cy - h / 2;
   g.shadowColor = 'rgba(46,38,28,0.22)';
   g.shadowBlur = 10;
   g.shadowOffsetY = 3;
@@ -291,7 +344,7 @@ export function plate(g: G, at: Pt, text: string, o: { size?: number; chip?: str
  * A speech bubble in UI type. Rounded, with a short tail towards the speaker; the same plate material as a label so
  * the overlay and the world share one surface.
  */
-export function bubble(g: G, at: Pt, lines: string[], o: { size?: number; max?: number; tail?: 'left' | 'right'; ink?: string; tint?: string } = {}): void {
+export function bubble(g: G, at: Pt, lines: string[], o: { size?: number; max?: number; tail?: 'left' | 'right'; ink?: string; tint?: string; within?: { w: number; h: number } } = {}): void {
   const size = o.size ?? 12.5;
   const ink = o.ink ?? M.bubbleInk;
   const padX = Math.round(size * 0.92), padY = Math.round(size * 0.62);
@@ -302,8 +355,16 @@ export function bubble(g: G, at: Pt, lines: string[], o: { size?: number; max?: 
   for (const l of lines) tw = Math.max(tw, g.measureText(l).width);
   const w = Math.round(tw + padX * 2);
   const h = Math.round(lines.length * lh + padY * 2);
-  const x = at.x - w / 2;
-  const y = at.y - h;
+  // Inside the frame, always. A bubble centred on someone standing near the right-hand edge used to run off the
+  // screen and the owner read half a sentence (visual QA S9-5); pushed back in, the tail still points at whoever
+  // said it, which is the only thing the position has to carry.
+  const m = 12;
+  let x = at.x - w / 2;
+  let y = at.y - h;
+  if (o.within) {
+    x = Math.max(m, Math.min(o.within.w - w - m, x));
+    y = Math.max(m, Math.min(o.within.h - h - m, y));
+  }
   g.shadowColor = 'rgba(40,32,24,0.26)';
   g.shadowBlur = 14;
   g.shadowOffsetY = 4;
@@ -314,7 +375,7 @@ export function bubble(g: G, at: Pt, lines: string[], o: { size?: number; max?: 
   g.shadowBlur = 0;
   g.shadowOffsetY = 0;
   // the tail: a rounded wedge under the body, pointing down at the speaker
-  const tx = o.tail === 'left' ? x + w * 0.26 : x + w * 0.74;
+  const tx = Math.max(x + 12, Math.min(x + w - 12, at.x + (o.tail === 'left' ? -w * 0.24 : w * 0.24)));
   fillPoly(g, [{ x: tx - 6, y: y + h - 2 }, { x: tx + 6, y: y + h - 2 }, { x: tx + (o.tail === 'left' ? -3 : 3), y: y + h + 8 }], 2.5, o.tint ?? 'rgba(255,255,255,0.96)');
   roundRect(g, x + 0.5, y + 0.5, w - 1, h - 1, Math.min(12.5, (h - 1) / 2.2));
   g.strokeStyle = 'rgba(40,32,24,0.09)';

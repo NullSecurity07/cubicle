@@ -62,7 +62,7 @@ page.on('pageerror', (e) => console.log('[page exception]', String(e).slice(0, 2
 
 type Tile = { tx: number; ty: number };
 type Agent = { role: string; state: string; seat: Tile | null; tile: Tile };
-type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }>; inbox?: { id: string }[]; conversations?: { id: string; kind: string; room?: string }[] }; agents: () => Agent[]; zone: (id?: string) => string; zones: () => string[]; route: (role: string, target: string) => Promise<{ x: number; y: number }[] | null>; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void } };
+type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }>; inbox?: { id: string }[]; conversations?: { id: string; kind: string; room?: string }[] }; agents: () => Agent[]; zone: (id?: string) => string; zones: () => string[]; coffee: (on: boolean) => boolean; route: (role: string, target: string) => Promise<{ x: number; y: number }[] | null>; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; profile: () => Record<string, number>; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void } };
 /** Run `fn` inside the page against `window.__cubicle`. `fn` crosses over as source text, so it can close over
  *  nothing from this script: whatever it needs (a floor number, an hour) is passed as `arg` and arrives as its
  *  second parameter. */
@@ -153,6 +153,11 @@ const FPS_GATE_MAX_LOAD = 8;
 try {
   await page.goto(`http://127.0.0.1:${webPort}/?token=${token}`, { waitUntil: 'load' });
   await page.waitForTimeout(2500);
+  // Hold everyone at their desks for the run. An idle person wanders off for a coffee after ninety seconds in the
+  // product, which is right there and wrong here: this script takes minutes, and the pantry quietly collected a
+  // dozen people who were meant to be in the zone being photographed (visual QA S9-7). Scene 17 is a pantry chat
+  // driven by events, which this does not touch.
+  await cub((c) => c.coffee(false));
 
   // 01: an empty company asks the one question (spec §12 d/e). The card is centred over the office and is shown once
   // per session, so it is the first scene and the Escape that dismisses it comes after — never before.
@@ -236,16 +241,17 @@ try {
   if (!(await waitForAgents((ags) => board.every((r) => seated(ags.find((a) => a.role === r))), 30000))) fail('08: the board never took their seats within 30 s');
   console.log(`board: ${JSON.stringify(await cub((c, rs: string[]) => c.agents().filter((a) => rs.includes(a.role)).map((a) => ({ r: a.role, s: a.state, t: a.tile, seat: a.seat })), board))}`);
   await gotoZone('boardroom', '08');
-  // The checklist asks this shot for the owner's "You" label, the advisors' glasses and crisp text close in, and a
+  // The checklist asks this shot for the owner's "You" label, the advisors' glasses and crisp type close in, and a
   // zone fit is about zoom 1.6: at that size a head is a dozen pixels and none of the three can be judged. So frame
   // the table itself. `zoom`/`center` set the camera outright while `zone(id)` tweens it — a `zone(id)` after them
   // would tween straight back over them.
-  const seat = await cub((c) => c.stand('boardroom'));
-  if (!seat) fail('08: the map has no stand tile for the boardroom, so the shot is a zone fit');
-  await cub((c) => c.zoom(2.6));
-  // Two rows back from the stand tile, not one: at one the whiteboard's own caption plate sat under the top bar, in
-  // the scene that is meant to show a bubble, four faces and crisp type together.
-  if (seat) await cub((c, s: Tile) => c.center(s.tx, s.ty - 4), seat);
+  //
+  // On the table, not on the zone's stand tile. The stand is the walkway *below* the board room, four cells south
+  // of the table, and centring on it put the eight chairs in the top-right corner with half of them off the frame
+  // in the one scene that is about the board (visual QA S9-8). `board_table` is {5.8, 3.2}..{12.2, 5.6} in
+  // scripts/world/campus.ts, so its middle is (9, 4.4); a step south leaves room for the whiteboard above it.
+  await cub((c) => c.zoom(2.2));
+  await cub((c) => c.center(9, 5.4));
   // The spoken turn goes last, not with `meeting.opened`: a bubble times out after a few seconds, and the walk to the
   // table plus the camera framing above eat more than that. Emitted here, it is still up when the shutter opens —
   // which is the point, since this is the shot that has to show a bubble not colliding with a room label.
@@ -305,6 +311,10 @@ try {
   // number nobody can interpret a week later. (35 fps at load 16, then 60 on a rerun, is what prompted this.)
   load1m = oneMinuteLoad();
   console.log(`fps: ${fps} (1-min load ${load1m.toFixed(2)}, ${cpus().length} cores)`);
+  // Where the frame went, so a number under the gate names the pass to look at rather than starting an argument.
+  await cub((c) => c.profile());
+  await page.waitForTimeout(2000);
+  console.log('profile (ms per frame):', JSON.stringify(await cub((c) => c.profile())));
 
   // 10: the browser viewer, live. Three pushed frames give it a seq, an fps readout and the amber LIVE badge; the
   // 'demo' session opened in the burst above is still active, so nothing here has to fake the badge.
@@ -563,12 +573,15 @@ try {
   // what the office actually reads either way.
   const pantryPair = ['qa_lead', 'growth'];
   ev.emit({ type: 'meeting.opened', agent: 'qa_lead', job: null, payload: { id: 'p1', room: 'pantry', participants: pantryPair, agenda: 'coffee' } });
-  // Wait for both to reach the counter rather than guessing at the walk: QA is two zones away from the pantry and
-  // how long that crossing takes depends on the machine. A pantry shot taken early is a picture of an empty counter.
-  if (!(await waitForAgents((ags) => pantryPair.every((r) => { const a = ags.find((x) => x.role === r); return !!a && a.state !== 'walking'; }), 30000))) fail('17: the pair never reached the pantry counter within 30 s');
+  // Wait for both to actually be in the pantry rather than guessing at the walk: QA is two zones away and how long
+  // that crossing takes depends on the machine. On their position, not on their state — the reducer keeps a
+  // meeting's participants `walking` until the turns start, so waiting on the state never came true (the same trap
+  // the board scene fell into). The pantry is {2.6, 13.2}..{14.6, 20.4} in scripts/world/campus.ts.
+  const inPantry = (a: Agent | undefined): boolean => !!a && a.tile.tx >= 2 && a.tile.tx <= 15 && a.tile.ty >= 13 && a.tile.ty <= 21;
+  if (!(await waitForAgents((ags) => pantryPair.every((r) => inPantry(ags.find((a) => a.role === r))), 40000))) fail('17: the pair never reached the pantry counter within 40 s');
   await gotoZone('pantry', '17');
-  await cub((c) => c.zoom(2.6));
-  await cub((c) => c.center(8.6, 17));
+  await cub((c) => c.zoom(2.2));
+  await cub((c) => c.center(8.6, 17.4));
   // The turns go last: a bubble times out after a few seconds and the walk plus the framing above eat more than that.
   ev.emit({ type: 'meeting.turn', agent: 'growth', job: null, payload: { id: 'p1', round: 1, text: 'What if the plan came as a printable page?' } });
   ev.emit({ type: 'meeting.turn', agent: 'qa_lead', job: null, payload: { id: 'p1', round: 2, text: 'Then the thing to test is whether they cook from it on Wednesday.' } });

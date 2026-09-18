@@ -213,8 +213,12 @@ export const DAY: Light = {
  */
 export const NIGHT: Light = {
   name: 'night',
-  mulFrom: '#8E90B4', mulTo: '#4C4E70', mulAlpha: 0.62,
-  washFrom: '#5A6AA8', washTo: '#2A2E4A', washAlpha: 0.08,
+  // Deep enough to *be* night. At `#8E90B4` over 0.62 the off-white floor came back at 177 — a daylight office
+  // behind a blue filter, with the lamps invisible against it, which is what the first campus night render showed
+  // (visual QA S9-4). These numbers put the floor between 106 near the windows and 68 away from them, so the desk
+  // lamps and the screens are the only lit things in the frame, which is the whole point of the hour.
+  mulFrom: '#5C5F86', mulTo: '#2E3050', mulAlpha: 0.88,
+  washFrom: '#5A6AA8', washTo: '#2A2E4A', washAlpha: 0.1,
   groundFrom: '#080A12', groundTo: '#12131E',
   shadowLen: 0.85, shadowAlpha: 0.3, shadowTint: '#12121F',
   skyHigh: '#0A0E22', sky: '#15193A', skyLow: '#2A2E55', glassGlow: 0.18,
