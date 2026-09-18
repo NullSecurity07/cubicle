@@ -12,7 +12,7 @@
 import type { Ctx, View } from './content.js';
 import { chip, emptyHtml, esc, fmtWhen, humanTitle, kindLabel, obsidianUrl, row, rows, section, segmented, who } from './content.js';
 import { md } from './markdown.js';
-import type { DecidedRow, Decidable, DecideState, InboxRow, State } from '../state.js';
+import { inFlight, needsYouCount, type DecidedRow, type Decidable, type DecideState, type InboxRow, type State } from '../state.js';
 
 /** What the reader says between the click and the dispatcher applying the decision. */
 export const APPLYING_TEXT = 'Decided · applying…';
@@ -214,11 +214,15 @@ export function decisionsView(s: State): View {
   // company sent, not something anyone has to decide. Absent — which is the usual case — it takes no room at all.
   const mailRows = mailWithoutRows(s.mail, [...s.inbox.map((n) => n.title), ...s.decided.map((d) => d.title)]);
   const mail = mailRows.length ? section('Mail', rows(mailRows.slice(-20).reverse().map((m) => row({ title: m.text, right: esc(fmtWhen(m.ts)) })))) : '';
+  // One count, worked out once (ruling W6-12b): a row the owner has decided, or one the board is still arguing,
+  // is not waiting on them. Both keep their place in the list — the sheet says what became of a decision — but
+  // neither is counted here, on the pill, or on the wall screen, because all three read `needsYouCount`.
+  const mine = needsYouCount(s), waiting = inFlight(s).length;
   return {
     mode: 'drawer', icon: 'envelope', title: 'Decisions',
-    sub: s.inbox.length ? `${s.inbox.length} need${s.inbox.length === 1 ? 's' : ''} you` : 'nothing needs you',
+    sub: [mine ? `${mine} need${mine === 1 ? 's' : ''} you` : 'nothing needs you', waiting ? `${waiting} being applied` : ''].filter(Boolean).join(' · '),
     html: segmented([
-      { id: 'needs', label: 'Needs you', count: s.inbox.length, html: needs },
+      { id: 'needs', label: 'Needs you', count: mine, html: needs },
       { id: 'decided', label: 'Decided', count: s.decided.length, html: decided },
     ]) + mail,
   };

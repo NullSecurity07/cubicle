@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { applySnapshot, emptyState, decideSent, decideAcked, decideFailed, type Snapshot, type InboxRow } from '../state.js';
-import { viewFor } from './surfaces.js';
+import { applySnapshot, emptyState, decideSent, decideAcked, decideFailed, needsYou, needsYouCount, type Snapshot, type InboxRow } from '../state.js';
+import { SURFACES, viewFor } from './surfaces.js';
 import { APPLYING_TEXT, BOARD_SITTING, BOARD_SITTING_CHIP, COMMENT_REQUIRED, actionBar, commentRequired, decidableOf, decideStateFor, decisionKey, decisionsView, mailWithoutRows, overrulesBoard, planFirst, proposedContent, readerBody, rowStateChip, verbsFor, withoutFileInstructions, withoutResolutionFooter } from './decisions.js';
 import { THEMES, contrastRatio } from './tokens.js';
 import type { Ctx } from './content.js';
@@ -25,6 +25,36 @@ describe('the Decisions sheet (SP8 §1)', () => {
     expect(v.html).toContain('data-open="decision:p1"');
     expect(v.html).toContain('data-open="decision:p0"');
     expect(v.html).toContain('the board decided: build it');
+  });
+
+  /**
+   * Ruling W6-12b. The header pill was `data-count="1"` while the sheet beside it read "2 need you" and the wall
+   * screen read "2 to approve" — two of them counting a founder brief the board had not finished arguing. Three
+   * surfaces, one filter, worked out in `needsYouCount`.
+   */
+  it('counts only what the owner can actually decide, and the pill, the sheet and the wall agree', () => {
+    const sitting: InboxRow = { ...adoptRow, id: 'p9', board_pending: true };
+    const applying: InboxRow = { ...approveRow, id: 'p8', title: 'Hire a performance auditor', pending: true, approved: true };
+    const st = applySnapshot(emptyState(), snap({ inbox: [approveRow, sitting, applying], pendingProposals: 1 }));
+    expect(needsYouCount(st)).toBe(1);
+    expect(needsYou(st).map((n) => n.id)).toEqual(['p1']);
+
+    const v = decisionsView(st);
+    expect(v.sub).toBe('1 needs you · 2 being applied');
+    expect(v.html).toContain('Needs you<span class="n">1</span>');   // the segment's count is the same number…
+    expect(v.html).toContain('data-open="decision:p9"');        // …and the rows themselves are all still listed
+    expect(v.html).toContain('data-open="decision:p8"');
+
+    const wall = viewFor('postoffice', st, ctx);
+    expect(wall.sub).toBe(v.sub);
+    const head = SURFACES.postoffice.headline!(st);
+    expect(head.head).toBe('1 to approve');
+    expect(head.badge).toBe('1');
+    expect(head.lines).toHaveLength(1);
+  });
+
+  it('falls back to the daemon’s own count when a snapshot carries no inbox at all', () => {
+    expect(needsYouCount(applySnapshot(emptyState(), snap({ pendingProposals: 3 })))).toBe(3);
   });
 
   it('says what is missing rather than nothing at all', () => {

@@ -14,7 +14,7 @@ import {
   connected, stationFor, stationId, deskOf, roleAtDesk, layoutBody, OfficeLayout, OFFICE_LAYOUT_PATH,
   type CampusLayout,
 } from '../src/index.js';
-import { scaffoldVault, loadOrg, type Org, type Vault } from '../src/index.js';
+import { scaffoldVault, loadOrg, stringifyNote, type Org, type Vault } from '../src/index.js';
 
 const map = loadCampusMap();
 let dir: string, vault: Vault, org: Org;
@@ -156,6 +156,87 @@ describe('validateLayout', () => {
   it('survives rubbish', () => {
     expect(ok(null)).toEqual({ version: 1, nodes: {}, connections: [] });
     expect(ok({ nodes: [], connections: 'lots' })).toEqual({ version: 1, nodes: {}, connections: [] });
+  });
+});
+
+/**
+ * Ruling W6-2. Hand-editing `cto:` to a coordinate inside a wall deleted the desk outright — out of `nodes:`,
+ * out of the body's "Moved" list, with no error anywhere — so the note's own instructions ("edit a line here and
+ * the office moves") destroyed the drag the owner had just made. A refusal may cost an explanation, never work.
+ */
+describe('a line the daemon will not take never costs the owner what they had (W6-2)', () => {
+  const good = (): CampusLayout => {
+    const l = validateLayout(map, org, { nodes: { cto: { x: 44, y: 8 } } });
+    expect(l.dropped).toEqual([]);      // the fixture itself has to be a legal office, or the test proves nothing
+    return l.layout;
+  };
+
+  it('keeps the last good position for a coordinate inside a wall, and says so in one sentence', () => {
+    const before = good();
+    const { layout, dropped } = validateLayout(map, org, { nodes: { cto: { x: 0, y: 0 } } }, before);
+    expect(layout.nodes.cto).toEqual({ x: 44, y: 8 });          // the owner's drag survives their own typo
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0].kept).toBe('44, 8');
+    expect(dropped[0].sentence).toBe('cto: 0, 0 is inside a wall — kept at 44, 8');
+  });
+
+  it('keeps it for a coordinate off the campus too, and leaves every other line alone', () => {
+    const before = good();
+    const { layout, dropped } = validateLayout(map, org, { nodes: { cto: { x: 900, y: 900 }, cfo: { x: 9, y: 6 } } }, before);
+    expect(layout.nodes.cto).toEqual({ x: 44, y: 8 });
+    expect(layout.nodes.cfo).toEqual({ x: 9, y: 6 });
+    expect(dropped[0].sentence).toBe('cto: 900, 900 is off the campus — kept at 44, 8');
+  });
+
+  it('says what it could not do even when there is nothing to keep', () => {
+    const { layout, dropped } = validateLayout(map, org, { nodes: { who_even: { x: 4, y: 4 } } });
+    expect(layout.nodes.who_even).toBeUndefined();
+    expect(dropped[0].sentence).toBe('who_even: 4, 4 is not a desk, a zone or a prop on this campus');
+    expect(dropped[0].kept).toBeUndefined();
+  });
+
+  it('does not put a kept desk back on cells this write has given to someone else', () => {
+    const before = good();
+    // the CFO takes the cells the CTO was on, and the CTO's own line is refused: two desks may not be kept
+    // inside each other just because both were legal at different moments
+    const { layout, dropped } = validateLayout(map, org, { nodes: { cfo: { x: 44, y: 8 }, cto: { x: 0, y: 0 } } }, before);
+    expect(layout.nodes.cfo).toEqual({ x: 44, y: 8 });
+    expect(layout.nodes.cto).toBeUndefined();
+    expect(dropped[0].kept).toBeUndefined();
+    expect(dropped[0].sentence).toBe('cto: 0, 0 is inside a wall');
+  });
+
+  it('keeps a line that was already drawn when the owner mistypes it', () => {
+    const before = validateLayout(map, org, { connections: [{ from: 'ceo', to: 'cto', kind: 'peer' }] });
+    expect(before.dropped).toEqual([]);
+    const { layout, dropped } = validateLayout(map, org, { connections: [{ from: 'ceo', to: 'cto', kind: 'access' }] }, before.layout);
+    expect(layout.connections).toEqual([{ from: 'ceo', to: 'cto', kind: 'peer' }]);
+    expect(dropped[0].kept).toBe('as it was');
+    expect(dropped[0].sentence).toContain('ceo → cto');
+    expect(dropped[0].sentence).toContain('kept as it was');
+  });
+
+  it('writes the refusal into the note, and takes it out again on the next good save', () => {
+    const before = good();
+    const { layout, dropped } = validateLayout(map, org, { nodes: { cto: { x: 0, y: 0 } } }, before);
+    writeLayout(vault, layout, 'daemon', org, dropped);
+    const note = vault.readText(OFFICE_LAYOUT_PATH);
+    expect(note).toContain("## Couldn't apply");
+    expect(note).toContain('cto: 0, 0 is inside a wall — kept at 44, 8');
+    expect(note).toContain('- CTO is at 44, 8.');                 // and the Moved list still has the desk
+    writeLayout(vault, layout, 'daemon', org);
+    expect(vault.readText(OFFICE_LAYOUT_PATH)).not.toContain("Couldn't apply");
+  });
+
+  it('reads the note against the last good layout, so a save in Obsidian cannot delete a desk', () => {
+    const before = good();
+    writeLayout(vault, before, 'owner', org);
+    vault.writeText(OFFICE_LAYOUT_PATH, stringifyNote({ version: 1, nodes: { cto: { x: 30, y: 20 } }, connections: [] }, '# The office\n'), 'owner');
+    const blind = readLayout(vault, map, org)!;
+    expect(blind.layout.nodes.cto).toBeUndefined();               // what the daemon used to do: the desk is gone
+    const kept = readLayout(vault, map, org, before)!;
+    expect(kept.layout.nodes.cto).toEqual({ x: 44, y: 8 });
+    expect(kept.dropped[0].sentence).toContain('kept at 44, 8');
   });
 });
 

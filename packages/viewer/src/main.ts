@@ -2,7 +2,7 @@ import './ui/tokens.css';
 import './ui/app.css';
 import { CampusView } from './world/view.js';
 import { Net, resolveWs } from './net.js';
-import { applyConversation, decideAcked, decideFailed, decideSent, emptyState, applyEvent, applySnapshot, tick, withFrameSeq, type State, type CubicleEvent, type Snapshot, type ThreadTurn } from './state.js';
+import { applyConversation, applyLayoutChanged, needsYouCount, decideAcked, decideFailed, decideSent, emptyState, applyEvent, applySnapshot, tick, withFrameSeq, type State, type CubicleEvent, type Snapshot, type ThreadTurn } from './state.js';
 import { Panel, SURPRISE_ME, type Origin } from './ui/panel.js';
 import { TopBar } from './ui/bar.js';
 import { applyTheme, currentTheme, themeFromQuery, THEMES } from './ui/tokens.js';
@@ -12,7 +12,7 @@ import { MESSAGES, roomThread } from './ui/messages.js';
 import { viewFor, SURFACES } from './ui/surfaces.js';
 import { TimeControls } from './ui/time.js';
 import { withMotion, reducedMotion } from './world/motion.js';
-import { announce, announcementFor, coachMark, toast } from './ui/notify.js';
+import { announce, announcementFor, coachMark, layoutRefusal, toast } from './ui/notify.js';
 import { FirstRun } from './ui/firstrun.js';
 import { QuickOpen, quickItems } from './ui/quickopen.js';
 import { bindKeys, keysView } from './ui/keys.js';
@@ -323,7 +323,7 @@ function refresh(): void {
   outline.update(state);
   if (panel.current) panel.update(panel.current, viewOf(panel.current));
   rail.update();
-  bar.setPending(state.pendingProposals);
+  bar.setPending(needsYouCount(state));
   bar.setBrand(state.brand.name, state.brand.tagline);
 }
 
@@ -422,6 +422,15 @@ const net = new Net(url, token, {
     if (said) announce(said);
     if (e.type === 'proposal.created' && e.payload.kind !== 'message') toast(said!, { action: { label: 'Open', open: 'postoffice' } });
     if (e.type === 'deploy.done') toast(said!, { action: { label: 'See it', open: 'workshop' } });
+    // The owner saved `Office/campus.md` in Obsidian and the daemon would not take one of its lines (ruling
+    // W6-2). The note itself says so, but the office they are looking at must not stay silent about work that
+    // did not land — a `layout.set` from this window is answered by `onLayoutAck` instead, so this is only ever
+    // the hand-edited path.
+    if (e.type === 'daemon.warning' && e.payload.where === 'owner.edited' && typeof e.payload.sentence === 'string') {
+      const refusal = layoutRefusal([{ line: String(e.payload.line ?? ''), reason: String(e.payload.reason ?? ''), sentence: e.payload.sentence }]);
+      toast(refusal);
+      announce(refusal);
+    }
     if (e.type === 'browser.frame' && !frames[String(e.payload.session)]) frames[String(e.payload.session)] = `/screens/${String(e.payload.path).replace('.cubicle/screens/', '')}${ctx.tokenQuery}`;
     // One message, travelling the line that lets it be sent (SP9b). The renderer drops it where there is no line.
     if (e.type === 'agent.spoke' && e.agent && typeof e.payload.to === 'string') scene.pulse(e.agent, String(e.payload.to));
@@ -451,6 +460,17 @@ const net = new Net(url, token, {
   onDecideAck(id) { state = decideAcked(state, id); refresh(); },
   onHireAck(id) { hiringId = id; toast('Hire proposed — approve it in Decisions.'); announce('Hire proposed — approve it in Decisions.'); },
   onConversation(id, turns) { state = applyConversation(state, id, turns as ThreadTurn[]); refresh(); },
+  /**
+   * The office moved somewhere else — another window dragged something, or the owner saved `Office/campus.md`
+   * in Obsidian (ruling W6-13). The daemon has already validated it, so it replaces what is drawn here whatever
+   * this window was holding, and `syncLayout` sees a new object and redraws. In replay the floor is the live
+   * office's, so the change is kept for the moment the owner comes back to live.
+   */
+  onLayoutChanged(layout) {
+    if (state.mode === 'replay') { if (liveState) liveState = applyLayoutChanged(liveState, layout); return; }
+    state = applyLayoutChanged(state, layout);
+    refresh();
+  },
   // An error the daemon ties to a decision belongs in that reader's own state line; anything else is a toast.
   onError(message, id) {
     const pending = id ?? Object.keys(state.decisions).find((k) => state.decisions[k].status === 'sending' || state.decisions[k].status === 'applying') ?? null;
@@ -464,8 +484,9 @@ const net = new Net(url, token, {
    */
   onLayoutAck(dropped) {
     if (!dropped.length) return;
-    const first = dropped[0];
-    toast(dropped.length === 1 ? `${first.reason} (${first.line})` : `${dropped.length} changes were not kept — the first: ${first.reason}`);
+    const said = layoutRefusal(dropped);
+    toast(said);
+    announce(said);
   },
 });
 net.connect();

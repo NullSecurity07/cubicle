@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
   applyLayout, connected, inRect, isStationId, paintRect, parseCampusMap, resourceRect, stationFor, stationId,
-  MIN_ZONE, RESOURCE_KINDS, STATION_FAMILIES, STATION_SCREEN,
+  EMPTY_LAYOUT, MIN_ZONE, RESOURCE_KINDS, STATION_FAMILIES, STATION_SCREEN,
   type CampusLayout, type CampusMap, type LayoutConnection, type LayoutNode, type Rect, type ResourceKind,
 } from './campus-map.js';
 import { parseNote, stringifyNote } from './frontmatter.js';
@@ -69,8 +69,22 @@ export type OfficeLayout = z.infer<typeof OfficeLayout>;
 const _shapesAgree: CampusLayout = OfficeLayout.parse({});
 void _shapesAgree;
 
-/** An entry the daemon would not apply, and why. One line, never the whole file. */
-export interface DroppedEntry { line: string; reason: string }
+/**
+ * An entry the daemon would not apply, and why. One line, never the whole file.
+ *
+ * `kept` and `sentence` are ruling W6-2: a refusal may never *cost* the owner anything. A line the daemon will
+ * not take leaves whatever was last good in its place, `kept` is that value, and `sentence` is the whole of it
+ * in one line of English — the same one that goes in the note's "Couldn't apply" section, in the
+ * `daemon.warning`, and in the office's toast, because three tellings of one fact is three chances to disagree.
+ */
+export interface DroppedEntry {
+  line: string;
+  reason: string;
+  /** What this line was left at instead: `44, 8`, or the words for a value with no coordinates. Absent when there was nothing to keep. */
+  kept?: string;
+  /** One sentence for the owner: `cto: 30, 20 is inside a wall — kept at 44, 8`. */
+  sentence: string;
+}
 
 /* -------------------------------------------------------------------------------------------------------- */
 /* the campus map, daemon side                                                                               */
@@ -119,6 +133,45 @@ function rectFree(grid: number[][], walk: number, r: Rect): boolean {
 
 const within = (m: CampusMap, r: Rect): boolean => r.x0 >= 0 && r.y0 >= 0 && r.x1 <= m.width && r.y1 <= m.height;
 
+/** What a refusal knows about itself while the pass is still running, so the sentence can be written at the end. */
+interface DropContext {
+  /** The node this line is about, canonicalised to its desk id — the key the last good value is looked up by. */
+  id?: string;
+  /** How the owner would name it: the id they typed, or `cto → cfo` for a connection. */
+  subject?: string;
+  /** What they asked for, when it was a position. */
+  at?: { x?: number; y?: number };
+  /** The pair a refused connection names, so a line that was already drawn is not cut by a typo. */
+  pair?: { from: string; to: string };
+  /** The refusal as a predicate — "is inside a wall" — where there is a plainer word for it than the reason. */
+  plain?: string;
+}
+
+/** ` — kept at 44, 8`, ` — kept as it was`, or nothing at all. */
+const keptTail = (kept?: string): string => (kept === undefined ? '' : /^-?\d/.test(kept) ? ` — kept at ${kept}` : ` — kept ${kept}`);
+
+/**
+ * Put a refused node back where it last legally stood, when the floor this write leaves still has room for it.
+ *
+ * A desk with a saved position is not standing on its template cells, so those are freed before the keep is
+ * measured and put back only if it does not fit — otherwise a desk that moved once could never be kept again.
+ */
+function keepNode(map: CampusMap, grid: number[][], id: string, prev: LayoutNode): boolean {
+  if (map.zoneById[id]) return true;                                   // a zone takes no floor
+  if (prev.x === undefined || prev.y === undefined) return true;       // a resize, a removal: nothing to stand on
+  const desk = map.desks[id];
+  const rect: Rect = desk
+    ? { x0: prev.x, y0: prev.y, x1: prev.x + (desk.rect.x1 - desk.rect.x0), y1: prev.y + (desk.rect.y1 - desk.rect.y0) }
+    : prev.kind ? resourceRect(prev.kind, { x: prev.x, y: prev.y }) : { x0: prev.x, y0: prev.y, x1: prev.x + 0.5, y1: prev.y + 0.5 };
+  if (desk) paintRect(grid, map.walk, desk.rect, 0);
+  if (!within(map, rect) || !rectFree(grid, map.walk, rect)) {
+    if (desk) paintRect(grid, map.walk, desk.rect, 1);
+    return false;
+  }
+  paintRect(grid, map.walk, rect, 1);
+  return true;
+}
+
 /**
  * The one gate every write goes through, whether it came from the office or from a save in Obsidian.
  *
@@ -130,9 +183,18 @@ const within = (m: CampusMap, r: Rect): boolean => r.x0 >= 0 && r.y0 >= 0 && r.x
  * is a zone, a prop id is a prop, a resource id is `kind_n` or `station_<family>`); a position is inside the
  * campus and not on a blocked cell or on another desk; a desk keeps the size the campus gave it; a connection's
  * ends exist and differ; `peer` is desk↔desk and `access` is desk→resource; and no pair is wired twice.
+ *
+ * **`previous` is the last good layout the daemon holds, and it is what makes a refusal cost nothing** (ruling
+ * W6-2). Hand-editing `cto:` to a coordinate inside a wall used to delete the desk outright — out of `nodes:`,
+ * out of the body's "Moved" list, with no error anywhere — so the owner's own drag was destroyed by the note's
+ * own instructions. With a previous layout, a refused entry keeps the value it last had and says so; without
+ * one (a first read, a fresh vault) the old behaviour stands, because there is nothing to keep.
  */
-export function validateLayout(map: CampusMap, org: Org, input: unknown): { layout: CampusLayout; dropped: DroppedEntry[] } {
+export function validateLayout(map: CampusMap, org: Org, input: unknown, previous: CampusLayout = EMPTY_LAYOUT): { layout: CampusLayout; dropped: DroppedEntry[] } {
   const dropped: DroppedEntry[] = [];
+  /** One per `dropped`, same index: what the sentence at the end needs and the layout no longer remembers. */
+  const why: DropContext[] = [];
+  const drop = (line: string, reason: string, ctx: DropContext = {}): void => { dropped.push({ line, reason, sentence: '' }); why.push(ctx); };
   const raw = (input && typeof input === 'object' && !Array.isArray(input) ? input : {}) as Record<string, unknown>;
   const version = typeof raw.version === 'number' && Number.isInteger(raw.version) ? raw.version : 1;
   const rawNodes = (raw.nodes && typeof raw.nodes === 'object' && !Array.isArray(raw.nodes) ? raw.nodes : {}) as Record<string, unknown>;
@@ -141,59 +203,63 @@ export function validateLayout(map: CampusMap, org: Org, input: unknown): { layo
   const propIds = new Set(map.props.map((p) => p.id));
   const nodes: Record<string, LayoutNode> = {};
   /** Desk placements that passed everything but the collision check, which needs all of them at once. */
-  const placing: { id: string; line: string; rect: Rect }[] = [];
+  const placing: { id: string; line: string; rect: Rect; ctx: DropContext }[] = [];
   /** Things that stand on the floor — props and what the owner added — judged once the desks have settled. */
-  const standing: { id: string; line: string; rect: Rect; node: LayoutNode }[] = [];
+  const standing: { id: string; line: string; rect: Rect; ctx: DropContext; node: LayoutNode }[] = [];
 
   for (const [rawId, value] of Object.entries(rawNodes)) {
     const id = map.desks[rawId] ? rawId : deskOf(org, rawId);
     const line = `nodes.${rawId}`;
+    const said = (value ?? {}) as { x?: unknown; y?: unknown };
+    // What the owner asked for, off the raw entry: by the time a line is refused the parsed value may not exist.
+    const at = typeof said.x === 'number' || typeof said.y === 'number' ? { x: said.x as number | undefined, y: said.y as number | undefined } : undefined;
+    const ctx: DropContext = { id, subject: rawId, at };
     const parsed = LayoutNodeSchema.safeParse(value);
     if (!parsed.success) {
-      dropped.push({ line, reason: parsed.error.issues.map((i) => `${i.path.join('.') || 'value'} ${i.message.toLowerCase()}`).join('; ') });
+      drop(line, parsed.error.issues.map((i) => `${i.path.join('.') || 'value'} ${i.message.toLowerCase()}`).join('; '), ctx);
       continue;
     }
     const n = parsed.data;
     const desk = map.desks[id], zone = map.zoneById[id], prop = propIds.has(id);
     const isResource = !desk && !zone && !prop;
-    if (isResource && !n.kind) { dropped.push({ line, reason: `no desk, zone or prop called ${rawId}` }); continue; }
-    if (isResource && !resourceIdOk(id, n.kind!)) { dropped.push({ line, reason: `a ${n.kind} is called ${n.kind}_1, ${n.kind}_2 …` }); continue; }
+    if (isResource && !n.kind) { drop(line, `no desk, zone or prop called ${rawId}`, { ...ctx, plain: 'is not a desk, a zone or a prop on this campus' }); continue; }
+    if (isResource && !resourceIdOk(id, n.kind!)) { drop(line, `a ${n.kind} is called ${n.kind}_1, ${n.kind}_2 …`, ctx); continue; }
     if (isResource && n.kind === 'station') {
       const family = STATION_FAMILIES.find((f) => stationId(f) === id);
-      if (n.tool && n.tool !== family) { dropped.push({ line, reason: `station ${id} is the ${family} station, not ${n.tool}` }); continue; }
+      if (n.tool && n.tool !== family) { drop(line, `station ${id} is the ${family} station, not ${n.tool}`, ctx); continue; }
       n.tool = family;
     }
     if (n.removed) { nodes[id] = { removed: true }; continue; }
 
     const moved = n.x !== undefined || n.y !== undefined;
-    if (moved && (n.x === undefined || n.y === undefined)) { dropped.push({ line, reason: 'a move needs both x and y' }); continue; }
-    if (isResource && !moved) { dropped.push({ line, reason: 'a resource needs x and y' }); continue; }
-    if (!moved && !zone) { dropped.push({ line, reason: 'nothing to change' }); continue; }
+    if (moved && (n.x === undefined || n.y === undefined)) { drop(line, 'a move needs both x and y', { ...ctx, at: undefined, plain: 'needs both an x and a y' }); continue; }
+    if (isResource && !moved) { drop(line, 'a resource needs x and y', { ...ctx, plain: 'needs both an x and a y' }); continue; }
+    if (!moved && !zone) { drop(line, 'nothing to change', ctx); continue; }
 
     if (desk) {
-      if (n.w !== undefined || n.d !== undefined) dropped.push({ line, reason: 'a desk keeps the size the campus gave it' });
+      if (n.w !== undefined || n.d !== undefined) drop(line, 'a desk keeps the size the campus gave it', { ...ctx, at: undefined });
       const w = desk.rect.x1 - desk.rect.x0, d = desk.rect.y1 - desk.rect.y0;
       const rect: Rect = { x0: n.x!, y0: n.y!, x1: n.x! + w, y1: n.y! + d };
-      if (!within(map, rect)) { dropped.push({ line, reason: 'that spot is off the campus' }); continue; }
-      placing.push({ id, line, rect });
+      if (!within(map, rect)) { drop(line, 'that spot is off the campus', { ...ctx, plain: 'is off the campus' }); continue; }
+      placing.push({ id, line, rect, ctx });
       continue;
     }
     if (zone) {
       const w = n.w ?? zone.rect.x1 - zone.rect.x0, d = n.d ?? zone.rect.y1 - zone.rect.y0;
-      if (w < MIN_ZONE || d < MIN_ZONE) { dropped.push({ line, reason: `a zone is at least ${MIN_ZONE} cells across` }); continue; }
-      if (!moved && n.w === undefined && n.d === undefined) { dropped.push({ line, reason: 'nothing to change' }); continue; }
+      if (w < MIN_ZONE || d < MIN_ZONE) { drop(line, `a zone is at least ${MIN_ZONE} cells across`, { ...ctx, at: undefined }); continue; }
+      if (!moved && n.w === undefined && n.d === undefined) { drop(line, 'nothing to change', ctx); continue; }
       const x0 = n.x ?? zone.rect.x0, y0 = n.y ?? zone.rect.y0;
-      if (!within(map, { x0, y0, x1: x0 + w, y1: y0 + d })) { dropped.push({ line, reason: 'that spot is off the campus' }); continue; }
+      if (!within(map, { x0, y0, x1: x0 + w, y1: y0 + d })) { drop(line, 'that spot is off the campus', { ...ctx, plain: 'is off the campus' }); continue; }
       nodes[id] = { ...(moved ? { x: x0, y: y0 } : {}), ...(n.w !== undefined ? { w } : {}), ...(n.d !== undefined ? { d } : {}) };
       continue;
     }
     // a prop or a resource: one thing, and it has to stand on free floor. A resource is measured by the footprint
     // its kind has (`resourceRect`) rather than a nominal half-cell, so the office and the daemon refuse the same
     // drops — a kiosk that fits in the office's ghost and is then rejected here is the two-parsers bug again.
-    const at: Rect = n.kind ? resourceRect(n.kind, { x: n.x!, y: n.y! }) : { x0: n.x!, y0: n.y!, x1: n.x! + 0.5, y1: n.y! + 0.5 };
-    if (!within(map, at)) { dropped.push({ line, reason: 'that spot is off the campus' }); continue; }
+    const foot: Rect = n.kind ? resourceRect(n.kind, { x: n.x!, y: n.y! }) : { x0: n.x!, y0: n.y!, x1: n.x! + 0.5, y1: n.y! + 0.5 };
+    if (!within(map, foot)) { drop(line, 'that spot is off the campus', { ...ctx, plain: 'is off the campus' }); continue; }
     standing.push({
-      id, line, rect: at,
+      id, line, rect: foot, ctx,
       node: prop ? { x: n.x, y: n.y } : {
         kind: n.kind, x: n.x, y: n.y,
         ...(n.zone && map.zoneById[n.zone] ? { zone: n.zone } : {}),
@@ -212,8 +278,10 @@ export function validateLayout(map: CampusMap, org: Org, input: unknown): { layo
   const grid = map.grid.map((row) => row.slice());
   for (const { id } of placing) paintRect(grid, map.walk, map.desks[id].rect, 0);
   for (const [id, n] of Object.entries(nodes)) if (n.removed && map.desks[id]) paintRect(grid, map.walk, map.desks[id].rect, 0);
-  for (const { id, line, rect } of placing) {
-    if (!rectFree(grid, map.walk, rect)) { dropped.push({ line, reason: 'that spot is taken' }); paintRect(grid, map.walk, map.desks[id].rect, 1); continue; }
+  for (const { id, line, rect, ctx } of placing) {
+    // "Taken" is two different things to the owner, and the note has to say which: the campus's own walls and
+    // furniture, which never move, or something else this write has just put there.
+    if (!rectFree(grid, map.walk, rect)) { drop(line, 'that spot is taken', { ...ctx, plain: rectFree(map.grid, map.walk, rect) ? 'is where something else now stands' : 'is inside a wall' }); paintRect(grid, map.walk, map.desks[id].rect, 1); continue; }
     paintRect(grid, map.walk, rect, 1);
     nodes[id] = { x: rect.x0, y: rect.y0 };
   }
@@ -222,8 +290,8 @@ export function validateLayout(map: CampusMap, org: Org, input: unknown): { layo
   // dropped on the cells a desk has just vacated in the same payload is a legal drop, and judging it against the
   // template grid refused exactly what the office had drawn as free. Each accepted thing takes its own floor, so
   // two kiosks written onto one spot is the second one refused rather than both standing inside each other.
-  for (const { id, line, rect, node } of standing) {
-    if (!rectFree(grid, map.walk, rect)) { dropped.push({ line, reason: 'that spot is taken' }); continue; }
+  for (const { id, line, rect, ctx, node } of standing) {
+    if (!rectFree(grid, map.walk, rect)) { drop(line, 'that spot is taken', { ...ctx, plain: rectFree(map.grid, map.walk, rect) ? 'is where something else now stands' : 'is inside a wall' }); continue; }
     paintRect(grid, map.walk, rect, 1);
     nodes[id] = node;
   }
@@ -235,7 +303,7 @@ export function validateLayout(map: CampusMap, org: Org, input: unknown): { layo
   for (const value of rawConns) {
     const parsed = LayoutConnectionSchema.safeParse(value);
     if (!parsed.success) {
-      dropped.push({ line: 'connections', reason: 'a connection needs from, to and kind (peer or access)' });
+      drop('connections', 'a connection needs from, to and kind (peer or access)', { subject: 'a connection', plain: 'is missing its from, its to or its kind (peer or access)' });
       continue;
     }
     let { from, to } = parsed.data;
@@ -243,19 +311,40 @@ export function validateLayout(map: CampusMap, org: Org, input: unknown): { layo
     from = map.desks[from] ? from : deskOf(org, from);
     to = map.desks[to] ? to : deskOf(org, to);
     const line = `connections: ${from} → ${to}`;
-    if (from === to) { dropped.push({ line, reason: 'a connection needs two different ends' }); continue; }
+    const ctx: DropContext = { subject: `${from} → ${to}`, pair: { from, to } };
+    if (from === to) { drop(line, 'a connection needs two different ends', ctx); continue; }
     if (kind === 'peer') {
-      if (!isDesk(from) || !isDesk(to)) { dropped.push({ line, reason: 'a peer connection runs between two desks' }); continue; }
+      if (!isDesk(from) || !isDesk(to)) { drop(line, 'a peer connection runs between two desks', ctx); continue; }
     } else {
       // access runs desk → resource; written the other way round it means the same thing, so turn it round
       if (isResourceNode(from) && isDesk(to)) { const t = from; from = to; to = t; }
-      if (!isDesk(from)) { dropped.push({ line, reason: `no desk called ${from}` }); continue; }
-      if (!isResourceNode(to)) { dropped.push({ line, reason: `nothing called ${to} on the campus` }); continue; }
+      if (!isDesk(from)) { drop(line, `no desk called ${from}`, ctx); continue; }
+      if (!isResourceNode(to)) { drop(line, `nothing called ${to} on the campus`, ctx); continue; }
     }
     const key = pairKey(from, to);
-    if (seen.has(key)) { dropped.push({ line, reason: 'those two are connected already' }); continue; }
+    if (seen.has(key)) { drop(line, 'those two are connected already', ctx); continue; }
     seen.add(key);
     connections.push({ from, to, kind });
+  }
+
+  // Ruling W6-2, and the last thing this function does: nothing the owner had is lost to a line that would not
+  // take. Every refusal is handed back the last good value the daemon holds for it — the node put back where it
+  // stood, the line put back if it was drawn — and then says, in one sentence, what it asked for and what it was
+  // left at. Written here rather than at each refusal because a keep only makes sense once the floor has settled.
+  for (let i = 0; i < dropped.length; i++) {
+    const c = why[i], d = dropped[i];
+    const prev = c.id ? previous.nodes[c.id] : undefined;
+    if (c.id && prev && !nodes[c.id] && keepNode(map, grid, c.id, prev)) {
+      nodes[c.id] = prev;
+      d.kept = prev.removed ? 'off the floor' : prev.x === undefined ? 'the size it had' : `${prev.x}, ${prev.y}`;
+    }
+    if (c.pair) {
+      const back = previous.connections.find((p) => pairKey(p.from, p.to) === pairKey(c.pair!.from, c.pair!.to));
+      if (back && !seen.has(pairKey(back.from, back.to))) { seen.add(pairKey(back.from, back.to)); connections.push(back); d.kept = 'as it was'; }
+    }
+    const where = c.at && c.at.x !== undefined && c.at.y !== undefined ? `: ${c.at.x}, ${c.at.y}` : '';
+    const subject = `${c.subject ?? d.line}${where}`;
+    d.sentence = c.plain ? `${subject} ${c.plain}${keptTail(d.kept)}` : `${subject} — ${d.reason}${keptTail(d.kept)}`;
   }
 
   return { layout: { version, nodes, connections }, dropped };
@@ -363,21 +452,26 @@ function stationSpot(map: CampusMap, near: { x: number; y: number }): { x: numbe
 /* the note                                                                                                  */
 /* -------------------------------------------------------------------------------------------------------- */
 
-/** The note as it stands, validated against the campus and the org. `null` when there is no note yet. */
-export function readLayout(vault: Vault, map: CampusMap, org: Org): { layout: CampusLayout; dropped: DroppedEntry[] } | null {
+/**
+ * The note as it stands, validated against the campus and the org. `null` when there is no note yet.
+ *
+ * `previous` is the last good layout the daemon is holding (ruling W6-2): with it, a hand-edited line the
+ * campus refuses keeps the value it had instead of being deleted out of the owner's office.
+ */
+export function readLayout(vault: Vault, map: CampusMap, org: Org, previous?: CampusLayout): { layout: CampusLayout; dropped: DroppedEntry[] } | null {
   const text = vault.readTextOrNull(OFFICE_LAYOUT_PATH);
   if (text === null) return null;
-  return validateLayout(map, org, parseNote(text).data);
+  return validateLayout(map, org, parseNote(text).data, previous);
 }
 
 /** The note, as markdown. Exposed so a caller can tell whether writing it would change anything. */
-export function layoutMarkdown(layout: CampusLayout, org?: Org): string {
-  return stringifyNote({ version: layout.version, nodes: layout.nodes, connections: layout.connections }, layoutBody(layout, org));
+export function layoutMarkdown(layout: CampusLayout, org?: Org, dropped: DroppedEntry[] = []): string {
+  return stringifyNote({ version: layout.version, nodes: layout.nodes, connections: layout.connections }, layoutBody(layout, org, dropped));
 }
 
 /** Write the note: frontmatter is the data, the body is written from it. Returns the markdown written. */
-export function writeLayout(vault: Vault, layout: CampusLayout, by: string, org?: Org): string {
-  const text = layoutMarkdown(layout, org);
+export function writeLayout(vault: Vault, layout: CampusLayout, by: string, org?: Org, dropped: DroppedEntry[] = []): string {
+  const text = layoutMarkdown(layout, org, dropped);
   vault.writeText(OFFICE_LAYOUT_PATH, text, by, { generated: true });
   return text;
 }
@@ -396,11 +490,17 @@ const CAN_USE: Record<string, string> = {
   station_analytics: 'read the analytics', station_memory: "use the company's memory",
 };
 
+/** The note's own heading for the lines it would not take (ruling W6-2). One spelling, so the office can find it. */
+export const COULD_NOT_APPLY = "Couldn't apply";
+
 /**
  * The body of the note: who can message whom, and who can use what — the two things a connection means,
  * in sentences, in the order the owner would read them.
+ *
+ * `dropped` goes at the top, under its own heading: a line the daemon would not take is the one thing on this
+ * page the owner has to read, and it is gone again the moment the note is saved without it.
  */
-export function layoutBody(layout: CampusLayout, org?: Org): string {
+export function layoutBody(layout: CampusLayout, org?: Org, dropped: DroppedEntry[] = []): string {
   const peers = layout.connections.filter((c) => c.kind === 'peer');
   const access = layout.connections.filter((c) => c.kind === 'access');
   const moved = Object.entries(layout.nodes).filter(([, n]) => !n.kind && !n.removed);
@@ -413,9 +513,20 @@ export function layoutBody(layout: CampusLayout, org?: Org): string {
     'line here and the office moves. The frontmatter is the data — everything below is written from it, so an edit',
     'down here is overwritten on the next save.',
     '',
-    '## Who can message whom',
-    '',
   ];
+  if (dropped.length) {
+    out.push(
+      `## ${COULD_NOT_APPLY}`,
+      '',
+      // Not sentence-cased: each one opens on the id the owner typed, and "Cto:" is not a line anybody wrote.
+      ...dropped.map((d) => `- ${d.sentence}`),
+      '',
+      'Everything else in this note was applied. Fix the line above and save again, or leave it — the office is',
+      'already standing as this note describes it.',
+      '',
+    );
+  }
+  out.push('## Who can message whom', '');
   out.push(peers.length
     ? peers.map((c) => `- ${sentence(nameOf(org, c.from))} and ${nameOf(org, c.to)} can message each other.`).join('\n')
     : '- Nobody is connected to anybody, so no colleague can message another.');

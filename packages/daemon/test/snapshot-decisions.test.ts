@@ -71,6 +71,29 @@ describe('Snapshot.inbox carries the whole decision', () => {
     expect(r.pressure).not.toContain('Set `approved: true`');
   });
 
+  /**
+   * Ruling W6-15. The founder brief reached the owner titled **Proposed content** — in the reader's header, in
+   * its accessible name ("Proposed content — needs you") and, once adopted, as line 1 of
+   * `Memory/founder-brief.md`. The note's own `# ` heading had been rewritten away when the board's block went
+   * in, so the snapshot's title regex fell through to the first heading it could find, which was *inside* the
+   * `## Proposed content` fence: a placeholder became the name of the company's founding document.
+   */
+  it('never takes a title from inside a fenced block', () => {
+    const doc = '# Proposed content\n\n## What the company is\n\nPageSpeedAudit.\n';
+    const { id } = createProposal(vault, { kind: 'founder_brief', from: 'research_manager', target: FOUNDER_BRIEF, title: 'Founder Brief: PageSpeedAudit', body: `Read it closely.\n\n## Proposed content\n\n\`\`\`\`\n${doc}\`\`\`\`\n` }, 'research_manager');
+    // …and the covering note loses its own heading, exactly as the board's rewrite left it
+    const note = findInboxById(vault, id)!;
+    vault.updateNote(note.path, (n) => ({ data: n.data, body: n.body.replace(/^#\s+.*\n+/, '') }), 'daemon');
+    const r = row(buildSnapshot(vault), id);
+    expect(r.title).not.toBe('Proposed content');
+    expect(r.title).toBe('Founder brief');          // the kind, said plainly: never a placeholder off the page
+  });
+
+  it('takes the note’s own heading when it has one, fence or no fence', () => {
+    const { id } = createProposal(vault, { kind: 'founder_brief', from: 'ceo', target: FOUNDER_BRIEF, title: 'Founder Brief: PageSpeedAudit', body: 'Read it closely.\n\n## Proposed content\n\n```\n# Proposed content\n\nx\n```\n' }, 'ceo');
+    expect(row(buildSnapshot(vault), id).title).toBe('Founder Brief: PageSpeedAudit');
+  });
+
   it('everything else is an approval', () => {
     const { id } = createProposal(vault, { kind: 'plan_verdict', from: 'ceo', title: 'The plan', body: '1. bet one\n2. bet two' }, 'ceo');
     expect(row(buildSnapshot(vault), id)).toMatchObject({ decidable: 'approve', options: [], target: '', job: '' });
