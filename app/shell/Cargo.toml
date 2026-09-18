@@ -1,0 +1,17 @@
+[package]
+name = "stage-shell"
+version = "0.1.0"
+edition = "2021"
+description = "Desktop window for the stage: starts the local server, opens the canvas, stops the server on exit"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", default-features = false }
+
+[dependencies]
+tauri = { version = "2.11", features = [] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

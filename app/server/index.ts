@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import type { ChatEvent, Stage } from '../shared/model.ts';
 import { buildMessages, wiredDocIds } from './prompt.ts';
 import { fakeClient, realClients, streamReply } from './providers.ts';
+import { readStatic } from './static.ts';
 import { createStore } from './store.ts';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -12,6 +13,12 @@ const port = Number(process.env.STAGE_API_PORT ?? 7421);
 const store = createStore(process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace'));
 const clients = process.env.STAGE_FAKE_MODEL === '1' ? [fakeClient] : realClients();
 const busy = new Set<string>();
+
+// Started by the desktop shell: leave when the shell does, even if it was killed.
+if (process.env.STAGE_EXIT_WITH_PARENT === '1') {
+  process.stdin.resume();
+  process.stdin.on('end', () => process.exit(0));
+}
 
 const json = (res: ServerResponse, status: number, body: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json' });
@@ -67,7 +74,11 @@ createServer(async (req, res) => {
       if (!text) return json(res, 400, { error: 'empty message' });
       return await chat(room, text, res);
     }
-    json(res, 404, { error: 'not found' });
+    if (path.startsWith('/api/')) return json(res, 404, { error: 'not found' });
+    const file = req.method === 'GET' ? await readStatic(resolve(import.meta.dirname, '../dist'), path) : null;
+    if (!file) return json(res, 404, { error: 'not found — run `pnpm build` so the server has a client to serve' });
+    res.writeHead(200, { 'content-type': file.type });
+    res.end(file.body);
   } catch (error) {
     if (!res.headersSent) json(res, 500, { error: (error as Error).message });
     else res.end();

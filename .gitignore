@@ -11,3 +11,5 @@ playwright-report/
 .playwright-mcp/
 app/assets/raw/
 workspace/
+app/shell/target/
+app/shell/gen/

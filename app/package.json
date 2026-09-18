@@ -7,6 +7,10 @@
     "dev": "node scripts/dev.mjs",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
+    "shell:build": "pnpm build && cargo build --release --manifest-path shell/Cargo.toml",
+    "shell": "shell/target/release/stage-shell",
+    "shell:check": "STAGE_FAKE_MODEL=1 STAGE_API_PORT=7444 STAGE_WORKSPACE=$(mktemp -d) shell/target/release/stage-shell --perf",
+    "shell:dev": "shell/target/release/stage-shell --url http://localhost:7420",
     "e2e": "playwright test",
     "assets": "node scripts/to-webp.mjs"
   },

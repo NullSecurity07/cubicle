@@ -7,5 +7,7 @@ the operator; the people speed the founder up. Built slowly, one narrow slice at
   that person; docs are real files; a wire to a doc lets the person read it). Specs in `docs/specs/`.
 - Run it: `cd app && pnpm install && pnpm dev`, then open http://localhost:7420. Model keys come from `.env` at the
   repository root (`GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`); your data lives in `workspace/`.
+- Desktop window: `cd app && pnpm shell:build` once (about three minutes), then `pnpm shell`. It starts the server
+  itself and stops it on close. `pnpm shell:check` runs the in-window self-test (frame rate and one chat turn).
 - The earlier product, CUBICLE v2 (an self-running company), is archived: tag `v2-final`, branch `archive/v2`.
   Its documents, ledgers and lessons are under `docs/archive/v2/`.
