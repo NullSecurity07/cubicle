@@ -2748,9 +2748,14 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         ].join('\n');
         // A dormant company spends nothing, and that includes the strong-tier call this draft costs. The
         // template fallback below already says everything a stopped company has to say.
-        let drafted = moneyFacts.dormant ? null : await ask(deps, ceoSystem(vault), `Write the owner's "since you were away" brief from these facts, under 200 words, three sections: ## What happened, ## What's next, ## What needs you. Bullet points only. Do not invent anything not in the facts.\n\n${facts}`, 1200);
+        let drafted = moneyFacts.dormant ? null : await ask(deps, ceoSystem(vault), `Write the owner's "since you were away" brief from these facts, under 200 words, three sections: ## What happened, ## What's next, ## What needs you. Bullet points only. Do not invent anything not in the facts. "What happened" is an account of the cycle in prose, grouped by what came of the work — never a list of job titles with their status after them, and never the same line twice.\n\n${facts}`, 1200);
         if (drafted && !(/## What happened/.test(drafted) && /## What'?s next/.test(drafted) && /## What needs you/.test(drafted) && drafted.trim().length > 80)) drafted = null; // truncated or malformed → template
-        const fallback = `## What happened\n- ${state.finished?.length ? state.finished.map((f) => `${f.title}: ${f.status}`).join('\n- ') : 'Nothing finished since the last heartbeat.'}\n\n## What's next\n- ${queued.length ? queued.map((j) => `${j.assigned}: ${j.title}`).join('\n- ') : 'Waiting on the plan.'}\n\n## What needs you\n${needsYou.length ? needsYou.join('\n') : '- Nothing right now.'}`;
+        // Ruling W4-11: the floor under the brief. A "What happened" that is the queue copied out — sixty per
+        // cent `Title: done` lines, or one job listed four times, which is what `Runs/2026-09-18-1057.md` was —
+        // is thrown away for the deterministic prose below, and the brief says why it reads plain.
+        const dumped = !!drafted && isJobDump(whatHappenedSection(drafted));
+        if (dumped) drafted = null;
+        const fallback = `## What happened\n${whatHappenedProse(state.finished ?? [])}${dumped ? `\n\n${WRITTEN_WITHOUT_MODEL}` : ''}\n\n## What's next\n- ${queued.length ? queued.map((j) => `${j.assigned}: ${j.title}`).join('\n- ') : 'Waiting on the plan.'}\n\n## What needs you\n${needsYou.length ? needsYou.join('\n') : '- Nothing right now.'}`;
         const org = loadOrg(vault);
         const nextActionPerTeam = Object.values(org.teams).map((t) => `- ${t.id}: ${queued.find((j) => j.team === t.id)?.title ?? 'nothing queued'}`).join('\n');
         // Ruling W3-5: the board never sits on a card the owner has not seen, so an intelligence sweep's own
