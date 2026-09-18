@@ -47,7 +47,25 @@ export interface Screen {
 }
 
 export interface Partition { x: number; y: number; axis: Axis; len: number; h: number; accent: AccentName }
-export interface PropItem { kind: string; rect: Rect; at: Pt; props: Record<string, string | number> }
+/**
+ * A piece of dressing. `id` is `<kind>_<n>`, numbered per kind in map order — the map JSON has no stable name for a
+ * prop (`prop_200` is a generator counter), and `Office/campus.md` has to be able to say `plant_7: { removed: true }`
+ * in a line the owner can read.
+ */
+export interface PropItem { id: string; kind: string; rect: Rect; at: Pt; props: Record<string, string | number> }
+
+/**
+ * Something the owner put on the campus themselves: a browser kiosk, a document board, a sticky note, a screen of
+ * the live site, or a tool station. Not in the map JSON — it comes from `Office/campus.md` through `applyLayout`.
+ */
+export interface Resource {
+  id: string; kind: 'browser' | 'doc' | 'note' | 'site' | 'station';
+  /** the middle of its footprint */ at: Pt;
+  rect: Rect; label: string; zone: string; accent: AccentName;
+  /** `station` only */ tool?: 'email' | 'deploy' | 'analytics' | 'memory';
+  /** `doc` only: the vault path it shows */ path?: string;
+  /** `note` only: what is written on it */ body?: string;
+}
 export interface DecorItem { kind: string; at: Pt; desk: string | null }
 export interface Sign { room: string; label: string; at: Pt }
 
@@ -81,6 +99,8 @@ export interface CampusMap {
   screens: Record<string, Screen>;
   partitions: Partition[];
   props: PropItem[];
+  /** what the owner added, keyed by id; empty until `applyLayout` has run over `Office/campus.md` */
+  resources: Record<string, Resource>;
   paths: Rect[];
   decor: DecorItem[];
   signs: Record<string, Sign>;
@@ -116,6 +136,7 @@ export function parseCampus(json: TiledMap): CampusMap {
   const screens: Record<string, Screen> = {};
   const partitions: Partition[] = [];
   const props: PropItem[] = [];
+  const propCount: Record<string, number> = {};
   const paths: Rect[] = [];
   const decor: DecorItem[] = [];
   const signs: Record<string, Sign> = {};
@@ -168,7 +189,8 @@ export function parseCampus(json: TiledMap): CampusMap {
         const kind = str(p.kind);
         const rest: Record<string, string | number> = { ...p };
         delete rest.kind; delete rest.floor;
-        props.push({ kind, rect, at: { x, y }, props: rest });
+        propCount[kind] = (propCount[kind] ?? 0) + 1;
+        props.push({ id: `${kind}_${propCount[kind]}`, kind, rect, at: { x, y }, props: rest });
         break;
       }
       case 'path': paths.push(rect); break;
@@ -181,7 +203,7 @@ export function parseCampus(json: TiledMap): CampusMap {
 
   const zoneById: Record<string, Zone> = Object.fromEntries(zones.map((z) => [z.id, z]));
   const rail = zones.filter((z) => z.rail).sort((a, b) => a.rail!.order - b.rail!.order);
-  return { width: json.width, height: json.height, wall, walk, grid, zones, zoneById, rail, rooms, desks, seats, reserved, screens, partitions, props, paths, decor, signs, door };
+  return { width: json.width, height: json.height, wall, walk, grid, zones, zoneById, rail, rooms, desks, seats, reserved, screens, partitions, props, resources: {}, paths, decor, signs, door };
 }
 
 /* -------------------------------------------------------------------------------------------------------- */
@@ -242,6 +264,8 @@ export function standAt(m: CampusMap, name: string): Pt | null {
   if (name.startsWith('desk:')) return m.desks[name.slice(5)]?.seat ?? null;
   if (m.desks[name]) return m.desks[name].seat;
   if (m.screens[name]) return m.screens[name].stand;
+  // a resource is stood *at*, a half cell in front of its near edge, so nobody stands inside the kiosk
+  if (m.resources[name]) { const r = m.resources[name].rect; return { x: (r.x0 + r.x1) / 2, y: r.y1 + 0.55 }; }
   if (m.rooms[name]) return m.rooms[name].stand;
   if (m.zoneById[name]) return m.zoneById[name].stand;
   return null;
@@ -252,6 +276,7 @@ export function rectOf(m: CampusMap, name: string): Rect | null {
   if (m.zoneById[name]) return m.zoneById[name].rect;
   if (m.rooms[name]) return m.rooms[name].rect;
   if (m.desks[name]) return m.desks[name].rect;
+  if (m.resources[name]) return m.resources[name].rect;
   if (name.startsWith('desk:') && m.desks[name.slice(5)]) return m.desks[name.slice(5)].rect;
   const s = m.screens[name];
   if (s) {

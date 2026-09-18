@@ -19,7 +19,8 @@ import {
   type Drawable, boardTable, chair, counter, curtainWall, desk, floorLamp, glassWall, highTable, path, plant, rug,
   screen, shelf, stool, windowPools,
 } from './props.js';
-import type { CampusMap } from './campus.js';
+import type { CampusMap, PropItem, Desk } from './campus.js';
+import { resourceProp } from './resources.js';
 
 export interface ScreenContent {
   lines?: string[];
@@ -47,25 +48,44 @@ export function buildProps(m: CampusMap): Drawable[] {
   for (const z of m.zones) out.push(rug(z.rect, z.accent, { alpha: z.accent === 'neutral' ? 0.72 : 0.92 }));
   out.push(curtainWall(m.width, 'x', { thick: m.wall }), curtainWall(m.height, 'y', { thick: m.wall }));
   for (const p of m.partitions) out.push(glassWall({ x: p.x, y: p.y, axis: p.axis, len: p.len, z: 0, h: p.h }, p.accent));
-  for (const p of m.props) {
-    switch (p.kind) {
-      case 'boardtable': out.push(boardTable(p.rect)); break;
-      case 'counter': out.push(counter(p.rect)); break;
-      case 'hightable': out.push(highTable(p.at.x, p.at.y)); break;
-      case 'stool': out.push(stool(p.at.x, p.at.y)); break;
-      case 'floorlamp': out.push(floorLamp(p.at.x, p.at.y)); break;
-      case 'shelf': out.push(shelf(p.at.x, p.at.y, Number(p.props.w ?? 3), 0.75, String(p.props.accent ?? 'neutral') as AccentName)); break;
-      case 'plant': out.push(plant(p.at.x, p.at.y, Number(p.props.size ?? 1))); break;
-      case 'chair': out.push(chair(p.at.x, p.at.y, (String(p.props.facing ?? 'se') as 'se' | 'sw' | 'ne' | 'nw'))); break;
-      default: break;
-    }
-  }
-  for (const d of Object.values(m.desks)) {
-    const w = d.rect.x1 - d.rect.x0, dd = d.rect.y1 - d.rect.y0;
-    out.push(chair(d.rect.x0 + w / 2 - 0.46, d.side === 'near' ? d.rect.y1 + 0.56 : d.rect.y0 - 1.28, d.side === 'near' ? 'nw' : 'se'));
-    out.push(desk(d.rect.x0, d.rect.y0, w, dd, { accent: d.accent, side: d.side, lamp: d.lamp, papers: d.papers }));
-  }
+  for (const p of m.props) for (const dr of propDrawables(p)) out.push(dr);
+  for (const d of Object.values(m.desks)) for (const dr of deskDrawables(d)) out.push(dr);
+  // What the owner put there themselves, last: they are the newest things in the room and the ones a drag is
+  // most likely to be about, so a tie in depth order goes to them.
+  for (const r of Object.values(m.resources)) { const dr = resourceProp(r); dr.owner = r.id; out.push(dr); }
   return out;
+}
+
+/** A desk and the chair at it, tagged with the desk's own id so a drag can lift the pair together. */
+export function deskDrawables(d: Desk): Drawable[] {
+  const w = d.rect.x1 - d.rect.x0, dd = d.rect.y1 - d.rect.y0;
+  const out = [
+    chair(d.rect.x0 + w / 2 - 0.46, d.side === 'near' ? d.rect.y1 + 0.56 : d.rect.y0 - 1.28, d.side === 'near' ? 'nw' : 'se'),
+    desk(d.rect.x0, d.rect.y0, w, dd, { accent: d.accent, side: d.side, lamp: d.lamp, papers: d.papers }),
+  ];
+  for (const dr of out) dr.owner = d.id;
+  return out;
+}
+
+/** One piece of dressing, tagged with its id. Not every prop kind draws; the rest are in the map for the router. */
+export function propDrawables(p: PropItem): Drawable[] {
+  const make = (): Drawable | null => {
+    switch (p.kind) {
+      case 'boardtable': return boardTable(p.rect);
+      case 'counter': return counter(p.rect);
+      case 'hightable': return highTable(p.at.x, p.at.y);
+      case 'stool': return stool(p.at.x, p.at.y);
+      case 'floorlamp': return floorLamp(p.at.x, p.at.y);
+      case 'shelf': return shelf(p.at.x, p.at.y, Number(p.props.w ?? 3), 0.75, String(p.props.accent ?? 'neutral') as AccentName);
+      case 'plant': return plant(p.at.x, p.at.y, Number(p.props.size ?? 1));
+      case 'chair': return chair(p.at.x, p.at.y, (String(p.props.facing ?? 'se') as 'se' | 'sw' | 'ne' | 'nw'));
+      default: return null;
+    }
+  };
+  const dr = make();
+  if (!dr) return [];
+  dr.owner = p.id;
+  return [dr];
 }
 
 /**
@@ -177,17 +197,25 @@ export function paintHour(g: G, v: View, m: CampusMap, light: Light): void {
   g.fillRect(0, 0, w, h);
 }
 
-/** Pass 5a: the zone plates. */
-export function paintZonePlates(g: G, v: View, m: CampusMap, o: { current?: string | null } = {}): void {
+/**
+ * Pass 5a: the zone plates.
+ *
+ * Hands back where each one landed. A zone is dragged by its plate (SP9b), and the plate moves — it lifts out of
+ * the way of the ones already drawn — so the only place that knows its box is the frame that drew it.
+ */
+export function paintZonePlates(g: G, v: View, m: CampusMap, o: { current?: string | null; selected?: string | null } = {}): Record<string, { x: number; y: number; w: number; h: number }> {
   const { w, h } = v.cam;
+  const boxes: Record<string, { x: number; y: number; w: number; h: number }> = {};
   for (const z of m.zones) {
     const at = v.p(z.rect.x0 + (z.rect.x1 - z.rect.x0) * z.plate.fx, z.rect.y0 + (z.rect.y1 - z.rect.y0) * z.plate.fy, 0);
     if (at.x < -90 || at.x > w + 90 || at.y < -40 || at.y > h + 40) continue;
-    plate(g, at, z.label, {
+    const box = plate(g, at, z.label, {
       size: Math.max(11, Math.min(13.5, 10 + v.z * 3.4)),
       chip: accentChip(z.accent),
-      alpha: o.current && o.current === z.id ? 0.98 : 0.92,
+      alpha: o.selected === z.id ? 1 : o.current && o.current === z.id ? 0.98 : 0.92,
       lift: 2,
     });
+    if (box.w > 0) boxes[z.id] = box;
   }
+  return boxes;
 }

@@ -102,6 +102,21 @@ export class Body {
     if (view.state === 'entering') void this.goTo('home');
   }
 
+  /**
+   * The campus moved under this body's feet.
+   *
+   * `Office/campus.md` changed — the owner dragged a desk, or Obsidian did — so the map and the router the body
+   * routes against are new objects. Anyone who is at their desk with nothing else to do gets up and walks to
+   * where their desk is now, which is the whole of what the owner is promised when they drag one.
+   */
+  remap(map: CampusMap, router: Router, movedHome: boolean): void {
+    this.deps = { ...this.deps, map, router };
+    if (!movedHome) return;
+    if (this.detour || (this.target && this.target !== 'home')) return;
+    this.walkingTo = null;
+    void this.goTo('home');
+  }
+
   /** The seat at this role's own desk; a role with no desk stands at the entrance. */
   homeAt(): Pt { return this.deps.map.desks[this.view.desk]?.seat ?? this.deps.map.door; }
   /** Which desk-side a seated body takes, for the pose. */

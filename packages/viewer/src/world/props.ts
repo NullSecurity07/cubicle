@@ -16,6 +16,12 @@ export interface Drawable {
   /** painter's depth on the single plane */
   d: number;
   /**
+   * The id of the thing in `Office/campus.md` this belongs to, where it belongs to one — a desk is a chair and a
+   * desk and they carry the same owner. The renderer needs it for exactly one job: while the owner is dragging
+   * something, the thing has to be drawn where the pointer is and *not* where it still is in the map.
+   */
+  owner?: string;
+  /**
    * The grid footprint and height this prop paints inside, so the renderer can drop what the camera cannot see.
    * At room zoom four fifths of the campus is off screen; without this the frame pays for all of it.
    */
