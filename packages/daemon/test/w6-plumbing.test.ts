@@ -25,7 +25,19 @@ import {
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { renderQuotaMarkdown, quotaRowStatus } from '@cubicle/router';
-import { dispatchProposals, buildSnapshot, writeQueueMd, statusFacts, agoInWords, blockedInWords, planObjectiveLines } from '../src/index.js';
+import { Daemon, defaultConfig, dispatchProposals, buildSnapshot, writeQueueMd, statusFacts, agoInWords, blockedInWords, planObjectiveLines, createHeartbeatJob, openHeartbeat, HEARTBEAT_OPEN_STATUSES, GENERATED_NOTE_DEBOUNCE_MS } from '../src/index.js';
+
+const REPO = path.resolve(__dirname, '../../..');
+
+/** Poll a real-timer condition; the debounce under test is wall-clock, so this one waits on the clock too. */
+async function waitUntil(pred: () => boolean, what: string, budgetMs = 15_000): Promise<void> {
+  const until = Date.now() + budgetMs;
+  while (Date.now() < until) {
+    if (pred()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`timed out after ${budgetMs} ms waiting for ${what}`);
+}
 
 let dir: string; let vault: Vault;
 beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-w6-')); vault = (await scaffoldVault(dir)).vault; });
@@ -281,4 +293,109 @@ describe('W6-8 / W6-9: quota and the run brief tell the same truth', () => {
     expect(lines.join('\n')).not.toContain('cycle:');
     expect(lines.join('')).not.toContain('# Plan');
   });
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// W6-10 — Jobs/queue.md never rots
+// ---------------------------------------------------------------------------------------------------------
+
+describe('W6-10: Jobs/queue.md lists every open job', () => {
+  it('all 23 of them, and says how many are open', () => {
+    // The dry run's exact shape: 23 job notes in `Jobs/`, of which the note listed 9.
+    const ids: string[] = [];
+    for (let i = 0; i < 23; i++) ids.push(createJob(vault, { type: 'engineer.ship', title: `Job number ${i}`, assigned: 'backend_engineer', goal: 'g', team: 'dev', priority: (i % 4) + 1 }, 'cto'));
+    for (const [i, id] of ids.entries()) {
+      if (i % 3 === 0) updateJob(vault, id, { status: 'running' }, 'daemon');
+      else if (i % 3 === 1) updateJob(vault, id, { status: 'blocked', blocked_on: { kind: 'quota', id: 'all-providers', since: nowIso() } }, 'daemon');
+    }
+
+    writeQueueMd(vault);
+    const md = vault.readText('Jobs/queue.md');
+
+    for (const id of ids) expect(md, `${id} is missing from the queue note`).toContain(`[[${id}]]`);
+    expect(md).toContain('**23 open**');
+    expect(md).toContain('rewritten within a couple of seconds of any job changing');
+  });
+
+  it('caps only the finished lanes, and says how many it left out', () => {
+    for (let i = 0; i < 25; i++) {
+      const id = createJob(vault, { type: 'engineer.ship', title: `Done ${i}`, assigned: 'backend_engineer', goal: 'g' }, 'cto');
+      updateJob(vault, id, { status: 'done' }, 'daemon');
+    }
+    const md = vault.readText((writeQueueMd(vault), 'Jobs/queue.md'));
+    expect(md).toContain('## done (25)');
+    expect(md).toContain('… 5 more');
+    expect(md).toContain('**0 open**');
+  });
+
+  it('and the daemon rewrites it whenever a job changes, without waiting for a heartbeat', async () => {
+    // The live note was fifteen minutes old because only the daemon's startup and the heartbeat's brief step
+    // ever wrote it. Nothing here runs a job: what is under test is the subscription and its debounce.
+    expect(GENERATED_NOTE_DEBOUNCE_MS).toBeLessThanOrEqual(2000);
+    vault.close();
+    const cfg = defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, {
+      port: 0, tickMs: 600_000, maxConcurrentJobs: 1,
+      providersPath: path.join(REPO, 'config/providers.yaml'), toolsPath: path.join(REPO, 'config/tools.yaml'),
+    });
+    const d = new Daemon(cfg, { llm: { async chat() { throw new Error('no model'); }, promptBudget: () => 1000 }, disableWs: true, disableSleepWatch: true, disablePantry: true, memory: false, log: () => undefined });
+    await d.start();
+    try {
+      expect(d.vault.readText('Jobs/queue.md')).toContain('**0 open**');
+      // `assigned: nobody` so no worker picks it up: the note has to move on the write alone.
+      const id = createJob(d.vault, { type: 'engineer.ship', title: 'Scaffold the site', assigned: 'nobody', goal: 'g' }, 'cto');
+      await waitUntil(() => d.vault.readText('Jobs/queue.md').includes(`[[${id}]]`), 'the new job to reach Jobs/queue.md');
+      expect(d.vault.readText('Jobs/queue.md')).toContain('## queued (1)');
+
+      updateJob(d.vault, id, { status: 'blocked', blocked_on: { kind: 'quota', id: 'all-providers', since: nowIso() } }, 'daemon');
+      await waitUntil(() => d.vault.readText('Jobs/queue.md').includes('## blocked (1)'), 'the block to reach Jobs/queue.md');
+      expect(d.vault.readText('Jobs/queue.md')).not.toContain('## queued');
+    } finally { await d.stop(); }
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// W6-11 — one CEO heartbeat at a time
+// ---------------------------------------------------------------------------------------------------------
+
+describe('W6-11: one open heartbeat, whatever asks for one', () => {
+  it('openHeartbeat sees a cycle in every status it can still be in — in_review included', () => {
+    const id = createHeartbeatJob(vault, 'test');
+    for (const status of HEARTBEAT_OPEN_STATUSES) {
+      updateJob(vault, id, { status }, 'daemon');
+      expect(openHeartbeat(vault)?.id, `a ${status} heartbeat must be visible`).toBe(id);
+    }
+    for (const status of ['done', 'failed', 'cancelled'] as const) {
+      updateJob(vault, id, { status }, 'daemon');
+      expect(openHeartbeat(vault), `a ${status} heartbeat has come to rest`).toBeNull();
+    }
+    // …and it is the heartbeat it finds, never some other job of the CEO's.
+    updateJob(vault, id, { status: 'done' }, 'daemon');
+    createJob(vault, { type: 'company.plan', title: 'Write the company plan', assigned: 'ceo', goal: 'g' }, 'daemon');
+    expect(openHeartbeat(vault)).toBeNull();
+  });
+
+  it('a decision wake and the tick trigger together open one cycle, not two', async () => {
+    vault.close();
+    const cfg = defaultConfig(dir, { CUBICLE_MOCK_TOOLS: '1' } as NodeJS.ProcessEnv, {
+      port: 0, tickMs: 600_000, maxConcurrentJobs: 1,
+      providersPath: path.join(REPO, 'config/providers.yaml'), toolsPath: path.join(REPO, 'config/tools.yaml'),
+    });
+    // A heartbeat already parked in review: invisible to the four hand-written status lists this replaces, so
+    // every later trigger opened a second cycle beside it — the live run's `job_20260918_3679f4` and
+    // `job_20260918_bc1eef`, both open, both planning, both writing the owner a brief.
+    const v = Vault.open(dir);
+    v.updateNote('Brand/name.md', (n) => ({ data: { ...n.data, name: 'PageSpeedAudit' }, body: n.body }), 'owner');  // §12's gate: the company has an idea
+    const seed = createHeartbeatJob(v, 'seeded');
+    updateJob(v, seed, { status: 'in_review', checkpoint_step: 7 }, 'daemon');
+    v.close();
+
+    const d = new Daemon(cfg, { llm: { async chat() { throw new Error('no model'); }, promptBudget: () => 1000 }, disableWs: true, disableSleepWatch: true, disablePantry: true, memory: false, log: () => undefined });
+    await d.start();
+    try {
+      expect(d.requestHeartbeat('decided prop_x')).toBe(seed);
+      expect(d.requestHeartbeat('startup after 2.3 h away')).toBe(seed);
+      await d.runTick('test');
+      expect(listJobs(d.vault).filter((j) => j.type === 'ceo.heartbeat')).toHaveLength(1);
+    } finally { await d.stop(); }
+  }, 30_000);
 });

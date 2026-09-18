@@ -1317,6 +1317,25 @@ export function fileIdeaVerdict(
   return { id, path: rel, band, filed: true };
 }
 
+/**
+ * Every status a `ceo.heartbeat` can be in and still be *this cycle*. Anything else has come to rest.
+ *
+ * `in_review` was missing from the four hand-written copies of this list (ruling W6-11): a heartbeat parked
+ * there is invisible to all of them, and the next trigger opens a second cycle beside it. `ceo.heartbeat` has
+ * an empty gate chain today, so nothing puts one in review — which is exactly the kind of fact that is true
+ * until somebody edits `config/gates.yaml`.
+ */
+export const HEARTBEAT_OPEN_STATUSES = ['queued', 'running', 'blocked', 'in_review'] as const;
+
+/**
+ * The open heartbeat, or null. **One** reader for the whole repo (ruling W6-11): the daemon's trigger, its
+ * coalescing check, its two "which cycle am I attributing this to" lookups and the CLI all used to spell the
+ * status list out for themselves, and five copies of a list is how a sixth comes to disagree with it.
+ */
+export function openHeartbeat(vault: Vault): JobFrontmatter | null {
+  return listJobs(vault, { status: [...HEARTBEAT_OPEN_STATUSES] }).find((j) => j.type === 'ceo.heartbeat') ?? null;
+}
+
 /** Create the `ceo.heartbeat` job note (the heartbeat is a job so R9/R10/R12 apply). */
 export function createHeartbeatJob(vault: Vault, trigger: string): string {
   const org = loadOrg(vault);
