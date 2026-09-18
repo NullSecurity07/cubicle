@@ -197,9 +197,14 @@ export function chairRoundPrompt(s: BoardSubject, o: {
     EVIDENCE_RULE,
     '',
     ...(o.withheld?.length ? [withheldNote(o.withheld), ''] : []),
+    // Ruling W6-4: a board that has already ruled on this subject is told what it ruled, before it rules again.
+    ...(o.prior?.verdict ? [priorSittingBlock(o.prior), ''] : []),
   ];
   if (o.close) {
     if (o.challenge) lines.push(`Your advisors did not settle that round: ${o.challenge}. Say so in one sentence, to them, by name, before you rule — this is the one challenge that round gets.`, '');
+    // Ruling W6-14: the round summary says what happened. Agreement is not a disagreement, and a chair told
+    // neither one way nor the other reported one of the dry-run's rounds backwards.
+    else if (o.agreement) lines.push(`Your advisors settled that round: ${o.agreement}. Close it by saying what they agree on — "${o.agreement}: …" — and never write that they disagree when they did not.`, '');
     lines.push(
       `First, close the round on **${o.close}**. Write one line beginning \`${FINDING_LABEL}\` — what the board now holds on that question, in at most 40 words${o.close === 'Three Fatal Flaws' ? ', and then at most four bullets under it, each a flaw specific to this subject and the change that would fix it' : ''}.`,
       `If what is in front of you does not answer it, write \`${OWNER_QUESTION} <the one thing only the owner can tell you>\` instead of the finding, and do not guess. A question is a better answer than an invention.`,
@@ -258,19 +263,35 @@ function verdictWordsIn(text: string): Set<string> {
 }
 
 /**
- * Why the chair should challenge this round, or `''` for a round that settled. Two triggers, both deterministic
- * so the challenge costs no call of its own: an advisor that used the banned hedge (the same regex that refuses
- * a chair, so what provokes one and what refuses one cannot drift), or two advisors that reached different
- * verdicts — or said in as many words that they disagree.
+ * What the round actually did, so the chair closes it by saying that (ruling W6-14).
+ *
+ * The third dry-run's chair opened round 4 with "Advisor investor and advisor customer disagree on whether
+ * landing page speed is a hair-on-fire pain or a vitamin" — both had just called it a vitamin — and round 6
+ * with "you disagree on the viability of manual email optimization" after both had voted the same way. It was
+ * told to, by this function: any advisor whose sentence contained the word *disagree* ("I disagree with any
+ * reading that calls it urgent") put the whole round down as unsettled, and the chair dutifully reported a
+ * disagreement that had not happened.
+ *
+ * A disagreement is now what it says on the tin: **their verdict lines differ**. Two deterministic triggers are
+ * left, so the challenge still costs no call of its own — the banned hedge (the same regex that refuses a chair,
+ * so what provokes one and what refuses one cannot drift), and two advisors who reached different verdict words.
+ * Anything else settled, and the chair is handed the agreement to close on instead.
  */
-export function challengeReason(answers: { role: string; text: string }[]): string {
+export function roundStance(answers: { role: string; text: string }[]): { challenge: string; agreement: string } {
   const said = answers.filter((a) => a.text.trim());
   const hedged = said.filter((a) => hedges(a.text));
-  if (hedged.length) return `${hedged.map((a) => a.role).join(' and ')} hedged with "${BANNED_HEDGE}", which is a way of not deciding`;
-  if (said.some((a) => /\bdisagree\b/i.test(a.text))) return 'they disagree with each other';
+  if (hedged.length) return { challenge: `${hedged.map((a) => a.role).join(' and ')} hedged with "${BANNED_HEDGE}", which is a way of not deciding`, agreement: '' };
   const words = said.map((a) => verdictWordsIn(a.text)).filter((w) => w.size > 0);
-  if (words.length > 1 && new Set(words.flatMap((w) => [...w])).size > 1) return 'they reached different verdicts';
-  return '';
+  const distinct = new Set(words.flatMap((w) => [...w]));
+  if (words.length > 1 && distinct.size > 1) return { challenge: 'they reached different verdicts', agreement: '' };
+  if (said.length < 2) return { challenge: '', agreement: '' };
+  const shared = words.length > 1 && distinct.size === 1 ? ` — both of them said ${[...distinct][0]}` : '';
+  return { challenge: '', agreement: `the advisors agree${shared}` };
+}
+
+/** Why the chair should challenge this round, or `''` for a round that settled. See `roundStance`. */
+export function challengeReason(answers: { role: string; text: string }[]): string {
+  return roundStance(answers).challenge;
 }
 
 /**
@@ -583,14 +604,15 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
     }
   }
 
-  const chairTurn = async (o: { close: PressurePart | null; open: PressurePart | null; challenge: string; verdict: boolean; withheld: readonly string[] }): Promise<string | null> => {
+  const chairTurn = async (o: { close: PressurePart | null; open: PressurePart | null; challenge: string; agreement?: string; verdict: boolean; withheld: readonly string[] }): Promise<string | null> => {
     calls++;
-    return askAs(deps, chair, advisorSystem(vault, chair), chairRoundPrompt(s, { ...o, transcript: transcriptSoFar() }),
+    return askAs(deps, chair, advisorSystem(vault, chair), chairRoundPrompt(s, { ...o, transcript: transcriptSoFar(), prior: priorVerdict }),
       o.verdict ? (s.kind === 'plan' ? 600 : CHAIR_IDEA_TOKENS) : CHAIR_TURN_TOKENS, leadTier);
   };
 
   let closing: PressurePart | null = null;
   let challenge = '';
+  let agreement = '';
   let withheld: string[] = [];
   for (let i = 0; i < PRESSURE_PARTS.length; i++) {
     const part = PRESSURE_PARTS[i];
@@ -600,12 +622,13 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
       say(round, chair, `${REUSED_NOTE} ${prior!.opened.slice(0, 10)} — the board's answer has not changed.\n\n${FINDING_LABEL} ${reuse[part]}`);
       continue;
     }
-    const turn = await chairTurn({ close: closing, open: part, challenge, verdict: false, withheld });
+    const turn = await chairTurn({ close: closing, open: part, challenge, agreement, verdict: false, withheld });
     if (turn) answeredBy.add(chair);
     const spoken = await speak(round, chair, turn ?? '(no answer: no model was available)');
     if (closing) findings[closing] = turn ? findingIn(spoken.text) : `${OWNER_QUESTION} the board had no model to answer this with.`;
     closing = part;
     challenge = '';
+    agreement = '';
     withheld = [];
     const question = turn ? questionIn(spoken.text, part) : `${part} — ${ADVISOR_ASK[part]}`;
     const said: { role: string; text: string }[] = [];
@@ -620,11 +643,11 @@ export async function runBoardDialogue(deps: HeartbeatDeps, org: Org, subject: s
       if (advisorTurn.withheld) withheld.push(a);
       else said.push({ role: a, text: text ?? '' });
     }
-    challenge = challengeReason(said);
+    ({ challenge, agreement } = roundStance(said));
   }
 
   // Round six: the chair closes the last round it argued and delivers the verdict in today's `chairFormat`.
-  const rawVerdictTurn = await chairTurn({ close: closing, open: null, challenge, verdict: true, withheld });
+  const rawVerdictTurn = await chairTurn({ close: closing, open: null, challenge, agreement, verdict: true, withheld });
   if (rawVerdictTurn) answeredBy.add(chair);
   const verdictTurn = rawVerdictTurn === null ? null : (await speak(BOARD_DIALOGUE_ROUNDS, chair, rawVerdictTurn)).text;
   if (rawVerdictTurn === null) say(BOARD_DIALOGUE_ROUNDS, chair, '(no answer: no model was available)');

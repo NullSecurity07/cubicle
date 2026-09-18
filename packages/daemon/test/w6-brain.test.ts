@@ -11,12 +11,14 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  scaffoldVault, Vault, createProposal, ownerDecide, readIdea, listIdeas, keptIdeas, BRAND_NAME_PATH, ownerInstruction, OWNER_INSTRUCTION_SURFACE, founderBriefTitle, withFounderBriefTitle, founderBriefProposalBody,
+  scaffoldVault, Vault, createProposal, ownerDecide, readIdea, listIdeas, keptIdeas,
+  BRAND_NAME_PATH, ownerInstruction, OWNER_INSTRUCTION_SURFACE, founderBriefTitle, withFounderBriefTitle,
+  founderBriefProposalBody,
 } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { dispatchProposals } from '../src/index.js';
-import { priorSittingBlock, briefProposalBodyWithBoard, renderBriefPressureSection, WEDGE_NOT_A_CARD } from '../src/board-dialogue.js';
+import { challengeReason, roundStance, priorSittingBlock, briefProposalBodyWithBoard, renderBriefPressureSection, WEDGE_NOT_A_CARD } from '../src/board-dialogue.js';
 import { ideaVerdictBody, chairPivotText } from '../src/heartbeat.js';
 
 const root = path.resolve(__dirname, '../../..');
@@ -138,6 +140,31 @@ describe('W6-6: the wedge goes in the pressure test, not in Ideas/', () => {
 
   it('says nothing about a wedge when the board did not name one', () => {
     expect(renderBriefPressureSection({}, 'WEAK', 'Meetings/x.md')).not.toContain('**Wedge:**');
+  });
+});
+
+describe('W6-14: the chair’s round summaries say what happened', () => {
+  /** Round 4 of the 17:06 sitting: both advisors called it a vitamin, and the chair reported a disagreement. */
+  const AGREED = [
+    { role: 'advisor_investor', text: 'This is a vitamin. Slow pages annoy founders; they do not stop the business, and I disagree with any reading that calls it urgent.' },
+    { role: 'advisor_customer', text: 'A vitamin. Merchants live with it and reach for a free plugin when it gets bad enough.' },
+  ];
+
+  it('calls agreement agreement, whatever the word "disagree" is doing in a sentence', () => {
+    expect(challengeReason(AGREED)).toBe('');
+    expect(roundStance(AGREED).challenge).toBe('');
+    expect(roundStance(AGREED).agreement).toContain('the advisors agree');
+  });
+
+  it('still challenges a round whose verdict lines differ, and one that hedged', () => {
+    const split = [
+      { role: 'advisor_investor', text: 'VERDICT: WEAK — the margin is not there.' },
+      { role: 'advisor_customer', text: 'VERDICT: PIVOT — sell the fix, not the report.' },
+    ];
+    expect(roundStance(split).challenge).toBe('they reached different verdicts');
+    expect(roundStance(split).agreement).toBe('');
+    const hedged = [{ role: 'advisor_investor', text: 'It has potential, but the margin is thin.' }, ...AGREED];
+    expect(roundStance(hedged).challenge).toContain('hedged');
   });
 });
 
