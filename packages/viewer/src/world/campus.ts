@@ -19,6 +19,21 @@ export type {
   Rect, Pt, AccentName, Axis, Zone, Room, Desk, Seat, Screen, Partition, PropItem, DecorItem, Sign, TiledMap, CampusMap,
 } from '@cubicle/core/campus';
 
+/**
+ * `Office/campus.md`, and what it means — core's, not a copy.
+ *
+ * The office draws the layout, the daemon writes it and the tools are gated by it, so the three read one
+ * contract: what a connection is, how big a kiosk is and what an unnamed note is called are answers the company
+ * has once. `applyLayout` here is the same pure function the daemon runs on every write.
+ */
+export {
+  applyLayout, connected, connectionsOf, labelOfNode, resourceRect, stationFor, stationId, isStationId,
+  EMPTY_LAYOUT, RESOURCE_KINDS, RESOURCE_LABEL, RESOURCE_SIZE, STATION_FAMILIES, STATION_LABEL, STATION_SCREEN,
+} from '@cubicle/core/campus';
+export type {
+  CampusLayout, LayoutNode, LayoutConnection, ResourceNode, ResourceKind, StationFamily,
+} from '@cubicle/core/campus';
+
 /** Map JSON → campus geometry. The office's own name for `parseCampusMap`; the one parser, shared with the daemon. */
 export const parseCampus = parseCampusMap;
 

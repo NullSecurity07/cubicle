@@ -120,6 +120,7 @@ export function parseCampusMap(json: TiledMap): CampusMap {
   const screens: Record<string, Screen> = {};
   const partitions: Partition[] = [];
   const props: PropItem[] = [];
+  const propCount: Record<string, number> = {};
   const paths: Rect[] = [];
   const decor: DecorItem[] = [];
   const signs: Record<string, Sign> = {};
@@ -169,10 +170,14 @@ export function parseCampusMap(json: TiledMap): CampusMap {
         partitions.push({ x, y, axis: p.axis === 'y' ? 'y' : 'x', len: num(p.len, 2), h: num(p.h, 1.38), accent });
         break;
       case 'prop': {
+        // Numbered per kind in map order — `plant_1`, `plant_2` — not by the object's own name: the map JSON has
+        // no stable name for a prop (`prop_200` is a generator counter), and `Office/campus.md` has to be able to
+        // say `plant_7: { removed: true }` in a line the owner can read.
         const kind = str(p.kind);
         const rest: Record<string, string | number> = { ...p };
         delete rest.kind; delete rest.floor;
-        props.push({ id: o.name, kind, rect, at: { x, y }, props: rest });
+        propCount[kind] = (propCount[kind] ?? 0) + 1;
+        props.push({ id: `${kind}_${propCount[kind]}`, kind, rect, at: { x, y }, props: rest });
         break;
       }
       case 'path': paths.push(rect); break;
@@ -302,14 +307,63 @@ export interface CampusLayout {
 export type ResourceKind = 'browser' | 'doc' | 'note' | 'site' | 'station';
 export const RESOURCE_KINDS: ResourceKind[] = ['browser', 'doc', 'note', 'site', 'station'];
 
-/** A thing the owner put on the floor: a browser kiosk, a document board, a sticky note, the site, a station. */
+/**
+ * A thing the owner put on the floor: a browser kiosk, a document board, a sticky note, the site, a station.
+ *
+ * `rect` and `accent` are derived, not stored: the note says where a thing is and what it is, and how much floor
+ * it takes and what colour it wears follow from that. They are on the node rather than recomputed by each reader
+ * because "is that spot free" has to have one answer — the daemon refusing a drop the office drew as legal is the
+ * same bug as two parsers.
+ */
 export interface ResourceNode {
   id: string; kind: ResourceKind; at: Pt;
-  /** the zone it stands in, when the layout names one */
+  /** the footprint it stands on, centred on `at` */
+  rect: Rect;
+  /** the zone it stands in — named by the note, or the zone its middle falls in */
   zone: string | null;
+  /** that zone's accent, so a thing in Sales wears Sales' colour */
+  accent: AccentName;
   label: string; body: string; path: string;
   /** a station's family; `''` for everything else */
   tool: string;
+}
+
+/**
+ * How much floor each kind takes, in cells.
+ *
+ * Fixed per kind rather than stored in the note: a sticky note the owner could stretch to the size of the Sales
+ * floor is a drawing tool, and the office is not one. The note stores where a thing is; what it is decides the rest.
+ */
+export const RESOURCE_SIZE: Record<ResourceKind, { w: number; d: number }> = {
+  browser: { w: 1.6, d: 1.0 },
+  doc: { w: 1.8, d: 0.7 },
+  note: { w: 1.0, d: 0.8 },
+  site: { w: 2.0, d: 0.8 },
+  station: { w: 1.4, d: 1.0 },
+};
+
+/** The footprint a resource of this kind occupies, centred on `at`. */
+export function resourceRect(kind: ResourceKind, at: Pt): Rect {
+  const s = RESOURCE_SIZE[kind];
+  return { x0: at.x - s.w / 2, y0: at.y - s.d / 2, x1: at.x + s.w / 2, y1: at.y + s.d / 2 };
+}
+
+export const RESOURCE_LABEL: Record<ResourceKind, string> = { browser: 'Browser', doc: 'Document', note: 'Note', site: 'Site', station: 'Tool' };
+export const STATION_LABEL: Record<StationFamily, string> = { browser: 'Browser', email: 'Email', deploy: 'Deploy', analytics: 'Analytics', memory: 'Memory' };
+
+/**
+ * What a thing the owner added is called when the note does not say — the name on its plate in the office and in
+ * the note's own body, so the two never call the same thing two things.
+ */
+export function labelOfNode(kind: ResourceKind, n: Pick<LayoutNode, 'label' | 'path' | 'body' | 'tool'>): string {
+  if (n.label) return n.label;
+  if (kind === 'station' && n.tool && (STATION_FAMILIES as readonly string[]).includes(n.tool)) return STATION_LABEL[n.tool as StationFamily];
+  if (kind === 'doc' && n.path) return n.path.split('/').pop()!.replace(/\.md$/, '');
+  if (kind === 'note' && n.body) {
+    const line = n.body.split('\n').find((l) => l.trim())?.trim() ?? '';
+    return line.length > 28 ? `${line.slice(0, 27)}…` : line || RESOURCE_LABEL.note;
+  }
+  return RESOURCE_LABEL[kind];
 }
 
 /**
@@ -357,6 +411,15 @@ export function connectionsOf(layout: Pick<CampusLayout, 'connections'>, id: str
 
 export const EMPTY_LAYOUT: CampusLayout = { version: 1, nodes: {}, connections: [] };
 
+/**
+ * No zone may be made smaller than this, in cells.
+ *
+ * The office's reason is that below it a zone's four corner handles sit on top of each other and it cannot be
+ * dragged back out again; the daemon's is that the same is true of a zone typed that small in Obsidian. One
+ * number, so the note and the office cannot disagree about what a zone is.
+ */
+export const MIN_ZONE = 3;
+
 const translateRect = (r: Rect, dx: number, dy: number): Rect => ({ x0: r.x0 + dx, y0: r.y0 + dy, x1: r.x1 + dx, y1: r.y1 + dy });
 
 /** Paint a rectangle into a walk grid, the same rounding the generator used. Mutates `grid`. */
@@ -401,7 +464,7 @@ export function applyLayout(map: CampusMap, layout: CampusLayout | null | undefi
     const z = zones[at];
     if (n.removed) { zones.splice(at, 1); continue; }
     const x0 = n.x ?? z.rect.x0, y0 = n.y ?? z.rect.y0;
-    const w = n.w ?? z.rect.x1 - z.rect.x0, d = n.d ?? z.rect.y1 - z.rect.y0;
+    const w = Math.max(MIN_ZONE, n.w ?? z.rect.x1 - z.rect.x0), d = Math.max(MIN_ZONE, n.d ?? z.rect.y1 - z.rect.y0);
     const dx = x0 - z.rect.x0, dy = y0 - z.rect.y0;
     if (dx || dy) carried.push({ was: z.rect, dx, dy });
     zones[at] = { ...z, rect: { x0, y0, x1: x0 + w, y1: y0 + d }, stand: { x: z.stand.x + dx, y: z.stand.y + dy } };
@@ -435,16 +498,32 @@ export function applyLayout(map: CampusMap, layout: CampusLayout | null | undefi
     return dx || dy ? [{ ...p, at: { x: p.at.x + dx, y: p.at.y + dy }, rect: translateRect(p.rect, dx, dy) }] : [p];
   });
 
-  // 4. what the owner added: everything with a `kind`.
+  const zoneById: Record<string, Zone> = Object.fromEntries(zones.map((z) => [z.id, z]));
+
+  // 4. what the owner added: everything with a `kind`. The zone comes from the note when it names one and from
+  // the floor the thing stands on when it does not — zones may have moved in step 1, so this reads the new ones.
   for (const [id, n] of Object.entries(nodes)) {
-    if (!n.kind || n.removed) continue;
+    // Total, because this runs on what came back over the wire as well as on what the daemon validated: a line
+    // that makes no sense is skipped on its own and the rest of the office still draws.
+    if (!n.kind || n.removed || !RESOURCE_KINDS.includes(n.kind)) continue;
+    if (n.x === undefined || n.y === undefined) continue;
+    // A station is one of the five families, and its id says which — `station_email` is the email station. A
+    // station that is neither is nothing the office could draw, so it is skipped with the rest of the junk.
+    const family = n.kind !== 'station' ? '' : (STATION_FAMILIES as readonly string[]).includes(n.tool ?? '')
+      ? n.tool! : STATION_FAMILIES.find((f) => stationId(f) === id) ?? '';
+    if (n.kind === 'station' && !family) continue;
+    const at = { x: n.x ?? 0, y: n.y ?? 0 };
+    const zone = (n.zone && zoneById[n.zone] ? n.zone : zoneAt({ zones }, at)?.id) ?? null;
     resources[id] = {
-      id, kind: n.kind, at: { x: n.x ?? 0, y: n.y ?? 0 }, zone: n.zone ?? null,
-      label: n.label ?? '', body: n.body ?? '', path: n.path ?? '', tool: n.tool ?? '',
+      id, kind: n.kind, at, rect: resourceRect(n.kind, at), zone,
+      accent: (zone && zoneById[zone]?.accent) || 'neutral',
+      label: labelOfNode(n.kind, { ...n, tool: family || n.tool }), body: n.body ?? '', path: n.path ?? '', tool: family,
     };
+    // A thing on the floor is on the floor: without this an agent walks straight through the kiosk the owner has
+    // just put in front of them, and the office reads as a diagram again.
+    paintRect(grid, map.walk, resources[id].rect, 1); gridTouched = true;
   }
 
-  const zoneById: Record<string, Zone> = Object.fromEntries(zones.map((z) => [z.id, z]));
   return {
     ...map, desks, zones, zoneById, props, resources,
     rail: zones.filter((z) => z.rail).sort((a, b) => a.rail!.order - b.rail!.order),

@@ -23,8 +23,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
-  applyLayout, connected, inRect, isStationId, paintRect, parseCampusMap, stationFor, stationId,
-  RESOURCE_KINDS, STATION_FAMILIES, STATION_SCREEN,
+  applyLayout, connected, inRect, isStationId, paintRect, parseCampusMap, resourceRect, stationFor, stationId,
+  MIN_ZONE, RESOURCE_KINDS, STATION_FAMILIES, STATION_SCREEN,
   type CampusLayout, type CampusMap, type LayoutConnection, type LayoutNode, type Rect, type ResourceKind,
 } from './campus-map.js';
 import { parseNote, stringifyNote } from './frontmatter.js';
@@ -139,6 +139,8 @@ export function validateLayout(map: CampusMap, org: Org, input: unknown): { layo
   const rawConns = Array.isArray(raw.connections) ? raw.connections : [];
 
   const propIds = new Set(map.props.map((p) => p.id));
+  /** The floor each accepted resource takes, so the note cannot stack two of them on one spot. */
+  const taken: number[][] = map.grid.map((row) => row.map(() => 0));
   const nodes: Record<string, LayoutNode> = {};
   /** Desk placements that passed everything but the collision check, which needs all of them at once. */
   const placing: { id: string; line: string; rect: Rect }[] = [];
@@ -178,17 +180,22 @@ export function validateLayout(map: CampusMap, org: Org, input: unknown): { layo
     }
     if (zone) {
       const w = n.w ?? zone.rect.x1 - zone.rect.x0, d = n.d ?? zone.rect.y1 - zone.rect.y0;
-      if (w <= 0 || d <= 0) { dropped.push({ line, reason: 'a zone needs a width and a depth' }); continue; }
+      if (w < MIN_ZONE || d < MIN_ZONE) { dropped.push({ line, reason: `a zone is at least ${MIN_ZONE} cells across` }); continue; }
       if (!moved && n.w === undefined && n.d === undefined) { dropped.push({ line, reason: 'nothing to change' }); continue; }
       const x0 = n.x ?? zone.rect.x0, y0 = n.y ?? zone.rect.y0;
       if (!within(map, { x0, y0, x1: x0 + w, y1: y0 + d })) { dropped.push({ line, reason: 'that spot is off the campus' }); continue; }
       nodes[id] = { ...(moved ? { x: x0, y: y0 } : {}), ...(n.w !== undefined ? { w } : {}), ...(n.d !== undefined ? { d } : {}) };
       continue;
     }
-    // a prop or a resource: one thing on one cell, and it has to be a free one
-    const at: Rect = { x0: n.x!, y0: n.y!, x1: n.x! + 0.5, y1: n.y! + 0.5 };
+    // a prop or a resource: one thing, and it has to stand on free floor. A resource is measured by the footprint
+    // its kind has (`resourceRect`) rather than a nominal half-cell, so the office and the daemon refuse the same
+    // drops — a kiosk that fits in the office's ghost and is then rejected here is the two-parsers bug again.
+    const at: Rect = n.kind ? resourceRect(n.kind, { x: n.x!, y: n.y! }) : { x0: n.x!, y0: n.y!, x1: n.x! + 0.5, y1: n.y! + 0.5 };
     if (!within(map, at)) { dropped.push({ line, reason: 'that spot is off the campus' }); continue; }
-    if (!rectFree(map.grid, map.walk, at)) { dropped.push({ line, reason: 'that spot is taken' }); continue; }
+    if (!rectFree(map.grid, map.walk, at) || !rectFree(taken, map.walk, at)) { dropped.push({ line, reason: 'that spot is taken' }); continue; }
+    // Each thing takes the floor it stands on as it is accepted, so two kiosks written onto the same cells in one
+    // note is the second one refused rather than both of them standing inside each other.
+    if (n.kind) paintRect(taken, map.walk, at, 1);
     nodes[id] = prop ? { x: n.x, y: n.y } : {
       kind: n.kind, x: n.x, y: n.y,
       ...(n.zone && map.zoneById[n.zone] ? { zone: n.zone } : {}),
@@ -319,9 +326,18 @@ export function migrationLayout(map: CampusMap, org: Org): CampusLayout {
 
 const zoneOf = (map: CampusMap, p: { x: number; y: number }): string | null => map.zones.find((z) => inRect(z.rect, p))?.id ?? null;
 
-/** A free half-cell beside a screen's standing spot, searched outwards so a station never lands inside furniture. */
+/**
+ * A free spot beside a screen's standing spot, searched outwards so a station never lands inside furniture.
+ *
+ * Measured by the floor a station actually takes, centred on the spot, which is what `applyLayout` draws and what
+ * `validateLayout` checks: a migration that placed a station the daemon then refused would empty the office on
+ * the first read of its own note.
+ */
 function stationSpot(map: CampusMap, near: { x: number; y: number }): { x: number; y: number } {
-  const free = (x: number, y: number): boolean => rectFree(map.grid, map.walk, { x0: x, y0: y, x1: x + 0.5, y1: y + 0.5 }) && within(map, { x0: x, y0: y, x1: x + 0.5, y1: y + 0.5 });
+  const free = (x: number, y: number): boolean => {
+    const r = resourceRect('station', { x, y });
+    return within(map, r) && rectFree(map.grid, map.walk, r);
+  };
   for (let r = 0; r <= 8; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {

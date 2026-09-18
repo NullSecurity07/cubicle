@@ -90,11 +90,13 @@ describe('validateLayout', () => {
   it('a zone may be moved and resized', () => {
     const l = ok({ nodes: { sales: { x: 36, y: 20, w: 12, d: 9 } } });
     expect(l.nodes.sales).toEqual({ x: 36, y: 20, w: 12, d: 9 });
-    expect(validateLayout(map, org, { nodes: { sales: { w: 0, d: 4 } } }).dropped[0].reason).toContain('width and a depth');
+    expect(validateLayout(map, org, { nodes: { sales: { w: 0, d: 4 } } }).dropped[0].reason).toContain('at least 3 cells');
   });
 
   it('names a resource kind_n and a station by its family', () => {
-    const l = ok({ nodes: { browser_1: { kind: 'browser', x: 21, y: 20 }, station_email: { kind: 'station', x: 21.5, y: 20 } } });
+    // Two spots, not two names on one spot: each is measured by the floor its kind takes, and a kiosk at 21
+    // and a station at 21.5 stand inside each other.
+    const l = ok({ nodes: { browser_1: { kind: 'browser', x: 21, y: 20 }, station_email: { kind: 'station', x: 21.5, y: 17 } } });
     expect(l.nodes.browser_1.kind).toBe('browser');
     expect(l.nodes.station_email.tool).toBe('email');
     expect(validateLayout(map, org, { nodes: { browser_x: { kind: 'browser', x: 21, y: 20 } } }).dropped[0].reason).toContain('browser_1');
@@ -278,7 +280,9 @@ describe('the note', () => {
 
   it('writes a body the owner can read', () => {
     const l = ok({
-      nodes: { station_email: { kind: 'station', x: 44, y: 17 } },
+      // one cell south of the post office: a station is measured by the floor its kind takes (`resourceRect`),
+      // and at y: 17 that footprint is under the post office screen itself.
+      nodes: { station_email: { kind: 'station', x: 44, y: 18 } },
       connections: [{ from: 'ceo', to: 'cto', kind: 'peer' }, { from: 'ceo', to: 'station_email', kind: 'access' }],
     });
     const body = layoutBody(l, org);

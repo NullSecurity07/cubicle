@@ -8,6 +8,7 @@
  * way round), so this module has no cycle to be careful about and can be read top to bottom.
  */
 import { statusText, type State, type JobView, type TeamView, type AgentView } from '../state.js';
+import { type LayoutConnection } from '../world/layout.js';
 import { md, inline } from './markdown.js';
 import { pixelIcon, type GlyphName } from './icons.js';
 import { pantryStale, PANTRY_TURN_CHARS, type PantryState } from './pantry.js';
@@ -209,7 +210,46 @@ export function orgView(s: State, ctx: Ctx): View {
     const ordered = [...here.filter((t) => t.id === d.id), ...here.filter((t) => t.id !== d.id)];
     return `<div class="division" style="--division:var(--division-${esc(d.id)}, var(--division-other))"><h2 class="division-title">${esc(d.name)}</h2>${ordered.map(teamHtml).join('')}</div>`;
   }).join('');
-  return { mode: 'drawer', title: 'Org', sub: `${s.teams.length} teams`, html };
+  return { mode: 'drawer', title: 'Org', sub: `${s.teams.length} teams`, html: html + connectionsHtml(s) };
+}
+
+/**
+ * Who may talk to whom, and who may use what — the same lines the office draws on its floor, as a list.
+ *
+ * Every gesture in the campus has to have a route that does not need a pointer (SP9b), and this is the one for
+ * connecting: a row per line with the sentence it means and a button to cut it, and two selects to draw a new
+ * one. It reads the layout out of the snapshot, so it says the same thing the floor does.
+ */
+export function connectionsHtml(s: State): string {
+  const cns = s.layout?.connections ?? [];
+  const label = (c: LayoutConnection): string => (c.kind === 'peer'
+    ? `${who(s, c.from)} and ${who(s, c.to)}`
+    : `${who(s, c.from)} \u2192 ${resourceName(s, c.to)}`);
+  const means = (c: LayoutConnection): string => (c.kind === 'peer' ? 'can message each other' : 'can use it');
+  const lines = cns.map((c) => row({
+    title: label(c), small: means(c),
+    actions: `<button class="mini" data-act="disconnect:${esc(c.from)}|${esc(c.to)}">Remove</button>`,
+  }));
+  const desks = Object.values(s.agents).filter((a) => a.active).map((a) => ({ id: a.role, name: a.display }));
+  const things = [
+    ...desks.map((d) => ({ id: d.id, name: d.name })),
+    ...Object.entries(s.layout?.nodes ?? {}).filter(([, n]) => n.kind).map(([id, n]) => ({ id, name: n.label ?? id })),
+  ];
+  const opts = things.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
+  const add = desks.length
+    ? `<div class="addconn"><label class="caption dim" for="conn-from">Connect</label>`
+      + `<select id="conn-from" data-key="conn-from">${desks.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select>`
+      + `<label class="caption dim" for="conn-to">to</label>`
+      + `<select id="conn-to" data-key="conn-to">${opts}</select>`
+      + `<button class="btn" data-act="connect:add">Add</button></div>`
+    : '';
+  return `<div class="division"><h2 class="division-title">Connections</h2>${section('Who may reach what', (lines.length ? rows(lines) : emptyHtml('chat', 'Nothing is wired yet', 'Drag from a desk\u2019s port to another desk, or to something it should be allowed to use.')) + add, `${cns.length}`)}</div>`;
+}
+
+/** What a connection's far end is called: a person, or the thing the owner put on the floor. */
+function resourceName(s: State, id: string): string {
+  const n = s.layout?.nodes?.[id];
+  return n?.label ?? (s.agents[id] ? who(s, id) : id);
 }
 
 /** Queue: Open / In review / Done segments, each grouped by team. */

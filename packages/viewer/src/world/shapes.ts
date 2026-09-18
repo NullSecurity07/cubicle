@@ -285,7 +285,7 @@ export const PLATES = new Plates();
  * yields to a plate already there. Pass `crowd: false` for a plate that must always be drawn — a bubble's speaker,
  * an owner's own selection — which then takes its space and lets the rest work round it.
  */
-export function plate(g: G, at: Pt, text: string, o: { size?: number; chip?: string; ink?: string; sub?: string; alpha?: number; align?: 'centre' | 'left'; lift?: number; crowd?: boolean } = {}): { w: number; h: number } {
+export function plate(g: G, at: Pt, text: string, o: { size?: number; chip?: string; ink?: string; sub?: string; alpha?: number; align?: 'centre' | 'left'; lift?: number; crowd?: boolean } = {}): { x: number; y: number; w: number; h: number } {
   const size = o.size ?? 12;
   const ink = o.ink ?? M.ink;
   const padX = Math.round(size * 0.75), padY = Math.round(size * 0.42);
@@ -301,7 +301,7 @@ export function plate(g: G, at: Pt, text: string, o: { size?: number; chip?: str
   let cy = at.y;
   if (o.crowd !== false) {
     const spot = PLATES.claim(cx, cy, w, h, o.lift ?? 0);
-    if (!spot) { g.restore(); return { w: 0, h: 0 }; }
+    if (!spot) { g.restore(); return { x: 0, y: 0, w: 0, h: 0 }; }
     cy = spot.y;
   }
   const x = cx - w / 2;
@@ -337,7 +337,7 @@ export function plate(g: G, at: Pt, text: string, o: { size?: number; chip?: str
     g.fillText(o.sub, tx + tw + size * 0.7, y + h / 2 + 0.5);
   }
   g.restore();
-  return { w, h };
+  return { x: x, y: y, w, h };
 }
 
 /**
