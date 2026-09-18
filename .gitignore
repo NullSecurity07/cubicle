@@ -3,10 +3,10 @@ dist/
 *.tsbuildinfo
 .env
 .DS_Store
-coverage/
 .shots/
+test-results/
+playwright-report/
 .worktrees/
 
-packages/app/src-tauri/target/
-packages/app/src-tauri/gen/
 .playwright-mcp/
+app/assets/raw/

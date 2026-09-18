@@ -1,7 +1,0 @@
-
-## 2026-09-02 — Final critique: four blockers fixed
-- First run: the optional extra local model found on the build machine is disabled in `config/providers.yaml`; `doctor` requires only the first enabled local chat model plus the embeddings model, so a fresh install needs exactly what README/SETUP say. `acceptance-all.sh` asserts doctor's exit code.
-- `shell.run` snapshots owner-edited `Site/` files before a command and restores any the command changed (with `guardrail.blocked` and a note in the tool result), so the sandbox cannot bypass R34.
-- The banned-tactics classifier now reports every fail-open (no local model, no JSON) through `daemon.warning`; the text is passed as a separate untrusted message.
-- The daemon and the acceptance scripts run under `node --import tsx/esm`, never the `tsx` CLI wrapper (which relays SIGTERM with a 30 ms ack window and then SIGKILLs its child); `test:sleep` is deterministic (5/5) and Ctrl-C on `cubicle start` checkpoints properly.
-- Documented: `silent: true` vault writes (queue.md, quota.md, read markers, skill use counters, meeting drafts) update `written_sha` but emit no `vault.wrote` event — they are derived/generated content, never owner-facing state. The tray app keeps only the chosen vault path in Electron's `userData/config.json`. `config/roles.default/` from the spec's layout lives at `vault-template/Roles/` (the scaffold copies it).
