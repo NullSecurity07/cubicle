@@ -5,7 +5,7 @@ import { stringifyNote } from './frontmatter.js';
 import { setSection } from './jobs.js';
 import { nowIso } from './fs.js';
 import { renderRubric, BoardRubric, chairAnswerText, PRESSURE_CHAIR_SECTION } from './pressure.js';
-import { ownerPick, OWNER_PICK_LABEL } from './discovery.js';
+import { ownerPick, OWNER_PICK_LABEL, hasFounderBrief, FOUNDER_BRIEF } from './discovery.js';
 
 /**
  * The idea dossier: something the company *could* do, with everything anyone needs to rule on it in one note.
@@ -318,7 +318,12 @@ export function ownerHasSeenIdea(idea: { source: string; decision: string }): bo
  * until the board has actually sat on it (`board_verdict`, checked by the callers that have it).
  */
 export function ideaOpenToBoard(idea: { source: string; decision: string }): boolean {
-  return idea.decision === 'undecided' ? !sweepSourced(idea.source) : idea.decision === 'keep' && sweepSourced(idea.source);
+  // A **kept** card is a candidate whatever filed it (ruling W4-5). It used to be one only when a sweep had
+  // filed it, on the reading that the owner's own card reaches the board while it is still undecided — and
+  // once their pick is written onto that card as a keep on the first morning, that reading would have taken
+  // the owner's own idea off the board's table for ever. Every caller checks `board_verdict === null`, so a
+  // kept card is judged once and not again.
+  return idea.decision === 'undecided' ? !sweepSourced(idea.source) : idea.decision === 'keep';
 }
 
 /**
@@ -612,20 +617,64 @@ const PICK_NAME_MIN = 4;
  * cycle that ran afterwards.
  */
 export function keepOwnerPick(vault: Vault, by = 'daemon', now = new Date()): string | null {
+  const chose = pickedCard(vault);
+  const card = chose ?? briefCard(vault);
+  if (!card || card.idea.decision !== 'undecided') return null;
+  const at = now.toISOString();
+  updateIdea(vault, card.idea.id, { decision: 'keep', decided_by: 'owner', decided_at: at, status: 'accepted' }, by, {
+    heading: '## Decision',
+    content: `**keep** — the owner, ${at.slice(0, 10)}. ${card.why}`,
+  });
+  return card.idea.id;
+}
+
+/**
+ * A card the owner's own decision could be about: their material, their typing, the idle-hours chat — never a
+ * pivot the board proposed. Ruling W3-2 exists so that a `PIVOT REQUIRED` becomes a card the owner *keeps*, and
+ * a keep applied on their behalf here would be the company taking that decision for them after all.
+ */
+function theirsToKeep(idea: IdeaFrontmatter): boolean {
+  return ownerHasSeenIdea(idea) && idea.source.split(':')[0].trim().toLowerCase() !== BOARD_IDEA_SOURCE;
+}
+
+/** The card the owner's `chosen:` line names, if the CEO offered them three and they took one. */
+function pickedCard(vault: Vault): { idea: IdeaFrontmatter; why: string } | null {
   const pick = ownerPick(vault);
   if (!pick) return null;
   const name = pickedIdeaName(pick.line);
   if (name.length < PICK_NAME_MIN) return null;
   const want = ideaSlug(name);
-  const card = listIdeas(vault).find((i) => ownerHasSeenIdea(i)
+  const idea = listIdeas(vault).find((i) => theirsToKeep(i)
     && (i.id === want || sameIdeaTitle(i.title, name) || ideaSlug(i.title).startsWith(want)));
-  if (!card || card.decision !== 'undecided') return null;
-  const at = now.toISOString();
-  updateIdea(vault, card.id, { decision: 'keep', decided_by: 'owner', decided_at: at, status: 'accepted' }, by, {
-    heading: '## Decision',
-    content: `**keep** — the owner, ${at.slice(0, 10)}. ${OWNER_PICK_LABEL} ${pick.line.replace(/^\s*\d+[.)]\s*/, '')}`,
-  });
-  return card.id;
+  return idea ? { idea, why: `${OWNER_PICK_LABEL} ${pick.line.replace(/^\s*\d+[.)]\s*/, '')}` } : null;
+}
+
+/**
+ * The card the founder brief the owner adopted names — the other half of the same decision.
+ *
+ * The pick is how an owner who said "surprise me" chooses; an owner who typed their own idea into
+ * `Discovery/inbox/` never sees three lines to choose from, and the document they *do* sign is the brief. Its
+ * `## Candidate ideas` names the card discovery filed off their material, and adopting it is them saying this
+ * is what the company is for. Without this the commonest first run has no kept idea at all and — under the
+ * same ruling's gate — would never plan anything.
+ *
+ * Only an owner-seen card, and only the one the brief actually names: a sweep's card is not made theirs by
+ * being filed the same week.
+ */
+function briefCard(vault: Vault): { idea: IdeaFrontmatter; why: string } | null {
+  if (!hasFounderBrief(vault)) return null;
+  const brief = vault.readTextOrNull(FOUNDER_BRIEF) ?? '';
+  const section = (brief.split(/^## Candidate ideas[ \t]*$/m)[1] ?? '').split(/^## /m)[0];
+  const why = `The owner adopted [[${FOUNDER_BRIEF.replace(/\.md$/, '')}]], which is written against this idea.`;
+  // The section is read in every spelling the template has ever asked for: a wikilink, a path, and the bare
+  // slug `Processes/discovery.md` asks for by name. An `_underscored_` word is emphasis, not a slug.
+  const named = new Set([...ideasNamedIn(section), ...[...section.matchAll(new RegExp(`(?<![A-Za-z0-9_/-])(${IDEA_SLUG_SRC})(?![A-Za-z0-9_/-])`, 'gi'))].map((m) => m[1].toLowerCase())]);
+  const seen = listIdeas(vault).filter((i) => theirsToKeep(i) && i.decision === 'undecided');
+  const idea = seen.find((i) => named.has(i.id.toLowerCase()))
+    // …and failing that, the one card the owner's own material produced. Only when there is exactly one: with
+    // two, which of them the brief is written against is a question only the owner can answer.
+    ?? (seen.length === 1 ? seen[0] : undefined);
+  return idea ? { idea, why } : null;
 }
 
 /** What an idea verdict tells the owner about a card they kept themselves and the board would now park. */

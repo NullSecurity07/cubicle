@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  scaffoldVault, Vault, createProposal, writeIdeaCard, readIdea, keptIdeas, BRAND_NAME_PATH,
+  scaffoldVault, Vault, createProposal, writeIdeaCard, readIdea, keptIdeas, listInbox, BRAND_NAME_PATH, FOUNDER_BRIEF,
   keepOwnerPick, pickedIdeaName, ownerKept, ownerKeptNote,
   isJobDump, whatHappenedSection, whatHappenedProse, WRITTEN_WITHOUT_MODEL,
 } from '../src/index.js';
@@ -46,6 +46,25 @@ describe("the idea the owner picked is the idea the owner kept (W4-5)", () => {
     writeIdeaCard(vault, { slug: 'speedaudit', title: 'SpeedAudit', source: 'discovery' }, 'daemon');
     expect(keepOwnerPick(vault)).toBe('speedaudit');
     expect(keepOwnerPick(vault)).toBeNull();
+  });
+
+  it('keeps the card the adopted brief is written against when the owner never picked from three', async () => {
+    // The commonest first run: the owner typed their idea into `Discovery/inbox/` and was never offered three
+    // lines to choose from, so the document they sign is the brief. Without this there is no kept idea at all
+    // and — under the same ruling's gate — the company would never plan anything.
+    const { path: rel } = listInbox(vault).map((n) => ({ path: n.path, n }))[0];
+    vault.updateNote(rel, (n) => ({ data: { ...n.data, approved: null, chosen: null }, body: n.body }), 'owner');
+    writeIdeaCard(vault, { slug: 'meal-kits', title: 'Meal kits for nurseries', source: 'discovery' }, 'research_manager');
+    vault.writeText(FOUNDER_BRIEF, '## What the company is\n\nMeal kits.\n\n## Candidate ideas\n\n- meal-kits — a weekly box.\n', 'daemon');
+    expect(keepOwnerPick(vault)).toBe('meal-kits');
+    expect(readIdea(vault, 'meal-kits')!.data.decided_by).toBe('owner');
+  });
+
+  it("never keeps a pivot the board proposed: that one is theirs to rule on (W3-2)", () => {
+    writeIdeaCard(vault, { slug: 'anchor-pilots', title: 'Anchor-customer pilots', source: 'board' }, 'daemon');
+    vault.writeText(FOUNDER_BRIEF, '## Candidate ideas\n\n- anchor-pilots\n', 'daemon');
+    expect(keepOwnerPick(vault)).toBeNull();
+    expect(readIdea(vault, 'anchor-pilots')!.data.decision).toBe('undecided');
   });
 
   it('never keeps a card the owner has not seen', () => {

@@ -146,8 +146,10 @@ describe('the board sits only on ideas the owner has seen (ruling W3-5)', () => 
     for (const source of ['discovery', 'owner', 'pantry', 'board']) {
       expect(ownerHasSeenIdea({ source, decision: 'undecided' }), source).toBe(true);
       expect(ideaOpenToBoard({ source, decision: 'undecided' }), source).toBe(true);
-      // A kept card of the owner's own is not a board candidate: that decision has already been taken.
-      expect(ideaOpenToBoard({ source, decision: 'keep' }), source).toBe(false);
+      // Ruling W4-5: a kept card is a candidate whatever filed it. The owner's pick is written onto their own
+      // card as a keep on the first morning, and the old rule would have taken their idea off the board's
+      // table for ever. The callers check `board_verdict === null`, so it is judged once and not again.
+      expect(ideaOpenToBoard({ source, decision: 'keep' }), source).toBe(true);
     }
     expect(ownerHasSeenIdea({ source: 'intelligence:competitive', decision: 'undecided' })).toBe(false);
     expect(ownerHasSeenIdea({ source: 'intelligence:competitive', decision: 'keep' })).toBe(true);
