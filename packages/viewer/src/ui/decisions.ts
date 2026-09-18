@@ -84,13 +84,6 @@ export function proposedContent(body: string): string | null {
 }
 
 /**
- * What the reader shows of a note.
- *
- * A founder brief's proposed content is the document the owner is adopting — the fence is how the note carries it,
- * not what it is — so the covering note is followed by the document itself, as prose. Every other kind keeps its
- * fence: a `file_change` proposes a *file*, and a file is shown as a file, monospace and unwrapped.
- */
-/**
  * The dispatcher's own closing line, taken off the note the reader shows (W5-3).
  *
  * `dispatcher.ts` appends `\n\n---\n_Resolved <when>: <outcome>_` — or `_Not applied: <why>_` — so that a note
@@ -107,6 +100,13 @@ export function withoutResolutionFooter(body: string): string {
   return body.replace(RESOLUTION_FOOTER, '');
 }
 
+/**
+ * What the reader shows of a note.
+ *
+ * A founder brief's proposed content is the document the owner is adopting — the fence is how the note carries it,
+ * not what it is — so the covering note is followed by the document itself, as prose. Every other kind keeps its
+ * fence: a `file_change` proposes a *file*, and a file is shown as a file, monospace and unwrapped.
+ */
 export function readerBody(n: Pick<InboxRow, 'kind' | 'body' | 'options'>): string {
   const body = withoutFileInstructions(withoutResolutionFooter(n.body ?? ''), !!n.options?.length);
   if (n.kind === 'plan_verdict') return planFirst(body);

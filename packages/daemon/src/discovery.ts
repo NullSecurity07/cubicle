@@ -477,6 +477,12 @@ export function discoveryPrompt(vault: Vault, since: string | null = null): stri
  * the CEO proposes for an idea the owner typed themselves — carries the fence and is not a pick anyone is
  * waiting on, so saying "waiting for you to pick one of the three" about it would be a lie.
  */
+export function pickPending(vault: Vault): boolean {
+  return listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === BRAND_NAME_PATH && !n.data.resolved_at
+    && !/^## Proposed content/m.test(n.body) && n.body.split('\n').some((l) => /^\s*\d+\.\s/.test(l))
+    && (n.data.approved !== true || n.data.chosen === null || n.data.chosen === undefined));
+}
+
 /**
  * The owner asked the CEO to surprise them and has not chosen one of the three ideas yet (defect W5-1).
  *
@@ -491,12 +497,6 @@ export function discoveryPrompt(vault: Vault, since: string | null = null): stri
 export function awaitingSurprisePick(vault: Vault): boolean {
   if (ownerPick(vault)) return false;
   return listInbox(vault).some((n) => n.data.kind === 'message' && n.data.from === 'owner' && asksForSurprise(ownerSaid(n.body)));
-}
-
-export function pickPending(vault: Vault): boolean {
-  return listInbox(vault).some((n) => n.data.kind === 'brand_change' && n.data.target === BRAND_NAME_PATH && !n.data.resolved_at
-    && !/^## Proposed content/m.test(n.body) && n.body.split('\n').some((l) => /^\s*\d+\.\s/.test(l))
-    && (n.data.approved !== true || n.data.chosen === null || n.data.chosen === undefined));
 }
 
 /**
