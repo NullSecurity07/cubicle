@@ -11,7 +11,7 @@ import { dispatchProposals } from './dispatcher.js';
 import { sweepTrustReviews } from './trust.js';
 import { budgetForRole, budgetRows } from './money.js';
 import { WsServer } from './ws.js';
-import { createHeartbeatJob, answerOwnerMessages, unansweredOwnerMessages, answerRejectedBrief, inboxEditWakesHeartbeat, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
+import { createHeartbeatJob, openHeartbeat, answerOwnerMessages, unansweredOwnerMessages, answerRejectedBrief, inboxEditWakesHeartbeat, quotaBlockedJobs, NON_WORK_TYPES, type HeartbeatDeps } from './heartbeat.js';
 import { writeQueueMd } from './queue-md.js';
 import { watchSleep, onProcessSignals, type SleepWatcher } from './signals.js';
 import { captureResearchDeliveries, enqueueResearchFollowUps, enqueueExperimentReviews, maybeEnqueueCharterCompression, maybeEnqueueIntelligence, collectOwnerFeedback, collectOfflineOwnerComments, feedbackFor, maybeEnqueuePostmortem, maybeEnqueueWeeklyReview, maybeOpenIncident, maybeCorrectiveActions, maybeFlagLessons } from './evolution.js';
@@ -89,6 +89,17 @@ export function pollCached<T>(read: () => T, ttlMs: number, now: () => number = 
   };
 }
 
+/**
+ * How long a burst of writes is coalesced before a generated note (`Jobs/queue.md`, `Metrics/quota.md`) is
+ * rewritten (ruling W6-10: regenerate on every job state change, debounced ≤ 2 s).
+ *
+ * A running job's step writes its note two or three times a second and every model call moves the quota, so
+ * regenerating on each one would rewrite — and autocommit — two whole files faster than anyone could read them.
+ * Under two seconds is the whole budget: the note must never again be the fifteen minutes stale the third dry
+ * run found it, listing 9 of 23 jobs.
+ */
+export const GENERATED_NOTE_DEBOUNCE_MS = 1500;
+
 /** The compaction prompt, module-level so the summariser's test can recognise the call it made. */
 export const SUMMARIZE_SYSTEM = 'Summarize the following observations in ≤ 200 words, keeping file paths, ids and numbers.';
 
@@ -149,6 +160,8 @@ export class Daemon {
   private heartbeatRequested: string | null = null;
   private startedAt = new Date();
   private lastPrune = 0;
+  /** Generated notes with a rewrite pending, keyed by path. See `regenerate` and `GENERATED_NOTE_DEBOUNCE_MS`. */
+  private pendingWrites = new Map<string, { timer: NodeJS.Timeout; write: () => void }>();
   private guardrails: import('@cubicle/harness').Guardrail[] = [];
   private openMeeting: (agenda: string, participants?: string[]) => Promise<string | null> = async () => null;
   /**
@@ -326,7 +339,15 @@ export class Daemon {
       const intel = maybeEnqueueIntelligence(this.vault);
       if (intel.length) this.log(`intelligence sweeps queued: ${intel.join(', ')}`);
     }));
-    this.offEvents.push(this.vault.events.on('quota.updated', () => this.writeQuotaMd()));
+    this.offEvents.push(this.vault.events.on('quota.updated', () => this.regenerate('Metrics/quota.md', () => this.writeQuotaMd())));
+    // Ruling W6-10: `Jobs/queue.md` is rewritten whenever a job note changes — created, started, blocked,
+    // requeued, finished, cancelled, or edited by the owner in Obsidian — rather than only at startup and at
+    // the heartbeat's brief step. Every one of those goes through `vault.writeText`, so one subscription covers
+    // the lot; the generated note itself and `_template.md` are excluded, so this cannot feed itself.
+    const jobNote = (rel: unknown) => /^Jobs\/(?!queue\.md$|_)[^/]+\.md$/.test(String(rel ?? ''));
+    const queueChanged = () => this.regenerate('Jobs/queue.md', () => writeQueueMd(this.vault));
+    this.offEvents.push(this.vault.events.on('vault.wrote', (e) => { if (jobNote(e.payload.path)) queueChanged(); }));
+    this.offEvents.push(this.vault.events.on('owner.edited', (e) => { if (jobNote(e.payload.path)) queueChanged(); }));
 
     if (!this.overrides.disableWs) {
       this.ws = new WsServer({ vault: this.vault, router: this.router, port: cfg.port, onChat: () => { this.requestHeartbeat('owner message'); void this.answerOwnerNow('chat'); void this.runTick('chat'); }, onDecide: (id) => { this.wakeForDecision(id); void this.runTick('decide'); } });
@@ -436,15 +457,33 @@ export class Daemon {
     if (findInboxById(this.vault, id)) this.requestHeartbeat(`decided ${id}`);
   }
 
+  /**
+   * True from the moment the open-heartbeat check is read until the new job note is on disk (ruling W6-11).
+   *
+   * `requestHeartbeat` has two callers that fire from unrelated places — a decision taken in the office
+   * (`wakeForDecision`, straight off the WebSocket handler) and the tick's own trigger — and its check and its
+   * create have to be one indivisible step for them. They are today, because nothing between them awaits; this
+   * is what keeps that true when something eventually does. Two heartbeats is not a cosmetic fault: both gather
+   * the same window, both plan, both sit the board, and the owner is handed two contradictory accounts of one
+   * cycle.
+   */
+  private creatingHeartbeat = false;
+
   requestHeartbeat(trigger: string): string | null {
     if (this.stopping) return null;
+    // Someone is already between the check and the create. Whatever they are opening covers this trigger too:
+    // a cycle gathers when it starts, so it will see everything this request was about.
+    if (this.creatingHeartbeat) return null;
     if (!this.vault.events.last('heartbeat.completed') && !hasIdea(this.vault)) return null;
-    const open = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
-    if (open) { if (open.checkpoint_step >= 1) this.heartbeatRequested = trigger; return open.id; }
-    const id = createHeartbeatJob(this.vault, trigger);
-    this.heartbeatRequested = null;
-    this.workers.wake();
-    return id;
+    this.creatingHeartbeat = true;
+    try {
+      const open = openHeartbeat(this.vault);
+      if (open) { if (open.checkpoint_step >= 1) this.heartbeatRequested = trigger; return open.id; }
+      const id = createHeartbeatJob(this.vault, trigger);
+      this.heartbeatRequested = null;
+      this.workers.wake();
+      return id;
+    } finally { this.creatingHeartbeat = false; }
   }
 
   /**
@@ -490,7 +529,7 @@ export class Daemon {
           // The open cycle's id when there is one, so the reply and the proposal are attributed to it as they
           // always were. The ids the sweep derives come from the message, never from the job, so it does not
           // matter which of the callers answers first.
-          const hb = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
+          const hb = openHeartbeat(this.vault);
           const n = await answerOwnerMessages({ vault: this.vault, ...this.heartbeatDeps }, this.vault, msgs, { jobId: hb?.id });
           if (n) this.log(`${reason}: ${n} owner message(s) answered`);
           return n;
@@ -517,7 +556,7 @@ export class Daemon {
    */
   private answerBriefRejection = async (note: { path: string; data: InboxFrontmatter; body: string }, ctx: { comment: string; brief: string; discoveryJob: string }): Promise<void> => {
     if (this.stopping || !this.heartbeatDeps) return;
-    const hb = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
+    const hb = openHeartbeat(this.vault);
     await answerRejectedBrief({ vault: this.vault, ...this.heartbeatDeps }, note, ctx, { jobId: hb?.id });
   };
 
@@ -576,7 +615,7 @@ export class Daemon {
       await this.sweep(reason, 'heartbeat-trigger', () => {
         const last = this.vault.events.last('heartbeat.completed');
         const since = last ? (Date.now() - Date.parse(last.ts)) / 3600_000 : Infinity;
-        const hasOpen = listJobs(this.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat');
+        const hasOpen = !!openHeartbeat(this.vault);
         // An owner note nobody has answered (typed while the daemon was down, or missed by an older build) is a heartbeat trigger too.
         const unanswered = hasOpen ? undefined : listInbox(this.vault).find((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo' && !n.data.answered);
         if (!hasOpen && (since >= this.config.heartbeat.maxElapsedHours || this.heartbeatRequested || unanswered)) this.requestHeartbeat(this.heartbeatRequested ?? (unanswered ? `unanswered owner message ${unanswered.data.id}` : `${since.toFixed(1)} h elapsed`));
@@ -599,7 +638,33 @@ export class Daemon {
   }
 
   private writeQuotaMd(): void {
-    try { this.vault.writeText('Metrics/quota.md', renderQuotaMarkdown(this.router.quotaSnapshot()), 'daemon', { generated: true }); } catch { /* ignore */ }
+    try { this.vault.writeText('Metrics/quota.md', renderQuotaMarkdown(this.router.quotaSnapshot(), new Date(), quotaBlockedJobs(this.vault)), 'daemon', { generated: true }); } catch { /* ignore */ }
+  }
+
+  /**
+   * Rewrite a generated note soon, and once, however many changes arrive in the meantime (ruling W6-10).
+   *
+   * The timer is unrefed — a generated note must never be what keeps the process alive — and `stop()` flushes
+   * whatever is still pending, so the last state a daemon saw is the state on disk when it exits. A write that
+   * throws costs its note and nothing else: these two files are a convenience, and neither is worth a tick.
+   */
+  private regenerate(key: string, write: () => void): void {
+    if (this.stopping) return;
+    const pending = this.pendingWrites.get(key);
+    if (pending) { pending.write = write; return; }
+    const timer = setTimeout(() => {
+      this.pendingWrites.delete(key);
+      if (this.stopping) return;
+      try { write(); } catch (err) { this.vault.events.emit({ type: 'daemon.warning', payload: { where: `regenerate:${key}`, message: String((err as Error).message ?? err).slice(0, 200) } }); }
+    }, GENERATED_NOTE_DEBOUNCE_MS);
+    timer.unref();
+    this.pendingWrites.set(key, { timer, write });
+  }
+
+  /** Run every pending rewrite now and clear the timers — what `stop()` owes the vault it is leaving behind. */
+  private flushGenerated(): void {
+    for (const [, p] of this.pendingWrites) { clearTimeout(p.timer); try { p.write(); } catch { /* the vault may already be going */ } }
+    this.pendingWrites.clear();
   }
 
   /** Graceful stop: no new jobs, wait up to shutdownMs for in-flight steps, close everything. */
@@ -619,6 +684,9 @@ export class Daemon {
     // gets the same bounded grace rather than being cut off mid-write on a vault that is about to close.
     if (this.answering) await Promise.race([this.answering.catch(() => 0), new Promise((r) => setTimeout(r, Math.max(500, Math.min(this.config.shutdownMs - 1000, 5000))))]);
     if (!this.vault) { this.log(`stopped in ${Date.now() - t0} ms`); return; }
+    // The workers and the tick have come to rest, so this is the last job state this daemon will ever see —
+    // and it is the state the owner finds in `Jobs/queue.md` while the daemon is off (ruling W6-10).
+    this.flushGenerated();
     await Promise.race([closeAllSessions(this.vault.events), new Promise((r) => setTimeout(r, 1500))]);
     await this.watcher?.stop();
     await this.sleepWatcher?.stop();

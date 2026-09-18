@@ -62,12 +62,14 @@ describe('hire / fire (acceptance test 7, headless)', () => {
   });
   it('rejects hires without justification, over max_roles, or with a bad charter', async () => {
     const p1 = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: '```markdown\n' + CHARTER + '```' }, 'ceo');
-    expect(await applyHire(vault, { ...p1, ...findInboxById(vault, p1.id)! })).toMatch(/at least 2/);
+    // Ruling W6-1: the rule is the same, said in words the owner reads after their click rather than in the
+    // daemon's own vocabulary ("2 distinct blocked, failed or retried jobs (found 0 of 0 linked)").
+    expect(await applyHire(vault, { ...p1, ...findInboxById(vault, p1.id)! })).toMatch(/needs two jobs that were blocked for lack of this role; this one links none/);
     const j1 = createJob(vault, { type: 'custom', title: 'a', assigned: 'cmo', goal: 'g' }, 'cto');
     const j2 = createJob(vault, { type: 'custom', title: 'b', assigned: 'cmo', goal: 'g' }, 'cto');
     updateJob(vault, j1, { status: 'failed' }, 'daemon'); updateJob(vault, j2, { status: 'failed' }, 'daemon');
     const dup = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: `[[${j1}]] [[${j1}]]\n\`\`\`markdown\n${CHARTER}\`\`\`` }, 'ceo');
-    expect(await applyHire(vault, findInboxById(vault, dup.id)!)).toMatch(/at least 2 distinct/);
+    expect(await applyHire(vault, findInboxById(vault, dup.id)!)).toMatch(/needs two jobs that were blocked for lack of this role; of the 1 job linked here, 1 qualifies/);
     const bad = createProposal(vault, { kind: 'hire', from: 'ceo', title: 'x', body: `[[${j1}]] [[${j2}]]\n\`\`\`markdown\n---\nrole: Bad Role\n---\n# c\n\`\`\`` }, 'ceo');
     expect(await applyHire(vault, findInboxById(vault, bad.id)!)).toMatch(/invalid/);
     vault.updateNote('Memory/constitution.md', (n) => ({ data: n.data, body: n.body.replace('max_roles: 40', 'max_roles: 33') }), 'owner');

@@ -629,16 +629,18 @@ describe('daemon lifecycle', () => {
     ownerEdit(bc.path, (t) => t.replace('approved: null', 'approved: true').replace('chosen: null', 'chosen: 2'));
     ownerEdit(q.path, (t) => t.replace('answered: null', 'answered: true') + '\n## Owner\n\nBlue.\n');
     ownerEdit(evil.path, (t) => t.replace('approved: null', 'approved: true'));
-    expect(await dispatchProposals(deps)).toBe(3);
+    // Four actions, not three: the refused `evil` note is closed rather than left open for a retry that could
+    // never succeed (ruling W6-1). Nothing is written to the constitution either way.
+    expect(await dispatchProposals(deps)).toBe(4);
     expect(vault.readText('Memory/owner_preferences.md')).toContain('changed by proposal');
     expect(vault.readText('Memory/constitution.md')).toContain('max_emails_per_day: 20');
-    expect(findInboxById(vault, evil.id)!.data.resolved_at).toBeNull();
-    expect(findInboxById(vault, evil.id)!.body).toContain('Not applied');
+    expect(findInboxById(vault, evil.id)!.data.resolved_at).toBeTruthy();
+    expect(findInboxById(vault, evil.id)!.body).toContain('not applied — brand_change may only target Brand/');
     expect(vault.readText('Brand/name.md')).toContain('name: Porch Pantry');
     expect(listJobs(vault).some((j) => /reconcile site with brand/i.test(j.title))).toBe(true);
     expect(vault.readText('Messages/backend_engineer.md')).toContain(`re:${q.id} Blue.`);
     expect(findInboxById(vault, fc.id)!.data.resolved_at).toBeTruthy();
-    expect(vault.events.count('proposal.resolved')).toBe(3);
+    expect(vault.events.count('proposal.resolved')).toBe(4);
     expect(await dispatchProposals(deps)).toBe(0); // idempotent
     // A flip written through the system (e.g. an agent that somehow wrote the note) is ignored with guardrail.blocked
     const forged = createProposal(vault, { kind: 'file_change', from: 'cto', target: 'Memory/lessons.md', title: 'f', body: 'x', call: { tool: 'vault.write', args: { path: 'Memory/lessons.md', content: 'forged' }, idempotency_key: 'k' } }, 'cto');

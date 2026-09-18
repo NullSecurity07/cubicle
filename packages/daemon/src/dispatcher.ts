@@ -120,7 +120,47 @@ const NOTHING_TO_DO = 'Nothing to do: this is applied on its own as soon as both
  */
 const NOTHING_TO_FIX = 'Nothing to do: it is sent on its own on the next cycle, as soon as a model answers the guardrail again.';
 
-function refuseNote(vault: Vault, note: { path: string; data: InboxFrontmatter }, why: string, extra: Record<string, unknown> = {}): void {
+/**
+ * The three reasons a note is **held** rather than refused (ruling W6-1). Nothing was decided about any of
+ * them: the reviews are still out, no model could check the call, or the company has no money this minute —
+ * and in each case something other than the owner ends the wait, which is why the approval has to survive it.
+ *
+ * Every other reason is a refusal of the side effect itself, and a refusal is an answer: it closes the note.
+ */
+const HOLD_REASONS: readonly string[] = [TRUST_PENDING_HOLD, CLASSIFIER_UNAVAILABLE_HOLD, DORMANT_SPEND_REFUSAL];
+
+/** What the footer of a closed refusal tells the owner to do, since there is no retry coming. */
+const CLOSED_AND_NOT_APPLIED = 'Nothing was changed and this decision is closed; file a fresh proposal if you still want it.';
+
+/**
+ * A refused side effect, closed (ruling W6-1).
+ *
+ * The live run's worst moment: the owner approved a hire, the hire gate refused it, and the note ended
+ * `approved: true`, `refused: …`, `resolved_at: null` — which is not a state, it is two halves of two. The
+ * office's reader waited on a resolution that was never coming ("Decided · applying…", for ever), the row went
+ * back under *Needs you* as though the click had not happened, and the reason existed only inside the
+ * frontmatter. **No proposal kind may end `approved: true` with `resolved_at: null`**, so a refusal resolves:
+ * the reason stays on the note as `refused`, the footer is the one `resolvedOutcome` already reads, and the
+ * `proposal.resolved` event reaches every open office the same tick.
+ */
+function closeRefused(vault: Vault, note: { path: string; data: InboxFrontmatter }, why: string, extra: Record<string, unknown> = {}): void {
+  const outcome = `not applied — ${why}`;
+  const at = nowIso();
+  vault.events.emit({ type: 'guardrail.blocked', payload: { proposal: note.data.id, kind: note.data.kind, reason: why, resolved: true, ...extra } });
+  vault.updateNote(note.path, (nn) => ({
+    data: { ...nn.data, refused: why, refused_at: at, resolved_at: at },
+    body: nn.body.replace(/\n\n---\n_Not applied:[^\n]*_\n?$/s, '').trimEnd() + `\n\n---\n_Resolved ${at}: ${outcome}. ${CLOSED_AND_NOT_APPLIED}_\n`,
+  }), 'daemon');
+  vault.db.prepare('DELETE FROM refusals WHERE path = ?').run(note.path);
+  vault.events.emit({ type: 'proposal.resolved', agent: 'owner', job: note.data.job ?? null, payload: { id: note.data.id, kind: note.data.kind, approved: note.data.approved, refused: why, outcome } });
+}
+
+/**
+ * Leave a proposal unresolved with a reason, or — for anything that is not one of the three `HOLD_REASONS` —
+ * close it as refused. Returns true when the note was closed, which is an action the caller counts.
+ */
+function refuseNote(vault: Vault, note: { path: string; data: InboxFrontmatter }, why: string, extra: Record<string, unknown> = {}): boolean {
+  if (!HOLD_REASONS.includes(why)) { closeRefused(vault, note, why, extra); return true; }
   const closing = why === TRUST_PENDING_HOLD ? NOTHING_TO_DO : why === CLASSIFIER_UNAVAILABLE_HOLD ? NOTHING_TO_FIX : FIX_IT;
   // A classifier that could not run refused nothing — it decided nothing at all — so it gets its own event.
   // `guardrail.blocked` is rendered as "not allowed", with a worried face, which is the exact opposite of
@@ -130,6 +170,7 @@ function refuseNote(vault: Vault, note: { path: string; data: InboxFrontmatter }
   vault.updateNote(note.path, (nn) => ({ data: { ...nn.data, refused: why, refused_at: nowIso() }, body: nn.body.replace(/\n\n---\n_Not applied:[^\n]*_\n?$/s, '').trimEnd() + `\n\n---\n_Not applied: ${why}. ${closing}_\n` }), 'daemon');
   const sha = vault.currentSha(note.path);
   if (sha) vault.db.prepare('INSERT OR REPLACE INTO refusals(path, sha, at) VALUES (?, ?, ?)').run(note.path, sha, nowIso());
+  return false;
 }
 
 /**
@@ -409,13 +450,13 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
           case 'hire':
           case 'fire': {
             const r = d.kind === 'hire' ? (deps.onHire ? await deps.onHire(note) : await applyHire(vault, note, deps.onRoleHired, { autoApproved })) : (deps.onFire ? await deps.onFire(note) : await applyFire(vault, note, deps.onRoleFired));
-            if (!/^(hired|fired) /.test(r)) { refuseNote(vault, note, r); continue; }
+            if (!/^(hired|fired) /.test(r)) { if (refuseNote(vault, note, r)) n++; continue; }
             outcome = r;
             break;
           }
           case 'reorg': {
             const r = await applyReorg(vault, note);
-            if (!/^applied/.test(r)) { refuseNote(vault, note, r); continue; }
+            if (!/^applied/.test(r)) { if (refuseNote(vault, note, r)) n++; continue; }
             outcome = r;
             break;
           }
@@ -425,14 +466,14 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             const target = d.target;
             if (!target) { outcome = 'no target path on proposal'; break; }
             const invalid = validateTarget(d.kind, target, !!d.call);
-            if (invalid) { refuseNote(vault, note, invalid, { target }); continue; }
+            if (invalid) { if (refuseNote(vault, note, invalid, { target })) n++; continue; }
             let content = (d.call?.tool === 'vault.write' && typeof d.call.args.content === 'string') ? String(d.call.args.content) : fenced(note.body);
             if (d.kind === 'brand_change' && target === 'Brand/name.md' && !content) {
               // One parser (`numberedOptions`): the snapshot shows the owner a chip per option and this applies
               // the line a number names, so the two must agree on what a numbered line is, down to the digit.
               const options = numberedOptions(note.body);
               const line = d.chosen ? options.find((o) => o.n === d.chosen)?.line : undefined;
-              if (options.length && !line) { refuseNote(vault, note, d.chosen ? `chosen: ${d.chosen} matches no option; set chosen: 1..${options.length}` : `set chosen: 1..${options.length} to pick an option`); continue; }
+              if (options.length && !line) { if (refuseNote(vault, note, d.chosen ? `chosen: ${d.chosen} matches no option; set chosen: 1..${options.length}` : `set chosen: 1..${options.length} to pick an option`)) n++; continue; }
               if (line) {
                 const clean = (x: string) => x.replace(/[*_`]/g, '').trim();
                 const name = clean(line.replace(/^\s*\d+\.\s*/, '').split(/\s+—\s+|\s+-\s+|:/)[0]);
@@ -446,7 +487,7 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
               // owner (spec §11) and to hire/fire (§9.5): they are carried over from the current note, never taken from the proposal.
               const current = vault.readNoteOrNull(target);
               const cur = current && RoleFrontmatter.safeParse(current.data);
-              const refuse = (why: string) => refuseNote(vault, note, why, { target });
+              const refuse = (why: string) => { if (refuseNote(vault, note, why, { target })) n++; };
               if (!cur || !cur.success) { refuse('charter_change may only edit an existing role (use a hire proposal to add one)'); continue; }
               const incoming = parseNote(content);
               const parsed = RoleFrontmatter.safeParse({ ...incoming.data, role: cur.data.role, desk: cur.data.desk, hired: cur.data.hired, sprite: cur.data.sprite, active: cur.data.active, model_tier: cur.data.model_tier, display: cur.data.display });
@@ -553,7 +594,7 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
           case 'founder_brief': {
             const target = d.target ?? FOUNDER_BRIEF;
             const invalid = validateTarget('founder_brief', target, !!d.call);
-            if (invalid) { refuseNote(vault, note, invalid, { target }); continue; }
+            if (invalid) { if (refuseNote(vault, note, invalid, { target })) n++; continue; }
             const content = fenced(note.body);
             if (!content) { outcome = 'no "## Proposed content" block found'; break; }
             // The owner may have edited the block before approving it; a brief that lost a section on the way
@@ -564,7 +605,7 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
             // template's own instructions under it has not taken the test, and §4 is that the brief takes it
             // once (ruling H5). The other seven are still judged on the heading.
             const missing = missingBriefSections(content, String(note.data.created ?? ''));
-            if (missing.length) { refuseNote(vault, note, `the founder brief has not written ${missing.join(', ')}; write the section(s) and approve again`, { target }); continue; }
+            if (missing.length) { if (refuseNote(vault, note, `the founder brief has not written ${missing.join(', ')}; write the section(s) and approve again`, { target })) n++; continue; }
             vault.writeText(target, content, 'daemon', { job: d.job ?? null });
             // The interview those answers fed is over (ruling W3-7). Written here rather than in the heartbeat
             // because this is the one place a brief is ever adopted — from the office, from Obsidian, whoever
@@ -583,10 +624,10 @@ export async function dispatchProposals(deps: DispatcherDeps): Promise<number> {
           case 'idea_verdict': {
             const target = d.target ?? '';
             const invalid = validateTarget('idea_verdict', target, !!d.call);
-            if (invalid) { refuseNote(vault, note, invalid, { target }); continue; }
+            if (invalid) { if (refuseNote(vault, note, invalid, { target })) n++; continue; }
             const slug = target.slice('Ideas/'.length).replace(/\.md$/, '');
             const card = readIdea(vault, slug);
-            if (!card) { refuseNote(vault, note, `no idea card at ${target}`, { target }); continue; }
+            if (!card) { if (refuseNote(vault, note, `no idea card at ${target}`, { target })) n++; continue; }
             // The band the owner was *shown*, stamped on the note when the board filed it — not a fresh
             // recomputation. The note's body says "Set approved: true to take the recommendation (**keep**)";
             // if any office re-filed the card between the session and the click (a corrected value, a research

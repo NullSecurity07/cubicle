@@ -78,6 +78,11 @@ export const proposalCreate = defineTool({
       if (!/```(?:markdown|md)?\s*\n---\n/.test(body)) return { ok: false, text: 'a hire proposal must contain the full charter in a ```markdown fence starting with a --- frontmatter block (role, display, model_tier, tools)' };
       const active = ctx.vault.list('Roles', { ext: '.md' }).filter((r) => !r.includes('/archive/')).length;
       if (active >= ctx.vault.constitution().max_roles) return { ok: false, text: `constitution max_roles (${ctx.vault.constitution().max_roles}) is already reached` };
+      // Ruling W6-1 (c): the gate that can still refuse this at approve time is stated on the note, in the
+      // owner's words, *before* they press the button. The links are checked again when the hire is applied —
+      // a job that has since finished no longer justifies anything — and the live run's owner read the rule for
+      // the first time in a `refused:` field, after their click, written in daemon vocabulary.
+      body = `${body.trimEnd()}\n\n_Before you approve: this hire is applied only if at least two of the jobs linked above are still blocked, failed or retried when you press the button — that is the evidence the company owes you for a new salary. If they have all since finished, send it back and ask for a fresh case._\n`;
     }
     // A threat model covers one change (§27), and `approvedThreatModel` matches it to the job that filed it.
     if (kind === 'threat_model' && !ctx.jobId) return { ok: false, text: 'a threat_model belongs to a job; file it from the job whose change it covers' };

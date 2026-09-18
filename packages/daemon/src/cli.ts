@@ -7,7 +7,7 @@ import { Daemon, readDaemonInfo, isPidAlive } from './daemon.js';
 import { defaultConfig } from './config.js';
 import { rebuildCache } from './rebuild.js';
 import { runDoctor, formatDoctor, doctorExitCode } from './doctor.js';
-import { createHeartbeatJob } from './heartbeat.js';
+import { createHeartbeatJob, openHeartbeat, HEARTBEAT_OPEN_STATUSES } from './heartbeat.js';
 import { createJob, listJobs, updateJob, cancelJob } from '@cubicle/core';
 import { writeQueueMd } from './queue-md.js';
 import { mkdtempSync } from 'node:fs';
@@ -170,7 +170,7 @@ const commands: Record<string, Handler> = {
     const info = readDaemonInfo(root);
     if (info && isPidAlive(info.pid)) {
       const vault = Vault.open(root);
-      const open = listJobs(vault, { status: ['queued', 'running', 'blocked'] }).find((j) => j.type === 'ceo.heartbeat');
+      const open = openHeartbeat(vault);
       const id = open?.id ?? createHeartbeatJob(vault, 'forced by cubicle heartbeat');
       vault.close();
       console.log(open ? `heartbeat ${id} is already open (step ${open.checkpoint_step}); the running daemon continues it` : `queued heartbeat ${id}; the running daemon will execute it`);
@@ -178,10 +178,10 @@ const commands: Record<string, Handler> = {
     }
     const daemon = new Daemon(defaultConfig(root, process.env, { tickMs: 2000, maxConcurrentJobs: 2 }), { disableWs: true, disableSleepWatch: true, log: (m) => console.log(`[cubicle] ${m}`) });
     await daemon.start(); // start() already requests a heartbeat on a fresh/stale vault; request again only if none is open
-    if (!listJobs(daemon.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat')) daemon.requestHeartbeat('forced by cubicle heartbeat');
+    if (!openHeartbeat(daemon.vault)) daemon.requestHeartbeat('forced by cubicle heartbeat');
     const deadline = Date.now() + Number(flags.timeout ?? 20 * 60) * 1000;
     while (Date.now() < deadline) {
-      const open = listJobs(daemon.vault, { status: ['queued', 'running', 'blocked'] }).some((j) => j.type === 'ceo.heartbeat' || j.type === 'cto.plan');
+      const open = !!openHeartbeat(daemon.vault) || listJobs(daemon.vault, { status: [...HEARTBEAT_OPEN_STATUSES] }).some((j) => j.type === 'cto.plan');
       if (!open && daemon.vault.events.last('heartbeat.completed')) break;
       await new Promise((r) => setTimeout(r, 1000));
     }
