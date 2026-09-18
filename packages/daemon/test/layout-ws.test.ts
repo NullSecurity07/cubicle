@@ -14,6 +14,7 @@ import {
   scaffoldVault, Vault, loadOrg, loadCampusMap, readLayout, writeLayout, stringifyNote, connected,
   OFFICE_LAYOUT_PATH, type CampusLayout,
 } from '@cubicle/core';
+import { findInboxById, listInbox } from '@cubicle/core';
 import { WsServer, buildSnapshot } from '../src/ws.js';
 
 let dir: string, vault: Vault, server: WsServer, port: number;
@@ -125,5 +126,32 @@ describe('the layout on the wire', () => {
     const before = vault.writtenSha(OFFICE_LAYOUT_PATH);
     server.pushLayout();
     expect(vault.writtenSha(OFFICE_LAYOUT_PATH)).toBe(before);
+  });
+
+  it('hire.propose files the hire the owner dropped on the floor, and refuses what the office cannot have meant', async () => {
+    const a = await open();
+    a.ws.send(JSON.stringify({ op: 'hire.propose', role: 'support', display: 'Support', team: 'sales', at: { x: 9, y: 6 } }));
+    await waitFor(() => a.msgs.some((m) => m.op === 'hire.ack'), 'hire.ack');
+    const { id } = a.msgs.find((m) => m.op === 'hire.ack') as { id: string };
+    const note = findInboxById(vault, id)!;
+    expect(note.data.kind).toBe('hire');
+    expect(note.data).toMatchObject({ x: 9, y: 6 });
+    expect(note.body).toContain('```markdown');
+    expect(note.body).toContain('role: support');
+    expect(note.body).toContain('team: sales');
+
+    const errors = () => a.msgs.filter((m) => m.op === 'error').length;
+    const before = errors();
+    a.ws.send(JSON.stringify({ op: 'hire.propose', role: 'cto', team: 'sales' }));
+    await waitFor(() => errors() > before, 'a refusal for a desk that is taken');
+    expect((a.msgs.filter((m) => m.op === 'error').at(-1) as { message: string }).message).toContain('already has a desk');
+    a.ws.send(JSON.stringify({ op: 'hire.propose', role: 'support_2', team: 'nowhere' }));
+    await waitFor(() => errors() > before + 1, 'a refusal for a room that is not there');
+    expect((a.msgs.filter((m) => m.op === 'error').at(-1) as { message: string }).message).toContain('no team called nowhere');
+    a.ws.send(JSON.stringify({ op: 'hire.propose', role: 'Not An Id', team: 'sales' }));
+    await waitFor(() => errors() > before + 2, 'a refusal for a name that is not an id');
+
+    expect(listInbox(vault).filter((n) => n.data.kind === 'hire')).toHaveLength(1);   // one proposal, three refusals
+    a.ws.close();
   });
 });

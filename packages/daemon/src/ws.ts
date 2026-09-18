@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'node:crypto';
-import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, loadCampusMap, readLayout, writeLayout, validateLayout, layoutMarkdown, EMPTY_LAYOUT, OFFICE_LAYOUT_PATH, type CampusLayout, type DroppedEntry, gatesForRisk, wipLoad, readLedger, moneyReport, money as moneyStr, ownerDecide, proposalOptions, decidableFor, pressureBlock, noteVerdict, needsConfirm, resolvedOutcome, listConversations, readConversation, type Decidable, type Thread, type Turn, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
+import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, loadCampusMap, readLayout, writeLayout, validateLayout, layoutMarkdown, EMPTY_LAYOUT, OFFICE_LAYOUT_PATH, isValidRoleId, stringifyNote, type CampusLayout, type DroppedEntry, gatesForRisk, wipLoad, readLedger, moneyReport, money as moneyStr, ownerDecide, proposalOptions, decidableFor, pressureBlock, noteVerdict, needsConfirm, resolvedOutcome, listConversations, readConversation, type Decidable, type Thread, type Turn, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
 import { budgetRows } from './money.js';
 
@@ -297,7 +297,7 @@ export class WsServer {
     wss.on('connection', (ws) => {
       ws.on('message', (raw) => {
         try {
-          let msg: { op?: string; from?: string; to?: string; text?: string; cursor?: number; id?: unknown; approved?: unknown; chosen?: unknown; comment?: unknown; confirm?: unknown; nodes?: unknown; connections?: unknown } = {};
+          let msg: { op?: string; from?: string; to?: string; text?: string; cursor?: number; id?: unknown; approved?: unknown; chosen?: unknown; comment?: unknown; confirm?: unknown; nodes?: unknown; connections?: unknown; role?: unknown; display?: unknown; team?: unknown; at?: unknown } = {};
           try { msg = JSON.parse(String(raw).slice(0, 200_000)); } catch { return; }
           if (msg.op === 'snapshot') ws.send(JSON.stringify(buildSnapshot(this.deps.vault, this.deps.router)));
           else if (msg.op === 'replay' && msg.from) {
@@ -357,6 +357,32 @@ export class WsServer {
               // office, this one included, is told what the floor now is.
               ws.send(JSON.stringify({ op: 'layout.ack', dropped }));
               this.broadcast({ op: 'layout.changed', layout });
+            }
+          } else if (msg.op === 'hire.propose') {
+            // The dock's Agent flow: the owner drops a desk on the floor and says who sits at it. What comes
+            // back is a proposal like any other — a hire is still decided in Decisions, and the desk is a ghost
+            // until it is — so this refuses only what the office could not have meant: a name that is not an id,
+            // a desk that is taken, a room that does not exist.
+            const role = typeof msg.role === 'string' ? msg.role.trim() : '';
+            const team = typeof msg.team === 'string' ? msg.team.trim() : '';
+            const display = typeof msg.display === 'string' && msg.display.trim() ? msg.display.trim() : role;
+            const spot = msg.at && typeof msg.at === 'object' ? (msg.at as { x?: unknown; y?: unknown }) : null;
+            const at = spot && Number.isFinite(Number(spot.x)) && Number.isFinite(Number(spot.y)) ? { x: Number(spot.x), y: Number(spot.y) } : undefined;
+            const org = loadOrg(this.deps.vault);
+            const refuse = (message: string) => ws.send(JSON.stringify({ op: 'error', message }));
+            if (!isValidRoleId(role)) refuse('hire.propose needs role (a lowercase id, e.g. "support")');
+            else if (org.roles[role] || this.deps.vault.exists(`Roles/${role}.md`)) refuse(`${role} already has a desk`);
+            else if (!org.teams[team]) refuse(`no team called ${team}`);
+            else {
+              // A charter the CEO can finish: the three things the sheet asks for, and no tools — nobody but the
+              // owner may hand out a capability, so an empty list is the honest starting point.
+              const charter = stringifyNote({ role, display, team, tools: [] }, `# Charter\n\n${display} joins ${org.teams[team].name}.\n`);
+              const { id } = createProposal(this.deps.vault, {
+                kind: 'hire', from: 'owner', title: `Hire ${display}`,
+                body: `The owner put a desk in the ${org.teams[team].name} room and asked for ${display} to sit at it.\n\nFill in the tools this charter needs, and link the work that justifies the hire, before approving.\n\n\`\`\`markdown\n${charter}\`\`\`\n`,
+                at,
+              }, 'owner');
+              ws.send(JSON.stringify({ op: 'hire.ack', id }));
             }
           } else if (msg.op === 'conversation.get') {
             if (typeof msg.id !== 'string' || !msg.id) ws.send(JSON.stringify({ op: 'error', message: 'conversation.get needs id (string)' }));
