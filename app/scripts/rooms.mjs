@@ -1,5 +1,5 @@
-// STAND-IN room art. Draws three flat-shaded isometric rooms as SVG and rasterises them to assets/raw/<room>.png.
-// It exists so the canvas can be judged before the real 3D dioramas are made; replace the PNGs and rerun `pnpm assets`.
+// Room art. Draws the flat-shaded isometric rooms as SVG and rasterises them, with a transparent background,
+// to assets/raw/<room>.png. Run `pnpm assets` afterwards to produce the WebP files the stage loads.
 import { mkdir } from 'node:fs/promises';
 import sharp from 'sharp';
 
@@ -69,4 +69,4 @@ await mkdir('assets/raw', { recursive: true });
 for (const [name, svg] of Object.entries(rooms)) {
   await sharp(Buffer.from(svg)).png().toFile(`assets/raw/${name}.png`);
 }
-console.log('stand-in rooms written');
+console.log('rooms written');

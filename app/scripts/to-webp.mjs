@@ -3,7 +3,7 @@
 import { mkdir } from 'node:fs/promises';
 import sharp from 'sharp';
 
-const pick = process.argv[2] ?? 'c'; // which wallpaper candidate becomes the default
+const pick = process.argv[2] ?? 'b'; // which wallpaper candidate becomes the default
 
 await mkdir('public/rooms', { recursive: true });
 await mkdir('assets/candidates', { recursive: true });
@@ -16,7 +16,11 @@ for (const room of ['founder', 'marketing', 'build']) {
 }
 
 for (const letter of ['a', 'b', 'c']) {
-  const image = sharp(`assets/raw/wallpaper-${letter}.jpg`)
+  const source = `assets/raw/wallpaper-${letter}.jpg`;
+  const { width, height } = await sharp(source).metadata();
+  const trim = 0.02; // museum scans keep a sliver of the picture frame at the edges
+  const image = sharp(source)
+    .extract({ left: Math.round(width * trim), top: Math.round(height * trim), width: Math.round(width * (1 - 2 * trim)), height: Math.round(height * (1 - 2 * trim)) })
     .resize({ width: 3840, withoutEnlargement: true })
     .webp({ quality: 82 });
   await image.clone().toFile(`assets/candidates/wallpaper-${letter}.webp`);
