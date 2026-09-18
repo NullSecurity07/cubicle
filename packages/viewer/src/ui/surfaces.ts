@@ -13,7 +13,7 @@ import type { Headline } from './headlines.js';
 import { cut, planBits, briefBits } from './headlines.js';
 import { boardHeadline } from './board.js';
 import type { Ctx, View } from './content.js';
-import { agentView, bankView, browserStream, browserViewerView, briefTitle, byUpdated, callsToday, chatHtml, emptyHtml, esc, feedHtml, isOpen, isRoom, jobView, kindLabel, obsidianUrl, orgView, queueView, roomView, section, teamJobs, terminalViewerView, who } from './content.js';
+import { agentView, bankView, browserStream, browserViewerView, briefTitle, byUpdated, callsToday, chatHtml, emptyHtml, esc, feedHtml, isOpen, isRoom, jobView, kindLabel, obsidianUrl, orgView, queueView, roomView, section, teamJobs, terminalViewerView, vaultBoardLines, who } from './content.js';
 import { decisionView, decisionsView } from './decisions.js';
 import { MESSAGES, messagesView, roomThread } from './messages.js';
 import { md } from './markdown.js';
@@ -153,7 +153,7 @@ for (const def of [
   {
     kind: 'vault', streamKind: 'list', streamId: () => 'jobs',
     // "1 jobs" was a plural bug, and a bare count on a vault reads as money: the head says what is being counted.
-    headline: (s) => { const all = Object.values(s.jobs); const c = (st: string): number => all.filter((j) => j.status === st).length; return { head: `${all.length} job ${all.length === 1 ? 'note' : 'notes'}`, short: String(all.length), lines: [`${c('done')} done · ${c('running')} running`, `${c('blocked')} blocked`, 'Open in Obsidian'] }; },
+    headline: (s) => { const all = Object.values(s.jobs); return { head: `${all.length} job ${all.length === 1 ? 'note' : 'notes'}`, short: String(all.length), lines: [...vaultBoardLines(all.map((j) => j.status)), 'Open in Obsidian'] }; },
     view: (s, ctx) => {
       const all = Object.values(s.jobs).sort(byUpdated);
       const active = all.filter((j) => isOpen(j.status));

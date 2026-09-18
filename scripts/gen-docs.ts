@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { EVENT_TYPES, JobFrontmatter, RoleFrontmatter, TeamFrontmatter, IdeaFrontmatter, DecisionFrontmatter, InboxFrontmatter, Constitution, OwnerPreferences, JobResult, MAX_PROCESS_STEPS, loadGates, StreamFrontmatter, LedgerEntry } from '@cubicle/core';
+import { EVENT_TYPES, JobFrontmatter, RoleFrontmatter, TeamFrontmatter, IdeaFrontmatter, DecisionFrontmatter, InboxFrontmatter, Constitution, OwnerPreferences, JobResult, MAX_PROCESS_STEPS, loadGates, StreamFrontmatter, LedgerEntry, OfficeLayout, OFFICE_LAYOUT_PATH } from '@cubicle/core';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** Where the two files go. Overridable so a test can generate into a temp dir and diff against the committed pair. */
@@ -174,6 +174,13 @@ Body sections: \`## Problem\`, \`## Customers\`, \`## Outcome metric\`, \`## Run
 | \`steps\` | array, 1–${MAX_PROCESS_STEPS} entries | each: \`role\` (string), \`type\` (string, default \`"custom"\`, a job type), \`title\` (string; \`{objective}\` is filled in when the process is expanded), \`for\` (string, optional — who the step's output is for), \`gate\` (string, optional) |
 
 Body: freeform notes, appended to every expanded step's job goal.
+
+${table(`Office layout (${OFFICE_LAYOUT_PATH})`, OfficeLayout as unknown as z.ZodObject<z.ZodRawShape>, { nodes: 'only what differs from the generated campus (`config/world/office.json`), keyed by node id: a desk id (which is a role id for every charter the template ships), a zone id, a prop id, or a resource the owner added — `browser_1`, `doc_1`, `note_1`, `site_1`, or `station_<family>` for one of the five tool stations (`browser`, `email`, `deploy`, `analytics`, `memory`). Each entry may carry `x`/`y` (cells, fractional), `w`/`d` (a zone rect\'s size; a desk keeps the size the campus gave it), `zone`, `label`, `body`, `path`, `tool`, or `removed: true`', connections: '`{ from, to, kind }`, and a connection is a **permission**: `peer` between two desks means those two roles may send each other a `colleague.message`; `access` from a desk to a resource means that role may use it — a tool whose family has a station on the campus needs a line to it. Ends are desk ids or resource ids, and a line has no direction' })}
+The body is generated from the frontmatter — who can message whom, who can use what — so an edit down there is
+overwritten on the next save. A line the daemon cannot apply (an id that is not on the campus, a spot that is
+taken or off the campus, a connection with one end) is dropped on its own with a \`daemon.warning\` naming it;
+the rest of the file stands. A vault that has never had this note gets one on the next daemon start, with no
+node overrides and the wiring the org already implies, so the office opens exactly as it did the day before.
 
 ${table('Inbox note (00 Inbox/*.md)', InboxFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { kind: '`message` is a conversation; the rest are proposals', approved: 'set `true`/`false`; the daemon acts on the next tick and stamps `resolved_at`', chosen: 'for multi-option brand proposals', call: 'stored tool call executed after approval (`spend`, `outbound_batch`, `file_change`)', target: 'file a brand/charter/file change applies to (validated per kind)', board_pending: 'SP8: a `founder_brief` the board has not pressure-tested yet. The brief reaches the inbox from the discovery job\'s own tool call, so this says the `## Pressure test` section is not written and the owner should not be asked to rule on it; the daemon clears it when the board\'s findings are in the brief. Never set under `board_dialogue: brief`' })}
 ${table('Decision note (Decisions/*.md)', DecisionFrontmatter as unknown as z.ZodObject<z.ZodRawShape>, { owner_rating: 'set `up`/`down`; `down` reaches the author as feedback', rating_seen: 'set to the delivery time once a `down` `owner_rating` has been delivered to the author as feedback, so it reaches them exactly once', review_date: 'optional date the author records for a second look, mirroring the `## Review date` body section; nothing schedules it — only `Experiments/` review dates are acted on' }, { rating_seen: 'ISO timestamp' })}

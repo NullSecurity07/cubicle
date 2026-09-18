@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { applySnapshot, emptyState, decideSent, decideAcked, decideFailed, type Snapshot, type InboxRow } from '../state.js';
 import { viewFor } from './surfaces.js';
-import { APPLYING_TEXT, BOARD_SITTING, BOARD_SITTING_CHIP, COMMENT_REQUIRED, readerBody, proposedContent, actionBar, commentRequired, decidableOf, decideStateFor, decisionKey, decisionsView, rowStateChip, verbsFor } from './decisions.js';
+import { APPLYING_TEXT, BOARD_SITTING, BOARD_SITTING_CHIP, COMMENT_REQUIRED, actionBar, commentRequired, decidableOf, decideStateFor, decisionKey, decisionsView, mailWithoutRows, overrulesBoard, planFirst, proposedContent, readerBody, rowStateChip, verbsFor, withoutFileInstructions } from './decisions.js';
 import { THEMES, contrastRatio } from './tokens.js';
 import type { Ctx } from './content.js';
 
@@ -261,8 +261,11 @@ describe('a decision the dispatcher has not finished with', () => {
     expect(html).toContain('>Adopt brief<');
     expect(html).not.toContain('data-key="verdict"');
     expect(verbsFor('adopt')).toEqual({ yes: 'Adopt brief', no: 'Send back' });
-    // `needs_confirm` is the founder brief's alone: nothing else has an adopt bar to relabel.
-    expect(verbsFor('approve', true)).toEqual({ yes: 'Approve', no: 'Reject' });
+    // Overruling the board is one fact and it now reads the same on every screen (dry-run 2026-09-14): a plan the
+    // board sent back used to offer a plain Approve with nothing said about the ruling, while a brief the board
+    // ruled PIVOT REQUIRED on said so in a sentence. The verb changes; the bar does not become a dialog.
+    expect(verbsFor('approve', true)).toEqual({ yes: 'Approve anyway', no: 'Reject' });
+    expect(verbsFor('approve', false)).toEqual({ yes: 'Approve', no: 'Reject' });
   });
 
   it('the chosen option comes back from the note when this session did not pick it', () => {
@@ -291,4 +294,50 @@ describe('the action bar reads in both themes', () => {
       expect(contrastRatio(c.text2, c.surface1), 'the state line').toBeGreaterThanOrEqual(4.5);
     });
   }
+});
+
+
+describe('the reader after the dry-run (2026-09-14)', () => {
+  it('leads a plan verdict with the plan being approved, not with what was said about it', () => {
+    const body = '## Board findings\n\n- The wedge is unproven.\n\n## The plan\n\n- Ship the scanner.\n';
+    expect(planFirst(body).startsWith('## The plan')).toBe(true);
+    expect(planFirst(body)).toContain('## Board findings');
+    expect(planFirst('no plan section here')).toBe('no plan section here');
+  });
+
+  it('shows the cards and not the file’s own instructions for them', () => {
+    const body = 'Pick one:\n\n1. A speed audit\n2. A Shopify plugin\n3. A newsletter\n\nSet `chosen: 1|2|3` and `approved: true` in the frontmatter.\n';
+    const out = withoutFileInstructions(body, true);
+    expect(out).not.toContain('chosen:');
+    expect(out).not.toContain('A speed audit');
+    expect(out).toContain('Pick one:');
+    // with no cards on the screen the note’s own list is all the owner has, so it stays
+    expect(withoutFileInstructions(body, false)).toContain('A speed audit');
+  });
+
+  it('names a returned plan’s verdict on the bar, as a brief’s is named', () => {
+    const returned: InboxRow = { ...approveRow, id: 'pv', kind: 'plan_verdict', board_verdict: 'return', body: '## The plan\n\n- Ship it.\n' };
+    expect(overrulesBoard(returned)).toBe(true);
+    const html = viewFor('decision:pv', applySnapshot(emptyState(), snap({ inbox: [returned] })), ctx).html;
+    expect(html).toContain('>Approve anyway<');
+    expect(html).toContain('data-key="verdict"');
+    expect(html).toContain('The board ruled return on this plan');
+    // a board that passed it changes nothing about the bar
+    expect(overrulesBoard({ ...returned, board_verdict: 'STRONG' })).toBe(false);
+    // and a board still sitting has no ruling to overrule yet
+    expect(overrulesBoard({ ...returned, board_pending: true })).toBe(false);
+  });
+
+  it('keeps the note under the outcome once it is decided', () => {
+    const s2 = applySnapshot(emptyState(), snap({ inbox: [], decided: [{ id: 'd1', kind: 'founder_brief', title: 'founder_brief', path: '00 Inbox/x.md', created: 'c', resolved_at: 'r', approved: true, outcome: 'adopted at Memory/founder-brief.md', body: '# The brief\n\nThe wedge is speed.\n' }] }));
+    const v = viewFor('decision:d1', s2, ctx);
+    expect(v.title).toBe('Founder brief');
+    expect(v.html).toContain('adopted at Memory/founder-brief.md');
+    expect(v.html).toContain('The wedge is speed.');
+  });
+
+  it('never lists the same decision as a row and as mail', () => {
+    const kept = mailWithoutRows([{ text: 'approval needed: Name the company' }, { text: 'sent the weekly note' }], ['Name the company']);
+    expect(kept.map((m) => m.text)).toEqual(['sent the weekly note']);
+  });
 });

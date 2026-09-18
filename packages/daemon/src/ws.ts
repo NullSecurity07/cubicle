@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'node:crypto';
-import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, readLedger, moneyReport, money as moneyStr, ownerDecide, proposalOptions, decidableFor, pressureBlock, noteVerdict, needsConfirm, resolvedOutcome, listConversations, readConversation, type Decidable, type Thread, type Turn, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
+import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, loadCampusMap, readLayout, writeLayout, validateLayout, layoutMarkdown, EMPTY_LAYOUT, OFFICE_LAYOUT_PATH, isValidRoleId, stringifyNote, type CampusLayout, type DroppedEntry, gatesForRisk, wipLoad, readLedger, moneyReport, money as moneyStr, ownerDecide, proposalOptions, decidableFor, pressureBlock, noteVerdict, needsConfirm, resolvedOutcome, listConversations, readConversation, type Decidable, type Thread, type Turn, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
 import { budgetRows } from './money.js';
 
@@ -65,6 +65,8 @@ const cutWhy = (s: string, n = 80): string => {
 export const INBOX_BODY_MAX = 32 * 1024;
 /** How many closed notes the *Decided* segment carries. */
 export const DECIDED_ROWS = 20;
+/** How much of a decided note rides on the snapshot, per row. Enough to re-read; not the whole archive. */
+const DECIDED_BODY_CHARS = 8000;
 
 const cutBody = (s: string): string => (s.length <= INBOX_BODY_MAX ? s : `${s.slice(0, INBOX_BODY_MAX)}\n\n_…truncated; open the note in Obsidian for the rest._\n`);
 
@@ -137,7 +139,7 @@ export interface Snapshot {
     board_pending: boolean;
   }[];
   /** The last 20 notes the dispatcher closed — the Decisions sheet's *Decided* segment. */
-  decided: { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean | null; chosen: number | null; outcome: string }[];
+  decided: { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean | null; chosen: number | null; outcome: string; body: string }[];
   /** Every conversation in the vault, newest first — the Messages view's thread list. */
   conversations: Thread[];
   /** Owner ↔ CEO conversation from 00 Inbox/ message notes (oldest first) — the cabin thread. */
@@ -151,6 +153,20 @@ export interface Snapshot {
   teams: { id: string; name: string; lead: string; members: string[]; mission: string; room?: string; floor?: number; parent?: string; wip: { limits: WipLimits | null; load: Record<WipStage, number> } }[];
   /** The constitution's office → role map, so the viewer animates the right desks. */
   offices: Record<string, string>;
+  /**
+   * `Office/campus.md`: what the owner moved, added and wired, on top of the template campus. The office applies
+   * it over `/office.json`; the same state comes back on every `layout.changed`, so a reconnect and a live edit
+   * land in the same place.
+   */
+  layout: CampusLayout;
+}
+
+/**
+ * A dropped line is the owner's business: they wrote it, in Obsidian or by dragging, and it did not take. One
+ * warning per line, naming it, so the reason reaches the brief and the office's own toast alike.
+ */
+export function warnDropped(vault: Vault, dropped: DroppedEntry[], where: string): void {
+  for (const d of dropped) vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { where, path: OFFICE_LAYOUT_PATH, line: d.line, reason: d.reason } });
 }
 
 export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
@@ -199,6 +215,10 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
       id: n.data.id, kind: n.data.kind, title: (n.body.match(/^#\s+(.+)$/m)?.[1] ?? n.data.kind).trim(), path: n.path, created: n.data.created,
       resolved_at: str(n.data.resolved_at), approved: n.data.approved, chosen: n.data.chosen,
       outcome: resolvedOutcome(n.body),
+      // The note the owner decided, so the reader can keep showing it under the outcome instead of emptying: the
+      // first thing anyone does after adopting a brief is read the brief they adopted. Capped, because these
+      // ride on every snapshot and *Decided* is a receipt, not the archive — `00 Inbox/` is the archive.
+      body: n.body.slice(0, DECIDED_BODY_CHARS),
     }));
   const chat: Snapshot['chat'] = [];
   for (const n of notes.filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo').slice(-40)) {
@@ -246,6 +266,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
     // on the dispatcher. A decided note is off the owner's plate whatever the sheet still shows of it.
     pendingProposals: inbox.filter((r) => !r.pending && !r.board_pending).length,
     brand, inbox, decided, chat, teams, offices: org.offices ?? {},
+    layout: readLayout(vault, loadCampusMap(), org)?.layout ?? EMPTY_LAYOUT,
     conversations: listConversations(vault),
   };
 }
@@ -282,8 +303,8 @@ export class WsServer {
     wss.on('connection', (ws) => {
       ws.on('message', (raw) => {
         try {
-          let msg: { op?: string; from?: string; to?: string; text?: string; cursor?: number; id?: unknown; approved?: unknown; chosen?: unknown; comment?: unknown; confirm?: unknown } = {};
-          try { msg = JSON.parse(String(raw).slice(0, 20_000)); } catch { return; }
+          let msg: { op?: string; from?: string; to?: string; text?: string; cursor?: number; id?: unknown; approved?: unknown; chosen?: unknown; comment?: unknown; confirm?: unknown; nodes?: unknown; connections?: unknown; role?: unknown; display?: unknown; team?: unknown; at?: unknown } = {};
+          try { msg = JSON.parse(String(raw).slice(0, 200_000)); } catch { return; }
           if (msg.op === 'snapshot') ws.send(JSON.stringify(buildSnapshot(this.deps.vault, this.deps.router)));
           else if (msg.op === 'replay' && msg.from) {
             const all = this.deps.vault.events.query({ from: msg.from, to: msg.to });
@@ -328,6 +349,47 @@ export class WsServer {
               ws.send(JSON.stringify({ op: 'decide.ack', id }));
               this.deps.onDecide?.(id);
             }
+          } else if (msg.op === 'layout.set') {
+            // The office sends the whole state, so this is idempotent and a reconnect cannot half-apply a drag.
+            // A payload missing either half is refused rather than read as "the owner emptied the office".
+            if (!msg.nodes || typeof msg.nodes !== 'object' || Array.isArray(msg.nodes) || !Array.isArray(msg.connections)) {
+              ws.send(JSON.stringify({ op: 'error', message: 'layout.set needs nodes (object) and connections (array)' }));
+            } else {
+              const org = loadOrg(this.deps.vault);
+              const { layout, dropped } = validateLayout(loadCampusMap(), org, { version: 1, nodes: msg.nodes, connections: msg.connections });
+              writeLayout(this.deps.vault, layout, 'owner', org);
+              warnDropped(this.deps.vault, dropped, 'layout.set');
+              // The sender learns what would not stick — it has a thing in its hand to spring back — and every
+              // office, this one included, is told what the floor now is.
+              ws.send(JSON.stringify({ op: 'layout.ack', dropped }));
+              this.broadcast({ op: 'layout.changed', layout });
+            }
+          } else if (msg.op === 'hire.propose') {
+            // The dock's Agent flow: the owner drops a desk on the floor and says who sits at it. What comes
+            // back is a proposal like any other — a hire is still decided in Decisions, and the desk is a ghost
+            // until it is — so this refuses only what the office could not have meant: a name that is not an id,
+            // a desk that is taken, a room that does not exist.
+            const role = typeof msg.role === 'string' ? msg.role.trim() : '';
+            const team = typeof msg.team === 'string' ? msg.team.trim() : '';
+            const display = typeof msg.display === 'string' && msg.display.trim() ? msg.display.trim() : role;
+            const spot = msg.at && typeof msg.at === 'object' ? (msg.at as { x?: unknown; y?: unknown }) : null;
+            const at = spot && Number.isFinite(Number(spot.x)) && Number.isFinite(Number(spot.y)) ? { x: Number(spot.x), y: Number(spot.y) } : undefined;
+            const org = loadOrg(this.deps.vault);
+            const refuse = (message: string) => ws.send(JSON.stringify({ op: 'error', message }));
+            if (!isValidRoleId(role)) refuse('hire.propose needs role (a lowercase id, e.g. "support")');
+            else if (org.roles[role] || this.deps.vault.exists(`Roles/${role}.md`)) refuse(`${role} already has a desk`);
+            else if (!org.teams[team]) refuse(`no team called ${team}`);
+            else {
+              // A charter the CEO can finish: the three things the sheet asks for, and no tools — nobody but the
+              // owner may hand out a capability, so an empty list is the honest starting point.
+              const charter = stringifyNote({ role, display, team, tools: [] }, `# Charter\n\n${display} joins ${org.teams[team].name}.\n`);
+              const { id } = createProposal(this.deps.vault, {
+                kind: 'hire', from: 'owner', title: `Hire ${display}`,
+                body: `The owner put a desk in the ${org.teams[team].name} room and asked for ${display} to sit at it.\n\nFill in the tools this charter needs, and link the work that justifies the hire, before approving.\n\n\`\`\`markdown\n${charter}\`\`\`\n`,
+                at,
+              }, 'owner');
+              ws.send(JSON.stringify({ op: 'hire.ack', id }));
+            }
           } else if (msg.op === 'conversation.get') {
             if (typeof msg.id !== 'string' || !msg.id) ws.send(JSON.stringify({ op: 'error', message: 'conversation.get needs id (string)' }));
             else {
@@ -347,6 +409,23 @@ export class WsServer {
   }
 
   clientCount(): number { return this.wss?.clients.size ?? 0; }
+
+  /**
+   * Re-read `Office/campus.md` and tell every office what it says — the path an owner's save in Obsidian takes.
+   * The note is rewritten only when what it holds is not what it means (a dropped line, a stale body), so an
+   * ordinary edit is not answered with a write the owner did not make.
+   */
+  pushLayout(): CampusLayout {
+    const org = loadOrg(this.deps.vault);
+    const read = readLayout(this.deps.vault, loadCampusMap(), org);
+    const layout = read?.layout ?? EMPTY_LAYOUT;
+    if (read) {
+      warnDropped(this.deps.vault, read.dropped, 'owner.edited');
+      if (layoutMarkdown(layout, org) !== this.deps.vault.readTextOrNull(OFFICE_LAYOUT_PATH)) writeLayout(this.deps.vault, layout, 'daemon', org);
+    }
+    this.broadcast({ op: 'layout.changed', layout });
+    return layout;
+  }
 
   broadcast(payload: unknown): void {
     if (!this.wss) return;

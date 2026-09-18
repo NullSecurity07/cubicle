@@ -10,6 +10,11 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./campus": {
+      "development": "./src/campus-map.ts",
+      "types": "./dist/campus-map.d.ts",
+      "import": "./dist/campus-map.js"
     }
   },
   "scripts": {

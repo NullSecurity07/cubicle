@@ -54,5 +54,17 @@ for (const [scene, file] of [['campus', 'concept-campus.png'], ['room', 'concept
   console.log(`shot ${file} (zoom ${zoom.toFixed(3)})`);
 }
 
+// SP9b: what the owner adds and wires, on a bare slab at the two hours. `concept/sp9b.ts` imports the product's
+// own `src/world` modules, so this is not a mock-up of the art — it is the art, with nothing standing in front
+// of it. It is here rather than in `office:shot` because a kiosk that has to be found behind a partition four
+// minutes into a full run is a kiosk nobody will iterate on.
+for (const h of [12, 22]) {
+  await page.goto(`http://127.0.0.1:${PORT}/concept/sp9b.html?hour=${h}`, { waitUntil: 'load' });
+  await page.waitForFunction(() => (window as unknown as { __sp9b?: { ready: boolean } }).__sp9b?.ready === true, null, { timeout: 20_000 });
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(out, `concept-sp9b-${h}.png`) });
+  console.log(`shot concept-sp9b-${h}.png`);
+}
+
 await browser.close();
 vite.kill('SIGTERM');

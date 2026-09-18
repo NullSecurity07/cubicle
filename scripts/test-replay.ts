@@ -2,13 +2,16 @@
  * Acceptance test 8: close the viewer, run work that opens a browser (frames stored), reopen the viewer → office
  * reconstructs from the snapshot; replay of the day shows the stored frames on the billboard.
  * Usage: pnpm test:replay   (headless Chromium; local test page; no external network)
+ *
+ * `test:replay` builds the viewer first: the daemon serves `packages/viewer/dist`, so without that build every
+ * line below is a claim about yesterday's code — which is how a replay that had emptied the office floor passed.
  */
 import http from 'node:http';
 import path from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { scaffoldVault, createJob, readJob, RoleFrontmatter, parseNote } from '@cubicle/core';
+import { scaffoldVault, createJob, readJob, RoleFrontmatter, parseNote, loadCampusMap, loadOrg, validateLayout, writeLayout, readLayout } from '@cubicle/core';
 import type { RoutedChatResult } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig } from '@cubicle/daemon';
@@ -22,6 +25,27 @@ const sitePort = (site.address() as { port: number }).port;
 const { vault } = await scaffoldVault(dir);
 vault.events.emit({ type: 'heartbeat.completed', payload: { id: 'seed' } });
 const jobId = createJob(vault, { type: 'research', title: 'Look at the test page', assigned: 'cmo', goal: 'browse' }, 'cto');
+
+/**
+ * The owner moved a desk before this viewer was ever opened (SP9b).
+ *
+ * Where a sprite sits is the office's own answer to "reconstructed correctly", and after SP9b that answer comes
+ * from `Office/campus.md` rather than from the generated campus. So the note is written here, with one desk two
+ * cells over, and the check below asserts the sprite came back on the *moved* anchor and not on the template's.
+ * A viewer that ignored the note would still pass a role count and would seat that agent inside the furniture.
+ */
+const campus = loadCampusMap();
+const org = loadOrg(vault);
+const MOVED_ROLE = 'cmo';
+const movedDesk = campus.desks[MOVED_ROLE];
+const movedTo = movedDesk ? { x: 20, y: 20 } : null;
+if (movedTo) {
+  const { layout, dropped } = validateLayout(campus, org, { nodes: { [MOVED_ROLE]: movedTo } });
+  if (dropped.length) console.log(`note: the office could not take the desk move (${JSON.stringify(dropped)})`);
+  writeLayout(vault, layout, 'owner', org);
+}
+const wroteLayout = movedTo ? readLayout(vault, campus, org)?.layout.nodes[MOVED_ROLE] ?? null : null;
+console.log('the owner moved a desk before opening:', JSON.stringify({ role: MOVED_ROLE, was: movedDesk ? { x: movedDesk.rect.x0, y: movedDesk.rect.y0 } : null, now: wroteLayout }));
 vault.close();
 // scripted head of growth: open the page, extract, close, finish
 const steps = [{ name: 'browser.open', args: { url: `http://127.0.0.1:${sitePort}/` } }, { name: 'browser.extract', args: {} }, { name: 'browser.close', args: {} }, { name: 'finish', args: { status: 'done', summary: 'looked' } }];
@@ -72,7 +96,7 @@ type Tile = { tx: number; ty: number };
 type Dbg = {
   __cubicle: {
     state: { agents: Record<string, { active: boolean }>; mode: string; surfaces: Record<string, { lastFrame?: string }> };
-    agents: () => { role: string; desk: string; home: Tile; tile: Tile }[];
+    agents: () => { role: string; desk: string; home: { x: number; y: number }; tile: Tile }[];
     desks: () => Record<string, Tile>;
     stand: (name: string) => Tile | null;
     surfaces: () => Record<string, { streamKind: string; streamId: string; lastFrame: string | null; image: string | null }>;
@@ -88,9 +112,20 @@ const desks = await page.evaluate(() => {
   const w = window as unknown as Dbg;
   const all = w.__cubicle.desks();
   // the exact tile homeTile() falls back to when a desk anchor is missing
-  return { door: w.__cubicle.stand('door'), sprites: w.__cubicle.agents().map((a) => ({ role: a.role, desk: a.desk, home: a.home, anchor: all[a.desk] ?? null })) };
+  // `home` is a point and a desk anchor is the seat rounded to a tile, so the comparison is made on tiles.
+  return { door: w.__cubicle.stand('door'), sprites: w.__cubicle.agents().map((a) => ({ role: a.role, desk: a.desk, home: { tx: Math.round(a.home.x), ty: Math.round(a.home.y) }, anchor: all[a.desk] ?? null })) };
 });
 const homeless = desks.sprites.filter((s) => !s.desk || !s.anchor || s.home.tx !== s.anchor.tx || s.home.ty !== s.anchor.ty);
+// And the desk the owner moved: the anchor the office homed that sprite on has to be the note's, not the
+// campus's. `desks()` reports the seat, which travels with the desk, so this compares it against both.
+if (wroteLayout && movedDesk) {
+  const moved = desks.sprites.find((s) => s.role === MOVED_ROLE);
+  const seatWas = { tx: Math.round(movedDesk.seat.x), ty: Math.round(movedDesk.seat.y) };
+  const shift = { x: (wroteLayout.x ?? 0) - movedDesk.rect.x0, y: (wroteLayout.y ?? 0) - movedDesk.rect.y0 };
+  const seatNow = { tx: Math.round(movedDesk.seat.x + shift.x), ty: Math.round(movedDesk.seat.y + shift.y) };
+  console.log(`the moved desk: ${MOVED_ROLE} is homed at ${JSON.stringify(moved?.home)}; the note puts its seat at ${JSON.stringify(seatNow)}, the campus at ${JSON.stringify(seatWas)}`);
+  if (!moved || moved.home.tx !== seatNow.tx || moved.home.ty !== seatNow.ty) { console.log('FAIL: the office did not seat the moved desk where Office/campus.md puts it'); pass = false; }
+}
 const atDoor = desks.sprites.filter((s) => desks.door && s.home.tx === desks.door.tx && s.home.ty === desks.door.ty);
 console.log(`desks: ${desks.sprites.length} sprites, ${homeless.length} not homed on their desk anchor, ${atDoor.length} homed at the door`);
 if (desks.sprites.length < 5 || homeless.length > 0 || atDoor.length > 0) { console.log('sprites without a desk:', JSON.stringify(homeless.concat(atDoor))); pass = false; }
@@ -120,5 +155,5 @@ await browser.close();
 await d.stop();
 site.close();
 rmSync(dir, { recursive: true, force: true });
-console.log(pass ? 'PASS: office reconstructed after reopen; replay carries stored browser frames on the billboard' : 'FAIL');
+console.log(pass ? 'PASS: office reconstructed after reopen, every sprite on its own desk and the moved one on the desk Office/campus.md gives it; replay carries stored browser frames on the billboard' : 'FAIL');
 process.exit(pass ? 0 : 1);

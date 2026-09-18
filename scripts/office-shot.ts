@@ -1,21 +1,27 @@
 /**
- * Visual check for the tower: starts a daemon on a temp vault with a scripted model, opens the viewer in headless
- * Chromium, injects a burst of events, and saves the thirteen scenes of docs/office-visual-checklist.md to <outDir>
+ * Visual check for the campus: starts a daemon on a temp vault with a scripted model, opens the viewer in headless
+ * Chromium, injects a burst of events, and saves the scenes of docs/office-visual-checklist.md to <outDir>
  * (default .shots/).
  * Usage: pnpm office:shot [outDir] — always go through the script, never `tsx scripts/office-shot.ts` directly: the
  * daemon serves the viewer's built `dist/`, so `office:shot` rebuilds the viewer first. A stale `dist/` makes every
  * screenshot a claim about last night's code.
  *
  * The scenes, in the checklist's own order and under its own names:
- *   01-first-run  02-lobby  03-f1  04-f2  05-f3  06-f4  07-elevator  08-board  09-night
- *   09a-tower-day  09b-tower-night  09c-tower-dusk  10-browser-live  11-terminal  12-light-theme  13-stack  14-sales
- *   15-decisions  16-messages
+ *   01-first-run  02-campus  03-exec  04-dev  05-qa  06-research  07-ops  08-board  09-night
+ *   09a-campus-day  09b-campus-night  09c-campus-dusk  10-browser-live  11-terminal  12-light-theme  13-stack
+ *   14-sales  15-decisions  16-messages  17-pantry
+ * SP9 re-scened this. There are no floors to photograph any more: the office is one open plane, so the four floor
+ * shots are the five rail zones that hold people, and the elevator scene is gone with the shaft. What replaced it
+ * is `07-ops` plus a routing assertion — the one thing a single plane can get wrong that a tower could not is a
+ * body walking through a partition, so every route the scenes depend on is read back from the router and checked
+ * against the walls before the shutter opens.
+ *
  * Every scene's hour is pinned (`DAY`, `DUSK`, `NIGHT`) rather than inherited from the wall clock: a run at 19:47
  * made fifteen dusk pictures and a run at 21:43 made fifteen dark ones, and neither proved the daylight palette.
  * Order is not free. `01-first-run` has to come before the Escape that dismisses the card, because the card is shown
  * once per session and never returns; `09-night` has to come before the shell burst that scene 11 needs, because that
- * burst walks the one lit engineer out of her room. The frame-rate reading sits between 09b and 10, on the bare office
- * with no panel over it, so the number is the cost of drawing the tower rather than of compositing an HTML sheet.
+ * burst walks the one lit engineer out of her zone. The frame-rate reading sits between 09c and 10, on the bare
+ * office with no panel over it, so the number is the cost of drawing the campus rather than of compositing a sheet.
  */
 import path from 'node:path';
 import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
@@ -56,7 +62,23 @@ page.on('pageerror', (e) => console.log('[page exception]', String(e).slice(0, 2
 
 type Tile = { tx: number; ty: number };
 type Agent = { role: string; state: string; seat: Tile | null; tile: Tile };
-type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }>; inbox?: { id: string }[]; conversations?: { id: string; kind: string; room?: string }[] }; agents: () => Agent[]; floor: (n: number) => void; currentFloor: () => number; elevator: () => unknown; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void } };
+type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }>; inbox?: { id: string }[]; conversations?: { id: string; kind: string; room?: string }[]; teams?: { id: string; name: string }[] }; agents: () => Agent[]; zone: (id?: string) => string; zones: () => string[]; coffee: (on: boolean) => boolean; route: (role: string, target: string) => Promise<{ x: number; y: number }[] | null>; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; profile: () => Record<string, number>; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void;
+  // SP9b: the office the owner arranges. Every gesture has a call behind it, so a scene can be set up without a
+  // mouse — and the two that are *about* the pointer (the lift, the hover ring) use a real one on purpose.
+  layout: () => { nodes: Record<string, unknown>; connections: { from: string; to: string; kind: string }[] };
+  desks: () => Record<string, Tile>;
+  project: (x: number, y: number, z?: number) => { x: number; y: number };
+  place: (kind: string, at: { x: number; y: number }, extra?: Record<string, unknown>) => boolean;
+  connect: (a: string, b: string) => boolean;
+  select: (id: string | null) => string | null;
+  dock: (on?: boolean) => boolean;
+  pulse: (from: string, to: string) => void;
+  nodeBox: (id: string) => { x: number; y: number; w: number; h: number; cx: number; cy: number } | null;
+  hitAt: (x: number, y: number) => { kind: string; id: string } | null;
+  hire: (at: { x: number; y: number }, req?: { role: string; display: string; team: string }) => boolean;
+  hiring: () => { x0: number; y0: number; x1: number; y1: number } | null;
+  lifted: () => { id: string; rect: { x0: number; y0: number; x1: number; y1: number }; blocked: boolean } | null;
+} };
 /** Run `fn` inside the page against `window.__cubicle`. `fn` crosses over as source text, so it can close over
  *  nothing from this script: whatever it needs (a floor number, an hour) is passed as `arg` and arrives as its
  *  second parameter. */
@@ -79,6 +101,7 @@ const hhmm = (h: number): string => `${String(Math.floor(h)).padStart(2, '0')}:$
 let sceneHour: number | null = null;
 const setHour = async (h: number | null): Promise<void> => { if (h === sceneHour) return; sceneHour = h; await cub((c, v: number | null) => c.setHour(v), h); };
 const shot = async (name: string, settleMs = 900): Promise<void> => { await page.waitForTimeout(settleMs); await page.screenshot({ path: path.join(out, `${name}.png`) }); console.log(`shot ${name} at ${sceneHour === null ? 'the wall clock' : hhmm(sceneHour)}`); };
+void hhmm;
 const failures: string[] = [];
 const fail = (m: string): void => { failures.push(m); console.log(`FAIL: ${m}`); };
 /** A pushable browser frame, drawn in the page. `page.evaluate` is handed source text, not a function: tsx rewrites
@@ -96,13 +119,24 @@ const closePanels = async (): Promise<void> => {
   // Four Escapes with the stack still up is a stuck panel, and every scene after this one would be taken through it.
   fail(`a panel would not close: ${JSON.stringify(await cub((c) => c.stack().map((s) => s.kind)))} still on the stack after four Escapes`);
 };
-/** `floor(n)` claims a floor; `currentFloor()` is what the viewer thinks it is showing. A scene named `05-f3` that
- *  frames F4 is a lie the checklist cannot catch, so the two have to agree before the shutter opens. */
-const gotoFloor = async (n: number, scene: string): Promise<void> => {
-  await cub((c, f: number) => c.floor(f), n);
-  await page.waitForTimeout(700);
-  const at = await cub((c) => c.currentFloor());
-  if (at !== n) fail(`${scene}: floor(${n}) left the viewer on floor ${at}`);
+/** `zone(id)` frames a zone; `zone()` is what the viewer thinks it is over. A scene named `05-qa` that frames
+ *  Research is a lie the checklist cannot catch, so the two have to agree before the shutter opens. */
+const gotoZone = async (id: string, scene: string): Promise<void> => {
+  await cub((c, z: string) => { c.zone(z); }, id);
+  await page.waitForTimeout(900);
+  const at = await cub((c) => c.zone());
+  if (at !== id) fail(`${scene}: zone(${id}) left the viewer over ${at}`);
+};
+/**
+ * The one thing a single plane can get wrong that a tower could not: a body crossing a partition instead of walking
+ * round it. The router hands back the corners of a route; every corner has to be on the floor and every leg has to
+ * clear the walls, which the router itself is the authority on — so ask it for the route and refuse an empty one.
+ */
+const checkRoute = async (role: string, target: string, scene: string): Promise<void> => {
+  const r = await cub((c, a: { role: string; target: string }) => c.route(a.role, a.target), { role, target });
+  if (!r || r.length === 0) { fail(`${scene}: no route from ${role} to ${target} — the campus is not connected there`); return; }
+  const legs = r.length - 1;
+  console.log(`route ${role} -> ${target}: ${legs} leg${legs === 1 ? '' : 's'}, ${r.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}`);
 };
 /** Poll `agents()` until `ok`, or give up. Returns whether it settled — the caller decides how loud that is. */
 const waitForAgents = async (ok: (a: Agent[]) => boolean, timeoutMs: number): Promise<boolean> => {
@@ -136,6 +170,11 @@ const FPS_GATE_MAX_LOAD = 8;
 try {
   await page.goto(`http://127.0.0.1:${webPort}/?token=${token}`, { waitUntil: 'load' });
   await page.waitForTimeout(2500);
+  // Hold everyone at their desks for the run. An idle person wanders off for a coffee after ninety seconds in the
+  // product, which is right there and wrong here: this script takes minutes, and the pantry quietly collected a
+  // dozen people who were meant to be in the zone being photographed (visual QA S9-7). Scene 17 is a pantry chat
+  // driven by events, which this does not touch.
+  await cub((c) => c.coffee(false));
 
   // 01: an empty company asks the one question (spec §12 d/e). The card is centred over the office and is shown once
   // per session, so it is the first scene and the Escape that dismisses it comes after — never before.
@@ -147,10 +186,12 @@ try {
   if (await page.$eval('#firstrun', (el) => !(el as HTMLElement).hidden).catch(() => false)) fail('01: Escape did not dismiss the first-run card');
   await closePanels();   // if the card handed over to the cabin sheet, pop it the same way a user would
 
-  // 02: the lobby with the whole tower's ground floor
-  await gotoFloor(1, '02');
-  await shot('02-lobby');
-  // a burst of work so every floor has something to show: CMO browses (F4), backend engineer shells (F2), CEO speaks (F1), QA lead deploys (F3)
+  // 02: the whole campus at once — one open plane, every zone in the frame. This is the shot the owner sees first.
+  await cub((c) => { c.zone('campus'); });
+  await page.waitForTimeout(900);
+  await shot('02-campus');
+  // a burst of work so every zone has something to show: CMO browses (Ops), backend engineer shells (Dev),
+  // CEO speaks (Executive), QA lead deploys (QA)
   const ev = d.vault.events;
   const g = 'job_demo_cmo';
   ev.emit({ type: 'job.queued', agent: 'ceo', job: g, payload: { type: 'growth.post', title: 'Find a channel', assigned: 'cmo' } });
@@ -169,19 +210,24 @@ try {
   ev.emit({ type: 'agent.spoke', agent: 'ceo', job: null, payload: { to: 'owner', text: 'I proposed the name WeekPlate — approve it in 00 Inbox/.' } });
   createProposal(d.vault, { kind: 'brand_change', from: 'ceo', target: 'Brand/name.md', title: 'Name the company: WeekPlate', body: 'x' }, 'ceo');
   await page.waitForTimeout(5000);
-  // 03..06: one shot per floor. 04 is also the reduced-motion scene: the checklist asks that walking and the elevator
-  // survive `prefers-reduced-motion` and only the easing go, and nothing else in the run exercises it. It is set for
-  // this scene alone and cleared straight after, so the eleven scenes around it keep the product's real motion.
-  for (const n of [1, 2, 3, 4]) {
-    const scene = `0${n + 2}-f${n}`;
-    if (n === 2) await page.emulateMedia({ reducedMotion: 'reduce' });
-    await gotoFloor(n, scene);
+  // The walk the burst set off, checked against the walls before any of it is photographed: the backend engineer
+  // leaves the Dev studio for the terminal, which is a route across two partitions and the widest one in the run.
+  await checkRoute('backend_engineer', 'terminal', '02');
+  await checkRoute('cmo', 'billboard', '02');
+
+  // 03..07: one shot per rail zone that holds people. 04 is also the reduced-motion scene: the checklist asks that
+  // walking survives `prefers-reduced-motion` and only the easing go, and nothing else in the run exercises it. It
+  // is set for this scene alone and cleared straight after, so the scenes around it keep the product's real motion.
+  const ZONE_SCENES: [string, string][] = [['03-exec', 'boardroom'], ['04-dev', 'dev'], ['05-qa', 'qa'], ['06-research', 'research'], ['07-ops', 'ops']];
+  for (const [scene, zone] of ZONE_SCENES) {
+    if (scene === '04-dev') await page.emulateMedia({ reducedMotion: 'reduce' });
+    await gotoZone(zone, scene);
     await shot(scene);
-    if (n === 2) {
+    if (scene === '04-dev') {
       // Prove the shot really was taken under the preference rather than trusting the call: the duration tokens are
       // what reduced motion moves, and `--d-open` is 200 ms normally and 1 ms under it.
-      const d = await page.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--d-open').trim()`);
-      if (d !== '1ms') fail(`04: reduced motion is not in effect (--d-open is ${String(d)}), so the scene does not prove the line`);
+      const dur = await page.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--d-open').trim()`);
+      if (dur !== '1ms') fail(`04: reduced motion is not in effect (--d-open is ${String(dur)}), so the scene does not prove the line`);
       await page.emulateMedia({ reducedMotion: 'no-preference' });
     }
   }
@@ -189,67 +235,40 @@ try {
   // was ten kilobytes of log per run and nobody read it.
   console.log('busy:', (await cub((c) => c.agents())).filter((a) => a.state !== 'idle_at_desk' && a.state !== 'offline').map((a) => `${a.role}:${a.state}`).join(' ') || 'nobody');
 
-  // 07: a cross-floor ride: a failed job on F2 sends the COO (F4) down to the engineer's desk
+  // The failure that used to call the lift: it still sends the COO across the campus, and on one plane that walk is
+  // the whole of what the elevator scene used to prove. There is no shaft to photograph, so this is an assertion
+  // rather than a scene — the route from her desk in Ops to the engineer's in Dev crosses the lobby and four
+  // partitions, and a router that cannot find it is a campus that is not connected.
   ev.emit({ type: 'job.failed', agent: 'backend_engineer', job: e, payload: { reason: 'step_limit' } });
-  // The COO walks from her office on F4 to the shaft before the car moves at all, and how long that walk takes depends
-  // on the machine. Wait for the ride itself — a car in motion — rather than for a guessed number of milliseconds, or
-  // the shot catches an idle shaft and proves nothing. `moving` specifically, not merely `waiting`: this shot is the
-  // one that proves the doors stay shut while the car travels, and a car still parked proves nothing.
-  // A raw Playwright timeout here would skip the daemon shutdown below, so turn it into a throw the try/finally owns.
-  //
-  // With a rider aboard, not merely moving: the car's first move is the empty run up to fetch the COO, and a shot
-  // taken then is an empty cab. This scene is also the only evidence for the rider sitting *inside* the car rather
-  // than hanging through its floor into the shaft (visual QA R-M7), and an empty cab proves neither.
-  await page.waitForFunction(() => { const e = (window as unknown as Cub).__cubicle.elevator() as { status: string; riders: unknown[] }; return e.status === 'moving' && e.riders.length > 0; }, undefined, { timeout: 40000, polling: 50 })
-    .catch(() => { throw new Error('07: the car never carried anyone'); });
-  const elev = await cub((c) => c.elevator()) as { row: number };   // logged: the framing below is read off it
-  console.log('elevator:', JSON.stringify(elev));
-  // A floor fit is zoom 1, at which the car is 48 px tall and its doors are a smear. This shot is the one that has to
-  // prove the doors stay shut in transit, so frame the shaft itself; `row` is where the car was a moment ago, and it
-  // keeps climbing, so centre one tile ahead of it and settle briefly. `zoom`/`center` set the camera outright while
-  // `floor(n)` tweens it, so they cannot be combined: a `floor(n)` here would tween straight back over them.
-  await cub((c) => c.zoom(3));
-  // The car covers about nine tiles a second, so a row read even a fraction of a second early frames it off-centre:
-  // zoom first, then read the row and centre on it in the same step as the shot.
-  //
-  // The frame is the car *and the landing it is passing*, not the car and the sky: the old centre (52.5, row + 1.5)
-  // put a third of the shot outside the building, and the checklist line this scene exists for — "the doors are
-  // closed while the car is moving" — needs a set of doors in it (visual QA C5). The landing doors sit at row
-  // y0 + 11 of each floor, so 13, 26, 39 and 52; the camera centres between the car and the nearest of them, and
-  // on column 45 so the corridor, the doors and the shaft share the frame.
-  await cub((c) => {
-    const r = (c.elevator() as { row: number }).row;
-    const landing = [13, 26, 39, 52].reduce((best, d) => (Math.abs(d - r) < Math.abs(best - r) ? d : best), 13);
-    c.center(45, (r + 1.5 + landing) / 2);
-  });
-  await shot('07-elevator', 0);
+  await checkRoute('coo', 'dev', '07');
 
-  // 08: a board meeting on F1 with the owner in the chair
+  // 08: a board meeting in the executive suite, with the owner in the chair
   const board = ['ceo', 'advisor_skeptic', 'advisor_investor', 'advisor_customer'];
   ev.emit({ type: 'meeting.opened', agent: 'ceo', job: null, payload: { id: 'm1', room: 'board', participants: board, agenda: 'Two jobs failed' } });
   // Wait for the four to actually take their chairs, not for a guessed 4.5 s: how long the walk to the table takes
   // depends on the machine, and a fixed wait either shoots an empty table on a slow box or idles on a fast one.
   //
   // Seated, not "has been given a seat". A seat is assigned the moment the meeting opens, so waiting on `seat`
-  // alone released the shutter while people were still walking — and the CEO, whose office is at the far end of
-  // F1, was at column 9 heading for column 35 when the picture was taken. Three advisors and an empty chair, in
+  // alone released the shutter while people were still walking — and the CEO, whose cabin is the next zone along,
+  // was still crossing the lobby when the picture was taken. Three advisors and an empty chair, in
   // the scene that is meant to show the board, and the one scene that can show the CEO's own ring (R-M1).
   // On the seat tile, not merely `state !== 'walking'`: the reducer keeps a meeting's participants in `walking`
   // until the meeting turns start, so that test never came true and the wait timed out on a table that was full.
   const seated = (a: Agent | undefined): boolean => !!a && a.seat != null && a.tile.tx === a.seat.tx && a.tile.ty === a.seat.ty;
   if (!(await waitForAgents((ags) => board.every((r) => seated(ags.find((a) => a.role === r))), 30000))) fail('08: the board never took their seats within 30 s');
   console.log(`board: ${JSON.stringify(await cub((c, rs: string[]) => c.agents().filter((a) => rs.includes(a.role)).map((a) => ({ r: a.role, s: a.state, t: a.tile, seat: a.seat })), board))}`);
-  await gotoFloor(1, '08');
-  await page.waitForTimeout(800);
-  // The checklist asks this shot for the owner's "You" label, the advisors' glasses and crisp text at zoom 3, and a
-  // floor fit is zoom 1: at that size a head is eight pixels and none of the three can be judged. So frame the table.
-  // `zoom`/`center` set the camera outright while `floor(n)` tweens it — a `floor(n)` after them tweens straight back.
-  const seat = await cub((c) => c.stand('boardroom'));
-  if (!seat) fail('08: the map has no stand tile for the boardroom, so the shot is a floor fit');
-  await cub((c) => c.zoom(3));
-  // Two rows above the seat, not one: at one the whiteboard's own caption plate sat under the top bar, in the scene
-  // that is meant to show a bubble, four faces and crisp type together.
-  if (seat) await cub((c, s: Tile) => c.center(s.tx, s.ty - 2), seat);
+  await gotoZone('boardroom', '08');
+  // The checklist asks this shot for the owner's "You" label, the advisors' glasses and crisp type close in, and a
+  // zone fit is about zoom 1.6: at that size a head is a dozen pixels and none of the three can be judged. So frame
+  // the table itself. `zoom`/`center` set the camera outright while `zone(id)` tweens it — a `zone(id)` after them
+  // would tween straight back over them.
+  //
+  // On the table, not on the zone's stand tile. The stand is the walkway *below* the board room, four cells south
+  // of the table, and centring on it put the eight chairs in the top-right corner with half of them off the frame
+  // in the one scene that is about the board (visual QA S9-8). `board_table` is {5.8, 3.2}..{12.2, 5.6} in
+  // scripts/world/campus.ts, so its middle is (9, 4.4); a step south leaves room for the whiteboard above it.
+  await cub((c) => c.zoom(2.2));
+  await cub((c) => c.center(9, 5.4));
   // The spoken turn goes last, not with `meeting.opened`: a bubble times out after a few seconds, and the walk to the
   // table plus the camera framing above eat more than that. Emitted here, it is still up when the shutter opens —
   // which is the point, since this is the shot that has to show a bubble not colliding with a room label.
@@ -257,38 +276,37 @@ try {
   await shot('08-board', 1200);
 
   // 09: the same office at night: lamps only where someone works
-  // Lamps light a room that holds an agent in `working` or `talking` state, and scene 07's failure sent the only
-  // worker on F2 idle. Put a frontend engineer on a job — queued and started, with no tool call, so she stays at her
-  // desk in the Dev room instead of walking off to the terminal — and the Dev room is lit while Sales beside it is not.
+  // Lamps light a desk whose agent is `working` or `talking`, and the failure above sent the only worker in Dev
+  // idle. Put a frontend engineer on a job — queued and started, with no tool call, so she stays at her desk in the
+  // Dev studio instead of walking off to the terminal — and Dev is lit while the QA lab beside it is not.
   const w = 'job_demo_night';
   ev.emit({ type: 'job.queued', agent: 'dev_manager', job: w, payload: { type: 'engineer.ship', title: 'Fix the build', assigned: 'frontend_engineer' } });
   ev.emit({ type: 'job.started', agent: 'frontend_engineer', job: w, payload: { type: 'engineer.ship', title: 'Fix the build' } });
   await setHour(NIGHT);
-  await gotoFloor(2, '09');
+  await gotoZone('dev', '09');
   await shot('09-night', 1200);
 
-  // 09a/09b: the whole tower at once, day and night. This is the only framing that shows all four floors, the lobby
-  // and the surround outside the building together, so it is where the floor tints are compared against each other
-  // rather than remembered between shots, and where the night tint has to cover the surround and the minimap too.
-  // Reached through the `0` key rather than a camera call, because the fit is a key path the owner has and a zoom set
-  // from the script would not prove `fitTower` still works.
-  // Midday for the day half of the pair: without it `09a-tower-day` was taken on the wall clock, which for every
-  // run of this script so far has been dusk — so the day/night comparison the checklist asks for compared dusk to
-  // night, and `PALETTE.sky.day` appeared in none of the fifteen scenes (visual QA I8).
+  // 09a/09b/09c: the whole campus at once, at the three hours the light is written for. This is the only framing
+  // that holds every zone together, so it is where the zone accents are compared against each other rather than
+  // remembered between shots, and where the hour's light has to cover the plane, the glass and the minimap as one
+  // picture. Reached through the `0` key rather than a camera call, because the fit is a key path the owner has and
+  // a zoom set from the script would not prove the campus fit still works.
   await setHour(DAY);
   await page.keyboard.press('0');
-  await shot('09a-tower-day', 1200);
+  await page.waitForTimeout(400);
+  if ((await cub((c) => c.zone())) !== 'campus') fail('09a: `0` did not fit the whole campus');
+  await shot('09a-campus-day', 1200);
   await setHour(23);
-  await shot('09b-tower-night', 1200);
-  // 09c: the same framing at dusk. The evening ramp is the one C2 claim that was never a picture — every delivered
-  // scene was night, so the sky was recomputed from the stops and argued about instead of looked at (visual QA
-  // R-I4). The tower fit is where to look at it: two thirds of that frame is sky.
+  await shot('09b-campus-night', 1200);
+  // 09c: the same framing at dusk. Dusk has to paint the campus and not only the glass — the spec's line is that the
+  // hour changes colour temperature, window glow and the desk lamps together, and a dusk that stops at the windows
+  // is a noon office behind a sunset.
   await setHour(DUSK);
-  await shot('09c-tower-dusk', 1200);
+  await shot('09c-campus-dusk', 1200);
   await setHour(DAY);
-  // Back to a floor fit before the frame rate is read: the tower fit draws the whole map and is a different, heavier
-  // subject, and changing what the gate measures is not this scene's business.
-  await gotoFloor(2, '09b');
+  // Back to a zone fit before the frame rate is read: the campus fit draws the whole plane and is a different,
+  // heavier subject, and changing what the gate measures is not this scene's business.
+  await gotoZone('dev', '09');
 
   // The frame rate, measured here rather than at the end: every scene from 10 on has an HTML sheet over the canvas,
   // and `actualFps` is a rolling average, so a reading taken there would be about compositing, not about the office.
@@ -310,6 +328,10 @@ try {
   // number nobody can interpret a week later. (35 fps at load 16, then 60 on a rerun, is what prompted this.)
   load1m = oneMinuteLoad();
   console.log(`fps: ${fps} (1-min load ${load1m.toFixed(2)}, ${cpus().length} cores)`);
+  // Where the frame went, so a number under the gate names the pass to look at rather than starting an argument.
+  await cub((c) => c.profile());
+  await page.waitForTimeout(2000);
+  console.log('profile (ms per frame):', JSON.stringify(await cub((c) => c.profile())));
 
   // 10: the browser viewer, live. Three pushed frames give it a seq, an fps readout and the amber LIVE badge; the
   // 'demo' session opened in the burst above is still active, so nothing here has to fake the badge.
@@ -336,11 +358,11 @@ try {
   await page.waitForTimeout(1200);
   await cub((c) => c.open('terminal'));
   await page.waitForTimeout(700);
-  // On the Dev room, not on the terminal's own wall: `focusOn` centres the screen, which is in Dev's top row, so
-  // the frame held half of F3 above it and cut the QA row's names at the top edge (visual QA R2-M8). F2's rooms
-  // run rows 29-40, so 35 is the floor's middle and the frame is exactly one floor.
-  await cub((c) => c.zoom(3));
-  await cub((c) => c.center(32, 35));
+  // On the Dev studio, not on the terminal's own wall: `focusOn` centres the screen itself, which sits on Dev's
+  // north partition, so half the frame is the corridor above it. Dev runs columns 2.6–15.2 and rows 22.6–34, so
+  // its own middle is (9, 28) and the frame is the studio with the terminal along its top edge.
+  await cub((c) => c.zoom(2.6));
+  await cub((c) => c.center(9, 28));
   // The caret blinks on a 530 ms 50 %-duty animation, so half of all shutters catch it invisible — and this is the
   // scene the checklist leans on for it. Under `prefers-reduced-motion` the stylesheet turns that animation off and
   // the caret stays lit (app.css: "the caret stays lit, the LIVE badge stays solid"), which is what a still wants.
@@ -411,17 +433,14 @@ try {
   await shot('13-stack', 700);
   await closePanels();
 
-  // 14: the Sales room at a zoom that draws desk names. The five placeholders were renamed in the first wave and
-  // appeared in no delivered scene, because Sales sits at the right-hand end of F2 and the floor elevation draws
-  // no names (visual QA R-M10). `zoom`/`center` set the camera outright; `floor(n)` would tween over them.
+  // 14: the Revenue floor at a zoom that draws desk names. Sibling desks have to be told apart there — the row is
+  // five people with one job title between them, and a column of "Sales …" is the failure this scene watches for.
+  // `zoom`/`center` set the camera outright; a `zone(id)` would tween over them.
   await cub((c) => c.theme('dark'));
   await page.waitForTimeout(300);
-  await cub((c) => c.zoom(3));
-  // On the room the shot names. Centring left of it to trim the lift shaft out of the right of the frame put the
-  // Dev room under the left edge instead, and a name cut by the viewport reads as a name cut by the label budget
-  // (visual QA R2-M8). Sales runs columns 39-50, so its own middle is 44.5; the shaft and the sky past the
-  // building's corner are what the right of the frame is, and they are honestly what is there.
-  await cub((c) => c.center(44.5, 35));
+  await cub((c) => c.zoom(2.6));
+  // On the zone the shot names: Sales runs columns 35.4–49.8 and rows 16.6–33.8, so its own middle is (42.6, 25.2).
+  await cub((c) => c.center(42.6, 25.2));
   await shot('14-sales', 900);
   await closePanels();
 
@@ -562,6 +581,224 @@ try {
   if (bubbles < 3) fail(`16: the conversation pane shows ${bubbles} bubbles, so there is no conversation to look at`);
   await shot('16-messages', 900);
   await closePanels();
+
+  // 17: the pantry, mid-chat. The spec asks for it by name, and it is the one scene where two people stand and talk
+  // to each other rather than to a screen — the counter, the stools, two bubbles, and nobody at a desk.
+  //
+  // Driven by the three meeting events `runPantryChat` emits, not by the daemon's own pantry loop: this run was
+  // started with `disablePantry` so that no tick could walk a sprite out of an earlier scene, and the events are
+  // what the office actually reads either way.
+  // `cmo`, not `growth`: the campus has no `growth` desk (the roster runs cmo / cgo / sales_1..5), so the second
+  // sprite never existed, `inPantry` could never come true and this check had been failing on its own since the
+  // harness was re-scened. Pre-existing, and one word to put right rather than hand over red (SP9b QA).
+  const pantryPair = ['qa_lead', 'cmo'];
+  ev.emit({ type: 'meeting.opened', agent: 'qa_lead', job: null, payload: { id: 'p1', room: 'pantry', participants: pantryPair, agenda: 'coffee' } });
+  // Wait for both to actually be in the pantry rather than guessing at the walk: QA is two zones away and how long
+  // that crossing takes depends on the machine. On their position, not on their state — the reducer keeps a
+  // meeting's participants `walking` until the turns start, so waiting on the state never came true (the same trap
+  // the board scene fell into). The pantry is {2.6, 13.2}..{14.6, 20.4} in scripts/world/campus.ts.
+  const inPantry = (a: Agent | undefined): boolean => !!a && a.tile.tx >= 2 && a.tile.tx <= 15 && a.tile.ty >= 13 && a.tile.ty <= 21;
+  if (!(await waitForAgents((ags) => pantryPair.every((r) => inPantry(ags.find((a) => a.role === r))), 40000))) fail('17: the pair never reached the pantry counter within 40 s');
+  await gotoZone('pantry', '17');
+  await cub((c) => c.zoom(2.2));
+  await cub((c) => c.center(8.6, 17.4));
+  // The turns go last: a bubble times out after a few seconds and the walk plus the framing above eat more than that.
+  ev.emit({ type: 'meeting.turn', agent: 'growth', job: null, payload: { id: 'p1', round: 1, text: 'What if the plan came as a printable page?' } });
+  ev.emit({ type: 'meeting.turn', agent: 'qa_lead', job: null, payload: { id: 'p1', round: 2, text: 'Then the thing to test is whether they cook from it on Wednesday.' } });
+  await shot('17-pantry', 1200);
+  ev.emit({ type: 'meeting.closed', agent: 'qa_lead', job: null, payload: { id: 'p1', room: 'pantry', decision: 'IDEA: The plan as a printable fridge page' } });
+  await closePanels();
+
+  /* ── SP9b: the campus the owner can rearrange, staff and wire ──────────────────────────────────────────── */
+
+  // 18: a wired campus. Everything the owner can add is on the floor and everything a line can mean is drawn:
+  // peers between desks, access from a desk to a kiosk, a board, a sticky, the site and a tool station. This is
+  // the picture the spec is about, so it is framed close enough to read a plate and wide enough to hold the lines.
+  await setHour(DAY);
+  // The lobby, which is where a kiosk belongs anyway and is the one piece of open floor with nothing standing in
+  // front of it. The first row tried sat a cell north of the QA lab's own partition and screen, and on a plane
+  // sorted by x + y a screen one cell nearer the camera covers everything behind it (visual QA SP9b-3).
+  //
+  // Each is tried at a few spots rather than one: a hard-coded cell that a later campus change fills is a scene
+  // that quietly stops being about anything. Nothing in here may be a *named* inner function — tsx rewrites those
+  // to a `__name` helper the page does not have — so the loop is written out rather than factored into one.
+  const placed = await cub((c) => {
+    const want: [string, number[][], Record<string, unknown>][] = [
+      ['browser', [[18, 15], [17.5, 15], [17, 15]], {}],
+      ['doc', [[21.5, 13.5], [22, 13.5], [21.5, 14]], { path: 'Plans/plan.md', label: 'Plan' }],
+      ['note', [[24, 13.5], [24, 14], [23.5, 13.5]], { body: 'Ask the CFO about runway' }],
+      ['site', [[19, 16.5], [19.5, 16.5], [19, 17]], {}],
+      ['station', [[23, 16.5], [23.5, 16.5], [23, 17]], { tool: 'deploy' }],
+    ];
+    const ok: Record<string, boolean> = {};
+    for (const [kind, spots, extra] of want) {
+      ok[kind] = false;
+      for (const [x, y] of spots) if (!ok[kind] && c.place(kind, { x, y }, extra)) ok[kind] = true;
+    }
+    return ok;
+  });
+  console.log('placed:', JSON.stringify(placed));
+  for (const [k, v] of Object.entries(placed)) if (!v) fail(`18: a ${k} would not go down on the open floor beside the Dev studio`);
+  // The company arrives already wired — the migration draws the room's own lines and every reporting line — so
+  // what is asserted is that the line is *there*, not that this call is the one that drew it. `connect` answers
+  // false for a pair that is connected already, which is right at the console and says nothing about the scene.
+  const wired = await cub((c) => {
+    const want: [string, string][] = [
+      ['cto', 'backend_engineer'], ['dev_manager', 'backend_engineer'], ['cto', 'dev_manager'],
+      ['dev_manager', 'frontend_engineer'], ['backend_engineer', 'browser_1'], ['dev_manager', 'doc_1'],
+      ['frontend_engineer', 'station_deploy'], ['qa_lead', 'site_1'],
+    ];
+    const missing: string[] = [];
+    for (const [a, b] of want) {
+      c.connect(a, b);
+      let there = false;
+      for (const cn of c.layout().connections) if ((cn.from === a && cn.to === b) || (cn.from === b && cn.to === a)) there = true;
+      if (!there) missing.push(`${a} → ${b}`);
+    }
+    return missing;
+  });
+  console.log('wired:', JSON.stringify(wired));
+  for (const m of wired) fail(`18: the office has no line ${m}`);
+  const cns = await cub((c) => c.layout().connections.length);
+  if (cns < 8) fail(`18: the office holds ${cns} connections after eight were asked for`);
+  // Five things standing across the walkway must not wall the QA lab off from the rest of the campus: what the
+  // owner puts down blocks the floor under it (`applyLayout` stamps the walk grid), and a router that can no
+  // longer reach the lobby is an office nobody can cross.
+  await checkRoute('qa_lead', 'lobby', '18');
+  await checkRoute('backend_engineer', 'terminal', '18');
+  // One desk is selected, because that is when there is anything to see: the office draws the lines that are
+  // *about* what the owner is looking at, and at rest it draws none (`edgesShown`). The office with nothing
+  // picked — the campus as it sits — is `09a-campus-day`, which is where that line of the checklist is read.
+  await cub((c) => c.select('qa_lead'));
+  await cub((c) => c.zoom(0.95));
+  await cub((c) => c.center(19, 18));
+  await page.waitForTimeout(5200);                       // let the placement toast go: it is not part of this scene
+  await shot('18-wired-campus', 900);
+
+  // 18b: the five things themselves, close enough to see what each one is. A kiosk that reads as a grey box at a
+  // zone fit is a kiosk nobody will recognise, and this is the only scene that can say otherwise.
+  await cub((c) => c.select(null));
+  await cub((c) => c.zoom(1.75));
+  await cub((c) => c.center(21, 15));
+  // All five in one frame, and every one of them named: a scene that shows three of the five things the spec is
+  // about is a scene that cannot answer the question it was taken for.
+  const named = await cub((c) => {
+    const out: Record<string, boolean> = {};
+    for (const id of ['browser_1', 'doc_1', 'note_1', 'site_1', 'station_deploy']) out[id] = !!c.nodeBox(id);
+    return out;
+  });
+  console.log('18b in frame:', JSON.stringify(named));
+  for (const [id, ok] of Object.entries(named)) if (!ok) fail(`18b: ${id} is not on the campus`);
+  await shot('18b-resources', 900);
+
+  // 19: a desk in the air. A real press and a real drag, because the lift, the ghost and the red tint are what the
+  // pointer path draws and nothing else does — `drag()` moves a desk without ever putting one in the air.
+  await cub((c) => c.zoom(1.6));
+  await cub((c) => c.center(21, 27));
+  await page.waitForTimeout(700);
+  // On the desk, not on the seat: `desks()` hands back where somebody *sits*, people win every hit test, and a
+  // press there is a press on them — which is a camera pan, and a scene of nothing at all (visual QA SP9b-1).
+  const deskAt = await cub((c) => c.nodeBox('qa_lead'));
+  if (!deskAt) fail('19: the QA lead has no desk on the campus');
+  else {
+    const under = await cub((c, p: { x: number; y: number }) => c.hitAt(p.x, p.y), { x: deskAt.cx, y: deskAt.cy });
+    if (under?.kind !== 'thing') fail(`19: the point the drag presses on is ${under ? `${under.kind}:${under.id}` : 'nothing'}, not a thing to pick up`);
+    await page.mouse.move(deskAt.cx, deskAt.cy);
+    await page.waitForTimeout(250);                     // the port ring comes up on hover
+    await page.mouse.down();
+    // Onto open floor: the ordinary case, where the ghost says yes. The QA lab is a dense room, so the spot is
+    // looked for rather than assumed — the office answers `lifted().blocked` on every move, and a desk in the
+    // air over another desk is 19b's picture, not this one.
+    let inAir: { id: string; rect: { x0: number; y0: number; x1: number; y1: number }; blocked: boolean } | null = null;
+    for (const [dx, dy] of [[-120, 96], [-190, 140], [-60, 150], [-250, 60], [-150, 210], [-320, 120]]) {
+      await page.mouse.move(deskAt.cx + dx, deskAt.cy + dy, { steps: 8 });
+      await page.waitForTimeout(160);
+      inAir = await cub((c) => c.lifted());
+      if (inAir && !inAir.blocked) break;
+    }
+    // The scene is a photograph of a desk in the air, so it says out loud what is in the air and where it would
+    // land: a drag that quietly turned into a camera pan makes a picture of an ordinary office (visual QA SP9b-1).
+    const airBox = inAir ? await cub((c, r: { x0: number; y0: number; x1: number; y1: number }) => c.project((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2), inAir.rect) : null;
+    console.log('19 in the air:', JSON.stringify({ inAir, airBox }));
+    if (!inAir) fail('19: nothing is in the air, so the scene is a picture of an office at rest');
+    else if (inAir.blocked) fail('19: every spot tried was taken, so the desk is in the air over a red footprint');
+    else if (!airBox || airBox.x < 100 || airBox.x > 1270 || airBox.y < 40 || airBox.y > 790) fail(`19: the desk in the air is at ${JSON.stringify(airBox)}, off the frame`);
+    await shot('19-dragging', 400);
+    // and the same drag aimed at a desk that is already there: the ghost goes red and the drop is refused
+    await page.mouse.move(deskAt.cx + 74, deskAt.cy + 26, { steps: 8 });
+    await page.waitForTimeout(200);
+    const onTop = await cub((c) => c.lifted());
+    console.log('19b over a taken spot:', JSON.stringify(onTop));
+    if (!onTop?.blocked) fail('19b: the drag is not over a taken spot, so there is no red footprint to photograph');
+    await shot('19b-dragging-blocked', 400);
+    await page.keyboard.press('Escape');                // put it back: the scenes after this one are not about it
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+  }
+
+  // 20: the dock open, with a glyph under the pointer so its label is in the picture.
+  await cub((c) => c.dock(true));
+  await page.waitForTimeout(300);
+  const dockBox = await page.locator('#dock .item[data-kind="note"]').boundingBox();
+  if (!dockBox) fail('20: the dock has no Note glyph');
+  else await page.mouse.move(dockBox.x + dockBox.width / 2, dockBox.y + dockBox.height / 2);
+  await shot('20-dock-open', 700);
+  await cub((c) => c.dock(false));
+
+  // 20b–20c: the dock's Agent, which is the one glyph that opens a card instead of putting something down. The
+  // sheet asks the three things only the owner can answer, and what it leaves on the floor is a ghost desk —
+  // nobody is seated on a hire nobody has approved yet.
+  const hireSpot = await cub((c) => {
+    const d = c.desks().qa_lead as { tx: number; ty: number } | undefined;
+    return d ? { x: d.tx - 3, y: d.ty + 3 } : { x: 20, y: 27 };
+  });
+  await cub((c) => c.zoom(1.5));
+  await cub((c, p: { x: number; y: number }) => c.center(p.x, p.y), hireSpot);
+  await page.waitForTimeout(500);
+  await cub((c, at: { x: number; y: number }) => c.hire(at), hireSpot);
+  await page.waitForTimeout(400);
+  if (await page.$eval('#hire', (el) => (el as HTMLElement).hidden).catch(() => true)) fail('20b: the dock\'s Agent did not open the hire sheet');
+  await page.fill('#hire-name', 'Head of Support');
+  await page.waitForTimeout(200);
+  await shot('20b-hire-sheet', 600);
+  const hireTeam = await cub((c) => { const t = c.state.teams ?? []; return t.length ? t[0].id : ''; });
+  if (!hireTeam) fail('20b: the company has no team for a hire to join');
+  else {
+    await page.selectOption('#hire-team', hireTeam);
+    await page.click('#hire .btn.primary');
+    await page.waitForTimeout(600);
+  }
+  if (!(await cub((c) => c.hiring()))) fail('20c: no ghost desk stands where the hire was asked for');
+  await page.waitForTimeout(4800);                       // let the "Hire proposed" toast go
+  await shot('20c-hiring-ghost', 700);
+
+  // 21: a line selected, with its ⓧ chip, and a message travelling one of the others at the same time. The pulse
+  // is 600 ms, so it is fired last and the shutter is the next thing that happens.
+  // A line between two desks in the same studio, so its whole length and the ⓧ at its middle are in the frame —
+  // the CTO sits in Ops and a line from there to Dev leaves the picture at both ends.
+  await cub((c) => c.zoom(1.7));
+  await cub((c) => c.center(9, 26));
+  await page.waitForTimeout(700);
+  await cub((c) => c.select('edge:backend_engineer|dev_manager'));
+  await page.waitForTimeout(500);
+  if (await page.$eval('#selection', (el) => (el as HTMLElement).hidden).catch(() => true)) fail('21: selecting a line did not bring up its plate');
+  // The pulse goes down a *quiet* line, not the selected one: an amber dot on an amber line says nothing.
+  await cub((c) => c.pulse('dev_manager', 'frontend_engineer'));
+  await page.waitForTimeout(200);                        // the pulse is 600 ms; catch it mid-flight
+  await page.screenshot({ path: path.join(out, '21-edge-selected.png') });
+  console.log('shot 21-edge-selected at 12:00');
+  await cub((c) => c.select(null));
+
+  // 22: the same wired office at night, which is where a line on a dark floor and a port ring have to prove they
+  // are still controls rather than scenery the evening swallowed.
+  await setHour(NIGHT);
+  await cub((c) => c.zoom(1.7));
+  await cub((c) => c.center(9, 26));
+  await cub((c) => c.select('edge:backend_engineer|dev_manager'));
+  await page.waitForTimeout(700);
+  await shot('22-wired-night', 800);
+  await cub((c) => c.select(null));
+  await setHour(DAY);
 } catch (err) {
   fail(err instanceof Error ? err.message : String(err));
 } finally {

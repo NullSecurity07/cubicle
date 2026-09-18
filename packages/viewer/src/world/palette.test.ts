@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PALETTE, floorPalette, familyOf, rolePalette, roleColor, hsl, hexToHsl, shade, hexToInt } from './palette.js';
+import { PALETTE, ZONE_TINT, divisionTint, zoneTint, familyOf, rolePalette, roleColor, hsl, hexToHsl, shade, hexToInt } from './palette.js';
 
 describe('colour maths', () => {
   it('hsl → hex → hsl round-trips within rounding', () => {
@@ -21,22 +21,27 @@ describe('colour maths', () => {
   it('hexToInt parses the accent', () => { expect(hexToInt('#e6a93c')).toBe(0xe6a93c); expect(PALETTE.amber).toBe('#e6a93c'); });
 });
 
-describe('floor palettes', () => {
-  it('four floors, hues 272/216/150/325, carpet saturation ≤ 30 %, tabs ≥ 50 %', () => {
-    const hues = [1, 2, 3, 4].map((n) => floorPalette(n).hue);
-    expect(hues).toEqual([272, 216, 150, 325]);
-    for (const n of [1, 2, 3, 4]) {
-      const p = floorPalette(n);
-      expect(hexToHsl(p.carpet).s).toBeLessThanOrEqual(0.31);
-      expect(hexToHsl(p.tab).s).toBeGreaterThanOrEqual(0.49);
-      expect(p.carpet).not.toBe(p.carpetAlt);
-      expect(p.floor).not.toBe(p.floorAlt);
-    }
+describe('zone tints', () => {
+  it('every zone carries one of the four campus accents, and the three indigo rooms share one', () => {
+    expect(Object.keys(ZONE_TINT).sort()).toEqual([
+      'boardroom', 'ceo_office', 'dev', 'lobby', 'lounge', 'meetingroom', 'ops', 'pantry', 'qa', 'research', 'sales',
+    ]);
+    expect(zoneTint('dev')).toBe(zoneTint('qa'));
+    expect(zoneTint('dev')).toBe(zoneTint('research'));
+    // Five, not four. SP9 gives the four divisions an accent each and the rooms that belong to nobody — the
+    // pantry, the lobby, the lounge — the neutral. Four would mean the pantry wearing a division's colour.
+    expect(new Set(Object.values(ZONE_TINT)).size).toBe(5);
   });
-  it('hues stay well apart (the notes\' 216 → 272 gap is 56°) and out-of-range floors clamp', () => {
-    const hues = [1, 2, 3, 4].map((n) => floorPalette(n).hue).sort((a, b) => a - b);
-    for (let i = 1; i < hues.length; i++) expect(hues[i] - hues[i - 1]).toBeGreaterThanOrEqual(50);
-    expect(floorPalette(0).n).toBe(1); expect(floorPalette(9).n).toBe(4);
+  it('the executive suite is one tint across its three rooms, and an unknown zone falls back rather than throwing', () => {
+    expect(zoneTint('ceo_office')).toBe(zoneTint('boardroom'));
+    expect(zoneTint('meetingroom')).toBe(zoneTint('boardroom'));
+    expect(zoneTint('nowhere')).toBe(zoneTint('pantry'));
+  });
+  it('a division\u2019s tint matches the zone its people sit in', () => {
+    expect(divisionTint('technology')).toBe(zoneTint('dev'));
+    expect(divisionTint('revenue')).toBe(zoneTint('sales'));
+    expect(divisionTint('operations')).toBe(zoneTint('ops'));
+    expect(divisionTint('nonesuch')).toBe(divisionTint('other'));
   });
 });
 
@@ -70,15 +75,17 @@ describe('families and role palettes', () => {
    * Visual QA R2-M3: floor 4's identity hue was 30 at saturation 0.75, and the accent amber is hue 38 — so the
    * selected F4 rail chip and F4's room signs read as calls to action. The same rule the role rings live under.
    */
-  it('gives no floor an identity hue the chrome has already spent', () => {
-    // Amber is the action colour and `bad` is the failure colour; a floor wearing either turns its room signs and
-    // its rail chip into status. Hue 30 was amber's own family and hue 4 was `bad`'s (visual QA R2-M3).
+  it('gives no zone an identity hue the chrome has already spent', () => {
+    // Amber is the action colour and `bad` is the failure colour; a zone wearing either turns its rail chip and
+    // its desk chips into status. The Revenue floor's amber is the exception the spec asks for by name, and it is
+    // desaturated well below the chrome's own — it is a material, not a call to action.
     for (const [name, spent] of [['accent', PALETTE.amber], ['bad', PALETTE.bad]] as const) {
       const ref = hexToHsl(spent);
-      for (const n of [1, 2, 3, 4]) {
-        const c = hexToHsl(floorPalette(n).tab);
+      for (const [id, tint] of Object.entries(ZONE_TINT)) {
+        if (id === 'sales' && name === 'accent') { expect(hexToHsl(tint).s).toBeLessThan(hexToHsl(PALETTE.amber).s); continue; }
+        const c = hexToHsl(tint);
         const dh = Math.abs(((c.h - ref.h + 540) % 360) - 180);
-        expect(dh > 25 || c.s < 0.25, `floor ${n} tab ${floorPalette(n).tab} against ${name}`).toBe(true);
+        expect(dh > 25 || c.s < 0.3, `zone ${id} tint ${tint} against ${name}`).toBe(true);
       }
     }
   });
@@ -93,12 +100,16 @@ describe('families and role palettes', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// One palette drives Phaser and CSS (the spec's consistency rule). This is the lint that keeps it true: no colour
-// literal may appear in `world/` or `scenes/` outside the palette itself and the two pixel drawers, which paint
-// from palettes handed to them. Three raw ambers and about thirty other hexes had drifted out of the table.
+// One palette drives the world and CSS (the spec's consistency rule). This is the lint that keeps it true: no
+// colour literal may appear in `world/` outside the two palette tables themselves.
+//
+// SP9 moved both ends of this rule. `scenes/` is gone with the Phaser tower, so the walk covers `world/` alone;
+// the two pixel drawers it used to excuse are gone with the tileset, and in their place `world/materials.ts`
+// holds the campus materials while `world/palette.ts` holds what the chrome reads. Everything else — the vector
+// renderers, the minimap, the bodies — derives its colours from those two and names none of its own.
 // ---------------------------------------------------------------------------------------------------------------
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..');
-const ALLOWED = new Set(['world/palette.ts', 'world/tiles-draw.ts', 'world/sprite-draw.ts']);
+const ALLOWED = new Set(['world/palette.ts', 'world/materials.ts']);
 
 function walk(dir: string, rel = ''): string[] {
   return readdirSync(join(SRC, dir, rel), { withFileTypes: true }).flatMap((e) => {
@@ -111,7 +122,7 @@ function walk(dir: string, rel = ''): string[] {
 describe('one palette', () => {
   it('has no colour literal outside palette.ts and the two pixel drawers', () => {
     const offenders: string[] = [];
-    for (const file of [...walk('world'), ...walk('scenes')]) {
+    for (const file of walk('world')) {
       if (ALLOWED.has(file)) continue;
       readFileSync(join(SRC, file), 'utf8').split('\n').forEach((line, i) => {
         if (line.includes('palette-lint: ignore')) return;

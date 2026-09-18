@@ -2,14 +2,22 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, updateJob } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, updateJob, loadOrg, loadCampusMap, readLayout, writeLayout } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { parseToolsConfig, ToolRegistry, phase3Tools, constitutionGuardrail } from '@cubicle/tools';
 import { runJob, vaultScheduler, MemoryIndex, hashEmbed, loadObservations, MEMORY_DIRS, type Llm } from '../src/index.js';
 
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 let dir: string; let vault: Vault;
-beforeEach(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-harness-')); vault = (await scaffoldVault(dir)).vault; });
+beforeEach(async () => {
+  dir = mkdtempSync(path.join(tmpdir(), 'cubicle-harness-'));
+  vault = (await scaffoldVault(dir)).vault;
+  // An engineer and the CTO are two rooms apart, so the company's own wiring does not connect them and
+  // `colleague.message` refuses the pair (SP9b: a connection is a permission). Draw the line the cases assume.
+  const org = loadOrg(vault);
+  const read = readLayout(vault, loadCampusMap(), org)!;
+  writeLayout(vault, { ...read.layout, connections: [...read.layout.connections, { from: 'backend_engineer', to: 'cto', kind: 'peer' as const }] }, 'owner', org);
+});
 afterEach(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
 type Step = { tool: string; args: Record<string, unknown> } | { text: string } | { badJson: true };

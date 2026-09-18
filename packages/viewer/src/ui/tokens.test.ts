@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import { MINIMAP_H } from './minimap.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { THEMES, contrastRatio, cssVars, themeFromQuery, hexNum } from './tokens.js';
-import { floorPalette } from '../world/palette.js';
+import { ZONE_TINT } from '../world/palette.js';
 import { DUR } from '../world/motion.js';
-import { floorDeep } from './rail.js';
+import { deepen } from './rail.js';
+import { ACCENT, MATERIAL as M, contrast, floorAt, lightAt, onFloorInk } from '../world/materials.js';
+import { EDGE_ALPHA, EDGE_INK, EDGE_SELECTED, PORT_FILL } from '../world/edges.js';
 
 const SURFACES = ['bg', 'surface1', 'surface2', 'surface3'] as const;
 const TEXTS = ['text', 'text2', 'text3'] as const;
@@ -34,8 +37,8 @@ describe('contrast (WCAG 2.1)', () => {
     it(`${mode}: the viewer chrome's quiet text reads on the terminal background`, () => {
       expect(contrastRatio(c.termText2, c.termBg), 'termText2 on termBg').toBeGreaterThanOrEqual(4.5);
     });
-    it(`${mode}: text on a floor tint reads on all four deepened tints`, () => {
-      for (const n of [1, 2, 3, 4]) expect(contrastRatio(c.onTint, floorDeep(n)), `onTint on F${n}`).toBeGreaterThanOrEqual(4.5);
+    it(`${mode}: text on a zone tint reads on every deepened accent`, () => {
+      for (const [id, tint] of Object.entries(ZONE_TINT)) expect(contrastRatio(c.onTint, deepen(tint)), `onTint on ${id}`).toBeGreaterThanOrEqual(4.5);
     });
     it(`${mode}: the accent as text reads on the surface the approvals pill sits on`, () => {
       // I4's ruling: the primary button keeps the amber fill and the pill yields to accent text on a surface.
@@ -45,11 +48,11 @@ describe('contrast (WCAG 2.1)', () => {
 });
 
 describe('css variables', () => {
-  it('emits one custom property per token plus the four floor tabs from the shared palette', () => {
+  it('emits one custom property per token plus a zone and a division tint from the shared palette', () => {
     const v = cssVars('dark');
-    for (const name of ['--bg', '--surface-1', '--surface-2', '--surface-3', '--hairline', '--hairline-2', '--text', '--text-2', '--text-3', '--accent', '--accent-ink', '--accent-text', '--ok', '--warn', '--bad', '--info', '--term-bg', '--term-text', '--term-prompt', '--term-text-2', '--term-line', '--term-line-2', '--on-tint', '--paper', '--glass', '--scrim', '--shadow-1', '--shadow-2', '--floor-1', '--floor-2', '--floor-3', '--floor-4']) expect(v[name], name).toBeTruthy();
-    expect(v['--floor-1']).toBe(floorPalette(1).tab);
-    expect(v['--floor-4']).toBe(floorPalette(4).tab);
+    for (const name of ['--bg', '--surface-1', '--surface-2', '--surface-3', '--hairline', '--hairline-2', '--text', '--text-2', '--text-3', '--accent', '--accent-ink', '--accent-text', '--ok', '--warn', '--bad', '--info', '--term-bg', '--term-text', '--term-prompt', '--term-text-2', '--term-line', '--term-line-2', '--on-tint', '--paper', '--glass', '--scrim', '--shadow-1', '--shadow-2', '--zone-dev', '--zone-sales', '--zone-ops', '--zone-boardroom', '--division-technology', '--division-revenue']) expect(v[name], name).toBeTruthy();
+    expect(v['--zone-dev']).toBe(ZONE_TINT.dev);
+    expect(v['--zone-sales']).toBe(ZONE_TINT.sales);
     expect(cssVars('light')['--text']).not.toBe(v['--text']);
   });
   it('reads ?theme= and falls back to system', () => {
@@ -93,8 +96,10 @@ describe('layout tokens clear the elevation-0 controls', () => {
   it('--time-h covers the time bar: --s1 twice plus a --hit control, plus its --s3 inset and an --s3 gap', () => {
     expect(px('time-h')).toBeGreaterThanOrEqual(px('hit') + 2 * px('s1') + px('s3'));
   });
-  it('--minimap-h covers the 160 px minimap camera, its 12 px inset and the M toggle above it', () => {
-    expect(px('minimap-h')).toBeGreaterThanOrEqual(12 + 160 + px('hit'));
+  it('--minimap-h covers the campus thumbnail, its --s3 inset, and the M toggle --s1 above it', () => {
+    // 160 px was the tower's minimap camera. The campus thumbnail is MINIMAP_H, read from the module rather than
+    // restated, so shrinking the thumbnail without shrinking the reserve shows up here.
+    expect(px('minimap-h')).toBeGreaterThanOrEqual(px('s3') + MINIMAP_H + px('s1') + px('hit'));
   });
   it('#layer stops at the time bar rather than at the viewport floor', () => {
     expect(app).toMatch(/#layer \{[^}]*inset: var\(--bar-h\) 0 var\(--time-h\) var\(--rail-w\)/);
@@ -119,5 +124,64 @@ describe('layout tokens clear the elevation-0 controls', () => {
   });
   it('no literal hex or rgba is left in the viewer chrome', () => {
     for (const literal of ['rgba(212,218,232', 'rgba(255,255,255,.08)', 'rgba(255,255,255,.1)', 'rgba(255,255,255,.15)', 'background: #000', 'background: #fff', 'color: #fff']) expect(app, literal).not.toContain(literal);
+  });
+});
+
+/**
+ * The campus's own contrast (SP9b).
+ *
+ * The chrome above has two themes; the office has twenty-four hours, and they are the same problem. A line on the
+ * floor, a port ring and a message travelling a line are things the owner has to be able to *see* at every one of
+ * them — not only at the hour the screenshots happen to be taken at.
+ *
+ * Two different claims, because the office paints them in two different places:
+ *  - a **resting line** lies under the hour's multiply, like the floor it is on. Both are darkened together, so
+ *    what can be asserted is the material claim: the ink, at its own alpha, against the floor it is drawn on.
+ *  - a **control** — the selected line's casing, a port's rim and hairline, the ⓧ chip — is painted *over* the
+ *    hour, the way the desk lamps are, so it is asserted against the floor as that hour actually leaves it.
+ */
+describe('the campus at every hour (SP9b)', () => {
+  /** A colour at `alpha` over another, both `#rrggbb`. */
+  const over = (fg: string, alpha: number, bg: string): string => {
+    const f = parseInt(fg.slice(1), 16), b = parseInt(bg.slice(1), 16);
+    const ch = (sh: number): string => Math.round((((f >> sh) & 255) * alpha) + (((b >> sh) & 255) * (1 - alpha))).toString(16).padStart(2, '0');
+    return `#${ch(16)}${ch(8)}${ch(0)}`;
+  };
+  /** Every hour on the clock, at quarter-hour steps: the ramp is continuous, so nothing may fail between stops. */
+  const HOURS = Array.from({ length: 96 }, (_, i) => i / 4);
+
+  it('a resting line reads on the floor it lies on', () => {
+    expect(contrast(over(EDGE_INK, EDGE_ALPHA, M.floor), M.floor)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('a selected line\u2019s casing reads on the floor at every hour', () => {
+    for (const h of HOURS) {
+      const light = lightAt(h);
+      expect(contrast(onFloorInk(light), floorAt(light)), `casing at ${h}h`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('a port\u2019s ring reads on the disc it is drawn on, whatever the division', () => {
+    for (const [name, a] of Object.entries(ACCENT)) expect(contrast(a.chip, PORT_FILL), `${name} port ring`).toBeGreaterThanOrEqual(3);
+  });
+
+  it('a port\u2019s disc is held off the floor by its hairline at every hour', () => {
+    for (const h of HOURS) {
+      const light = lightAt(h);
+      expect(contrast(onFloorInk(light), floorAt(light)), `port hairline at ${h}h`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('the \u24e7 chip\u2019s glyph reads on the chip, and the chip on its own rim', () => {
+    expect(contrast(M.actionFill, EDGE_SELECTED)).toBeGreaterThanOrEqual(3);
+    expect(contrast(M.actionFill, M.attention)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('the accent is the one loud thing: a selected line is told from a resting one', () => {
+    // the casing alone separates them, whichever way round the hour has put it
+    for (const h of [9, 12, 19, 23]) {
+      const light = lightAt(h);
+      expect(contrast(onFloorInk(light), over(EDGE_INK, EDGE_ALPHA, M.floor)), `selected vs resting at ${h}h`).toBeGreaterThanOrEqual(2);
+    }
   });
 });

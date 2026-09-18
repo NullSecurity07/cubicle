@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { applyConversation, applyEvent, applySnapshot, emptyState, type Snapshot, type Thread } from '../state.js';
 import { viewFor } from './surfaces.js';
-import { DM_ID, chipTint, filterThreads, messagesView, roomThread, sinceText } from './messages.js';
+import { DM_ID, chipTint, filterThreads, messagesView, roomThread, sinceText, turnHtml } from './messages.js';
 import { THEMES, contrastRatio } from './tokens.js';
 import type { Ctx } from './content.js';
 
@@ -109,5 +109,26 @@ describe('a participant wears their own colour, and it reads', () => {
   it('the chip is the person’s own hue, not a colour invented per theme', () => {
     expect(chipTint('ceo')).toMatch(/^#[0-9a-f]{6}$/);
     expect(chipTint('ceo')).not.toBe(chipTint('cto'));
+  });
+});
+
+
+describe('what the company writes to itself (dry-run 2026-09-14)', () => {
+  it('turns a machine marker into a chip and leaves the sentence a sentence', () => {
+    const html = turnHtml('FINDING: the pilot data shows one paid conversion.');
+    expect(html).toContain('<span class="marker">Finding</span>');
+    expect(html).not.toContain('FINDING:');
+    expect(html).toContain('the pilot data shows one paid conversion.');
+  });
+
+  it('knows a marker from a person saying something in capitals', () => {
+    expect(turnHtml('VERDICT: PIVOT REQUIRED')).toContain('<span class="marker">Verdict</span>');
+    expect(turnHtml('RUBRIC: core assumption 1/2')).toContain('<span class="marker">Rubric</span>');
+    expect(turnHtml('NO: that will not work')).toBe('NO: that will not work');
+    expect(turnHtml('John said: we should ship')).toBe('John said: we should ship');
+  });
+
+  it('leaves the markdown a bubble already understood alone', () => {
+    expect(turnHtml('**six** dollars')).toContain('<b>six</b>');
   });
 });

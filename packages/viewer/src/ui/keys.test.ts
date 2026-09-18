@@ -3,8 +3,8 @@ import { shortcutFor, SHORTCUTS, keysView, bindKeys, isControl, trapTab, type Ac
 
 describe('shortcuts', () => {
   it('maps keys to actions', () => {
-    expect(shortcutFor({ key: '1' }, false)).toBe('floor1');
-    expect(shortcutFor({ key: '4' }, false)).toBe('floor4');
+    expect(shortcutFor({ key: '1' }, false)).toBe('zone1');
+    expect(shortcutFor({ key: '7' }, false)).toBe('zone7');
     expect(shortcutFor({ key: 'l' }, false)).toBe('lobby');
     expect(shortcutFor({ key: 'L' }, false)).toBe('lobby');
     expect(shortcutFor({ key: '0' }, false)).toBe('fit');
@@ -58,7 +58,7 @@ describe('Space and the focus ring', () => {
     const fired: Action[] = [];
     const listeners: ((e: unknown) => void)[] = [];
     (globalThis as { window?: unknown }).window = { addEventListener: (_t: string, fn: (e: unknown) => void) => listeners.push(fn), removeEventListener: () => {} };
-    const actions: Action[] = ['floor1', 'floor2', 'floor3', 'floor4', 'lobby', 'fit', 'talk', 'queue', 'brief', 'plan', 'org', 'pause', 'prev', 'next', 'minimap', 'help', 'quickopen'];
+    const actions: Action[] = ['zone1', 'zone2', 'zone3', 'zone4', 'zone5', 'zone6', 'zone7', 'lobby', 'fit', 'talk', 'queue', 'brief', 'plan', 'org', 'pause', 'prev', 'next', 'minimap', 'help', 'quickopen'];
     const handlers = Object.fromEntries(actions.map((a) => [a, (): void => { fired.push(a); }])) as unknown as Record<Action, () => void>;
     const off = bindKeys(handlers);
 
@@ -132,7 +132,7 @@ describe('shortcuts behind a modal', () => {
     const fired: Action[] = [];
     const listeners: ((e: unknown) => void)[] = [];
     (globalThis as { window?: unknown }).window = { addEventListener: (_t: string, fn: (e: unknown) => void) => listeners.push(fn), removeEventListener: () => {} };
-    const actions: Action[] = ['floor1', 'floor2', 'floor3', 'floor4', 'lobby', 'fit', 'talk', 'queue', 'brief', 'plan', 'org', 'pause', 'prev', 'next', 'minimap', 'help', 'quickopen'];
+    const actions: Action[] = ['zone1', 'zone2', 'zone3', 'zone4', 'zone5', 'zone6', 'zone7', 'lobby', 'fit', 'talk', 'queue', 'brief', 'plan', 'org', 'pause', 'prev', 'next', 'minimap', 'help', 'quickopen'];
     const handlers = Object.fromEntries(actions.map((a) => [a, (): void => { fired.push(a); }])) as unknown as Record<Action, () => void>;
     const off = bindKeys(handlers, blocked);
     return { fired, fire: (e) => listeners[0](e), off };

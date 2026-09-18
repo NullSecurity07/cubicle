@@ -8,7 +8,9 @@
  * way round), so this module has no cycle to be careful about and can be read top to bottom.
  */
 import { statusText, type State, type JobView, type TeamView, type AgentView } from '../state.js';
+import { type LayoutConnection } from '../world/layout.js';
 import { md, inline } from './markdown.js';
+import { plain } from './headlines.js';
 import { pixelIcon, type GlyphName } from './icons.js';
 import { pantryStale, PANTRY_TURN_CHARS, type PantryState } from './pantry.js';
 
@@ -41,7 +43,6 @@ export interface Ctx {
   frames: Record<string, string>; tokenQuery: string; vaultName: string;
   /** what the owner has picked inside the open sheet (see `UiState`) */ ui?: UiState;
   /** measured frame rate per browser stream (main.ts) */ fps?: Record<string, number>;
-  /** floor number → division label from `scene.floorSummary()` */ floorLabels?: Record<number, string>;
 }
 
 export const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -59,6 +60,47 @@ export function vaultPathOf(url: string): string {
 /** obsidian://open link for a vault file when the vault name is known (`?vault=`), else ''. */
 export function obsidianUrl(vaultName: string, file: string): string {
   return vaultName ? `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(file.replace(/\.md$/, ''))}` : '';
+}
+
+/**
+ * A title the owner can read.
+ *
+ * The company writes notes whose title is sometimes the note's own kind — `founder_brief`, `idea_verdict` — and a
+ * reader that heads the page with a slug is showing the owner a file name and calling it a headline. Anything
+ * with a space in it is already a sentence and is left exactly as it was written.
+ */
+export function humanTitle(t: string): string {
+  const s = (t ?? '').trim();
+  if (!s || /\s/.test(s)) return s;
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(s)) return s;
+  const words = s.replace(/[_-]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * Cut at a word, with an ellipsis. The header subtitle used to stop mid-word ("three manual, actionable website
+ * …"), which reads as a broken string rather than as a line that goes on.
+ */
+export function cutWords(text: string, max: number): string {
+  const t = (text ?? '').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const at = cut.lastIndexOf(' ');
+  return `${(at > max * 0.5 ? cut.slice(0, at) : cut).replace(/[\s,.;:!?-]+$/, '')}…`;
+}
+
+/**
+ * What the vault board says about the jobs, in counts that add up to the number above them.
+ *
+ * It used to print done, running and blocked and leave everything queued out, so "52 job notes / 42 done · 2
+ * running / 3 blocked" was a board disagreeing with itself in one glance.
+ */
+export function vaultBoardLines(statuses: string[]): string[] {
+  const n = (...want: string[]): number => statuses.filter((st) => want.includes(st)).length;
+  const done = n('done'), running = n('running'), waiting = n('queued', 'in_review'), blocked = n('blocked');
+  const rest = statuses.length - done - running - waiting - blocked;
+  const second = [`${waiting} queued`, `${blocked} blocked`, ...(rest > 0 ? [`${rest} stopped`] : [])].join(' · ');
+  return [`${done} done · ${running} running`, second];
 }
 
 const KIND_LABEL: Record<string, string> = { spend: 'Spend', outbound_batch: 'Send batch', brand_change: 'Brand', charter_change: 'Charter', file_change: 'File change', hire: 'Hire', fire: 'Fire', message: 'Question' };
@@ -119,7 +161,7 @@ export const stats = (tiles: string[]): string => `<div class="stats">${tiles.jo
 export const meterHtml = (pct: number): string => `<div class="meter${pct > 0.9 ? ' hot' : pct > 0.6 ? ' warn' : ''}"><i style="width:${Math.round((1 - Math.min(1, Math.max(0, pct))) * 100)}%"></i></div>`;
 
 const statusChip = (status: string): string => (status === 'in_review' ? chip('in_review', 'in review') : chip(status));
-const jobRow = (j: JobView, s: State): string => row({ left: statusChip(j.status), title: j.title, small: `${who(s, j.assigned)} · ${teamName(s, j.team)} · ${j.type} · step ${j.checkpoint_step}`, right: esc(fmtWhen(j.updated)), open: `job:${j.id}` });
+const jobRow = (j: JobView, s: State): string => row({ left: statusChip(j.status), title: humanTitle(j.title), small: `${who(s, j.assigned)} · ${teamName(s, j.team)} · ${j.type} · step ${j.checkpoint_step}`, right: esc(fmtWhen(j.updated)), open: `job:${j.id}` });
 export const byUpdated = (a: JobView, b: JobView): number => b.updated.localeCompare(a.updated);
 /** Jobs the office is still working on (as opposed to done / failed / cancelled). */
 export const isOpen = (status: string): boolean => ['queued', 'running', 'blocked', 'in_review'].includes(status);
@@ -187,20 +229,69 @@ export const isTeamOpen = (s: State, teamId: string): number => Object.values(s.
 /** Org by division (= floor, F4 down to F1), then team (parents before children), a Locate per role. */
 export function orgView(s: State, ctx: Ctx): View {
   if (!s.teams.length) return { mode: 'drawer', title: 'Org', html: emptyHtml('chat', 'No teams yet', 'Start the daemon once to create the default org.') };
-  const floorOf = (t: TeamView): number => t.floor ?? s.teams.find((p) => p.id === t.parent)?.floor ?? 0;
-  const floors = [...new Set(s.teams.map(floorOf))].sort((a, b) => b - a);
+  // The org groups by division now, not by floor: the campus is one plane, and a division is what a team belongs
+  // to. The root of a team's `parent` chain is its division; a team with no parent is its own.
+  const rootOf = (t: TeamView): TeamView => {
+    let cur = t;
+    const seen = new Set<string>([t.id]);
+    for (;;) {
+      const parent = cur.parent ? s.teams.find((p) => p.id === cur.parent) : undefined;
+      if (!parent || seen.has(parent.id)) return cur;
+      seen.add(parent.id);
+      cur = parent;
+    }
+  };
+  const divisions = [...new Map(s.teams.map((t) => [rootOf(t).id, rootOf(t)])).values()];
   const teamHtml = (t: TeamView): string => {
     const lead = row({ left: chip('kind', 'Lead'), title: who(s, t.lead), small: t.mission, open: `agent:${t.lead}`, actions: locate(t.lead) });
     const members = t.members.map((m) => row({ title: who(s, m), small: roleTitle(s, m), open: `agent:${m}`, actions: locate(m) }));
     return section(t.name, rows([lead, ...members]), `${isTeamOpen(s, t.id)} open`);
   };
-  const html = floors.map((f) => {
-    const here = s.teams.filter((t) => floorOf(t) === f);
-    const ordered = [...here.filter((t) => !t.parent || !here.some((p) => p.id === t.parent)), ...here.filter((t) => t.parent && here.some((p) => p.id === t.parent))];
-    const label = f ? ctx.floorLabels?.[f] ?? `Floor ${f}` : 'Elsewhere';
-    return `<div class="division" style="--division:var(--floor-${f || 1})"><h2 class="division-title">${esc(label)}</h2>${ordered.map(teamHtml).join('')}</div>`;
+  const html = divisions.map((d) => {
+    const here = s.teams.filter((t) => rootOf(t).id === d.id);
+    const ordered = [...here.filter((t) => t.id === d.id), ...here.filter((t) => t.id !== d.id)];
+    return `<div class="division" style="--division:var(--division-${esc(d.id)}, var(--division-other))"><h2 class="division-title">${esc(d.name)}</h2>${ordered.map(teamHtml).join('')}</div>`;
   }).join('');
-  return { mode: 'drawer', title: 'Org', sub: `${s.teams.length} teams`, html };
+  return { mode: 'drawer', title: 'Org', sub: `${s.teams.length} teams`, html: html + connectionsHtml(s) };
+}
+
+/**
+ * Who may talk to whom, and who may use what — the same lines the office draws on its floor, as a list.
+ *
+ * Every gesture in the campus has to have a route that does not need a pointer (SP9b), and this is the one for
+ * connecting: a row per line with the sentence it means and a button to cut it, and two selects to draw a new
+ * one. It reads the layout out of the snapshot, so it says the same thing the floor does.
+ */
+export function connectionsHtml(s: State): string {
+  const cns = s.layout?.connections ?? [];
+  const label = (c: LayoutConnection): string => (c.kind === 'peer'
+    ? `${who(s, c.from)} and ${who(s, c.to)}`
+    : `${who(s, c.from)} \u2192 ${resourceName(s, c.to)}`);
+  const means = (c: LayoutConnection): string => (c.kind === 'peer' ? 'can message each other' : 'can use it');
+  const lines = cns.map((c) => row({
+    title: label(c), small: means(c),
+    actions: `<button class="mini" data-act="disconnect:${esc(c.from)}|${esc(c.to)}">Remove</button>`,
+  }));
+  const desks = Object.values(s.agents).filter((a) => a.active).map((a) => ({ id: a.role, name: a.display }));
+  const things = [
+    ...desks.map((d) => ({ id: d.id, name: d.name })),
+    ...Object.entries(s.layout?.nodes ?? {}).filter(([, n]) => n.kind).map(([id, n]) => ({ id, name: n.label ?? id })),
+  ];
+  const opts = things.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
+  const add = desks.length
+    ? `<div class="addconn"><label class="caption dim" for="conn-from">Connect</label>`
+      + `<select id="conn-from" data-key="conn-from">${desks.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select>`
+      + `<label class="caption dim" for="conn-to">to</label>`
+      + `<select id="conn-to" data-key="conn-to">${opts}</select>`
+      + `<button class="btn" data-act="connect:add">Add</button></div>`
+    : '';
+  return `<div class="division"><h2 class="division-title">Connections</h2>${section('Who may reach what', (lines.length ? rows(lines) : emptyHtml('chat', 'Nothing is wired yet', 'Drag from a desk\u2019s port to another desk, or to something it should be allowed to use.')) + add, `${cns.length}`)}</div>`;
+}
+
+/** What a connection's far end is called: a person, or the thing the owner put on the floor. */
+function resourceName(s: State, id: string): string {
+  const n = s.layout?.nodes?.[id];
+  return n?.label ?? (s.agents[id] ? who(s, id) : id);
 }
 
 /** Queue: Open / In review / Done segments, each grouped by team. */
@@ -278,7 +369,13 @@ export function browserViewerView(s: State, ctx: Ctx): View {
   const fps = ctx.fps?.[cur.streamId];
   const meta = [cur.agent ? who(s, cur.agent) : '', hostOf(cur.url)].filter(Boolean).join(' · ');
   const bar = `<div class="vbar" data-key="vbar">${cur.active ? '<span class="badge live">LIVE</span>' : '<span class="badge ended">Ended</span>'}<span class="vmeta">${esc(meta)}</span><span class="vstats">seq ${seq}${cur.active && fps !== undefined ? ` · ${fps.toFixed(1)} fps` : ''}</span></div>`;
-  const frame = src ? `<div class="vframe" data-key="vframe"><img data-key="frame" class="frame" src="${esc(src)}" alt="Browser session" /></div>` : emptyHtml('doc', 'Waiting for the first frame');
+  // A bot check is not the company's screen. It is a real thing that happened to whoever is browsing — their own
+  // transcript says so — but the billboard is the one picture a visitor sees of what the company is working on,
+  // and "Performing security verification" is not it.
+  const blocked = s.frames[cur.streamId]?.challenge === true;
+  const frame = blocked
+    ? emptyHtml('doc', 'The site is running a security check', `${cur.agent ? who(s, cur.agent) : 'Whoever is browsing'} is waiting for it to pass.`)
+    : src ? `<div class="vframe" data-key="vframe"><img data-key="frame" class="frame" src="${esc(src)}" alt="Browser session" /></div>` : emptyHtml('doc', 'Waiting for the first frame');
   const foot = cur.active ? '' : `<div class="vfoot" data-key="vfoot">Session ended${cur.endedAt ? ` ${esc(fmtTime(cur.endedAt))}` : ''} · showing the last frame</div>`;
   // One metadata row, the spec's wireframe: the .vbar carries LIVE, the agent, the host, the seq and the rate.
   // It used to be handed to the panel header as `sub` as well, so the viewer wore two header bars.
@@ -293,7 +390,9 @@ export const shellRunning = (s: State): boolean => Object.values(s.agents).some(
 
 /** Terminal viewer: prompt lines in the accent, a caret while a job runs; the panel offers "Jump to latest". */
 export function terminalViewerView(s: State): View {
-  const lines = s.terminal.slice(-400).flatMap((l) => l.split('\n'));
+  // The shell's own colours are escape codes, and the office is not a terminal emulator: stripped here as on the
+  // board, in both the shapes they arrive in (`ui/headlines.ts` `plain`).
+  const lines = s.terminal.slice(-400).flatMap((l) => plain(l).split('\n'));
   if (!lines.length) return { mode: 'viewer', viewer: 'terminal', title: 'Terminal', html: emptyHtml('chevron', 'No commands run yet', 'Shell output from the Dev room streams here.'), live: true };
   const body = lines.map((l) => `<span class="line${/^[$>#]\s/.test(l) ? ' prompt' : ''}">${esc(l)}</span>`).join('\n');
   // Who is at the shell, where there is someone (visual QA M11): the terminal viewer named neither the agent nor
@@ -350,7 +449,7 @@ export function jobView(id: string, s: State, ctx: Ctx): View {
   const j = s.jobs[id];
   if (!j) return { mode: 'drawer', title: 'Job', html: emptyHtml('clipboard', 'This job is not in the current snapshot.') };
   const body = `<p>${chip(j.status)} &nbsp;<span class="muted">${esc(who(s, j.assigned))} · ${esc(j.type)} · priority ${j.priority} · step ${j.checkpoint_step}</span></p><p class="muted">Updated ${esc(fmtWhen(j.updated))}. The full note, checkpoint log and result live in the vault.</p>`;
-  return { mode: 'doc', title: j.title, sub: `Jobs/${j.id}.md`, html: body, link: obsidianUrl(ctx.vaultName, `Jobs/${j.id}.md`) };
+  return { mode: 'doc', title: humanTitle(j.title), sub: `Jobs/${j.id}.md`, html: body, link: obsidianUrl(ctx.vaultName, `Jobs/${j.id}.md`) };
 }
 
 /** One person: state line, current job, charter link, Locate. Pure, so main.ts has nothing to build. */

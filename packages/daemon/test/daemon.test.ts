@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob, loadOrg, createStream, writeCiRecord, HOUSE } from '@cubicle/core';
+import { scaffoldVault, Vault, createJob, readJob, listJobs, listInbox, findInboxById, createProposal, updateJob, loadOrg, createStream, writeCiRecord, HOUSE, readLayout, loadCampusMap, connected, OFFICE_LAYOUT_PATH } from '@cubicle/core';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import type { Llm } from '@cubicle/harness';
 import { Daemon, defaultConfig, runHeartbeat, createHeartbeatJob, dispatchProposals, executeStoredCall, requeueUnblocked, buildSnapshot, makeSummarize, SUMMARIZE_SYSTEM, NON_WORK_TYPES, HEARTBEAT_STEPS } from '../src/index.js';
@@ -787,9 +787,21 @@ describe('daemon lifecycle', () => {
 
   it('an old vault is migrated to the default org on start and the brief mentions it', async () => {
     rmSync(path.join(dir, 'Teams'), { recursive: true, force: true });
+    // and a vault from before there was an office note gets one, with the wiring the org already implies (SP9b)
+    rmSync(path.join(dir, 'Office'), { recursive: true, force: true });
     const d = daemonFor(fakeLlm());
     await d.start();
-    try { expect(existsSync(path.join(dir, 'Teams/dev.md'))).toBe(true); expect(d.vault.events.count('org.changed')).toBe(1); } finally { await d.stop(); }
+    try {
+      expect(existsSync(path.join(dir, 'Teams/dev.md'))).toBe(true);
+      expect(d.vault.events.count('org.changed')).toBe(1);
+      const l = readLayout(d.vault, loadCampusMap(), loadOrg(d.vault))!;
+      expect(l.dropped).toEqual([]);
+      expect(connected(l.layout, 'ceo', 'cto')).toBe(true);
+      expect(Object.values(l.layout.nodes).every((n) => n.kind === 'station')).toBe(true);  // nothing moved
+      const sha = d.vault.writtenSha(OFFICE_LAYOUT_PATH);
+      d.vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { note: 'marker' } });
+      expect(d.vault.writtenSha(OFFICE_LAYOUT_PATH)).toBe(sha);   // written once, then it is the owner's
+    } finally { await d.stop(); }
   }, TEST_MS);
 });
 

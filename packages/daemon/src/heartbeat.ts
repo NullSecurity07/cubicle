@@ -68,6 +68,21 @@ export interface HeartbeatDeps {
  * Exported for its own test: what it guarantees (one read per cycle) is a rule about calls that did *not*
  * happen, which is far more legible asserted here than inferred from a scripted cycle.
  */
+/**
+ * The brief's `## Next action per team` block.
+ *
+ * A company of ten teams with two jobs queued printed eight lines of "nothing queued" — eight lines saying
+ * nothing, in a brief whose whole job is to be read in a minute. The teams with nothing queued are one line, and
+ * a company with nothing queued anywhere says so once.
+ */
+export function nextActionLines(teams: { id: string; next: string | null }[]): string {
+  const busy = teams.filter((t) => t.next);
+  const idle = teams.filter((t) => !t.next).map((t) => t.id);
+  const lines = busy.map((t) => `- ${t.id}: ${t.next}`);
+  if (idle.length) lines.push(`- ${idle.join(', ')}: nothing queued`);
+  return lines.join('\n') || '- nothing queued anywhere';
+}
+
 export function withCycleBudget(deps: HeartbeatDeps): HeartbeatDeps {
   const read = deps.modelBudget;
   if (!read) return deps;
@@ -2862,7 +2877,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
         if (dumped) drafted = null;
         const fallback = `## What happened\n${whatHappenedProse(state.finished ?? [])}${dumped ? `\n\n${WRITTEN_WITHOUT_MODEL}` : ''}\n\n## What's next\n- ${queued.length ? queued.map((j) => `${j.assigned}: ${j.title}`).join('\n- ') : 'Waiting on the plan.'}\n\n## What needs you\n${needsYou.length ? needsYou.join('\n') : '- Nothing right now.'}`;
         const org = loadOrg(vault);
-        const nextActionPerTeam = Object.values(org.teams).map((t) => `- ${t.id}: ${queued.find((j) => j.team === t.id)?.title ?? 'nothing queued'}`).join('\n');
+        const nextActionPerTeam = nextActionLines(Object.values(org.teams).map((t) => ({ id: t.id, next: queued.find((j) => j.team === t.id)?.title ?? null })));
         // Ruling W3-5: the board never sits on a card the owner has not seen, so an intelligence sweep's own
         // cards surface here and nowhere else — title, one line of why, and how to have the board look at one.
         // Written deterministically from the cards, below the drafted brief, because the model is told not to

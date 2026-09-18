@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineTool } from '../registry.js';
 import { unknownRoleText } from './scheduler.js';
-import { nowIso, makeId, idFromKey, isValidRoleId, parseNote, RoleFrontmatter, loadOrg, can, teamOf, createJob, officeHolder } from '@cubicle/core';
+import { nowIso, makeId, idFromKey, isValidRoleId, parseNote, RoleFrontmatter, loadOrg, can, teamOf, createJob, officeHolder, connected, deskOf, leadOf, loadCampusMap, readLayout } from '@cubicle/core';
 
 export const MessageKind = z.enum(['fyi', 'question', 'handoff', 'meeting_request']);
 
@@ -20,6 +20,17 @@ export const colleagueMessage = defineTool({
     if (!roleNote) return { ok: false, text: unknownRoleText(loadOrg(ctx.vault), to, 'unknown role') };
     const parsedRole = RoleFrontmatter.safeParse(roleNote.data);
     if (parsedRole.success && !parsedRole.data.active) return { ok: false, text: `${to} is no longer active` };
+    // A connection is a permission (SP9b): two desks with no line between them are two people who do not talk.
+    // The check is skipped only where there is no office note at all — an old vault the daemon has not started
+    // on yet — so nothing the company could say yesterday is refused before the owner has a floor to draw on.
+    const wiring = readLayout(ctx.vault, loadCampusMap(), loadOrg(ctx.vault));
+    if (wiring) {
+      const org = loadOrg(ctx.vault);
+      if (!connected(wiring.layout, deskOf(org, ctx.roleId), deskOf(org, to))) {
+        const lead = leadOf(org, ctx.roleId);
+        return { ok: false, text: `You aren't connected to the ${org.roles[to]?.display ?? to}. Ask the owner to connect you, or go through your lead${lead && lead !== 'owner' ? ` (${lead})` : ''}.` };
+      }
+    }
     if (kind === 'handoff') {
       const org = loadOrg(ctx.vault);
       if (!can(org, ctx.roleId, 'schedule', to)) return { ok: false, text: `handoff only to a teammate (${teamOf(org, ctx.roleId)?.members.join(', ') ?? 'none'}); cross-team needs go through your lead` };

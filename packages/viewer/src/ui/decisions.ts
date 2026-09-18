@@ -10,7 +10,7 @@
  * Pure: every builder here is State → HTML, so the whole screen is unit-tested without a DOM.
  */
 import type { Ctx, View } from './content.js';
-import { chip, emptyHtml, esc, fmtWhen, kindLabel, obsidianUrl, row, rows, section, segmented, who } from './content.js';
+import { chip, emptyHtml, esc, fmtWhen, humanTitle, kindLabel, obsidianUrl, row, rows, section, segmented, who } from './content.js';
 import { md } from './markdown.js';
 import type { DecidedRow, Decidable, DecideState, InboxRow, State } from '../state.js';
 
@@ -39,14 +39,27 @@ export const decidableOf = (n: Pick<InboxRow, 'decidable' | 'options'>): Decidab
  * the difference between a click and a decision.
  */
 export function verbsFor(d: Decidable, needsConfirm = false): { yes: string; no: string } {
-  if (d !== 'adopt') return { yes: 'Approve', no: 'Reject' };
+  if (d !== 'adopt') return { yes: needsConfirm ? 'Approve anyway' : 'Approve', no: 'Reject' };
   return { yes: needsConfirm ? 'Adopt anyway' : 'Adopt brief', no: 'Send back' };
 }
 
+/**
+ * The board verdicts an owner would be going *against*.
+ *
+ * A plan the board sent back arrived with a plain Approve/Reject bar and nothing said about the ruling, while a
+ * brief the board ruled PIVOT REQUIRED on said so in a sentence. Same fact, two screens: this is the one list.
+ */
+const BLOCKING = /\b(return(ed)?|pivot|weak|reject(ed)?|block(ed)?|no-?go|fail(ed)?)\b/i;
+export const overrulesBoard = (n: Pick<InboxRow, 'needs_confirm' | 'board_verdict' | 'board_pending'>): boolean =>
+  !n.board_pending && (!!n.needs_confirm || (!!n.board_verdict && BLOCKING.test(n.board_verdict)));
+
 /** What the bar says about a verdict the owner is about to overrule. Names the verdict; never argues with them. */
-export function verdictLine(verdict: string): string {
-  return `The board ruled ${verdict} on this brief. Adopting it is your call over theirs.`;
+export function verdictLine(verdict: string, what = 'brief'): string {
+  return `The board ruled ${verdict} on this ${what}. ${what === 'brief' ? 'Adopting' : 'Approving'} it is your call over theirs.`;
 }
+
+/** What the note is, in the sentence above the bar: a brief is adopted, everything else is approved. */
+const noun = (kind: string): string => (kind === 'founder_brief' ? 'brief' : kind === 'plan_verdict' ? 'plan' : kindLabel(kind).toLowerCase());
 
 /** A send back with no comment is a dead end for the company: it is told no and not why. */
 export const commentRequired = (d: Decidable, approved: boolean): boolean => d === 'adopt' && !approved;
@@ -77,13 +90,51 @@ export function proposedContent(body: string): string | null {
  * not what it is — so the covering note is followed by the document itself, as prose. Every other kind keeps its
  * fence: a `file_change` proposes a *file*, and a file is shown as a file, monospace and unwrapped.
  */
-export function readerBody(n: Pick<InboxRow, 'kind' | 'body'>): string {
-  const body = n.body ?? '';
+export function readerBody(n: Pick<InboxRow, 'kind' | 'body' | 'options'>): string {
+  const body = withoutFileInstructions(n.body ?? '', !!n.options?.length);
+  if (n.kind === 'plan_verdict') return planFirst(body);
   if (n.kind !== 'founder_brief') return body;
   const doc = proposedContent(body);
   if (!doc) return body;
   const covering = body.split(/^## Proposed content\s*$/m)[0].trim();
   return covering ? `${covering}\n\n${doc}` : doc;
+}
+
+/**
+ * Lines that tell the owner to go and edit the note's frontmatter, taken out.
+ *
+ * "Set `chosen: 1|2|3` and `approved: true`" was printed beside three clickable cards and an Approve button: the
+ * reader was showing the instructions for a screen it had replaced. The same reader then listed the three options
+ * as prose above the cards, so the owner read every idea twice.
+ */
+export function withoutFileInstructions(body: string, hasOptions: boolean): string {
+  const lines = body.split('\n').filter((l) => !/^\s*[-*>]?\s*(set|edit|change|write)\b[^\n]*\b(chosen|approved|decision|status)\s*:/i.test(l));
+  if (!hasOptions) return lines.join('\n');
+  // With cards on the screen, the note's own numbered list of the same options is the second telling of it.
+  const out: string[] = [];
+  let run = 0;
+  for (const l of lines) {
+    const isOption = /^\s*(\d+[.)]|[-*]\s*\d+[.)])\s+\S/.test(l);
+    if (isOption) { run += 1; continue; }
+    if (run >= 2 && !l.trim()) continue;      // the blank line the list left behind
+    run = 0;
+    out.push(l);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * The plan the owner is approving, first.
+ *
+ * A plan verdict opens on the board's four findings and clips "## The plan" — the objectives being decided — at
+ * the bottom edge of the reader. What is being approved goes above what was said about it.
+ */
+export function planFirst(body: string): string {
+  const m = /^##+\s*The plan\s*$/im.exec(body);
+  if (!m) return body;
+  const head = body.slice(0, m.index).trim();
+  const plan = body.slice(m.index).trim();
+  return head ? `${plan}\n\n${head}` : plan;
 }
 
 const bandChip = (n: InboxRow): string => (n.band ? chip('band', n.band) : '');
@@ -113,12 +164,25 @@ export function needsRow(n: InboxRow, s: State): string {
   const small = [n.from ? who(s, n.from) : '', n.band_reason || n.board_verdict || n.target || ''].filter(Boolean).join(' · ');
   // A refused row says why on its own second line: it is the one thing the owner has to read before deciding again.
   const line = n.board_pending ? BOARD_SITTING : n.refused ? `Refused: ${n.refused}` : n.pending ? 'Decided, being applied' : small || n.path.replace(/^00 Inbox\//, '');
-  return row({ left: chip('note', kindLabel(n.kind)), title: n.title, small: line, right: esc(fmtWhen(n.created)), open: decisionKind(n.id), actions: rowStateChip(n) || undefined });
+  return row({ left: chip('note', kindLabel(n.kind)), title: humanTitle(n.title), small: line, right: esc(fmtWhen(n.created)), open: decisionKind(n.id), actions: rowStateChip(n) || undefined });
 }
 
 /** One row in *Decided*: what you said, and what the company did with it. */
 export function decidedRow(d: DecidedRow): string {
-  return row({ left: d.approved ? chip('done', 'Approved') : chip('failed', 'Rejected'), title: d.title, small: d.outcome || kindLabel(d.kind), right: esc(fmtWhen(d.resolved_at || d.created)), open: decisionKind(d.id) });
+  return row({ left: d.approved ? chip('done', 'Approved') : chip('failed', 'Rejected'), title: humanTitle(d.title), small: d.outcome || kindLabel(d.kind), right: esc(fmtWhen(d.resolved_at || d.created)), open: decisionKind(d.id) });
+}
+
+/**
+ * The mail log, minus what is already a row on this screen.
+ *
+ * "approval needed: Keep, park or scrap …" is the same decision as the row above it, and the office listed both:
+ * one screen saying the same thing twice reads as two things waiting. A line about something that is *not* on
+ * this screen — a note sent, a message delivered — is the log's own job and stays.
+ */
+export function mailWithoutRows<T extends { text: string }>(mail: T[], titles: string[]): T[] {
+  const seen = titles.map((t) => t.trim().toLowerCase()).filter((t) => t.length > 8);
+  if (!seen.length) return mail;
+  return mail.filter((m) => { const t = m.text.toLowerCase(); return !seen.some((x) => t.includes(x)); });
 }
 
 /** The sheet: what needs the owner, then what they have already decided. */
@@ -131,7 +195,8 @@ export function decisionsView(s: State): View {
     : emptyHtml('clipboard', 'Nothing decided yet', 'Your approvals and rejections are kept here with what came of them.');
   // The mail log keeps its place under the segments rather than losing its only screen: it is a record of what the
   // company sent, not something anyone has to decide. Absent — which is the usual case — it takes no room at all.
-  const mail = s.mail.length ? section('Mail', rows(s.mail.slice(-20).reverse().map((m) => row({ title: m.text, right: esc(fmtWhen(m.ts)) })))) : '';
+  const mailRows = mailWithoutRows(s.mail, [...s.inbox.map((n) => n.title), ...s.decided.map((d) => d.title)]);
+  const mail = mailRows.length ? section('Mail', rows(mailRows.slice(-20).reverse().map((m) => row({ title: m.text, right: esc(fmtWhen(m.ts)) })))) : '';
   return {
     mode: 'drawer', icon: 'envelope', title: 'Decisions',
     sub: s.inbox.length ? `${s.inbox.length} need${s.inbox.length === 1 ? 's' : ''} you` : 'nothing needs you',
@@ -154,7 +219,7 @@ export function actionBar(n: InboxRow, o: { chosen?: number; st?: DecideState })
   // A brief the board is still arguing has no verdict to overrule yet, whatever its draft section happens to say
   // (ruling P8-6): the bar is shut, it says the board is sitting, and it must not also promise a ruling nobody
   // has made. So `needs_confirm` only speaks once the argument is in.
-  const confirming = !!n.needs_confirm && !n.board_pending;
+  const confirming = overrulesBoard(n);
   const v = verbsFor(d, confirming);
   const st = o.st;
   const busy = st?.status === 'sending' || st?.status === 'applying';
@@ -171,7 +236,8 @@ export function actionBar(n: InboxRow, o: { chosen?: number; st?: DecideState })
   const yes = `<button class="btn primary" data-act="decide:yes"${yesOff}>${esc(v.yes)}<kbd>A</kbd></button>`;
   const no = `<button class="btn" data-act="decide:no"${dis}>${esc(v.no)}<kbd>R</kbd></button>`;
   // Above the buttons, so it is read before the click and not after it: the verdict the owner is about to overrule.
-  const verdict = confirming && n.verdict ? `<p class="hintline" data-key="verdict">${esc(verdictLine(n.verdict))}</p>` : '';
+  const said = n.verdict || n.board_verdict || '';
+  const verdict = confirming && said ? `<p class="hintline" data-key="verdict">${esc(verdictLine(said, noun(n.kind)))}</p>` : '';
   return `<div class="actionbar" data-key="actionbar">${opts}${verdict}${state}<div class="acts">${comment}${no}${yes}</div></div>`;
 }
 
@@ -183,9 +249,15 @@ export function decisionView(id: string, s: State, ctx: Ctx, ui: { choice?: Reco
   const path = n?.path ?? done!.path;
   const link = obsidianUrl(ctx.vaultName, path);
   if (!n) {
-    const body = `<p>${done!.approved ? chip('done', 'Approved') : chip('failed', 'Rejected')} <span class="muted">${esc(kindLabel(done!.kind))} · ${esc(fmtWhen(done!.resolved_at || done!.created))}</span></p>`
-      + `<p class="hintline">${esc(done!.outcome || 'Recorded.')}</p>`;
-    return { mode: 'doc', icon: 'envelope', title: done!.title, sub: path, html: body, link };
+    // A ribbon over the note, not instead of it: the owner has just adopted a brief and the first thing they do
+    // is read what they adopted. Approving used to replace the whole document with a two-line card.
+    const d = done!;
+    const ribbon = `<p class="ribbon ${d.approved ? 'ok' : 'no'}">${d.approved ? chip('done', 'Approved') : chip('failed', 'Rejected')}`
+      + `<span class="muted">${esc(kindLabel(d.kind))} · ${esc(fmtWhen(d.resolved_at || d.created))}</span>`
+      + `<b>${esc(d.outcome || 'Recorded.')}</b></p>`;
+    const shownBody = readerBody(d);
+    const kept = shownBody ? `<div class="prose">${md(shownBody)}</div>` : `<p class="muted">The note carries no body. Open it in Obsidian to read it in full.</p>`;
+    return { mode: 'doc', icon: 'envelope', title: humanTitle(d.title), sub: path, html: ribbon + kept, link, copy: d.body ?? '' };
   }
   const st = decideStateFor(n, s.decisions[id]);
   const head = `<p>${chip('note', kindLabel(n.kind))} ${bandChip(n)} <span class="muted">${esc([n.from ? who(s, n.from) : '', fmtWhen(n.created)].filter(Boolean).join(' · '))}</span></p>`;
@@ -199,7 +271,7 @@ export function decisionView(id: string, s: State, ctx: Ctx, ui: { choice?: Reco
   const pressure = !inBody && pressureBody.trim() ? section('Pressure test', `<div class="prose">${md(pressureBody)}</div>`) : '';
   const verdict = n.board_verdict ? `<p class="hintline">The board: ${esc(n.board_verdict)}</p>` : '';
   return {
-    mode: 'doc', icon: 'envelope', title: n.title, sub: path, link,
+    mode: 'doc', icon: 'envelope', title: humanTitle(n.title), sub: path, link,
     html: head + why + body + pressure + verdict + actionBar(n, { chosen: ui.choice?.[id] ?? n.chosen, st }),
     copy: n.body ?? '',
   };

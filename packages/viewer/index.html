@@ -11,11 +11,15 @@
       body { margin: 0; height: 100%; overflow: hidden; }
       #game { position: absolute; inset: 0; }
       [hidden] { display: none !important; }
-      #layer, #rail, #minimap-chrome, #toast, #coach { visibility: hidden; }  /* until the stylesheet is in */
+      #layer, #rail, #minimap-chrome, #toast, #coach, #dock, #selection { visibility: hidden; }  /* until the stylesheet is in */
     </style>
   </head>
   <body>
     <div id="game" aria-hidden="true"></div>
+    <!-- The office, as a list. A canvas has no accessibility tree, so this is the campus's: people, screens,
+         what is on the floor and what is waiting on the owner, each a button that opens what clicking it in the
+         room would open. `.sr-only`, so it costs the picture nothing (ui/a11y.ts). -->
+    <nav id="office-a11y" class="sr-only" aria-label="The office"></nav>
     <header id="bar" class="glass">
       <div class="brand"><span class="mark" aria-hidden="true"></span><strong id="brand-name">Your company</strong><span id="brand-tagline">No name yet. Tell the CEO your idea.</span></div>
       <nav aria-label="Company">
@@ -29,7 +33,7 @@
         <button class="txt primary" data-open="cabin">Talk to the CEO</button>
       </nav>
     </header>
-    <nav id="rail" class="glass" aria-label="Floors"></nav>
+    <nav id="rail" class="glass" aria-label="Zones"></nav>
     <div id="coach" class="footnote glass" hidden></div>
     <div id="scrim" hidden></div>
     <div id="layer" hidden>
@@ -63,6 +67,10 @@
       <span id="clock" class="footnote"></span>
       <span id="replay-hint" class="caption dim replay-only">Space plays · arrows step</span>
     </div>
+    <!-- SP9b: the dock is what the owner adds things from (D), and the plate is what they do to the one thing they
+         have picked. Both are HTML over the canvas, so a press on either is never a press on the office. -->
+    <div id="dock" class="glass" hidden></div>
+    <div id="selection" class="glass" hidden></div>
     <div id="minimap-chrome" hidden></div>
     <div id="toast" hidden></div>
     <div id="announcer" aria-live="polite" class="sr-only"></div>

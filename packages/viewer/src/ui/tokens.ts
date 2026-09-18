@@ -1,9 +1,9 @@
 /**
  * The single palette source for the HTML layer and Phaser (visual notes §1 "Consistency"). `applyTheme` writes every
  * semantic token as a CSS custom property on <html>; Phaser code reads the same hex strings through `THEMES` and
- * `hexNum`. Floor colours come from world/palette.ts so carpet, sign, floor tab and minimap tick share one hue.
+ * `hexNum`. Zone accents come from world/palette.ts so the rug, the rail tab and the minimap share one hue.
  */
-import { floorPalette, PALETTE } from '../world/palette.js';
+import { DIVISION_TINT, PALETTE, ZONE_TINT } from '../world/palette.js';
 
 export type ThemeMode = 'dark' | 'light';
 
@@ -21,7 +21,7 @@ export interface ThemeColors {
   termBg: string; termText: string; termPrompt: string;
   /** the quieter text of the viewer chrome (.vbar, .vfoot, the viewer's own header) — on `termBg`, in both themes */
   termText2: string;
-  /** text laid over a floor tint: the current rail tab, and anything else sitting on `floorPalette(n).tab` deepened */
+  /** text laid over a zone tint: the current rail tab, and anything else sitting on that accent deepened */
   onTint: string;
   /** foreign content's own ground — a deployed site in an iframe brings its own light page, whatever our theme is */
   paper: string;
@@ -56,7 +56,8 @@ export function cssVars(mode: ThemeMode): Record<string, string> {
   const t = THEMES[mode];
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries({ ...t.colors, ...t.materials })) out[VAR_NAMES[k as keyof typeof VAR_NAMES]] = v;
-  for (const n of [1, 2, 3, 4]) out[`--floor-${n}`] = floorPalette(n).tab;
+  for (const [id, tint] of Object.entries(ZONE_TINT)) out[`--zone-${id}`] = tint;
+  for (const [id, tint] of Object.entries(DIVISION_TINT)) out[`--division-${id}`] = tint;
   return out;
 }
 

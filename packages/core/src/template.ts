@@ -7,6 +7,8 @@ import { listFilesRecursive, sha256, atomicWriteSync } from './fs.js';
 import { placeholderSquare } from './png.js';
 import { ENV_EXAMPLE } from './env-example.js';
 import { parseNote } from './frontmatter.js';
+import { loadCampusMap, migrationLayout, writeLayout, OFFICE_LAYOUT_PATH } from './layout.js';
+import { loadOrg } from './org.js';
 
 /** Repo root, resolved from this file (works from src/ via tsx and from dist/). */
 export function repoRoot(): string {
@@ -74,8 +76,12 @@ export async function scaffoldVault(target: string, opts: { force?: boolean; mem
     vault.recordWritten(rel, sha, 'init', /\.md$/.test(rel) ? buf.toString('utf8') : undefined);
     vault.events.emit({ type: 'vault.wrote', agent: 'init', payload: { path: rel, sha, by: 'init' } });
   }
+  // `Office/campus.md`: the office as shipped. No node overrides — day one looks exactly as the campus was
+  // generated — and the wiring the org already implies, so the owner opens the note and sees what they can cut.
+  const org = loadOrg(vault);
+  writeLayout(vault, migrationLayout(loadCampusMap(), org), 'init', org);
   const commit = await autoCommit(abs, 'cubicle: init vault');
-  return { vault, files: [...files, ...generated], commit };
+  return { vault, files: [...files, ...generated, OFFICE_LAYOUT_PATH], commit };
 }
 
 export { atomicWriteSync };

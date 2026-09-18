@@ -14,6 +14,12 @@ export interface NewProposal {
   target?: string;
   job?: string;
   id?: string;
+  /**
+   * Where on the office floor this one goes, when it is a hire the owner placed from the dock (SP9b). The
+   * applied hire writes it into `Office/campus.md` as the new desk's position; a hire filed any other way
+   * leaves the desk where the campus put it.
+   */
+  at?: { x: number; y: number };
 }
 
 export const INBOX = '00 Inbox';
@@ -48,7 +54,7 @@ export function createProposal(vault: Vault, p: NewProposal, by: string): { id: 
     while (findInboxById(vault, id)) id = makeId(p.kind === 'message' ? 'msg' : 'prop');
   }
   const rel = `${INBOX}/${stampForFilename()}-${p.kind}-${filenameTail(id, p.kind)}.md`;
-  const data = InboxFrontmatter.parse({ id, kind: p.kind, created: nowIso(), from: p.from, to: p.to ?? 'owner', call: p.call, target: p.target, job: p.job });
+  const data = InboxFrontmatter.parse({ id, kind: p.kind, created: nowIso(), from: p.from, to: p.to ?? 'owner', call: p.call, target: p.target, job: p.job, ...(p.at ? { x: p.at.x, y: p.at.y } : {}) });
   const body = `# ${p.title.trim()}\n\n${p.body.trim()}\n`;
   vault.writeText(rel, stringifyNote(data as Record<string, unknown>, body), by, { job: p.job ?? null });
   vault.events.emit({ type: 'proposal.created', agent: by, job: p.job ?? null, payload: { id, kind: p.kind, path: rel, title: p.title, to: data.to } });
