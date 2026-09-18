@@ -2404,7 +2404,7 @@ export async function runHeartbeat(rawDeps: HeartbeatDeps, jobId: string): Promi
           // the CEO rewrites against and what the owner reads is the capped list, the same budget the board's
           // own return gets: a plan naming twenty scrapped ideas must not become a twenty-bullet prompt.
           state = { ...state, boardVerdict: 'return', boardFindings: guardOnlyFindings }; saveState(state);
-          const out = returnPlan(guardOnlyFindings, !rewriteCheck.ok ? 'the rewrite changed what the company sells' : planCheck.ok ? 'unkept ideas' : 'objectives that serve no kept idea');
+          const out = returnPlan(guardOnlyFindings, unkeptForcesReturn(unkept) ? 'unkept ideas' : !rewriteCheck.ok ? 'the rewrite changed what the company sells' : 'objectives that serve no kept idea');
           if (out) return out;
           // Twice. The plan is not run and the board is not asked (ruling W3-1): a CEO that cannot write a plan
           // against the ideas the owner kept is not a thing another rewrite fixes, and the owner is the only one

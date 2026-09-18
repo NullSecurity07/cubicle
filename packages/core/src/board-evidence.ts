@@ -27,9 +27,9 @@ export const BOARD_OPINION = "(the board's opinion)";
 
 /** The rule itself, said once, so the advisor prompt, the chair prompt and this module all quote one sentence. */
 export const EVIDENCE_RULE = [
-  `Evidence is a link to a note in this vault — \`[[Research/<slug>/report]]\`, \`[[Ideas/<slug>]]\`, \`[[Meetings/<note>]]\` — and nothing else.`,
-  `A claim that carries a number, a named person or a named company with no such link is opinion, not evidence: write "${OPINION_PHRASES[0]}" or "${OPINION_PHRASES[1]}" in the sentence that makes it.`,
-  `Never invent a study, a pilot, a customer, a testimonial or a person. A link this vault does not hold is marked ${NO_SUCH_NOTE} in the transcript for the owner to see, and a turn that invents evidence is withheld from the board.`,
+  'Evidence is a link to a note in this vault — `[[Research/<slug>/report]]`, `[[Ideas/<slug>]]` — and nothing else.',
+  `A claim carrying a number, a named person or a named company with no such link is opinion: write "${OPINION_PHRASES[0]}" or "${OPINION_PHRASES[1]}" in the sentence that makes it.`,
+  `Never invent a study, a pilot, a customer or a person: a link this vault does not hold is marked ${NO_SUCH_NOTE} for the owner to read, and a turn that invents evidence is withheld.`,
 ].join(' ');
 
 /** What replaces a turn the constitution's `banned_tactics` classifier refused. */

@@ -137,6 +137,11 @@ const PLAN_FILLER = new Set([
   'metric', 'number', 'outcome', 'process', 'target', 'goal', 'each', 'every', 'some', 'over', 'under', 'after',
   'before', 'between', 'through', 'during', 'against', 'about', 'above', 'below', 'again', 'further', 'once',
   'here', 'there', 'whose', 'being', 'does', 'doing', 'could', 'should', 'would', 'might', 'must', 'shall',
+  // …and the plumbing. These name how software is delivered, never what a company sells, and an objective made
+  // only of them ("Ship the staging branch") is engineering housekeeping in service of whatever is on the card.
+  'staging', 'branch', 'site', 'page', 'landing', 'repo', 'repository', 'pipeline', 'infrastructure',
+  'environment', 'dashboard', 'docs', 'documentation', 'readme', 'backlog', 'ticket', 'sprint', 'release',
+  'version', 'migration', 'schema', 'config', 'setup', 'scaffold', 'prototype', 'draft', 'copy', 'content',
 ]);
 
 /** How short a word may be and still say what a company sells. `URL` and `API` are three letters and generic. */
@@ -240,6 +245,11 @@ export function checkPlan(vault: Vault, planMd: string): PlanCheck {
   if (!kept.length) return { ok: false, findings: [`The plan states ${objectives.length} objective${objectives.length === 1 ? '' : 's'} and ${NOTHING_PLANNED}: no objective can say which idea it serves. Keep an idea — pick one of the CEO's, or set \`decision: keep\` on a card — and the next plan is written against it.`] };
   const decisions = new Map<string, IdeaDecision>(all.map((i) => [i.id.toLowerCase(), i.decision]));
   const findings: string[] = [];
+  // A finding that does not refuse. An idea the owner has not ruled on yet is the state every card starts in,
+  // and returning a plan for one would deadlock the cycle it is filed in — the same asymmetry
+  // `unkeptForcesReturn` keeps, said once more here so the two halves of the guard cannot disagree. The CEO and
+  // the owner still read it.
+  let soft = 0;
   for (const o of objectives) {
     if (!o.idea) {
       findings.push(`The objective "${quote(o.text)}" under \`### ${o.team}\` names no idea. End every objective with \`${PLAN_IDEA_MARKER} <slug>\` naming the kept idea it serves — the ideas the owner kept are ${keptList(kept)}.`);
@@ -254,7 +264,9 @@ export function checkPlan(vault: Vault, planMd: string): PlanCheck {
       const card = productWords(ideaProductText(vault, o.idea));
       if (!card.length) continue;   // a card with no prose yet cannot refute anything
       const said = productWords(o.text);
-      if (said.some((w) => card.includes(w))) continue;
+      // "Ship the first cut" names nothing this can weigh. An objective with no product word of its own is
+      // vague, which is a different complaint from planning a different business, and not this rule's to make.
+      if (!said.length || said.some((w) => card.includes(w))) continue;
       findings.push(`The objective "${quote(o.text)}" under \`### ${o.team}\` serves \`${PLAN_IDEA_MARKER} ${o.idea}\`, but nothing it names is on that card: it is about "${quote(objectiveProduct(o.text))}", and [[${ideaPath(o.idea).replace(/\.md$/, '')}]] is about "${quote(readIdea(vault, o.idea)?.data.title ?? o.idea)}". A plan may not change what the company sells. If the board wants a different product, the owner keeps its pivot card first.`);
       continue;
     }
@@ -264,9 +276,10 @@ export function checkPlan(vault: Vault, planMd: string): PlanCheck {
       : decision === 'undecided'
         ? 'which the owner has not ruled on yet'
         : `which the company ${decision === 'scrap' ? 'scrapped' : 'parked'}`;
+    if (decision === 'undecided') soft++;
     findings.push(`The objective "${quote(o.text)}" under \`### ${o.team}\` serves \`${PLAN_IDEA_MARKER} ${o.idea}\`, ${what}. A plan may only draw on ideas the owner kept: ${keptList(kept)}.`);
   }
-  return { ok: findings.length === 0, findings };
+  return { ok: findings.length === soft, findings };
 }
 
 /** The `idea:` slugs a plan's objectives serve, lower-cased and deduplicated, in the order they appear. */
