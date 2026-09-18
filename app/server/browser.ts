@@ -77,7 +77,7 @@ export function realRunner(env: NodeJS.ProcessEnv = process.env): Runner {
 // Stand-in for browser journeys: no Chrome, fixed answers.
 export const fakeRunner: Runner = async (_session, args) => {
   if (args[0] === 'eval' && ENGINES.some((engine) => engine.read === args[1])) return JSON.stringify(JSON.stringify([{ title: 'Example result', url: 'https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8', snippet: 'An example.' }]));
-  if (args[0] === 'eval') return JSON.stringify(JSON.stringify({ title: 'Example Domain', url: 'https://example.com/', text: 'This domain is for use in examples.' }));
+  if (args[0] === 'eval') return JSON.stringify(JSON.stringify({ title: 'Example Domain', url: 'https://example.com/', text: `This domain is for use in examples. ${'It is reserved for documentation and may be used without asking. '.repeat(3)}`.trim() }));
   if (args[0] === 'snapshot') return '- heading "Example Domain" [ref=e1]\n- link "More information" [ref=e2]\n';
   if (args[0] === 'stream') return 'Streaming enabled on ws://127.0.0.1:1\n';
   if (args[0] === 'get') return 'https://example.com/\n';
