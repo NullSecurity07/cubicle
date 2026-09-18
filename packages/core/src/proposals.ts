@@ -49,7 +49,7 @@ export function ownerInstruction(kind: string): string {
     case 'idea_verdict': return `Choose Keep, Park or Scrap in ${OWNER_INSTRUCTION_SURFACE}.`;
     case 'founder_brief': return `Adopt it or send it back in ${OWNER_INSTRUCTION_SURFACE}; sending it back asks the company to write it again.`;
     case 'plan_verdict': return `Approve it or send it back in ${OWNER_INSTRUCTION_SURFACE}. Work already approved keeps running while you decide.`;
-    case 'brand_change': return `Pick one in ${OWNER_INSTRUCTION_SURFACE}; the name you choose becomes the company's.`;
+    case 'brand_change': return `Pick one in ${OWNER_INSTRUCTION_SURFACE}. The name you choose becomes the company's.`;
     // One kind, two screens: three lines to choose between, and a single name to adopt. `brand_change_name` is
     // not a proposal kind — a caller may pass a finer key than the kind when the kind alone would say the wrong
     // thing, and every key still has to answer `namesAFieldToEdit` with false.
