@@ -1,0 +1,76 @@
+# The pipeline for a static site. Copy this over Workspace/<stream>/cubicle-ci.yaml when the stream ships the
+# one-page site from config/templates/static/ (ruling W4-8).
+#
+# It validates the HTML and nothing else: bash and grep, both in the sandbox image, no npm, no network, no
+# installed dependencies, no build step. An engineer.ship cannot finish without a green run of this newer than every
+# source file in its stream (operating model §17), and this one is green the moment the page is real HTML with
+# the placeholders filled in.
+#
+# The site lives at /work/Site, mounted read-only; the cwd is the stream's workspace. Every step reads $SITE,
+# which defaults to that path, so the same checks run against any directory — which is how they are tested.
+# Add build, lint and test steps ahead of these the day this stream ships something that has them (toolchain
+# §45 gives the order).
+network: none
+timeout_s: 60
+steps:
+  - name: html-exists
+    run: |
+      set -eu
+      SITE="${SITE:-/work/Site}"
+      test -d "$SITE" || { echo "no Site/ is mounted: this pipeline validates the vault's Site/ folder"; exit 1; }
+      test -s "$SITE/index.html" || { echo "Site/index.html is missing or empty"; exit 1; }
+      ls -la "$SITE"
+
+  - name: html-valid
+    run: |
+      set -eu
+      cd "${SITE:-/work/Site}"
+      fail() { echo "FAIL: $1"; exit 1; }
+      head -c 200 index.html | grep -qi '<!doctype html' || fail "index.html does not start with <!doctype html>"
+      grep -qi '<html[^>]*lang=' index.html || fail "<html> has no lang attribute"
+      grep -qi '<meta[^>]*charset=' index.html || fail "no <meta charset>"
+      grep -qi '<meta[^>]*name=["'"'"']\?viewport' index.html || fail "no viewport meta: the page will not work on a phone"
+      grep -qi '<title>[^<]\{3,\}</title>' index.html || fail "no <title> with anything in it"
+      grep -qi '<h1[ >]' index.html || fail "no <h1>: the page never says what this company does"
+      # Every opening tag that must be closed, closed. A crude count, and crude is the point: it catches the
+      # half-written page a model leaves behind without pretending to be a parser.
+      for tag in html head body main; do
+        o=$(grep -oi "<$tag[ >]" index.html | wc -l)
+        c=$(grep -oi "</$tag>" index.html | wc -l)
+        [ "$o" = "$c" ] || fail "<$tag> opened $o time(s) and closed $c time(s)"
+      done
+      echo "index.html is well-formed"
+
+  - name: no-placeholders
+    run: |
+      set -eu
+      cd "${SITE:-/work/Site}"
+      # The template ships every line the engineer has to replace marked REPLACE, so a page that still carries
+      # one has not been written yet. This is the step the Astro scaffold had no equivalent of: the 2026-09-14
+      # run shipped default placeholder content through a green build.
+      if grep -rn 'REPLACE' . ; then
+        echo "FAIL: the template's REPLACE placeholders are still in the page. Write the real copy from Brand/."
+        exit 1
+      fi
+      for phrase in 'Lorem ipsum' 'Astro' 'Welcome to Astro' 'TODO' 'Example Domain'; do
+        if grep -rni "$phrase" . ; then echo "FAIL: placeholder or scaffold text left in the site: $phrase"; exit 1; fi
+      done
+      echo "no placeholder text"
+
+  - name: links-resolve
+    run: |
+      set -eu
+      cd "${SITE:-/work/Site}"
+      # Every href/src that is not a URL, a mailto:, a tel: or an anchor must name a file that is actually here.
+      # "no broken links" is in the seed's done_when, and this is what checks it.
+      missing=0
+      for f in $(grep -roh '\(href\|src\)="[^"]*"' . | sed 's/.*="//;s/"$//'); do
+        case "$f" in
+          http://*|https://*|mailto:*|tel:*|data:*|//*|'#'*|'') continue ;;
+        esac
+        target="${f%%#*}"
+        target="${target%%\?*}"
+        [ -e "$target" ] || { echo "broken link: $f"; missing=$((missing + 1)); }
+      done
+      [ "$missing" = "0" ] || { echo "FAIL: $missing broken link(s)"; exit 1; }
+      echo "every local link resolves"

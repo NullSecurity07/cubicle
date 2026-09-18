@@ -6,7 +6,7 @@ import {
   scaffoldVault, Vault, loadOrg, readJob, listJobs, listStreams, createProposal,
   readCiConfig, ciConfigPath, ciStatus, latestCiRecord, JobResult, type JobFrontmatter,
 } from '@cubicle/core';
-import { parseToolsConfig, ToolRegistry, phase3Tools, phase5Tools, hasDocker, hasSandboxImage } from '@cubicle/tools';
+import { parseToolsConfig, ToolRegistry, phase3Tools, phase5Tools, hasDocker, hasSandboxImage, STATIC_TEMPLATE, templatesDir } from '@cubicle/tools';
 import { runJob, vaultScheduler, shipRefusal, type Llm } from '@cubicle/harness';
 import type { RoutedChatResult, RouteRequest, ChatMessage, ToolSchema } from '@cubicle/router';
 import { seedFirstStream, seedFirstJobs } from '../src/first-run.js';
@@ -135,4 +135,43 @@ describe('a fresh vault\'s first seeded job can finish (fix wave item 10 / I3)',
     expect(blocked.join(' ')).toMatch(/Docker|bubblewrap/i);
     expect(blocked.join(' ')).not.toMatch(/no CI config/);
   }, 60_000);
+});
+
+/**
+ * Ruling W4-8: the site seed no longer contradicts its own goal.
+ *
+ * `job_20260914_b88c4b` was told "Keep it static and boring — no framework, no build step the owner has to
+ * learn", and the only template the sandbox offered was `/opt/templates/minimal`: Astro with an npm build. The
+ * engineer copied it — the sensible thing to do with the only template there is — and the job cost five CI
+ * failures, a step_limit, three attempts and 25 steps before shipping default Astro placeholder content.
+ */
+describe('the site seed points at a template that matches it (W4-8)', () => {
+  const siteSeed = (): JobFrontmatter => {
+    seedFirstStream(vault);
+    const ids = seedFirstJobs(vault, loadOrg(vault));
+    return listJobs(vault).find((j) => ids.includes(j.id) && j.type === 'engineer.ship')!;
+  };
+
+  it('names the static template by path, says to copy it, and rules the Astro one out', () => {
+    const goal = readJob(vault, siteSeed().id)!.body;
+    expect(goal).toContain(STATIC_TEMPLATE);
+    expect(goal).toContain('Copy these, then edit');
+    expect(goal).toContain('index.html, styles.css and cubicle-ci.yaml');
+    // The goal still says what it always said…
+    expect(goal).toContain('no framework, no build step');
+    // …and now says which template that rules out, by name, where the engineer reads it.
+    expect(goal).toContain('Do NOT copy /opt/templates/minimal');
+  });
+
+  it('tells the engineer to put the template\'s own pipeline in place of the placeholder one', () => {
+    const goal = readJob(vault, siteSeed().id)!.body;
+    expect(goal).toContain(`${STATIC_TEMPLATE}/cubicle-ci.yaml`);
+    expect(goal).toContain(ciConfigPath("<the job's stream>"));
+    expect(goal).toMatch(/no npm/);
+  });
+
+  it('the template that goal names is actually in the repo, and is those three files', () => {
+    const dirOnDisk = path.join(templatesDir(), 'static');
+    for (const f of ['index.html', 'styles.css', 'cubicle-ci.yaml']) expect(readFileSync(path.join(dirOnDisk, f), 'utf8').length).toBeGreaterThan(100);
+  });
 });

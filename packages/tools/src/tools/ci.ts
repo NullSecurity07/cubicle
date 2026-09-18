@@ -3,7 +3,7 @@ import { existsSync, lstatSync, openSync, readSync, fstatSync, closeSync, consta
 import path from 'node:path';
 import { defineTool } from '../registry.js';
 import { readCiConfig, writeCiRecord, ciConfigPath, workspacePath, isValidStreamSlug, nowIso, type CiRecord, type CiStepResult } from '@cubicle/core';
-import { sandboxExec } from './shell.js';
+import { sandboxExec, templatesMount } from './shell.js';
 import { commandPublishes, secretsGuardrail } from '../guardrails.js';
 
 const MAX_STEP_OUTPUT = 8000;
@@ -148,7 +148,16 @@ export const ciRun = defineTool({
       }
       const exec = await sandboxExec(ctx, {
         command: step.run,
-        mounts: [{ src: abs, dst: '/work/stream' }, { src: ctx.vault.abs(`.cubicle/workspace/${ctx.jobId ?? 'ci'}/scratch`), dst: '/work/scratch' }],
+        mounts: [
+          { src: abs, dst: '/work/stream' },
+          { src: ctx.vault.abs(`.cubicle/workspace/${ctx.jobId ?? 'ci'}/scratch`), dst: '/work/scratch' },
+          // The site, read-only, so a pipeline can check what actually shipped (ruling W4-8). A stream whose
+          // deliverable is `Site/index.html` had no way to validate it from here: the workspace is where the
+          // code is built and `Site/` is where the page lives, and CI only ever saw the first. Read-only
+          // because CI reads a result; the page is written by the job, in `shell.run` or `vault.write`.
+          { src: ctx.vault.abs('Site'), dst: '/work/Site', ro: true },
+          templatesMount(),
+        ],
         workdir: '/work/stream',
         network: cfg.config.network,
         timeoutMs: Math.min(cfg.config.timeout_s * 1000, remaining),
