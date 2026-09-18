@@ -2,7 +2,7 @@ import './ui/tokens.css';
 import './ui/app.css';
 import { CampusView } from './world/view.js';
 import { Net, resolveWs } from './net.js';
-import { applyConversation, decideAcked, decideFailed, decideSent, emptyState, applyEvent, applySnapshot, tick, withFrameSeq, type State, type CubicleEvent, type Snapshot, type ThreadTurn } from './state.js';
+import { applyConversation, applyLayoutChanged, decideAcked, decideFailed, decideSent, emptyState, applyEvent, applySnapshot, tick, withFrameSeq, type State, type CubicleEvent, type Snapshot, type ThreadTurn } from './state.js';
 import { Panel, SURPRISE_ME, type Origin } from './ui/panel.js';
 import { TopBar } from './ui/bar.js';
 import { applyTheme, currentTheme, themeFromQuery, THEMES } from './ui/tokens.js';
@@ -460,6 +460,17 @@ const net = new Net(url, token, {
   onDecideAck(id) { state = decideAcked(state, id); refresh(); },
   onHireAck(id) { hiringId = id; toast('Hire proposed — approve it in Decisions.'); announce('Hire proposed — approve it in Decisions.'); },
   onConversation(id, turns) { state = applyConversation(state, id, turns as ThreadTurn[]); refresh(); },
+  /**
+   * The office moved somewhere else — another window dragged something, or the owner saved `Office/campus.md`
+   * in Obsidian (ruling W6-13). The daemon has already validated it, so it replaces what is drawn here whatever
+   * this window was holding, and `syncLayout` sees a new object and redraws. In replay the floor is the live
+   * office's, so the change is kept for the moment the owner comes back to live.
+   */
+  onLayoutChanged(layout) {
+    if (state.mode === 'replay') { if (liveState) liveState = applyLayoutChanged(liveState, layout); return; }
+    state = applyLayoutChanged(state, layout);
+    refresh();
+  },
   // An error the daemon ties to a decision belongs in that reader's own state line; anything else is a toast.
   onError(message, id) {
     const pending = id ?? Object.keys(state.decisions).find((k) => state.decisions[k].status === 'sending' || state.decisions[k].status === 'applying') ?? null;

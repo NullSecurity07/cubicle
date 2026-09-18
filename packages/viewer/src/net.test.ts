@@ -80,6 +80,23 @@ describe('Net decide and conversation.get', () => {
     net.close();
   });
 
+  /**
+   * W6-13. `layout.changed` is an op of its own, not an `event` — the daemon broadcasts it from `layout.set`
+   * and from an owner's save in Obsidian. Nothing routed it, so the live office only ever followed a hand edit
+   * after a reload, and a drag the daemon refused never sprang back.
+   */
+  it('routes the daemon\'s layout.changed to the office', () => {
+    withFakeWs();
+    const seen: unknown[] = [];
+    const net = new Net('ws://127.0.0.1:7521', 'tok', { ...handlers(), onLayoutChanged(layout) { seen.push(layout); } });
+    net.connect();
+    const ws = FakeWs.instances[0];
+    ws.open();
+    ws.onmessage!({ data: JSON.stringify({ op: 'layout.changed', layout: { version: 1, nodes: { cto: { x: 44, y: 8 } }, connections: [] } }) });
+    expect(seen).toEqual([{ version: 1, nodes: { cto: { x: 44, y: 8 } }, connections: [] }]);
+    net.close();
+  });
+
   it('asks for one thread and decodes the ack, the turns and an error', () => {
     withFakeWs();
     const seen: string[] = [];

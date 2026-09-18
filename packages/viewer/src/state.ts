@@ -249,6 +249,15 @@ export function conversationTurns(s: Pick<State, 'turns' | 'live'>, id: string):
   return [...(s.turns[id] ?? []), ...(s.live[id] ?? [])];
 }
 
+/**
+ * A `layout.changed` landed: the daemon's word on the office, whole (ruling W6-13).
+ *
+ * It arrives as its own op rather than through the event stream — the floor is one note as it stands, with no
+ * history to replay — so it needs a reducer of its own. Never merged with what this office drew: the daemon has
+ * already validated it, which is exactly what makes it the thing that springs a refused drag back.
+ */
+export const applyLayoutChanged = (s: State, layout: unknown): State => ({ ...s, layout: asLayout(layout) });
+
 /** A `conversation` reply landed: it is the whole thread, so the live buffer it replaces is dropped. */
 export function applyConversation(s: State, id: string, turns: ThreadTurn[]): State {
   const live = { ...s.live };

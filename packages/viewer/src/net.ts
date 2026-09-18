@@ -27,6 +27,13 @@ export interface NetHandlers {
    * stays a ghost until they do — a hire is the owner's, not the office's.
    */
   onHireAck?(id: string): void;
+  /**
+   * The office moved, and the daemon is telling every open one (SP9b, ruling W6-13). It follows a `layout.set`
+   * from any window and a save of `Office/campus.md` in Obsidian, and it is the daemon's *validated* floor — so
+   * it is also what springs a refused drag back. It is an op of its own, not an `event`: the floor is one note
+   * as it stands, with no history to replay, so it never goes near the event stream.
+   */
+  onLayoutChanged?(layout: unknown): void;
 }
 
 /** Resolve the daemon WS URL + token: ?ws= & ?token= in the page URL, else defaults (daemon port 7411 next to the viewer's 7412). */
@@ -65,6 +72,7 @@ export class Net {
       else if (msg.op === 'decide.ack') this.h.onDecideAck?.(String(msg.id));
       else if (msg.op === 'conversation') this.h.onConversation?.(String(msg.id), Array.isArray(msg.turns) ? (msg.turns as ThreadTurn[]) : []);
       else if (msg.op === 'layout.ack') this.h.onLayoutAck?.(Array.isArray(msg.dropped) ? (msg.dropped as { line: string; reason: string; sentence?: string }[]) : []);
+      else if (msg.op === 'layout.changed') this.h.onLayoutChanged?.(msg.layout);
       else if (msg.op === 'hire.ack') this.h.onHireAck?.(String(msg.id));
       else if (msg.op === 'error') this.h.onError?.(String(msg.message ?? 'the daemon refused that'), msg.id === undefined ? null : String(msg.id));
     };

@@ -127,6 +127,25 @@ describe('the layout on the wire', () => {
   });
 
   /**
+   * Ruling W6-13. The office in front of the owner has to follow a save in Obsidian without a reload, so the
+   * broadcast must carry the floor itself and not merely wake the page. The other half — routing the op at all
+   * — is the viewer's, and is tested there (`net.test.ts`, `state.test.ts`); it was the broken one.
+   */
+  it('a hand edit reaches an office that is already open, with the value that was typed', async () => {
+    const a = await open();
+    const was = layoutNow();
+    vault.writeText(OFFICE_LAYOUT_PATH, stringifyNote(
+      { version: 1, nodes: { ...was.nodes, cto: { x: 44, y: 8 } }, connections: was.connections },
+      '# The office\n',
+    ), 'owner');
+    server.pushLayout();
+    await waitFor(() => a.msgs.some((m) => m.op === 'layout.changed'), 'layout.changed');
+    const changed = a.msgs.filter((m) => m.op === 'layout.changed').at(-1) as { layout: CampusLayout };
+    expect(changed.layout.nodes.cto).toEqual({ x: 44, y: 8 });
+    a.ws.close();
+  });
+
+  /**
    * Ruling W6-2. Editing `cto:` to a blocked coordinate deleted the desk outright — out of `nodes:` and out of
    * the body's "Moved" list — with no error anywhere, so the note's own instructions destroyed the owner's drag.
    */
