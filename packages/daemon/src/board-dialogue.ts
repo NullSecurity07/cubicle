@@ -808,10 +808,15 @@ export function briefBoardBlock(o: { verdict: string; notePath: string; question
  * characters of the company's own prose back as the owner's). Anything the company added under the fence would
  * be quoted to the research office as the rejection.
  */
-export function briefProposalBodyWithBoard(brief: string, board: string): string {
+export function briefProposalBodyWithBoard(brief: string, board: string, title = ''): string {
   const body = founderBriefProposalBody(brief, citedPaths(brief));
   const at = body.indexOf('## Proposed content');
-  return at < 0 ? `${board}\n\n${body}` : `${body.slice(0, at)}${board}\n\n${body.slice(at)}`;
+  const withBoard = at < 0 ? `${board}\n\n${body}` : `${body.slice(0, at)}${board}\n\n${body.slice(at)}`;
+  // Ruling W6-12, the other half of it. `createProposal` writes the note's own title as its first line, and
+  // this rewrite used to drop it — so the first `# ` heading left in the note was the one *inside* the fence,
+  // and every reader that takes a note's title from its first heading (the office's own snapshot does) showed
+  // the owner the brief's H1 instead of the note's. The heading is put back where the note had it.
+  return title.trim() ? `# ${title.trim()}\n\n${withBoard}` : withBoard;
 }
 
 /**
@@ -1022,7 +1027,14 @@ export async function runBriefBoardSession(deps: HeartbeatDeps, org: Org): Promi
   // everything above the fence, so their paragraph is re-appended under it where the rejection path reads it.
   const decidedEarly = now.data.approved !== null;
   const comment = decidedEarly ? splitRejectedBrief({ data: now.data as Record<string, unknown>, body: now.body }).comment : '';
-  const body = briefProposalBodyWithBoard(brief, briefBoardBlock({ verdict, notePath: session.notePath, questions: session.questions, unusable, decidedEarly }));
+  // Ruling W6-12: the founding document is titled here too, because this rewrite is the last thing to touch it
+  // before the owner reads it and the dispatcher writes it to disk byte for byte.
+  const body = briefProposalBodyWithBoard(
+    withFounderBriefTitle(brief, vault),
+    briefBoardBlock({ verdict, notePath: session.notePath, questions: session.questions, unusable, decidedEarly }),
+    // The title the note already had, kept across the rewrite; failing that, the brief's own (W6-12).
+    now.body.match(/^#\s+(.+)$/m)?.[1]?.trim() || founderBriefTitle(vault),
+  );
   vault.updateNote(proposal.path, (n) => ({
     data: { ...n.data, board_pending: false, ...(decidedEarly ? { approved: null, chosen: null } : {}) },
     body: comment ? `${body.trimEnd()}\n\n${comment}\n` : body,

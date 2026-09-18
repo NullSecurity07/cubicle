@@ -3,6 +3,7 @@ import { defineTool, type ToolContext } from '../registry.js';
 import {
   createProposal, ProposalKind, idFromKey, loadOrg, can, officeHolder, listInbox, type Vault,
   checkFounderBrief, briefCheckContext, briefFromProposalBody, hasProposedContentFence, founderBriefProposalBody, citedPaths,
+  withProposedContent, withFounderBriefTitle,
 } from '@cubicle/core';
 
 /**
@@ -105,10 +106,15 @@ export const proposalCreate = defineTool({
       // live run's brief had none, so the owner's "rejected make it better or get a new idea" was invisible and
       // a thousand characters of the company's own prose went back to them as their words. A brief that arrives
       // without the fence is wrapped here, once, where the bytes are still ours to shape.
-      if (!hasProposedContentFence(body)) {
-        const brief = briefFromProposalBody(body);
-        body = founderBriefProposalBody(brief, citedPaths(brief));
-      }
+      // Ruling W6-12, and the same "the bytes are still ours to shape" moment: the brief's own H1 is two facts
+      // the vault holds, not a title for the author to choose. The third dry-run's author echoed the fence it
+      // was told to use — `# Proposed content` — and that became the heading of `Memory/founder-brief.md`, the
+      // reader's title and its accessible name. Applied whether or not the fence had to be added, because the
+      // placeholder arrives inside a correctly fenced brief just as easily.
+      const titled = withFounderBriefTitle(briefFromProposalBody(body), ctx.vault);
+      body = hasProposedContentFence(body)
+        ? withProposedContent(body, titled)
+        : founderBriefProposalBody(titled, citedPaths(titled));
       // One open brief per discovery job (ruling W3-4). The check runs **after** the truth check above, so the
       // note the owner sees is always a brief that passed it, and so the two-returns rule keeps working on the
       // same document rather than being reset by a second note.

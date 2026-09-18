@@ -723,6 +723,38 @@ export function founderBriefProposalBody(brief: string, sources: string[]): stri
     brief.trim(),
     PROPOSED_CONTENT_FENCE,
     '',
-    'Set `approved: true` to adopt it, or edit the block first. Set `approved: false` and I will ask again next cycle.',
+    ownerInstruction('founder_brief'),
   ].join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// The founder brief is titled (ruling W6-12)
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** What the company calls itself, out of `Brand/name.md`, or `''` before it has a name. */
+export function companyName(vault: Vault): string {
+  return String(parseNote(vault.readTextOrNull(BRAND_NAME_PATH) ?? '').data.name ?? '').trim();
+}
+
+/**
+ * The H1 the company's founding document carries: `Founder brief — <company name>`.
+ *
+ * `Memory/founder-brief.md` opened `# Proposed content` in the third dry-run, and so did the reader's heading
+ * and its accessible name — the words of the fence the brief travels inside, echoed back by the author as a
+ * title and then adopted verbatim as the title of the one document every plan is written against. The title is
+ * not the author's to choose: it is two facts the vault already holds, so it is written in code.
+ */
+export function founderBriefTitle(vault: Vault): string {
+  const name = companyName(vault);
+  return name ? `Founder brief — ${name}` : 'Founder brief';
+}
+
+/**
+ * The brief under its own title: whatever H1 it arrived with is replaced, and one is added when it came with
+ * none. Everything below the first heading is the author's and is untouched.
+ */
+export function withFounderBriefTitle(brief: string, vault: Vault): string {
+  const body = (brief ?? '').replace(/\r/g, '').replace(/^﻿/, '').trimStart();
+  const rest = /^#\s+[^\n]*\n?/.test(body) ? body.replace(/^#\s+[^\n]*\n?/, '').trimStart() : body;
+  return `# ${founderBriefTitle(vault)}\n\n${rest}`.trimEnd() + '\n';
 }

@@ -11,12 +11,12 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  scaffoldVault, Vault, createProposal, ownerDecide, readIdea, listIdeas, keptIdeas, BRAND_NAME_PATH, ownerInstruction, OWNER_INSTRUCTION_SURFACE, founderBriefProposalBody,
+  scaffoldVault, Vault, createProposal, ownerDecide, readIdea, listIdeas, keptIdeas, BRAND_NAME_PATH, ownerInstruction, OWNER_INSTRUCTION_SURFACE, founderBriefTitle, withFounderBriefTitle, founderBriefProposalBody,
 } from '@cubicle/core';
 import { parseToolsConfig, ToolRegistry, phase3Tools } from '@cubicle/tools';
 import { vaultScheduler } from '@cubicle/harness';
 import { dispatchProposals } from '../src/index.js';
-import { priorSittingBlock, renderBriefPressureSection, WEDGE_NOT_A_CARD } from '../src/board-dialogue.js';
+import { priorSittingBlock, briefProposalBodyWithBoard, renderBriefPressureSection, WEDGE_NOT_A_CARD } from '../src/board-dialogue.js';
 import { ideaVerdictBody, chairPivotText } from '../src/heartbeat.js';
 
 const root = path.resolve(__dirname, '../../..');
@@ -97,6 +97,31 @@ describe('W6-7: no frontmatter instructions in a proposal body', () => {
     const body = founderBriefProposalBody('## What the company is\n\nPageSpeedAudit.', []);
     expect(body).not.toMatch(/set\s+`?(chosen|approved)`?\s*:/i);
     expect(body).toContain(ownerInstruction('founder_brief'));
+  });
+});
+
+describe('W6-12: the founder brief is titled', () => {
+  it('names the company, and replaces the placeholder the model echoed', () => {
+    vault.writeText(BRAND_NAME_PATH, '---\nname: PageSpeedAudit\ntagline: ""\nurl: ""\n---\n# PageSpeedAudit\n', 'daemon');
+    expect(founderBriefTitle(vault)).toBe('Founder brief — PageSpeedAudit');
+    const brief = withFounderBriefTitle('# Proposed content\n\n## What the company is\n\nAudits.\n', vault);
+    expect(brief.split('\n')[0]).toBe('# Founder brief — PageSpeedAudit');
+    expect(brief).toContain('## What the company is');
+    expect(brief).not.toContain('# Proposed content');
+  });
+
+  it('titles a brief that has no heading at all, and an unnamed company', () => {
+    expect(founderBriefTitle(vault)).toBe('Founder brief');
+    expect(withFounderBriefTitle('## What the company is\n\nUnnamed.\n', vault).split('\n')[0]).toBe('# Founder brief');
+  });
+
+  it("keeps the note's own heading across the board's rewrite, so the reader stops reading inside the fence", () => {
+    const body = briefProposalBodyWithBoard('# Founder brief — PageSpeedAudit\n\n## What the company is\n\nAudits.', 'The board ruled **WEAK**.', 'Founder Brief: PageSpeedAudit');
+    expect(body.split('\n')[0]).toBe('# Founder Brief: PageSpeedAudit');
+    // What any reader that takes a title from the first heading now finds.
+    expect(body.match(/^#\s+(.+)$/m)![1]).toBe('Founder Brief: PageSpeedAudit');
+    expect(body).toContain('The board ruled **WEAK**.');
+    expect(body.indexOf('The board ruled')).toBeLessThan(body.indexOf('## Proposed content'));
   });
 });
 
