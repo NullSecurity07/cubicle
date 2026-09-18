@@ -34,9 +34,9 @@ describe('stage data', () => {
     }
   });
 
-  it('points every room at an image under /rooms/', () => {
+  it('gives every room person an accent colour', () => {
     for (const node of stageNodes) {
-      if (node.type === 'room') expect(node.data.image).toMatch(/^\/rooms\/[a-z]+\.webp$/);
+      if (node.type === 'room') expect(node.data.accent).toMatch(/^#[0-9a-f]{6}$/);
     }
   });
 });

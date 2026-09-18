@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "e2e": "playwright test",
-    "assets": "node scripts/rooms.mjs && node scripts/to-webp.mjs"
+    "assets": "node scripts/to-webp.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5",

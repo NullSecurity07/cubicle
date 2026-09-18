@@ -15,11 +15,10 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('.react-flow__node')).toHaveCount(4);
 });
 
-test('shows three rooms, one card and two wires, with every image loaded', async ({ page }) => {
+test('shows three rooms with a person each, one card and two wires', async ({ page }) => {
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
-  const widths = await page.locator('.card__body img').evaluateAll((imgs) => imgs.map((img) => (img as HTMLImageElement).naturalWidth));
-  expect(widths).toHaveLength(3);
-  for (const width of widths) expect(width).toBeGreaterThan(0);
+  await expect(page.locator('.card__body--room svg.person')).toHaveCount(3);
+  await expect(page.locator('.card img')).toHaveCount(0);
   await expect(page.locator('button, .react-flow__minimap, .react-flow__controls, .react-flow__attribution')).toHaveCount(0);
 });
 
