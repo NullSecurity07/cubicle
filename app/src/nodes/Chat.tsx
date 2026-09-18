@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { ChatMessage, ToolEvent } from '../../shared/model';
 import { getChat, sendChat } from '../api';
-import { emit } from '../bus';
+import { emit, listen } from '../bus';
 import { useFlushStage } from '../sync';
 import { Message } from './Message';
 
@@ -26,6 +26,8 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
     return () => stop.current?.abort();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+  // A colleague consulted this person: the question and the answer were written to this room by the server.
+  useEffect(() => listen('effect', (effect) => { if (effect.kind === 'chat-changed' && effect.id === id) getChat(id).then(setMessages).catch(() => {}); }), [id]);
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [messages, live]);
 
   async function send() {

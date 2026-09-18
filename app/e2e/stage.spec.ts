@@ -25,8 +25,8 @@ test.beforeEach(async ({ page }) => {
   await expect(node(page, 'marketing')).toBeVisible();
 });
 
-test('shows two rooms and a doc, one wire, a dock with usage rings and nothing else', async ({ page }) => {
-  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+test('shows two rooms, a doc and the company brief, one wire, a dock with usage rings and nothing else', async ({ page }) => {
+  await expect(page.locator('.react-flow__node')).toHaveCount(4);
   await expect(page.locator('.dock button')).toHaveCount(5);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(node(page, 'marketing')).toContainText('Maya');
@@ -46,9 +46,9 @@ test('the wallpaper stays still while the cards pan', async ({ page }) => {
 
 test('a person answers in their room and reads only the docs wired to it', async ({ page }) => {
   await expect(await ask(page, 'marketing', 'three taglines')).toContainText('Maya here');
-  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('Docs I can read: Brand doc.');
+  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('Docs I can read: Company brief, Brand doc.');
   await expect(node(page, 'marketing').locator('.card__doing')).toHaveText('three taglines');
-  await expect(await ask(page, 'build', 'what first')).toContainText('Docs I can read: none.');
+  await expect(await ask(page, 'build', 'what first')).toContainText('Docs I can read: Company brief.');
 });
 
 test('typing, scrolling and dragging inside a card never move the canvas', async ({ page }) => {
@@ -64,7 +64,7 @@ test('typing, scrolling and dragging inside a card never move the canvas', async
 
 test('layout, doc text and conversation survive a reload', async ({ page }) => {
   const bar = (await node(page, 'brand-doc').locator('.card__header').boundingBox())!;
-  const header = { x: bar.x + bar.width * 0.8, y: bar.y + bar.height / 2 }; // the empty part of the header, right of the title
+  const header = { x: bar.x + bar.width * 0.55, y: bar.y + bar.height / 2 }; // the empty part of the header, between the title and the buttons
   await drag(page, header, { x: header.x + 90, y: header.y + 40 });
   await node(page, 'brand-doc').locator('textarea.doc').fill('We sell calm.');
   await ask(page, 'marketing', 'remember me');
@@ -82,7 +82,7 @@ test('drawing a wire to a doc lets that person read it', async ({ page }) => {
   await drag(page, from, to, 20);
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
   await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).wires.length).toBe(2);
-  await expect(await ask(page, 'build', 'now what')).toContainText('Docs I can read: Brand doc.');
+  await expect(await ask(page, 'build', 'now what')).toContainText('Docs I can read: Company brief, Brand doc.');
 });
 
 test('screenshots and frame rate', async ({ page }, info) => {
@@ -341,4 +341,37 @@ test('a project card: a wired person hands coding work to an agent after the fou
   await expect(card.locator('.project__log')).toContainText('edit src/example.ts');
   await expect(card.locator('.project__log')).toContainText('done · 1 file changed');
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Changed: src/example.ts');
+});
+
+test('a pinned doc is read by everyone; unpinning takes it away again', async ({ page }) => {
+  const brief = node(page, 'company-brief');
+  await expect(brief.locator('.doc__all')).toHaveText('all');
+  await expect(await ask(page, 'build', 'what do you read')).toContainText('Company brief');
+  await brief.hover();
+  await brief.getByRole('button', { name: /^Unpin/ }).click();
+  await expect(brief.locator('.doc__all')).toHaveCount(0);
+  await expect(await ask(page, 'build', 'and now')).not.toContainText('Company brief');
+  await brief.hover();
+  await brief.getByRole('button', { name: /^Pin/ }).click();
+  await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).docs.find((doc: { id: string }) => doc.id === 'company-brief').pinned).toBe(true);
+});
+
+test('a wire between two people lets one consult the other; the exchange shows in both rooms', async ({ page }) => {
+  await send(page, 'marketing', '/tool ask_person {"name":"Dev","question":"How long for SSO?"}');
+  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('no colleague called "Dev"');
+
+  const wires = await page.locator('.react-flow__edge').count();
+  const inView = async (target: ReturnType<typeof handle>) => { const box = await target.boundingBox(); return !!box && box.x > 10 && box.y > 10 && box.x < 1580 && box.y < 980; };
+  for (let tries = 0; tries < 6 && !((await inView(handle(page, 'marketing', 'l'))) && (await inView(handle(page, 'build', 'l')))); tries += 1) {
+    await page.mouse.move(6, 6); await page.mouse.wheel(0, 400); await page.waitForTimeout(250);
+  }
+  await drag(page, centre((await handle(page, 'marketing', 'l').boundingBox())!), centre((await handle(page, 'build', 'l').boundingBox())!), 20);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(wires + 1);
+
+  await send(page, 'marketing', '/tool ask_person {"name":"Dev","question":"How long for SSO?"}');
+  await expect(node(page, 'marketing').locator('.chip--ok summary').last()).toHaveText('Asked Dev');
+  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('Dev answered:');
+  await expect(node(page, 'build').locator('.msg--colleague').last()).toContainText('Maya asked');
+  await expect(node(page, 'build').locator('.msg--colleague').last()).toContainText('How long for SSO?');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Dev here.');
 });

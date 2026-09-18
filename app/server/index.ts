@@ -6,8 +6,8 @@ import { fakeCoder, opencodeCoder } from './coder.ts';
 import { createBrowser, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
-import { buildMessages, wiredDocIds } from './prompt.ts';
-import { fakeClient, promptSize, realClients } from './providers.ts';
+import { buildMessages, colleagueIds, readableDocIds } from './prompt.ts';
+import { complete, fakeClient, promptSize, realClients } from './providers.ts';
 import { route } from './router.ts';
 import { readStatic } from './static.ts';
 import { createStore } from './store.ts';
@@ -15,6 +15,7 @@ import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
 import { outwardTools } from './tools/outward.ts';
 import { projectTools } from './tools/project.ts';
+import { teamTools, type Consult } from './tools/team.ts';
 import { browserSession, webTools } from './tools/web.ts';
 import { createUsage } from './usage.ts';
 
@@ -29,7 +30,30 @@ const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner) : createBrowser(realRunner(), process.env.STAGE_NO_READER === '1' ? null : jinaReader);
 const approvals = createApprovals();
-const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root])];
+
+// What one person's turn is built from: their readable docs, their own history, and the recent talk of wired colleagues.
+async function promptFor(stage: Stage, roomId: string, toolNames: string[]) {
+  const docs: Record<string, string> = {};
+  for (const id of readableDocIds(stage, roomId)) docs[id] = await store.readDoc(id);
+  const colleagues: Record<string, Awaited<ReturnType<typeof store.readChat>>> = {};
+  for (const id of colleagueIds(stage, roomId)) colleagues[id] = await store.readChat(id);
+  return buildMessages(stage, roomId, docs, await store.readChat(roomId), toolNames, colleagues);
+}
+
+// A consult: the question lands in the colleague's room under the asker's name, they answer once without tools, and both are kept there.
+const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
+  const stage = await store.loadStage();
+  const asker = stage.rooms.find((room) => room.id === fromRoomId)!;
+  const target = stage.rooms.find((room) => room.id === toRoomId)!;
+  await store.appendChat(toRoomId, { id: newMessageId(), role: 'user', text: question, at: Date.now(), from: asker.name });
+  const messages = await promptFor(stage, toRoomId, []);
+  const { order } = route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
+  const reply = await complete(messages, { onToken: () => {}, signal }, order);
+  usage.record(reply.client.name, reply.usage, reply.quota);
+  await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
+  return reply.text;
+};
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult)];
 const clients = fake ? [fakeClient] : realClients();
 const busy = new Set<string>();
 
@@ -66,9 +90,7 @@ async function chat(roomId: string, text: string, res: ServerResponse) {
   res.on('close', () => stop.abort());
   try {
     await store.appendChat(roomId, { id: newMessageId(), role: 'user', text, at: Date.now() });
-    const docs: Record<string, string> = {};
-    for (const id of wiredDocIds(stage, roomId)) docs[id] = await store.readDoc(id);
-    const messages = buildMessages(stage, roomId, docs, await store.readChat(roomId), tools.map((tool) => tool.name));
+    const messages = await promptFor(stage, roomId, tools.map((tool) => tool.name));
     const room = stage.rooms.find((candidate) => candidate.id === roomId)!;
     const { order, notice } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true });
     if (notice) send({ notice });

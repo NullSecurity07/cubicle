@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { STANCE, seedStage, type Stage } from '../shared/model.ts';
-import { buildMessages, wiredDocIds } from './prompt.ts';
+import { buildMessages, colleagueIds, readableDocIds, wiredDocIds } from './prompt.ts';
 
 const docs = { 'brand-doc': 'We sell calm.', other: 'SECRET' };
-const stage: Stage = { ...seedStage, docs: [...seedStage.docs, { id: 'other', title: 'Other', x: 0, y: 0, w: 1, h: 1 }] };
+const stage: Stage = { ...seedStage, docs: [...seedStage.docs.filter((doc) => !doc.pinned), { id: 'other', title: 'Other', x: 0, y: 0, w: 1, h: 1 }] };
 
 describe('prompt', () => {
   it('finds docs wired to a room in either direction', () => {
@@ -58,6 +58,30 @@ describe('prompt', () => {
     expect(system).toContain('never write project code into them');
     expect(system).toContain('A browser card');
     expect(buildMessages(withCards, 'marketing', docs, [], ['delegate_coding'])[0].content).not.toContain('Also connected');
+  });
+
+  it('gives every person the pinned docs, wired or not, without repeating one that is also wired', () => {
+    const pinned: Stage = { ...stage, docs: [...stage.docs, { id: 'brief', title: 'Company brief', pinned: true, x: 0, y: 0, w: 1, h: 1 }, { ...stage.docs[0], pinned: true }] };
+    expect(readableDocIds(pinned, 'build').sort()).toEqual(['brand-doc', 'brief']);
+    const system = buildMessages(pinned, 'build', { ...docs, brief: 'We ship weekly.' }, [])[0].content;
+    expect(system).toContain('Company documents every person reads');
+    expect(system).toContain('We ship weekly.');
+    expect(system).not.toContain('no written background');
+    expect(buildMessages(pinned, 'marketing', docs, [])[0].content.match(/## Doc: Brand doc/g)).toHaveLength(1);
+  });
+
+  it('introduces wired colleagues with the last words from their room, and marks a colleague\'s question as such', () => {
+    const team: Stage = { ...stage, wires: [...stage.wires, { id: 't', from: 'build', fromHandle: 'l', to: 'marketing', toHandle: 'l' }] };
+    expect(colleagueIds(team, 'marketing')).toEqual(['build']);
+    expect(colleagueIds(stage, 'marketing')).toEqual([]);
+    const theirs = [{ id: '1', role: 'user' as const, text: 'What is the build order?', at: 1 }, { id: '2', role: 'assistant' as const, text: 'Canvas first, then chat. '.repeat(40), at: 2 }];
+    const system = buildMessages(team, 'marketing', docs, [], ['ask_person'], { build: theirs })[0].content;
+    expect(system).toContain('- Dev, Build.');
+    expect(system).toContain('Founder: What is the build order?');
+    expect(system).toMatch(/Dev: Canvas first, then chat\./);
+    expect(system.length).toBeLessThan(3200);
+    const asked = buildMessages(team, 'build', docs, [{ id: 'q', role: 'user', text: 'Is SSO in scope?', at: 3, from: 'Maya' }]);
+    expect(asked.at(-1)!.content).toBe('[Maya, a colleague, asks you. The founder will see your answer.]\nIs SSO in scope?');
   });
 
   it('throws for an unknown room', () => {

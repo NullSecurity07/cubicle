@@ -228,3 +228,14 @@ div.msg--assistant:has(.approval) { align-self: stretch; max-width: none; }
 .project__log { flex: 1; min-height: 0; overflow-y: auto; margin: 8px 0 0; padding: 4px 12px 10px; display: flex; flex-direction: column; gap: 3px; font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; line-height: 1.45; color: var(--muted); cursor: auto; user-select: text; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
 .project__log .project__say { color: var(--text); font-family: inherit; }
 .project__log .chat__empty { font-family: 'Inter Variable', Inter, system-ui, sans-serif; line-height: 1.5; max-width: 300px; }
+
+/* Teamwork: a colleague's question in this room; a pinned doc. */
+.msg--colleague { align-self: flex-end; max-width: 85%; padding: 6px 10px; border-radius: 12px 12px 3px 12px; border: 1px dashed rgba(255, 255, 255, 0.22); background: rgba(255, 255, 255, 0.04); white-space: pre-wrap; }
+.msg--colleague span { display: block; margin-bottom: 2px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); }
+.doc__all { flex: none; padding: 1px 6px; border-radius: 6px; font-size: 10px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: #0b0c10; background: var(--accent); }
+.doc__pin { flex: none; width: 24px; height: 24px; padding: 5px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 0.15s; }
+.doc__pin svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; stroke-linecap: round; }
+.card:hover .doc__pin, .doc__pin.is-on, .doc__pin:focus-visible { opacity: 1; }
+.doc__pin:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+.doc__pin.is-on { color: var(--accent); }
+.doc__pin.is-on svg { fill: currentColor; }

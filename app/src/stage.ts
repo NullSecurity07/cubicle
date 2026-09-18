@@ -41,7 +41,7 @@ export function fromFlow(nodes: StageNode[], edges: Edge[]): Stage {
   });
   return {
     rooms: nodes.filter((node): node is RoomNodeType => node.type === 'room').map((node) => ({ id: node.id, ...node.data, ...box(node) })),
-    docs: nodes.filter((node): node is DocNodeType => node.type === 'doc').map((node) => ({ id: node.id, ...node.data, ...box(node) })),
+    docs: nodes.filter((node): node is DocNodeType => node.type === 'doc').map(({ id, data: { pinned, ...data }, ...node }) => ({ id, ...data, ...(pinned ? { pinned: true } : {}), ...box({ ...node, id } as StageNode) })),
     cards: nodes.flatMap((node): Card[] => (node.type === 'browser' ? [{ id: node.id, kind: 'browser', ...(node.data.headed ? { headed: true } : {}), ...box(node) }]
       : node.type === 'project' ? [{ id: node.id, kind: 'project', path: node.data.path, ...box(node) }] : [])),
     wires: edges.map((edge) => ({ id: edge.id, from: edge.source, fromHandle: edge.sourceHandle ?? 'r', to: edge.target, toHandle: edge.targetHandle ?? 'l' })),

@@ -22,10 +22,14 @@ export function wired(stage: Stage, roomId: string, ids: string[]): string[] {
 
 // A wire between a room and a doc lets that person read and write the doc.
 export const wiredDocIds = (stage: Stage, roomId: string) => wired(stage, roomId, stage.docs.map((doc) => doc.id));
+// What a person reads each turn: the docs wired to it, plus every pinned doc.
+export const readableDocIds = (stage: Stage, roomId: string) => [...new Set([...stage.docs.filter((doc) => doc.pinned).map((doc) => doc.id), ...wiredDocIds(stage, roomId)])];
+export const colleagueIds = (stage: Stage, roomId: string) => wired(stage, roomId, stage.rooms.filter((room) => room.id !== roomId && room.name).map((room) => room.id));
+const EXCERPT = 280;
 
 // An earlier reply that used tools goes back to the model the way it happened: the calls, short results, then the words.
 function past(message: ChatMessage): ModelMessage[] {
-  if (message.role === 'user') return [{ role: 'user', content: message.text }];
+  if (message.role === 'user') return [{ role: 'user', content: message.from ? `[${message.from}, a colleague, asks you. The founder will see your answer.]\n${message.text}` : message.text }];
   const tools = (message.tools ?? []).filter((tool) => tool.ok !== undefined);
   if (!tools.length) return [{ role: 'assistant', content: message.text }];
   return [
@@ -35,13 +39,20 @@ function past(message: ChatMessage): ModelMessage[] {
   ];
 }
 
-export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = []): ModelMessage[] {
+export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}): ModelMessage[] {
   const room = stage.rooms.find((candidate) => candidate.id === roomId);
   if (!room) throw new Error(`unknown room: ${roomId}`);
 
-  const docsWired = wiredDocIds(stage, roomId).map((id) => {
-    const title = stage.docs.find((doc) => doc.id === id)!.title;
-    return `## Doc: ${title}\n${docs[id] ?? ''}`;
+  const block = (id: string) => `## Doc: ${stage.docs.find((doc) => doc.id === id)!.title}\n${docs[id] ?? ''}`;
+  const mine = wiredDocIds(stage, roomId);
+  const docsWired = mine.map(block);
+  const pinned = stage.docs.filter((doc) => doc.pinned && !mine.includes(doc.id)).map((doc) => block(doc.id));
+  // Wired colleagues: who they are and the last things said in their room, so a consult starts from common ground.
+  const team = colleagueIds(stage, roomId).map((id) => {
+    const other = stage.rooms.find((candidate) => candidate.id === id)!;
+    const recent = (colleagues[id] ?? []).filter((message) => message.text.trim()).slice(-4)
+      .map((message) => `  ${message.role === 'assistant' ? other.name : message.from ?? 'Founder'}: ${message.text.replace(/\s+/g, ' ').slice(0, EXCERPT)}`);
+    return `- ${other.name}, ${other.role}. ${other.brief}${recent.length ? `\n  Lately in ${other.name}'s room:\n${recent.join('\n')}` : ''}`;
   });
   // A person only uses what it knows it has: say which cards are wired to the room, and what each is for.
   const cards = stage.cards ?? [];
@@ -61,9 +72,11 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
         + 'then say in one or two lines what changed.'
       : '',
     reach.length ? `Also connected to your room:\n${reach.join('\n')}` : '',
+    team.length ? `Colleagues connected to your room. Ask one with ask_person when their field decides the answer; say in your reply what they told you.\n${team.join('\n')}` : '',
+    pinned.length ? `Company documents every person reads:\n\n${pinned.join('\n\n')}` : '',
     docsWired.length
       ? `The founder has connected these documents to your room. Treat them as what the founder wants you to know.\n\n${docsWired.join('\n\n')}`
-      : 'No documents are connected to your room, so you have no written background on the product yet.',
+      : pinned.length ? '' : 'No documents are connected to your room, so you have no written background on the product yet.',
   ].filter(Boolean).join('\n\n');
 
   return [{ role: 'system', content: system }, ...history.slice(-MAX_TURNS).flatMap(past)];

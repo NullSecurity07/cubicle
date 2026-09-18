@@ -5,9 +5,9 @@ import { nodeTypes } from './nodes';
 import { HANDLE_IDS, fromFlow, toFlow } from './stage';
 
 describe('seed stage', () => {
-  it('has two rooms, one doc and no founder card', () => {
+  it('has two rooms, a brand doc, a pinned company brief and no founder card', () => {
     expect(seedStage.rooms.map((room) => room.id)).toEqual(['marketing', 'build']);
-    expect(seedStage.docs).toHaveLength(1);
+    expect(seedStage.docs).toHaveLength(2);
   });
 
   it('has unique ids and wires only existing cards through known handles', () => {
