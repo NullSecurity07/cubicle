@@ -220,6 +220,9 @@ importers:
         specifier: 3.90.0
         version: 3.90.0
     devDependencies:
+      '@cubicle/core':
+        specifier: workspace:*
+        version: link:../core
       tsx:
         specifier: ^4.23
         version: 4.23.13

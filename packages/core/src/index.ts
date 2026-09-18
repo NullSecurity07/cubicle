@@ -31,3 +31,5 @@ export * from './money.js';
 export * from './pantry.js';
 export * from './decide.js';
 export * from './conversations.js';
+export * from './campus-map.js';
+export * from './layout.js';
