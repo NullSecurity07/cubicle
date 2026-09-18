@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { applySnapshot, emptyState, type Snapshot } from '../state.js';
 import { officeOutline, outlineHtml } from './a11y.js';
+import { decisionsView } from './decisions.js';
+import { viewFor } from './surfaces.js';
 
 const snap: Snapshot = {
   op: 'snapshot', at: 'now',
@@ -26,6 +28,20 @@ describe('the office as a list', () => {
   it('opens with what is waiting on the owner, named as a person would say it', () => {
     expect(groups[0].title).toBe('Needs you');
     expect(groups[0].items[0]).toEqual({ open: 'decision:p1', label: 'Founder brief', detail: 'needs you' });
+  });
+
+  /**
+   * Ruling W6-15. The founder brief's accessible name came out as "Proposed content — needs you" while the row
+   * beside it read the real title: two names for one item. The item's name is its human title, wherever it is
+   * said — the outline button, the row and the reader all go through the same helper on the same field.
+   */
+  it('gives the reader and the rail one name, and it is the item’s own title', () => {
+    const titled = applySnapshot(emptyState(), { ...snap, inbox: [{ ...snap.inbox![0], title: 'Founder Brief: PageSpeedAudit' }] });
+    const item = officeOutline(titled)[0].items[0];
+    expect(item.label).toBe('Founder Brief: PageSpeedAudit');
+    expect(decisionsView(titled).html).toContain('Founder Brief: PageSpeedAudit');
+    expect(viewFor('decision:p1', titled, { frames: {}, tokenQuery: '', vaultName: 'Cubicle' }).title).toBe(item.label);
+    expect(outlineHtml(officeOutline(titled))).not.toContain('Proposed content');
   });
 
   it('names everyone who is in, and nobody who is not', () => {

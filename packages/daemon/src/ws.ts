@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'node:crypto';
-import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, loadCampusMap, readLayout, writeLayout, validateLayout, layoutMarkdown, EMPTY_LAYOUT, OFFICE_LAYOUT_PATH, isValidRoleId, stringifyNote, type CampusLayout, type DroppedEntry, gatesForRisk, wipLoad, readLedger, moneyReport, money as moneyStr, ownerDecide, proposalOptions, decidableFor, pressureBlock, noteVerdict, needsConfirm, resolvedOutcome, listConversations, readConversation, type Decidable, type Thread, type Turn, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
+import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, noteTitle, nowIso, loadOrg, loadGates, loadCampusMap, readLayout, writeLayout, validateLayout, layoutMarkdown, EMPTY_LAYOUT, OFFICE_LAYOUT_PATH, isValidRoleId, stringifyNote, type CampusLayout, type DroppedEntry, gatesForRisk, wipLoad, readLedger, moneyReport, money as moneyStr, ownerDecide, proposalOptions, decidableFor, pressureBlock, noteVerdict, needsConfirm, resolvedOutcome, listConversations, readConversation, type Decidable, type Thread, type Turn, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
 import { budgetRows } from './money.js';
 
@@ -192,7 +192,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
       const d = n.data as Record<string, unknown>;
       const options = proposalOptions(n.data.kind, n.body);
       return {
-        id: n.data.id, kind: n.data.kind, title: (n.body.match(/^#\s+(.+)$/m)?.[1] ?? n.data.kind).trim(), path: n.path, created: n.data.created,
+        id: n.data.id, kind: n.data.kind, title: noteTitle(n.body, n.data.kind), path: n.path, created: n.data.created,
         from: n.data.from, job: str(n.data.job), target: str(n.data.target),
         body: cutBody(n.body),
         options: options.map((o) => ({ n: o.n, label: o.label })),
@@ -216,7 +216,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
     .sort((a, b) => String(b.data.resolved_at).localeCompare(String(a.data.resolved_at)))
     .slice(0, DECIDED_ROWS)
     .map((n) => ({
-      id: n.data.id, kind: n.data.kind, title: (n.body.match(/^#\s+(.+)$/m)?.[1] ?? n.data.kind).trim(), path: n.path, created: n.data.created,
+      id: n.data.id, kind: n.data.kind, title: noteTitle(n.body, n.data.kind), path: n.path, created: n.data.created,
       resolved_at: str(n.data.resolved_at), approved: n.data.approved, chosen: n.data.chosen,
       outcome: resolvedOutcome(n.body),
       // The note the owner decided, so the reader can keep showing it under the outcome instead of emptying: the
