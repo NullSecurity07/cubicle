@@ -7,6 +7,7 @@ import {
   loadOrg, leadOf, teamOf, resolveRole, incidentResponder, openSubtree, expandProcess, unifiedDiff, HEARTBEAT_WAKE_AREAS, isOwnerEditablePath, researchLead, officeHolder, roleWithTool, jobPath,
   RESEARCH_INDEX, upsertIndexRow, resultBlock, researchSlug, type ResearchRequest, type DeliveredResearch,
   readStream, budgetLines, listStreams, readFlags, expiredFlags,
+  loadCampusMap, readLayout, writeLayout, validateLayout, impliedConnections, connected,
 } from '@cubicle/core';
 
 // ---------- desks ----------
@@ -32,6 +33,43 @@ export function freeDesk(vault: Vault, team?: string, roleId?: string): string |
   const used = new Set(activeRoles(vault).filter((r) => r.active).map((r) => r.desk));
   const free = loadDesks().filter((d) => d.slot === 'member' && d.room === room && !used.has(d.id));
   return free.find((d) => d.id === roleId)?.id ?? free[0]?.id ?? null;
+}
+
+// ---------- the office floor (SP9b) ----------
+
+/**
+ * Put a new desk on the floor and wire it up.
+ *
+ * Where the owner dropped it, when the hire came from the dock (`x`/`y` on the proposal), and the lines the org
+ * already implies for this role — its lead, its team, and a station for each tool family its charter lists.
+ * Without them a hire would arrive unable to message anyone or use anything, which is not what approving a hire
+ * means. A vault with no office note yet is left alone: the migration writes one on the next start.
+ */
+export function seatInOffice(vault: Vault, desk: string, at?: { x: number; y: number }): void {
+  const org = loadOrg(vault);
+  const map = loadCampusMap();
+  const read = readLayout(vault, map, org);
+  if (!read) return;
+  const nodes = { ...read.layout.nodes, ...(at ? { [desk]: { x: at.x, y: at.y } } : {}) };
+  const fresh = impliedConnections(org).filter((c) => (c.from === desk || c.to === desk) && !connected(read.layout, c.from, c.to));
+  const { layout } = validateLayout(map, org, { version: read.layout.version, nodes, connections: [...read.layout.connections, ...fresh] });
+  writeLayout(vault, layout, 'daemon', org);
+}
+
+/** Take a desk's lines off the floor: whoever sat there has gone, and a line to nobody is a line to nobody. */
+export function unwireDesk(vault: Vault, desk: string): void {
+  const org = loadOrg(vault);
+  const read = readLayout(vault, loadCampusMap(), org);
+  if (!read) return;
+  const connections = read.layout.connections.filter((c) => c.from !== desk && c.to !== desk);
+  if (connections.length === read.layout.connections.length) return;
+  writeLayout(vault, { ...read.layout, connections }, 'daemon', org);
+}
+
+/** A position the owner dropped a hire at, from the proposal's own frontmatter. */
+function hireSpot(data: Record<string, unknown>): { x: number; y: number } | undefined {
+  const x = Number(data.x), y = Number(data.y);
+  return Number.isFinite(x) && Number.isFinite(y) && data.x !== undefined && data.y !== undefined ? { x, y } : undefined;
 }
 
 // ---------- hire / fire (spec §9.5) ----------
@@ -137,6 +175,7 @@ export async function applyHire(vault: Vault, note: { path: string; data: InboxF
   const members = [...new Set([...(teamNote.data.members as string[] ?? []), role.role])];
   vault.writeText(`Teams/${role.team}.md`, stringifyNote({ ...teamNote.data, members }, teamNote.body), 'daemon', { job: note.data.job ?? null });
   vault.events.emit({ type: 'org.changed', agent: 'daemon', job: note.data.job ?? null, payload: { reason: 'hire', role: role.role, team: role.team } });
+  seatInOffice(vault, desk, hireSpot(note.data as unknown as Record<string, unknown>));
   if (!vault.exists(`Messages/${role.role}.md`)) vault.writeText(`Messages/${role.role}.md`, `# Messages for ${role.role}\n\nColleagues append sections here; the harness includes unread ones in context.\n`, 'daemon');
   vault.events.emit({ type: 'role.hired', agent: 'daemon', job: note.data.job ?? null, payload: { role: role.role, display: role.display, desk, sprite: data.sprite, team: role.team, reports_to, proposal: note.data.id } });
   onHired?.(role.role);
@@ -162,7 +201,9 @@ export async function applyFire(vault: Vault, note: { path: string; data: InboxF
   const manager = leadOf(org, target) ?? chief;
   const managerRole = manager === 'owner' ? chief : manager;
   vault.writeText(rel, stringifyNote({ ...n.data, active: false, fired: nowIso() }, n.body), 'daemon', { job: note.data.job ?? null });
+  const desk = String((n.data as Record<string, unknown>).desk || target);
   vault.move(rel, `Roles/archive/${target}-${nowIso().slice(0, 10)}.md`, 'daemon');
+  unwireDesk(vault, desk);
   // Gate jobs (team:qa.review/office:operations.verify/requester.review) must not be cancelled — that would strand the parent
   // in_review forever (F1) — so they always go to the manager. A work job cannot go to the manager blindly: a
   // lead/manager's charter rarely carries the tools (shell.run, git.*, deploy.*, …) a specialist's work needs, so

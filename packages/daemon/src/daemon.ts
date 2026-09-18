@@ -1,6 +1,6 @@
 import { writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, findInboxById, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO, officeHolder, loadOrg, moneyReport, readLedger, HOUSE } from '@cubicle/core';
+import { Vault, VaultWatcher, listJobs, readJob, updateJob, nowIso, HEARTBEAT_WAKE_AREAS, listInbox, findInboxById, migrateOrg, templateDir, placeholderLogo, atomicWriteSync, BRAND_LOGO, officeHolder, loadOrg, moneyReport, readLedger, HOUSE, OFFICE_LAYOUT_PATH, loadCampusMap, migrationLayout, writeLayout } from '@cubicle/core';
 import { loadProvidersConfig, QuotaTracker, Router, embedTexts, renderQuotaMarkdown, type ModelBudget } from '@cubicle/router';
 import { loadToolsConfig, ToolRegistry, phase3Tools, phase5Tools, phase6Tools, constitutionGuardrail, secretsGuardrail, browserFrames, closeAllSessions, createRoleToolClient, meetingOpen, emailInbox, analyticsPull, type AnyTool, type ToolContext } from '@cubicle/tools';
 import { RoleFrontmatter, type InboxFrontmatter } from '@cubicle/core';
@@ -211,6 +211,7 @@ export class Daemon {
     this.vault = Vault.open(cfg.vaultPath);
     const mig = migrateOrg(this.vault, templateDir());
     if (mig.changed.length) this.log(`org migrated: ${mig.changed.length} file(s) written`);
+    this.ensureOfficeLayout();
     this.ensureBrandLogo();
     const providers = loadProvidersConfig(cfg.providersPath);
     this.router = new Router(providers, new QuotaTracker(this.vault.db), { env: cfg.env, events: this.vault.events });
@@ -307,6 +308,10 @@ export class Daemon {
       // the document ruling S-1 makes every planning step wait on. `inboxEditWakesHeartbeat` is the whole of
       // that judgement, and the re-planning gate reads the same predicate so a cycle woken for something else
       // cannot re-plan off an approval either.
+      // The office is a note like any other: a save in Obsidian moves the desks, cuts a line or draws one, and
+      // every open office is told at once. It wakes nothing — the floor is not work — and the note is rewritten
+      // only where what it holds is not what it means (see `pushLayout`).
+      if (rel === OFFICE_LAYOUT_PATH) this.ws?.pushLayout();
       if (HEARTBEAT_WAKE_AREAS.includes(area) && (area !== '00 Inbox' || inboxEditWakesHeartbeat(this.vault, rel))) this.requestHeartbeat(`owner edited ${rel}`);
       this.workers.wake();
     }));
@@ -368,6 +373,20 @@ export class Daemon {
    * Written with the low-level helpers rather than `vault.writeText`, which takes a string: this is a PNG, and
    * it is the same path `scaffoldVault` uses for exactly this file.
    */
+  /**
+   * `Office/campus.md` on first start, and for every vault scaffolded before there was one.
+   *
+   * No node overrides and the wiring the org already implies, so the office looks and behaves exactly as it did
+   * the day before — and the owner opens the note and sees, in sentences, every line they are now free to cut.
+   * Written once: after this the note is the owner's, and nothing here writes it again.
+   */
+  private ensureOfficeLayout(): void {
+    if (this.vault.exists(OFFICE_LAYOUT_PATH)) return;
+    const org = loadOrg(this.vault);
+    writeLayout(this.vault, migrationLayout(loadCampusMap(), org), 'daemon', org);
+    this.log(`wrote ${OFFICE_LAYOUT_PATH}`);
+  }
+
   private ensureBrandLogo(): void {
     if (existsSync(this.vault.abs(BRAND_LOGO))) return;
     try {

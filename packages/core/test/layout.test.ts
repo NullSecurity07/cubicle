@@ -13,10 +13,8 @@ import {
   loadCampusMap, validateLayout, applyLayout, readLayout, writeLayout, impliedConnections, migrationLayout,
   connected, stationFor, stationId, deskOf, roleAtDesk, layoutBody, OfficeLayout, OFFICE_LAYOUT_PATH,
   type CampusLayout,
-} from '../src/layout.js';
-import { scaffoldVault } from '../src/template.js';
-import { loadOrg, type Org } from '../src/org.js';
-import type { Vault } from '../src/vault.js';
+} from '../src/index.js';
+import { scaffoldVault, loadOrg, type Org, type Vault } from '../src/index.js';
 
 const map = loadCampusMap();
 let dir: string, vault: Vault, org: Org;
@@ -271,9 +269,11 @@ describe('the note', () => {
     expect(back.layout).toEqual(l);
   });
 
-  it('is nothing at all until it is written', () => {
-    expect(readLayout(vault, map, org)).toBeNull();
-    expect(vault.exists(OFFICE_LAYOUT_PATH)).toBe(false);
+  it('a new vault is scaffolded with the office it shipped with', () => {
+    expect(vault.exists(OFFICE_LAYOUT_PATH)).toBe(true);
+    const read = readLayout(vault, map, org)!;
+    expect(read.dropped).toEqual([]);
+    expect(read.layout).toEqual(migrationLayout(map, org));
   });
 
   it('writes a body the owner can read', () => {

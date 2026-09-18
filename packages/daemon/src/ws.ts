@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'node:crypto';
-import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, gatesForRisk, wipLoad, readLedger, moneyReport, money as moneyStr, ownerDecide, proposalOptions, decidableFor, pressureBlock, noteVerdict, needsConfirm, resolvedOutcome, listConversations, readConversation, type Decidable, type Thread, type Turn, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
+import { type Vault, listJobs, listInbox, parseNote, RoleFrontmatter, createProposal, nowIso, loadOrg, loadGates, loadCampusMap, readLayout, writeLayout, validateLayout, layoutMarkdown, EMPTY_LAYOUT, OFFICE_LAYOUT_PATH, type CampusLayout, type DroppedEntry, gatesForRisk, wipLoad, readLedger, moneyReport, money as moneyStr, ownerDecide, proposalOptions, decidableFor, pressureBlock, noteVerdict, needsConfirm, resolvedOutcome, listConversations, readConversation, type Decidable, type Thread, type Turn, type WipLimits, type WipStage, type JobFrontmatter, type CubicleEvent } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
 import { budgetRows } from './money.js';
 
@@ -151,6 +151,20 @@ export interface Snapshot {
   teams: { id: string; name: string; lead: string; members: string[]; mission: string; room?: string; floor?: number; parent?: string; wip: { limits: WipLimits | null; load: Record<WipStage, number> } }[];
   /** The constitution's office → role map, so the viewer animates the right desks. */
   offices: Record<string, string>;
+  /**
+   * `Office/campus.md`: what the owner moved, added and wired, on top of the template campus. The office applies
+   * it over `/office.json`; the same state comes back on every `layout.changed`, so a reconnect and a live edit
+   * land in the same place.
+   */
+  layout: CampusLayout;
+}
+
+/**
+ * A dropped line is the owner's business: they wrote it, in Obsidian or by dragging, and it did not take. One
+ * warning per line, naming it, so the reason reaches the brief and the office's own toast alike.
+ */
+export function warnDropped(vault: Vault, dropped: DroppedEntry[], where: string): void {
+  for (const d of dropped) vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { where, path: OFFICE_LAYOUT_PATH, line: d.line, reason: d.reason } });
 }
 
 export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
@@ -246,6 +260,7 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
     // on the dispatcher. A decided note is off the owner's plate whatever the sheet still shows of it.
     pendingProposals: inbox.filter((r) => !r.pending && !r.board_pending).length,
     brand, inbox, decided, chat, teams, offices: org.offices ?? {},
+    layout: readLayout(vault, loadCampusMap(), org)?.layout ?? EMPTY_LAYOUT,
     conversations: listConversations(vault),
   };
 }
@@ -282,8 +297,8 @@ export class WsServer {
     wss.on('connection', (ws) => {
       ws.on('message', (raw) => {
         try {
-          let msg: { op?: string; from?: string; to?: string; text?: string; cursor?: number; id?: unknown; approved?: unknown; chosen?: unknown; comment?: unknown; confirm?: unknown } = {};
-          try { msg = JSON.parse(String(raw).slice(0, 20_000)); } catch { return; }
+          let msg: { op?: string; from?: string; to?: string; text?: string; cursor?: number; id?: unknown; approved?: unknown; chosen?: unknown; comment?: unknown; confirm?: unknown; nodes?: unknown; connections?: unknown } = {};
+          try { msg = JSON.parse(String(raw).slice(0, 200_000)); } catch { return; }
           if (msg.op === 'snapshot') ws.send(JSON.stringify(buildSnapshot(this.deps.vault, this.deps.router)));
           else if (msg.op === 'replay' && msg.from) {
             const all = this.deps.vault.events.query({ from: msg.from, to: msg.to });
@@ -328,6 +343,21 @@ export class WsServer {
               ws.send(JSON.stringify({ op: 'decide.ack', id }));
               this.deps.onDecide?.(id);
             }
+          } else if (msg.op === 'layout.set') {
+            // The office sends the whole state, so this is idempotent and a reconnect cannot half-apply a drag.
+            // A payload missing either half is refused rather than read as "the owner emptied the office".
+            if (!msg.nodes || typeof msg.nodes !== 'object' || Array.isArray(msg.nodes) || !Array.isArray(msg.connections)) {
+              ws.send(JSON.stringify({ op: 'error', message: 'layout.set needs nodes (object) and connections (array)' }));
+            } else {
+              const org = loadOrg(this.deps.vault);
+              const { layout, dropped } = validateLayout(loadCampusMap(), org, { version: 1, nodes: msg.nodes, connections: msg.connections });
+              writeLayout(this.deps.vault, layout, 'owner', org);
+              warnDropped(this.deps.vault, dropped, 'layout.set');
+              // The sender learns what would not stick — it has a thing in its hand to spring back — and every
+              // office, this one included, is told what the floor now is.
+              ws.send(JSON.stringify({ op: 'layout.ack', dropped }));
+              this.broadcast({ op: 'layout.changed', layout });
+            }
           } else if (msg.op === 'conversation.get') {
             if (typeof msg.id !== 'string' || !msg.id) ws.send(JSON.stringify({ op: 'error', message: 'conversation.get needs id (string)' }));
             else {
@@ -347,6 +377,23 @@ export class WsServer {
   }
 
   clientCount(): number { return this.wss?.clients.size ?? 0; }
+
+  /**
+   * Re-read `Office/campus.md` and tell every office what it says — the path an owner's save in Obsidian takes.
+   * The note is rewritten only when what it holds is not what it means (a dropped line, a stale body), so an
+   * ordinary edit is not answered with a write the owner did not make.
+   */
+  pushLayout(): CampusLayout {
+    const org = loadOrg(this.deps.vault);
+    const read = readLayout(this.deps.vault, loadCampusMap(), org);
+    const layout = read?.layout ?? EMPTY_LAYOUT;
+    if (read) {
+      warnDropped(this.deps.vault, read.dropped, 'owner.edited');
+      if (layoutMarkdown(layout, org) !== this.deps.vault.readTextOrNull(OFFICE_LAYOUT_PATH)) writeLayout(this.deps.vault, layout, 'daemon', org);
+    }
+    this.broadcast({ op: 'layout.changed', layout });
+    return layout;
+  }
 
   broadcast(payload: unknown): void {
     if (!this.wss) return;

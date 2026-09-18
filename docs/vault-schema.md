@@ -192,6 +192,20 @@ Body sections: `## Problem`, `## Customers`, `## Outcome metric`, `## Runbook`, 
 
 Body: freeform notes, appended to every expanded step's job goal.
 
+### Office layout (Office/campus.md)
+
+| field | type | notes |
+|---|---|---|
+| `version` | number = `1` |  |
+| `nodes` | record<string, object> = `{}` | only what differs from the generated campus (`config/world/office.json`), keyed by node id: a desk id (which is a role id for every charter the template ships), a zone id, a prop id, or a resource the owner added — `browser_1`, `doc_1`, `note_1`, `site_1`, or `station_<family>` for one of the five tool stations (`browser`, `email`, `deploy`, `analytics`, `memory`). Each entry may carry `x`/`y` (cells, fractional), `w`/`d` (a zone rect's size; a desk keeps the size the campus gave it), `zone`, `label`, `body`, `path`, `tool`, or `removed: true` |
+| `connections` | object[] = `[]` | `{ from, to, kind }`, and a connection is a **permission**: `peer` between two desks means those two roles may send each other a `colleague.message`; `access` from a desk to a resource means that role may use it — a tool whose family has a station on the campus needs a line to it. Ends are desk ids or resource ids, and a line has no direction |
+
+The body is generated from the frontmatter — who can message whom, who can use what — so an edit down there is
+overwritten on the next save. A line the daemon cannot apply (an id that is not on the campus, a spot that is
+taken or off the campus, a connection with one end) is dropped on its own with a `daemon.warning` naming it;
+the rest of the file stands. A vault that has never had this note gets one on the next daemon start, with no
+node overrides and the wiring the org already implies, so the office opens exactly as it did the day before.
+
 ### Inbox note (00 Inbox/*.md)
 
 | field | type | notes |

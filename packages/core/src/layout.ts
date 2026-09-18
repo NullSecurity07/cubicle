@@ -20,6 +20,7 @@
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
   applyLayout, connected, inRect, isStationId, paintRect, parseCampusMap, stationFor, stationId,
@@ -27,7 +28,6 @@ import {
   type CampusLayout, type CampusMap, type LayoutConnection, type LayoutNode, type Rect, type ResourceKind,
 } from './campus-map.js';
 import { parseNote, stringifyNote } from './frontmatter.js';
-import { repoRoot } from './template.js';
 import type { Vault } from './vault.js';
 import { type Org, leadOf, isLead, officeHolder } from './org.js';
 
@@ -78,9 +78,16 @@ export interface DroppedEntry { line: string; reason: string }
 
 let cachedMap: CampusMap | null = null;
 
-/** The template campus the generator writes, parsed once per process. */
+/**
+ * The template campus the generator writes, parsed once per process.
+ *
+ * The repo root is resolved here rather than taken from `template.ts`: `scaffoldVault` writes the note, so
+ * importing `repoRoot` from there and being imported back by it is a cycle, and a cycle in a module that both
+ * sides load at start is the kind of thing that only breaks in the bundle.
+ */
 export function loadCampusMap(): CampusMap {
-  if (!cachedMap) cachedMap = parseCampusMap(JSON.parse(readFileSync(path.join(repoRoot(), 'config', 'world', 'office.json'), 'utf8')));
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+  if (!cachedMap) cachedMap = parseCampusMap(JSON.parse(readFileSync(path.join(root, 'config', 'world', 'office.json'), 'utf8')));
   return cachedMap;
 }
 
@@ -249,11 +256,17 @@ function resourceIdOk(id: string, kind: ResourceKind): boolean {
 
 /**
  * The wiring the company already has, so day one looks and behaves exactly as it did before there was a note to
- * cut: every reporting line is a peer connection, the chief executive is connected to every lead, and every
- * charter is connected to the station of each tool family it lists.
+ * cut: everyone in a room is connected to everyone else in it, every reporting line is a connection, the chief
+ * executive is connected to every lead, and every charter is connected to the station of each tool family its
+ * charter lists.
  *
- * Reporting lines, not team membership alone: a room's lead is not a member of the division above it (the v2
- * stopgap took those out), so lead↔member by itself would leave the CTO unable to message the dev manager.
+ * Three rules, and each of them is something the company could do the day before the note existed:
+ *  - **a room is a room.** `can(org, …, 'schedule')` already lets a member hand work to a team-mate, so wiring
+ *    only lead↔member would have refused a handoff the company made yesterday — the migration must take nothing
+ *    away. It is the denser rule (a room of six is fifteen lines) and it is the honest one.
+ *  - **reporting lines**, not team membership alone: a room's lead is not a member of the division above it (the
+ *    v2 stopgap took those out), so nothing else would connect the CTO to the dev manager.
+ *  - **the chief executive answers to the owner and to everyone**, so every lead has a line to that desk.
  */
 export function impliedConnections(org: Org): LayoutConnection[] {
   const out: LayoutConnection[] = [];
@@ -272,7 +285,8 @@ export function impliedConnections(org: Org): LayoutConnection[] {
     if (isLead(org, role) && org.roles[chief]) add(deskOf(org, chief), deskOf(org, role), 'peer');
   }
   for (const t of Object.values(org.teams)) {
-    for (const m of t.members) if (org.roles[t.lead] && org.roles[m]) add(deskOf(org, t.lead), deskOf(org, m), 'peer');
+    const room = [t.lead, ...t.members].filter((r) => org.roles[r]);
+    for (let i = 0; i < room.length; i++) for (let j = i + 1; j < room.length; j++) add(deskOf(org, room[i]), deskOf(org, room[j]), 'peer');
   }
   for (const r of Object.values(org.roles)) {
     for (const tool of r.tools) {
@@ -331,9 +345,14 @@ export function readLayout(vault: Vault, map: CampusMap, org: Org): { layout: Ca
   return validateLayout(map, org, parseNote(text).data);
 }
 
+/** The note, as markdown. Exposed so a caller can tell whether writing it would change anything. */
+export function layoutMarkdown(layout: CampusLayout, org?: Org): string {
+  return stringifyNote({ version: layout.version, nodes: layout.nodes, connections: layout.connections }, layoutBody(layout, org));
+}
+
 /** Write the note: frontmatter is the data, the body is written from it. Returns the markdown written. */
 export function writeLayout(vault: Vault, layout: CampusLayout, by: string, org?: Org): string {
-  const text = stringifyNote({ version: layout.version, nodes: layout.nodes, connections: layout.connections }, layoutBody(layout, org));
+  const text = layoutMarkdown(layout, org);
   vault.writeText(OFFICE_LAYOUT_PATH, text, by, { generated: true });
   return text;
 }
@@ -401,5 +420,3 @@ const describeResource = (id: string, n: LayoutNode): string => {
   if (n.kind === 'site') return 'the site screen';
   return `a ${n.kind}`;
 };
-
-export { applyLayout, connected, stationFor, stationId };

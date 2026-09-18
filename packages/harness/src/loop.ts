@@ -7,6 +7,7 @@ import {
   loadOrg, isLead, teamOf, leadOf, resolveRole, officeHolder, type ModelTier,
   ciStatus, listStreams, listInbox, ENGINEERING_JOB_TYPES, RESULT_HEADING,
   trustReviewsFor, trustDecision, trustVerdictFor, recordTrustVerdict, CLASSIFIER_UNAVAILABLE_HOLD,
+  loadCampusMap, readLayout,
 } from '@cubicle/core';
 import { NoModelAvailableError, TIER_RANK, type ModelBudget, type RoutedChatResult, type RouteRequest, type ChatMessage } from '@cubicle/router';
 import type { ToolSchema } from '@cubicle/router';
@@ -238,7 +239,10 @@ export async function runJob(deps: HarnessDeps, jobId: string, opts: { onStep?: 
     // the loop refuses never reaches the wrapper and `guardrail.blocked` is emitted exactly once.
     guardrails: deps.guardrails,
   };
-  const defs = deps.registry.forRole(role, deps.toolsConfig);
+  // The office floor is the third rule on what this role may use: a tool whose station stands on the campus
+  // needs a line from this desk to it. `null` when the vault has no office note, which gates nothing.
+  const wiring = readLayout(vault, loadCampusMap(), org);
+  const defs = deps.registry.forRole(role, deps.toolsConfig, wiring?.layout ?? null);
   const client = await createRoleToolClient(defs, baseCtx);
   const prefs = vault.ownerPreferences();
 

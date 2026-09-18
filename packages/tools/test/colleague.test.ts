@@ -2,13 +2,25 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, listJobs, readJob } from '@cubicle/core';
+import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, listJobs, readJob, loadOrg, loadCampusMap, readLayout, writeLayout } from '@cubicle/core';
 import { parseToolsConfig, createRoleToolClient, colleagueMessage, type ToolContext } from '../src/index.js';
 
 let dir: string; let vault: Vault;
 const cfg = parseToolsConfig(readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8'));
 
-beforeAll(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-colleague-')); vault = (await scaffoldVault(dir)).vault; });
+beforeAll(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-colleague-')); vault = (await scaffoldVault(dir)).vault; wire('backend_engineer', 'cto'); });
+
+/**
+ * Draw a line between two desks on the office floor. A connection is a permission (SP9b): an engineer and the
+ * CTO are two rooms apart, so the company's own wiring does not connect them and `colleague.message` refuses
+ * the pair — which is the point of the gate, and not what these tests are about.
+ */
+function wire(a: string, b: string): void {
+  const org = loadOrg(vault);
+  const read = readLayout(vault, loadCampusMap(), org)!;
+  writeLayout(vault, { ...read.layout, connections: [...read.layout.connections, { from: a, to: b, kind: 'peer' as const }] }, 'owner', org);
+}
+
 afterAll(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
 function role(id: string) { return RoleFrontmatter.parse(parseNote(vault.readText(`Roles/${id}.md`)).data); }
@@ -61,6 +73,17 @@ describe('colleague.message(kind: question)', () => {
       const r = await client.call('colleague.message', { to: 'cto', body: 'shipped the landing page', kind: 'fyi' });
       expect(r.ok).toBe(true);
       expect(listJobs(vault).length).toBe(before);
+    } finally { await client.close(); }
+  });
+
+  it('refuses a message to a desk this one has no line to', async () => {
+    const client = await createRoleToolClient([colleagueMessage], ctxFor('backend_engineer', null, 'k:cut:1'));
+    try {
+      const r = await client.call('colleague.message', { to: 'cfo', body: 'about the budget', kind: 'fyi' });
+      expect(r.ok).toBe(false);
+      expect(r.text).toContain("You aren't connected to the");
+      expect(r.text).toContain('go through your lead');
+      expect(vault.readTextOrNull('Messages/cfo.md')).toBeNull();
     } finally { await client.close(); }
   });
 });

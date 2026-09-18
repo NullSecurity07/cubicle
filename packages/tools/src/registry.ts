@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import YAML from 'yaml';
 import { z } from 'zod';
 import type { ZodRawShape } from 'zod';
-import { ApprovalMode, type Vault, type EventLog, type RoleFrontmatter, type ProposalKind, type OwnerPreferences, type ResearchRequest, type ModelTier } from '@cubicle/core';
+import { ApprovalMode, connected, stationFor, stationId, type Vault, type EventLog, type RoleFrontmatter, type ProposalKind, type OwnerPreferences, type ResearchRequest, type ModelTier, type CampusLayout } from '@cubicle/core';
 import type { Router } from '@cubicle/router';
 import type { Guardrail } from './guardrails.js';
 
@@ -148,13 +148,27 @@ export class ToolRegistry {
     return [...this.tools.keys()];
   }
 
-  /** Tools a role may see: charter `tools` list with `prefix.*` wildcards, intersected with policy `roles` restrictions. */
-  forRole(role: RoleFrontmatter, cfg: ToolsConfig): AnyTool[] {
+  /**
+   * Tools a role may see: the charter's `tools` list with `prefix.*` wildcards, intersected with the policy's
+   * `roles` restriction, intersected with the office floor.
+   *
+   * The third rule is the owner's (SP9b): a tool whose family has a station standing on the campus can only be
+   * used by a desk wired to that station, because that line is what the owner drew to say so. A family with no
+   * station on the campus is not gated at all — the two old rules decide, exactly as before — so a vault with
+   * no `Office/campus.md` behaves as it always did.
+   */
+  forRole(role: RoleFrontmatter, cfg: ToolsConfig, layout?: CampusLayout | null): AnyTool[] {
     const allowed = (name: string) => role.tools.some((pat) => pat === name || (pat.endsWith('.*') && name.startsWith(pat.slice(0, -1))));
+    const desk = role.desk || role.role;
     return [...this.tools.values()].filter((t) => {
       if (!allowed(t.name)) return false;
       const pol = cfg.tools[t.name];
       if (pol?.roles && !pol.roles.includes(role.role)) return false;
+      if (layout) {
+        const family = stationFor(t.name);
+        const station = family ? stationId(family) : null;
+        if (station && layout.nodes[station] && !connected(layout, desk, station)) return false;
+      }
       return true;
     });
   }

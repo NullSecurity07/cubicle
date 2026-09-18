@@ -2,14 +2,26 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, listInbox, listJobs } from '@cubicle/core';
+import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, listInbox, listJobs, loadOrg, loadCampusMap, readLayout, writeLayout } from '@cubicle/core';
 import { parseToolsConfig, resolveMode, ToolRegistry, createRoleToolClient, phase3Tools, unreadMessages, findAnswer, type ToolContext } from '../src/index.js';
 
 let dir: string; let vault: Vault;
 const cfgText = readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8');
 const cfg = parseToolsConfig(cfgText);
 
-beforeAll(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-tools-')); vault = (await scaffoldVault(dir)).vault; });
+beforeAll(async () => { dir = mkdtempSync(path.join(tmpdir(), 'cubicle-tools-')); vault = (await scaffoldVault(dir)).vault; wire('backend_engineer', 'cto'); });
+
+/**
+ * Draw a line between two desks on the office floor. A connection is a permission (SP9b): an engineer and the
+ * CTO are two rooms apart, so the company's own wiring does not connect them and `colleague.message` refuses
+ * the pair — which is the point of the gate, and not what these tests are about.
+ */
+function wire(a: string, b: string): void {
+  const org = loadOrg(vault);
+  const read = readLayout(vault, loadCampusMap(), org)!;
+  writeLayout(vault, { ...read.layout, connections: [...read.layout.connections, { from: a, to: b, kind: 'peer' as const }] }, 'owner', org);
+}
+
 afterAll(() => { vault.close(); rmSync(dir, { recursive: true, force: true }); });
 
 function role(id: string) { const n = parseNote(vault.readText(`Roles/${id}.md`)); return RoleFrontmatter.parse(n.data); }
