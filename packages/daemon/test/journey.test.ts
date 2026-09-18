@@ -274,9 +274,12 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     // The one thing this cycle did say in the log, in the discovery step's own words.
     expect(readJob(v, heartbeats()[0].id)!.body).toContain('waiting for you to pick one of the three ideas');
 
-    // The six questions are the CEO's own (ruling P8-13), and they go out on this cycle — the company asks
-    // itself about the ideas it just proposed rather than asking the owner to answer for them.
-    expect(interviewPhase(v.readTextOrNull(INTERVIEW_PATH))).toBe('asked');
+    // …and the six questions have *not* gone out yet (defect W5-1). They are the CEO's own to answer (ruling
+    // P8-13), and there is nothing yet to answer them from: dry-run 3 asked here, 68 seconds before the pick,
+    // and the CEO described a company nobody had proposed, citing "[from the idea]" for an idea that did not
+    // exist. The interview waits for the pick, and the pick's own cycle asks it.
+    expect(interviewPhase(v.readTextOrNull(INTERVIEW_PATH))).toBe('none');
+    expect(readJob(v, heartbeats()[0].id)!.body).not.toMatch(/asked the founder interview/);
 
     // =======================================================================================================
     // Act 2 — the owner picks idea 2 from the Decisions sheet (D1 / ruling P8-14).
@@ -289,7 +292,9 @@ describe('the owner journey, end to end (three live runs\' worth of defects, in 
     // … and wakes the company, which is the whole of D1: the same pick saved in Obsidian always did.
     await waitFor(() => heartbeats().some((j) => j.title === `Heartbeat (decided ${pick.id})`), 'the cycle the pick asked for');
 
-    // The self-interview is in the owner's thread, six answers, every one tagged with what it rests on.
+    // The self-interview is asked *now*, on the cycle the pick woke, and it is in the owner's thread: six
+    // answers, every one tagged with what it rests on, about the idea they just chose (W5-1).
+    await waitFor(() => interviewPhase(v.readTextOrNull(INTERVIEW_PATH)) === 'asked', 'the CEO to answer the six about the idea that was picked');
     const sixQuestions = cabin().find((n) => n.data.from !== 'owner' && INTERVIEW_QUESTIONS.every((q) => n.body.includes(q)))!;
     expect(sixQuestions, 'the CEO\'s own six answers in the cabin').toBeTruthy();
     const answers = ceoAnswersFrom(sixQuestions.body);

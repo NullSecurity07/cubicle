@@ -45,10 +45,23 @@ afterEach(() => { try { vault.close(); } catch { /* already closed */ } rmSync(d
 /** The self-interview callback `askInterview` takes, scripted: one raw model reply, parsed the way the daemon does. */
 const scripted = (raw: string | null) => async (qs: readonly string[]): Promise<CeoAnswer[]> => parseCeoAnswers(raw, qs.length);
 
+/**
+ * The idea `SIX` is an answer to, in the vault: the one the owner picked out of the CEO's three.
+ *
+ * Every case below that expects an `[from the idea]` tag to survive needs one, because `askInterview` now takes
+ * those claims back when the vault holds no idea at all (defect W5-1) — a tag is a citation, and there was
+ * nothing to cite. Filed as the pick rather than as a cabin message so the coverage check still sees the same
+ * empty vault it always did, and the six questions all stay open.
+ */
+function pickedIdea(v: Vault): void {
+  v.writeText('00 Inbox/2026-09-13-prop-picked.md', ['---', 'id: prop_picked', 'kind: brand_change', 'from: ceo', 'target: Brand/name.md', 'created: 2026-09-13T08:59:00.000Z', 'approved: true', 'chosen: 1', '---', '# Three company ideas — pick one', '', '1. GreenCrate — a weekly meal-kit box delivered to nurseries before seven.', '2. Deskless — shift scheduling for cafes.', '3. Tinyletter Co — a newsletter for allotment holders.', ''].join('\n'), 'ceo');
+}
+
 const message = (id: string | null) => listInbox(vault).find((n) => n.data.id === id)!;
 
 describe('the CEO answers the six itself, and the owner adds to them (ruling P8-13)', () => {
   it('writes six tagged answers into the transcript and puts them in the owner\'s thread', async () => {
+    pickedIdea(vault);
     const id = await askInterview(vault, 'ceo', new Date('2026-09-13T09:00:00.000Z'), scripted(SIX));
     expect(id).toBeTruthy();
 
@@ -91,6 +104,7 @@ describe('the CEO answers the six itself, and the owner adds to them (ruling P8-
   });
 
   it('"go" closes it with no words put in the owner\'s mouth, and the brief may say they endorsed it', async () => {
+    pickedIdea(vault);
     await askInterview(vault, 'ceo', new Date('2026-09-13T09:00:00.000Z'), scripted(SIX));
     expect(briefCheckContext(vault).interviewAnswered).toBe(false);        // the CEO's answers are not theirs
 
@@ -105,6 +119,7 @@ describe('the CEO answers the six itself, and the owner adds to them (ruling P8-
   });
 
   it('an addition is appended under the answers, never over them', async () => {
+    pickedIdea(vault);
     await askInterview(vault, 'ceo', new Date('2026-09-13T09:00:00.000Z'), scripted(SIX));
     expect(captureInterviewAnswer(vault, 'Nurseries, not parents.\nTwo of them already pay us.', new Date('2026-09-13T10:00:00.000Z'))).toBe(true);
     const t = vault.readText(INTERVIEW_PATH);

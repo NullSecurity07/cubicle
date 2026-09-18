@@ -381,6 +381,25 @@ export function parseCeoAnswers(raw: string | null, count: number = INTERVIEW_QU
   return Array.from({ length: count }, (_, i) => found[i] ?? { text: CEO_UNKNOWN, tag: 'unstated' as InterviewTag });
 }
 
+/**
+ * The same six answers with every `[from the idea]` claim taken back out — what the CEO is allowed to say when
+ * there is **no** idea to read (defect W5-1).
+ *
+ * Dry-run 3: asked before the owner had picked one of the three ideas, the CEO answered anyway — "an automated
+ * service that compiles local markdown folders into clean, self-hosted static newsletters", tagged
+ * `[from the idea]`, about a company nobody had proposed. The prompt already said "nothing has been written
+ * down yet" and the model claimed a source regardless, so the tag cannot be trusted to the model alone: an
+ * answer that rests on an idea that does not exist is a false citation, and the citation is the whole of ruling
+ * P8-13.
+ *
+ * The answer goes with the tag rather than just the tag: `[unstated]` over an invented sentence would still put
+ * the invention in front of the owner, in the one note they read first. What rests on the vault, and what
+ * already said "I do not know", is untouched.
+ */
+export function withoutIdeaClaims(answers: readonly CeoAnswer[]): CeoAnswer[] {
+  return answers.map((a) => (a.tag === 'from the idea' ? { text: CEO_UNKNOWN, tag: 'unstated' as InterviewTag } : { ...a }));
+}
+
 /** One rendered answer line, the one spelling the message, the transcript and both parsers agree on. */
 export function renderCeoAnswer(a: CeoAnswer): string { return `**CEO:** ${a.text} [${a.tag}]`; }
 
