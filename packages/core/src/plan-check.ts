@@ -1,5 +1,5 @@
 import type { Vault } from './vault.js';
-import { IDEA_SLUG_SRC, listIdeas, keptIdeas, readIdea, ideaPath, type IdeaDecision } from './ideas.js';
+import { IDEA_SLUG_SRC, listIdeas, keptIdeas, readIdea, ideaPath, BOARD_IDEA_SOURCE, type IdeaDecision } from './ideas.js';
 
 /**
  * Does the company plan only serve ideas the owner kept? (Spec §4, ruling W3-1.)
@@ -244,11 +244,20 @@ export function checkPlan(vault: Vault, planMd: string): PlanCheck {
   const kept = keptIdeas(vault).map((i) => i.id);
   if (!kept.length) return { ok: false, findings: [`The plan states ${objectives.length} objective${objectives.length === 1 ? '' : 's'} and ${NOTHING_PLANNED}: no objective can say which idea it serves. Keep an idea — pick one of the CEO's, or set \`decision: keep\` on a card — and the next plan is written against it.`] };
   const decisions = new Map<string, IdeaDecision>(all.map((i) => [i.id.toLowerCase(), i.decision]));
+  const fromBoard = new Set(all.filter((i) => i.source.split(':')[0].trim().toLowerCase() === BOARD_IDEA_SOURCE).map((i) => i.id.toLowerCase()));
   const findings: string[] = [];
-  // A finding that does not refuse. An idea the owner has not ruled on yet is the state every card starts in,
-  // and returning a plan for one would deadlock the cycle it is filed in — the same asymmetry
-  // `unkeptForcesReturn` keeps, said once more here so the two halves of the guard cannot disagree. The CEO and
-  // the owner still read it.
+  /**
+   * Findings that do not refuse.
+   *
+   * An idea the owner has not ruled on yet is the state every card starts in, and returning a plan for one
+   * would deadlock the cycle it is filed in — the same asymmetry `unkeptForcesReturn` keeps, said once more
+   * here so the two halves of the guard cannot disagree. The CEO and the owner still read it.
+   *
+   * **Except a card the board filed** (ruling W3-2). That one is a pivot the chair proposed and the owner has
+   * not taken: an objective serving it is the company changing what it sells on the board's say-so, which is
+   * the whole failure this wave exists to stop. Undecided there means "nobody agreed to this", not "nobody has
+   * got round to it yet".
+   */
   let soft = 0;
   for (const o of objectives) {
     if (!o.idea) {
@@ -276,7 +285,7 @@ export function checkPlan(vault: Vault, planMd: string): PlanCheck {
       : decision === 'undecided'
         ? 'which the owner has not ruled on yet'
         : `which the company ${decision === 'scrap' ? 'scrapped' : 'parked'}`;
-    if (decision === 'undecided') soft++;
+    if (decision === 'undecided' && !fromBoard.has(o.idea)) soft++;
     findings.push(`The objective "${quote(o.text)}" under \`### ${o.team}\` serves \`${PLAN_IDEA_MARKER} ${o.idea}\`, ${what}. A plan may only draw on ideas the owner kept: ${keptList(kept)}.`);
   }
   return { ok: findings.length === soft, findings };
