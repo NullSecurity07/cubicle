@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { newMessageId, type ChatEvent, type Stage } from '../shared/model.ts';
-import { createBrowser, fakeRunner, realRunner } from './browser.ts';
+import { createBrowser, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { runTurn } from './loop.ts';
 import { buildMessages, wiredDocIds } from './prompt.ts';
 import { fakeClient, promptSize, realClients } from './providers.ts';
@@ -21,7 +21,7 @@ const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
 const store = createStore(workspace);
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
-const browser = createBrowser(process.env.STAGE_FAKE_MODEL === '1' ? fakeRunner : realRunner());
+const browser = process.env.STAGE_FAKE_MODEL === '1' ? createBrowser(fakeRunner) : createBrowser(realRunner(), process.env.STAGE_NO_READER === '1' ? null : jinaReader);
 const tools = [...docTools, ...fileTools, ...webTools(browser)];
 const clients = process.env.STAGE_FAKE_MODEL === '1' ? [fakeClient] : realClients();
 const busy = new Set<string>();

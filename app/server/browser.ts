@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -25,10 +25,11 @@ export function webUrl(raw: string): string {
   return url.href;
 }
 
-// Bing wraps every result in a redirect that carries the real address as base64 in `u`.
-export function unwrapBing(href: string): string {
+// Search engines wrap each result in a redirect: Bing packs the real address as base64 in `u`, DuckDuckGo as `uddg`.
+export function unwrapRedirect(href: string): string {
   try {
-    const url = new URL(href);
+    const url = new URL(href, 'https://duckduckgo.com');
+    if (url.hostname.endsWith('duckduckgo.com') && url.pathname === '/l/') return url.searchParams.get('uddg') ?? href;
     const packed = url.hostname.endsWith('bing.com') && url.pathname.startsWith('/ck/') ? url.searchParams.get('u') : null;
     if (!packed?.startsWith('a1')) return href;
     const real = Buffer.from(packed.slice(2), 'base64url').toString('utf8');
@@ -36,23 +37,46 @@ export function unwrapBing(href: string): string {
   } catch { return href; }
 }
 
-const READ_RESULTS = 'JSON.stringify([...document.querySelectorAll("li.b_algo")].slice(0,6).map(r=>({title:(r.querySelector("h2")?.textContent||"").trim(),url:r.querySelector("h2 a")?.href||"",snippet:(r.querySelector(".b_caption p, p")?.textContent||"").trim().slice(0,180)})))';
+const hits = (rows: string, title: string, snippet: string) => `JSON.stringify([...document.querySelectorAll("${rows}")].slice(0,6).map(r=>({title:(r.querySelector("${title}")?.textContent||"").trim(),url:r.querySelector("${title}")?.href||r.querySelector("${title} a")?.href||"",snippet:(r.querySelector("${snippet}")?.textContent||"").trim().slice(0,180)})))`;
+// Tried in order for each query; an engine that answers with nothing (a challenge page, a changed layout) hands over to the next.
+export const ENGINES = [
+  { name: 'duckduckgo', url: (query: string) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, read: hits('.result:not(.result--ad)', '.result__a', '.result__snippet') },
+  { name: 'bing', url: (query: string) => `https://www.bing.com/search?q=${encodeURIComponent(query)}`, read: hits('li.b_algo', 'h2 a', '.b_caption p, p') },
+];
+// A site that answers with a human check instead of its page. The person must hear that plainly, or it will guess the content.
+const WALL = /prove your humanity|verify (that )?you('| a)re (a )?human|are you a robot|unusual traffic|complete the (following )?challenge|checking your browser|just a moment|access denied|attention required|enable javascript and cookies|captcha/i;
+export const walled = (title: string, text: string) => WALL.test(title) || (text.length < 1200 && WALL.test(text));
+export const WALL_NOTE = 'This site asked for a human check and did not show its page. Do not guess what it says. Tell the founder it is behind a bot wall; another source may have the same facts.';
+const THIN = 400;
+
 const READ_PAGE = `JSON.stringify((()=>{const pick=document.querySelector("article")||document.querySelector("main")||document.querySelector("[role=main]")||document.body;return{title:document.title,url:location.href,text:(pick.innerText||"").replace(/\\n{3,}/g,"\\n\\n").trim()}})())`;
 // `eval` prints its value as JSON; a value that is itself JSON text arrives wrapped once more.
 const unwrap = <T>(printed: string): T => { const once = JSON.parse(printed.trim()); return (typeof once === 'string' ? JSON.parse(once) : once) as T; };
 
+// Headless Chrome calls itself "HeadlessChrome", and most search engines refuse that name on sight. It is the founder's
+// own Chrome, so it says so, with its real version. Nothing else about the session is disguised: sites that still ask
+// for a human check get left alone.
+export function honestUserAgent(version: string, platform: NodeJS.Platform = process.platform): string | undefined {
+  const major = /(\d+)\.\d+\.\d+/.exec(version)?.[1];
+  if (!major) return undefined;
+  const system = platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10_15_7' : platform === 'win32' ? 'Windows NT 10.0; Win64; x64' : 'X11; Linux x86_64';
+  return `Mozilla/5.0 (${system}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+}
+
 export function realRunner(env: NodeJS.ProcessEnv = process.env): Runner {
   const bin = resolve(import.meta.dirname, '../node_modules/.bin/agent-browser');
   const chrome = env.AGENT_BROWSER_EXECUTABLE_PATH ?? CHROMES.find((path) => existsSync(path));
+  let agent = env.AGENT_BROWSER_USER_AGENT;
+  if (!agent && chrome) { try { agent = honestUserAgent(execFileSync(chrome, ['--version'], { encoding: 'utf8', timeout: 5000 })); } catch { /* keep the default */ } }
   return (session, args) => new Promise((done, fail) => {
-    execFile(bin, ['--session', session, ...args], { timeout: 45_000, maxBuffer: 8_000_000, env: { ...env, ...(chrome ? { AGENT_BROWSER_EXECUTABLE_PATH: chrome } : {}) } },
+    execFile(bin, ['--session', session, ...args], { timeout: 45_000, maxBuffer: 8_000_000, env: { ...env, ...(chrome ? { AGENT_BROWSER_EXECUTABLE_PATH: chrome } : {}), ...(agent ? { AGENT_BROWSER_USER_AGENT: agent } : {}) } },
       (error, stdout, stderr) => (error ? fail(new Error((stderr || stdout || error.message).trim().slice(0, 300))) : done(stdout)));
   });
 }
 
 // Stand-in for browser journeys: no Chrome, fixed answers.
 export const fakeRunner: Runner = async (_session, args) => {
-  if (args[0] === 'eval' && args[1] === READ_RESULTS) return JSON.stringify(JSON.stringify([{ title: 'Example result', url: 'https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8', snippet: 'An example.' }]));
+  if (args[0] === 'eval' && ENGINES.some((engine) => engine.read === args[1])) return JSON.stringify(JSON.stringify([{ title: 'Example result', url: 'https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8', snippet: 'An example.' }]));
   if (args[0] === 'eval') return JSON.stringify(JSON.stringify({ title: 'Example Domain', url: 'https://example.com/', text: 'This domain is for use in examples.' }));
   if (args[0] === 'snapshot') return '- heading "Example Domain" [ref=e1]\n- link "More information" [ref=e2]\n';
   if (args[0] === 'stream') return 'Streaming enabled on ws://127.0.0.1:1\n';
@@ -60,7 +84,19 @@ export const fakeRunner: Runner = async (_session, args) => {
   return '✓ done\n';
 };
 
-export function createBrowser(run: Runner) {
+// Second opinion for a page the local browser could not read: Jina's public reader fetches it from their side and returns
+// markdown. Only the address leaves the machine. No key; about 20 requests a minute.
+export type Reader = (url: string) => Promise<{ title: string; text: string } | null>;
+export const jinaReader: Reader = async (url) => {
+  const response = await fetch(`https://r.jina.ai/${url}`, { headers: { 'x-return-format': 'markdown' }, signal: AbortSignal.timeout(30_000) }).catch(() => null);
+  if (!response?.ok) return null;
+  const body = await response.text();
+  const title = /^Title: (.*)$/m.exec(body)?.[1]?.trim() ?? '';
+  const text = body.replace(/^Title: .*$/m, '').replace(/^URL Source: .*$/m, '').replace(/^Markdown Content:\s*$/m, '').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\n{3,}/g, '\n\n').trim();
+  return { title, text };
+};
+
+export function createBrowser(run: Runner, reader: Reader | null = null) {
   // Each session is a Chrome tab set with its own memory; only a few run at once, the rest wait their turn.
   let active = 0;
   const waiting: (() => void)[] = [];
@@ -81,18 +117,34 @@ export function createBrowser(run: Runner) {
     // All queries at once, each in its own throwaway session.
     async search(queries: string[]): Promise<string> {
       const blocks = await settled(queries.map((query) => scratch(async (session) => {
-        await run(session, ['open', `https://www.bing.com/search?q=${encodeURIComponent(query)}`]);
-        const hits = unwrap<SearchHit[]>(await run(session, ['eval', READ_RESULTS])).filter((hit) => hit.url);
-        const lines = hits.map((hit, index) => `${index + 1}. ${hit.title || '(untitled)'}\n   ${unwrapBing(hit.url)}\n   ${hit.snippet}`);
-        return `## ${query}\n${lines.join('\n') || 'No results.'}`;
+        for (const engine of ENGINES) {
+          const found = await run(session, ['open', engine.url(query)]).then(() => run(session, ['eval', engine.read])).then((printed) => unwrap<SearchHit[]>(printed).filter((hit) => hit.url), () => []);
+          if (!found.length) continue;
+          const lines = found.map((hit, index) => `${index + 1}. ${hit.title || '(untitled)'}\n   ${unwrapRedirect(hit.url)}\n   ${hit.snippet}`);
+          return `## ${query}\n${lines.join('\n')}`;
+        }
+        return `## ${query}\nNo results: every search engine refused or came back empty.`;
       })), (index) => queries[index]);
       return blocks.join('\n\n');
     },
     // All pages at once: the readable text of each, cut to a size a model can afford.
     async read(urls: string[]): Promise<string> {
       const blocks = await settled(urls.map((raw) => scratch(async (session) => {
-        await run(session, ['open', webUrl(raw)]);
-        const page = unwrap<{ title: string; url: string; text: string }>(await run(session, ['eval', READ_PAGE]));
+        const address = webUrl(raw);
+        let page = await run(session, ['open', address]).then(() => run(session, ['eval', READ_PAGE])).then((printed) => unwrap<{ title: string; url: string; text: string }>(printed), () => null);
+        // Pages built in the browser are still empty at first load: give those a moment to finish, once.
+        if (page && page.text.length < THIN && !walled(page.title, page.text)) {
+          await run(session, ['wait', '--load', 'networkidle']).catch(() => {});
+          page = unwrap<NonNullable<typeof page>>(await run(session, ['eval', READ_PAGE]));
+        }
+        // Refused, empty or timed out here: ask the reader service once before giving up.
+        if (!page || page.text.length < THIN || walled(page.title, page.text)) {
+          const second = await reader?.(address).catch(() => null);
+          if (second && second.text.length >= THIN && !walled(second.title, second.text)) page = { ...second, url: address };
+        }
+        if (!page) throw new Error('the page did not load');
+        if (walled(page.title, page.text)) return `## ${raw}\n${WALL_NOTE}`;
+        if (page.text.length < 150) return `## ${raw}\nThis page came back almost empty (a silent bot wall or a login page). Do not guess what it says; try another source.`;
         const cut = page.text.length > PAGE_CHARS ? `${page.text.slice(0, PAGE_CHARS)}\n… (cut at ${PAGE_CHARS} of ${page.text.length} characters)` : page.text;
         return `## ${page.title || page.url}\n${page.url}\n\n${cut || '(no readable text)'}`;
       })), (index) => urls[index]);
@@ -118,6 +170,8 @@ export function createBrowser(run: Runner) {
         const address = (await run(session, ['get', 'url']).catch(() => '')).trim();
         if (address && !/^about:/.test(address)) webUrl(address);
         const tree = (await run(session, ['snapshot', '-i'])).trim();
+        const title = (await run(session, ['get', 'title']).catch(() => '')).trim();
+        if (walled(title, tree.length < 1200 ? tree : '')) return `Now at ${address}\n${WALL_NOTE} The founder can see the check in the browser card.`;
         return `Now at ${address || 'a blank page'}\n${tree.length > SNAPSHOT_CHARS ? `${tree.slice(0, SNAPSHOT_CHARS)}\n… (cut; scroll or open a more specific page)` : tree || '(nothing to interact with)'}`;
       });
     },

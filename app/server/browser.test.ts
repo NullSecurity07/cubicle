@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createBrowser, fakeRunner, unwrapBing, webUrl, type Runner } from './browser.ts';
+import { ENGINES, WALL_NOTE, createBrowser, fakeRunner, honestUserAgent, unwrapRedirect, webUrl, type Runner } from './browser.ts';
 
 describe('webUrl', () => {
   it('accepts web pages and adds https to a bare domain', () => {
@@ -14,10 +14,20 @@ describe('webUrl', () => {
   });
 });
 
-describe('unwrapBing', () => {
-  it('reads the real address out of a Bing redirect and leaves other links alone', () => {
-    expect(unwrapBing('https://www.bing.com/ck/a?!&&p=abc&u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8&ntb=1')).toBe('https://example.com/');
-    expect(unwrapBing('https://example.org/x')).toBe('https://example.org/x');
+describe('unwrapRedirect', () => {
+  it('reads the real address out of Bing and DuckDuckGo redirects and leaves other links alone', () => {
+    expect(unwrapRedirect('https://www.bing.com/ck/a?!&&p=abc&u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8&ntb=1')).toBe('https://example.com/');
+    expect(unwrapRedirect('https://duckduckgo.com/l/?uddg=https%3A%2F%2Fkanboard.org%2F&rut=04')).toBe('https://kanboard.org/');
+    expect(unwrapRedirect('//duckduckgo.com/l/?uddg=https%3A%2F%2Fkanboard.org%2F')).toBe('https://kanboard.org/');
+    expect(unwrapRedirect('https://example.org/x')).toBe('https://example.org/x');
+  });
+});
+
+describe('honestUserAgent', () => {
+  it('names the real Chrome and its version instead of HeadlessChrome', () => {
+    expect(honestUserAgent('Google Chrome 152.0.7977.82 \n', 'linux')).toBe('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36');
+    expect(honestUserAgent('Chromium 140.0.1.2', 'darwin')).toContain('Macintosh');
+    expect(honestUserAgent('no version here')).toBeUndefined();
   });
 });
 
@@ -34,6 +44,47 @@ describe('browser', () => {
     expect(closed).toHaveLength(6);
     expect(text.match(/^## /gm)).toHaveLength(6);
     expect(text).toContain('https://example.com/');
+  });
+
+  it('moves to the next search engine when one comes back empty, and says so when all do', async () => {
+    const opened: string[] = [];
+    const run: Runner = async (session, args) => {
+      if (args[0] === 'open') opened.push(new URL(args[1]).hostname);
+      if (args[0] === 'eval' && args[1] === ENGINES[0].read) return JSON.stringify('[]');
+      return fakeRunner(session, args);
+    };
+    expect(await createBrowser(run).search(['calm'])).toContain('https://example.com/');
+    expect(opened).toEqual(['html.duckduckgo.com', 'www.bing.com']);
+    const none: Runner = async (session, args) => (args[0] === 'eval' ? JSON.stringify('[]') : fakeRunner(session, args));
+    expect(await createBrowser(none).search(['calm'])).toContain('every search engine refused');
+  });
+
+  it('says plainly when a site answers with a human check, instead of passing the check page off as content', async () => {
+    const wall: Runner = async (session, args) => (args[0] === 'eval' ? JSON.stringify(JSON.stringify({ title: 'Reddit - Prove your humanity', url: 'https://www.reddit.com/', text: 'Please wait for verification.' })) : fakeRunner(session, args));
+    const text = await createBrowser(wall).read(['https://www.reddit.com/r/startups/']);
+    expect(text).toContain(WALL_NOTE);
+    expect(text).not.toContain('Please wait');
+  });
+
+  it('asks the reader service when the local browser is refused, and still admits a wall nobody got past', async () => {
+    const wall: Runner = async (session, args) => (args[0] === 'eval' ? JSON.stringify(JSON.stringify({ title: 'Just a moment...', url: 'https://techcrunch.com/', text: '' })) : fakeRunner(session, args));
+    const asked: string[] = [];
+    const helped = await createBrowser(wall, async (url) => { asked.push(url); return { title: 'TechCrunch', text: 'Startup news. '.repeat(60) }; }).read(['https://techcrunch.com/']);
+    expect(asked).toEqual(['https://techcrunch.com/']);
+    expect(helped).toContain('## TechCrunch');
+    const stuck = await createBrowser(wall, async () => ({ title: 'Just a moment...', text: 'Verify you are human' })).read(['https://www.crunchbase.com/']);
+    expect(stuck).toContain(WALL_NOTE);
+  });
+
+  it('gives a page built in the browser one more moment before reading it', async () => {
+    let reads = 0; const waited: string[][] = [];
+    const slow: Runner = async (session, args) => {
+      if (args[0] === 'wait') waited.push(args);
+      if (args[0] === 'eval') { reads += 1; return JSON.stringify(JSON.stringify({ title: 'App', url: 'https://app.example/', text: reads === 1 ? 'Loading' : 'x'.repeat(900) })); }
+      return fakeRunner(session, args);
+    };
+    expect(await createBrowser(slow).read(['https://app.example/'])).toContain('x'.repeat(900));
+    expect(waited).toEqual([['wait', '--load', 'networkidle']]);
   });
 
   it('reports a page that fails without losing the others', async () => {
