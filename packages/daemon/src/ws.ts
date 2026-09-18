@@ -164,9 +164,13 @@ export interface Snapshot {
 /**
  * A dropped line is the owner's business: they wrote it, in Obsidian or by dragging, and it did not take. One
  * warning per line, naming it, so the reason reaches the brief and the office's own toast alike.
+ *
+ * `sentence` is the whole of it in the owner's words, and `kept` is what the line was left at (ruling W6-2).
+ * The office toasts the sentence rather than composing one of its own, because a second telling of the same
+ * fact is a second chance to say something different from the note.
  */
 export function warnDropped(vault: Vault, dropped: DroppedEntry[], where: string): void {
-  for (const d of dropped) vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { where, path: OFFICE_LAYOUT_PATH, line: d.line, reason: d.reason } });
+  for (const d of dropped) vault.events.emit({ type: 'daemon.warning', agent: 'daemon', payload: { where, path: OFFICE_LAYOUT_PATH, line: d.line, reason: d.reason, sentence: d.sentence, kept: d.kept ?? null } });
 }
 
 export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
@@ -275,6 +279,8 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
 export class WsServer {
   private wss: WebSocketServer | null = null;
   private off: (() => void) | null = null;
+  /** The office as the daemon last agreed to it. See `lastGood`, and ruling W6-2. */
+  private good: CampusLayout | null = null;
   readonly token: string;
   readonly rejected: string[] = [];
 
@@ -296,6 +302,10 @@ export class WsServer {
   }
 
   async start(): Promise<number> {
+    // Read the office before anyone can edit it (ruling W6-2). Lazily, the first read would be of the note the
+    // owner has *just* broken, and the value a refusal falls back to would be the breakage — which is the whole
+    // defect, reappearing on the first hand edit after every restart.
+    try { this.lastGood(); } catch { /* no vault note yet: the migration writes one and the next read picks it up */ }
     const wss = new WebSocketServer({ port: this.deps.port, host: this.deps.host ?? '127.0.0.1', verifyClient: (info: { origin?: string; req: { url?: string; headers: Record<string, string | string[] | undefined> } }) => this.acceptClient(info) });
     this.wss = wss;
     await new Promise<void>((resolve, reject) => { wss.once('listening', resolve); wss.once('error', reject); });
@@ -356,8 +366,11 @@ export class WsServer {
               ws.send(JSON.stringify({ op: 'error', message: 'layout.set needs nodes (object) and connections (array)' }));
             } else {
               const org = loadOrg(this.deps.vault);
-              const { layout, dropped } = validateLayout(loadCampusMap(), org, { version: 1, nodes: msg.nodes, connections: msg.connections });
-              writeLayout(this.deps.vault, layout, 'owner', org);
+              // Against the last good floor, so a drag the campus refuses springs back to where the thing was
+              // rather than taking it off the office altogether (ruling W6-2).
+              const { layout, dropped } = validateLayout(loadCampusMap(), org, { version: 1, nodes: msg.nodes, connections: msg.connections }, this.lastGood());
+              writeLayout(this.deps.vault, layout, 'owner', org, dropped);
+              this.good = layout;
               warnDropped(this.deps.vault, dropped, 'layout.set');
               // The sender learns what would not stick — it has a thing in its hand to spring back — and every
               // office, this one included, is told what the floor now is.
@@ -414,17 +427,34 @@ export class WsServer {
    * Re-read `Office/campus.md` and tell every office what it says — the path an owner's save in Obsidian takes.
    * The note is rewritten only when what it holds is not what it means (a dropped line, a stale body), so an
    * ordinary edit is not answered with a write the owner did not make.
+   *
+   * The read is against `lastGood()` (ruling W6-2): a line the campus refuses keeps the value it had, the note
+   * is rewritten with that value and gains a "Couldn't apply" section naming it, and the warning carries the
+   * same sentence to every open office. Editing a coordinate into a wall used to delete the desk outright.
    */
   pushLayout(): CampusLayout {
     const org = loadOrg(this.deps.vault);
-    const read = readLayout(this.deps.vault, loadCampusMap(), org);
+    const read = readLayout(this.deps.vault, loadCampusMap(), org, this.lastGood());
     const layout = read?.layout ?? EMPTY_LAYOUT;
     if (read) {
+      this.good = layout;
       warnDropped(this.deps.vault, read.dropped, 'owner.edited');
-      if (layoutMarkdown(layout, org) !== this.deps.vault.readTextOrNull(OFFICE_LAYOUT_PATH)) writeLayout(this.deps.vault, layout, 'daemon', org);
+      if (layoutMarkdown(layout, org, read.dropped) !== this.deps.vault.readTextOrNull(OFFICE_LAYOUT_PATH)) writeLayout(this.deps.vault, layout, 'daemon', org, read.dropped);
     }
     this.broadcast({ op: 'layout.changed', layout });
     return layout;
+  }
+
+  /**
+   * The office as the daemon last agreed to it — what a refused line falls back to (ruling W6-2).
+   *
+   * Read from the note the first time it is asked for, which is the only honest starting point after a restart:
+   * whatever is on disk was validated before it was written there. From then on it is whatever this server last
+   * accepted, so the owner's most recent good office is always the one a typo cannot cost them.
+   */
+  private lastGood(): CampusLayout {
+    if (!this.good) this.good = readLayout(this.deps.vault, loadCampusMap(), loadOrg(this.deps.vault))?.layout ?? EMPTY_LAYOUT;
+    return this.good;
   }
 
   broadcast(payload: unknown): void {

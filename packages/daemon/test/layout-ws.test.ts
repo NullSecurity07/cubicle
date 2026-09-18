@@ -66,8 +66,12 @@ describe('the layout on the wire', () => {
       connections: was.connections,
     }));
     await waitFor(() => a.msgs.some((m) => m.op === 'layout.ack'), 'layout.ack');
-    const ack = a.msgs.find((m) => m.op === 'layout.ack') as { dropped: { line: string; reason: string }[] };
-    expect(ack.dropped).toEqual([{ line: 'nodes.plant_nowhere', reason: 'no desk, zone or prop called plant_nowhere' }]);
+    const ack = a.msgs.find((m) => m.op === 'layout.ack') as { dropped: { line: string; reason: string; sentence: string }[] };
+    expect(ack.dropped).toEqual([{
+      line: 'nodes.plant_nowhere',
+      reason: 'no desk, zone or prop called plant_nowhere',
+      sentence: 'plant_nowhere: 1, 1 is not a desk, a zone or a prop on this campus',
+    }]);
 
     await waitFor(() => b.msgs.some((m) => m.op === 'layout.changed'), 'layout.changed on the other office');
     const changed = b.msgs.find((m) => m.op === 'layout.changed') as { layout: CampusLayout };
@@ -115,9 +119,77 @@ describe('the layout on the wire', () => {
     const layout = server.pushLayout();
     expect(layout.nodes.who_even).toBeUndefined();
     await waitFor(() => a.msgs.some((m) => m.op === 'layout.changed'), 'layout.changed');
-    expect(vault.readText(OFFICE_LAYOUT_PATH)).not.toContain('who_even');
-    expect(vault.readText(OFFICE_LAYOUT_PATH)).toContain('## Who can use what');
+    const note = vault.readText(OFFICE_LAYOUT_PATH);
+    expect(note.split('---')[1]).not.toContain('who_even');   // out of the data…
+    expect(note).toContain('who_even: 4, 4 is not a desk, a zone or a prop on this campus');   // …and answered (W6-2)
+    expect(note).toContain('## Who can use what');
     a.ws.close();
+  });
+
+  /**
+   * Ruling W6-2. Editing `cto:` to a blocked coordinate deleted the desk outright — out of `nodes:` and out of
+   * the body's "Moved" list — with no error anywhere, so the note's own instructions destroyed the owner's drag.
+   */
+  describe('a hand edit the campus refuses (W6-2)', () => {
+    it('keeps the last good position, rewrites the note with it, and says why in the note and on the wire', async () => {
+      const a = await open();
+      const was = layoutNow();
+      // first, a good drag: this is the work that must survive what comes next
+      a.ws.send(JSON.stringify({ op: 'layout.set', nodes: { ...was.nodes, cto: { x: 44, y: 8 } }, connections: was.connections }));
+      await waitFor(() => a.msgs.some((m) => m.op === 'layout.ack'), 'the good drag');
+      expect(layoutNow().nodes.cto).toEqual({ x: 44, y: 8 });
+
+      // then the owner hand-edits it into a wall and saves
+      vault.writeText(OFFICE_LAYOUT_PATH, stringifyNote(
+        { version: 1, nodes: { ...layoutNow().nodes, cto: { x: 0, y: 0 } }, connections: layoutNow().connections },
+        '# The office\n',
+      ), 'owner');
+      const layout = server.pushLayout();
+
+      expect(layout.nodes.cto).toEqual({ x: 44, y: 8 });                        // the drag is still there
+      const note = vault.readText(OFFICE_LAYOUT_PATH);
+      expect(note).toContain("## Couldn't apply");
+      expect(note).toContain('cto: 0, 0 is inside a wall — kept at 44, 8');
+      expect(note).toContain('- CTO is at 44, 8.');                             // and so is the Moved line
+      const warn = vault.events.query({ types: ['daemon.warning'] }).find((e) => e.payload.where === 'owner.edited');
+      expect(warn!.payload.sentence).toBe('cto: 0, 0 is inside a wall — kept at 44, 8');
+      expect(warn!.payload.kept).toBe('44, 8');
+      const changed = a.msgs.filter((m) => m.op === 'layout.changed').at(-1) as { layout: CampusLayout };
+      expect(changed.layout.nodes.cto).toEqual({ x: 44, y: 8 });                // and the open office is told
+      a.ws.close();
+    });
+
+    it('keeps it on the very first edit after a restart, when nothing has been dragged yet', async () => {
+      // The last good office is read when the server starts, before anyone can break it: read lazily, the first
+      // thing it would ever see is the note the owner has just broken.
+      const was = layoutNow();
+      const fresh = new WsServer({ vault, port: 0, token: TOKEN });
+      const p = await fresh.start();
+      try {
+        expect(p).toBeGreaterThan(0);
+        const station = Object.entries(was.nodes).find(([, n]) => n.kind === 'station')!;
+        vault.writeText(OFFICE_LAYOUT_PATH, stringifyNote(
+          { version: 1, nodes: { ...was.nodes, [station[0]]: { ...station[1], x: 0, y: 0 } }, connections: was.connections },
+          '# The office\n',
+        ), 'owner');
+        expect(fresh.pushLayout().nodes[station[0]]).toEqual(station[1]);
+      } finally { await fresh.stop(); }
+    });
+
+    it('springs a refused drag back and tells the office what it was left at', async () => {
+      const a = await open();
+      const was = layoutNow();
+      a.ws.send(JSON.stringify({ op: 'layout.set', nodes: { ...was.nodes, cto: { x: 44, y: 8 } }, connections: was.connections }));
+      await waitFor(() => a.msgs.some((m) => m.op === 'layout.ack'), 'the good drag');
+      a.ws.send(JSON.stringify({ op: 'layout.set', nodes: { ...layoutNow().nodes, cto: { x: 0, y: 0 } }, connections: was.connections }));
+      await waitFor(() => a.msgs.filter((m) => m.op === 'layout.ack').length > 1, 'the refused drag');
+      const ack = a.msgs.filter((m) => m.op === 'layout.ack').at(-1) as { dropped: { sentence: string; kept?: string }[] };
+      expect(ack.dropped[0].kept).toBe('44, 8');
+      expect(ack.dropped[0].sentence).toBe('cto: 0, 0 is inside a wall — kept at 44, 8');
+      const changed = a.msgs.filter((m) => m.op === 'layout.changed').at(-1) as { layout: CampusLayout };
+      expect(changed.layout.nodes.cto).toEqual({ x: 44, y: 8 });   // what the office draws when it springs back
+      a.ws.close();
+    });
   });
 
   it('does not answer a good edit with a write of its own', async () => {

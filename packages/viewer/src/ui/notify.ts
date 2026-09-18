@@ -18,6 +18,23 @@ export function announcementFor(e: CubicleEvent): string | null {
   }
 }
 
+/** One line of `Office/campus.md` the daemon would not take, as it comes off the wire or off a `daemon.warning`. */
+export interface LayoutDrop { line: string; reason: string; sentence?: string; kept?: string }
+
+/**
+ * What the office says out loud when the daemon would not take part of a floor change (ruling W6-2).
+ *
+ * The daemon composes the sentence — it is the one that knows what the line was left at — and the same string
+ * goes into the note's "Couldn't apply" section, so the toast and the note can never say different things. An
+ * older daemon that sends no sentence still gets a line, from the reason it does send.
+ */
+export function layoutRefusal(dropped: LayoutDrop[]): string {
+  const first = dropped[0];
+  if (!first) return '';
+  const said = first.sentence || `${first.reason} (${first.line})`;
+  return dropped.length === 1 ? said : `${said} — and ${dropped.length - 1} other line${dropped.length === 2 ? '' : 's'} the office could not take`;
+}
+
 let toastTimer = 0;
 /** One toast at a time; an optional action button opens something through the panel's `data-open` routing. */
 export function toast(text: string, opts: { action?: { label: string; open: string }; ms?: number } = {}): void {
