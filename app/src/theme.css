@@ -4,6 +4,7 @@
   --card-fill: rgba(16, 17, 20, 0.72);
   --card-border: rgba(255, 255, 255, 0.1);
   --text: #e8eaf0;
+  --muted: #9aa1b0;
 }
 
 html, body, #root { height: 100%; margin: 0; background: #0a0a0a; }
@@ -39,15 +40,53 @@ body { font-family: 'Inter Variable', system-ui, sans-serif; color: var(--text);
   transition: border-color 0.15s;
 }
 .react-flow__node.selected .card { border-color: rgba(78, 140, 255, 0.7); }
-.card__title {
-  flex: none; height: 36px; box-sizing: border-box; padding: 0 14px;
-  display: flex; align-items: center;
-  font-size: 13px; font-weight: 550; letter-spacing: 0.01em;
+.card__header {
+  flex: none; min-height: 52px; box-sizing: border-box; padding: 8px 12px;
+  display: flex; align-items: center; gap: 10px; cursor: grab;
   border-bottom: 1px solid var(--card-border);
 }
-.card__body { flex: 1; min-height: 0; }
-.card__body--room { display: flex; align-items: center; justify-content: center; }
-.person { height: 72%; width: auto; display: block; }
+.card__header:active { cursor: grabbing; }
+.card__header--doc { min-height: 38px; }
+.avatar { flex: none; width: 32px; height: 32px; }
+.doc-icon { flex: none; width: 15px; height: 15px; color: var(--muted); }
+.card__who { flex: 1; min-width: 0; }
+.card__name { flex: 1; font-size: 13px; font-weight: 600; letter-spacing: 0.01em; }
+.card__name span { font-weight: 400; color: var(--muted); }
+.card__doing, .card__saved { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card__saved { flex: none; }
+
+.status { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #5d6472; }
+.status--thinking { background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
+.status--error { background: #e5645a; }
+@keyframes pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
+
+.chat { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; cursor: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.msg { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.msg--user { align-self: flex-end; max-width: 85%; padding: 6px 10px; border-radius: 12px 12px 3px 12px; background: rgba(255, 255, 255, 0.1); }
+.msg--assistant { align-self: flex-start; max-width: 95%; }
+.msg--problem { color: #f0968e; font-size: 12px; }
+.chat__empty { margin: auto; color: var(--muted); font-size: 12.5px; text-align: center; }
+
+.ask { flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 12px; border-top: 1px solid var(--card-border); }
+.ask textarea, .doc {
+  flex: 1; min-width: 0; resize: none; border: 0; outline: 0; background: transparent;
+  color: var(--text); font: inherit; font-size: 13px; line-height: 1.5;
+}
+.ask textarea { max-height: 110px; padding: 4px 0; field-sizing: content; }
+.ask textarea::placeholder { color: var(--muted); }
+.ask button {
+  flex: none; width: 28px; height: 28px; border: 0; border-radius: 50%; padding: 6px;
+  color: #fff; background: var(--accent); cursor: pointer; transition: opacity 0.15s, transform 0.1s;
+}
+.ask button:disabled { opacity: 0.3; cursor: default; }
+.ask button:not(:disabled):active { transform: scale(0.92); }
+.ask button svg { display: block; width: 100%; height: 100%; }
+.doc { padding: 12px; font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 12.5px; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+
+.grip-line.react-flow__resize-control { border-color: transparent; }
+.grip.react-flow__resize-control { width: 9px; height: 9px; border-radius: 3px; background: var(--accent); border: 2px solid #0b0c10; }
+
+.stage__problem { position: absolute; inset: auto 0 24px; margin: 0; text-align: center; color: #f0968e; font-size: 13px; }
 
 /* Handles: dots, seen on hover, on selection, and while a wire is being drawn. */
 .react-flow__handle.dot {
@@ -57,4 +96,4 @@ body { font-family: 'Inter Variable', system-ui, sans-serif; color: var(--text);
 }
 .react-flow__node:hover .dot,
 .react-flow__node.selected .dot,
-.stage.connecting .dot { opacity: 1; }
+.react-flow.connecting .dot { opacity: 1; }

@@ -10,3 +10,4 @@ playwright-report/
 
 .playwright-mcp/
 app/assets/raw/
+workspace/

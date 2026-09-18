@@ -1,0 +1,5 @@
+[
+  { "name": "groq", "baseURL": "https://api.groq.com/openai/v1", "keyEnv": "GROQ_API_KEY", "model": "openai/gpt-oss-120b", "maxPromptChars": 18000, "maxTokens": 2048, "extra": { "reasoning_effort": "low" } },
+  { "name": "gemini", "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai", "keyEnv": "GEMINI_API_KEY", "model": "gemini-3.5-flash-lite", "maxPromptChars": 400000, "maxTokens": 4096 },
+  { "name": "openrouter", "baseURL": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY", "model": "z-ai/glm-5.2:free", "maxPromptChars": 100000, "maxTokens": 4096 }
+]

@@ -1,30 +1,41 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
+import type { Box, Doc, Room, Stage } from '../shared/model';
 
-export type RoomData = { role: string; accent: string };
-export type ResourceData = { title: string };
+export type RoomData = Omit<Room, keyof Box | 'id'>;
+export type DocData = Omit<Doc, keyof Box | 'id'>;
 export type RoomNodeType = Node<RoomData, 'room'>;
-export type ResourceNodeType = Node<ResourceData, 'resource'>;
-export type StageNode = RoomNodeType | ResourceNodeType;
+export type DocNodeType = Node<DocData, 'doc'>;
+export type StageNode = RoomNodeType | DocNodeType;
 
 export const HANDLE_IDS = ['l', 'r', 't', 'b'] as const;
 export const ACCENT = '#4e8cff';
 
-// Spread into every edge, hardcoded or drawn, so all wires look the same.
+// Spread into every edge, loaded or drawn, so all wires look the same.
 export const WIRE = {
   type: 'wire',
   markerEnd: { type: MarkerType.ArrowClosed, color: ACCENT, width: 16, height: 16 },
 } satisfies Pick<Edge, 'type' | 'markerEnd'>;
 
-const ROOM = { width: 280, height: 260, deletable: false } as const;
+// Cards move by their header only, so text inside a card can be selected and scrolled.
+const CARD = { dragHandle: '.card__header', deletable: false } as const;
 
-export const stageNodes: StageNode[] = [
-  { id: 'founder', type: 'room', position: { x: 0, y: 0 }, data: { role: 'Founder', accent: '#f0b35a' }, ...ROOM },
-  { id: 'marketing', type: 'room', position: { x: 460, y: -180 }, data: { role: 'Marketing', accent: '#ee8a72' }, ...ROOM },
-  { id: 'build', type: 'room', position: { x: 460, y: 180 }, data: { role: 'Build', accent: '#4e8cff' }, ...ROOM },
-  { id: 'brand-doc', type: 'resource', position: { x: 920, y: -110 }, data: { title: 'Brand doc' }, width: 240, height: 120, deletable: false },
-];
+export function toFlow(stage: Stage): { nodes: StageNode[]; edges: Edge[] } {
+  const nodes: StageNode[] = [
+    ...stage.rooms.map(({ id, x, y, w, h, ...data }): RoomNodeType => ({ id, type: 'room', position: { x, y }, width: w, height: h, data, ...CARD })),
+    ...stage.docs.map(({ id, x, y, w, h, ...data }): DocNodeType => ({ id, type: 'doc', position: { x, y }, width: w, height: h, data, ...CARD })),
+  ];
+  const edges = stage.wires.map((wire): Edge => ({ id: wire.id, source: wire.from, sourceHandle: wire.fromHandle, target: wire.to, targetHandle: wire.toHandle, ...WIRE }));
+  return { nodes, edges };
+}
 
-export const stageEdges: Edge[] = [
-  { id: 'founder-marketing', source: 'founder', sourceHandle: 'r', target: 'marketing', targetHandle: 'l', ...WIRE },
-  { id: 'marketing-brand-doc', source: 'marketing', sourceHandle: 'r', target: 'brand-doc', targetHandle: 'l', ...WIRE },
-];
+export function fromFlow(nodes: StageNode[], edges: Edge[]): Stage {
+  const box = (node: StageNode): Box => ({
+    x: Math.round(node.position.x), y: Math.round(node.position.y),
+    w: Math.round(node.width ?? node.measured?.width ?? 0), h: Math.round(node.height ?? node.measured?.height ?? 0),
+  });
+  return {
+    rooms: nodes.filter((node): node is RoomNodeType => node.type === 'room').map((node) => ({ id: node.id, ...node.data, ...box(node) })),
+    docs: nodes.filter((node): node is DocNodeType => node.type === 'doc').map((node) => ({ id: node.id, ...node.data, ...box(node) })),
+    wires: edges.map((edge) => ({ id: edge.id, from: edge.source, fromHandle: edge.sourceHandle ?? 'r', to: edge.target, toHandle: edge.targetHandle ?? 'l' })),
+  };
+}

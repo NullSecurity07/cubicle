@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 const node = (page: Page, id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
 const handle = (page: Page, id: string, side: string) => node(page, id).locator(`.react-flow__handle[data-handleid="${side}"]`);
+const centre = (box: { x: number; y: number; width: number; height: number }) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
 
 async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }, steps = 12) {
   await page.mouse.move(from.x, from.y);
@@ -10,69 +11,93 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
   await page.mouse.up();
 }
 
+async function ask(page: Page, room: string, text: string) {
+  await node(page, room).locator('.ask textarea').fill(text);
+  await node(page, room).locator('.ask textarea').press('Enter');
+  const reply = node(page, room).locator('.msg--assistant').last();
+  await expect(reply).toContainText(`You said: "${text}"`);
+  await expect(node(page, room).locator('.status--idle')).toBeVisible();
+  return reply;
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('.react-flow__node')).toHaveCount(4);
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
 });
 
-test('shows three rooms with a person each, one card and two wires', async ({ page }) => {
-  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
-  await expect(page.locator('.card__body--room svg.person')).toHaveCount(3);
-  await expect(page.locator('.card img')).toHaveCount(0);
-  await expect(page.locator('button, .react-flow__minimap, .react-flow__controls, .react-flow__attribution')).toHaveCount(0);
+test('shows two rooms and a doc, one wire, and nothing else', async ({ page }) => {
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  await expect(node(page, 'marketing')).toContainText('Maya');
+  await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue(/# Brand/);
+  await expect(page.locator('.react-flow__minimap, .react-flow__controls, .react-flow__attribution')).toHaveCount(0);
 });
 
-test('the wallpaper stays still while the rooms pan', async ({ page }) => {
+test('the wallpaper stays still while the cards pan', async ({ page }) => {
   const stage = page.locator('.stage');
   const snapshot = () => stage.evaluate((el) => `${getComputedStyle(el).backgroundPosition}|${JSON.stringify(el.getBoundingClientRect())}`);
-  const before = (await node(page, 'founder').boundingBox())!;
+  const before = (await node(page, 'marketing').boundingBox())!;
   const wallpaperBefore = await snapshot();
   await drag(page, { x: 20, y: 20 }, { x: 220, y: 140 });
-  const after = (await node(page, 'founder').boundingBox())!;
-  expect(after.x - before.x).toBeGreaterThan(150);
+  expect((await node(page, 'marketing').boundingBox())!.x - before.x).toBeGreaterThan(150);
   expect(await snapshot()).toBe(wallpaperBefore);
 });
 
-test('a room drags and a wire can be drawn between two handles', async ({ page }) => {
-  const box = (await node(page, 'build').boundingBox())!;
-  await drag(page, { x: box.x + 40, y: box.y + 12 }, { x: box.x + 40, y: box.y + 92 });
-  const moved = (await node(page, 'build').boundingBox())!;
-  expect(moved.y - box.y).toBeGreaterThan(40);
-
-  const from = (await handle(page, 'build', 'l').boundingBox())!;
-  const to = (await handle(page, 'founder', 'b').boundingBox())!;
-  await drag(page, { x: from.x + from.width / 2, y: from.y + from.height / 2 }, { x: to.x + to.width / 2, y: to.y + to.height / 2 }, 20);
-  await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+test('a person answers in their room and reads only the docs wired to it', async ({ page }) => {
+  await expect(await ask(page, 'marketing', 'three taglines')).toContainText('Maya here');
+  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('Docs I can read: Brand doc.');
+  await expect(node(page, 'marketing').locator('.card__doing')).toHaveText('three taglines');
+  await expect(await ask(page, 'build', 'what first')).toContainText('Docs I can read: none.');
 });
 
-test('screenshots at three zoom levels', async ({ page }, info) => {
-  const shot = (name: string) => page.screenshot({ path: `.shots/${info.project.name}-${name}.png` });
-  await page.waitForTimeout(400);
-  await shot('1-fit');
-  await page.mouse.move(800, 500);
-  await page.mouse.wheel(0, -500);
-  await page.waitForTimeout(400);
-  await shot('2-near');
-  await page.mouse.wheel(0, 1400);
-  await page.waitForTimeout(400);
-  await shot('3-far');
+test('typing, scrolling and dragging inside a card never move the canvas', async ({ page }) => {
+  const before = (await node(page, 'marketing').boundingBox())!;
+  const chat = centre((await node(page, 'marketing').locator('.chat').boundingBox())!);
+  await page.mouse.move(chat.x, chat.y);
+  await page.mouse.wheel(0, -400);
+  await drag(page, chat, { x: chat.x + 120, y: chat.y + 60 });
+  await node(page, 'marketing').locator('.ask textarea').pressSequentially('wasd ');
+  const after = (await node(page, 'marketing').boundingBox())!;
+  expect([after.x, after.y, after.width]).toEqual([before.x, before.y, before.width]);
 });
 
-test('dragging a frosted card keeps a usable frame rate', async ({ page }, info) => {
-  const box = (await node(page, 'founder').boundingBox())!;
+test('layout, doc text and conversation survive a reload', async ({ page }) => {
+  const header = centre((await node(page, 'brand-doc').locator('.card__header').boundingBox())!);
+  await drag(page, header, { x: header.x + 90, y: header.y + 40 });
+  await node(page, 'brand-doc').locator('textarea.doc').fill('We sell calm.');
+  await ask(page, 'marketing', 'remember me');
+  await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).docs[0].x).toBeGreaterThan(560);
+  await expect.poll(async () => (await (await page.request.get('/api/docs/brand-doc')).json()).text).toBe('We sell calm.');
+
+  await page.reload();
+  await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue('We sell calm.');
+  await expect(node(page, 'marketing').locator('.msg--user').last()).toHaveText('remember me');
+});
+
+test('drawing a wire to a doc lets that person read it', async ({ page }) => {
+  const from = centre((await handle(page, 'build', 'r').boundingBox())!);
+  const to = centre((await handle(page, 'brand-doc', 'b').boundingBox())!);
+  await drag(page, from, to, 20);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).wires.length).toBe(2);
+  await expect(await ask(page, 'build', 'now what')).toContainText('Docs I can read: Brand doc.');
+});
+
+test('screenshots and frame rate', async ({ page }, info) => {
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: '.shots/1-fit.png' });
   await page.evaluate(() => {
     const w = window as unknown as { __frames: number; __t0: number };
-    w.__frames = 0;
-    w.__t0 = performance.now();
+    w.__frames = 0; w.__t0 = performance.now();
     const tick = () => { w.__frames += 1; requestAnimationFrame(tick); };
     requestAnimationFrame(tick);
   });
-  await drag(page, { x: box.x + 40, y: box.y + 12 }, { x: box.x + 440, y: box.y + 212 }, 90);
+  const header = centre((await node(page, 'marketing').locator('.card__header').boundingBox())!);
+  await drag(page, header, { x: header.x + 300, y: header.y + 120 }, 90);
   const fps = await page.evaluate(() => {
     const w = window as unknown as { __frames: number; __t0: number };
     return (w.__frames * 1000) / (performance.now() - w.__t0);
   });
+  console.log(`drag fps: ${fps.toFixed(1)}`);
   info.annotations.push({ type: 'fps', description: fps.toFixed(1) });
-  console.log(`${info.project.name} drag fps: ${fps.toFixed(1)}`);
   expect(fps).toBeGreaterThan(30);
 });

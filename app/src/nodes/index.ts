@@ -1,5 +1,5 @@
 import type { NodeTypes } from '@xyflow/react';
-import { ResourceNode } from './ResourceNode';
+import { DocNode } from './DocNode';
 import { RoomNode } from './RoomNode';
 
-export const nodeTypes = { room: RoomNode, resource: ResourceNode } satisfies NodeTypes;
+export const nodeTypes = { room: RoomNode, doc: DocNode } satisfies NodeTypes;
