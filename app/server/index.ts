@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
-import { newMessageId, type ChatEvent, type Stage } from '../shared/model.ts';
+import { isHeaded, newMessageId, type ChatEvent, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
+import { fakeCoder, opencodeCoder } from './coder.ts';
 import { createBrowser, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
@@ -13,6 +14,7 @@ import { createStore } from './store.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
 import { outwardTools } from './tools/outward.ts';
+import { projectTools } from './tools/project.ts';
 import { browserSession, webTools } from './tools/web.ts';
 import { createUsage } from './usage.ts';
 
@@ -27,7 +29,7 @@ const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner) : createBrowser(realRunner(), process.env.STAGE_NO_READER === '1' ? null : jinaReader);
 const approvals = createApprovals();
-const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir)];
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root])];
 const clients = fake ? [fakeClient] : realClients();
 const busy = new Set<string>();
 
@@ -114,7 +116,7 @@ createServer(async (req, res) => {
     if (watched && req.method === 'GET') {
       if (!(await store.loadStage()).cards?.some((card) => card.id === watched && card.kind === 'browser')) return json(res, 404, { error: 'unknown browser' });
       const card = (await store.loadStage()).cards!.find((one) => one.id === watched)!;
-      return json(res, 200, await browser.watch(browserSession(watched), { profile: store.browserProfile(watched), headed: !!card.headed }));
+      return json(res, 200, await browser.watch(browserSession(watched), { profile: store.browserProfile(watched), headed: isHeaded(card) }));
     }
     // "Show window" changed: Chrome reads that only at start, so end the session and start it again the new way.
     const restarted = /^\/api\/browsers\/([^/]+)\/restart$/.exec(path)?.[1];
@@ -122,7 +124,7 @@ createServer(async (req, res) => {
       const card = (await store.loadStage()).cards?.find((one) => one.id === restarted && one.kind === 'browser');
       if (!card) return json(res, 404, { error: 'unknown browser' });
       await browser.close(browserSession(restarted));
-      return json(res, 200, await browser.watch(browserSession(restarted), { profile: store.browserProfile(restarted), headed: !!card.headed }));
+      return json(res, 200, await browser.watch(browserSession(restarted), { profile: store.browserProfile(restarted), headed: isHeaded(card) }));
     }
     if (doc && req.method === 'GET') return json(res, 200, { text: await store.readDoc(doc) });
     if (doc && req.method === 'PUT') { await store.writeDoc(doc, String((await body(req)).text ?? '')); return json(res, 200, { ok: true }); }

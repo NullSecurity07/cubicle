@@ -101,8 +101,15 @@ export const jinaReader: Reader = async (url) => {
   return { title, text };
 };
 
+// Clicks that send, publish, pay or destroy something. Browsing is free; these wait for the founder.
+const OUTWARD = /^(send|reply|forward|post|publish|tweet|submit|share|comment|pay|buy|purchase|order|checkout|place order|subscribe|confirm|delete|remove|unsubscribe|sign up|create account|register)\b/i;
+const MAIL_HOSTS = /(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|outlook\.office365\.com|mail\.proton\.me|mail\.yahoo\.com|app\.fastmail\.com|mail\.zoho\.com|app\.tuta\.com)$/;
+// The accessible name of a ref in a snapshot line such as `- button "Send" [ref=e44]`: '' for an element without one, null for a ref that is not on the page.
+export const nameOfRef = (tree: string, ref: string) => { const found = new RegExp(`^\\s*- \\w+(?: "((?:[^"\\\\]|\\\\.)*)")?[^\\n]*\\[ref=${ref.replace(/^@/, '')}\\]`, 'm').exec(tree); return found ? found[1] ?? '' : null; };
+
 export function createBrowser(run: Runner, reader: Reader | null = null) {
   const outer = run;
+  const seen = new Map<string, { tree: string; address: string }>();
   // Each session is a Chrome tab set with its own memory; only a few run at once, the rest wait their turn.
   let active = 0;
   const waiting: (() => void)[] = [];
@@ -177,10 +184,24 @@ export function createBrowser(run: Runner, reader: Reader | null = null) {
         const address = (await go(session, ['get', 'url']).catch(() => '')).trim();
         if (address && !/^about:/.test(address)) webUrl(address);
         const tree = (await go(session, ['snapshot', '-i'])).trim();
+        seen.set(session, { tree, address });
         const title = (await go(session, ['get', 'title']).catch(() => '')).trim();
         if (walled(title, tree.length < 1200 ? tree : '')) return `Now at ${address}\n${WALL_NOTE} ${CARD_WALL_NOTE}`;
         return `Now at ${address || 'a blank page'}\n${tree.length > SNAPSHOT_CHARS ? `${tree.slice(0, SNAPSHOT_CHARS)}\n… (cut; scroll or open a more specific page)` : tree || '(nothing to interact with)'}`;
       });
+    },
+    // The question for the founder when a step would send, publish, pay or delete; null when the step is plain browsing.
+    async outward(session: string, action: string, input: { ref?: string; key?: string }, launch?: Launch): Promise<string | null> {
+      let page = seen.get(session);
+      const host = (() => { try { return new URL(page?.address ?? '').hostname; } catch { return ''; } })();
+      if (action === 'press') return /enter/i.test(input.key ?? '') && MAIL_HOSTS.test(host) ? `Press ${input.key} on ${host}? In webmail this can send the message.` : null;
+      if (action !== 'click' || !input.ref) return null;
+      if (!page) { const tree = await run(session, ['snapshot', '-i'], launch).catch(() => ''); page = { tree, address: '' }; }
+      const name = nameOfRef(page.tree, input.ref);
+      if (name === null) return `Click ${input.ref} on ${host || 'this page'}? I could not read what that element is.`;
+      // An icon with no name could be anything; inside webmail that is reason enough to ask.
+      if (!name.trim()) return MAIL_HOSTS.test(host) ? `Click an unnamed button (${input.ref}) on ${host}? Look at the browser card first.` : null;
+      return OUTWARD.test(name.trim()) ? `Click "${name}" on ${host || 'this page'}? Look at the browser card first: it shows exactly what will go out.` : null;
     },
     // Where a browser card can watch its session live. Opens the session if nobody has used it yet.
     async watch(session: string, launch?: Launch): Promise<{ port: number; url: string }> {

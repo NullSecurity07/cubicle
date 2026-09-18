@@ -39,10 +39,15 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
   const room = stage.rooms.find((candidate) => candidate.id === roomId);
   if (!room) throw new Error(`unknown room: ${roomId}`);
 
-  const wired = wiredDocIds(stage, roomId).map((id) => {
+  const docsWired = wiredDocIds(stage, roomId).map((id) => {
     const title = stage.docs.find((doc) => doc.id === id)!.title;
     return `## Doc: ${title}\n${docs[id] ?? ''}`;
   });
+  // A person only uses what it knows it has: say which cards are wired to the room, and what each is for.
+  const cards = stage.cards ?? [];
+  const reach = wired(stage, roomId, cards.map((card) => card.id)).map((id) => cards.find((card) => card.id === id)!).map((card) => (card.kind === 'project'
+    ? `- A project folder${card.path ? ` (${card.path})` : ''}. Any change to that code goes through delegate_coding, which works inside the folder. Documents and shared files are not the project: never write project code into them, and never say the project changed unless delegate_coding reported it.`
+    : '- A browser card the founder watches live. Use browse for anything that needs clicking, typing or being signed in.'));
   const system = [
     `You are ${room.name}, ${room.role}. ${room.brief}`,
     STANCE,
@@ -55,8 +60,9 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
         + 'something unless that tool call ran in this turn and succeeded. When a request has several parts, make every tool call first, '
         + 'then say in one or two lines what changed.'
       : '',
-    wired.length
-      ? `The founder has connected these documents to your room. Treat them as what the founder wants you to know.\n\n${wired.join('\n\n')}`
+    reach.length ? `Also connected to your room:\n${reach.join('\n')}` : '',
+    docsWired.length
+      ? `The founder has connected these documents to your room. Treat them as what the founder wants you to know.\n\n${docsWired.join('\n\n')}`
       : 'No documents are connected to your room, so you have no written background on the product yet.',
   ].filter(Boolean).join('\n\n');
 

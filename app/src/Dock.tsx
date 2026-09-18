@@ -50,14 +50,15 @@ function Quota() {
 export function Dock() {
   const { getNodes, setNodes, screenToFlowPosition, setCenter, getZoom } = useReactFlow<StageNode>();
 
-  function add(kind: 'room' | 'doc' | 'browser') {
+  function add(kind: 'room' | 'doc' | 'browser' | 'project') {
     const nodes = getNodes();
-    const [width, height] = kind === 'room' ? [380, 440] : kind === 'browser' ? [560, 353] : [340, 300];
+    const [width, height] = kind === 'room' ? [380, 440] : kind === 'browser' ? [560, 353] : kind === 'project' ? [380, 300] : [340, 300];
     const centre = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
     const position = freeSpot(nodes, { x: Math.round(centre.x - width / 2), y: Math.round(centre.y - height / 2) }, width, height);
     const rooms = nodes.filter((node) => node.type === 'room').length;
     const node: StageNode = kind === 'room'
       ? { id: newId('room'), type: 'room', position, width, height, selected: true, data: { name: '', role: '', brief: '', accent: PALETTE[rooms % PALETTE.length] }, ...CARD }
+      : kind === 'project' ? { id: newId('project'), type: 'project', position, width, height, selected: true, data: { path: '' }, ...CARD }
       : kind === 'browser' ? { id: newId('browser'), type: 'browser', position, width, height, selected: true, data: {}, ...CARD }
       : { id: newId('doc'), type: 'doc', position, width, height, selected: true, data: { title: 'Untitled doc' }, ...CARD };
     setNodes((current) => [...current.map((other) => ({ ...other, selected: false })), node]);
@@ -74,6 +75,9 @@ export function Dock() {
       </button>
       <button type="button" aria-label="Add browser" title="Add browser" onClick={() => add('browser')}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2" /><path d="M2.8 10h14.4M10 2.800c2.400 2.300 2.400 12.100 0 14.400M10 2.800c-2.400 2.300-2.400 12.100 0 14.400" /></svg>
+      </button>
+      <button type="button" aria-label="Add project" title="Add project folder" onClick={() => add('project')}>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.800 5.500h5l1.600 2h7.800v8.500H2.800z" /><path d="M7.500 11l-1.800 1.600 1.800 1.600M12.500 11l1.800 1.600-1.800 1.600" /></svg>
       </button>
       <Quota />
     </Panel>

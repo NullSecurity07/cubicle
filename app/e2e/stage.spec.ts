@@ -27,7 +27,7 @@ test.beforeEach(async ({ page }) => {
 
 test('shows two rooms and a doc, one wire, a dock with usage rings and nothing else', async ({ page }) => {
   await expect(page.locator('.react-flow__node')).toHaveCount(3);
-  await expect(page.locator('.dock button')).toHaveCount(4);
+  await expect(page.locator('.dock button')).toHaveCount(5);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(node(page, 'marketing')).toContainText('Maya');
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue(/# Brand/);
@@ -315,4 +315,30 @@ test('code runs only after the founder reads it, in the sandbox', async ({ page 
   await ask.getByRole('button', { name: 'Run' }).click();
   await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Ran javascript code');
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Tool said: 42');
+});
+
+test('a project card: a wired person hands coding work to an agent after the founder says start', async ({ page }) => {
+  await page.getByRole('button', { name: 'Add project' }).click();
+  const card = page.locator('.react-flow__node-project');
+  await expect(card).toContainText('Set the folder');
+  const id = (await card.getAttribute('data-id'))!;
+  await card.getByLabel('Project folder').fill('/usr/share');
+  await expect(card.locator('.card__name')).toHaveText('share');
+  const wires = await page.locator('.react-flow__edge').count();
+  await page.waitForTimeout(600);
+  const inView = async (target: ReturnType<typeof handle>) => { const box = await target.boundingBox(); return !!box && box.x > 10 && box.y > 10 && box.x < 1580 && box.y < 980; };
+  for (let tries = 0; tries < 6 && !((await inView(handle(page, 'build', 'l'))) && (await inView(handle(page, id, 'l')))); tries += 1) {
+    await page.mouse.move(6, 6); await page.mouse.wheel(0, 400); await page.waitForTimeout(250);
+  }
+  await drag(page, centre((await handle(page, 'build', 'l').boundingBox())!), centre((await handle(page, id, 'l').boundingBox())!), 20);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(wires + 1);
+
+  await send(page, 'build', '/tool delegate_coding {"task":"Add a health check endpoint"}');
+  const ask = node(page, 'build').getByRole('group', { name: 'Start this coding task?' });
+  await expect(ask).toContainText('Start this coding task in /usr/share?');
+  await ask.getByRole('button', { name: 'Start' }).click();
+  await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Coded: Add a health check endpoint');
+  await expect(card.locator('.project__log')).toContainText('edit src/example.ts');
+  await expect(card.locator('.project__log')).toContainText('done · 1 file changed');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Changed: src/example.ts');
 });

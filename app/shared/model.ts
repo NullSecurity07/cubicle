@@ -3,16 +3,17 @@ export type Box = { x: number; y: number; w: number; h: number };
 // `model` is a name from server/models.json; absent or 'auto' lets the server choose.
 export type Room = Box & { id: string; name: string; role: string; accent: string; brief: string; model?: string };
 export type Doc = Box & { id: string; title: string };
-// Resource cards that are not docs. `browser` is a live browser a wired person can drive.
+// Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is a code folder a wired person may hand to a coding agent.
 // `headed` shows the card's Chrome as a real window, for the founder to sign in or pass a human check by hand.
-export type Card = Box & { id: string; kind: 'browser'; headed?: boolean };
+export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean } | { kind: 'project'; path: string });
+export const isHeaded = (card?: Card) => card?.kind === 'browser' && !!card.headed;
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };
 export type Usage = { input: number; output: number };
 // What a tool run changed on the stage, for the client to mirror.
-export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string };
+export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string } | { kind: 'project-progress'; id: string; line: string };
 // One tool call inside a reply. `ok` is absent while the tool is still running; `waiting` means it needs the founder's yes first.
-export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; waiting?: boolean; ok?: boolean; result?: string; effect?: ToolEffect };
+export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; waiting?: boolean; question?: string; ok?: boolean; result?: string; effect?: ToolEffect };
 export type ChatMessage = {
   id: string; role: 'user' | 'assistant'; text: string; at: number;
   provider?: string; model?: string; usage?: Usage; tools?: ToolEvent[]; stopped?: boolean;

@@ -50,6 +50,16 @@ describe('prompt', () => {
     expect(buildMessages(stage, 'build', docs, [])[0].content).not.toContain('You can act');
   });
 
+  it('tells a person which cards are wired to it, and that project code changes only through the coding agent', () => {
+    const withCards: Stage = { ...stage, cards: [{ id: 'proj', kind: 'project', path: '/code/app', x: 0, y: 0, w: 1, h: 1 }, { id: 'web', kind: 'browser', x: 0, y: 0, w: 1, h: 1 }],
+      wires: [...stage.wires, { id: 'a', from: 'build', fromHandle: 'r', to: 'proj', toHandle: 'l' }, { id: 'b', from: 'web', fromHandle: 'r', to: 'build', toHandle: 'l' }] };
+    const system = buildMessages(withCards, 'build', docs, [], ['delegate_coding'])[0].content;
+    expect(system).toContain('A project folder (/code/app)');
+    expect(system).toContain('never write project code into them');
+    expect(system).toContain('A browser card');
+    expect(buildMessages(withCards, 'marketing', docs, [], ['delegate_coding'])[0].content).not.toContain('Also connected');
+  });
+
   it('throws for an unknown room', () => {
     expect(() => buildMessages(stage, 'nope', docs, [])).toThrow(/room/);
   });

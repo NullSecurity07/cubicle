@@ -221,3 +221,10 @@ div.msg--assistant:has(.approval) { align-self: stretch; max-width: none; }
 .card:hover .browser__window, .browser__window.is-on, .browser__window:focus-visible { opacity: 1; }
 .browser__window:hover { color: var(--text); }
 .browser__window.is-on { color: #f0b35a; border-color: rgba(240, 179, 90, 0.5); }
+
+/* Project card: folder path, then the coding agent's steps. */
+.project__path { flex: none; margin: 8px 10px 0; border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 8px; outline: 0; background: rgba(0, 0, 0, 0.25); color: var(--text); font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; }
+.project__path:focus { border-color: rgba(78, 140, 255, 0.7); }
+.project__log { flex: 1; min-height: 0; overflow-y: auto; margin: 8px 0 0; padding: 4px 12px 10px; display: flex; flex-direction: column; gap: 3px; font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; line-height: 1.45; color: var(--muted); cursor: auto; user-select: text; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.project__log .project__say { color: var(--text); font-family: inherit; }
+.project__log .chat__empty { font-family: 'Inter Variable', Inter, system-ui, sans-serif; line-height: 1.5; max-width: 300px; }

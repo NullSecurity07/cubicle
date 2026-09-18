@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ENGINES, WALL_NOTE, createBrowser, fakeRunner, honestUserAgent, unwrapRedirect, webUrl, type Runner } from './browser.ts';
+import { ENGINES, WALL_NOTE, nameOfRef, createBrowser, fakeRunner, honestUserAgent, unwrapRedirect, webUrl, type Runner } from './browser.ts';
 
 describe('webUrl', () => {
   it('accepts web pages and adds https to a bare domain', () => {
@@ -103,6 +103,23 @@ describe('browser', () => {
     expect(launches.some((launch) => (launch as { headed?: boolean }).headed)).toBe(true);
     await browser.search(['x']);
     expect(launches.at(-1)).toBeUndefined();
+  });
+
+  it('asks the founder before a click that sends, posts, pays or deletes, and before Enter in webmail; plain browsing is free', async () => {
+    const tree = '- link "Inbox" [ref=e1]\n- textbox "To" [ref=e2]\n  - button "Send \u202a(Ctrl-Enter)\u202c" [ref=e3]\n- button "Delete forever" [ref=e4]\n- button [ref=e5]';
+    expect(nameOfRef(tree, 'e3')).toContain('Send');
+    expect(nameOfRef(tree, '@e1')).toBe('Inbox');
+    const run: Runner = async (session, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://mail.google.com/mail/u/0/' : fakeRunner(session, args));
+    const browser = createBrowser(run);
+    await browser.act('card-m', 'look', {});
+    expect(await browser.outward('card-m', 'click', { ref: 'e1' })).toBeNull();
+    expect(await browser.outward('card-m', 'fill', { ref: 'e2' })).toBeNull();
+    expect(await browser.outward('card-m', 'click', { ref: 'e3' })).toMatch(/^Click "Send.*mail\.google\.com/);
+    expect(await browser.outward('card-m', 'click', { ref: 'e4' })).toMatch(/Delete forever/);
+    expect(await browser.outward('card-m', 'click', { ref: 'e5' })).toMatch(/unnamed button/);
+    expect(await browser.outward('card-m', 'click', { ref: 'e99' })).toMatch(/could not read/);
+    expect(await browser.outward('card-m', 'press', { key: 'Control+Enter' })).toMatch(/can send the message/);
+    expect(await browser.outward('card-fresh', 'press', { key: 'Enter' })).toBeNull();
   });
 
   it('turns a step into a command and answers with the page tree', async () => {

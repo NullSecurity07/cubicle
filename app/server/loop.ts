@@ -63,14 +63,18 @@ export async function runTurn(input: {
       const tool = tools.find((candidate) => candidate.name === call.name);
       let rawArgs = call.args;
       let refusal = tool?.ready?.() ?? null;
-      if (!refusal && tool?.approval) {
-        events.tool({ id: call.id, name: call.name, args, waiting: true });
-        const answer = input.approve ? await input.approve({ id: call.id, name: call.name, args }, signal) : { ok: false };
+      const question = refusal || !tool?.approval ? null : typeof tool.approval === 'function' ? await tool.approval(args, context).catch(() => 'Allow this step?') : '';
+      if (question !== null) {
+        const asking: ToolEvent = { id: call.id, name: call.name, args, waiting: true, ...(question ? { question } : {}) };
+        events.tool(asking);
+        const answer = input.approve ? await input.approve(asking, signal) : { ok: false };
         if (!answer.ok) refusal = signal?.aborted ? 'Stopped by the founder.' : 'The founder said no to this. Do not try it again; ask what they want changed.';
         // The founder may have edited what goes out. Only fields the person proposed can change; nothing new is added.
         else if (answer.args) { args = { ...args, ...Object.fromEntries(Object.entries(answer.args).filter(([key, value]) => key in args && typeof value === typeof args[key])) }; rawArgs = JSON.stringify(args); }
       }
       events.tool({ id: call.id, name: call.name, args });
+      context.signal = signal;
+      context.report = (effect) => events.tool({ id: call.id, name: call.name, args, effect });
       const ran = refusal ? { text: refusal, ok: false, args, effect: undefined } : await runTool(tools, call.name, rawArgs, context);
       const event: ToolEvent = { id: call.id, name: call.name, args: ran.args, ok: ran.ok, result: ran.text.slice(0, RESULT_CHARS), effect: ran.effect };
       done.push(event);

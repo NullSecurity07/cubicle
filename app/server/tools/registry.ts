@@ -5,11 +5,13 @@ import type { Store } from '../store.ts';
 // What a tool may see and touch: the stage as the turn began, whose turn it is, and the workspace.
 // `granted` holds docs this person made during the turn, which no wire covers yet.
 // `calls` counts how often each tool ran this turn, for tools that cap it.
-export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number> };
+// `report` shows progress while a long tool runs; `signal` ends it when the founder stops the turn.
+export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number>; report?: (effect: ToolEffect) => void; signal?: AbortSignal };
 export type ToolResult = { text: string; effect?: ToolEffect };
 // `perTurn` stops a person from looping on a costly tool: past it, the tool answers with a nudge to use what it has.
 // `approval` makes the turn wait for the founder's yes. `ready` returns why the tool cannot work yet, before anyone is asked.
-export type Tool = ToolSpec & { perTurn?: number; approval?: boolean; ready?: () => string | null; run(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> };
+// `approval` may also be a function, for tools where only some calls reach outward: it returns the question to put to the founder, or null.
+export type Tool = ToolSpec & { perTurn?: number; approval?: boolean | ((args: Record<string, unknown>, context: ToolContext) => Promise<string | null>); ready?: () => string | null; run(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> };
 
 export const text = (args: Record<string, unknown>, key: string, max = 200_000) => {
   const value = args[key];
