@@ -10,6 +10,7 @@
 import { statusText, type State, type JobView, type TeamView, type AgentView } from '../state.js';
 import { type LayoutConnection } from '../world/layout.js';
 import { md, inline } from './markdown.js';
+import { plain } from './headlines.js';
 import { pixelIcon, type GlyphName } from './icons.js';
 import { pantryStale, PANTRY_TURN_CHARS, type PantryState } from './pantry.js';
 
@@ -59,6 +60,47 @@ export function vaultPathOf(url: string): string {
 /** obsidian://open link for a vault file when the vault name is known (`?vault=`), else ''. */
 export function obsidianUrl(vaultName: string, file: string): string {
   return vaultName ? `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(file.replace(/\.md$/, ''))}` : '';
+}
+
+/**
+ * A title the owner can read.
+ *
+ * The company writes notes whose title is sometimes the note's own kind — `founder_brief`, `idea_verdict` — and a
+ * reader that heads the page with a slug is showing the owner a file name and calling it a headline. Anything
+ * with a space in it is already a sentence and is left exactly as it was written.
+ */
+export function humanTitle(t: string): string {
+  const s = (t ?? '').trim();
+  if (!s || /\s/.test(s)) return s;
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(s)) return s;
+  const words = s.replace(/[_-]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * Cut at a word, with an ellipsis. The header subtitle used to stop mid-word ("three manual, actionable website
+ * …"), which reads as a broken string rather than as a line that goes on.
+ */
+export function cutWords(text: string, max: number): string {
+  const t = (text ?? '').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const at = cut.lastIndexOf(' ');
+  return `${(at > max * 0.5 ? cut.slice(0, at) : cut).replace(/[\s,.;:!?-]+$/, '')}…`;
+}
+
+/**
+ * What the vault board says about the jobs, in counts that add up to the number above them.
+ *
+ * It used to print done, running and blocked and leave everything queued out, so "52 job notes / 42 done · 2
+ * running / 3 blocked" was a board disagreeing with itself in one glance.
+ */
+export function vaultBoardLines(statuses: string[]): string[] {
+  const n = (...want: string[]): number => statuses.filter((st) => want.includes(st)).length;
+  const done = n('done'), running = n('running'), waiting = n('queued', 'in_review'), blocked = n('blocked');
+  const rest = statuses.length - done - running - waiting - blocked;
+  const second = [`${waiting} queued`, `${blocked} blocked`, ...(rest > 0 ? [`${rest} stopped`] : [])].join(' · ');
+  return [`${done} done · ${running} running`, second];
 }
 
 const KIND_LABEL: Record<string, string> = { spend: 'Spend', outbound_batch: 'Send batch', brand_change: 'Brand', charter_change: 'Charter', file_change: 'File change', hire: 'Hire', fire: 'Fire', message: 'Question' };
@@ -119,7 +161,7 @@ export const stats = (tiles: string[]): string => `<div class="stats">${tiles.jo
 export const meterHtml = (pct: number): string => `<div class="meter${pct > 0.9 ? ' hot' : pct > 0.6 ? ' warn' : ''}"><i style="width:${Math.round((1 - Math.min(1, Math.max(0, pct))) * 100)}%"></i></div>`;
 
 const statusChip = (status: string): string => (status === 'in_review' ? chip('in_review', 'in review') : chip(status));
-const jobRow = (j: JobView, s: State): string => row({ left: statusChip(j.status), title: j.title, small: `${who(s, j.assigned)} · ${teamName(s, j.team)} · ${j.type} · step ${j.checkpoint_step}`, right: esc(fmtWhen(j.updated)), open: `job:${j.id}` });
+const jobRow = (j: JobView, s: State): string => row({ left: statusChip(j.status), title: humanTitle(j.title), small: `${who(s, j.assigned)} · ${teamName(s, j.team)} · ${j.type} · step ${j.checkpoint_step}`, right: esc(fmtWhen(j.updated)), open: `job:${j.id}` });
 export const byUpdated = (a: JobView, b: JobView): number => b.updated.localeCompare(a.updated);
 /** Jobs the office is still working on (as opposed to done / failed / cancelled). */
 export const isOpen = (status: string): boolean => ['queued', 'running', 'blocked', 'in_review'].includes(status);
@@ -327,7 +369,13 @@ export function browserViewerView(s: State, ctx: Ctx): View {
   const fps = ctx.fps?.[cur.streamId];
   const meta = [cur.agent ? who(s, cur.agent) : '', hostOf(cur.url)].filter(Boolean).join(' · ');
   const bar = `<div class="vbar" data-key="vbar">${cur.active ? '<span class="badge live">LIVE</span>' : '<span class="badge ended">Ended</span>'}<span class="vmeta">${esc(meta)}</span><span class="vstats">seq ${seq}${cur.active && fps !== undefined ? ` · ${fps.toFixed(1)} fps` : ''}</span></div>`;
-  const frame = src ? `<div class="vframe" data-key="vframe"><img data-key="frame" class="frame" src="${esc(src)}" alt="Browser session" /></div>` : emptyHtml('doc', 'Waiting for the first frame');
+  // A bot check is not the company's screen. It is a real thing that happened to whoever is browsing — their own
+  // transcript says so — but the billboard is the one picture a visitor sees of what the company is working on,
+  // and "Performing security verification" is not it.
+  const blocked = s.frames[cur.streamId]?.challenge === true;
+  const frame = blocked
+    ? emptyHtml('doc', 'The site is running a security check', `${cur.agent ? who(s, cur.agent) : 'Whoever is browsing'} is waiting for it to pass.`)
+    : src ? `<div class="vframe" data-key="vframe"><img data-key="frame" class="frame" src="${esc(src)}" alt="Browser session" /></div>` : emptyHtml('doc', 'Waiting for the first frame');
   const foot = cur.active ? '' : `<div class="vfoot" data-key="vfoot">Session ended${cur.endedAt ? ` ${esc(fmtTime(cur.endedAt))}` : ''} · showing the last frame</div>`;
   // One metadata row, the spec's wireframe: the .vbar carries LIVE, the agent, the host, the seq and the rate.
   // It used to be handed to the panel header as `sub` as well, so the viewer wore two header bars.
@@ -342,7 +390,9 @@ export const shellRunning = (s: State): boolean => Object.values(s.agents).some(
 
 /** Terminal viewer: prompt lines in the accent, a caret while a job runs; the panel offers "Jump to latest". */
 export function terminalViewerView(s: State): View {
-  const lines = s.terminal.slice(-400).flatMap((l) => l.split('\n'));
+  // The shell's own colours are escape codes, and the office is not a terminal emulator: stripped here as on the
+  // board, in both the shapes they arrive in (`ui/headlines.ts` `plain`).
+  const lines = s.terminal.slice(-400).flatMap((l) => plain(l).split('\n'));
   if (!lines.length) return { mode: 'viewer', viewer: 'terminal', title: 'Terminal', html: emptyHtml('chevron', 'No commands run yet', 'Shell output from the Dev room streams here.'), live: true };
   const body = lines.map((l) => `<span class="line${/^[$>#]\s/.test(l) ? ' prompt' : ''}">${esc(l)}</span>`).join('\n');
   // Who is at the shell, where there is someone (visual QA M11): the terminal viewer named neither the agent nor
@@ -399,7 +449,7 @@ export function jobView(id: string, s: State, ctx: Ctx): View {
   const j = s.jobs[id];
   if (!j) return { mode: 'drawer', title: 'Job', html: emptyHtml('clipboard', 'This job is not in the current snapshot.') };
   const body = `<p>${chip(j.status)} &nbsp;<span class="muted">${esc(who(s, j.assigned))} · ${esc(j.type)} · priority ${j.priority} · step ${j.checkpoint_step}</span></p><p class="muted">Updated ${esc(fmtWhen(j.updated))}. The full note, checkpoint log and result live in the vault.</p>`;
-  return { mode: 'doc', title: j.title, sub: `Jobs/${j.id}.md`, html: body, link: obsidianUrl(ctx.vaultName, `Jobs/${j.id}.md`) };
+  return { mode: 'doc', title: humanTitle(j.title), sub: `Jobs/${j.id}.md`, html: body, link: obsidianUrl(ctx.vaultName, `Jobs/${j.id}.md`) };
 }
 
 /** One person: state line, current job, charter link, Locate. Pure, so main.ts has nothing to build. */

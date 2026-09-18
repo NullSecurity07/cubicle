@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { emptyState, applySnapshot, applyEvent, CHECKING_TEXT, type Snapshot, type State } from '../state.js';
-import { briefTitle, kindLabel, chatHtml, emptyHtml, segmented, segTabId, segPaneId, feedKind, dayLabel, browserViewerView, terminalViewerView, roomView, agentView, type Ctx } from './content.js';
+import { briefTitle, kindLabel, chatHtml, cutWords, emptyHtml, humanTitle, segmented, segTabId, segPaneId, feedKind, dayLabel, browserViewerView, terminalViewerView, roomView, agentView, vaultBoardLines, type Ctx } from './content.js';
 import { headlineFor, viewFor } from './surfaces.js';
-import { planBits, briefBits, cut } from './headlines.js';
+import { planBits, briefBits, cut, plain } from './headlines.js';
 
 const ctx: Ctx = { frames: {}, tokenQuery: '?token=t', vaultName: 'Cubicle' };
 const PLAN = `---\nupdated: "2026-09-03"\ncycle: 2\n---\n# Plan\n\n## Objective\nEstablish initial web presence and research the first organic channel.\n\n## This cycle\n- Scaffold initial static site from Brand/ (engineer.ship)\n- Research first organic acquisition channel (research)\n- [ ] Verify site deployment and review analytics setup\n\n## Next\n- Launch\n`;
@@ -303,5 +303,49 @@ describe('tower views (plan 3)', () => {
     for (const k of ['noticeboard', 'org', 'dev', 'agent:backend_engineer']) expect(viewFor(k, evil, ctx).html, k).not.toMatch(/<script|<img src=x/);
     const st = applyEvent(evil, { ts: 'now', type: 'shell.output', agent: 'backend_engineer', job: null, payload: { text: '<script>x</script>' } });
     expect(terminalViewerView(st).html).not.toContain('<script>');
+  });
+});
+
+describe('what the owner reads, not what the file says (dry-run 2026-09-14)', () => {
+  it('humanises a slug title and leaves a sentence alone', () => {
+    expect(humanTitle('founder_brief')).toBe('Founder brief');
+    expect(humanTitle('idea-verdict')).toBe('Idea verdict');
+    expect(humanTitle('Name the company: PlateReady')).toBe('Name the company: PlateReady');
+    expect(humanTitle('SpeedAudit')).toBe('SpeedAudit');
+    expect(humanTitle('')).toBe('');
+  });
+
+  it('cuts the header subtitle at a word', () => {
+    const line = 'A free performance diagnostic service delivering three manual, actionable website reports';
+    expect(cutWords(line, 60)).toBe('A free performance diagnostic service delivering three…');
+    expect(cutWords(line, 500)).toBe(line);
+    expect(cutWords('short', 3)).toBe('sho…');
+  });
+
+  it('makes the vault board add up to its own total', () => {
+    const jobs = ['done', 'done', 'running', 'queued', 'blocked', 'in_review', 'failed'];
+    const lines = vaultBoardLines(jobs);
+    expect(lines[0]).toBe('2 done · 1 running');
+    expect(lines[1]).toBe('2 queued · 1 blocked · 1 stopped');
+    const counted = [...lines.join(' ').matchAll(/(\d+)\s/g)].reduce((n, m) => n + Number(m[1]), 0);
+    expect(counted).toBe(jobs.length);
+  });
+
+  it('takes the shell’s escape codes and a file’s markup off a sign in a room', () => {
+    expect(plain('[2m05:27:21[22m done')).toBe('05:27:21 done');
+    expect(plain('[2m05:27:21[22m (+11ms)')).toBe('05:27:21 (+11ms)');
+    expect(plain('**Demand:** ≥$500')).toBe('Demand: ≥$500');
+    expect(plain('## Pressure test')).toBe('Pressure test');
+    expect(plain('- `vault.read` [[Plans/plan]]')).toBe('vault.read Plans/plan');
+    expect(cut('**Demand:** ≥$500 a month', 40)).toBe('Demand: ≥$500 a month');
+  });
+
+  it('never hangs a security check on the billboard', () => {
+    const withFrame = applyEvent(s, { ts: '2026-09-03T05:00:00.000Z', type: 'browser.frame', agent: 'backend_engineer', job: 'job_a', payload: { session: 'sess1', seq: 3, path: '.cubicle/screens/sess1/00003.jpg' } });
+    expect(browserViewerView(withFrame, ctx).html).toContain('<img');
+    const blocked = applyEvent(withFrame, { ts: '2026-09-03T05:00:01.000Z', type: 'browser.frame', agent: 'backend_engineer', job: 'job_a', payload: { session: 'sess1', seq: 4, path: '.cubicle/screens/sess1/00004.jpg', challenge: true } });
+    const html = browserViewerView(blocked, ctx).html;
+    expect(html).not.toContain('<img');
+    expect(html).toContain('security check');
   });
 });

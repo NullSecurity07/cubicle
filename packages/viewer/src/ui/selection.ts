@@ -66,9 +66,12 @@ export class SelectionPlate {
   /** Where it hangs, in canvas pixels; null parks it out of the way without losing the selection. */
   place(at: { x: number; y: number } | null): void {
     if (!this.cur || !at) return;
-    // kept inside the frame, so a thing selected at the edge of the campus still has its plate on the screen
+    // Kept inside the frame, so a thing selected at the edge of the campus still has its plate on the screen —
+    // and clear of the zone rail, which the left clamp used to put it straight on top of.
     const w = this.el.offsetWidth || 180, h = this.el.offsetHeight || 64;
-    const x = Math.max(8, Math.min(window.innerWidth - w - 8, at.x + 10));
+    const rail = document.getElementById('rail');
+    const left = (rail && !rail.hidden ? rail.getBoundingClientRect().right : 0) + 8;
+    const x = Math.max(left, Math.min(window.innerWidth - w - 8, at.x + 10));
     const y = Math.max(60, Math.min(window.innerHeight - h - 76, at.y - h - 6));
     this.el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
   }

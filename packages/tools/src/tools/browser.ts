@@ -14,7 +14,21 @@ const FPS = 5;
 const MAX_SESSIONS = 2;
 const IDLE_MS = 10 * 60_000;
 
-interface Session { id: string; ctx: BrowserContext; page: Page; cdp: CDPSession | null; seq: number; lastFrameAt: number; lastUsed: number; roleId: string; jobId: string | null }
+interface Session { id: string; ctx: BrowserContext; page: Page; cdp: CDPSession | null; seq: number; lastFrameAt: number; lastUsed: number; roleId: string; jobId: string | null;
+  /** the page is a security check rather than the site: the office does not hang one of these on its billboard */
+  challenge: boolean }
+
+/**
+ * Is this page the site, or the wall in front of it?
+ *
+ * A bot check is a real thing that happens to an agent with a browser, and the agent's own transcript should say
+ * so. What it must not do is become the company's hero screen: the dry-run found the office billboard — the one
+ * picture a visitor sees of what the company is working on — showing "Performing security verification".
+ */
+export function isInterstitial(title: string, text = ''): boolean {
+  const t = `${title}\n${text.slice(0, 400)}`.toLowerCase();
+  return /security verification|just a moment|checking your browser|verify (you are|you're) (a )?human|are you a robot|captcha|access denied|attention required|ddos protection|enable javascript and cookies/.test(t);
+}
 const sessions = new Map<string, Session>();
 
 async function launch(ctx: ToolContext): Promise<Session> {
@@ -42,7 +56,7 @@ async function launch(ctx: ToolContext): Promise<Session> {
   });
   const page = bctx.pages()[0] ?? (await bctx.newPage());
   const id = `${ctx.jobId ?? ctx.roleId}-${Date.now().toString(36)}`;
-  const s: Session = { id, ctx: bctx, page, cdp: null, seq: 0, lastFrameAt: 0, lastUsed: Date.now(), roleId: ctx.roleId, jobId: ctx.jobId };
+  const s: Session = { id, ctx: bctx, page, cdp: null, seq: 0, lastFrameAt: 0, lastUsed: Date.now(), roleId: ctx.roleId, jobId: ctx.jobId , challenge: false };
   sessions.set(id, s);
   ctx.events.emit({ type: 'browser.session_started', agent: ctx.roleId, job: ctx.jobId, payload: { session: id } });
   // Screencast (verified CDP API): frames ≤ 5 fps → .cubicle/screens/<session>/<seq>.jpg + screens table + WS frame op
@@ -70,7 +84,7 @@ function storeFrame(ctx: ToolContext, s: Session, jpegBase64: string, force = fa
   const rel = `.cubicle/screens/${s.id}/${String(s.seq).padStart(5, '0')}.jpg`;
   try { mkdirSync(path.dirname(ctx.vault.abs(rel)), { recursive: true }); writeFileSync(ctx.vault.abs(rel), Buffer.from(jpegBase64, 'base64')); } catch { return false; }
   ctx.vault.db.prepare('INSERT OR REPLACE INTO screens(session_id, seq, ts, path) VALUES (?, ?, ?, ?)').run(s.id, s.seq, new Date(now).toISOString(), rel);
-  ctx.events.emit({ type: 'browser.frame', agent: ctx.roleId, job: ctx.jobId, payload: { session: s.id, seq: s.seq, path: rel } });
+  ctx.events.emit({ type: 'browser.frame', agent: ctx.roleId, job: ctx.jobId, payload: { session: s.id, seq: s.seq, path: rel, ...(s.challenge ? { challenge: true } : {}) } });
   browserFrames.emit('frame', { session: s.id, seq: s.seq, jpegBase64 });
   return true;
 }
@@ -151,7 +165,10 @@ export const browserGoto = defineTool({
     const res = await s.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch((err: Error) => { throw new Error(`navigation failed: ${err.message.split('\n')[0]}`); });
     await ensureFrame(ctx, s);
     const text = (await s.page.innerText('body').catch(() => '')).replace(/\s+\n/g, '\n').slice(0, 2000);
-    return { ok: !!res && res.ok(), text: `${res?.status() ?? '?'} ${await s.page.title()}\n${s.page.url()}\n\n${text}`, data: { session: s.id, status: res?.status() } };
+    const title = await s.page.title();
+    // What the agent sees is what the agent sees; what the office hangs on the billboard is not a bot check.
+    s.challenge = isInterstitial(title, text);
+    return { ok: !!res && res.ok(), text: `${res?.status() ?? '?'} ${title}\n${s.page.url()}\n\n${text}`, data: { session: s.id, status: res?.status(), ...(s.challenge ? { challenge: true } : {}) } };
   },
 });
 

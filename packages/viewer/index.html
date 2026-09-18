@@ -16,6 +16,10 @@
   </head>
   <body>
     <div id="game" aria-hidden="true"></div>
+    <!-- The office, as a list. A canvas has no accessibility tree, so this is the campus's: people, screens,
+         what is on the floor and what is waiting on the owner, each a button that opens what clicking it in the
+         room would open. `.sr-only`, so it costs the picture nothing (ui/a11y.ts). -->
+    <nav id="office-a11y" class="sr-only" aria-label="The office"></nav>
     <header id="bar" class="glass">
       <div class="brand"><span class="mark" aria-hidden="true"></span><strong id="brand-name">Your company</strong><span id="brand-tagline">No name yet. Tell the CEO your idea.</span></div>
       <nav aria-label="Company">
@@ -29,7 +33,7 @@
         <button class="txt primary" data-open="cabin">Talk to the CEO</button>
       </nav>
     </header>
-    <nav id="rail" class="glass" aria-label="Floors"></nav>
+    <nav id="rail" class="glass" aria-label="Zones"></nav>
     <div id="coach" class="footnote glass" hidden></div>
     <div id="scrim" hidden></div>
     <div id="layer" hidden>

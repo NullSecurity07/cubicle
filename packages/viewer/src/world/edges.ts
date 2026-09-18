@@ -13,7 +13,7 @@
 import type { Pt, Rect, View } from './iso.js';
 import { type Light, MATERIAL as M, mix, onFloorInk, rgba } from './materials.js';
 import { type G, roundRect, UI_FONT } from './shapes.js';
-import { type Anchor, type LayoutConnection } from './layout.js';
+import { type Anchor, type LayoutConnection, edgeEnds, edgeId } from './layout.js';
 
 /** How far the curve bows off the straight line, as a fraction of its own length. */
 export const BOW = 0.13;
@@ -318,3 +318,34 @@ export function edgeLegend(kind: LayoutConnection['kind']): string {
 }
 
 export { rgba, roundRect, UI_FONT, type Light };
+
+/**
+ * Which lines are drawn this frame.
+ *
+ * The company arrives wired: a room is a clique and every reporting line is a connection, which on day one is
+ * about a hundred and fifty lines. Drawn all at once they are a net over the office — the campus reads as a
+ * diagram of itself and the furniture disappears under it. So a resting line is drawn when it is *about*
+ * something the owner is looking at:
+ *
+ *  - every line that touches the thing under the pointer, or the thing they have selected — which is how you ask
+ *    "who can this desk talk to" and get an answer about that desk;
+ *  - the selected line itself, and the one under the pointer;
+ *  - **all of them** while a wire is being dragged out of a port, because that is the one moment the question is
+ *    about the whole floor: what is already wired, and what is still free;
+ *  - and any line with a message in flight on it, so the pulse has a line to travel.
+ */
+export function edgesShown(
+  connections: { from: string; to: string }[],
+  focus: { selected?: string | null; hovered?: string | null; wiring?: boolean; pulses?: { from: string; to: string }[] },
+): Set<string> {
+  const out = new Set<string>();
+  if (focus.wiring) { for (const c of connections) out.add(edgeId(c.from, c.to)); return out; }
+  const nodes = new Set<string>();
+  for (const id of [focus.selected, focus.hovered]) {
+    if (!id) continue;
+    if (edgeEnds(id)) out.add(id); else nodes.add(id);
+  }
+  for (const p of focus.pulses ?? []) out.add(edgeId(p.from, p.to));
+  if (nodes.size) for (const c of connections) if (nodes.has(c.from) || nodes.has(c.to)) out.add(edgeId(c.from, c.to));
+  return out;
+}

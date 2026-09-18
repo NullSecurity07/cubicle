@@ -39,9 +39,11 @@ input::placeholder { color: var(--text-3); }
 @keyframes pulse { from { opacity: 1; } to { opacity: .6; } }
 
 /* ---- top bar (elevation 0) ---- */
-#bar { position: absolute; left: 0; right: 0; top: 0; height: var(--bar-h); display: flex; align-items: center; gap: var(--s4); padding: 0 var(--s4); border-width: 0 0 1px; border-radius: 0; z-index: 10; }
+#bar { position: absolute; left: 0; right: 0; top: 0; height: var(--bar-h); display: flex; align-items: center; gap: var(--s4); padding: 0 var(--s4); border-width: 0 0 1px; border-radius: 0; z-index: 21; }
 #bar .brand { display: flex; align-items: baseline; gap: var(--s3); min-width: 0; }
-#bar .brand .mark { width: 10px; height: 10px; border-radius: 2px; background: var(--text-2); align-self: center; }
+/* `flex: 0 0 auto`: squeezed by the flex row at a narrow window the mark collapsed to a 1 px bar, which
+   read as a stray glyph beside the company's name. */
+#bar .brand .mark { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 2px; background: var(--text-2); align-self: center; }
 #bar .brand strong { font-size: var(--fs-headline); font-weight: var(--fw-headline); letter-spacing: -0.01em; white-space: nowrap; }
 #bar .brand span:not(.mark) { color: var(--text-2); font-size: var(--fs-subhead); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34vw; }
 #bar nav { margin-left: auto; display: flex; gap: var(--s1); align-items: center; }
@@ -75,7 +77,9 @@ input::placeholder { color: var(--text-3); }
 #rail .tab .dots { display: flex; gap: 2px; height: 4px; } #rail .tab .dots i { width: 4px; height: 4px; border-radius: 50%; }
 
 /* ---- scrim + layer (elevations 1 and 2) ---- */
-#scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 19; animation: fade var(--d-open) var(--ease-out); }
+/* The scrim starts under the top bar and the bar is raised over it: the header nav is how the owner leaves a
+   reader, and an invisible sheet of glass over controls that still look enabled is the worst of both. */
+#scrim { position: absolute; inset: var(--bar-h) 0 0 0; background: var(--scrim); z-index: 19; animation: fade var(--d-open) var(--ease-out); }
 /* The bottom inset is the time bar's: every presentation stops above the Live/Replay control instead of slicing it. */
 #layer { position: absolute; inset: var(--bar-h) 0 var(--time-h) var(--rail-w); z-index: 20; display: flex; pointer-events: none; }
 /* The sheet is right-aligned and full height, which is exactly where the minimap chrome lives; stopping above it
@@ -372,3 +376,22 @@ a.vaultlink:hover { color: var(--text); }
 /* The Org sheet's connection form: the keyboard's route to a line on the floor. */
 .addconn { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s2); padding: var(--s3) 0 0; }
 .addconn select { min-height: var(--hit); padding: 0 var(--s2); border-radius: var(--r-s); background: var(--surface-2); border: 1px solid var(--hairline-2); color: var(--text); font: inherit; font-size: var(--fs-subhead); max-width: 11rem; }
+
+/* A machine marker at the head of a turn (FINDING:, VERDICT:, RUBRIC:, WEDGE:) as a chip, so the sentence after
+   it reads as a sentence rather than as shouting in the middle of a conversation. */
+.msg .bubble .marker { display: inline-block; margin-right: var(--s2); padding: 0 6px; border-radius: var(--r-pill); background: var(--bg); border: 1px solid var(--hairline-2); color: var(--text-2); font-size: var(--fs-caption); font-weight: 600; vertical-align: 1px; }
+/* A thread's timestamp keeps its own column and the title takes what is left: the stamp used to wrap under the
+   row and stack two lines deep at the right edge. */
+.trow .top { display: flex; align-items: baseline; gap: var(--s2); min-width: 0; }
+.trow .top .tt { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trow .top .when { flex: 0 0 auto; white-space: nowrap; }
+
+/* A reader never scrolls sideways. A fence, a table or one very long token used to widen the document and put a
+   horizontal scrollbar under a modal the owner is reading. */
+#panel-body { overflow-x: hidden; }
+#panel-body .prose { max-width: 100%; overflow-wrap: anywhere; }
+#panel-body .prose pre, #panel-body .prose table { max-width: 100%; overflow-x: auto; }
+/* The ribbon over a decided note: what the owner's click did, above the note it did it to. */
+.ribbon { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--s2); margin: 0 0 var(--s3); padding: var(--s2) var(--s3); border-radius: var(--r); background: var(--bg); border: 1px solid var(--hairline-2); }
+.ribbon b { font-weight: 600; }
+.ribbon.no { border-color: var(--bad, var(--hairline-2)); }

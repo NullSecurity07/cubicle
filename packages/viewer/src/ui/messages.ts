@@ -89,11 +89,32 @@ function threadRow(s: State, t: Thread, current: string | null, now: number): st
     + `</button>`;
 }
 
+/**
+ * The markers the company writes to itself at the head of a turn.
+ *
+ * `FINDING:`, `VERDICT: PIVOT REQUIRED`, `RUBRIC: core assumption 1/2` and `WEDGE:` are how an advisor labels
+ * what kind of thing it is about to say — useful, and not prose. Shown raw they read as shouting in the middle
+ * of a conversation, so the label becomes a chip and the sentence after it becomes the sentence.
+ */
+const MARKERS = ['FINDING', 'VERDICT', 'RUBRIC', 'WEDGE', 'CLAIM', 'EVIDENCE', 'RISK', 'ASK'];
+export function turnHtml(text: string): string {
+  const lines = text.split('\n');
+  const out = lines.map((line) => {
+    const m = /^\s*([A-Z][A-Z ]{2,15}?)\s*:\s*(.*)$/.exec(line);
+    if (!m || !MARKERS.includes(m[1].trim())) return inline(line);
+    const label = m[1].trim();
+    const rest = m[2].trim();
+    // A marker with nothing after it is a heading for the line under it, so the chip stands on its own.
+    return `<span class="marker">${esc(label.charAt(0) + label.slice(1).toLowerCase())}</span>${rest ? ` ${inline(rest)}` : ''}`;
+  });
+  return out.join('\n');
+}
+
 function bubble(s: State, turn: ThreadTurn): string {
   const me = turn.who === OWNER;
   const tint = me ? '' : ` style="background:${esc(chipTint(turn.who, familyOfRole(s, turn.who)))}"`;
   const when = turn.at ? esc(fmtTime(turn.at)) : '';
-  return `<div class="msg ${me ? 'me' : 'them'}"><div class="who">${me ? '' : `<i class="dot"${tint}></i>`}<b>${esc(nameOf(s, turn.who))}</b><span>${when}</span></div><div class="bubble">${inline(turn.text)}</div></div>`;
+  return `<div class="msg ${me ? 'me' : 'them'}"><div class="who">${me ? '' : `<i class="dot"${tint}></i>`}<b>${esc(nameOf(s, turn.who))}</b><span>${when}</span></div><div class="bubble">${turnHtml(turn.text)}</div></div>`;
 }
 
 /** The right-hand pane: the thread's turns as bubbles, the owner's on the right, plus the composer where there is one. */

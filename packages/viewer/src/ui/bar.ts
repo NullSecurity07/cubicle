@@ -1,3 +1,5 @@
+import { cutWords } from './content.js';
+
 /** The top bar: brand, connection status, the amber approvals pill, text buttons (their `data-open` is routed by Panel). */
 export class TopBar {
   private name = document.getElementById('brand-name')!;
@@ -5,10 +7,26 @@ export class TopBar {
   private pending = document.getElementById('pending')!;
   private conn = document.getElementById('conn')!;
   private connText = document.getElementById('conn-text')!;
+  private said = '';
+
+  constructor() { window.addEventListener('resize', () => this.paintBrand()); }
 
   setBrand(name: string, tagline: string): void {
     this.name.textContent = name || 'Your company';
-    this.tagline.textContent = name ? tagline : 'No name yet. Tell the CEO your idea.';
+    this.said = name ? tagline : 'No name yet. Tell the CEO your idea.';
+    this.paintBrand();
+  }
+
+  /**
+   * The tagline, cut at a word.
+   *
+   * CSS ellipsis cuts wherever the box ends, which gave "three manual, actionable website …" — a sentence that
+   * stops mid-word reads as a broken string rather than as a line that goes on. The budget follows the window,
+   * and the stylesheet's own ellipsis stays as the backstop for a window narrower than any budget.
+   */
+  private paintBrand(): void {
+    this.tagline.textContent = cutWords(this.said, Math.max(24, Math.floor(window.innerWidth / 16)));
+    this.tagline.title = this.said;
   }
   /** Nothing to approve is the absence of the pill, not a grey "0 to approve" parked beside the primary button. */
   setPending(n: number): void {

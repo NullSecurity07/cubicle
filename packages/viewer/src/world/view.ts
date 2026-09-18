@@ -37,7 +37,7 @@ import {
   disconnect as disconnectStep, moveThing, moveZone, removeThing, resizeZone,
 } from './editing.js';
 import {
-  type Pulse, PORT_HIT, PULSE_MS, drawCutChip, drawEdge, drawHandle, drawPort, drawPulse, drawRubberBand,
+  type Pulse, PORT_HIT, PULSE_MS, drawCutChip, drawEdge, drawHandle, drawPort, drawPulse, drawRubberBand, edgesShown,
   drawTargetGlow, edgeCurve, edgeHit, pointOn, portAt, pulseT, shouldPulse,
 } from './edges.js';
 import { RESOURCE_H, drawGhost, drawLiftShadow, resourceProp } from './resources.js';
@@ -306,7 +306,16 @@ export class CampusView {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    c.addEventListener('pointerleave', () => { if (!this.dragging) this.pointer = null; });
+    // The pointer left the office: nothing is under it any more. Clearing only `pointer` left whatever was last
+    // hovered still hovered, so its label stayed on the screen after the owner had moved on to the sheet — the
+    // half-off-screen ghost the dry-run caught. A hover mark cannot outlive the pointer that made it.
+    c.addEventListener('pointerleave', () => {
+      if (this.dragging) return;
+      this.pointer = null;
+      this.hovered = null;
+      this.over = null;
+      this.canvas.style.cursor = 'grab';
+    });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       const r = c.getBoundingClientRect();
@@ -735,7 +744,11 @@ export class CampusView {
       case 'billboard': {
         const browser = Object.values(s.surfaces).filter((x) => x.streamKind === 'browser');
         const su = browser.find((x) => x.active) ?? browser[0];
-        const url = su ? frames[su.streamId] : undefined;
+        // A bot check is not the company's hero screen. The billboard is the one picture a visitor gets of what
+        // the company is working on, and the office hangs the words rather than "Performing security verification".
+        const blocked = !!su && s.frames[su.streamId]?.challenge === true;
+        const url = su && !blocked ? frames[su.streamId] : undefined;
+        if (blocked) return { lines: ['waiting on a', 'security check'], live: !!su?.active };
         return { ...(url ? { image: this.image(url) } : {}), live: !!su?.active, ...(url ? {} : { lines: ['no session open'] }) };
       }
       case 'terminal': {
@@ -844,6 +857,20 @@ export class CampusView {
   }
   /** What is picked, or null. */
   selected2(): string | null { return this.picked; }
+
+  /**
+   * Put the camera on a thing and select it: the keyboard's version of clicking it in the room.
+   *
+   * The office outline (`ui/a11y.ts`) is how anyone who cannot use a pointer reaches the floor, and "reaches" has
+   * to mean the same thing it means with a mouse — the thing picked, its plate up, and the camera on it.
+   */
+  focusNode(id: string): boolean {
+    const a = anchorOf(this.map, id);
+    if (!a) return false;
+    this.camera.panTo(a.at);
+    this.select(id);
+    return true;
+  }
 
   private refreshSelection(): void {
     if (!this.picked) return;
@@ -1008,6 +1035,11 @@ export class CampusView {
   }
   hiringAt(): Rect | null { return this.hiring?.rect ?? null; }
 
+  /** What the owner is holding and where it would land, or null when nothing is in the air. */
+  liftedNow(): { id: string; rect: Rect; blocked: boolean } | null {
+    return this.lift ? { id: this.lift.id, rect: { ...this.lift.rect }, blocked: this.lift.blocked } : null;
+  }
+
   /** The name of the room a cell falls in, for a sheet that has to say where the owner just dropped something. */
   zoneLabelAt(at: Cell): string | null { return this.map ? zoneAt(this.map, at)?.label ?? null : null; }
 
@@ -1108,23 +1140,31 @@ export class CampusView {
    * scenery but controls, so they are drawn over the hour instead (`paintMarksOverHour`) and hold their contrast
    * at noon and at midnight alike.
    */
+  /** Which lines are drawn this frame — the rule is `edgesShown`, and the reason is in its own comment. */
+  private edgesToDraw(): Set<string> {
+    const now = this.hooks.clock();
+    return edgesShown(liveConnections(this.map, this.edits.layout), {
+      selected: this.picked, hovered: this.over, wiring: this.drag?.kind === 'wire',
+      pulses: this.pulses.filter((p) => now - p.at <= PULSE_MS),
+    });
+  }
+
   private paintFloorMarks(g: G, v: View): void {
     const sel = this.selectedEdge();
+    const show = this.edgesToDraw();
     for (const cn of liveConnections(this.map, this.edits.layout)) {
+      const id = edgeId(cn.from, cn.to);
+      if (!show.has(id)) continue;
       const a = anchorOf(this.map, cn.from), b = anchorOf(this.map, cn.to);
       if (!a || !b) continue;
       if (!this.rectOnScreen(v, a.rect) && !this.rectOnScreen(v, b.rect)) continue;
-      if (edgeId(cn.from, cn.to) === sel) continue;
-      drawEdge(g, v, edgeCurve(a.at, b.at), { kind: cn.kind, hovered: edgeId(cn.from, cn.to) === this.over });
+      if (id === sel) continue;
+      drawEdge(g, v, edgeCurve(a.at, b.at), { kind: cn.kind, hovered: id === this.over });
     }
     if (this.drag?.kind === 'wire' && this.pointer) this.paintWire(g, v, this.drag.from, this.pointer);
     if (this.lift && this.lift.spring <= 0) drawGhost(g, v, this.lift.rect, this.lift.blocked);
     if (this.zoneGhost) drawGhost(g, v, this.zoneGhost, false);
-    if (this.hiring) {
-      drawGhost(g, v, this.hiring.rect, false);
-      const c = { x: (this.hiring.rect.x0 + this.hiring.rect.x1) / 2, y: (this.hiring.rect.y0 + this.hiring.rect.y1) / 2 };
-      if (v.z > 0.6) plate(g, v.p(c.x, c.y, 0.9), this.hiring.label, { size: 11, alpha: 0.9, lift: 1 });
-    }
+    if (this.hiring) drawGhost(g, v, this.hiring.rect, false);
     if (this.placing && this.pointer) {
       const cell = this.camera.toGrid(this.pointer.x, this.pointer.y);
       const rect = this.placing.kind === 'agent'
@@ -1172,6 +1212,12 @@ export class CampusView {
   private paintMarksOverHour(g: G, v: View, light: Light): void {
     const now = this.hooks.clock();
     const sel = this.selectedEdge();
+    // What the ghost desk is waiting on, said over the hour: on the campus's own pale floor a white plate under
+    // the multiply is a plate nobody can see, and this one is the whole point of the ghost.
+    if (this.hiring && v.z > 0.6) {
+      const c = { x: (this.hiring.rect.x0 + this.hiring.rect.x1) / 2, y: (this.hiring.rect.y0 + this.hiring.rect.y1) / 2 };
+      plate(g, v.p(c.x, c.y, 0.95), this.hiring.label, { size: 11, chip: ACCENT.amber.chip, alpha: 0.96, lift: 1 });
+    }
     for (const cn of liveConnections(this.map, this.edits.layout)) {
       const a = anchorOf(this.map, cn.from), b = anchorOf(this.map, cn.to);
       if (!a || !b) continue;
@@ -1476,10 +1522,23 @@ export function offsetView(base: View, ox: number, oy: number): View {
   };
 }
 
-/** The first line of a markdown document that says something, without its hashes. */
+/**
+ * The first line of a markdown document that says something, as a sign in a room says it.
+ *
+ * A screen on the campus is a sign, not a document: it has no bold and no code spans, so `**Demand:** ≥$500`
+ * painted on the whiteboard read as `**Demand:**` with two lines drawn over each other. The marks come off here,
+ * where the wall gets its words.
+ */
 export function headline(text: string): string | null {
   for (const raw of text.split('\n')) {
-    const line = raw.replace(/^#+\s*/, '').trim();
+    const line = raw
+      .replace(/^#+\s*/, '')
+      .replace(/^\s*[-*+]\s+/, '')
+      .replace(/\*\*(.+?)\*\*/g, '$1')
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .trim();
     if (line && !line.startsWith('---') && !/^[a-z_]+:/.test(line)) return line.length > 42 ? `${line.slice(0, 41)}\u2026` : line;
   }
   return null;

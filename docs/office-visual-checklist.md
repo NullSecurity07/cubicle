@@ -80,3 +80,24 @@ Each of these lines exists because a delivered screenshot showed the opposite.
 - [ ] A participant chip is the person's own colour with white on it, at 4.5:1, in both themes (`16-messages`)
 - [ ] An open conversation shows its newest turn, not its oldest (`16-messages`)
 - [ ] A live meeting carries one LIVE mark in the list and one in the conversation header — no third amber thing on the screen (`16-messages`)
+
+## The office the owner arranges (added by SP9b, 2026-09-18)
+
+The campus is the owner's to move, staff and wire, so these lines are about the marks that say so: what can be
+picked up, what is in flight, where a line runs and what it means. A control has to hold its contrast at every
+hour — a resting line is scenery and dims with the room, a selected one and a port ring are painted over the
+hour, like the desk lamps.
+
+- [ ] A line between two desks reads as a line at a glance, on the floor under everything that stands (`18-wired-campus`)
+- [ ] Peer and access are told apart without a legend: one solid, one dashed, both bowed the same way (`18-wired-campus`, `concept-sp9b-12`)
+- [ ] A selected line is unmistakable — accent, its casing under the dashes rather than through them, and the ⓧ on its own midpoint (`21-edge-selected`, `concept-sp9b-12`)
+- [ ] The lines do not bury the office: at the campus fit they read as wiring behind the furniture, not as a net over it (`18-wired-campus`)
+- [ ] Every line still reads at night, and the port rings with it: a control is painted over the hour, a resting line dims with the room (`22-wired-night`)
+- [ ] Each of the five things the owner can add is an object in the room, not an icon on a map — a kiosk stands, a board leans, a note is propped (`18b-resources`, `concept-sp9b-12`)
+- [ ] A thing's name is on a plate over its own middle, at the same weight a screen's title is (`18b-resources`)
+- [ ] A station's glyph says its family at 20 px and is not a padlock, a badge or an emoji (`20-dock-open`, `18b-resources`)
+- [ ] A thing being dragged is visibly in the air: the shadow grows, the footprint below it shows where it lands (`19-dragging`)
+- [ ] A blocked landing is red at a glance, on the thing that is in the way (`19b-dragging-blocked`)
+- [ ] The dock is one frosted plate above the time strip, six glyphs, labels on hover, nothing else added to the screen (`20-dock-open`)
+- [ ] The selection plate hangs beside what it names and says what it is in words, never as an id (`21-edge-selected`)
+- [ ] A hire asked for from the dock stands as a ghost desk marked "Hiring …" and seats nobody until Decisions says so (`20-dock-open`)

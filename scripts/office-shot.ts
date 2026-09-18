@@ -62,7 +62,7 @@ page.on('pageerror', (e) => console.log('[page exception]', String(e).slice(0, 2
 
 type Tile = { tx: number; ty: number };
 type Agent = { role: string; state: string; seat: Tile | null; tile: Tile };
-type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }>; inbox?: { id: string }[]; conversations?: { id: string; kind: string; room?: string }[] }; agents: () => Agent[]; zone: (id?: string) => string; zones: () => string[]; coffee: (on: boolean) => boolean; route: (role: string, target: string) => Promise<{ x: number; y: number }[] | null>; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; profile: () => Record<string, number>; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void;
+type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: string; status: string }>; frames: Record<string, { seq: number }>; inbox?: { id: string }[]; conversations?: { id: string; kind: string; room?: string }[]; teams?: { id: string; name: string }[] }; agents: () => Agent[]; zone: (id?: string) => string; zones: () => string[]; coffee: (on: boolean) => boolean; route: (role: string, target: string) => Promise<{ x: number; y: number }[] | null>; stand: (name: string) => Tile | null; setHour: (h: number | null) => void; fps: () => number; profile: () => Record<string, number>; open: (k: string) => void; zoom: (z: number) => void; center: (tx: number, ty: number) => void; theme: (m: 'dark' | 'light' | 'system') => 'dark' | 'light'; stack: () => { kind: string; title: string }[]; pushFrame: (id: string, dataUrl: string) => void;
   // SP9b: the office the owner arranges. Every gesture has a call behind it, so a scene can be set up without a
   // mouse — and the two that are *about* the pointer (the lift, the hover ring) use a real one on purpose.
   layout: () => { nodes: Record<string, unknown>; connections: { from: string; to: string; kind: string }[] };
@@ -75,6 +75,9 @@ type Cub = { __cubicle: { state: { jobs: Record<string, { id: string; title: str
   pulse: (from: string, to: string) => void;
   nodeBox: (id: string) => { x: number; y: number; w: number; h: number; cx: number; cy: number } | null;
   hitAt: (x: number, y: number) => { kind: string; id: string } | null;
+  hire: (at: { x: number; y: number }, req?: { role: string; display: string; team: string }) => boolean;
+  hiring: () => { x0: number; y0: number; x1: number; y1: number } | null;
+  lifted: () => { id: string; rect: { x0: number; y0: number; x1: number; y1: number }; blocked: boolean } | null;
 } };
 /** Run `fn` inside the page against `window.__cubicle`. `fn` crosses over as source text, so it can close over
  *  nothing from this script: whatever it needs (a floor number, an hour) is passed as `arg` and arrives as its
@@ -636,30 +639,37 @@ try {
   });
   console.log('placed:', JSON.stringify(placed));
   for (const [k, v] of Object.entries(placed)) if (!v) fail(`18: a ${k} would not go down on the open floor beside the Dev studio`);
+  // The company arrives already wired — the migration draws the room's own lines and every reporting line — so
+  // what is asserted is that the line is *there*, not that this call is the one that drew it. `connect` answers
+  // false for a pair that is connected already, which is right at the console and says nothing about the scene.
   const wired = await cub((c) => {
-    const ok: Record<string, boolean> = {};
-    ok.peer = c.connect('cto', 'backend_engineer');
-    ok.peer2 = c.connect('dev_manager', 'backend_engineer');
-    ok.peer3 = c.connect('cto', 'dev_manager');
-    ok.peer4 = c.connect('dev_manager', 'frontend_engineer');
-    ok.access = c.connect('backend_engineer', 'browser_1');
-    ok.access2 = c.connect('dev_manager', 'doc_1');
-    ok.access3 = c.connect('frontend_engineer', 'station_deploy');
-    ok.access4 = c.connect('qa_lead', 'site_1');
-    return ok;
+    const want: [string, string][] = [
+      ['cto', 'backend_engineer'], ['dev_manager', 'backend_engineer'], ['cto', 'dev_manager'],
+      ['dev_manager', 'frontend_engineer'], ['backend_engineer', 'browser_1'], ['dev_manager', 'doc_1'],
+      ['frontend_engineer', 'station_deploy'], ['qa_lead', 'site_1'],
+    ];
+    const missing: string[] = [];
+    for (const [a, b] of want) {
+      c.connect(a, b);
+      let there = false;
+      for (const cn of c.layout().connections) if ((cn.from === a && cn.to === b) || (cn.from === b && cn.to === a)) there = true;
+      if (!there) missing.push(`${a} → ${b}`);
+    }
+    return missing;
   });
   console.log('wired:', JSON.stringify(wired));
-  for (const [k, v] of Object.entries(wired)) if (!v) fail(`18: the ${k} connection was refused`);
+  for (const m of wired) fail(`18: the office has no line ${m}`);
   const cns = await cub((c) => c.layout().connections.length);
-  if (cns < 8) fail(`18: the office holds ${cns} connections after eight were drawn`);
+  if (cns < 8) fail(`18: the office holds ${cns} connections after eight were asked for`);
   // Five things standing across the walkway must not wall the QA lab off from the rest of the campus: what the
   // owner puts down blocks the floor under it (`applyLayout` stamps the walk grid), and a router that can no
   // longer reach the lobby is an office nobody can cross.
   await checkRoute('qa_lead', 'lobby', '18');
   await checkRoute('backend_engineer', 'terminal', '18');
-  // Nothing is selected in the scene the checklist reads as "the office, wired": `place()` leaves what it put down
-  // picked, which is right at the console and wrong in a photograph of the room.
-  await cub((c) => c.select(null));
+  // One desk is selected, because that is when there is anything to see: the office draws the lines that are
+  // *about* what the owner is looking at, and at rest it draws none (`edgesShown`). The office with nothing
+  // picked — the campus as it sits — is `09a-campus-day`, which is where that line of the checklist is read.
+  await cub((c) => c.select('qa_lead'));
   await cub((c) => c.zoom(0.95));
   await cub((c) => c.center(19, 18));
   await page.waitForTimeout(5200);                       // let the placement toast go: it is not part of this scene
@@ -667,6 +677,7 @@ try {
 
   // 18b: the five things themselves, close enough to see what each one is. A kiosk that reads as a grey box at a
   // zone fit is a kiosk nobody will recognise, and this is the only scene that can say otherwise.
+  await cub((c) => c.select(null));
   await cub((c) => c.zoom(2.1));
   await cub((c) => c.center(21, 15));
   await shot('18b-resources', 900);
@@ -686,13 +697,30 @@ try {
     await page.mouse.move(deskAt.cx, deskAt.cy);
     await page.waitForTimeout(250);                     // the port ring comes up on hover
     await page.mouse.down();
-    // south-west, onto the open floor at the foot of the QA lab: the ordinary case, where the ghost says yes
-    await page.mouse.move(deskAt.cx - 120, deskAt.cy + 96, { steps: 10 });
-    await page.waitForTimeout(200);
+    // Onto open floor: the ordinary case, where the ghost says yes. The QA lab is a dense room, so the spot is
+    // looked for rather than assumed — the office answers `lifted().blocked` on every move, and a desk in the
+    // air over another desk is 19b's picture, not this one.
+    let inAir: { id: string; rect: { x0: number; y0: number; x1: number; y1: number }; blocked: boolean } | null = null;
+    for (const [dx, dy] of [[-120, 96], [-190, 140], [-60, 150], [-250, 60], [-150, 210], [-320, 120]]) {
+      await page.mouse.move(deskAt.cx + dx, deskAt.cy + dy, { steps: 8 });
+      await page.waitForTimeout(160);
+      inAir = await cub((c) => c.lifted());
+      if (inAir && !inAir.blocked) break;
+    }
+    // The scene is a photograph of a desk in the air, so it says out loud what is in the air and where it would
+    // land: a drag that quietly turned into a camera pan makes a picture of an ordinary office (visual QA SP9b-1).
+    const airBox = inAir ? await cub((c, r: { x0: number; y0: number; x1: number; y1: number }) => c.project((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2), inAir.rect) : null;
+    console.log('19 in the air:', JSON.stringify({ inAir, airBox }));
+    if (!inAir) fail('19: nothing is in the air, so the scene is a picture of an office at rest');
+    else if (inAir.blocked) fail('19: every spot tried was taken, so the desk is in the air over a red footprint');
+    else if (!airBox || airBox.x < 100 || airBox.x > 1270 || airBox.y < 40 || airBox.y > 790) fail(`19: the desk in the air is at ${JSON.stringify(airBox)}, off the frame`);
     await shot('19-dragging', 400);
     // and the same drag aimed at a desk that is already there: the ghost goes red and the drop is refused
     await page.mouse.move(deskAt.cx + 74, deskAt.cy + 26, { steps: 8 });
     await page.waitForTimeout(200);
+    const onTop = await cub((c) => c.lifted());
+    console.log('19b over a taken spot:', JSON.stringify(onTop));
+    if (!onTop?.blocked) fail('19b: the drag is not over a taken spot, so there is no red footprint to photograph');
     await shot('19b-dragging-blocked', 400);
     await page.keyboard.press('Escape');                // put it back: the scenes after this one are not about it
     await page.mouse.up();
@@ -707,6 +735,33 @@ try {
   else await page.mouse.move(dockBox.x + dockBox.width / 2, dockBox.y + dockBox.height / 2);
   await shot('20-dock-open', 700);
   await cub((c) => c.dock(false));
+
+  // 20b–20c: the dock's Agent, which is the one glyph that opens a card instead of putting something down. The
+  // sheet asks the three things only the owner can answer, and what it leaves on the floor is a ghost desk —
+  // nobody is seated on a hire nobody has approved yet.
+  const hireSpot = await cub((c) => {
+    const d = c.desks().qa_lead as { tx: number; ty: number } | undefined;
+    return d ? { x: d.tx - 3, y: d.ty + 3 } : { x: 20, y: 27 };
+  });
+  await cub((c) => c.zoom(1.5));
+  await cub((c, p: { x: number; y: number }) => c.center(p.x, p.y), hireSpot);
+  await page.waitForTimeout(500);
+  await cub((c, at: { x: number; y: number }) => c.hire(at), hireSpot);
+  await page.waitForTimeout(400);
+  if (await page.$eval('#hire', (el) => (el as HTMLElement).hidden).catch(() => true)) fail('20b: the dock\'s Agent did not open the hire sheet');
+  await page.fill('#hire-name', 'Head of Support');
+  await page.waitForTimeout(200);
+  await shot('20b-hire-sheet', 600);
+  const hireTeam = await cub((c) => { const t = c.state.teams ?? []; return t.length ? t[0].id : ''; });
+  if (!hireTeam) fail('20b: the company has no team for a hire to join');
+  else {
+    await page.selectOption('#hire-team', hireTeam);
+    await page.click('#hire .btn.primary');
+    await page.waitForTimeout(600);
+  }
+  if (!(await cub((c) => c.hiring()))) fail('20c: no ghost desk stands where the hire was asked for');
+  await page.waitForTimeout(4800);                       // let the "Hire proposed" toast go
+  await shot('20c-hiring-ghost', 700);
 
   // 21: a line selected, with its ⓧ chip, and a message travelling one of the others at the same time. The pulse
   // is 600 ms, so it is fired last and the shutter is the next thing that happens.

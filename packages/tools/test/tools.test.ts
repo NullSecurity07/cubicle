@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scaffoldVault, Vault, RoleFrontmatter, parseNote, createJob, listInbox, listJobs, loadOrg, loadCampusMap, readLayout, writeLayout } from '@cubicle/core';
 import { parseToolsConfig, resolveMode, ToolRegistry, createRoleToolClient, phase3Tools, unreadMessages, findAnswer, type ToolContext } from '../src/index.js';
+import { isInterstitial } from '../src/tools/browser.js';
 
 let dir: string; let vault: Vault;
 const cfgText = readFileSync(path.resolve(__dirname, '../../../config/tools.yaml'), 'utf8');
@@ -117,5 +118,16 @@ describe('MCP tools', () => {
       const l = await client.call('skills.load', { name: 'Deploy to Cloudflare Pages' });
       expect(l.text).toContain('wrangler');
     } finally { await client.close(); }
+  });
+});
+
+describe('a bot check is not the company’s screen', () => {
+  it('knows the wall in front of a site from the site', () => {
+    expect(isInterstitial('Just a moment...')).toBe(true);
+    expect(isInterstitial('Attention Required! | Cloudflare')).toBe(true);
+    expect(isInterstitial('example.com', 'Performing security verification, please wait')).toBe(true);
+    expect(isInterstitial('Verify you are human')).toBe(true);
+    expect(isInterstitial('Pricing — Acme', 'Plans start at $10 a month.')).toBe(false);
+    expect(isInterstitial('')).toBe(false);
   });
 });

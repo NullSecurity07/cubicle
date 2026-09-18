@@ -135,10 +135,17 @@ export class Panel {
   get current(): string | null { return this.stack.current()?.kind ?? null; }
   isModal(): boolean { const p = this.stack.current()?.presentation; return p === 'reader' || p === 'viewer'; }
 
-  /** Open `kind` on top of the stack (re-opening the current kind just re-renders it). */
-  show(kind: string, v: View, origin?: Origin): void {
+  /**
+   * Open `kind` on top of the stack (re-opening the current kind just re-renders it).
+   *
+   * `root` starts a new trail. A breadcrumb is a way back to where you came from, and the header nav is not a
+   * way in from anywhere — so opening Messages from the bar while a decision reader was up read "Decisions ›
+   * Messages", and after a few clicks every panel in the office claimed to live under Decisions.
+   */
+  show(kind: string, v: View, origin?: Origin, opts: { root?: boolean } = {}): void {
     if (!this.stack.depth) this.returnTo = document.activeElement as HTMLElement | null;
     const wasCurrent = this.current === kind;
+    if (opts.root && !wasCurrent) this.stack.clear();
     this.stack.push({ kind, title: v.title, presentation: presentationOf(v.mode) });
     this.render(kind, v, !wasCurrent, wasCurrent ? undefined : origin);
   }

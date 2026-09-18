@@ -65,6 +65,8 @@ const cutWhy = (s: string, n = 80): string => {
 export const INBOX_BODY_MAX = 32 * 1024;
 /** How many closed notes the *Decided* segment carries. */
 export const DECIDED_ROWS = 20;
+/** How much of a decided note rides on the snapshot, per row. Enough to re-read; not the whole archive. */
+const DECIDED_BODY_CHARS = 8000;
 
 const cutBody = (s: string): string => (s.length <= INBOX_BODY_MAX ? s : `${s.slice(0, INBOX_BODY_MAX)}\n\n_…truncated; open the note in Obsidian for the rest._\n`);
 
@@ -137,7 +139,7 @@ export interface Snapshot {
     board_pending: boolean;
   }[];
   /** The last 20 notes the dispatcher closed — the Decisions sheet's *Decided* segment. */
-  decided: { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean | null; chosen: number | null; outcome: string }[];
+  decided: { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean | null; chosen: number | null; outcome: string; body: string }[];
   /** Every conversation in the vault, newest first — the Messages view's thread list. */
   conversations: Thread[];
   /** Owner ↔ CEO conversation from 00 Inbox/ message notes (oldest first) — the cabin thread. */
@@ -213,6 +215,10 @@ export function buildSnapshot(vault: Vault, router?: Router): Snapshot {
       id: n.data.id, kind: n.data.kind, title: (n.body.match(/^#\s+(.+)$/m)?.[1] ?? n.data.kind).trim(), path: n.path, created: n.data.created,
       resolved_at: str(n.data.resolved_at), approved: n.data.approved, chosen: n.data.chosen,
       outcome: resolvedOutcome(n.body),
+      // The note the owner decided, so the reader can keep showing it under the outcome instead of emptying: the
+      // first thing anyone does after adopting a brief is read the brief they adopted. Capped, because these
+      // ride on every snapshot and *Decided* is a receipt, not the archive — `00 Inbox/` is the archive.
+      body: n.body.slice(0, DECIDED_BODY_CHARS),
     }));
   const chat: Snapshot['chat'] = [];
   for (const n of notes.filter((n) => n.data.kind === 'message' && n.data.from === 'owner' && n.data.to === 'ceo').slice(-40)) {

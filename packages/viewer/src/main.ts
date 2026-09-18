@@ -22,6 +22,7 @@ import { fitZoom } from './world/camera.js';
 import { Dock } from './ui/dock.js';
 import { SelectionPlate } from './ui/selection.js';
 import { HireSheet } from './ui/hire.js';
+import { OfficeOutline } from './ui/a11y.js';
 import type { Selection } from './world/view.js';
 import type { DockKind } from './world/editing.js';
 import type { LayoutNode, CampusLayout, StationFamily } from './world/layout.js';
@@ -220,6 +221,12 @@ window.addEventListener('keydown', (e) => {
  */
 function open(kind: string, origin?: Origin, opts: { zoom?: boolean } = {}): void {
   if (kind === 'ceo_office') kind = 'cabin';           // the CEO office is the owner's channel
+  // A thing on the floor has no sheet of its own: it is a thing in a room, so this is the keyboard's version of
+  // clicking it — selected, with its plate up, and the camera on it (the office outline, `ui/a11y.ts`).
+  if (kind.startsWith('thing:')) {
+    scene.focusNode(kind.slice(6));
+    return;
+  }
   const zoom = opts.zoom ?? true;
   // Messages opens on a thread: the room's own transcript when a room was clicked, else the newest conversation.
   // The fetch is the op — the index carries only the last line — and `viewFor` stays pure.
@@ -228,7 +235,9 @@ function open(kind: string, origin?: Origin, opts: { zoom?: boolean } = {}): voi
     if (want && want !== ui.thread) ui.thread = want;
     if (ui.thread) net.conversation(ui.thread);
   }
-  panel.show(kind, viewOf(kind), origin ?? undefined);
+  // A surface of the office is a place, not a step inside another one: opening it starts the trail again. What
+  // has a `:` in it — a decision, a job, a person — was opened *from* something, so it keeps the trail it is in.
+  panel.show(kind, viewOf(kind), origin ?? undefined, { root: !kind.includes(':') });
   if (kind.startsWith('agent:')) scene.focusOn(kind, { zoom });
   else if (!kind.includes(':') && kind !== 'org' && kind !== 'keys' && kind !== MESSAGES) scene.focusOn(kind, { zoom });
 }
@@ -307,8 +316,11 @@ function syncLayout(): void {
   scene.setLayout(state.layout);
 }
 
+const outline = new OfficeOutline();
+
 function refresh(): void {
   syncLayout();
+  outline.update(state);
   if (panel.current) panel.update(panel.current, viewOf(panel.current));
   rail.update();
   bar.setPending(state.pendingProposals);
@@ -537,6 +549,8 @@ const shellHooks = (window as unknown as { __cubicle?: Record<string, unknown> }
   },
   /** Where the ghost desk stands, or null when no hire is waiting. */
   hiring: () => scene.hiringAt(),
+  /** What is in the air mid-drag, and whether it may land where it is. */
+  lifted: () => scene.liftedNow(),
 };
 
 let last = performance.now();

@@ -59,7 +59,7 @@ export interface InboxRow {
   board_pending?: boolean;
 }
 /** A resolved note: what the owner said and what the dispatcher did with it. */
-export interface DecidedRow { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean; chosen?: number; outcome: string }
+export interface DecidedRow { id: string; kind: string; title: string; path: string; created: string; resolved_at: string; approved: boolean; chosen?: number; outcome: string; /** the note as decided, so the reader keeps showing it; absent from a daemon older than this */ body?: string }
 /** One turn of a conversation. `at` is null for note shapes that carry no stamp; those are ordered as written. */
 export interface ThreadTurn { who: string; at: string | null; text: string }
 export type ThreadKind = 'dm' | 'meeting' | 'board' | 'pantry' | 'agents';
@@ -121,7 +121,7 @@ export interface State {
   board: BoardState | null;
   /** The pantry chat in progress, or the one that just ended; null when nobody is at the counter. See ui/pantry.ts. */
   pantry: PantryState | null;
-  frames: Record<string, { seq: number; jpegBase64?: string; path?: string }>;
+  frames: Record<string, { seq: number; jpegBase64?: string; path?: string; /** the page is a bot check, not the site: the billboard says so instead of showing it */ challenge?: boolean }>;
   lastEventTs: string | null;
   deploys: { ts: string; url: string }[];
   /** No company name, no jobs and nothing said yet: the office is empty and the owner has not started (spec §12). */
@@ -424,7 +424,7 @@ export function applyEvent(s: State, e: CubicleEvent, nowMs = Date.now()): State
     case 'meeting.turn': { const ag = a(e.agent); if (ag) { ag.bubble = { kind: 'speech', text: String(p.text ?? '').slice(0, 140), until: nowMs + BUBBLE_MS }; ag.state = 'talking'; } st.pantry = pantryTurn(st.pantry, e.agent, p, e.ts); { const tid = threadIdFor(st, String(p.id ?? '')); const speaker = String(e.agent ?? p.role ?? ''); const text = String(p.text ?? ''); appendLive(st, tid, { who: speaker, at: e.ts, text }); const room = st.meetings[String(p.id ?? '')]?.room ?? 'meeting'; const kind: ThreadKind = room === 'board' ? 'board' : room === 'pantry' ? 'pantry' : 'meeting'; touchThread(st, tid, kind, () => ({ title: `${room} meeting`, room, participants: speaker ? [speaker] : [], updated: e.ts, open: true, last: null, turns: 0 }), (t) => ({ ...t, updated: e.ts, open: true, turns: t.turns + 1, last: { who: speaker, text, at: e.ts }, participants: speaker && !t.participants.includes(speaker) ? [...t.participants, speaker] : t.participants })); } break; }
     case 'meeting.closed': { const id = String(p.id); if (st.meetings[id]) { st.meetings[id] = { ...st.meetings[id], open: false }; for (const r of st.meetings[id].participants) { const ag = a(r); if (ag) { ag.target = null; ag.state = 'walking'; } } } st.board = boardClosed(st.board, p, e.ts); st.pantry = pantryClosed(st.pantry, p, e.ts); { const tid = threadIdFor(st, id); if (st.conversations.some((t) => t.id === tid)) touchThread(st, tid, 'meeting', () => ({ title: 'meeting', participants: [], updated: e.ts, open: false, last: null, turns: 0 }), (t) => ({ ...t, open: false, updated: e.ts })); } st.feed = [...st.feed.slice(-100), { ts: e.ts, text: `meeting closed → ${String(p.decision ?? '')}` }]; break; }
     case 'browser.session_started': st.surfaces[String(p.session)] = { streamKind: 'browser', streamId: String(p.session), active: true, agent: e.agent ?? undefined }; break;
-    case 'browser.frame': { const id = String(p.session); const cur = st.surfaces[id] ?? { streamKind: 'browser' as const, streamId: id, active: true }; st.surfaces[id] = { ...cur, lastFrame: String(p.path), active: true }; st.frames[id] = { ...(st.frames[id] ?? { seq: 0 }), seq: Number(p.seq), path: String(p.path) }; break; }
+    case 'browser.frame': { const id = String(p.session); const cur = st.surfaces[id] ?? { streamKind: 'browser' as const, streamId: id, active: true }; st.surfaces[id] = { ...cur, lastFrame: String(p.path), active: true }; st.frames[id] = { ...(st.frames[id] ?? { seq: 0 }), seq: Number(p.seq), path: String(p.path), ...(p.challenge === true ? { challenge: true } : { challenge: undefined }) }; break; }
     case 'browser.session_ended': { const id = String(p.session); if (st.surfaces[id]) st.surfaces[id] = { ...st.surfaces[id], active: false, endedAt: e.ts }; break; }
     case 'email.sent': st.mail = [...st.mail.slice(-100), { ts: e.ts, text: `→ ${String(p.to)}: ${String(p.subject ?? '')}${p.mock ? ' (mock)' : ''}` }]; break;
     case 'email.received': st.mail = [...st.mail.slice(-100), { ts: e.ts, text: `← ${String(p.from)}: ${String(p.subject ?? '')}` }]; break;

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { view, type View } from './iso.js';
-import { BOW, END_GAP, PORT_R, PULSE_MS, edgeCurve, edgeHit, edgeLegend, pointOn, portAt, pulseT, segDist, shouldPulse } from './edges.js';
+import { BOW, END_GAP, PORT_R, PULSE_MS, edgeCurve, edgeHit, edgeLegend, edgesShown, pointOn, portAt, pulseT, segDist, shouldPulse } from './edges.js';
+import { edgeId } from './layout.js';
 
 const V: View = view({ at: { x: 10, y: 10 }, zoom: 1, w: 1280, h: 800 });
 
@@ -95,5 +96,47 @@ describe('what a line says it permits', () => {
   it('has one sentence per kind', () => {
     expect(edgeLegend('peer')).toBe('Can message each other');
     expect(edgeLegend('access')).toBe('Can use this');
+  });
+});
+
+describe('which lines are drawn', () => {
+  const CNS = [
+    { from: 'cto', to: 'ceo', kind: 'peer' as const },
+    { from: 'cto', to: 'backend_engineer', kind: 'peer' as const },
+    { from: 'ceo', to: 'cfo', kind: 'peer' as const },
+    { from: 'qa_lead', to: 'browser_1', kind: 'access' as const },
+  ];
+
+  it('draws nothing at rest: a hundred and fifty lines at once is a net over the office, not wiring under it', () => {
+    expect(edgesShown(CNS, {}).size).toBe(0);
+  });
+
+  it('answers about the desk the owner is looking at, and only that desk', () => {
+    const shown = edgesShown(CNS, { hovered: 'cto' });
+    expect([...shown].sort()).toEqual([edgeId('cto', 'backend_engineer'), edgeId('cto', 'ceo')].sort());
+    expect(shown.has(edgeId('ceo', 'cfo'))).toBe(false);
+  });
+
+  it('takes the selected thing and the hovered one together', () => {
+    const shown = edgesShown(CNS, { selected: 'qa_lead', hovered: 'ceo' });
+    expect(shown.has(edgeId('qa_lead', 'browser_1'))).toBe(true);
+    expect(shown.has(edgeId('ceo', 'cfo'))).toBe(true);
+    expect(shown.has(edgeId('cto', 'ceo'))).toBe(true);                    // the CEO's line to the CTO is the CEO's
+    expect(shown.has(edgeId('cto', 'backend_engineer'))).toBe(false);      // and the CTO's other lines are not
+  });
+
+  it('a selected line is a line, not a node: it does not pull in its ends’ other lines', () => {
+    const shown = edgesShown(CNS, { selected: edgeId('ceo', 'cfo') });
+    expect([...shown]).toEqual([edgeId('ceo', 'cfo')]);
+  });
+
+  it('shows the whole floor while a wire is out of a port, which is when the question is about the whole floor', () => {
+    expect(edgesShown(CNS, { wiring: true }).size).toBe(CNS.length);
+    expect(edgesShown(CNS, { wiring: true, selected: 'cto' }).size).toBe(CNS.length);
+  });
+
+  it('gives a message in flight a line to travel', () => {
+    const shown = edgesShown(CNS, { pulses: [{ from: 'ceo', to: 'cfo' }] });
+    expect([...shown]).toEqual([edgeId('ceo', 'cfo')]);
   });
 });
