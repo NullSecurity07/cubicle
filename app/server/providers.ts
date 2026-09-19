@@ -79,6 +79,9 @@ export async function complete(
   throw new Error(`no provider answered — ${failures.join('; ')}`);
 }
 
+// Only the three fields the API knows. Our tools carry more (limits, approval rules), and Gemini refuses a request with any unknown field.
+export const wireTools = (tools: ToolSpec[]) => tools.map(({ name, description, parameters }) => ({ type: 'function' as const, function: { name, description, parameters } }));
+
 const number = (value: string | null) => (value === null || value === '' || Number.isNaN(Number(value)) ? undefined : Number(value));
 
 export function readQuota(headers: Headers): Quota | undefined {
@@ -136,7 +139,7 @@ export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[]
         const { data: stream, response } = await api.chat.completions.create({
           model: entry.model, messages, stream: true, max_tokens: entry.maxTokens,
           ...(entry.streamUsage === false ? {} : { stream_options: { include_usage: true } }),
-          ...(tools?.length ? { tools: tools.map((tool) => ({ type: 'function', function: tool })) } : {}),
+          ...(tools?.length ? { tools: wireTools(tools) } : {}),
           ...(entry.extra ?? {}),
         } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal }).withResponse();
 
@@ -167,7 +170,7 @@ export const fakeClient: ModelClient = {
     const name = /^You are ([^,]+),/.exec(system)?.[1] ?? 'Someone';
     const docs = [...system.matchAll(/^## Doc: (.+)$/gm)].map((match) => match[1]);
     const last = messages.at(-1);
-    const wanted = last?.role === 'user' ? /^\/tool (\w+) (\{.*\})$/s.exec(last.content) : null;
+    const wanted = last?.role === 'user' ? /^\/tool (\w+) (\{.*\})$/m.exec(last.content) : null;
     if (wanted && tools?.some((tool) => tool.name === wanted[1])) {
       return { text: '', calls: [{ id: `call-${messages.length}`, name: wanted[1], args: wanted[2] }], usage: { input: 10, output: 5 } };
     }

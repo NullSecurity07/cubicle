@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectCalls, complete, portable, readQuota, type ModelClient, type ToolCall } from './providers.ts';
+import { wireTools, collectCalls, complete, portable, readQuota, type ModelClient, type ToolCall } from './providers.ts';
 
 const client = (name: string, tokens: string[] | Error, maxPromptChars = Infinity): ModelClient => ({
   name, model: `${name}-1`, maxPromptChars, tools: true, limits: {},
@@ -108,5 +108,12 @@ describe('changing provider half way through a turn', () => {
     const result = await complete(messages, { onToken: () => {} }, [limited, client('other', ['no'])]);
     expect(result.client.name).toBe('groq');
     expect(tries).toBe(2);
+  });
+});
+
+describe('wireTools', () => {
+  it('sends a provider nothing but name, description and parameters', () => {
+    const tool = { name: 'web_search', description: 'Search', parameters: { type: 'object' }, perTurn: 3, approval: true, run: async () => ({ text: '' }) };
+    expect(wireTools([tool])).toEqual([{ type: 'function', function: { name: 'web_search', description: 'Search', parameters: { type: 'object' } } }]);
   });
 });

@@ -4,9 +4,25 @@ export type Box = { x: number; y: number; w: number; h: number };
 export type Room = Box & { id: string; name: string; role: string; accent: string; brief: string; model?: string };
 // `pinned` makes a doc company-wide: every person reads it, wired or not. Writing it still needs a wire.
 export type Doc = Box & { id: string; title: string; pinned?: boolean };
-// Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is a code folder a wired person may hand to a coding agent.
+// Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is a code folder a wired person may hand to a coding agent; `board` holds tasks that wired people may propose and the founder runs.
 // `headed` shows the card's Chrome as a real window, for the founder to sign in or pass a human check by hand.
-export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean } | { kind: 'project'; path: string });
+export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean } | { kind: 'project'; path: string } | { kind: 'board' });
+export const COLUMNS = ['proposed', 'todo', 'doing', 'review', 'done'] as const;
+export type Column = (typeof COLUMNS)[number];
+// When a task repeats, in the founder's local time. `weekday` (0 = Sunday) is used by 'week' only.
+export type Repeat = { every: 'day' | 'weekdays' | 'week'; time: string; weekday?: number };
+// One background run of a task. `approval` is the outward step waiting for the founder while `state` is 'waiting'.
+export type TaskRun = {
+  state: 'running' | 'waiting' | 'done' | 'failed' | 'stopped'; startedAt: number; finishedAt?: number;
+  log: string[]; result?: string; approval?: ToolEvent; provider?: string; model?: string; usage?: Usage;
+};
+export type Task = {
+  id: string; title: string; detail: string; column: Column; createdAt: number;
+  assignee?: string; proposedBy?: string; repeat?: Repeat; nextRun?: number; missed?: boolean; run?: TaskRun;
+};
+// What a board streams to its card: the tasks after every change, and stage effects from runs that the client must mirror.
+export type BoardEvent = { tasks: Task[] } | { effect: ToolEffect; roomId: string };
+
 export const isHeaded = (card?: Card) => card?.kind === 'browser' && !!card.headed;
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };

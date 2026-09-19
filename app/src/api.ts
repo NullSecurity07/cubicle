@@ -1,4 +1,4 @@
-import type { ChatEvent, ChatMessage, ModelInfo, Stage } from '../shared/model';
+import type { BoardEvent, ChatEvent, ChatMessage, ModelInfo, Stage, Task } from '../shared/model';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -31,4 +31,17 @@ export async function sendChat(roomId: string, text: string, onEvent: (event: Ch
     buffer = frames.pop() ?? '';
     for (const frame of frames) if (frame.startsWith('data: ')) onEvent(JSON.parse(frame.slice(6)) as ChatEvent);
   }
+}
+
+const send = (method: string, body?: unknown): RequestInit => ({ method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+export const addTask = (boardId: string, title: string) => request<Task>(`/api/boards/${boardId}/tasks`, send('POST', { title }));
+export const changeTask = (boardId: string, taskId: string, patch: Partial<Pick<Task, 'title' | 'detail' | 'column' | 'assignee'>> & { repeat?: Task['repeat'] | null }) => request<Task>(`/api/boards/${boardId}/tasks/${taskId}`, send('PATCH', patch));
+export const removeTask = (boardId: string, taskId: string) => request(`/api/boards/${boardId}/tasks/${taskId}`, send('DELETE'));
+export const runTask = (boardId: string, taskId: string) => request(`/api/boards/${boardId}/tasks/${taskId}/run`, send('POST'));
+export const stopTask = (boardId: string, taskId: string) => request(`/api/boards/${boardId}/tasks/${taskId}/stop`, send('POST'));
+// The board's live feed: tasks after every change, and stage effects from background runs.
+export function watchBoard(boardId: string, onEvent: (event: BoardEvent) => void) {
+  const source = new EventSource(`/api/boards/${boardId}/events`);
+  source.onmessage = (message) => onEvent(JSON.parse(message.data) as BoardEvent);
+  return () => source.close();
 }

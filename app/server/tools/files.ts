@@ -6,7 +6,7 @@ const path = { type: 'string', description: 'Path inside the shared files folder
 export const fileTools: Tool[] = [
   {
     name: 'list_files',
-    description: 'List the files in the shared files folder.',
+    description: 'List the files in the shared files folder. That folder is separate from the documents on the stage: documents never appear here.',
     parameters: { type: 'object', properties: {} },
     async run(_args, context) {
       const files = await context.store.listFiles();
@@ -15,7 +15,7 @@ export const fileTools: Tool[] = [
   },
   {
     name: 'read_file',
-    description: 'Read a text file from the shared files folder.',
+    description: 'Read a text file from the shared files folder. Not for documents on the stage: a connected document is already in your context.',
     parameters: { type: 'object', properties: { path }, required: ['path'] },
     async run(args, context) {
       const body = await context.store.readFile(text(args, 'path', 200));

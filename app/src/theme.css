@@ -239,3 +239,48 @@ div.msg--assistant:has(.approval) { align-self: stretch; max-width: none; }
 .doc__pin:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
 .doc__pin.is-on { color: var(--accent); }
 .doc__pin.is-on svg { fill: currentColor; }
+
+/* Board card: five columns, task tiles, and the open task over the card. */
+.board { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 10px; cursor: auto; }
+.board__column { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: rgba(0, 0, 0, 0.22); }
+.board__column h3 { margin: 0 2px; font-size: 11px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.board__column h3 span { font-weight: 400; opacity: 0.7; }
+.board__tasks { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.board__column form input { width: 100%; box-sizing: border-box; border: 1px dashed var(--card-border); border-radius: 8px; padding: 6px 8px; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 12px; }
+.board__column form input:focus { border-style: solid; border-color: rgba(78, 140, 255, 0.7); }
+.task { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 8px 9px; border: 1px solid var(--card-border); border-radius: 9px; background: rgba(255, 255, 255, 0.06); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.task:hover { background: rgba(255, 255, 255, 0.1); }
+.task--waiting { border-color: rgba(240, 179, 90, 0.6); }
+.task--running { border-color: rgba(78, 140, 255, 0.6); }
+.task__title { font-size: 12.5px; line-height: 1.35; overflow-wrap: anywhere; }
+.task__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 10.5px; color: var(--muted); }
+.task__meta:empty { display: none; }
+.task__meta i { width: 7px; height: 7px; border-radius: 50%; }
+.task__meta em { font-style: normal; }
+.task__needs { color: #f0b35a; font-weight: 600; }
+.task__missed { color: #f0968e; }
+.board__badge { flex: none; padding: 2px 8px; border-radius: 8px; font-size: 10.5px; font-weight: 650; color: #0b0c10; background: #f0b35a; }
+.board__problem { position: absolute; left: 12px; right: 12px; bottom: 8px; margin: 0; padding: 6px 10px; border-radius: 8px; font-size: 12px; color: #ffd9d5; background: rgba(120, 30, 24, 0.85); }
+.taskview { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; border-radius: inherit; background: rgba(14, 15, 19, 0.985); cursor: auto; }
+.taskview__head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--card-border); }
+.taskview__head input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 14px; font-weight: 600; }
+.taskview__head button { width: 26px; height: 26px; padding: 6px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
+.taskview__head button:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+.taskview__head svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.taskview__body { flex: 1; min-height: 0; display: flex; }
+.taskview__side { flex: 0 0 300px; display: flex; flex-direction: column; gap: 9px; padding: 12px; overflow-y: auto; border-right: 1px solid var(--card-border); }
+.taskview__side label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+.taskview__side textarea, .taskview__side select, .taskview__side input { border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 8px; outline: 0; resize: none; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 12.5px; color-scheme: dark; }
+.taskview__side option { background: #16181d; }
+.taskview__repeat { display: flex; gap: 6px; }
+.taskview__repeat > * { flex: 1; min-width: 0; }
+.taskview__hint { margin: -3px 0 0; font-size: 11px; line-height: 1.4; color: var(--muted); }
+.taskview__end { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding-top: 6px; }
+.taskview__end button { border: 0; border-radius: 8px; padding: 6px 14px; font: inherit; font-size: 12.5px; font-weight: 550; color: var(--text); background: rgba(255, 255, 255, 0.1); cursor: pointer; }
+.taskview__end button:hover { background: rgba(255, 255, 255, 0.16); }
+.taskview__end .primary { background: var(--accent); color: #fff; }
+.taskview__end .primary:disabled { opacity: 0.35; cursor: default; }
+.taskview__end .danger { margin-right: auto; background: transparent; color: #f0968e; }
+.taskview__run { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow-y: auto; font-size: 13px; line-height: 1.5; scrollbar-width: thin; }
+.taskview__log { display: flex; flex-direction: column; gap: 2px; font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.taskview__result { padding-top: 8px; border-top: 1px solid var(--card-border); user-select: text; }

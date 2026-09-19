@@ -12,7 +12,8 @@
     "shell:check": "STAGE_FAKE_MODEL=1 STAGE_API_PORT=7444 STAGE_WORKSPACE=$(mktemp -d) shell/target/release/stage-shell --perf",
     "shell:dev": "shell/target/release/stage-shell --url http://localhost:7420",
     "e2e": "playwright test",
-    "assets": "node scripts/to-webp.mjs"
+    "assets": "node scripts/to-webp.mjs",
+    "check:providers": "node scripts/check-providers.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5",

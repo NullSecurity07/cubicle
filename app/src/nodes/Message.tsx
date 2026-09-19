@@ -5,7 +5,7 @@ import type { ChatMessage, ToolEvent } from '../../shared/model';
 import { Approval } from './Approval';
 
 const VERBS: Record<string, [doing: string, done: string]> = {
-  write_doc: ['Rewriting', 'Rewrote'], append_doc: ['Adding to', 'Added to'], create_doc: ['Creating', 'Created'],
+  read_doc: ['Reading', 'Read'], write_doc: ['Rewriting', 'Rewrote'], append_doc: ['Adding to', 'Added to'], create_doc: ['Creating', 'Created'],
   ask_person: ['Asking', 'Asked'], delegate_coding: ['Coding:', 'Coded:'],
   send_email: ['Sending email to', 'Emailed'], read_inbox: ['Checking', 'Checked'], run_code: ['Running', 'Ran'],
   web_search: ['Searching', 'Searched'], web_fetch: ['Reading', 'Read'], browse: ['Browsing', 'Browsed'],
@@ -33,7 +33,7 @@ function Chip({ tool }: { tool: ToolEvent }) {
   );
 }
 
-const Words = memo(function Words({ text }: { text: string }) {
+export const Words = memo(function Words({ text }: { text: string }) {
   return (
     <Markdown remarkPlugins={[remarkGfm]} components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" /> }}>
       {text}

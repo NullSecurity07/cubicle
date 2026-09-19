@@ -22,6 +22,12 @@ const doc = { type: 'string', description: 'Title of a document connected to you
 
 export const docTools: Tool[] = [
   {
+    name: 'read_doc',
+    description: 'Read the current text of a connected document. Its text is already in your context; use this only to check it again after a change.',
+    parameters: { type: 'object', properties: { doc }, required: ['doc'] },
+    run: async (args, context) => ({ text: (await context.store.readDoc(find(context, text(args, 'doc')))) || '(empty)' }),
+  },
+  {
     name: 'write_doc',
     description: 'Replace the whole text of a connected document. The old version is kept in the trash.',
     parameters: { type: 'object', properties: { doc, text: { type: 'string', description: 'The full new markdown text' } }, required: ['doc', 'text'] },

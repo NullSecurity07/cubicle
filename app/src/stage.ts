@@ -7,7 +7,8 @@ export type RoomNodeType = Node<RoomData, 'room'>;
 export type DocNodeType = Node<DocData, 'doc'>;
 export type BrowserNodeType = Node<{ headed?: boolean }, 'browser'>;
 export type ProjectNodeType = Node<{ path: string }, 'project'>;
-export type StageNode = RoomNodeType | DocNodeType | BrowserNodeType | ProjectNodeType;
+export type BoardNodeType = Node<Record<string, never>, 'board'>;
+export type StageNode = RoomNodeType | DocNodeType | BrowserNodeType | ProjectNodeType | BoardNodeType;
 
 export const HANDLE_IDS = ['l', 'r', 't', 'b'] as const;
 export const ACCENT = '#4e8cff';
@@ -25,8 +26,9 @@ export function toFlow(stage: Stage): { nodes: StageNode[]; edges: Edge[] } {
   const nodes: StageNode[] = [
     ...stage.rooms.map(({ id, x, y, w, h, ...data }): RoomNodeType => ({ id, type: 'room', position: { x, y }, width: w, height: h, data, ...CARD })),
     ...stage.docs.map(({ id, x, y, w, h, ...data }): DocNodeType => ({ id, type: 'doc', position: { x, y }, width: w, height: h, data, ...CARD })),
-    ...(stage.cards ?? []).map((card): BrowserNodeType | ProjectNodeType => {
+    ...(stage.cards ?? []).map((card): BrowserNodeType | ProjectNodeType | BoardNodeType => {
       const place = { id: card.id, position: { x: card.x, y: card.y }, width: card.w, height: card.h, ...CARD };
+      if (card.kind === 'board') return { ...place, type: 'board', data: {} };
       return card.kind === 'project' ? { ...place, type: 'project', data: { path: card.path } } : { ...place, type: 'browser', data: card.headed ? { headed: true } : {} };
     }),
   ];
@@ -43,7 +45,8 @@ export function fromFlow(nodes: StageNode[], edges: Edge[]): Stage {
     rooms: nodes.filter((node): node is RoomNodeType => node.type === 'room').map((node) => ({ id: node.id, ...node.data, ...box(node) })),
     docs: nodes.filter((node): node is DocNodeType => node.type === 'doc').map(({ id, data: { pinned, ...data }, ...node }) => ({ id, ...data, ...(pinned ? { pinned: true } : {}), ...box({ ...node, id } as StageNode) })),
     cards: nodes.flatMap((node): Card[] => (node.type === 'browser' ? [{ id: node.id, kind: 'browser', ...(node.data.headed ? { headed: true } : {}), ...box(node) }]
-      : node.type === 'project' ? [{ id: node.id, kind: 'project', path: node.data.path, ...box(node) }] : [])),
+      : node.type === 'project' ? [{ id: node.id, kind: 'project', path: node.data.path, ...box(node) }]
+      : node.type === 'board' ? [{ id: node.id, kind: 'board', ...box(node) }] : [])),
     wires: edges.map((edge) => ({ id: edge.id, from: edge.source, fromHandle: edge.sourceHandle ?? 'r', to: edge.target, toHandle: edge.targetHandle ?? 'l' })),
   };
 }

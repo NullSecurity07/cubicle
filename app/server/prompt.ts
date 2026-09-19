@@ -58,6 +58,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
   const cards = stage.cards ?? [];
   const reach = wired(stage, roomId, cards.map((card) => card.id)).map((id) => cards.find((card) => card.id === id)!).map((card) => (card.kind === 'project'
     ? `- A project folder${card.path ? ` (${card.path})` : ''}. Any change to that code goes through delegate_coding, which works inside the folder. Documents and shared files are not the project: never write project code into them, and never say the project changed unless delegate_coding reported it.`
+    : card.kind === 'board' ? '- The task board. Read it with list_tasks. When you notice follow-up work, suggest it with propose_task; the founder decides what gets done.'
     : '- A browser card the founder watches live. Use browse for anything that needs clicking, typing or being signed in.'));
   const system = [
     `You are ${room.name}, ${room.role}. ${room.brief}`,
@@ -65,7 +66,8 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     'Reply in short markdown: brief paragraphs, lists where they help, a table only for real comparisons.',
     toolNames.length
       ? `You can act with these tools: ${toolNames.join(', ')}. Use one when the founder asks for the work itself, not for advice about it. `
-        + 'You may change only the documents connected to your room; name a document by its title. '
+        + `You may change only the documents connected to your room${mine.length ? ` (${mine.map((id) => `"${stage.docs.find((doc) => doc.id === id)!.title}"`).join(', ')})` : ''}, with write_doc or append_doc, naming the document by its title. `
+        + 'Their text is already below: never look for a document with read_file or list_files, which only see the separate shared files folder. '
         + 'For anything on the web, search and read with all your queries or addresses in one call. Say where a fact came from. '
         + 'The founder sees a receipt for every tool call, and work without a receipt did not happen: never write that you saved, created or changed '
         + 'something unless that tool call ran in this turn and succeeded. When a request has several parts, make every tool call first, '

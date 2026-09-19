@@ -27,7 +27,7 @@ test.beforeEach(async ({ page }) => {
 
 test('shows two rooms, a doc and the company brief, one wire, a dock with usage rings and nothing else', async ({ page }) => {
   await expect(page.locator('.react-flow__node')).toHaveCount(4);
-  await expect(page.locator('.dock button')).toHaveCount(5);
+  await expect(page.locator('.dock button')).toHaveCount(6);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(node(page, 'marketing')).toContainText('Maya');
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue(/# Brand/);
@@ -374,4 +374,55 @@ test('a wire between two people lets one consult the other; the exchange shows i
   await expect(node(page, 'build').locator('.msg--colleague').last()).toContainText('Maya asked');
   await expect(node(page, 'build').locator('.msg--colleague').last()).toContainText('How long for SSO?');
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Dev here.');
+});
+
+test('the board: a person proposes, the founder accepts, assigns and runs; an outward step waits on the task', async ({ page }) => {
+  await page.getByRole('button', { name: 'Add board' }).click();
+  const board = page.locator('.react-flow__node-board');
+  await expect(board.getByRole('region', { name: 'To do' })).toBeVisible();
+  const id = (await board.getAttribute('data-id'))!;
+  const wires = await page.locator('.react-flow__edge').count();
+  await page.waitForTimeout(600);
+  const inView = async (target: ReturnType<typeof handle>) => { const box = await target.boundingBox(); return !!box && box.x > 10 && box.y > 10 && box.x < 1580 && box.y < 980; };
+  for (let tries = 0; tries < 8 && !((await inView(handle(page, 'marketing', 'l'))) && (await inView(handle(page, id, 'l')))); tries += 1) {
+    await page.mouse.move(6, 6); await page.mouse.wheel(0, 400); await page.waitForTimeout(250);
+  }
+  await drag(page, centre((await handle(page, 'marketing', 'l').boundingBox())!), centre((await handle(page, id, 'l').boundingBox())!), 20);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(wires + 1);
+
+  // a person proposes; nothing runs until the founder takes it
+  await send(page, 'marketing', '/tool propose_task {"title":"Write the launch FAQ","detail":"Ten questions."}');
+  const proposed = board.getByRole('region', { name: 'Proposed' }).getByRole('button', { name: /Write the launch FAQ/ });
+  await expect(proposed).toContainText('from Maya');
+  await proposed.click();
+  const view = board.getByRole('dialog', { name: 'Write the launch FAQ' });
+  await expect(view.getByRole('button', { name: 'Run' })).toBeDisabled();
+  await view.getByRole('button', { name: 'Accept' }).click();
+  await view.getByLabel('Assignee').selectOption({ label: 'Maya' });
+  await expect(node(page, 'marketing').locator('.status--idle')).toBeVisible(); // a person does one thing at a time: her chat turn must be over
+  await view.getByRole('button', { name: 'Run' }).click();
+  await expect(view.locator('.taskview__result')).toContainText('Maya here.');
+  await expect(view.locator('.taskview__log')).toContainText('Maya started');
+  await view.getByRole('button', { name: 'Close task' }).click();
+  await expect(board.getByRole('region', { name: 'Review' }).getByRole('button', { name: /Write the launch FAQ/ })).toBeVisible();
+
+  // the founder adds a task with an outward step: it parks on the task until the founder says yes
+  await board.getByLabel('New task').fill('Email the lead');
+  await board.getByLabel('New task').press('Enter');
+  await board.getByRole('region', { name: 'To do' }).getByRole('button', { name: /Email the lead/ }).click();
+  const mail = board.getByRole('dialog', { name: 'Email the lead' });
+  await mail.getByLabel('Task detail').fill('/tool send_email {"to":"lead@example.com","subject":"Hello","body":"Hi"}');
+  await mail.getByLabel('Task title').click();
+  await mail.getByLabel('Assignee').selectOption({ label: 'Maya' });
+  await mail.getByLabel('Repeat').selectOption('week');
+  await expect(mail.locator('.taskview__hint').last()).toContainText('Runs only while the app is open');
+  await mail.getByRole('button', { name: 'Run' }).click();
+  await expect(mail.getByRole('group', { name: 'Send this email?' })).toBeVisible();
+  await expect(board.locator('.board__badge')).toHaveText('1 needs you');
+  await mail.getByRole('group', { name: 'Send this email?' }).getByRole('button', { name: 'Send' }).click();
+  await expect(mail.locator('.taskview__log')).toContainText('✓ send_email lead@example.com');
+  await expect(board.locator('.board__badge')).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.locator('.react-flow__node-board').getByRole('region', { name: 'Review' }).getByRole('button')).toHaveCount(2);
 });

@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { resolve } from 'node:path';
 import { isHeaded, newMessageId, type ChatEvent, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
+import { createBoards } from './boards.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
 import { createBrowser, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { runTurn } from './loop.ts';
@@ -9,12 +10,14 @@ import { createMail, fakeMailHttp } from './mail.ts';
 import { buildMessages, colleagueIds, readableDocIds } from './prompt.ts';
 import { complete, fakeClient, promptSize, realClients } from './providers.ts';
 import { route } from './router.ts';
+import { createRuns, desktopNotify } from './runs.ts';
 import { readStatic } from './static.ts';
 import { createStore } from './store.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
 import { outwardTools } from './tools/outward.ts';
 import { projectTools } from './tools/project.ts';
+import { taskTools } from './tools/tasks.ts';
 import { teamTools, type Consult } from './tools/team.ts';
 import { browserSession, webTools } from './tools/web.ts';
 import { createUsage } from './usage.ts';
@@ -24,20 +27,24 @@ try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: only the
 
 const port = Number(process.env.STAGE_API_PORT ?? 7421);
 const fake = process.env.STAGE_FAKE_MODEL === '1';
+const clients = fake ? [fakeClient] : realClients();
+const busy = new Set<string>();
 const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
 const store = createStore(workspace);
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner) : createBrowser(realRunner(), process.env.STAGE_NO_READER === '1' ? null : jinaReader);
 const approvals = createApprovals();
+const boards = createBoards(workspace);
 
 // What one person's turn is built from: their readable docs, their own history, and the recent talk of wired colleagues.
-async function promptFor(stage: Stage, roomId: string, toolNames: string[]) {
+async function promptFor(stage: Stage, roomId: string, toolNames: string[], fresh = false) {
   const docs: Record<string, string> = {};
   for (const id of readableDocIds(stage, roomId)) docs[id] = await store.readDoc(id);
   const colleagues: Record<string, Awaited<ReturnType<typeof store.readChat>>> = {};
   for (const id of colleagueIds(stage, roomId)) colleagues[id] = await store.readChat(id);
-  return buildMessages(stage, roomId, docs, await store.readChat(roomId), toolNames, colleagues);
+  // A board task starts from a clean slate: the person, their documents and colleagues, not their chat.
+  return buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues);
 }
 
 // A consult: the question lands in the colleague's room under the asker's name, they answer once without tools, and both are kept there.
@@ -53,9 +60,9 @@ const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
   await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
   return reply.text;
 };
-const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult)];
-const clients = fake ? [fakeClient] : realClients();
-const busy = new Set<string>();
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards)];
+const runs = createRuns({ boards, store, tools, clients, usage, approvals, promptFor, busy, notify: fake ? () => {} : desktopNotify });
+setInterval(() => { void runs.tick().catch(() => {}); }, 30_000).unref();
 
 // Started by the desktop shell: leave when the shell does, even if it was killed.
 if (process.env.STAGE_EXIT_WITH_PARENT === '1') {
@@ -133,6 +140,24 @@ createServer(async (req, res) => {
       const answer = await body(req);
       const known = approvals.answer(asked, { ok: answer.ok === true, args: answer.args && typeof answer.args === 'object' ? answer.args : undefined });
       return json(res, known ? 200 : 404, known ? { ok: true } : { error: 'nothing is waiting under that id' });
+    }
+    const board = /^\/api\/boards\/([^/]+)(?:\/(events|tasks)(?:\/([^/]+)(?:\/(run|stop))?)?)?$/.exec(path);
+    if (board) {
+      const [, boardId, part, taskId, action] = board;
+      if (!(await store.loadStage()).cards?.some((card) => card.id === boardId && card.kind === 'board')) return json(res, 404, { error: 'unknown board' });
+      if (!part && req.method === 'GET') return json(res, 200, await boards.list(boardId));
+      if (part === 'events' && req.method === 'GET') {
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+        const tell = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+        tell({ tasks: await boards.list(boardId) });
+        res.on('close', boards.watch(boardId, tell));
+        return;
+      }
+      if (part === 'tasks' && !taskId && req.method === 'POST') return json(res, 200, await boards.add(boardId, await body(req)));
+      if (taskId && !action && req.method === 'PATCH') return json(res, 200, await boards.change(boardId, taskId, await body(req)));
+      if (taskId && !action && req.method === 'DELETE') { runs.stop(taskId); await boards.remove(boardId, taskId); return json(res, 200, { ok: true }); }
+      if (taskId && action === 'run' && req.method === 'POST') { await runs.start(boardId, taskId); return json(res, 200, { ok: true }); }
+      if (taskId && action === 'stop' && req.method === 'POST') { runs.stop(taskId); return json(res, 200, { ok: true }); }
     }
     const watched = /^\/api\/browsers\/([^/]+)$/.exec(path)?.[1];
     if (watched && req.method === 'GET') {
