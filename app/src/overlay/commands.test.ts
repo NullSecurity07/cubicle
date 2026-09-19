@@ -27,6 +27,8 @@ describe('command bar', () => {
     expect(first('add browser').action).toEqual({ do: 'add', kind: 'browser' });
     expect(first('add a picture').action).toEqual({ do: 'add', kind: 'image' });
     expect(first('add an image studio').action).toEqual({ do: 'add', kind: 'imagegen' });
+    expect(first('add a voice studio').action).toEqual({ do: 'add', kind: 'voicegen' });
+    expect(first('add text to speech').action).toEqual({ do: 'add', kind: 'voicegen' });
   });
 
   it('asks a person by name, in the ways a founder would type it', () => {

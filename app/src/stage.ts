@@ -12,7 +12,8 @@ export type NoteNodeType = Node<{ text: string; color?: string }, 'note'>;
 export type ImageNodeType = Node<{ path: string }, 'image'>;
 export type LinkNodeType = Node<{ url: string; title?: string }, 'link'>;
 export type ImageGenNodeType = Node<{ prompt?: string; shape?: Shape }, 'imagegen'>;
-export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | NoteNodeType | ImageNodeType | LinkNodeType | ImageGenNodeType;
+export type VoiceGenNodeType = Node<{ text?: string; voice?: string }, 'voicegen'>;
+export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | NoteNodeType | ImageNodeType | LinkNodeType | ImageGenNodeType | VoiceGenNodeType;
 export type StageNode = RoomNodeType | DocNodeType | CardNodeType;
 
 export const HANDLE_IDS = ['l', 'r', 't', 'b'] as const;

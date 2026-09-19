@@ -1,3 +1,8 @@
+# The voice model's own package asks for the embedding runtime's version 3; it runs unchanged on the 4 recall already
+# has, and one copy of a 500 MB runtime is enough. pnpm 11 reads this here, not from package.json.
+overrides:
+  "@huggingface/transformers": "^4.3.0"
+
 allowBuilds:
   agent-browser: false
   esbuild: true

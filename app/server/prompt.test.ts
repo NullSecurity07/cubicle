@@ -73,6 +73,15 @@ describe('prompt', () => {
     expect(buildMessages(studio, 'build', docs, [], ['generate_image'])[0].content).not.toContain('image studio');
   });
 
+  it('tells only a wired person that a voice studio is theirs to speak in', () => {
+    const studio: Stage = { ...stage, cards: [{ id: 'studio-2', kind: 'voicegen', x: 0, y: 0, w: 1, h: 1 }],
+      wires: [...stage.wires, { id: 'a', from: 'studio-2', fromHandle: 'r', to: 'marketing', toHandle: 'l' }] };
+    const system = buildMessages(studio, 'marketing', docs, [], ['generate_voice'])[0].content;
+    expect(system).toContain('- A voice studio.');
+    expect(system).toContain('generate_voice');
+    expect(buildMessages(studio, 'build', docs, [], ['generate_voice'])[0].content).not.toContain('voice studio');
+  });
+
   it('gives every person the pinned docs, wired or not, without repeating one that is also wired', () => {
     const pinned: Stage = { ...stage, docs: [...stage.docs, { id: 'brief', title: 'Company brief', pinned: true, x: 0, y: 0, w: 1, h: 1 }, { ...stage.docs[0], pinned: true }] };
     expect(readableDocIds(pinned, 'build').sort()).toEqual(['brand-doc', 'brief']);

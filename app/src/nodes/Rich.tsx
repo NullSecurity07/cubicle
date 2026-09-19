@@ -3,6 +3,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 const VIDEO = /\.(mp4|webm|mov)(\?.*)?$/i;
+const AUDIO = /\.(wav|mp3|ogg|m4a)(\?.*)?$/i;
 
 // A diagram written as Mermaid text. The library is large, so it loads only when a reply first contains one.
 function Diagram({ source }: { source: string }) {
@@ -52,10 +53,12 @@ export const Words = memo(function Words({ text }: { text: string }) {
     <Markdown
       remarkPlugins={[remarkGfm]}
       components={{
-        a: ({ node: _node, href, children, ...props }) => (href && VIDEO.test(href)
-          ? <video className="md__media" src={href} controls preload="metadata" />
+        a: ({ node: _node, href, children, ...props }) => (href && VIDEO.test(href) ? <video className="md__media" src={href} controls preload="metadata" />
+          : href && AUDIO.test(href) ? <audio className="md__media md__media--sound" src={href} controls preload="metadata" />
           : <a {...props} href={href} target="_blank" rel="noreferrer">{children}</a>),
-        img: ({ node: _node, src, alt }) => (typeof src === 'string' && VIDEO.test(src) ? <video className="md__media" src={src} controls preload="metadata" /> : <img className="md__media" src={typeof src === 'string' ? src : undefined} alt={alt ?? ''} loading="lazy" />),
+        img: ({ node: _node, src, alt }) => (typeof src === 'string' && VIDEO.test(src) ? <video className="md__media" src={src} controls preload="metadata" />
+          : typeof src === 'string' && AUDIO.test(src) ? <audio className="md__media md__media--sound" src={src} controls preload="metadata" />
+          : <img className="md__media" src={typeof src === 'string' ? src : undefined} alt={alt ?? ''} loading="lazy" />),
         code: ({ node: _node, className, children }) => <Code className={className}>{children}</Code>,
         pre: ({ node: _node, children }) => {
           const only = Array.isArray(children) ? children[0] : children;

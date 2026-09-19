@@ -315,6 +315,7 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .ask .ask__attach { background: transparent; color: var(--muted); padding: 5px; }
 .ask .ask__attach:hover { color: var(--text); }
 .md__media { display: block; max-width: 100%; max-height: 320px; border-radius: 9px; margin: 4px 0 8px; }
+.md__media--sound { width: 100%; height: 36px; }
 .diagram { margin: 4px 0 8px; padding: 10px; border-radius: 9px; background: rgba(0, 0, 0, 0.3); overflow-x: auto; }
 .diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .artifact { margin: 4px 0 8px; border: 1px solid var(--card-border); border-radius: 10px; overflow: hidden; }
@@ -355,6 +356,15 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .studio__result.is-making::after { content: ''; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.11) 50%, transparent 62%); background-size: 260% 100%; animation: shimmer 1.6s linear infinite; }
 @keyframes shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
 .studio__doing { position: absolute; margin: 0; padding: 0 14px; text-align: center; font-size: 12px; color: var(--muted); }
+/* A recording has nothing to look at: the player and the words that were said sit in the middle instead of a picture. */
+.studio__result--sound { flex: none; min-height: 96px; padding: 14px 12px; background: rgba(0, 0, 0, 0.2); }
+.studio__sound { display: flex; flex-direction: column; gap: 9px; width: 100%; }
+.studio__sound audio { width: 100%; height: 34px; }
+.studio__sound p { margin: 0; max-height: 52px; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.studio__takes { flex: none; display: flex; flex-direction: column; gap: 3px; margin: 8px 10px 0; max-height: 84px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.studio__takes button { flex: none; border: 0; border-left: 2px solid transparent; border-radius: 0 6px 6px 0; padding: 4px 8px; background: rgba(255, 255, 255, 0.04); color: var(--muted); font: inherit; font-size: 11.5px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.studio__takes button:hover { background: rgba(255, 255, 255, 0.08); }
+.studio__takes button.is-shown { border-left-color: var(--accent); color: var(--text); }
 .studio__strip { flex: none; display: flex; gap: 6px; margin: 8px 10px 0; padding-bottom: 2px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
 .studio__strip button { flex: none; width: 42px; height: 42px; padding: 0; border: 1.5px solid transparent; border-radius: 8px; background: rgba(0, 0, 0, 0.3); overflow: hidden; cursor: pointer; }
 .studio__strip button.is-shown { border-color: rgba(78, 140, 255, 0.8); }

@@ -583,6 +583,38 @@ test('an image studio: the founder draws, a wired person draws, and the card kee
   await expect(page.locator('.react-flow__node-imagegen').getByLabel('What to draw')).toHaveValue('a quiet desk at dawn');
 });
 
+test('a voice studio: the founder picks a voice, a wired person speaks, and both recordings stay on the card', async ({ page }) => {
+  await tidy(page);
+  await addCard(page, 'Add voice studio');
+  const card = page.locator('.react-flow__node-voicegen');
+  await expect(card).toContainText('Write what should be said');
+  const id = (await card.getAttribute('data-id'))!;
+
+  await page.waitForTimeout(600);
+  await wire(page, 'marketing', id);
+  await expect(await ask(page, 'marketing', 'what can you make')).toContainText('Studios: voice.');
+
+  // The founder's own recording: a player on the card, and a file to download.
+  await card.getByLabel('What to say').fill('Thanks for stopping by.');
+  await card.getByLabel('Voice').selectOption('bf_emma');
+  await card.getByRole('button', { name: 'Make' }).click();
+  await expect(card.locator('.studio__sound audio')).toBeVisible();
+  await expect(card.getByRole('link', { name: 'Download' })).toHaveAttribute('href', /\/api\/files\/media\/.+\.wav$/);
+  await expect.poll(async () => (await (await page.request.get(`/api/media/${id}`)).json()).results.length).toBe(1);
+
+  // The person speaks there too: the recording plays in their reply and lands on the same card.
+  await send(page, 'marketing', '/tool generate_voice {"text":"Here is what we built this week."}');
+  const reply = node(page, 'marketing').locator('.msg--assistant').last();
+  await expect(reply.locator('.chip--ok summary').last()).toHaveText('Said "Here is what we built this week."');
+  await expect(reply.locator('audio.md__media')).toBeVisible();
+  await expect(card.locator('.studio__takes button')).toHaveCount(2);
+
+  await page.reload();
+  await expect(page.locator('.react-flow__node-voicegen .studio__sound audio')).toBeVisible();
+  await expect(page.locator('.react-flow__node-voicegen').getByLabel('What to say')).toHaveValue('Thanks for stopping by.');
+  await expect(page.locator('.react-flow__node-voicegen').getByLabel('Voice')).toHaveValue('bf_emma');
+});
+
 test('the api answers the app\'s own page and refuses everyone else', async ({ browser }) => {
   // No script token here: this is what the founder's window and any other web page really send.
   const context = await browser.newContext({ baseURL: 'http://localhost:7430', extraHTTPHeaders: {} });

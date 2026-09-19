@@ -15,6 +15,7 @@ import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
 import { fakeImages, imageMakers } from './media/image.ts';
 import { createMedia } from './media/jobs.ts';
+import { fakeVoices, voiceMakers, VOICES } from './media/voice.ts';
 import { createMemory } from './memory.ts';
 import { missionsOf } from './missions.ts';
 import { TEXT_FILE, gatherPieces } from './gather.ts';
@@ -68,7 +69,13 @@ const attention = createAttention(workspace);
 attention.source(boardAttention(store, boards));
 boards.onChange(() => { void attention.refresh(); });
 // The studio cards: one job per card, the files in the shared files folder, the rest beside the stage.
-const media = createMedia({ dir: workspace, store, makers: { imagegen: fake ? [fakeImages] : imageMakers() } });
+const media = createMedia({
+  dir: workspace,
+  store,
+  makers: fake
+    ? { imagegen: [fakeImages], voicegen: [fakeVoices] }
+    : { imagegen: imageMakers(), voicegen: voiceMakers(resolve(root, 'app/.cache/voice')) },
+});
 const decisions = createDecisions(workspace);
 attention.source(decisionAttention(decisions));
 decisions.onChange(() => { void attention.refresh(); });
@@ -302,6 +309,8 @@ createServer(async (req, res) => {
       res.on('close', media.watch((event) => res.write(`data: ${JSON.stringify(event)}\n\n`)));
       return;
     }
+    // The voices a voice studio offers, named for the founder. A fixed list: asking the model would fetch 310 MB first.
+    if (path === '/api/media/voices' && req.method === 'GET') return json(res, 200, { voices: VOICES });
     const studio = /^\/api\/media\/([^/]+)(?:\/(make|stop))?$/.exec(path);
     if (studio) {
       const [, cardId, action] = studio;

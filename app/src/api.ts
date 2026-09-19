@@ -52,6 +52,7 @@ export function watchBoard(boardId: string, onEvent: (event: BoardEvent) => void
 export const getMedia = (id: string) => request<Media & { hint: string | null }>(`/api/media/${id}`);
 export const makeMedia = (id: string, ask: { prompt: string } & Record<string, unknown>) => request<MediaResult>(`/api/media/${id}/make`, send('POST', ask));
 export const stopMedia = (id: string) => request(`/api/media/${id}/stop`, send('POST'));
+export const getVoices = () => request<{ voices: { id: string; name: string }[] }>('/api/media/voices');
 // One feed for every studio on the stage: a line while something is being made, a nudge after every change.
 export function watchMedia(onEvent: (event: MediaEvent) => void) {
   const source = new EventSource('/api/media/events');
