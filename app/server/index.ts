@@ -13,6 +13,9 @@ import { createBrowser, dnsResolve, fakeRunner, jinaReader, realRunner } from '.
 import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
+import type { Clips } from './media/clips.ts';
+import { probe } from './media/ff.ts';
+import { thumbOf } from './media/footage.ts';
 import { fakeImages, imageMakers } from './media/image.ts';
 import { createMedia } from './media/jobs.ts';
 import { fakeVideos, hyperframesVideos } from './media/video.ts';
@@ -80,13 +83,31 @@ const storyboard = async (prompt: string) => {
   usage.record(reply.client.name, reply.usage, reply.quota);
   return reply.text;
 };
+// The moving-picture backend is built elsewhere and lands as `media/spaces.ts`. Asked for by name at start so that
+// this half of the studio runs with or without it; without it, every clip and presenter scene falls back gracefully.
+const clips = await (async () => {
+  const where = './media/spaces.ts';
+  const made = await import(where).then((module: { createClips?: (env?: NodeJS.ProcessEnv) => Clips }) => module.createClips?.(), () => undefined);
+  if (made) console.log('AI clips:', made.ready() ?? 'ready');
+  return made;
+})();
 const media = createMedia({
   dir: workspace,
   store,
   makers: {
     imagegen: pictures,
     voicegen: voices,
-    videogen: fake ? [fakeVideos] : [hyperframesVideos({ dir: workspace, images: pictures[0], voices: voices[0], think: storyboard })],
+    videogen: fake ? [fakeVideos] : [hyperframesVideos({
+      dir: workspace, images: pictures[0], voices: voices[0], think: storyboard, clips,
+      forbidden: [workspace, root],
+      stage: () => store.loadStage(),
+      // `media` is read inside these, never at the moment they are made, so the studio can ask the card that asked it.
+      assets: (cardId) => media.assetsOf(cardId),
+      fileOf: (path) => store.pathOf(path),
+      readDoc: (id) => store.readDoc(id),
+      readFile: (path) => store.readFileBytes(path),
+      browser: { shots: (raw, want, signal) => browser.shots(raw, want, signal), where: (session) => browser.where(session) },
+    })],
   },
 });
 const decisions = createDecisions(workspace);
@@ -173,6 +194,10 @@ async function body(req: IncomingMessage): Promise<any> {
 const IMAGE_FILE = /\.(png|jpe?g|webp|gif)$/i;
 const TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml', mp4: 'video/mp4', webm: 'video/webm', wav: 'audio/wav', mp3: 'audio/mpeg', ogg: 'audio/ogg', m4a: 'audio/mp4', pdf: 'application/pdf', csv: 'text/csv', json: 'application/json', md: 'text/markdown' };
 const typeOf = (name: string) => TYPES[name.split('.').pop()?.toLowerCase() ?? ''] ?? (TEXT_FILE.test(name) ? 'text/plain' : 'application/octet-stream');
+
+// A chat attachment is read into memory, so it stays small; a piece of footage is written straight to disk as it
+// arrives, so it can be as big as a phone makes them.
+const UPLOAD_LIMIT = 300_000_000;
 
 async function raw(req: IncomingMessage, limit: number): Promise<Buffer> {
   const chunks: Buffer[] = []; let size = 0;
@@ -324,12 +349,27 @@ createServer(async (req, res) => {
     }
     // The voices a voice studio offers, named for the founder. A fixed list: asking the model would fetch 310 MB first.
     if (path === '/api/media/voices' && req.method === 'GET') return json(res, 200, { voices: VOICES });
-    const studio = /^\/api\/media\/([^/]+)(?:\/(make|stop))?$/.exec(path);
+    const studio = /^\/api\/media\/([^/]+)(?:\/(make|stop|assets)(?:\/([A-Za-z0-9 _-]{1,40}))?)?$/.exec(path);
     if (studio) {
-      const [, cardId, action] = studio;
+      const [, cardId, action, assetName] = studio;
       const card = (await store.loadStage()).cards?.find((one) => one.id === cardId && (MEDIA_KINDS as readonly string[]).includes(one.kind));
       if (!card) return json(res, 404, { error: 'unknown studio' });
       if (!action && req.method === 'GET') return json(res, 200, { ...(await media.read(cardId)), hint: media.ready(card.kind as MediaKind) });
+      // The founder's own footage, dropped on a studio card. A video is far bigger than anything else this app takes,
+      // so it is written to disk as it arrives rather than held in memory, and only then looked at.
+      if (action === 'assets' && !assetName && req.method === 'POST') {
+        const name = new URL(req.url ?? '/', 'http://localhost').searchParams.get('name') ?? 'clip.mp4';
+        const { path: saved, bytes } = await store.streamUpload(name, req, UPLOAD_LIMIT);
+        const track = await probe(store.pathOf(saved)).catch(() => null);
+        if (!track) { return json(res, 400, { error: 'that file could not be read as a video, a picture or a sound' }); }
+        let thumb: string | undefined;
+        if (track.kind === 'video') {
+          const into = `media/thumb-${Date.now().toString(36)}.jpg`;
+          await thumbOf(store.pathOf(saved), store.pathOf(into), Math.min(1, track.seconds / 3)).then(() => { thumb = into; }, () => {});
+        } else if (track.kind === 'image') thumb = saved;
+        return json(res, 200, await media.addAsset(cardId, { file: name, path: saved, kind: track.kind, bytes, seconds: track.seconds || undefined, thumb }));
+      }
+      if (action === 'assets' && assetName && req.method === 'DELETE') { await media.removeAsset(cardId, assetName); return json(res, 200, { ok: true }); }
       if (action === 'make' && req.method === 'POST') {
         const asked = await body(req);
         const prompt = String(asked.prompt ?? '').trim();

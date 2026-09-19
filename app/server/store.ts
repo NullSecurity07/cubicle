@@ -1,5 +1,8 @@
-import { copyFile, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import type { Readable } from 'node:stream';
 import { newMessageId, seedDocs, seedStage, type ChatMessage, type Stage } from '../shared/model.ts';
 import type { Memory } from './memory.ts';
 
@@ -135,6 +138,30 @@ export function createStore(dir: string) {
       await writeFile(full, data);
       return path;
     },
+    // A file too big to hold in memory — a piece of the founder's own footage — written straight to disk as it
+    // arrives. Nothing is buffered, and a file that runs past the limit is stopped and thrown away half-written.
+    async streamUpload(name: string, body: Readable, limit: number): Promise<{ path: string; bytes: number }> {
+      const clean = name.normalize('NFKD').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[.-]+/, '').slice(-60) || 'file';
+      const path = `uploads/${Date.now().toString(36)}-${clean}`;
+      const full = filePath(path);
+      await mkdir(dirname(full), { recursive: true });
+      let bytes = 0;
+      try {
+        await pipeline(async function* () {
+          for await (const chunk of body) {
+            bytes += (chunk as Buffer).length;
+            if (bytes > limit) throw new Error(`that file is too large (the limit is ${Math.round(limit / 1_000_000)} MB)`);
+            yield chunk as Buffer;
+          }
+        }, createWriteStream(full));
+      } catch (error) {
+        await rm(full, { force: true }).catch(() => {});
+        throw error;
+      }
+      return { path, bytes };
+    },
+    // Where a shared file really is on disk, for the one thing that cannot take bytes: handing a path to ffmpeg.
+    pathOf: (name: string) => filePath(name),
     // What a studio made. Bytes, under a folder of the shared files, so the same route serves it to the founder and to a chat.
     async saveFileBytes(name: string, data: Buffer): Promise<string> {
       const full = filePath(name);

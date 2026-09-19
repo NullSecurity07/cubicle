@@ -31,6 +31,16 @@ export function webUrl(raw: string): string {
   return url.href;
 }
 
+// The one address this app will open on this machine: the product the founder is building, typed by the founder on
+// their own Video studio card. A product in the middle of being built lives on localhost, so a screenshot of it has to
+// be allowed — but only here, only for a founder-typed address, and never down any path a person can reach.
+export function ownUrl(raw: string): string {
+  let url: URL;
+  try { url = new URL(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `http://${raw}`); } catch { throw new Error(`not a web address: ${raw}`); }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(`only http and https pages can be opened, not ${url.protocol}`);
+  return url.href;
+}
+
 // A public name can still point at this machine. Asked before Chrome opens an address; a name that cannot be resolved
 // is left for Chrome to fail on.
 export type Resolve = (host: string) => Promise<string[]>;
@@ -193,6 +203,28 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       })), (index) => urls[index]);
       return blocks.join('\n\n---\n\n');
     },
+    // A product's own screens, as pictures, for a film to be cut from. One session, one viewport, the page opened
+    // once and photographed at each scroll position asked for; a shot that did not land is simply left out.
+    // `own` means the address is the founder's own product on this machine, which only a Video studio card may say.
+    async shots(raw: string, want: { width: number; height: number; at: number[]; own?: boolean; file: (index: number) => string }, signal?: AbortSignal): Promise<string[]> {
+      const address = want.own ? ownUrl(raw) : await publicUrl(raw, resolveHost);
+      return scratch(async (session) => {
+        const taken: string[] = [];
+        await run(session, ['set', 'viewport', String(want.width), String(want.height)]);
+        await run(session, ['open', address]);
+        // A page built in the browser is still empty the moment it loads; give it a breath, and its fonts a chance.
+        await run(session, ['wait', '2200']).catch(() => {});
+        for (const [index, down] of want.at.entries()) {
+          if (signal?.aborted) break;
+          await run(session, ['eval', `window.scrollTo(0, ${Math.max(0, Math.round(down))})`]).catch(() => {});
+          await run(session, ['wait', '700']).catch(() => {});
+          const file = want.file(index);
+          const done = await run(session, ['screenshot', file]).then(() => true, () => false);
+          if (done && existsSync(file)) taken.push(file);
+        }
+        return taken;
+      });
+    },
     // One step in a browser card's lasting session, answered with the page as a compact tree of refs.
     async act(session: string, action: string, input: { url?: string; ref?: string; text?: string; key?: string; direction?: string }, launch?: Launch): Promise<string> {
       const go: Runner = (name, args) => run(name, args, launch);
@@ -244,6 +276,8 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       if (!port) throw new Error('the browser did not offer a live view');
       return { port, url: (await run(session, ['get', 'url']).catch(() => '')).trim() };
     },
+    // Where a card's browser is sitting right now, without opening anything: nothing when it is not running.
+    where: (session: string) => run(session, ['get', 'url']).then((printed) => printed.trim() || null, () => null),
     close: (session: string) => run(session, ['close']).then(() => {}, () => {}),
   };
 }
