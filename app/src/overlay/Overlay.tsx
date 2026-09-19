@@ -1,7 +1,12 @@
 import { useReactFlow } from '@xyflow/react';
 import { useEffect, useRef } from 'react';
+import type React from 'react';
 import { createPortal } from 'react-dom';
+import { NeedsPanel } from './NeedsPanel';
 import { overlay, setFocusSheet, useLayers } from './store';
+
+// The founder's views, by layer name.
+const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel };
 
 const typing = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -13,6 +18,8 @@ export function Overlay() {
   const { getNodes, setNodes } = useReactFlow();
   const top = useRef<HTMLDivElement>(null);
   const focused = layers.some((layer) => layer.kind === 'focus');
+  const panel = layers.at(-1)?.kind === 'panel' ? (layers.at(-1) as { name: string }).name : null;
+  const View = panel ? PANELS[panel] : null;
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -42,7 +49,8 @@ export function Overlay() {
   return createPortal(
     <div className={`overlay${layers.length ? ' is-open' : ''}`} ref={top}>
       <div className="overlay__shade" onClick={() => overlay.back()} />
-      <div className="focus__sheet" ref={setFocusSheet} hidden={!focused} role="dialog" aria-modal="true" aria-label="Focused card" />
+      <div className="focus__sheet" ref={setFocusSheet} hidden={!focused || !!View} role="dialog" aria-modal="true" aria-label="Focused card" />
+      {View && <View />}
     </div>,
     document.body,
   );

@@ -25,6 +25,13 @@ export type Task = {
 // What a board streams to its card: the tasks after every change, and stage effects from runs that the client must mirror.
 export type BoardEvent = { tasks: Task[] } | { effect: ToolEffect; roomId: string };
 
+// One thing waiting for the founder. `lapsed`: the approval belonged to a turn that ended with the app; it can only be asked again.
+export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'proposed-decision' | 'run-failed' | 'missed' | 'review-due';
+export type Attention = {
+  id: string; kind: AttentionKind; title: string; detail?: string; at: number; who?: string;
+  roomId?: string; cardId?: string; taskId?: string; decisionId?: string; event?: ToolEvent; lapsed?: boolean;
+};
+
 export const isHeaded = (card?: Card) => card?.kind === 'browser' && !!card.headed;
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };

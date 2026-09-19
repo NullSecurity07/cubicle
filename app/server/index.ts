@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { resolve } from 'node:path';
 import { isHeaded, newMessageId, type Attachment, type ChatEvent, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
+import { boardAttention, createAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
 import { guard } from './guard.ts';
@@ -51,6 +52,10 @@ const memory = createMemory(store, async (messages) => {
   return reply.text;
 });
 const boards = createBoards(workspace);
+// One list of everything that waits for the founder; boards report into it, approvals are held in it while they wait.
+const attention = createAttention(workspace);
+attention.source(boardAttention(store, boards));
+boards.onChange(() => { void attention.refresh(); });
 
 // What one person's turn is built from: their readable docs, their own history, and the recent talk of wired colleagues.
 async function promptFor(stage: Stage, roomId: string, toolNames: string[], fresh = false) {
@@ -95,7 +100,7 @@ const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
   return reply.text;
 };
 const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...memoryTools(memory)];
-const runs = createRuns({ boards, store, tools, clients, usage, approvals, promptFor, busy, notify: fake ? () => {} : desktopNotify });
+const runs = createRuns({ boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify: fake ? () => {} : desktopNotify });
 setInterval(() => { void runs.tick().catch(() => {}); }, 30_000).unref();
 
 // Started by the desktop shell: leave when the shell does, even if it was killed.
@@ -166,7 +171,10 @@ async function chat(roomId: string, text: string, res: ServerResponse, extra: { 
     if (notice) send({ notice });
     const reply = await runTurn({
       messages, tools, clients: order, usage, signal: stop.signal,
-      approve: (event, signal) => approvals.ask(event.id, signal),
+      approve: async (event, signal) => {
+        await attention.raise({ id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event });
+        try { return await approvals.ask(event.id, signal); } finally { await attention.clear(`approval:${event.id}`); }
+      },
       context: { stage, roomId, store, granted: new Map() },
       events: { token: (token) => send({ token }), tool: (tool) => send({ tool }), notice: (text) => send({ notice: text }) },
     });
@@ -200,6 +208,7 @@ createServer(async (req, res) => {
       await store.saveStage(next);
       // A browser card that left the stage takes its Chrome session with it.
       for (const card of before.cards ?? []) if (!next.cards?.some((kept) => kept.id === card.id)) void browser.close(browserSession(card.id));
+      if ((before.cards ?? []).length !== (next.cards ?? []).length) void attention.refresh();
       return json(res, 200, { ok: true });
     }
     const asked = /^\/api\/approvals\/([\w.:-]{1,120})$/.exec(path)?.[1];
@@ -208,6 +217,16 @@ createServer(async (req, res) => {
       const known = approvals.answer(asked, { ok: answer.ok === true, args: answer.args && typeof answer.args === 'object' ? answer.args : undefined });
       return json(res, known ? 200 : 404, known ? { ok: true } : { error: 'nothing is waiting under that id' });
     }
+    if (path === '/api/attention' && req.method === 'GET') return json(res, 200, await attention.list());
+    if (path === '/api/attention/events' && req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      const tell = (list: unknown) => res.write(`data: ${JSON.stringify(list)}\n\n`);
+      tell(await attention.list());
+      res.on('close', attention.watch(tell));
+      return;
+    }
+    const dismissed = /^\/api\/attention\/([\w.:-]{1,160})\/dismiss$/.exec(path)?.[1];
+    if (dismissed && req.method === 'POST') { await attention.dismiss(dismissed); return json(res, 200, { ok: true }); }
     const board = /^\/api\/boards\/([^/]+)(?:\/(events|tasks)(?:\/([^/]+)(?:\/(run|stop))?)?)?$/.exec(path);
     if (board) {
       const [, boardId, part, taskId, action] = board;

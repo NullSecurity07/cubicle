@@ -34,6 +34,7 @@ export function createBoards(dir: string, now: () => number = Date.now) {
   const path = (boardId: string) => join(dir, 'boards', `${safe(boardId)}.json`);
   const cache = new Map<string, Task[]>();
   const watchers = new Map<string, Set<(event: BoardEvent) => void>>();
+  const listeners = new Set<() => void>();
   let queue: Promise<unknown> = Promise.resolve();
 
   async function load(boardId: string): Promise<Task[]> {
@@ -50,11 +51,14 @@ export function createBoards(dir: string, now: () => number = Date.now) {
     const text = JSON.stringify(cache.get(boardId) ?? [], null, 2);
     queue = queue.then(async () => { await mkdir(join(dir, 'boards'), { recursive: true }); await writeFile(`${path(boardId)}.tmp`, text); await rename(`${path(boardId)}.tmp`, path(boardId)); }).catch(() => {});
     for (const tell of watchers.get(boardId) ?? []) tell({ tasks: cache.get(boardId) ?? [] });
+    for (const tell of listeners) tell();
   }
 
   return {
     settled: () => queue,
     list: load,
+    // Any change on any board, for whoever keeps a view across all of them.
+    onChange(tell: () => void) { listeners.add(tell); return () => { listeners.delete(tell); }; },
     async add(boardId: string, input: { title: string; detail?: string; column?: Column; proposedBy?: string }): Promise<Task> {
       const title = input.title.trim().slice(0, 200);
       if (!title) throw new Error('a task needs a title');

@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import type { ModelInfo } from '../shared/model';
 import { getModels } from './api';
 import { listen } from './bus';
+import { useAttention } from './overlay/attention';
+import { overlay } from './overlay/store';
 import { freeSpot } from './place';
 import type { StageNode } from './stage';
 import { CARD } from './stage';
@@ -66,6 +68,18 @@ const MORE: [kind: keyof typeof NEW, label: string, hint: string][] = [
   ['board', 'Task board', 'People propose, you run'],
 ];
 
+// The bell: how many things wait for the founder, in the one colour that means "needs you". The window title carries the count too.
+function Needs() {
+  const count = useAttention().length;
+  useEffect(() => { document.title = count ? `(${count}) Stage` : 'Stage'; }, [count]);
+  return (
+    <button type="button" className={`dock__needs${count ? ' is-waiting' : ''}`} aria-label={count ? `Needs you: ${count} waiting` : 'Needs you: nothing waiting'} title="Needs you" onClick={() => overlay.open({ kind: 'panel', name: 'needs' })}>
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.200 13.500V9a4.800 4.800 0 0 1 9.600 0v4.500l1.400 1.800H3.800zM8.300 17.300a1.900 1.900 0 0 0 3.400 0" /></svg>
+      {count > 0 && <b aria-hidden="true">{count > 9 ? '9+' : count}</b>}
+    </button>
+  );
+}
+
 // The only chrome on the stage: add a person, add a doc, and today's model usage. New cards land at the centre of the view.
 export function Dock() {
   const { getNodes, setNodes, screenToFlowPosition, setCenter, getZoom } = useReactFlow<StageNode>();
@@ -102,6 +116,8 @@ export function Dock() {
           </div>
         )}
       </div>
+      <span className="dock__gap" aria-hidden="true" />
+      <Needs />
       <Quota />
     </Panel>
   );

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import type { Stage, ToolEvent } from '../shared/model.ts';
 import type { createApprovals } from './approvals.ts';
+import type { AttentionBook } from './attention.ts';
 import type { Boards } from './boards.ts';
 import { nextDue } from './boards.ts';
 import { runTurn } from './loop.ts';
@@ -24,10 +25,10 @@ const line = (event: ToolEvent) => `${event.ok ? '✓' : '✗'} ${event.name} ${
 // Background work on a task: the same turn a chat runs, started by the founder (the Run button or a repeat the founder set),
 // written into the task instead of a conversation. An outward step parks the run in "waiting" until the founder answers on the board.
 export function createRuns(deps: {
-  boards: Boards; store: Store; tools: Tool[]; clients: ModelClient[]; usage: UsageBook; approvals: ReturnType<typeof createApprovals>;
+  boards: Boards; store: Store; tools: Tool[]; clients: ModelClient[]; usage: UsageBook; approvals: ReturnType<typeof createApprovals>; attention?: AttentionBook;
   promptFor: (stage: Stage, roomId: string, toolNames: string[], fresh?: boolean) => Promise<ModelMessage[]>; busy: Set<string>; notify: Notify;
 }) {
-  const { boards, store, tools, clients, usage, approvals, promptFor, busy, notify } = deps;
+  const { boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify } = deps;
   const stops = new Map<string, AbortController>();
 
   async function start(boardId: string, taskId: string): Promise<void> {
@@ -64,7 +65,8 @@ export function createRuns(deps: {
           approve: async (event, signal) => {
             await boards.update(boardId, taskId, (one) => { one.run!.state = 'waiting'; one.run!.approval = event; });
             notify(`${room.name} needs your OK`, `${task.title}: ${event.question ?? event.name.replace(/_/g, ' ')}`);
-            const answer = await approvals.ask(event.id, signal);
+            await attention?.raise({ id: `approval:${event.id}`, kind: 'run-approval', title: event.question ?? event.name.replace(/_/g, ' '), detail: task.title, at: Date.now(), roomId: room.id, who: room.name, cardId: boardId, taskId, event });
+            const answer = await approvals.ask(event.id, signal).finally(() => attention?.clear(`approval:${event.id}`));
             await boards.update(boardId, taskId, (one) => { one.run!.state = 'running'; one.run!.approval = undefined; });
             return answer;
           },

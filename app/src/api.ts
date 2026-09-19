@@ -1,4 +1,4 @@
-import type { Attachment, BoardEvent, ChatEvent, ChatMessage, ModelInfo, Stage, Task } from '../shared/model';
+import type { Attachment, Attention, BoardEvent, ChatEvent, ChatMessage, ModelInfo, Stage, Task } from '../shared/model';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -52,3 +52,11 @@ export const deleteMessage = (roomId: string, messageId: string) => request<Chat
 export const uploadFile = (file: File) => request<Attachment>(`/api/files?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
 export const fileUrl = (path: string) => `/api/files/${path.split('/').map(encodeURIComponent).join('/')}`;
 export const refreshLink = (id: string) => request<{ title: string; preview: string }>(`/api/links/${id}`, { method: 'POST' });
+
+// Everything that waits for the founder, pushed whole after every change.
+export function watchAttention(onList: (list: Attention[]) => void) {
+  const source = new EventSource('/api/attention/events');
+  source.onmessage = (message) => onList(JSON.parse(message.data) as Attention[]);
+  return () => source.close();
+}
+export const dismissAttention = (id: string) => request(`/api/attention/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });

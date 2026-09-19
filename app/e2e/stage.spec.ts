@@ -622,3 +622,50 @@ test('focus: a card fills the window and comes back with everything it held', as
   await expect(doc.locator('textarea')).toHaveValue('Focused writing.');
   await expect.poll(async () => (await (await page.request.get('/api/docs/brand-doc')).json()).text).toBe('Focused writing.');
 });
+
+test('needs you: one list of what waits for the founder, answered in place', async ({ page }) => {
+  await tidy(page);
+  const bell = page.getByRole('button', { name: /^Needs you/ });
+  await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+
+  // An email waits in Maya's room: the bell counts it, the window title carries it, and it can be answered from the list.
+  await send(page, 'marketing', '/tool send_email {"to":"lead@example.com","subject":"From the list","body":"Hi"}');
+  await expect(bell).toHaveAccessibleName('Needs you: 1 waiting');
+  await expect(page).toHaveTitle('(1) Stage');
+  await bell.click();
+  const panel = page.getByRole('dialog', { name: 'Needs you' });
+  await expect(panel).toContainText('Maya needs your OK');
+  await panel.getByLabel('Subject').fill('Edited in the list');
+  await panel.getByRole('button', { name: 'Send' }).click();
+  await expect(panel).toContainText('Nothing is waiting for you.');
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+  const chip = node(page, 'marketing').locator('.chip--ok').last();
+  await chip.locator('summary').click();
+  await expect(chip.locator('pre')).toContainText('Edited in the list');
+  await expect(page).toHaveTitle('Stage');
+
+  // A proposal on a board shows up too; accepting it there moves the task and clears the entry.
+  await addCard(page, 'Add task board');
+  const board = page.locator('.react-flow__node-board');
+  const id = (await board.getAttribute('data-id'))!;
+  await page.waitForTimeout(600);
+  await wire(page, 'marketing', id);
+  await expect(node(page, 'marketing').locator('.status--idle')).toBeVisible();
+  await send(page, 'marketing', '/tool propose_task {"title":"Plan the webinar","detail":"Pick a date."}');
+  await expect(bell).toHaveAccessibleName('Needs you: 1 waiting');
+  await bell.click();
+  await expect(panel).toContainText('Maya suggests a task');
+  await expect(panel).toContainText('Plan the webinar');
+  await panel.getByRole('button', { name: 'Accept' }).click();
+  await expect(panel).toContainText('Nothing is waiting for you.');
+  await page.keyboard.press('Escape');
+  await expect(board.getByRole('region', { name: 'To do' })).toContainText('Plan the webinar');
+
+  // "Show on the stage" closes the list and selects the card the entry lives on.
+  await send(page, 'marketing', '/tool propose_task {"title":"Second idea"}');
+  await bell.click();
+  await panel.getByRole('button', { name: 'Show on the stage' }).click();
+  await expect(panel).toBeHidden();
+  await expect(page.locator(`.react-flow__node[data-id="${id}"].selected`)).toBeVisible();
+});
