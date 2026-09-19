@@ -38,6 +38,10 @@ const weight = (text: string) => (text.length <= 44 ? 'display' : 'heading');
 // A hook is one line at the size of a poster; a long one is stepped down rather than run off the frame.
 const hookWeight = (text: string) => (text.length <= 38 ? 'hook' : text.length <= 72 ? 'display' : 'heading');
 
+// A scene that is a moving picture rather than a still: the frame under the words is a video file, and that video is
+// written as an element of the film in its own right rather than inside the scene.
+export const MOVING = new Set(['footage', 'clip', 'presenter']);
+
 // A tall frame has a phone in it and a wide one a browser, unless the storyboard said which.
 export const FRAMES = ['phone', 'laptop', 'browser'] as const;
 export type DeviceFrame = (typeof FRAMES)[number];
@@ -95,13 +99,13 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     parts.push(`<div class="shot" data-mark="frame"><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
     if (text) parts.push(`<div class="plate"><p class="lead rise">${html(text)}</p></div>`);
     return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
-  } else if (scene.layout === 'footage' || scene.layout === 'clip' || scene.layout === 'presenter') {
-    const muted = scene.layout === 'footage' && scene.mute === false ? '' : ' muted';
-    const from = typeof scene.start === 'number' && scene.start > 0 ? ` data-media-start="${scene.start.toFixed(2)}"` : '';
-    const sound = scene.layout === 'footage' && scene.mute === false ? ' data-has-audio="true" data-volume="0.85"' : '';
-    parts.push(`<div class="${scene.layout === 'presenter' ? 'presenter' : 'shot'}" data-mark="frame">`
-      + (shot.video ? `<video src="assets/${shot.video}" playsinline${muted}${from}${sound} data-layout-allow-overflow></video>`
-        : shot.image ? `<img src="assets/${shot.image}" alt="" data-layout-allow-overflow>` : '') + '</div>');
+  } else if (MOVING.has(scene.layout)) {
+    // The moving picture itself is not written here. A <video> carrying its own start may not sit inside a section
+    // that carries one too — the renderer resolves the two against different clocks and shows the wrong frames — so
+    // it is written as an element of the film in its own right and this is only what goes over it.
+    if (!shot.video && shot.image) {
+      parts.push(`<div class="${scene.layout === 'presenter' ? 'presenter' : 'shot'}" data-mark="frame"><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
+    }
     if (text) parts.push(`<div class="plate"><p class="lead rise">${html(text)}</p></div>`);
     return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'device') {
@@ -137,8 +141,6 @@ const hasRule = (scene: Scene) => scene.layout === 'title' || scene.layout === '
   || scene.layout === 'outro' || scene.layout === 'logo' || ((scene.layout === 'bullets' || scene.layout === 'checklist' || scene.layout === 'steps') && !!scene.heading?.trim());
 const hasTicks = (scene: Scene) => scene.layout === 'bullets' && !!scene.bullets?.length;
 
-// A scene that is a moving picture rather than a still: the frame under the words is a video file.
-export const MOVING = new Set(['footage', 'clip', 'presenter']);
 // A scene that fills the frame with a picture, moving or not, and so takes the slow push rather than the rise.
 const FILLS = new Set(['picture', 'footage', 'clip', 'presenter']);
 
@@ -151,11 +153,12 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
   const time = (offset: number) => (at + offset).toFixed(3);
   const layout = shot.scene.layout;
   if (FILLS.has(layout)) {
-    const box = layout === 'presenter' ? '.presenter' : '.shot';
-    steps.push(`tl.fromTo("#s${index} ${box}", { opacity: 0 }, { opacity: 1, duration: ${(beat.rise * 0.9).toFixed(2)}, ease: "power2.out" }, ${time(0)});`);
-    // The only motion that runs the whole scene: a slow push in, so a still — or a locked-off shot — does not sit dead.
-    if (!MOVING.has(layout) || layout === 'presenter') {
-      steps.push(`tl.fromTo("#s${index} ${box} img, #s${index} ${box} video", { scale: 1 }, { scale: ${layout === 'presenter' ? 1.06 : 1.09}, duration: ${shot.seconds.toFixed(3)}, ease: "none" }, ${time(0)});`);
+    const box = shot.video ? `#v${index}` : `#s${index} ${layout === 'presenter' ? '.presenter' : '.shot'}`;
+    steps.push(`tl.fromTo("${box}", { opacity: 0 }, { opacity: 1, duration: ${(beat.rise * 0.9).toFixed(2)}, ease: "power2.out" }, ${time(0)});`);
+    // The only motion that runs the whole scene: a slow push in, so a still does not sit dead on the screen. Footage
+    // moves by itself and is left alone; a talking head is a locked-off shot, so it takes the push too.
+    if (!shot.video || layout === 'presenter') {
+      steps.push(`tl.fromTo("${shot.video ? box : `${box} img`}", { scale: 1 }, { scale: ${layout === 'presenter' ? 1.06 : 1.09}, duration: ${shot.seconds.toFixed(3)}, ease: "none" }, ${time(0)});`);
     }
   }
   if (layout === 'device') {

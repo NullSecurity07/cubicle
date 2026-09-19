@@ -114,6 +114,18 @@ export function composition(film: Film): string {
   };
   const captions = film.shots.map(capsFor);
 
+  // The moving pictures are elements of the film in their own right, before the scenes and behind them: the renderer
+  // owns their playback, and a <video> that carried its own start inside a section that carried one too would be
+  // resolved against two different clocks and show the wrong frames.
+  const reels = film.shots.flatMap((shot, index) => {
+    if (!shot.video) return [];
+    const scene = shot.scene;
+    const loud = scene.layout === 'footage' && scene.mute === false;
+    const from = typeof scene.start === 'number' && scene.start > 0 ? ` data-media-start="${scene.start.toFixed(2)}"` : '';
+    return [`      <video id="v${index}" class="reel${scene.layout === 'presenter' ? ' reel--face' : ''}" src="assets/${shot.video}" playsinline${loud ? ' data-has-audio="true" data-volume="0.85"' : ' muted'}`
+      + ` data-start="${starts[index]}" data-duration="${shot.seconds.toFixed(2)}"${from}></video>`];
+  });
+
   const sections = film.shots.map((shot, index) => `      <section class="clip" id="s${index}" data-start="${starts[index]}" data-duration="${shot.seconds}">`
     + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}${sceneHtml(shot, index, film.shape, !!captions[index].html)}${captions[index].html}</section>`);
   // Every sound needs an id of its own or the mixer never finds it and the film comes out silent.
@@ -143,7 +155,7 @@ ${styleSheet(film.shape, film.look, film.brand)}
   </head>
   <body>
     <div id="root" data-composition-id="main" data-start="0" data-width="${width}" data-height="${height}" data-duration="${total}">
-${sections.join('\n')}
+${reels.length ? `${reels.join('\n')}\n` : ''}${sections.join('\n')}
 ${sounds.join('\n')}
     </div>
     <script>

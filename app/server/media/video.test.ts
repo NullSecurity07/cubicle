@@ -8,7 +8,7 @@ import { mediaTools } from '../tools/media.ts';
 import { createMedia } from './jobs.ts';
 import { composition, FORMATS, sceneSeconds, type Shot } from './templates/index.ts';
 import { spendingScenes } from '../tools/media.ts';
-import { fakeVideos, LENGTHS, MAX_IMAGES, parseSpec, PURPOSE, PURPOSES, scenesFor, storyboardOf, storyboardPrompt, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
+import { fakeVideos, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, storyboardOf, storyboardPrompt, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
 
 const film: Spec = {
   title: 'Week eleven',
@@ -359,9 +359,12 @@ describe('a film with everything in it', () => {
     for (const shape of Object.keys(FORMATS) as (keyof typeof FORMATS)[]) {
       const page = composition({ title: 'One', shape, look: 'clean', pace: 'punchy', shots: drawn });
       for (const mark of ['class="hook', 'class="list list--check"', 'class="list list--steps"', 'class="compare"',
-        'class="device device--', 'class="cta', 'frame--logo', 'class="presenter"', 'class="mark"', 'class="step"']) expect(page, `${shape}: ${mark}`).toContain(mark);
-      expect(page).toContain('<video src="assets/cut-13.mp4" playsinline muted');
-      expect(page).toContain('<video src="assets/pres-15.mp4" playsinline muted');
+        'class="device device--', 'class="cta', 'frame--logo', 'class="reel reel--face"', 'class="mark"', 'class="step"']) expect(page, `${shape}: ${mark}`).toContain(mark);
+      // A moving picture is an element of the film in its own right, not a tag inside a timed section: the renderer
+      // resolves a nested one against the wrong clock and shows the wrong frames.
+      expect(page).toContain('<video id="v13" class="reel" src="assets/cut-13.mp4" playsinline muted data-start=');
+      expect(page).toContain('<video id="v15" class="reel reel--face" src="assets/pres-15.mp4" playsinline muted data-start=');
+      expect(page.indexOf('<video id="v13"')).toBeLessThan(page.indexOf('<section class="clip" id="s0"'));
       expect(page.match(/<section class="clip"/g)).toHaveLength(17);
     }
     // A tall frame takes a phone and a wide one a browser, unless the storyboard said which.
@@ -376,6 +379,8 @@ describe('a film with everything in it', () => {
     expect(page).toContain('data-media-start="3.50"');
     expect(page).toContain('data-has-audio="true" data-volume="0.85"');
     expect(page).not.toContain('playsinline muted');
+    // Its window on the film's clock is the scene's own, so the renderer knows exactly which frames to pull.
+    expect(page).toContain('data-start="0" data-duration="4.00"');
   });
 
   it('moves twice as fast when the founder asked it to', () => {
@@ -500,5 +505,24 @@ describe('how long a film comes out', () => {
     expect(withinLength([{ seconds: 60 }, { seconds: 60 }], 15).dropped).toBe(0);
     // A storyboard a person wrote themselves is never cut: they said what they wanted.
     expect(withinLength(near, 0).dropped).toBe(0);
+  });
+});
+
+describe('how many moving shots a film may have', () => {
+  it('allows twice as many when they are made here, because here costs only time', () => {
+    const six = { title: 'One', scenes: Array(6).fill(0).map((_, at) => ({ layout: 'clip' as const, clip_prompt: `a kite ${at}`, text: `Kite ${at}` })) };
+    const online = withinCaps(six, { ai: true, assets: [], most: MAX_AI });
+    expect(online.spec.scenes.filter((one) => one.layout === 'clip')).toHaveLength(MAX_AI);
+    const here = withinCaps(six, { ai: true, assets: [], most: MAX_LOCAL_AI });
+    expect(here.spec.scenes.filter((one) => one.layout === 'clip')).toHaveLength(MAX_LOCAL_AI);
+    expect(here.spec.scenes.filter((one) => one.layout === 'picture')).toHaveLength(6 - MAX_LOCAL_AI);
+  });
+
+  it('asks the founder only when something would really go out and be spent', async () => {
+    // A clip made on this machine spends nothing, so nothing is asked.
+    expect(spendingScenes([{ layout: 'clip' }, { layout: 'clip' }], true)).toEqual([]);
+    expect(spendingScenes([{ layout: 'clip' }, { layout: 'clip' }], false)).toEqual(['clip', 'clip']);
+    // A talking head always goes out, whatever this machine can do.
+    expect(spendingScenes([{ layout: 'clip' }, { layout: 'presenter' }], true)).toEqual(['presenter']);
   });
 });

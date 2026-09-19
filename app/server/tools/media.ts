@@ -14,14 +14,19 @@ const studio = (context: ToolContext, kind: Card['kind']) => {
   return cards.find((one) => one.id === id);
 };
 
-// The scenes in a storyboard that cost somebody else's quota rather than this machine's time.
-export const spendingScenes = (scenes: unknown): Layout[] =>
+// The scenes in a storyboard that would go out to somebody else's machine and spend their daily quota. A clip made
+// here costs only this computer's time, so it is not one of these; a talking head always is, because there is no
+// local way to make one whose licence allows a founder to sell anything with it.
+export const spendingScenes = (scenes: unknown, localReady = false): Layout[] =>
   (Array.isArray(scenes) ? scenes : []).map((one) => (one as { layout?: unknown })?.layout)
-    .filter((layout): layout is Layout => typeof layout === 'string' && AI_LAYOUTS.has(layout as Layout));
+    .filter((layout): layout is Layout => typeof layout === 'string' && AI_LAYOUTS.has(layout as Layout))
+    .filter((layout) => layout === 'presenter' || !localReady);
 
 // Pictures and spoken words, made in the studio cards the founder connected to this person. Free and local to this
 // machine's account, so nothing waits for the founder's yes; the per-turn caps are what keep a person from making all day.
-export function mediaTools(media: MediaJobs): Tool[] {
+// `localClipsReady` says whether the moving pictures would be made here; when they would, nothing goes out and
+// nothing is spent, so the founder is not asked.
+export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = () => false): Tool[] {
   return [{
     name: 'generate_image',
     perTurn: 4,
@@ -119,7 +124,7 @@ export function mediaTools(media: MediaJobs): Tool[] {
     // quota on somebody else's machine, so the founder says yes to those and to nothing else.
     async approval(args, context) {
       const card = studio(context, 'videogen');
-      const spent = spendingScenes(args.scenes);
+      const spent = spendingScenes(args.scenes, localClipsReady());
       if (!card || !spent.length) return null;
       if (card.kind === 'videogen' && !card.ai) return null;
       return `Make ${spent.length} AI ${spent.length === 1 ? 'scene' : 'scenes'} (${spent.join(', ')}) in the video studio? Those are the only part of a film that is not free.`;

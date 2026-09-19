@@ -143,7 +143,11 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
 .shot img, .shot video { display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 50%; }
 /* The words over a picture sit at the foot of the frame — unless the film is captioned, in which case the captions
    are already there and the two would be read as one sentence. Then the plate lifts clear of them. */
-.has-caps .plate { padding-bottom: calc(var(--caps) + 22px); }
+/* Captioned, the foot of the frame belongs to the captions, so the words over a picture go to the head of it
+   instead. Two blocks of white type a line apart read as one sentence, and one of them is not a sentence. */
+.has-caps .plate { top: 0; bottom: auto; padding: var(--margin) var(--margin) calc(var(--margin) * 1.6);
+  background: ${sketch ? 'none' : `linear-gradient(to bottom, rgb(${paint.scrim}) 12%, rgba(${paint.scrim}, 0.74) 56%, rgba(${paint.scrim}, 0) 100%)`}; }
+.frame--picture.has-caps { justify-content: flex-start; }
 .plate { position: absolute; left: 0; right: 0; bottom: 0; padding: var(--margin); padding-top: calc(var(--margin) * 1.7);
   background: ${sketch ? 'none' : `linear-gradient(to top, rgb(${paint.scrim}) 12%, rgba(${paint.scrim}, 0.74) 56%, rgba(${paint.scrim}, 0) 100%)`}; }
 .frame--picture { justify-content: flex-end; padding: 0; gap: 0; }
@@ -206,6 +210,10 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
 .device--browser .device__pill { flex: 1; margin-left: calc(16px * var(--s)); height: calc(28px * var(--s)); border-radius: 999px;
   background: #1D2127; color: #8C95A1; font-size: calc(16px * var(--s)); line-height: calc(28px * var(--s)); padding: 0 calc(16px * var(--s)); overflow: hidden; white-space: nowrap; }
 .device--browser .device__glass { width: 100%; aspect-ratio: 16 / 9.2; height: auto; border-radius: 0; }
+/* A moving picture fills the frame from behind everything else: it is an element of the film in its own right, so
+   the renderer can own its playback, and the words of its scene are drawn over it. */
+.reel { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%; transform-origin: 50% 50%; background: ${paint.ground}; }
+.reel--face { object-position: 50% 30%; transform-origin: 50% 30%; }
 /* A person talking to camera, or a generated clip, fills the frame and takes the words over it. */
 .frame--presenter { justify-content: flex-end; padding: 0; gap: 0; }
 .presenter { position: absolute; inset: 0; overflow: hidden; }

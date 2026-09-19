@@ -35,7 +35,10 @@ export type Spec = { title: string; scenes: Scene[]; music?: Mood; sfx?: boolean
 export const MAX_SCENES = 24;
 // Every drawn still costs a call to a free picture service with a day's quota, and every AI clip costs far more.
 export const MAX_IMAGES = 6;
+// A clip from the free Spaces spends somebody else's daily minutes, so a film makes at most two. A clip made on this
+// machine spends nothing but time, so a film may have twice as many — the founder is told what that time costs.
 export const MAX_AI = 2;
+export const MAX_LOCAL_AI = 4;
 export const LENGTHS = [15, 30, 60, 90] as const;
 const CAPS = { title: 80, heading: 90, text: 260, bullet: 100, bullets: 6, labels: 2, say: 420, image_prompt: 300, clip_prompt: 240, asset: 80 };
 export const SETUP_HINT = 'No video renderer is set up. The founder installs Chrome and ffmpeg — both are free — and restarts the app.';
@@ -245,8 +248,9 @@ export async function storyboardOf(brief: string, think: (prompt: string) => Pro
 // A storyboard costs nothing to write and everything to render, so what came back is brought inside the caps rather
 // than thrown away: too many drawn stills become statements, a third AI scene becomes what it would have fallen back
 // to, and a scene naming an asset that is not there loses the name.
-export function withinCaps(spec: Spec, allow: { ai: boolean; assets: string[] }): { spec: Spec; notes: string[] } {
+export function withinCaps(spec: Spec, allow: { ai: boolean; assets: string[]; most?: number }): { spec: Spec; notes: string[] } {
   const notes: string[] = [];
+  const most = allow.most ?? MAX_AI;
   let drawn = 0;
   let spent = 0;
   const scenes = spec.scenes.map((scene): Scene => {
@@ -256,7 +260,7 @@ export function withinCaps(spec: Spec, allow: { ai: boolean; assets: string[] })
     }
     if (AI_LAYOUTS.has(scene.layout)) {
       spent += 1;
-      if (!allow.ai || spent > MAX_AI) return fallbackOf(scene, allow.ai ? `a film makes at most ${MAX_AI} AI scenes` : 'AI clips are switched off');
+      if (!allow.ai || spent > most) return fallbackOf(scene, allow.ai ? `a film makes at most ${most} AI scenes` : 'AI clips are switched off');
     }
     if ((scene.layout === 'footage' || scene.layout === 'device') && scene.asset && !allow.assets.includes(scene.asset)) {
       return fallbackOf({ ...scene, asset: undefined }, `there is nothing on the card called "${scene.asset}"`);
@@ -332,7 +336,9 @@ export type VideoAsk = {
 // The other half of the studio: what it can read, what it can photograph, what it can film with.
 export type VideoDeps = {
   dir: string; images?: Maker; voices?: Maker; think: (prompt: string) => Promise<string>;
-  clips?: Clips; forbidden?: string[];
+  // `clips` is every moving-picture backend as one; `local` is the one that runs here, which is what decides how many
+  // such scenes a film may have and whether a person's call needs the founder's yes.
+  clips?: Clips; local?: Clips; forbidden?: string[];
   stage?: () => Promise<Stage>;
   assets?: (cardId: string) => Promise<MediaAsset[]>;
   fileOf?: (path: string) => string;
@@ -470,7 +476,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         })();
         const able = asked.ai === true && !clips.ready();
         if (asked.ai === true && !able) report(`AI clips are switched on but not ready: ${clips.ready()}`);
-        const { spec, notes } = withinCaps(wanted, { ai: able, assets: [...files.keys()] });
+        const here = !!deps.local && !deps.local.ready();
+        const { spec, notes } = withinCaps(wanted, { ai: able, assets: [...files.keys()], most: here ? MAX_LOCAL_AI : MAX_AI });
         for (const note of notes) report(note);
         report(`${spec.scenes.length} scenes: ${spec.title}`);
 

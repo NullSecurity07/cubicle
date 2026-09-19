@@ -1,25 +1,52 @@
-// The shape of the moving-picture backend the video studio asks for b-roll and a talking head, written down here so
-// this half of the studio can be built, tested and reviewed against it before the backend itself lands.
+// The one definition of what a moving-picture backend is, and the order the studio asks them in.
 //
-// `media/spaces.ts` is the real implementation and is owned elsewhere; it exports `createClips`, `fakeClips` and a
-// `Clips` type identical to this one. Nothing in this file imports it: the studio takes a `Clips` and never asks
-// where it came from, so the two meet at one injection point in `server/index.ts` and nowhere else.
-//
-// These calls spend a small free daily quota on somebody else's machine, which is why the studio bounds them hard:
-// at most two such scenes in a film, only when the card's switch is on, and the founder says yes when a person asks.
+// Two of them exist. `local-clips.ts` makes b-roll on this machine with stable-diffusion.cpp and Wan2.1 — slow
+// (minutes a clip) but unlimited and private. `spaces.ts` asks free Hugging Face Spaces — fast, but it spends a small
+// daily quota and is the only one that can make a talking head. The studio takes whichever answers first and falls
+// back in plain words when neither can.
+export type ClipAsk = { prompt: string; image?: Buffer; seconds: number };
+export type PresenterAsk = { portrait: Buffer; speech: Buffer };
+export type Help = { report: (line: string) => void; signal?: AbortSignal };
+export type Clip = { ext: 'mp4'; bytes: Buffer };
 export type Clips = {
   // Why nothing can be made yet, in the founder's words, or nothing when the backend is ready.
   ready(): string | null;
   // A few seconds of b-roll from a description, optionally starting from a still we already drew.
-  broll(ask: { prompt: string; image?: Buffer; seconds: number }, help: { report: (line: string) => void; signal?: AbortSignal }): Promise<{ ext: 'mp4'; bytes: Buffer }>;
+  broll(ask: ClipAsk, help: Help): Promise<Clip>;
   // A face and a recording, made into the face saying it.
-  presenter(ask: { portrait: Buffer; speech: Buffer }, help: { report: (line: string) => void; signal?: AbortSignal }): Promise<{ ext: 'mp4'; bytes: Buffer }>;
+  presenter(ask: PresenterAsk, help: Help): Promise<Clip>;
 };
 
-// Stands in for the backend until it is wired up, and in every test and fake-model run: it says what it needs, so
-// every clip and presenter scene takes the graceful way out instead of the network.
+// Stands in for a backend that is not there: it says what it needs, so every clip and presenter scene takes the
+// graceful way out instead of the network.
 export const noClips: Clips = {
   ready: () => 'AI clips are not set up on this machine yet.',
   broll: async () => { throw new Error('AI clips are not set up on this machine yet.'); },
   presenter: async () => { throw new Error('AI clips are not set up on this machine yet.'); },
 };
+
+// Several backends as one, tried in the order given: the first that is ready makes it, and a failure hands on to the
+// next rather than ending the scene. `ready()` is nothing when any of them is ready, and otherwise the first hint —
+// the one the founder is most likely to be able to act on.
+export function firstClips(...backends: Clips[]): Clips {
+  const able = () => backends.filter((one) => !one.ready());
+  const hint = () => backends.map((one) => one.ready()).find(Boolean) ?? null;
+  const tryEach = async <T>(what: (one: Clips) => Promise<Clip>, help: Help): Promise<Clip> => {
+    const ready = able();
+    if (!ready.length) throw new Error(hint() ?? 'nothing can make moving pictures on this machine');
+    const failures: string[] = [];
+    for (const one of ready) {
+      try { return await what(one); } catch (error) {
+        if (help.signal?.aborted) throw error;
+        failures.push((error as Error).message);
+        if (ready.indexOf(one) < ready.length - 1) help.report(`that did not work (${(error as Error).message}); trying another way…`);
+      }
+    }
+    throw new Error(failures.join('; '));
+  };
+  return {
+    ready: () => (able().length ? null : hint()),
+    broll: (ask, help) => tryEach((one) => one.broll(ask, help), help),
+    presenter: (ask, help) => tryEach((one) => one.presenter(ask, help), help),
+  };
+}

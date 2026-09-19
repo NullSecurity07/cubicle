@@ -1,0 +1,96 @@
+{
+  "broll": [
+    {
+      "name": "Wan 2.2",
+      "space": "zerogpu-aoti/wan2-2-fp8da-aoti-faster",
+      "endpoint": "/generate_video",
+      "needs": "image",
+      "params": {
+        "input_image": "$image",
+        "prompt": "$prompt",
+        "steps": 6,
+        "duration_seconds": "$seconds",
+        "guidance_scale": 1,
+        "guidance_scale_2": 1,
+        "seed": "$seed",
+        "randomize_seed": false
+      }
+    },
+    {
+      "name": "LTX Video",
+      "space": "Lightricks/ltx-video-distilled",
+      "endpoint": "/image_to_video",
+      "needs": "image",
+      "params": {
+        "prompt": "$prompt",
+        "input_image_filepath": "$image",
+        "mode": "image-to-video",
+        "duration_ui": "$seconds",
+        "height_ui": 512,
+        "width_ui": 704,
+        "seed_ui": "$seed",
+        "randomize_seed": false,
+        "ui_guidance_scale": 1,
+        "improve_texture_flag": true
+      }
+    },
+    {
+      "name": "LTX Video",
+      "space": "Lightricks/ltx-video-distilled",
+      "endpoint": "/text_to_video",
+      "needs": "words",
+      "params": {
+        "prompt": "$prompt",
+        "mode": "text-to-video",
+        "duration_ui": "$seconds",
+        "height_ui": 512,
+        "width_ui": 704,
+        "seed_ui": "$seed",
+        "randomize_seed": false,
+        "ui_guidance_scale": 1,
+        "improve_texture_flag": true
+      }
+    }
+  ],
+  "presenter": [
+    {
+      "name": "LeapTalk",
+      "space": "hugging-apps/leaptalk-talking-head",
+      "endpoint": "/generate",
+      "params": {
+        "portrait_image": "$portrait",
+        "speech_audio": "$speech",
+        "max_seconds": "$seconds",
+        "num_inference_steps": 1,
+        "guidance_scale": 1,
+        "seed": "$seed",
+        "auto_crop_face": true
+      }
+    },
+    {
+      "name": "LongCat Avatar 1.5",
+      "space": "victor/LongCat-Video-Avatar-1.5",
+      "endpoint": "/generate",
+      "params": {
+        "image_path": "$portrait",
+        "audio_path": "$speech",
+        "prompt": "A person is speaking expressively, looking at the camera.",
+        "resolution": "480p",
+        "seed": "$seed",
+        "vocal_mode": "Clean speech (fast)",
+        "acceleration": "DBCache faster"
+      }
+    },
+    {
+      "name": "MoDA",
+      "space": "multimodalart/MoDA-fast-talking-head",
+      "endpoint": "/generate_motion",
+      "params": {
+        "source_image_path": "$portrait",
+        "driving_audio_path": "$speech",
+        "emotion_name": "Neutral",
+        "cfg_scale": 1.2
+      }
+    }
+  ]
+}

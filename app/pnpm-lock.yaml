@@ -14,6 +14,9 @@ importers:
       '@fontsource-variable/inter':
         specifier: ^5
         version: 5.3.0
+      '@gradio/client':
+        specifier: 2.7.0
+        version: 2.7.0
       '@huggingface/transformers':
         specifier: ^4.3.0
         version: 4.3.0(@types/node@24.13.5)
@@ -278,6 +281,10 @@ packages:
     peerDependenciesMeta:
       '@modelcontextprotocol/sdk':
         optional: true
+
+  '@gradio/client@2.7.0':
+    resolution: {integrity: sha512-nH0mi4gcS9YBgDMGKLLwDEUqAP9uapzC77t2LZ9JURTYn3UxWqgPwiKSHLuZ8/3hLWUtPTjlOmvU+VqT9Gtxtw==}
+    engines: {node: '>=18.0.0'}
 
   '@hono/node-server@2.1.1':
     resolution: {integrity: sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg==}
@@ -1259,6 +1266,9 @@ packages:
   fetch-blob@3.2.0:
     resolution: {integrity: sha512-7yAQpD2UMJzLi1Dqv7qFYnPbaPx7ZfFK6PiIxQ4PfkGPyNyl2Ugx+a/umUonmKqjhM4DnfbMvdX6otXq83soQQ==}
     engines: {node: ^12.20 || >= 14.13}
+
+  fetch-event-stream@0.1.6:
+    resolution: {integrity: sha512-GREtJ5HNikdU2AXtZ6E/5bk+aslMU6ie5mPG6H9nvsdDkkHQ6m5lHwmmmDTOBexok9hApQ7EprsXCdmz9ZC68w==}
 
   flatbuffers@25.9.23:
     resolution: {integrity: sha512-MI1qs7Lo4Syw0EOzUl0xjs2lsoeqFku44KpngfIduHBYvzm8h2+7K8YMQh1JtVVVrUvhLpNwqVi4DERegUJhPQ==}
@@ -2336,6 +2346,10 @@ snapshots:
       - utf-8-validate
     optional: true
 
+  '@gradio/client@2.7.0':
+    dependencies:
+      fetch-event-stream: 0.1.6
+
   '@hono/node-server@2.1.1(hono@4.13.8)':
     dependencies:
       hono: 4.13.8
@@ -3228,6 +3242,8 @@ snapshots:
       node-domexception: 1.0.0
       web-streams-polyfill: 3.3.3
     optional: true
+
+  fetch-event-stream@0.1.6: {}
 
   flatbuffers@25.9.23: {}
 

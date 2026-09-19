@@ -319,10 +319,11 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
               <label className="studio__toggle"><input type="checkbox" checked={!data.silent} onChange={(event) => updateNodeData(id, { silent: !event.target.checked })} />Narrate</label>
               <label className="studio__toggle"><input type="checkbox" checked={data.captions === 'on'} onChange={(event) => updateNodeData(id, { captions: event.target.checked ? 'on' : 'off' })} />Captions</label>
               <label className="studio__toggle"><input type="checkbox" checked={data.sfx !== 'off'} onChange={(event) => updateNodeData(id, { sfx: event.target.checked ? 'on' : 'off' })} />Sound</label>
-              <label className="studio__toggle" title="A clip and a talking head are the only part of a film that is not free: they spend a small daily quota, at most twice a film.">
+              <label className="studio__toggle" title="Moving shots and talking heads. B-roll is made here on this computer, which takes about three minutes a clip and costs nothing; a talking head is made online, out of a small daily free quota.">
                 <input type="checkbox" checked={data.ai === true} onChange={(event) => updateNodeData(id, { ai: event.target.checked })} />AI clips
               </label>
             </div>
+            {data.ai === true && <p className="studio__aside">Moving shots are drawn here on this computer: about three minutes each, and the film waits for them. Talking heads are made online, out of a small daily free quota.</p>}
             <AssetTray id={id} assets={assets} onChange={reload} />
           </details>
         </form>

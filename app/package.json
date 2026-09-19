@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5",
+    "@gradio/client": "2.7.0",
     "@huggingface/transformers": "^4.3.0",
     "@xyflow/react": "^12.11",
     "agent-browser": "^0.38.1",

@@ -13,7 +13,9 @@ import { createBrowser, dnsResolve, fakeRunner, jinaReader, realRunner } from '.
 import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
-import type { Clips } from './media/clips.ts';
+import { firstClips } from './media/clips.ts';
+import { fakeLocalClips, localClips, MINUTES_EACH } from './media/local-clips.ts';
+import { createClips, fakeClips } from './media/spaces.ts';
 import { probe } from './media/ff.ts';
 import { thumbOf } from './media/footage.ts';
 import { fakeImages, imageMakers } from './media/image.ts';
@@ -83,14 +85,13 @@ const storyboard = async (prompt: string) => {
   usage.record(reply.client.name, reply.usage, reply.quota);
   return reply.text;
 };
-// The moving-picture backend is built elsewhere and lands as `media/spaces.ts`. Asked for by name at start so that
-// this half of the studio runs with or without it; without it, every clip and presenter scene falls back gracefully.
-const clips = await (async () => {
-  const where = './media/spaces.ts';
-  const made = await import(where).then((module: { createClips?: (env?: NodeJS.ProcessEnv) => Clips }) => module.createClips?.(), () => undefined);
-  if (made) console.log('AI clips:', made.ready() ?? 'ready');
-  return made;
-})();
+// Moving pictures, two ways round: made here on this machine, slowly and without limit, or asked of the free Hugging
+// Face Spaces, quickly and out of a daily quota. B-roll tries this machine first; a talking head can only be made
+// out there. Either way a scene that cannot be made falls back in plain words.
+const local = fake ? fakeLocalClips : localClips();
+const online = fake ? fakeClips : createClips();
+const clips = firstClips(local, online);
+if (!fake) console.log('clips · here:', local.ready() ?? `ready (about ${MINUTES_EACH} minutes each)`, '· online:', online.ready() ?? 'ready');
 const media = createMedia({
   dir: workspace,
   store,
@@ -98,7 +99,7 @@ const media = createMedia({
     imagegen: pictures,
     voicegen: voices,
     videogen: fake ? [fakeVideos] : [hyperframesVideos({
-      dir: workspace, images: pictures[0], voices: voices[0], think: storyboard, clips,
+      dir: workspace, images: pictures[0], voices: voices[0], think: storyboard, clips, local,
       forbidden: [workspace, root],
       stage: () => store.loadStage(),
       // `media` is read inside these, never at the moment they are made, so the studio can ask the card that asked it.
@@ -167,7 +168,7 @@ const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
   await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
   return reply.text;
 };
-const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media)];
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media, () => !local.ready())];
 const runs = createRuns({ boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify: fake ? () => {} : desktopNotify });
 setInterval(() => { void runs.tick().catch(() => {}); }, 30_000).unref();
 

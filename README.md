@@ -23,6 +23,12 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   own video, photographs or a music track on the card and it edits around them. Seventeen scene shapes, two paces,
   three looks, word-by-word captions, sound on the cuts, and a music bed ducked under the narration. Nothing about
   a film leaves this machine except what you wired to it.
+- **Moving shots** (2026-09-19): switch on *AI clips* and a film can hold real b-roll and a talking head. B-roll is
+  drawn **on your own machine** — stable-diffusion.cpp and Wan2.1-1.3B through Vulkan, about three minutes a clip,
+  nothing sent anywhere, no limit on how many; the model (5.8 GB) is fetched once. When this computer cannot do it,
+  and for talking heads either way, free Hugging Face Spaces make them out of a small daily quota. Whatever fails
+  falls back in plain words: a clip becomes a drawn still with a slow push, a presenter becomes the line said over
+  the words.
 - **Operator views** (2026-09-19): Focus mode (`F` or the header button; a card fills the window); Needs you (dock
   bell, `N`); Messages (`M`); Decisions (`D`; one markdown file per decision in `workspace/decisions/`); Recall (a
   `recall` tool for people, a search for the founder, by meaning, on a local model; a person finds only what their

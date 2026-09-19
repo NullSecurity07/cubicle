@@ -406,6 +406,7 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .studio__grid select:focus, .studio__grid input:focus { border-color: rgba(78, 140, 255, 0.7); }
 .studio__grid option { background: #16181d; }
 .studio__switches { display: flex; flex-wrap: wrap; gap: 6px 14px; padding-bottom: 9px; }
+.studio__aside { margin: 0 0 9px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 /* What the founder dropped on the card. Each one carries the name a storyboard calls it by. */
 .tray { display: flex; flex-direction: column; gap: 4px; padding-bottom: 10px; }
 .tray__one { display: flex; align-items: center; gap: 7px; border-radius: 7px; padding: 3px 4px 3px 3px; background: rgba(255, 255, 255, 0.045); }
