@@ -16,15 +16,19 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean }
   // The switches that can be on, off *or* whatever the purpose says are words rather than flags, for the same reason.
   | { kind: 'videogen'; brief?: string; format?: Shape; look?: VideoLook; silent?: boolean;
     purpose?: string; length?: number; pace?: 'calm' | 'punchy'; music?: string; voice?: string;
-    captions?: Switch; sfx?: Switch; ai?: boolean; address?: string });
-export type VideoLook = 'clean' | 'sketch' | 'brand';
+    captions?: Switch; sfx?: Switch; ai?: Switch; address?: string; person?: Switch });
+// The six looks a film can wear. `clean` and `sketch` are the originals, `brand` takes the wired product's colours,
+// and `creator`, `editorial` and `neon` are the three a motion designer reaches for.
+export type VideoLook = 'clean' | 'creator' | 'editorial' | 'neon' | 'sketch' | 'brand';
 export type Switch = 'on' | 'off';
 export const SHAPES = ['square', 'wide', 'tall'] as const;
 export type Shape = (typeof SHAPES)[number];
 export const MEDIA_KINDS = ['imagegen', 'voicegen', 'videogen'] as const;
 export type MediaKind = (typeof MEDIA_KINDS)[number];
 // One thing a studio made. `prompt` is what was asked for: a picture prompt, the words to say, a video brief.
-export type MediaResult = { path: string; prompt: string; at: number; poster?: string };
+// `music` credits the bed a film was made with, because a track's terms travel with the file it is in.
+export type MediaResult = { path: string; prompt: string; at: number; poster?: string; music?: MediaCredit };
+export type MediaCredit = { title: string; by: string; licence: string; source: string };
 // Something the founder dropped on a studio card for it to build with: their own footage, a photograph, a music track.
 // `name` is what a storyboard calls it in `asset`; `path` is where it really is in the shared files.
 export type MediaAsset = { name: string; path: string; kind: 'video' | 'image' | 'audio'; at: number; bytes: number; seconds?: number; thumb?: string };

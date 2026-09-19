@@ -7,297 +7,41 @@ import { CHROMES } from '../browser.ts';
 import { projectDir } from '../coder.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { noClips, type Clips } from './clips.ts';
-import { ffReady } from './ff.ts';
+import { bibleFor, direct, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
+import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
 import type { Maker, Piece } from './jobs.ts';
+import {
+  AI_LAYOUTS, isPurpose, MAX_AI, MAX_BACKGROUNDS, MAX_LOCAL_AI, PURPOSE, PURPOSES,
+  fallbackOf, withinCaps, withinLength, type Spec,
+} from './spec.ts';
 import { readProject, VIEWPORTS } from './sources.ts';
-import { composition, cuesOf, FORMATS, FRAMES, LOOKS, PACES, projectFile, sceneSeconds, type Brand, type Look, type Pace, type Shot } from './templates/index.ts';
-
-export { FRAMES } from './templates/index.ts';
+import {
+  composition, cuesOf, FORMATS, isPack, PACK, PACKS, PACES, projectFile, sceneSeconds, snapToBeats,
+  type Pace, type Pack, type Shot,
+} from './templates/index.ts';
 import { wavSeconds } from './voice.ts';
 
-// Seventeen shapes a scene can take, in the order a film tends to use them.
-export const LAYOUTS = ['title', 'hook', 'statement', 'bullets', 'checklist', 'steps', 'compare', 'picture', 'device',
-  'stat', 'quote', 'logo', 'cta', 'footage', 'clip', 'presenter', 'outro'] as const;
-export type Layout = (typeof LAYOUTS)[number];
-// One scene of a video, as a model or a person fills it in. `say` is the line spoken over it; `image_prompt` is the
-// still drawn for it; `asset` names something already on the card. Which fields a layout needs is what `parseSpec`
-// checks, and everything here is a plain string, number or list of strings — no provider argues with those.
-export type Scene = {
-  layout: Layout; heading?: string; text?: string; bullets?: string[]; labels?: string[];
-  image_prompt?: string; asset?: string; frame?: string; clip_prompt?: string; portrait_prompt?: string;
-  seconds?: number; start?: number; mute?: boolean; say?: string;
-};
-// The whole film as one flat object. `music` is the mood the bed wants, `sfx` and `captions` are on or off, `pace` is
-// how fast it cuts. Everything the founder chose on the card is folded in before this is filled.
-export type Spec = { title: string; scenes: Scene[]; music?: Mood; sfx?: boolean; captions?: boolean; pace?: Pace };
+// The spec vocabulary lives in `spec.ts` now, so the director and the critic can share it without importing the
+// whole renderer. Everything that used to be here is still here, by the same names.
+export {
+  LAYOUTS, AI_LAYOUTS, MAX_SCENES, MAX_IMAGES, MAX_AI, MAX_LOCAL_AI, MAX_BACKGROUNDS, LENGTHS, PURPOSES, PURPOSE,
+  isPurpose, parseSpec, scenesFor, wordsFor, withinCaps, withinLength, fallbackOf, WORDS_A_SECOND, budgetOf,
+  type Layout, type Scene, type Spec, type Purpose,
+} from './spec.ts';
+export { FRAMES } from './templates/index.ts';
+export type { Material, Understanding } from './director.ts';
 
-export const MAX_SCENES = 24;
-// Every drawn still costs a call to a free picture service with a day's quota, and every AI clip costs far more.
-export const MAX_IMAGES = 6;
-// A clip from the free Spaces spends somebody else's daily minutes, so a film makes at most two. A clip made on this
-// machine spends nothing but time, so a film may have twice as many — the founder is told what that time costs.
-export const MAX_AI = 2;
-export const MAX_LOCAL_AI = 4;
-export const LENGTHS = [15, 30, 60, 90] as const;
-const CAPS = { title: 80, heading: 90, text: 260, bullet: 100, bullets: 6, labels: 2, say: 420, image_prompt: 300, clip_prompt: 240, asset: 80 };
 export const SETUP_HINT = 'No video renderer is set up. The founder installs Chrome and ffmpeg — both are free — and restarts the app.';
 
-const words = (value: unknown, what: string, limit: number): string => {
-  if (typeof value !== 'string' || !value.trim()) throw new Error(`${what} must be a line of text`);
-  if (value.length > limit) throw new Error(`${what} is too long (${value.length} characters, limit ${limit})`);
-  return value.trim();
+// --- the music, which somebody else is building ---------------------------------------------------------------
+// `media/music.ts` is owned by another pair of hands. This is the shape it hands back, declared here so this half
+// builds and runs with or without it; when it lands, the studio takes it through `deps.music` and nothing else moves.
+export type Credit = { title: string; by: string; licence: string; source: string };
+export type Music = {
+  bed(ask: { mood: Mood; seconds: number; bpm?: number }, help: { report: (line: string) => void; signal?: AbortSignal }):
+  Promise<{ ext: 'wav' | 'mp3' | 'ogg'; bytes: Buffer; credit: Credit; bpm?: number; beats?: number[] }>;
 };
-const lines = (value: unknown, what: string, most: number, limit: number): string[] => {
-  if (!Array.isArray(value) || !value.length) throw new Error(`${what} must be a list of short lines`);
-  if (value.length > most) throw new Error(`${what}: at most ${most} fit on screen, not ${value.length}`);
-  return value.map((one, at) => words(one, `${what.replace(/"$/, '')} ${at + 1}"`.replace(/""/g, '"'), limit));
-};
-const number = (value: unknown, what: string, low: number, high: number): number => {
-  const read = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(read)) throw new Error(`${what} must be a number of seconds`);
-  return Math.min(high, Math.max(low, Math.round(read * 100) / 100));
-};
-
-// Which layouts need what, said once so the parser and the prompt cannot drift apart.
-const NEEDS_HEADING = new Set<Layout>(['title', 'stat', 'logo']);
-const NEEDS_TEXT = new Set<Layout>(['statement', 'quote', 'outro', 'hook', 'cta']);
-const NEEDS_BULLETS = new Set<Layout>(['bullets', 'checklist', 'steps']);
-// A scene that is a moving picture the studio has to make or cut before there is anything to show.
-export const AI_LAYOUTS = new Set<Layout>(['clip', 'presenter']);
-
-// The storyboard, checked by hand so that whatever went wrong comes back in a line a model or a person can act on.
-export function parseSpec(raw: unknown): Spec {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('the storyboard must be a JSON object with "title" and "scenes"');
-  const asked = raw as Record<string, unknown>;
-  const title = words(asked.title, '"title"', CAPS.title);
-  if (!Array.isArray(asked.scenes) || !asked.scenes.length) throw new Error('"scenes" must be a list with at least one scene');
-  if (asked.scenes.length > MAX_SCENES) throw new Error(`a video can have at most ${MAX_SCENES} scenes, not ${asked.scenes.length}`);
-  const scenes = asked.scenes.map((one, index): Scene => {
-    const where = `scene ${index + 1}`;
-    if (!one || typeof one !== 'object' || Array.isArray(one)) throw new Error(`${where} must be an object`);
-    const scene = one as Record<string, unknown>;
-    if (!(LAYOUTS as readonly unknown[]).includes(scene.layout)) throw new Error(`${where}: "layout" must be one of ${LAYOUTS.join(', ')}`);
-    const layout = scene.layout as Layout;
-    const made: Scene = { layout };
-    const some = (key: keyof Scene, what: string, limit: number) => {
-      if (scene[key] !== undefined && scene[key] !== null) (made as Record<string, unknown>)[key] = words(scene[key], `${where}: "${what}"`, limit);
-    };
-    some('heading', 'heading', CAPS.heading);
-    some('text', 'text', CAPS.text);
-    some('say', 'say', CAPS.say);
-    some('image_prompt', 'image_prompt', CAPS.image_prompt);
-    some('clip_prompt', 'clip_prompt', CAPS.clip_prompt);
-    some('portrait_prompt', 'portrait_prompt', CAPS.image_prompt);
-    some('asset', 'asset', CAPS.asset);
-    if (scene.frame !== undefined && scene.frame !== null) {
-      if (!(FRAMES as readonly unknown[]).includes(scene.frame)) throw new Error(`${where}: "frame" must be one of ${FRAMES.join(', ')}`);
-      made.frame = scene.frame as string;
-    }
-    if (scene.bullets !== undefined && scene.bullets !== null) made.bullets = lines(scene.bullets, `${where}: "bullets"`, CAPS.bullets, CAPS.bullet);
-    if (scene.labels !== undefined && scene.labels !== null) made.labels = lines(scene.labels, `${where}: "labels"`, CAPS.labels, 28);
-    if (scene.seconds !== undefined && scene.seconds !== null) made.seconds = number(scene.seconds, `${where}: "seconds"`, 1, 30);
-    if (scene.start !== undefined && scene.start !== null) made.start = number(scene.start, `${where}: "start"`, 0, 3600);
-    if (scene.mute !== undefined && scene.mute !== null) made.mute = scene.mute !== false;
-
-    if (NEEDS_HEADING.has(layout) && !made.heading) throw new Error(`${where}: a ${layout} scene needs "heading"`);
-    if (NEEDS_TEXT.has(layout) && !made.text) throw new Error(`${where}: a ${layout} scene needs "text"`);
-    if (NEEDS_BULLETS.has(layout) && !made.bullets) throw new Error(`${where}: a ${layout} scene needs "bullets"`);
-    // A comparison is two things next to each other; one of them is a statement and three of them is a list.
-    if (layout === 'compare' && made.bullets?.length !== 2) throw new Error(`${where}: a compare scene needs exactly two "bullets" — the before and the after`);
-    // A picture scene must read as something even when no picture can be drawn, so it always carries words of its own.
-    if (layout === 'picture' && (!made.image_prompt || !(made.text || made.heading))) throw new Error(`${where}: a picture scene needs "image_prompt" and a caption in "text"`);
-    if (layout === 'device' && !made.asset && !made.image_prompt) throw new Error(`${where}: a device scene needs "asset" — the name of a screenshot on the card`);
-    if (layout === 'footage' && !made.asset) throw new Error(`${where}: a footage scene needs "asset" — the name of a file dropped on the card`);
-    if (layout === 'clip' && !made.clip_prompt) throw new Error(`${where}: a clip scene needs "clip_prompt"`);
-    if (layout === 'clip') made.seconds = made.seconds ? Math.min(5, Math.max(3, made.seconds)) : 4;
-    if (layout === 'presenter' && !made.say) throw new Error(`${where}: a presenter scene needs "say" — the words the person on screen says`);
-    if (layout === 'presenter' && !made.portrait_prompt && !made.asset) throw new Error(`${where}: a presenter scene needs "portrait_prompt" or "asset" — who is on screen`);
-    return made;
-  });
-  const spec: Spec = { title, scenes };
-  if (typeof asked.music === 'string' && (MOODS as readonly string[]).includes(asked.music)) spec.music = asked.music as Mood;
-  if (typeof asked.pace === 'string' && (PACES as readonly string[]).includes(asked.pace)) spec.pace = asked.pace as Pace;
-  if (asked.sfx !== undefined && asked.sfx !== null) spec.sfx = asked.sfx !== false;
-  if (asked.captions !== undefined && asked.captions !== null) spec.captions = asked.captions !== false;
-  return spec;
-}
-
-// What the film is for. A purpose is not a style: it is the shape of the thing — how it opens, how long it holds, what
-// it has to end with. The founder picks one on the card and the storyboard is written to it.
-export const PURPOSES = ['explainer', 'launch', 'feature', 'ad', 'reel', 'pitch', 'testimonial'] as const;
-export type Purpose = (typeof PURPOSES)[number];
-export const PURPOSE: Record<Purpose, { name: string; pace: Pace; format: Shape; length: number; music: Mood; captions: boolean; shape: string }> = {
-  explainer: {
-    name: 'product explainer', pace: 'calm', format: 'wide', length: 60, music: 'calm', captions: false,
-    shape: 'Open on a title. Name the problem in one statement, show the product doing the thing (device scenes), then how it works in steps, then one proof — a stat or a quote — and close on a logo.',
-  },
-  launch: {
-    name: 'launch announcement', pace: 'punchy', format: 'wide', length: 30, music: 'bright', captions: true,
-    shape: 'Open on a hook: the thing is here. Say what it is in one statement, show it on screen, list what is new as a checklist, and end on a cta with where to get it.',
-  },
-  feature: {
-    name: 'single feature', pace: 'calm', format: 'wide', length: 30, music: 'warm', captions: true,
-    shape: 'Open on the moment the feature saves: a compare scene, before and after. Then the feature on screen, then the two or three things it does, then a cta.',
-  },
-  ad: {
-    name: 'marketing ad', pace: 'punchy', format: 'square', length: 30, music: 'drive', captions: true,
-    shape: 'Open on a hook that is a problem the viewer has. One statement of the turn. One device or footage scene of the product. One stat as proof. A cta. Nothing else — every scene must earn its seconds.',
-  },
-  reel: {
-    name: 'influencer-style reel', pace: 'punchy', format: 'tall', length: 30, music: 'drive', captions: true,
-    shape: 'Open on a hook in the first second — a claim, a number or a question, no title card. Then short scenes that cut fast: what it is, what it replaces, what it costs you not to have it. Talk like a person, not a brochure. End on a cta.',
-  },
-  pitch: {
-    name: 'investor pitch', pace: 'calm', format: 'wide', length: 90, music: 'calm', captions: false,
-    shape: 'Open on a title. The problem, sized with a stat. What you built, on screen. Who it is for. Traction as stats. What is next as steps. Close on a logo.',
-  },
-  testimonial: {
-    name: 'customer testimonial', pace: 'calm', format: 'tall', length: 30, music: 'warm', captions: true,
-    shape: 'Open on the customer in their own words — a quote or a presenter scene. Then what changed for them as a compare, then one stat, then a short cta. Never put words in a customer\'s mouth that the material does not contain.',
-  },
-};
-export const isPurpose = (value: unknown): value is Purpose => typeof value === 'string' && (PURPOSES as readonly string[]).includes(value);
-
-// How many scenes a film of that length wants, at about the rate a narrated scene really runs.
-export const scenesFor = (seconds: number, pace: Pace): [number, number] => {
-  const each = pace === 'punchy' ? 2.6 : 5.2;
-  const middle = Math.max(3, Math.round(seconds / each));
-  return [Math.max(3, Math.round(middle * 0.8)), Math.min(MAX_SCENES, Math.round(middle * 1.25))];
-};
-
-// What really decides how long a film runs is not how many scenes it has but how much is said over them: a scene is
-// never shorter than the line spoken on it. The voice model says about two and a third words a second, so a film of a
-// given length has a word budget, and that is the number the storyboard has to be told.
-export const WORDS_A_SECOND = 2.3;
-export const wordsFor = (seconds: number): number => Math.round(seconds * WORDS_A_SECOND);
-
-// What the film has to work with, gathered before a word of the storyboard is written.
-export type Material = { lines: string[]; assets: { name: string; kind: string; what: string }[]; brand?: Brand; using: string[] };
-
-// The brief the model fills in. Everything that can change — the purpose, the length, the material, what is on the
-// card, whether AI clips may be spent — is written into it, so the storyboard is about this film and not about films.
-export function storyboardPrompt(ask: { brief: string; purpose: Purpose; seconds: number; pace: Pace; shape: Shape; captions: boolean; music: Mood; sfx: boolean; ai: boolean; material: Material }): string {
-  const [least, most] = scenesFor(ask.seconds, ask.pace);
-  const layouts = LAYOUTS.filter((one) => ask.ai || !AI_LAYOUTS.has(one))
-    .filter((one) => one !== 'footage' || ask.material.assets.some((asset) => asset.kind === 'video'))
-    .filter((one) => one !== 'device' || ask.material.assets.some((asset) => asset.kind === 'screen'));
-  const said = [
-    `You are storyboarding a ${ask.seconds}-second ${PURPOSE[ask.purpose].name}, ${ask.shape === 'tall' ? 'shot tall for a phone' : ask.shape === 'square' ? 'square for a feed' : 'wide for a screen'}. Answer with one JSON object and nothing else.`,
-    '',
-    '{"title": "the film\'s title, a few words", "scenes": [ ... ]}',
-    '',
-    `Each scene is {"layout": one of ${layouts.join(', ')}, and the fields that layout needs}.`,
-    '- title: "heading" is the title, "text" one short line under it.',
-    '- hook: "text" is one short line that stops somebody scrolling. "heading" is an optional two-word label over it.',
-    '- statement: "text" is one sentence, the point of the scene. "heading" is optional and must be two or three words.',
-    '- bullets: "heading" plus two to five short "bullets", a few words each.',
-    '- checklist: the same, for things that are done or included.',
-    '- steps: the same, for things that happen in order.',
-    '- compare: "heading", and exactly two "bullets" — the before and the after. "labels" optionally renames them (["Before","After"], ["Them","Us"]).',
-    '- picture: "image_prompt" describes a whole scene to draw (subject, setting, style, light) and "text" is the caption.',
-    ...(layouts.includes('device') ? ['- device: "asset" is the name of one of the screenshots listed below, "heading" one short line over it, "frame" one of phone, laptop, browser.'] : []),
-    '- stat: "heading" is one number or figure, "text" says what it measures.',
-    '- quote: "text" is the quotation, "heading" is who said it.',
-    '- logo: "heading" is the product\'s name set as a wordmark, "text" one line under it.',
-    '- cta: "text" is what to do, "heading" is where to do it (an address, a handle).',
-    ...(layouts.includes('footage') ? ['- footage: "asset" is the name of one of the founder\'s own files listed below, "start" and "seconds" cut into it, "text" is a caption over it, "mute" false keeps its own sound.'] : []),
-    ...(ask.ai ? [
-      '- clip: "clip_prompt" describes three to five seconds of moving b-roll, "seconds" is how long. Use at most one.',
-      '- presenter: "say" is what the person on screen says and "portrait_prompt" describes them. Use at most one.',
-    ] : []),
-    '- outro: "text" is the closing line.',
-    '',
-    `Write ${least} to ${most} scenes. ${PURPOSE[ask.purpose].shape}`,
-    ask.captions
-      ? 'Every scene needs a "say": what is spoken over it, written the way someone would read it aloud. It is captioned word by word on screen, so keep it short and spoken, not written.'
-      : 'Give every scene a "say": what is spoken over it, written the way someone would read it aloud.',
-    // The one instruction that actually sets the length. A scene lasts as long as the line said over it, so the whole
-    // film is its narration, and a storyboard told "thirty seconds" without a word count writes a minute and a half.
-    `All the "say" lines together must come to about ${wordsFor(ask.seconds)} words — roughly ${Math.max(4, Math.round(wordsFor(ask.seconds) / Math.round((least + most) / 2)))} words a scene. That word count is what makes the film ${ask.seconds} seconds long, so count them and stay under it.`,
-    `Keep "heading" under ${CAPS.heading} characters, "text" under ${CAPS.text}, each bullet under ${CAPS.bullet}. Plain words, no exclamation marks, no hashtags, no emoji.`,
-    ask.pace === 'punchy' ? 'This one cuts fast: one idea a scene, short lines, no scene that takes more than a breath to read.' : 'This one has room: let a scene land before the next one starts.',
-  ];
-  if (ask.material.assets.length) {
-    said.push('', 'These are on the card already, and the film should be built around them. Name one in "asset" exactly as it is written here:');
-    for (const asset of ask.material.assets) said.push(`- ${asset.name} — ${asset.what}`);
-  }
-  if (ask.material.lines.length) {
-    said.push('', 'This is the product, in its own words. Use its real words and its real claims; never invent a feature, a number or a customer it does not have:', '', ...ask.material.lines);
-  }
-  said.push('', 'The brief:', ask.brief);
-  return said.join('\n');
-}
-
-// The model writes the storyboard, and gets exactly one more go with the reason its first answer could not be used.
-export async function storyboardOf(brief: string, think: (prompt: string) => Promise<string>): Promise<Spec> {
-  let problem = '';
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const said = await think(`${brief}${problem ? `\n\nYour last answer could not be used: ${problem}\nAnswer again, JSON only.` : ''}`);
-    try {
-      const body = said.slice(said.indexOf('{'), said.lastIndexOf('}') + 1);
-      if (!body) throw new Error('the answer held no JSON object');
-      let parsed: unknown;
-      try { parsed = JSON.parse(body); } catch { throw new Error('the answer was not valid JSON'); }
-      return parseSpec(parsed);
-    } catch (error) { problem = (error as Error).message; }
-  }
-  throw new Error(`the storyboard could not be written: ${problem}`);
-}
-
-// A storyboard costs nothing to write and everything to render, so what came back is brought inside the caps rather
-// than thrown away: too many drawn stills become statements, a third AI scene becomes what it would have fallen back
-// to, and a scene naming an asset that is not there loses the name.
-export function withinCaps(spec: Spec, allow: { ai: boolean; assets: string[]; most?: number }): { spec: Spec; notes: string[] } {
-  const notes: string[] = [];
-  const most = allow.most ?? MAX_AI;
-  let drawn = 0;
-  let spent = 0;
-  const scenes = spec.scenes.map((scene): Scene => {
-    if (scene.layout === 'picture') {
-      drawn += 1;
-      if (drawn > MAX_IMAGES) { notes.push(`scene ${spec.scenes.indexOf(scene) + 1} is written out in words: a film draws at most ${MAX_IMAGES} pictures`); return { ...scene, layout: 'statement', text: scene.text || scene.heading || '', image_prompt: undefined }; }
-    }
-    if (AI_LAYOUTS.has(scene.layout)) {
-      spent += 1;
-      if (!allow.ai || spent > most) return fallbackOf(scene, allow.ai ? `a film makes at most ${most} AI scenes` : 'AI clips are switched off');
-    }
-    if ((scene.layout === 'footage' || scene.layout === 'device') && scene.asset && !allow.assets.includes(scene.asset)) {
-      return fallbackOf({ ...scene, asset: undefined }, `there is nothing on the card called "${scene.asset}"`);
-    }
-    return scene;
-  });
-  return { spec: { ...spec, scenes }, notes };
-}
-
-// A last guard on the length. The word budget in the brief does most of the work, but a model that ignores it would
-// otherwise hand the founder ninety seconds where they asked for thirty. Scenes go from the middle, never the opening
-// and never the last two, and only while the film is still well over what was asked for.
-export function withinLength<T extends { seconds: number }>(shots: T[], target: number, slack = 1.35): { shots: T[]; dropped: number } {
-  if (!target || shots.length <= 4) return { shots, dropped: 0 };
-  const kept = [...shots];
-  let total = kept.reduce((sum, one) => sum + one.seconds, 0);
-  let dropped = 0;
-  while (total > target * slack && kept.length > 4) {
-    // The longest scene in the middle is the one the film can best do without.
-    const middle = kept.slice(1, -2);
-    const worst = middle.reduce((most, one) => (one.seconds > most.seconds ? one : most), middle[0]);
-    kept.splice(kept.indexOf(worst), 1);
-    total -= worst.seconds;
-    dropped += 1;
-  }
-  return { shots: kept, dropped };
-}
-
-// What a scene becomes when the thing it needed could not be made or found. A clip keeps its words as a picture if it
-// had any, and a presenter keeps saying what it was going to say — the film is never a scene shorter for it.
-export function fallbackOf(scene: Scene, why: string): Scene {
-  if (scene.layout === 'clip') return { layout: 'picture', image_prompt: scene.clip_prompt ?? scene.text ?? 'an abstract product still, soft light', text: scene.text || scene.heading || ' ', say: scene.say, heading: scene.heading };
-  if (scene.layout === 'presenter') return { layout: 'statement', text: scene.text || scene.say || '', say: scene.say, heading: scene.heading };
-  if (scene.layout === 'device') return { layout: 'statement', text: scene.text || scene.heading || '', say: scene.say };
-  if (scene.layout === 'footage') return { layout: 'statement', text: scene.text || scene.heading || '', say: scene.say };
-  return { ...scene, layout: 'statement', text: scene.text || scene.heading || why };
-}
 
 // Where Chrome is on this machine. The renderer takes it by name in the environment, not as a flag.
 export const chromePath = (): string | null => CHROMES.find((path) => existsSync(path)) ?? null;
@@ -325,12 +69,23 @@ function run(command: string, args: string[], at: string, onLine: (line: string)
   });
 }
 
-// What a video studio was asked for: the brief in `prompt`, everything the founder set on the card, and for a person
-// the storyboard itself.
+// A handful of slow things at a time rather than all of them: a dozen pictures asked for at once is a dozen refusals.
+export async function pool<T>(jobs: (() => Promise<T>)[], most = 3): Promise<T[]> {
+  const out: T[] = new Array(jobs.length);
+  let next = 0;
+  const hands = Array.from({ length: Math.min(most, jobs.length) }, async () => {
+    for (let mine = next++; mine < jobs.length; mine = next++) out[mine] = await jobs[mine]();
+  });
+  await Promise.all(hands);
+  return out;
+}
+
+// What a video studio was asked for: the brief in `prompt`, everything the founder set on the card — where 'auto' and
+// nothing at all both mean "you decide" — and for a person who wrote one, the storyboard itself.
 export type VideoAsk = {
   prompt: string; format?: string; look?: string; narrate?: boolean; spec?: Spec; cardId?: string;
-  purpose?: string; length?: number; pace?: string; music?: string; sfx?: boolean; captions?: boolean;
-  ai?: boolean; address?: string; voice?: string;
+  purpose?: string; length?: number | string; pace?: string; music?: string; sfx?: boolean; captions?: boolean;
+  ai?: boolean | string; address?: string; voice?: string; person?: boolean;
 };
 
 // The other half of the studio: what it can read, what it can photograph, what it can film with.
@@ -338,9 +93,11 @@ export type VideoDeps = {
   dir: string; images?: Maker; voices?: Maker; think: (prompt: string) => Promise<string>;
   // `clips` is every moving-picture backend as one; `local` is the one that runs here, which is what decides how many
   // such scenes a film may have and whether a person's call needs the founder's yes.
-  clips?: Clips; local?: Clips; forbidden?: string[];
+  clips?: Clips; local?: Clips; music?: Music; forbidden?: string[];
   stage?: () => Promise<Stage>;
   assets?: (cardId: string) => Promise<MediaAsset[]>;
+  // The pictures another studio card has already made, newest first: a wired image studio's work is the film's.
+  pictures?: (cardId: string) => Promise<string[]>;
   fileOf?: (path: string) => string;
   readDoc?: (id: string) => Promise<string>;
   readFile?: (path: string) => Promise<Buffer | null>;
@@ -359,6 +116,22 @@ export const wiredTo = (stage: Stage, cardId: string): Card[] => {
 
 // Where each of a page's shots is taken from: the top, then what is under it, on a desktop and on a phone.
 const SCROLLS = { desktop: [0, 780, 1700], mobile: [0, 900] };
+
+// A picker the founder left on Auto is nothing at all; anything else is their decision and is obeyed.
+const chose = <T extends string>(value: unknown, allowed: readonly T[]): T | undefined =>
+  (typeof value === 'string' && value !== 'auto' && (allowed as readonly string[]).includes(value) ? value as T : undefined);
+
+// About how long this is going to take, said before it starts rather than found out. Nothing here is precise; it is
+// honest, which is what a founder watching a spinner actually needs.
+export function estimate(ask: { scenes: number; seconds: number; pictures: number; clips: number; narrate: boolean }): string {
+  const drawing = Math.ceil(ask.pictures / 3) * 8;
+  const saying = ask.narrate ? ask.seconds * 0.6 : 0;
+  const rendering = 12 + ask.seconds * 2.4;
+  const local = ask.clips * 180;
+  const all = drawing + saying + rendering + local;
+  const minutes = Math.max(1, Math.round(all / 60));
+  return `about ${minutes} minute${minutes === 1 ? '' : 's'}${ask.clips ? ` — ${ask.clips} of that is the moving shot${ask.clips === 1 ? '' : 's'} this computer draws` : ''}`;
+}
 
 // The renderer: our own scenes written as one HTML page, which headless Chrome steps through frame by frame and ffmpeg
 // turns into an MP4. Nothing leaves this machine except what the founder wired to the card, and the same storyboard
@@ -399,7 +172,18 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         } else if (card.kind === 'note' && card.text?.trim()) { material.lines.push(`A note on the stage:\n${card.text.slice(0, 1600)}`); material.using.push('a note'); }
         else if (card.kind === 'image' && card.path) {
           const bytes = await deps.readFile?.(card.path).catch(() => null);
-          if (bytes) { const name = `card-${files.size}.png`; await writeFile(join(at, 'assets', name), bytes); files.set(name, { file: name, kind: 'image', where: 'job' }); material.assets.push({ name, kind: 'image', what: 'a picture the founder put on the stage' }); }
+          if (bytes) { const name = `picture-${files.size + 1}`; await writeFile(join(at, 'assets', `${name}.png`), bytes); files.set(name, { file: `${name}.png`, kind: 'image', where: 'job' }); material.assets.push({ name, kind: 'image', what: 'a picture the founder put on the stage — use it as a scene' }); }
+        } else if (card.kind === 'imagegen') {
+          // A picture studio wired to a video studio is a picture studio whose pictures belong in the film. The
+          // founder does not have to say so: they drew a wire, and a wire is the saying.
+          const drawn = await latestPictures(card.id);
+          for (const [index, bytes] of drawn.entries()) {
+            const name = `drawn-${files.size + 1}`;
+            await writeFile(join(at, 'assets', `${name}.png`), bytes);
+            files.set(name, { file: `${name}.png`, kind: 'image', where: 'job' });
+            material.assets.push({ name, kind: 'image', what: `a picture the founder drew in the image studio${index ? ' (an earlier one)' : ' (the latest)'}` });
+          }
+          if (drawn.length) material.using.push(`${drawn.length} picture${drawn.length === 1 ? '' : 's'} from the image studio`);
         }
       } catch (error) { report(`could not read ${card.kind === 'project' ? card.path : card.kind}: ${(error as Error).message}`); }
     }
@@ -440,6 +224,18 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
     if (clipCount) material.using.push(`${clipCount} of your clip${clipCount === 1 ? '' : 's'}`);
     const bed = dropped.find((one) => one.kind === 'audio');
     return { material, files, bed, shape };
+
+    // The pictures a wired image studio has made, newest first. Its results live in the same sidecar every studio
+    // card keeps, which is `assets` on the card for dropped files and `results` for made ones.
+    async function latestPictures(cardId: string): Promise<Buffer[]> {
+      const paths = (await deps.pictures?.(cardId).catch(() => [])) ?? [];
+      const found: Buffer[] = [];
+      for (const path of paths.slice(0, 3)) {
+        const bytes = await deps.readFile?.(path).catch(() => null);
+        if (bytes) found.push(bytes);
+      }
+      return found;
+    }
   }
 
   return {
@@ -447,55 +243,93 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
     ready: () => (chromePath() ? null : SETUP_HINT),
     async make(ask, { report, signal }): Promise<Piece> {
       const asked = ask as VideoAsk;
-      const purpose: Purpose = isPurpose(asked.purpose) ? asked.purpose : 'explainer';
-      const preset = PURPOSE[purpose];
-      const shape: Shape = (FORMATS[asked.format as Shape] ? asked.format : preset.format) as Shape;
-      const look: Look = (LOOKS as readonly string[]).includes(asked.look ?? '') ? asked.look as Look : 'clean';
-      const pace: Pace = (PACES as readonly string[]).includes(asked.pace ?? '') ? asked.pace as Pace : preset.pace;
-      // The card offers four lengths; a person or a script may ask for any sensible number of seconds.
-      const asking = Number(asked.length);
-      const seconds = Number.isFinite(asking) && asking >= 10 && asking <= 180 ? Math.round(asking) : preset.length;
-      const mood: Mood = (MOODS as readonly string[]).includes(asked.music ?? '') ? asked.music as Mood : preset.music;
-      const captions = asked.captions ?? preset.captions;
-      const sfx = asked.sfx !== false;
-
       const at = join(deps.dir, '.video', Date.now().toString(36));
       try {
         await mkdir(join(at, 'assets'), { recursive: true });
         await mkdir(join(at, 'vendor'), { recursive: true });
-        for (const file of ['gsap.min.js', 'inter.woff2', ...(look === 'sketch' ? ['rough.js'] : [])]) await copyFile(join(vendor, file), join(at, 'vendor', file));
 
-        const { material, files, bed } = await gather(asked, at, shape, report, signal);
-        if (material.using.length) report(`using: ${material.using.join(', ')}`);
-        const brand = look === 'brand' ? material.brand : undefined;
-        if (look === 'brand' && !brand) report('no product colours were found, so the film is set in the clean look');
-
-        const wanted = asked.spec ?? await (async () => {
-          report('writing the storyboard…');
-          return storyboardOf(storyboardPrompt({ brief: asked.prompt, purpose, seconds, pace, shape, captions, music: mood, sfx, ai: asked.ai === true, material }), deps.think);
-        })();
-        const able = asked.ai === true && !clips.ready();
-        if (asked.ai === true && !able) report(`AI clips are switched on but not ready: ${clips.ready()}`);
+        // Everything the founder decided, and nothing they did not. What is still open the director reads out of the
+        // brief itself, one pass at a time, saying each decision on the card as it makes it.
+        const told: Asked = {
+          brief: asked.prompt,
+          purpose: chose(asked.purpose, PURPOSES),
+          seconds: typeof asked.length === 'number' && Number.isFinite(asked.length) ? asked.length : undefined,
+          shape: chose(asked.format, ['wide', 'tall', 'square'] as const),
+          pace: chose(asked.pace, PACES),
+          pack: chose(asked.look, PACKS),
+          music: chose(asked.music, MOODS),
+          captions: asked.captions,
+          person: asked.person,
+        };
+        // The founder's AI-clips switch: on, off, or theirs to work out.
+        const wantsAi = asked.ai === true || asked.ai === 'on';
+        const autoAi = asked.ai === 'auto' || asked.ai === undefined;
         const here = !!deps.local && !deps.local.ready();
-        const { spec, notes } = withinCaps(wanted, { ai: able, assets: [...files.keys()], most: here ? MAX_LOCAL_AI : MAX_AI });
+
+        const shapeFirst: Shape = chose(asked.format, ['wide', 'tall', 'square'] as const) ?? (isPurpose(told.purpose) ? PURPOSE[told.purpose].format : 'wide');
+        const { material, files, bed } = await gather(asked, at, shapeFirst, report, signal);
+        if (material.using.length) report(`using: ${material.using.join(', ')}`);
+
+        // A person who wrote the whole storyboard is not overruled about what is in it, only about how it is set.
+        let understanding: Understanding;
+        let spec: Spec;
+        let bible: string;
+        const mayUseAi = wantsAi || (autoAi && here);
+        if (asked.spec) {
+          understanding = understandingOf({}, told, readBrief(asked.prompt));
+          bible = bibleFor(understanding);
+          spec = asked.spec;
+          if (spec.pace) understanding.pace = spec.pace;
+          if (spec.pack) understanding.pack = spec.pack;
+          if (spec.music) understanding.mood = spec.music;
+          if (spec.captions !== undefined) understanding.captions = spec.captions;
+          report(tellOf(understanding));
+        } else {
+          const directed = await direct(told, material, deps.think, { report, ai: mayUseAi });
+          understanding = directed.understanding;
+          spec = directed.spec;
+          bible = directed.bible;
+        }
+        const shape: Shape = understanding.shape;
+        const pack: Pack = isPack(understanding.pack) ? understanding.pack : 'clean';
+        const pace: Pace = understanding.pace;
+        const seconds = understanding.seconds;
+        const mood: Mood = understanding.mood;
+        const captions = understanding.captions;
+        const sfx = asked.sfx !== false;
+
+        // The fonts this pack sets its words in, and rough.js when the pack draws by hand.
+        for (const file of [...new Set(PACK[pack].fonts.map((one) => one.file))]) await copyFile(join(vendor, file), join(at, 'vendor', file));
+        await copyFile(join(vendor, 'gsap.min.js'), join(at, 'vendor', 'gsap.min.js'));
+        if (pack === 'sketch') await copyFile(join(vendor, 'rough.js'), join(at, 'vendor', 'rough.js'));
+
+        const brand = pack === 'brand' ? material.brand : undefined;
+        if (pack === 'brand' && !brand) report('no product colours were found, so the film is set in the clean look');
+
+        const able = mayUseAi && !clips.ready();
+        if (wantsAi && !able) report(`AI clips are switched on but not ready: ${clips.ready()}`);
+        const { spec: capped, notes } = withinCaps(spec, { ai: able, assets: [...files.keys()], most: here ? MAX_LOCAL_AI : MAX_AI });
+        spec = capped;
         for (const note of notes) report(note);
-        report(`${spec.scenes.length} scenes: ${spec.title}`);
 
         const drawing = deps.images && !deps.images.ready() ? deps.images : null;
         const saying = deps.voices && !deps.voices.ready() && asked.narrate !== false ? deps.voices : null;
-        if (!drawing && spec.scenes.some((scene) => scene.layout === 'picture')) report('no picture maker is set up, so those scenes are written out in words');
+        if (!drawing) report('no picture maker is set up, so the scenes are set on drawn backgrounds instead of photographs');
         const { width, height } = FORMATS[shape];
         // `null` here means ffmpeg answered; anything else is the line the founder is told instead.
         const noFf = await ffReady();
-        if (noFf && (spec.scenes.some((scene) => scene.layout === 'footage') || (mood !== 'none' && bed))) report(noFf);
+        if (noFf && (spec.scenes.some((scene) => scene.layout === 'footage') || mood !== 'none')) report(noFf);
 
+        const wantsPictures = spec.scenes.filter((scene) => scene.layout === 'picture' || scene.bg_prompt).length;
+        const wantsClips = spec.scenes.filter((scene) => AI_LAYOUTS.has(scene.layout)).length;
+        report(`${spec.scenes.length} scenes, ${estimate({ scenes: spec.scenes.length, seconds, pictures: drawing ? wantsPictures : 0, clips: here ? wantsClips : 0, narrate: !!saying })}`);
         report('drawing the pictures and recording the narration…');
         const shots: Shot[] = spec.scenes.map((scene) => ({ scene, seconds: 0 }));
         const said = (index: number, line: string) => report(`scene ${index + 1}: ${line}`);
 
         // Everything a scene needs is made beside everything else: the stills, the lines, the clips and the founder's
         // own footage are the slow part, and none of them waits on another.
-        await Promise.all(spec.scenes.map(async (scene, index) => {
+        const scenework = Promise.all(spec.scenes.map(async (scene, index) => {
           const shot = shots[index];
           // Where a named asset really is: in this job's assets already, or still out in the shared files. A phone film
           // wants the phone view of a page, whichever one the storyboard happened to name.
@@ -520,13 +354,6 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             await (noFf ? Promise.reject(new Error(noFf)) : normalise({ from: source, to: join(at, 'assets', cut), width, height, start: scene.start, seconds: scene.seconds, mute: scene.mute, signal }))
               .then(() => { shot.video = cut; }, (error: Error) => { said(index, `that clip could not be used (${error.message}), so the scene is its words instead`); shot.scene = fallbackOf(scene, error.message); });
           }
-          if (drawing && (scene.layout === 'picture' || scene.layout === 'logo') && scene.image_prompt && !shot.image) {
-            try {
-              const piece = await drawing.make({ prompt: scene.image_prompt, shape }, { report: () => {}, signal });
-              shot.image = `shot-${index}.${piece.ext}`;
-              await writeFile(join(at, 'assets', shot.image), piece.bytes);
-            } catch (error) { said(index, `no picture: ${(error as Error).message}`); }
-          }
           // The line is recorded before a talking head is made of it, because the head is made out of the line.
           if (saying && scene.say) {
             try {
@@ -540,17 +367,13 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             try {
               said(index, 'making a few seconds of moving picture…');
               // A still first, so the clip looks like the rest of the film rather than like a different film.
-              const still = drawing ? await drawing.make({ prompt: scene.clip_prompt!, shape }, { report: () => {}, signal }).then((one) => one.bytes, () => undefined) : undefined;
+              const still = drawing ? await drawing.make({ prompt: `${bible}. ${scene.clip_prompt!}`, shape }, { report: () => {}, signal }).then((one) => one.bytes, () => undefined) : undefined;
               const made = await clips.broll({ prompt: scene.clip_prompt!, image: still, seconds: scene.seconds ?? 4 }, { report: (line) => said(index, line), signal });
               shot.video = `clip-${index}.mp4`;
               await writeFile(join(at, 'assets', shot.video), made.bytes);
             } catch (error) {
               said(index, `the clip could not be made (${(error as Error).message}), so the scene is a picture instead`);
               shot.scene = fallbackOf(scene, (error as Error).message);
-              if (drawing && shot.scene.image_prompt) {
-                await drawing.make({ prompt: shot.scene.image_prompt, shape }, { report: () => {}, signal })
-                  .then(async (piece) => { shot.image = `shot-${index}.${piece.ext}`; await writeFile(join(at, 'assets', shot.image), piece.bytes); }, () => { shot.scene = { ...shot.scene, layout: 'statement' }; });
-              } else shot.scene = { ...shot.scene, layout: 'statement' };
             }
           }
           if (scene.layout === 'presenter' && able) {
@@ -570,45 +393,119 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             }
           }
         }));
+
+        // The pictures. A scene that is a picture gets one; every other scene gets one drawn behind it, because a
+        // film of flat dark rectangles is the single thing the founder said was wrong with the last one. Three at a
+        // time: a free picture service asked for a dozen at once refuses most of them.
+        const picturework = (async () => {
+          if (!drawing) return;
+          let drawn = 0;
+          const jobs = spec.scenes.map((scene, index) => async () => {
+            const shot = shots[index];
+            const front = scene.layout === 'picture' || scene.layout === 'logo';
+            const prompt = front ? scene.image_prompt : scene.bg_prompt;
+            if (!prompt || shot.image) return;
+            if (!front && drawn >= MAX_BACKGROUNDS) return;
+            if (!front) drawn += 1;
+            try {
+              const piece = await drawing.make({ prompt: front ? `${bible}. ${prompt}` : prompt, shape }, { report: () => {}, signal });
+              const file = `${front ? 'shot' : 'bg'}-${index}.${piece.ext}`;
+              await writeFile(join(at, 'assets', file), piece.bytes);
+              if (front) shot.image = file; else shot.bg = file;
+            } catch (error) { if (front) said(index, `no picture: ${(error as Error).message}`); }
+          });
+          await pool(jobs, 3);
+        })();
+        await Promise.all([scenework, picturework]);
         if (signal?.aborted) throw new Error('stopped');
 
         // A scene whose picture never arrived becomes the words it carries, so a founder with no picture key still
         // gets a film, and every scene is as long as the line said over it.
         for (const shot of shots) {
           const layout = shot.scene.layout;
-          if ((layout === 'picture' || layout === 'device' || layout === 'logo') && !shot.image && layout !== 'logo') shot.scene = fallbackOf(shot.scene, 'nothing to show');
+          if ((layout === 'picture' || layout === 'device') && !shot.image) shot.scene = fallbackOf(shot.scene, 'nothing to show');
           if ((layout === 'footage' || layout === 'clip' || layout === 'presenter') && !shot.video && !shot.image) shot.scene = fallbackOf(shot.scene, 'nothing to show');
-          const on = [shot.scene.heading, shot.scene.text, ...(shot.scene.bullets ?? [])].filter(Boolean).join(' ');
-          shot.seconds = sceneSeconds(on, shot.voice?.seconds ?? 0, pace);
-          // A piece of footage is only as long as the piece of footage.
-          if (shot.video && shot.scene.layout === 'footage' && shot.scene.seconds) shot.seconds = Math.max(shot.seconds, shot.scene.seconds);
         }
-        const held = withinLength(shots, asked.spec ? 0 : seconds);
+
+        // The length, held to what was asked for. The word budget does most of it, but a voice is a voice: when the
+        // recording still runs long, it is spoken a little faster — up to a seventh, which nobody hears as fast —
+        // before any scene is cut, because a film that loses a scene loses an idea.
+        const measure = () => {
+          for (const shot of shots) {
+            const on = [shot.scene.heading, shot.scene.text, ...(shot.scene.bullets ?? [])].filter(Boolean).join(' ');
+            shot.seconds = sceneSeconds(on, shot.voice?.seconds ?? 0, pace);
+            if (shot.video && shot.scene.layout === 'footage' && shot.scene.seconds) shot.seconds = Math.max(shot.seconds, shot.scene.seconds);
+          }
+          return shots.reduce((sum, one) => sum + one.seconds, 0);
+        };
+        let total = measure();
+        const target = asked.spec ? 0 : seconds;
+        if (target && total > target * 1.06 && !noFf) {
+          const faster = Math.min(1.16, total / (target * 1.0));
+          if (faster > 1.02) {
+            report(`the narration came to ${Math.round(total)} seconds, so it is read ${Math.round((faster - 1) * 100)}% quicker to fit ${target}`);
+            await pool(shots.map((shot) => async () => {
+              if (!shot.voice) return;
+              const to = shot.voice.file.replace('.wav', '-fit.wav');
+              await ff(FFMPEG, ['-y', '-loglevel', 'error', '-i', join(at, 'assets', shot.voice.file), '-filter:a', `atempo=${faster.toFixed(3)}`, join(at, 'assets', to)], signal, 120)
+                .then(async () => {
+                  const bytes = await readFile(join(at, 'assets', to));
+                  shot.voice = { file: to, seconds: wavSeconds(bytes), parts: (shot.voice!.parts ?? []).map((part) => ({ ...part, seconds: part.seconds / faster })) };
+                }, () => {});
+            }), 4);
+            total = measure();
+          }
+        }
+        const held = withinLength(shots, target);
         if (held.dropped) report(`${held.dropped} scene${held.dropped === 1 ? '' : 's'} cut to keep the film near ${seconds} seconds`);
         const cut = held.shots;
+
+        // The bed. The founder's own track first; failing that whatever the music maker can write for the mood.
+        let music: { file: string; seconds: number } | undefined;
+        let credit: Credit | undefined;
+        let beats: number[] | undefined;
+        let bedFile = '';
+        if (mood !== 'none' && !noFf) {
+          if (bed) bedFile = deps.fileOf?.(bed.path) ?? bed.path;
+          else if (deps.music) {
+            try {
+              report('writing the music…');
+              const made = await deps.music.bed({ mood, seconds: Math.ceil(cut.reduce((sum, one) => sum + one.seconds, 0)) + 2 }, { report, signal });
+              bedFile = join(at, 'assets', `bed-source.${made.ext}`);
+              await writeFile(bedFile, made.bytes);
+              credit = made.credit;
+              beats = made.beats;
+            } catch (error) { report(`no music this time: ${(error as Error).message}`); }
+          } else report('no music is set up — drop a music file on the card and the next film will have a bed under it');
+        }
+        // A cut lands better on a beat than a hair away from one.
+        if (beats?.length) {
+          const snapped = snapToBeats(cut.map((one) => one.seconds), beats);
+          snapped.forEach((value, index) => { cut[index].seconds = value; });
+          report('the cuts are pulled onto the beat');
+        }
+
         const starts: number[] = [];
         let clock = 0;
         for (const shot of cut) { starts.push(clock); clock = Math.round((clock + shot.seconds) * 100) / 100; }
-        const total = clock;
+        total = clock;
 
         // The sounds the film is cut with, and the bed under it, ducked where somebody is speaking.
         const cues = sfx ? cuesOf(cut, starts, pace) : [];
         for (const sound of new Set(cues.map((one) => one.sound))) {
           await copyFile(join(SFX_DIR, sfxFile(sound)), join(at, 'assets', sfxFile(sound))).catch(() => {});
         }
-        let music: { file: string; seconds: number } | undefined;
-        if (mood !== 'none' && !noFf) {
-          if (!bed) report('no music is bundled with the studio — drop a music file on the card and the next film will have a bed under it');
-          else {
-            report('mixing the music under the narration…');
-            const from = deps.fileOf?.(bed.path) ?? bed.path;
-            const windows = cut.map((shot, index) => ({ at: starts[index] + 0.35, seconds: shot.voice?.seconds ?? 0 })).filter((one) => one.seconds > 0);
-            await musicBed({ from, to: join(at, 'assets', 'bed.wav'), seconds: total, mood, windows, signal })
-              .then(() => { music = { file: 'bed.wav', seconds: total }; }, (error: Error) => report(`the music could not be mixed: ${error.message}`));
-          }
+        if (bedFile && mood !== 'none') {
+          report('mixing the music under the narration…');
+          const windows = cut.map((shot, index) => ({ at: starts[index] + 0.35, seconds: shot.voice?.seconds ?? 0 })).filter((one) => one.seconds > 0);
+          await musicBed({ from: bedFile, to: join(at, 'assets', 'bed.wav'), seconds: total, mood, windows, signal })
+            .then(() => { music = { file: 'bed.wav', seconds: total }; }, (error: Error) => report(`the music could not be mixed: ${error.message}`));
         }
+        if (credit && music) report(`Music: ${credit.title} by ${credit.by} · ${credit.licence}`);
 
-        await writeFile(join(at, 'index.html'), composition({ title: spec.title, shape, look: look === 'brand' && !brand ? 'clean' : look, shots: cut, pace, captions, brand, bed: music, cues }));
+        await writeFile(join(at, 'index.html'), composition({
+          title: spec.title, shape, look: pack === 'brand' && !brand ? 'clean' : pack, shots: cut, pace, captions, brand, bed: music, cues, beats,
+        }));
         await writeFile(join(at, 'hyperframes.json'), projectFile);
 
         // A finding here is worth saying out loud, but it is not worth withholding the film over: render either way.
@@ -639,7 +536,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         await run(bin, ['snapshot', '.', '--at', (cut[0].seconds * 0.6).toFixed(2), '--no-end', '--describe=false', '-o', 'poster'], at, () => {}, signal);
         const shot = (await readdir(join(at, 'poster')).catch(() => [])).find((name) => name.endsWith('.png'));
         if (shot) poster = { ext: 'png', bytes: await readFile(join(at, 'poster', shot)) };
-        return { ext: 'mp4', bytes, poster };
+        return { ext: 'mp4', bytes, poster, credit };
       } finally {
         await rm(at, { recursive: true, force: true }).catch(() => {});
       }
@@ -656,8 +553,29 @@ export const fakeVideos: Maker = {
   async make(ask, { report }) {
     const asked = ask as VideoAsk;
     const spec = asked.spec ?? { title: asked.prompt.slice(0, 60), scenes: [{ layout: 'title' as const, heading: asked.prompt.slice(0, 60) }] };
+    report(`reading the brief: ${asked.prompt.slice(0, 60)}`);
     report(`${spec.scenes.length} scenes: ${spec.title}`);
     report('rendering 6 seconds…');
     return { ext: 'mp4', bytes: Buffer.from(CLIP, 'base64'), poster: { ext: 'png', bytes: Buffer.from(POSTER, 'base64') } };
   },
 };
+
+// A stand-in for the music maker somebody else is building, so the tests and the fake mode have a bed without one.
+export const fakeMusicBed: Music = {
+  async bed({ seconds }) {
+    // Two seconds of silence, looped by the mixer: enough for the ducking and the credit to be exercised.
+    const rate = 44100;
+    const samples = Math.max(1, Math.round(rate * Math.min(seconds, 2)));
+    const body = Buffer.alloc(samples * 2);
+    const head = Buffer.alloc(44);
+    head.write('RIFF', 0); head.writeUInt32LE(36 + body.length, 4); head.write('WAVEfmt ', 8);
+    head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22);
+    head.writeUInt32LE(rate, 24); head.writeUInt32LE(rate * 2, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34);
+    head.write('data', 36); head.writeUInt32LE(body.length, 40);
+    return { ext: 'wav', bytes: Buffer.concat([head, body]), credit: { title: 'Nothing at all', by: 'the test', licence: 'CC0', source: 'here' }, bpm: 120, beats: [] };
+  },
+};
+
+// The rules the critic holds a film to, exported for whatever wants to check one without rendering it.
+export type { Want } from './critic.ts';
+export { criticise, repair } from './critic.ts';

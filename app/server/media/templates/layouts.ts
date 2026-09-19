@@ -1,13 +1,14 @@
 import type { Shape } from '../../../shared/model.ts';
-import type { Scene } from '../video.ts';
+import type { Scene } from '../spec.ts';
 import type { Part } from './captions.ts';
-import { FORMATS, PACE, type Look, type Pace } from './looks.ts';
+import { FORMATS, PACE, PACK, type Pace, type Pack } from './looks.ts';
 
 // One scene, ready to be written out: what was asked for, how long it is on screen, the still drawn for it, the moving
-// picture cut into it and the narration recorded over it. `image` and `video` are file names inside the project's own
-// assets folder; `parts` is the narration sentence by sentence, which is what the captions are timed from.
+// picture cut into it, the picture drawn behind it and the narration recorded over it. `image`, `video` and `bg` are
+// file names inside the project's own assets folder; `parts` is the narration sentence by sentence, which is what the
+// captions are timed from.
 export type Shot = {
-  scene: Scene; seconds: number; image?: string; video?: string;
+  scene: Scene; seconds: number; image?: string; video?: string; bg?: string;
   voice?: { file: string; seconds: number; parts?: Part[] };
 };
 
@@ -18,18 +19,44 @@ const quoted = (text: string) => `“${text.replace(/^["“]|["”]$/g, '')}”`
 const FIGURE = /^(\D{0,3})(\d{1,4})(\D{0,14})$/;
 // The one number on a stat scene is as big as the frame can hold it on one line: full height for a short figure, and
 // stepped down for a longer one, down to the size of a heading — past that it is a sentence, and it wraps like one.
-function statStyle(heading: string, shape: Shape): string {
+function statStyle(heading: string, shape: Shape, pack: Pack): string {
   const { width, margin, scale } = FORMATS[shape];
-  const room = Math.round((width - margin * 2) / Math.max(heading.length * 0.78, 1));
-  const floor = Math.round(68 * scale);
+  // How wide a character really is at that size. A display face set for a figure is narrow — Anton is very narrow —
+  // and the old 0.78 was the width of a body face, which is why a seven-character figure came out at a third of the
+  // size it could have been and read as a caption rather than as the scene.
+  const wide = PACK[pack].shout ? 0.50 : 0.62;
+  const room = Math.round((width - margin * 2) / Math.max(heading.length * wide, 1));
+  const floor = Math.round(88 * scale);
   return `font-size: ${Math.max(Math.min(300 * scale, room), floor)}px${room < floor ? '; white-space: normal' : ''}`;
 }
-const figure = (heading: string, shape: Shape): string => {
+const figure = (heading: string, shape: Shape, pack: Pack): string => {
   const bits = FIGURE.exec(heading);
-  const open = `<p class="stat rise" data-mark="ring" style="${statStyle(heading, shape)}">`;
+  const open = `<p class="stat rise" data-mark="ring" style="${statStyle(heading, shape, pack)}">`;
   if (!bits) return `${open}${html(heading)}</p>`;
   return `${open}${html(bits[1])}<span class="count" style="min-width: ${bits[2].length}ch">${bits[2]}</span>${html(bits[3])}</p>`;
 };
+
+// --- kinetic type -------------------------------------------------------------------------------------------------
+
+const barest = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+// A line set one word at a time, so it can arrive one word at a time. The word the scene turns on takes the accent
+// colour, and in the packs that shout it takes a sweep of that colour drawn behind it as well.
+export function kinetic(text: string, emphasis: string | undefined, pack: Pack, word = true): string {
+  const style = PACK[pack];
+  const mark = emphasis ? barest(emphasis) : '';
+  const parts = text.split(/\s+/).filter(Boolean);
+  if (!word) {
+    // Not kinetic: the block moves as a block, and only the accent word is painted.
+    if (!mark) return html(text);
+    return parts.map((one) => (barest(one) === mark ? `<span class="pop">${html(one)}</span>` : html(one))).join(' ');
+  }
+  return parts.map((one) => {
+    const hit = mark && barest(one) === mark;
+    if (hit && style.sweep) return `<span class="w swept"><span class="sweep"></span><span class="on-sweep">${html(one)}</span></span>`;
+    return `<span class="w${hit ? ' pop' : ''}">${html(one)}</span>`;
+  }).join(' ');
+}
 
 // A line short enough to be said in one breath is set as large as a title; a paragraph is set as a heading, or it would
 // not fit the frame. Nothing else in the film changes size with what is written on it.
@@ -61,43 +88,73 @@ function device(shot: Shot, shape: Shape): string {
     + `<div class="device__bar"><div class="device__dot"></div><div class="device__dot"></div><div class="device__dot"></div><div class="device__pill">${where}</div></div>${glass}</div></div>`;
 }
 
-// The seventeen shapes a scene can take. Most are the same left-aligned block with different weights in it; the one
-// line that says "this block ends here" recurs through them, drawn straight in the clean look and by hand in the
-// notebook. The rest — a device, a comparison, a piece of the founder's own footage — fill the frame instead.
-export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = false): string {
+// --- what a scene sits on -------------------------------------------------------------------------------------------
+
+// Four soft lamps drifting behind the words, placed from the scene's own number so two renders of the same film put
+// them in the same place. This is what a scene with no picture gets, and it is the reason no film is a flat rectangle
+// any more.
+export function meshHtml(index: number, pack: Pack): string {
+  const paint = PACK[pack].paint;
+  const colours = [paint.signal, paint.mark, paint.quiet, paint.signal];
+  const seed = (step: number) => ((index * 37 + step * 61) % 100) / 100;
+  const blobs = colours.map((colour, step) => {
+    const x = Math.round(8 + seed(step) * 74);
+    const y = Math.round(6 + seed(step + 4) * 70);
+    const size = Math.round(46 + seed(step + 8) * 40);
+    return `<div class="blob" id="b${index}-${step}" data-layout-allow-overflow style="left:${x}%; top:${y}%; width:${size}%; height:${size}%; background:${colour}; opacity:${(0.22 + seed(step + 12) * 0.3).toFixed(2)}"></div>`;
+  }).join('');
+  return `<div class="mesh" id="mesh${index}">${blobs}</div>`;
+}
+
+// The picture behind a scene, or the lamps when there is no picture. Either way the scene has somewhere to be.
+export const groundHtml = (shot: Shot, index: number, pack: Pack): string =>
+  (shot.bg ? `<div class="bg" id="bg${index}"><img src="assets/${shot.bg}" alt="" data-layout-allow-overflow></div>` : meshHtml(index, pack));
+
+// --- the seventeen shapes ---------------------------------------------------------------------------------------------
+
+// Most are the same left-aligned block with different weights in it; the one line that says "this block ends here"
+// recurs through them, drawn straight in the clean look and by hand in the notebook. The rest — a device, a comparison,
+// a piece of the founder's own footage — fill the frame instead.
+export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = false, pack: Pack = 'clean'): string {
   const { scene } = shot;
+  const style = PACK[pack];
+  const moving = style.motion === 'kinetic' || style.motion === 'snap';
   const heading = scene.heading?.trim() ?? '';
   const text = scene.text?.trim() ?? '';
+  const icon = scene.icon?.trim() ? `<p class="icon rise">${html(scene.icon.trim())}</p>` : '';
+  const say = (words: string, cls: string) => `<p class="${cls} rise">${kinetic(words, scene.emphasis, pack, moving)}</p>`;
   const parts: string[] = [];
   if (scene.layout === 'title') {
-    parts.push(`<h1 class="display rise" data-mark="highlight">${html(heading)}</h1>`, '<div class="rule" data-mark="dash"></div>');
+    parts.push(`<h1 class="display rise" data-mark="highlight">${kinetic(heading, scene.emphasis, pack, moving)}</h1>`, '<div class="rule" data-mark="dash"></div>');
     if (text) parts.push(`<p class="lead quiet rise">${html(text)}</p>`);
     return `<div class="frame frame--title" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'hook') {
+    if (icon) parts.push(icon);
     if (heading) parts.push(`<p class="label rise">${html(heading)}</p>`);
-    parts.push(`<p class="${hookWeight(text)} rise" data-mark="highlight">${html(text)}</p>`);
+    parts.push(`<p class="${hookWeight(text)} rise" data-mark="highlight">${kinetic(text, scene.emphasis, pack, moving)}</p>`);
     return `<div class="frame frame--hook" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'statement') {
+    if (icon) parts.push(icon);
     if (heading) parts.push(`<p class="label quiet rise">${html(heading)}</p>`);
-    parts.push(`<p class="${weight(text)} rise">${html(text)}</p>`, '<div class="rule" data-mark="dash"></div>');
+    parts.push(say(text, weight(text)), '<div class="rule" data-mark="dash"></div>');
   } else if (scene.layout === 'bullets') {
-    if (heading) parts.push(`<h2 class="heading rise">${html(heading)}</h2>`, '<div class="rule" data-mark="dash"></div>');
+    if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
     parts.push(`<ul class="list">${(scene.bullets ?? []).map((one) => `<li class="rise"><span class="tick" data-mark="dash"></span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
   } else if (scene.layout === 'checklist') {
-    if (heading) parts.push(`<h2 class="heading rise">${html(heading)}</h2>`, '<div class="rule" data-mark="dash"></div>');
+    if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
     parts.push(`<ul class="list list--check">${(scene.bullets ?? []).map((one) => `<li class="rise"><span class="mark">${CHECK}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
   } else if (scene.layout === 'steps') {
-    if (heading) parts.push(`<h2 class="heading rise">${html(heading)}</h2>`, '<div class="rule" data-mark="dash"></div>');
+    if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
     parts.push(`<ul class="list list--steps">${(scene.bullets ?? []).map((one, at) => `<li class="rise"><span class="step">${at + 1}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
   } else if (scene.layout === 'compare') {
     const labels = scene.labels ?? [];
     const sides = (scene.bullets ?? []).slice(0, 2).map((one, at) => `<div class="side${at === 1 ? ' side--after' : ''}" id="p${index}-${at}">`
       + `<p class="label">${html(labels[at] ?? (at === 0 ? 'Before' : 'After'))}</p><p class="body">${html(one)}</p></div>`).join('');
-    if (heading) parts.push(`<h2 class="heading rise">${html(heading)}</h2>`);
+    if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`);
     parts.push(`<div class="compare">${sides}</div>`);
   } else if (scene.layout === 'picture') {
     parts.push(`<div class="shot" data-mark="frame"><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
-    if (text) parts.push(`<div class="plate"><p class="lead rise">${html(text)}</p></div>`);
+    if (text) parts.push(`<div class="plate"><p class="lead rise">${kinetic(text, scene.emphasis, pack, false)}</p></div>`);
     return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
   } else if (MOVING.has(scene.layout)) {
     // The moving picture itself is not written here. A <video> carrying its own start may not sit inside a section
@@ -106,7 +163,7 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     if (!shot.video && shot.image) {
       parts.push(`<div class="${scene.layout === 'presenter' ? 'presenter' : 'shot'}" data-mark="frame"><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
     }
-    if (text) parts.push(`<div class="plate"><p class="lead rise">${html(text)}</p></div>`);
+    if (text) parts.push(`<div class="plate"><p class="lead rise">${kinetic(text, scene.emphasis, pack, false)}</p></div>`);
     return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'device') {
     // The device is the scene. Its words go on a chip in the corner rather than under it, so the mockup can have the
@@ -117,22 +174,23 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     return `<div class="frame frame--device" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'stat') {
     // The ring around the figure is mark enough in the notebook: the line under it stays a straight one, or nothing.
-    parts.push(figure(heading, shape), '<div class="rule"></div>');
+    parts.push(figure(heading, shape, pack), '<div class="rule"></div>');
     if (text) parts.push(`<p class="lead quiet rise">${html(text)}</p>`);
     return `<div class="frame frame--stat" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'quote') {
-    parts.push(`<blockquote class="quote rise" data-mark="bar">${html(quoted(text))}</blockquote>`);
+    parts.push(`<blockquote class="quote rise" data-mark="bar">${kinetic(quoted(text), scene.emphasis, pack, false)}</blockquote>`);
     if (heading) parts.push(`<p class="label quiet rise">— ${html(heading)}</p>`);
   } else if (scene.layout === 'logo') {
     parts.push(shot.image ? `<div class="logo rise" data-mark="ring"><img src="assets/${shot.image}" alt=""></div>` : `<p class="logo rise" data-mark="ring">${html(heading)}</p>`, '<div class="rule" data-mark="dash"></div>');
     if (text) parts.push(`<p class="lead quiet rise">${html(text)}</p>`);
     return `<div class="frame frame--logo" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'cta') {
-    parts.push(`<p class="${weight(text || heading)} rise">${html(text || heading)}</p>`);
+    if (icon) parts.push(icon);
+    parts.push(say(text || heading, weight(text || heading)));
     if (text && heading) parts.push(`<p class="cta rise" data-mark="highlight">${html(heading)}</p>`);
     return `<div class="frame frame--cta" id="f${index}">${parts.join('')}</div>`;
   } else {
-    parts.push('<div class="rule" data-mark="dash"></div>', `<h2 class="${weight(text || heading)} rise">${html(text || heading)}</h2>`);
+    parts.push('<div class="rule" data-mark="dash"></div>', say(text || heading, weight(text || heading)));
     if (text && heading) parts.push(`<p class="label quiet rise">${html(heading)}</p>`);
   }
   return `<div class="frame" id="f${index}">${parts.join('')}</div>`;
@@ -149,11 +207,34 @@ const FILLS = new Set(['picture', 'footage', 'clip', 'presenter']);
 // One orchestrated entrance a scene, and one fade out of it. Nothing moves that is not saying something arrived, and
 // what moves arrives fast and settles: a long ease out, a little further travelled than looks safe, no bounce. A
 // punchy film does the same thing in half the time, which is the whole difference between an explainer and a reel.
-export function sceneSteps(shot: Shot, index: number, at: number, scale: number, look: Look, last: boolean, pace: Pace = 'calm'): string[] {
+// What this scene actually put on the page. GSAP complains, loudly and once per frame, about a tween whose target is
+// not there, so nothing is animated that was not written: the html is the one thing that knows.
+export type Onscreen = { words: boolean; sweep: boolean; rise: boolean; rule: boolean; tick: boolean; mark: boolean; count: boolean };
+export const onscreen = (html: string): Onscreen => ({
+  words: html.includes('class="w'), sweep: html.includes('class="sweep"'), rise: html.includes(' rise"') || html.includes('rise ') || html.includes('"rise'),
+  rule: html.includes('class="rule"'), tick: html.includes('class="tick"'), mark: html.includes('class="mark"'), count: html.includes('class="count"'),
+});
+
+export function sceneSteps(shot: Shot, index: number, at: number, scale: number, pack: Pack, last: boolean, pace: Pace = 'calm', has: Onscreen = { words: true, sweep: true, rise: true, rule: true, tick: true, mark: true, count: true }): string[] {
   const steps: string[] = [];
   const beat = PACE[pace];
+  const style = PACK[pack];
   const time = (offset: number) => (at + offset).toFixed(3);
   const layout = shot.scene.layout;
+  const lead = style.overlap * 0.6;
+
+  // The ground. A drawn picture pushes slowly in behind the words the way a camera would; the lamps drift instead.
+  if (shot.bg) {
+    const to = 1.0 + (index % 2 ? 0.10 : 0.14);
+    const pan = index % 2 ? 1.6 : -1.8;
+    steps.push(`tl.fromTo("#bg${index} img", { scale: 1.02, xPercent: 0 }, { scale: ${to.toFixed(2)}, xPercent: ${pan}, duration: ${(shot.seconds + style.overlap).toFixed(3)}, ease: "none" }, ${time(0)});`);
+  } else {
+    for (let blob = 0; blob < 4; blob += 1) {
+      const drift = ((index * 31 + blob * 17) % 9) - 4;
+      steps.push(`tl.fromTo("#b${index}-${blob}", { xPercent: 0, yPercent: 0, scale: 1 }, { xPercent: ${drift * 1.6}, yPercent: ${drift * -1.1}, scale: ${(1 + blob * 0.03).toFixed(2)}, duration: ${(shot.seconds + style.overlap).toFixed(3)}, ease: "none" }, ${time(0)});`);
+    }
+  }
+
   if (FILLS.has(layout)) {
     const box = shot.video ? `#v${index}` : `#s${index} ${layout === 'presenter' ? '.presenter' : '.shot'}`;
     steps.push(`tl.fromTo("${box}", { opacity: 0 }, { opacity: 1, duration: ${(beat.rise * 0.9).toFixed(2)}, ease: "power2.out" }, ${time(0)});`);
@@ -169,21 +250,38 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
     // middle, where a page keeps its nav, its heading and its first real content.
     steps.push(`tl.fromTo("#s${index} .device__glass img", { scale: 1 }, { scale: 1.35, duration: ${shot.seconds.toFixed(3)}, ease: "power1.in" }, ${time(0)});`);
   }
-  steps.push(`tl.fromTo("#s${index} .rise", { y: ${Math.round(beat.travel * scale)}, opacity: 0 }, { y: 0, opacity: 1, duration: ${beat.rise.toFixed(2)}, ease: "${beat.ease}", stagger: ${beat.stagger} }, ${time(0)});`);
+  // The words. In a kinetic pack they arrive one at a time and a little oversized, which is what makes a reel read as
+  // a reel; everywhere else the block moves as a block.
+  const rise = `#s${index} .rise`;
+  if (!has.rise) { /* nothing rose: a device scene or a bare picture */ }
+  else if (style.motion === 'kinetic') {
+    steps.push(`tl.fromTo("${rise}", { y: ${Math.round(beat.travel * scale * 0.6)}, opacity: 0 }, { y: 0, opacity: 1, duration: ${(beat.rise * 0.7).toFixed(2)}, ease: "${beat.ease}", stagger: ${(beat.stagger * 0.8).toFixed(3)} }, ${time(lead)});`);
+    if (has.words) steps.push(`tl.fromTo("#s${index} .w", { yPercent: 62, opacity: 0, scale: 0.86 }, { yPercent: 0, opacity: 1, scale: 1, duration: 0.34, ease: "back.out(1.7)", stagger: 0.048 }, ${time(lead + 0.04)});`);
+  } else if (style.motion === 'snap') {
+    steps.push(`tl.fromTo("${rise}", { y: ${Math.round(beat.travel * scale * 0.5)}, opacity: 0 }, { y: 0, opacity: 1, duration: ${(beat.rise * 0.55).toFixed(2)}, ease: "power4.out", stagger: ${(beat.stagger * 0.7).toFixed(3)} }, ${time(lead)});`);
+    if (has.words) steps.push(`tl.fromTo("#s${index} .w", { opacity: 0, xPercent: -14 }, { opacity: 1, xPercent: 0, duration: 0.22, ease: "power3.out", stagger: 0.034 }, ${time(lead + 0.03)});`);
+  } else if (style.motion === 'glide') {
+    steps.push(`tl.fromTo("${rise}", { y: ${Math.round(beat.travel * scale * 1.3)}, opacity: 0, filter: "blur(9px)" }, { y: 0, opacity: 1, filter: "blur(0px)", duration: ${(beat.rise * 1.25).toFixed(2)}, ease: "${beat.ease}", stagger: ${(beat.stagger * 1.4).toFixed(3)} }, ${time(lead)});`);
+  } else {
+    steps.push(`tl.fromTo("${rise}", { y: ${Math.round(beat.travel * scale)}, opacity: 0 }, { y: 0, opacity: 1, duration: ${beat.rise.toFixed(2)}, ease: "${beat.ease}", stagger: ${beat.stagger} }, ${time(lead)});`);
+  }
+  // The sweep of colour behind the one word the line turns on, drawn after the word has landed.
+  if (style.sweep && has.sweep) steps.push(`tl.fromTo("#s${index} .sweep", { scaleX: 0 }, { scaleX: 1, duration: 0.30, ease: "power3.out" }, ${time(lead + 0.34)});`);
   // The two halves of a comparison are not one thing: the second arrives after the first has been read.
   if (layout === 'compare') {
     steps.push(`tl.fromTo("#p${index}-0", { x: ${-Math.round(beat.travel * 0.8)}, opacity: 0 }, { x: 0, opacity: 1, duration: ${beat.rise.toFixed(2)}, ease: "${beat.ease}" }, ${time(0.1)});`);
     steps.push(`tl.fromTo("#p${index}-1", { x: ${Math.round(beat.travel * 0.8)}, opacity: 0 }, { x: 0, opacity: 1, duration: ${beat.rise.toFixed(2)}, ease: "${beat.ease}" }, ${time(Math.min(1.5, shot.seconds * 0.42))});`);
   }
   // The figure on a stat scene runs up to itself, the way a counter settles on a number.
-  const counted = layout === 'stat' && FIGURE.exec(shot.scene.heading?.trim() ?? '');
+  const counted = layout === 'stat' && has.count && FIGURE.exec(shot.scene.heading?.trim() ?? '');
   if (counted) steps.push(`tl.fromTo("#s${index} .count", { textContent: 0 }, { textContent: ${counted[2]}, duration: ${Math.min(1.5, shot.seconds * 0.45).toFixed(2)}, ease: "power2.out", snap: { textContent: 1 } }, ${time(0.22)});`);
   // In the notebook the same lines are drawn by hand instead, which the marks script animates.
-  const straight = look === 'sketch' ? [] : [hasRule(shot.scene) && `#s${index} .rule`, hasTicks(shot.scene) && `#s${index} .tick`].filter(Boolean);
+  const straight = pack === 'sketch' ? [] : [has.rule && hasRule(shot.scene) && `#s${index} .rule`, has.tick && hasTicks(shot.scene) && `#s${index} .tick`].filter(Boolean);
   if (straight.length) steps.push(`tl.fromTo("${straight.join(', ')}", { scaleX: 0 }, { scaleX: 1, duration: ${(beat.rise * 0.94).toFixed(2)}, ease: "${beat.ease}", stagger: 0.07 }, ${time(0.22)});`);
-  if (layout === 'checklist') steps.push(`tl.fromTo("#s${index} .mark", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: ${(beat.rise * 0.6).toFixed(2)}, ease: "back.out(2)", stagger: ${beat.stagger} }, ${time(0.2)});`);
+  if (layout === 'checklist' && has.mark) steps.push(`tl.fromTo("#s${index} .mark", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: ${(beat.rise * 0.6).toFixed(2)}, ease: "back.out(2)", stagger: ${beat.stagger} }, ${time(0.2)});`);
+  // The words leave before the frame does, so the picture is what the next scene is cut against.
   if (!last) {
-    const targets = look === 'sketch' ? `["#f${index}", "#m${index}"]` : `"#f${index}"`;
+    const targets = pack === 'sketch' ? `["#f${index}", "#m${index}"]` : `"#f${index}"`;
     steps.push(`tl.to(${targets}, { opacity: 0, duration: ${beat.out.toFixed(2)}, ease: "power2.in" }, ${time(shot.seconds - beat.out)});`);
   }
   return steps;

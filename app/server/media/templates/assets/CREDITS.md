@@ -1,5 +1,25 @@
 # What is bundled with the video studio, and under what terms
 
+## Typefaces — four, all SIL Open Font License 1.1
+
+The films set their words in faces that live in `templates/vendor/`, so a render fetches nothing and a founder
+with no network still gets a film that looks like itself. All four are published under the
+[SIL Open Font License 1.1](https://openfontlicense.org/), which permits redistribution — including bundled
+inside software — and commercial use, and requires only that the fonts are not sold on their own and that any
+modified version is renamed. None of them is modified here: each is the Latin subset `woff2` that Google Fonts
+serves, copied as it came.
+
+| file | face | by | used for |
+| --- | --- | --- | --- |
+| `inter.woff2` | Inter | Rasmus Andersson | body copy in every pack; the display face of `clean`, `sketch` and `brand` |
+| `anton.woff2` | Anton | Vernon Adams / Cyreal | the display face of `creator` — a condensed grotesque that shouts |
+| `instrument-serif.woff2` | Instrument Serif | Rodrigo Fuenzalida, Jordan Egstad | the display face of `editorial` |
+| `space-grotesk.woff2` | Space Grotesk | Florian Karsten | the display and body face of `neon` |
+
+The families are renamed in the page (`Studio Sans`, `Studio Shout`, `Studio Serif`, `Studio Tech`) only so that
+a wired product's own typeface can be layered in front of them without a name collision; the files themselves are
+untouched, which is what the licence is about.
+
 ## Sound effects — Kenney, CC0 1.0 (public domain)
 
 The ten files in `sfx/` come from [Kenney](https://kenney.nl/)'s free game-asset packs, which Kenney releases

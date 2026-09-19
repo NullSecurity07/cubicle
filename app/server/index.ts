@@ -78,13 +78,23 @@ boards.onChange(() => { void attention.refresh(); });
 // A video is made out of the other two: it draws its stills with the picture makers and records its lines with the voice ones.
 const pictures = fake ? [fakeImages] : imageMakers();
 const voices = fake ? [fakeVoices] : voiceMakers(resolve(root, 'app/.cache/voice'));
+// Direction is the one place in the app where the *best* free model matters more than the roomiest: a storyboard is
+// short, and what it needs is judgement. The configured order puts gpt-oss-120b first and the router moves anything
+// out of quota to the back, so this asks the strongest model that can still answer today, then anything that can.
 const storyboard = async (prompt: string) => {
   const messages = [{ role: 'user' as const, content: prompt }];
-  const { order } = route([...clients].reverse(), usage, { promptChars: promptSize(messages), tools: false });
-  const reply = await complete(messages, { onToken: () => {} }, order);
+  const chars = promptSize(messages);
+  const { order } = route(clients, usage, { promptChars: chars, tools: false });
+  const roomy = [...clients].reverse().filter((client) => !order.includes(client) && client.maxPromptChars >= chars);
+  const reply = await complete(messages, { onToken: () => {} }, [...order, ...roomy]);
   usage.record(reply.client.name, reply.usage, reply.quota);
   return reply.text;
 };
+// The bed under a film. `media/music.ts` is being built in another pair of hands; until it lands this resolves to
+// nothing and every film says so in plain words. The specifier is not a literal, so the build does not need the file.
+const musicModule = './media/music.ts';
+const music = await import(musicModule)
+  .then((made: { createMusic?: (deps: { cacheDir: string }) => unknown }) => made.createMusic?.({ cacheDir: resolve(root, 'app/.cache/music') }) as undefined, () => undefined);
 // Moving pictures, two ways round: made here on this machine, slowly and without limit, or asked of the free Hugging
 // Face Spaces, quickly and out of a daily quota. B-roll tries this machine first; a talking head can only be made
 // out there. Either way a scene that cannot be made falls back in plain words.
@@ -99,11 +109,13 @@ const media = createMedia({
     imagegen: pictures,
     voicegen: voices,
     videogen: fake ? [fakeVideos] : [hyperframesVideos({
-      dir: workspace, images: pictures[0], voices: voices[0], think: storyboard, clips, local,
+      dir: workspace, images: pictures[0], voices: voices[0], think: storyboard, clips, local, music,
       forbidden: [workspace, root],
       stage: () => store.loadStage(),
       // `media` is read inside these, never at the moment they are made, so the studio can ask the card that asked it.
       assets: (cardId) => media.assetsOf(cardId),
+      // A wired image studio's own pictures, newest first: a wire is the founder saying "use these".
+      pictures: async (cardId) => (await media.read(cardId)).results.map((one) => one.path),
       fileOf: (path) => store.pathOf(path),
       readDoc: (id) => store.readDoc(id),
       readFile: (path) => store.readFileBytes(path),

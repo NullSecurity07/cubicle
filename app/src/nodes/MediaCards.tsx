@@ -142,15 +142,26 @@ export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>
   );
 }
 
-const LOOK_WORDS: Record<VideoLook, string> = { clean: 'Clean', sketch: 'Sketch', brand: 'Brand' };
+const LOOK_WORDS: Record<VideoLook, string> = {
+  clean: 'Clean', creator: 'Creator', editorial: 'Editorial', neon: 'Neon', sketch: 'Sketch', brand: 'Brand',
+};
 // What the film is for. The words are the founder's, not the code's; each one sets a structure, a pace and a length
-// on the server, and the founder can still overrule any of them below.
+// on the server. Every picker starts on Auto, which is not a default but a decision: the director reads the brief and
+// works it out, and anything the founder does set it obeys instead.
 const PURPOSE_WORDS: [string, string][] = [
   ['explainer', 'Product explainer'], ['launch', 'Launch announcement'], ['feature', 'One feature'],
   ['ad', 'Marketing ad'], ['reel', 'Influencer-style reel'], ['pitch', 'Investor pitch'], ['testimonial', 'Customer testimonial'],
 ];
 const MUSIC_WORDS: [string, string][] = [['none', 'No music'], ['calm', 'Calm'], ['warm', 'Warm'], ['drive', 'Driving'], ['bright', 'Bright']];
-const LENGTH_WORDS = [15, 30, 60, 90];
+const LENGTH_WORDS = [15, 20, 30, 45, 60, 90];
+// How long a film of this length takes to make here, in the founder's words, said before they press Make rather than
+// found out afterwards: the pictures, the voice, and Chrome drawing every frame of it.
+const howLong = (seconds: number | undefined, clips: 'auto' | 'on' | 'off'): string => {
+  const length = seconds ?? 30;
+  const minutes = Math.max(1, Math.round((40 + length * 3) / 60));
+  const moving = clips === 'on' ? ' — plus about three minutes for each moving shot' : '';
+  return `about ${minutes} minute${minutes === 1 ? '' : 's'}${moving}`;
+};
 const MEDIA_FILE = 'video/*,image/*,audio/*';
 const seconds = (value?: number) => (value ? `${Math.round(value)}s` : '');
 
@@ -200,11 +211,12 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
   const shoot = () => {
     if (!brief.trim() || making) return;
     setShown(0);
+    // Everything the founder left on Auto goes as 'auto', which is the studio's word for "you decide".
     void make({
-      prompt: brief.trim(), format: data.format, look: data.look ?? 'clean', narrate: !data.silent,
-      purpose: data.purpose ?? 'explainer', length: data.length, pace: data.pace, music: data.music,
+      prompt: brief.trim(), format: data.format ?? 'auto', look: data.look ?? 'auto', narrate: !data.silent,
+      purpose: data.purpose ?? 'auto', length: data.length, pace: data.pace ?? 'auto', music: data.music ?? 'auto',
       captions: data.captions === 'on' ? true : data.captions === 'off' ? false : undefined,
-      sfx: data.sfx !== 'off', ai: data.ai === true, address: data.address,
+      sfx: data.sfx !== 'off', ai: data.ai ?? 'auto', address: data.address,
     });
   };
 
@@ -268,6 +280,8 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
         )}
         {film && !making && <div className="studio__done"><a href={fileUrl(film.path)} download>Download</a></div>}
         {!!using.length && <p className="studio__using">Using: {using.join(', ')}</p>}
+        {film?.music && !making && <p className="studio__using">Music: {film.music.title} by {film.music.by} · {film.music.licence}</p>}
+        {!making && !!brief.trim() && <p className="studio__using">Making it takes {howLong(data.length, data.ai ?? 'auto')}. Everything you leave on Auto, the director reads out of the brief.</p>}
         <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); shoot(); }}>
           <textarea
             aria-label="What the film is about" placeholder="A one-minute update for investors: what shipped this month, the numbers, what is next…" rows={2} value={brief}
@@ -275,11 +289,12 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
             onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); shoot(); } }}
           />
           <div className="studio__end">
-            <select aria-label="What it is for" value={data.purpose ?? 'explainer'} onChange={(event) => updateNodeData(id, { purpose: event.target.value })}>
+            <select aria-label="What it is for" value={data.purpose ?? ''} onChange={(event) => updateNodeData(id, { purpose: event.target.value || undefined })}>
+              <option value="">Auto</option>
               {PURPOSE_WORDS.map(([value, word]) => <option key={value} value={value}>{word}</option>)}
             </select>
             <select aria-label="How long" value={String(data.length ?? '')} onChange={(event) => updateNodeData(id, { length: event.target.value ? Number(event.target.value) : undefined })}>
-              <option value="">As it comes</option>
+              <option value="">Auto</option>
               {LENGTH_WORDS.map((one) => <option key={one} value={one}>{one} seconds</option>)}
             </select>
             {making
@@ -292,23 +307,24 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
             <div className="studio__grid">
               <label>Shape
                 <select value={data.format ?? ''} onChange={(event) => updateNodeData(id, { format: (event.target.value || undefined) as Shape | undefined })}>
-                  <option value="">As it comes</option>
+                  <option value="">Auto</option>
                   {SHAPES.map((shape) => <option key={shape} value={shape}>{SHAPE_WORDS[shape]}</option>)}
                 </select>
               </label>
               <label>Look
-                <select value={data.look ?? 'clean'} onChange={(event) => updateNodeData(id, { look: event.target.value as VideoLook })}>
+                <select value={data.look ?? ''} onChange={(event) => updateNodeData(id, { look: (event.target.value || undefined) as VideoLook | undefined })}>
+                  <option value="">Auto</option>
                   {Object.entries(LOOK_WORDS).map(([look, word]) => <option key={look} value={look}>{word}</option>)}
                 </select>
               </label>
               <label>Pace
                 <select value={data.pace ?? ''} onChange={(event) => updateNodeData(id, { pace: (event.target.value || undefined) as 'calm' | 'punchy' | undefined })}>
-                  <option value="">As it comes</option><option value="calm">Calm</option><option value="punchy">Punchy</option>
+                  <option value="">Auto</option><option value="calm">Calm</option><option value="punchy">Punchy</option>
                 </select>
               </label>
               <label>Music
                 <select value={data.music ?? ''} onChange={(event) => updateNodeData(id, { music: event.target.value || undefined })}>
-                  <option value="">As it comes</option>
+                  <option value="">Auto</option>
                   {MUSIC_WORDS.map(([value, word]) => <option key={value} value={value}>{word}</option>)}
                 </select>
               </label>
@@ -323,11 +339,14 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
               <label className="studio__toggle"><input type="checkbox" checked={!data.silent} onChange={(event) => updateNodeData(id, { silent: !event.target.checked })} />Narrate</label>
               <label className="studio__toggle"><input type="checkbox" checked={data.captions === 'on'} onChange={(event) => updateNodeData(id, { captions: event.target.checked ? 'on' : 'off' })} />Captions</label>
               <label className="studio__toggle"><input type="checkbox" checked={data.sfx !== 'off'} onChange={(event) => updateNodeData(id, { sfx: event.target.checked ? 'on' : 'off' })} />Sound</label>
-              <label className="studio__toggle" title="Moving shots and talking heads. B-roll is made here on this computer, which takes about three minutes a clip and costs nothing; a talking head is made online, out of a small daily free quota.">
-                <input type="checkbox" checked={data.ai === true} onChange={(event) => updateNodeData(id, { ai: event.target.checked })} />AI clips
-              </label>
             </div>
-            {data.ai === true && <p className="studio__aside">Moving shots are drawn here on this computer: about three minutes each, and the film waits for them. Talking heads are made online, out of a small daily free quota.</p>}
+            <label className="studio__ai" title="Moving shots and talking heads. B-roll is made here on this computer, which takes about three minutes a clip and costs nothing; a talking head is made online, out of a small daily free quota.">
+              AI clips
+              <select value={data.ai ?? ''} onChange={(event) => updateNodeData(id, { ai: (event.target.value || undefined) as 'on' | 'off' | undefined })}>
+                <option value="">Auto</option><option value="on">On</option><option value="off">Off</option>
+              </select>
+            </label>
+            {data.ai === 'on' && <p className="studio__aside">Moving shots are drawn here on this computer: about three minutes each, and the film waits for them. Talking heads are made online, out of a small daily free quota.</p>}
             <AssetTray id={id} assets={assets} onChange={reload} />
           </details>
         </form>

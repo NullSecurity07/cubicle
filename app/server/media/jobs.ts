@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Card, Media, MediaAsset, MediaEvent, MediaKind, MediaResult } from '../../shared/model.ts';
+import type { Card, Media, MediaAsset, MediaCredit, MediaEvent, MediaKind, MediaResult } from '../../shared/model.ts';
 import type { Store } from '../store.ts';
 
 export type MediaJobs = ReturnType<typeof createMedia>;
@@ -8,7 +8,7 @@ export type MediaJobs = ReturnType<typeof createMedia>;
 export type Ask = { prompt: string } & Record<string, unknown>;
 // What a backend made: the bytes and the file ending they belong in, for a video the still that stands in for it, and
 // for a recording the pieces it was said in — which is the only honest way to know when each word is spoken.
-export type Piece = { ext: string; bytes: Buffer; poster?: { ext: string; bytes: Buffer }; parts?: { text: string; seconds: number }[] };
+export type Piece = { ext: string; bytes: Buffer; poster?: { ext: string; bytes: Buffer }; parts?: { text: string; seconds: number }[]; credit?: MediaCredit };
 // One backend that makes one kind of media. `ready` says in the founder's words why it cannot work yet, or nothing.
 export type Maker = { name: string; ready(): string | null; make(ask: Ask, help: { report: (line: string) => void; signal?: AbortSignal }): Promise<Piece> };
 export type Makers = Partial<Record<MediaKind, Maker[]>>;
@@ -116,6 +116,7 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
             const at = now();
             const made: MediaResult = { path: await deps.store.saveFileBytes(nameOf(ask, at, piece.ext), piece.bytes), prompt: ask.prompt, at };
             if (piece.poster) made.poster = await deps.store.saveFileBytes(nameOf(ask, at + 1, piece.poster.ext), piece.poster.bytes);
+            if (piece.credit) made.music = piece.credit;
             // What the founder dropped on the card while it was working is still theirs: read the card again, not `before`.
             const latest = await read(card.id);
             save(card.id, { ...latest, state: 'idle', problem: undefined, log: [...log, `done · ${maker.name}`], results: [made, ...before.results].slice(0, KEEP) });

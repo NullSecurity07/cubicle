@@ -1,7 +1,7 @@
 import { SHAPES, type Card } from '../../shared/model.ts';
 import { MOODS } from '../media/audio.ts';
 import type { MediaJobs } from '../media/jobs.ts';
-import { AI_LAYOUTS, FRAMES, LAYOUTS, parseSpec, type Layout } from '../media/video.ts';
+import { AI_LAYOUTS, FRAMES, LAYOUTS, parseSpec, PURPOSES, type Layout } from '../media/video.ts';
 import { DEFAULT_VOICE, isVoice, VOICES } from '../media/voice.ts';
 import { LOOKS, PACES } from '../media/templates/index.ts';
 import { wired } from '../prompt.ts';
@@ -74,29 +74,34 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
   }, {
     name: 'generate_video',
     perTurn: 1,
-    description: 'Make a short narrated video in the video studio connected to your room. You write the whole storyboard: a title and the scenes in order, '
-      + 'each with a layout, the words on screen and the line spoken over it. Rendering takes a few minutes, so plan the whole film before you call this once. '
+    description: 'Make a short narrated video in the video studio connected to your room. The simplest call is a "brief" alone — say what the film is for, how long, '
+      + 'and who it is for, and the studio\'s own director works out the shape, the look, the pace, the music and every scene. '
+      + 'Write "scenes" yourself only when you want a particular storyboard; then each scene needs a layout, the words on screen and the line spoken over it. '
+      + 'What goes on screen is a headline of a few words, never the sentence being spoken. Rendering takes a few minutes, so call this once. '
       + 'The card lists what it is drawing on — the founder\'s own footage, screenshots of the product — under names you can put in "asset".',
     parameters: {
       type: 'object',
       properties: {
+        brief: { type: 'string', description: 'What the film is for, in a sentence or two. Enough on its own: the director reads the length, the shape, the look and the pace out of it.' },
         title: { type: 'string', description: "The film's title, a few words" },
         scenes: {
           type: 'array',
-          description: 'The scenes in order. Open with a title or a hook and end with an outro, a cta or a logo.',
+          description: 'Optional. The scenes in order, when you want to write the storyboard yourself. Open with a title or a hook and end with an outro, a cta or a logo.',
           items: {
             type: 'object',
             properties: {
               layout: {
                 type: 'string', enum: [...LAYOUTS],
                 description: 'title, stat and logo need heading; statement, hook, quote, cta and outro need text; bullets, checklist and steps need bullets; '
-                  + 'compare needs exactly two bullets; picture needs image_prompt and text; device and footage need asset; clip needs clip_prompt; presenter needs say and portrait_prompt',
+                  + 'compare needs exactly two bullets; picture needs image_prompt; device and footage need asset; clip needs clip_prompt; presenter needs say and portrait_prompt',
               },
               heading: { type: 'string', description: 'The title, the list heading, the one big figure, the wordmark, where to go, or who said the quote' },
               text: { type: 'string', description: 'The sentence on screen, or the caption over a picture' },
               bullets: { type: 'array', items: { type: 'string' }, description: 'Two to five short lines; for compare, exactly two — the before and the after' },
               labels: { type: 'array', items: { type: 'string' }, description: 'The two words over a compare scene, such as Before and After' },
               image_prompt: { type: 'string', description: 'The whole scene to draw, for a picture scene' },
+              bg_prompt: { type: 'string', description: 'A picture to draw full-bleed behind the words of any other scene, so no scene is a flat colour' },
+              emphasis: { type: 'string', description: 'The one word in "text" that carries the line; it is set in the accent colour' },
               asset: { type: 'string', description: 'The name of a screenshot or a file already on the card, for a device or footage scene' },
               frame: { type: 'string', enum: [...FRAMES], description: 'What a device scene shows the screenshot in' },
               clip_prompt: { type: 'string', description: 'Three to five seconds of moving b-roll to make, for a clip scene' },
@@ -110,14 +115,16 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
           },
         },
         format: { type: 'string', enum: [...SHAPES], description: 'The shape of the film; tall for a phone reel, wide for a screen' },
-        look: { type: 'string', enum: [...LOOKS], description: 'clean is typographic, sketch is hand-drawn, brand takes the wired product\'s own colours' },
+        look: { type: 'string', enum: [...LOOKS], description: 'creator is bold kinetic captions for a phone reel, editorial is a serif and pictures, neon is tech, clean is typographic, sketch is hand-drawn, brand takes the wired product\'s own colours' },
+        purpose: { type: 'string', enum: [...PURPOSES], description: 'What the film is for; the director reads it from the brief when it is left out' },
+        length: { type: 'number', description: 'How many seconds the film should run' },
         pace: { type: 'string', enum: [...PACES], description: 'calm holds each scene, punchy cuts fast for a reel' },
         music: { type: 'string', enum: [...MOODS], description: "The mood of the bed under it, or none. It plays only if the founder dropped a music file on the card" },
         captions: { type: 'boolean', description: 'Whether the spoken words are captioned on screen, word by word' },
         narrate: { type: 'boolean', description: 'Whether the spoken lines are recorded; true when left out' },
         sfx: { type: 'boolean', description: 'Whether the cuts and the entrances carry sound; true when left out' },
       },
-      required: ['title', 'scenes'],
+      required: [],
     },
     ready: () => media.ready('videogen'),
     // Everything else a studio makes is free and local. A clip or a talking head is neither: it spends a small daily
@@ -126,21 +133,30 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
       const card = studio(context, 'videogen');
       const spent = spendingScenes(args.scenes, localClipsReady());
       if (!card || !spent.length) return null;
-      if (card.kind === 'videogen' && !card.ai) return null;
+      if (card.kind === 'videogen' && card.ai === 'off') return null;
       return `Make ${spent.length} AI ${spent.length === 1 ? 'scene' : 'scenes'} (${spent.join(', ')}) in the video studio? Those are the only part of a film that is not free.`;
     },
     async run(args, context) {
       const card = studio(context, 'videogen');
       if (!card) throw new Error('no video studio is connected to your room. Ask the founder to add one from the dock and draw a wire to it.');
-      // What a person wrote is the storyboard itself, so no model is asked to write one again.
-      const spec = parseSpec({ title: args.title, scenes: args.scenes, music: args.music, captions: args.captions, sfx: args.sfx, pace: args.pace });
+      // A storyboard somebody wrote is kept; a brief alone goes to the studio's own director, which is the better of
+      // the two roads and the one a person should usually take.
+      const written = Array.isArray(args.scenes) && args.scenes.length;
+      const brief = typeof args.brief === 'string' && args.brief.trim() ? args.brief.trim()
+        : typeof args.title === 'string' && args.title.trim() ? args.title.trim() : '';
+      if (!written && !brief) throw new Error('say what the film is about in "brief", or write the "scenes" yourself.');
+      const spec = written ? parseSpec({ title: args.title || brief.slice(0, 60), scenes: args.scenes, music: args.music, captions: args.captions, sfx: args.sfx, pace: args.pace }) : undefined;
       const settings = card.kind === 'videogen' ? card : undefined;
       const made = await media.make(card, {
-        prompt: spec.title, spec, format: args.format ?? settings?.format, look: args.look ?? settings?.look,
-        pace: spec.pace ?? settings?.pace, music: spec.music ?? settings?.music,
-        captions: spec.captions, sfx: spec.sfx, narrate: args.narrate !== false,
+        prompt: written ? (brief || spec!.title) : brief,
+        ...(spec ? { spec } : {}),
+        format: args.format ?? settings?.format, look: args.look ?? settings?.look,
+        purpose: args.purpose ?? settings?.purpose, length: typeof args.length === 'number' ? args.length : settings?.length,
+        pace: spec?.pace ?? args.pace ?? settings?.pace, music: spec?.music ?? args.music ?? settings?.music,
+        captions: spec?.captions ?? (typeof args.captions === 'boolean' ? args.captions : undefined),
+        sfx: spec?.sfx ?? (typeof args.sfx === 'boolean' ? args.sfx : undefined), narrate: args.narrate !== false,
         // The switch on the card is the founder's, not the person's: a film only spends the quota when it is on.
-        ai: settings?.ai === true, address: settings?.address, voice: settings?.voice,
+        ai: settings?.ai ?? 'auto', address: settings?.address, voice: settings?.voice,
       }, { signal: context.signal });
       return { text: `Made the film.\n\n[${made.prompt.replace(/[[\]]/g, '')}](/api/files/${made.path})`, effect: { kind: 'media-made', id: card.id } };
     },

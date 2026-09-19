@@ -1,4 +1,10 @@
 import type { Shape } from '../../../shared/model.ts';
+import { lightOf, PACK, paintOf, type Brand, type Pack } from './packs.ts';
+
+export { PACK, PACKS, paintOf, rgbOf, chromaOf, cutAt, isPack, CUTS, lightOf, type Brand, type Pack, type Paint, type Cut, type PackStyle } from './packs.ts';
+// The founder's word for a pack used to be a "look", and the tool still says `look`. One name, two words for it.
+export type Look = Pack;
+export { PACKS as LOOKS } from './packs.ts';
 
 // The three shapes a video can be, and how big everything in it is drawn. `scale` multiplies the whole type scale so a
 // tall phone video is not the wide one with the words falling off the sides — a phone is read at arm's length, so its
@@ -9,14 +15,13 @@ import type { Shape } from '../../../shared/model.ts';
 // between shapes, but a line of body copy set for a screen watched across a room is unreadable held in one hand, so
 // everything small grows by a third on a tall frame. `capChars` is how wide a caption line may run before it breaks —
 // measured in characters, because a caption that wraps by itself leaves one word stranded on a line of its own.
-export const FORMATS: Record<Shape, { width: number; height: number; scale: number; text: number; margin: number; lift: number; caps: number; capChars: number }> = {
-  wide: { width: 1280, height: 720, scale: 1, text: 1, margin: 96, lift: 56, caps: 74, capChars: 34 },
-  tall: { width: 720, height: 1280, scale: 0.98, text: 1.34, margin: 64, lift: 96, caps: 196, capChars: 20 },
-  square: { width: 1080, height: 1080, scale: 0.94, text: 1.12, margin: 92, lift: 58, caps: 110, capChars: 26 },
+// `safeTop` and `safeFoot` are the platform's own furniture: on a phone feed the top of the frame carries a handle
+// and the bottom carries the caption, the sound and the buttons, and anything drawn there is covered up.
+export const FORMATS: Record<Shape, { width: number; height: number; scale: number; text: number; margin: number; lift: number; caps: number; capChars: number; safeTop: number; safeFoot: number }> = {
+  wide: { width: 1280, height: 720, scale: 1, text: 1, margin: 96, lift: 56, caps: 74, capChars: 34, safeTop: 0, safeFoot: 0 },
+  tall: { width: 720, height: 1280, scale: 0.98, text: 1.34, margin: 64, lift: 96, caps: 196, capChars: 20, safeTop: 120, safeFoot: 260 },
+  square: { width: 1080, height: 1080, scale: 0.94, text: 1.12, margin: 92, lift: 58, caps: 110, capChars: 26, safeTop: 0, safeFoot: 0 },
 };
-
-export const LOOKS = ['clean', 'sketch', 'brand'] as const;
-export type Look = (typeof LOOKS)[number];
 
 // How fast the film moves. `calm` is the explainer: one long ease, a scene held as long as it takes to read. `punchy`
 // is the reel: half the entrance, a third of the hold, a cut you feel. Nothing else about the film changes.
@@ -24,113 +29,92 @@ export const PACES = ['calm', 'punchy'] as const;
 export type Pace = (typeof PACES)[number];
 export const PACE: Record<Pace, { rise: number; ease: string; stagger: number; out: number; travel: number; read: number; floor: number; ceiling: number; lead: number; tail: number }> = {
   calm: { rise: 0.92, ease: 'expo.out', stagger: 0.10, out: 0.42, travel: 46, read: 2.9, floor: 2.8, ceiling: 11, lead: 0.35, tail: 0.65 },
-  punchy: { rise: 0.52, ease: 'power3.out', stagger: 0.05, out: 0.22, travel: 30, read: 4.3, floor: 1.7, ceiling: 7.5, lead: 0.18, tail: 0.30 },
+  punchy: { rise: 0.52, ease: 'power3.out', stagger: 0.05, out: 0.22, travel: 30, read: 4.3, floor: 1.6, ceiling: 6, lead: 0.16, tail: 0.24 },
 };
 
-// The palette of a film. `clean` is the instrument panel: cold slate, brass, air, the type doing all the work.
-// `sketch` is the notebook: paper, a blue pen, a yellow highlighter, every line drawn by hand. `brand` is neither —
-// it is the product's own colours and typeface, read out of the product's code, so the film looks like the thing it
-// is about. A brand with nothing readable in it falls back to `clean`.
-export type Paint = { ground: string; ink: string; quiet: string; signal: string; mark: string; scrim: string; font?: string };
-export const PAINT: Record<'clean' | 'sketch', Paint> = {
-  clean: { ground: '#1C2530', ink: '#F2F5F8', quiet: '#93A3B4', signal: '#E8B04B', mark: '#E8B04B', scrim: '28, 37, 48' },
-  sketch: { ground: '#F4F0E6', ink: '#1F1D1A', quiet: '#6B6660', signal: '#2B54C8', mark: '#FFD24A', scrim: '244, 240, 230' },
-};
-
-// A hex colour as the three numbers a scrim is written with, and how bright it is: a palette read off a product does
-// not say which of its colours is the page and which is the ink, so the film works that out from the colours alone.
-export function rgbOf(hex: string): [number, number, number] | null {
-  const short = /^#?([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(hex.trim());
-  const full = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
-  if (short) return [parseInt(short[1] + short[1], 16), parseInt(short[2] + short[2], 16), parseInt(short[3] + short[3], 16)];
-  if (full) return [parseInt(full[1], 16), parseInt(full[2], 16), parseInt(full[3], 16)];
-  return null;
-}
-export const lightOf = (hex: string): number => { const rgb = rgbOf(hex); return rgb ? (rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722) / 255 : 0.5; };
-// How much colour a colour actually has. A product's palette is mostly greys — the page, the panel, the rule, the
-// muted label — and the brightest of those is white, which is no accent at all. The signal has to be the one with
-// colour in it.
-export const chromaOf = (hex: string): number => {
-  const rgb = rgbOf(hex);
-  if (!rgb) return 0;
-  const [high, low] = [Math.max(...rgb), Math.min(...rgb)];
-  return high ? (high - low) / high : 0;
-};
-const mix = (hex: string, towards: [number, number, number], amount: number): string => {
-  const rgb = rgbOf(hex) ?? [128, 128, 128];
-  return `#${rgb.map((one, at) => Math.round(one + (towards[at] - one) * amount).toString(16).padStart(2, '0')).join('')}`;
-};
-
-// What was found in the product's own code: the colours it paints itself with and the typeface it sets itself in.
-export type Brand = { colours: string[]; font?: string; fontFile?: string; name?: string };
-
-// The product's palette made into a film's palette. The darkest colour that is dark enough becomes the ground (a film
-// is watched, not read, and a bright ground on a screen is a lamp); the brightest saturated one becomes the signal.
-export function paintOf(look: Look, brand?: Brand): Paint {
-  if (look !== 'brand') return PAINT[look];
-  const colours = (brand?.colours ?? []).map((one) => one.trim()).filter((one) => rgbOf(one));
-  if (!colours.length) return PAINT.clean;
-  const sorted = [...colours].sort((a, b) => lightOf(a) - lightOf(b));
-  // The lightest colour that is still dark enough to be a ground: a product's palette usually holds both its page and
-  // a pure black somewhere, and the page is the one it actually looks like.
-  const dark = [...sorted].reverse().find((one) => lightOf(one) < 0.30);
-  const ground = dark ?? mix(sorted[0], [16, 20, 26], 0.72);
-  // The accent is the most coloured colour the product has, bright enough to be seen against its own ground; failing
-  // that, the brightest. A near-white "signal" would make the whole film one flat grey.
-  const colourful = colours.filter((one) => one !== ground && chromaOf(one) > 0.22 && lightOf(one) > 0.26)
-    .sort((a, b) => chromaOf(b) * (0.4 + lightOf(b)) - chromaOf(a) * (0.4 + lightOf(a)));
-  const bright = [...sorted].reverse().find((one) => lightOf(one) > 0.42 && one !== ground);
-  const signal = colourful[0] ?? bright ?? sorted.at(-1)!;
-  const ink = lightOf(ground) < 0.5 ? '#F6F8FA' : '#15181C';
-  const rgb = rgbOf(ground)!;
-  return {
-    ground, ink, signal, mark: signal,
-    quiet: mix(ink, rgb, 0.42),
-    scrim: rgb.join(', '),
-    font: brand?.font,
-  };
-}
+// Film grain, drawn rather than fetched: one tile of monochrome noise as an SVG, repeated over the whole frame. It is
+// static, and it has to be — a grain that moved would have to be driven by something, and nothing in a film rendered
+// frame by frame may depend on anything but the clock.
+const GRAIN = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E\")";
 
 // One type scale, set once, used everywhere: display, heading, lead, body, label, and the one big number. The sizes
 // are written for something watched from across a room, not read on a page: on a wide frame a heading is a fifteenth
 // of the height, a title a seventh, and the one number on a stat scene is over a third of it.
-export function styleSheet(shape: Shape, look: Look, brand?: Brand): string {
-  const { scale, text, margin, lift, caps } = FORMATS[shape];
-  const paint = paintOf(look, brand);
-  const sketch = look === 'sketch';
+export function styleSheet(shape: Shape, pack: Pack, brand?: Brand): string {
+  const { scale, text, margin, lift, caps, safeTop, safeFoot } = FORMATS[shape];
+  const style = PACK[pack];
+  const paint = paintOf(pack, brand);
+  const sketch = pack === 'sketch';
   // A product's own typeface is used only when its file could be copied out of the product. Naming a face the page
   // cannot load is not a fallback, it is a lie the renderer calls out: nothing would be fetched, nothing would
   // change, and the check would carry an error about it for the rest of the film's life.
-  const family = brand?.fontFile && paint.font ? `${JSON.stringify(paint.font)}, 'Studio Sans', sans-serif` : "'Studio Sans', sans-serif";
+  const display = brand?.fontFile && paint.font ? `${JSON.stringify(paint.font)}, ${style.display}` : style.display;
+  const body = brand?.fontFile && paint.font ? `${JSON.stringify(paint.font)}, ${style.body}` : style.body;
+  const faces = style.fonts.map((one) => `@font-face { font-family: '${one.family}'; src: url('vendor/${one.file}') format('woff2'); font-weight: 100 900; font-style: normal; font-display: block; }`).join('\n');
   return `
-@font-face { font-family: 'Studio Sans'; src: url('vendor/inter.woff2') format('woff2-variations'); font-weight: 100 900; font-style: normal; font-display: block; }
+${faces}
 ${brand?.fontFile ? `@font-face { font-family: ${JSON.stringify(paint.font ?? 'Brand')}; src: url('vendor/${brand.fontFile}'); font-weight: 100 900; font-style: normal; font-display: block; }\n` : ''}* { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.ground}; }
-:root { --s: ${scale}; --t: ${(scale * text).toFixed(3)}; --margin: ${margin}px; --lift: ${lift}px; --caps: ${caps}px; --ground: ${paint.ground}; --ink: ${paint.ink}; --quiet: ${paint.quiet}; --signal: ${paint.signal}; --mark: ${paint.mark}; }
+:root { --s: ${scale}; --t: ${(scale * text).toFixed(3)}; --margin: ${margin}px; --lift: ${lift}px; --caps: ${caps}px;
+  --safe-top: ${safeTop}px; --safe-foot: ${safeFoot}px; --radius: ${style.radius}px;
+  --ground: ${paint.ground}; --ink: ${paint.ink}; --quiet: ${paint.quiet}; --signal: ${paint.signal}; --mark: ${paint.mark}; --scrim: ${paint.scrim}; }
 #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: ${paint.ground}; color: ${paint.ink};
-  font-family: ${family}; font-synthesis: none; -webkit-font-smoothing: antialiased; }
+  font-family: ${body}; font-synthesis: none; -webkit-font-smoothing: antialiased; }
 .clip { position: absolute; inset: 0; }
+/* Everything one scene is made of sits inside one box, because the move between two scenes is a move of the whole
+   box: a whip pan that left the captions behind would read as a fault rather than as a cut. */
+.stage { position: absolute; inset: 0; will-change: transform, opacity; }
 .marks { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* --- Depth. Three layers nothing else touches: the picture under the words, the grain over everything, and the
+   corners pulled down so the middle of the frame is where the eye goes. --- */
+.bg { position: absolute; inset: 0; overflow: hidden; z-index: 0; background: ${paint.ground}; }
+.bg img { display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 45%; }
+/* The scrim: the ground washing up from the foot of the frame and a flat hold over the whole of it, so a line of
+   type is legible over a photograph whatever the photograph turns out to be. */
+.bg::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(to top, rgba(${paint.scrim}, ${Math.min(0.96, style.scrim + 0.16).toFixed(2)}) 0%, rgba(${paint.scrim}, ${(style.scrim * 0.86).toFixed(2)}) 46%, rgba(${paint.scrim}, ${(style.scrim * 0.62).toFixed(2)}) 100%); }
+/* No picture maker, no flat colour either: four soft lamps of the film's own colours drifting behind the words. */
+.mesh { position: absolute; inset: -18%; z-index: 0; overflow: hidden; }
+.blob { position: absolute; border-radius: 50%; filter: blur(calc(120px * var(--s))); opacity: 0.55; }
+.grain { position: absolute; inset: 0; z-index: 8; pointer-events: none; opacity: ${style.grain}; background-image: ${GRAIN}; background-size: calc(180px * var(--s)); mix-blend-mode: ${lightIsDark(paint.ground) ? 'screen' : 'multiply'}; }
+.vig { position: absolute; inset: 0; z-index: 7; pointer-events: none;
+  background: radial-gradient(ellipse at 50% 46%, rgba(0,0,0,0) 44%, rgba(0,0,0,${style.vignette.toFixed(2)}) 100%); }
+
 /* Every scene is the same asymmetric block: one left margin, the words stacked down it, nothing centred for its own
-   sake. The block is set a little above the middle, because type centred on the middle of a frame reads as low. */
-.frame { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
-  padding: var(--margin) var(--margin) calc(var(--margin) + var(--lift)); gap: calc(var(--margin) * 0.32); }
+   sake. The block is set a little above the middle, because type centred on the middle of a frame reads as low.
+   On a phone the frame's own top and bottom belong to the platform, so the block keeps clear of both. */
+.frame { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+  padding: calc(var(--margin) + var(--safe-top)) var(--margin) calc(var(--margin) + var(--lift) + var(--safe-foot) * 0.34); gap: calc(var(--margin) * 0.32); }
 .frame > * { position: relative; }
 /* A title card is set on the foot of the frame instead, with the air above it, the way a poster is. */
-.frame--title { justify-content: flex-end; padding-bottom: calc(var(--margin) * 1.05); }
+.frame--title { justify-content: flex-end; padding-bottom: calc(var(--margin) * 1.05 + var(--safe-foot) * 0.34); }
 /* A figure that size carries its own lift: the digits stand well above their line and nothing hangs below them. */
-.frame--stat { padding-bottom: var(--margin); }
-.display { font-size: calc(112px * var(--s)); line-height: 1.0; letter-spacing: -0.038em; font-weight: 660; max-width: 10.5em; overflow-wrap: break-word; }
-.heading { font-size: calc(68px * var(--s)); line-height: 1.08; letter-spacing: -0.03em; font-weight: 630; max-width: 13.5em; overflow-wrap: break-word; }
+.frame--stat { padding-bottom: calc(var(--margin) + var(--safe-foot) * 0.34); }
+${sketch ? '' : `.display, .heading, .hook, .lead, .body, .label, .quote, .logo, .stat, .step, .side .body { text-shadow: 0 calc(2px * var(--s)) calc(22px * var(--s)) rgba(0, 0, 0, 0.58); }`}
+.display { font-family: ${display}; font-size: calc(${style.shout ? 118 : 112}px * var(--s)); line-height: ${style.shout ? 0.94 : 1.0}; letter-spacing: ${style.shout ? '-0.01em' : '-0.038em'};
+  font-weight: ${style.shout ? 400 : 660}; max-width: 10.5em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
+.heading { font-family: ${display}; font-size: calc(68px * var(--s)); line-height: ${style.shout ? 1.0 : 1.08}; letter-spacing: ${style.shout ? '-0.006em' : '-0.03em'};
+  font-weight: ${style.shout ? 400 : 630}; max-width: 13.5em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
 .lead { font-size: calc(38px * var(--t)); line-height: 1.3; letter-spacing: -0.016em; font-weight: 450; max-width: 22em; overflow-wrap: break-word; }
 .body { font-size: calc(34px * var(--t)); line-height: 1.32; letter-spacing: -0.012em; font-weight: 440; max-width: 20em; overflow-wrap: break-word; }
 .label { font-size: calc(22px * var(--t)); line-height: 1.3; font-weight: 620; text-transform: uppercase; letter-spacing: 0.1em; }
+/* One word in a line may be the line: it takes the accent colour, and on a kinetic pack a little more size with it. */
+.pop { color: ${sketch ? paint.ink : paint.signal}; }
+/* The words of a display line are set one at a time so they can arrive one at a time. The box has to be inline for
+   the line to break where it would have broken anyway. */
+.w { display: inline-block; will-change: transform, opacity; }
+/* A sweep of colour drawn behind a headline rather than under it: it grows from the left as the words land. */
+.swept { position: relative; z-index: 0; }
+.sweep { position: absolute; left: -0.12em; top: 0.10em; bottom: 0.08em; right: -0.12em; z-index: -1; transform-origin: 0% 50%;
+  background: ${paint.signal}; border-radius: calc(6px * var(--s)); opacity: 1; }
+.on-sweep { position: relative; color: ${lightOf(paint.signal) > 0.55 ? '#0E1013' : '#FFFFFF'}; text-shadow: none; }
 /* The one number a stat scene carries is the scene: everything else on it is a caption to the number. */
-.stat { font-size: calc(300px * var(--s)); line-height: 0.88; letter-spacing: -0.052em; font-weight: 680; color: ${sketch ? paint.ink : paint.signal};
+.stat { font-family: ${display}; font-size: calc(300px * var(--s)); line-height: 0.88; letter-spacing: -0.052em; font-weight: ${style.shout ? 400 : 680}; color: ${sketch ? paint.ink : paint.signal};
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* The figure counts up to itself, so the digits are held to their final width and nothing beside them shifts. */
 .count { display: inline-block; text-align: right; }
-.quote { font-size: calc(62px * var(--s)); line-height: 1.18; letter-spacing: -0.024em; font-weight: 520; max-width: 12.5em;
+.quote { font-family: ${display}; font-size: calc(${pack === 'editorial' ? 74 : 62}px * var(--s)); line-height: 1.18; letter-spacing: -0.024em; font-weight: ${style.shout ? 400 : 520}; max-width: 12.5em;
   border-left: ${sketch ? 'transparent' : paint.signal} solid calc(5px * var(--s)); padding-left: calc(var(--margin) * 0.5); overflow-wrap: break-word; }
 .quiet { color: ${paint.quiet}; }
 /* The one piece of structure that recurs: a short measured bar that says the block ends here. Drawn by hand in the notebook. */
@@ -139,23 +123,26 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
 .list li { display: flex; align-items: baseline; gap: calc(30px * var(--t)); }
 .tick { flex: none; position: relative; top: -0.3em; width: calc(34px * var(--s)); height: calc(4px * var(--s)); transform-origin: 0 50%; background: ${sketch ? 'transparent' : paint.signal}; }
 /* A picture fills the frame in the clean look and is taped onto the page, with a margin, in the notebook. */
-.shot { position: absolute; inset: ${sketch ? 'calc(var(--margin) * 0.72)' : '0'}; overflow: hidden; }
+.shot { position: absolute; inset: ${sketch ? 'calc(var(--margin) * 0.72)' : '0'}; overflow: hidden; z-index: 1; ${sketch ? 'border-radius: var(--radius);' : ''} }
 ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''}
 .shot img, .shot video { display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 50%; }
+.shot::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: ${sketch ? 'none' : `linear-gradient(to top, rgba(${paint.scrim}, 0.64) 0%, rgba(${paint.scrim}, 0.26) 44%, rgba(${paint.scrim}, 0.60) 100%)`}; }
 /* The words over a picture sit at the foot of the frame — unless the film is captioned, in which case the captions
    are already there and the two would be read as one sentence. Then the plate lifts clear of them. */
-/* Captioned, the foot of the frame belongs to the captions, so the words over a picture go to the head of it
-   instead. Two blocks of white type a line apart read as one sentence, and one of them is not a sentence. */
-.has-caps .plate { top: 0; bottom: auto; padding: var(--margin) var(--margin) calc(var(--margin) * 1.6);
-  background: ${sketch ? 'none' : `linear-gradient(to bottom, rgb(${paint.scrim}) 12%, rgba(${paint.scrim}, 0.74) 56%, rgba(${paint.scrim}, 0) 100%)`}; }
+.has-caps .plate { top: 0; bottom: auto; padding: calc(var(--margin) + var(--safe-top)) var(--margin) calc(var(--margin) * 1.6);
+  background: ${sketch ? 'none' : `linear-gradient(to bottom, rgb(${paint.scrim}) 10%, rgba(${paint.scrim}, 0.88) 48%, rgba(${paint.scrim}, 0) 100%)`}; }
 .frame--picture.has-caps { justify-content: flex-start; }
-.plate { position: absolute; left: 0; right: 0; bottom: 0; padding: var(--margin); padding-top: calc(var(--margin) * 1.7);
-  background: ${sketch ? 'none' : `linear-gradient(to top, rgb(${paint.scrim}) 12%, rgba(${paint.scrim}, 0.74) 56%, rgba(${paint.scrim}, 0) 100%)`}; }
+.plate { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: var(--margin); padding-top: calc(var(--margin) * 1.7); padding-bottom: calc(var(--margin) + var(--safe-foot) * 0.34);
+  background: ${sketch ? 'none' : `linear-gradient(to top, rgb(${paint.scrim}) 10%, rgba(${paint.scrim}, 0.88) 48%, rgba(${paint.scrim}, 0) 100%)`}; }
 .frame--picture { justify-content: flex-end; padding: 0; gap: 0; }
 
 /* A hook is the first second and a half of a reel: one line, as large as the frame will carry it, and nothing else. */
-.hook { font-size: calc(132px * var(--s)); line-height: 0.98; letter-spacing: -0.042em; font-weight: 740; max-width: 9em; overflow-wrap: break-word; }
+.hook { font-family: ${display}; font-size: calc(${style.shout ? 146 : 132}px * var(--s)); line-height: ${style.shout ? 0.92 : 0.98}; letter-spacing: ${style.shout ? '-0.012em' : '-0.042em'};
+  font-weight: ${style.shout ? 400 : 740}; max-width: 9em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
 .frame--hook { justify-content: center; }
+/* An emoji or a mark set beside a line, at the size of a line: the one thing in a reel that is not type. */
+.icon { font-size: calc(64px * var(--t)); line-height: 1; }
 /* A call to action is a line and the place to go, set apart from it the way a button is. */
 .frame--cta { justify-content: center; align-items: flex-start; }
 .cta { display: inline-flex; align-items: center; gap: calc(22px * var(--s)); padding: calc(20px * var(--t)) calc(38px * var(--t));
@@ -163,7 +150,7 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
   font-size: calc(34px * var(--t)); font-weight: 640; letter-spacing: -0.01em; }
 /* A logo sting is the wordmark alone on the ground, with one measured line drawing itself under it. */
 .frame--logo { justify-content: center; align-items: center; padding-bottom: var(--margin); }
-.logo { font-size: calc(104px * var(--s)); line-height: 1; letter-spacing: -0.03em; font-weight: 700; text-align: center; }
+.logo { font-family: ${display}; font-size: calc(104px * var(--s)); line-height: 1; letter-spacing: -0.03em; font-weight: ${style.shout ? 400 : 700}; text-align: center; }
 .logo img { display: block; max-width: calc(520px * var(--s)); max-height: calc(200px * var(--s)); object-fit: contain; }
 .frame--logo .lead { text-align: center; max-width: 18em; }
 .frame--logo .rule { align-self: center; }
@@ -171,7 +158,7 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
    scene, so the second half is held back until the first has been read. */
 .compare { display: flex; ${shape === 'tall' ? 'flex-direction: column;' : ''} gap: calc(var(--margin) * 0.5); width: 100%; align-items: stretch; }
 .side { flex: 1 1 0; display: flex; flex-direction: column; gap: calc(20px * var(--s)); padding: calc(var(--margin) * 0.52);
-  border-radius: calc(22px * var(--s)); border: calc(3px * var(--s)) solid ${sketch ? 'transparent' : `${paint.quiet}55`}; }
+  border-radius: var(--radius); border: calc(3px * var(--s)) solid ${sketch ? 'transparent' : `${paint.quiet}55`}; background: rgba(${paint.scrim}, ${sketch ? '0' : '0.78'}); backdrop-filter: blur(calc(6px * var(--s))); }
 .side--after { border-color: ${sketch ? 'transparent' : paint.signal}; }
 .side .label { color: ${paint.quiet}; }
 .side--after .label { color: ${paint.signal}; }
@@ -190,8 +177,8 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
    into the screen so a still page has somewhere to go. The mockups are drawn here, in the page, so nothing is
    fetched and every frame of the push is drawn rather than resampled.
    The variable --devroom is the height the frame needs for all that is not the device; captions claim their own. */
-:root { --devroom: 78px; }
-#root.has-captions { --devroom: calc(var(--caps) + 80px); }
+:root { --devroom: calc(78px + var(--safe-top) + var(--safe-foot) * 0.5); }
+#root.has-captions { --devroom: calc(var(--caps) + 80px + var(--safe-top)); }
 .frame--device { justify-content: center; align-items: center; gap: 0; padding: 0; overflow: visible; }
 .device { position: relative; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
 /* The floor: a soft shadow pooled under the device and a faint wash of the ground rising past it. */
@@ -225,25 +212,34 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
    whatever the screenshot is showing. */
 /* The chip sits in the floor under the device, where the ground is darkest and nothing is happening — except in a
    captioned film, where the foot of the frame is already spoken for and it goes to the head instead. */
-.chip { position: absolute; bottom: calc(var(--margin) * 0.5); left: calc(var(--margin) * 0.62); z-index: 2;
+.chip { position: absolute; bottom: calc(var(--margin) * 0.5 + var(--safe-foot) * 0.34); left: calc(var(--margin) * 0.62); z-index: 5;
   padding: calc(10px * var(--t)) calc(20px * var(--t)); border-radius: 999px;
   background: rgba(${paint.scrim}, ${sketch ? '0.86' : '0.82'}); backdrop-filter: blur(calc(8px * var(--s)));
   border: 1px solid ${paint.quiet}44; color: ${paint.ink};
   font-size: calc(26px * var(--t)); font-weight: 600; letter-spacing: -0.008em; max-width: 72%; }
-#root.has-captions .chip { top: calc(var(--margin) * 0.55); bottom: auto; }
+#root.has-captions .chip { top: calc(var(--margin) * 0.55 + var(--safe-top)); bottom: auto; }
 /* A person talking to camera, or a generated clip, fills the frame and takes the words over it. */
 .frame--presenter { justify-content: flex-end; padding: 0; gap: 0; }
-.presenter { position: absolute; inset: 0; overflow: hidden; }
+.presenter { position: absolute; inset: 0; overflow: hidden; z-index: 1; }
 .presenter img, .presenter video { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; transform-origin: 50% 30%; }
+
+/* How far through the film a viewer is, drawn as one hairline across the foot of the frame. A reel earns this: it is
+   the one thing that makes somebody stay for the last two seconds. */
+.progress { position: absolute; left: 0; bottom: 0; height: calc(7px * var(--s)); width: 100%; z-index: 9;
+  transform-origin: 0 50%; background: ${paint.signal}; opacity: 0.92; }
 
 /* The captions: the line being said, word by word, held off the bottom edge by more than it looks like it needs —
    on a phone the last fifth of the frame belongs to the player, the poster's own furniture and the thumb. */
-.caps { position: absolute; left: var(--margin); right: var(--margin); bottom: var(--caps); display: flex; flex-direction: column;
+.caps { position: absolute; left: var(--margin); right: var(--margin); bottom: var(--caps); z-index: 6; display: flex; flex-direction: column;
   align-items: center; justify-content: flex-end; pointer-events: none; }
 .capline { position: absolute; bottom: 0; left: 0; right: 0; display: flex; flex-wrap: wrap; gap: 0 calc(16px * var(--s));
   align-items: baseline; justify-content: center; text-align: center; }
-.capword { font-size: calc(${shape === 'tall' ? 58 : shape === 'square' ? 50 : 44}px * var(--s)); line-height: 1.16; font-weight: 720; letter-spacing: -0.018em;
-  color: ${paint.ink}; ${sketch ? `text-shadow: 0 0 calc(12px * var(--s)) rgba(${paint.scrim}, 0.9);` : `text-shadow: 0 calc(3px * var(--s)) calc(18px * var(--s)) rgba(0, 0, 0, 0.55);`}
+.capword { font-family: ${style.shout ? display : body}; font-size: calc(${shape === 'tall' ? 58 : shape === 'square' ? 50 : 44}px * var(--s)); line-height: 1.16; font-weight: ${style.shout ? 400 : 720}; letter-spacing: -0.018em;
+  color: ${paint.ink}; ${style.shout ? 'text-transform: uppercase;' : ''} ${sketch ? `text-shadow: 0 0 calc(12px * var(--s)) rgba(${paint.scrim}, 0.9);` : `text-shadow: 0 calc(3px * var(--s)) calc(18px * var(--s)) rgba(0, 0, 0, 0.62);`}
   padding: calc(2px * var(--s)) 0; }
+.capword.pop { color: ${sketch ? paint.ink : paint.signal}; }
 `.trim();
 }
+
+// Grain is light on a dark ground and dark on a light one, or it is a grey haze over the picture rather than film.
+const lightIsDark = (hex: string) => lightOf(hex) < 0.5;

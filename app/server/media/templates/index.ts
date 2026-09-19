@@ -1,13 +1,15 @@
 import type { Shape } from '../../../shared/model.ts';
 import { SFX, type Cue, type Sfx } from '../audio.ts';
 import { capHtml, capLines, capSteps, wordTimes } from './captions.ts';
-import { MOVING, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
-import { FORMATS, PACE, styleSheet, type Brand, type Look, type Pace } from './looks.ts';
+import { cutSteps } from './cuts.ts';
+import { groundHtml, MOVING, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
+import { cutAt, FORMATS, PACE, PACK, styleSheet, type Brand, type Pace, type Pack } from './looks.ts';
 
-export { FORMATS, LOOKS, PACES, PAINT, paintOf, type Brand, type Look, type Pace } from './looks.ts';
+export { FORMATS, LOOKS, PACKS, PACES, PACK, paintOf, lightOf, cutAt, isPack, type Brand, type Look, type Pack, type Pace, type Paint } from './looks.ts';
 export type { Shot } from './layouts.ts';
 export { FRAMES } from './layouts.ts';
 export { wordTimes, capLines, type Part } from './captions.ts';
+export { snapToBeats } from './cuts.ts';
 
 // A scene lasts as long as the line said over it, and never less than the time it takes to read what is on it. A
 // punchy film reads faster and holds less: the floor, the ceiling and the reading speed all move with the pace.
@@ -90,26 +92,33 @@ function markSteps(tl, drawn) {
 // What a film is, once everything it is made of has been made: the scenes in order, how fast it moves, the look it
 // wears, the bed under it and the sounds cut into it.
 export type Film = {
-  title: string; shape: Shape; look: Look; shots: Shot[];
+  title: string; shape: Shape; look: Pack; shots: Shot[];
   pace?: Pace; captions?: boolean; brand?: Brand;
   bed?: { file: string; seconds: number }; cues?: Cue[];
+  // Where the bed's beats fall, when the bed knew: the cuts are pulled onto them.
+  beats?: number[];
 };
 
 // The whole video as one HTML file: the scenes in order with their timing on them, the narration and the music beside
 // them, and one paused timeline the renderer steps through frame by frame.
 export function composition(film: Film): string {
   const { width, height, scale, capChars } = FORMATS[film.shape];
-  const sketch = film.look === 'sketch';
+  const pack: Pack = film.look;
+  const style = PACK[pack];
+  const sketch = pack === 'sketch';
   const pace: Pace = film.pace ?? 'calm';
   const starts: number[] = [];
   let at = 0;
   for (const shot of film.shots) { starts.push(Math.round(at * 100) / 100); at = Math.round((at + shot.seconds) * 100) / 100; }
   const total = at;
+  const last = film.shots.length - 1;
+  // A scene is given its own length plus the time the next one needs to arrive over it, so the two really overlap.
+  const held = (index: number) => Math.round((film.shots[index].seconds + (index === last ? 0 : style.overlap)) * 100) / 100;
 
   // The captions belong to the frame, not to the scene's own block, so they sit outside it and survive its fade.
   const capsFor = (shot: Shot, index: number) => {
     if (!film.captions || !shot.voice?.parts?.length) return { html: '', steps: [] as string[] };
-    const lines = capLines(wordTimes(shot.voice.parts, starts[index] + PACE[pace].lead), capChars);
+    const lines = capLines(wordTimes(shot.voice.parts, starts[index] + PACE[pace].lead), Math.round(capChars * style.capScale));
     return { html: capHtml(lines, index), steps: capSteps(lines, index, starts[index] + shot.seconds) };
   };
   const captions = film.shots.map(capsFor);
@@ -126,8 +135,13 @@ export function composition(film: Film): string {
       + ` data-start="${starts[index]}" data-duration="${shot.seconds.toFixed(2)}"${from}></video>`];
   });
 
-  const sections = film.shots.map((shot, index) => `      <section class="clip" id="s${index}" data-start="${starts[index]}" data-duration="${shot.seconds}">`
-    + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}${sceneHtml(shot, index, film.shape, !!captions[index].html)}${captions[index].html}</section>`);
+  // Every scene is one box that moves as one thing, because the cut between two scenes is a move of the whole box.
+  const bodies = film.shots.map((shot, index) => sceneHtml(shot, index, film.shape, !!captions[index].html, pack));
+  const sections = film.shots.map((shot, index) => `      <section class="clip" id="s${index}" data-start="${starts[index]}" data-duration="${held(index)}">`
+    + `<div class="stage" id="g${index}">${groundHtml(shot, index, pack)}`
+    + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}`
+    + `${bodies[index]}${captions[index].html}`
+    + `<div class="vig"></div><div class="grain"></div></div></section>`);
   // Every sound needs an id of its own or the mixer never finds it and the film comes out silent.
   const sounds = film.shots.flatMap((shot, index) => (shot.voice
     ? [`      <audio id="say${index}" src="assets/${shot.voice.file}" data-start="${(starts[index] + PACE[pace].lead).toFixed(2)}" data-duration="${shot.voice.seconds.toFixed(2)}" data-volume="1"></audio>`]
@@ -137,10 +151,20 @@ export function composition(film: Film): string {
     const sound = SFX[cue.sound];
     sounds.push(`      <audio id="fx${index}" src="assets/${sound.file}" data-start="${Math.max(0, cue.at).toFixed(2)}" data-duration="1" data-volume="${(cue.gain ?? sound.gain).toFixed(2)}"></audio>`);
   }
-  const steps = film.shots.flatMap((shot, index) => [
-    ...sceneSteps(shot, index, starts[index], scale, film.look, index === film.shots.length - 1, pace),
-    ...captions[index].steps,
-  ]);
+  // How far through the film a viewer is, on the packs that are made for a feed. It sits outside every scene, so it
+  // runs across the cuts rather than restarting at each one.
+  const bar = (pack === 'creator' || pack === 'neon') && film.shots.length > 1;
+
+  const steps = film.shots.flatMap((shot, index) => {
+    const move = cutSteps(cutAt(pack, index), `#g${index}`, starts[index], starts[index] + shot.seconds, style.overlap, index);
+    return [
+      ...move.into,
+      ...(index === last ? [] : move.outOf),
+      ...sceneSteps(shot, index, starts[index], scale, pack, index === last, pace, onscreen(bodies[index])),
+      ...captions[index].steps,
+    ];
+  });
+  if (bar) steps.push(`tl.fromTo("#bar", { scaleX: 0 }, { scaleX: 1, duration: ${total.toFixed(2)}, ease: "none" }, 0);`);
 
   return `<!doctype html>
 <html lang="en">
@@ -150,13 +174,13 @@ export function composition(film: Film): string {
     <title>${film.title.replace(/[<>&]/g, ' ')}</title>
     <script src="vendor/gsap.min.js"></script>
 ${sketch ? '    <script src="vendor/rough.js"></script>\n' : ''}    <style>
-${styleSheet(film.shape, film.look, film.brand)}
+${styleSheet(film.shape, pack, film.brand)}
     </style>
   </head>
   <body>
     <div id="root"${film.captions ? ' class="has-captions"' : ''} data-composition-id="main" data-start="0" data-width="${width}" data-height="${height}" data-duration="${total}">
 ${reels.length ? `${reels.join('\n')}\n` : ''}${sections.join('\n')}
-${sounds.join('\n')}
+${bar ? '      <div class="progress" id="bar"></div>\n' : ''}${sounds.join('\n')}
     </div>
     <script>
 ${sketch ? `${MARKS}\n` : ''}      const SCENE_AT = ${JSON.stringify(starts)};
