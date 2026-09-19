@@ -47,15 +47,15 @@ const set = <T>(value: Choice<T>): T | undefined => (value === 'auto' || value =
 // The words a founder actually writes, and what each of them really asks for. This runs before the model and again
 // as its net: a model that answers nonsense never moves the film away from what the brief plainly said.
 const CUES: { was: RegExp; is: Partial<Understanding> }[] = [
-  { was: /\b(reel|tiktok|short-?form|shorts|influencer|creator|vertical|for (?:my )?(?:ig|insta|instagram))\b/i, is: { purpose: 'reel', shape: 'tall', pace: 'punchy', pack: 'creator', captions: true, mood: 'drive' } },
-  { was: /\b(ad|advert|commercial|promo)\b/i, is: { purpose: 'ad', pace: 'punchy', captions: true, mood: 'drive' } },
-  { was: /\b(launch|launching|announc\w+|introducing|we (?:just )?shipped|out now|release)\b/i, is: { purpose: 'launch', pace: 'punchy', captions: true, mood: 'bright' } },
+  { was: /\b(reel|tiktok|short-?form|shorts|influencer|creator|vertical|for (?:my )?(?:ig|insta|instagram))\b/i, is: { purpose: 'reel', shape: 'tall', pace: 'punchy', pack: 'creator', captions: true, mood: 'upbeat' } },
+  { was: /\b(ad|advert|commercial|promo)\b/i, is: { purpose: 'ad', pace: 'punchy', captions: true, mood: 'upbeat' } },
+  { was: /\b(launch|launching|announc\w+|introducing|we (?:just )?shipped|out now|release)\b/i, is: { purpose: 'launch', pace: 'punchy', captions: true, mood: 'upbeat' } },
   { was: /\b(pitch|investors?|raising|seed round|fundrais\w+|vc)\b/i, is: { purpose: 'pitch', shape: 'wide', pace: 'calm', pack: 'editorial', mood: 'calm' } },
   { was: /\b(testimonial|customer story|case study|what .{0,20}customers? say)\b/i, is: { purpose: 'testimonial', pace: 'calm', mood: 'warm' } },
   { was: /\b(explain\w*|how it works|walkthrough|tutorial|demo|onboarding)\b/i, is: { purpose: 'explainer', shape: 'wide', pace: 'calm', pack: 'clean', mood: 'calm' } },
   { was: /\b(feature|one thing|new in)\b/i, is: { purpose: 'feature' } },
   { was: /\b(calm|quiet|slow|editorial|elegant|minimal|considered|understated|thoughtful)\b/i, is: { pace: 'calm', pack: 'editorial', mood: 'calm', tone: 'considered' } },
-  { was: /\b(punchy|fast|snappy|energetic|hype|bold|loud|upbeat)\b/i, is: { pace: 'punchy', mood: 'drive', tone: 'energetic' } },
+  { was: /\b(punchy|fast|snappy|energetic|hype|bold|loud|upbeat)\b/i, is: { pace: 'punchy', mood: 'upbeat', tone: 'energetic' } },
   { was: /\b(tech|technical|developer|engineer|api|ai|futurist\w*|cyber)\b/i, is: { pack: 'neon', tone: 'technical' } },
   { was: /\b(hand-?drawn|sketch|doodle|notebook|whiteboard)\b/i, is: { pack: 'sketch' } },
   { was: /\b(on (?:the )?brand|our colours?|our colors?|brand look|in our brand)\b/i, is: { pack: 'brand' } },
@@ -126,25 +126,29 @@ export function understandPrompt(asked: Asked, material: Material): string {
 // plainly said, and failing that to what the purpose has always meant.
 export function understandingOf(raw: unknown, asked: Asked, read: Partial<Understanding>): Understanding {
   const said = (raw ?? {}) as Record<string, unknown>;
-  const purpose = set(asked.purpose) ?? (isPurpose(said.purpose) ? said.purpose : undefined) ?? read.purpose ?? 'explainer';
+  // The order is the point. What the founder set is law; after that comes what the brief plainly says — "influencer",
+  // "15 second", "calm" are not hints, they are instructions — and the model only fills what neither of those found.
+  // A free model asked to read "15 second clip of influencer talking" called it a product explainer, which is how a
+  // reel ends up looking like a slide deck.
+  const purpose = set(asked.purpose) ?? read.purpose ?? (isPurpose(said.purpose) ? said.purpose : undefined) ?? 'explainer';
   const preset = PURPOSE[purpose];
   const seconds = (() => {
     const want = typeof asked.seconds === 'number' ? asked.seconds : read.seconds ?? Number(said.seconds);
     return Number.isFinite(want) && want >= 8 && want <= 180 ? Math.round(want) : preset.length;
   })();
-  const person = set(asked.person) ?? (typeof said.person_on_camera === 'boolean' ? said.person_on_camera : undefined) ?? read.person ?? preset.person;
+  const person = set(asked.person) ?? read.person ?? (typeof said.person_on_camera === 'boolean' ? said.person_on_camera : undefined) ?? preset.person;
   const understanding: Understanding = {
     purpose,
     audience: typeof said.audience === 'string' && said.audience.trim() ? said.audience.trim().slice(0, 80) : 'whoever the founder is trying to reach',
     platform: typeof said.platform === 'string' && said.platform.trim() ? said.platform.trim().slice(0, 40) : (preset.format === 'tall' ? 'a phone feed' : 'a screen'),
-    shape: set(asked.shape) ?? one(said.format, ['wide', 'tall', 'square'] as const) ?? read.shape ?? preset.format,
+    shape: set(asked.shape) ?? read.shape ?? one(said.format, ['wide', 'tall', 'square'] as const) ?? preset.format,
     seconds,
-    pace: set(asked.pace) ?? one(said.pace, PACES) ?? read.pace ?? preset.pace,
+    pace: set(asked.pace) ?? read.pace ?? one(said.pace, PACES) ?? preset.pace,
     tone: typeof said.tone === 'string' && said.tone.trim() ? said.tone.trim().slice(0, 60) : read.tone ?? (preset.pace === 'punchy' ? 'direct and quick' : 'measured'),
-    mood: set(asked.music) ?? one(said.music, MOODS) ?? read.mood ?? preset.music,
-    pack: set(asked.pack) ?? (isPack(said.look) ? said.look : undefined) ?? read.pack ?? preset.pack,
+    mood: set(asked.music) ?? read.mood ?? one(said.music, MOODS) ?? preset.music,
+    pack: set(asked.pack) ?? read.pack ?? (isPack(said.look) ? said.look : undefined) ?? preset.pack,
     person,
-    captions: asked.captions ?? (typeof said.captions === 'boolean' ? said.captions : undefined) ?? read.captions ?? preset.captions,
+    captions: asked.captions ?? read.captions ?? (typeof said.captions === 'boolean' ? said.captions : undefined) ?? preset.captions,
     said: '',
   };
   understanding.said = tellOf(understanding, typeof said.why === 'string' ? said.why : '');
@@ -183,7 +187,8 @@ export function planPrompt(understanding: Understanding, asked: Asked, material:
     `All the "say" lines together must come to about ${budget} words — that is what makes the film ${understanding.seconds} seconds long, and it is a hard number. Count them.`,
     'Each beat says one thing. No beat says two things. Nothing is repeated in a later beat.',
     understanding.person ? 'The brief wants a person talking to camera, so the opening beats are written as somebody speaking, in the first person.' : '',
-    material.lines.length ? 'Use the product\'s own words and its real claims below; invent no feature, number or customer it does not have.' : 'Invent no numbers, no customer names and no claims that cannot be checked.',
+    material.lines.length ? 'Use the product\'s own words and its real claims below; invent no feature, number or customer it does not have.'
+      : 'There is no product behind this film. Do not invent one: no brand name, no wordmark, no made-up statistics, no customer. Everything said has to be something a person could say about the subject in general.',
     material.lines.length ? ['', ...material.lines].join('\n') : '',
     '',
     'The brief:',
@@ -344,6 +349,7 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
     seconds: understanding.seconds, pace: understanding.pace, purpose: understanding.purpose,
     captions: understanding.captions, bible: plan.bible, layouts,
     reel: understanding.purpose === 'reel' || understanding.purpose === 'ad',
+    product: material.lines.length > 0 || material.assets.length > 0 || !!material.brand,
   };
 
   let spec: Spec;
@@ -375,8 +381,29 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
   // Whatever survives, the last word on shape and length is the rules', not the model's.
   const { spec: final } = repair(spec, want);
   spec = final;
+  spec = { ...spec, scenes: onCamera(spec.scenes, understanding, plan.bible, help.report) };
   help.report(`${spec.scenes.length} scenes, about ${saidWords(spec)} words said: ${spec.title}`);
   return { understanding, plan, spec, bible: plan.bible };
+}
+
+// A brief that asks for somebody talking to camera gets somebody talking to camera. With the founder's own footage
+// or a made clip there is a real person; with neither, the film opens on a portrait with a slow push into it, which
+// is what a reel does when the creator is not the one holding the camera. Nothing here invents a name or a claim —
+// it is a face, and the words over it are the film's own.
+export function onCamera(scenes: Scene[], understanding: Understanding, bible: string, report: (line: string) => void): Scene[] {
+  if (!understanding.person) return scenes;
+  if (scenes.some((one) => one.layout === 'presenter' || one.layout === 'footage' || one.layout === 'clip')) return scenes;
+  const portrait = `${bible}. one person talking straight to camera, head and shoulders, direct eye contact, natural expression`;
+  // The opening, and one more in the middle of anything long enough to come back to a face.
+  const faces = new Set([0, ...(scenes.length >= 5 ? [Math.floor(scenes.length / 2)] : [])]);
+  let given = 0;
+  const made = scenes.map((scene, index) => {
+    if (!faces.has(index) || scene.image_prompt || scene.asset) return scene;
+    given += 1;
+    return { ...scene, bg_prompt: portrait };
+  });
+  if (given) report(`the brief wants somebody on camera and there is no footage, so ${given === 1 ? 'the opening sits' : 'two scenes sit'} on a face`);
+  return made;
 }
 
 export function fixPrompt(spec: Spec, found: { says: string }[], understanding: Understanding, layouts: Layout[]): string {

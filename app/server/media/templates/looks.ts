@@ -87,6 +87,10 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
 .frame { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
   padding: calc(var(--margin) + var(--safe-top)) var(--margin) calc(var(--margin) + var(--lift) + var(--safe-foot) * 0.34); gap: calc(var(--margin) * 0.32); }
 .frame > * { position: relative; }
+/* Over a picture the words drop to the foot of the frame: that is where the scrim holds the picture down, and on a
+   portrait it is the one place the type is not across somebody's face. */
+.frame--onbg { justify-content: flex-end; }
+.frame--onbg.frame--stat, .frame--onbg.frame--logo { justify-content: flex-end; }
 /* A title card is set on the foot of the frame instead, with the air above it, the way a poster is. */
 .frame--title { justify-content: flex-end; padding-bottom: calc(var(--margin) * 1.05 + var(--safe-foot) * 0.34); }
 /* A figure that size carries its own lift: the digits stand well above their line and nothing hangs below them. */

@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { ff, FFMPEG } from './ff.ts';
+import { MOODS as MUSIC_MOODS, type Mood as MusicMood } from './music.ts';
 
 // The ten sounds the films are cut with. They are Kenney's, public domain, and they live in the folder beside this
 // file; see templates/assets/CREDITS.md for where each came from and why no music is bundled with them.
@@ -21,16 +22,20 @@ export const sfxFile = (sound: Sfx): string => SFX[sound].file;
 // One sound placed on the film's clock: which one, when it lands, and how loud against the narration.
 export type Cue = { sound: Sfx; at: number; gain?: number };
 
-// The moods a storyboard can ask its bed for. Nothing is bundled to play them (the licence of the one free set we
-// could find is unverified), so a mood is what the founder's own dropped track is chosen and mixed *for*: how loud it
-// sits under the words, and how long it takes to arrive and to leave.
-export const MOODS = ['none', 'calm', 'warm', 'drive', 'bright'] as const;
-export type Mood = (typeof MOODS)[number];
-export const BED: Record<Exclude<Mood, 'none'>, { gain: number; quiet: number; in: number; out: number }> = {
+// The moods a storyboard can ask its bed for. The words are the music maker's own (`media/music.ts`), because it is
+// the thing that has to write one; `none` is this side's addition, for a film that wants silence under it. What is
+// kept here is what a mood means to the *mix*: how loud the bed sits under the words, how far it ducks, and how long
+// it takes to arrive and to leave.
+export const MOODS = ['none', ...MUSIC_MOODS] as const;
+export type Mood = 'none' | MusicMood;
+export const BED: Record<MusicMood, { gain: number; quiet: number; in: number; out: number }> = {
   calm: { gain: 0.24, quiet: 0.30, in: 2.2, out: 2.6 },
   warm: { gain: 0.30, quiet: 0.32, in: 1.6, out: 2.2 },
-  drive: { gain: 0.38, quiet: 0.34, in: 0.9, out: 1.6 },
-  bright: { gain: 0.34, quiet: 0.30, in: 1.2, out: 1.8 },
+  upbeat: { gain: 0.34, quiet: 0.30, in: 1.2, out: 1.8 },
+  playful: { gain: 0.32, quiet: 0.30, in: 1.0, out: 1.6 },
+  tech: { gain: 0.36, quiet: 0.32, in: 0.9, out: 1.6 },
+  dramatic: { gain: 0.38, quiet: 0.34, in: 1.4, out: 2.4 },
+  cinematic: { gain: 0.28, quiet: 0.28, in: 2.6, out: 3.0 },
 };
 
 // When somebody is speaking, and for a breath either side of it.
@@ -59,7 +64,7 @@ export function duckExpr(windows: Window[], quiet: number, ramp = 0.38): string 
 // The founder's own track, cut to the film's length, faded in and out, and ducked under every line said over it. One
 // file, handed to the renderer as a single sound; nothing about it is decided in the page.
 export async function musicBed(ask: {
-  from: string; to: string; seconds: number; mood: Exclude<Mood, 'none'>; windows: Window[]; signal?: AbortSignal;
+  from: string; to: string; seconds: number; mood: MusicMood; windows: Window[]; signal?: AbortSignal;
 }): Promise<void> {
   const shape = BED[ask.mood];
   const out = Math.max(0, ask.seconds - shape.out);

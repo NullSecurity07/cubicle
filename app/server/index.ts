@@ -20,6 +20,7 @@ import { probe } from './media/ff.ts';
 import { thumbOf } from './media/footage.ts';
 import { fakeImages, imageMakers } from './media/image.ts';
 import { createMedia } from './media/jobs.ts';
+import { createMusic, fakeMusic } from './media/music.ts';
 import { fakeVideos, hyperframesVideos } from './media/video.ts';
 import { fakeVoices, voiceMakers, VOICES } from './media/voice.ts';
 import { createMemory } from './memory.ts';
@@ -90,11 +91,9 @@ const storyboard = async (prompt: string) => {
   usage.record(reply.client.name, reply.usage, reply.quota);
   return reply.text;
 };
-// The bed under a film. `media/music.ts` is being built in another pair of hands; until it lands this resolves to
-// nothing and every film says so in plain words. The specifier is not a literal, so the build does not need the file.
-const musicModule = './media/music.ts';
-const music = await import(musicModule)
-  .then((made: { createMusic?: (deps: { cacheDir: string }) => unknown }) => made.createMusic?.({ cacheDir: resolve(root, 'app/.cache/music') }) as undefined, () => undefined);
+// The bed under a film: a mood and a length in, a finished loop at −23 LUFS out, with its own beats and its own
+// credit. The cache is on a real disk beside the voice model's, never a tmpfs.
+const music = fake ? fakeMusic : createMusic({ cacheDir: resolve(root, 'app/.cache') });
 // Moving pictures, two ways round: made here on this machine, slowly and without limit, or asked of the free Hugging
 // Face Spaces, quickly and out of a daily quota. B-roll tries this machine first; a talking head can only be made
 // out there. Either way a scene that cannot be made falls back in plain words.

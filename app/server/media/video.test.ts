@@ -222,7 +222,7 @@ describe('generate_video', () => {
 describe('the storyboard a fuller film needs', () => {
   it('takes every new layout and keeps exactly the fields it carries', () => {
     const read = parseSpec({
-      title: 'A launch', pace: 'punchy', music: 'drive', captions: true, sfx: false,
+      title: 'A launch', pace: 'punchy', music: 'upbeat', captions: true, sfx: false,
       scenes: [
         { layout: 'hook', text: 'You lose a day a week.' },
         { layout: 'compare', heading: 'The turn', bullets: ['Three tools', 'One stage'], labels: ['Them', 'Us'] },
@@ -237,7 +237,7 @@ describe('the storyboard a fuller film needs', () => {
       ],
     });
     expect(read.pace).toBe('punchy');
-    expect(read.music).toBe('drive');
+    expect(read.music).toBe('upbeat');
     expect(read.captions).toBe(true);
     expect(read.sfx).toBe(false);
     expect(read.scenes[1]).toEqual({ layout: 'compare', heading: 'The turn', bullets: ['Three tools', 'One stage'], labels: ['Them', 'Us'] });

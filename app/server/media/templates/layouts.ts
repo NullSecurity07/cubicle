@@ -118,6 +118,9 @@ export const groundHtml = (shot: Shot, index: number, pack: Pack): string =>
 export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = false, pack: Pack = 'clean'): string {
   const { scene } = shot;
   const style = PACK[pack];
+  // A block of type centred on a photograph lands on whatever the photograph's subject is — which, on the portrait a
+  // reel opens with, is somebody's face. Over a picture the words go to the foot of the frame, where the scrim is.
+  const onbg = shot.bg ? ' frame--onbg' : '';
   const moving = style.motion === 'kinetic' || style.motion === 'snap';
   const heading = scene.heading?.trim() ?? '';
   const text = scene.text?.trim() ?? '';
@@ -127,12 +130,12 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
   if (scene.layout === 'title') {
     parts.push(`<h1 class="display rise" data-mark="highlight">${kinetic(heading, scene.emphasis, pack, moving)}</h1>`, '<div class="rule" data-mark="dash"></div>');
     if (text) parts.push(`<p class="lead quiet rise">${html(text)}</p>`);
-    return `<div class="frame frame--title" id="f${index}">${parts.join('')}</div>`;
+    return `<div class="frame frame--title${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'hook') {
     if (icon) parts.push(icon);
     if (heading) parts.push(`<p class="label rise">${html(heading)}</p>`);
     parts.push(`<p class="${hookWeight(text)} rise" data-mark="highlight">${kinetic(text, scene.emphasis, pack, moving)}</p>`);
-    return `<div class="frame frame--hook" id="f${index}">${parts.join('')}</div>`;
+    return `<div class="frame frame--hook${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'statement') {
     if (icon) parts.push(icon);
     if (heading) parts.push(`<p class="label quiet rise">${html(heading)}</p>`);
@@ -176,24 +179,24 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     // The ring around the figure is mark enough in the notebook: the line under it stays a straight one, or nothing.
     parts.push(figure(heading, shape, pack), '<div class="rule"></div>');
     if (text) parts.push(`<p class="lead quiet rise">${html(text)}</p>`);
-    return `<div class="frame frame--stat" id="f${index}">${parts.join('')}</div>`;
+    return `<div class="frame frame--stat${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'quote') {
     parts.push(`<blockquote class="quote rise" data-mark="bar">${kinetic(quoted(text), scene.emphasis, pack, false)}</blockquote>`);
     if (heading) parts.push(`<p class="label quiet rise">— ${html(heading)}</p>`);
   } else if (scene.layout === 'logo') {
     parts.push(shot.image ? `<div class="logo rise" data-mark="ring"><img src="assets/${shot.image}" alt=""></div>` : `<p class="logo rise" data-mark="ring">${html(heading)}</p>`, '<div class="rule" data-mark="dash"></div>');
     if (text) parts.push(`<p class="lead quiet rise">${html(text)}</p>`);
-    return `<div class="frame frame--logo" id="f${index}">${parts.join('')}</div>`;
+    return `<div class="frame frame--logo${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'cta') {
     if (icon) parts.push(icon);
     parts.push(say(text || heading, weight(text || heading)));
     if (text && heading) parts.push(`<p class="cta rise" data-mark="highlight">${html(heading)}</p>`);
-    return `<div class="frame frame--cta" id="f${index}">${parts.join('')}</div>`;
+    return `<div class="frame frame--cta${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else {
     parts.push('<div class="rule" data-mark="dash"></div>', say(text || heading, weight(text || heading)));
     if (text && heading) parts.push(`<p class="label quiet rise">${html(heading)}</p>`);
   }
-  return `<div class="frame" id="f${index}">${parts.join('')}</div>`;
+  return `<div class="frame${onbg}" id="f${index}">${parts.join('')}</div>`;
 }
 
 // Which scenes carry the recurring line, and which carry the little marks beside a list.

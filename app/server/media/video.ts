@@ -6,6 +6,7 @@ import type { Card, MediaAsset, Shape, Stage } from '../../shared/model.ts';
 import { CHROMES } from '../browser.ts';
 import { projectDir } from '../coder.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
+import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
 import { bibleFor, direct, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
@@ -34,14 +35,9 @@ export type { Material, Understanding } from './director.ts';
 
 export const SETUP_HINT = 'No video renderer is set up. The founder installs Chrome and ffmpeg — both are free — and restarts the app.';
 
-// --- the music, which somebody else is building ---------------------------------------------------------------
-// `media/music.ts` is owned by another pair of hands. This is the shape it hands back, declared here so this half
-// builds and runs with or without it; when it lands, the studio takes it through `deps.music` and nothing else moves.
-export type Credit = { title: string; by: string; licence: string; source: string };
-export type Music = {
-  bed(ask: { mood: Mood; seconds: number; bpm?: number }, help: { report: (line: string) => void; signal?: AbortSignal }):
-  Promise<{ ext: 'wav' | 'mp3' | 'ogg'; bytes: Buffer; credit: Credit; bpm?: number; beats?: number[] }>;
-};
+// The bed under a film is written by `media/music.ts`, which is asked for a mood and a length and hands back a
+// finished loop at −23 LUFS with its own beats and its own credit. Nothing about it is decided here.
+export type { Credit, Music } from './music.ts';
 
 // Where Chrome is on this machine. The renderer takes it by name in the environment, not as a flag.
 export const chromePath = (): string | null => CHROMES.find((path) => existsSync(path)) ?? null;
@@ -120,6 +116,15 @@ const SCROLLS = { desktop: [0, 780, 1700], mobile: [0, 900] };
 // A picker the founder left on Auto is nothing at all; anything else is their decision and is obeyed.
 const chose = <T extends string>(value: unknown, allowed: readonly T[]): T | undefined =>
   (typeof value === 'string' && value !== 'auto' && (allowed as readonly string[]).includes(value) ? value as T : undefined);
+
+// A picture model cannot write. Asked for a checklist it draws a checklist full of gibberish, and a scene of real
+// type over a picture of fake type is unreadable twice over — so nothing drawn for this studio is ever asked for
+// words, and a scene that is mostly type asks for something out of focus to sit on rather than a scene of its own.
+export const NO_WORDS = ', no text, no lettering, no captions, no logos, no user interface, no charts';
+const TYPE_HEAVY = new Set(['checklist', 'bullets', 'steps', 'compare', 'stat', 'quote', 'hook', 'title', 'cta', 'outro']);
+export const bgPrompt = (bible: string, subject: string, layout: string): string =>
+  `${subject.toLowerCase().startsWith(bible.slice(0, 18).toLowerCase()) ? subject : `${bible}. ${subject}`}`
+  + `${TYPE_HEAVY.has(layout) ? ', shallow depth of field, softly out of focus, the subject well away from the centre of the frame' : ''}${NO_WORDS}`;
 
 // About how long this is going to take, said before it starts rather than found out. Nothing here is precise; it is
 // honest, which is what a founder watching a spinner actually needs.
@@ -412,7 +417,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             if (!front && drawn >= MAX_BACKGROUNDS) return;
             if (!front) drawn += 1;
             try {
-              const piece = await drawing.make({ prompt: front ? `${bible}. ${prompt}` : prompt, shape }, { report: () => {}, signal });
+              const piece = await drawing.make({ prompt: front ? `${bible}. ${prompt}${NO_WORDS}` : bgPrompt(bible, prompt, scene.layout), shape }, { report: () => {}, signal });
               const file = `${front ? 'shot' : 'bg'}-${index}.${piece.ext}`;
               await writeFile(join(at, 'assets', file), piece.bytes);
               if (front) shot.image = file; else shot.bg = file;
@@ -474,7 +479,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           else if (deps.music) {
             try {
               report('writing the music…');
-              const made = await deps.music.bed({ mood, seconds: Math.ceil(cut.reduce((sum, one) => sum + one.seconds, 0)) + 2 }, { report, signal });
+              const made = await deps.music.bed({ mood: mood as MusicMood, seconds: Math.ceil(cut.reduce((sum, one) => sum + one.seconds, 0)) + 2 }, { report, signal });
               bedFile = join(at, 'assets', `bed-source.${made.ext}`);
               await writeFile(bedFile, made.bytes);
               credit = made.credit;
@@ -502,7 +507,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         if (bedFile && mood !== 'none') {
           report('mixing the music under the narration…');
           const windows = cut.map((shot, index) => ({ at: starts[index] + 0.35, seconds: shot.voice?.seconds ?? 0 })).filter((one) => one.seconds > 0);
-          await musicBed({ from: bedFile, to: join(at, 'assets', 'bed.wav'), seconds: total, mood, windows, signal })
+          await musicBed({ from: bedFile, to: join(at, 'assets', 'bed.wav'), seconds: total, mood: mood as MusicMood, windows, signal })
             .then(() => { music = { file: 'bed.wav', seconds: total }; }, (error: Error) => report(`the music could not be mixed: ${error.message}`));
         }
         if (credit && music) report(`Music: ${credit.title} by ${credit.by} · ${credit.licence}`);
@@ -564,21 +569,8 @@ export const fakeVideos: Maker = {
   },
 };
 
-// A stand-in for the music maker somebody else is building, so the tests and the fake mode have a bed without one.
-export const fakeMusicBed: Music = {
-  async bed({ seconds }) {
-    // Two seconds of silence, looped by the mixer: enough for the ducking and the credit to be exercised.
-    const rate = 44100;
-    const samples = Math.max(1, Math.round(rate * Math.min(seconds, 2)));
-    const body = Buffer.alloc(samples * 2);
-    const head = Buffer.alloc(44);
-    head.write('RIFF', 0); head.writeUInt32LE(36 + body.length, 4); head.write('WAVEfmt ', 8);
-    head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22);
-    head.writeUInt32LE(rate, 24); head.writeUInt32LE(rate * 2, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34);
-    head.write('data', 36); head.writeUInt32LE(body.length, 40);
-    return { ext: 'wav', bytes: Buffer.concat([head, body]), credit: { title: 'Nothing at all', by: 'the test', licence: 'CC0', source: 'here' }, bpm: 120, beats: [] };
-  },
-};
+// The bed the tests and the fake-model runs get: the real synthesiser, four seconds of it.
+export const fakeMusicBed: Music = fakeMusic;
 
 // The rules the critic holds a film to, exported for whatever wants to check one without rendering it.
 export type { Want } from './critic.ts';

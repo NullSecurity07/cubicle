@@ -138,7 +138,7 @@ export const PURPOSE: Record<Purpose, Preset> = {
     shape: 'Open on a title. Name the problem in one statement, show the product doing the thing (device scenes), then how it works in steps, then one proof — a stat or a quote — and close on a logo.',
   },
   launch: {
-    name: 'launch announcement', pace: 'punchy', format: 'wide', length: 30, music: 'bright', captions: true, pack: 'neon', person: false,
+    name: 'launch announcement', pace: 'punchy', format: 'wide', length: 30, music: 'upbeat', captions: true, pack: 'neon', person: false,
     shape: 'Open on a hook: the thing is here. Say what it is in one statement, show it on screen, list what is new as a checklist, and end on a cta with where to get it.',
   },
   feature: {
@@ -146,11 +146,11 @@ export const PURPOSE: Record<Purpose, Preset> = {
     shape: 'Open on the moment the feature saves: a compare scene, before and after. Then the feature on screen, then the two or three things it does, then a cta.',
   },
   ad: {
-    name: 'marketing ad', pace: 'punchy', format: 'square', length: 30, music: 'drive', captions: true, pack: 'creator', person: false,
+    name: 'marketing ad', pace: 'punchy', format: 'square', length: 30, music: 'upbeat', captions: true, pack: 'creator', person: false,
     shape: 'Open on a hook that is a problem the viewer has. One statement of the turn. One device or footage scene of the product. One stat as proof. A cta. Nothing else — every scene must earn its seconds.',
   },
   reel: {
-    name: 'influencer-style reel', pace: 'punchy', format: 'tall', length: 30, music: 'drive', captions: true, pack: 'creator', person: true,
+    name: 'influencer-style reel', pace: 'punchy', format: 'tall', length: 30, music: 'upbeat', captions: true, pack: 'creator', person: true,
     shape: 'Open on a hook in the first second — a claim, a number or a question, no title card. Then short scenes that cut fast: what it is, what it replaces, what it costs you not to have it. Talk like a person, not a brochure. End on a cta.',
   },
   pitch: {

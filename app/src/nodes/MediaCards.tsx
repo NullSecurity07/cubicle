@@ -152,7 +152,12 @@ const PURPOSE_WORDS: [string, string][] = [
   ['explainer', 'Product explainer'], ['launch', 'Launch announcement'], ['feature', 'One feature'],
   ['ad', 'Marketing ad'], ['reel', 'Influencer-style reel'], ['pitch', 'Investor pitch'], ['testimonial', 'Customer testimonial'],
 ];
-const MUSIC_WORDS: [string, string][] = [['none', 'No music'], ['calm', 'Calm'], ['warm', 'Warm'], ['drive', 'Driving'], ['bright', 'Bright']];
+// The moods the music maker can actually write a bed in, plus silence. Music is on by default: a film with nothing
+// under it sounds like a draft, and the studio can write one for any of these without asking anybody for anything.
+const MUSIC_WORDS: [string, string][] = [
+  ['none', 'No music'], ['upbeat', 'Upbeat'], ['calm', 'Calm'], ['cinematic', 'Cinematic'],
+  ['tech', 'Tech'], ['warm', 'Warm'], ['playful', 'Playful'], ['dramatic', 'Dramatic'],
+];
 const LENGTH_WORDS = [15, 20, 30, 45, 60, 90];
 // How long a film of this length takes to make here, in the founder's words, said before they press Make rather than
 // found out afterwards: the pictures, the voice, and Chrome drawing every frame of it.

@@ -15,6 +15,8 @@ import type { Pace } from './templates/looks.ts';
 
 export type Want = {
   seconds: number; pace: Pace; purpose: Purpose; captions: boolean;
+  // Whether this film has a product behind it. Without one, a wordmark is a brand the film made up.
+  product?: boolean;
   // The one line of visual direction every drawn picture in this film is prefixed with, so six pictures look like
   // six frames of one film rather than six stock photos.
   bible: string;
@@ -214,6 +216,26 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       scenes[scenes.length - 1] = { ...last, layout: 'cta', text: trimTo(line, HEADING_WORDS) || 'Follow for more', heading: last.heading && countWords(last.heading) <= 4 ? last.heading : undefined };
       note('the film had no ending, so the last scene is a call to action');
     }
+  }
+
+  // 2a. A figure scene carries a figure. "25% Faster funding" set as one line is a ten-character string sized down to
+  //     a caption; "25%" over "Faster funding" is the scene the number deserves.
+  scenes = scenes.map((scene) => {
+    if (scene.layout !== 'stat' || !scene.heading) return scene;
+    const figure = figureIn(scene.heading);
+    if (!figure || scene.heading.trim() === figure) return scene;
+    const rest = scene.heading.replace(figure, ' ').replace(/\s+/g, ' ').trim();
+    note('the words beside a figure are set under it, so the figure can be the size of the scene');
+    return { ...scene, heading: figure, text: trimTo([rest, scene.text].filter(Boolean).join(' '), 6) || scene.text };
+  });
+
+  // 2b. A wordmark is the mark of something. A film with no product behind it closes on what to do instead.
+  if (want.product === false) {
+    scenes = scenes.map((scene) => {
+      if (scene.layout !== 'logo') return scene;
+      note('there is no product behind this film, so it closes on what to do rather than on a made-up wordmark');
+      return { ...scene, layout: 'cta', text: trimTo(scene.text || scene.heading || 'Follow for more', HEADING_WORDS), heading: undefined };
+    });
   }
 
   // 2. A number is a stat scene, a list is a checklist, a contrast is a comparison. This is the difference between a
