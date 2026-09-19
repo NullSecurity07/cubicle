@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
+import { lookup } from 'node:dns/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Reader } from './readers.ts';
@@ -18,6 +19,7 @@ const CHROMES = ['/usr/bin/google-chrome-stable', '/usr/sbin/google-chrome-stabl
 
 // People may read the open web, never the founder's own machine or network: a page that says
 // "now open http://localhost…" must get nowhere.
+const LOCAL_REFUSED = 'addresses on this machine or the local network cannot be opened';
 export function webUrl(raw: string): string {
   let url: URL;
   try { url = new URL(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`); } catch { throw new Error(`not a web address: ${raw}`); }
@@ -25,8 +27,20 @@ export function webUrl(raw: string): string {
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   const local = host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')
     || /^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) || host === '::1' || /^f[cd][0-9a-f]{2}:/.test(host) || /^fe80:/.test(host);
-  if (local) throw new Error('addresses on this machine or the local network cannot be opened');
+  if (local) throw new Error(LOCAL_REFUSED);
   return url.href;
+}
+
+// A public name can still point at this machine. Asked before Chrome opens an address; a name that cannot be resolved
+// is left for Chrome to fail on.
+export type Resolve = (host: string) => Promise<string[]>;
+export const dnsResolve: Resolve = async (host) => (await lookup(host, { all: true })).map((found) => found.address);
+async function publicUrl(raw: string, resolveHost?: Resolve): Promise<string> {
+  const href = webUrl(raw);
+  if (!resolveHost) return href;
+  const host = new URL(href).hostname.replace(/^\[|\]$/g, '');
+  for (const address of await resolveHost(host).catch(() => [])) webUrl(`http://${address.includes(':') ? `[${address}]` : address}/`);
+  return href;
 }
 
 // Search engines wrap each result in a redirect: Bing packs the real address as base64 in `u`, DuckDuckGo as `uddg`.
@@ -109,7 +123,7 @@ export const nameOfRef = (tree: string, ref: string) => { const found = new RegE
 // `direct` readers know a site's feed or API and go first; `fallback` readers are asked, in order, when the local browser got nothing.
 export type Readers = { direct: Reader[]; fallback: Reader[] };
 
-export function createBrowser(run: Runner, readers: Readers = { direct: [], fallback: [] }) {
+export function createBrowser(run: Runner, readers: Readers = { direct: [], fallback: [] }, resolveHost?: Resolve) {
   const outer = run;
   const seen = new Map<string, { tree: string; address: string }>();
   // Each session is a Chrome tab set with its own memory; only a few run at once, the rest wait their turn.
@@ -151,13 +165,15 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
     // All pages at once: the readable text of each, cut to a size a model can afford.
     async read(urls: string[]): Promise<string> {
       const blocks = await settled(urls.map((raw) => scratch(async (session) => {
-        const address = webUrl(raw);
+        const address = await publicUrl(raw, resolveHost);
         // A site with a feed or an official API is read through it: faster, and it works where the site walls browsers.
         for (const reader of readers.direct) {
           const known = await reader(address).catch(() => null);
           if (known && known.text.length >= THIN) return `## ${known.title || address}\n${address}\n\n${known.text.length > PAGE_CHARS ? `${known.text.slice(0, PAGE_CHARS)}\n… (cut at ${PAGE_CHARS} of ${known.text.length} characters)` : known.text}`;
         }
         let page = await run(session, ['open', address]).then(() => run(session, ['eval', READ_PAGE])).then((printed) => unwrap<{ title: string; url: string; text: string }>(printed), () => null);
+        // Where the page ended up counts as much as where it started: a redirect must not land on this machine.
+        if (page?.url && !/^about:/.test(page.url)) webUrl(page.url);
         // Pages built in the browser are still empty at first load: give those a moment to finish, once.
         if (page && page.text.length < THIN && !walled(page.title, page.text)) {
           await run(session, ['wait', '--load', 'networkidle']).catch(() => {});
@@ -194,6 +210,7 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       if (!steps[action]) throw new Error(`unknown action "${action}". Use one of: ${Object.keys(steps).join(', ')}`);
       return slot(async () => {
         const args = steps[action]();
+        if (action === 'open') await publicUrl(args[1], resolveHost);
         if (args.length) await go(session, args);
         const address = (await go(session, ['get', 'url']).catch(() => '')).trim();
         if (address && !/^about:/.test(address)) webUrl(address);

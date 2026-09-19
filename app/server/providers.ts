@@ -9,7 +9,8 @@ export type ToolSpec = { name: string; description: string; parameters: Record<s
 // it goes back unchanged on the next step, because some providers reject a call they cannot recognise.
 export type ToolCall = { id: string; name: string; args: string; extra?: unknown };
 export type Quota = { remainingRequests?: number; limitRequests?: number; remainingTokens?: number; limitTokens?: number };
-export type ModelTurn = { text: string; calls: ToolCall[]; usage?: Usage; quota?: Quota };
+// `cut`: the provider stopped the reply at its length limit, mid-thought.
+export type ModelTurn = { text: string; calls: ToolCall[]; usage?: Usage; quota?: Quota; cut?: boolean };
 export type StepOptions = { tools?: ToolSpec[]; signal?: AbortSignal; onToken: (token: string) => void };
 
 export type ModelClient = {
@@ -158,13 +159,15 @@ export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[]
 
         const calls: ToolCall[] = [];
         let usage: Usage | undefined;
+        let cut = false;
         for await (const chunk of stream) {
           if (chunk.usage) usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
           const delta = chunk.choices[0]?.delta;
+          if (chunk.choices[0]?.finish_reason === 'length') cut = true;
           if (delta?.content) onToken(delta.content);
           collectCalls(calls, delta?.tool_calls ?? []);
         }
-        return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || `call-${index}` })), usage, quota: readQuota(response.headers) };
+        return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || `call-${index}` })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
       },
     };
   });

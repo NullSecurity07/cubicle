@@ -124,6 +124,19 @@ describe('runTurn', () => {
     void run;
   });
 
+  it('tells the founder when a reply was cut at the model\'s length limit', async () => {
+    const short: ModelClient = { ...scripted([]), name: 'short', async step(_messages, { onToken }) { onToken('The plan has three par'); return { text: '', calls: [], cut: true }; } };
+    const notices: string[] = [];
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const reply = await runTurn({
+      messages: [{ role: 'user', content: 'plan' }], tools: [], clients: [short], usage: createUsage(null),
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(text) },
+    });
+    expect(reply.text).toBe('The plan has three par');
+    expect(notices.join(' ')).toMatch(/length limit/);
+  });
+
   it('stops between steps when the founder stops it, keeping what was said', async () => {
     const { run } = await setup();
     const stop = new AbortController();

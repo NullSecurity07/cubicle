@@ -45,6 +45,8 @@ export async function runTurn(input: {
     }, clients, onFailure);
 
     if (failed.length) events.notice?.(`${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
+    // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
+    if (turn.cut) events.notice?.(`${turn.client.name} hit its length limit, so this reply is cut short. Ask for the rest, or for a shorter answer.`);
     usage.record(turn.client.name, turn.usage, turn.quota);
     total.input += turn.usage?.input ?? 0;
     total.output += turn.usage?.output ?? 0;

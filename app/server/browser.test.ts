@@ -76,6 +76,25 @@ describe('browser', () => {
     expect(stuck).toContain(WALL_NOTE);
   });
 
+  it('refuses a page that ended on this machine after a redirect, and never shows what it said', async () => {
+    const bounced: Runner = async (session, args) => (args[0] === 'eval' ? JSON.stringify(JSON.stringify({ title: 'stage', url: 'http://127.0.0.1:7421/api/stage', text: 'secret rooms and wires. '.repeat(40) })) : fakeRunner(session, args));
+    const text = await createBrowser(bounced).read(['https://short.example/x']);
+    expect(text).toContain('cannot be opened');
+    expect(text).not.toContain('secret rooms');
+  });
+
+  it('refuses a public name that resolves to this machine or the local network, before Chrome opens it', async () => {
+    const opened: string[] = [];
+    const run: Runner = async (session, args) => { if (args[0] === 'open') opened.push(args[1]); return fakeRunner(session, args); };
+    const resolve = async (host: string) => (host === 'rebind.example' ? ['93.184.216.34', '127.0.0.1'] : host === 'lan.example' ? ['fd00::1'] : ['93.184.216.34']);
+    const browser = createBrowser(run, { direct: [], fallback: [] }, resolve);
+    expect(await browser.read(['https://rebind.example/'])).toContain('cannot be opened');
+    expect(await browser.read(['https://lan.example/'])).toContain('cannot be opened');
+    await expect(browser.act('card-1', 'open', { url: 'https://rebind.example/' })).rejects.toThrow('cannot be opened');
+    expect(opened).toEqual([]);
+    expect(await browser.read(['https://example.com/'])).toContain('Example Domain');
+  });
+
   it('reads a site through its own feed or API first, without opening the browser at all', async () => {
     const opened: string[] = [];
     const run: Runner = async (session, args) => { if (args[0] === 'open') opened.push(args[1]); return fakeRunner(session, args); };
