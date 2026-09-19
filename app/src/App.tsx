@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getStage, putStage } from './api';
 import { listen } from './bus';
 import { Dock } from './Dock';
+import { Missions } from './Missions';
 import { edgeTypes } from './edges';
 import { nodeTypes } from './nodes';
 import { Overlay } from './overlay/Overlay';
@@ -75,6 +76,7 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
     >
       <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="rgba(255, 255, 255, 0.24)" bgColor="transparent" />
       <Dock />
+      <Missions />
       <Overlay />
     </ReactFlow>
     </SyncContext.Provider>

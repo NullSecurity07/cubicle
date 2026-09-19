@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { isHeaded, newMessageId, type Attachment, type ChatEvent, type Stage } from '../shared/model.ts';
@@ -13,6 +14,7 @@ import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
 import { createMemory } from './memory.ts';
+import { missionsOf } from './missions.ts';
 import { TEXT_FILE, gatherPieces } from './gather.ts';
 import { createRecall, localEmbedder, wordEmbedder } from './recall.ts';
 import { recallTools } from './tools/recall.ts';
@@ -233,6 +235,16 @@ createServer(async (req, res) => {
       const known = approvals.answer(asked, { ok: answer.ok === true, args: answer.args && typeof answer.args === 'object' ? answer.args : undefined });
       return json(res, known ? 200 : 404, known ? { ok: true } : { error: 'nothing is waiting under that id' });
     }
+    if (path === '/api/missions' && req.method === 'GET') {
+      const stage = await store.loadStage();
+      const [chats, docs]: [Record<string, Awaited<ReturnType<typeof store.readChat>>>, Record<string, string>] = [{}, {}];
+      for (const one of stage.rooms) chats[one.id] = await store.readChat(one.id);
+      for (const one of stage.docs) docs[one.id] = await store.readDoc(one.id).catch(() => '');
+      const tasks = (await Promise.all((stage.cards ?? []).filter((card) => card.kind === 'board').map((card) => boards.list(card.id)))).flat();
+      const dismissed = await readFile(resolve(workspace, 'missions.json'), 'utf8').then((text) => JSON.parse(text).dismissed === true, () => false);
+      return json(res, 200, { dismissed, missions: missionsOf({ stage, chats, docs, decisions: await decisions.list(), tasks }) });
+    }
+    if (path === '/api/missions/dismiss' && req.method === 'POST') { await writeFile(resolve(workspace, 'missions.json'), JSON.stringify({ dismissed: true })); return json(res, 200, { ok: true }); }
     if (path === '/api/search' && req.method === 'GET') {
       const hits = await recall.search(new URL(req.url ?? '/', 'http://localhost').searchParams.get('q') ?? '', { top: 12 });
       return json(res, 200, { hits, mode: recall.mode() });

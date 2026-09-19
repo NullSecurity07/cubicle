@@ -1,4 +1,4 @@
-import type { Attachment, Attention, BoardEvent, Decision, Hit, ChatEvent, ChatMessage, ModelInfo, Stage, Task, Thread } from '../shared/model';
+import type { Attachment, Attention, BoardEvent, Decision, Hit, Mission, ChatEvent, ChatMessage, ModelInfo, Stage, Task, Thread } from '../shared/model';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -66,3 +66,5 @@ export const recordDecision = (decision: Partial<Decision>) => request<Decision>
 export const decide = (id: string, verdict: Pick<Decision, 'chosen' | 'why' | 'effect' | 'review'>) => request<Decision>(`/api/decisions/${id}/decide`, send('POST', verdict));
 export const removeDecision = (id: string) => request(`/api/decisions/${id}`, send('DELETE'));
 export const search = (query: string, signal?: AbortSignal) => request<{ hits: Hit[]; mode: 'meaning' | 'words' }>(`/api/search?q=${encodeURIComponent(query)}`, { signal });
+export const getMissions = () => request<{ dismissed: boolean; missions: Mission[] }>('/api/missions');
+export const dismissMissions = () => request('/api/missions/dismiss', { method: 'POST' });

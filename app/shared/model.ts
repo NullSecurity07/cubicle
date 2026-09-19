@@ -50,6 +50,9 @@ export type Decision = {
 // a link card's page); `roomId` is set for what belongs to one person.
 export type Hit = { kind: 'doc' | 'chat' | 'memory' | 'decision' | 'file' | 'link'; id: string; title: string; text: string; score: number; roomId?: string; at?: number };
 
+// One step of the first-run list. `done` is worked out from what the workspace holds, never from what was clicked.
+export type Mission = { id: string; title: string; tip: string; done: boolean };
+
 export const isHeaded = (card?: Card) => card?.kind === 'browser' && !!card.headed;
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };

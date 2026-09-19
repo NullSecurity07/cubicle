@@ -443,6 +443,26 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .decide__end .primary { border: 0; border-radius: 9px; padding: 8px 18px; font: inherit; font-size: 13px; font-weight: 600; color: #fff; background: var(--accent); cursor: pointer; }
 .decide__end .primary:disabled { opacity: 0.35; cursor: default; }
 
+/* First-run missions: a small glass card in the corner. */
+.missions { width: 288px; margin: 16px; border-radius: 14px; border: 1px solid var(--card-border); background: rgba(16, 17, 20, 0.78); -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45); overflow: hidden; }
+.missions__head { width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px 13px; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.missions__head svg { flex: none; width: 18px; height: 18px; fill: none; stroke: var(--accent); stroke-width: 2.6; stroke-linecap: round; }
+.missions__head .ring__track { stroke: rgba(255, 255, 255, 0.12); }
+.missions__head b { flex: 1; text-align: left; font-weight: 600; }
+.missions__head span { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.missions__body { padding: 2px 8px 10px; border-top: 1px solid var(--card-border); }
+.missions ul { margin: 6px 0 4px; padding: 0; list-style: none; }
+.missions li button { width: 100%; display: flex; align-items: center; gap: 9px; padding: 6px 6px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.missions li button:hover { background: rgba(255, 255, 255, 0.06); }
+.missions li i { flex: none; width: 15px; height: 15px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, 0.28); display: grid; place-items: center; }
+.missions li.is-done i { border-color: #6fcf97; background: #6fcf97; }
+.missions li i svg { width: 10px; height: 10px; fill: none; stroke: #0d1a12; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.missions li.is-done span { color: var(--muted); }
+.missions li p { margin: 0 6px 6px 30px; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.missions__dismiss { margin: 2px 6px 0; border: 0; padding: 4px 0; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.missions__dismiss:hover { color: var(--text); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
 /* The command bar: one input near the top, answers under it. */
 .command { position: absolute; top: 14vh; left: 50%; width: min(660px, calc(100% - 40px)); max-height: 70vh; transform: translateX(-50%); display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(16, 17, 20, 0.9); -webkit-backdrop-filter: blur(24px) saturate(1.2); backdrop-filter: blur(24px) saturate(1.2); box-shadow: 0 30px 90px rgba(0, 0, 0, 0.65); animation: panel-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .command > input { flex: none; border: 0; border-bottom: 1px solid var(--card-border); outline: 0; padding: 17px 20px; background: transparent; color: var(--text); font: inherit; font-size: 16px; }

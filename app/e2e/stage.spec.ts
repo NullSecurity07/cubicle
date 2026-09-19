@@ -833,3 +833,34 @@ test('command bar: find anything, do anything, and never a guess', async ({ page
   await page.keyboard.press('n');
   await expect(page.getByRole('dialog', { name: 'Needs you' })).toBeVisible();
 });
+
+test('missions: the first-run list ticks itself from what the workspace holds, and can be sent away for good', async ({ page }) => {
+  await tidy(page);
+  const card = page.locator('.missions');
+  const item = (title: string) => card.getByRole('listitem').filter({ hasText: title });
+  await expect(card.getByRole('button', { name: /Getting started|You know your way around/ })).toBeVisible();
+  await expect(card.getByRole('listitem')).toHaveCount(6);
+
+  // Talking to someone ticks the first mission; nobody clicked anything on the list.
+  await ask(page, 'marketing', 'hello, this is the founder');
+  await expect(item('Talk to someone')).toHaveClass(/is-done/);
+
+  // A decision recorded anywhere (here: straight through the api) ticks its mission within moments.
+  await page.request.post('/api/decisions', { data: { title: 'Missions check', context: '', options: [], chosen: 'Yes', why: 'To see the tick.' } });
+  await expect(item('Record a decision')).toHaveClass(/is-done/, { timeout: 12_000 });
+
+  // Each mission explains itself.
+  await item('Connect something').getByRole('button').click();
+  await expect(item('Connect something')).toContainText('Drag from a dot on a person');
+
+  // Collapsed it stays out of the way; hidden for good survives a reload.
+  await card.getByRole('button', { name: /of 6/ }).click();
+  await expect(card.getByRole('list')).toBeHidden();
+  await card.getByRole('button', { name: /of 6/ }).click();
+  await card.getByRole('button', { name: /hide this/i }).click();
+  await expect(card).toBeHidden();
+  await page.reload();
+  await expect(node(page, 'marketing')).toBeVisible();
+  await page.waitForTimeout(1200);
+  await expect(card).toBeHidden();
+});
