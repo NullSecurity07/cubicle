@@ -19,6 +19,7 @@
     "@fontsource-variable/inter": "^5",
     "@xyflow/react": "^12.11",
     "agent-browser": "^0.38.1",
+    "mermaid": "^12.0.0",
     "nodemailer": "^10.0.10",
     "openai": "^7.17.0",
     "pyodide": "^314.0.7",

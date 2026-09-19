@@ -125,7 +125,7 @@ test('a person can be added, talked to, edited and removed', async ({ page }) =>
   await page.reload();
   await expect(rio.locator('.msg--user').last()).toHaveText('who first');
   await rio.locator('.card__header').hover();
-  await rio.getByRole('button', { name: 'Edit' }).click();
+  await rio.getByRole('button', { name: 'Edit', exact: true }).click();
   await rio.getByLabel('Name').fill('Ria');
   await rio.getByRole('button', { name: 'Done' }).click();
   const ria = page.locator('.react-flow__node', { hasText: 'Ria' });
@@ -234,7 +234,7 @@ test('the dock shows today\'s model usage and a person can be pinned to a model'
   await expect(detail).toContainText(/\d+ replies · [\d,]+ tokens/);
 
   await node(page, 'marketing').hover();
-  await node(page, 'marketing').getByRole('button', { name: 'Edit' }).click();
+  await node(page, 'marketing').getByRole('button', { name: 'Edit', exact: true }).click();
   await node(page, 'marketing').locator('select').selectOption('fake');
   await node(page, 'marketing').getByRole('button', { name: 'Done' }).click();
   await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).rooms[0].model).toBe('fake');
@@ -440,4 +440,56 @@ test('a person keeps notes the founder can read and rewrite, and sees them in la
   await panel.getByRole('button', { name: 'Save' }).click();
   await expect(panel).toHaveCount(0);
   expect((await (await page.request.get('/api/rooms/build/memory')).json()).notes).toBe('- The founder wants releases every two weeks.');
+});
+
+test('a reply can be regenerated, a question edited and re-asked, a message deleted; nothing is lost', async ({ page }) => {
+  const room = node(page, 'build');
+  await ask(page, 'build', 'first question');
+  await ask(page, 'build', 'second question');
+  const before = await room.locator('.msg').count();
+  await room.locator('.msg--assistant').last().hover();
+  await room.getByRole('button', { name: 'Regenerate' }).click();
+  await expect(room.locator('.status--idle')).toBeVisible();
+  await expect(room.locator('.msg')).toHaveCount(before);
+  await expect(room.locator('.msg--assistant').last()).toContainText('You said: "second question"');
+
+  await room.locator('.msg--user').last().hover();
+  await room.locator('.msg--user').last().getByRole('button', { name: 'Edit message' }).click();
+  await expect(room.locator('.ask__editing')).toBeVisible();
+  await room.locator('.ask textarea').fill('second question, sharper');
+  await room.locator('.ask textarea').press('Enter');
+  await expect(room.locator('.msg--assistant').last()).toContainText('You said: "second question, sharper"');
+  await expect(room.locator('.status--idle')).toBeVisible();
+  await expect(room.locator('.msg')).toHaveCount(before);
+
+  await room.locator('.msg--assistant').last().hover();
+  await room.locator('.msg--assistant').last().getByRole('button', { name: 'Delete message' }).click();
+  await expect(room.locator('.msg')).toHaveCount(before - 1);
+  await page.reload();
+  await expect(node(page, 'build').locator('.msg')).toHaveCount(before - 1);
+});
+
+test('files can be attached: a text file is read, a picture is seen and shown', async ({ page }) => {
+  const room = node(page, 'marketing');
+  await room.locator('input[type=file]').setInputFiles({ name: 'plan notes.md', mimeType: 'text/markdown', buffer: Buffer.from('# Plan\nLaunch in October.') });
+  await expect(room.locator('.ask__file')).toContainText('plan-notes.md');
+  await send(page, 'marketing', 'read this');
+  await expect(room.locator('.msg--assistant').last()).toContainText('Launch in October.');
+  await expect(room.locator('.msg--user').last().locator('.attached a')).toContainText('plan-notes.md');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  await room.locator('input[type=file]').setInputFiles({ name: 'logo.png', mimeType: 'image/png', buffer: png });
+  await send(page, 'marketing', 'what is this');
+  await expect(room.locator('.msg--assistant').last()).toContainText('I can see 1 picture');
+  await expect(room.locator('.msg--user').last().locator('.attached img')).toBeVisible();
+});
+
+test('replies render diagrams and a live, sandboxed page preview', async ({ page }) => {
+  await send(page, 'marketing', '/rich show me');
+  const reply = node(page, 'marketing').locator('.msg--assistant').last();
+  await expect(reply.locator('.diagram svg')).toBeVisible({ timeout: 15000 });
+  const frame = reply.locator('.artifact iframe');
+  await expect(frame).toHaveAttribute('sandbox', 'allow-scripts');
+  await expect(reply.frameLocator('.artifact iframe').locator('h1')).toHaveText('Landing page');
+  await reply.getByRole('button', { name: 'Show code' }).click();
+  await expect(reply.locator('.artifact pre')).toContainText('<!doctype html>');
 });

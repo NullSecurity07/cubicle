@@ -17,6 +17,7 @@ export type ModelClient = {
   model: string;
   maxPromptChars: number;
   tools: boolean;
+  vision?: boolean;
   limits: Limits;
   step(messages: ModelMessage[], options: StepOptions): Promise<ModelTurn>;
 };
@@ -26,7 +27,8 @@ export type Failure = { client: ModelClient; error: Error };
 
 export const promptSize = (messages: ModelMessage[]) => messages.reduce((sum, message) => {
   const calls = 'tool_calls' in message && message.tool_calls ? JSON.stringify(message.tool_calls).length : 0;
-  return sum + message.content.length + calls;
+  const images = 'images' in message && message.images ? message.images.length * 1200 : 0;
+  return sum + message.content.length + calls + images;
 }, 0);
 
 const MAX_WAIT = 8000;
@@ -96,6 +98,16 @@ export function readQuota(headers: Headers): Quota | undefined {
 
 // A turn can change provider half way. Tool calls made by another provider carry no signature, which Gemini insists on,
 // so it gets the stand-in Google documents for that case; every other provider gets the calls without Google's extras.
+// The wire form of a message: a model that can see gets images as parts, any other gets a line that names them.
+export function withImages(messages: ModelMessage[], vision: boolean): unknown[] {
+  return messages.map((message) => {
+    if (message.role !== 'user' || !message.images?.length) return message;
+    const { images, ...rest } = message;
+    if (!vision) return { ...rest, content: `${message.content}\n\n[${images.length === 1 ? 'An image was' : `${images.length} images were`} attached (${images.map((image) => image.name).join(', ')}), but the model answering now cannot see images. Say so if the question depends on them.]` };
+    return { ...rest, content: [{ type: 'text', text: message.content }, ...images.map((image) => ({ type: 'image_url', image_url: { url: image.url } }))] };
+  });
+}
+
 export function portable(messages: ModelMessage[], signature?: string): ModelMessage[] {
   return messages.map((message) => {
     if (message.role !== 'assistant' || !message.tool_calls) return message;
@@ -123,7 +135,7 @@ export function collectCalls(calls: ToolCall[], parts: CallPart[]) {
   }
 }
 
-type Entry = (typeof models)[number] & { streamUsage?: boolean; callSignature?: string; extra?: Record<string, unknown>; limits?: Limits };
+type Entry = (typeof models)[number] & { vision?: boolean; streamUsage?: boolean; callSignature?: string; extra?: Record<string, unknown>; limits?: Limits };
 
 export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[] {
   return (models as Entry[]).filter((entry) => env[entry.keyEnv]).map((entry) => {
@@ -133,9 +145,10 @@ export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[]
       model: entry.model,
       maxPromptChars: entry.maxPromptChars,
       tools: entry.tools,
+      vision: !!entry.vision,
       limits: entry.limits ?? {},
       async step(history, { tools, signal, onToken }) {
-        const messages = portable(history, entry.callSignature);
+        const messages = withImages(portable(history, entry.callSignature), !!entry.vision);
         const { data: stream, response } = await api.chat.completions.create({
           model: entry.model, messages, stream: true, max_tokens: entry.maxTokens,
           ...(entry.streamUsage === false ? {} : { stream_options: { include_usage: true } }),
@@ -164,6 +177,7 @@ export const fakeClient: ModelClient = {
   model: 'fake-1',
   maxPromptChars: Infinity,
   tools: true,
+  vision: true,
   limits: { rpd: 100_000 },
   async step(messages, { onToken, signal, tools }) {
     const system = messages[0]?.content ?? '';
@@ -178,6 +192,8 @@ export const fakeClient: ModelClient = {
     const reply = last?.role === 'tool'
       ? `Tool said: ${last.content}`
       : heard.startsWith('/markdown') ? '**Bold plan**\n\n- one\n- two'
+      : heard.startsWith('/rich') ? 'A flow:\n\n```mermaid\ngraph TD; Idea-->Build; Build-->Launch;\n```\n\nA page:\n\n```html\n<!doctype html><html><body><h1 id="t">Landing</h1><script>document.getElementById("t").textContent += " page";</script></body></html>\n```'
+      : last?.role === 'user' && last.images?.length ? `I can see ${last.images.length} picture: ${last.images[0].name.split('/').pop()}.`
       : `${name} here. You said: "${heard}". Docs I can read: ${docs.join(', ') || 'none'}.`;
     const delay = heard.startsWith('/slow') ? 150 : 15;
     for (const word of reply.split(/(?<= )/)) {

@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
-import { isHeaded, newMessageId, type ChatEvent, type Stage } from '../shared/model.ts';
+import { isHeaded, newMessageId, type Attachment, type ChatEvent, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
 import { createBoards } from './boards.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
@@ -8,7 +8,8 @@ import { createBrowser, fakeRunner, jinaReader, realRunner } from './browser.ts'
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
 import { createMemory } from './memory.ts';
-import { buildMessages, colleagueIds, readableDocIds } from './prompt.ts';
+import { recent } from './memory.ts';
+import { buildMessages, colleagueIds, readableDocIds, type Attached } from './prompt.ts';
 import { complete, fakeClient, promptSize, realClients } from './providers.ts';
 import { route } from './router.ts';
 import { createRuns, desktopNotify } from './runs.ts';
@@ -53,7 +54,7 @@ async function promptFor(stage: Stage, roomId: string, toolNames: string[], fres
   const colleagues: Record<string, Awaited<ReturnType<typeof store.readChat>>> = {};
   for (const id of colleagueIds(stage, roomId)) colleagues[id] = await store.readChat(id);
   // A board task starts from a clean slate: the person, their documents and colleagues, not their chat.
-  return buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues, await memory.read(roomId));
+  return buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(roomId));
 }
 
 // A consult: the question lands in the colleague's room under the asker's name, they answer once without tools, and both are kept there.
@@ -93,7 +94,32 @@ async function body(req: IncomingMessage): Promise<any> {
   return text ? JSON.parse(text) : {};
 }
 
-async function chat(roomId: string, text: string, res: ServerResponse) {
+const TEXT_FILE = /\.(txt|md|markdown|csv|tsv|json|ya?ml|xml|html?|css|js|mjs|ts|tsx|jsx|py|rb|go|rs|java|c|h|cpp|sh|sql|log|ini|toml|env)$/i;
+const IMAGE_FILE = /\.(png|jpe?g|webp|gif)$/i;
+const TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml', mp4: 'video/mp4', webm: 'video/webm', pdf: 'application/pdf', csv: 'text/csv', json: 'application/json', md: 'text/markdown' };
+const typeOf = (name: string) => TYPES[name.split('.').pop()?.toLowerCase() ?? ''] ?? (TEXT_FILE.test(name) ? 'text/plain' : 'application/octet-stream');
+
+async function raw(req: IncomingMessage, limit: number): Promise<Buffer> {
+  const chunks: Buffer[] = []; let size = 0;
+  for await (const chunk of req) { size += chunk.length; if (size > limit) throw new Error(`file too large (limit ${Math.round(limit / 1_000_000)} MB)`); chunks.push(chunk as Buffer); }
+  return Buffer.concat(chunks);
+}
+
+// What the founder attached to the messages still in the window: text files as text, pictures as pictures.
+async function attachedTo(roomId: string): Promise<Attached> {
+  const attached: Attached = { texts: {}, images: {} };
+  for (const message of recent(await store.readChat(roomId))) {
+    for (const file of message.attachments ?? []) {
+      const bytes = await store.readFileBytes(file.path);
+      if (!bytes) continue;
+      if (IMAGE_FILE.test(file.path) && bytes.length <= 4_000_000) attached.images[file.path] = `data:${typeOf(file.path)};base64,${bytes.toString('base64')}`;
+      else if (TEXT_FILE.test(file.path) && bytes.length <= 400_000) attached.texts[file.path] = bytes.toString('utf8');
+    }
+  }
+  return attached;
+}
+
+async function chat(roomId: string, text: string, res: ServerResponse, extra: { replace?: string; attachments?: Attachment[] } = {}) {
   const stage = await store.loadStage();
   if (!stage.rooms.some((room) => room.id === roomId)) return json(res, 404, { error: 'unknown room' });
   if (busy.has(roomId)) return json(res, 409, { error: 'this person is still replying' });
@@ -105,10 +131,14 @@ async function chat(roomId: string, text: string, res: ServerResponse) {
   const stop = new AbortController();
   res.on('close', () => stop.abort());
   try {
-    await store.appendChat(roomId, { id: newMessageId(), role: 'user', text, at: Date.now() });
+    // Regenerate and edit: the old message and everything after it leave the conversation (to trash) before the new one goes in.
+    if (extra.replace) await store.cutChat(roomId, extra.replace, true);
+    await store.appendChat(roomId, { id: newMessageId(), role: 'user', text, at: Date.now(), ...(extra.attachments?.length ? { attachments: extra.attachments } : {}) });
     const messages = await promptFor(stage, roomId, tools.map((tool) => tool.name));
     const room = stage.rooms.find((candidate) => candidate.id === roomId)!;
-    const { order, notice } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true });
+    const vision = messages.some((message) => message.role === 'user' && !!message.images?.length);
+    const { order, notice } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true, vision });
+    if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
     if (notice) send({ notice });
     const reply = await runTurn({
       messages, tools, clients: order, usage, signal: stop.signal,
@@ -187,14 +217,39 @@ createServer(async (req, res) => {
     if (doc && req.method === 'GET') return json(res, 200, { text: await store.readDoc(doc) });
     if (doc && req.method === 'PUT') { await store.writeDoc(doc, String((await body(req)).text ?? '')); return json(res, 200, { ok: true }); }
     if (path === '/api/models' && req.method === 'GET') return json(res, 200, usage.info(clients));
+    const cut = /^\/api\/rooms\/([^/]+)\/chat\/([\w-]{1,80})$/.exec(path);
+    if (cut && req.method === 'DELETE') {
+      if (busy.has(cut[1])) return json(res, 409, { error: 'this person is still replying' });
+      return json(res, 200, await store.cutChat(cut[1], cut[2], false));
+    }
+    if (path === '/api/files' && req.method === 'POST') {
+      const name = new URL(req.url ?? '/', 'http://localhost').searchParams.get('name') ?? 'file';
+      const data = await raw(req, 15_000_000);
+      const saved = await store.saveUpload(name, data);
+      return json(res, 200, { path: saved, type: typeOf(saved), size: data.length });
+    }
+    if (path.startsWith('/api/files/') && req.method === 'GET') {
+      const name = decodeURIComponent(path.slice('/api/files/'.length));
+      const bytes = await store.readFileBytes(name).catch(() => null);
+      if (!bytes) return json(res, 404, { error: 'no such file' });
+      // Files may hold anything a person or a page produced: never let one run as a page of this app.
+      res.writeHead(200, { 'content-type': typeOf(name), 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'x-content-type-options': 'nosniff', 'cache-control': 'no-cache' });
+      return res.end(bytes);
+    }
     const remembered = /^\/api\/rooms\/([^/]+)\/memory$/.exec(path)?.[1];
     if (remembered && req.method === 'GET') { const { notes, summary } = await memory.read(remembered); return json(res, 200, { notes, summary }); }
     if (remembered && req.method === 'PUT') { await memory.write(remembered, await body(req)); return json(res, 200, { ok: true }); }
     if (room && req.method === 'GET') return json(res, 200, await store.readChat(room));
     if (room && req.method === 'POST') {
-      const text = String((await body(req)).text ?? '').trim();
-      if (!text) return json(res, 400, { error: 'empty message' });
-      return await chat(room, text, res);
+      const sent = await body(req);
+      const text = String(sent.text ?? '').trim();
+      const attachments: Attachment[] = [];
+      for (const file of Array.isArray(sent.attachments) ? sent.attachments.slice(0, 5) : []) {
+        const bytes = typeof file?.path === 'string' && file.path.startsWith('uploads/') ? await store.readFileBytes(file.path) : null;
+        if (bytes) attachments.push({ path: file.path, type: typeOf(file.path), size: bytes.length });
+      }
+      if (!text && !attachments.length) return json(res, 400, { error: 'empty message' });
+      return await chat(room, text || 'See the attached file.', res, { replace: typeof sent.replace === 'string' ? sent.replace : undefined, attachments });
     }
     if (path.startsWith('/api/')) return json(res, 404, { error: 'not found' });
     const file = req.method === 'GET' ? await readStatic(resolve(import.meta.dirname, '../dist'), path) : null;

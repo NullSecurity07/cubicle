@@ -1,4 +1,4 @@
-import type { BoardEvent, ChatEvent, ChatMessage, ModelInfo, Stage, Task } from '../shared/model';
+import type { Attachment, BoardEvent, ChatEvent, ChatMessage, ModelInfo, Stage, Task } from '../shared/model';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -20,8 +20,8 @@ export const putMemory = (roomId: string, memory: { notes: string; summary: stri
 export const getChat = (roomId: string) => request<ChatMessage[]>(`/api/rooms/${roomId}/chat`);
 
 // Posts one message and feeds every server-sent event to onEvent until the stream ends. Aborting the signal stops the reply.
-export async function sendChat(roomId: string, text: string, onEvent: (event: ChatEvent) => void, signal?: AbortSignal) {
-  const response = await fetch(`/api/rooms/${roomId}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }), signal });
+export async function sendChat(roomId: string, text: string, onEvent: (event: ChatEvent) => void, signal?: AbortSignal, extra: { replace?: string; attachments?: Attachment[] } = {}) {
+  const response = await fetch(`/api/rooms/${roomId}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, ...extra }), signal });
   if (!response.ok || !response.body) throw new Error((await response.json().catch(() => null))?.error ?? `chat failed (${response.status})`);
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = '';
@@ -47,3 +47,7 @@ export function watchBoard(boardId: string, onEvent: (event: BoardEvent) => void
   source.onmessage = (message) => onEvent(JSON.parse(message.data) as BoardEvent);
   return () => source.close();
 }
+
+export const deleteMessage = (roomId: string, messageId: string) => request<ChatMessage[]>(`/api/rooms/${roomId}/chat/${messageId}`, { method: 'DELETE' });
+export const uploadFile = (file: File) => request<Attachment>(`/api/files?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
+export const fileUrl = (path: string) => `/api/files/${path.split('/').map(encodeURIComponent).join('/')}`;

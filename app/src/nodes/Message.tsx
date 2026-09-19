@@ -1,8 +1,7 @@
-import { memo } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import type { ChatMessage, ToolEvent } from '../../shared/model';
+import { fileUrl } from '../api';
 import { Approval } from './Approval';
+import { Words } from './Rich';
 
 const VERBS: Record<string, [doing: string, done: string]> = {
   read_doc: ['Reading', 'Read'], write_doc: ['Rewriting', 'Rewrote'], append_doc: ['Adding to', 'Added to'], create_doc: ['Creating', 'Created'],
@@ -35,18 +34,34 @@ function Chip({ tool }: { tool: ToolEvent }) {
   );
 }
 
-export const Words = memo(function Words({ text }: { text: string }) {
-  return (
-    <Markdown remarkPlugins={[remarkGfm]} components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" /> }}>
-      {text}
-    </Markdown>
-  );
-});
+type Actions = { onEdit?: () => void; onDelete?: () => void; onRegenerate?: () => void };
 
-export function Message({ message, live = false }: { message: Omit<ChatMessage, 'id' | 'at'>; live?: boolean }) {
+function Attachments({ message }: { message: Pick<ChatMessage, 'attachments'> }) {
+  if (!message.attachments?.length) return null;
+  return (
+    <div className="attached">
+      {message.attachments.map((file) => (file.type.startsWith('image/')
+        ? <img key={file.path} src={fileUrl(file.path)} alt={file.path.split('/').pop()} loading="lazy" />
+        : <a key={file.path} href={fileUrl(file.path)} target="_blank" rel="noreferrer">{file.path.split('/').pop()?.replace(/^[a-z0-9]+-/, '')}</a>))}
+    </div>
+  );
+}
+
+function Tools({ onEdit, onDelete, onRegenerate }: Actions) {
+  if (!onEdit && !onDelete && !onRegenerate) return null;
+  return (
+    <span className="msg__tools nodrag">
+      {onRegenerate && <button type="button" aria-label="Regenerate" title="Answer again" onClick={onRegenerate}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.500-3.500M13 2.500v3h-3" /></svg></button>}
+      {onEdit && <button type="button" aria-label="Edit message" title="Edit and ask again" onClick={onEdit}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13l.600-2.800L10.800 3l2.200 2.200-7.200 7.200z" /></svg></button>}
+      {onDelete && <button type="button" aria-label="Delete message" title="Delete (kept in the workspace trash)" onClick={onDelete}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button>}
+    </span>
+  );
+}
+
+export function Message({ message, live = false, ...actions }: { message: Omit<ChatMessage, 'id' | 'at'>; live?: boolean } & Actions) {
   if (message.role === 'user') return message.from
     ? <div className="msg msg--colleague"><span>{message.from} asked</span>{message.text}</div>
-    : <p className="msg msg--user">{message.text}</p>;
+    : <div className="msg msg--user"><Attachments message={message} />{message.text}<Tools {...actions} /></div>;
   const tokens = message.usage ? message.usage.input + message.usage.output : 0;
   return (
     <div className="msg msg--assistant">
@@ -55,6 +70,7 @@ export function Message({ message, live = false }: { message: Omit<ChatMessage, 
       {!live && message.provider && (
         <div className="msg__foot">
           {message.provider} · {message.model}{tokens ? ` · ${compact(tokens)} tokens` : ''}{message.stopped ? ' · stopped' : ''}
+          <Tools {...actions} />
         </div>
       )}
     </div>

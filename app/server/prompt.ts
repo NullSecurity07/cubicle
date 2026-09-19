@@ -2,8 +2,11 @@ import { STANCE, type ChatMessage, type Stage } from '../shared/model.ts';
 import { recent, type Memory } from './memory.ts';
 
 type CallEcho = { id: string; type: 'function'; function: { name: string; arguments: string }; extra_content?: unknown };
+// An image travels as its own part; only models that can see get it, the rest get a line saying an image was attached.
+export type Part = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
 export type ModelMessage =
-  | { role: 'system' | 'user'; content: string }
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string; images?: { name: string; url: string }[] }
   | { role: 'assistant'; content: string; tool_calls?: CallEcho[] }
   | { role: 'tool'; tool_call_id: string; content: string };
 
@@ -28,8 +31,21 @@ export const colleagueIds = (stage: Stage, roomId: string) => wired(stage, roomI
 const EXCERPT = 280;
 
 // An earlier reply that used tools goes back to the model the way it happened: the calls, short results, then the words.
-function past(message: ChatMessage): ModelMessage[] {
-  if (message.role === 'user') return [{ role: 'user', content: message.from ? `[${message.from}, a colleague, asks you. The founder will see your answer.]\n${message.text}` : message.text }];
+// What the founder attached, as the model gets it: text files inline, images as images.
+export type Attached = { texts: Record<string, string>; images: Record<string, string> };
+const ATTACHED_CHARS = 8000;
+
+function past(message: ChatMessage, attached: Attached): ModelMessage[] {
+  if (message.role === 'user') {
+    const files = (message.attachments ?? []).map((file) => {
+      const text = attached.texts[file.path];
+      if (text !== undefined) return `\n\n[Attached file ${file.path}]\n${text.length > ATTACHED_CHARS ? `${text.slice(0, ATTACHED_CHARS)}\n… (cut; the full file is in the shared files folder)` : text}`;
+      return attached.images[file.path] ? '' : `\n\n[Attached file ${file.path} (${file.type || 'unknown type'}, ${file.size} bytes) is in the shared files folder.]`;
+    }).join('');
+    const images = (message.attachments ?? []).filter((file) => attached.images[file.path]).map((file) => ({ name: file.path, url: attached.images[file.path] }));
+    const words = message.from ? `[${message.from}, a colleague, asks you. The founder will see your answer.]\n${message.text}` : message.text;
+    return [{ role: 'user', content: `${words}${files}`, ...(images.length ? { images } : {}) }];
+  }
   const tools = (message.tools ?? []).filter((tool) => tool.ok !== undefined);
   if (!tools.length) return [{ role: 'assistant', content: message.text }];
   return [
@@ -39,7 +55,7 @@ function past(message: ChatMessage): ModelMessage[] {
   ];
 }
 
-export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}, memory?: Memory): ModelMessage[] {
+export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}, memory?: Memory, attached: Attached = { texts: {}, images: {} }): ModelMessage[] {
   const room = stage.rooms.find((candidate) => candidate.id === roomId);
   if (!room) throw new Error(`unknown room: ${roomId}`);
 
@@ -84,5 +100,5 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
       : pinned.length ? '' : 'No documents are connected to your room, so you have no written background on the product yet.',
   ].filter(Boolean).join('\n\n');
 
-  return [{ role: 'system', content: system }, ...recent(history).flatMap(past)];
+  return [{ role: 'system', content: system }, ...recent(history).flatMap((message) => past(message, attached))];
 }

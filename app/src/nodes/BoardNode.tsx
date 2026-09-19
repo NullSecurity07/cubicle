@@ -7,7 +7,7 @@ import type { BoardNodeType, StageNode } from '../stage';
 import { useFlushStage } from '../sync';
 import { Approval } from './Approval';
 import { CardActions, Frame } from './Frame';
-import { Words } from './Message';
+import { Words } from './Rich';
 
 const NAMES: Record<Column, string> = { proposed: 'Proposed', todo: 'To do', doing: 'Doing', review: 'Review', done: 'Done' };
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];

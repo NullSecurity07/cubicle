@@ -290,3 +290,28 @@ div.msg--assistant:has(.approval) { align-self: stretch; max-width: none; }
 .memory__lead { margin: 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
 .memory textarea { flex: 1; min-height: 60px; font-size: 12.5px; line-height: 1.5; }
 .memory label { flex: 1; min-height: 0; }
+
+/* Chat polish: message actions, attachments, media, diagrams, live previews. */
+div.msg--user { position: relative; white-space: pre-wrap; }
+.msg__tools { display: inline-flex; gap: 1px; margin-left: 6px; vertical-align: middle; opacity: 0; transition: opacity 0.15s; }
+.msg--user .msg__tools { position: absolute; right: 100%; top: 2px; margin: 0 4px 0 0; }
+.msg:hover .msg__tools, .msg__tools:focus-within { opacity: 1; }
+.msg__tools button { width: 20px; height: 20px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.msg__tools button:hover { background: rgba(255, 255, 255, 0.12); color: var(--text); }
+.msg__tools svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.attached { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 5px; }
+.attached img { max-width: 100%; max-height: 160px; border-radius: 8px; display: block; }
+.attached a, .ask__file { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 7px; font-size: 11.5px; color: var(--text); text-decoration: none; background: rgba(255, 255, 255, 0.1); }
+.ask__extras { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 12px 0; }
+.ask__editing { flex-basis: 100%; font-size: 11px; color: #f0b35a; }
+.ask__file button { border: 0; padding: 0 0 0 2px; background: transparent; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer; }
+.ask .ask__attach { background: transparent; color: var(--muted); padding: 5px; }
+.ask .ask__attach:hover { color: var(--text); }
+.md__media { display: block; max-width: 100%; max-height: 320px; border-radius: 9px; margin: 4px 0 8px; }
+.diagram { margin: 4px 0 8px; padding: 10px; border-radius: 9px; background: rgba(0, 0, 0, 0.3); overflow-x: auto; }
+.diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.artifact { margin: 4px 0 8px; border: 1px solid var(--card-border); border-radius: 10px; overflow: hidden; }
+.artifact__bar { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px; font-size: 11px; color: var(--muted); background: rgba(255, 255, 255, 0.05); }
+.artifact__bar button { border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
+.artifact iframe { display: block; width: 100%; height: 260px; border: 0; background: #fff; }
+.artifact pre { margin: 0; border-radius: 0; max-height: 260px; }

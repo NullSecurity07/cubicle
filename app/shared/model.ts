@@ -31,11 +31,13 @@ export type Usage = { input: number; output: number };
 export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string } | { kind: 'project-progress'; id: string; line: string } | { kind: 'chat-changed'; id: string } | { kind: 'memory-changed'; id: string };
 // One tool call inside a reply. `ok` is absent while the tool is still running; `waiting` means it needs the founder's yes first.
 export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; waiting?: boolean; question?: string; ok?: boolean; result?: string; effect?: ToolEffect };
+// A file the founder attached to a message; it lives in the shared files folder.
+export type Attachment = { path: string; type: string; size: number };
 export type ChatMessage = {
   id: string; role: 'user' | 'assistant'; text: string; at: number;
   // Set when the words came from a colleague's consult, not from the founder: the colleague's name.
   from?: string;
-  provider?: string; model?: string; usage?: Usage; tools?: ToolEvent[]; stopped?: boolean;
+  provider?: string; model?: string; usage?: Usage; tools?: ToolEvent[]; stopped?: boolean; attachments?: Attachment[];
 };
 export type ChatEvent = { token: string } | { tool: ToolEvent } | { notice: string } | { done: true; message: ChatMessage } | { error: string };
 // One configured model as the client sees it: `left` is the share of today's free quota still there, 0 to 1.

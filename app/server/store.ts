@@ -114,6 +114,26 @@ export function createStore(dir: string) {
       return { notes: saved.notes ?? '', summary: saved.summary ?? '', upTo: saved.upTo };
     },
     writeMemory: (id: string, memory: Memory) => write(memoryPath(id), JSON.stringify(memory, null, 2)),
+    // Takes messages out of a conversation (one, or one and everything after it). What is taken out goes to trash.
+    async cutChat(id: string, messageId: string, andAfter: boolean): Promise<ChatMessage[]> {
+      const messages: ChatMessage[] = JSON.parse((await read(chatPath(id))) ?? '[]');
+      const at = messages.findIndex((message) => message.id === messageId);
+      if (at < 0) throw new Error('unknown message');
+      const gone = andAfter ? messages.splice(at) : messages.splice(at, 1);
+      await write(join(dir, 'trash', `${stamp()}-${safe(id)}-messages.json`), JSON.stringify(gone, null, 2));
+      await write(chatPath(id), JSON.stringify(messages, null, 2));
+      return messages;
+    },
+    // A file the founder dropped into a chat. Kept under files/uploads with a name that cannot clash or escape.
+    async saveUpload(name: string, data: Buffer): Promise<string> {
+      const clean = name.normalize('NFKD').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[.-]+/, '').slice(-60) || 'file';
+      const path = `uploads/${Date.now().toString(36)}-${clean}`;
+      const full = filePath(path);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, data);
+      return path;
+    },
+    readFileBytes: async (name: string) => { await queue; return readFile(filePath(name)).catch(() => null); },
     async listFiles(): Promise<string[]> {
       await queue;
       const entries = await readdir(filesDir, { recursive: true, withFileTypes: true }).catch(() => []);
