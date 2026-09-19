@@ -1,7 +1,8 @@
 import type { ToolEffect } from '../shared/model';
 
 // Carries what a person's tool changed from their chat to the cards that show it, and tells the dock that usage moved.
-type Events = { effect: ToolEffect & { roomId: string }; usage: null };
+// `ask` puts a question into one person's own ask box, from elsewhere in the window (the command bar).
+type Events = { effect: ToolEffect & { roomId: string }; usage: null; ask: { roomId: string; text: string } };
 const target = new EventTarget();
 
 export function emit<K extends keyof Events>(type: K, detail: Events[K]) {

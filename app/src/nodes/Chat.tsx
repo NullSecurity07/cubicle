@@ -37,7 +37,7 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
   useEffect(() => { if (editing) box.current?.focus(); }, [editing]);
 
   // `again` re-asks an earlier message: it and everything after it leave the conversation first (kept in the trash).
-  async function send(again?: { replace: string; text: string; attachments?: Attachment[] }) {
+  async function send(again?: { replace?: string; text: string; attachments?: Attachment[] }) {
     const text = again?.text ?? draft.trim();
     const attachments = again ? again.attachments ?? [] : files;
     const replace = again?.replace ?? editing?.id;
@@ -88,6 +88,10 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
     }
   }
 
+  // A question sent from the command bar is asked here, exactly as if it had been typed in this box.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  useEffect(() => listen('ask', (asked) => { if (asked.roomId === id) void sendRef.current({ text: asked.text }); }), [id]);
   async function attach(list: FileList | File[]) {
     setProblem('');
     for (const file of [...list].slice(0, 5 - files.length)) {

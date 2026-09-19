@@ -80,7 +80,7 @@ test('shows two rooms, a doc and the company brief, one wire, a dock with usage 
   await expect(page.locator('.react-flow__node')).toHaveCount(4);
   // The dock, by name: three ways to add, the founder's two views, and the usage rings (which arrive once the models are known).
   await expect(page.getByRole('button', { name: 'Model usage today' })).toBeVisible();
-  expect(await page.locator('.dock button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual(['Add person', 'Add doc', 'More cards', 'Messages', 'Decisions', 'Needs you: nothing waiting', 'Model usage today']);
+  expect(await page.locator('.dock button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual(['Add person', 'Add doc', 'More cards', 'Command bar', 'Messages', 'Decisions', 'Needs you: nothing waiting', 'Model usage today']);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(node(page, 'marketing')).toContainText('Maya');
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue(/# Brand/);
@@ -770,4 +770,66 @@ test('recall: a person finds by meaning only what their wires let them read; the
   // The founder's own search covers the whole workspace.
   const found = await (await page.request.get('/api/search?q=calm%20plain%20words%20hype')).json();
   expect(found.hits[0]).toMatchObject({ kind: 'doc', id: 'brand-doc' });
+});
+
+test('command bar: find anything, do anything, and never a guess', async ({ page }) => {
+  await tidy(page);
+  await ask(page, 'marketing', 'say hello from the bar, earlier');
+  await page.request.put('/api/docs/brand-doc', { data: { text: '# Brand\n\nVoice: calm, plain words, never any hype.' } });
+  const bar = page.getByRole('dialog', { name: 'Command bar' });
+  const box = bar.getByRole('combobox');
+  const options = bar.getByRole('option');
+
+  // Ctrl K opens it with the founder's views first; a few letters of a name find the card.
+  await page.keyboard.press('Control+k');
+  await expect(options.first()).toContainText('Needs you');
+  await box.fill('bra');
+  await expect(options.first()).toContainText('Brand doc');
+  await page.keyboard.press('Enter');
+  await expect(bar).toBeHidden();
+  await expect(page.locator('.react-flow__node[data-id="brand-doc"].selected')).toBeVisible();
+
+  // Words that were written somewhere find the place, by way of the workspace search.
+  await page.keyboard.press('Control+k');
+  await box.fill('plain words without hype');
+  const hit = options.filter({ hasText: 'Doc ·' });
+  await expect(hit).toContainText('Brand doc');
+
+  // Plain words that match nothing are offered to each person, never interpreted.
+  await box.fill('what should our refund policy be');
+  await expect(options.filter({ hasText: /^Ask / })).toHaveText([/Ask Maya/, /Ask Dev/]);
+
+  // "ask maya to …" puts the question in Maya's own ask box and brings her card forward. An earlier conversation that
+  // holds the same words must not get in front of it.
+  await box.fill('ask maya to say hello from the bar');
+  await expect(options.first()).toContainText('Ask Maya');
+  await page.keyboard.press('Enter');
+  const sheet = page.locator('.focus__sheet');
+  await expect(sheet.locator('.card__name')).toContainText('Maya');
+  await expect(sheet.locator('.chat')).toContainText('You said: "say hello from the bar"', { timeout: 15_000 });
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+
+  // A small question is answered in the bar itself; "/" opens it too.
+  await page.locator('.react-flow__pane').click({ position: { x: 12, y: 12 } });
+  await page.keyboard.press('/');
+  await box.fill('who is idle?');
+  await page.keyboard.press('Enter');
+  await expect(bar.getByRole('status')).toContainText('Idle: Maya, Dev.');
+  await page.keyboard.press('Escape');
+
+  // Hiring by role opens a new person with the role filled in; the founder names them.
+  await page.keyboard.press('Control+k');
+  await box.fill('hire a designer');
+  await page.keyboard.press('Enter');
+  const fresh = page.locator('.react-flow__node-room.selected');
+  await expect(fresh.getByLabel('Role')).toHaveValue('Designer');
+
+  // "?" shows the shortcuts, from the same table the keys run on.
+  await page.locator('.react-flow__pane').click({ position: { x: 12, y: 12 } });
+  await page.keyboard.press('?');
+  await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toContainText('Focus the selected card');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('n');
+  await expect(page.getByRole('dialog', { name: 'Needs you' })).toBeVisible();
 });

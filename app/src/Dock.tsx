@@ -1,16 +1,11 @@
-import { Panel, useReactFlow } from '@xyflow/react';
+import { Panel } from '@xyflow/react';
 import { useEffect, useState } from 'react';
 import type { ModelInfo } from '../shared/model';
 import { getModels } from './api';
 import { listen } from './bus';
 import { useAttention } from './overlay/attention';
 import { overlay } from './overlay/store';
-import { freeSpot } from './place';
-import type { StageNode } from './stage';
-import { CARD } from './stage';
-
-const PALETTE = ['#ee8a72', '#4e8cff', '#f0b35a', '#6fcf97', '#b58cff', '#5fc9d6'];
-const newId = (kind: string) => `${kind}-${Math.random().toString(36).slice(2, 8)}`;
+import { useAddCard, type CardKind } from './addCard';
 
 // One ring per model provider: how much of today's free quota is left. Amber under a fifth, red when gone.
 function Quota() {
@@ -48,18 +43,7 @@ function Quota() {
   );
 }
 
-// What a new card of each kind starts as.
-const NEW = {
-  room: { size: [380, 440], data: { name: '', role: '', brief: '' } },
-  doc: { size: [340, 300], data: { title: 'Untitled doc' } },
-  browser: { size: [560, 353], data: {} },
-  project: { size: [380, 300], data: { path: '' } },
-  board: { size: [980, 440], data: {} },
-  note: { size: [220, 180], data: { text: '' } },
-  image: { size: [300, 260], data: { path: '' } },
-  link: { size: [320, 150], data: { url: '' } },
-} as const;
-const MORE: [kind: keyof typeof NEW, label: string, hint: string][] = [
+const MORE: [kind: CardKind, label: string, hint: string][] = [
   ['note', 'Sticky note', 'Words a wired person keeps in mind'],
   ['link', 'Link', 'A web page a wired person reads'],
   ['image', 'Picture', 'An image a wired person can see'],
@@ -82,21 +66,9 @@ function Needs() {
 
 // The only chrome on the stage: add a person, add a doc, and today's model usage. New cards land at the centre of the view.
 export function Dock() {
-  const { getNodes, setNodes, screenToFlowPosition, setCenter, getZoom } = useReactFlow<StageNode>();
-
+  const addCard = useAddCard();
   const [more, setMore] = useState(false);
-
-  function add(kind: keyof typeof NEW) {
-    setMore(false);
-    const nodes = getNodes();
-    const { size: [width, height], data } = NEW[kind];
-    const centre = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
-    const position = freeSpot(nodes, { x: Math.round(centre.x - width / 2), y: Math.round(centre.y - height / 2) }, width, height);
-    const rooms = nodes.filter((node) => node.type === 'room').length;
-    const node = { id: newId(kind), type: kind, position, width, height, selected: true, data: kind === 'room' ? { ...data, accent: PALETTE[rooms % PALETTE.length] } : { ...data }, ...CARD } as StageNode;
-    setNodes((current) => [...current.map((other) => ({ ...other, selected: false })), node]);
-    void setCenter(position.x + width / 2, position.y + height / 2, { zoom: getZoom(), duration: 350 });
-  }
+  const add = (kind: CardKind) => { setMore(false); addCard(kind); };
 
   return (
     <Panel position="bottom-center" className="dock">
@@ -117,6 +89,9 @@ export function Dock() {
         )}
       </div>
       <span className="dock__gap" aria-hidden="true" />
+      <button type="button" aria-label="Command bar" title="Find or do anything (Ctrl K)" onClick={() => overlay.open({ kind: 'panel', name: 'command' })}>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.200" /><path d="M13 13l3.800 3.800" /></svg>
+      </button>
       <button type="button" aria-label="Messages" title="Messages" onClick={() => overlay.open({ kind: 'panel', name: 'messages' })}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.500 5.200c0-.9.700-1.700 1.700-1.700h9.600c1 0 1.700.8 1.700 1.700v6.600c0 .9-.7 1.700-1.700 1.700H9l-3.700 3v-3h-.1c-1 0-1.700-.8-1.700-1.700z" /></svg>
       </button>
