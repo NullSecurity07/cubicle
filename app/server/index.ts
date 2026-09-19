@@ -1,9 +1,11 @@
+import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { isHeaded, newMessageId, type Attachment, type ChatEvent, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
 import { createBoards } from './boards.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
+import { guard } from './guard.ts';
 import { createBrowser, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
@@ -31,6 +33,8 @@ try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: only the
 
 const port = Number(process.env.STAGE_API_PORT ?? 7421);
 const fake = process.env.STAGE_FAKE_MODEL === '1';
+// Who may use the api: the app's own page (here, or on Vite's port in development) and scripts that hold this launch's token.
+const own = { ports: [port, Number(process.env.STAGE_PORT ?? 7420)], token: process.env.STAGE_API_TOKEN || randomBytes(24).toString('base64url') };
 const clients = fake ? [fakeClient] : realClients();
 const busy = new Set<string>();
 const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
@@ -185,6 +189,8 @@ async function chat(roomId: string, text: string, res: ServerResponse, extra: { 
 createServer(async (req, res) => {
   try {
     const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+    const refused = guard({ path, method: req.method ?? 'GET', headers: req.headers }, own);
+    if (refused) return json(res, 403, { error: refused });
     const doc = /^\/api\/docs\/([^/]+)$/.exec(path)?.[1];
     const room = /^\/api\/rooms\/([^/]+)\/chat$/.exec(path)?.[1];
 

@@ -548,3 +548,29 @@ test('a sticky note and a link are context for the person they are wired to', as
   await expect(page.locator('.react-flow__node-note').getByLabel('Note')).toHaveValue('Never discount below 15 dollars');
   await expect(page.locator('.react-flow__node-link .card__name')).toHaveText('Example Domain');
 });
+
+test('the api answers the app\'s own page and refuses everyone else', async ({ browser }) => {
+  // No script token here: this is what the founder's window and any other web page really send.
+  const context = await browser.newContext({ baseURL: 'http://localhost:7430', extraHTTPHeaders: {} });
+  const page = await context.newPage();
+  await page.goto('/');
+  await expect(page.locator('.react-flow__node-room').first()).toBeVisible();
+  expect(await page.evaluate(async () => (await fetch('/api/stage')).status)).toBe(200);
+
+  // A page on another site, asking the founder's browser to carry its request to the local server.
+  const stranger = await context.newPage();
+  await stranger.route('https://stranger.example/', (route) => route.fulfill({ contentType: 'text/html', body: '<title>stranger</title>' }));
+  await stranger.goto('https://stranger.example/');
+  const outcome = await stranger.evaluate(async () => {
+    const tried = await fetch('http://localhost:7431/api/stage', { method: 'PUT', mode: 'no-cors', headers: { 'content-type': 'text/plain' }, body: '{"rooms":[],"docs":[],"wires":[]}' }).then(() => 'sent', () => 'blocked');
+    return tried;
+  });
+  expect(['sent', 'blocked']).toContain(outcome);
+  // Whatever the browser did with it, the stage is untouched, and a bare request gets nothing either.
+  expect(await page.evaluate(async () => (await (await fetch('/api/stage')).json()).rooms.length)).toBeGreaterThan(0);
+  const bare = await fetch('http://localhost:7431/api/stage');
+  expect(bare.status).toBe(403);
+  const rebound = await fetch('http://localhost:7431/api/stage', { headers: { host: 'stranger.example' } }).catch(() => null);
+  expect(rebound?.status ?? 403).toBe(403);
+  await context.close();
+});
