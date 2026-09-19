@@ -11,6 +11,29 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
   await page.mouse.up();
 }
 
+// Browser, project, board, note, picture and link cards sit behind the dock's plus button.
+async function addCard(page: Page, name: string) {
+  await page.getByRole('button', { name: 'More cards' }).click();
+  await page.getByRole('menuitem', { name }).click();
+}
+
+// Draws a wire between two cards. Journeys share one stage, so by the later ones a handle may sit under another card or
+// off screen: bring both ends into view, then try each side until a wire appears.
+async function wire(page: Page, from: string, to: string) {
+  const edges = page.locator('.react-flow__edge');
+  const before = await edges.count();
+  const shown = async (id: string, side: string) => { const box = await handle(page, id, side).boundingBox(); return !!box && box.x > 10 && box.y > 10 && box.x < 1580 && box.y < 980; };
+  for (const side of ['l', 'r', 't', 'b']) {
+    for (let tries = 0; tries < 8 && !((await shown(from, side)) && (await shown(to, side))); tries += 1) { await page.mouse.move(6, 6); await page.mouse.wheel(0, 400); await page.waitForTimeout(250); }
+    const [start, end] = [await handle(page, from, side).boundingBox(), await handle(page, to, side).boundingBox()];
+    if (!start || !end) continue;
+    await drag(page, centre(start), centre(end), 24);
+    await page.waitForTimeout(250);
+    if ((await edges.count()) > before) return;
+  }
+  throw new Error(`could not wire ${from} to ${to}`);
+}
+
 async function ask(page: Page, room: string, text: string) {
   await node(page, room).locator('.ask textarea').fill(text);
   await node(page, room).locator('.ask textarea').press('Enter');
@@ -27,7 +50,7 @@ test.beforeEach(async ({ page }) => {
 
 test('shows two rooms, a doc and the company brief, one wire, a dock with usage rings and nothing else', async ({ page }) => {
   await expect(page.locator('.react-flow__node')).toHaveCount(4);
-  await expect(page.locator('.dock button')).toHaveCount(6);
+  await expect(page.locator('.dock button')).toHaveCount(4);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(node(page, 'marketing')).toContainText('Maya');
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue(/# Brand/);
@@ -255,21 +278,12 @@ test('a browser card can be added; only a wired person can drive it, and never t
   await expect(node(page, 'build').locator('.chip--fail').last()).toBeVisible();
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('no browser card is connected');
 
-  await page.getByRole('button', { name: 'Add browser' }).click();
+  await addCard(page, 'Add browser');
   const card = page.locator('.react-flow__node-browser');
   await expect(card).toContainText('Wire a person to this browser');
   const id = (await card.getAttribute('data-id'))!;
-  const wires = await page.locator('.react-flow__edge').count();
   await page.waitForTimeout(600); // the view glides to the new card; handles sit still after that
-  // Earlier journeys leave cards around, so the two ends may not share the screen: zoom out from an empty corner until they do.
-  const inView = async (target: ReturnType<typeof handle>) => { const box = await target.boundingBox(); return !!box && box.x > 10 && box.y > 10 && box.x < 1580 && box.y < 980; };
-  for (let tries = 0; tries < 6 && !((await inView(handle(page, 'build', 'l'))) && (await inView(handle(page, id, 'l')))); tries += 1) {
-    await page.mouse.move(6, 6);
-    await page.mouse.wheel(0, 400);
-    await page.waitForTimeout(250);
-  }
-  await drag(page, centre((await handle(page, 'build', 'l').boundingBox())!), centre((await handle(page, id, 'l').boundingBox())!), 20);
-  await expect(page.locator('.react-flow__edge')).toHaveCount(wires + 1);
+  await wire(page, 'build', id);
   await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).cards?.length).toBe(1);
 
   await send(page, 'build', '/tool browse {"action":"open","url":"https://example.com"}');
@@ -318,20 +332,14 @@ test('code runs only after the founder reads it, in the sandbox', async ({ page 
 });
 
 test('a project card: a wired person hands coding work to an agent after the founder says start', async ({ page }) => {
-  await page.getByRole('button', { name: 'Add project' }).click();
+  await addCard(page, 'Add project folder');
   const card = page.locator('.react-flow__node-project');
   await expect(card).toContainText('Set the folder');
   const id = (await card.getAttribute('data-id'))!;
   await card.getByLabel('Project folder').fill('/usr/share');
   await expect(card.locator('.card__name')).toHaveText('share');
-  const wires = await page.locator('.react-flow__edge').count();
   await page.waitForTimeout(600);
-  const inView = async (target: ReturnType<typeof handle>) => { const box = await target.boundingBox(); return !!box && box.x > 10 && box.y > 10 && box.x < 1580 && box.y < 980; };
-  for (let tries = 0; tries < 6 && !((await inView(handle(page, 'build', 'l'))) && (await inView(handle(page, id, 'l')))); tries += 1) {
-    await page.mouse.move(6, 6); await page.mouse.wheel(0, 400); await page.waitForTimeout(250);
-  }
-  await drag(page, centre((await handle(page, 'build', 'l').boundingBox())!), centre((await handle(page, id, 'l').boundingBox())!), 20);
-  await expect(page.locator('.react-flow__edge')).toHaveCount(wires + 1);
+  await wire(page, 'build', id);
 
   await send(page, 'build', '/tool delegate_coding {"task":"Add a health check endpoint"}');
   const ask = node(page, 'build').getByRole('group', { name: 'Start this coding task?' });
@@ -360,13 +368,7 @@ test('a wire between two people lets one consult the other; the exchange shows i
   await send(page, 'marketing', '/tool ask_person {"name":"Dev","question":"How long for SSO?"}');
   await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('no colleague called "Dev"');
 
-  const wires = await page.locator('.react-flow__edge').count();
-  const inView = async (target: ReturnType<typeof handle>) => { const box = await target.boundingBox(); return !!box && box.x > 10 && box.y > 10 && box.x < 1580 && box.y < 980; };
-  for (let tries = 0; tries < 6 && !((await inView(handle(page, 'marketing', 'l'))) && (await inView(handle(page, 'build', 'l')))); tries += 1) {
-    await page.mouse.move(6, 6); await page.mouse.wheel(0, 400); await page.waitForTimeout(250);
-  }
-  await drag(page, centre((await handle(page, 'marketing', 'l').boundingBox())!), centre((await handle(page, 'build', 'l').boundingBox())!), 20);
-  await expect(page.locator('.react-flow__edge')).toHaveCount(wires + 1);
+  await wire(page, 'marketing', 'build');
 
   await send(page, 'marketing', '/tool ask_person {"name":"Dev","question":"How long for SSO?"}');
   await expect(node(page, 'marketing').locator('.chip--ok summary').last()).toHaveText('Asked Dev');
@@ -377,18 +379,12 @@ test('a wire between two people lets one consult the other; the exchange shows i
 });
 
 test('the board: a person proposes, the founder accepts, assigns and runs; an outward step waits on the task', async ({ page }) => {
-  await page.getByRole('button', { name: 'Add board' }).click();
+  await addCard(page, 'Add task board');
   const board = page.locator('.react-flow__node-board');
   await expect(board.getByRole('region', { name: 'To do' })).toBeVisible();
   const id = (await board.getAttribute('data-id'))!;
-  const wires = await page.locator('.react-flow__edge').count();
   await page.waitForTimeout(600);
-  const inView = async (target: ReturnType<typeof handle>) => { const box = await target.boundingBox(); return !!box && box.x > 10 && box.y > 10 && box.x < 1580 && box.y < 980; };
-  for (let tries = 0; tries < 8 && !((await inView(handle(page, 'marketing', 'l'))) && (await inView(handle(page, id, 'l')))); tries += 1) {
-    await page.mouse.move(6, 6); await page.mouse.wheel(0, 400); await page.waitForTimeout(250);
-  }
-  await drag(page, centre((await handle(page, 'marketing', 'l').boundingBox())!), centre((await handle(page, id, 'l').boundingBox())!), 20);
-  await expect(page.locator('.react-flow__edge')).toHaveCount(wires + 1);
+  await wire(page, 'marketing', id);
 
   // a person proposes; nothing runs until the founder takes it
   await send(page, 'marketing', '/tool propose_task {"title":"Write the launch FAQ","detail":"Ten questions."}');
@@ -492,4 +488,30 @@ test('replies render diagrams and a live, sandboxed page preview', async ({ page
   await expect(reply.frameLocator('.artifact iframe').locator('h1')).toHaveText('Landing page');
   await reply.getByRole('button', { name: 'Show code' }).click();
   await expect(reply.locator('.artifact pre')).toContainText('<!doctype html>');
+});
+
+test('a sticky note and a link are context for the person they are wired to', async ({ page }) => {
+  await addCard(page, 'Add sticky note');
+  const note = page.locator('.react-flow__node-note');
+  await note.getByLabel('Note').fill('Never discount below 15 dollars');
+  await addCard(page, 'Add link');
+  const link = page.locator('.react-flow__node-link');
+  await link.getByLabel('Web address').fill('https://example.com');
+  await link.getByLabel('Web address').press('Enter');
+  await expect(link.locator('.card__name')).toHaveText('Example Domain');
+  await expect(link.locator('p')).toContainText('This domain is for use in examples.');
+
+  await page.waitForTimeout(600);
+  for (const card of [note, link]) {
+    const id = (await card.getAttribute('data-id'))!;
+    await wire(page, 'build', id);
+  }
+  const reply = await ask(page, 'build', 'what do you know');
+  await expect(reply).toContainText('Notes: Never discount below 15 dollars.');
+  await expect(reply).toContainText('Pages: Example Domain.');
+  await expect(await ask(page, 'marketing', 'and you')).not.toContainText('Never discount');
+
+  await page.reload();
+  await expect(page.locator('.react-flow__node-note').getByLabel('Note')).toHaveValue('Never discount below 15 dollars');
+  await expect(page.locator('.react-flow__node-link .card__name')).toHaveText('Example Domain');
 });

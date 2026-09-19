@@ -46,22 +46,40 @@ function Quota() {
   );
 }
 
+// What a new card of each kind starts as.
+const NEW = {
+  room: { size: [380, 440], data: { name: '', role: '', brief: '' } },
+  doc: { size: [340, 300], data: { title: 'Untitled doc' } },
+  browser: { size: [560, 353], data: {} },
+  project: { size: [380, 300], data: { path: '' } },
+  board: { size: [980, 440], data: {} },
+  note: { size: [220, 180], data: { text: '' } },
+  image: { size: [300, 260], data: { path: '' } },
+  link: { size: [320, 150], data: { url: '' } },
+} as const;
+const MORE: [kind: keyof typeof NEW, label: string, hint: string][] = [
+  ['note', 'Sticky note', 'Words a wired person keeps in mind'],
+  ['link', 'Link', 'A web page a wired person reads'],
+  ['image', 'Picture', 'An image a wired person can see'],
+  ['browser', 'Browser', 'A live browser a wired person drives'],
+  ['project', 'Project folder', 'Code a wired person can have changed'],
+  ['board', 'Task board', 'People propose, you run'],
+];
+
 // The only chrome on the stage: add a person, add a doc, and today's model usage. New cards land at the centre of the view.
 export function Dock() {
   const { getNodes, setNodes, screenToFlowPosition, setCenter, getZoom } = useReactFlow<StageNode>();
 
-  function add(kind: 'room' | 'doc' | 'browser' | 'project' | 'board') {
+  const [more, setMore] = useState(false);
+
+  function add(kind: keyof typeof NEW) {
+    setMore(false);
     const nodes = getNodes();
-    const [width, height] = kind === 'room' ? [380, 440] : kind === 'browser' ? [560, 353] : kind === 'project' ? [380, 300] : kind === 'board' ? [980, 440] : [340, 300];
+    const { size: [width, height], data } = NEW[kind];
     const centre = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
     const position = freeSpot(nodes, { x: Math.round(centre.x - width / 2), y: Math.round(centre.y - height / 2) }, width, height);
     const rooms = nodes.filter((node) => node.type === 'room').length;
-    const node: StageNode = kind === 'room'
-      ? { id: newId('room'), type: 'room', position, width, height, selected: true, data: { name: '', role: '', brief: '', accent: PALETTE[rooms % PALETTE.length] }, ...CARD }
-      : kind === 'board' ? { id: newId('board'), type: 'board', position, width, height, selected: true, data: {}, ...CARD }
-      : kind === 'project' ? { id: newId('project'), type: 'project', position, width, height, selected: true, data: { path: '' }, ...CARD }
-      : kind === 'browser' ? { id: newId('browser'), type: 'browser', position, width, height, selected: true, data: {}, ...CARD }
-      : { id: newId('doc'), type: 'doc', position, width, height, selected: true, data: { title: 'Untitled doc' }, ...CARD };
+    const node = { id: newId(kind), type: kind, position, width, height, selected: true, data: kind === 'room' ? { ...data, accent: PALETTE[rooms % PALETTE.length] } : { ...data }, ...CARD } as StageNode;
     setNodes((current) => [...current.map((other) => ({ ...other, selected: false })), node]);
     void setCenter(position.x + width / 2, position.y + height / 2, { zoom: getZoom(), duration: 350 });
   }
@@ -74,15 +92,16 @@ export function Dock() {
       <button type="button" aria-label="Add doc" title="Add doc" onClick={() => add('doc')}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 2.5h6L15 6v11.5H5.5zM11.5 2.5V6H15M8 10h4.5M8 13h4.5" /></svg>
       </button>
-      <button type="button" aria-label="Add browser" title="Add browser" onClick={() => add('browser')}>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2" /><path d="M2.8 10h14.4M10 2.800c2.400 2.300 2.400 12.100 0 14.400M10 2.800c-2.400 2.300-2.400 12.100 0 14.400" /></svg>
-      </button>
-      <button type="button" aria-label="Add project" title="Add project folder" onClick={() => add('project')}>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.800 5.500h5l1.600 2h7.800v8.500H2.800z" /><path d="M7.500 11l-1.800 1.600 1.800 1.600M12.500 11l1.800 1.600-1.800 1.600" /></svg>
-      </button>
-      <button type="button" aria-label="Add board" title="Add task board" onClick={() => add('board')}>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3.500" width="14" height="13" rx="2" /><path d="M7.700 3.500v13M12.300 3.500v13M4.800 7h1.400M9.400 7h1.400M9.400 10h1.400M14 7h1.400" /></svg>
-      </button>
+      <div className="dock__more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMore(false); }} onKeyDown={(event) => { if (event.key === 'Escape') setMore(false); }}>
+        <button type="button" aria-label="More cards" aria-expanded={more} title="More cards" onClick={() => setMore(!more)}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.500v11M4.500 10h11" /></svg>
+        </button>
+        {more && (
+          <div className="dock__menu" role="menu" aria-label="More cards">
+            {MORE.map(([kind, label, hint]) => <button key={kind} type="button" role="menuitem" aria-label={`Add ${label.toLowerCase()}`} onClick={() => add(kind)}><b>{label}</b><small>{hint}</small></button>)}
+          </div>
+        )}
+      </div>
       <Quota />
     </Panel>
   );

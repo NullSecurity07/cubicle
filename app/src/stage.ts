@@ -8,7 +8,11 @@ export type DocNodeType = Node<DocData, 'doc'>;
 export type BrowserNodeType = Node<{ headed?: boolean }, 'browser'>;
 export type ProjectNodeType = Node<{ path: string }, 'project'>;
 export type BoardNodeType = Node<Record<string, never>, 'board'>;
-export type StageNode = RoomNodeType | DocNodeType | BrowserNodeType | ProjectNodeType | BoardNodeType;
+export type NoteNodeType = Node<{ text: string; color?: string }, 'note'>;
+export type ImageNodeType = Node<{ path: string }, 'image'>;
+export type LinkNodeType = Node<{ url: string; title?: string }, 'link'>;
+export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | NoteNodeType | ImageNodeType | LinkNodeType;
+export type StageNode = RoomNodeType | DocNodeType | CardNodeType;
 
 export const HANDLE_IDS = ['l', 'r', 't', 'b'] as const;
 export const ACCENT = '#4e8cff';
@@ -26,15 +30,15 @@ export function toFlow(stage: Stage): { nodes: StageNode[]; edges: Edge[] } {
   const nodes: StageNode[] = [
     ...stage.rooms.map(({ id, x, y, w, h, ...data }): RoomNodeType => ({ id, type: 'room', position: { x, y }, width: w, height: h, data, ...CARD })),
     ...stage.docs.map(({ id, x, y, w, h, ...data }): DocNodeType => ({ id, type: 'doc', position: { x, y }, width: w, height: h, data, ...CARD })),
-    ...(stage.cards ?? []).map((card): BrowserNodeType | ProjectNodeType | BoardNodeType => {
-      const place = { id: card.id, position: { x: card.x, y: card.y }, width: card.w, height: card.h, ...CARD };
-      if (card.kind === 'board') return { ...place, type: 'board', data: {} };
-      return card.kind === 'project' ? { ...place, type: 'project', data: { path: card.path } } : { ...place, type: 'browser', data: card.headed ? { headed: true } : {} };
-    }),
+    // Every other card: the node type is the card kind, the node data is whatever the card carries beyond its box.
+    ...(stage.cards ?? []).map(({ id, x, y, w, h, kind, ...data }) => ({ id, type: kind, position: { x, y }, width: w, height: h, data, ...CARD }) as CardNodeType),
   ];
   const edges = stage.wires.map((wire): Edge => ({ id: wire.id, source: wire.from, sourceHandle: wire.fromHandle, target: wire.to, targetHandle: wire.toHandle, ...WIRE }));
   return { nodes, edges };
 }
+
+// Unset and false fields stay out of the saved stage, so a card reads back exactly as it was written.
+const clean = (data: Record<string, unknown>) => Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined && value !== false && value !== ''));
 
 export function fromFlow(nodes: StageNode[], edges: Edge[]): Stage {
   const box = (node: StageNode): Box => ({
@@ -44,9 +48,7 @@ export function fromFlow(nodes: StageNode[], edges: Edge[]): Stage {
   return {
     rooms: nodes.filter((node): node is RoomNodeType => node.type === 'room').map((node) => ({ id: node.id, ...node.data, ...box(node) })),
     docs: nodes.filter((node): node is DocNodeType => node.type === 'doc').map(({ id, data: { pinned, ...data }, ...node }) => ({ id, ...data, ...(pinned ? { pinned: true } : {}), ...box({ ...node, id } as StageNode) })),
-    cards: nodes.flatMap((node): Card[] => (node.type === 'browser' ? [{ id: node.id, kind: 'browser', ...(node.data.headed ? { headed: true } : {}), ...box(node) }]
-      : node.type === 'project' ? [{ id: node.id, kind: 'project', path: node.data.path, ...box(node) }]
-      : node.type === 'board' ? [{ id: node.id, kind: 'board', ...box(node) }] : [])),
+    cards: nodes.filter((node): node is CardNodeType => node.type !== 'room' && node.type !== 'doc').map((node) => ({ id: node.id, kind: node.type, ...clean(node.data), ...box(node) }) as Card),
     wires: edges.map((edge) => ({ id: edge.id, from: edge.source, fromHandle: edge.sourceHandle ?? 'r', to: edge.target, toHandle: edge.targetHandle ?? 'l' })),
   };
 }

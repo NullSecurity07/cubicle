@@ -109,6 +109,8 @@ export function createStore(dir: string) {
       messages.push(message);
       await write(path, JSON.stringify(messages, null, 2));
     },
+    readPage: async (id: string): Promise<{ url: string; title: string; text: string } | null> => JSON.parse((await read(join(dir, 'links', `${safe(id)}.json`))) ?? 'null'),
+    writePage: (id: string, page: { url: string; title: string; text: string }) => write(join(dir, 'links', `${safe(id)}.json`), JSON.stringify(page, null, 2)),
     async readMemory(id: string): Promise<Memory> {
       const saved = JSON.parse((await read(memoryPath(id))) ?? '{}') as Partial<Memory>;
       return { notes: saved.notes ?? '', summary: saved.summary ?? '', upTo: saved.upTo };

@@ -183,6 +183,8 @@ export const fakeClient: ModelClient = {
     const system = messages[0]?.content ?? '';
     const name = /^You are ([^,]+),/.exec(system)?.[1] ?? 'Someone';
     const docs = [...system.matchAll(/^## Doc: (.+)$/gm)].map((match) => match[1]);
+    const notes = /Sticky notes the founder connected to your room:\n- ([^\n]+)/.exec(system)?.[1];
+    const pages = [...system.matchAll(/^## Page: (.+)$/gm)].map((match) => match[1]);
     const last = messages.at(-1);
     const wanted = last?.role === 'user' ? /^\/tool (\w+) (\{.*\})$/m.exec(last.content) : null;
     if (wanted && tools?.some((tool) => tool.name === wanted[1])) {
@@ -194,7 +196,7 @@ export const fakeClient: ModelClient = {
       : heard.startsWith('/markdown') ? '**Bold plan**\n\n- one\n- two'
       : heard.startsWith('/rich') ? 'A flow:\n\n```mermaid\ngraph TD; Idea-->Build; Build-->Launch;\n```\n\nA page:\n\n```html\n<!doctype html><html><body><h1 id="t">Landing</h1><script>document.getElementById("t").textContent += " page";</script></body></html>\n```'
       : last?.role === 'user' && last.images?.length ? `I can see ${last.images.length} picture: ${last.images[0].name.split('/').pop()}.`
-      : `${name} here. You said: "${heard}". Docs I can read: ${docs.join(', ') || 'none'}.`;
+      : `${name} here. You said: "${heard}". Docs I can read: ${docs.join(', ') || 'none'}.${notes ? ` Notes: ${notes}.` : ''}${pages.length ? ` Pages: ${pages.join(', ')}.` : ''}`;
     const delay = heard.startsWith('/slow') ? 150 : 15;
     for (const word of reply.split(/(?<= )/)) {
       await new Promise((resolve) => setTimeout(resolve, delay));

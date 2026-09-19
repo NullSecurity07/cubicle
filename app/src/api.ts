@@ -51,3 +51,4 @@ export function watchBoard(boardId: string, onEvent: (event: BoardEvent) => void
 export const deleteMessage = (roomId: string, messageId: string) => request<ChatMessage[]>(`/api/rooms/${roomId}/chat/${messageId}`, { method: 'DELETE' });
 export const uploadFile = (file: File) => request<Attachment>(`/api/files?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
 export const fileUrl = (path: string) => `/api/files/${path.split('/').map(encodeURIComponent).join('/')}`;
+export const refreshLink = (id: string) => request<{ title: string; preview: string }>(`/api/links/${id}`, { method: 'POST' });

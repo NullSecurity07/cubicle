@@ -9,7 +9,7 @@ import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
 import { createMemory } from './memory.ts';
 import { recent } from './memory.ts';
-import { buildMessages, colleagueIds, readableDocIds, type Attached } from './prompt.ts';
+import { buildMessages, colleagueIds, readableDocIds, wired, type Attached } from './prompt.ts';
 import { complete, fakeClient, promptSize, realClients } from './providers.ts';
 import { route } from './router.ts';
 import { createRuns, desktopNotify } from './runs.ts';
@@ -54,7 +54,26 @@ async function promptFor(stage: Stage, roomId: string, toolNames: string[], fres
   const colleagues: Record<string, Awaited<ReturnType<typeof store.readChat>>> = {};
   for (const id of colleagueIds(stage, roomId)) colleagues[id] = await store.readChat(id);
   // A board task starts from a clean slate: the person, their documents and colleagues, not their chat.
-  return buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(roomId));
+  // Link cards wired to this person: the page text, read once and kept until the address changes.
+  const pages: Record<string, { title: string; text: string }> = {};
+  const mine = new Set(wired(stage, roomId, (stage.cards ?? []).map((card) => card.id)));
+  for (const card of stage.cards ?? []) {
+    if (card.kind !== 'link' || !card.url || !mine.has(card.id)) continue;
+    let page = await store.readPage(card.id);
+    if (!page || page.url !== card.url) { page = { url: card.url, ...(await browser.page(card.url).catch((error: Error) => ({ title: card.url, text: `(could not be read: ${error.message})` }))) }; await store.writePage(card.id, page); }
+    pages[card.id] = page;
+  }
+  const messages = buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(roomId), pages);
+  // Image cards wired to this person ride along with the latest question, for a model that can see.
+  const pictures: { name: string; url: string }[] = [];
+  for (const card of stage.cards ?? []) {
+    if (card.kind !== 'image' || !card.path || !mine.has(card.id)) continue;
+    const bytes = await store.readFileBytes(card.path).catch(() => null);
+    if (bytes && bytes.length <= 4_000_000) pictures.push({ name: card.path, url: `data:${typeOf(card.path)};base64,${bytes.toString('base64')}` });
+  }
+  const last = messages.at(-1);
+  if (pictures.length && last?.role === 'user') last.images = [...(last.images ?? []), ...pictures.slice(0, 4)];
+  return messages;
 }
 
 // A consult: the question lands in the colleague's room under the asker's name, they answer once without tools, and both are kept there.
@@ -199,6 +218,14 @@ createServer(async (req, res) => {
       if (taskId && !action && req.method === 'DELETE') { runs.stop(taskId); await boards.remove(boardId, taskId); return json(res, 200, { ok: true }); }
       if (taskId && action === 'run' && req.method === 'POST') { await runs.start(boardId, taskId); return json(res, 200, { ok: true }); }
       if (taskId && action === 'stop' && req.method === 'POST') { runs.stop(taskId); return json(res, 200, { ok: true }); }
+    }
+    const linked = /^\/api\/links\/([^/]+)$/.exec(path)?.[1];
+    if (linked && req.method === 'POST') {
+      const card = (await store.loadStage()).cards?.find((one) => one.id === linked);
+      if (!card || card.kind !== 'link' || !card.url) return json(res, 404, { error: 'unknown link' });
+      const page = { url: card.url, ...(await browser.page(card.url)) };
+      await store.writePage(linked, page);
+      return json(res, 200, { title: page.title, preview: page.text.slice(0, 280) });
     }
     const watched = /^\/api\/browsers\/([^/]+)$/.exec(path)?.[1];
     if (watched && req.method === 'GET') {

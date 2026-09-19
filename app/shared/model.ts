@@ -6,7 +6,9 @@ export type Room = Box & { id: string; name: string; role: string; accent: strin
 export type Doc = Box & { id: string; title: string; pinned?: boolean };
 // Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is a code folder a wired person may hand to a coding agent; `board` holds tasks that wired people may propose and the founder runs.
 // `headed` shows the card's Chrome as a real window, for the founder to sign in or pass a human check by hand.
-export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean } | { kind: 'project'; path: string } | { kind: 'board' });
+export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean } | { kind: 'project'; path: string } | { kind: 'board' }
+  // Small things that are context when wired to a person: a note's words, a picture (for models that can see), a web page's text.
+  | { kind: 'note'; text: string; color?: string } | { kind: 'image'; path: string } | { kind: 'link'; url: string; title?: string });
 export const COLUMNS = ['proposed', 'todo', 'doing', 'review', 'done'] as const;
 export type Column = (typeof COLUMNS)[number];
 // When a task repeats, in the founder's local time. `weekday` (0 = Sunday) is used by 'week' only.

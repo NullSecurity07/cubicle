@@ -140,6 +140,12 @@ export function createBrowser(run: Runner, reader: Reader | null = null) {
       })), (index) => queries[index]);
       return blocks.join('\n\n');
     },
+    // One page as title and text, for a link card. Same path as `read`: local browser, then the reader service; a wall is said plainly.
+    async page(raw: string): Promise<{ title: string; text: string }> {
+      const block = await this.read([raw]);
+      const [head, , ...rest] = block.split('\n');
+      return { title: head.replace(/^## /, '').slice(0, 160), text: rest.join('\n').trim().slice(0, 5000) || block.slice(0, 600) };
+    },
     // All pages at once: the readable text of each, cut to a size a model can afford.
     async read(urls: string[]): Promise<string> {
       const blocks = await settled(urls.map((raw) => scratch(async (session) => {
