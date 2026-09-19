@@ -5,6 +5,7 @@ import { createApprovals } from './approvals.ts';
 import { createBoards } from './boards.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
 import { createBrowser, fakeRunner, jinaReader, realRunner } from './browser.ts';
+import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
 import { createMemory } from './memory.ts';
@@ -36,7 +37,7 @@ const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
 const store = createStore(workspace);
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
-const browser = fake ? createBrowser(fakeRunner) : createBrowser(realRunner(), process.env.STAGE_NO_READER === '1' ? null : jinaReader);
+const browser = fake ? createBrowser(fakeRunner) : createBrowser(realRunner(), { direct: [redditFeed(), stackExchange()], fallback: process.env.STAGE_NO_READER === '1' ? [] : [jinaReader, archiveCopy()] });
 const approvals = createApprovals();
 // Summaries go to a model with room to spare: the last configured providers are the large free ones.
 const memory = createMemory(store, async (messages) => {

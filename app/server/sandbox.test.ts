@@ -21,10 +21,10 @@ describe('sandbox', () => {
     expect(await runCode({ language: 'javascript', code: 'nope()' }, dir)).toMatchObject({ ok: false, output: expect.stringContaining('nope is not defined') });
   }, 60_000);
 
-  it('says plainly that only the standard library exists, instead of advising an install that cannot work', async () => {
-    const result = await runCode({ language: 'python', code: 'import pandas' }, await folder());
+  it('says plainly what the sandbox has when code wants a package it cannot have', async () => {
+    const result = await runCode({ language: 'python', code: 'import tensorflow' }, await folder());
     expect(result.ok).toBe(false);
-    expect(result.output).toMatch(/pandas is not available.*standard library only/);
+    expect(result.output).toMatch(/tensorflow is not available in this sandbox.*Pyodide packages/);
     expect(result.output).not.toMatch(/micropip/);
   }, 60_000);
 

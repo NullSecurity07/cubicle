@@ -69,11 +69,19 @@ describe('browser', () => {
   it('asks the reader service when the local browser is refused, and still admits a wall nobody got past', async () => {
     const wall: Runner = async (session, args) => (args[0] === 'eval' ? JSON.stringify(JSON.stringify({ title: 'Just a moment...', url: 'https://techcrunch.com/', text: '' })) : fakeRunner(session, args));
     const asked: string[] = [];
-    const helped = await createBrowser(wall, async (url) => { asked.push(url); return { title: 'TechCrunch', text: 'Startup news. '.repeat(60) }; }).read(['https://techcrunch.com/']);
+    const helped = await createBrowser(wall, { direct: [], fallback: [async () => null, async (url) => { asked.push(url); return { title: 'TechCrunch', text: 'Startup news. '.repeat(60) }; }] }).read(['https://techcrunch.com/']);
     expect(asked).toEqual(['https://techcrunch.com/']);
     expect(helped).toContain('## TechCrunch');
-    const stuck = await createBrowser(wall, async () => ({ title: 'Just a moment...', text: 'Verify you are human' })).read(['https://www.crunchbase.com/']);
+    const stuck = await createBrowser(wall, { direct: [], fallback: [async () => ({ title: 'Just a moment...', text: 'Verify you are human' })] }).read(['https://www.crunchbase.com/']);
     expect(stuck).toContain(WALL_NOTE);
+  });
+
+  it('reads a site through its own feed or API first, without opening the browser at all', async () => {
+    const opened: string[] = [];
+    const run: Runner = async (session, args) => { if (args[0] === 'open') opened.push(args[1]); return fakeRunner(session, args); };
+    const text = await createBrowser(run, { direct: [async (url) => (url.includes('reddit.com') ? { title: 'r/startups', text: 'Thread one. '.repeat(50) } : null)], fallback: [] }).read(['https://www.reddit.com/r/startups/', 'https://example.com']);
+    expect(text).toContain('## r/startups');
+    expect(opened).toEqual(['https://example.com/']);
   });
 
   it('gives a page built in the browser one more moment before reading it', async () => {

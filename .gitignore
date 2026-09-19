@@ -13,3 +13,6 @@ app/assets/raw/
 workspace/
 app/shell/target/
 app/shell/gen/
+
+# Pyodide wheels fetched on first use
+app/.cache/

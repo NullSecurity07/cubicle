@@ -17,21 +17,49 @@ async function addCard(page: Page, name: string) {
   await page.getByRole('menuitem', { name }).click();
 }
 
+// Journeys share one workspace, so the stage fills up. A journey that draws wires starts from the four seed cards again
+// (conversations and docs stay; removed cards go to the workspace trash, as they would for the founder).
+async function tidy(page: Page) {
+  const stage = await (await page.request.get('/api/stage')).json();
+  const keep = new Set(['marketing', 'build', 'brand-doc', 'company-brief']);
+  await page.request.put('/api/stage', { data: {
+    rooms: stage.rooms.filter((room: { id: string }) => keep.has(room.id)).map((room: object) => ({ ...room, model: undefined })),
+    docs: stage.docs.filter((doc: { id: string }) => keep.has(doc.id)), cards: [],
+    wires: stage.wires.filter((wire: { id: string }) => wire.id === 'marketing-brand-doc'),
+  } });
+  await page.reload();
+  await expect(node(page, 'marketing')).toBeVisible();
+}
+
 // Draws a wire between two cards. Journeys share one stage, so by the later ones a handle may sit under another card or
 // off screen: bring both ends into view, then try each side until a wire appears.
 async function wire(page: Page, from: string, to: string) {
   const edges = page.locator('.react-flow__edge');
   const before = await edges.count();
-  const shown = async (id: string, side: string) => { const box = await handle(page, id, side).boundingBox(); return !!box && box.x > 10 && box.y > 10 && box.x < 1580 && box.y < 980; };
+  const inside = (box: { x: number; y: number } | null) => !!box && box.x > 30 && box.y > 30 && box.x < 1570 && box.y < 900;
+  // Drag an empty piece of the canvas so that the point (x, y) moves toward the middle of the screen.
+  const pan = async (x: number, y: number) => {
+    const [dx, dy] = [Math.max(-700, Math.min(700, 800 - x)), Math.max(-400, Math.min(400, 450 - y))];
+    const spots = [[dx > 0 ? 12 : 1588, dy > 0 ? 12 : 880], [dx > 0 ? 12 : 1588, 450], [800, dy > 0 ? 12 : 880]];
+    const spot = await page.evaluate((list) => list.find(([px, py]) => document.elementFromPoint(px, py)?.classList.contains('react-flow__pane')) ?? null, spots);
+    if (spot) await drag(page, { x: spot[0], y: spot[1] }, { x: spot[0] + dx, y: spot[1] + dy }, 8);
+  };
   for (const side of ['l', 'r', 't', 'b']) {
-    for (let tries = 0; tries < 8 && !((await shown(from, side)) && (await shown(to, side))); tries += 1) { await page.mouse.move(6, 6); await page.mouse.wheel(0, 400); await page.waitForTimeout(250); }
+    for (let tries = 0; tries < 10; tries += 1) {
+      const [a, b] = [await handle(page, from, side).boundingBox(), await handle(page, to, side).boundingBox()];
+      if (inside(a) && inside(b)) break;
+      // Too far apart for the screen: zoom out. Otherwise slide the pair toward the middle.
+      if (a && b && (Math.abs(a.x - b.x) > 1400 || Math.abs(a.y - b.y) > 800)) { await page.mouse.move(12, 12); await page.mouse.wheel(0, 400); } else if (a && b) await pan((a.x + b.x) / 2, (a.y + b.y) / 2);
+      await page.waitForTimeout(250);
+    }
     const [start, end] = [await handle(page, from, side).boundingBox(), await handle(page, to, side).boundingBox()];
-    if (!start || !end) continue;
-    await drag(page, centre(start), centre(end), 24);
+    if (!inside(start) || !inside(end)) continue;
+    await drag(page, centre(start!), centre(end!), 24);
     await page.waitForTimeout(250);
     if ((await edges.count()) > before) return;
   }
-  throw new Error(`could not wire ${from} to ${to}`);
+  await page.screenshot({ path: `test-results/wire-fail-${to}.png` });
+  throw new Error(`could not wire ${from} to ${to}: ${JSON.stringify({ from: await handle(page, from, 'l').boundingBox(), to: await handle(page, to, 'l').boundingBox(), view: await page.locator('.react-flow__viewport').getAttribute('style') })}`);
 }
 
 async function ask(page: Page, room: string, text: string) {
@@ -274,6 +302,7 @@ test('a person searches and reads the web, several at once', async ({ page }) =>
 });
 
 test('a browser card can be added; only a wired person can drive it, and never to this machine', async ({ page }) => {
+  await tidy(page);
   await send(page, 'build', '/tool browse {"action":"open","url":"https://example.com"}');
   await expect(node(page, 'build').locator('.chip--fail').last()).toBeVisible();
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('no browser card is connected');
@@ -332,6 +361,7 @@ test('code runs only after the founder reads it, in the sandbox', async ({ page 
 });
 
 test('a project card: a wired person hands coding work to an agent after the founder says start', async ({ page }) => {
+  await tidy(page);
   await addCard(page, 'Add project folder');
   const card = page.locator('.react-flow__node-project');
   await expect(card).toContainText('Set the folder');
@@ -365,6 +395,7 @@ test('a pinned doc is read by everyone; unpinning takes it away again', async ({
 });
 
 test('a wire between two people lets one consult the other; the exchange shows in both rooms', async ({ page }) => {
+  await tidy(page);
   await send(page, 'marketing', '/tool ask_person {"name":"Dev","question":"How long for SSO?"}');
   await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('no colleague called "Dev"');
 
@@ -379,6 +410,7 @@ test('a wire between two people lets one consult the other; the exchange shows i
 });
 
 test('the board: a person proposes, the founder accepts, assigns and runs; an outward step waits on the task', async ({ page }) => {
+  await tidy(page);
   await addCard(page, 'Add task board');
   const board = page.locator('.react-flow__node-board');
   await expect(board.getByRole('region', { name: 'To do' })).toBeVisible();
@@ -491,6 +523,7 @@ test('replies render diagrams and a live, sandboxed page preview', async ({ page
 });
 
 test('a sticky note and a link are context for the person they are wired to', async ({ page }) => {
+  await tidy(page);
   await addCard(page, 'Add sticky note');
   const note = page.locator('.react-flow__node-note');
   await note.getByLabel('Note').fill('Never discount below 15 dollars');

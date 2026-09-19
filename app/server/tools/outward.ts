@@ -48,9 +48,11 @@ export function outwardTools(mail: Mail, filesDir: string): Tool[] {
       name: 'run_code',
       approval: true,
       perTurn: 3,
-      description: 'Run Python or JavaScript in a sealed sandbox. STANDARD LIBRARY ONLY: never import pandas, numpy or any other package, and nothing can be installed; use csv, json, statistics, math, datetime. '
-        + 'No network, 30 seconds. It sees only the shared files folder, as the working directory (JavaScript gets files.list(), files.read(path), files.write(path, text)). '
+      description: 'Run Python or JavaScript in a sealed sandbox: no network, nothing can be installed, 30 seconds (90 with packages). '
+        + 'Python has the standard library plus the Pyodide packages, loaded when imported: pandas, numpy, matplotlib, scipy, scikit-learn, openpyxl, beautifulsoup4 and similar. '
+        + 'It sees only the shared files folder, as the working directory (JavaScript gets files.list(), files.read(path), files.write(path, text)). '
         + 'Look at a data file with read_file before you write code for it, so the columns are right the first time. Print what you want to see. '
+        + 'For a chart, save a PNG into the folder (plt.savefig("chart.png")) and show it in your reply as ![chart](/api/files/chart.png). '
         + 'The founder must read and approve every run, so do the whole job in one run.',
       parameters: { type: 'object', properties: { language: { type: 'string', enum: ['python', 'javascript'] }, code: { type: 'string' } }, required: ['language', 'code'] },
       async run(args) {

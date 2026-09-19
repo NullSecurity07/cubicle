@@ -4,7 +4,7 @@ import { constants, mkdirSync, readFileSync, readdirSync, writeFileSync } from '
 import { dirname, resolve, sep } from 'node:path';
 import vm from 'node:vm';
 
-const [filesDir, pyodideDir] = process.argv.slice(2);
+const [filesDir, pyodideDir, packageDir] = process.argv.slice(2);
 const job = JSON.parse(readFileSync(0, 'utf8'));
 const lines = [];
 const say = (...parts) => lines.push(parts.map((part) => (typeof part === 'string' ? part : JSON.stringify(part))).join(' '));
@@ -16,7 +16,10 @@ try {
     // Emscripten's file layer asks for this one internal table, which the permission model hides. Give it the public one.
     process.binding = (name) => { if (name === 'constants') return { fs: constants }; throw new Error('not available'); };
     const { loadPyodide } = await import(`${pyodideDir}/pyodide.mjs`);
-    const python = await loadPyodide({ stdout: say, stderr: say });
+    const python = await loadPyodide({ stdout: say, stderr: (line) => { if (!/Warning/.test(line)) say(line); }, ...(packageDir ? { packageCacheDir: packageDir } : {}) });
+    // Wheels come from the folder the server filled; there is no network here to fetch anything else.
+    if (job.packages?.length) await python.loadPackage(job.packages, { messageCallback: () => {}, errorCallback: (message) => say(`package problem: ${message}`) });
+    python.runPython("import os; os.environ['MPLBACKEND'] = 'Agg'");
     python.FS.mkdirTree('/files');
     python.FS.mount(python.FS.filesystems.NODEFS, { root: filesDir }, '/files');
     python.FS.chdir('/files');

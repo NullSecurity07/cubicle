@@ -1,6 +1,7 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { Reader } from './readers.ts';
 
 // How a browser card's Chrome starts: `profile` is a folder that keeps its logins between runs, `headed` opens a real
 // window on the founder's desktop. Both take effect when the session starts, so changing them means closing it first.
@@ -89,9 +90,7 @@ export const fakeRunner: Runner = async (_session, args) => {
   return '✓ done\n';
 };
 
-// Second opinion for a page the local browser could not read: Jina's public reader fetches it from their side and returns
-// markdown. Only the address leaves the machine. No key; about 20 requests a minute.
-export type Reader = (url: string) => Promise<{ title: string; text: string } | null>;
+// Jina's public reader fetches a page from their side and returns markdown. Only the address leaves the machine. No key.
 export const jinaReader: Reader = async (url) => {
   const response = await fetch(`https://r.jina.ai/${url}`, { headers: { 'x-return-format': 'markdown' }, signal: AbortSignal.timeout(30_000) }).catch(() => null);
   if (!response?.ok) return null;
@@ -107,7 +106,10 @@ const MAIL_HOSTS = /(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\
 // The accessible name of a ref in a snapshot line such as `- button "Send" [ref=e44]`: '' for an element without one, null for a ref that is not on the page.
 export const nameOfRef = (tree: string, ref: string) => { const found = new RegExp(`^\\s*- \\w+(?: "((?:[^"\\\\]|\\\\.)*)")?[^\\n]*\\[ref=${ref.replace(/^@/, '')}\\]`, 'm').exec(tree); return found ? found[1] ?? '' : null; };
 
-export function createBrowser(run: Runner, reader: Reader | null = null) {
+// `direct` readers know a site's feed or API and go first; `fallback` readers are asked, in order, when the local browser got nothing.
+export type Readers = { direct: Reader[]; fallback: Reader[] };
+
+export function createBrowser(run: Runner, readers: Readers = { direct: [], fallback: [] }) {
   const outer = run;
   const seen = new Map<string, { tree: string; address: string }>();
   // Each session is a Chrome tab set with its own memory; only a few run at once, the rest wait their turn.
@@ -150,6 +152,11 @@ export function createBrowser(run: Runner, reader: Reader | null = null) {
     async read(urls: string[]): Promise<string> {
       const blocks = await settled(urls.map((raw) => scratch(async (session) => {
         const address = webUrl(raw);
+        // A site with a feed or an official API is read through it: faster, and it works where the site walls browsers.
+        for (const reader of readers.direct) {
+          const known = await reader(address).catch(() => null);
+          if (known && known.text.length >= THIN) return `## ${known.title || address}\n${address}\n\n${known.text.length > PAGE_CHARS ? `${known.text.slice(0, PAGE_CHARS)}\n… (cut at ${PAGE_CHARS} of ${known.text.length} characters)` : known.text}`;
+        }
         let page = await run(session, ['open', address]).then(() => run(session, ['eval', READ_PAGE])).then((printed) => unwrap<{ title: string; url: string; text: string }>(printed), () => null);
         // Pages built in the browser are still empty at first load: give those a moment to finish, once.
         if (page && page.text.length < THIN && !walled(page.title, page.text)) {
@@ -157,8 +164,9 @@ export function createBrowser(run: Runner, reader: Reader | null = null) {
           page = unwrap<NonNullable<typeof page>>(await run(session, ['eval', READ_PAGE]));
         }
         // Refused, empty or timed out here: ask the reader service once before giving up.
-        if (!page || page.text.length < THIN || walled(page.title, page.text)) {
-          const second = await reader?.(address).catch(() => null);
+        for (const reader of readers.fallback) {
+          if (page && page.text.length >= THIN && !walled(page.title, page.text)) break;
+          const second = await reader(address).catch(() => null);
           if (second && second.text.length >= THIN && !walled(second.title, second.text)) page = { ...second, url: address };
         }
         if (!page) throw new Error('the page did not load');
