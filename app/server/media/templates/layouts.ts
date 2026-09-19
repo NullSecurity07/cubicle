@@ -9,6 +9,9 @@ import { FORMATS, PACE, PACK, type Pace, type Pack } from './looks.ts';
 // captions are timed from.
 export type Shot = {
   scene: Scene; seconds: number; image?: string; video?: string; bg?: string;
+  // Whether `bg` is a picture this scene shares with others. A shared one is shown at its own crop and its own
+  // tint, so the film hangs together without three scenes looking like the same frame held too long.
+  bgShared?: boolean;
   voice?: { file: string; seconds: number; parts?: Part[] };
 };
 
@@ -98,20 +101,53 @@ function device(shot: Shot, shape: Shape): string {
 // any more.
 export function meshHtml(index: number, pack: Pack): string {
   const paint = PACK[pack].paint;
-  const colours = [paint.signal, paint.mark, paint.quiet, paint.signal];
+  // Three to five lamps, a different number and a different order of the film's colours each scene, with a band of
+  // light lying across them. Four of the same lamps in the same four colours made every scene of a film with no
+  // pictures the same green cloud, which is what a founder saw when the day's free pictures ran out.
   const seed = (step: number) => ((index * 37 + step * 61) % 100) / 100;
+  const wheel = [paint.signal, paint.mark, paint.quiet, paint.mark, paint.signal, paint.quiet];
+  const many = 3 + (index % 3);
+  const colours = Array.from({ length: many }, (_one, step) => wheel[(index * 2 + step) % wheel.length]);
   const blobs = colours.map((colour, step) => {
-    const x = Math.round(8 + seed(step) * 74);
-    const y = Math.round(6 + seed(step + 4) * 70);
-    const size = Math.round(46 + seed(step + 8) * 40);
-    return `<div class="blob" id="b${index}-${step}" data-layout-allow-overflow style="left:${x}%; top:${y}%; width:${size}%; height:${size}%; background:${colour}; opacity:${(0.22 + seed(step + 12) * 0.3).toFixed(2)}"></div>`;
+    const x = Math.round(-8 + seed(step) * 96);
+    const y = Math.round(-6 + seed(step + 4) * 92);
+    const wide = Math.round(38 + seed(step + 8) * 62);
+    const tall = Math.round(34 + seed(step + 16) * 66);
+    const round = Math.round(34 + seed(step + 20) * 32);
+    return `<div class="blob" id="b${index}-${step}" data-layout-allow-overflow style="left:${x}%; top:${y}%; width:${wide}%; height:${tall}%;`
+      + ` border-radius:${round}% ${100 - round}% ${round + 12}% ${88 - round}%; background:${colour};`
+      + ` opacity:${(0.16 + seed(step + 12) * 0.38).toFixed(2)}"></div>`;
   }).join('');
-  return `<div class="mesh" id="mesh${index}">${blobs}</div>`;
+  // One sweep of light across the frame, at its own angle, so the eye has somewhere to go.
+  const angle = Math.round(seed(29) * 180);
+  const sweep = `<div class="sweep" id="w${index}" data-layout-allow-overflow style="background:linear-gradient(${angle}deg,`
+    + ` rgba(255,255,255,0) 28%, rgba(255,255,255,${(0.05 + seed(31) * 0.09).toFixed(3)}) 50%, rgba(255,255,255,0) 72%)"></div>`;
+  return `<div class="mesh" id="mesh${index}">${blobs}${sweep}</div>`;
 }
 
 // The picture behind a scene, or the lamps when there is no picture. Either way the scene has somewhere to be.
+// One picture behind several scenes, each seeing a different part of it in a slightly different light. The numbers
+// come from the scene's own place in the film, so two renders of the same storyboard look the same.
+function share(index: number): string {
+  const turn = (step: number) => ((index * 41 + step * 67) % 100) / 100;
+  // The crop, which is what makes two scenes of one picture two pictures. The transform is not touched: the slow
+  // push across every background belongs to the timeline, and a transform set here is the first thing it overwrites.
+  const x = Math.round(8 + turn(1) * 84);
+  const y = Math.round(20 + turn(2) * 60);
+  const hue = Math.round(-16 + turn(4) * 32);
+  const warm = (0.88 + turn(5) * 0.34).toFixed(2);
+  const soft = (turn(6) * 4).toFixed(1);
+  const light = (0.86 + turn(3) * 0.3).toFixed(2);
+  return `object-position:${x}% ${y}%; filter:hue-rotate(${hue}deg) saturate(${warm}) brightness(${light}) blur(${soft}px);`;
+}
+
 export const groundHtml = (shot: Shot, index: number, pack: Pack): string =>
-  (shot.bg ? `<div class="bg" id="bg${index}"><img src="assets/${shot.bg}" alt="" data-layout-allow-overflow></div>` : meshHtml(index, pack));
+  // A scene playing a moving shot has its ground already: the shot. Lamps drawn over it are a green wash across
+  // somebody's face, which is what the founder was shown when a clip finally arrived.
+  (shot.video ? ''
+    : shot.bg
+      ? `<div class="bg" id="bg${index}"><img src="assets/${shot.bg}" alt="" data-layout-allow-overflow${shot.bgShared ? ` style="${share(index)}"` : ''}></div>`
+      : meshHtml(index, pack));
 
 // --- the seventeen shapes ---------------------------------------------------------------------------------------------
 

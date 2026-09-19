@@ -162,7 +162,21 @@ export async function screensOf(found: Found[], readme: string, skip: Set<string
 }
 
 // What one wired project card is worth to a film: the product's real words, its palette, its typeface and its mark.
-export type Product = { name?: string; about?: string; words: string; brand: Brand; logo?: { name: string; bytes: Buffer }; font?: { name: string; bytes: Buffer }; screens: Screens };
+export type Product = { name?: string; about?: string; pitch: string; words: string; brand: Brand; logo?: { name: string; bytes: Buffer }; font?: { name: string; bytes: Buffer }; screens: Screens };
+
+// What the product says it is, before it says how it is built: the line in its package and the first sentences a
+// README opens with, which is where anybody writing about it would look first. A film argues this; the rest of the
+// material is only there to check the film against. Without it a launch film reads down a feature list, which is
+// how one came to open on "Read-only project card".
+export function pitchOf(about: string | undefined, readme: string): string {
+  const said = readme.split(/\n+/).map((one) => one.replace(/\s+/g, ' ').trim())
+    .filter((one) => countWordsIn(one) >= 6 && /[a-z]{3}/.test(one) && !/^[-*+>|#]/.test(one))
+    .flatMap((one) => one.split(/(?<=[.!?])\s+/))
+    .filter((one) => countWordsIn(one) >= 6)
+    .slice(0, 3);
+  return [about, ...said].filter(Boolean).join(' ').slice(0, 480);
+}
+const countWordsIn = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
 
 export async function readProject(dir: string): Promise<Product> {
   const found = await walk(resolve(dir));
@@ -223,9 +237,10 @@ export async function readProject(dir: string): Promise<Product> {
   // The product's own screens, out of the project itself. The mark is not one of them: a logo on a slide is a title
   // card, and a film that cuts to one thinking it is showing the product is showing nothing.
   const screens = await screensOf(found, readmeBody, new Set([logo?.name ?? ''].filter(Boolean)));
+  const pitch = pitchOf(about, readme ? copyOf(readmeBody, readme.path) : '');
 
   return {
-    name, about, logo, font, screens,
+    name, about, pitch, logo, font, screens,
     words: words.join('\n\n').slice(0, CAPS.words),
     brand: { colours, name, font: face.name, fontFile: font?.name },
   };

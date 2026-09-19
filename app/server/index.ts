@@ -109,6 +109,7 @@ const media = createMedia({
     voicegen: voices,
     videogen: fake ? [fakeVideos] : [hyperframesVideos({
       dir: workspace, images: pictures[0], voices: voices[0], think: storyboard, clips, local, music,
+      cacheDir: resolve(root, 'app/.cache'),
       forbidden: [workspace, root],
       stage: () => store.loadStage(),
       // `media` is read inside these, never at the moment they are made, so the studio can ask the card that asked it.

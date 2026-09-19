@@ -116,25 +116,48 @@ export function shorten(said: string, most: number): string {
 // saved and the grammar gone. So the cut is made in whole words, on a clause where there is one, and only the
 // throat-clearing at the front is dropped.
 const LEAD_IN = new Set(['so', 'and', 'but', 'well', 'now', 'then', 'basically', 'actually', 'look', 'okay', 'right']);
+// Where one thought ends and the next begins, for the purpose of cutting between them.
+const CLAUSE = /(?<=[,;:])\s+|\s+[—–]\s+|\s+(?:and|but|so|because|which|that|while|when)\s+/i;
 export function headlineOf(said: string, most: number): string {
   const words = (said ?? '').trim().replace(/^[^\p{L}\p{N}]+/u, '').split(/\s+/).filter(Boolean);
   while (words.length > 3 && LEAD_IN.has(words[0].toLowerCase().replace(/[^\p{L}]+/gu, ''))) words.shift();
   // A full stop belongs to a sentence, not to a headline; a question mark and an exclamation are the headline.
   const whole = words.join(' ').replace(/[,;:.]+$/, '');
+  if (!whole) return '';
   // A line a word or two over the cap is set whole rather than broken in half: "I solve a single, painful problem"
   // is a headline, and "I solve a single" is the first half of one.
-  if (countWords(whole) <= most + 2) return whole;
+  const room = most + 2;
+  if (countWords(whole) <= room) return whole;
+  // A whole clause is a whole thought, and the one a line opens on is the one with the subject in it: "The founder
+  // stays the operator" is the headline of that sentence, and "people speed the founder up" is the middle of it.
+  // Nothing dangles at a clause boundary: that is the writer's own stopping place, so "the operator" ends the
+  // thought it belongs to. Only a cut made in the middle of a line has to be checked for what it left behind.
+  const first = whole.split(CLAUSE)[0]?.replace(/[\s,;:]+$/, '').trim() ?? '';
+  if (first && countWords(first) <= room && countWords(first) >= 3 && content(first).length >= 2) return first;
+  // No clause fits, so the words themselves — stopping on one that carries something, and never between "a" and
+  // the thing it was about to name.
   let line = trimTo(whole, most);
   for (let cap = countWords(line); cap > 2 && !endsClean(line); cap = countWords(line)) {
     const shorter = trimTo(whole, cap - 1);
     if (countWords(shorter) >= cap) break;
     line = shorter;
   }
-  // A cut that has left one word standing, or a clause that turns out to be more throat-clearing — "the thing is"
-  // — is not a headline. The words the line turns on are the better answer then, even set as a telegram.
-  const enough = content(line).length >= Math.min(2, content(said ?? '').length);
-  return countWords(line) >= 2 && enough && endsClean(line) ? line : kickerOf(said ?? '', most);
+  // "The founder stays" is a subject and its verb and nothing they did: the beginning of a headline rather than
+  // one. Three things said is the least that stands on its own, and below it the scene is better off with nothing
+  // written on it at all, letting the captions carry the line.
+  return content(line).length >= 3 && endsClean(line) ? line : '';
 }
+
+// A figure worth a scene of its own. A number belongs in a film because it changes something for the person
+// watching: money, time, how many people, how much better. "17 — scene shapes" is an inventory of the product's own
+// parts set forty points high, which tells a stranger how somebody's code is organised and nothing else.
+const VIEWER_FIGURE = /(%|[$£€]|\b\d+(?:\.\d+)?\s*x\b)/i;
+const VIEWER_WORDS = /\b(per ?cents?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|people|persons?|founders?|customers?|users?|clients?|teams?|companies|company|dollars?|pounds?|euros?|revenue|sales|cost|costs|price|prices|faster|quicker|slower|cheaper|longer|shorter|more|less|fewer|times|a ?week|a ?day|a ?month)\b/i;
+export const worthAStat = (figure: string, beside = ''): boolean =>
+  VIEWER_FIGURE.test(figure) || VIEWER_WORDS.test(`${figure} ${beside}`);
+
+// A path, a flag or a filename is something a founder types, not something a stranger reads off a screen.
+export const CODEY = /(?:\S*\/\S*\.[a-z]{1,5}\b|\S+\/\s*$|\s--[a-z][\w-]+|\b[\w-]+\.(?:ts|tsx|js|jsx|json|py|rs|go|md|yml|yaml|toml|sh)\b)/i;
 
 // The same, but never padded out with the words that carry nothing: a line whose only real word is "goes" has no
 // headline in it, and "It is" is not one. Used where a short line has to stand on its own or not be written at all.
@@ -206,6 +229,13 @@ export function criticise(spec: Spec, want: Want): Finding[] {
     const ceiling = want.pace === 'punchy' ? 4 : 6;
     if (spoken / 2.4 > ceiling) say('pace', `scene ${at} says ${spoken} words, which holds one scene for ${Math.round(spoken / 2.4)} seconds`, at);
     if ((scene.bullets?.length ?? 0) > 4) say('headline', `scene ${at} carries ${scene.bullets!.length} lines — four is what fits and what is read`, at);
+    // A number set forty points high is a promise that it means something to the person watching.
+    if (scene.layout === 'stat' && scene.heading && !worthAStat(scene.heading, `${scene.text ?? ''} ${scene.say ?? ''}`)) {
+      say('stat', `scene ${at} sets "${scene.heading}" the size of the frame, and it counts the product's own parts rather than anything the viewer gets`, at);
+    }
+    // A path, a flag or a filename on screen is a founder reading their own terminal out to a stranger.
+    const onScreen = [scene.heading, scene.text, ...(scene.bullets ?? [])].filter(Boolean).join(' ');
+    if (CODEY.test(onScreen)) say('headline', `scene ${at} puts "${onScreen.match(CODEY)?.[0].trim()}" on screen, which is something a founder types rather than something a stranger reads`, at);
   });
 
   if (want.reel) {
@@ -283,7 +313,12 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     if (next === 'picture') return { ...scene, layout: 'picture', image_prompt: scene.image_prompt || `${want.bible}. ${subjectOf(scene)}`, text: scene.text && countWords(scene.text) <= 8 ? scene.text : undefined };
     if (next === 'quote') return { ...scene, layout: 'quote', text: trimTo(scene.text || scene.say || '', 16), heading: scene.heading };
     if (next === 'hook') return { ...scene, layout: 'hook', text: scene.text ? trimTo(scene.text, HEADING_WORDS) : headlineOf(scene.say ?? '', HEADING_WORDS), heading: undefined };
-    if (next === 'stat') { const figure = figureIn(scene.text) ?? figureIn(scene.say); return figure && countWords(figure) <= 3 ? { ...scene, layout: 'stat', heading: figure, text: headlineOf((scene.text ?? scene.say ?? '').replace(figure, ' '), 6) } : null; }
+    if (next === 'stat') {
+      const figure = figureIn(scene.text) ?? figureIn(scene.say);
+      // A number only becomes the size of the frame when it is a number the viewer gets something from.
+      if (!figure || countWords(figure) > 3 || !worthAStat(figure, `${scene.text ?? ''} ${scene.say ?? ''}`)) return null;
+      return { ...scene, layout: 'stat', heading: figure, text: headlineOf((scene.text ?? scene.say ?? '').replace(figure, ' '), 6) };
+    }
     if (next === 'compare') {
       const halves = (scene.text || scene.say || '').split(/\s+(?:but|instead of|rather than|versus|vs\.?)\s+/i);
       return halves.length >= 2 && halves[0].trim() && halves[1].trim()
@@ -378,6 +413,14 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
         made = { ...made, bullets: made.bullets?.map(strike).filter((one) => countWords(one) >= 1) };
       }
       if (pointless) {
+        // A close is not a claim to be replaced with another claim: it asks somebody to do something. Where the
+        // material names no place to go, the film closes on something plain and true instead of a button to a
+        // website nobody has built.
+        if (made.layout === 'cta' || made.layout === 'outro') {
+          note('there is no address or command in your material, so the film closes on something plain rather than a made-up one');
+          keep.push({ ...made, text: want.reel ? 'Follow for more' : 'Try it this week', heading: undefined, say: want.reel ? 'Follow for more.' : 'Try it this week.', source: undefined });
+          continue;
+        }
         // Nothing points at this. Either the founder's own words go in its place, or the scene goes.
         const real = sources.has ? realLine(sources, used) : null;
         if (real) {
@@ -396,6 +439,30 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     }
     scenes = keep.length >= 2 ? keep : scenes;
   }
+
+  // 1c. The words a viewer actually reads. A number that counts the product's own parts is not a headline the size
+  //     of the frame, and a file path is not a headline at all.
+  scenes = scenes.map((scene) => {
+    let made = scene;
+    if (made.layout === 'stat' && made.heading && !worthAStat(made.heading, `${made.text ?? ''} ${made.say ?? ''}`)) {
+      note(`"${made.heading}" counts this product's own parts rather than anything the viewer gets, so it is said rather than set the size of the frame`);
+      const line = [made.heading, made.text].filter(Boolean).join(' ');
+      made = recast({ ...made, text: line, heading: undefined }, 'statement')
+        ?? { ...made, layout: 'statement', heading: undefined, text: headlineOf(line, TEXT_WORDS) || undefined };
+    }
+    const shown = [made.heading, made.text, ...(made.bullets ?? [])].filter(Boolean).join(' ');
+    if (CODEY.test(shown)) {
+      note('a file path is something you type, not something a stranger reads off a screen, so it came off');
+      const clean = (line?: string) => (line && CODEY.test(line) ? undefined : line);
+      made = {
+        ...made,
+        heading: clean(made.heading),
+        text: clean(made.text) ?? (headlineOf(made.say ?? '', TEXT_WORDS) || undefined),
+        bullets: made.bullets?.filter((one) => !CODEY.test(one)),
+      };
+    }
+    return made;
+  });
 
   // 2a. A figure scene carries a figure. "25% Faster funding" set as one line is a ten-character string sized down to
   //     a caption; "25%" over "Faster funding" is the scene the number deserves.

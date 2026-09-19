@@ -26,7 +26,9 @@ export type Asked = {
 };
 
 // What the film has to work with, gathered before a word of the storyboard is written.
-export type Material = { lines: string[]; assets: { name: string; kind: string; what: string }[]; brand?: Brand; using: string[] };
+// `pitch` is what the product says it is, in its own words — the thing the film argues. `lines` is everything else
+// it says, which is what the film is checked against.
+export type Material = { lines: string[]; pitch?: string; assets: { name: string; kind: string; what: string }[]; brand?: Brand; using: string[] };
 
 // What the director understood, which is the thing the card shows the founder before anything is made.
 export type Understanding = {
@@ -189,12 +191,21 @@ export function planPrompt(understanding: Understanding, asked: Asked, material:
     `Write ${least} to ${most} beats. ${PURPOSE[understanding.purpose].shape}`,
     `All the "say" lines together must come to about ${budget} words — that is what makes the film ${understanding.seconds} seconds long, and it is a hard number. Count them.`,
     'Each beat says one thing. No beat says two things. Nothing is repeated in a later beat.',
+    // A model handed a repository writes a film about the repository. What a stranger needs is the thing the
+    // product is for, said as a whole thought — which is why the pitch goes above the material and not inside it.
+    material.pitch ? `What this product is, in its own words. The whole film argues this, and everything else below is only there to keep it honest:\n${material.pitch}` : '',
+    'Every "say" line is a complete thought a stranger understands on its own — a sentence with a subject and something happening. Never a fragment, never a label, never a feature name on its own.',
+    'Write for somebody who has never seen this product. Do not name a kind of card, a screen, a setting, a folder, a file or a field unless the material itself explains what it is; say what it does for the person watching instead.',
     understanding.person ? 'The brief wants a person talking to camera, so the opening beats are written as somebody speaking, in the first person.' : '',
     material.lines.length
-      ? 'Everything specific this film says — every feature, every number, every name — must come out of the material below, and every beat must carry the words it came from in "source", quoted exactly. A beat whose claim you cannot quote is a beat you must not write: say something you can quote instead. Do not describe features the material does not mention.'
+      ? 'Everything specific this film says — every feature, every number, every name — must come out of the material below, and every beat must carry the words it came from in "source", quoted exactly. Say it in your own words; the quotation is what proves it, not what you read out. A beat whose claim you cannot quote is a beat you must not write.'
       : 'There is no material behind this film, so it may say only what is generally true. No brand name, no product name, no customer, and no statistics at all — not a percentage, not a multiple, not a sum of money. A number nobody measured is a lie with a decimal point in it. Leave "source" out.',
+    'A number belongs in this film only if it changes something for the person watching — money, time, how many people, how much better. How many kinds of something the product has is an inventory, not a number worth a scene.',
+    material.lines.length
+      ? 'The last beat asks the viewer to do one thing they really can do — an address, a command or an action the material names. If the material names none, close on something plain and true instead, with no invented website, download or button.'
+      : 'The last beat closes on something plain: no website, no download, no button, because there is nothing behind this film to click.',
     `Never use these words, in any form: ${FILLER.slice(0, 20).join(', ')}. They are what writing sounds like when it has nothing to say.`,
-    material.lines.length ? ['', ...material.lines].join('\n') : '',
+    material.lines.length ? ['', 'Everything it says about itself:', ...material.lines].join('\n') : '',
     '',
     'The brief:',
     asked.brief,
@@ -416,21 +427,49 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
 // or a made clip there is a real person; with neither, the film opens on a portrait with a slow push into it, which
 // is what a reel does when the creator is not the one holding the camera. Nothing here invents a name or a claim —
 // it is a face, and the words over it are the film's own.
-export function onCamera(scenes: Scene[], understanding: Understanding, bible: string, report: (line: string) => void): Scene[] {
+// The most a film gets of somebody talking to the camera when this machine is drawing them: two, because each one
+// costs minutes of the founder's time and a third is a third of the film.
+export const MOST_FACES = 2;
+// Whether a moving scene already has somebody in it. A clip of hands over a desk is a clip; it is not the person
+// the brief asked for, and a film that counts it as one has nobody on camera at all.
+const SOMEBODY = /\b(person|people|man|woman|founder|speaker|influencer|presenter|host|face|talking head|him|her|they|creator|someone|somebody)\b/i;
+export const hasSomebody = (scene: Scene): boolean =>
+  scene.layout === 'presenter' || scene.layout === 'footage'
+  || (scene.layout === 'clip' && SOMEBODY.test(`${scene.clip_prompt ?? ''} ${scene.portrait_prompt ?? ''}`));
+
+export function onCamera(scenes: Scene[], understanding: Understanding, bible: string, report: (line: string) => void,
+  filmHere?: { minutes: number }): Scene[] {
   if (!understanding.person) return scenes;
-  if (scenes.some((one) => one.layout === 'presenter' || one.layout === 'footage' || one.layout === 'clip')) return scenes;
+  if (scenes.some(hasSomebody)) return scenes;
   // The bible says "single strong subject, shallow depth of field", and a picture model reads that as a macro of
   // somebody's mouth. A talking head has to be asked for as a talking head: the framing first, and loudly.
-  const portrait = `a medium shot of one person from the chest up, facing the camera and talking to it, their whole head and shoulders inside the frame with room above, both eyes open and looking into the lens, ${bible.replace(/,?\s*shallow depth of field/i, '')}`;
+  const look = bible.replace(/,?\s*shallow depth of field/i, '');
+  const facing = 'one person from the chest up, facing the camera and talking to it, their whole head and shoulders inside the frame with room above, both eyes open and looking into the lens';
+  const portrait = `a medium shot of ${facing}, ${look}`;
   // The opening, and one more in the middle of anything long enough to come back to a face.
   const faces = new Set([0, ...(scenes.length >= 5 ? [Math.floor(scenes.length / 2)] : [])]);
+  // Whether the person moves. A still of somebody mid-sentence is a photograph of a person, not a person talking,
+  // and the brief asked for the second one — so where this machine can draw a moving shot, it draws one. It is not
+  // left to the model to choose: a model that writes a talking-head scene writes it as a `presenter`, which only
+  // the free online service makes, and when that is out of quota the film quietly has nobody in it at all.
+  // A clip scene the model wrote of something else is one of the film's moving shots already, so the film does not
+  // get two more on top of it — unless it sits where a face is going, in which case it is the one being replaced.
+  const already = scenes.filter((one, index) => one.layout === 'clip' && !faces.has(index)).length;
   let given = 0;
   const made = scenes.map((scene, index) => {
     if (!faces.has(index) || scene.image_prompt || scene.asset) return scene;
+    if (filmHere && given + already < MOST_FACES) {
+      given += 1;
+      return { ...scene, layout: 'clip' as Layout, clip_prompt: `${facing}, talking, small natural head movement, ${look}`, bg_prompt: portrait, image_prompt: undefined };
+    }
     given += 1;
     return { ...scene, bg_prompt: portrait };
   });
-  if (given) report(`the brief wants somebody on camera and there is no footage, so ${given === 1 ? 'the opening sits' : 'two scenes sit'} on a face`);
+  if (given && filmHere) {
+    report(`the brief wants somebody on camera, so this computer films ${given === 1 ? 'one shot' : `${given} shots`} of a person talking — about ${filmHere.minutes * given} minutes, and nothing leaves the machine`);
+  } else if (given) {
+    report(`the brief wants somebody on camera and there is no footage, so ${given === 1 ? 'the opening sits' : 'two scenes sit'} on a face`);
+  }
   return made;
 }
 

@@ -26,9 +26,13 @@ export const MAX_SCENES = 24;
 // Every drawn still costs a call to a free picture service with a day's quota, and every AI clip costs far more.
 // A picture in front of the words and a picture behind them cost the same, so the two caps are near enough the same.
 export const MAX_IMAGES = 10;
-// A background is drawn for every scene that has nothing else to show, so the ceiling on those is a whole film's
-// worth rather than a handful: a film of flat colour was the single worst thing about the old studio.
-export const MAX_BACKGROUNDS = 14;
+// How many pictures are drawn to stand behind the words of a whole film. Not one a scene: a free daily quota is a
+// few hundred pictures and a founder making three films a day would spend it by lunchtime, and — the better
+// reason — six frames of one film should look like six frames of one film. So a handful are drawn from the style
+// bible and shared out, each scene taking its own crop, tint and drift of the same picture.
+export const MAX_BACKGROUNDS = 4;
+// A run of scenes this long shares one background before another is drawn.
+export const SCENES_A_BACKGROUND = 3;
 // A clip from the free Spaces spends somebody else's daily minutes, so a film makes at most two. A clip made on this
 // machine spends nothing but time, so a film may have twice as many — the founder is told what that time costs.
 export const MAX_AI = 2;

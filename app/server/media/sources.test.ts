@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { projectDir } from '../coder.ts';
-import { CAPS, coloursOf, copyOf, fontOf, looksLikeScreen, readProject, sizeOf } from './sources.ts';
+import { CAPS, coloursOf, copyOf, fontOf, looksLikeScreen, pitchOf, readProject, sizeOf } from './sources.ts';
 import { lightOf, paintOf } from './templates/looks.ts';
 
 const dir = await mkdtemp(join(tmpdir(), 'product-'));
@@ -155,5 +155,21 @@ describe('the pictures a project has of itself', () => {
     expect(names).not.toContain('badge.png');
     expect(names).not.toContain('logo.png');
     expect(product.screens.every((one) => one.what.includes('out of the project itself'))).toBe(true);
+  });
+});
+
+describe('what a product says it is', () => {
+  it('takes the line in its package and the sentences its README opens on', () => {
+    const said = pitchOf('Handover, without the handover.', 'Relay keeps the context with the work, so nothing is explained twice.\nIt is built for teams who brief each other all day long.\n- A bullet, which is a list and not a pitch');
+    expect(said).toContain('Handover, without the handover.');
+    expect(said).toContain('Relay keeps the context with the work');
+    // A bullet is a feature list; a pitch is prose.
+    expect(said).not.toContain('A bullet');
+  });
+
+  it('is what the film argues, so it comes off a real project', async () => {
+    const product = await readProject(dir);
+    expect(product.pitch).toContain('Handover, without the handover.');
+    expect(product.pitch.length).toBeLessThanOrEqual(480);
   });
 });

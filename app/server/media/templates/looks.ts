@@ -76,7 +76,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
   background: linear-gradient(to top, rgba(${paint.scrim}, ${Math.min(0.96, style.scrim + 0.16).toFixed(2)}) 0%, rgba(${paint.scrim}, ${(style.scrim * 0.86).toFixed(2)}) 46%, rgba(${paint.scrim}, ${(style.scrim * 0.62).toFixed(2)}) 100%); }
 /* No picture maker, no flat colour either: four soft lamps of the film's own colours drifting behind the words. */
 .mesh { position: absolute; inset: -18%; z-index: 0; overflow: hidden; }
-.blob { position: absolute; border-radius: 50%; filter: blur(calc(120px * var(--s))); opacity: 0.55; }
+.blob { position: absolute; filter: blur(calc(120px * var(--s))); opacity: 0.55; }
+.sweep { position: absolute; inset: -20%; mix-blend-mode: screen; }
 .grain { position: absolute; inset: 0; z-index: 8; pointer-events: none; opacity: ${style.grain}; background-image: ${GRAIN}; background-size: calc(180px * var(--s)); mix-blend-mode: ${lightIsDark(paint.ground) ? 'screen' : 'multiply'}; }
 .vig { position: absolute; inset: 0; z-index: 7; pointer-events: none;
   background: radial-gradient(ellipse at 50% 46%, rgba(0,0,0,0) 44%, rgba(0,0,0,${style.vignette.toFixed(2)}) 100%); }
@@ -134,6 +135,14 @@ ${sketch ? '' : `.display, .heading, .hook, .lead, .body, .label, .quote, .logo,
 .shot { position: absolute; inset: ${sketch ? 'calc(var(--margin) * 0.72)' : '0'}; overflow: hidden; z-index: 1; ${sketch ? 'border-radius: var(--radius);' : ''} }
 ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''}
 .shot img, .shot video { display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 50%; }
+/* A moving shot is the whole frame it plays in. It is written as an element of the film rather than of its scene —
+   a <video> with its own start inside a section with one too is resolved against two clocks — so it is the one thing
+   on the page that has to be placed here and nowhere else. Without this it plays at whatever size it was encoded
+   at, in the corner of the frame, with the film going on underneath it. */
+.reel { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; opacity: 0;
+  background: ${paint.ground}; transform-origin: 50% 50%; }
+/* Somebody talking: their eyes belong a third of the way down, not in the middle. */
+.reel--face { object-position: 50% 26%; transform-origin: 50% 26%; }
 .shot::after { content: ''; position: absolute; inset: 0; pointer-events: none;
   background: ${sketch ? 'none' : `linear-gradient(to top, rgba(${paint.scrim}, 0.64) 0%, rgba(${paint.scrim}, 0.26) 44%, rgba(${paint.scrim}, 0.60) 100%)`}; }
 /* The words over a picture sit at the foot of the frame — unless the film is captioned, in which case the captions

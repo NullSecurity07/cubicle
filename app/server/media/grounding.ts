@@ -78,9 +78,11 @@ const STOP = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'so', 'of', 'in', 'o
   'by', 'as', 'is', 'are', 'was', 'were', 'be', 'it', 'its', 'you', 'your', 'we', 'our', 'they', 'their', 'this',
   'that', 'these', 'those', 'all', 'any', 'no', 'not', 'one', 'more', 'most', 'into', 'out', 'up', 'down', 'over']);
 
-// Whether a quotation really occurs in the material. A model asked to quote will paraphrase a word or two, so this
-// is generous about the joins and strict about the substance: either the line is there as written, or nearly all of
-// the words that carry its meaning are.
+// Whether a quotation really occurs in the material. A film that reads its source out word for word is grep with a
+// soundtrack, so what is asked for is the substance rather than the wording: either the line is there as written,
+// or most of the words that carry its meaning are. Two in three is the line — below that a sentence can share a
+// noun with the material and mean something else entirely.
+export const ENOUGH_OF_IT = 0.6;
 export function saysIt(quote: string, sources: Sources): boolean {
   const said = flat(quote ?? '');
   if (said.length < 6) return false;
@@ -88,7 +90,7 @@ export function saysIt(quote: string, sources: Sources): boolean {
   const words = said.split(' ').filter((one) => one.length > 2 && !STOP.has(one));
   if (words.length < 2) return false;
   const found = words.filter((one) => sources.corpus.includes(one.length > 5 ? one.slice(0, -1) : one));
-  return found.length / words.length >= 0.7;
+  return found.length / words.length >= ENOUGH_OF_IT;
 }
 
 // A figure that is a claim rather than a count. "Three questions" is a way of speaking; "74%", "$12k", "10x" and
@@ -239,10 +241,12 @@ export function ownWords(text: string, sources: Sources): string[] {
   return [...new Set(said.filter((one) => !known(one)))];
 }
 
-// A call to action asks somebody to do something; it states nothing, so there is nothing for it to point at. Every
-// other scene has to trace — but only where it is really saying something of its own. A line made of everyday words
-// is a line about the world, and the film may say it; a line with this film's own vocabulary in it is a claim.
-const NO_CLAIM = new Set(['cta', 'logo', 'title']);
+// A wordmark is the product's name and a title card is the film's own; what those may say is settled by whether the
+// film has a product behind it at all. Everything else has to trace — including the close, because "Download now,
+// Cubicle Site" is a website and a download that do not exist, and asking somebody to go somewhere that is not
+// there is the one lie a founder cannot afford. A line made of everyday words is a line about the world and the
+// film may say it; a line with this film's own vocabulary in it is a claim.
+const NO_CLAIM = new Set(['logo', 'title']);
 export function ungrounded(scene: Scene, sources: Sources): string | null {
   if (!sources.has) return null;
   if (NO_CLAIM.has(scene.layout)) return null;

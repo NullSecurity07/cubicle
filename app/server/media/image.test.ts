@@ -1,11 +1,12 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type { Maker } from './jobs.ts';
 import { seedStage, type Stage } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
-import { cloudflareImages, fakeImages, pictureOf, SETUP_HINT } from './image.ts';
+import { askedFor, cachedImages, cloudflareImages, fakeImages, outOfPictures, pictureOf, SETUP_HINT } from './image.ts';
 import { createMedia } from './jobs.ts';
 
 const keys = { CLOUDFLARE_API_TOKEN: 'token', CLOUDFLARE_ACCOUNT_ID: 'account' };
@@ -84,5 +85,36 @@ describe('generate_image', () => {
   it('will not draw from nothing', async () => {
     const { tool, context } = await turn(wired);
     await expect(tool.run({ prompt: '  ' }, context)).rejects.toThrow('"prompt" is missing');
+  });
+});
+
+describe('a picture is paid for once', () => {
+  it('keeps what was drawn under what was asked for, and hands it back for nothing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pictures-'));
+    let drawn = 0;
+    const once: Maker = {
+      name: 'counted', ready: () => null,
+      async make() { drawn += 1; return { ext: 'png', bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, drawn]) }; },
+    };
+    const kept = cachedImages(once, dir);
+    const said: string[] = [];
+    const first = await kept.make({ prompt: 'a paper plane', shape: 'wide' }, { report: (line) => said.push(line) });
+    const again = await kept.make({ prompt: 'a paper plane', shape: 'wide' }, { report: (line) => said.push(line) });
+    expect(drawn).toBe(1);
+    expect(again.bytes).toEqual(first.bytes);
+    expect(said.join(' ')).toContain('costs nothing');
+    // A different shape of the same words is a different picture, and so is a different prompt.
+    await kept.make({ prompt: 'a paper plane', shape: 'tall' }, { report: () => {} });
+    await kept.make({ prompt: 'a paper boat', shape: 'wide' }, { report: () => {} });
+    expect(drawn).toBe(3);
+    expect(askedFor('a', 'b', 'wide')).not.toBe(askedFor('a', 'b', 'tall'));
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('knows when a free service has said there is nothing left today', () => {
+    expect(outOfPictures('Cloudflare answered 429: you have used up your daily free allocation of 10,000 neurons')).toBe(true);
+    expect(outOfPictures('Too Many Requests')).toBe(true);
+    expect(outOfPictures('fetch failed')).toBe(false);
+    expect(outOfPictures('no picture came back')).toBe(false);
   });
 });

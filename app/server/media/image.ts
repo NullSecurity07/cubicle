@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Maker, Piece } from './jobs.ts';
 
 const API = 'https://api.cloudflare.com/client/v4';
@@ -49,6 +52,33 @@ export function cloudflareImages(env: NodeJS.ProcessEnv = process.env, http: typ
 }
 
 export const imageMakers = (env: NodeJS.ProcessEnv = process.env, http: typeof fetch = fetch): Maker[] => [cloudflareImages(env, http)];
+
+// What a free daily quota is spent on, and what it is never spent on twice. A picture is filed under a hash of
+// exactly what was asked for, so a founder who renders the same film again — after a line of narration changed, or
+// after the app restarted — pays nothing for the pictures they already have. A cache that cannot be written to is
+// not an error: the film is made either way.
+export const askedFor = (name: string, prompt: string, shape: unknown): string =>
+  createHash('sha256').update(`${name}|${String(shape ?? '')}|${prompt}`).digest('hex').slice(0, 32);
+
+export function cachedImages(maker: Maker, dir: string): Maker {
+  return {
+    name: maker.name,
+    ready: maker.ready,
+    async make(ask, help): Promise<Piece> {
+      const file = join(dir, `${askedFor(maker.name, String(ask.prompt ?? ''), ask.shape)}.img`);
+      const held = await readFile(file).catch(() => null);
+      if (held?.length) { help.report('drawn before, so it costs nothing'); return { ext: held[0] === 0x89 ? 'png' : 'jpg', bytes: held }; }
+      const piece = await maker.make(ask, help);
+      await mkdir(dir, { recursive: true }).then(() => writeFile(file, piece.bytes)).catch(() => { /* a cache is a kindness, not a requirement */ });
+      return piece;
+    },
+  };
+}
+
+// Whether a picture service has said, in its own words, that there is nothing left today. There is no retrying
+// past this and no point asking again for the next scene: the founder is told once and the film uses textures.
+export const outOfPictures = (why: string): boolean =>
+  /\b429\b|daily free allocation|quota|rate ?limit|too many requests/i.test(why);
 
 // A picture that costs nothing and needs no network, for the checks and the fake-model mode.
 const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';

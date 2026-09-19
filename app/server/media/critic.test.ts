@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carriesVisual, criticise, echoes, figureIn, headlineOf, keywords, repair, shorten, trimTo, type Want } from './critic.ts';
+import { carriesVisual, criticise, echoes, figureIn, headlineOf, keywords, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
 import { countWords, LAYOUTS, saidWords, saysWhatItShows, type Layout, type Scene, type Spec } from './spec.ts';
 
 // Every rule here is written the same way round: a lazy storyboard of the kind a free model really hands back goes
@@ -283,5 +283,52 @@ describe('a line said aloud, made shorter', () => {
     // A line that cannot be cut without breaking stays as long as it is: a film a second over beats one that
     // stops mid-breath.
     expect(shorten('Investors fund traction.', 2)).toBe('Investors fund traction.');
+  });
+});
+
+describe('a headline is a whole thought or it is nothing', () => {
+  it('stops where the writer stopped, at the clause the line opens on', () => {
+    // A real launch film set "The founder stays" across a frame: a subject, its verb, and nothing they did.
+    expect(headlineOf('The founder stays the operator: people speed the founder up, the founder decides.', 5))
+      .toBe('The founder stays the operator');
+    expect(headlineOf('Everything is made on this machine and nothing leaves it unless you wired it.', 6))
+      .toBe('Everything is made on this machine');
+    // The opening clause, never a better-fitting one out of the middle, which loses whoever it was about.
+    expect(headlineOf('Rooms hold people, wires carry context, and a board holds the work.', 5)).toBe('Rooms hold people');
+  });
+
+  it('writes nothing rather than half a thought', () => {
+    // Two things said is a beginning; the scene is better off with the captions carrying the line.
+    expect(headlineOf('It is what it is and so on it goes', 4)).toBe('');
+  });
+});
+
+describe('a number worth the size of the frame', () => {
+  it('knows a number a viewer gets from one that counts the product\'s own parts', () => {
+    expect(worthAStat('74%', 'never get a second meeting')).toBe(true);
+    expect(worthAStat('3', 'hours a week saved')).toBe(true);
+    expect(worthAStat('$12k', 'a month')).toBe(true);
+    // A real launch film set "17 — Shapes scene elements used" forty points high.
+    expect(worthAStat('17', 'Shapes scene elements used')).toBe(false);
+    expect(worthAStat('28', 'voices to choose from')).toBe(false);
+  });
+
+  it('says an inventory rather than setting it the size of the frame', () => {
+    const inventory = spec([{ layout: 'stat', heading: '17', text: 'scene shapes', say: 'There are seventeen scene shapes.', bg_prompt: 'x' }]);
+    expect(rules(criticise(inventory, reelWant({ reel: false })))).toContain('stat');
+    const { spec: fixed, notes } = repair(inventory, reelWant({ reel: false }));
+    expect(fixed.scenes[0].layout).not.toBe('stat');
+    expect(notes.join(' ')).toContain("counts this product's own parts");
+    expect(rules(criticise(fixed, reelWant({ reel: false })))).not.toContain('stat');
+  });
+});
+
+describe('what a founder types and what a stranger reads', () => {
+  it('takes a file path off the screen and leaves the line being said', () => {
+    const typed = spec([{ layout: 'statement', text: 'workspace/files/media/', say: 'Everything you make lands in one folder.', bg_prompt: 'x' }]);
+    expect(rules(criticise(typed, reelWant({ reel: false })))).toContain('headline');
+    const { spec: fixed } = repair(typed, reelWant({ reel: false }));
+    expect(fixed.scenes[0].text ?? '').not.toContain('/');
+    expect(rules(criticise(fixed, reelWant({ reel: false })))).not.toContain('headline');
   });
 });

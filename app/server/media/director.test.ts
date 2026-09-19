@@ -5,10 +5,10 @@ import { describe, expect, it } from 'vitest';
 import { seedStage, type Stage } from '../../shared/model.ts';
 import { criticise } from './critic.ts';
 import {
-  bibleFor, direct, layoutsFor, readBrief, secondsIn, specFromPlan, tellOf, understandingOf,
+  bibleFor, direct, onCamera, layoutsFor, readBrief, secondsIn, specFromPlan, tellOf, understandingOf,
   type Material, type Plan, type Understanding,
 } from './director.ts';
-import { countWords, saidWords, type Spec } from './spec.ts';
+import { countWords, saidWords, type Scene, type Spec } from './spec.ts';
 import { sourcesOf } from './grounding.ts';
 import { gather, type VideoDeps } from './video.ts';
 
@@ -232,3 +232,47 @@ describe('what the card is wired to, used without being asked', () => {
 });
 
 void writeFile;
+
+describe('somebody on camera', () => {
+  const person = (over: Partial<Understanding> = {}): Understanding => ({
+    purpose: 'reel', audience: 'founders', platform: 'a phone', shape: 'tall', seconds: 15, pace: 'punchy',
+    tone: 'friendly', mood: 'upbeat', pack: 'creator', person: true, captions: true, said: '', ...over,
+  });
+  const six = Array.from({ length: 6 }, (_one, index): Scene => ({ layout: 'statement', text: `Line ${index}`, say: `Line ${index}.` }));
+
+  it('films the person here rather than leaving it to the model to ask somebody else', () => {
+    // A model that wants a talking head writes a `presenter` scene, which only the free online service makes; when
+    // that is out of quota the film quietly has nobody in it. So the director places the shots itself.
+    const said: string[] = [];
+    const made = onCamera(six, person(), 'warm daylight', (line) => said.push(line), { minutes: 3 });
+    const filmed = made.filter((one) => one.layout === 'clip');
+    expect(filmed).toHaveLength(2);
+    for (const one of filmed) expect(one.clip_prompt).toContain('talking to it');
+    // What it costs the founder in waiting, said before any of it starts.
+    expect(said.join(' ')).toContain('6 minutes');
+  });
+
+  it('sits on a still of a face when this computer cannot film one', () => {
+    const said: string[] = [];
+    const made = onCamera(six, person(), 'warm daylight', (line) => said.push(line));
+    expect(made.some((one) => one.layout === 'clip')).toBe(false);
+    expect(made[0].bg_prompt).toContain('facing the camera');
+    expect(said.join(' ')).toContain('no footage');
+  });
+
+  it('leaves a film that already has somebody in it alone, and one that never asked for anybody', () => {
+    const already = [{ layout: 'presenter' as const, say: 'Hello.' }, ...six];
+    expect(onCamera(already, person(), 'warm', () => {}, { minutes: 3 })).toBe(already);
+    expect(onCamera(six, person({ person: false }), 'warm', () => {}, { minutes: 3 })).toBe(six);
+  });
+
+  it('does not mistake a clip of a desk for a person', () => {
+    // A real reel spent three minutes of this computer's time on hands over a contact sheet, and the film it went
+    // into had nobody in it, because a clip scene counted as somebody on camera.
+    const desk = [...six.slice(0, 2), { layout: 'clip' as const, clip_prompt: 'hands moving papers across a desk', say: 'They read it.' }, ...six.slice(2)];
+    const made = onCamera(desk, person(), 'warm daylight', () => {}, { minutes: 3 });
+    expect(made.filter((one) => one.layout === 'clip' && /talking to it/.test(one.clip_prompt ?? ''))).toHaveLength(1);
+    // Two moving shots in one film is the ceiling, whoever wrote them.
+    expect(made.filter((one) => one.layout === 'clip')).toHaveLength(2);
+  });
+});

@@ -12,9 +12,11 @@ import { headlineOf, trimTo } from './critic.ts';
 import { bibleFor, direct, onCamera, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
+import { cachedImages, outOfPictures } from './image.ts';
 import type { Maker, Piece } from './jobs.ts';
+import { availableRam, MINUTES_EACH, needsRam } from './local-clips.ts';
 import {
-  AI_LAYOUTS, isPurpose, MAX_AI, MAX_BACKGROUNDS, MAX_LOCAL_AI, PURPOSE, PURPOSES,
+  AI_LAYOUTS, isPurpose, MAX_AI, MAX_BACKGROUNDS, MAX_LOCAL_AI, PURPOSE, PURPOSES, SCENES_A_BACKGROUND,
   fallbackOf, withinCaps, withinLength, type Spec,
 } from './spec.ts';
 import { readProject, VIEWPORTS } from './sources.ts';
@@ -88,6 +90,9 @@ export type VideoAsk = {
 // The other half of the studio: what it can read, what it can photograph, what it can film with.
 export type VideoDeps = {
   dir: string; images?: Maker; voices?: Maker; think: (prompt: string) => Promise<string>;
+  // Where drawn pictures are kept between runs, beside the voice model and the music. Without one they are kept in
+  // the workspace, which still saves a second render of the same film.
+  cacheDir?: string;
   // `clips` is every moving-picture backend as one; `local` is the one that runs here, which is what decides how many
   // such scenes a film may have and whether a person's call needs the founder's yes.
   clips?: Clips; local?: Clips; music?: Music; forbidden?: string[];
@@ -170,6 +175,7 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
         if (card.kind === 'project' && card.path) {
           const product = await readProject(projectDir(card.path, deps.forbidden ?? []));
           if (product.words) material.lines.push(product.words);
+          if (product.pitch) material.pitch = product.pitch;
           if (product.brand.colours.length || product.brand.font) material.brand = product.brand;
           material.using.push(`${product.name ?? 'the'} project`);
           if (product.font) await writeFile(join(at, 'vendor', product.font.name), product.font.bytes);
@@ -339,10 +345,21 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         spec = capped;
         for (const note of notes) report(note);
         // Only now is it settled whether there is really a person in this film: a clip scene that was written and
-        // then could not be made is not somebody on camera, and the brief asked for somebody on camera.
-        spec = { ...spec, scenes: onCamera(spec.scenes, understanding, bible, report) };
+        // then could not be made is not somebody on camera, and the brief asked for somebody on camera. Whether
+        // this machine can film one is asked here and now, because what a computer can spare changes minute to
+        // minute and a clip that leans on swap takes an hour instead of three minutes.
+        const spare = here && able ? await availableRam() : null;
+        const roomToFilm = here && able && (spare === null || spare >= needsRam());
+        if (understanding.person && here && able && !roomToFilm) {
+          report(`there is ${spare?.toFixed(0)} GB of memory free and filming a person here needs about ${needsRam()}, so the film shows a still of one instead`);
+        }
+        spec = { ...spec, scenes: onCamera(spec.scenes, understanding, bible, report, roomToFilm ? { minutes: MINUTES_EACH } : undefined) };
 
-        const drawing = deps.images && !deps.images.ready() ? deps.images : null;
+        // Every drawn picture is filed under what was asked for, so the same film rendered twice draws nothing the
+        // second time and a founder's daily quota lasts the week.
+        const drawing = deps.images && !deps.images.ready()
+          ? cachedImages(deps.images, deps.cacheDir ? join(deps.cacheDir, 'pictures') : join(deps.dir, '.cache', 'pictures'))
+          : null;
         const saying = deps.voices && !deps.voices.ready() && asked.narrate !== false ? deps.voices : null;
         if (!drawing) report('no picture maker is set up, so the scenes are set on drawn backgrounds instead of photographs');
         const { width, height } = FORMATS[shape];
@@ -429,22 +446,46 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // time: a free picture service asked for a dozen at once refuses most of them.
         const picturework = (async () => {
           if (!drawing) return;
-          let drawn = 0;
-          const jobs = spec.scenes.map((scene, index) => async () => {
-            const shot = shots[index];
-            const front = scene.layout === 'picture' || scene.layout === 'logo';
-            const prompt = front ? scene.image_prompt : scene.bg_prompt;
-            if (!prompt || shot.image) return;
-            if (!front && drawn >= MAX_BACKGROUNDS) return;
-            if (!front) drawn += 1;
+          // Nothing is asked for twice once the answer is "not today". A free service says it plainly, and going
+          // on asking costs the founder a minute a scene to be told the same thing.
+          let spent = false;
+          const spendable = async (job: () => Promise<void>) => { if (!spent) await job(); };
+          const gone = (error: Error, index: number, front: boolean) => {
+            if (outOfPictures(error.message)) {
+              if (!spent) report("today's free pictures are used up, so the scenes sit on textures instead — they come back tomorrow");
+              spent = true;
+              return;
+            }
+            if (front) said(index, `no picture: ${error.message}`);
+          };
+
+          // The pictures in front of the words: a picture scene is a picture of its own, and no two are the same.
+          const front = spec.scenes.map((scene, index) => async () => spendable(async () => {
+            if (shots[index].image || (scene.layout !== 'picture' && scene.layout !== 'logo') || !scene.image_prompt) return;
             try {
-              const piece = await drawing.make({ prompt: front ? bgPrompt(bible, prompt, 'picture') : bgPrompt(bible, prompt, scene.layout), shape }, { report: () => {}, signal });
-              const file = `${front ? 'shot' : 'bg'}-${index}.${piece.ext}`;
+              const piece = await drawing.make({ prompt: bgPrompt(bible, scene.image_prompt, 'picture'), shape }, { report: () => {}, signal });
+              const file = `shot-${index}.${piece.ext}`;
               await writeFile(join(at, 'assets', file), piece.bytes);
-              if (front) shot.image = file; else shot.bg = file;
-            } catch (error) { if (front) said(index, `no picture: ${(error as Error).message}`); }
-          });
-          await pool(jobs, 3);
+              shots[index].image = file;
+            } catch (error) { gone(error as Error, index, true); }
+          }));
+
+          // What goes behind the words. A handful for the whole film, shared out in runs, each scene taking its own
+          // crop and tint of the one it was given: six frames of one film rather than six photographs of six.
+          const wants = spec.scenes.map((scene, index) => ({ scene, index }))
+            .filter(({ scene, index }) => !shots[index].image && scene.layout !== 'picture' && scene.layout !== 'logo' && scene.bg_prompt?.trim());
+          const takes = Math.min(MAX_BACKGROUNDS, Math.max(2, Math.ceil(wants.length / SCENES_A_BACKGROUND)));
+          const runs = Array.from({ length: Math.min(takes, wants.length) }, (_, take) =>
+            wants.filter((_one, at) => Math.floor((at * takes) / wants.length) === take));
+          const behind = runs.filter((run) => run.length).map((run, take) => async () => spendable(async () => {
+            try {
+              const piece = await drawing.make({ prompt: bgPrompt(bible, run[0].scene.bg_prompt!, run[0].scene.layout), shape }, { report: () => {}, signal });
+              const file = `bg-${take}.${piece.ext}`;
+              await writeFile(join(at, 'assets', file), piece.bytes);
+              for (const { index } of run) { shots[index].bg = file; shots[index].bgShared = run.length > 1; }
+            } catch (error) { gone(error as Error, run[0].index, false); }
+          }));
+          await pool([...front, ...behind], 3);
         })();
         await Promise.all([scenework, picturework]);
         if (signal?.aborted) throw new Error('stopped');
