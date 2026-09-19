@@ -137,6 +137,11 @@ body { font-family: 'Inter Variable', system-ui, sans-serif; color: var(--text);
 /* Chat: markdown, tool chips, the quiet lines under a reply. */
 .card__body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .card__body[hidden] { display: none; }
+.card__row { flex: 1; min-height: 0; display: flex; }
+.card__row[hidden] { display: none; }
+.card-slot { width: 100%; height: 100%; }
+/* The wrapper exists for event handling only; the card lays out its children as if it were not there. */
+.card__content { display: contents; }
 div.msg--assistant { white-space: normal; display: flex; flex-direction: column; gap: 6px; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
@@ -338,3 +343,35 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .link input:focus { border-color: rgba(78, 140, 255, 0.7); }
 .link p { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
 .link__open { flex: none; font-size: 11px; color: var(--accent); text-decoration: none; }
+
+/* Above the canvas: a shade, and the sheet a focused card moves into. */
+.overlay { position: fixed; inset: 0; z-index: 40; display: none; }
+.overlay.is-open { display: block; }
+.overlay__shade { position: absolute; inset: 0; background: rgba(5, 6, 10, 0.58); -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px); animation: shade-in 0.16s ease-out; }
+.focus__sheet { position: absolute; inset: 28px; width: min(1320px, calc(100% - 56px)); margin: 0 auto; animation: sheet-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.focus__sheet[hidden] { display: none; }
+.card--focused { border-color: rgba(255, 255, 255, 0.16); box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6); }
+.card--focused .card__header { cursor: default; min-height: 56px; padding: 10px 16px; }
+.card--focused .card__actions { opacity: 1; }
+.card--focused .card__name { font-size: 14.5px; }
+.card--focused .chat { padding: 20px max(20px, calc((100% - 780px) / 2)); gap: 12px; font-size: 14px; }
+.card--focused .doc { width: 100%; max-width: 86ch; margin: 0 auto; padding: 28px 20px; font-size: 14px; line-height: 1.65; box-sizing: border-box; }
+.side { flex: none; width: 300px; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 22px; border-left: 1px solid var(--card-border); scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.side h3 { margin: 0 0 8px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.side h3 button { border: 0; border-radius: 6px; padding: 2px 8px; background: rgba(255, 255, 255, 0.08); color: var(--text); font: inherit; font-size: 11px; letter-spacing: 0; text-transform: none; cursor: pointer; }
+.side h3 button:hover { background: rgba(255, 255, 255, 0.16); }
+.side h4 { margin: 12px 0 4px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.side ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.side li { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; }
+.side li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side li em { flex: none; font-style: normal; font-size: 11.5px; color: var(--muted); }
+.side__none { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.side__text { margin: 0; font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; }
+.side dl { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.side dl div { display: flex; justify-content: space-between; font-size: 13px; }
+.side dt { color: var(--muted); }
+.side dd { margin: 0; font-variant-numeric: tabular-nums; }
+@media (max-width: 900px) { .side { display: none; } }
+@keyframes shade-in { from { opacity: 0; } }
+@keyframes sheet-in { from { opacity: 0; transform: scale(0.985) translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }

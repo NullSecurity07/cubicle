@@ -8,6 +8,7 @@ import { listen } from './bus';
 import { Dock } from './Dock';
 import { edgeTypes } from './edges';
 import { nodeTypes } from './nodes';
+import { Overlay } from './overlay/Overlay';
 import { freeSpot } from './place';
 import { CARD, WIRE, fromFlow, toFlow, type StageNode } from './stage';
 import { SyncContext } from './sync';
@@ -74,6 +75,7 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
     >
       <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="rgba(255, 255, 255, 0.24)" bgColor="transparent" />
       <Dock />
+      <Overlay />
     </ReactFlow>
     </SyncContext.Provider>
   );

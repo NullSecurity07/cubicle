@@ -574,3 +574,51 @@ test('the api answers the app\'s own page and refuses everyone else', async ({ b
   expect(rebound?.status ?? 403).toBe(403);
   await context.close();
 });
+
+test('focus: a card fills the window and comes back with everything it held', async ({ page }) => {
+  await tidy(page);
+  const room = node(page, 'marketing');
+  const sheet = page.locator('.focus__sheet');
+  await expect(sheet).toBeHidden();
+
+  // The header button moves the card itself into the sheet; the person's side column appears.
+  await room.locator('.card__header').hover();
+  await room.getByRole('button', { name: 'Focus' }).click();
+  await expect(sheet.locator('.card--focused')).toBeVisible();
+  expect((await sheet.locator('.card--focused').boundingBox())!.width).toBeGreaterThan(1000);
+  await expect(sheet.locator('.side')).toContainText('Brand doc');
+  await expect(sheet.locator('.side')).toContainText('reads and writes');
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(0);
+
+  // A slow reply starts in the sheet; Escape returns to the stage while it is still streaming, and nothing is lost.
+  await expect(sheet.getByPlaceholder('Ask Maya…')).toBeFocused();
+  await sheet.getByPlaceholder('Ask Maya…').fill('/slow focus check');
+  await sheet.getByPlaceholder('Ask Maya…').press('Enter');
+  await expect(sheet.locator('.chat')).toContainText('Maya here');
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await expect(room.locator('.chat')).toContainText('You said: "/slow focus check"', { timeout: 15_000 });
+  await expect(sheet.locator('.side')).toHaveCount(0);
+
+  // F focuses the selected card; an edit in progress takes the first Escape, the sheet the second.
+  await room.locator('.card__header').click();
+  await page.keyboard.press('f');
+  await expect(sheet.locator('.card--focused')).toBeVisible();
+  await expect(sheet.locator('.side')).toContainText('Replies');
+  await sheet.locator('.msg--user').last().hover();
+  await sheet.getByRole('button', { name: 'Edit message' }).last().click();
+  await page.keyboard.press('Escape');
+  await expect(sheet.locator('.card--focused')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+
+  // A doc focuses too, at reading width, and what is typed there is the doc.
+  const doc = node(page, 'brand-doc');
+  await doc.locator('.card__header').hover();
+  await doc.getByRole('button', { name: 'Focus' }).click();
+  await sheet.locator('textarea').fill('Focused writing.');
+  await sheet.getByRole('button', { name: 'Back to the stage' }).click();
+  await expect(sheet).toBeHidden();
+  await expect(doc.locator('textarea')).toHaveValue('Focused writing.');
+  await expect.poll(async () => (await (await page.request.get('/api/docs/brand-doc')).json()).text).toBe('Focused writing.');
+});

@@ -24,7 +24,7 @@ export function ProjectNode({ id, data, selected }: NodeProps<ProjectNodeType>) 
         <CardActions id={id} what={`the ${name} card (the folder itself stays)`} />
       </header>
       <input className="project__path nodrag" aria-label="Project folder" spellCheck={false} placeholder="/full/path/to/your/project" value={data.path} onChange={(event) => updateNodeData(id, { path: event.target.value })} />
-      <div className="project__log nodrag nowheel" ref={log}>
+      <div className="project__log nodrag nowheel" data-tail ref={log}>
         {lines.length === 0
           ? <p className="chat__empty">Set the folder, wire a person to it, then ask them to build or fix something. A free coding agent works inside this folder only, after your OK.</p>
           : lines.map((line, index) => <div key={index} className={line.startsWith('»') ? 'project__say' : undefined}>{line}</div>)}

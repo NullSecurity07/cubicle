@@ -6,6 +6,8 @@ import { Chat, type Status } from './Chat';
 import { CardActions, Frame } from './Frame';
 import { MemoryPanel } from './MemoryPanel';
 import { PersonForm } from './PersonForm';
+import { RoomSide } from './RoomSide';
+import { useFocused } from '../overlay/store';
 
 export function RoomNode({ id, data, selected }: NodeProps<RoomNodeType>) {
   const [status, setStatus] = useState<Status>('idle');
@@ -13,6 +15,7 @@ export function RoomNode({ id, data, selected }: NodeProps<RoomNodeType>) {
   const [editing, setEditing] = useState(false);
   const [remembering, setRemembering] = useState(false);
   const { updateNodeData } = useReactFlow();
+  const focused = useFocused(id);
   const setup = editing || !data.name;
   const doing = status === 'waiting' ? 'needs your OK' : status === 'thinking' ? 'working…' : status === 'error' ? 'could not reply' : lastAsk ?? 'Ready when you are';
 
@@ -37,8 +40,11 @@ export function RoomNode({ id, data, selected }: NodeProps<RoomNodeType>) {
       {remembering && <MemoryPanel id={id} name={data.name} onClose={() => setRemembering(false)} />}
       {setup && <PersonForm person={data} onCancel={data.name ? () => setEditing(false) : undefined} onSave={(next) => { updateNodeData(id, next); setEditing(false); }} />}
       {/* The chat stays mounted under the form, so a reply in flight survives an edit. */}
-      <div className="card__body" hidden={setup}>
-        {data.name && <Chat id={id} name={data.name} role={data.role} onStatus={(next, ask) => { setStatus(next); setLastAsk(ask); }} />}
+      <div className="card__row" hidden={setup}>
+        <div className="card__body">
+          {data.name && <Chat id={id} name={data.name} role={data.role} onStatus={(next, ask) => { setStatus(next); setLastAsk(ask); }} />}
+        </div>
+        {focused && data.name && <RoomSide id={id} name={data.name} status={status} onEditMemory={() => setRemembering(true)} />}
       </div>
     </Frame>
   );

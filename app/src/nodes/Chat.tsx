@@ -18,6 +18,7 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
   const [files, setFiles] = useState<Attachment[]>([]);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const picker = useRef<HTMLInputElement>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
   const flushStage = useFlushStage();
   const log = useRef<HTMLDivElement>(null);
   const stop = useRef<AbortController>(null);
@@ -32,6 +33,8 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
   // A colleague consulted this person: the question and the answer were written to this room by the server.
   useEffect(() => listen('effect', (effect) => { if (effect.kind === 'chat-changed' && effect.id === id) getChat(id).then(setMessages).catch(() => {}); }), [id]);
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [messages, live]);
+  // Editing an earlier message happens in the ask box: the caret goes there, and Escape there cancels the edit.
+  useEffect(() => { if (editing) box.current?.focus(); }, [editing]);
 
   // `again` re-asks an earlier message: it and everything after it leave the conversation first (kept in the trash).
   async function send(again?: { replace: string; text: string; attachments?: Attachment[] }) {
@@ -113,7 +116,7 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
 
   return (
     <>
-      <div className="chat nodrag nowheel" ref={log} onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
+      <div className="chat nodrag nowheel" data-tail ref={log} onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
         {messages.length === 0 && !live && <p className="chat__empty">Ask {name} anything about {role.toLowerCase()}.</p>}
         {messages.map((message) => (
           <Message
@@ -142,7 +145,7 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
         <button type="button" className="ask__attach" aria-label="Attach a file" title="Attach a file (or drop one here)" onClick={() => picker.current?.click()}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.500 7.500 7.300 11.700a2.400 2.400 0 0 1-3.400-3.400l5-5a1.600 1.600 0 0 1 2.300 2.300L6.400 10.400a.800.800 0 0 1-1.200-1.200L9 5.500" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
-        <textarea rows={1} value={draft} placeholder={`Ask ${name}…`} onChange={(event) => setDraft(event.target.value)} onKeyDown={onKeyDown} />
+        <textarea ref={box} rows={1} value={draft} placeholder={`Ask ${name}…`} onChange={(event) => setDraft(event.target.value)} onKeyDown={onKeyDown} {...(editing ? { 'data-holds-escape': '' } : {})} />
         {thinking ? (
           <button type="button" className="ask__stop" aria-label="Stop" title="Stop" onClick={() => stop.current?.abort()}>
             <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.500" width="7" height="7" rx="1.5" fill="currentColor" /></svg>
