@@ -6,6 +6,7 @@ import { Approval } from './Approval';
 
 const VERBS: Record<string, [doing: string, done: string]> = {
   read_doc: ['Reading', 'Read'], write_doc: ['Rewriting', 'Rewrote'], append_doc: ['Adding to', 'Added to'], create_doc: ['Creating', 'Created'],
+  remember: ['Remembering', 'Remembered'], propose_task: ['Proposing', 'Proposed'], list_tasks: ['Reading', 'Read'],
   ask_person: ['Asking', 'Asked'], delegate_coding: ['Coding:', 'Coded:'],
   send_email: ['Sending email to', 'Emailed'], read_inbox: ['Checking', 'Checked'], run_code: ['Running', 'Ran'],
   web_search: ['Searching', 'Searched'], web_fetch: ['Reading', 'Read'], browse: ['Browsing', 'Browsed'],
@@ -21,6 +22,7 @@ function Chip({ tool }: { tool: ToolEvent }) {
   const many = (tool.args.queries ?? tool.args.urls) as unknown;
   const subject = Array.isArray(many) ? (many.length === 1 ? String(many[0]) : `${many.length} ${tool.args.queries ? 'queries' : 'pages'} at once`)
     : tool.name === 'browse' ? [tool.args.action, tool.args.url ?? tool.args.ref].filter(Boolean).join(' ')
+    : tool.name === 'remember' ? String(tool.args.fact ?? '').slice(0, 60) : tool.name === 'list_tasks' ? 'the board'
     : tool.name === 'ask_person' ? String(tool.args.name ?? '')
     : tool.name === 'delegate_coding' ? String(tool.args.task ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'run_code' ? `${tool.args.language ?? ''} code` : tool.name === 'read_inbox' ? 'the mailbox'

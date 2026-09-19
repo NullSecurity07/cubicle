@@ -15,6 +15,8 @@ export const getModels = () => request<ModelInfo[]>('/api/models');
 export const getBrowser = (id: string) => request<{ port: number; url: string }>(`/api/browsers/${id}`);
 export const answerApproval = (id: string, ok: boolean, args?: Record<string, string>) => request(`/api/approvals/${encodeURIComponent(id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok, args }) });
 export const restartBrowser = (id: string) => request<{ port: number; url: string }>(`/api/browsers/${id}/restart`, { method: 'POST' });
+export const getMemory = (roomId: string) => request<{ notes: string; summary: string }>(`/api/rooms/${roomId}/memory`);
+export const putMemory = (roomId: string, memory: { notes: string; summary: string }) => request(`/api/rooms/${roomId}/memory`, put(memory));
 export const getChat = (roomId: string) => request<ChatMessage[]>(`/api/rooms/${roomId}/chat`);
 
 // Posts one message and feeds every server-sent event to onEvent until the stream ends. Aborting the signal stops the reply.

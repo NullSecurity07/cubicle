@@ -284,3 +284,9 @@ div.msg--assistant:has(.approval) { align-self: stretch; max-width: none; }
 .taskview__run { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow-y: auto; font-size: 13px; line-height: 1.5; scrollbar-width: thin; }
 .taskview__log { display: flex; flex-direction: column; gap: 2px; font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
 .taskview__result { padding-top: 8px; border-top: 1px solid var(--card-border); user-select: text; }
+
+/* Memory panel: covers the chat the way the person form does. */
+.memory { position: absolute; inset: 52px 0 0; z-index: 1; background: rgba(14, 15, 19, 0.97); border-radius: 0 0 inherit inherit; }
+.memory__lead { margin: 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.memory textarea { flex: 1; min-height: 60px; font-size: 12.5px; line-height: 1.5; }
+.memory label { flex: 1; min-height: 0; }

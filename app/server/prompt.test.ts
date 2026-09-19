@@ -29,11 +29,15 @@ describe('prompt', () => {
     expect(system.content).toContain('Do not invent such facts');
   });
 
-  it('keeps only the most recent turns', () => {
-    const history = Array.from({ length: 60 }, (_, i) => ({ id: `m${i}`, role: 'user' as const, text: `m${i}`, at: i }));
-    const messages = buildMessages(stage, 'build', docs, history);
-    expect(messages).toHaveLength(1 + 24);
-    expect(messages.at(-1)!.content).toBe('m59');
+  it('keeps the recent talk that fits the budget, and carries the person\'s memory', () => {
+    const history = Array.from({ length: 60 }, (_, i) => ({ id: `m${i}`, role: 'user' as const, text: `message ${i} ${'x'.repeat(480)}`, at: i }));
+    const messages = buildMessages(stage, 'build', docs, history, [], {}, { notes: '- The founder prefers short emails.', summary: 'Launch moved to 14 October.' });
+    expect(messages.length).toBeGreaterThan(8);
+    expect(messages.length).toBeLessThan(14);
+    expect(messages.at(-1)!.content).toContain('message 59');
+    expect(messages[0].content).toContain('The founder prefers short emails.');
+    expect(messages[0].content).toContain('Launch moved to 14 October.');
+    expect(buildMessages(stage, 'build', docs, [])[0].content).not.toContain('Your memory');
   });
 
   it('replays an earlier tool call the way it happened, with a short result', () => {

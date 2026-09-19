@@ -1,4 +1,5 @@
 import { STANCE, type ChatMessage, type Stage } from '../shared/model.ts';
+import { recent, type Memory } from './memory.ts';
 
 type CallEcho = { id: string; type: 'function'; function: { name: string; arguments: string }; extra_content?: unknown };
 export type ModelMessage =
@@ -6,7 +7,6 @@ export type ModelMessage =
   | { role: 'assistant'; content: string; tool_calls?: CallEcho[] }
   | { role: 'tool'; tool_call_id: string; content: string };
 
-const MAX_TURNS = 24;
 const PAST_RESULT_CHARS = 300;
 
 // A wire grants access, whichever way it was drawn: of the given cards, the ones wired to this room.
@@ -39,7 +39,7 @@ function past(message: ChatMessage): ModelMessage[] {
   ];
 }
 
-export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}): ModelMessage[] {
+export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}, memory?: Memory): ModelMessage[] {
   const room = stage.rooms.find((candidate) => candidate.id === roomId);
   if (!room) throw new Error(`unknown room: ${roomId}`);
 
@@ -74,6 +74,9 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
         + 'then say in one or two lines what changed.'
       : '',
     reach.length ? `Also connected to your room:\n${reach.join('\n')}` : '',
+    memory && (memory.notes.trim() || memory.summary.trim())
+      ? `Your memory (the founder can read and edit it).${memory.notes.trim() ? `\nNotes you kept:\n${memory.notes.trim()}` : ''}${memory.summary.trim() ? `\nEarlier conversation, in short:\n${memory.summary.trim()}` : ''}`
+      : '',
     team.length ? `Colleagues connected to your room. Ask one with ask_person when their field decides the answer; say in your reply what they told you.\n${team.join('\n')}` : '',
     pinned.length ? `Company documents every person reads:\n\n${pinned.join('\n\n')}` : '',
     docsWired.length
@@ -81,5 +84,5 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
       : pinned.length ? '' : 'No documents are connected to your room, so you have no written background on the product yet.',
   ].filter(Boolean).join('\n\n');
 
-  return [{ role: 'system', content: system }, ...history.slice(-MAX_TURNS).flatMap(past)];
+  return [{ role: 'system', content: system }, ...recent(history).flatMap(past)];
 }

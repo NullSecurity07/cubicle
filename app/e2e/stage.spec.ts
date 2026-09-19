@@ -426,3 +426,18 @@ test('the board: a person proposes, the founder accepts, assigns and runs; an ou
   await page.reload();
   await expect(page.locator('.react-flow__node-board').getByRole('region', { name: 'Review' }).getByRole('button')).toHaveCount(2);
 });
+
+test('a person keeps notes the founder can read and rewrite, and sees them in later turns', async ({ page }) => {
+  await send(page, 'build', '/tool remember {"fact":"The founder wants weekly releases."}');
+  const room = node(page, 'build');
+  await expect(room.locator('.chip--ok summary').last()).toHaveText('Remembered The founder wants weekly releases.');
+  await expect(room.locator('.status--idle')).toBeVisible();
+  await room.hover();
+  await room.getByRole('button', { name: 'Memory' }).click();
+  const panel = room.getByRole('dialog', { name: 'What Dev remembers' });
+  await expect(panel.getByLabel('Notes')).toHaveValue('- The founder wants weekly releases.');
+  await panel.getByLabel('Notes').fill('- The founder wants releases every two weeks.');
+  await panel.getByRole('button', { name: 'Save' }).click();
+  await expect(panel).toHaveCount(0);
+  expect((await (await page.request.get('/api/rooms/build/memory')).json()).notes).toBe('- The founder wants releases every two weeks.');
+});

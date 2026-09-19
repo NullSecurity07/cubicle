@@ -7,6 +7,7 @@ import { fakeCoder, opencodeCoder } from './coder.ts';
 import { createBrowser, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
+import { createMemory } from './memory.ts';
 import { buildMessages, colleagueIds, readableDocIds } from './prompt.ts';
 import { complete, fakeClient, promptSize, realClients } from './providers.ts';
 import { route } from './router.ts';
@@ -17,6 +18,7 @@ import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
 import { outwardTools } from './tools/outward.ts';
 import { projectTools } from './tools/project.ts';
+import { memoryTools } from './tools/remember.ts';
 import { taskTools } from './tools/tasks.ts';
 import { teamTools, type Consult } from './tools/team.ts';
 import { browserSession, webTools } from './tools/web.ts';
@@ -35,6 +37,13 @@ const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner) : createBrowser(realRunner(), process.env.STAGE_NO_READER === '1' ? null : jinaReader);
 const approvals = createApprovals();
+// Summaries go to a model with room to spare: the last configured providers are the large free ones.
+const memory = createMemory(store, async (messages) => {
+  const { order } = route([...clients].reverse(), usage, { promptChars: promptSize(messages), tools: false });
+  const reply = await complete(messages, { onToken: () => {} }, order);
+  usage.record(reply.client.name, reply.usage, reply.quota);
+  return reply.text;
+});
 const boards = createBoards(workspace);
 
 // What one person's turn is built from: their readable docs, their own history, and the recent talk of wired colleagues.
@@ -44,7 +53,7 @@ async function promptFor(stage: Stage, roomId: string, toolNames: string[], fres
   const colleagues: Record<string, Awaited<ReturnType<typeof store.readChat>>> = {};
   for (const id of colleagueIds(stage, roomId)) colleagues[id] = await store.readChat(id);
   // A board task starts from a clean slate: the person, their documents and colleagues, not their chat.
-  return buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues);
+  return buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues, await memory.read(roomId));
 }
 
 // A consult: the question lands in the colleague's room under the asker's name, they answer once without tools, and both are kept there.
@@ -60,7 +69,7 @@ const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
   await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
   return reply.text;
 };
-const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards)];
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...memoryTools(memory)];
 const runs = createRuns({ boards, store, tools, clients, usage, approvals, promptFor, busy, notify: fake ? () => {} : desktopNotify });
 setInterval(() => { void runs.tick().catch(() => {}); }, 30_000).unref();
 
@@ -113,6 +122,8 @@ async function chat(roomId: string, text: string, res: ServerResponse) {
     };
     if (reply.text.trim() || reply.tools.length) await store.appendChat(roomId, message);
     send({ done: true, message });
+    // Older talk folds into the person's memory after the reply, never in the founder's way.
+    void memory.fold(roomId).catch(() => {});
   } catch (error) {
     send({ error: (error as Error).message });
   } finally {
@@ -176,6 +187,9 @@ createServer(async (req, res) => {
     if (doc && req.method === 'GET') return json(res, 200, { text: await store.readDoc(doc) });
     if (doc && req.method === 'PUT') { await store.writeDoc(doc, String((await body(req)).text ?? '')); return json(res, 200, { ok: true }); }
     if (path === '/api/models' && req.method === 'GET') return json(res, 200, usage.info(clients));
+    const remembered = /^\/api\/rooms\/([^/]+)\/memory$/.exec(path)?.[1];
+    if (remembered && req.method === 'GET') { const { notes, summary } = await memory.read(remembered); return json(res, 200, { notes, summary }); }
+    if (remembered && req.method === 'PUT') { await memory.write(remembered, await body(req)); return json(res, 200, { ok: true }); }
     if (room && req.method === 'GET') return json(res, 200, await store.readChat(room));
     if (room && req.method === 'POST') {
       const text = String((await body(req)).text ?? '').trim();

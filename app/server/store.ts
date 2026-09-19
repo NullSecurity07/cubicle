@@ -1,6 +1,7 @@
 import { copyFile, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { newMessageId, seedDocs, seedStage, type ChatMessage, type Stage } from '../shared/model.ts';
+import type { Memory } from './memory.ts';
 
 export type Store = ReturnType<typeof createStore>;
 
@@ -13,6 +14,7 @@ export function createStore(dir: string) {
   const stagePath = join(dir, 'stage.json');
   const docPath = (id: string) => join(dir, 'docs', `${safe(id)}.md`);
   const chatPath = (id: string) => join(dir, 'rooms', `${safe(id)}.json`);
+  const memoryPath = (id: string) => join(dir, 'rooms', `${safe(id)}.memory.json`);
   const filesDir = resolve(dir, 'files');
   let queue: Promise<unknown> = Promise.resolve();
   const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
@@ -74,7 +76,7 @@ export function createStore(dir: string) {
       const before = await loadStage();
       const gone = (was: { id: string }[], now: { id: string }[]) => was.filter((card) => !now.some((kept) => kept.id === card.id));
       const moves = [
-        ...gone(before.rooms, stage.rooms).map((room) => chatPath(room.id)),
+        ...gone(before.rooms, stage.rooms).flatMap((room) => [chatPath(room.id), memoryPath(room.id)]),
         ...gone(before.docs, stage.docs).map((doc) => docPath(doc.id)),
         ...gone(before.cards ?? [], stage.cards ?? []).map((card) => join(dir, 'browsers', card.id)),
       ];
@@ -107,6 +109,11 @@ export function createStore(dir: string) {
       messages.push(message);
       await write(path, JSON.stringify(messages, null, 2));
     },
+    async readMemory(id: string): Promise<Memory> {
+      const saved = JSON.parse((await read(memoryPath(id))) ?? '{}') as Partial<Memory>;
+      return { notes: saved.notes ?? '', summary: saved.summary ?? '', upTo: saved.upTo };
+    },
+    writeMemory: (id: string, memory: Memory) => write(memoryPath(id), JSON.stringify(memory, null, 2)),
     async listFiles(): Promise<string[]> {
       await queue;
       const entries = await readdir(filesDir, { recursive: true, withFileTypes: true }).catch(() => []);
