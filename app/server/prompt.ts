@@ -92,6 +92,9 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
         + 'something unless that tool call ran in this turn and succeeded. When a request has several parts, make every tool call first, '
         + 'then say in one or two lines what changed.'
       : '',
+    toolNames.includes('recall')
+      ? 'Only the recent part of this conversation is in front of you. When the founder refers to something you cannot see here (an earlier talk, a file, a fact about customers or the company), look it up with recall before you answer or say you do not know.'
+      : '',
     toolNames.includes('propose_decision')
       ? 'Decisions are the founder\'s, and they are kept on record. When the founder asks you to lay out, frame or prepare a decision, or your work waits on a choice that is theirs, '
         + 'your first step is a propose_decision call (the context with the facts you have, two to five options, the one you would pick and why). A decision written only into the chat is lost: '

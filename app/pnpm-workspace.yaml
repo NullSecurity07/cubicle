@@ -1,4 +1,7 @@
 allowBuilds:
   agent-browser: false
   esbuild: true
+  # The embedding runtime ships its Linux binaries in the package; its install script only fetches GPU extras.
+  onnxruntime-node: false
+  protobufjs: false
   sharp: true

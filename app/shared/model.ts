@@ -46,6 +46,10 @@ export type Decision = {
   context: string; options: string[]; recommendation?: string; chosen?: string; why?: string; effect?: string; review?: string;
 };
 
+// One thing recall found. `kind` and `id` say where it lives (a doc, a room's chat or memory, a decision, a shared file,
+// a link card's page); `roomId` is set for what belongs to one person.
+export type Hit = { kind: 'doc' | 'chat' | 'memory' | 'decision' | 'file' | 'link'; id: string; title: string; text: string; score: number; roomId?: string; at?: number };
+
 export const isHeaded = (card?: Card) => card?.kind === 'browser' && !!card.headed;
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };

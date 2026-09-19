@@ -13,6 +13,9 @@ import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
 import { createMemory } from './memory.ts';
+import { TEXT_FILE, gatherPieces } from './gather.ts';
+import { createRecall, localEmbedder, wordEmbedder } from './recall.ts';
+import { recallTools } from './tools/recall.ts';
 import { recent } from './memory.ts';
 import { buildMessages, colleagueIds, readableDocIds, wired, type Attached } from './prompt.ts';
 import { complete, fakeClient, promptSize, realClients } from './providers.ts';
@@ -62,6 +65,10 @@ boards.onChange(() => { void attention.refresh(); });
 const decisions = createDecisions(workspace);
 attention.source(decisionAttention(decisions));
 decisions.onChange(() => { void attention.refresh(); });
+// Search by meaning over everything the workspace holds. The model runs inside this process; its file is fetched once.
+const recall = createRecall({ dir: workspace, embed: fake ? wordEmbedder : localEmbedder(resolve(root, 'app/.cache/recall')), gather: gatherPieces(store, decisions, (roomId) => memory.read(roomId)) });
+// Bring the saved vectors up to date shortly after start, so the first search does not wait for it.
+setTimeout(() => { void recall.warm().catch(() => {}); }, 4000).unref();
 // A review date falls due without anything else changing: look once an hour.
 setInterval(() => { void attention.refresh(); }, 3_600_000).unref();
 
@@ -109,7 +116,7 @@ const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
   await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
   return reply.text;
 };
-const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory)];
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory), ...recallTools(recall)];
 const runs = createRuns({ boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify: fake ? () => {} : desktopNotify });
 setInterval(() => { void runs.tick().catch(() => {}); }, 30_000).unref();
 
@@ -133,7 +140,6 @@ async function body(req: IncomingMessage): Promise<any> {
   return text ? JSON.parse(text) : {};
 }
 
-const TEXT_FILE = /\.(txt|md|markdown|csv|tsv|json|ya?ml|xml|html?|css|js|mjs|ts|tsx|jsx|py|rb|go|rs|java|c|h|cpp|sh|sql|log|ini|toml|env)$/i;
 const IMAGE_FILE = /\.(png|jpe?g|webp|gif)$/i;
 const TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml', mp4: 'video/mp4', webm: 'video/webm', pdf: 'application/pdf', csv: 'text/csv', json: 'application/json', md: 'text/markdown' };
 const typeOf = (name: string) => TYPES[name.split('.').pop()?.toLowerCase() ?? ''] ?? (TEXT_FILE.test(name) ? 'text/plain' : 'application/octet-stream');
@@ -226,6 +232,10 @@ createServer(async (req, res) => {
       const answer = await body(req);
       const known = approvals.answer(asked, { ok: answer.ok === true, args: answer.args && typeof answer.args === 'object' ? answer.args : undefined });
       return json(res, known ? 200 : 404, known ? { ok: true } : { error: 'nothing is waiting under that id' });
+    }
+    if (path === '/api/search' && req.method === 'GET') {
+      const hits = await recall.search(new URL(req.url ?? '/', 'http://localhost').searchParams.get('q') ?? '', { top: 12 });
+      return json(res, 200, { hits, mode: recall.mode() });
     }
     if (path === '/api/decisions' && req.method === 'GET') return json(res, 200, await decisions.list());
     if (path === '/api/decisions' && req.method === 'POST') return json(res, 200, await decisions.record(await body(req)));

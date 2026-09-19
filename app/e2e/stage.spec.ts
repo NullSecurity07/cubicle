@@ -755,3 +755,19 @@ test('decisions: a person lays a choice out, only the founder decides, and every
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Decided: Hacker News');
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Our first fifty users came from there.');
 });
+
+test('recall: a person finds by meaning only what their wires let them read; the founder finds everything', async ({ page }) => {
+  await tidy(page);
+  await page.request.put('/api/docs/brand-doc', { data: { text: '# Brand\n\nVoice: calm, plain words, never any hype.\n\nWe sell focus to busy founders.' } });
+
+  // Maya is wired to the brand doc: she finds it. Dev is not: for him it does not exist.
+  await send(page, 'marketing', '/tool recall {"query":"which voice do we write in, calm or hype?"}');
+  await expect(node(page, 'marketing').locator('.chip--ok summary').last()).toContainText('Looked up which voice');
+  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('[Doc: Brand doc]');
+  await send(page, 'build', '/tool recall {"query":"which voice do we write in, calm or hype?"}');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).not.toContainText('Brand doc');
+
+  // The founder's own search covers the whole workspace.
+  const found = await (await page.request.get('/api/search?q=calm%20plain%20words%20hype')).json();
+  expect(found.hits[0]).toMatchObject({ kind: 'doc', id: 'brand-doc' });
+});

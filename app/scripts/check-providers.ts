@@ -11,7 +11,8 @@ const { teamTools } = await import('../server/tools/team.ts');
 const { taskTools } = await import('../server/tools/tasks.ts');
 const { memoryTools } = await import('../server/tools/remember.ts');
 const { decisionTools } = await import('../server/tools/decisions.ts');
-const tools = [...docTools, ...fileTools, ...webTools({} as any), ...outwardTools({ ready: () => true, ways: () => ({}) } as any, '/tmp'), ...projectTools((async () => ({})) as any, []), ...teamTools((async () => '') as any), ...taskTools({} as any), ...memoryTools({} as any), ...decisionTools({} as any)];
+const { recallTools } = await import('../server/tools/recall.ts');
+const tools = [...docTools, ...fileTools, ...webTools({} as any), ...outwardTools({ ready: () => true, ways: () => ({}) } as any, '/tmp'), ...projectTools((async () => ({})) as any, []), ...teamTools((async () => '') as any), ...taskTools({} as any), ...memoryTools({} as any), ...decisionTools({} as any), ...recallTools({} as any)];
 for (const client of realClients()) {
   try { const turn = await client.step([{ role: 'user', content: 'List the shared files with your tool.' }], { tools, onToken: () => {} }); console.log(client.name, 'OK with', tools.length, 'tools ->', turn.calls.map((c: any) => c.name).join(',') || 'text'); }
   catch (error: any) { console.log(client.name, 'ERROR', error.status, String(error.message).slice(0, 200)); }

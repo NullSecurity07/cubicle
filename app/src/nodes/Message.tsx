@@ -9,6 +9,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   ask_person: ['Asking', 'Asked'], delegate_coding: ['Coding:', 'Coded:'],
   send_email: ['Sending email to', 'Emailed'], read_inbox: ['Checking', 'Checked'], run_code: ['Running', 'Ran'],
   web_search: ['Searching', 'Searched'], web_fetch: ['Reading', 'Read'], browse: ['Browsing', 'Browsed'],
+  recall: ['Looking up', 'Looked up'], propose_decision: ['Proposing', 'Proposed'], read_decision: ['Reading', 'Read'],
   list_files: ['Looking at', 'Looked at'], read_file: ['Reading', 'Read'], write_file: ['Saving', 'Saved'],
 };
 const compact = (count: number) => (count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`);
@@ -22,7 +23,7 @@ function Chip({ tool }: { tool: ToolEvent }) {
   const subject = Array.isArray(many) ? (many.length === 1 ? String(many[0]) : `${many.length} ${tool.args.queries ? 'queries' : 'pages'} at once`)
     : tool.name === 'browse' ? [tool.args.action, tool.args.url ?? tool.args.ref].filter(Boolean).join(' ')
     : tool.name === 'remember' ? String(tool.args.fact ?? '').slice(0, 60) : tool.name === 'list_tasks' ? 'the board'
-    : tool.name === 'ask_person' ? String(tool.args.name ?? '')
+    : tool.name === 'ask_person' ? String(tool.args.name ?? '') : tool.name === 'recall' ? String(tool.args.query ?? '').slice(0, 60)
     : tool.name === 'delegate_coding' ? String(tool.args.task ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'run_code' ? `${tool.args.language ?? ''} code` : tool.name === 'read_inbox' ? 'the mailbox'
     : String(tool.args.to ?? tool.args.doc ?? tool.args.title ?? tool.args.path ?? (tool.name === 'list_files' ? 'the shared files' : ''));
