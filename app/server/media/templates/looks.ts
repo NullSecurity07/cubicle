@@ -98,9 +98,10 @@ export function styleSheet(shape: Shape, look: Look, brand?: Brand): string {
   const { scale, text, margin, lift, caps } = FORMATS[shape];
   const paint = paintOf(look, brand);
   const sketch = look === 'sketch';
-  // A product's own typeface is used when its file could be copied out of the product; otherwise its name is asked for
-  // first and the film's own face stands behind it, so a missing font is a different face, never a fallback serif.
-  const family = paint.font ? `${JSON.stringify(paint.font)}, 'Studio Sans', sans-serif` : "'Studio Sans', sans-serif";
+  // A product's own typeface is used only when its file could be copied out of the product. Naming a face the page
+  // cannot load is not a fallback, it is a lie the renderer calls out: nothing would be fetched, nothing would
+  // change, and the check would carry an error about it for the rest of the film's life.
+  const family = brand?.fontFile && paint.font ? `${JSON.stringify(paint.font)}, 'Studio Sans', sans-serif` : "'Studio Sans', sans-serif";
   return `
 @font-face { font-family: 'Studio Sans'; src: url('vendor/inter.woff2') format('woff2-variations'); font-weight: 100 900; font-style: normal; font-display: block; }
 ${brand?.fontFile ? `@font-face { font-family: ${JSON.stringify(paint.font ?? 'Brand')}; src: url('vendor/${brand.fontFile}'); font-weight: 100 900; font-style: normal; font-display: block; }\n` : ''}* { margin: 0; padding: 0; box-sizing: border-box; }
@@ -184,36 +185,52 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
 .step { flex: none; font-size: calc(40px * var(--t)); font-weight: 700; line-height: 1.1; color: ${sketch ? paint.ink : paint.signal};
   font-variant-numeric: tabular-nums; min-width: 1.6em; }
 .list--steps li { align-items: baseline; gap: calc(26px * var(--s)); }
-/* A screenshot in the thing it was taken on. The mockups are drawn here, in the page, so nothing is fetched and every
-   frame of the slow push into the screen is drawn rather than resampled. */
-.frame--device { justify-content: center; align-items: center; gap: calc(var(--margin) * 0.34);
-  padding: calc(var(--margin) * 0.5) calc(var(--margin) * 0.5) calc(var(--margin) * 0.55); overflow: hidden; }
-.frame--device .device { min-height: 0; }
-.frame--device .heading, .frame--device .lead { text-align: center; max-width: 16em; padding-bottom: 0.14em; flex: none; }
-.device { position: relative; flex: 0 1 auto; display: flex; align-items: center; justify-content: center; }
+/* A screenshot in the thing it was taken on, and the thing it was taken on is the scene: the mockup takes most of
+   the frame's width, its words sit over it on a chip rather than under it in a caption, and the shot pushes slowly
+   into the screen so a still page has somewhere to go. The mockups are drawn here, in the page, so nothing is
+   fetched and every frame of the push is drawn rather than resampled.
+   The variable --devroom is the height the frame needs for all that is not the device; captions claim their own. */
+:root { --devroom: 78px; }
+#root.has-captions { --devroom: calc(var(--caps) + 80px); }
+.frame--device { justify-content: center; align-items: center; gap: 0; padding: 0; overflow: visible; }
+.device { position: relative; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+/* The floor: a soft shadow pooled under the device and a faint wash of the ground rising past it. */
+.device::after { content: ''; position: absolute; left: 50%; bottom: calc(-26px * var(--s)); transform: translateX(-50%);
+  width: 108%; height: calc(54px * var(--s)); border-radius: 50%; background: rgba(0, 0, 0, ${sketch ? '0.14' : '0.42'}); filter: blur(calc(26px * var(--s))); z-index: -1; }
+.frame--device::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 34%; pointer-events: none;
+  background: linear-gradient(to top, rgba(${paint.scrim}, ${sketch ? '0' : '0.55'}) 0%, rgba(${paint.scrim}, 0) 100%); }
 .device__glass { position: relative; overflow: hidden; background: #0B0E12; }
-.device__glass img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 0%; transform-origin: 50% 0%; }
-.device--phone .device__glass { height: min(calc(786px * var(--s)), 62vh); aspect-ratio: 9 / 18.6; width: auto; border-radius: calc(46px * var(--s));
-  box-shadow: 0 0 0 calc(12px * var(--s)) #23272E, 0 0 0 calc(15px * var(--s)) #3A414B, 0 calc(40px * var(--s)) calc(80px * var(--s)) rgba(0,0,0,0.42); }
+.device__glass img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 0%; transform-origin: 50% 30%; }
+/* A phone is bound by the frame's height; a laptop and a browser by its width, then cut back if that would not fit. */
+.device--phone .device__glass { height: min(calc(100vh - var(--devroom)), calc(78vw * 2.067)); aspect-ratio: 9 / 18.6; width: auto;
+  border-radius: calc(46px * var(--s));
+  box-shadow: 0 0 0 calc(12px * var(--s)) #23272E, 0 0 0 calc(15px * var(--s)) #3A414B, 0 calc(34px * var(--s)) calc(70px * var(--s)) rgba(0,0,0,0.44); }
 .device--phone .device__notch { position: absolute; top: calc(14px * var(--s)); left: 50%; transform: translateX(-50%);
   width: calc(118px * var(--s)); height: calc(30px * var(--s)); border-radius: 999px; background: #14171C; }
-.device--laptop .device__glass { width: min(calc(1000px * var(--s)), 74vw, 100vh); aspect-ratio: 16 / 10; height: auto; border-radius: calc(12px * var(--s));
+.device--laptop .device__glass { width: min(84vw, calc((100vh - var(--devroom)) * 1.6)); aspect-ratio: 16 / 10; height: auto;
+  border-radius: calc(12px * var(--s));
   box-shadow: 0 0 0 calc(13px * var(--s)) #23272E, 0 0 0 calc(16px * var(--s)) #3A414B; }
-.device--laptop .device__foot { position: absolute; left: 50%; bottom: calc(-26px * var(--s)); transform: translateX(-50%);
-  width: calc(1180px * var(--s)); height: calc(20px * var(--s)); border-radius: 0 0 calc(14px * var(--s)) calc(14px * var(--s));
-  background: linear-gradient(#2C313A, #1B1F25); box-shadow: 0 calc(26px * var(--s)) calc(50px * var(--s)) rgba(0,0,0,0.38); }
-.device--browser .device__chrome { width: min(calc(1060px * var(--s)), 78vw, 96vh); border-radius: calc(16px * var(--s)); overflow: hidden;
+.device--laptop .device__foot { position: absolute; left: 50%; bottom: calc(-22px * var(--s)); transform: translateX(-50%);
+  width: 104%; height: calc(18px * var(--s)); border-radius: 0 0 calc(14px * var(--s)) calc(14px * var(--s));
+  background: linear-gradient(#2C313A, #1B1F25); }
+.device--browser .device__chrome { width: fit-content; max-width: 86vw; border-radius: calc(16px * var(--s)); overflow: hidden;
   box-shadow: 0 calc(34px * var(--s)) calc(74px * var(--s)) rgba(0,0,0,0.40); }
 .device--browser .device__bar { display: flex; align-items: center; gap: calc(10px * var(--s)); height: calc(52px * var(--s));
   padding: 0 calc(20px * var(--s)); background: #2A2F37; }
-.device--browser .device__dot { width: calc(14px * var(--s)); height: calc(14px * var(--s)); border-radius: 999px; background: #4A515C; }
+.device--browser .device__dot { flex: none; width: calc(14px * var(--s)); height: calc(14px * var(--s)); border-radius: 999px; background: #4A515C; }
 .device--browser .device__pill { flex: 1; margin-left: calc(16px * var(--s)); height: calc(28px * var(--s)); border-radius: 999px;
   background: #1D2127; color: #8C95A1; font-size: calc(16px * var(--s)); line-height: calc(28px * var(--s)); padding: 0 calc(16px * var(--s)); overflow: hidden; white-space: nowrap; }
-.device--browser .device__glass { width: 100%; aspect-ratio: 16 / 9.2; height: auto; border-radius: 0; }
-/* A moving picture fills the frame from behind everything else: it is an element of the film in its own right, so
-   the renderer can own its playback, and the words of its scene are drawn over it. */
-.reel { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%; transform-origin: 50% 50%; background: ${paint.ground}; }
-.reel--face { object-position: 50% 30%; transform-origin: 50% 30%; }
+.device--browser .device__glass { height: min(calc(86vw / 1.739), calc(100vh - var(--devroom) - calc(52px * var(--s)))); aspect-ratio: 16 / 9.2; width: auto; border-radius: 0; }
+/* The scene's words go on the device, not under it: one small chip in the corner of the frame, out of the way of
+   whatever the screenshot is showing. */
+/* The chip sits in the floor under the device, where the ground is darkest and nothing is happening — except in a
+   captioned film, where the foot of the frame is already spoken for and it goes to the head instead. */
+.chip { position: absolute; bottom: calc(var(--margin) * 0.5); left: calc(var(--margin) * 0.62); z-index: 2;
+  padding: calc(10px * var(--t)) calc(20px * var(--t)); border-radius: 999px;
+  background: rgba(${paint.scrim}, ${sketch ? '0.86' : '0.82'}); backdrop-filter: blur(calc(8px * var(--s)));
+  border: 1px solid ${paint.quiet}44; color: ${paint.ink};
+  font-size: calc(26px * var(--t)); font-weight: 600; letter-spacing: -0.008em; max-width: 72%; }
+#root.has-captions .chip { top: calc(var(--margin) * 0.55); bottom: auto; }
 /* A person talking to camera, or a generated clip, fills the frame and takes the words over it. */
 .frame--presenter { justify-content: flex-end; padding: 0; gap: 0; }
 .presenter { position: absolute; inset: 0; overflow: hidden; }

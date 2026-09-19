@@ -154,7 +154,7 @@ ${styleSheet(film.shape, film.look, film.brand)}
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-start="0" data-width="${width}" data-height="${height}" data-duration="${total}">
+    <div id="root"${film.captions ? ' class="has-captions"' : ''} data-composition-id="main" data-start="0" data-width="${width}" data-height="${height}" data-duration="${total}">
 ${reels.length ? `${reels.join('\n')}\n` : ''}${sections.join('\n')}
 ${sounds.join('\n')}
     </div>

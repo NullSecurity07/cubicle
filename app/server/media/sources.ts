@@ -151,4 +151,7 @@ export async function readProject(dir: string): Promise<Product> {
 // The screens a product actually has, as pictures. `scrolls` is how far down the page each shot is taken from, so a
 // film shows the top of the page and then what is under it rather than the same hero three times.
 export type Screens = { name: string; bytes: Buffer; what: string }[];
-export const VIEWPORTS = { desktop: { width: 1440, height: 900 }, mobile: { width: 420, height: 900 } };
+// Bigger than the frame will ever show them, because a device scene pushes into the screenshot: `agent-browser` has
+// no device-scale-factor of its own, so the only way to keep a 1.35x push sharp is to photograph more pixels than
+// the film needs. A desktop page is still laid out as a desktop page at this width, and 560 is still a phone.
+export const VIEWPORTS = { desktop: { width: 1920, height: 1200 }, mobile: { width: 560, height: 1240 } };

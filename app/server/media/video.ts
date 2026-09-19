@@ -497,8 +497,12 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // own footage are the slow part, and none of them waits on another.
         await Promise.all(spec.scenes.map(async (scene, index) => {
           const shot = shots[index];
-          // Where a named asset really is: in this job's assets already, or still out in the shared files.
-          const named = scene.asset ? files.get(scene.asset) : undefined;
+          // Where a named asset really is: in this job's assets already, or still out in the shared files. A phone film
+          // wants the phone view of a page, whichever one the storyboard happened to name.
+          const wanted = scene.layout === 'device' && shape === 'tall' && scene.asset?.includes('-desktop-')
+            ? (files.has(scene.asset.replace('-desktop-', '-mobile-')) ? scene.asset.replace('-desktop-', '-mobile-') : scene.asset)
+            : scene.asset;
+          const named = wanted ? files.get(wanted) : undefined;
           const source = named ? (named.where === 'job' ? join(at, 'assets', named.file) : deps.fileOf?.(named.file) ?? named.file) : '';
           // A screenshot, a dropped picture or the product's own mark: already on disk, only the right shape away.
           if (named && named.kind !== 'video' && named.kind !== 'audio' && (scene.layout === 'device' || scene.layout === 'picture' || scene.layout === 'logo' || scene.layout === 'presenter')) {
@@ -610,7 +614,12 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // A finding here is worth saying out loud, but it is not worth withholding the film over: render either way.
         report('checking the composition…');
         const checked = await run(bin, ['check', '.'], at, () => {}, signal);
-        if (checked.code !== 0) report(`the check was not happy: ${(checked.out.match(/^.*(error|warning|finding).*$/im)?.[0] ?? 'see the render').trim().slice(0, 160)}`);
+        // Say what it disliked, not how many things it disliked: the lint's own line names the element and the reason.
+        if (checked.code !== 0) {
+          const found = checked.out.split('\n').map((line) => line.trim()).find((line) => line.startsWith('✗'))
+            ?? checked.out.match(/^.*(error|warning|finding).*$/im)?.[0]?.trim() ?? 'see the render';
+          report(`the check was not happy: ${found.replace(/^✗\s*/, '').slice(0, 200)}`);
+        }
 
         report(`rendering ${Math.round(total)} seconds…`);
         let last = 0;

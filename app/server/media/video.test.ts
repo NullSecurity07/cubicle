@@ -410,6 +410,11 @@ describe('a film with everything in it', () => {
     expect(brand).toContain('--ground: #0e1117;');
     expect(brand).toContain('--signal: #4e8cff;');
     expect(brand).toContain('font-family: "Satoshi", \'Studio Sans\', sans-serif;');
+    // A face whose file could not be found is not named at all: the renderer cannot supply it, and saying its name
+    // only earns an error in the check.
+    const unnamed = composition({ title: 'One', shape: 'wide', look: 'brand', brand: { colours: ['#0e1117', '#4e8cff'], font: 'Inter Variable' }, shots: shots(film.scenes) });
+    expect(unnamed).toContain("font-family: 'Studio Sans', sans-serif;");
+    expect(unnamed).not.toContain('Inter Variable');
     expect(brand).toContain("src: url('vendor/Satoshi.woff2')");
   });
 });

@@ -109,9 +109,11 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     if (text) parts.push(`<div class="plate"><p class="lead rise">${html(text)}</p></div>`);
     return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'device') {
+    // The device is the scene. Its words go on a chip in the corner rather than under it, so the mockup can have the
+    // frame's whole width and the screenshot can be read.
+    const said = heading || (frameOf(scene, shape) === 'browser' ? '' : text);
+    if (said) parts.push(`<p class="chip rise">${html(said)}</p>`);
     parts.push(device(shot, shape));
-    if (heading) parts.push(`<h2 class="heading rise">${html(heading)}</h2>`);
-    else if (text && frameOf(scene, shape) !== 'browser') parts.push(`<p class="lead quiet rise">${html(text)}</p>`);
     return `<div class="frame frame--device" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'stat') {
     // The ring around the figure is mark enough in the notebook: the line under it stays a straight one, or nothing.
@@ -163,8 +165,9 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
   }
   if (layout === 'device') {
     steps.push(`tl.fromTo("#s${index} .device", { opacity: 0, y: ${Math.round(beat.travel * 1.4)}, scale: 0.965 }, { opacity: 1, y: 0, scale: 1, duration: ${(beat.rise * 1.1).toFixed(2)}, ease: "${beat.ease}" }, ${time(0)});`);
-    // A screenshot is taller than its glass, so the scene slowly reads down the page it was taken of.
-    steps.push(`tl.fromTo("#s${index} .device__glass img", { yPercent: 0, scale: 1 }, { yPercent: -8, scale: 1.05, duration: ${shot.seconds.toFixed(3)}, ease: "none" }, ${time(0)});`);
+    // The whole screen first, then a slow push into the part of it that is doing the work. The origin sits above the
+    // middle, where a page keeps its nav, its heading and its first real content.
+    steps.push(`tl.fromTo("#s${index} .device__glass img", { scale: 1 }, { scale: 1.35, duration: ${shot.seconds.toFixed(3)}, ease: "power1.in" }, ${time(0)});`);
   }
   steps.push(`tl.fromTo("#s${index} .rise", { y: ${Math.round(beat.travel * scale)}, opacity: 0 }, { y: 0, opacity: 1, duration: ${beat.rise.toFixed(2)}, ease: "${beat.ease}", stagger: ${beat.stagger} }, ${time(0)});`);
   // The two halves of a comparison are not one thing: the second arrives after the first has been read.
