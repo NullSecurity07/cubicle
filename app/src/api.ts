@@ -1,4 +1,4 @@
-import type { Attachment, Attention, BoardEvent, Decision, Hit, Mission, ChatEvent, ChatMessage, ModelInfo, Stage, Task, Thread } from '../shared/model';
+import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaEvent, MediaResult, Mission, ChatEvent, ChatMessage, ModelInfo, Stage, Task, Thread } from '../shared/model';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -45,6 +45,17 @@ export const stopTask = (boardId: string, taskId: string) => request(`/api/board
 export function watchBoard(boardId: string, onEvent: (event: BoardEvent) => void) {
   const source = new EventSource(`/api/boards/${boardId}/events`);
   source.onmessage = (message) => onEvent(JSON.parse(message.data) as BoardEvent);
+  return () => source.close();
+}
+
+// A studio card: what it has made, and asking it for more. `hint` says why it cannot work yet, when it cannot.
+export const getMedia = (id: string) => request<Media & { hint: string | null }>(`/api/media/${id}`);
+export const makeMedia = (id: string, ask: { prompt: string } & Record<string, unknown>) => request<MediaResult>(`/api/media/${id}/make`, send('POST', ask));
+export const stopMedia = (id: string) => request(`/api/media/${id}/stop`, send('POST'));
+// One feed for every studio on the stage: a line while something is being made, a nudge after every change.
+export function watchMedia(onEvent: (event: MediaEvent) => void) {
+  const source = new EventSource('/api/media/events');
+  source.onmessage = (message) => onEvent(JSON.parse(message.data) as MediaEvent);
   return () => source.close();
 }
 

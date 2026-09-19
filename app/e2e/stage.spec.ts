@@ -551,6 +551,38 @@ test('a sticky note and a link are context for the person they are wired to', as
   await expect(page.locator('.react-flow__node-link .card__name')).toHaveText('Example Domain');
 });
 
+test('an image studio: the founder draws, a wired person draws, and the card keeps both', async ({ page }) => {
+  await tidy(page);
+  await addCard(page, 'Add image studio');
+  const card = page.locator('.react-flow__node-imagegen');
+  await expect(card).toContainText('Say what you want to see');
+  const id = (await card.getAttribute('data-id'))!;
+
+  // A wire tells the person the studio is theirs to draw in.
+  await page.waitForTimeout(600);
+  await wire(page, 'marketing', id);
+  await expect(await ask(page, 'marketing', 'what can you make')).toContainText('Studios: image.');
+
+  // The founder's own picture: it fills the card, and can be put on the stage as a picture card.
+  await card.getByLabel('What to draw').fill('a quiet desk at dawn');
+  await card.getByLabel('Shape').selectOption('wide');
+  await card.getByRole('button', { name: 'Make' }).click();
+  await expect(card.locator('.studio__result img')).toBeVisible();
+  await expect(card.getByRole('link', { name: 'Download' })).toHaveAttribute('href', /\/api\/files\/media\/.+\.png$/);
+  await expect.poll(async () => (await (await page.request.get(`/api/media/${id}`)).json()).results.length).toBe(1);
+
+  // The person draws there too: the picture shows in their reply and lands on the same card.
+  await send(page, 'marketing', '/tool generate_image {"prompt":"a paper plane over a city"}');
+  const reply = node(page, 'marketing').locator('.msg--assistant').last();
+  await expect(reply.locator('.chip--ok summary').last()).toHaveText('Drew a paper plane over a city');
+  await expect(reply.locator('img.md__media')).toBeVisible();
+  await expect(card.locator('.studio__strip button')).toHaveCount(2);
+
+  await page.reload();
+  await expect(page.locator('.react-flow__node-imagegen .studio__result img')).toBeVisible();
+  await expect(page.locator('.react-flow__node-imagegen').getByLabel('What to draw')).toHaveValue('a quiet desk at dawn');
+});
+
 test('the api answers the app\'s own page and refuses everyone else', async ({ browser }) => {
   // No script token here: this is what the founder's window and any other web page really send.
   const context = await browser.newContext({ baseURL: 'http://localhost:7430', extraHTTPHeaders: {} });

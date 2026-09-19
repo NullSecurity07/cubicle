@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
-import { isHeaded, newMessageId, type Attachment, type ChatEvent, type Stage } from '../shared/model.ts';
+import { MEDIA_KINDS, isHeaded, newMessageId, type Attachment, type ChatEvent, type MediaKind, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
 import { boardAttention, createAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
@@ -13,6 +13,8 @@ import { createBrowser, dnsResolve, fakeRunner, jinaReader, realRunner } from '.
 import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
+import { fakeImages, imageMakers } from './media/image.ts';
+import { createMedia } from './media/jobs.ts';
 import { createMemory } from './memory.ts';
 import { missionsOf } from './missions.ts';
 import { TEXT_FILE, gatherPieces } from './gather.ts';
@@ -23,12 +25,13 @@ import { buildMessages, colleagueIds, readableDocIds, wired, type Attached } fro
 import { complete, fakeClient, promptSize, realClients } from './providers.ts';
 import { route } from './router.ts';
 import { createRuns, desktopNotify } from './runs.ts';
-import { readStatic } from './static.ts';
+import { rangeOf, readStatic } from './static.ts';
 import { createStore } from './store.ts';
 import { threadsOf } from './threads.ts';
 import { decisionTools } from './tools/decisions.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
+import { mediaTools } from './tools/media.ts';
 import { outwardTools } from './tools/outward.ts';
 import { projectTools } from './tools/project.ts';
 import { memoryTools } from './tools/remember.ts';
@@ -64,6 +67,8 @@ const boards = createBoards(workspace);
 const attention = createAttention(workspace);
 attention.source(boardAttention(store, boards));
 boards.onChange(() => { void attention.refresh(); });
+// The studio cards: one job per card, the files in the shared files folder, the rest beside the stage.
+const media = createMedia({ dir: workspace, store, makers: { imagegen: fake ? [fakeImages] : imageMakers() } });
 const decisions = createDecisions(workspace);
 attention.source(decisionAttention(decisions));
 decisions.onChange(() => { void attention.refresh(); });
@@ -93,12 +98,15 @@ async function promptFor(stage: Stage, roomId: string, toolNames: string[], fres
   // What the founder has decided lately: everyone works from it, wired or not.
   const decided = (await decisions.list()).filter((one) => one.status === 'decided').slice(0, 12).map((one) => `- ${one.title}: ${(one.chosen ?? '').replace(/\s+/g, ' ').slice(0, 160)}`);
   const messages = buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(roomId), pages, decided);
-  // Image cards wired to this person ride along with the latest question, for a model that can see.
+  // Image cards wired to this person ride along with the latest question, for a model that can see. An image studio
+  // sends the last picture it made the same way, so a person can look at their own work.
   const pictures: { name: string; url: string }[] = [];
   for (const card of stage.cards ?? []) {
-    if (card.kind !== 'image' || !card.path || !mine.has(card.id)) continue;
-    const bytes = await store.readFileBytes(card.path).catch(() => null);
-    if (bytes && bytes.length <= 4_000_000) pictures.push({ name: card.path, url: `data:${typeOf(card.path)};base64,${bytes.toString('base64')}` });
+    if (!mine.has(card.id)) continue;
+    const file = card.kind === 'image' ? card.path : card.kind === 'imagegen' ? (await media.read(card.id)).results[0]?.path : null;
+    if (!file) continue;
+    const bytes = await store.readFileBytes(file).catch(() => null);
+    if (bytes && bytes.length <= 4_000_000) pictures.push({ name: file, url: `data:${typeOf(file)};base64,${bytes.toString('base64')}` });
   }
   const last = messages.at(-1);
   if (pictures.length && last?.role === 'user') last.images = [...(last.images ?? []), ...pictures.slice(0, 4)];
@@ -118,7 +126,7 @@ const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
   await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
   return reply.text;
 };
-const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory), ...recallTools(recall)];
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media)];
 const runs = createRuns({ boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify: fake ? () => {} : desktopNotify });
 setInterval(() => { void runs.tick().catch(() => {}); }, 30_000).unref();
 
@@ -143,7 +151,7 @@ async function body(req: IncomingMessage): Promise<any> {
 }
 
 const IMAGE_FILE = /\.(png|jpe?g|webp|gif)$/i;
-const TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml', mp4: 'video/mp4', webm: 'video/webm', pdf: 'application/pdf', csv: 'text/csv', json: 'application/json', md: 'text/markdown' };
+const TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml', mp4: 'video/mp4', webm: 'video/webm', wav: 'audio/wav', mp3: 'audio/mpeg', ogg: 'audio/ogg', m4a: 'audio/mp4', pdf: 'application/pdf', csv: 'text/csv', json: 'application/json', md: 'text/markdown' };
 const typeOf = (name: string) => TYPES[name.split('.').pop()?.toLowerCase() ?? ''] ?? (TEXT_FILE.test(name) ? 'text/plain' : 'application/octet-stream');
 
 async function raw(req: IncomingMessage, limit: number): Promise<Buffer> {
@@ -288,6 +296,26 @@ createServer(async (req, res) => {
       if (taskId && action === 'run' && req.method === 'POST') { await runs.start(boardId, taskId); return json(res, 200, { ok: true }); }
       if (taskId && action === 'stop' && req.method === 'POST') { runs.stop(taskId); return json(res, 200, { ok: true }); }
     }
+    // Every studio card on the stage streams through one feed, the way the attention list does.
+    if (path === '/api/media/events' && req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      res.on('close', media.watch((event) => res.write(`data: ${JSON.stringify(event)}\n\n`)));
+      return;
+    }
+    const studio = /^\/api\/media\/([^/]+)(?:\/(make|stop))?$/.exec(path);
+    if (studio) {
+      const [, cardId, action] = studio;
+      const card = (await store.loadStage()).cards?.find((one) => one.id === cardId && (MEDIA_KINDS as readonly string[]).includes(one.kind));
+      if (!card) return json(res, 404, { error: 'unknown studio' });
+      if (!action && req.method === 'GET') return json(res, 200, { ...(await media.read(cardId)), hint: media.ready(card.kind as MediaKind) });
+      if (action === 'make' && req.method === 'POST') {
+        const asked = await body(req);
+        const prompt = String(asked.prompt ?? '').trim();
+        if (!prompt) return json(res, 400, { error: 'say what to make first' });
+        return json(res, 200, await media.make(card, { ...asked, prompt }));
+      }
+      if (action === 'stop' && req.method === 'POST') { media.stop(cardId); return json(res, 200, { ok: true }); }
+    }
     const linked = /^\/api\/links\/([^/]+)$/.exec(path)?.[1];
     if (linked && req.method === 'POST') {
       const card = (await store.loadStage()).cards?.find((one) => one.id === linked);
@@ -329,7 +357,15 @@ createServer(async (req, res) => {
       const bytes = await store.readFileBytes(name).catch(() => null);
       if (!bytes) return json(res, 404, { error: 'no such file' });
       // Files may hold anything a person or a page produced: never let one run as a page of this app.
-      res.writeHead(200, { 'content-type': typeOf(name), 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'x-content-type-options': 'nosniff', 'cache-control': 'no-cache' });
+      const headers = { 'content-type': typeOf(name), 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'x-content-type-options': 'nosniff', 'cache-control': 'no-cache', 'accept-ranges': 'bytes' };
+      // A player asks for a piece at a time, and will not play or seek a sound or a video that answers with the lot.
+      const piece = rangeOf(Array.isArray(req.headers.range) ? req.headers.range[0] : req.headers.range, bytes.length);
+      if (piece === 'bad') { res.writeHead(416, { ...headers, 'content-range': `bytes */${bytes.length}` }); return res.end(); }
+      if (piece) {
+        res.writeHead(206, { ...headers, 'content-range': `bytes ${piece.from}-${piece.to}/${bytes.length}`, 'content-length': String(piece.to - piece.from + 1) });
+        return res.end(bytes.subarray(piece.from, piece.to + 1));
+      }
+      res.writeHead(200, { ...headers, 'content-length': String(bytes.length) });
       return res.end(bytes);
     }
     const remembered = /^\/api\/rooms\/([^/]+)\/memory$/.exec(path)?.[1];

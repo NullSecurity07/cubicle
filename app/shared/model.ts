@@ -8,7 +8,21 @@ export type Doc = Box & { id: string; title: string; pinned?: boolean };
 // `headed` shows the card's Chrome as a real window, for the founder to sign in or pass a human check by hand.
 export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean } | { kind: 'project'; path: string } | { kind: 'board' }
   // Small things that are context when wired to a person: a note's words, a picture (for models that can see), a web page's text.
-  | { kind: 'note'; text: string; color?: string } | { kind: 'image'; path: string } | { kind: 'link'; url: string; title?: string });
+  | { kind: 'note'; text: string; color?: string } | { kind: 'image'; path: string } | { kind: 'link'; url: string; title?: string }
+  // Studios: the founder, or a wired person, says what they want and the server makes it. Only what was asked for lives
+  // on the card; what came out lives in a sidecar the server owns.
+  | { kind: 'imagegen'; prompt?: string; shape?: Shape } | { kind: 'voicegen'; text?: string; voice?: string }
+  | { kind: 'videogen'; brief?: string; format?: Shape; look?: 'clean' | 'sketch'; narrate?: boolean });
+export const SHAPES = ['square', 'wide', 'tall'] as const;
+export type Shape = (typeof SHAPES)[number];
+export const MEDIA_KINDS = ['imagegen', 'voicegen', 'videogen'] as const;
+export type MediaKind = (typeof MEDIA_KINDS)[number];
+// One thing a studio made. `prompt` is what was asked for: a picture prompt, the words to say, a video brief.
+export type MediaResult = { path: string; prompt: string; at: number; poster?: string };
+// A studio card's sidecar, which the server owns: how the job in flight is going, and the last dozen results, newest first.
+export type Media = { state: 'idle' | 'making' | 'failed'; log: string[]; problem?: string; results: MediaResult[] };
+// What a studio's feed carries: a line while something is being made, and a nudge after every change.
+export type MediaEvent = { id: string; line: string } | { id: string; changed: true };
 export const COLUMNS = ['proposed', 'todo', 'doing', 'review', 'done'] as const;
 export type Column = (typeof COLUMNS)[number];
 // When a task repeats, in the founder's local time. `weekday` (0 = Sunday) is used by 'week' only.
@@ -58,7 +72,8 @@ export type Wire = { id: string; from: string; fromHandle: string; to: string; t
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };
 export type Usage = { input: number; output: number };
 // What a tool run changed on the stage, for the client to mirror.
-export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string } | { kind: 'project-progress'; id: string; line: string } | { kind: 'chat-changed'; id: string } | { kind: 'memory-changed'; id: string };
+export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string } | { kind: 'project-progress'; id: string; line: string } | { kind: 'chat-changed'; id: string } | { kind: 'memory-changed'; id: string }
+  | { kind: 'media-progress'; id: string; line: string } | { kind: 'media-made'; id: string };
 // One tool call inside a reply. `ok` is absent while the tool is still running; `waiting` means it needs the founder's yes first.
 export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; waiting?: boolean; question?: string; ok?: boolean; result?: string; effect?: ToolEffect };
 // A file the founder attached to a message; it lives in the shared files folder.

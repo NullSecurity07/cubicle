@@ -1,5 +1,5 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
-import type { Box, Card, Doc, Room, Stage } from '../shared/model';
+import type { Box, Card, Doc, Room, Shape, Stage } from '../shared/model';
 
 export type RoomData = Omit<Room, keyof Box | 'id'>;
 export type DocData = Omit<Doc, keyof Box | 'id'>;
@@ -11,7 +11,8 @@ export type BoardNodeType = Node<Record<string, never>, 'board'>;
 export type NoteNodeType = Node<{ text: string; color?: string }, 'note'>;
 export type ImageNodeType = Node<{ path: string }, 'image'>;
 export type LinkNodeType = Node<{ url: string; title?: string }, 'link'>;
-export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | NoteNodeType | ImageNodeType | LinkNodeType;
+export type ImageGenNodeType = Node<{ prompt?: string; shape?: Shape }, 'imagegen'>;
+export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | NoteNodeType | ImageNodeType | LinkNodeType | ImageGenNodeType;
 export type StageNode = RoomNodeType | DocNodeType | CardNodeType;
 
 export const HANDLE_IDS = ['l', 'r', 't', 'b'] as const;

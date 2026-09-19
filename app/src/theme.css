@@ -346,6 +346,35 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .link p { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
 .link__open { flex: none; font-size: 11px; color: var(--accent); text-decoration: none; }
 
+/* A studio: what it made fills the card, what it made before sits under it, and what to make next is at the bottom. */
+.studio { flex: 1; min-height: 0; display: flex; flex-direction: column; cursor: auto; }
+.studio__result { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; margin: 8px 10px 0; border-radius: 10px; overflow: hidden; background: rgba(0, 0, 0, 0.28); }
+.studio__result img { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; transition: opacity 0.25s, filter 0.25s; }
+.studio__result .chat__empty { max-width: 260px; margin: 0; padding: 14px; }
+.studio__result.is-making img { opacity: 0.2; filter: blur(3px); }
+.studio__result.is-making::after { content: ''; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.11) 50%, transparent 62%); background-size: 260% 100%; animation: shimmer 1.6s linear infinite; }
+@keyframes shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+.studio__doing { position: absolute; margin: 0; padding: 0 14px; text-align: center; font-size: 12px; color: var(--muted); }
+.studio__strip { flex: none; display: flex; gap: 6px; margin: 8px 10px 0; padding-bottom: 2px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.studio__strip button { flex: none; width: 42px; height: 42px; padding: 0; border: 1.5px solid transparent; border-radius: 8px; background: rgba(0, 0, 0, 0.3); overflow: hidden; cursor: pointer; }
+.studio__strip button.is-shown { border-color: rgba(78, 140, 255, 0.8); }
+.studio__strip img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.studio__done { flex: none; display: flex; gap: 12px; margin: 8px 12px 0; }
+.studio__done a, .studio__done button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 11.5px; text-decoration: none; cursor: pointer; }
+.studio__done a:hover, .studio__done button:hover { text-decoration: underline; }
+.studio__ask { flex: none; display: flex; flex-direction: column; gap: 7px; padding: 9px 12px 11px; }
+.studio__ask textarea { border: 1px solid var(--card-border); border-radius: 9px; padding: 7px 9px; outline: 0; resize: none; field-sizing: content; max-height: 88px; background: rgba(0, 0, 0, 0.25); color: var(--text); font: inherit; font-size: 12.5px; line-height: 1.45; }
+.studio__ask textarea:focus { border-color: rgba(78, 140, 255, 0.7); }
+.studio__end { display: flex; align-items: center; gap: 8px; }
+.studio__end select { border: 1px solid var(--card-border); border-radius: 8px; padding: 5px 8px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 12px; }
+.studio__end option { background: #16181d; }
+.studio__end button { margin-left: auto; border: 0; border-radius: 8px; padding: 6px 16px; font: inherit; font-size: 12.5px; font-weight: 550; color: var(--text); background: rgba(255, 255, 255, 0.1); cursor: pointer; }
+.studio__end button:hover { background: rgba(255, 255, 255, 0.16); }
+.studio__end .primary { background: var(--accent); color: #fff; }
+.studio__end .primary:hover { background: #5f99ff; }
+.studio__end button:disabled { opacity: 0.35; cursor: default; }
+.studio__problem { margin: 0 12px 10px; }
+
 /* Above the canvas: a shade, and the sheet a focused card moves into. */
 .overlay { position: fixed; inset: 0; z-index: 40; display: none; }
 .overlay.is-open { display: block; }

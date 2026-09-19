@@ -45,6 +45,7 @@ describe('flow mapping', () => {
       { id: 'p', kind: 'project', path: '/code/app', x: 1, y: 2, w: 3, h: 4 }, { id: 'k', kind: 'board', x: 1, y: 2, w: 3, h: 4 },
       { id: 'n', kind: 'note', text: 'Ship weekly', color: '#6fcf97', x: 1, y: 2, w: 3, h: 4 }, { id: 'i', kind: 'image', path: 'uploads/a.png', x: 1, y: 2, w: 3, h: 4 },
       { id: 'l', kind: 'link', url: 'https://example.com', title: 'Example', x: 1, y: 2, w: 3, h: 4 },
+      { id: 'g', kind: 'imagegen', prompt: 'A calm desk at dawn', shape: 'wide', x: 1, y: 2, w: 3, h: 4 }, { id: 'g2', kind: 'imagegen', x: 1, y: 2, w: 3, h: 4 },
     ] };
     const { nodes, edges } = toFlow(stage);
     expect(fromFlow(nodes, edges).cards).toEqual(stage.cards);

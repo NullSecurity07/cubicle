@@ -78,7 +78,7 @@ export function createStore(dir: string) {
       const moves = [
         ...gone(before.rooms, stage.rooms).flatMap((room) => [chatPath(room.id), memoryPath(room.id)]),
         ...gone(before.docs, stage.docs).map((doc) => docPath(doc.id)),
-        ...gone(before.cards ?? [], stage.cards ?? []).map((card) => join(dir, 'browsers', card.id)),
+        ...gone(before.cards ?? [], stage.cards ?? []).flatMap((card) => [join(dir, 'browsers', card.id), join(dir, 'media', `${card.id}.json`)]),
       ];
       await write(stagePath, JSON.stringify(stage, null, 2));
       await queue;
@@ -134,6 +134,13 @@ export function createStore(dir: string) {
       await mkdir(dirname(full), { recursive: true });
       await writeFile(full, data);
       return path;
+    },
+    // What a studio made. Bytes, under a folder of the shared files, so the same route serves it to the founder and to a chat.
+    async saveFileBytes(name: string, data: Buffer): Promise<string> {
+      const full = filePath(name);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, data);
+      return name;
     },
     readFileBytes: async (name: string) => { await queue; return readFile(filePath(name)).catch(() => null); },
     async listFiles(): Promise<string[]> {

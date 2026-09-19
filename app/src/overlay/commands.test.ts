@@ -25,6 +25,8 @@ describe('command bar', () => {
     expect(first('add a task board').action).toEqual({ do: 'add', kind: 'board' });
     expect(first('add sticky note').action).toEqual({ do: 'add', kind: 'note' });
     expect(first('add browser').action).toEqual({ do: 'add', kind: 'browser' });
+    expect(first('add a picture').action).toEqual({ do: 'add', kind: 'image' });
+    expect(first('add an image studio').action).toEqual({ do: 'add', kind: 'imagegen' });
   });
 
   it('asks a person by name, in the ways a founder would type it', () => {
