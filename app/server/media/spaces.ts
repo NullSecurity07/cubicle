@@ -1,4 +1,6 @@
-import { Client, handle_file } from '@gradio/client';
+// The Hugging Face client is loaded on first use, like the voice and recall models: an optional backend must never
+// keep the server from starting.
+const gradio = () => import('@gradio/client');
 import listed from './spaces.json' with { type: 'json' };
 import type { Clip, ClipAsk, Clips, Help, PresenterAsk } from './clips.ts';
 
@@ -57,7 +59,7 @@ const clamp = (seconds: number, { least, most }: { least: number; most: number }
   Math.min(most, Math.max(least, Math.round(Number.isFinite(seconds) ? seconds : least)));
 
 // The Spaces want a file with a name and a type, not a bag of bytes: some of them pick their loader by the ending.
-const fileOf = (bytes: Buffer, name: string, type: string) => handle_file(new File([new Uint8Array(bytes)], name, { type }));
+const fileOf = async (bytes: Buffer, name: string, type: string) => (await gradio()).handle_file(new File([new Uint8Array(bytes)], name, { type }));
 
 // How long a WAV plays, read out of the file itself, so a talking head is asked for exactly the line it must say.
 export function speechSeconds(bytes: Buffer): number {
@@ -116,7 +118,7 @@ const fill = (value: unknown, have: Filling) =>
   typeof value === 'string' && value.startsWith('$') && (SLOTS as readonly string[]).includes(value.slice(1))
     ? have[value.slice(1) as Slot] : value;
 
-export function createClips(env: NodeJS.ProcessEnv = process.env, connect: Connect = (space, options) => Client.connect(space, options) as Promise<App>, http: typeof fetch = fetch): Clips {
+export function createClips(env: NodeJS.ProcessEnv = process.env, connect: Connect = async (space, options) => (await gradio()).Client.connect(space, options) as Promise<App>, http: typeof fetch = fetch): Clips {
   const token = () => env.HF_TOKEN as `hf_${string}` | undefined;
 
   // The file link a Space hands back lives for minutes, so it is fetched the moment the call returns, not later.
@@ -208,14 +210,14 @@ export function createClips(env: NodeJS.ProcessEnv = process.env, connect: Conne
 
   return {
     ready: () => (token() ? null : SETUP_HINT),
-    broll: (ask, help) => run(spaces.broll, {
+    broll: async (ask, help) => run(spaces.broll, {
       prompt: ask.prompt,
       seconds: clamp(ask.seconds, BROLL_SECONDS),
-      image: ask.image && fileOf(ask.image, 'still.png', 'image/png'),
+      image: ask.image && await fileOf(ask.image, 'still.png', 'image/png'),
     }, help),
-    presenter: (ask, help) => run(spaces.presenter, {
-      portrait: fileOf(ask.portrait, 'portrait.png', 'image/png'),
-      speech: fileOf(ask.speech, 'speech.wav', 'audio/wav'),
+    presenter: async (ask, help) => run(spaces.presenter, {
+      portrait: await fileOf(ask.portrait, 'portrait.png', 'image/png'),
+      speech: await fileOf(ask.speech, 'speech.wav', 'audio/wav'),
       seconds: clamp(speechSeconds(ask.speech) + 1, PRESENTER_SECONDS),
     }, help),
   };
