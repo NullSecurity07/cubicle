@@ -77,7 +77,8 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
     description: 'Make a short narrated video in the video studio connected to your room. The simplest call is a "brief" alone — say what the film is for, how long, '
       + 'and who it is for, and the studio\'s own director works out the shape, the look, the pace, the music and every scene. '
       + 'Write "scenes" yourself only when you want a particular storyboard; then each scene needs a layout, the words on screen and the line spoken over it. '
-      + 'What goes on screen is a headline of a few words, never the sentence being spoken. Rendering takes a few minutes, so call this once. '
+      + 'What goes on screen is a headline of a few words, never the sentence being spoken. Everything specific a film says — a feature, a number, a name — has to come out of what is wired to the card and be quoted in "source"; anything else is cut before it renders. '
+      + 'Rendering takes a few minutes, so call this once. '
       + 'The card lists what it is drawing on — the founder\'s own footage, screenshots of the product — under names you can put in "asset".',
     parameters: {
       type: 'object',
@@ -102,6 +103,7 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
               image_prompt: { type: 'string', description: 'The whole scene to draw, for a picture scene' },
               bg_prompt: { type: 'string', description: 'A picture to draw full-bleed behind the words of any other scene, so no scene is a flat colour' },
               emphasis: { type: 'string', description: 'The one word in "text" that carries the line; it is set in the accent colour' },
+              source: { type: 'string', description: 'A short quotation, word for word, out of the wired material that this scene\'s claim rests on. A feature, number or name that cannot be quoted is cut before the film is rendered.' },
               asset: { type: 'string', description: 'The name of a screenshot or a file already on the card, for a device or footage scene' },
               frame: { type: 'string', enum: [...FRAMES], description: 'What a device scene shows the screenshot in' },
               clip_prompt: { type: 'string', description: 'Three to five seconds of moving b-roll to make, for a clip scene' },

@@ -1,14 +1,14 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { extname, join, resolve } from 'node:path';
 import type { Card, MediaAsset, Shape, Stage } from '../../shared/model.ts';
 import { CHROMES } from '../browser.ts';
 import { projectDir } from '../coder.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
-import { kickerOf, trimTo } from './critic.ts';
+import { headlineOf, trimTo } from './critic.ts';
 import { bibleFor, direct, onCamera, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
@@ -177,6 +177,17 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
             await writeFile(join(at, 'assets', `logo-${product.logo.name}`), product.logo.bytes);
             files.set('logo', { file: `logo-${product.logo.name}`, kind: 'image', where: 'job' });
           }
+          // A project with nobody's browser wired to it still has pictures of itself in it — the ones its README
+          // shows off with. They are screens, so a device scene may hold one, and a film about a product gets to
+          // show the product rather than an abstract picture of one.
+          for (const screen of product.screens) {
+            const name = `screen-repo-${material.assets.filter((one) => one.kind === 'screen').length + 1}`;
+            const file = `${name}${extname(screen.name).toLowerCase() || '.png'}`;
+            await writeFile(join(at, 'assets', file), screen.bytes);
+            files.set(name, { file, kind: 'screen', where: 'job' });
+            material.assets.push({ name, kind: 'screen', what: screen.what });
+          }
+          if (product.screens.length) material.using.push(`${product.screens.length} screenshot${product.screens.length === 1 ? '' : 's'} out of the project`);
         } else if (card.kind === 'link' && card.url) addresses.push({ url: card.url, own: false, label: card.url });
         else if (card.kind === 'browser') {
           const where = await deps.browser?.where(`card-${card.id}`).catch(() => null);
@@ -371,7 +382,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             const cut = `cut-${index}.mp4`;
             said(index, 'cutting your footage to the frame…');
             await (noFf ? Promise.reject(new Error(noFf)) : normalise({ from: source, to: join(at, 'assets', cut), width, height, start: scene.start, seconds: scene.seconds, mute: scene.mute, signal }))
-              .then(() => { shot.video = cut; }, (error: Error) => { said(index, `that clip could not be used (${error.message}), so the scene is its words instead`); shot.scene = fallbackOf(scene, error.message); });
+              .then(() => { shot.video = cut; }, (error: Error) => { said(index, `that clip could not be used (${error.message}), so the scene is its words instead`); shot.scene = fallbackOf(scene); });
           }
           // The line is recorded before a talking head is made of it, because the head is made out of the line.
           if (saying && scene.say) {
@@ -392,7 +403,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               await writeFile(join(at, 'assets', shot.video), made.bytes);
             } catch (error) {
               said(index, `the clip could not be made (${(error as Error).message}), so the scene is a picture instead`);
-              shot.scene = fallbackOf(scene, (error as Error).message);
+              shot.scene = fallbackOf(scene);
             }
           }
           if (scene.layout === 'presenter' && able) {
@@ -408,7 +419,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               await writeFile(join(at, 'assets', shot.video), made.bytes);
             } catch (error) {
               said(index, `the talking head could not be made (${(error as Error).message}), so the line is said over the words instead`);
-              shot.scene = fallbackOf(scene, (error as Error).message);
+              shot.scene = fallbackOf(scene);
             }
           }
         }));
@@ -442,14 +453,17 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // gets a film, and every scene is as long as the line said over it.
         for (const shot of shots) {
           const layout = shot.scene.layout;
-          if ((layout === 'picture' || layout === 'device') && !shot.image) shot.scene = fallbackOf(shot.scene, 'nothing to show');
-          if ((layout === 'footage' || layout === 'clip' || layout === 'presenter') && !shot.video && !shot.image) shot.scene = fallbackOf(shot.scene, 'nothing to show');
+          if ((layout === 'picture' || layout === 'device') && !shot.image) shot.scene = fallbackOf(shot.scene);
+          if ((layout === 'footage' || layout === 'clip' || layout === 'presenter') && !shot.video && !shot.image) shot.scene = fallbackOf(shot.scene);
           // A scene that lost its words to the captions and then lost its picture to a refused call would be three
-          // seconds of nothing at all. When there is nothing to look at, the words come back.
-          const bare = !shot.image && !shot.video && !shot.bg;
+          // seconds of nothing at all. Whenever there is nothing written on a scene, the words come back — the
+          // line it is already saying, cut to a headline.
           const silentOnScreen = ![shot.scene.heading, shot.scene.text, ...(shot.scene.bullets ?? [])].some((one) => one?.trim());
-          if (bare && silentOnScreen && shot.scene.say) {
-            shot.scene = { ...shot.scene, layout: shot.scene.layout === 'picture' ? 'statement' : shot.scene.layout, text: kickerOf(shot.scene.say, 5) || trimTo(shot.scene.say, 6) };
+          // A moving shot, or a real picture or screen filling the frame, carries a scene on its own — one wordless
+          // picture in three is the point. Anything else with nothing written on it is a gradient.
+          const carries = !!shot.video || (!!shot.image && (shot.scene.layout === 'picture' || shot.scene.layout === 'device'));
+          if (silentOnScreen && shot.scene.say && !carries) {
+            shot.scene = { ...shot.scene, layout: shot.scene.layout === 'picture' ? 'statement' : shot.scene.layout, text: headlineOf(shot.scene.say ?? '', 6) || trimTo(shot.scene.say, 6) };
           }
         }
 

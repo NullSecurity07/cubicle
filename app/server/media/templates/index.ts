@@ -1,5 +1,6 @@
 import type { Shape } from '../../../shared/model.ts';
 import { SFX, type Cue, type Sfx } from '../audio.ts';
+import { saysWhatItShows } from '../spec.ts';
 import { capHtml, capLines, capSteps, wordTimes } from './captions.ts';
 import { cutSteps } from './cuts.ts';
 import { groundHtml, MOVING, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
@@ -116,8 +117,11 @@ export function composition(film: Film): string {
   const held = (index: number) => Math.round((film.shots[index].seconds + (index === last ? 0 : style.overlap)) * 100) / 100;
 
   // The captions belong to the frame, not to the scene's own block, so they sit outside it and survive its fade.
+  // A scene whose own words are already the line being said gets none: a hook is the spoken line set large, and a
+  // word-by-word caption under it is the same sentence twice on one frame, which is what a founder was handed.
   const capsFor = (shot: Shot, index: number) => {
     if (!film.captions || !shot.voice?.parts?.length) return { html: '', steps: [] as string[] };
+    if (saysWhatItShows(shot.scene)) return { html: '', steps: [] as string[] };
     const lines = capLines(wordTimes(shot.voice.parts, starts[index] + PACE[pace].lead), Math.round(capChars * style.capScale));
     return { html: capHtml(lines, index), steps: capSteps(lines, index, starts[index] + shot.seconds) };
   };

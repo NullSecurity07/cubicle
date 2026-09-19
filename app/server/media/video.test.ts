@@ -290,6 +290,22 @@ describe('the storyboard a fuller film needs', () => {
     expect(off.spec.scenes[0].image_prompt).toBe('a kite');
   });
 
+  it('never sets the reason something failed across the frame', () => {
+    // A real launch film rendered "nothing to show" as its headline on ten frames of sixteen, because the reason a
+    // picture never arrived was handed to the scene as its words. A founder's film says nothing it was not given.
+    const { spec, notes } = withinCaps({ title: 'One', scenes: [
+      { layout: 'clip', clip_prompt: 'a kite over a field', say: 'A kite goes up.' },
+      { layout: 'device', asset: 'nothing-by-that-name', say: 'Here it is.' },
+    ] }, { ai: false, assets: [] });
+    for (const scene of spec.scenes) {
+      const shown = [scene.heading, scene.text, ...(scene.bullets ?? [])].filter(Boolean).join(' ');
+      expect(shown).not.toMatch(/switched off|nothing on the card|at most/i);
+    }
+    // The founder is told, on the card, in both cases.
+    expect(notes.join(' ')).toContain('AI clips are switched off');
+    expect(notes.join(' ')).toContain('nothing on the card by that name');
+  });
+
   it('drops a name for something that is not on the card, rather than filming a hole', () => {
     const { spec } = withinCaps({ title: 'One', scenes: [
       { layout: 'footage', asset: 'holiday', text: 'On the beach' },

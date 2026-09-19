@@ -1,0 +1,273 @@
+import type { Material } from './director.ts';
+import { countWords, type Scene } from './spec.ts';
+
+// Whether a film is telling the truth.
+//
+// A launch film made from this repository said the product had "live cursor tracking", "zero email clutter",
+// "instant visual updates" and made a team "10x" more productive. None of that is in the source. A film that lies
+// about a product is worse than a plain one: the founder cannot publish it, and everything else in it is suspect.
+//
+// The fix is not a better prompt. It is that every specific claim has to *point at* something — the director hands
+// back, with each beat, a short quotation from the material it rests on, and this module checks, without asking
+// anybody, that the quotation is really in the material. What cannot be pointed at is taken out and said out loud
+// on the card. Where there is no material at all, general knowledge is fine and invented specifics are not: no
+// precise statistics, no brand names nobody mentioned.
+
+// The corpus a film's claims are checked against: everything the founder wired, dropped or typed.
+export type Sources = {
+  // Every word of the material, normalised: lower case, punctuation flattened, one space between words.
+  corpus: string;
+  // The brief itself, normalised. A name in the brief is the founder's, not the film's invention.
+  brief: string;
+  // Whether there is any material at all. With none, the rules change: general truths are fine, specifics are not.
+  has: boolean;
+  // Real sentences out of the material, for putting back what had to be taken out.
+  lines: string[];
+};
+
+export const flat = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N}%$£€.]+/gu, ' ').replace(/\s{2,}/g, ' ').trim();
+
+export function sourcesOf(material: Material, brief: string): Sources {
+  const parts = [
+    ...material.lines,
+    ...material.assets.map((one) => `${one.name} ${one.what}`),
+    material.brand?.name ?? '',
+  ].filter(Boolean);
+  const body = parts.join('\n');
+  return { corpus: flat(body), brief: flat(brief), has: material.lines.length > 0, lines: sentencesIn(body).slice(0, 40) };
+}
+
+// Whole sentences out of the material, for putting back what had to be taken out. A README wraps a sentence over
+// two lines and lists its features one to a line, so a plain split on the newline hands back "The founder stays the"
+// — which is not a sentence and cannot be said over a scene. A line that carries on is joined to the one after it;
+// a bullet or a heading starts a new one; and nothing that ends mid-thought survives the filter.
+const BULLET = /^\s*(?:[-*+>|#]|\d+[.)])/;
+export function sentencesIn(body: string): string[] {
+  const joined = body.split('\n').reduce<string[]>((lines, raw) => {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    if (!line) { lines.push(''); return lines; }
+    const last = lines.at(-1);
+    // A heading is a short line with nothing after it and a capital on the line below; the sentence under it is its
+    // own, not a continuation of the title.
+    const heading = !!last && countWords(last) <= 6 && /^[\p{Lu}]/u.test(line);
+    const carries = last && !heading && !BULLET.test(line) && !BULLET.test(last) && !/[.!?:]$/.test(last);
+    if (carries) lines[lines.length - 1] = `${last} ${line}`;
+    else lines.push(line);
+    return lines;
+  }, []);
+  const said = joined.flatMap((one) => one.replace(BULLET, '').trim().split(/(?<=[.!?])\s+/))
+    .map((one) => one.replace(/\s+/g, ' ').trim())
+    .filter((one) => {
+      if (countWords(one) < 4 || countWords(one) > 26 || !/[a-z]{3}/.test(one)) return false;
+      if (!/^[\p{L}\p{N}]/u.test(one)) return false;
+      if (/^(readme|copy from|what it says it is|a note on the stage)\b/i.test(one)) return false;
+      // A sentence that reached its full stop is whole, whatever word it got there on. One that did not has to
+      // end on a word that carries something, or it is a thought that stopped in the middle of itself.
+      if (/[.!?]$/.test(one)) return true;
+      if (/[,:;]$/.test(one)) return false;
+      const end = one.split(' ').at(-1)?.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '') ?? '';
+      return !STOP.has(end);
+    });
+  // A sentence that closes on a full stop is a sentence; the rest is prose that ran out of line. Both may be used,
+  // but a film is given the whole ones first.
+  const whole = [...new Set(said)];
+  return [...whole.filter((one) => /[.!?]$/.test(one)), ...whole.filter((one) => !/[.!?]$/.test(one))];
+}
+
+const STOP = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'so', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'from',
+  'by', 'as', 'is', 'are', 'was', 'were', 'be', 'it', 'its', 'you', 'your', 'we', 'our', 'they', 'their', 'this',
+  'that', 'these', 'those', 'all', 'any', 'no', 'not', 'one', 'more', 'most', 'into', 'out', 'up', 'down', 'over']);
+
+// Whether a quotation really occurs in the material. A model asked to quote will paraphrase a word or two, so this
+// is generous about the joins and strict about the substance: either the line is there as written, or nearly all of
+// the words that carry its meaning are.
+export function saysIt(quote: string, sources: Sources): boolean {
+  const said = flat(quote ?? '');
+  if (said.length < 6) return false;
+  if (sources.corpus.includes(said)) return true;
+  const words = said.split(' ').filter((one) => one.length > 2 && !STOP.has(one));
+  if (words.length < 2) return false;
+  const found = words.filter((one) => sources.corpus.includes(one.length > 5 ? one.slice(0, -1) : one));
+  return found.length / words.length >= 0.7;
+}
+
+// A figure that is a claim rather than a count. "Three questions" is a way of speaking; "74%", "$12k", "10x" and
+// "1,200" are measurements, and a measurement nobody measured is a lie with a decimal point in it.
+const FIGURE = /([$£€]\s?\d[\d,.]*\s*(?:%|x\b|k\b|m\b|bn\b)?|\d[\d,.]*\s*(?:%|x\b|k\b|m\b|bn\b)|\d{1,3}(?:,\d{3})+|\b\d+(?:\.\d+)?\b)/gi;
+export function preciseFigures(text?: string): string[] {
+  const found = [...(text ?? '').matchAll(FIGURE)].map((hit) => hit[1].trim());
+  return found.filter((one) => {
+    if (/[%$£€]|\b\d+\s*[xkm]\b|bn/i.test(one)) return true;
+    const plain = Number(one.replace(/,/g, ''));
+    // A small whole number is a count — three steps, two founders — and everybody may say one.
+    return !Number.isFinite(plain) || plain > 10;
+  });
+}
+
+// A figure on screen and the same figure in the founder's own prose are the same fact: "12%" is what the material
+// meant when it wrote "twelve per cent". A number is looked for both ways round before it is called invented.
+const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven',
+  'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+export function spellOut(value: number): string[] {
+  if (!Number.isInteger(value) || value < 0 || value > 999) return [];
+  if (value < 20) return [ONES[value]];
+  if (value < 100) { const ten = TENS[Math.floor(value / 10)]; const one = value % 10; return one ? [`${ten}-${ONES[one]}`, `${ten} ${ONES[one]}`] : [ten]; }
+  const hundreds = `${ONES[Math.floor(value / 100)]} hundred`;
+  return value % 100 ? [`${hundreds} and ${spellOut(value % 100)[0]}`, `${hundreds} ${spellOut(value % 100)[0]}`] : [hundreds];
+}
+
+// Every way the material might have written this figure.
+export function figureSaid(figure: string, sources: Sources): boolean {
+  if (saysIt(figure, sources)) return true;
+  const digits = figure.replace(/[^\d.]/g, '');
+  const value = Number(digits);
+  if (!Number.isFinite(value) || !digits) return false;
+  const words = spellOut(value);
+  if (!words.length) return false;
+  const percent = /%/.test(figure);
+  const forms = words.flatMap((word) => (percent ? [`${word} per cent`, `${word} percent`] : [word]));
+  return forms.some((form) => sources.corpus.includes(form));
+}
+
+// The words a marketing model reaches for when it has nothing to say. Every one of these was in a film made from
+// this repository, and not one of them was in the repository.
+export const FILLER = ['synergy', 'synergies', 'seamless', 'seamlessly', 'unlock', 'unlocks', 'unlocking',
+  'revolutionize', 'revolutionise', 'revolutionary', 'streamline', 'streamlines', 'streamlining', 'game-changing',
+  'game changer', 'cutting-edge', 'next-generation', 'next-gen', 'best-in-class', 'world-class', 'turnkey',
+  'frictionless', 'effortless', 'supercharge', 'supercharges', 'leverage', 'leveraging', 'empower', 'empowers',
+  'empowering', 'holistic', 'robust', 'paradigm', 'disrupt', 'disruptive', 'elevate your', 'take it to the next level',
+  '10x', 'end-to-end solution', 'one-stop', 'cutting edge'];
+const FILLER_RE = new RegExp(`\\b(${FILLER.map((one) => one.replace(/[-\s]/g, '[-\\s]')).join('|')})\\b`, 'gi');
+export const fillerIn = (text?: string): string[] => [...new Set([...(text ?? '').matchAll(FILLER_RE)].map((hit) => hit[0].toLowerCase()))];
+// The filler taken back out. An adjective that meant nothing leaves nothing behind it.
+export const unfill = (text: string): string =>
+  // A comma with a space on both sides of it belonged to the word that has just gone.
+  text.replace(FILLER_RE, ' ').replace(/\s+,\s*/g, ' ').replace(/,\s*(?=[,.!?]|$)/g, '')
+    .replace(/\s+([,.!?])/g, '$1').replace(/^[\s,.-]+/, '').replace(/\s{2,}/g, ' ').trim();
+
+// A name the film has given something: a capitalised word in the middle of a line, which is where products, people
+// and places live. The first word of a line is capitalised because it is the first word.
+const COMMON = new Set(['i', 'the', 'a', 'an', 'you', 'your', 'we', 'our', 'it', 'they', 'monday', 'tuesday',
+  'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december', 'ai', 'ceo', 'cto', 'vc', 'us', 'uk', 'eu']);
+// A capital letter is not evidence of anything: a model writes its headings in Title Case, so "Instant Launch Film"
+// is three capitals and no names in it, and the first word of every sentence has one too. What a made-up product is
+// called, on the other hand, is almost always two words pushed together — TractionCheck, CardCanvas, WireCanvas —
+// and that shape belongs to nothing else in English.
+const MADE_NAME = /^\p{Lu}\p{Ll}+\p{Lu}\p{L}*$/u;
+export function namesIn(text?: string): string[] {
+  return [...new Set((text ?? '').split(/\s+/)
+    .map((one) => one.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+    .filter((one) => MADE_NAME.test(one) && !COMMON.has(one.toLowerCase())))];
+}
+
+// The names a film has given things that nobody wired to it gave them. A product with a README is allowed its own
+// name and the founder's brief is allowed the names in it; everything else is a company the film made up, and a
+// wordmark is exactly where one goes.
+export function madeUpNames(scene: Scene, sources: Sources): string[] {
+  const known = (name: string) => {
+    const word = name.toLowerCase();
+    return sources.corpus.includes(word) || sources.brief.includes(word);
+  };
+  return [...new Set(claimsOf(scene).flatMap((one) => namesIn(one)))].filter((one) => !known(one));
+}
+
+// Everything on one scene that a viewer would take as a statement of fact.
+export const claimsOf = (scene: Scene): string[] =>
+  [scene.heading, scene.text, ...(scene.bullets ?? []), scene.say].filter((one): one is string => !!one?.trim());
+
+// The everyday words of the language, which say nothing in particular about anybody. "Investors want a real problem
+// and a team that ships" is made of these; "live cursor tracking" is not. This is the line between a film saying
+// something general, which it may, and a film saying something specific, which it has to be able to point at.
+const PLAIN = new Set(['about', 'add', 'adds', 'after', 'again', 'against', 'ago', 'ahead', 'all', 'almost', 'already',
+  'also', 'always', 'another', 'answer', 'answers', 'any', 'anybody', 'anyone', 'anything', 'apart', 'around', 'ask',
+  'asked', 'asks', 'away', 'back', 'bad', 'become', 'becomes', 'been', 'before', 'begin', 'behind', 'being', 'below',
+  'best', 'better', 'between', 'big', 'bigger', 'both', 'bring', 'brings', 'build', 'builds', 'built', 'business',
+  'busy', 'buy', 'buys', 'call', 'called', 'calls', 'came', 'cannot', 'care', 'carry', 'case', 'cases', 'catch',
+  'caught', 'change', 'changed', 'changes', 'cheap', 'check', 'checked', 'checks', 'choice', 'choose', 'clear',
+  'close', 'closes', 'come', 'comes', 'coming', 'company', 'companies', 'cost', 'costs', 'could', 'customer',
+  'customers', 'cut', 'cuts', 'day', 'days', 'deal', 'deals', 'decide', 'decides', 'decision', 'decisions', 'did',
+  'difference', 'different', 'does', 'doing', 'done', 'door', 'down', 'each', 'early', 'easier', 'easy', 'else',
+  'end', 'ends', 'enough', 'even', 'ever', 'every', 'everybody', 'everyone', 'everything', 'exactly', 'eye', 'eyes',
+  'face', 'fact', 'fail', 'fails', 'fair', 'fall', 'far', 'fast', 'faster', 'feel', 'feels', 'few', 'find', 'finds',
+  'first', 'fit', 'fits', 'follow', 'follows', 'forget', 'found', 'founder', 'founders', 'free', 'friend', 'from',
+  'front', 'full', 'game', 'gave', 'get', 'gets', 'getting', 'give', 'gives', 'goes', 'going', 'gone', 'good',
+  'great', 'group', 'grow', 'grows', 'growth', 'had', 'half', 'hand', 'hands', 'happen', 'happens', 'hard',
+  'harder', 'has', 'have', 'having',
+  'head', 'hear', 'heard', 'help', 'helps', 'high', 'hold', 'holds', 'home', 'hour', 'hours', 'idea', 'ideas',
+  'idle', 'important', 'inside', 'instead', 'into', 'investor', 'investors', 'job', 'jobs', 'keep', 'keeps', 'kind',
+  'knew', 'know', 'knows',
+  'large', 'last', 'late', 'later', 'lead', 'leads', 'learn', 'least', 'leave', 'leaves', 'left', 'less', 'let',
+  'life', 'light', 'like', 'line', 'lines', 'list', 'lists', 'little', 'live', 'lives', 'long', 'longer', 'look',
+  'looks', 'lose', 'loses', 'lost', 'lot', 'love', 'low', 'made', 'make', 'makes', 'making', 'man', 'many', 'market',
+  'matter', 'matters', 'maybe', 'mean', 'means', 'meet', 'meeting', 'meetings', 'meets', 'might', 'mind', 'minute',
+  'minutes', 'miss', 'moment', 'money', 'month', 'months', 'more', 'morning', 'most', 'move', 'moves', 'much',
+  'must', 'name', 'names', 'near', 'need', 'needs', 'never', 'new', 'news', 'next', 'nice', 'night', 'nobody',
+  'none', 'nothing', 'now', 'number', 'numbers', 'off', 'offer', 'offers', 'often', 'old', 'once', 'one', 'only',
+  'open', 'opens', 'order', 'other', 'others', 'over', 'own', 'owns', 'part', 'parts', 'pay', 'pays', 'people',
+  'person', 'pick', 'picks', 'place', 'plan', 'plans', 'play', 'point', 'points', 'poor', 'price', 'prices',
+  'probably', 'problem', 'problems', 'product', 'products', 'put', 'puts', 'question', 'questions', 'quick',
+  'quickly', 'quite', 'rather', 'reach', 'read', 'reads', 'ready', 'real', 'really', 'reason', 'reasons', 'rest',
+  'result', 'results', 'right', 'room', 'rooms', 'run', 'runs', 'said', 'same', 'save', 'saves', 'saw', 'say',
+  'says', 'second', 'seconds', 'see', 'seen', 'sell', 'sells', 'send', 'sends', 'sent', 'set', 'sets', 'shall',
+  'ship', 'ships', 'short', 'should', 'show', 'shows', 'side', 'simple', 'since', 'sit', 'sits', 'slow', 'small',
+  'staff', 'startup', 'startups', 'traction', 'revenue', 'funding', 'pitch', 'deck', 'sales', 'office', 'brand',
+  'email', 'phone', 'user', 'users', 'client', 'clients',
+  'smart', 'some', 'somebody', 'someone', 'something', 'sometimes', 'soon', 'sort', 'sound', 'sounds', 'speak',
+  'spend', 'spends', 'spent', 'stand', 'start', 'started', 'starts', 'stay', 'step', 'steps', 'still', 'stop',
+  'stops', 'story', 'stories', 'strong', 'such', 'sure', 'take', 'taken', 'takes', 'talk', 'talks', 'team', 'teams',
+  'tell', 'tells', 'than', 'thing', 'things', 'think', 'thinks', 'though', 'thought', 'three', 'through', 'time',
+  'times', 'today', 'together', 'told', 'too', 'took', 'top', 'toward', 'true', 'try', 'tries', 'turn', 'turns',
+  'twice', 'two', 'under', 'until', 'upon', 'use', 'used', 'uses', 'using', 'wait', 'walk', 'want', 'wanted',
+  'wants', 'watch', 'water', 'way', 'ways', 'week', 'weeks', 'well', 'went', 'were', 'what', 'whatever', 'when',
+  'where', 'whether', 'which', 'while', 'who', 'whole', 'whose', 'why', 'will', 'wins', 'win', 'wish', 'with',
+  'within', 'without', 'woman', 'wonder', 'word', 'words', 'work', 'worked', 'works', 'world', 'worse', 'worst',
+  'worth', 'would', 'write', 'writes', 'wrong', 'year', 'years', 'yet', 'your', 'yours']);
+
+// The words in a line that are nobody's but this film's: not everyday English, not in the material, not in the
+// brief. One of these is what makes a line a specific claim — "cursor", "clutter", "synergy" — and a specific claim
+// is the kind that has to be able to point at where it came from.
+export function ownWords(text: string, sources: Sources): string[] {
+  // `flat` keeps the full stop, because "3.5" needs it; a word at the end of a sentence does not.
+  const said = flat(text ?? '').split(' ').map((one) => one.replace(/^\.+|\.+$/g, ''))
+    .filter((one) => one.length > 2 && !/[\d%$£€]/.test(one) && !STOP.has(one) && !PLAIN.has(one) && !PLAIN.has(one.replace(/s$/, '')));
+  const known = (word: string) => {
+    const stem = word.length > 5 ? word.slice(0, -1) : word;
+    return sources.corpus.includes(stem) || sources.brief.includes(stem);
+  };
+  return [...new Set(said.filter((one) => !known(one)))];
+}
+
+// A call to action asks somebody to do something; it states nothing, so there is nothing for it to point at. Every
+// other scene has to trace — but only where it is really saying something of its own. A line made of everyday words
+// is a line about the world, and the film may say it; a line with this film's own vocabulary in it is a claim.
+const NO_CLAIM = new Set(['cta', 'logo', 'title']);
+export function ungrounded(scene: Scene, sources: Sources): string | null {
+  if (!sources.has) return null;
+  if (NO_CLAIM.has(scene.layout)) return null;
+  const onScreen = [scene.heading, scene.text, ...(scene.bullets ?? [])].filter(Boolean).join('. ');
+  if (!onScreen.trim() && !scene.say?.trim()) return null;
+  if (saysIt(scene.source ?? '', sources)) return null;
+  // Each line on its own, because a list of three is three claims and one of them being real is not enough.
+  const lines = [scene.heading, scene.text, ...(scene.bullets ?? []), scene.say]
+    .filter((one): one is string => !!one?.trim());
+  for (const line of lines) {
+    if (!ownWords(line, sources).length) continue;
+    if (saysIt(line, sources)) continue;
+    return line;
+  }
+  return null;
+}
+export const grounded = (scene: Scene, sources: Sources): boolean => ungrounded(scene, sources) === null;
+
+// A real sentence out of the material, to put where an invented one was. Each is used once, so a film that loses
+// three claims does not get the same line back three times.
+export function realLine(sources: Sources, used: Set<string>): string | null {
+  for (const line of sources.lines) {
+    if (used.has(line)) continue;
+    used.add(line);
+    return line;
+  }
+  return null;
+}

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { projectDir } from '../coder.ts';
-import { CAPS, coloursOf, copyOf, fontOf, readProject } from './sources.ts';
+import { CAPS, coloursOf, copyOf, fontOf, looksLikeScreen, readProject, sizeOf } from './sources.ts';
 import { lightOf, paintOf } from './templates/looks.ts';
 
 const dir = await mkdtemp(join(tmpdir(), 'product-'));
@@ -18,6 +18,23 @@ await writeFile(join(dir, 'src/index.css'), ':root { --brand-primary: #4E8CFF; -
 await mkdir(join(dir, 'public/fonts'), { recursive: true });
 await writeFile(join(dir, 'public/fonts/Satoshi.woff2'), Buffer.alloc(2048, 7));
 await writeFile(join(dir, 'public/logo.png'), Buffer.alloc(512, 3));
+// A PNG says how big it is in the twenty-four bytes it opens with, which is all anybody here needs to read.
+const png = (width: number, height: number): Buffer => {
+  const bytes = Buffer.alloc(64);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);
+  bytes.write('IHDR', 12, 'ascii');
+  bytes.writeUInt32BE(width, 16);
+  bytes.writeUInt32BE(height, 20);
+  return bytes;
+};
+// The product's own screens: one the README shows off, one in a folder that says what is in it, and two that are
+// neither — a wallpaper the size of a screen, and an icon that is not the size of anything.
+await mkdir(join(dir, '.shots'), { recursive: true });
+await writeFile(join(dir, '.shots/02-board.png'), png(1920, 1200));
+await writeFile(join(dir, 'public/screenshot-home.png'), png(1600, 900));
+await writeFile(join(dir, 'public/wallpaper.png'), png(2400, 1400));
+await writeFile(join(dir, 'public/badge.png'), png(88, 20));
+
 // The things that must never be read: somebody else's dependencies, and a file far too big to be copy.
 await mkdir(join(dir, 'node_modules/left-pad'), { recursive: true });
 await writeFile(join(dir, 'node_modules/left-pad/README.md'), '# left-pad\n\nThis is not the product.\n');
@@ -115,5 +132,28 @@ describe('the brand look', () => {
   it('falls back to the clean look when the product said nothing about colour', () => {
     expect(paintOf('brand', { colours: [] }).ground).toBe(paintOf('clean').ground);
     expect(paintOf('brand', { colours: ['not a colour'] }).ground).toBe(paintOf('clean').ground);
+  });
+});
+
+describe('the pictures a project has of itself', () => {
+  it('reads how big a picture is out of its own first bytes', () => {
+    expect(sizeOf(png(1600, 900))).toEqual({ width: 1600, height: 900 });
+    expect(sizeOf(Buffer.alloc(40, 9))).toBe(null);
+    expect(looksLikeScreen({ width: 1600, height: 900 })).toBe(true);
+    // A badge, and a banner six times wider than it is tall. Neither is a picture of a product.
+    expect(looksLikeScreen({ width: 88, height: 20 })).toBe(false);
+    expect(looksLikeScreen({ width: 1280, height: 200 })).toBe(false);
+    expect(looksLikeScreen(null)).toBe(false);
+  });
+
+  it('takes the screenshots and leaves the wallpaper, the badge and the mark', async () => {
+    const product = await readProject(dir);
+    const names = product.screens.map((one) => one.name);
+    expect(names).toContain('02-board.png');
+    expect(names).toContain('screenshot-home.png');
+    expect(names).not.toContain('wallpaper.png');
+    expect(names).not.toContain('badge.png');
+    expect(names).not.toContain('logo.png');
+    expect(product.screens.every((one) => one.what.includes('out of the project itself'))).toBe(true);
   });
 });

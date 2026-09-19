@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { carriesVisual, criticise, echoes, figureIn, keywords, repair, trimTo, type Want } from './critic.ts';
-import { countWords, LAYOUTS, saidWords, type Layout, type Scene, type Spec } from './spec.ts';
+import { carriesVisual, criticise, echoes, figureIn, headlineOf, keywords, repair, shorten, trimTo, type Want } from './critic.ts';
+import { countWords, LAYOUTS, saidWords, saysWhatItShows, type Layout, type Scene, type Spec } from './spec.ts';
 
 // Every rule here is written the same way round: a lazy storyboard of the kind a free model really hands back goes
 // in, and what comes out is a film. The founder's own run is the case they all descend from — three identical
@@ -64,8 +64,9 @@ describe('the critic', () => {
     // Nothing on screen is the sentence being said under it.
     for (const scene of fixed.scenes) {
       const mayRepeat = ['hook', 'cta', 'logo', 'title', 'stat', 'quote'].includes(scene.layout);
-      // Three or four of the spoken line's own words set large is emphasis; a sentence of them is a transcript.
-      if (scene.text && scene.say && !mayRepeat && echoes(scene.text, scene.say) >= 0.6) expect(countWords(scene.text)).toBeLessThanOrEqual(4);
+      // A scene that shows the line it says loses its captions when it is rendered, so it may show it — as a
+      // headline. A sentence of it set in type is the narration written out, and that is still a transcript.
+      if (scene.text && scene.say && !mayRepeat && echoes(scene.say, scene.text) >= 0.6) expect(countWords(scene.text)).toBeLessThanOrEqual(7);
       expect(countWords(scene.text)).toBeLessThanOrEqual(12);
       expect(countWords(scene.heading)).toBeLessThanOrEqual(7);
     }
@@ -89,7 +90,7 @@ describe('one rule at a time', () => {
     const twice = spec([{ layout: 'statement', text: 'Traction beats a beautiful deck every single time', say: 'Traction beats a beautiful deck every single time.', bg_prompt: 'x' }]);
     expect(rules(criticise(twice, reelWant({ reel: false })))).toContain('echo');
     const { spec: fixed } = repair(twice, reelWant({ reel: false }));
-    expect(countWords(fixed.scenes[0].text)).toBeLessThanOrEqual(4);
+    expect(countWords(fixed.scenes[0].text)).toBeLessThanOrEqual(7);
     expect(rules(criticise(fixed, reelWant({ reel: false })))).not.toContain('echo');
     // A line that will not make even a handful of words gives up its words altogether and shows a picture.
     const bare = spec([{ layout: 'statement', text: 'It is what it is and so on it goes', say: 'It is what it is and so on it goes.', bg_prompt: 'x' }]);
@@ -199,5 +200,88 @@ describe('one rule at a time', () => {
     expect(notes).toEqual([]);
     expect(fixed.scenes.map((one) => one.layout)).toEqual(['hook', 'stat', 'checklist', 'cta']);
     expect(fixed.scenes[0].text).toBe('Your deck is the problem');
+  });
+});
+
+describe('a headline is a line of English', () => {
+  it('keeps the small words a telegram would drop', () => {
+    // The real run set "INVESTORS ASK BRUTAL QUESTION" across a frame. That is a sentence with its grammar removed.
+    expect(headlineOf('Investors ask a brutal question first', 5)).toBe('Investors ask a brutal question first');
+    expect(headlineOf('Wires carry context between rooms', 6)).toBe('Wires carry context between rooms');
+    // A question mark is the headline; a full stop belongs to the sentence it came from.
+    expect(headlineOf('Want investors to chase you?', 5)).toBe('Want investors to chase you?');
+    expect(headlineOf('Wires carry context.', 5)).toBe('Wires carry context');
+  });
+
+  it('never stops between "a" and the thing it was about to name', () => {
+    // A real reel set "I SOLVE A SINGLE" across a frame, which is the first half of a headline.
+    expect(headlineOf('I solve a single, painful problem.', 5)).toBe('I solve a single, painful problem');
+    expect(headlineOf('Traction beats a beautiful deck every single time.', 5)).toBe('Traction beats a beautiful deck');
+  });
+
+  it('drops the throat-clearing at the front and gives up where there is no headline to be had', () => {
+    expect(headlineOf('So here is the thing: investors want traction', 5)).not.toMatch(/^So /);
+    // Nothing in this line carries anything, so it has no headline and the scene shows a picture instead.
+    expect(headlineOf('It is what it is and so on it goes', 4)).toBe('');
+  });
+});
+
+describe('the words on screen and the words underneath', () => {
+  it('turns the captions off for a scene whose own words are the line being said', () => {
+    // A hook is the spoken line set large. Captioned as well, it is the same sentence twice on one frame.
+    expect(saysWhatItShows({ layout: 'hook', text: 'Your whole company on one canvas', say: 'Your whole company on one canvas.' })).toBe(true);
+    expect(saysWhatItShows({ layout: 'cta', text: 'Follow for more', say: 'Follow for more.' })).toBe(true);
+  });
+
+  it('keeps them where the screen shows a few words of a longer line', () => {
+    expect(saysWhatItShows({ layout: 'statement', text: 'Investors ask a brutal question', say: 'Investors ask a brutal question first, and most founders get that answer wrong.' })).toBe(false);
+    expect(saysWhatItShows({ layout: 'picture', say: 'Nothing is written on this one at all.' })).toBe(false);
+  });
+});
+
+describe('a film about a product that has pictures of itself', () => {
+  const screens = ['screen-repo-1', 'screen-repo-2'];
+  const drawn = spec([
+    { layout: 'hook', text: 'Your whole company on one canvas', say: 'Your whole company on one canvas.', bg_prompt: 'a desk' },
+    { layout: 'statement', text: 'Rooms hold people', say: 'Rooms hold people.', bg_prompt: 'a room' },
+    { layout: 'picture', image_prompt: 'a canvas of cards', say: 'Wires carry the context.' },
+    { layout: 'cta', text: 'Put it on one canvas', say: 'Put it on one canvas.', bg_prompt: 'a laptop' },
+  ]);
+
+  it('says so when every scene is a drawing and the real screens are on the card', () => {
+    expect(rules(criticise(drawn, reelWant({ screens })))).toContain('screens');
+    expect(rules(criticise(drawn, reelWant()))).not.toContain('screens');
+  });
+
+  it('gives one scene a real screenshot to hold', () => {
+    const { spec: fixed, notes } = repair(drawn, reelWant({ screens }));
+    const shown = fixed.scenes.find((one) => one.layout === 'device');
+    expect(shown?.asset).toBe('screen-repo-1');
+    expect(notes.join(' ')).toContain('real pictures of the product');
+    expect(rules(criticise(fixed, reelWant({ screens })))).not.toContain('screens');
+  });
+
+  it('leaves a film that already shows the product alone', () => {
+    const already = spec([...drawn.scenes.slice(0, 2), { layout: 'device', asset: 'screen-repo-1', frame: 'browser', say: 'This is the stage.' }, drawn.scenes[3]]);
+    expect(rules(criticise(already, reelWant({ screens })))).not.toContain('screens');
+  });
+});
+
+describe('a line said aloud, made shorter', () => {
+  it('cuts at a full stop, then at a clause, and never in the middle of a thought', () => {
+    // The real film said "I'm a founder, I feel." because the fit was done with a headline's scissors.
+    expect(shorten("I'm a founder, I feel the weight of every decision.", 6)).toBe("I'm a founder.");
+    expect(shorten('A canvas where a founder works with a small workforce of people, each in their own room.', 9))
+      .toBe('A canvas where a founder works with a small workforce of people.');
+    // Two sentences: the second one goes whole before the first is touched.
+    expect(shorten('Investors want traction. They fund what already works.', 4)).toBe('Investors want traction.');
+  });
+
+  it('stops on a word that carries something when there is no clause to stop at', () => {
+    const cut = shorten('Investors look for a real problem and a team that can ship it fast.', 11);
+    expect(cut).toBe('Investors look for a real problem.');
+    // A line that cannot be cut without breaking stays as long as it is: a film a second over beats one that
+    // stops mid-breath.
+    expect(shorten('Investors fund traction.', 2)).toBe('Investors fund traction.');
   });
 });

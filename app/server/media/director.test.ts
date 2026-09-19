@@ -9,6 +9,7 @@ import {
   type Material, type Plan, type Understanding,
 } from './director.ts';
 import { countWords, saidWords, type Spec } from './spec.ts';
+import { sourcesOf } from './grounding.ts';
 import { gather, type VideoDeps } from './video.ts';
 
 const nothing: Material = { lines: [], assets: [], using: [] };
@@ -166,19 +167,21 @@ describe('the whole direction, end to end', () => {
       title: 'What investors check',
       scenes: [
         { layout: 'hook', text: 'Investors check one thing', say: 'Investors check one thing first.', bg_prompt: 'a founder mid-pitch' },
-        { layout: 'stat', heading: '12%', text: 'get a second meeting', say: 'Only twelve per cent get a second meeting.', bg_prompt: 'an empty meeting room' },
-        { layout: 'checklist', heading: 'The checklist', bullets: ['A real problem', 'A team that ships'], say: 'A real problem and a team that ships.', bg_prompt: 'a whiteboard' },
+        { layout: 'stat', heading: '12%', text: 'get a second meeting', say: 'Only twelve per cent get a second meeting.', bg_prompt: 'an empty meeting room', source: 'Only twelve per cent of decks get a second meeting' },
+        { layout: 'checklist', heading: 'The checklist', bullets: ['A real problem', 'A team that ships'], say: 'A real problem and a team that ships.', bg_prompt: 'a whiteboard', source: 'a real problem and a team that ships' },
         { layout: 'cta', text: 'Follow for more', heading: '@founder', say: 'Follow for more.', bg_prompt: 'a phone in a hand' },
       ],
     };
     const model = async (prompt: string) => (prompt.includes('Turn this plan into a storyboard') ? JSON.stringify(good) : '{}');
     const said: string[] = [];
-    const made = await direct({ brief: 'a 15 second reel about what investors check' }, nothing, model, { report: (line) => said.push(line) });
+    // The figure is real because the material says so, and every scene points at the line it came from.
+    const backed: Material = { ...nothing, lines: ['Only twelve per cent of decks get a second meeting. What they check is a real problem and a team that ships.'], using: ['a note'] };
+    const made = await direct({ brief: 'a 15 second reel about what investors check' }, backed, model, { report: (line) => said.push(line) });
     expect(made.spec.scenes.map((one) => one.layout)).toEqual(['hook', 'stat', 'checklist', 'cta']);
     expect(said.some((line) => line.includes('did not hold up'))).toBe(false);
     expect(criticise(made.spec, {
       seconds: 15, pace: 'punchy', purpose: 'reel', captions: true, bible: made.bible,
-      layouts: layoutsFor({ ai: false, material: nothing }), reel: true,
+      layouts: layoutsFor({ ai: false, material: backed }), reel: true, sources: sourcesOf(backed, 'a 15 second reel about what investors check'),
     })).toEqual([]);
   });
 });

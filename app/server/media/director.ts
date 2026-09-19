@@ -1,11 +1,12 @@
 import type { Shape } from '../../shared/model.ts';
 import { MOODS, type Mood } from './audio.ts';
-import { contrasty, criticise, figureIn, hasNumber, keywords, listy, repair, trimTo, type Want } from './critic.ts';
+import { contrasty, criticise, figureIn, hasNumber, headlineOf, keywords, listy, repair, trimTo, type Want } from './critic.ts';
 import {
   AI_LAYOUTS, budgetOf, CAPS, HEADING_WORDS, isPurpose, LAYOUTS, MAX_SCENES, parseSpec, PURPOSE, PURPOSES,
   saidWords, scenesFor, TEXT_WORDS, type Layout, type Purpose, type Scene, type Spec,
 } from './spec.ts';
 import { isPack, PACES, PACKS, type Brand, type Pace, type Pack } from './templates/looks.ts';
+import { FILLER, sourcesOf } from './grounding.ts';
 
 // The director. Not a form to fill in — a person who reads the brief, works out what is being asked for, decides on
 // an angle and a look, writes the beats, and only then writes the storyboard. Every one of those is a separate pass,
@@ -36,7 +37,9 @@ export type Understanding = {
 };
 
 // The creative plan: what this film is going to argue, how it opens, and what every picture in it has in common.
-export type Beat = { beat: string; on_screen: string; say: string; seconds?: number };
+// `source` is the short quotation out of the material that this beat's claim rests on — the one thing that makes
+// the difference between a film about a product and a film about a product somebody imagined.
+export type Beat = { beat: string; on_screen: string; say: string; source?: string; seconds?: number };
 export type Plan = { angle: string; hook: string; bible: string; beats: Beat[] };
 
 const one = <T>(value: unknown, allowed: readonly T[]): T | undefined => (allowed as readonly unknown[]).includes(value) ? value as T : undefined;
@@ -181,14 +184,16 @@ export function planPrompt(understanding: Understanding, asked: Asked, material:
     '{"angle": "the one idea the whole film turns on, in a sentence — not a summary of the brief, a decision",',
     ' "hook": "the first line, five to nine words, said and shown at the same time. A claim, a number or a question. Never a title.",',
     ' "style_bible": "one line describing how every picture in this film looks: medium, light, colour, mood. It is pasted in front of every image prompt, so it must describe a look and name no subject.",',
-    ` "beats": [{"beat": "what this beat does for the viewer", "on_screen": "what is seen — a picture of what, a number, a list, a screen", "say": "the line spoken over it, written the way a person would say it aloud"}]}`,
+    ` "beats": [{"beat": "what this beat does for the viewer", "on_screen": "what is seen — a picture of what, a number, a list, a screen", "say": "the line spoken over it, written the way a person would say it aloud", "source": "a short quotation, word for word, out of the material below that this beat's claim rests on"}]}`,
     '',
     `Write ${least} to ${most} beats. ${PURPOSE[understanding.purpose].shape}`,
     `All the "say" lines together must come to about ${budget} words — that is what makes the film ${understanding.seconds} seconds long, and it is a hard number. Count them.`,
     'Each beat says one thing. No beat says two things. Nothing is repeated in a later beat.',
     understanding.person ? 'The brief wants a person talking to camera, so the opening beats are written as somebody speaking, in the first person.' : '',
-    material.lines.length ? 'Use the product\'s own words and its real claims below; invent no feature, number or customer it does not have.'
-      : 'There is no product behind this film. Do not invent one: no brand name, no wordmark, no made-up statistics, no customer. Everything said has to be something a person could say about the subject in general.',
+    material.lines.length
+      ? 'Everything specific this film says — every feature, every number, every name — must come out of the material below, and every beat must carry the words it came from in "source", quoted exactly. A beat whose claim you cannot quote is a beat you must not write: say something you can quote instead. Do not describe features the material does not mention.'
+      : 'There is no material behind this film, so it may say only what is generally true. No brand name, no product name, no customer, and no statistics at all — not a percentage, not a multiple, not a sum of money. A number nobody measured is a lie with a decimal point in it. Leave "source" out.',
+    `Never use these words, in any form: ${FILLER.slice(0, 20).join(', ')}. They are what writing sounds like when it has nothing to say.`,
     material.lines.length ? ['', ...material.lines].join('\n') : '',
     '',
     'The brief:',
@@ -204,6 +209,7 @@ export function planOf(raw: unknown, understanding: Understanding, asked: Asked)
       beat: String(beat.beat ?? '').slice(0, 160),
       on_screen: String(beat.on_screen ?? '').slice(0, 200),
       say: String(beat.say ?? '').slice(0, CAPS.say),
+      source: beat.source ? String(beat.source).slice(0, CAPS.text) : undefined,
     };
   }).filter((beat) => beat.say.trim() || beat.on_screen.trim());
   const bible = typeof said.style_bible === 'string' && said.style_bible.trim().length > 12
@@ -257,15 +263,24 @@ export function specPrompt(plan: Plan, understanding: Understanding, material: M
     '- "say": the line spoken over it, exactly as the plan wrote it.',
     `- "bg_prompt": the picture drawn full-bleed BEHIND the words, for any scene that is not already a picture, a screen or a clip. Write it as "${plan.bible}" followed by what this scene is about. Every scene needs one.`,
     '- "emphasis": the single word in "text" that carries the line, which is set in the accent colour.',
+    ...(material.lines.length
+      ? ['- "source": the quotation the beat carried, word for word, for any scene that states a feature, a number or a name.']
+      : []),
     ...(understanding.pack === 'creator' ? ['- "icon": one emoji that belongs beside this scene, or leave it out.'] : []),
     '',
     'The rules this storyboard is checked against, before it is rendered:',
     `- What is on screen is a headline, never the narration. A heading is at most ${HEADING_WORDS} words and a line of text at most ${TEXT_WORDS}.`,
+    '- "heading" and "text" are words a viewer reads, never a note about what the shot shows. "Investors want proof" is a headline; "user growth shown" and "purpose highlighted" are directions to a camera operator and must never be set across a frame.',
     understanding.captions ? '- The spoken words are already captioned word by word at the foot of the frame. A scene that also writes them out shows the same sentence twice, so it must not.' : '- There are no captions, so the words on screen and the words spoken should not be the same words.',
     `- At least four different layouts. ${understanding.seconds} seconds of the same layout is a slideshow.`,
     '- A number is a stat scene. A list is a checklist or steps. A before-and-after is a compare.',
     understanding.pace === 'punchy' ? '- No scene holds for more than four seconds: at most ten spoken words a scene.' : '- No scene holds for more than six seconds.',
     `- All the "say" lines together come to about ${budget} words. Count them.`,
+    understanding.person ? '- Headlines are grammatical English. "Investors ask a brutal question" is a headline; "Investors ask brutal question" is a telegram.' : '- Headlines are grammatical English, not telegrams with the small words removed.',
+    material.lines.length
+      ? '- Every feature, number and name has to be in the material, and has to be quoted in "source". Anything you cannot quote is cut before this is rendered.'
+      : '- No statistics of any kind, and no product or company name: there is nothing behind this film to have measured or built anything.',
+    `- Never these words: ${FILLER.slice(0, 14).join(', ')}.`,
     ...(understanding.purpose === 'reel' || understanding.purpose === 'ad' ? ['- The first scene is a hook and the last is a cta.'] : []),
     '',
     `The angle: ${plan.angle}`,
@@ -275,6 +290,9 @@ export function specPrompt(plan: Plan, understanding: Understanding, material: M
     'The beats:',
     ...plan.beats.map((beat, index) => `${index + 1}. ${beat.beat}${beat.on_screen ? ` — on screen: ${beat.on_screen}` : ''}\n   say: ${beat.say}`),
     ...(material.assets.length ? ['', 'These are on the card already. Name one in "asset" exactly as written here:', ...material.assets.map((asset) => `- ${asset.name} — ${asset.what}`)] : []),
+    ...(material.assets.some((asset) => asset.kind === 'screen')
+      ? ['These are the real product. At least one scene is a device scene holding one of them, before any scene is a drawn picture: a film about a product that never shows the product is a film about an idea.']
+      : []),
   ].filter((line) => line !== '').join('\n');
 }
 
@@ -287,21 +305,21 @@ export function specFromPlan(plan: Plan, understanding: Understanding, layouts: 
   const scenes: Scene[] = plan.beats.map((beat, index): Scene => {
     const last = index === plan.beats.length - 1;
     const about = `${plan.bible}. ${beat.on_screen || keywords(beat.say, 8)}`;
-    if (index === 0 && reel && can('hook')) return { layout: 'hook', text: trimTo(plan.hook || beat.on_screen || beat.say, HEADING_WORDS), say: beat.say, bg_prompt: about };
-    if (last && reel && can('cta')) return { layout: 'cta', text: trimTo(keywords(beat.say, 5), 5) || 'Follow for more', say: beat.say, bg_prompt: about };
+    if (index === 0 && reel && can('hook')) return { layout: 'hook', text: trimTo(plan.hook || beat.say, HEADING_WORDS), say: beat.say, bg_prompt: about, source: beat.source };
+    if (last && reel && can('cta')) return { layout: 'cta', text: trimTo(beat.say, HEADING_WORDS) || 'Follow for more', say: beat.say, bg_prompt: about, source: beat.source };
     const figure = figureIn(beat.on_screen) ?? figureIn(beat.say);
-    if (figure && can('stat')) return { layout: 'stat', heading: figure, text: trimTo(keywords((beat.on_screen || beat.say).replace(figure, ' '), 6), 6), say: beat.say, bg_prompt: about };
+    if (figure && can('stat')) return { layout: 'stat', heading: figure, text: headlineOf(beat.say.replace(figure, ' '), 6), say: beat.say, bg_prompt: about, source: beat.source };
     if (contrasty(beat.say) && can('compare')) {
       const halves = beat.say.split(/\s+(?:but|instead of|rather than|versus|vs\.?)\s+/i);
-      if (halves.length >= 2) return { layout: 'compare', bullets: [trimTo(halves[0], 6), trimTo(halves[1], 6)], say: beat.say, bg_prompt: about };
+      if (halves.length >= 2) return { layout: 'compare', bullets: [trimTo(halves[0], 6), trimTo(halves[1], 6)], say: beat.say, bg_prompt: about, source: beat.source };
     }
     if (listy(beat.say) && can('checklist')) {
       const parts = beat.say.split(/[,;]|\band\b/i).map((part) => trimTo(part.trim(), 5)).filter(Boolean).slice(0, 4);
-      if (parts.length >= 2) return { layout: 'checklist', heading: 'What you get', bullets: parts, say: beat.say, bg_prompt: about };
+      if (parts.length >= 2) return { layout: 'checklist', heading: 'What you get', bullets: parts, say: beat.say, bg_prompt: about, source: beat.source };
     }
     // One wordless picture in three: a reel that never writes anything is a slideshow of somebody else's photographs.
-    if (can('picture') && index % 3 === 2) return { layout: 'picture', image_prompt: about, say: beat.say };
-    return { layout: 'statement', text: trimTo(keywords(beat.on_screen || beat.say, 5), 5), say: beat.say, bg_prompt: about };
+    if (can('picture') && index % 3 === 2) return { layout: 'picture', image_prompt: about, say: beat.say, source: beat.source };
+    return { layout: 'statement', text: headlineOf(beat.say || beat.on_screen, 5), say: beat.say, bg_prompt: about, source: beat.source };
   });
   return { title: trimTo(plan.angle || understanding.audience, 8), scenes: scenes.length ? scenes : [{ layout: 'statement', text: trimTo(plan.hook, HEADING_WORDS), say: plan.hook }] };
 }
@@ -351,6 +369,8 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
     captions: understanding.captions, bible: plan.bible, layouts,
     reel: understanding.purpose === 'reel' || understanding.purpose === 'ad',
     product: material.lines.length > 0 || material.assets.length > 0 || !!material.brand,
+    sources: sourcesOf(material, asked.brief),
+    screens: material.assets.filter((asset) => asset.kind === 'screen').map((asset) => asset.name),
   };
 
   // The storyboard, and one more go with the reason the first would not do: a model that forgot a field usually
@@ -383,7 +403,7 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
   if (last.length) {
     const { spec: mended, notes } = repair(spec, want);
     spec = mended;
-    for (const line of notes.slice(0, 4)) help.report(line);
+    for (const line of notes.slice(0, 5)) help.report(line);
   }
   // Whatever survives, the last word on shape and length is the rules', not the model's.
   const { spec: final } = repair(spec, want);

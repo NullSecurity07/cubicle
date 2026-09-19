@@ -1,8 +1,9 @@
 import {
-  budgetOf, countWords, HEADING_WORDS, MAX_SCENES, saidWords, TEXT_WORDS, VISUAL_LAYOUTS,
-  type Layout, type Purpose, type Scene, type Spec,
+  budgetOf, content, countWords, echoes, HEADING_WORDS, MAX_SCENES, saidWords, saysWhatItShows, STOP, TEXT_WORDS,
+  VISUAL_LAYOUTS, type Layout, type Purpose, type Scene, type Spec,
 } from './spec.ts';
 import type { Pace } from './templates/looks.ts';
+import { claimsOf, figureSaid, fillerIn, madeUpNames, preciseFigures, realLine, unfill, ungrounded, type Sources } from './grounding.ts';
 
 // The critic. A free model asked for a storyboard will, left alone, write the same scene three times, put the whole
 // of the narration on screen as a wall of type, and hand back a minute and a half where fifteen seconds were asked
@@ -17,6 +18,11 @@ export type Want = {
   seconds: number; pace: Pace; purpose: Purpose; captions: boolean;
   // Whether this film has a product behind it. Without one, a wordmark is a brand the film made up.
   product?: boolean;
+  // Everything the founder wired, dropped or typed. Every specific claim in the film is checked against it.
+  sources?: Sources;
+  // The real screenshots of the product on the card, by name. A film that has these and draws a picture instead is
+  // a film about a product nobody has seen.
+  screens?: string[];
   // The one line of visual direction every drawn picture in this film is prefixed with, so six pictures look like
   // six frames of one film rather than six stock photos.
   bible: string;
@@ -30,29 +36,14 @@ export type Finding = { rule: string; scene?: number; says: string };
 
 // --- reading what a line of writing actually is -------------------------------------------------------------
 
-const STOP = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'so', 'if', 'then', 'than', 'that', 'this', 'these', 'those',
-  'is', 'are', 'was', 'were', 'be', 'been', 'being', 'am', 'do', 'does', 'did', 'have', 'has', 'had', 'will', 'would',
-  'can', 'could', 'should', 'may', 'might', 'must', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'from', 'by', 'as',
-  'it', 'its', 'you', 'your', 'we', 'our', 'they', 'their', 'i', 'my', 'me', 'he', 'she', 'his', 'her', 'them', 'us',
-  'what', 'when', 'where', 'who', 'how', 'why', 'which', 'there', 'here', 'about', 'into', 'over', 'just', 'like',
-  'not', 'no', 'yes', 'up', 'out', 'down', 'off', 'all', 'any', 'some', 'more', 'most', 'very', 'really', 'actually']);
+// The stop words, what one line has of another, and whether a scene writes out its own narration all live in
+// `spec.ts` now, because the renderer needs the last of them to decide whether a scene keeps its captions.
+export { echoes, saysWhatItShows } from './spec.ts';
 
 // Words that only ever introduce what comes after them. A headline may not end on one.
 const WEAK_END = new Set(['whether', 'while', 'since', 'though', 'although', 'unless', 'until', 'because', 'after',
   'before', 'during', 'without', 'within', 'between', 'among', 'across', 'around', 'toward', 'towards', 'onto',
   'upon', 'per', 'via', 'every', 'each', 'both', 'either', 'neither', 'nor', 'one', 'two', 'three']);
-
-const bare = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}\s]+/gu, ' ').split(/\s+/).filter(Boolean);
-const content = (text: string) => bare(text).filter((word) => !STOP.has(word) && word.length > 2);
-
-// How much of one line is already in another, counted in the words that carry meaning. Two lines that share most of
-// their nouns are one line said twice, whatever the grammar around them.
-export function echoes(text: string, said: string): number {
-  const mine = content(text);
-  if (!mine.length) return 0;
-  const theirs = new Set(content(said));
-  return mine.filter((word) => theirs.has(word)).length / mine.length;
-}
 
 // A line cut to a headline: whole words, stopping at the last punctuation that makes a phrase rather than mid-clause.
 export function trimTo(text: string, most: number): string {
@@ -77,6 +68,72 @@ export function keywords(said: string, most: number): string {
   const kept = words.filter((word) => !STOP.has(word.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')) && word.replace(/[^\p{L}\p{N}]+/gu, '').length > 2);
   const picked = (kept.length >= 2 ? kept : words).slice(0, most).map((word) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''));
   return picked.join(' ');
+}
+
+// A cut that ends on "with a small" stops in the middle of the thing it was about to name. A determiner in the last
+// two words is that: whatever it introduced did not make the cut.
+const DANGLING = new Set(['a', 'an', 'the', 'this', 'that', 'these', 'those', 'my', 'your', 'our', 'their', 'its',
+  'his', 'her', 'no', 'every', 'each', 'another', 'some', 'any', 'one', 'two', 'three', 'both']);
+export const endsClean = (line: string): boolean =>
+  !line.split(/\s+/).map((one) => one.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')).slice(-2).some((one) => DANGLING.has(one));
+
+// A line said aloud, made shorter. A sentence read out is not a string: cut it at ten words and the founder hears
+// "I'm a founder, I feel." — which is what a real film said, because the fit was done with a headline's scissors.
+// So whole sentences go first, then whole clauses, and a line with neither stays as long as it is: a film a second
+// over is better than a film that stops mid-breath.
+export function shorten(said: string, most: number): string {
+  const sentences = (said ?? '').split(/(?<=[.!?])\s+/).map((one) => one.trim()).filter(Boolean);
+  if (!sentences.length) return said ?? '';
+  if (sentences.length > 1) {
+    let kept = sentences;
+    while (kept.length > 1 && countWords(kept.join(' ')) > most) kept = kept.slice(0, -1);
+    if (countWords(kept.join(' ')) <= most) return kept.join(' ');
+    return shorten(kept[0], most);
+  }
+  const one = sentences[0];
+  if (countWords(one) <= most) return one;
+  let run = '';
+  for (const part of one.split(/(?<=[,;:])\s+|\s+[—–]\s+/)) {
+    const next = run ? `${run} ${part}` : part;
+    if (run && countWords(next) > most) break;
+    run = next;
+  }
+  const cut = run.replace(/[\s,;:—–]+$/, '').trim();
+  if (countWords(cut) >= 3 && countWords(cut) < countWords(one)) return `${cut.replace(/[.!?]+$/, '')}.`;
+  // One long sentence with nothing to break it on. The words themselves, then, stopping on one that carries
+  // something — never on "and", and never on the "a" whose noun did not make the cut.
+  let words = trimTo(one, most);
+  for (let cap = countWords(words); cap > 4 && !endsClean(words); cap = countWords(words)) {
+    const shorter = trimTo(one, cap - 1);
+    if (countWords(shorter) >= cap) break;
+    words = shorter;
+  }
+  return countWords(words) >= 4 && countWords(words) < countWords(one) && endsClean(words) ? `${words.replace(/[.!?]+$/, '')}.` : one;
+}
+
+// A headline, out of a line somebody would say. It is English: "Investors ask a brutal question", never "Investors
+// ask brutal question", which is what taking the small words out of a sentence leaves behind — three characters
+// saved and the grammar gone. So the cut is made in whole words, on a clause where there is one, and only the
+// throat-clearing at the front is dropped.
+const LEAD_IN = new Set(['so', 'and', 'but', 'well', 'now', 'then', 'basically', 'actually', 'look', 'okay', 'right']);
+export function headlineOf(said: string, most: number): string {
+  const words = (said ?? '').trim().replace(/^[^\p{L}\p{N}]+/u, '').split(/\s+/).filter(Boolean);
+  while (words.length > 3 && LEAD_IN.has(words[0].toLowerCase().replace(/[^\p{L}]+/gu, ''))) words.shift();
+  // A full stop belongs to a sentence, not to a headline; a question mark and an exclamation are the headline.
+  const whole = words.join(' ').replace(/[,;:.]+$/, '');
+  // A line a word or two over the cap is set whole rather than broken in half: "I solve a single, painful problem"
+  // is a headline, and "I solve a single" is the first half of one.
+  if (countWords(whole) <= most + 2) return whole;
+  let line = trimTo(whole, most);
+  for (let cap = countWords(line); cap > 2 && !endsClean(line); cap = countWords(line)) {
+    const shorter = trimTo(whole, cap - 1);
+    if (countWords(shorter) >= cap) break;
+    line = shorter;
+  }
+  // A cut that has left one word standing, or a clause that turns out to be more throat-clearing — "the thing is"
+  // — is not a headline. The words the line turns on are the better answer then, even set as a telegram.
+  const enough = content(line).length >= Math.min(2, content(said ?? '').length);
+  return countWords(line) >= 2 && enough && endsClean(line) ? line : kickerOf(said ?? '', most);
 }
 
 // The same, but never padded out with the words that carry nothing: a line whose only real word is "goes" has no
@@ -139,7 +196,10 @@ export function criticise(spec: Spec, want: Want): Finding[] {
     if (scene.text && countWords(scene.text) > TEXT_WORDS) {
       say('headline', `scene ${at} puts ${countWords(scene.text)} words on screen — a viewer reads ${TEXT_WORDS}, and the rest is narration written out`, at);
     }
-    if (want.captions && scene.say && scene.text && countWords(scene.text) > EMPHASIS_WORDS && !ECHO_FINE.has(scene.layout) && echoes(scene.text, scene.say) >= 0.6) {
+    // How much of the *spoken* line is already on the screen. A scene that shows what it says loses its captions
+    // when it is rendered, so saying it twice is no longer the fault — the fault is the sentence. A headline the
+    // voice happens to read is a scene; a paragraph of it is the narration set in type, which nobody watches.
+    if (want.captions && scene.say && scene.text && countWords(scene.text) > HEADING_WORDS && !ECHO_FINE.has(scene.layout) && echoes(scene.say, scene.text) >= 0.6) {
       say('echo', `scene ${at} writes out what is already said over it and already captioned under it`, at);
     }
     const spoken = countWords(scene.say);
@@ -159,11 +219,41 @@ export function criticise(spec: Spec, want: Want): Finding[] {
   }
   const seen = scenes.filter(carriesVisual).length;
   if (seen / Math.max(1, scenes.length) < 0.7) say('visuals', `${scenes.length - seen} of ${scenes.length} scenes have nothing to look at`);
+  // The product itself. A drawn picture of a founder at a laptop is a stock photograph; the screenshot on the card
+  // is the thing being launched, and a launch film that never shows it is a film about an idea.
+  if (want.screens?.length && !scenes.some((one) => one.layout === 'device' || one.layout === 'footage')) {
+    say('screens', `there ${want.screens.length === 1 ? 'is a real picture' : `are ${want.screens.length} real pictures`} of the product on the card and the film shows none of them`);
+  }
 
   const budget = budgetOf(want.seconds, scenes.length, want.pace);
   const said = saidWords(spec);
   if (said > budget * 1.1) say('length', `the narration runs to ${said} words, which is about ${Math.round(said / 2.4 + scenes.length * 0.4)} seconds, not ${want.seconds}`);
   if (said && said < budget * 0.6) say('length', `the narration is only ${said} words, which leaves the film holding still`);
+
+  // What the film says is so. A claim that cannot be pointed at is not a style problem, it is a lie, and a founder
+  // cannot publish a film that invents their own product's features.
+  if (want.sources) {
+    scenes.forEach((scene, index) => {
+      const at = index + 1;
+      const claims = claimsOf(scene);
+      const filler = claims.flatMap((one) => fillerIn(one));
+      if (filler.length) say('filler', `scene ${at} says "${filler[0]}", which is a word for having nothing to say`, at);
+      const figures = claims.flatMap((one) => preciseFigures(one));
+      for (const figure of figures) {
+        if (!want.sources!.has) { say('invented', `scene ${at} claims "${figure}" and there is nothing behind this film to have measured it`, at); break; }
+        if (!figureSaid(figure, want.sources!)) { say('invented', `scene ${at} claims "${figure}", which is nowhere in what you wired to the card`, at); break; }
+      }
+      // A name nobody wired and nobody wrote in the brief is a company the film made up — and a title card is
+      // exactly where one goes, so this is asked of every scene, whatever it is.
+      const named = madeUpNames(scene, want.sources!);
+      if (named.length) say('invented', `scene ${at} names "${named[0]}", which is in neither your brief nor your material`, at);
+      // Everything else a scene states has to be in the material, or to point at the words it came from.
+      if (want.sources!.has) {
+        const made = ungrounded(scene, want.sources!);
+        if (made) say('invented', `scene ${at} says "${trimTo(made, 8)}", which is nowhere in what you wired to the card`, at);
+      }
+    });
+  }
 
   // The three shapes a line of writing asks to be given, and is not.
   scenes.forEach((scene, index) => {
@@ -192,8 +282,8 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     if (!can(next)) return null;
     if (next === 'picture') return { ...scene, layout: 'picture', image_prompt: scene.image_prompt || `${want.bible}. ${subjectOf(scene)}`, text: scene.text && countWords(scene.text) <= 8 ? scene.text : undefined };
     if (next === 'quote') return { ...scene, layout: 'quote', text: trimTo(scene.text || scene.say || '', 16), heading: scene.heading };
-    if (next === 'hook') return { ...scene, layout: 'hook', text: trimTo(scene.text || keywords(scene.say ?? '', 5), HEADING_WORDS), heading: undefined };
-    if (next === 'stat') { const figure = figureIn(scene.text) ?? figureIn(scene.say); return figure && countWords(figure) <= 3 ? { ...scene, layout: 'stat', heading: figure, text: trimTo(keywords((scene.text ?? scene.say ?? '').replace(figure, ' '), 6), 6) } : null; }
+    if (next === 'hook') return { ...scene, layout: 'hook', text: scene.text ? trimTo(scene.text, HEADING_WORDS) : headlineOf(scene.say ?? '', HEADING_WORDS), heading: undefined };
+    if (next === 'stat') { const figure = figureIn(scene.text) ?? figureIn(scene.say); return figure && countWords(figure) <= 3 ? { ...scene, layout: 'stat', heading: figure, text: headlineOf((scene.text ?? scene.say ?? '').replace(figure, ' '), 6) } : null; }
     if (next === 'compare') {
       const halves = (scene.text || scene.say || '').split(/\s+(?:but|instead of|rather than|versus|vs\.?)\s+/i);
       return halves.length >= 2 && halves[0].trim() && halves[1].trim()
@@ -214,21 +304,97 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     return null;
   };
 
-  // 1. A reel opens on a hook and closes on a call to action. Both are recasts of a scene that is already there, so
-  //    the film is never a scene longer or shorter for it.
+  // 1a. A reel opens on a hook and closes on a call to action. Both are recasts of a scene that is already there, so
+  //     the film is never a scene longer or shorter for it.
   if (want.reel && scenes.length >= 2) {
     if (scenes[0].layout !== 'hook' && can('hook')) {
       const first = scenes[0];
-      const line = first.text || first.heading || keywords(first.say ?? '', 6);
+      const line = first.text || first.heading || first.say || '';
       scenes[0] = { ...first, layout: 'hook', heading: undefined, text: trimTo(line, HEADING_WORDS) || 'Watch this' };
       note('the film opened on a title card, so the first scene is a hook instead');
     }
     const last = scenes.at(-1)!;
     if (last.layout !== 'cta' && last.layout !== 'logo' && last.layout !== 'outro' && can('cta')) {
-      const line = last.text || last.heading || keywords(last.say ?? '', 6);
+      const line = last.text || last.heading || last.say || '';
       scenes[scenes.length - 1] = { ...last, layout: 'cta', text: trimTo(line, HEADING_WORDS) || 'Follow for more', heading: last.heading && countWords(last.heading) <= 4 ? last.heading : undefined };
       note('the film had no ending, so the last scene is a call to action');
     }
+  }
+
+  // 1b. The truth, before any of the shape is decided: a scene built on a claim nobody can point at is cut, and a scene
+  //    that is only a little wrong is put right with the founder's own words. Nothing invented is dressed up.
+  if (want.sources) {
+    const sources = want.sources;
+    const used = new Set<string>();
+    const keep: Scene[] = [];
+    let dropped = 0;
+    for (const scene of scenes) {
+      let made = { ...scene };
+      // Filler first: it is never true and it never has to be, so it simply goes.
+      for (const key of ['heading', 'text', 'say'] as const) {
+        const said = made[key];
+        if (said && fillerIn(said).length) {
+          const clean = unfill(said);
+          made = { ...made, [key]: countWords(clean) >= 2 ? clean : undefined } as Scene;
+          note('the words that only sound like something were taken out');
+        }
+      }
+      if (made.bullets?.some((one) => fillerIn(one).length)) {
+        made = { ...made, bullets: made.bullets.map(unfill).filter((one) => countWords(one) >= 1) };
+        note('the words that only sound like something were taken out');
+      }
+      const claims = claimsOf(made);
+      const figures = claims.flatMap((one) => preciseFigures(one));
+      const unsourced = figures.filter((one) => !sources.has || !figureSaid(one, sources));
+      const pointless = ungrounded(made, sources);
+      const invented = madeUpNames(made, sources);
+
+      if (!unsourced.length && !pointless && !invented.length) { keep.push(made); continue; }
+      // A figure nobody measured cannot be a figure scene, and cannot sit in a line either.
+      if (unsourced.length) {
+        note(sources.has
+          ? `${unsourced.length === 1 ? 'a number' : `${unsourced.length} numbers`} nobody in your material measured ${unsourced.length === 1 ? 'was' : 'were'} taken out`
+          : 'there is nothing behind this film to measure, so the numbers in it were taken out');
+        if (made.layout === 'stat') made = recast(made, 'statement') ?? { ...made, layout: 'statement', text: made.text || 'What matters', heading: undefined };
+        for (const key of ['heading', 'text', 'say'] as const) {
+          const said = made[key];
+          if (!said) continue;
+          const clean = unsourced.reduce((line, figure) => line.replace(figure, ''), said).replace(/\s{2,}/g, ' ').replace(/\s+([,.!?%])/g, '$1').trim();
+          made = { ...made, [key]: countWords(clean) >= 2 ? clean : undefined } as Scene;
+        }
+        made = { ...made, bullets: made.bullets?.map((one) => unsourced.reduce((line, figure) => line.replace(figure, ''), one).trim()).filter((one) => countWords(one) >= 1) };
+      }
+      // A company the film made up is struck out of every line it appears in; there is nothing to put in its place,
+      // because there was never anything there.
+      if (invented.length) {
+        note(`"${invented[0]}" is in neither your brief nor your material, so ${invented.length === 1 ? 'that name was' : `those ${invented.length} names were`} taken out`);
+        const strike = (line: string) => invented.reduce((said, one) => said.replace(new RegExp(`\\b${one}\\b`, 'g'), ''), line).replace(/\s{2,}/g, ' ').replace(/\s+([,.!?])/g, '$1').trim();
+        for (const key of ['heading', 'text', 'say'] as const) {
+          const said = made[key];
+          if (!said) continue;
+          const clean = strike(said);
+          made = { ...made, [key]: countWords(clean) >= 2 ? clean : undefined } as Scene;
+        }
+        made = { ...made, bullets: made.bullets?.map(strike).filter((one) => countWords(one) >= 1) };
+      }
+      if (pointless) {
+        // Nothing points at this. Either the founder's own words go in its place, or the scene goes.
+        const real = sources.has ? realLine(sources, used) : null;
+        if (real) {
+          note(`"${trimTo(pointless, 6)}" is nowhere in your material, so that scene says your own words instead`);
+          keep.push({ ...made, text: headlineOf(real, TEXT_WORDS), say: real, heading: undefined, bullets: undefined, source: real, layout: made.layout === 'stat' ? 'statement' : made.layout });
+          continue;
+        }
+        if (keep.length + 1 < scenes.length && scenes.length - dropped > 3) {
+          dropped += 1;
+          note(`I could not find "${trimTo(pointless, 6)}" in your material, so ${dropped === 1 ? 'that claim was' : `those ${dropped} claims were`} dropped`);
+          continue;
+        }
+      }
+      if (!claimsOf(made).length) { dropped += 1; continue; }
+      keep.push(made);
+    }
+    scenes = keep.length >= 2 ? keep : scenes;
   }
 
   // 2a. A figure scene carries a figure. "25% Faster funding" set as one line is a ten-character string sized down to
@@ -251,6 +417,19 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     });
   }
 
+  // 2c. The product, shown. Where there are real screenshots on the card and not one scene holds one, the scene that
+  //     was going to be a drawing holds a screenshot instead — that being the picture the founder actually has.
+  if (want.screens?.length && can('device') && !scenes.some((one) => one.layout === 'device' || one.layout === 'footage')) {
+    const middle = scenes.findIndex((one, index) => index > 0 && index < scenes.length - 1 && (one.layout === 'picture' || one.layout === 'statement'));
+    const where = middle >= 0 ? middle : scenes.findIndex((one) => one.layout === 'picture' || one.layout === 'statement');
+    if (where >= 0) {
+      note('the project had real pictures of the product in it, so one scene shows the product rather than a drawing of it');
+      scenes = scenes.map((one, index) => (index === where
+        ? { ...one, layout: 'device' as Layout, asset: want.screens![0], frame: one.frame ?? 'browser', image_prompt: undefined, heading: undefined, text: one.text || trimTo(one.heading ?? '', HEADING_WORDS) || undefined }
+        : one));
+    }
+  }
+
   // 2. A number is a stat scene, a list is a checklist, a contrast is a comparison. This is the difference between a
   //    film and a set of subtitles: the shape of a scene is what a viewer reads before they read a word of it.
   scenes = scenes.map((scene) => {
@@ -268,12 +447,13 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
   scenes = scenes.map((scene) => {
     let made = { ...scene };
     if (want.captions && made.say && !ECHO_FINE.has(made.layout)) {
-      const repeats = made.text && countWords(made.text) > EMPHASIS_WORDS && echoes(made.text, made.say) >= 0.6;
+      const repeats = made.text && countWords(made.text) > HEADING_WORDS && echoes(made.say, made.text) >= 0.6;
       if (repeats && made.text) {
-        // First try: the three or four words the line actually turns on, set large. That is emphasis, not a
-        // transcript, and it keeps something on screen — a film of nothing but photographs and subtitles is the
-        // other way of getting this wrong.
-        const kicker = kickerOf(made.say, EMPHASIS_WORDS);
+        // First try: a headline out of the line's own opening, in English — the clause it begins on, where it has
+        // one. That is emphasis and not a transcript, and it keeps something on screen: a film of nothing but
+        // photographs and subtitles is the other way of getting this wrong. Failing that, the words it turns on.
+        const opening = headlineOf(made.say, HEADING_WORDS);
+        const kicker = opening && echoes(made.say, opening) < 0.6 ? opening : kickerOf(made.say, EMPHASIS_WORDS);
         if (countWords(kicker) >= 2 && !ECHO_FINE.has(made.layout) && made.layout !== 'picture') {
           note('a sentence set on screen is cut to the words it turns on, and the captions say the rest');
           made = { ...made, text: kicker, emphasis: undefined };
@@ -288,7 +468,7 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
           made = reshape({ ...made, text: scene.text }, ['stat', 'compare', 'checklist', 'picture'])
             ?? { ...made, text: trimTo(keywords(scene.say ?? '', 4), 4) || 'Keep watching' };
           // Whatever shape it took, the words that were the echo do not survive into it.
-          if (made.text && scene.say && !ECHO_FINE.has(made.layout) && echoes(made.text, scene.say) >= 0.6) made = { ...made, text: undefined };
+          if (made.text && scene.say && !ECHO_FINE.has(made.layout) && echoes(scene.say, made.text) >= 0.6 && countWords(made.text) > HEADING_WORDS) made = { ...made, text: undefined };
         }
       }
       if (made.bullets?.length) made = { ...made, bullets: made.bullets.map((one) => trimTo(one, 5)) };
@@ -339,11 +519,11 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       const rest = sentences.slice(Math.max(1, half)).join(' ');
       note('a scene that ran for half the film is cut in two');
       // Both halves go back in the queue: one cut is rarely enough for a model that wrote a paragraph.
-      waiting.unshift({ ...scene, say: first }, { layout: can('picture') ? 'picture' : 'statement', say: rest, image_prompt: can('picture') ? `${want.bible}. ${subjectOf(scene)}` : undefined, text: can('picture') ? undefined : trimTo(keywords(rest, 5), 5) });
+      waiting.unshift({ ...scene, say: first }, { layout: can('picture') ? 'picture' : 'statement', say: rest, image_prompt: can('picture') ? `${want.bible}. ${subjectOf(scene)}` : undefined, text: can('picture') ? undefined : headlineOf(rest, 5) });
       continue;
     }
     note('a line too long to hold one scene is shortened');
-    split.push({ ...scene, say: trimTo(scene.say, most) });
+    split.push({ ...scene, say: shorten(scene.say, most) });
   }
   scenes = split.slice(0, MAX_SCENES);
 
@@ -363,8 +543,8 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
         const scene = scenes[index];
         const spoken = countWords(scene.say);
         if (spoken <= 4) continue;
-        const sentences = (scene.say ?? '').split(/(?<=[.!?])\s+/).filter(Boolean);
-        const shorter = sentences.length > 1 ? sentences.slice(0, -1).join(' ') : trimTo(scene.say!, Math.max(4, spoken - 3));
+        const shorter = shorten(scene.say!, Math.max(4, spoken - 3));
+        if (countWords(shorter) >= spoken) continue;
         scenes[index] = { ...scene, say: shorter };
         said -= spoken - countWords(shorter);
         moved = true;

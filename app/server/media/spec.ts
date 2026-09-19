@@ -14,6 +14,8 @@ export type Scene = {
   layout: Layout; heading?: string; text?: string; bullets?: string[]; labels?: string[];
   image_prompt?: string; bg_prompt?: string; asset?: string; frame?: string; clip_prompt?: string; portrait_prompt?: string;
   emphasis?: string; icon?: string;
+  // The few words out of the wired material that this scene's claim rests on. The critic checks it is really there.
+  source?: string;
   seconds?: number; start?: number; mute?: boolean; say?: string;
 };
 // The whole film as one flat object. `music` is the mood the bed wants, `sfx` and `captions` are on or off, `pace` is
@@ -38,6 +40,39 @@ export const CAPS = { title: 80, heading: 90, text: 260, bullet: 100, bullets: 6
 // holds the director to: a heading is a headline and a line of support is a line, never the narration written out.
 export const HEADING_WORDS = 7;
 export const TEXT_WORDS = 12;
+
+// The words that carry nothing on their own. Every rule that reads a line — what a headline may end on, which word
+// is the one the line turns on, whether two lines are the same line — counts the rest and ignores these.
+export const STOP = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'so', 'if', 'then', 'than', 'that', 'this', 'these', 'those',
+  'is', 'are', 'was', 'were', 'be', 'been', 'being', 'am', 'do', 'does', 'did', 'have', 'has', 'had', 'will', 'would',
+  'can', 'could', 'should', 'may', 'might', 'must', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'from', 'by', 'as',
+  'it', 'its', 'you', 'your', 'we', 'our', 'they', 'their', 'i', 'my', 'me', 'he', 'she', 'his', 'her', 'them', 'us',
+  'what', 'when', 'where', 'who', 'how', 'why', 'which', 'there', 'here', 'about', 'into', 'over', 'just', 'like',
+  'not', 'no', 'yes', 'up', 'out', 'down', 'off', 'all', 'any', 'some', 'more', 'most', 'very', 'really', 'actually']);
+
+const bare = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}\s]+/gu, ' ').split(/\s+/).filter(Boolean);
+export const content = (text: string) => bare(text).filter((word) => !STOP.has(word) && word.length > 2);
+
+// How much of one line is already in another, counted in the words that carry meaning. Two lines that share most of
+// their nouns are one line said twice, whatever the grammar around them.
+export function echoes(text: string, said: string): number {
+  const mine = content(text);
+  if (!mine.length) return 0;
+  const theirs = new Set(content(said));
+  return mine.filter((word) => theirs.has(word)).length / mine.length;
+}
+
+// Whether what is written on a scene is already the whole of the line being said over it. A hook is the spoken line
+// set large, and a word-by-word caption under it is the same sentence twice on one frame — which is what the founder
+// was handed. The test is how much of the *spoken* line is already on the screen: five words of a twelve-word line
+// is emphasis and keeps its captions; five words of a five-word line is the caption, set large.
+export function saysWhatItShows(scene: Scene): boolean {
+  const said = scene.say?.trim();
+  if (!said) return false;
+  const shown = [scene.heading, scene.text, ...(scene.bullets ?? [])].filter(Boolean).join(' ');
+  if (!shown.trim()) return false;
+  return echoes(said, shown) >= 0.6;
+}
 
 const words = (value: unknown, what: string, limit: number): string => {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${what} must be a line of text`);
@@ -92,6 +127,7 @@ export function parseSpec(raw: unknown): Spec {
     some('portrait_prompt', 'portrait_prompt', CAPS.image_prompt);
     some('asset', 'asset', CAPS.asset);
     some('emphasis', 'emphasis', CAPS.emphasis);
+    some('source', 'source', CAPS.text);
     some('icon', 'icon', CAPS.icon);
     if (scene.frame !== undefined && scene.frame !== null) {
       if (!(FRAMES as readonly unknown[]).includes(scene.frame)) throw new Error(`${where}: "frame" must be one of ${FRAMES.join(', ')}`);
@@ -203,10 +239,14 @@ export function withinCaps(spec: Spec, allow: { ai: boolean; assets: string[]; m
     }
     if (AI_LAYOUTS.has(scene.layout)) {
       spent += 1;
-      if (!allow.ai || spent > most) return fallbackOf(scene, allow.ai ? `a film makes at most ${most} AI scenes` : 'AI clips are switched off');
+      if (!allow.ai || spent > most) {
+        notes.push(`scene ${index + 1} is its words rather than a moving shot: ${allow.ai ? `a film makes at most ${most} of those` : 'AI clips are switched off'}`);
+        return fallbackOf(scene);
+      }
     }
     if ((scene.layout === 'footage' || scene.layout === 'device') && scene.asset && !allow.assets.includes(scene.asset)) {
-      return fallbackOf({ ...scene, asset: undefined }, `there is nothing on the card called "${scene.asset}"`);
+      notes.push(`scene ${index + 1} asked for "${scene.asset}", and there is nothing on the card by that name`);
+      return fallbackOf({ ...scene, asset: undefined });
     }
     return scene;
   });
@@ -233,11 +273,13 @@ export function withinLength<T extends { seconds: number }>(shots: T[], target: 
 }
 
 // What a scene becomes when the thing it needed could not be made or found. A clip keeps its words as a picture if it
-// had any, and a presenter keeps saying what it was going to say — the film is never a scene shorter for it.
-export function fallbackOf(scene: Scene, why: string): Scene {
+// had any, and a presenter keeps saying what it was going to say — the film is never a scene shorter for it. Why it
+// could not be made is told to the founder on the card; it is never set across the frame. A film that renders
+// "nothing to show" or "Cloudflare answered 429" as its headline is worse than one that renders nothing at all.
+export function fallbackOf(scene: Scene): Scene {
   if (scene.layout === 'clip') return { layout: 'picture', image_prompt: scene.clip_prompt ?? scene.text ?? 'an abstract product still, soft light', text: scene.text, say: scene.say, heading: scene.heading, emphasis: scene.emphasis };
   if (scene.layout === 'presenter') return { layout: 'statement', text: scene.text || scene.say || '', say: scene.say, heading: scene.heading, bg_prompt: scene.portrait_prompt, emphasis: scene.emphasis };
   if (scene.layout === 'device') return { layout: 'statement', text: scene.text || scene.heading || '', say: scene.say, bg_prompt: scene.bg_prompt, emphasis: scene.emphasis };
   if (scene.layout === 'footage') return { layout: 'statement', text: scene.text || scene.heading || '', say: scene.say, bg_prompt: scene.bg_prompt, emphasis: scene.emphasis };
-  return { ...scene, layout: 'statement', text: scene.text || scene.heading || why };
+  return { ...scene, layout: 'statement', text: scene.text || scene.heading || undefined, heading: undefined, image_prompt: undefined, bg_prompt: scene.bg_prompt ?? scene.image_prompt };
 }
