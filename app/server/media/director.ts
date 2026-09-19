@@ -299,8 +299,9 @@ export function specFromPlan(plan: Plan, understanding: Understanding, layouts: 
       const parts = beat.say.split(/[,;]|\band\b/i).map((part) => trimTo(part.trim(), 5)).filter(Boolean).slice(0, 4);
       if (parts.length >= 2) return { layout: 'checklist', heading: 'What you get', bullets: parts, say: beat.say, bg_prompt: about };
     }
-    if (can('picture') && index % 2 === 1) return { layout: 'picture', image_prompt: about, say: beat.say };
-    return { layout: 'statement', text: trimTo(keywords(beat.on_screen || beat.say, HEADING_WORDS), HEADING_WORDS), say: beat.say, bg_prompt: about };
+    // One wordless picture in three: a reel that never writes anything is a slideshow of somebody else's photographs.
+    if (can('picture') && index % 3 === 2) return { layout: 'picture', image_prompt: about, say: beat.say };
+    return { layout: 'statement', text: trimTo(keywords(beat.on_screen || beat.say, 5), 5), say: beat.say, bg_prompt: about };
   });
   return { title: trimTo(plan.angle || understanding.audience, 8), scenes: scenes.length ? scenes : [{ layout: 'statement', text: trimTo(plan.hook, HEADING_WORDS), say: plan.hook }] };
 }
@@ -352,14 +353,20 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
     product: material.lines.length > 0 || material.assets.length > 0 || !!material.brand,
   };
 
-  let spec: Spec;
-  try {
-    spec = parseSpec(await askJson(think, specPrompt(plan, understanding, material, layouts)));
-  } catch (error) {
-    help.report(`the storyboard would not come out of the model (${(error as Error).message}), so it is built from the plan`);
+  // The storyboard, and one more go with the reason the first would not do: a model that forgot a field usually
+  // remembers it when told which one. Only when it cannot manage that at all is the plan built into a film by hand.
+  let spec: Spec | null = null;
+  let wrong = '';
+  const brief = specPrompt(plan, understanding, material, layouts);
+  for (let attempt = 0; attempt < 2 && !spec; attempt += 1) {
+    try {
+      spec = parseSpec(await askJson(think, `${brief}${wrong ? `\n\nYour last storyboard could not be used: ${wrong}\nAnswer again, the whole object, JSON only.` : ''}`, 1));
+    } catch (error) { wrong = (error as Error).message; }
+  }
+  if (!spec?.scenes.length) {
+    help.report(`the storyboard would not come out of the model (${wrong || 'it answered nothing'}), so it is built from the plan`);
     spec = specFromPlan(plan, understanding, layouts);
   }
-  if (!spec.scenes.length) spec = specFromPlan(plan, understanding, layouts);
 
   // The reading. Two goes at its own work, then the rules do it.
   for (let round = 0; round < 2; round += 1) {
@@ -381,7 +388,6 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
   // Whatever survives, the last word on shape and length is the rules', not the model's.
   const { spec: final } = repair(spec, want);
   spec = final;
-  spec = { ...spec, scenes: onCamera(spec.scenes, understanding, plan.bible, help.report) };
   help.report(`${spec.scenes.length} scenes, about ${saidWords(spec)} words said: ${spec.title}`);
   return { understanding, plan, spec, bible: plan.bible };
 }
@@ -393,7 +399,9 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
 export function onCamera(scenes: Scene[], understanding: Understanding, bible: string, report: (line: string) => void): Scene[] {
   if (!understanding.person) return scenes;
   if (scenes.some((one) => one.layout === 'presenter' || one.layout === 'footage' || one.layout === 'clip')) return scenes;
-  const portrait = `${bible}. one person talking straight to camera, head and shoulders, direct eye contact, natural expression`;
+  // The bible says "single strong subject, shallow depth of field", and a picture model reads that as a macro of
+  // somebody's mouth. A talking head has to be asked for as a talking head: the framing first, and loudly.
+  const portrait = `a medium shot of one person from the chest up, facing the camera and talking to it, their whole head and shoulders inside the frame with room above, both eyes open and looking into the lens, ${bible.replace(/,?\s*shallow depth of field/i, '')}`;
   // The opening, and one more in the middle of anything long enough to come back to a face.
   const faces = new Set([0, ...(scenes.length >= 5 ? [Math.floor(scenes.length / 2)] : [])]);
   let given = 0;

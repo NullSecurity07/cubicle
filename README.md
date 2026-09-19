@@ -21,8 +21,21 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   type a **Product address**, and it photographs the real pages at desktop and phone size and puts the shots in
   phone, laptop and browser mockups; wired **notes**, **documents** and **pictures** are material too. Drop your
   own video, photographs or a music track on the card and it edits around them. Seventeen scene shapes, two paces,
-  three looks, word-by-word captions, sound on the cuts, and a music bed ducked under the narration. Nothing about
+  six looks, word-by-word captions, sound on the cuts, and a music bed ducked under the narration. Nothing about
   a film leaves this machine except what you wired to it.
+- **A director, not a form** (2026-09-19): every picker on the card starts on **Auto**, and a brief on its own is
+  enough. The studio reads what the brief actually asks for — what it is for, who is watching, how long, how fast,
+  what it should sound like, whether somebody is on camera — then decides an angle, a hook and one line of visual
+  direction every picture in the film shares, writes the storyboard against that, and only then hands it to a
+  **critic** that knows what a film is: a headline on screen and never the narration, a hook at the front and a
+  call to action at the back of a reel, four different shapes at the least, a number set as a figure, a list set as
+  a list, no scene held longer than a breath, and something to look at on every one. The model gets two goes at its
+  own work and after that the rules mend it themselves, so a film is always made. Every decision is said on the card
+  in plain words as it happens. Six looks: **creator** (bold kinetic captions, a condensed face shouting, an acid
+  accent, a progress bar, phone safe zones), **editorial** (a serif and photographs), **neon**, **clean**,
+  **sketch** and **brand**; real cuts between scenes — whip pan, zoom-through, mask wipe, match cut on the beat —
+  and every scene with nothing of its own gets a full-bleed picture drawn for it, or a drifting mesh of the film's
+  own colours when there is no picture maker. Never a flat rectangle again.
 - **Moving shots** (2026-09-19): switch on *AI clips* and a film can hold real b-roll and a talking head. B-roll is
   drawn **on your own machine** — stable-diffusion.cpp and Wan2.1-1.3B through Vulkan, about three minutes a clip,
   nothing sent anywhere, no limit on how many; the model (5.8 GB) is fetched once. When this computer cannot do it,

@@ -22,7 +22,8 @@ export type Spec = { title: string; scenes: Scene[]; music?: Mood; sfx?: boolean
 
 export const MAX_SCENES = 24;
 // Every drawn still costs a call to a free picture service with a day's quota, and every AI clip costs far more.
-export const MAX_IMAGES = 6;
+// A picture in front of the words and a picture behind them cost the same, so the two caps are near enough the same.
+export const MAX_IMAGES = 10;
 // A background is drawn for every scene that has nothing else to show, so the ceiling on those is a whole film's
 // worth rather than a handful: a film of flat colour was the single worst thing about the old studio.
 export const MAX_BACKGROUNDS = 14;
@@ -195,7 +196,10 @@ export function withinCaps(spec: Spec, allow: { ai: boolean; assets: string[]; m
   const scenes = spec.scenes.map((scene, index): Scene => {
     if (scene.layout === 'picture') {
       drawn += 1;
-      if (drawn > MAX_IMAGES) { notes.push(`scene ${index + 1} is written out in words: a film draws at most ${MAX_IMAGES} pictures`); return { ...scene, layout: 'statement', text: scene.text || scene.heading || '', image_prompt: undefined }; }
+      if (drawn > MAX_IMAGES) {
+        notes.push(`scene ${index + 1} is set on a background rather than a picture of its own: a film draws at most ${MAX_IMAGES} in front of the words`);
+        return { ...scene, layout: 'statement', text: scene.text || scene.heading || '', heading: undefined, image_prompt: undefined, bg_prompt: scene.bg_prompt ?? scene.image_prompt };
+      }
     }
     if (AI_LAYOUTS.has(scene.layout)) {
       spent += 1;

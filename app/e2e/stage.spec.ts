@@ -639,11 +639,19 @@ test('a video studio: the founder sets the film going and watches it being made,
   await wire(page, 'marketing', id);
   await expect(await ask(page, 'marketing', 'what can you make')).toContainText('Studios: video.');
 
+  // Every picker starts on Auto: the founder says what the film is about and the director reads the rest out of it.
+  await expect(card.getByLabel('What it is for')).toHaveValue('');
+  await expect(card.getByLabel('How long')).toHaveValue('');
+  await card.getByLabel('What the film is about').fill('a 15 second reel');
+  await expect(card.locator('.studio__note').first()).toContainText('Making it takes about');
+  await expect(card.locator('.studio__note').first()).toContainText('left on Auto');
   // Everything the founder sets once is folded away; what the film is for and how long it runs are not.
   await card.getByLabel('What it is for').selectOption('reel');
   await card.getByLabel('How long').selectOption('30');
   await card.getByText('More', { exact: false }).click();
   await card.getByLabel('Look').selectOption('sketch');
+  await expect(card.getByLabel('AI clips')).toHaveValue('');
+  await card.getByLabel('AI clips').selectOption('off');
   await card.getByRole('checkbox', { name: 'Narrate' }).uncheck();
   await card.getByRole('checkbox', { name: 'Captions' }).check();
   await card.getByLabel('Product address').fill('relay.app');
@@ -663,6 +671,7 @@ test('a video studio: the founder sets the film going and watches it being made,
   await expect.poll(async () => (await (await page.request.get(`/api/media/${id}`)).json()).results[0]?.poster).toMatch(/\.png$/);
 
   // The person writes the whole storyboard, and the film lands on the same card.
+  // A person may hand over a whole storyboard, or only a brief and let the director do the rest.
   await send(page, 'marketing', '/tool generate_video {"title":"Week eleven","scenes":[{"layout":"title","heading":"Week eleven"},{"layout":"outro","text":"More next week."}]}');
   const reply = node(page, 'marketing').locator('.msg--assistant').last();
   await expect(reply.locator('.chip--ok summary').last()).toHaveText('Filmed Week eleven');
@@ -676,6 +685,7 @@ test('a video studio: the founder sets the film going and watches it being made,
   await expect(again.getByLabel('How long')).toHaveValue('30');
   await again.getByText('More', { exact: false }).click();
   await expect(again.getByLabel('Look')).toHaveValue('sketch');
+  await expect(again.getByLabel('AI clips')).toHaveValue('off');
   await expect(again.getByRole('checkbox', { name: 'Narrate' })).not.toBeChecked();
   await expect(again.getByRole('checkbox', { name: 'Captions' })).toBeChecked();
   await expect(again.getByLabel('Product address')).toHaveValue('relay.app');

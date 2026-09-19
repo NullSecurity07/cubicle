@@ -90,6 +90,10 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
 /* Over a picture the words drop to the foot of the frame: that is where the scrim holds the picture down, and on a
    portrait it is the one place the type is not across somebody's face. */
 .frame--onbg { justify-content: flex-end; }
+/* …but in a captioned film the foot of the frame is already spoken for. A block of display type and a caption line
+   a few pixels apart are read as one sentence, and then as a fault; the block stops well above the band. */
+#root.has-captions .frame, #root.has-captions .frame--title, #root.has-captions .frame--stat, #root.has-captions .frame--onbg {
+  padding-bottom: calc(var(--caps) + 104px * var(--s)); }
 .frame--onbg.frame--stat, .frame--onbg.frame--logo { justify-content: flex-end; }
 /* A title card is set on the foot of the frame instead, with the air above it, the way a poster is. */
 .frame--title { justify-content: flex-end; padding-bottom: calc(var(--margin) * 1.05 + var(--safe-foot) * 0.34); }
@@ -140,6 +144,9 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
 .plate { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: var(--margin); padding-top: calc(var(--margin) * 1.7); padding-bottom: calc(var(--margin) + var(--safe-foot) * 0.34);
   background: ${sketch ? 'none' : `linear-gradient(to top, rgb(${paint.scrim}) 10%, rgba(${paint.scrim}, 0.88) 48%, rgba(${paint.scrim}, 0) 100%)`}; }
 .frame--picture { justify-content: flex-end; padding: 0; gap: 0; }
+/* The words over a picture are the scene's whole caption, so in a pack that shouts they are set like one rather than
+   like a footnote: a line of body copy under a photograph reads as a stray subtitle. */
+${style.shout ? `.plate .lead { font-family: ${display}; font-size: calc(54px * var(--s)); line-height: 1.06; font-weight: 400; letter-spacing: -0.006em; text-transform: uppercase; max-width: 13em; }` : ''}
 
 /* A hook is the first second and a half of a reel: one line, as large as the frame will carry it, and nothing else. */
 .hook { font-family: ${display}; font-size: calc(${style.shout ? 146 : 132}px * var(--s)); line-height: ${style.shout ? 0.92 : 0.98}; letter-spacing: ${style.shout ? '-0.012em' : '-0.042em'};

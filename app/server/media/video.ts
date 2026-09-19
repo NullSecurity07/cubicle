@@ -8,7 +8,8 @@ import { projectDir } from '../coder.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
-import { bibleFor, direct, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
+import { kickerOf, trimTo } from './critic.ts';
+import { bibleFor, direct, onCamera, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
 import type { Maker, Piece } from './jobs.ts';
@@ -117,21 +118,27 @@ const SCROLLS = { desktop: [0, 780, 1700], mobile: [0, 900] };
 const chose = <T extends string>(value: unknown, allowed: readonly T[]): T | undefined =>
   (typeof value === 'string' && value !== 'auto' && (allowed as readonly string[]).includes(value) ? value as T : undefined);
 
-// A picture model cannot write. Asked for a checklist it draws a checklist full of gibberish, and a scene of real
-// type over a picture of fake type is unreadable twice over — so nothing drawn for this studio is ever asked for
-// words, and a scene that is mostly type asks for something out of focus to sit on rather than a scene of its own.
-export const NO_WORDS = ', no text, no lettering, no captions, no logos, no user interface, no charts';
+// A picture model cannot write, and it has no negative prompt either: "no text, no lettering" is read as part of the
+// same sentence and summons the very thing it asked to be spared — which is how a scene of real type came to sit on
+// a picture of fake type reading "rogblellem / Solvic". The only thing that works is never asking. So the nouns that
+// summon lettering are taken out of the subject before it is drawn, and a scene that is mostly type is given a
+// texture to sit on rather than a scene of its own, which is the better picture anyway.
+const SUMMONS_TEXT = /\b(charts?|graphs?|dashboards?|decks?|slides?|metrics|checklists?|lists?|texts?|signs?|signage|screens?|displays?|interfaces?|ui|uis|apps?|websites?|web ?pages?|pages?|documents?|reports?|spreadsheets?|logos?|brands?|labels?|posters?|banners?|headlines?|newspapers?|magazines?|books?|whiteboards?|notebooks?|notes?|letters?|words?|writing|typography|captions?|subtitles?|numbers?|figures?|percentages?)\b/gi;
+// A scene whose frame is already full of words wants something quiet behind them, not a competing picture.
 const TYPE_HEAVY = new Set(['checklist', 'bullets', 'steps', 'compare', 'stat', 'quote', 'hook', 'title', 'cta', 'outro']);
-export const bgPrompt = (bible: string, subject: string, layout: string): string =>
-  `${subject.toLowerCase().startsWith(bible.slice(0, 18).toLowerCase()) ? subject : `${bible}. ${subject}`}`
-  + `${TYPE_HEAVY.has(layout) ? ', shallow depth of field, softly out of focus, the subject well away from the centre of the frame' : ''}${NO_WORDS}`;
+const TEXTURE = 'a softly out-of-focus surface, the light falling across it, nothing in sharp focus, no subject in the middle of the frame';
+export function bgPrompt(bible: string, subject: string, layout: string): string {
+  const clean = subject.replace(SUMMONS_TEXT, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([,.])/g, '$1').trim();
+  const said = TYPE_HEAVY.has(layout) || clean.split(/\s+/).filter(Boolean).length < 3 ? TEXTURE : `${clean}, shallow depth of field`;
+  return said.toLowerCase().startsWith(bible.slice(0, 18).toLowerCase()) ? said : `${bible}. ${said}`;
+}
 
 // About how long this is going to take, said before it starts rather than found out. Nothing here is precise; it is
 // honest, which is what a founder watching a spinner actually needs.
 export function estimate(ask: { scenes: number; seconds: number; pictures: number; clips: number; narrate: boolean }): string {
   const drawing = Math.ceil(ask.pictures / 3) * 8;
   const saying = ask.narrate ? ask.seconds * 0.6 : 0;
-  const rendering = 12 + ask.seconds * 2.4;
+  const rendering = 14 + ask.seconds * 4;
   const local = ask.clips * 180;
   const all = drawing + saying + rendering + local;
   const minutes = Math.max(1, Math.round(all / 60));
@@ -320,6 +327,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const { spec: capped, notes } = withinCaps(spec, { ai: able, assets: [...files.keys()], most: here ? MAX_LOCAL_AI : MAX_AI });
         spec = capped;
         for (const note of notes) report(note);
+        // Only now is it settled whether there is really a person in this film: a clip scene that was written and
+        // then could not be made is not somebody on camera, and the brief asked for somebody on camera.
+        spec = { ...spec, scenes: onCamera(spec.scenes, understanding, bible, report) };
 
         const drawing = deps.images && !deps.images.ready() ? deps.images : null;
         const saying = deps.voices && !deps.voices.ready() && asked.narrate !== false ? deps.voices : null;
@@ -417,7 +427,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             if (!front && drawn >= MAX_BACKGROUNDS) return;
             if (!front) drawn += 1;
             try {
-              const piece = await drawing.make({ prompt: front ? `${bible}. ${prompt}${NO_WORDS}` : bgPrompt(bible, prompt, scene.layout), shape }, { report: () => {}, signal });
+              const piece = await drawing.make({ prompt: front ? bgPrompt(bible, prompt, 'picture') : bgPrompt(bible, prompt, scene.layout), shape }, { report: () => {}, signal });
               const file = `${front ? 'shot' : 'bg'}-${index}.${piece.ext}`;
               await writeFile(join(at, 'assets', file), piece.bytes);
               if (front) shot.image = file; else shot.bg = file;
@@ -434,6 +444,13 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const layout = shot.scene.layout;
           if ((layout === 'picture' || layout === 'device') && !shot.image) shot.scene = fallbackOf(shot.scene, 'nothing to show');
           if ((layout === 'footage' || layout === 'clip' || layout === 'presenter') && !shot.video && !shot.image) shot.scene = fallbackOf(shot.scene, 'nothing to show');
+          // A scene that lost its words to the captions and then lost its picture to a refused call would be three
+          // seconds of nothing at all. When there is nothing to look at, the words come back.
+          const bare = !shot.image && !shot.video && !shot.bg;
+          const silentOnScreen = ![shot.scene.heading, shot.scene.text, ...(shot.scene.bullets ?? [])].some((one) => one?.trim());
+          if (bare && silentOnScreen && shot.scene.say) {
+            shot.scene = { ...shot.scene, layout: shot.scene.layout === 'picture' ? 'statement' : shot.scene.layout, text: kickerOf(shot.scene.say, 5) || trimTo(shot.scene.say, 6) };
+          }
         }
 
         // The length, held to what was asked for. The word budget does most of it, but a voice is a voice: when the

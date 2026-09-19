@@ -64,7 +64,8 @@ describe('the critic', () => {
     // Nothing on screen is the sentence being said under it.
     for (const scene of fixed.scenes) {
       const mayRepeat = ['hook', 'cta', 'logo', 'title', 'stat', 'quote'].includes(scene.layout);
-      if (scene.text && scene.say && !mayRepeat) expect(echoes(scene.text, scene.say)).toBeLessThan(0.6);
+      // Three or four of the spoken line's own words set large is emphasis; a sentence of them is a transcript.
+      if (scene.text && scene.say && !mayRepeat && echoes(scene.text, scene.say) >= 0.6) expect(countWords(scene.text)).toBeLessThanOrEqual(4);
       expect(countWords(scene.text)).toBeLessThanOrEqual(12);
       expect(countWords(scene.heading)).toBeLessThanOrEqual(7);
     }
@@ -84,16 +85,21 @@ describe('one rule at a time', () => {
     expect(countWords(fixed.scenes[0].text)).toBeLessThanOrEqual(12);
   });
 
-  it('echo: a captioned scene that writes out its own narration shows a picture instead', () => {
-    const twice = spec([{ layout: 'statement', text: 'Traction beats a beautiful deck', say: 'Traction beats a beautiful deck.', bg_prompt: 'x' }]);
+  it('echo: a captioned scene that writes out its own narration is cut to the words it turns on', () => {
+    const twice = spec([{ layout: 'statement', text: 'Traction beats a beautiful deck every single time', say: 'Traction beats a beautiful deck every single time.', bg_prompt: 'x' }]);
     expect(rules(criticise(twice, reelWant({ reel: false })))).toContain('echo');
     const { spec: fixed } = repair(twice, reelWant({ reel: false }));
-    expect(fixed.scenes[0].layout).toBe('picture');
-    expect(fixed.scenes[0].text).toBeUndefined();
-    expect(fixed.scenes[0].image_prompt).toContain('high-contrast editorial photography');
-    // With no captions under it, the same scene keeps its words: there is nothing else saying them.
+    expect(countWords(fixed.scenes[0].text)).toBeLessThanOrEqual(4);
+    expect(rules(criticise(fixed, reelWant({ reel: false })))).not.toContain('echo');
+    // A line that will not make even a handful of words gives up its words altogether and shows a picture.
+    const bare = spec([{ layout: 'statement', text: 'It is what it is and so on it goes', say: 'It is what it is and so on it goes.', bg_prompt: 'x' }]);
+    expect(repair(bare, reelWant({ reel: false })).spec.scenes[0].layout).toBe('picture');
+    // Three words of the line said over it is emphasis, not a transcript, and it is left alone.
+    const kicker = spec([{ layout: 'statement', text: 'Traction wins', say: 'Traction beats a beautiful deck every single time.', bg_prompt: 'x' }]);
+    expect(rules(criticise(kicker, reelWant({ reel: false })))).not.toContain('echo');
+    // With no captions under it, the same scene keeps its whole line: there is nothing else saying them.
     const { spec: kept } = repair(twice, reelWant({ reel: false, captions: false }));
-    expect(kept.scenes[0].text).toBe('Traction beats a beautiful deck');
+    expect(kept.scenes[0].text).toBe('Traction beats a beautiful deck every single time');
   });
 
   it('echo: a hook is allowed to be the line it says, because that is what a hook is', () => {

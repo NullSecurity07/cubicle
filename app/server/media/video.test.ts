@@ -267,11 +267,12 @@ describe('the storyboard a fuller film needs', () => {
   });
 
   it('holds a storyboard inside the caps rather than throwing it away', () => {
-    const seven = Array(7).fill(0).map((_, at) => ({ layout: 'picture' as const, image_prompt: `a kite ${at}`, text: `Kite ${at}` }));
-    const { spec, notes } = withinCaps({ title: 'Kites', scenes: seven }, { ai: true, assets: [] });
+    const many = Array(MAX_IMAGES + 1).fill(0).map((_, at) => ({ layout: 'picture' as const, image_prompt: `a kite ${at}`, text: `Kite ${at}` }));
+    const { spec, notes } = withinCaps({ title: 'Kites', scenes: many }, { ai: true, assets: [] });
     expect(spec.scenes.filter((one) => one.layout === 'picture')).toHaveLength(MAX_IMAGES);
-    expect(spec.scenes.at(-1)).toEqual({ layout: 'statement', text: 'Kite 6', image_prompt: undefined });
-    expect(notes[0]).toContain(`at most ${MAX_IMAGES} pictures`);
+    // What it would have drawn in front of the words is drawn behind them instead: the scene still has something.
+    expect(spec.scenes.at(-1)).toEqual({ layout: 'statement', text: `Kite ${MAX_IMAGES}`, heading: undefined, image_prompt: undefined, bg_prompt: `a kite ${MAX_IMAGES}` });
+    expect(notes[0]).toContain(`at most ${MAX_IMAGES} in front of the words`);
   });
 
   it("spends the AI quota at most twice, and never when the founder's switch is off", () => {

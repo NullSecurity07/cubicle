@@ -372,8 +372,9 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 /* Three answers, not two: on, off, or the director's to work out from the brief like everything else. */
 .studio__ai { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; color: var(--muted); font-size: 12px; }
 .studio__ai select { flex: none; }
-/* The whole log of a render, and the line before it starts that says what the director understood. */
-.studio__using + .studio__using { margin-top: 3px; }
+/* What the film will cost in minutes, and who wrote the music that ended up under it. */
+.studio__note { flex: none; margin: 4px 12px 0; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.studio__note + .studio__note { margin-top: 2px; }
 .studio__strip { flex: none; display: flex; gap: 6px; margin: 8px 10px 0; padding-bottom: 2px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
 .studio__strip button { flex: none; width: 42px; height: 42px; padding: 0; border: 1.5px solid transparent; border-radius: 8px; background: rgba(0, 0, 0, 0.3); overflow: hidden; cursor: pointer; }
 .studio__strip button.is-shown { border-color: rgba(78, 140, 255, 0.8); }

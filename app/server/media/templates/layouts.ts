@@ -60,10 +60,13 @@ export function kinetic(text: string, emphasis: string | undefined, pack: Pack, 
 
 // A line short enough to be said in one breath is set as large as a title; a paragraph is set as a heading, or it would
 // not fit the frame. Nothing else in the film changes size with what is written on it.
-const weight = (text: string) => (text.length <= 44 ? 'display' : 'heading');
+const weight = (text: string, shape: Shape) => (text.length <= (shape === 'tall' ? 28 : shape === 'square' ? 36 : 44) ? 'display' : 'heading');
 
 // A hook is one line at the size of a poster; a long one is stepped down rather than run off the frame.
-const hookWeight = (text: string) => (text.length <= 38 ? 'hook' : text.length <= 72 ? 'display' : 'heading');
+const hookWeight = (text: string, shape: Shape) => {
+  const room = shape === 'tall' ? 26 : shape === 'square' ? 32 : 38;
+  return text.length <= room ? 'hook' : text.length <= room * 1.9 ? 'display' : 'heading';
+};
 
 // A scene that is a moving picture rather than a still: the frame under the words is a video file, and that video is
 // written as an element of the film in its own right rather than inside the scene.
@@ -134,12 +137,12 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
   } else if (scene.layout === 'hook') {
     if (icon) parts.push(icon);
     if (heading) parts.push(`<p class="label rise">${html(heading)}</p>`);
-    parts.push(`<p class="${hookWeight(text)} rise" data-mark="highlight">${kinetic(text, scene.emphasis, pack, moving)}</p>`);
+    parts.push(`<p class="${hookWeight(text, shape)} rise" data-mark="highlight">${kinetic(text, scene.emphasis, pack, moving)}</p>`);
     return `<div class="frame frame--hook${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'statement') {
     if (icon) parts.push(icon);
     if (heading) parts.push(`<p class="label quiet rise">${html(heading)}</p>`);
-    parts.push(say(text, weight(text)), '<div class="rule" data-mark="dash"></div>');
+    parts.push(say(text, weight(text, shape)), '<div class="rule" data-mark="dash"></div>');
   } else if (scene.layout === 'bullets') {
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
     parts.push(`<ul class="list">${(scene.bullets ?? []).map((one) => `<li class="rise"><span class="tick" data-mark="dash"></span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
@@ -189,11 +192,11 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     return `<div class="frame frame--logo${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'cta') {
     if (icon) parts.push(icon);
-    parts.push(say(text || heading, weight(text || heading)));
+    parts.push(say(text || heading, weight(text || heading, shape)));
     if (text && heading) parts.push(`<p class="cta rise" data-mark="highlight">${html(heading)}</p>`);
     return `<div class="frame frame--cta${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else {
-    parts.push('<div class="rule" data-mark="dash"></div>', say(text || heading, weight(text || heading)));
+    parts.push('<div class="rule" data-mark="dash"></div>', say(text || heading, weight(text || heading, shape)));
     if (text && heading) parts.push(`<p class="label quiet rise">${html(heading)}</p>`);
   }
   return `<div class="frame${onbg}" id="f${index}">${parts.join('')}</div>`;

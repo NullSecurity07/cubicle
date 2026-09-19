@@ -79,6 +79,16 @@ export function keywords(said: string, most: number): string {
   return picked.join(' ');
 }
 
+// The same, but never padded out with the words that carry nothing: a line whose only real word is "goes" has no
+// headline in it, and "It is" is not one. Used where a short line has to stand on its own or not be written at all.
+export function kickerOf(said: string, most: number): string {
+  const kept = said.trim().split(/\s+/).filter((word) => {
+    const bareWord = word.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+    return bareWord.length > 2 && !STOP.has(bareWord);
+  }).map((word) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''));
+  return kept.length >= 2 ? kept.slice(0, most).join(' ') : '';
+}
+
 // What a line is about, in a handful of words, for the picture drawn behind it.
 export const subjectOf = (scene: Scene): string => {
   const source = [scene.text, scene.heading, ...(scene.bullets ?? []), scene.say].find((one) => one && one.trim()) ?? '';
@@ -108,6 +118,9 @@ export const carriesVisual = (scene: Scene): boolean =>
 
 // Whose words on screen are allowed to be the words being said: a hook *is* the spoken line set large, a quote is the
 // quotation, a wordmark is the name. Everywhere else, saying it and writing it is saying it twice.
+// How many of the spoken line's own words may be set on screen before it stops being emphasis and starts being a
+// transcript. Three or four is a creator reel; a sentence is a wall of type.
+export const EMPHASIS_WORDS = 4;
 const ECHO_FINE = new Set<Layout>(['hook', 'cta', 'logo', 'title', 'stat', 'quote', 'presenter']);
 const NEEDS_TEXT = new Set<Layout>(['statement', 'quote', 'outro', 'hook', 'cta']);
 
@@ -126,7 +139,7 @@ export function criticise(spec: Spec, want: Want): Finding[] {
     if (scene.text && countWords(scene.text) > TEXT_WORDS) {
       say('headline', `scene ${at} puts ${countWords(scene.text)} words on screen — a viewer reads ${TEXT_WORDS}, and the rest is narration written out`, at);
     }
-    if (want.captions && scene.say && scene.text && !ECHO_FINE.has(scene.layout) && echoes(scene.text, scene.say) >= 0.6) {
+    if (want.captions && scene.say && scene.text && countWords(scene.text) > EMPHASIS_WORDS && !ECHO_FINE.has(scene.layout) && echoes(scene.text, scene.say) >= 0.6) {
       say('echo', `scene ${at} writes out what is already said over it and already captioned under it`, at);
     }
     const spoken = countWords(scene.say);
@@ -255,8 +268,18 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
   scenes = scenes.map((scene) => {
     let made = { ...scene };
     if (want.captions && made.say && !ECHO_FINE.has(made.layout)) {
-      const repeats = echoes(made.text ?? '', made.say) >= 0.6;
+      const repeats = made.text && countWords(made.text) > EMPHASIS_WORDS && echoes(made.text, made.say) >= 0.6;
       if (repeats && made.text) {
+        // First try: the three or four words the line actually turns on, set large. That is emphasis, not a
+        // transcript, and it keeps something on screen — a film of nothing but photographs and subtitles is the
+        // other way of getting this wrong.
+        const kicker = kickerOf(made.say, EMPHASIS_WORDS);
+        if (countWords(kicker) >= 2 && !ECHO_FINE.has(made.layout) && made.layout !== 'picture') {
+          note('a sentence set on screen is cut to the words it turns on, and the captions say the rest');
+          made = { ...made, text: kicker, emphasis: undefined };
+          if (made.bullets?.length) made = { ...made, bullets: made.bullets.map((one) => trimTo(one, 5)) };
+          return made;
+        }
         note('the words on screen were the words being said, so those scenes show a picture and let the captions do the talking');
         made = { ...made, text: undefined };
         // The scene still has to be something, and what it becomes is decided the same way everything else is:

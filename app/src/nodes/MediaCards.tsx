@@ -285,8 +285,8 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
         )}
         {film && !making && <div className="studio__done"><a href={fileUrl(film.path)} download>Download</a></div>}
         {!!using.length && <p className="studio__using">Using: {using.join(', ')}</p>}
-        {film?.music && !making && <p className="studio__using">Music: {film.music.title} by {film.music.by} · {film.music.licence}</p>}
-        {!making && !!brief.trim() && <p className="studio__using">Making it takes {howLong(data.length, data.ai ?? 'auto')}. Everything you leave on Auto, the director reads out of the brief.</p>}
+        {film?.music && !making && <p className="studio__note">Music: {film.music.title} by {film.music.by} · {film.music.licence}</p>}
+        {!making && !!brief.trim() && <p className="studio__note">Making it takes {howLong(data.length, data.ai ?? 'auto')}. Everything left on Auto, the director reads out of the brief.</p>}
         <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); shoot(); }}>
           <textarea
             aria-label="What the film is about" placeholder="A one-minute update for investors: what shipped this month, the numbers, what is next…" rows={2} value={brief}

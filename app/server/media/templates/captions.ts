@@ -80,12 +80,14 @@ export function capSteps(lines: CapLine[], index: number, until: number): string
     // Every line sits in the same place, so the one going has to be gone before the one coming arrives — overlap them
     // by even a tenth of a second and the two read as one word on top of another.
     const next = lines[at + 1]?.at;
-    const gone = (next !== undefined ? next - FADE - 0.02 : Math.min(until, line.at + line.seconds + 0.5));
+    // The line going has to be gone before the line coming arrives — and two lines that all but touch used to skip
+    // the fade altogether, which left the first one on screen under the second for the rest of the scene.
+    const gone = Math.max(line.at + 0.06, next !== undefined ? next - FADE - 0.02 : Math.min(until, line.at + line.seconds + 0.5));
     steps.push(`tl.fromTo("#c${index}-${at}", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.18, ease: "power2.out" }, ${time(line.at)});`);
     line.words.forEach((word, order) => {
       steps.push(`tl.fromTo("#c${index}-${at}-${order}", { opacity: 0.26, scale: 0.94 }, { opacity: 1, scale: 1, duration: 0.14, ease: "power2.out" }, ${time(word.at)});`);
     });
-    if (gone > line.at + 0.1) steps.push(`tl.to("#c${index}-${at}", { opacity: 0, duration: ${FADE}, ease: "power2.in" }, ${time(gone)});`);
+    steps.push(`tl.to("#c${index}-${at}", { opacity: 0, duration: ${Math.min(FADE, Math.max(0.04, (next ?? gone + FADE) - gone)).toFixed(3)}, ease: "power2.in" }, ${time(gone)});`);
   });
   return steps;
 }
