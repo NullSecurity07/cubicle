@@ -19,6 +19,7 @@ const NEW = {
   link: { size: [320, 150], data: { url: '' } },
   imagegen: { size: [320, 420], data: { prompt: '' } },
   voicegen: { size: [320, 340], data: { text: '' } },
+  videogen: { size: [380, 420], data: { brief: '' } },
 } as const;
 export type CardKind = keyof typeof NEW;
 

@@ -1,4 +1,4 @@
-import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaEvent, MediaResult, Mission, ChatEvent, ChatMessage, ModelInfo, Stage, Task, Thread } from '../shared/model';
+import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, Stage, Task, Thread } from '../shared/model';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -50,7 +50,8 @@ export function watchBoard(boardId: string, onEvent: (event: BoardEvent) => void
 
 // A studio card: what it has made, and asking it for more. `hint` says why it cannot work yet, when it cannot.
 export const getMedia = (id: string) => request<Media & { hint: string | null }>(`/api/media/${id}`);
-export const makeMedia = (id: string, ask: { prompt: string } & Record<string, unknown>) => request<MediaResult>(`/api/media/${id}/make`, send('POST', ask));
+// The server answers the moment the job starts; what it made arrives on the feed, however long it takes.
+export const makeMedia = (id: string, ask: { prompt: string } & Record<string, unknown>) => request<{ started: true }>(`/api/media/${id}/make`, send('POST', ask));
 export const stopMedia = (id: string) => request(`/api/media/${id}/stop`, send('POST'));
 export const getVoices = () => request<{ voices: { id: string; name: string }[] }>('/api/media/voices');
 // One feed for every studio on the stage: a line while something is being made, a nudge after every change.

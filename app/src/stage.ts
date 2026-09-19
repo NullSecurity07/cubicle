@@ -13,7 +13,8 @@ export type ImageNodeType = Node<{ path: string }, 'image'>;
 export type LinkNodeType = Node<{ url: string; title?: string }, 'link'>;
 export type ImageGenNodeType = Node<{ prompt?: string; shape?: Shape }, 'imagegen'>;
 export type VoiceGenNodeType = Node<{ text?: string; voice?: string }, 'voicegen'>;
-export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | NoteNodeType | ImageNodeType | LinkNodeType | ImageGenNodeType | VoiceGenNodeType;
+export type VideoGenNodeType = Node<{ brief?: string; format?: Shape; look?: 'clean' | 'sketch'; silent?: boolean }, 'videogen'>;
+export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | NoteNodeType | ImageNodeType | LinkNodeType | ImageGenNodeType | VoiceGenNodeType | VideoGenNodeType;
 export type StageNode = RoomNodeType | DocNodeType | CardNodeType;
 
 export const HANDLE_IDS = ['l', 'r', 't', 'b'] as const;

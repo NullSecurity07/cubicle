@@ -75,11 +75,12 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
   const mineCards = wired(stage, roomId, cards.map((card) => card.id)).map((id) => cards.find((card) => card.id === id)!);
   const notes = mineCards.flatMap((card) => (card.kind === 'note' && card.text.trim() ? [`- ${card.text.trim().replace(/\n+/g, '\n  ')}`] : []));
   const links = mineCards.flatMap((card) => (card.kind === 'link' && card.url ? [`## Page: ${pages[card.id]?.title || card.url}\n${card.url}\n${pages[card.id]?.text ?? '(the page could not be read yet)'}`] : []));
-  const reach = mineCards.filter((card) => card.kind === 'project' || card.kind === 'board' || card.kind === 'browser' || card.kind === 'imagegen' || card.kind === 'voicegen').map((card) => (card.kind === 'project'
+  const reach = mineCards.filter((card) => card.kind === 'project' || card.kind === 'board' || card.kind === 'browser' || card.kind === 'imagegen' || card.kind === 'voicegen' || card.kind === 'videogen').map((card) => (card.kind === 'project'
     ? `- A project folder${card.path ? ` (${card.path})` : ''}. Any change to that code goes through delegate_coding, which works inside the folder. Documents and shared files are not the project: never write project code into them, and never say the project changed unless delegate_coding reported it.`
     : card.kind === 'board' ? '- The task board. Read it with list_tasks. When you notice follow-up work, suggest it with propose_task; the founder decides what gets done.'
     : card.kind === 'imagegen' ? '- An image studio. Draw with generate_image when the founder asks for a picture, a mockup or an illustration, describing the whole scene in the prompt. What you make appears on the card for the founder to see.'
     : card.kind === 'voicegen' ? '- A voice studio. Say something out loud with generate_voice when the founder asks for a recording, a voiceover or a read-aloud, writing the words exactly as they should be spoken. What you make appears on the card for the founder to hear.'
+    : card.kind === 'videogen' ? '- A video studio. Make a short narrated film with generate_video when the founder asks for one: you write the whole storyboard, a title and four to seven scenes, and the machine draws, narrates and renders it. It takes a few minutes, so plan the film before you call it once.'
     : '- A browser card the founder watches live. Use browse for anything that needs clicking, typing or being signed in.'));
   const system = [
     `You are ${room.name}, ${room.role}. ${room.brief}`,

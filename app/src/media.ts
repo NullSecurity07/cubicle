@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Media } from '../shared/model';
-import { getMedia, watchMedia } from './api';
+import { getMedia, makeMedia, watchMedia } from './api';
 import { emit, listen } from './bus';
 import { useFlushStage } from './sync';
 
@@ -21,9 +21,13 @@ function share() {
 }
 
 // What one studio card holds: the sidecar the server owns, kept fresh, and `hint` when no backend is set up yet.
+// `make` asks for something new; the server answers at once and the job itself arrives on the feed, which is what a
+// render taking minutes needs. `problem` is what stopped the asking; the sidecar keeps the last job's own failure.
 export function useMedia(id: string) {
   const [media, setMedia] = useState<Media>(EMPTY);
   const [hint, setHint] = useState<string | null>(null);
+  const [asked, setAsked] = useState(false);
+  const [problem, setProblem] = useState('');
   const flushStage = useFlushStage();
 
   useEffect(() => {
@@ -33,11 +37,19 @@ export function useMedia(id: string) {
     const stops = [listen('effect', (effect) => {
       if (effect.id !== id) return;
       if (effect.kind === 'media-progress') setMedia((current) => ({ ...current, state: 'making', log: [...current.log.slice(-199), effect.line] }));
-      if (effect.kind === 'media-made') void load();
+      // Every change ends the asking, whether something was made or something went wrong.
+      if (effect.kind === 'media-made') { setAsked(false); void load(); }
     })];
     void flushStage().then(() => { if (!gone) { void load(); stops.push(share()); } });
     return () => { gone = true; for (const stop of stops) stop(); };
   }, [id, flushStage]);
 
-  return { media, hint };
+  const make = useCallback(async (ask: { prompt: string } & Record<string, unknown>) => {
+    setProblem('');
+    setAsked(true);
+    try { await makeMedia(id, ask); }
+    catch (error) { setProblem((error as Error).message); setAsked(false); }
+  }, [id]);
+
+  return { media, hint, making: asked || media.state === 'making', problem, make };
 }

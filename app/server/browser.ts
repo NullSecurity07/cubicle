@@ -15,7 +15,7 @@ export type Browser = ReturnType<typeof createBrowser>;
 const MAX_AT_ONCE = 4;
 const PAGE_CHARS = 8000;
 const SNAPSHOT_CHARS = 7000;
-const CHROMES = ['/usr/bin/google-chrome-stable', '/usr/sbin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
+export const CHROMES = ['/usr/bin/google-chrome-stable', '/usr/sbin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
 
 // People may read the open web, never the founder's own machine or network: a page that says
 // "now open http://localhost…" must get nowhere.

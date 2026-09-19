@@ -1,6 +1,6 @@
 // What the command bar can do, as plain data: the bar shows suggestions, the window carries the chosen action out.
 export type Action =
-  | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'browser' | 'project' | 'board'; data?: Record<string, string> }
+  | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'videogen' | 'browser' | 'project' | 'board'; data?: Record<string, string> }
   | { do: 'focus' | 'jump'; id: string } | { do: 'panel'; name: 'needs' | 'messages' | 'decisions' }
   | { do: 'ask'; roomId: string; text: string } | { do: 'thread' | 'decision'; id: string } | { do: 'file'; path: string }
   | { do: 'new-decision' } | { do: 'idle' } | { do: 'fit' } | { do: 'keys' };
@@ -13,6 +13,7 @@ const CARD_WORDS: [RegExp, Extract<Action, { do: 'add' }>['kind'], string][] = [
   [/^(sticky( note)?|note)$/, 'note', 'Add a sticky note'], [/^(link|web ?page|url)$/, 'link', 'Add a link'], [/^(picture|image|photo)$/, 'image', 'Add a picture'],
   [/^((image|picture) studio|generate (an? )?(image|picture)s?|image ?gen)$/, 'imagegen', 'Add an image studio'],
   [/^(voice studio|generate (a )?voices?|voice ?gen|say (something )?out loud|text to speech|voice ?over)$/, 'voicegen', 'Add a voice studio'],
+  [/^(video studio|generate (a )?videos?|video ?gen|film|movie|clip)$/, 'videogen', 'Add a video studio'],
   [/^browser$/, 'browser', 'Add a browser'], [/^(project( folder)?|code|repo)$/, 'project', 'Add a project folder'], [/^((task )?board|tasks|kanban)$/, 'board', 'Add a task board'],
 ];
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);

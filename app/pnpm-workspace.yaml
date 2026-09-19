@@ -4,9 +4,14 @@ overrides:
   "@huggingface/transformers": "^4.3.0"
 
 allowBuilds:
+  # Only the video renderer's describe step would use it, and that step is always switched off here.
+  '@google/genai': false
   agent-browser: false
   esbuild: true
   # The embedding runtime ships its Linux binaries in the package; its install script only fetches GPU extras.
   onnxruntime-node: false
   protobufjs: false
   sharp: true
+
+minimumReleaseAgeExclude:
+  - hyperframes@0.8.50

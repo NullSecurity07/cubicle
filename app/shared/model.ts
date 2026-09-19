@@ -12,7 +12,8 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean }
   // Studios: the founder, or a wired person, says what they want and the server makes it. Only what was asked for lives
   // on the card; what came out lives in a sidecar the server owns.
   | { kind: 'imagegen'; prompt?: string; shape?: Shape } | { kind: 'voicegen'; text?: string; voice?: string }
-  | { kind: 'videogen'; brief?: string; format?: Shape; look?: 'clean' | 'sketch'; narrate?: boolean });
+  // `silent` rather than a narrate flag: `fromFlow` drops a false, so a switch the founder turned off has to be the true one.
+  | { kind: 'videogen'; brief?: string; format?: Shape; look?: 'clean' | 'sketch'; silent?: boolean });
 export const SHAPES = ['square', 'wide', 'tall'] as const;
 export type Shape = (typeof SHAPES)[number];
 export const MEDIA_KINDS = ['imagegen', 'voicegen', 'videogen'] as const;

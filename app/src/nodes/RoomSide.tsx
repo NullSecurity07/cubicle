@@ -16,9 +16,10 @@ export function labelOf(node: StageNode): string {
   if (node.type === 'link') return node.data.title || node.data.url || 'Link';
   if (node.type === 'imagegen') return 'Image studio';
   if (node.type === 'voicegen') return 'Voice studio';
+  if (node.type === 'videogen') return 'Video studio';
   return node.type === 'browser' ? 'Browser' : 'Board';
 }
-const KIND: Record<string, string> = { room: 'can ask', doc: 'reads and writes', browser: 'drives', project: 'hands coding work to', board: 'proposes tasks on', note: 'reads', image: 'sees', link: 'reads', imagegen: 'makes pictures in', voicegen: 'speaks in' };
+const KIND: Record<string, string> = { room: 'can ask', doc: 'reads and writes', browser: 'drives', project: 'hands coding work to', board: 'proposes tasks on', note: 'reads', image: 'sees', link: 'reads', imagegen: 'makes pictures in', voicegen: 'speaks in', videogen: 'makes films in' };
 const compact = (count: number) => (count >= 1000 ? `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}k` : String(count));
 
 // Beside a focused person: what they are wired to, what they remember, and what this conversation has cost.

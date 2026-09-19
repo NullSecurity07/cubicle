@@ -1,10 +1,10 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SHAPES, type Shape } from '../../shared/model';
 import { useAddCard } from '../addCard';
-import { fileUrl, getVoices, makeMedia, stopMedia } from '../api';
+import { fileUrl, getVoices, stopMedia } from '../api';
 import { useMedia } from '../media';
-import type { ImageGenNodeType, VoiceGenNodeType } from '../stage';
+import type { ImageGenNodeType, VideoGenNodeType, VoiceGenNodeType } from '../stage';
 import { CardActions, Frame } from './Frame';
 
 const SHAPE_WORDS: Record<Shape, string> = { square: 'Square', wide: 'Wide', tall: 'Tall' };
@@ -14,23 +14,11 @@ const SHAPE_WORDS: Record<Shape, string> = { square: 'Square', wide: 'Wide', tal
 export function ImageGenNode({ id, data, selected }: NodeProps<ImageGenNodeType>) {
   const { updateNodeData } = useReactFlow();
   const addCard = useAddCard();
-  const { media, hint } = useMedia(id);
-  const [asking, setAsking] = useState(false);
+  const { media, hint, making, problem, make } = useMedia(id);
   const [shown, setShown] = useState(0);
-  const [problem, setProblem] = useState('');
   const prompt = data.prompt ?? '';
-  const making = asking || media.state === 'making';
   const picture = media.results[shown] ?? media.results[0];
-
-  async function make() {
-    if (!prompt.trim() || making) return;
-    setProblem('');
-    setShown(0);
-    setAsking(true);
-    try { await makeMedia(id, { prompt: prompt.trim(), shape: data.shape ?? 'square' }); }
-    catch (error) { setProblem((error as Error).message); }
-    finally { setAsking(false); }
-  }
+  const draw = () => { if (prompt.trim() && !making) { setShown(0); void make({ prompt: prompt.trim(), shape: data.shape ?? 'square' }); } };
 
   return (
     <Frame selected={!!selected} minWidth={260} minHeight={300}>
@@ -60,11 +48,11 @@ export function ImageGenNode({ id, data, selected }: NodeProps<ImageGenNodeType>
             <button type="button" onClick={() => addCard('image', { path: picture.path })}>Put on stage</button>
           </div>
         )}
-        <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); void make(); }}>
+        <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); draw(); }}>
           <textarea
             aria-label="What to draw" placeholder="A quiet desk at dawn, soft light, photo…" rows={2} value={prompt}
             onChange={(event) => updateNodeData(id, { prompt: event.target.value })}
-            onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void make(); } }}
+            onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); draw(); } }}
           />
           <div className="studio__end">
             <select aria-label="Shape" value={data.shape ?? 'square'} onChange={(event) => updateNodeData(id, { shape: event.target.value as Shape })}>
@@ -98,24 +86,12 @@ function useVoices() {
 // recording appears here and the file goes to the shared files.
 export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>) {
   const { updateNodeData } = useReactFlow();
-  const { media, hint } = useMedia(id);
+  const { media, hint, making, problem, make } = useMedia(id);
   const voices = useVoices();
-  const [asking, setAsking] = useState(false);
   const [shown, setShown] = useState(0);
-  const [problem, setProblem] = useState('');
   const words = data.text ?? '';
-  const making = asking || media.state === 'making';
   const said = media.results[shown] ?? media.results[0];
-
-  async function make() {
-    if (!words.trim() || making) return;
-    setProblem('');
-    setShown(0);
-    setAsking(true);
-    try { await makeMedia(id, { prompt: words.trim(), voice: data.voice ?? '' }); }
-    catch (error) { setProblem((error as Error).message); }
-    finally { setAsking(false); }
-  }
+  const say = () => { if (words.trim() && !making) { setShown(0); void make({ prompt: words.trim(), voice: data.voice ?? '' }); } };
 
   return (
     <Frame selected={!!selected} minWidth={260} minHeight={260}>
@@ -143,11 +119,11 @@ export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>
           </div>
         )}
         {said && <div className="studio__done"><a href={fileUrl(said.path)} download>Download</a></div>}
-        <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); void make(); }}>
+        <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); say(); }}>
           <textarea
             aria-label="What to say" placeholder="Thanks for stopping by. Here is what we built this week…" rows={2} value={words}
             onChange={(event) => updateNodeData(id, { text: event.target.value })}
-            onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void make(); } }}
+            onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); say(); } }}
           />
           <div className="studio__end">
             <select aria-label="Voice" value={data.voice ?? voices[0]?.id ?? ''} onChange={(event) => updateNodeData(id, { voice: event.target.value })}>
@@ -156,6 +132,72 @@ export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>
             {making
               ? <button type="button" onClick={() => void stopMedia(id)}>Stop</button>
               : <button type="submit" className="primary" disabled={!words.trim() || !!hint} title={hint ?? ''}>Make</button>}
+          </div>
+        </form>
+        {!making && (problem || media.problem) && <p className="msg--problem studio__problem">That did not work: {problem || media.problem}</p>}
+      </div>
+    </Frame>
+  );
+}
+
+const LOOK_WORDS: Record<string, string> = { clean: 'Clean', sketch: 'Sketch' };
+
+// A video studio. The founder writes a brief and the server storyboards it, draws the stills, records the narration and
+// renders the film here on this machine; a wired person builds one scene by scene with generate_video. A render takes
+// minutes, so every step the renderer takes shows on the card as it happens.
+export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>) {
+  const { updateNodeData } = useReactFlow();
+  const { media, hint, making, problem, make } = useMedia(id);
+  const [shown, setShown] = useState(0);
+  const log = useRef<HTMLDivElement>(null);
+  const brief = data.brief ?? '';
+  const film = media.results[shown] ?? media.results[0];
+  const shoot = () => { if (brief.trim() && !making) { setShown(0); void make({ prompt: brief.trim(), format: data.format ?? 'wide', look: data.look ?? 'clean', narrate: !data.silent }); } };
+
+  useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [media.log]);
+
+  return (
+    <Frame selected={!!selected} minWidth={320} minHeight={380}>
+      <header className="card__header card__header--doc">
+        <svg className="doc-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.500" width="12" height="9" rx="1.600" fill="none" stroke="currentColor" strokeWidth="1.2" /><path d="M6.700 6.600l3.100 1.900-3.100 1.900z" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" /></svg>
+        <div className="card__name">Video studio</div>
+        <CardActions id={id} what="this video studio (the films it made stay in the shared files)" />
+      </header>
+      <div className="studio nodrag">
+        <div className="studio__result">
+          {film && !making && <video src={fileUrl(film.path)} poster={film.poster ? fileUrl(film.poster) : undefined} controls preload="metadata" aria-label={film.prompt} />}
+          {making && (
+            <div className="project__log studio__lines nowheel" ref={log}>
+              {media.log.length ? media.log.map((line, index) => <div key={index}>{line}</div>) : <div>starting…</div>}
+            </div>
+          )}
+          {!film && !making && <p className="chat__empty">{hint ?? 'Say what the film is about and press Make. It is storyboarded, drawn, narrated and rendered here, which takes a few minutes.'}</p>}
+        </div>
+        {media.results.length > 1 && (
+          <div className="studio__takes nowheel" aria-label="Made earlier">
+            {media.results.map((one, index) => (
+              <button key={one.path} type="button" className={index === shown ? 'is-shown' : undefined} title={one.prompt} onClick={() => setShown(index)}>{one.prompt}</button>
+            ))}
+          </div>
+        )}
+        {film && !making && <div className="studio__done"><a href={fileUrl(film.path)} download>Download</a></div>}
+        <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); shoot(); }}>
+          <textarea
+            aria-label="What the film is about" placeholder="A one-minute update for investors: what shipped this month, the numbers, what is next…" rows={2} value={brief}
+            onChange={(event) => updateNodeData(id, { brief: event.target.value })}
+            onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); shoot(); } }}
+          />
+          <div className="studio__end">
+            <select aria-label="Shape" value={data.format ?? 'wide'} onChange={(event) => updateNodeData(id, { format: event.target.value as Shape })}>
+              {SHAPES.map((shape) => <option key={shape} value={shape}>{SHAPE_WORDS[shape]}</option>)}
+            </select>
+            <select aria-label="Look" value={data.look ?? 'clean'} onChange={(event) => updateNodeData(id, { look: event.target.value as 'clean' | 'sketch' })}>
+              {Object.entries(LOOK_WORDS).map(([look, word]) => <option key={look} value={look}>{word}</option>)}
+            </select>
+            <label className="studio__toggle"><input type="checkbox" checked={!data.silent} onChange={(event) => updateNodeData(id, { silent: !event.target.checked })} />Narrate</label>
+            {making
+              ? <button type="button" onClick={() => void stopMedia(id)}>Stop</button>
+              : <button type="submit" className="primary" disabled={!brief.trim() || !!hint} title={hint ?? ''}>Make</button>}
           </div>
         </form>
         {!making && (problem || media.problem) && <p className="msg--problem studio__problem">That did not work: {problem || media.problem}</p>}

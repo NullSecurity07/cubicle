@@ -615,6 +615,39 @@ test('a voice studio: the founder picks a voice, a wired person speaks, and both
   await expect(page.locator('.react-flow__node-voicegen').getByLabel('Voice')).toHaveValue('bf_emma');
 });
 
+test('a video studio: the founder sets the film going and watches it being made, a wired person storyboards one', async ({ page }) => {
+  await tidy(page);
+  await addCard(page, 'Add video studio');
+  const card = page.locator('.react-flow__node-videogen');
+  await expect(card).toContainText('Say what the film is about');
+  const id = (await card.getAttribute('data-id'))!;
+
+  await page.waitForTimeout(600);
+  await wire(page, 'marketing', id);
+  await expect(await ask(page, 'marketing', 'what can you make')).toContainText('Studios: video.');
+
+  // The founder's own film: the card answers at once and every step of the render shows while it runs.
+  await card.getByLabel('What the film is about').fill('a one minute update for investors');
+  await card.getByLabel('Look').selectOption('sketch');
+  await card.getByRole('checkbox', { name: 'Narrate' }).uncheck();
+  await card.getByRole('button', { name: 'Make' }).click();
+  await expect(card.locator('.studio__result video')).toBeVisible();
+  await expect(card.getByRole('link', { name: 'Download' })).toHaveAttribute('href', /\/api\/files\/media\/.+\.mp4$/);
+  await expect.poll(async () => (await (await page.request.get(`/api/media/${id}`)).json()).results[0]?.poster).toMatch(/\.png$/);
+
+  // The person writes the whole storyboard, and the film lands on the same card.
+  await send(page, 'marketing', '/tool generate_video {"title":"Week eleven","scenes":[{"layout":"title","heading":"Week eleven"},{"layout":"outro","text":"More next week."}]}');
+  const reply = node(page, 'marketing').locator('.msg--assistant').last();
+  await expect(reply.locator('.chip--ok summary').last()).toHaveText('Filmed Week eleven');
+  await expect(reply.locator('video.md__media')).toBeVisible();
+  await expect(card.locator('.studio__takes button')).toHaveCount(2);
+
+  await page.reload();
+  await expect(page.locator('.react-flow__node-videogen .studio__result video')).toBeVisible();
+  await expect(page.locator('.react-flow__node-videogen').getByLabel('Look')).toHaveValue('sketch');
+  await expect(page.locator('.react-flow__node-videogen').getByRole('checkbox', { name: 'Narrate' })).not.toBeChecked();
+});
+
 test('the api answers the app\'s own page and refuses everyone else', async ({ browser }) => {
   // No script token here: this is what the founder's window and any other web page really send.
   const context = await browser.newContext({ baseURL: 'http://localhost:7430', extraHTTPHeaders: {} });

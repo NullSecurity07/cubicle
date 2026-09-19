@@ -15,6 +15,7 @@ import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
 import { fakeImages, imageMakers } from './media/image.ts';
 import { createMedia } from './media/jobs.ts';
+import { fakeVideos, hyperframesVideos } from './media/video.ts';
 import { fakeVoices, voiceMakers, VOICES } from './media/voice.ts';
 import { createMemory } from './memory.ts';
 import { missionsOf } from './missions.ts';
@@ -69,12 +70,24 @@ const attention = createAttention(workspace);
 attention.source(boardAttention(store, boards));
 boards.onChange(() => { void attention.refresh(); });
 // The studio cards: one job per card, the files in the shared files folder, the rest beside the stage.
+// A video is made out of the other two: it draws its stills with the picture makers and records its lines with the voice ones.
+const pictures = fake ? [fakeImages] : imageMakers();
+const voices = fake ? [fakeVoices] : voiceMakers(resolve(root, 'app/.cache/voice'));
+const storyboard = async (prompt: string) => {
+  const messages = [{ role: 'user' as const, content: prompt }];
+  const { order } = route([...clients].reverse(), usage, { promptChars: promptSize(messages), tools: false });
+  const reply = await complete(messages, { onToken: () => {} }, order);
+  usage.record(reply.client.name, reply.usage, reply.quota);
+  return reply.text;
+};
 const media = createMedia({
   dir: workspace,
   store,
-  makers: fake
-    ? { imagegen: [fakeImages], voicegen: [fakeVoices] }
-    : { imagegen: imageMakers(), voicegen: voiceMakers(resolve(root, 'app/.cache/voice')) },
+  makers: {
+    imagegen: pictures,
+    voicegen: voices,
+    videogen: fake ? [fakeVideos] : [hyperframesVideos({ dir: workspace, images: pictures[0], voices: voices[0], think: storyboard })],
+  },
 });
 const decisions = createDecisions(workspace);
 attention.source(decisionAttention(decisions));
@@ -321,7 +334,10 @@ createServer(async (req, res) => {
         const asked = await body(req);
         const prompt = String(asked.prompt ?? '').trim();
         if (!prompt) return json(res, 400, { error: 'say what to make first' });
-        return json(res, 200, await media.make(card, { ...asked, prompt }));
+        // A video takes minutes. Every studio answers the moment the job starts and the feed carries the rest, so the
+        // founder's window is never left holding a request open.
+        void media.make(card, { ...asked, prompt }).catch(() => { /* the card hears the failure through the feed */ });
+        return json(res, 202, { started: true });
       }
       if (action === 'stop' && req.method === 'POST') { media.stop(cardId); return json(res, 200, { ok: true }); }
     }

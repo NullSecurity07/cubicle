@@ -47,6 +47,7 @@ describe('flow mapping', () => {
       { id: 'l', kind: 'link', url: 'https://example.com', title: 'Example', x: 1, y: 2, w: 3, h: 4 },
       { id: 'g', kind: 'imagegen', prompt: 'A calm desk at dawn', shape: 'wide', x: 1, y: 2, w: 3, h: 4 }, { id: 'g2', kind: 'imagegen', x: 1, y: 2, w: 3, h: 4 },
       { id: 'v', kind: 'voicegen', text: 'Thanks for stopping by.', voice: 'bf_emma', x: 1, y: 2, w: 3, h: 4 }, { id: 'v2', kind: 'voicegen', x: 1, y: 2, w: 3, h: 4 },
+      { id: 'f', kind: 'videogen', brief: 'What we shipped this month', format: 'tall', look: 'sketch', silent: true, x: 1, y: 2, w: 3, h: 4 }, { id: 'f2', kind: 'videogen', x: 1, y: 2, w: 3, h: 4 },
     ] };
     const { nodes, edges } = toFlow(stage);
     expect(fromFlow(nodes, edges).cards).toEqual(stage.cards);
