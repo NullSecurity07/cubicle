@@ -349,7 +349,7 @@ createServer(async (req, res) => {
     }
     // The voices a voice studio offers, named for the founder. A fixed list: asking the model would fetch 310 MB first.
     if (path === '/api/media/voices' && req.method === 'GET') return json(res, 200, { voices: VOICES });
-    const studio = /^\/api\/media\/([^/]+)(?:\/(make|stop|assets)(?:\/([A-Za-z0-9 _-]{1,40}))?)?$/.exec(path);
+    const studio = /^\/api\/media\/([^/]+)(?:\/(make|stop|assets)(?:\/([^/]{1,120}))?)?$/.exec(path);
     if (studio) {
       const [, cardId, action, assetName] = studio;
       const card = (await store.loadStage()).cards?.find((one) => one.id === cardId && (MEDIA_KINDS as readonly string[]).includes(one.kind));
@@ -369,7 +369,8 @@ createServer(async (req, res) => {
         } else if (track.kind === 'image') thumb = saved;
         return json(res, 200, await media.addAsset(cardId, { file: name, path: saved, kind: track.kind, bytes, seconds: track.seconds || undefined, thumb }));
       }
-      if (action === 'assets' && assetName && req.method === 'DELETE') { await media.removeAsset(cardId, assetName); return json(res, 200, { ok: true }); }
+      // A path is not decoded on the way in, and an asset is named after a file, spaces and all.
+      if (action === 'assets' && assetName && req.method === 'DELETE') { await media.removeAsset(cardId, decodeURIComponent(assetName)); return json(res, 200, { ok: true }); }
       if (action === 'make' && req.method === 'POST') {
         const asked = await body(req);
         const prompt = String(asked.prompt ?? '').trim();

@@ -349,7 +349,7 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 
 /* A studio: what it made fills the card, what it made before sits under it, and what to make next is at the bottom. */
 .studio { flex: 1; min-height: 0; display: flex; flex-direction: column; cursor: auto; }
-.studio__result { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; margin: 8px 10px 0; border-radius: 10px; overflow: hidden; background: rgba(0, 0, 0, 0.28); }
+.studio__result { position: relative; flex: 1; min-height: 104px; display: flex; align-items: center; justify-content: center; margin: 8px 10px 0; border-radius: 10px; overflow: hidden; background: rgba(0, 0, 0, 0.28); }
 .studio__result img, .studio__result video { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; transition: opacity 0.25s, filter 0.25s; }
 .studio__result .chat__empty { max-width: 260px; margin: 0; padding: 14px; }
 .studio__result.is-making img { opacity: 0.2; filter: blur(3px); }
@@ -388,6 +388,36 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .studio__end .primary:hover { background: #5f99ff; }
 .studio__end button:disabled { opacity: 0.35; cursor: default; }
 .studio__problem { margin: 0 12px 10px; }
+/* What this film will be made of, said before the founder presses Make, so nothing about it is a surprise. */
+.studio__using { flex: none; margin: 8px 12px 0; color: var(--muted); font-size: 11.5px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Everything a founder sets once and rarely changes, folded away so the card reads as calmly as the others. */
+.studio__more { border-top: 1px solid var(--card-border); margin: 2px -12px -11px; padding: 0 12px; }
+.studio__more > summary { padding: 7px 0; color: var(--muted); font-size: 11.5px; cursor: pointer; list-style: none; }
+.studio__more > summary::-webkit-details-marker { display: none; }
+.studio__more > summary::before { content: '›'; display: inline-block; width: 11px; transition: transform 0.15s; }
+.studio__more[open] > summary::before { transform: rotate(90deg); }
+/* Opened, the fold is the one part of the card that scrolls: the film above it never gives up its room. */
+.studio__more[open] { max-height: 232px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.studio__more > summary:hover { color: var(--text); }
+.studio__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 10px; padding-bottom: 8px; }
+.studio__grid label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 11px; }
+.studio__grid .studio__wide { grid-column: 1 / -1; }
+.studio__grid select, .studio__grid input { border: 1px solid var(--card-border); border-radius: 8px; padding: 5px 8px; outline: 0; background: rgba(0, 0, 0, 0.25); color: var(--text); font: inherit; font-size: 12px; }
+.studio__grid select:focus, .studio__grid input:focus { border-color: rgba(78, 140, 255, 0.7); }
+.studio__grid option { background: #16181d; }
+.studio__switches { display: flex; flex-wrap: wrap; gap: 6px 14px; padding-bottom: 9px; }
+/* What the founder dropped on the card. Each one carries the name a storyboard calls it by. */
+.tray { display: flex; flex-direction: column; gap: 4px; padding-bottom: 10px; }
+.tray__one { display: flex; align-items: center; gap: 7px; border-radius: 7px; padding: 3px 4px 3px 3px; background: rgba(255, 255, 255, 0.045); }
+.tray__one img { flex: none; width: 34px; height: 24px; border-radius: 4px; object-fit: cover; background: rgba(0, 0, 0, 0.4); }
+.tray__kind { flex: none; width: 34px; height: 24px; border-radius: 4px; background: rgba(0, 0, 0, 0.4); color: var(--muted); font-size: 12px; line-height: 24px; text-align: center; }
+.tray__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.tray__len { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tray__one button { flex: none; width: 20px; height: 20px; border: 0; border-radius: 5px; padding: 0; background: transparent; color: var(--muted); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+.tray__one button:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+.tray__add { border: 1px dashed var(--card-border); border-radius: 8px; padding: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; text-align: center; cursor: pointer; }
+.tray__add:hover { border-color: rgba(78, 140, 255, 0.6); color: var(--text); }
+.studio.is-over { outline: 2px dashed rgba(78, 140, 255, 0.7); outline-offset: -4px; border-radius: 10px; }
 
 /* Above the canvas: a shade, and the sheet a focused card moves into. */
 .overlay { position: fixed; inset: 0; z-index: 40; display: none; }

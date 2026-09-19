@@ -29,6 +29,8 @@ export function useMedia(id: string) {
   const [asked, setAsked] = useState(false);
   const [problem, setProblem] = useState('');
   const flushStage = useFlushStage();
+  // Reading the card again, for the things a card changes without a job: a file dropped on it, or one taken off.
+  const reload = useCallback(() => { void getMedia(id).then((got) => { setMedia(got); setHint(got.hint); }).catch(() => {}); }, [id]);
 
   useEffect(() => {
     let gone = false;
@@ -51,5 +53,5 @@ export function useMedia(id: string) {
     catch (error) { setProblem((error as Error).message); setAsked(false); }
   }, [id]);
 
-  return { media, hint, making: asked || media.state === 'making', problem, make };
+  return { media, hint, making: asked || media.state === 'making', problem, make, reload };
 }

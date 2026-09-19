@@ -11,10 +11,18 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   with background runs and repeats, and memory.
 - **Studios** (2026-09-19): three cards that make things, driven by the founder from the card and by a wired
   person with `generate_image`, `generate_voice` and `generate_video`. **Image studio** draws from a few words.
-  **Voice studio** says a line in one of 28 voices, on this machine. **Video studio** turns a brief into a short
-  narrated film: a model writes the storyboard, the other two studios draw and speak it, and headless Chrome
-  renders it frame by frame. Everything made lands in `workspace/files/media/` and can be downloaded or put on
-  the stage.
+  **Voice studio** says a line in one of 28 voices, on this machine. **Video studio** turns a brief into a
+  marketing film, a product explainer or a phone reel: a model fills a validated flat storyboard, our TypeScript
+  writes the composition, the other two studios draw and speak it, and headless Chrome renders it frame by frame.
+  Everything made lands in `workspace/files/media/` and can be downloaded or put on the stage.
+- **What a film is made of** (2026-09-19): the Video studio builds from what is really there. Wire a **project
+  card** to it and it reads that folder read-only — the README, the landing copy, the CSS variables, the typeface,
+  the logo — and can wear the product's own colours (the `brand` look); wire a **link** or **browser** card, or
+  type a **Product address**, and it photographs the real pages at desktop and phone size and puts the shots in
+  phone, laptop and browser mockups; wired **notes**, **documents** and **pictures** are material too. Drop your
+  own video, photographs or a music track on the card and it edits around them. Seventeen scene shapes, two paces,
+  three looks, word-by-word captions, sound on the cuts, and a music bed ducked under the narration. Nothing about
+  a film leaves this machine except what you wired to it.
 - **Operator views** (2026-09-19): Focus mode (`F` or the header button; a card fills the window); Needs you (dock
   bell, `N`); Messages (`M`); Decisions (`D`; one markdown file per decision in `workspace/decisions/`); Recall (a
   `recall` tool for people, a search for the founder, by meaning, on a local model; a person finds only what their

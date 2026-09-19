@@ -1,8 +1,8 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useRef, useState } from 'react';
-import { SHAPES, type Shape } from '../../shared/model';
+import { SHAPES, type MediaAsset, type Shape, type VideoLook } from '../../shared/model';
 import { useAddCard } from '../addCard';
-import { fileUrl, getVoices, stopMedia } from '../api';
+import { addAsset, fileUrl, getVoices, removeAsset, stopMedia } from '../api';
 import { useMedia } from '../media';
 import type { ImageGenNodeType, VideoGenNodeType, VoiceGenNodeType } from '../stage';
 import { CardActions, Frame } from './Frame';
@@ -140,30 +140,112 @@ export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>
   );
 }
 
-const LOOK_WORDS: Record<string, string> = { clean: 'Clean', sketch: 'Sketch' };
+const LOOK_WORDS: Record<VideoLook, string> = { clean: 'Clean', sketch: 'Sketch', brand: 'Brand' };
+// What the film is for. The words are the founder's, not the code's; each one sets a structure, a pace and a length
+// on the server, and the founder can still overrule any of them below.
+const PURPOSE_WORDS: [string, string][] = [
+  ['explainer', 'Product explainer'], ['launch', 'Launch announcement'], ['feature', 'One feature'],
+  ['ad', 'Marketing ad'], ['reel', 'Influencer-style reel'], ['pitch', 'Investor pitch'], ['testimonial', 'Customer testimonial'],
+];
+const MUSIC_WORDS: [string, string][] = [['none', 'No music'], ['calm', 'Calm'], ['warm', 'Warm'], ['drive', 'Driving'], ['bright', 'Bright']];
+const LENGTH_WORDS = [15, 30, 60, 90];
+const MEDIA_FILE = 'video/*,image/*,audio/*';
+const seconds = (value?: number) => (value ? `${Math.round(value)}s` : '');
 
-// A video studio. The founder writes a brief and the server storyboards it, draws the stills, records the narration and
-// renders the film here on this machine; a wired person builds one scene by scene with generate_video. A render takes
-// minutes, so every step the renderer takes shows on the card as it happens.
+// What the founder dropped on the card, and what the card is drawing on besides. A film is built around these, so the
+// card says out loud what it will use before the founder presses Make.
+function AssetTray({ id, assets, onChange }: { id: string; assets: MediaAsset[]; onChange: () => void }) {
+  const [busy, setBusy] = useState('');
+  const pick = useRef<HTMLInputElement>(null);
+  const take = async (files: FileList | null) => {
+    for (const file of Array.from(files ?? [])) {
+      setBusy(`adding ${file.name}…`);
+      try { await addAsset(id, file); } catch (error) { setBusy(`${file.name}: ${(error as Error).message}`); await new Promise((wait) => setTimeout(wait, 4000)); }
+      onChange();
+    }
+    setBusy('');
+  };
+  return (
+    <div className="tray">
+      <input ref={pick} type="file" accept={MEDIA_FILE} multiple hidden onChange={(event) => { void take(event.target.files); event.target.value = ''; }} />
+      {assets.map((asset) => (
+        <div key={asset.name} className="tray__one" title={`${asset.name} · ${asset.kind}${asset.seconds ? ` · ${seconds(asset.seconds)}` : ''}`}>
+          {asset.thumb ? <img src={fileUrl(asset.thumb)} alt="" draggable={false} /> : <span className="tray__kind">{asset.kind === 'audio' ? '♪' : '▦'}</span>}
+          <span className="tray__name">{asset.name}</span>
+          {asset.seconds ? <span className="tray__len">{seconds(asset.seconds)}</span> : null}
+          <button type="button" aria-label={`Remove ${asset.name}`} onClick={() => void removeAsset(id, asset.name).then(onChange)}>×</button>
+        </div>
+      ))}
+      <button type="button" className="tray__add" onClick={() => pick.current?.click()}>{busy || 'Drop video, pictures or a music track here — or click to add'}</button>
+    </div>
+  );
+}
+
+// A video studio. The founder writes a brief and the server storyboards it out of whatever is wired to the card —
+// the product's own code, its screens, the founder's own footage — draws the stills, records the narration and renders
+// the film here on this machine; a wired person builds one scene by scene with generate_video. A render takes minutes,
+// so every step the renderer takes shows on the card as it happens.
 export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>) {
-  const { updateNodeData } = useReactFlow();
-  const { media, hint, making, problem, make } = useMedia(id);
+  const { updateNodeData, getNodes, getEdges } = useReactFlow();
+  const { media, hint, making, problem, make, reload } = useMedia(id);
   const [shown, setShown] = useState(0);
+  const [over, setOver] = useState(false);
   const log = useRef<HTMLDivElement>(null);
   const brief = data.brief ?? '';
   const film = media.results[shown] ?? media.results[0];
-  const shoot = () => { if (brief.trim() && !making) { setShown(0); void make({ prompt: brief.trim(), format: data.format ?? 'wide', look: data.look ?? 'clean', narrate: !data.silent }); } };
+  const assets = media.assets ?? [];
+  const shoot = () => {
+    if (!brief.trim() || making) return;
+    setShown(0);
+    void make({
+      prompt: brief.trim(), format: data.format, look: data.look ?? 'clean', narrate: !data.silent,
+      purpose: data.purpose ?? 'explainer', length: data.length, pace: data.pace, music: data.music,
+      captions: data.captions === 'on' ? true : data.captions === 'off' ? false : undefined,
+      sfx: data.sfx !== 'off', ai: data.ai === true, address: data.address,
+    });
+  };
 
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [media.log]);
 
+  // What this film will be made of, in the founder's words, so nothing about it is a surprise.
+  const using = (() => {
+    const joined = getEdges().filter((edge) => edge.source === id || edge.target === id).map((edge) => (edge.source === id ? edge.target : edge.source));
+    const nodes = getNodes().filter((node) => joined.includes(node.id));
+    const said: string[] = [];
+    for (const node of nodes) {
+      if (node.type === 'project') said.push(`${String((node.data as { path?: string }).path ?? '').split('/').filter(Boolean).at(-1) ?? 'a'} project`);
+      else if (node.type === 'link') said.push(String((node.data as { title?: string; url?: string }).title || (node.data as { url?: string }).url || 'a page'));
+      else if (node.type === 'browser') said.push('a browser card');
+      else if (node.type === 'doc') said.push(String((node.data as { title?: string }).title ?? 'a document'));
+      else if (node.type === 'note') said.push('a note');
+      else if (node.type === 'image') said.push('a picture');
+    }
+    if (data.address?.trim()) said.unshift(data.address.trim());
+    const clips = assets.filter((one) => one.kind === 'video').length;
+    if (clips) said.push(`${clips} of your clip${clips === 1 ? '' : 's'}`);
+    const track = assets.find((one) => one.kind === 'audio');
+    if (track && data.music !== 'none') said.push('your music');
+    return said;
+  })();
+
   return (
-    <Frame selected={!!selected} minWidth={320} minHeight={380}>
+    <Frame selected={!!selected} minWidth={340} minHeight={420}>
       <header className="card__header card__header--doc">
         <svg className="doc-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.500" width="12" height="9" rx="1.600" fill="none" stroke="currentColor" strokeWidth="1.2" /><path d="M6.700 6.600l3.100 1.900-3.100 1.900z" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" /></svg>
         <div className="card__name">Video studio</div>
         <CardActions id={id} what="this video studio (the films it made stay in the shared files)" />
       </header>
-      <div className="studio nodrag">
+      <div
+        className={`studio nodrag${over ? ' is-over' : ''}`}
+        onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setOver(true); } }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(event) => {
+          if (!event.dataTransfer.files.length) return;
+          event.preventDefault();
+          setOver(false);
+          void (async () => { for (const file of Array.from(event.dataTransfer.files)) await addAsset(id, file).catch(() => {}); reload(); })();
+        }}
+      >
         <div className="studio__result">
           {film && !making && <video src={fileUrl(film.path)} poster={film.poster ? fileUrl(film.poster) : undefined} controls preload="metadata" aria-label={film.prompt} />}
           {making && (
@@ -181,6 +263,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
           </div>
         )}
         {film && !making && <div className="studio__done"><a href={fileUrl(film.path)} download>Download</a></div>}
+        {!!using.length && <p className="studio__using">Using: {using.join(', ')}</p>}
         <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); shoot(); }}>
           <textarea
             aria-label="What the film is about" placeholder="A one-minute update for investors: what shipped this month, the numbers, what is next…" rows={2} value={brief}
@@ -188,17 +271,60 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
             onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); shoot(); } }}
           />
           <div className="studio__end">
-            <select aria-label="Shape" value={data.format ?? 'wide'} onChange={(event) => updateNodeData(id, { format: event.target.value as Shape })}>
-              {SHAPES.map((shape) => <option key={shape} value={shape}>{SHAPE_WORDS[shape]}</option>)}
+            <select aria-label="What it is for" value={data.purpose ?? 'explainer'} onChange={(event) => updateNodeData(id, { purpose: event.target.value })}>
+              {PURPOSE_WORDS.map(([value, word]) => <option key={value} value={value}>{word}</option>)}
             </select>
-            <select aria-label="Look" value={data.look ?? 'clean'} onChange={(event) => updateNodeData(id, { look: event.target.value as 'clean' | 'sketch' })}>
-              {Object.entries(LOOK_WORDS).map(([look, word]) => <option key={look} value={look}>{word}</option>)}
+            <select aria-label="How long" value={String(data.length ?? '')} onChange={(event) => updateNodeData(id, { length: event.target.value ? Number(event.target.value) : undefined })}>
+              <option value="">As it comes</option>
+              {LENGTH_WORDS.map((one) => <option key={one} value={one}>{one} seconds</option>)}
             </select>
-            <label className="studio__toggle"><input type="checkbox" checked={!data.silent} onChange={(event) => updateNodeData(id, { silent: !event.target.checked })} />Narrate</label>
             {making
               ? <button type="button" onClick={() => void stopMedia(id)}>Stop</button>
               : <button type="submit" className="primary" disabled={!brief.trim() || !!hint} title={hint ?? ''}>Make</button>}
           </div>
+          {/* Everything a founder sets once and rarely changes tucks away, so the card stays as calm as the others. */}
+          <details className="studio__more">
+            <summary>More{assets.length ? ` · ${assets.length} file${assets.length === 1 ? '' : 's'}` : ''}</summary>
+            <div className="studio__grid">
+              <label>Shape
+                <select value={data.format ?? ''} onChange={(event) => updateNodeData(id, { format: (event.target.value || undefined) as Shape | undefined })}>
+                  <option value="">As it comes</option>
+                  {SHAPES.map((shape) => <option key={shape} value={shape}>{SHAPE_WORDS[shape]}</option>)}
+                </select>
+              </label>
+              <label>Look
+                <select value={data.look ?? 'clean'} onChange={(event) => updateNodeData(id, { look: event.target.value as VideoLook })}>
+                  {Object.entries(LOOK_WORDS).map(([look, word]) => <option key={look} value={look}>{word}</option>)}
+                </select>
+              </label>
+              <label>Pace
+                <select value={data.pace ?? ''} onChange={(event) => updateNodeData(id, { pace: (event.target.value || undefined) as 'calm' | 'punchy' | undefined })}>
+                  <option value="">As it comes</option><option value="calm">Calm</option><option value="punchy">Punchy</option>
+                </select>
+              </label>
+              <label>Music
+                <select value={data.music ?? ''} onChange={(event) => updateNodeData(id, { music: event.target.value || undefined })}>
+                  <option value="">As it comes</option>
+                  {MUSIC_WORDS.map(([value, word]) => <option key={value} value={value}>{word}</option>)}
+                </select>
+              </label>
+              <label className="studio__wide">Product address
+                <input
+                  type="text" placeholder="relay.app, or http://localhost:3000" value={data.address ?? ''}
+                  onChange={(event) => updateNodeData(id, { address: event.target.value })}
+                />
+              </label>
+            </div>
+            <div className="studio__switches">
+              <label className="studio__toggle"><input type="checkbox" checked={!data.silent} onChange={(event) => updateNodeData(id, { silent: !event.target.checked })} />Narrate</label>
+              <label className="studio__toggle"><input type="checkbox" checked={data.captions === 'on'} onChange={(event) => updateNodeData(id, { captions: event.target.checked ? 'on' : 'off' })} />Captions</label>
+              <label className="studio__toggle"><input type="checkbox" checked={data.sfx !== 'off'} onChange={(event) => updateNodeData(id, { sfx: event.target.checked ? 'on' : 'off' })} />Sound</label>
+              <label className="studio__toggle" title="A clip and a talking head are the only part of a film that is not free: they spend a small daily quota, at most twice a film.">
+                <input type="checkbox" checked={data.ai === true} onChange={(event) => updateNodeData(id, { ai: event.target.checked })} />AI clips
+              </label>
+            </div>
+            <AssetTray id={id} assets={assets} onChange={reload} />
+          </details>
         </form>
         {!making && (problem || media.problem) && <p className="msg--problem studio__problem">That did not work: {problem || media.problem}</p>}
       </div>

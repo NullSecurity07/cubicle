@@ -626,10 +626,24 @@ test('a video studio: the founder sets the film going and watches it being made,
   await wire(page, 'marketing', id);
   await expect(await ask(page, 'marketing', 'what can you make')).toContainText('Studios: video.');
 
-  // The founder's own film: the card answers at once and every step of the render shows while it runs.
-  await card.getByLabel('What the film is about').fill('a one minute update for investors');
+  // Everything the founder sets once is folded away; what the film is for and how long it runs are not.
+  await card.getByLabel('What it is for').selectOption('reel');
+  await card.getByLabel('How long').selectOption('30');
+  await card.getByText('More', { exact: false }).click();
   await card.getByLabel('Look').selectOption('sketch');
   await card.getByRole('checkbox', { name: 'Narrate' }).uncheck();
+  await card.getByRole('checkbox', { name: 'Captions' }).check();
+  await card.getByLabel('Product address').fill('relay.app');
+
+  // The founder drops a file of their own on the card, and the card says what it will be drawing on.
+  await card.locator('input[type=file]').setInputFiles({ name: 'On the walk.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64') });
+  await expect(card.locator('.tray__one')).toHaveCount(1);
+  await expect(card.locator('.tray__name')).toHaveText('On the walk');
+  await expect(card.locator('.studio__using')).toContainText('relay.app');
+  await expect(card.locator('.studio__more summary')).toContainText('1 file');
+
+  // The founder's own film: the card answers at once and every step of the render shows while it runs.
+  await card.getByLabel('What the film is about').fill('a one minute update for investors');
   await card.getByRole('button', { name: 'Make' }).click();
   await expect(card.locator('.studio__result video')).toBeVisible();
   await expect(card.getByRole('link', { name: 'Download' })).toHaveAttribute('href', /\/api\/files\/media\/.+\.mp4$/);
@@ -643,9 +657,19 @@ test('a video studio: the founder sets the film going and watches it being made,
   await expect(card.locator('.studio__takes button')).toHaveCount(2);
 
   await page.reload();
-  await expect(page.locator('.react-flow__node-videogen .studio__result video')).toBeVisible();
-  await expect(page.locator('.react-flow__node-videogen').getByLabel('Look')).toHaveValue('sketch');
-  await expect(page.locator('.react-flow__node-videogen').getByRole('checkbox', { name: 'Narrate' })).not.toBeChecked();
+  const again = page.locator('.react-flow__node-videogen');
+  await expect(again.locator('.studio__result video')).toBeVisible();
+  await expect(again.getByLabel('What it is for')).toHaveValue('reel');
+  await expect(again.getByLabel('How long')).toHaveValue('30');
+  await again.getByText('More', { exact: false }).click();
+  await expect(again.getByLabel('Look')).toHaveValue('sketch');
+  await expect(again.getByRole('checkbox', { name: 'Narrate' })).not.toBeChecked();
+  await expect(again.getByRole('checkbox', { name: 'Captions' })).toBeChecked();
+  await expect(again.getByLabel('Product address')).toHaveValue('relay.app');
+  // What was dropped on the card is the server's, not the page's: it survives a reload and can be taken off again.
+  await expect(again.locator('.tray__name')).toHaveText('On the walk');
+  await again.getByRole('button', { name: 'Remove On the walk' }).click();
+  await expect(again.locator('.tray__one')).toHaveCount(0);
 });
 
 test('the api answers the app\'s own page and refuses everyone else', async ({ browser }) => {

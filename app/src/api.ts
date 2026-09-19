@@ -1,4 +1,4 @@
-import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, Stage, Task, Thread } from '../shared/model';
+import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaAsset, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, Stage, Task, Thread } from '../shared/model';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -54,6 +54,10 @@ export const getMedia = (id: string) => request<Media & { hint: string | null }>
 export const makeMedia = (id: string, ask: { prompt: string } & Record<string, unknown>) => request<{ started: true }>(`/api/media/${id}/make`, send('POST', ask));
 export const stopMedia = (id: string) => request(`/api/media/${id}/stop`, send('POST'));
 export const getVoices = () => request<{ voices: { id: string; name: string }[] }>('/api/media/voices');
+// The founder's own footage, dropped on a studio card. The file goes straight to disk, so it may be far bigger than
+// anything else this app takes; what comes back is the card's own name for it.
+export const addAsset = (id: string, file: File) => request<MediaAsset>(`/api/media/${id}/assets?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
+export const removeAsset = (id: string, name: string) => request(`/api/media/${id}/assets/${encodeURIComponent(name)}`, send('DELETE'));
 // One feed for every studio on the stage: a line while something is being made, a nudge after every change.
 export function watchMedia(onEvent: (event: MediaEvent) => void) {
   const source = new EventSource('/api/media/events');

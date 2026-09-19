@@ -1,5 +1,5 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
-import type { Box, Card, Doc, Room, Shape, Stage } from '../shared/model';
+import type { Box, Card, Doc, Room, Shape, Stage, Switch, VideoLook } from '../shared/model';
 
 export type RoomData = Omit<Room, keyof Box | 'id'>;
 export type DocData = Omit<Doc, keyof Box | 'id'>;
@@ -13,7 +13,7 @@ export type ImageNodeType = Node<{ path: string }, 'image'>;
 export type LinkNodeType = Node<{ url: string; title?: string }, 'link'>;
 export type ImageGenNodeType = Node<{ prompt?: string; shape?: Shape }, 'imagegen'>;
 export type VoiceGenNodeType = Node<{ text?: string; voice?: string }, 'voicegen'>;
-export type VideoGenNodeType = Node<{ brief?: string; format?: Shape; look?: 'clean' | 'sketch'; silent?: boolean }, 'videogen'>;
+export type VideoGenNodeType = Node<{ brief?: string; format?: Shape; look?: VideoLook; silent?: boolean; purpose?: string; length?: number; pace?: 'calm' | 'punchy'; music?: string; voice?: string; captions?: Switch; sfx?: Switch; ai?: boolean; address?: string }, 'videogen'>;
 export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | NoteNodeType | ImageNodeType | LinkNodeType | ImageGenNodeType | VoiceGenNodeType | VideoGenNodeType;
 export type StageNode = RoomNodeType | DocNodeType | CardNodeType;
 
