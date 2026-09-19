@@ -59,10 +59,23 @@ export const getVoices = () => request<{ voices: { id: string; name: string }[] 
 export const addAsset = (id: string, file: File) => request<MediaAsset>(`/api/media/${id}/assets?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
 export const removeAsset = (id: string, name: string) => request(`/api/media/${id}/assets/${encodeURIComponent(name)}`, send('DELETE'));
 // One feed for every studio on the stage: a line while something is being made, a nudge after every change.
-export function watchMedia(onEvent: (event: MediaEvent) => void) {
-  const source = new EventSource('/api/media/events');
-  source.onmessage = (message) => onEvent(JSON.parse(message.data) as MediaEvent);
-  return () => source.close();
+// A feed that outlives the server restarting: a browser gives up for good on a refused feed, so it is opened again,
+// and `onOpen` lets the cards read themselves afresh for whatever they missed meanwhile.
+export function watchMedia(onEvent: (event: MediaEvent) => void, onOpen: () => void = () => {}) {
+  let source: EventSource | null = null;
+  let again: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+  const open = () => {
+    source = new EventSource('/api/media/events');
+    source.onopen = onOpen;
+    source.onmessage = (message) => onEvent(JSON.parse(message.data) as MediaEvent);
+    source.onerror = () => {
+      if (closed || source?.readyState !== EventSource.CLOSED) return;
+      again = setTimeout(open, 1500);
+    };
+  };
+  open();
+  return () => { closed = true; clearTimeout(again); source?.close(); };
 }
 
 export const deleteMessage = (roomId: string, messageId: string) => request<ChatMessage[]>(`/api/rooms/${roomId}/chat/${messageId}`, { method: 'DELETE' });

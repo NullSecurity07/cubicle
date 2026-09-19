@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { SHAPES, type MediaAsset, type Shape, type VideoLook } from '../../shared/model';
 import { useAddCard } from '../addCard';
 import { addAsset, fileUrl, getVoices, removeAsset, stopMedia } from '../api';
-import { useMedia } from '../media';
+import { useElapsed, useMedia } from '../media';
 import type { ImageGenNodeType, VideoGenNodeType, VoiceGenNodeType } from '../stage';
 import { CardActions, Frame } from './Frame';
 
@@ -15,6 +15,7 @@ export function ImageGenNode({ id, data, selected }: NodeProps<ImageGenNodeType>
   const { updateNodeData } = useReactFlow();
   const addCard = useAddCard();
   const { media, hint, making, problem, make } = useMedia(id);
+  const elapsed = useElapsed(making);
   const [shown, setShown] = useState(0);
   const prompt = data.prompt ?? '';
   const picture = media.results[shown] ?? media.results[0];
@@ -30,7 +31,7 @@ export function ImageGenNode({ id, data, selected }: NodeProps<ImageGenNodeType>
       <div className="studio nodrag">
         <div className={`studio__result${making ? ' is-making' : ''}`}>
           {picture && <img src={fileUrl(picture.path)} alt={picture.prompt} draggable={false} />}
-          {making && <p className="studio__doing">{media.log.at(-1) ?? 'making it…'}</p>}
+          {making && <p className="studio__doing">{media.log.at(-1) ?? 'making it…'}<span className="studio__clock">{elapsed}</span></p>}
           {!picture && !making && <p className="chat__empty">{hint ?? 'Say what you want to see and press Make. A person wired to this card can draw here too.'}</p>}
         </div>
         {media.results.length > 1 && (
@@ -87,6 +88,7 @@ function useVoices() {
 export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>) {
   const { updateNodeData } = useReactFlow();
   const { media, hint, making, problem, make } = useMedia(id);
+  const elapsed = useElapsed(making);
   const voices = useVoices();
   const [shown, setShown] = useState(0);
   const words = data.text ?? '';
@@ -108,7 +110,7 @@ export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>
               <p>{said.prompt}</p>
             </div>
           )}
-          {making && <p className="studio__doing">{media.log.at(-1) ?? 'saying it…'}</p>}
+          {making && <p className="studio__doing">{media.log.at(-1) ?? 'saying it…'}<span className="studio__clock">{elapsed}</span></p>}
           {!said && !making && <p className="chat__empty">{hint ?? 'Write what should be said and press Make. A person wired to this card can speak here too.'}</p>}
         </div>
         {media.results.length > 1 && (
@@ -188,6 +190,7 @@ function AssetTray({ id, assets, onChange }: { id: string; assets: MediaAsset[];
 export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>) {
   const { updateNodeData, getNodes, getEdges } = useReactFlow();
   const { media, hint, making, problem, make, reload } = useMedia(id);
+  const elapsed = useElapsed(making);
   const [shown, setShown] = useState(0);
   const [over, setOver] = useState(false);
   const log = useRef<HTMLDivElement>(null);
@@ -251,6 +254,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
           {making && (
             <div className="project__log studio__lines nowheel" ref={log}>
               {media.log.length ? media.log.map((line, index) => <div key={index}>{line}</div>) : <div>starting…</div>}
+              <div className="studio__clock">{elapsed}</div>
             </div>
           )}
           {!film && !making && <p className="chat__empty">{hint ?? 'Say what the film is about and press Make. It is storyboarded, drawn, narrated and rendered here, which takes a few minutes.'}</p>}

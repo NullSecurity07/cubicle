@@ -551,6 +551,19 @@ test('a sticky note and a link are context for the person they are wired to', as
   await expect(page.locator('.react-flow__node-link .card__name')).toHaveText('Example Domain');
 });
 
+// The feed is the fast path, never the only one: a server restart once killed it for good and left a finished
+// picture behind a card that said "making it…" for ever.
+test('an image studio finishes even when its feed is lost', async ({ page }) => {
+  await page.route('**/api/media/events', (route) => route.abort());
+  await tidy(page);
+  await addCard(page, 'Add image studio');
+  const card = page.locator('.react-flow__node-imagegen');
+  await card.getByLabel('What to draw').fill('a quiet desk at dawn');
+  await card.getByRole('button', { name: 'Make' }).click();
+  await expect(card.locator('.studio__result img')).toBeVisible({ timeout: 10_000 });
+  await expect(card.getByRole('button', { name: 'Make' })).toBeVisible();
+});
+
 test('an image studio: the founder draws, a wired person draws, and the card keeps both', async ({ page }) => {
   await tidy(page);
   await addCard(page, 'Add image studio');

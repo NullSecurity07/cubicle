@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Media } from '../shared/model';
 import { getMedia, makeMedia, watchMedia } from './api';
 import { emit, listen } from './bus';
@@ -14,7 +14,7 @@ function share() {
   if (watching === 0) {
     close = watchMedia((event) => emit('effect', 'line' in event
       ? { kind: 'media-progress', id: event.id, line: event.line, roomId: '' }
-      : { kind: 'media-made', id: event.id, roomId: '' }));
+      : { kind: 'media-made', id: event.id, roomId: '' }), () => emit('media-feed', null));
   }
   watching += 1;
   return () => { watching -= 1; if (watching === 0) close(); };
@@ -42,16 +42,47 @@ export function useMedia(id: string) {
       // Every change ends the asking, whether something was made or something went wrong.
       if (effect.kind === 'media-made') { setAsked(false); void load(); }
     })];
+    // The feed came back after a gap: whatever it carried meanwhile is lost, so read the card again.
+    stops.push(listen('media-feed', () => { void load(); }));
     void flushStage().then(() => { if (!gone) { void load(); stops.push(share()); } });
     return () => { gone = true; for (const stop of stops) stop(); };
   }, [id, flushStage]);
 
+  // The feed is the fast path, never the only one: while something is being made the card also asks the server itself,
+  // so a lost event can slow a card down but never leave it waiting for good.
+  const making = asked || media.state === 'making';
+  const askedAt = useRef(0);
+  useEffect(() => {
+    if (!making) return;
+    const timer = setInterval(() => {
+      void getMedia(id).then((got) => {
+        setMedia(got); setHint(got.hint);
+        const settled = got.state !== 'making' && (Date.now() - askedAt.current > 3000 || (got.results[0]?.at ?? 0) >= askedAt.current);
+        if (settled) setAsked(false);
+      }).catch(() => {});
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [id, making]);
+
   const make = useCallback(async (ask: { prompt: string } & Record<string, unknown>) => {
     setProblem('');
+    askedAt.current = Date.now();
     setAsked(true);
     try { await makeMedia(id, ask); }
     catch (error) { setProblem((error as Error).message); setAsked(false); }
   }, [id]);
 
-  return { media, hint, making: asked || media.state === 'making', problem, make, reload };
+  return { media, hint, making, problem, make, reload };
+}
+
+// How long a card has been at it, as the founder reads it: proof of life beside the step it is on.
+export function useElapsed(making: boolean): string {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!making) { setSeconds(0); return; }
+    const started = Date.now();
+    const timer = setInterval(() => setSeconds(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [making]);
+  return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${String(seconds % 60).padStart(2, '0')} s`;
 }

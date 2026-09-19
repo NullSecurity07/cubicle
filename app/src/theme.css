@@ -379,6 +379,7 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .studio__ask { flex: none; display: flex; flex-direction: column; gap: 7px; padding: 9px 12px 11px; }
 .studio__ask textarea { border: 1px solid var(--card-border); border-radius: 9px; padding: 7px 9px; outline: 0; resize: none; field-sizing: content; max-height: 88px; background: rgba(0, 0, 0, 0.25); color: var(--text); font: inherit; font-size: 12.5px; line-height: 1.45; }
 .studio__ask textarea:focus { border-color: rgba(78, 140, 255, 0.7); }
+.studio__clock { display: block; margin-top: 4px; font-size: 11px; font-variant-numeric: tabular-nums; opacity: 0.6; }
 .studio__end { display: flex; align-items: center; gap: 8px; }
 .studio__end select { flex: 0 1 auto; min-width: 0; text-overflow: ellipsis; border: 1px solid var(--card-border); border-radius: 8px; padding: 5px 8px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 12px; }
 .studio__end option { background: #16181d; }
