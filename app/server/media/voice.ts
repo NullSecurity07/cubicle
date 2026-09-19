@@ -65,7 +65,7 @@ export function wavSeconds(bytes: Buffer): number {
 // The runtime's cache setting is shared with recall's model, and both only read it while a model is loading.
 export function kokoroVoices(cacheDir: string): Maker {
   type Kokoro = { generate: (text: string, options: { voice: string }) => Promise<{ audio: Float32Array; sampling_rate: number }>;
-    stream: (text: unknown, options: { voice: string }) => AsyncIterable<{ audio: { audio: Float32Array; sampling_rate: number } }> };
+    stream: (text: unknown, options: { voice: string }) => AsyncIterable<{ text?: string; audio: { audio: Float32Array; sampling_rate: number } }> };
   let ready: Promise<{ tts: Kokoro; Splitter: new () => { push: (text: string) => void; close: () => void } }> | null = null;
 
   const load = (report: (line: string) => void) => {
@@ -104,24 +104,29 @@ export function kokoroVoices(cacheDir: string): Maker {
       // Anything longer than a line or two is spoken sentence by sentence and joined, which the model handles far better.
       if (words.length <= 180) {
         const said = await tts.generate(words, { voice });
-        return { ext: 'wav', bytes: wavOf(said.audio, said.sampling_rate) };
+        return { ext: 'wav', bytes: wavOf(said.audio, said.sampling_rate), parts: [{ text: words, seconds: said.audio.length / said.sampling_rate }] };
       }
       const splitter = new Splitter();
       splitter.push(words);
       splitter.close();
       const pieces: Float32Array[] = [];
+      // Each sentence's own length, kept beside its words: this is what a caption is timed from.
+      const parts: { text: string; seconds: number }[] = [];
       let rate = RATE;
       for await (const part of tts.stream(splitter, { voice })) {
         if (signal?.aborted) throw new Error('stopped');
         pieces.push(part.audio.audio);
         rate = part.audio.sampling_rate;
+        parts.push({ text: (part.text ?? '').trim(), seconds: part.audio.audio.length / part.audio.sampling_rate });
         report(`saying it… ${pieces.length} sentence${pieces.length === 1 ? '' : 's'}`);
       }
       if (!pieces.length) throw new Error('nothing came back to say');
       const whole = new Float32Array(pieces.reduce((sum, piece) => sum + piece.length, 0));
       let at = 0;
       for (const piece of pieces) { whole.set(piece, at); at += piece.length; }
-      return { ext: 'wav', bytes: wavOf(whole, rate) };
+      // A runtime that does not hand back the words of each piece gets one piece: captions then span the whole line.
+      const said = parts.every((part) => part.text) ? parts : [{ text: words, seconds: whole.length / rate }];
+      return { ext: 'wav', bytes: wavOf(whole, rate), parts: said };
     },
   };
 }
@@ -152,7 +157,7 @@ export function geminiVoice(env: NodeJS.ProcessEnv = process.env, http: typeof f
       const pcm = Buffer.from(said, 'base64');
       const samples = new Float32Array(pcm.length / 2);
       for (let at = 0; at < samples.length; at += 1) samples[at] = pcm.readInt16LE(at * 2) / 32768;
-      return { ext: 'wav', bytes: wavOf(samples, GEMINI_RATE) };
+      return { ext: 'wav', bytes: wavOf(samples, GEMINI_RATE), parts: [{ text: ask.prompt, seconds: samples.length / GEMINI_RATE }] };
     },
   };
 }
@@ -163,8 +168,8 @@ export const voiceMakers = (cacheDir: string, env: NodeJS.ProcessEnv = process.e
 export const fakeVoices: Maker = {
   name: 'fake',
   ready: () => null,
-  async make(_ask, { report }): Promise<Piece> {
+  async make(ask, { report }): Promise<Piece> {
     report('saying it…');
-    return { ext: 'wav', bytes: wavOf(new Float32Array(RATE)) };
+    return { ext: 'wav', bytes: wavOf(new Float32Array(RATE)), parts: [{ text: String(ask.prompt ?? ''), seconds: 1 }] };
   },
 };

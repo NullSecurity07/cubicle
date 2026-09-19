@@ -13,15 +13,24 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean }
   // on the card; what came out lives in a sidecar the server owns.
   | { kind: 'imagegen'; prompt?: string; shape?: Shape } | { kind: 'voicegen'; text?: string; voice?: string }
   // `silent` rather than a narrate flag: `fromFlow` drops a false, so a switch the founder turned off has to be the true one.
-  | { kind: 'videogen'; brief?: string; format?: Shape; look?: 'clean' | 'sketch'; silent?: boolean });
+  // The switches that can be on, off *or* whatever the purpose says are words rather than flags, for the same reason.
+  | { kind: 'videogen'; brief?: string; format?: Shape; look?: VideoLook; silent?: boolean;
+    purpose?: string; length?: number; pace?: 'calm' | 'punchy'; music?: string; voice?: string;
+    captions?: Switch; sfx?: Switch; ai?: boolean; address?: string });
+export type VideoLook = 'clean' | 'sketch' | 'brand';
+export type Switch = 'on' | 'off';
 export const SHAPES = ['square', 'wide', 'tall'] as const;
 export type Shape = (typeof SHAPES)[number];
 export const MEDIA_KINDS = ['imagegen', 'voicegen', 'videogen'] as const;
 export type MediaKind = (typeof MEDIA_KINDS)[number];
 // One thing a studio made. `prompt` is what was asked for: a picture prompt, the words to say, a video brief.
 export type MediaResult = { path: string; prompt: string; at: number; poster?: string };
-// A studio card's sidecar, which the server owns: how the job in flight is going, and the last dozen results, newest first.
-export type Media = { state: 'idle' | 'making' | 'failed'; log: string[]; problem?: string; results: MediaResult[] };
+// Something the founder dropped on a studio card for it to build with: their own footage, a photograph, a music track.
+// `name` is what a storyboard calls it in `asset`; `path` is where it really is in the shared files.
+export type MediaAsset = { name: string; path: string; kind: 'video' | 'image' | 'audio'; at: number; bytes: number; seconds?: number; thumb?: string };
+// A studio card's sidecar, which the server owns: how the job in flight is going, the last dozen results, newest
+// first, and whatever the founder dropped on the card for it to work with.
+export type Media = { state: 'idle' | 'making' | 'failed'; log: string[]; problem?: string; results: MediaResult[]; assets?: MediaAsset[] };
 // What a studio's feed carries: a line while something is being made, and a nudge after every change.
 export type MediaEvent = { id: string; line: string } | { id: string; changed: true };
 export const COLUMNS = ['proposed', 'todo', 'doing', 'review', 'done'] as const;

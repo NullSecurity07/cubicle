@@ -1,18 +1,48 @@
 import type { Shape } from '../../../shared/model.ts';
-import { sceneHtml, sceneSteps, type Shot } from './layouts.ts';
-import { FORMATS, styleSheet, type Look } from './looks.ts';
+import { SFX, type Cue, type Sfx } from '../audio.ts';
+import { capHtml, capLines, capSteps, wordTimes } from './captions.ts';
+import { MOVING, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
+import { FORMATS, PACE, styleSheet, type Brand, type Look, type Pace } from './looks.ts';
 
-export { FORMATS, LOOKS, PAINT, type Look } from './looks.ts';
+export { FORMATS, LOOKS, PACES, PAINT, paintOf, type Brand, type Look, type Pace } from './looks.ts';
 export type { Shot } from './layouts.ts';
+export { FRAMES } from './layouts.ts';
+export { wordTimes, capLines, type Part } from './captions.ts';
 
-// A scene lasts as long as the line said over it, and never less than the time it takes to read what is on it.
-const LEAD = 0.35;
-const TAIL = 0.65;
-const READ = 2.9;
-export function sceneSeconds(words: string, spoken: number): number {
+// A scene lasts as long as the line said over it, and never less than the time it takes to read what is on it. A
+// punchy film reads faster and holds less: the floor, the ceiling and the reading speed all move with the pace.
+export function sceneSeconds(words: string, spoken: number, pace: Pace = 'calm'): number {
+  const beat = PACE[pace];
   const count = words.trim().split(/\s+/).filter(Boolean).length;
-  const readable = Math.min(11, Math.max(2.8, count / READ + 1.6));
-  return Math.round(Math.max(readable, spoken ? spoken + LEAD + TAIL : 0) * 100) / 100;
+  const readable = Math.min(beat.ceiling, Math.max(beat.floor, count / beat.read + (pace === 'punchy' ? 0.9 : 1.6)));
+  return Math.round(Math.max(readable, spoken ? spoken + beat.lead + beat.tail : 0) * 100) / 100;
+}
+
+// Where the sounds land. A cut at the head of every scene, and then whatever that scene does: a figure arriving, a
+// list ticking down, a comparison turning over, a wordmark dropping. A film with `sfx` off gets none of it.
+const CUT: Record<Pace, Sfx> = { calm: 'cut-soft', punchy: 'cut-hard' };
+export function cuesOf(shots: Shot[], starts: number[], pace: Pace): Cue[] {
+  const beat = PACE[pace];
+  const cues: Cue[] = [];
+  shots.forEach((shot, index) => {
+    const at = starts[index];
+    const layout = shot.scene.layout;
+    const first = index === 0;
+    // The opener of a punchy film is the one place a hard, bright sound belongs.
+    if (first && layout === 'hook' && pace === 'punchy') cues.push({ sound: 'hard', at });
+    else if (MOVING.has(layout) || layout === 'device') cues.push({ sound: 'cut-wood', at });
+    else if (first && pace === 'calm') cues.push({ sound: 'soft', at });
+    else cues.push({ sound: CUT[pace], at });
+    const lines = (shot.scene.bullets ?? []).length;
+    if (layout === 'bullets' || layout === 'steps') for (let one = 0; one < lines; one += 1) cues.push({ sound: 'tick', at: at + 0.22 + one * beat.stagger });
+    if (layout === 'checklist') for (let one = 0; one < lines; one += 1) cues.push({ sound: 'mark', at: at + 0.2 + one * beat.stagger });
+    if (layout === 'compare') cues.push({ sound: 'turn', at: at + Math.min(1.5, shot.seconds * 0.42) });
+    if (layout === 'stat') cues.push({ sound: 'accent', at: at + 0.22 });
+    if (layout === 'logo') cues.push({ sound: 'sting', at: at + 0.1 });
+    if (layout === 'cta') cues.push({ sound: 'accent', at: at + 0.3 });
+  });
+  // Enough is enough: a film that ticks forty times is a film nobody finishes.
+  return cues.slice(0, 64);
 }
 
 // The hand-drawn look, done in the page itself: every element that carries a mark is measured once the type has settled
@@ -57,23 +87,48 @@ function markSteps(tl, drawn) {
 }
 `.trim();
 
-// The whole video as one HTML file: the scenes in order with their timing on them, the narration beside them, and one
-// paused timeline the renderer steps through frame by frame.
-export function composition(film: { title: string; shape: Shape; look: Look; shots: Shot[] }): string {
-  const { width, height, scale } = FORMATS[film.shape];
+// What a film is, once everything it is made of has been made: the scenes in order, how fast it moves, the look it
+// wears, the bed under it and the sounds cut into it.
+export type Film = {
+  title: string; shape: Shape; look: Look; shots: Shot[];
+  pace?: Pace; captions?: boolean; brand?: Brand;
+  bed?: { file: string; seconds: number }; cues?: Cue[];
+};
+
+// The whole video as one HTML file: the scenes in order with their timing on them, the narration and the music beside
+// them, and one paused timeline the renderer steps through frame by frame.
+export function composition(film: Film): string {
+  const { width, height, scale, capChars } = FORMATS[film.shape];
   const sketch = film.look === 'sketch';
+  const pace: Pace = film.pace ?? 'calm';
   const starts: number[] = [];
   let at = 0;
   for (const shot of film.shots) { starts.push(Math.round(at * 100) / 100); at = Math.round((at + shot.seconds) * 100) / 100; }
   const total = at;
 
+  // The captions belong to the frame, not to the scene's own block, so they sit outside it and survive its fade.
+  const capsFor = (shot: Shot, index: number) => {
+    if (!film.captions || !shot.voice?.parts?.length) return { html: '', steps: [] as string[] };
+    const lines = capLines(wordTimes(shot.voice.parts, starts[index] + PACE[pace].lead), capChars);
+    return { html: capHtml(lines, index), steps: capSteps(lines, index, starts[index] + shot.seconds) };
+  };
+  const captions = film.shots.map(capsFor);
+
   const sections = film.shots.map((shot, index) => `      <section class="clip" id="s${index}" data-start="${starts[index]}" data-duration="${shot.seconds}">`
-    + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}${sceneHtml(shot, index, film.shape)}</section>`);
+    + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}${sceneHtml(shot, index, film.shape)}${captions[index].html}</section>`);
   // Every sound needs an id of its own or the mixer never finds it and the film comes out silent.
   const sounds = film.shots.flatMap((shot, index) => (shot.voice
-    ? [`      <audio id="say${index}" src="assets/${shot.voice.file}" data-start="${(starts[index] + 0.35).toFixed(2)}" data-duration="${shot.voice.seconds.toFixed(2)}" data-volume="1"></audio>`]
+    ? [`      <audio id="say${index}" src="assets/${shot.voice.file}" data-start="${(starts[index] + PACE[pace].lead).toFixed(2)}" data-duration="${shot.voice.seconds.toFixed(2)}" data-volume="1"></audio>`]
     : []));
-  const steps = film.shots.flatMap((shot, index) => sceneSteps(shot, index, starts[index], scale, film.look, index === film.shots.length - 1));
+  if (film.bed) sounds.unshift(`      <audio id="bed" src="assets/${film.bed.file}" data-start="0" data-duration="${film.bed.seconds.toFixed(2)}" data-volume="1"></audio>`);
+  for (const [index, cue] of (film.cues ?? []).entries()) {
+    const sound = SFX[cue.sound];
+    sounds.push(`      <audio id="fx${index}" src="assets/${sound.file}" data-start="${Math.max(0, cue.at).toFixed(2)}" data-duration="1" data-volume="${(cue.gain ?? sound.gain).toFixed(2)}"></audio>`);
+  }
+  const steps = film.shots.flatMap((shot, index) => [
+    ...sceneSteps(shot, index, starts[index], scale, film.look, index === film.shots.length - 1, pace),
+    ...captions[index].steps,
+  ]);
 
   return `<!doctype html>
 <html lang="en">
@@ -83,7 +138,7 @@ export function composition(film: { title: string; shape: Shape; look: Look; sho
     <title>${film.title.replace(/[<>&]/g, ' ')}</title>
     <script src="vendor/gsap.min.js"></script>
 ${sketch ? '    <script src="vendor/rough.js"></script>\n' : ''}    <style>
-${styleSheet(film.shape, film.look)}
+${styleSheet(film.shape, film.look, film.brand)}
     </style>
   </head>
   <body>
