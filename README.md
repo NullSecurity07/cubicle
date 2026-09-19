@@ -29,6 +29,16 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   and for talking heads either way, free Hugging Face Spaces make them out of a small daily quota. Whatever fails
   falls back in plain words: a clip becomes a drawn still with a slow push, a presenter becomes the line said over
   the words.
+- **Music and sound, found or made** (2026-09-19): a film scores itself, with nothing to drop on the card and no key
+  to fetch. The studio searches **Openverse** for public-domain music (CC0 or the Public Domain Mark), checks each
+  candidate's stated licence against a short list of terms a founder may *sell* a film under, fetches the one it
+  picks once into `app/.cache/music/` and writes down its title, author, licence and address in an index and a
+  `CREDITS.md` beside it — so the second film works with the network unplugged, and a year later you can still say
+  where the music came from. Nothing non-commercial, no-derivatives, share-alike or simply unstated is ever used,
+  and a track whose licence asks for a credit says so on the card. When there is no network, no match or no ffmpeg,
+  the bed is **written here instead** — chords, bass and light percussion synthesised a sample at a time, seven
+  moods, at broadcast bed level so the narration ducking has room. It never fails for want of a network. Whooshes,
+  risers and impacts are synthesised the same way, and owe nobody anything.
 - **Operator views** (2026-09-19): Focus mode (`F` or the header button; a card fills the window); Needs you (dock
   bell, `N`); Messages (`M`); Decisions (`D`; one markdown file per decision in `workspace/decisions/`); Recall (a
   `recall` tool for people, a search for the founder, by meaning, on a local model; a person finds only what their
@@ -47,7 +57,11 @@ The studios are free too, and only the pictures need a key. **Pictures** come fr
 needs the **Workers AI Read** permission, or the call comes back 401. It covers hundreds of pictures a day, and
 `STAGE_IMAGE_MODEL` points at another Workers AI model. **Voices** need no key at all: Kokoro-82M runs on this
 machine's processor, and the first line spoken downloads the 310 MB model into `app/.cache/voice/` (the card
-shows the progress); `GEMINI_API_KEY` is the fallback if it will not load. **Films** need no key either, only
+shows the progress); `GEMINI_API_KEY` is the fallback if it will not load. **Music** needs no key and no account:
+Openverse is searched anonymously (20 searches a minute, 200 a day, which is far more than a founder will use) and
+each track is kept in `app/.cache/music/`; `STAGE_NO_MUSIC_SEARCH=1` turns the search off entirely and every bed is
+written here, `FREESOUND_API_KEY` adds a second library if you have a free key, and `STAGE_MUSIC_SEED` pins the
+dice so a re-render of one film gets the same bed. **Films** need no key either, only
 Chrome and ffmpeg, which the browser card and the app already rely on; they render locally, a minute or so for
 a short one. The voice runtime adds about 500 MB to `node_modules`, and each film is a few MB in
 `workspace/files/media/`.
@@ -58,7 +72,8 @@ Desktop window: `cd app && pnpm shell:build` once, then `pnpm shell`. `pnpm shel
 
 `cd app && pnpm gate` runs typecheck, unit tests and the browser journeys, and reports their real exit code. Run
 `pnpm check:providers` after any change to the tools, and `pnpm check:media` after any change to the studios: it
-makes one real picture, one spoken line and one two-scene film, and prints what each backend still needs.
+makes one real picture, one spoken line, one two-scene film, one real fetched music bed and one written here, and
+prints what each backend still needs.
 
 The api listens on 127.0.0.1 only and answers only the app's own page: Host, Origin and fetch-metadata checks in
 `app/server/guard.ts`. Scripts must send `x-stage-token` with the value of `STAGE_API_TOKEN`.

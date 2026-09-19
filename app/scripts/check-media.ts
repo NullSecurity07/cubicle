@@ -10,6 +10,7 @@ const { DEFAULT_VOICE, voiceMakers, wavSeconds } = await import('../server/media
 const { hyperframesVideos } = await import('../server/media/video.ts');
 const { createClips } = await import('../server/media/spaces.ts');
 const { localClips, CLIP_SECONDS, MINUTES_EACH } = await import('../server/media/local-clips.ts');
+const { createMusic } = await import('../server/media/music.ts');
 import type { Ask, Maker, Piece } from '../server/media/jobs.ts';
 
 const dir = await mkdtemp(join(tmpdir(), 'stage-media-'));
@@ -32,6 +33,24 @@ try {
   for (const maker of voiceMakers(resolve(import.meta.dirname, '../.cache/voice'))) await check(maker, { prompt: 'The studios are working.', voice: DEFAULT_VOICE }, (piece) => `${wavSeconds(piece.bytes).toFixed(1)} seconds spoken · ${size(piece)}`);
   await check(hyperframesVideos({ dir, think: async () => { throw new Error('the storyboard is written here, not asked for'); } }),
     { prompt: film.title, spec: film, format: 'wide', look: 'clean', narrate: false }, (piece) => `an mp4 · ${size(piece)}${piece.poster ? ' · with a poster frame' : ''}`);
+
+  // The bed under a film, both ways it can arrive. First the real one: a live search of the public domain and a real
+  // download into the cache beside the voice model, which is where a founder's own run would put it. Then the one
+  // written here, with the search switched off, which is what happens on a plane and must never fail.
+  const music = createMusic({ cacheDir: resolve(import.meta.dirname, '../.cache') });
+  const offline = createMusic({ cacheDir: dir, env: { STAGE_NO_MUSIC_SEARCH: '1' } });
+  for (const [what, maker] of [['Music (found)', music], ['Music (written here)', offline]] as const) {
+    const started = Date.now();
+    try {
+      const bed = await maker.bed({ mood: 'upbeat', seconds: 20 }, { report: (line: string) => console.log('  ·', line) });
+      const found = bed.credit.source.startsWith('http');
+      console.log(what, 'OK', `${wavSeconds(bed.bytes).toFixed(1)} seconds · ${(bed.bytes.length / 1024).toFixed(0)} KB · ${bed.bpm ?? '?'} bpm · ${bed.beats?.length ?? 0} beats`,
+        `· ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      console.log(`  "${bed.credit.title}" by ${bed.credit.by} — ${bed.credit.licence}`);
+      // The one line that matters: a live search that quietly fell back has not proven anything about the network.
+      if (what.includes('found') && !found) console.log('  (nothing was found online, so this was written here too)');
+    } catch (error) { console.log(what, 'ERROR', String((error as Error).message).slice(0, 200)); }
+  }
 
   // Moving pictures made here on this machine. It is the slow one, so it is asked for the shortest thing it makes,
   // and only when the founder passes --local: three minutes is a long time to keep somebody waiting on a check.
