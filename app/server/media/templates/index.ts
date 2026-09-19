@@ -115,7 +115,7 @@ export function composition(film: Film): string {
   const captions = film.shots.map(capsFor);
 
   const sections = film.shots.map((shot, index) => `      <section class="clip" id="s${index}" data-start="${starts[index]}" data-duration="${shot.seconds}">`
-    + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}${sceneHtml(shot, index, film.shape)}${captions[index].html}</section>`);
+    + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}${sceneHtml(shot, index, film.shape, !!captions[index].html)}${captions[index].html}</section>`);
   // Every sound needs an id of its own or the mixer never finds it and the film comes out silent.
   const sounds = film.shots.flatMap((shot, index) => (shot.voice
     ? [`      <audio id="say${index}" src="assets/${shot.voice.file}" data-start="${(starts[index] + PACE[pace].lead).toFixed(2)}" data-duration="${shot.voice.seconds.toFixed(2)}" data-volume="1"></audio>`]

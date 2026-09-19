@@ -103,6 +103,15 @@ describe('the brand look', () => {
     expect(lightOf(paint.ground)).toBeLessThan(0.35);
   });
 
+  it('takes the most coloured colour as the accent, never the brightest grey', () => {
+    // A real palette is mostly greys: the page, the panel, the rule, the muted label, and one colour that means
+    // something. The brightest of those is near white, which is no accent at all.
+    const paint = paintOf('brand', { colours: ['#16181d', '#0a0a0a', '#e8eaf0', '#f0b35a', '#8fb5ff'] });
+    expect(paint.signal).toBe('#f0b35a');
+    // And the ground is the product's own page, not the pure black it also happens to define.
+    expect(paint.ground).toBe('#16181d');
+  });
+
   it('falls back to the clean look when the product said nothing about colour', () => {
     expect(paintOf('brand', { colours: [] }).ground).toBe(paintOf('clean').ground);
     expect(paintOf('brand', { colours: ['not a colour'] }).ground).toBe(paintOf('clean').ground);

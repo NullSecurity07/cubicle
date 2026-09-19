@@ -8,7 +8,7 @@ import { mediaTools } from '../tools/media.ts';
 import { createMedia } from './jobs.ts';
 import { composition, FORMATS, sceneSeconds, type Shot } from './templates/index.ts';
 import { spendingScenes } from '../tools/media.ts';
-import { fakeVideos, LENGTHS, MAX_IMAGES, parseSpec, PURPOSE, PURPOSES, scenesFor, storyboardOf, storyboardPrompt, withinCaps, type Scene, type Spec } from './video.ts';
+import { fakeVideos, LENGTHS, MAX_IMAGES, parseSpec, PURPOSE, PURPOSES, scenesFor, storyboardOf, storyboardPrompt, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
 
 const film: Spec = {
   title: 'Week eleven',
@@ -468,5 +468,37 @@ describe('the assets tray on a card', () => {
     expect(after.assets).toHaveLength(1);
     expect(after.results).toHaveLength(1);
     expect(after.state).toBe('idle');
+  });
+});
+
+describe('how long a film comes out', () => {
+  it('tells the storyboard its word budget, because the narration is what sets the length', () => {
+    expect(wordsFor(30)).toBe(69);
+    expect(wordsFor(90)).toBe(207);
+    const brief = storyboardPrompt({ brief: 'x', purpose: 'reel', seconds: 30, pace: 'punchy', shape: 'tall', captions: true, music: 'drive', sfx: true, ai: false, material: { lines: [], assets: [], using: [] } });
+    expect(brief).toContain('must come to about 69 words');
+    expect(brief).toContain('That word count is what makes the film 30 seconds long');
+  });
+
+  it('cuts a film that still overruns badly, from the middle and never the opening or the close', () => {
+    const shots = [12, 12, 12, 12, 12, 12].map((one, at) => ({ seconds: one + at * 0.1 }));
+    const held = withinLength(shots, 30);
+    expect(held.dropped).toBe(2);
+    expect(held.shots).toHaveLength(4);
+    // The opener stays, and so do the two that close it.
+    expect(held.shots[0]).toBe(shots[0]);
+    expect(held.shots.at(-1)).toBe(shots.at(-1));
+    expect(held.shots.at(-2)).toBe(shots.at(-2));
+    // The longest of what was actually in the middle went first.
+    expect(held.shots).not.toContain(shots[3]);
+    expect(held.shots).not.toContain(shots[2]);
+  });
+
+  it('leaves a film that is near enough, and a short one, exactly as it is', () => {
+    const near = [8, 8, 8, 8, 8].map((seconds) => ({ seconds }));
+    expect(withinLength(near, 30).dropped).toBe(0);
+    expect(withinLength([{ seconds: 60 }, { seconds: 60 }], 15).dropped).toBe(0);
+    // A storyboard a person wrote themselves is never cut: they said what they wanted.
+    expect(withinLength(near, 0).dropped).toBe(0);
   });
 });

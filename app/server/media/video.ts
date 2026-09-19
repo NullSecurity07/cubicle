@@ -163,6 +163,12 @@ export const scenesFor = (seconds: number, pace: Pace): [number, number] => {
   return [Math.max(3, Math.round(middle * 0.8)), Math.min(MAX_SCENES, Math.round(middle * 1.25))];
 };
 
+// What really decides how long a film runs is not how many scenes it has but how much is said over them: a scene is
+// never shorter than the line spoken on it. The voice model says about two and a third words a second, so a film of a
+// given length has a word budget, and that is the number the storyboard has to be told.
+export const WORDS_A_SECOND = 2.3;
+export const wordsFor = (seconds: number): number => Math.round(seconds * WORDS_A_SECOND);
+
 // What the film has to work with, gathered before a word of the storyboard is written.
 export type Material = { lines: string[]; assets: { name: string; kind: string; what: string }[]; brand?: Brand; using: string[] };
 
@@ -201,8 +207,11 @@ export function storyboardPrompt(ask: { brief: string; purpose: Purpose; seconds
     '',
     `Write ${least} to ${most} scenes. ${PURPOSE[ask.purpose].shape}`,
     ask.captions
-      ? 'Every scene needs a "say": one or two spoken sentences, written the way someone would read them aloud. They are captioned word by word on screen, so keep them short and spoken, not written.'
-      : 'Give every scene a "say": one or two spoken sentences, written the way someone would read them aloud.',
+      ? 'Every scene needs a "say": what is spoken over it, written the way someone would read it aloud. It is captioned word by word on screen, so keep it short and spoken, not written.'
+      : 'Give every scene a "say": what is spoken over it, written the way someone would read it aloud.',
+    // The one instruction that actually sets the length. A scene lasts as long as the line said over it, so the whole
+    // film is its narration, and a storyboard told "thirty seconds" without a word count writes a minute and a half.
+    `All the "say" lines together must come to about ${wordsFor(ask.seconds)} words — roughly ${Math.max(4, Math.round(wordsFor(ask.seconds) / Math.round((least + most) / 2)))} words a scene. That word count is what makes the film ${ask.seconds} seconds long, so count them and stay under it.`,
     `Keep "heading" under ${CAPS.heading} characters, "text" under ${CAPS.text}, each bullet under ${CAPS.bullet}. Plain words, no exclamation marks, no hashtags, no emoji.`,
     ask.pace === 'punchy' ? 'This one cuts fast: one idea a scene, short lines, no scene that takes more than a breath to read.' : 'This one has room: let a scene land before the next one starts.',
   ];
@@ -255,6 +264,25 @@ export function withinCaps(spec: Spec, allow: { ai: boolean; assets: string[] })
     return scene;
   });
   return { spec: { ...spec, scenes }, notes };
+}
+
+// A last guard on the length. The word budget in the brief does most of the work, but a model that ignores it would
+// otherwise hand the founder ninety seconds where they asked for thirty. Scenes go from the middle, never the opening
+// and never the last two, and only while the film is still well over what was asked for.
+export function withinLength<T extends { seconds: number }>(shots: T[], target: number, slack = 1.35): { shots: T[]; dropped: number } {
+  if (!target || shots.length <= 4) return { shots, dropped: 0 };
+  const kept = [...shots];
+  let total = kept.reduce((sum, one) => sum + one.seconds, 0);
+  let dropped = 0;
+  while (total > target * slack && kept.length > 4) {
+    // The longest scene in the middle is the one the film can best do without.
+    const middle = kept.slice(1, -2);
+    const worst = middle.reduce((most, one) => (one.seconds > most.seconds ? one : most), middle[0]);
+    kept.splice(kept.indexOf(worst), 1);
+    total -= worst.seconds;
+    dropped += 1;
+  }
+  return { shots: kept, dropped };
 }
 
 // What a scene becomes when the thing it needed could not be made or found. A clip keeps its words as a picture if it
@@ -418,7 +446,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
       const shape: Shape = (FORMATS[asked.format as Shape] ? asked.format : preset.format) as Shape;
       const look: Look = (LOOKS as readonly string[]).includes(asked.look ?? '') ? asked.look as Look : 'clean';
       const pace: Pace = (PACES as readonly string[]).includes(asked.pace ?? '') ? asked.pace as Pace : preset.pace;
-      const seconds = (LENGTHS as readonly number[]).includes(Number(asked.length)) ? Number(asked.length) : preset.length;
+      // The card offers four lengths; a person or a script may ask for any sensible number of seconds.
+      const asking = Number(asked.length);
+      const seconds = Number.isFinite(asking) && asking >= 10 && asking <= 180 ? Math.round(asking) : preset.length;
       const mood: Mood = (MOODS as readonly string[]).includes(asked.music ?? '') ? asked.music as Mood : preset.music;
       const captions = asked.captions ?? preset.captions;
       const sfx = asked.sfx !== false;
@@ -542,13 +572,16 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           // A piece of footage is only as long as the piece of footage.
           if (shot.video && shot.scene.layout === 'footage' && shot.scene.seconds) shot.seconds = Math.max(shot.seconds, shot.scene.seconds);
         }
+        const held = withinLength(shots, asked.spec ? 0 : seconds);
+        if (held.dropped) report(`${held.dropped} scene${held.dropped === 1 ? '' : 's'} cut to keep the film near ${seconds} seconds`);
+        const cut = held.shots;
         const starts: number[] = [];
         let clock = 0;
-        for (const shot of shots) { starts.push(clock); clock = Math.round((clock + shot.seconds) * 100) / 100; }
+        for (const shot of cut) { starts.push(clock); clock = Math.round((clock + shot.seconds) * 100) / 100; }
         const total = clock;
 
         // The sounds the film is cut with, and the bed under it, ducked where somebody is speaking.
-        const cues = sfx ? cuesOf(shots, starts, pace) : [];
+        const cues = sfx ? cuesOf(cut, starts, pace) : [];
         for (const sound of new Set(cues.map((one) => one.sound))) {
           await copyFile(join(SFX_DIR, sfxFile(sound)), join(at, 'assets', sfxFile(sound))).catch(() => {});
         }
@@ -558,13 +591,13 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           else {
             report('mixing the music under the narration…');
             const from = deps.fileOf?.(bed.path) ?? bed.path;
-            const windows = shots.map((shot, index) => ({ at: starts[index] + 0.35, seconds: shot.voice?.seconds ?? 0 })).filter((one) => one.seconds > 0);
+            const windows = cut.map((shot, index) => ({ at: starts[index] + 0.35, seconds: shot.voice?.seconds ?? 0 })).filter((one) => one.seconds > 0);
             await musicBed({ from, to: join(at, 'assets', 'bed.wav'), seconds: total, mood, windows, signal })
               .then(() => { music = { file: 'bed.wav', seconds: total }; }, (error: Error) => report(`the music could not be mixed: ${error.message}`));
           }
         }
 
-        await writeFile(join(at, 'index.html'), composition({ title: spec.title, shape, look: look === 'brand' && !brand ? 'clean' : look, shots, pace, captions, brand, bed: music, cues }));
+        await writeFile(join(at, 'index.html'), composition({ title: spec.title, shape, look: look === 'brand' && !brand ? 'clean' : look, shots: cut, pace, captions, brand, bed: music, cues }));
         await writeFile(join(at, 'hyperframes.json'), projectFile);
 
         // A finding here is worth saying out loud, but it is not worth withholding the film over: render either way.
@@ -587,7 +620,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // One frame out of the opening scene stands in for the film wherever it cannot be played.
         report('taking the poster frame…');
         let poster: Piece['poster'];
-        await run(bin, ['snapshot', '.', '--at', (shots[0].seconds * 0.6).toFixed(2), '--no-end', '--describe=false', '-o', 'poster'], at, () => {}, signal);
+        await run(bin, ['snapshot', '.', '--at', (cut[0].seconds * 0.6).toFixed(2), '--no-end', '--describe=false', '-o', 'poster'], at, () => {}, signal);
         const shot = (await readdir(join(at, 'poster')).catch(() => [])).find((name) => name.endsWith('.png'));
         if (shot) poster = { ext: 'png', bytes: await readFile(join(at, 'poster', shot)) };
         return { ext: 'mp4', bytes, poster };

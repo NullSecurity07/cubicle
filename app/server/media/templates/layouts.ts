@@ -60,7 +60,7 @@ function device(shot: Shot, shape: Shape): string {
 // The seventeen shapes a scene can take. Most are the same left-aligned block with different weights in it; the one
 // line that says "this block ends here" recurs through them, drawn straight in the clean look and by hand in the
 // notebook. The rest — a device, a comparison, a piece of the founder's own footage — fill the frame instead.
-export function sceneHtml(shot: Shot, index: number, shape: Shape): string {
+export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = false): string {
   const { scene } = shot;
   const heading = scene.heading?.trim() ?? '';
   const text = scene.text?.trim() ?? '';
@@ -94,7 +94,7 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape): string {
   } else if (scene.layout === 'picture') {
     parts.push(`<div class="shot" data-mark="frame"><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
     if (text) parts.push(`<div class="plate"><p class="lead rise">${html(text)}</p></div>`);
-    return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}" id="f${index}">${parts.join('')}</div>`;
+    return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'footage' || scene.layout === 'clip' || scene.layout === 'presenter') {
     const muted = scene.layout === 'footage' && scene.mute === false ? '' : ' muted';
     const from = typeof scene.start === 'number' && scene.start > 0 ? ` data-media-start="${scene.start.toFixed(2)}"` : '';
@@ -103,7 +103,7 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape): string {
       + (shot.video ? `<video src="assets/${shot.video}" playsinline${muted}${from}${sound} data-layout-allow-overflow></video>`
         : shot.image ? `<img src="assets/${shot.image}" alt="" data-layout-allow-overflow>` : '') + '</div>');
     if (text) parts.push(`<div class="plate"><p class="lead rise">${html(text)}</p></div>`);
-    return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}" id="f${index}">${parts.join('')}</div>`;
+    return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'device') {
     parts.push(device(shot, shape));
     if (heading) parts.push(`<h2 class="heading rise">${html(heading)}</h2>`);

@@ -47,6 +47,15 @@ export function rgbOf(hex: string): [number, number, number] | null {
   return null;
 }
 export const lightOf = (hex: string): number => { const rgb = rgbOf(hex); return rgb ? (rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722) / 255 : 0.5; };
+// How much colour a colour actually has. A product's palette is mostly greys — the page, the panel, the rule, the
+// muted label — and the brightest of those is white, which is no accent at all. The signal has to be the one with
+// colour in it.
+export const chromaOf = (hex: string): number => {
+  const rgb = rgbOf(hex);
+  if (!rgb) return 0;
+  const [high, low] = [Math.max(...rgb), Math.min(...rgb)];
+  return high ? (high - low) / high : 0;
+};
 const mix = (hex: string, towards: [number, number, number], amount: number): string => {
   const rgb = rgbOf(hex) ?? [128, 128, 128];
   return `#${rgb.map((one, at) => Math.round(one + (towards[at] - one) * amount).toString(16).padStart(2, '0')).join('')}`;
@@ -62,10 +71,16 @@ export function paintOf(look: Look, brand?: Brand): Paint {
   const colours = (brand?.colours ?? []).map((one) => one.trim()).filter((one) => rgbOf(one));
   if (!colours.length) return PAINT.clean;
   const sorted = [...colours].sort((a, b) => lightOf(a) - lightOf(b));
-  const dark = sorted.find((one) => lightOf(one) < 0.34);
+  // The lightest colour that is still dark enough to be a ground: a product's palette usually holds both its page and
+  // a pure black somewhere, and the page is the one it actually looks like.
+  const dark = [...sorted].reverse().find((one) => lightOf(one) < 0.30);
   const ground = dark ?? mix(sorted[0], [16, 20, 26], 0.72);
+  // The accent is the most coloured colour the product has, bright enough to be seen against its own ground; failing
+  // that, the brightest. A near-white "signal" would make the whole film one flat grey.
+  const colourful = colours.filter((one) => one !== ground && chromaOf(one) > 0.22 && lightOf(one) > 0.26)
+    .sort((a, b) => chromaOf(b) * (0.4 + lightOf(b)) - chromaOf(a) * (0.4 + lightOf(a)));
   const bright = [...sorted].reverse().find((one) => lightOf(one) > 0.42 && one !== ground);
-  const signal = bright ?? sorted.at(-1)!;
+  const signal = colourful[0] ?? bright ?? sorted.at(-1)!;
   const ink = lightOf(ground) < 0.5 ? '#F6F8FA' : '#15181C';
   const rgb = rgbOf(ground)!;
   return {
@@ -126,6 +141,9 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
 .shot { position: absolute; inset: ${sketch ? 'calc(var(--margin) * 0.72)' : '0'}; overflow: hidden; }
 ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''}
 .shot img, .shot video { display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 50%; }
+/* The words over a picture sit at the foot of the frame — unless the film is captioned, in which case the captions
+   are already there and the two would be read as one sentence. Then the plate lifts clear of them. */
+.has-caps .plate { padding-bottom: calc(var(--caps) + 22px); }
 .plate { position: absolute; left: 0; right: 0; bottom: 0; padding: var(--margin); padding-top: calc(var(--margin) * 1.7);
   background: ${sketch ? 'none' : `linear-gradient(to top, rgb(${paint.scrim}) 12%, rgba(${paint.scrim}, 0.74) 56%, rgba(${paint.scrim}, 0) 100%)`}; }
 .frame--picture { justify-content: flex-end; padding: 0; gap: 0; }
@@ -164,28 +182,30 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
 .list--steps li { align-items: baseline; gap: calc(26px * var(--s)); }
 /* A screenshot in the thing it was taken on. The mockups are drawn here, in the page, so nothing is fetched and every
    frame of the slow push into the screen is drawn rather than resampled. */
-.frame--device { justify-content: center; align-items: center; gap: calc(var(--margin) * 0.44); padding-bottom: calc(var(--margin) + var(--lift) * 0.4); }
-.frame--device .heading, .frame--device .lead { text-align: center; max-width: 16em; }
+.frame--device { justify-content: center; align-items: center; gap: calc(var(--margin) * 0.34);
+  padding: calc(var(--margin) * 0.5) calc(var(--margin) * 0.5) calc(var(--margin) * 0.55); overflow: hidden; }
+.frame--device .device { min-height: 0; }
+.frame--device .heading, .frame--device .lead { text-align: center; max-width: 16em; padding-bottom: 0.14em; flex: none; }
 .device { position: relative; flex: 0 1 auto; display: flex; align-items: center; justify-content: center; }
 .device__glass { position: relative; overflow: hidden; background: #0B0E12; }
 .device__glass img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 0%; transform-origin: 50% 0%; }
-.device--phone .device__glass { width: calc(380px * var(--s)); height: calc(786px * var(--s)); border-radius: calc(46px * var(--s));
+.device--phone .device__glass { height: min(calc(786px * var(--s)), 62vh); aspect-ratio: 9 / 18.6; width: auto; border-radius: calc(46px * var(--s));
   box-shadow: 0 0 0 calc(12px * var(--s)) #23272E, 0 0 0 calc(15px * var(--s)) #3A414B, 0 calc(40px * var(--s)) calc(80px * var(--s)) rgba(0,0,0,0.42); }
 .device--phone .device__notch { position: absolute; top: calc(14px * var(--s)); left: 50%; transform: translateX(-50%);
   width: calc(118px * var(--s)); height: calc(30px * var(--s)); border-radius: 999px; background: #14171C; }
-.device--laptop .device__glass { width: calc(1000px * var(--s)); height: calc(625px * var(--s)); border-radius: calc(12px * var(--s));
+.device--laptop .device__glass { width: min(calc(1000px * var(--s)), 74vw, 100vh); aspect-ratio: 16 / 10; height: auto; border-radius: calc(12px * var(--s));
   box-shadow: 0 0 0 calc(13px * var(--s)) #23272E, 0 0 0 calc(16px * var(--s)) #3A414B; }
 .device--laptop .device__foot { position: absolute; left: 50%; bottom: calc(-26px * var(--s)); transform: translateX(-50%);
   width: calc(1180px * var(--s)); height: calc(20px * var(--s)); border-radius: 0 0 calc(14px * var(--s)) calc(14px * var(--s));
   background: linear-gradient(#2C313A, #1B1F25); box-shadow: 0 calc(26px * var(--s)) calc(50px * var(--s)) rgba(0,0,0,0.38); }
-.device--browser .device__chrome { width: calc(1060px * var(--s)); border-radius: calc(16px * var(--s)); overflow: hidden;
+.device--browser .device__chrome { width: min(calc(1060px * var(--s)), 78vw, 96vh); border-radius: calc(16px * var(--s)); overflow: hidden;
   box-shadow: 0 calc(34px * var(--s)) calc(74px * var(--s)) rgba(0,0,0,0.40); }
 .device--browser .device__bar { display: flex; align-items: center; gap: calc(10px * var(--s)); height: calc(52px * var(--s));
   padding: 0 calc(20px * var(--s)); background: #2A2F37; }
 .device--browser .device__dot { width: calc(14px * var(--s)); height: calc(14px * var(--s)); border-radius: 999px; background: #4A515C; }
 .device--browser .device__pill { flex: 1; margin-left: calc(16px * var(--s)); height: calc(28px * var(--s)); border-radius: 999px;
   background: #1D2127; color: #8C95A1; font-size: calc(16px * var(--s)); line-height: calc(28px * var(--s)); padding: 0 calc(16px * var(--s)); overflow: hidden; white-space: nowrap; }
-.device--browser .device__glass { width: 100%; height: calc(600px * var(--s)); border-radius: 0; }
+.device--browser .device__glass { width: 100%; aspect-ratio: 16 / 9.2; height: auto; border-radius: 0; }
 /* A person talking to camera, or a generated clip, fills the frame and takes the words over it. */
 .frame--presenter { justify-content: flex-end; padding: 0; gap: 0; }
 .presenter { position: absolute; inset: 0; overflow: hidden; }
