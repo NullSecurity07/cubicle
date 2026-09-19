@@ -1,29 +1,29 @@
 import { NodeResizer, useNodeId, useReactFlow } from '@xyflow/react';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { focusSheet, overlay, useFocused } from '../overlay/store';
+import { overlay, useFocused, useHostElement } from '../overlay/store';
 import { Handles } from './Handles';
 
 const halt = (event: SyntheticEvent) => event.stopPropagation();
 
 // What every card shares: glass, resize grips when selected, four handles.
-// The glass itself is one lasting element that the card's content is drawn into. Focusing the card moves that element
-// into the sheet above the canvas and back; nothing is drawn twice, so a reply in flight or a draft is never lost.
+// The glass itself is one lasting element that the card's content is drawn into. Focusing the card (or opening its
+// conversation in the messages view) moves that element above the canvas and back; nothing is drawn twice, so a reply in flight or a draft is never lost.
 export function Frame({ selected, minWidth, minHeight, children }: { selected: boolean; minWidth: number; minHeight: number; children: ReactNode }) {
   const id = useNodeId() ?? '';
-  const focused = useFocused(id);
+  const host = useHostElement(id);
   const slot = useRef<HTMLDivElement>(null);
   const [glass] = useState(() => Object.assign(document.createElement('div'), { className: 'card' }));
 
   useLayoutEffect(() => {
-    const home = focused ? focusSheet() ?? slot.current : slot.current;
+    const home = host ?? slot.current;
     if (!home || glass.parentElement === home) return;
     home.appendChild(glass);
-    glass.classList.toggle('card--focused', focused && home !== slot.current);
+    glass.classList.toggle('card--focused', !!host);
     // A moved element forgets where it was scrolled to and what was being typed in.
     for (const tail of glass.querySelectorAll('[data-tail]')) tail.scrollTop = tail.scrollHeight;
-    if (focused) (glass.querySelector<HTMLElement>('textarea') ?? glass.querySelector<HTMLElement>('input:not([type="file"])') ?? glass.querySelector<HTMLElement>('button'))?.focus();
-  }, [focused, glass]);
+    if (host) (glass.querySelector<HTMLElement>('textarea') ?? glass.querySelector<HTMLElement>('input:not([type="file"])') ?? glass.querySelector<HTMLElement>('button'))?.focus();
+  }, [host, glass]);
   // A card that leaves the stage while focused takes its layer with it.
   useEffect(() => () => { overlay.close({ kind: 'focus', id }); glass.remove(); }, [id, glass]);
 
@@ -32,7 +32,7 @@ export function Frame({ selected, minWidth, minHeight, children }: { selected: b
       <NodeResizer isVisible={selected} minWidth={minWidth} minHeight={minHeight} lineClassName="grip-line" handleClassName="grip" />
       <div className="card-slot" ref={slot} />
       {/* In the sheet the card is no longer a canvas node: its clicks and keys must not select or nudge the node below. */}
-      {createPortal(<div className="card__content" {...(focused ? { onClick: halt, onDoubleClick: halt, onKeyDown: halt, onFocus: halt } : {})}>{children}</div>, glass)}
+      {createPortal(<div className="card__content" {...(host ? { onClick: halt, onDoubleClick: halt, onKeyDown: halt, onFocus: halt } : {})}>{children}</div>, glass)}
       <Handles />
     </>
   );

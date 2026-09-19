@@ -23,8 +23,22 @@ export const overlay = {
 export const useLayers = () => useSyncExternalStore(subscribe, overlay.layers);
 export const useFocused = (id: string) => useSyncExternalStore(subscribe, () => stack.some((layer) => layer.kind === 'focus' && layer.id === id));
 
-// Where a focused card's own DOM is moved to. The card is not drawn a second time: a reply in flight, a draft and
+// A card can be shown outside the canvas in two places: the focus sheet, and the conversation pane of the messages view.
+// Either way it is the card's own DOM that moves there. It is not drawn a second time: a reply in flight, a draft and
 // every other piece of its state stay exactly as they are.
-let sheet: HTMLElement | null = null;
-export const setFocusSheet = (element: HTMLElement | null) => { sheet = element; };
-export const focusSheet = () => sheet;
+export type Host = 'focus' | 'messages';
+let thread: string | null = null;
+const elements: Record<Host, HTMLElement | null> = { focus: null, messages: null };
+export const showThread = (id: string | null) => { thread = id; set(stack); };
+export const useThread = () => useSyncExternalStore(subscribe, () => thread);
+export const setHostElement = (host: Host) => (element: HTMLElement | null) => { if (elements[host] === element) return; elements[host] = element; set(stack); };
+
+// Where this card lives right now: the topmost layer that asks for it wins; null is its own place on the canvas.
+function hostOf(id: string): HTMLElement | null {
+  for (const layer of [...stack].reverse()) {
+    if (layer.kind === 'panel' && layer.name === 'messages' && thread === id) return elements.messages;
+    if (layer.kind === 'focus' && layer.id === id) return elements.focus;
+  }
+  return null;
+}
+export const useHostElement = (id: string) => useSyncExternalStore(subscribe, () => hostOf(id));

@@ -3,10 +3,12 @@ import { useEffect, useRef } from 'react';
 import type React from 'react';
 import { createPortal } from 'react-dom';
 import { NeedsPanel } from './NeedsPanel';
-import { overlay, setFocusSheet, useLayers } from './store';
+import { MessagesPanel } from './MessagesPanel';
+import { overlay, setHostElement, useLayers } from './store';
 
 // The founder's views, by layer name.
-const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel };
+const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel };
+const focusHost = setHostElement('focus');
 
 const typing = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -49,7 +51,7 @@ export function Overlay() {
   return createPortal(
     <div className={`overlay${layers.length ? ' is-open' : ''}`} ref={top}>
       <div className="overlay__shade" onClick={() => overlay.back()} />
-      <div className="focus__sheet" ref={setFocusSheet} hidden={!focused || !!View} role="dialog" aria-modal="true" aria-label="Focused card" />
+      <div className="focus__sheet" ref={focusHost} hidden={!focused || !!View} role="dialog" aria-modal="true" aria-label="Focused card" />
       {View && <View />}
     </div>,
     document.body,

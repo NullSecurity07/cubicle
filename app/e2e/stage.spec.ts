@@ -669,3 +669,45 @@ test('needs you: one list of what waits for the founder, answered in place', asy
   await expect(panel).toBeHidden();
   await expect(page.locator(`.react-flow__node[data-id="${id}"].selected`)).toBeVisible();
 });
+
+test('messages: every conversation in one place; a person\'s thread is their own card, a consult is read-only', async ({ page }) => {
+  await tidy(page);
+  await wire(page, 'marketing', 'build');
+  await send(page, 'marketing', '/tool ask_person {"name":"Dev","question":"How long for the pricing page?"}');
+  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('Dev answered:');
+  await expect(node(page, 'marketing').locator('.status--idle')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Messages' }).click();
+  const panel = page.getByRole('dialog', { name: 'Messages' });
+  const list = panel.getByRole('navigation', { name: 'Conversations' });
+  await expect(list.getByRole('button', { name: /Maya ↔ Dev/ })).toContainText('Dev: Dev here.');
+  await expect(list.getByRole('button')).toHaveCount(3);
+
+  // Maya's thread is Maya's card itself: a reply started here is still streaming on the stage after the view closes.
+  await list.getByRole('button', { name: /^Maya(?! ↔)/ }).click();
+  const pane = panel.locator('.threads__card');
+  await expect(pane.locator('.card__name')).toContainText('Maya');
+  await expect(pane.locator('.msg--assistant').last()).toContainText('Dev answered:');
+  await pane.getByPlaceholder('Ask Maya…').fill('/slow pane check');
+  await pane.getByPlaceholder('Ask Maya…').press('Enter');
+  await expect(pane.locator('.chat')).toContainText('Maya here');
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+  await expect(node(page, 'marketing').locator('.chat')).toContainText('You said: "/slow pane check"', { timeout: 15_000 });
+
+  // The consult between the two is there to read, with no ask box.
+  await page.getByRole('button', { name: 'Messages' }).click();
+  await list.getByRole('button', { name: /Maya ↔ Dev/ }).click();
+  const read = panel.locator('.threads__read');
+  await expect(read).toContainText('How long for the pricing page?');
+  await expect(read).toContainText('Dev here.');
+  await expect(read.locator('textarea')).toHaveCount(0);
+  await expect(node(page, 'marketing').getByPlaceholder('Ask Maya…')).toBeVisible();
+
+  // Search finds the thread where the words were said.
+  await panel.getByLabel('Search conversations').fill('pane check');
+  await expect(list.getByRole('button')).toHaveCount(1);
+  await expect(list.getByRole('button')).toContainText('pane check');
+  await panel.getByLabel('Search conversations').fill('nobody said this ever');
+  await expect(panel).toContainText('Nobody said that.');
+});

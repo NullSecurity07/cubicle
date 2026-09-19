@@ -19,6 +19,7 @@ import { route } from './router.ts';
 import { createRuns, desktopNotify } from './runs.ts';
 import { readStatic } from './static.ts';
 import { createStore } from './store.ts';
+import { threadsOf } from './threads.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
 import { outwardTools } from './tools/outward.ts';
@@ -216,6 +217,12 @@ createServer(async (req, res) => {
       const answer = await body(req);
       const known = approvals.answer(asked, { ok: answer.ok === true, args: answer.args && typeof answer.args === 'object' ? answer.args : undefined });
       return json(res, known ? 200 : 404, known ? { ok: true } : { error: 'nothing is waiting under that id' });
+    }
+    if (path === '/api/threads' && req.method === 'GET') {
+      const stage = await store.loadStage();
+      const chats: Record<string, Awaited<ReturnType<typeof store.readChat>>> = {};
+      for (const one of stage.rooms) chats[one.id] = await store.readChat(one.id);
+      return json(res, 200, threadsOf(stage, chats, busy, new URL(req.url ?? '/', 'http://localhost').searchParams.get('q') ?? ''));
     }
     if (path === '/api/attention' && req.method === 'GET') return json(res, 200, await attention.list());
     if (path === '/api/attention/events' && req.method === 'GET') {

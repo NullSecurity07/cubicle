@@ -32,6 +32,13 @@ export type Attention = {
   roomId?: string; cardId?: string; taskId?: string; decisionId?: string; event?: ToolEvent; lapsed?: boolean;
 };
 
+// One conversation as the messages view lists it: a person's room, or the consults between two people.
+// A consult thread carries its messages (they are picked out of a room's chat); a room thread is read from the room.
+export type Thread = {
+  id: string; kind: 'room' | 'consult'; title: string; accents: string[]; count: number; live?: boolean;
+  last?: { text: string; at: number; by: string }; hit?: string; messages?: ChatMessage[];
+};
+
 export const isHeaded = (card?: Card) => card?.kind === 'browser' && !!card.headed;
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };

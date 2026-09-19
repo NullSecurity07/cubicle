@@ -117,6 +117,9 @@ export function Dock() {
         )}
       </div>
       <span className="dock__gap" aria-hidden="true" />
+      <button type="button" aria-label="Messages" title="Messages" onClick={() => overlay.open({ kind: 'panel', name: 'messages' })}>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.500 5.200c0-.9.700-1.700 1.700-1.700h9.600c1 0 1.700.8 1.700 1.700v6.600c0 .9-.7 1.700-1.700 1.700H9l-3.700 3v-3h-.1c-1 0-1.700-.8-1.700-1.700z" /></svg>
+      </button>
       <Needs />
       <Quota />
     </Panel>

@@ -1,4 +1,4 @@
-import type { Attachment, Attention, BoardEvent, ChatEvent, ChatMessage, ModelInfo, Stage, Task } from '../shared/model';
+import type { Attachment, Attention, BoardEvent, ChatEvent, ChatMessage, ModelInfo, Stage, Task, Thread } from '../shared/model';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -60,3 +60,4 @@ export function watchAttention(onList: (list: Attention[]) => void) {
   return () => source.close();
 }
 export const dismissAttention = (id: string) => request(`/api/attention/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });
+export const getThreads = (query = '') => request<Thread[]>(`/api/threads${query ? `?q=${encodeURIComponent(query)}` : ''}`);

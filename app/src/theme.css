@@ -374,6 +374,41 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .side dt { color: var(--muted); }
 .side dd { margin: 0; font-variant-numeric: tabular-nums; }
 @media (max-width: 900px) { .side { display: none; } }
+/* Messages: a list of conversations and the one that is open. */
+.panel:has(.threads) .panel__body { padding: 0; overflow: hidden; display: flex; }
+.threads { flex: 1; min-width: 0; display: flex; }
+.threads__list { flex: none; width: 320px; display: flex; flex-direction: column; border-right: 1px solid var(--card-border); overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.threads__list input { margin: 12px; border: 1px solid var(--card-border); border-radius: 9px; padding: 8px 10px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 13px; }
+.threads__list input:focus { border-color: rgba(78, 140, 255, 0.7); }
+.threads__list ul { margin: 0; padding: 0 6px 8px; list-style: none; }
+.threads__list li button { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.threads__list li button:hover { background: rgba(255, 255, 255, 0.06); }
+.threads__list li button.is-open { background: rgba(78, 140, 255, 0.16); }
+.threads__faces { flex: none; display: flex; width: 34px; }
+.threads__faces i { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #121317; }
+.threads__faces i + i { margin-left: -10px; }
+.threads__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.threads__text b { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.threads__text small { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.threads__live { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
+.threads__list time { flex: none; align-self: flex-start; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.threads__pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.threads__card { flex: 1; min-height: 0; }
+.threads__card[hidden] { display: none; }
+.threads__card > .card { border: 0; border-radius: 0; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.threads__card .card__actions, .threads__card .side { display: none; }
+.threads__card .chat { padding: 18px max(18px, calc((100% - 720px) / 2)); }
+.threads__read { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.threads__read .chat { padding: 18px max(18px, calc((100% - 720px) / 2)); font-size: 14px; }
+.threads__note { flex: none; margin: 0; padding: 12px 18px; font-size: 12.5px; line-height: 1.5; color: var(--muted); border-bottom: 1px solid var(--card-border); }
+.threads__back { display: none; align-self: flex-start; margin: 8px 12px 0; border: 0; border-radius: 8px; padding: 5px 10px; background: rgba(255, 255, 255, 0.08); color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; }
+@media (max-width: 880px) {
+  .threads.has-open .threads__list { display: none; }
+  .threads:not(.has-open) .threads__pane { display: none; }
+  .threads:not(.has-open) .threads__list { width: auto; flex: 1; border-right: 0; }
+  .threads__back { display: block; }
+}
+
 /* The founder's views: one glass sheet over the shade. */
 .panel { position: absolute; top: 7vh; max-height: 86vh; left: 50%; width: min(620px, calc(100% - 40px)); transform: translateX(-50%); display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(16, 17, 20, 0.86); -webkit-backdrop-filter: blur(22px) saturate(1.2); backdrop-filter: blur(22px) saturate(1.2); box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6); animation: panel-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .panel--wide { bottom: 7vh; width: min(1120px, calc(100% - 56px)); }
