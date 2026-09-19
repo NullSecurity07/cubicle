@@ -30,6 +30,10 @@ export type Host = 'focus' | 'messages';
 let thread: string | null = null;
 const elements: Record<Host, HTMLElement | null> = { focus: null, messages: null };
 export const showThread = (id: string | null) => { thread = id; set(stack); };
+// Which decision the decisions view shows; 'new' is the empty form.
+let decision: string | null = null;
+export const showDecision = (id: string | null) => { decision = id; set(stack); };
+export const useDecision = () => useSyncExternalStore(subscribe, () => decision);
 export const useThread = () => useSyncExternalStore(subscribe, () => thread);
 export const setHostElement = (host: Host) => (element: HTMLElement | null) => { if (elements[host] === element) return; elements[host] = element; set(stack); };
 

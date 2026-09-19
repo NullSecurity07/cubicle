@@ -5,6 +5,7 @@ import { isHeaded, newMessageId, type Attachment, type ChatEvent, type Stage } f
 import { createApprovals } from './approvals.ts';
 import { boardAttention, createAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
+import { createDecisions, decisionAttention } from './decisions.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
 import { guard } from './guard.ts';
 import { createBrowser, dnsResolve, fakeRunner, jinaReader, realRunner } from './browser.ts';
@@ -20,6 +21,7 @@ import { createRuns, desktopNotify } from './runs.ts';
 import { readStatic } from './static.ts';
 import { createStore } from './store.ts';
 import { threadsOf } from './threads.ts';
+import { decisionTools } from './tools/decisions.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
 import { outwardTools } from './tools/outward.ts';
@@ -57,6 +59,11 @@ const boards = createBoards(workspace);
 const attention = createAttention(workspace);
 attention.source(boardAttention(store, boards));
 boards.onChange(() => { void attention.refresh(); });
+const decisions = createDecisions(workspace);
+attention.source(decisionAttention(decisions));
+decisions.onChange(() => { void attention.refresh(); });
+// A review date falls due without anything else changing: look once an hour.
+setInterval(() => { void attention.refresh(); }, 3_600_000).unref();
 
 // What one person's turn is built from: their readable docs, their own history, and the recent talk of wired colleagues.
 async function promptFor(stage: Stage, roomId: string, toolNames: string[], fresh = false) {
@@ -74,7 +81,9 @@ async function promptFor(stage: Stage, roomId: string, toolNames: string[], fres
     if (!page || page.url !== card.url) { page = { url: card.url, ...(await browser.page(card.url).catch((error: Error) => ({ title: card.url, text: `(could not be read: ${error.message})` }))) }; await store.writePage(card.id, page); }
     pages[card.id] = page;
   }
-  const messages = buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(roomId), pages);
+  // What the founder has decided lately: everyone works from it, wired or not.
+  const decided = (await decisions.list()).filter((one) => one.status === 'decided').slice(0, 12).map((one) => `- ${one.title}: ${(one.chosen ?? '').replace(/\s+/g, ' ').slice(0, 160)}`);
+  const messages = buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(roomId), pages, decided);
   // Image cards wired to this person ride along with the latest question, for a model that can see.
   const pictures: { name: string; url: string }[] = [];
   for (const card of stage.cards ?? []) {
@@ -100,7 +109,7 @@ const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
   await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
   return reply.text;
 };
-const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...memoryTools(memory)];
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory)];
 const runs = createRuns({ boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify: fake ? () => {} : desktopNotify });
 setInterval(() => { void runs.tick().catch(() => {}); }, 30_000).unref();
 
@@ -218,6 +227,11 @@ createServer(async (req, res) => {
       const known = approvals.answer(asked, { ok: answer.ok === true, args: answer.args && typeof answer.args === 'object' ? answer.args : undefined });
       return json(res, known ? 200 : 404, known ? { ok: true } : { error: 'nothing is waiting under that id' });
     }
+    if (path === '/api/decisions' && req.method === 'GET') return json(res, 200, await decisions.list());
+    if (path === '/api/decisions' && req.method === 'POST') return json(res, 200, await decisions.record(await body(req)));
+    const ruled = /^\/api\/decisions\/([a-z0-9-]{1,100})(?:\/(decide))?$/.exec(path);
+    if (ruled && ruled[2] === 'decide' && req.method === 'POST') return json(res, 200, await decisions.decide(ruled[1], await body(req)));
+    if (ruled && !ruled[2] && req.method === 'DELETE') { await decisions.remove(ruled[1]); return json(res, 200, { ok: true }); }
     if (path === '/api/threads' && req.method === 'GET') {
       const stage = await store.loadStage();
       const chats: Record<string, Awaited<ReturnType<typeof store.readChat>>> = {};

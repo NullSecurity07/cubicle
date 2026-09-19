@@ -101,4 +101,14 @@ describe('prompt', () => {
   it('throws for an unknown room', () => {
     expect(() => buildMessages(stage, 'nope', docs, [])).toThrow(/room/);
   });
+
+  it('tells every person what the founder has decided, and that a proposal is not a decision', () => {
+    const system = buildMessages(seedStage, 'build', {}, [], ['read_decision'], {}, undefined, undefined, {}, ['- Pricing model: Per seat'])[0].content;
+    expect(system).toContain('What the founder has decided');
+    expect(system).toContain('- Pricing model: Per seat');
+    expect(buildMessages(seedStage, 'build', {}, [])[0].content).not.toContain('What the founder has decided');
+    // With no decisions yet, a person still knows that a choice of the founder's goes on record, not only into the chat.
+    expect(buildMessages(seedStage, 'build', {}, [], ['propose_decision'])[0].content).toContain('your first step is a propose_decision call');
+    expect(buildMessages(seedStage, 'build', {}, [], ['read_doc'])[0].content).not.toContain('propose_decision');
+  });
 });

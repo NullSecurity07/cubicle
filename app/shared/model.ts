@@ -39,6 +39,13 @@ export type Thread = {
   last?: { text: string; at: number; by: string }; hit?: string; messages?: ChatMessage[];
 };
 
+// One decision of the founder's, kept as a markdown file. People propose (context, options, what they would pick);
+// only the founder decides. `review` is a date (YYYY-MM-DD) on which it comes back to be looked at again.
+export type Decision = {
+  id: string; title: string; status: 'proposed' | 'decided'; proposedBy?: string; at: number; decidedAt?: number;
+  context: string; options: string[]; recommendation?: string; chosen?: string; why?: string; effect?: string; review?: string;
+};
+
 export const isHeaded = (card?: Card) => card?.kind === 'browser' && !!card.headed;
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };

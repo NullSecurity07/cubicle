@@ -80,7 +80,7 @@ test('shows two rooms, a doc and the company brief, one wire, a dock with usage 
   await expect(page.locator('.react-flow__node')).toHaveCount(4);
   // The dock, by name: three ways to add, the founder's two views, and the usage rings (which arrive once the models are known).
   await expect(page.getByRole('button', { name: 'Model usage today' })).toBeVisible();
-  expect(await page.locator('.dock button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual(['Add person', 'Add doc', 'More cards', 'Messages', 'Needs you: nothing waiting', 'Model usage today']);
+  expect(await page.locator('.dock button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual(['Add person', 'Add doc', 'More cards', 'Messages', 'Decisions', 'Needs you: nothing waiting', 'Model usage today']);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(node(page, 'marketing')).toContainText('Maya');
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue(/# Brand/);
@@ -712,4 +712,46 @@ test('messages: every conversation in one place; a person\'s thread is their own
   await expect(list.getByRole('button')).toContainText('pane check');
   await panel.getByLabel('Search conversations').fill('nobody said this ever');
   await expect(panel).toContainText('Nobody said that.');
+});
+
+test('decisions: a person lays a choice out, only the founder decides, and everyone works from it afterwards', async ({ page }) => {
+  await tidy(page);
+  await send(page, 'marketing', '/tool propose_decision {"title":"Launch channel","context":"We can do one channel well this month.","options":["Product Hunt","Hacker News","LinkedIn"],"recommendation":"Hacker News: our users read it."}');
+  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('It waits for the founder');
+
+  // It waits in the founder's list; "Decide" opens it in the decisions view.
+  const bell = page.getByRole('button', { name: /^Needs you/ });
+  await expect(bell).toHaveAccessibleName('Needs you: 1 waiting');
+  await bell.click();
+  await expect(page.getByRole('dialog', { name: 'Needs you' })).toContainText('Maya asks for a decision');
+  await page.getByRole('dialog', { name: 'Needs you' }).getByRole('button', { name: 'Decide' }).click();
+  const panel = page.getByRole('dialog', { name: 'Decisions' });
+  const memo = panel.getByRole('article', { name: 'Launch channel' });
+  await expect(memo).toContainText('It is yours to decide.');
+  await expect(memo).toContainText('Hacker News: our users read it.');
+  await expect(memo.getByRole('button', { name: 'Decide' })).toBeDisabled();
+  await memo.getByText('Hacker News', { exact: true }).click();
+  await memo.getByLabel('Why').fill('Our first fifty users came from there.');
+  await memo.getByLabel('Review date').fill('2026-10-20');
+  await memo.getByRole('button', { name: 'Decide' }).click();
+  await expect(memo).toContainText('Decided on');
+  await expect(memo.locator('.decision__chosen')).toHaveText('Hacker News');
+  await expect(memo).toContainText('look again on 2026-10-20');
+  await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+
+  // The founder can also record one directly.
+  await panel.getByRole('button', { name: 'Record a decision' }).click();
+  await panel.getByLabel('Title').fill('No free tier');
+  await panel.getByLabel('Chosen').fill('Trial only, 14 days');
+  await panel.getByLabel('Why').fill('Support cost.');
+  await panel.getByRole('button', { name: 'Decide' }).click();
+  await expect(panel.getByRole('navigation', { name: 'All decisions' }).getByRole('button', { name: /No free tier/ })).toContainText('Trial only, 14 days');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+
+  // From now on every person works from it, and can read it in full.
+  await send(page, 'build', '/tool read_decision {"title":"launch channel"}');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Decided: Hacker News');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Our first fifty users came from there.');
 });

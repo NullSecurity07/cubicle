@@ -3,11 +3,12 @@ import { useEffect, useRef } from 'react';
 import type React from 'react';
 import { createPortal } from 'react-dom';
 import { NeedsPanel } from './NeedsPanel';
+import { DecisionsPanel } from './DecisionsPanel';
 import { MessagesPanel } from './MessagesPanel';
 import { overlay, setHostElement, useLayers } from './store';
 
 // The founder's views, by layer name.
-const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel };
+const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel };
 const focusHost = setHostElement('focus');
 
 const typing = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));

@@ -5,7 +5,7 @@ import { changeTask, dismissAttention, removeTask } from '../api';
 import { Approval } from '../nodes/Approval';
 import { useAttention } from './attention';
 import { PanelShell } from './PanelShell';
-import { overlay } from './store';
+import { overlay, showDecision } from './store';
 
 const WHAT: Record<Attention['kind'], string> = {
   approval: 'needs your OK', 'run-approval': 'needs your OK on a task', 'proposed-task': 'suggests a task', 'proposed-decision': 'asks for a decision',
@@ -53,6 +53,7 @@ export function NeedsPanel() {
                   <button type="button" onClick={() => attempt(removeTask(entry.cardId!, entry.taskId!))}>Decline</button>
                   <button type="button" className="primary" onClick={() => attempt(changeTask(entry.cardId!, entry.taskId!, { column: 'todo' }))}>Accept</button>
                 </>}
+                {entry.decisionId && <button type="button" className="primary" onClick={() => { showDecision(entry.decisionId!); overlay.open({ kind: 'panel', name: 'decisions' }); }}>{entry.kind === 'review-due' ? 'Look at it' : 'Decide'}</button>}
                 {(entry.lapsed || entry.kind === 'run-failed' || entry.kind === 'missed' || entry.kind === 'review-due') && <button type="button" onClick={() => attempt(dismissAttention(entry.id))}>Dismiss</button>}
               </div>
             </li>

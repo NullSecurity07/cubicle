@@ -120,6 +120,9 @@ export function Dock() {
       <button type="button" aria-label="Messages" title="Messages" onClick={() => overlay.open({ kind: 'panel', name: 'messages' })}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.500 5.200c0-.9.700-1.700 1.700-1.700h9.600c1 0 1.700.8 1.700 1.700v6.600c0 .9-.7 1.700-1.700 1.700H9l-3.700 3v-3h-.1c-1 0-1.700-.8-1.700-1.700z" /></svg>
       </button>
+      <button type="button" aria-label="Decisions" title="Decisions" onClick={() => overlay.open({ kind: 'panel', name: 'decisions' })}>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.500v13M5.500 16.500h9M4 6.500h12M4 6.500l-2 5a2.300 2.300 0 0 0 4 0zM16 6.500l-2 5a2.300 2.300 0 0 0 4 0z" /></svg>
+      </button>
       <Needs />
       <Quota />
     </Panel>
