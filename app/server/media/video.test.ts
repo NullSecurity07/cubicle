@@ -8,7 +8,9 @@ import { mediaTools } from '../tools/media.ts';
 import { createMedia } from './jobs.ts';
 import { composition, FORMATS, sceneSeconds, type Shot } from './templates/index.ts';
 import { spendingScenes } from '../tools/media.ts';
-import { fakeVideos, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, storyboardOf, storyboardPrompt, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
+import { fakeVideos, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
+import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
+import { budgetOf } from './spec.ts';
 
 const film: Spec = {
   title: 'Week eleven',
@@ -40,21 +42,18 @@ describe('a storyboard', () => {
     expect(() => parseSpec({ title: 'One', scenes: [film.scenes[0], { layout: 'statement' }] })).toThrow('scene 2: a statement scene needs "text"');
     expect(() => parseSpec({ title: 'One', scenes: [{ layout: 'bullets', heading: 'Two' }] })).toThrow('scene 1: a bullets scene needs "bullets"');
     expect(() => parseSpec({ title: 'One', scenes: [{ layout: 'bullets', bullets: Array(7).fill('one') }] })).toThrow('at most 6 fit on screen, not 7');
-    expect(() => parseSpec({ title: 'One', scenes: [{ layout: 'picture', image_prompt: 'a kite' }] })).toThrow('scene 1: a picture scene needs "image_prompt" and a caption in "text"');
+    expect(() => parseSpec({ title: 'One', scenes: [{ layout: 'picture', text: 'A kite' }] })).toThrow('scene 1: a picture scene needs "image_prompt"');
+    // A picture on its own is a scene: under captions a caption as well would be the same sentence twice.
+    expect(parseSpec({ title: 'One', scenes: [{ layout: 'picture', image_prompt: 'a kite' }] }).scenes[0].layout).toBe('picture');
     expect(() => parseSpec({ title: 'One', scenes: [{ layout: 'statement', text: 'x'.repeat(261) }] })).toThrow('scene 1: "text" is too long (261 characters, limit 260)');
     expect(() => parseSpec({ title: 'One', scenes: ['a scene'] })).toThrow('scene 1 must be an object');
   });
 
-  it('gives the model one more go with the reason its first answer could not be used', async () => {
-    const asked: string[] = [];
-    const said = ['Sure! {"title": "One"}', `here you go:\n\`\`\`json\n${JSON.stringify(film)}\n\`\`\``];
-    const spec = await storyboardOf('a week in review', async (prompt) => { asked.push(prompt); return said[asked.length - 1]; });
-    expect(spec.scenes).toHaveLength(4);
-    expect(asked).toHaveLength(2);
-    expect(asked[0]).toContain('a week in review');
-    expect(asked[1]).toContain('Your last answer could not be used: "scenes" must be a list with at least one scene');
-
-    await expect(storyboardOf('a week', async () => 'no json here at all')).rejects.toThrow(/the storyboard could not be written: /);
+  it('reads a JSON object out of a model that also wanted to explain itself', () => {
+    expect(jsonIn('Sure! {"title": "One"} hope that helps')).toEqual({ title: 'One' });
+    expect(jsonIn(`here you go:\n\`\`\`json\n${JSON.stringify(film)}\n\`\`\``)).toMatchObject({ title: 'Week eleven' });
+    expect(() => jsonIn('no json here at all')).toThrow('the answer held no JSON object');
+    expect(() => jsonIn('{not really}')).toThrow('the answer was not valid JSON');
   });
 });
 
@@ -77,7 +76,11 @@ describe('the composition', () => {
     expect(page).toContain('data-composition-id="main"');
     expect(page).toContain('data-width="1280" data-height="720" data-duration="16"');
     expect(page.match(/<section class="clip"/g)).toHaveLength(4);
-    expect(page).toContain('<section class="clip" id="s1" data-start="4" data-duration="4">');
+    expect(page).toContain('<section class="clip" id="s1" data-start="4" data-duration="4.42">');
+    // Everything one scene is made of moves as one box, because a cut is a move of the whole box.
+    expect(page).toContain('<div class="stage" id="g1">');
+    // The last scene has nothing to leave for, so it keeps its own length exactly.
+    expect(page).toContain('id="s3" data-start="12" data-duration="4">');
     // Every sound carries an id of its own, or the mixer never finds it and the film comes out silent.
     expect(page).toContain('<audio id="say0" src="assets/say-0.wav" data-start="0.35" data-duration="3.00" data-volume="1">');
     expect(page.match(/<audio /g)).toHaveLength(1);
@@ -125,10 +128,10 @@ describe('the composition', () => {
   it('sets the words for a screen watched from across a room', () => {
     const page = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots(film.scenes) });
     // A heading is about a tenth of the height of a wide frame, and a title half as much again.
-    expect(page).toContain('.heading { font-size: calc(68px * var(--s));');
-    expect(page).toContain('.display { font-size: calc(112px * var(--s));');
+    expect(page).toContain('font-size: calc(68px * var(--s));');
+    expect(page).toContain('font-size: calc(112px * var(--s));');
     // The block sits a little above the middle of the frame, where the eye reads it as centred.
-    expect(page).toContain('padding: var(--margin) var(--margin) calc(var(--margin) + var(--lift));');
+    expect(page).toContain('calc(var(--margin) + var(--lift) + var(--safe-foot) * 0.34);');
     expect(page).toContain('--lift: 56px;');
   });
 
@@ -139,10 +142,10 @@ describe('the composition', () => {
     expect(wide).toContain('{ textContent: 0 }, { textContent: 38,');
     // A longer figure is stepped down to the width of the frame rather than wrapped onto two lines.
     const long = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([{ layout: 'stat', heading: '$1,200 saved' }]) });
-    expect(long).toContain('style="font-size: 116px"');
+    expect(long).toContain('style="font-size: 146px"');
     // A figure that is really a sentence stops shrinking at the size of a heading and wraps.
     const said = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([{ layout: 'stat', heading: 'a whole working day, every single week' }]) });
-    expect(said).toContain('style="font-size: 68px; white-space: normal"');
+    expect(said).toContain('style="font-size: 88px; white-space: normal"');
     // Nothing to count in a figure that is not a whole number: it is simply shown.
     const words = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([{ layout: 'stat', heading: 'Twice over' }]) });
     expect(words).not.toContain('class="count"');
@@ -189,7 +192,7 @@ describe('generate_video', () => {
     expect(made.prompt).toBe('Week eleven');
     expect(made.poster).toMatch(/^media\/.+\.png$/);
     expect((await context.store.readFileBytes(made.path))!.length).toBeGreaterThan(1000);
-    expect((await media.read('studio-3')).log[0]).toBe('4 scenes: Week eleven');
+    expect((await media.read('studio-3')).log[1]).toBe('4 scenes: Week eleven');
   });
 
   it('hands a storyboard it cannot use straight back, and never films in someone else\'s studio', async () => {
@@ -203,8 +206,8 @@ describe('generate_video', () => {
   it('keeps its parameters flat and simple, the way every provider accepts them', async () => {
     const { tool } = await turn(wired);
     const properties = (tool.parameters as { properties: Record<string, { type: string; enum?: string[] }> }).properties;
-    expect(Object.keys(properties).sort()).toEqual(['captions', 'format', 'look', 'music', 'narrate', 'pace', 'scenes', 'sfx', 'title']);
-    expect(properties.look.enum).toEqual(['clean', 'sketch', 'brand']);
+    expect(Object.keys(properties).sort()).toEqual(['brief', 'captions', 'format', 'length', 'look', 'music', 'narrate', 'pace', 'purpose', 'scenes', 'sfx', 'title']);
+    expect(properties.look.enum).toEqual(['clean', 'creator', 'editorial', 'neon', 'sketch', 'brand']);
     expect(properties.format.enum).toEqual(['square', 'wide', 'tall']);
     expect(properties.pace.enum).toEqual(['calm', 'punchy']);
     // Every scene field is a plain string, number, boolean or list of strings: Gemini rejects anything cleverer.
@@ -318,20 +321,30 @@ describe('what a film is for', () => {
       assets: [{ name: 'walk', kind: 'video', what: "6 seconds of the founder's own footage" }],
       using: ['relay'],
     };
-    const reel = storyboardPrompt({ brief: 'launch the studio', purpose: 'reel', seconds: 30, pace: 'punchy', shape: 'tall', captions: true, music: 'drive', sfx: true, ai: false, material });
-    expect(reel).toContain('shot tall for a phone');
-    expect(reel).toContain(PURPOSE.reel.shape);
+    const reelMind = understandingOf({}, { brief: 'launch the studio', purpose: 'reel' }, {});
+    const plan: Plan = { angle: 'the handover is the bug', hook: 'Your handover is the bug', bible: bibleFor(reelMind), beats: [{ beat: 'name it', on_screen: 'a desk', say: 'Design hands to build and a day goes missing.' }] };
+    const layouts = layoutsFor({ ai: false, material });
+    const reel = specPrompt(plan, reelMind, material, layouts);
+    expect(reel).toContain('30-second vertical film');
+    expect(reel).toContain('the handover is the bug');
+    expect(reel).toContain('Your handover is the bug');
+    expect(reel).toContain(plan.bible);
     expect(reel).toContain("- walk — 6 seconds of the founder's own footage");
-    expect(reel).toContain('never invent a feature, a number or a customer it does not have');
-    expect(reel).toContain('captioned word by word');
-    expect(reel).toContain('launch the studio');
+    expect(reel).toContain('1. name it — on screen: a desk');
     // Nothing offers a layout the film cannot actually fill.
     expect(reel).toContain('- footage:');
     expect(reel).not.toContain('- clip:');
     expect(reel).not.toContain('- device:');
+    // The rules the storyboard will be read against are told to it before it is written.
+    expect(reel).toContain('The first scene is a hook and the last is a cta.');
+    expect(reel).toContain('At least four different layouts');
 
-    const pitch = storyboardPrompt({ brief: 'raise a seed round', purpose: 'pitch', seconds: 90, pace: 'calm', shape: 'wide', captions: false, music: 'calm', sfx: true, ai: true, material: { lines: [], assets: [], using: [] } });
-    expect(pitch).toContain('90-second investor pitch');
+    const empty: Material = { lines: [], assets: [], using: [] };
+    const pitchMind = understandingOf({}, { brief: 'raise a seed round', purpose: 'pitch' }, {});
+    const pitchPlan: Plan = { angle: 'we have the traction', hook: 'Ten thousand teams', bible: bibleFor(pitchMind), beats: [] };
+    expect(planPrompt(pitchMind, { brief: 'raise a seed round', purpose: 'pitch' }, empty)).toContain('90-second investor pitch');
+    expect(planPrompt(pitchMind, { brief: 'raise a seed round', purpose: 'pitch' }, empty)).toContain(PURPOSE.pitch.shape);
+    const pitch = specPrompt(pitchPlan, pitchMind, empty, layoutsFor({ ai: true, material: empty }));
     expect(pitch).toContain('- clip:');
     expect(pitch).not.toContain('- footage:');
     expect(pitch).not.toContain('These are on the card already');
@@ -390,7 +403,7 @@ describe('a film with everything in it', () => {
     expect(punchy).toContain('duration: 0.52, ease: "power3.out", stagger: 0.05');
     // The same words are held for longer when there is room for them.
     expect(sceneSeconds('one two three four five six', 0, 'calm')).toBeGreaterThan(sceneSeconds('one two three four five six', 0, 'punchy'));
-    expect(sceneSeconds('', 0, 'punchy')).toBe(1.7);
+    expect(sceneSeconds('', 0, 'punchy')).toBe(1.6);
   });
 
   it('puts the bed under everything and the sounds on the cuts, each with an id of its own', () => {
@@ -422,7 +435,7 @@ describe('a film with everything in it', () => {
 describe('the scenes that cost something', () => {
   const wiredWith = (ai: boolean): Stage => ({
     ...seedStage,
-    cards: [{ id: 'studio-3', kind: 'videogen', ...(ai ? { ai: true } : {}), x: 0, y: 0, w: 1, h: 1 }],
+    cards: [{ id: 'studio-3', kind: 'videogen', ai: ai ? 'on' : 'off', x: 0, y: 0, w: 1, h: 1 }],
     wires: [...seedStage.wires, { id: 'w', from: 'studio-3', fromHandle: 'r', to: 'marketing', toHandle: 'l' }],
   });
   const ask = async (stage: Stage) => {
@@ -483,11 +496,16 @@ describe('the assets tray on a card', () => {
 
 describe('how long a film comes out', () => {
   it('tells the storyboard its word budget, because the narration is what sets the length', () => {
-    expect(wordsFor(30)).toBe(69);
-    expect(wordsFor(90)).toBe(207);
-    const brief = storyboardPrompt({ brief: 'x', purpose: 'reel', seconds: 30, pace: 'punchy', shape: 'tall', captions: true, music: 'drive', sfx: true, ai: false, material: { lines: [], assets: [], using: [] } });
-    expect(brief).toContain('must come to about 69 words');
-    expect(brief).toContain('That word count is what makes the film 30 seconds long');
+    expect(wordsFor(30)).toBe(72);
+    expect(wordsFor(90)).toBe(216);
+    // And the budget the director really works to takes the breath before every line and the beat after it off the
+    // top, which is the three and a half seconds that made fifteen come out at eighteen.
+    expect(budgetOf(30, 10, 'punchy')).toBe(62);
+    expect(budgetOf(15, 6, 'punchy')).toBe(30);
+    expect(budgetOf(15, 6, 'punchy')).toBeLessThan(wordsFor(15));
+    const mind = understandingOf({}, { brief: 'x', purpose: 'reel' }, {});
+    const brief = planPrompt(mind, { brief: 'x', purpose: 'reel' }, { lines: [], assets: [], using: [] });
+    expect(brief).toContain('words — that is what makes the film 30 seconds long');
   });
 
   it('cuts a film that still overruns badly, from the middle and never the opening or the close', () => {
@@ -505,7 +523,8 @@ describe('how long a film comes out', () => {
   });
 
   it('leaves a film that is near enough, and a short one, exactly as it is', () => {
-    const near = [8, 8, 8, 8, 8].map((seconds) => ({ seconds }));
+    // Within a tenth of what was asked for is near enough; past that a scene goes.
+    const near = [6, 6, 6, 6, 6].map((seconds) => ({ seconds }));
     expect(withinLength(near, 30).dropped).toBe(0);
     expect(withinLength([{ seconds: 60 }, { seconds: 60 }], 15).dropped).toBe(0);
     // A storyboard a person wrote themselves is never cut: they said what they wanted.

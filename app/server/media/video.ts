@@ -136,18 +136,18 @@ export function estimate(ask: { scenes: number; seconds: number; pictures: numbe
 // The renderer: our own scenes written as one HTML page, which headless Chrome steps through frame by frame and ffmpeg
 // turns into an MP4. Nothing leaves this machine except what the founder wired to the card, and the same storyboard
 // always renders the same film.
-export function hyperframesVideos(deps: VideoDeps): Maker {
-  const bin = resolve(import.meta.dirname, '../../node_modules/.bin/hyperframes');
-  const vendor = resolve(import.meta.dirname, 'templates/vendor');
-  const clips = deps.clips ?? noClips;
+// What a named asset really is, and where. `where` says whether the file already sits in this job's own assets
+// folder (a screenshot we just took, a picture copied off a wired card) or out in the shared files.
+export type Held = { file: string; kind: 'screen' | 'video' | 'image' | 'audio'; where: 'job' | 'files'; seconds?: number };
 
-  // Everything wired to the card, read once: the product's own words and colours, its screens as pictures, the
-  // founder's own files, and whatever a note, a doc or a picture card beside it says.
-  async function gather(asked: VideoAsk, at: string, shape: Shape, report: (line: string) => void, signal?: AbortSignal) {
+// Everything wired to the card, read once: the product's own words and colours, its screens as pictures, the
+// founder's own files, the pictures a wired image studio has already drawn, and whatever a note or a doc beside it
+// says. A wire is the founder saying "use this", so none of it has to be asked for.
+export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, report: (line: string) => void, signal?: AbortSignal) {
     const material: Material = { lines: [], assets: [], using: [] };
     // What the storyboard may name in `asset`. `where` says whether the file already sits in this job's own assets
     // folder (a screenshot we just took) or in the shared files (something the founder dropped).
-    const files = new Map<string, { file: string; kind: 'screen' | 'video' | 'image' | 'audio'; where: 'job' | 'files'; seconds?: number }>();
+    const files = new Map<string, Held>();
     const stage = await deps.stage?.().catch(() => undefined);
     const cards = stage && asked.cardId ? wiredTo(stage, asked.cardId) : [];
     const addresses: { url: string; own: boolean; label: string }[] = [];
@@ -223,7 +223,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
     const clipCount = dropped.filter((one) => one.kind === 'video').length;
     if (clipCount) material.using.push(`${clipCount} of your clip${clipCount === 1 ? '' : 's'}`);
     const bed = dropped.find((one) => one.kind === 'audio');
-    return { material, files, bed, shape };
+    return { material, files, bed };
 
     // The pictures a wired image studio has made, newest first. Its results live in the same sidecar every studio
     // card keeps, which is `assets` on the card for dropped files and `results` for made ones.
@@ -236,7 +236,12 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
       }
       return found;
     }
-  }
+}
+
+export function hyperframesVideos(deps: VideoDeps): Maker {
+  const bin = resolve(import.meta.dirname, '../../node_modules/.bin/hyperframes');
+  const vendor = resolve(import.meta.dirname, 'templates/vendor');
+  const clips = deps.clips ?? noClips;
 
   return {
     name: 'Hyperframes',
@@ -266,8 +271,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const autoAi = asked.ai === 'auto' || asked.ai === undefined;
         const here = !!deps.local && !deps.local.ready();
 
-        const shapeFirst: Shape = chose(asked.format, ['wide', 'tall', 'square'] as const) ?? (isPurpose(told.purpose) ? PURPOSE[told.purpose].format : 'wide');
-        const { material, files, bed } = await gather(asked, at, shapeFirst, report, signal);
+        const { material, files, bed } = await gather(deps, asked, at, report, signal);
         if (material.using.length) report(`using: ${material.using.join(', ')}`);
 
         // A person who wrote the whole storyboard is not overruled about what is in it, only about how it is set.

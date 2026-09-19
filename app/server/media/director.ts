@@ -70,7 +70,7 @@ const CUES: { was: RegExp; is: Partial<Understanding> }[] = [
 export function secondsIn(brief: string): number | undefined {
   const named: [RegExp, number][] = [[/\bhalf a minute\b/i, 30], [/\ba minute and a half\b/i, 90], [/\bninety seconds\b/i, 90], [/\b(?:one |a )?minute\b/i, 60], [/\btwo minutes\b/i, 120]];
   for (const [was, is] of named) if (was.test(brief)) return is;
-  const digits = /(\d{1,3})\s*(?:-|\s)?\s*(?:second|sec|s)\b/i.exec(brief);
+  const digits = /(\d{1,3})\s*[-\s]?\s*(?:seconds?|secs?|s)\b/i.exec(brief);
   if (digits) { const found = Number(digits[1]); if (found >= 8 && found <= 180) return found; }
   const spelled: Record<string, number> = { ten: 10, fifteen: 15, twenty: 20, thirty: 30, forty: 40, forty5: 45, sixty: 60 };
   const word = /\b(ten|fifteen|twenty|thirty|forty|sixty)\b[- ]?(?:five)?\s*seconds?\b/i.exec(brief);
@@ -217,7 +217,7 @@ export function bibleFor(understanding: Understanding): string {
     neon: 'dark technical photography, cyan and magenta rim light, glass and metal surfaces, volumetric haze, long lens',
     clean: 'calm studio photography, cool slate palette, soft directional light, clean geometry, matte surfaces',
     sketch: 'loose ink and watercolour illustration on warm paper, visible pencil under-drawing, limited palette',
-    brand: 'clean product photography, soft even light, uncluttered surfaces, one accent colour, matte finish',
+    brand: 'clean still-life photography, soft even light, uncluttered surfaces, one accent colour, matte finish',
   };
   return by[understanding.pack] ?? by.clean;
 }

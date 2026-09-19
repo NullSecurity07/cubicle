@@ -35,6 +35,11 @@ const STOP = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'so', 'if', 'then', 
   'what', 'when', 'where', 'who', 'how', 'why', 'which', 'there', 'here', 'about', 'into', 'over', 'just', 'like',
   'not', 'no', 'yes', 'up', 'out', 'down', 'off', 'all', 'any', 'some', 'more', 'most', 'very', 'really', 'actually']);
 
+// Words that only ever introduce what comes after them. A headline may not end on one.
+const WEAK_END = new Set(['whether', 'while', 'since', 'though', 'although', 'unless', 'until', 'because', 'after',
+  'before', 'during', 'without', 'within', 'between', 'among', 'across', 'around', 'toward', 'towards', 'onto',
+  'upon', 'per', 'via', 'every', 'each', 'both', 'either', 'neither', 'nor', 'one', 'two', 'three']);
+
 const bare = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}\s]+/gu, ' ').split(/\s+/).filter(Boolean);
 const content = (text: string) => bare(text).filter((word) => !STOP.has(word) && word.length > 2);
 
@@ -54,7 +59,13 @@ export function trimTo(text: string, most: number): string {
   // A clause that already fits is a better headline than the first N words of a sentence.
   const clause = text.split(/(?<=[.!?])\s+|\s+[—–-]\s+|[,;:]\s+/)[0]?.trim() ?? '';
   if (clause && countWords(clause) <= most && countWords(clause) >= Math.min(3, most)) return clause.replace(/[,;:]$/, '');
-  return `${words.slice(0, most).join(' ').replace(/[,;:.!?]$/, '')}`;
+  // The longest cut that still ends on a word that carries something: "there is a" is not a headline, and neither
+  // is anything ending on a word whose whole job is to introduce what comes next.
+  for (let end = most; end >= 2; end -= 1) {
+    const last = words[end - 1].toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+    if (end === 2 || (!STOP.has(last) && !WEAK_END.has(last))) return words.slice(0, end).join(' ').replace(/[,;:.!?]$/, '');
+  }
+  return words.slice(0, most).join(' ').replace(/[,;:.!?]$/, '');
 }
 
 // The words of a line that are worth putting on a screen, in the order they were written. Used to turn a spoken
@@ -72,13 +83,20 @@ export const subjectOf = (scene: Scene): string => {
   return keywords(source, 8) || 'an abstract product still';
 };
 
-export const hasNumber = (text?: string): boolean => /(?:^|\s)[$£€]?\d[\d,.]*\s*(?:%|x\b|k\b|m\b|bn\b|billion|million|thousand|per cent|percent|hours?|minutes?|days?|weeks?|months?|years?|times)?/i.test(text ?? '');
+const FIGURE_IN = /([$£€]\s?\d[\d,.]*\s*(?:%|x\b|k\b|m\b|bn\b)?|\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?\s*(?:%|x\b|k\b|m\b|bn\b)|\d+\s+(?:out of|of)\s+\d+|\b\d{2,}(?:\.\d+)?\b)/i;
+export const hasNumber = (text?: string): boolean => FIGURE_IN.test(text ?? '');
+// Pieces that could really be bullets: two words at the least, none of them opening on a word that only makes sense
+// as the middle of a sentence. A "list" of sentence fragments is worse on screen than the sentence was.
+const OPENERS = new Set(['which', 'that', 'who', 'whose', 'where', 'when', 'because', 'so', 'then', 'but', 'or']);
+export const listable = (parts: string[]): boolean =>
+  parts.length >= 2 && parts.every((one) => countWords(one) >= 2 && countWords(one) <= 6 && !OPENERS.has(one.trim().split(/\s+/)[0].toLowerCase()));
+
 export const listy = (text?: string): boolean => ((text ?? '').match(/,/g)?.length ?? 0) >= 2 || /\b(?:first|second|third|then|finally)\b/i.test(text ?? '');
 export const contrasty = (text?: string): boolean => /\b(?:but|instead of|rather than|versus|vs\.?|used to|before|after|no longer|not\s+\w+\s+but)\b/i.test(text ?? '');
 
 // The one number a stat scene is built on, pulled out of the line that mentions it.
 export const figureIn = (text?: string): string | null => {
-  const found = /([$£€]?\d[\d,.]*\s*(?:%|x|k|m|bn)?)/i.exec(text ?? '');
+  const found = FIGURE_IN.exec(text ?? '');
   return found ? found[1].trim().replace(/[.,]$/, '') : null;
 };
 
@@ -106,9 +124,8 @@ export function criticise(spec: Spec, want: Want): Finding[] {
     if (scene.text && countWords(scene.text) > TEXT_WORDS) {
       say('headline', `scene ${at} puts ${countWords(scene.text)} words on screen — a viewer reads ${TEXT_WORDS}, and the rest is narration written out`, at);
     }
-    if (want.captions && scene.say && !ECHO_FINE.has(scene.layout)) {
-      const worst = Math.max(echoes(scene.text ?? '', scene.say), echoes((scene.bullets ?? []).join(' '), scene.say));
-      if (worst >= 0.6 && (scene.text || scene.bullets)) say('echo', `scene ${at} writes out what is already said over it and already captioned under it`, at);
+    if (want.captions && scene.say && scene.text && !ECHO_FINE.has(scene.layout) && echoes(scene.text, scene.say) >= 0.6) {
+      say('echo', `scene ${at} writes out what is already said over it and already captioned under it`, at);
     }
     const spoken = countWords(scene.say);
     const ceiling = want.pace === 'punchy' ? 4 : 6;
@@ -154,6 +171,33 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
   const can = (layout: Layout) => allowed.has(layout);
   let scenes = spec.scenes.map((one) => ({ ...one }));
   const note = (line: string) => { if (!notes.includes(line)) notes.push(line); };
+  // What a scene of these words could be, given a shape to try; nothing when its own words will not carry it. Every
+  // pass that changes a scene's shape goes through here, so a film never ends up with five of the same thing.
+  const recast = (scene: Scene, next: Layout): Scene | null => {
+    if (!can(next)) return null;
+    if (next === 'picture') return { ...scene, layout: 'picture', image_prompt: scene.image_prompt || `${want.bible}. ${subjectOf(scene)}`, text: scene.text && countWords(scene.text) <= 8 ? scene.text : undefined };
+    if (next === 'quote') return { ...scene, layout: 'quote', text: trimTo(scene.text || scene.say || '', 16), heading: scene.heading };
+    if (next === 'hook') return { ...scene, layout: 'hook', text: trimTo(scene.text || keywords(scene.say ?? '', 5), HEADING_WORDS), heading: undefined };
+    if (next === 'stat') { const figure = figureIn(scene.text) ?? figureIn(scene.say); return figure && countWords(figure) <= 3 ? { ...scene, layout: 'stat', heading: figure, text: trimTo(keywords((scene.text ?? scene.say ?? '').replace(figure, ' '), 6), 6) } : null; }
+    if (next === 'compare') {
+      const halves = (scene.text || scene.say || '').split(/\s+(?:but|instead of|rather than|versus|vs\.?)\s+/i);
+      return halves.length >= 2 && halves[0].trim() && halves[1].trim()
+        ? { ...scene, layout: 'compare', heading: scene.heading && countWords(scene.heading) <= HEADING_WORDS ? scene.heading : undefined, bullets: [trimTo(halves[0], 6), trimTo(halves[1], 6)], text: undefined } : null;
+    }
+    const parts = (scene.text || scene.say || '').split(/[,;]|\band\b/i).map((part) => trimTo(part.trim(), 5)).filter(Boolean).slice(0, 4);
+    return listable(parts) ? { ...scene, layout: next, heading: scene.heading && countWords(scene.heading) <= HEADING_WORDS ? scene.heading : 'What you get', bullets: parts, text: undefined } : null;
+  };
+  // The shapes already in the film. A recast prefers one that is not in here, which is how variety happens without
+  // anybody counting it afterwards.
+  const kinds = new Set(scenes.map((one) => one.layout));
+  const reshape = (scene: Scene, order: Layout[], onlyNew = false): Scene | null => {
+    const tries = onlyNew ? order.filter((one) => !kinds.has(one)) : [...order.filter((one) => !kinds.has(one)), ...order];
+    for (const next of tries) {
+      const made = recast(scene, next);
+      if (made) { kinds.add(next); return made; }
+    }
+    return null;
+  };
 
   // 1. A reel opens on a hook and closes on a call to action. Both are recasts of a scene that is already there, so
   //    the film is never a scene longer or shorter for it.
@@ -177,52 +221,14 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
   scenes = scenes.map((scene) => {
     if (scene.layout !== 'statement' && scene.layout !== 'outro') return scene;
     const line = `${scene.text ?? ''} ${scene.say ?? ''}`;
-    const figure = figureIn(scene.text) ?? figureIn(scene.say);
-    if (figure && can('stat') && countWords(figure) <= 3) {
-      note('a scene with a number on it is set as a figure rather than a sentence');
-      return { ...scene, layout: 'stat', heading: figure, text: trimTo(keywords((scene.text ?? scene.say ?? '').replace(figure, ' '), 6), 6) || scene.text };
-    }
-    if (contrasty(line) && can('compare')) {
-      const halves = (scene.text || scene.say || '').split(/\s+(?:but|instead of|rather than|versus|vs\.?)\s+/i);
-      if (halves.length >= 2 && halves[0].trim() && halves[1].trim()) {
-        note('a before and an after are set side by side rather than in one line');
-        return { ...scene, layout: 'compare', heading: scene.heading && countWords(scene.heading) <= HEADING_WORDS ? scene.heading : undefined, bullets: [trimTo(halves[0], 6), trimTo(halves[1], 6)], text: undefined };
-      }
-    }
-    if (listy(line) && can('checklist')) {
-      const parts = (scene.text || scene.say || '').split(/[,;]|\band\b/i).map((one) => trimTo(one.trim(), 5)).filter((one) => countWords(one) >= 1);
-      if (parts.length >= 2) {
-        note('a list written as a paragraph is set as a list');
-        return { ...scene, layout: 'checklist', heading: scene.heading && countWords(scene.heading) <= HEADING_WORDS ? scene.heading : 'What you get', bullets: parts.slice(0, 4), text: undefined };
-      }
-    }
+    if (hasNumber(line)) { const made = recast(scene, 'stat'); if (made) { note('a scene with a number on it is set as a figure rather than a sentence'); return made; } }
+    if (contrasty(line)) { const made = recast(scene, 'compare'); if (made) { note('a before and an after are set side by side rather than in one line'); return made; } }
+    if (listy(line)) { const made = recast(scene, 'checklist'); if (made) { note('a list written as a paragraph is set as a list'); return made; } }
     return scene;
   });
+  for (const scene of scenes) kinds.add(scene.layout);
 
-  // 3. Four shapes, at least, in anything over ten seconds. A scene that is the third of its kind is given the shape
-  //    its own words ask for, and failing that a picture — which is what a film does with a line it cannot draw.
-  if (want.seconds > 10 && scenes.length >= 4) {
-    const count = new Map<Layout, number>();
-    for (const scene of scenes) count.set(scene.layout, (count.get(scene.layout) ?? 0) + 1);
-    const spare: Layout[] = (['picture', 'quote', 'checklist', 'stat', 'steps', 'compare'] as Layout[]).filter((one) => can(one) && !count.has(one));
-    scenes = scenes.map((scene, index) => {
-      if (new Set(scenes.map((one) => one.layout)).size >= 4) return scene;
-      if (index === 0 || index === scenes.length - 1) return scene;
-      if ((count.get(scene.layout) ?? 0) < 2 || !spare.length) return scene;
-      const next = spare.shift()!;
-      count.set(scene.layout, (count.get(scene.layout) ?? 1) - 1);
-      count.set(next, 1);
-      note('every scene had the same shape, so the middle of the film is cut differently');
-      if (next === 'picture') return { ...scene, layout: 'picture', image_prompt: scene.image_prompt || `${want.bible}. ${subjectOf(scene)}`, text: scene.text && countWords(scene.text) <= 8 ? scene.text : undefined };
-      if (next === 'quote') return { ...scene, layout: 'quote', text: trimTo(scene.text || scene.say || '', 16) };
-      if (next === 'stat') { const figure = figureIn(scene.say) ?? figureIn(scene.text); return figure ? { ...scene, layout: 'stat', heading: figure, text: trimTo(keywords(scene.text ?? scene.say ?? '', 6), 6) } : scene; }
-      const parts = (scene.text || scene.say || '').split(/[,;]|\band\b/i).map((one) => trimTo(one.trim(), 5)).filter(Boolean).slice(0, 4);
-      if (parts.length >= 2) return { ...scene, layout: next, heading: scene.heading ?? 'In short', bullets: parts, text: undefined };
-      return scene;
-    });
-  }
-
-  // 4. What is on screen is a headline, and never the narration. Captioned, a scene that writes out what is being
+  // 3. What is on screen is a headline, and never the narration. Captioned, a scene that writes out what is being
   //    said is three lines of the same sentence stacked on one frame, which is exactly what the founder was handed.
   scenes = scenes.map((scene) => {
     let made = { ...scene };
@@ -231,10 +237,13 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       if (repeats && made.text) {
         note('the words on screen were the words being said, so those scenes show a picture and let the captions do the talking');
         made = { ...made, text: undefined };
+        // The scene still has to be something, and what it becomes is decided the same way everything else is:
+        // the shape its own words will carry, preferring one this film has not used yet.
         if (NEEDS_TEXT.has(made.layout)) {
-          made = can('picture')
-            ? { ...made, layout: 'picture', image_prompt: made.image_prompt || `${want.bible}. ${subjectOf(scene)}` }
-            : { ...made, text: trimTo(keywords(scene.say ?? '', 4), 4) || 'Keep watching' };
+          made = reshape({ ...made, text: scene.text }, ['stat', 'compare', 'checklist', 'picture'])
+            ?? { ...made, text: trimTo(keywords(scene.say ?? '', 4), 4) || 'Keep watching' };
+          // Whatever shape it took, the words that were the echo do not survive into it.
+          if (made.text && scene.say && !ECHO_FINE.has(made.layout) && echoes(made.text, scene.say) >= 0.6) made = { ...made, text: undefined };
         }
       }
       if (made.bullets?.length) made = { ...made, bullets: made.bullets.map((one) => trimTo(one, 5)) };
@@ -246,16 +255,37 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     return made;
   });
 
+  // 4. Four shapes, at least, in anything over ten seconds. A scene that is the third of its kind is given the shape
+  //    its own words ask for, and failing that a picture — which is what a film does with a line it cannot draw.
+  if (want.seconds > 10 && scenes.length >= 4) {
+    const count = new Map<Layout, number>();
+    for (const scene of scenes) count.set(scene.layout, (count.get(scene.layout) ?? 0) + 1);
+    const order: Layout[] = ['stat', 'checklist', 'compare', 'steps', 'picture', 'hook'];
+    scenes = scenes.map((scene, index) => {
+      if (kinds.size >= 4) return scene;
+      if (index === 0 || index === scenes.length - 1) return scene;
+      if ((count.get(scene.layout) ?? 0) < 2) return scene;
+      const made = reshape(scene, order.filter((one) => one !== scene.layout), true);
+      if (!made) return scene;
+      count.set(scene.layout, (count.get(scene.layout) ?? 1) - 1);
+      count.set(made.layout, (count.get(made.layout) ?? 0) + 1);
+      note('every scene had the same shape, so the middle of the film is cut differently');
+      return made;
+    });
+  }
+
   // 5. No scene holds longer than a breath. A line too long for one scene is two scenes when there is room for one
   //    and a shorter line when there is not.
   const ceiling = want.pace === 'punchy' ? 4 : 6;
-  const most = Math.round(ceiling * 2.4);
+  const most = Math.floor(ceiling * 2.4);
   const split: Scene[] = [];
-  for (const scene of scenes) {
+  const waiting = [...scenes];
+  while (waiting.length) {
+    const scene = waiting.shift()!;
     const spoken = countWords(scene.say);
     if (spoken <= most || !scene.say) { split.push(scene); continue; }
     const sentences = scene.say.split(/(?<=[.!?])\s+/).filter(Boolean);
-    if (sentences.length >= 2 && split.length + scenes.length < MAX_SCENES) {
+    if (sentences.length >= 2 && split.length + waiting.length < MAX_SCENES - 1) {
       // Break on the sentence nearest the middle, so neither half is a fragment.
       let half = 0;
       let run = 0;
@@ -263,8 +293,8 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       const first = sentences.slice(0, Math.max(1, half)).join(' ');
       const rest = sentences.slice(Math.max(1, half)).join(' ');
       note('a scene that ran for half the film is cut in two');
-      split.push({ ...scene, say: first });
-      split.push({ layout: can('picture') ? 'picture' : 'statement', say: rest, image_prompt: can('picture') ? `${want.bible}. ${subjectOf(scene)}` : undefined, text: can('picture') ? undefined : trimTo(keywords(rest, 5), 5) });
+      // Both halves go back in the queue: one cut is rarely enough for a model that wrote a paragraph.
+      waiting.unshift({ ...scene, say: first }, { layout: can('picture') ? 'picture' : 'statement', say: rest, image_prompt: can('picture') ? `${want.bible}. ${subjectOf(scene)}` : undefined, text: can('picture') ? undefined : trimTo(keywords(rest, 5), 5) });
       continue;
     }
     note('a line too long to hold one scene is shortened');
