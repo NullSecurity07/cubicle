@@ -14,6 +14,7 @@
     "e2e": "playwright test",
     "assets": "node scripts/to-webp.mjs",
     "check:providers": "node scripts/check-providers.ts",
+    "check:media": "node scripts/check-media.ts",
     "gate": "tsc --noEmit && vitest run && playwright test"
   },
   "dependencies": {

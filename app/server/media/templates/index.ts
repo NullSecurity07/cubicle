@@ -36,7 +36,7 @@ function marksOf(sceneAt) {
       const seed = index * 97 + order * 13 + 7;
       const kind = element.dataset.mark;
       let shape = null;
-      if (kind === "highlight") shape = pen.rectangle(x - h * 0.1, y + h * 0.16, w + h * 0.2, h * 0.78, { seed, roughness: 1.4, bowing: 1.1, stroke: "none", fill: mark, fillStyle: "hachure", hachureAngle: -4, hachureGap: h * 0.19, fillWeight: h * 0.21 });
+      if (kind === "highlight") shape = pen.rectangle(x - h * 0.08, y + h * 0.28, w + h * 0.16, h * 0.62, { seed, roughness: 1.4, bowing: 1.1, stroke: "none", fill: mark, fillStyle: "hachure", hachureAngle: -4, hachureGap: h * 0.15, fillWeight: h * 0.17 });
       else if (kind === "dash") shape = pen.line(x, y + h / 2, x + w, y + h / 2, { seed, roughness: 2.1, bowing: 2.4, stroke: signal, strokeWidth: 3.4 });
       else if (kind === "frame") shape = pen.rectangle(x - 10, y - 10, w + 20, h + 20, { seed, roughness: 2.2, bowing: 1.4, stroke: ink, strokeWidth: 3.6 });
       else if (kind === "ring") shape = pen.ellipse(x + w / 2, y + h / 2, Math.max(w * 1.22, h * 0.95), h * 1.28, { seed, roughness: 2.5, bowing: 1.3, stroke: signal, strokeWidth: 4.4 });
@@ -68,7 +68,7 @@ export function composition(film: { title: string; shape: Shape; look: Look; sho
   const total = at;
 
   const sections = film.shots.map((shot, index) => `      <section class="clip" id="s${index}" data-start="${starts[index]}" data-duration="${shot.seconds}">`
-    + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}${sceneHtml(shot, index)}</section>`);
+    + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}${sceneHtml(shot, index, film.shape)}</section>`);
   // Every sound needs an id of its own or the mixer never finds it and the film comes out silent.
   const sounds = film.shots.flatMap((shot, index) => (shot.voice
     ? [`      <audio id="say${index}" src="assets/${shot.voice.file}" data-start="${(starts[index] + 0.35).toFixed(2)}" data-duration="${shot.voice.seconds.toFixed(2)}" data-volume="1"></audio>`]
@@ -97,10 +97,12 @@ ${sketch ? `${MARKS}\n` : ''}      const SCENE_AT = ${JSON.stringify(starts)};
 ${steps.map((step) => `        ${step}`).join('\n')}
       }
       // The type has to have settled before anything is measured or drawn; the timeline is handed over only once it has.
+      // The marks are measured before the timeline is built, while every word still sits where it will come to rest:
+      // building it puts each scene into its opening state, and a line drawn around that lands off the words.
       document.fonts.ready.then(() => {
         const tl = gsap.timeline({ paused: true });
-        build(tl);
-${sketch ? '        markSteps(tl, marksOf(SCENE_AT));\n' : ''}        window.__timelines["main"] = tl;
+${sketch ? '        const drawn = marksOf(SCENE_AT);\n' : ''}        build(tl);
+${sketch ? '        markSteps(tl, drawn);\n' : ''}        window.__timelines["main"] = tl;
       });
     </script>
   </body>

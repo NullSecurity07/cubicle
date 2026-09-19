@@ -96,7 +96,9 @@ describe('the composition', () => {
 
     const sketch = composition({ title: 'One', shape: 'wide', look: 'sketch', shots: shots(film.scenes) });
     expect(sketch).toContain('src="vendor/rough.js"');
-    expect(sketch).toContain('markSteps(tl, marksOf(SCENE_AT));');
+    // The hand drawn marks are measured before the timeline is built, or they land where the words start, not where they rest.
+    expect(sketch.indexOf('const drawn = marksOf(SCENE_AT);')).toBeLessThan(sketch.indexOf('build(tl);'));
+    expect(sketch).toContain('markSteps(tl, drawn);');
     expect(sketch).toContain('<svg class="marks" id="m0" viewBox="0 0 1280 720">');
     expect(sketch).not.toContain('.rule", { scaleX: 0 }');
   });
@@ -117,6 +119,42 @@ describe('the composition', () => {
       // The quote marks are put on for whoever wrote the line without them.
       expect(page).toContain('“It just works.”');
     }
+  });
+
+  it('sets the words for a screen watched from across a room', () => {
+    const page = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots(film.scenes) });
+    // A heading is about a tenth of the height of a wide frame, and a title half as much again.
+    expect(page).toContain('.heading { font-size: calc(68px * var(--s));');
+    expect(page).toContain('.display { font-size: calc(112px * var(--s));');
+    // The block sits a little above the middle of the frame, where the eye reads it as centred.
+    expect(page).toContain('padding: var(--margin) var(--margin) calc(var(--margin) + var(--lift));');
+    expect(page).toContain('--lift: 56px;');
+  });
+
+  it('makes the one figure on a stat scene the whole scene, and runs it up to itself', () => {
+    const wide = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([{ layout: 'stat', heading: '38%', text: 'of a sprint' }]) });
+    expect(wide).toContain('<p class="stat rise" data-mark="ring" style="font-size: 300px">');
+    expect(wide).toContain('<span class="count" style="min-width: 2ch">38</span>%');
+    expect(wide).toContain('{ textContent: 0 }, { textContent: 38,');
+    // A longer figure is stepped down to the width of the frame rather than wrapped onto two lines.
+    const long = composition({ title: 'One', shape: 'tall', look: 'clean', shots: shots([{ layout: 'stat', heading: '$1,200 saved' }]) });
+    expect(long).toContain('style="font-size: 62px"');
+    // A figure that is really a sentence stops shrinking at the size of a heading and wraps.
+    const said = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([{ layout: 'stat', heading: 'a whole working day, every single week' }]) });
+    expect(said).toContain('style="font-size: 68px; white-space: normal"');
+    // Nothing to count in a figure that is not a whole number: it is simply shown.
+    const words = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([{ layout: 'stat', heading: 'Twice over' }]) });
+    expect(words).not.toContain('class="count"');
+    expect(words).not.toContain('textContent');
+  });
+
+  it('sets a line short enough to say in one breath as large as a title', () => {
+    const page = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([
+      { layout: 'statement', text: 'We stopped guessing.' },
+      { layout: 'statement', text: 'Most teams lose a whole day a week in the handover between design and build.' },
+    ]) });
+    expect(page).toContain('<p class="display rise">We stopped guessing.</p>');
+    expect(page).toContain('<p class="heading rise">Most teams lose');
   });
 
   it('keeps whatever was written out of the page\'s own markup', () => {
