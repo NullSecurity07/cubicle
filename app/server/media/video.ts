@@ -731,7 +731,14 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const silentOnScreen = ![shot.scene.heading, shot.scene.text, ...(shot.scene.bullets ?? [])].some((one) => one?.trim());
           // A moving shot, or a real picture or screen filling the frame, carries a scene on its own — one wordless
           // picture in three is the point. Anything else with nothing written on it is a gradient.
-          const carries = !!shot.video || (!!shot.image && (shot.scene.layout === 'picture' || shot.scene.layout === 'device'));
+          //
+          // …and in a captioned film a photograph behind the words carries it too, because the words being said
+          // are already on the frame. This line is where a real reel lost its caption track: the critic had taken
+          // the narration off three scenes precisely so the captions could say it, and then this put a headline
+          // cut from the same sentence straight back on — which silenced the captions again. A scene needs words
+          // of its own only when there is nothing else at all.
+          const carries = !!shot.video || (!!shot.image && (shot.scene.layout === 'picture' || shot.scene.layout === 'device'))
+            || (captions && !!shot.bg && !!shot.scene.say);
           if (silentOnScreen && shot.scene.say && !carries) {
             shot.scene = { ...shot.scene, layout: shot.scene.layout === 'picture' ? 'statement' : shot.scene.layout, text: headlineOf(shot.scene.say ?? '', 6) || trimTo(shot.scene.say, 6) };
           }
