@@ -183,7 +183,10 @@ function cutOnce(takes: Take[], words: Word[], style: Cutting, opts: { sfxOn?: b
     // past three seconds is where viewers leave — but then it moves slowly, as a camera does, not as a zoom does.
     const stale = shot.seconds > 3;
     if (!inside && !stale) return;
-    if (at - lastPunch < 2) return;
+    // Two punch-ins in a row is a film that never sits still, so a shot next to one that already pushed goes
+    // without — unless it would otherwise be held still past three seconds, which is where viewers leave. That
+    // is not a punch anyway: it is a slow camera, and two of those running on is what a camera does.
+    if (at - lastPunch < 2 && !stale) return;
     lastPunch = at;
     const [near, far] = style.punch;
     const reach = inside ? far : near;
@@ -193,9 +196,13 @@ function cutOnce(takes: Take[], words: Word[], style: Cutting, opts: { sfxOn?: b
 
   const total = shots.length ? Math.round((shots.at(-1)!.at + shots.at(-1)!.seconds) * 1000) / 1000 : 0;
   const cues = opts.sfxOn === false ? [] : soundsFor(shots, takes, style, total);
-  const ducks = takes
-    .filter((take) => take.to > take.from)
-    .map((take): Duck => ({ at: Math.round(take.from * 1000) / 1000, seconds: Math.round((take.to - take.from) * 1000) / 1000, db: style.duck[1] }));
+  // Where the bed has to get out of the way: under the narration, and nowhere else. A film with nobody speaking
+  // has nothing to duck for, and a bed pulled down twenty decibels under silence is a bed that never arrives.
+  const ducks = words.length
+    ? takes
+      .filter((take) => take.to > take.from && spokenIn(words, take))
+      .map((take): Duck => ({ at: Math.round(take.from * 1000) / 1000, seconds: Math.round((take.to - take.from) * 1000) / 1000, db: style.duck[1] }))
+    : [];
   return { shots, cues, ducks, total, changesPer10s: total ? Math.round((shots.length / total) * 100) / 10 : 0 };
 }
 
@@ -240,6 +247,10 @@ function betweenWords(words: Word[], at: number): number {
   }
   return best;
 }
+
+// Whether anybody is actually speaking over this scene, rather than it merely having a window on the clock.
+const spokenIn = (words: Word[], take: Take): boolean =>
+  words.some((one) => one.at >= take.from - 0.2 && one.at < take.to + 0.2);
 
 const insidePhrases = (phrases: Phrase[], from: number, to: number): Phrase[] =>
   phrases.filter((one) => one.at >= from - 0.01 && one.at + one.seconds <= to + 0.01);

@@ -142,12 +142,25 @@ describe('sound, and how little of it there is', () => {
     expect(editFilm(many, words, cuttingFor('creator', 'punchy'), { sfxOn: false }).cues).toEqual([]);
   });
 
-  it('tells the bed to get out of the way wherever somebody is speaking', () => {
+  it('tells the bed to get out of the way wherever somebody is speaking, and nowhere else', () => {
     const made = editFilm(many, words, cuttingFor('creator', 'punchy'));
-    expect(made.ducks).toHaveLength(many.length);
+    expect(made.ducks.length).toBeGreaterThan(0);
     for (const duck of made.ducks) {
       expect(duck.db).toBeGreaterThanOrEqual(18);
       expect(duck.db).toBeLessThanOrEqual(25);
+      // Every window it names really has words in it.
+      expect(words.some((one) => one.at >= duck.at - 0.2 && one.at < duck.at + duck.seconds + 0.2)).toBe(true);
+    }
+    // A film with nobody speaking has nothing to duck for: a bed pulled down under silence never arrives at all.
+    expect(editFilm(many, [], cuttingFor('creator', 'punchy')).ducks).toEqual([]);
+  });
+
+  it('keeps a wordless film moving even where two shots run on', () => {
+    // Never two punch-ins in a row — unless the second would otherwise be held still past three seconds, which is
+    // where viewers leave. A slow camera move is not a punch, and two of those running on is what a camera does.
+    const held = Array.from({ length: 4 }, (_one, index) => take(index, index * 4.2, (index + 1) * 4.2, { least: 4.2 }));
+    for (const shot of editFilm(held, [], cuttingFor('clean', 'calm')).shots) {
+      if (shot.seconds > 3) expect(shot.punch, `a ${shot.seconds}s shot with nothing moving in it`).toBeDefined();
     }
   });
 });
