@@ -1,5 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 
+// The same pair the config starts the app on; another checkout running its checks at the same time has another pair.
+const WEB_PORT = Number(process.env.E2E_PORT ?? 7430);
+const API_PORT = WEB_PORT + 1;
+
 const node = (page: Page, id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
 const handle = (page: Page, id: string, side: string) => node(page, id).locator(`.react-flow__handle[data-handleid="${side}"]`);
 const centre = (box: { x: number; y: number; width: number; height: number }) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
@@ -320,7 +324,7 @@ test('a browser card can be added; only a wired person can drive it, and never t
   await send(page, 'build', '/tool browse {"action":"open","url":"https://example.com"}');
   await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Browsed open https://example.com');
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('[ref=e1]');
-  await send(page, 'build', '/tool browse {"action":"open","url":"http://127.0.0.1:7431/api/stage"}');
+  await send(page, 'build', `/tool browse {"action":"open","url":"http://127.0.0.1:${API_PORT}/api/stage"}`);
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('cannot be opened');
 
   await card.hover();
@@ -728,7 +732,7 @@ test('a video studio: the founder sets the film going and watches it being made,
 
 test('the api answers the app\'s own page and refuses everyone else', async ({ browser }) => {
   // No script token here: this is what the founder's window and any other web page really send.
-  const context = await browser.newContext({ baseURL: 'http://localhost:7430', extraHTTPHeaders: {} });
+  const context = await browser.newContext({ baseURL: `http://localhost:${WEB_PORT}`, extraHTTPHeaders: {} });
   const page = await context.newPage();
   await page.goto('/');
   await expect(page.locator('.react-flow__node-room').first()).toBeVisible();
@@ -738,16 +742,16 @@ test('the api answers the app\'s own page and refuses everyone else', async ({ b
   const stranger = await context.newPage();
   await stranger.route('https://stranger.example/', (route) => route.fulfill({ contentType: 'text/html', body: '<title>stranger</title>' }));
   await stranger.goto('https://stranger.example/');
-  const outcome = await stranger.evaluate(async () => {
-    const tried = await fetch('http://localhost:7431/api/stage', { method: 'PUT', mode: 'no-cors', headers: { 'content-type': 'text/plain' }, body: '{"rooms":[],"docs":[],"wires":[]}' }).then(() => 'sent', () => 'blocked');
+  const outcome = await stranger.evaluate(async (port) => {
+    const tried = await fetch(`http://localhost:${port}/api/stage`, { method: 'PUT', mode: 'no-cors', headers: { 'content-type': 'text/plain' }, body: '{"rooms":[],"docs":[],"wires":[]}' }).then(() => 'sent', () => 'blocked');
     return tried;
-  });
+  }, API_PORT);
   expect(['sent', 'blocked']).toContain(outcome);
   // Whatever the browser did with it, the stage is untouched, and a bare request gets nothing either.
   expect(await page.evaluate(async () => (await (await fetch('/api/stage')).json()).rooms.length)).toBeGreaterThan(0);
-  const bare = await fetch('http://localhost:7431/api/stage');
+  const bare = await fetch(`http://localhost:${API_PORT}/api/stage`);
   expect(bare.status).toBe(403);
-  const rebound = await fetch('http://localhost:7431/api/stage', { headers: { host: 'stranger.example' } }).catch(() => null);
+  const rebound = await fetch(`http://localhost:${API_PORT}/api/stage`, { headers: { host: 'stranger.example' } }).catch(() => null);
   expect(rebound?.status ?? 403).toBe(403);
   await context.close();
 });
