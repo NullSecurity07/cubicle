@@ -8,12 +8,13 @@ import { projectDir } from '../coder.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
-import { headlineOf, inStyle, noFace, repair, subjectOf, trimTo, type Want } from './critic.ts';
+import { headlineOf, repair, trimTo, type Want } from './critic.ts';
+import { liftFor, meanLight, scrimFor } from './contrast.ts';
 import {
-  bibleFor, direct, faceIn, layoutsFor, narratorWanted, onCamera, readBrief, tellOf, understandingOf,
+  bibleFor, direct, faceIn, layoutsFor, narratorWanted, onCamera, photograph, readBrief, tellOf, understandingOf,
   type Asked, type Material, type Understanding,
 } from './director.ts';
-import { cuttingFor, editFilm, type Take } from './editor.ts';
+import { checkCut, cuttingFor, editFilm, type Take } from './editor.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
 import { cachedImages, mayDrawHere, outOfPictures } from './image.ts';
@@ -21,13 +22,17 @@ import { SECONDS_EACH } from './local-image.ts';
 import type { Maker, Piece } from './jobs.ts';
 import { availableRam, availableSwap, MINUTES_EACH, needsRam, roomToFilm as room } from './local-clips.ts';
 import {
-  AI_LAYOUTS, isPurpose, MAX_AI, MAX_BACKGROUNDS, MAX_LOCAL_AI, PURPOSE, PURPOSES, SCENES_A_BACKGROUND,
-  fallbackOf, saysWhatItShows, withinCaps, type Spec,
+  AI_LAYOUTS, content, isPurpose, MAX_AI, MAX_LOCAL_AI, PURPOSE, PURPOSES,
+  crowdsCaptions, fallbackOf, saysWhatItShows, withinCaps, type Spec,
 } from './spec.ts';
+import { broll, type Stock } from './stock.ts';
+import {
+  afforded, drawnAs, lineUnder, shareOut, slotsFor, type Slot,
+} from './visuals.ts';
 import { sourcesOf } from './grounding.ts';
 import { readProject, VIEWPORTS } from './sources.ts';
 import {
-  composition, FORMATS, isPack, PACE, PACK, PACKS, PACES, projectFile, sceneSeconds, snapToBeats,
+  composition, FORMATS, isPack, PACE, PACK, PACKS, PACES, paintOf, projectFile, sceneSeconds, snapToBeats,
   type Pace, type Pack, type Shot,
 } from './templates/index.ts';
 import { timeWords, type Word } from './timings.ts';
@@ -110,6 +115,8 @@ export type VideoDeps = {
   // thing: the backend that can move a real mouth to a real recording. Without one this studio shows no talking
   // person at all, so it is asked for by name rather than inferred from `clips`.
   clips?: Clips; local?: Clips; lipsync?: Clips; music?: Music; forbidden?: string[];
+  // Real photographs somebody took, when a free key is set. Nothing breaks without one; the film draws instead.
+  stock?: Stock;
   stage?: () => Promise<Stage>;
   assets?: (cardId: string) => Promise<MediaAsset[]>;
   // The pictures another studio card has already made, newest first: a wired image studio's work is the film's.
@@ -174,26 +181,10 @@ const SCROLLS = { desktop: [0, 780, 1700], mobile: [0, 900] };
 const chose = <T extends string>(value: unknown, allowed: readonly T[]): T | undefined =>
   (typeof value === 'string' && value !== 'auto' && (allowed as readonly string[]).includes(value) ? value as T : undefined);
 
-// A picture model cannot write, and it has no negative prompt either: "no text, no lettering" is read as part of the
-// same sentence and summons the very thing it asked to be spared — which is how a scene of real type came to sit on
-// a picture of fake type reading "rogblellem / Solvic". The only thing that works is never asking. So the nouns that
-// summon lettering are taken out of the subject before it is drawn, and a scene that is mostly type is given a
-// texture to sit on rather than a scene of its own, which is the better picture anyway.
-const SUMMONS_TEXT = /\b(charts?|graphs?|dashboards?|decks?|slides?|metrics|checklists?|lists?|texts?|signs?|signage|screens?|displays?|interfaces?|ui|uis|apps?|websites?|web ?pages?|pages?|documents?|reports?|spreadsheets?|logos?|brands?|labels?|posters?|banners?|headlines?|newspapers?|magazines?|books?|whiteboards?|notebooks?|notes?|letters?|words?|writing|typography|captions?|subtitles?|numbers?|figures?|percentages?)\b/gi;
-// A scene whose frame is already full of words wants something quiet behind them, not a competing picture.
-const TYPE_HEAVY = new Set(['checklist', 'bullets', 'steps', 'compare', 'stat', 'quote', 'hook', 'title', 'cta', 'outro']);
-const TEXTURE = 'a softly out-of-focus surface, the light falling across it, nothing in sharp focus, no subject in the middle of the frame';
-export function bgPrompt(bible: string, subject: string, layout: string): string {
-  // A scene may not ask to be drawn when the rest of the film is photographed: one film, one look. Nor may it ask
-  // for somebody looking down the lens: a picture behind the words is of what is being talked about, and the only
-  // person in a film is the one who is actually on camera.
-  const clean = noFace(inStyle(subject, bible)).replace(SUMMONS_TEXT, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([,.])/g, '$1').trim();
-  // What a picture behind the words is of, said to the model in as many words: the subject, and people only where
-  // they happen to be in it.
-  const said = TYPE_HEAVY.has(layout) || clean.split(/\s+/).filter(Boolean).length < 3 ? TEXTURE
-    : `${clean}, shallow depth of field, anybody in the picture is at work and turned away from the camera`;
-  return said.toLowerCase().startsWith(bible.slice(0, 18).toLowerCase()) ? said : `${bible}. ${said}`;
-}
+// Where the words a picture model is handed are written is `media/visuals.ts` now, one picture a shot, out of the
+// phrase being spoken under it. What used to be here — a subject cut out of a scene's headline, the nouns that
+// summon lettering struck out of it, and a texture wherever a frame was already full of type — is all in there,
+// with a critic over it that no single function could have.
 
 // About how long this is going to take, said before it starts rather than found out. Nothing here is precise; it is
 // honest, which is what a founder watching a spinner actually needs.
@@ -393,6 +384,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         let understanding: Understanding;
         let spec: Spec;
         let bible: string;
+        // The one idea the film turns on, which every picture in it is drawn against. A storyboard handed over
+        // whole has no plan behind it, so the brief itself stands in for one.
+        let angle = asked.prompt.slice(0, 160);
         const mayUseAi = wantsAi || (autoAi && here);
         // Whether anything can really move a mouth to a recording right now. It is the only thing that lets a
         // person speak on camera in one of these films, and a film never fakes it.
@@ -423,6 +417,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           understanding = directed.understanding;
           spec = directed.spec;
           bible = directed.bible;
+          angle = directed.plan.angle || angle;
         }
         const shape: Shape = understanding.shape;
         const pack: Pack = isPack(understanding.pack) ? understanding.pack : 'clean';
@@ -486,16 +481,19 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const noFf = await ffReady();
         if (noFf && (spec.scenes.some((scene) => scene.layout === 'footage') || mood !== 'none')) report(noFf);
 
-        const wantsPictures = spec.scenes.filter((scene) => scene.layout === 'picture' || scene.bg_prompt).length;
         const wantsClips = spec.scenes.filter((scene) => AI_LAYOUTS.has(scene.layout)).length;
         const drawnHere = mayDrawHere();
-        report(`${spec.scenes.length} scenes, ${estimate({ scenes: spec.scenes.length, seconds, pictures: drawing ? Math.min(wantsPictures, MAX_BACKGROUNDS + 2) : 0, clips: here ? wantsClips : 0, narrate: !!saying, here: drawnHere })}`);
-        report('drawing the pictures and recording the narration…');
+        // How long this is going to take, said before it starts rather than found out. The number of pictures is a
+        // guess until the film has been read aloud and cut — a scene is one shot or it is three — so it is said
+        // again, exactly, the moment the shot list exists and before anything slow has happened.
+        const guessed = drawing ? afforded(Math.round(spec.scenes.length * 1.6), drawnHere) : 0;
+        report(`${spec.scenes.length} scenes, ${estimate({ scenes: spec.scenes.length, seconds, pictures: guessed, clips: here ? wantsClips : 0, narrate: !!saying, here: drawnHere })}`);
+        report('cutting what you gave it and recording the narration…');
         const shots: Shot[] = spec.scenes.map((scene) => ({ scene, seconds: 0 }));
         const said = (index: number, line: string) => report(`scene ${index + 1}: ${line}`);
 
-        // Everything a scene needs is made beside everything else: the stills, the lines, the clips and the founder's
-        // own footage are the slow part, and none of them waits on another.
+        // Everything a scene was handed is made ready first: the founder's own footage, the screenshots, the moving
+        // shots. None of these depends on how the film is cut, and all of them decide how it is cut.
         const scenework = Promise.all(spec.scenes.map(async (scene, index) => {
           const shot = shots[index];
           // Where a named asset really is: in this job's assets already, or still out in the shared files. A phone film
@@ -536,75 +534,6 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           }
         }));
 
-        // The pictures. A scene that is a picture gets one; every other scene gets one drawn behind it, because a
-        // film of flat dark rectangles is the single thing the founder said was wrong with the last one. Three at a
-        // time: a free picture service asked for a dozen at once refuses most of them.
-        const picturework = (async () => {
-          if (!drawing) return;
-          // Nothing is asked for twice once the answer is "not today". A free service says it plainly, and going
-          // on asking costs the founder a minute a scene to be told the same thing.
-          let spent = false;
-          const spendable = async (job: () => Promise<void>) => { if (!spent) await job(); };
-          const gone = (error: Error, index: number, front: boolean) => {
-            if (outOfPictures(error.message)) {
-              if (!spent) report("today's free pictures are used up, so the scenes sit on textures instead — they come back tomorrow");
-              spent = true;
-              return;
-            }
-            if (front) said(index, `no picture: ${error.message}`);
-          };
-
-          // The pictures in front of the words: a picture scene is a picture of its own, and no two are the same.
-          const front = spec.scenes.map((scene, index) => async () => spendable(async () => {
-            if (shots[index].image || (scene.layout !== 'picture' && scene.layout !== 'logo') || !scene.image_prompt) return;
-            try {
-              const piece = await drawing.make({ prompt: bgPrompt(bible, scene.image_prompt, 'picture'), shape }, { report: () => {}, signal });
-              const file = `shot-${index}.${piece.ext}`;
-              await writeFile(join(at, 'assets', file), piece.bytes);
-              shots[index].image = file;
-            } catch (error) { gone(error as Error, index, true); }
-          }));
-
-          // What goes behind the words. A handful for the whole film, shared out in runs, each scene taking its own
-          // crop and tint of the one it was given: six frames of one film rather than six photographs of six.
-          // Every scene that is not itself a moving picture gets a real one behind it. A scene carrying an asset
-          // its own layout cannot show — a hook holding a picture, say — used to fall through both the picture
-          // pass and this one and end up on the drifting mesh, so a reel with a whole picture model ready opened
-          // on coloured fog. A scene with nothing written in `bg_prompt` is given one out of its own words.
-          const wants = spec.scenes.map((scene, index) => ({
-            scene, index,
-            about: scene.bg_prompt?.trim() || `${bible}. ${subjectOf(scene)}`,
-          })).filter(({ scene, index }) => !shots[index].image && !shots[index].video && scene.layout !== 'picture' && scene.layout !== 'logo')
-            // Somebody on camera is not a backdrop for the scenes either side of them. A portrait drawn for one of
-            // these used to be shared down its whole run, so five scenes of a reel sat on a close-up of a face
-            // that was not even the film's presenter.
-            .filter(({ scene }) => !scene.person && !AI_LAYOUTS.has(scene.layout));
-          const takes = Math.min(MAX_BACKGROUNDS, Math.max(2, Math.ceil(wants.length / SCENES_A_BACKGROUND)));
-          const runs = Array.from({ length: Math.min(takes, wants.length) }, (_, take) =>
-            wants.filter((_one, at) => Math.floor((at * takes) / wants.length) === take));
-          const behind = runs.filter((run) => run.length).map((run, take) => async () => spendable(async () => {
-            try {
-              const piece = await drawing.make({ prompt: bgPrompt(bible, run[0].about, run[0].scene.layout), shape }, { report: () => {}, signal });
-              const file = `bg-${take}.${piece.ext}`;
-              await writeFile(join(at, 'assets', file), piece.bytes);
-              for (const { index } of run) { shots[index].bg = file; shots[index].bgShared = run.length > 1; }
-            } catch (error) { gone(error as Error, run[0].index, false); }
-          }));
-          // The one portrait a film draws: every on-camera scene that has no moving shot takes the same one, so a
-          // film has one person in it whichever way it got them.
-          const faces = spec.scenes.map((scene, index) => ({ scene, index }))
-            .filter(({ scene, index }) => (scene.person || AI_LAYOUTS.has(scene.layout)) && !shots[index].image && !shots[index].video && scene.bg_prompt?.trim());
-          const theirs = faces.length ? [async () => spendable(async () => {
-            try {
-              const piece = await drawing.make({ prompt: faces[0].scene.bg_prompt!, shape }, { report: () => {}, signal });
-              const file = `face-of-this-film.${piece.ext}`;
-              await writeFile(join(at, 'assets', file), piece.bytes);
-              for (const { index } of faces) shots[index].bg = file;
-            } catch (error) { gone(error as Error, faces[0].index, false); }
-          })] : [];
-          await pool([...front, ...theirs, ...behind], 3);
-        })();
-
         // Somebody speaking on camera waits for the reading, because a mouth is matched to a recording and there
         // was no recording until now.
         const lipsyncWork = async () => {
@@ -638,7 +567,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           }
         };
 
-        await Promise.all([scenework, picturework]);
+        await scenework;
         if (signal?.aborted) throw new Error('stopped');
 
         // --- the narration, read once ---------------------------------------------------------------------------
@@ -648,10 +577,11 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // ever knew what came before it. Read in one go the voice rises, falls and hurries the way somebody
         // talking does — and there is one clock for the whole piece instead of a dozen that have to be added up.
         //
-        // What that costs, said plainly, because it changes two things the studio used to guarantee. A scene with
-        // nothing spoken over it no longer gets a silence of its own; it takes its screen time from the shot
-        // beside it, the way a cutaway does. And a piece of footage is cut to the line rather than the line
-        // waiting for the footage. Both are what an editor would do anyway.
+        // It happens here, before a single picture is drawn, and that order is the whole of phase three. Until now
+        // the pictures were drawn first, from the scenes, which meant one picture a scene however many times the
+        // editor cut inside it — a reel of five photographs where the shot list called for eleven, which is what
+        // "one picture with the text swapped over it" actually was. The reading is what the cut is made against,
+        // so the reading comes first, then the cut, and only then does anybody draw anything.
         const target = asked.spec ? 0 : seconds;
         const lines = spec.scenes.map((scene) => (scene.say ?? '').trim());
         const script = lines.filter(Boolean).join(' ');
@@ -683,7 +613,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             }
             voice = { file, seconds: spoke };
             // And now the one measurement in this studio that was always a guess. Every cut, punch-in and caption
-            // in the film lands on one of these.
+            // in the film lands on one of these — and so does every picture, because a picture is drawn from the
+            // phrase that is actually being said while it is on screen.
             report('listening back for where each word falls…');
             const heard = await timeWords(bin, join(at, 'assets', file), parts, PACE[pace].lead, { script: script.split(/\s+/).filter(Boolean), signal });
             words = heard.words;
@@ -714,33 +645,6 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             await ff(FFMPEG, ['-y', '-loglevel', 'error', '-ss', from.toFixed(3), '-i', join(at, 'assets', voice.file),
               '-t', (until - from).toFixed(3), join(at, 'assets', file)], signal, 120)
               .then(() => { shots[index].voice = { file, seconds: until - from }; }, () => {});
-          }
-        }
-        await lipsyncWork();
-        if (signal?.aborted) throw new Error('stopped');
-
-        // A scene whose picture never arrived becomes the words it carries, so a founder with no picture key still
-        // gets a film, and every scene is as long as the line said over it.
-        for (const shot of shots) {
-          const layout = shot.scene.layout;
-          if ((layout === 'picture' || layout === 'device') && !shot.image) shot.scene = fallbackOf(shot.scene);
-          if ((layout === 'footage' || layout === 'clip' || layout === 'presenter') && !shot.video && !shot.image) shot.scene = fallbackOf(shot.scene);
-          // A scene that lost its words to the captions and then lost its picture to a refused call would be three
-          // seconds of nothing at all. Whenever there is nothing written on a scene, the words come back — the
-          // line it is already saying, cut to a headline.
-          const silentOnScreen = ![shot.scene.heading, shot.scene.text, ...(shot.scene.bullets ?? [])].some((one) => one?.trim());
-          // A moving shot, or a real picture or screen filling the frame, carries a scene on its own — one wordless
-          // picture in three is the point. Anything else with nothing written on it is a gradient.
-          //
-          // …and in a captioned film a photograph behind the words carries it too, because the words being said
-          // are already on the frame. This line is where a real reel lost its caption track: the critic had taken
-          // the narration off three scenes precisely so the captions could say it, and then this put a headline
-          // cut from the same sentence straight back on — which silenced the captions again. A scene needs words
-          // of its own only when there is nothing else at all.
-          const carries = !!shot.video || (!!shot.image && (shot.scene.layout === 'picture' || shot.scene.layout === 'device'))
-            || (captions && !!shot.bg && !!shot.scene.say);
-          if (silentOnScreen && shot.scene.say && !carries) {
-            shot.scene = { ...shot.scene, layout: shot.scene.layout === 'picture' ? 'statement' : shot.scene.layout, text: headlineOf(shot.scene.say ?? '', 6) || trimTo(shot.scene.say, 6) };
           }
         }
 
@@ -807,23 +711,166 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
 
         const edit = editFilm(takes, words, style, { sfxOn: sfx });
         report(`${edit.shots.length} shots over ${spec.scenes.length} scenes — ${edit.changesPer10s} picture changes every ten seconds`);
+        // What the shot list says about itself, before anything is drawn for it. A hold nobody breaks and a hook
+        // that has not changed picture by two and a half seconds are both faults of the cut, not of the pictures,
+        // and both were in the proof films.
+        for (const line of checkCut(edit.shots, takes.map((one) => one.scene), takes.map((one) => !!one.moving)).slice(0, 3)) report(line.says);
+
+        // --- the pictures ---------------------------------------------------------------------------------------
+        //
+        // One picture a cut. Every shot in the list above gets something of its own on screen, drawn from the
+        // phrase actually being spoken while it is up — not from the scene's headline, and not from the film's
+        // subject in general. `media/visuals.ts` holds the rules and the critic; this is the part that spends
+        // quota on them, in the order a real edit would: what the founder gave us, then a real photograph
+        // somebody took, then one drawn here, and a texture only when everything else has run out.
+        const needing = edit.shots.map((one, at) => ({ one, at }))
+          .filter(({ one }) => !shots[one.scene].video && !shots[one.scene].image);
+        const visuals = await (async () => {
+          const slots: Slot[] = edit.shots.map((one) => ({
+            scene: one.scene, take: one.take, layout: spec.scenes[one.scene].layout,
+            line: lineUnder(words, one.at, one.at + one.seconds, spec.scenes[one.scene].say ?? ''),
+          }));
+          const empty = slotsFor(slots, captions, spec.scenes);
+          // Whatever the storyboard already wrote for a scene is the first take's picture, so the director's own
+          // work is the starting point rather than something thrown away.
+          const seeded = empty.map((one) => {
+            const wrote = spec.scenes[one.scene].image_prompt ?? spec.scenes[one.scene].bg_prompt;
+            return one.take === 0 && wrote ? { ...one, subject: wrote } : one;
+          });
+          const asked = seeded.filter((one) => needing.some(({ at }) => at === one.at));
+          if (!asked.length) return seeded;
+          const drawnFrom = await photograph(asked, bible, angle, deps.think, { report });
+          const byAt = new Map(drawnFrom.map((one) => [one.at, one]));
+          return seeded.map((one) => byAt.get(one.at) ?? one);
+        })();
+
+        // How many of those can really be drawn today, said in minutes before the waiting starts. Away from this
+        // machine a picture is four seconds; here it is most of a minute, and eleven minutes of waiting for a
+        // fifteen-second reel is not a trade a founder would make without being asked.
+        const many = drawing ? afforded(needing.length, drawnHere) : 0;
+        const owners = shareOut(needing.map(({ one }) => one.seconds), many);
+        if (drawing) {
+          report(`${many} picture${many === 1 ? '' : 's'} for ${edit.shots.length} shots — ${estimate({ scenes: spec.scenes.length, seconds, pictures: many, clips: 0, narrate: false, here: drawnHere })}`);
+        }
+        // Which drawable shot each one takes its picture from, and what was made for it.
+        const made = new Map<number, { file: string; hold?: number; lift?: number }>();
+        const paint = paintOf(pack, brand);
+        {
+          let spent = false;
+          const gone = (error: Error, which: number) => {
+            if (outOfPictures(error.message)) {
+              if (!spent) report("today's free pictures are used up, so the rest of the film sits on textures — they come back tomorrow");
+              spent = true;
+              return;
+            }
+            said(needing[which].one.scene, `no picture: ${error.message}`);
+          };
+          const jobs = [...new Set(owners)].map((which) => async () => {
+            if (spent || !drawing) return;
+            const visual = visuals[needing[which].at];
+            const scene = spec.scenes[visual.scene];
+            let file = '';
+            // A real photograph of a real thing, from somebody who took one. People in stock are b-roll and
+            // nothing else: never the film's own speaker, and never beside a claim about a named product.
+            if (deps.stock && !deps.stock.ready()) {
+              try {
+                const looking = content(visual.subject).slice(0, 5).join(' ') || trimTo(visual.line, 4);
+                const found = broll(await deps.stock.find({ query: looking, kind: 'photo', shape, many: 6 }, signal),
+                  { speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean) });
+                if (found.length) {
+                  const piece = await deps.stock.get(found[0], signal);
+                  file = `stock-${which}.${piece.ext}`;
+                  await writeFile(join(at, 'assets', file), piece.bytes);
+                }
+              } catch { file = ''; }
+            }
+            if (!file) {
+              try {
+                const piece = await drawing.make({ prompt: drawnAs(visual, bible), shape }, { report: () => {}, signal });
+                file = `frame-${which}.${piece.ext}`;
+                await writeFile(join(at, 'assets', file), piece.bytes);
+              } catch (error) { gone(error as Error, which); return; }
+            }
+            // And now the one thing nobody was doing: looking at the picture that came back. How hard it has to
+            // be held down for the words on it to be read is measured off the picture itself, where the words
+            // really sit — so a white wall gets a wash and a dark doorway gets almost nothing. A graded pack
+            // that has come back too dark to see a subject in is lifted rather than ungraded.
+            const path = join(at, 'assets', file);
+            const big = scene.layout === 'hook' || scene.layout === 'stat' || scene.layout === 'title';
+            // The scrim is solved for the *weakest* colour on the frame rather than the strongest. A line of
+            // support copy is set in the quiet tone, and a wash that clears the headline leaves that line
+            // floating — which is what "grey list text" was.
+            const hold = await scrimFor(path, visual.room === 'top' ? 'top' : 'foot', paint.quiet, paint.ground,
+              { big, floor: PACK[pack].scrim * 0.35 }).catch(() => null);
+            const light = PACK[pack].format?.grade ? await meanLight(path).catch(() => null) : null;
+            made.set(which, { file, hold: hold ?? undefined, lift: light === null ? undefined : liftFor(light) });
+          });
+          await pool(jobs, drawnHere ? 1 : 3);
+        }
+
+        await lipsyncWork();
+        if (signal?.aborted) throw new Error('stopped');
+
+        // A scene whose picture never arrived becomes the words it carries, so a founder with no picture key still
+        // gets a film, and every scene is as long as the line said over it.
+        const drewFor = new Map<number, { file: string; hold?: number; lift?: number; shared: boolean }>();
+        needing.forEach(({ at: order }, which) => {
+          const owner = owners[which];
+          const piece = made.get(owner);
+          if (piece) drewFor.set(order, { ...piece, shared: owner !== which });
+        });
+        // Which scenes ended up with something in front of the words at all: a picture scene with nothing to show
+        // is a picture scene that has to become its words.
+        const sceneGot = new Set(edit.shots.map((one, order) => (drewFor.has(order) ? one.scene : -1)).filter((one) => one >= 0));
+        for (const [index, shot] of shots.entries()) {
+          const layout = shot.scene.layout;
+          // A device scene is a screenshot inside a mockup, so nothing but a real screenshot will do: a drawn
+          // picture behind the words is not the product, and an empty phone frame is worse than a sentence.
+          if (layout === 'device' && !shot.image) shot.scene = fallbackOf(shot.scene);
+          if (layout === 'picture' && !shot.image && !sceneGot.has(index)) shot.scene = fallbackOf(shot.scene);
+          if ((layout === 'footage' || layout === 'clip' || layout === 'presenter') && !shot.video && !shot.image) shot.scene = fallbackOf(shot.scene);
+          // A scene that lost its words to the captions and then lost its picture to a refused call would be three
+          // seconds of nothing at all. Whenever there is nothing written on a scene, the words come back — the
+          // line it is already saying, cut to a headline.
+          const silentOnScreen = ![shot.scene.heading, shot.scene.text, ...(shot.scene.bullets ?? [])].some((one) => one?.trim());
+          // A moving shot, or a real picture or screen filling the frame, carries a scene on its own — one wordless
+          // picture in three is the point. Anything else with nothing written on it is a gradient.
+          //
+          // …and in a captioned film a photograph behind the words carries it too, because the words being said
+          // are already on the frame. This line is where a real reel lost its caption track: the critic had taken
+          // the narration off three scenes precisely so the captions could say it, and then this put a headline
+          // cut from the same sentence straight back on — which silenced the captions again. A scene needs words
+          // of its own only when there is nothing else at all.
+          const carries = !!shot.video || (!!shot.image && (shot.scene.layout === 'picture' || shot.scene.layout === 'device'))
+            || (captions && sceneGot.has(index) && !!shot.scene.say);
+          if (silentOnScreen && shot.scene.say && !carries) {
+            shot.scene = { ...shot.scene, layout: shot.scene.layout === 'picture' ? 'statement' : shot.scene.layout, text: headlineOf(shot.scene.say ?? '', 6) || trimTo(shot.scene.say, 6) };
+          }
+        }
 
         // The shot list as the renderer wants it: one entry a shot, each with the scene it belongs to, its own
-        // picture and the push the editor asked for. A second take of a scene never shows the first take's
-        // picture — a picture change that changes nothing is worse than a hold.
-        const others = [...new Set(shots.map((one) => one.bg).filter(Boolean) as string[])];
+        // picture, the hold measured off that picture and the push the editor asked for. Two shots of one scene
+        // never show the same frame — a picture change that changes nothing is worse than a hold.
+        // The picture a scene ended up with, whichever of its shots was the one that got it. A second take of a
+        // picture scene whose own picture was never drawn used to render an <img> pointed at nothing.
+        const sceneHas = new Map<number, { file: string; hold?: number; lift?: number; shared: boolean }>();
+        edit.shots.forEach((one, order) => {
+          const drew = drewFor.get(order);
+          if (drew && !sceneHas.has(one.scene)) sceneHas.set(one.scene, drew);
+        });
         const cut: Shot[] = edit.shots.map((one, order): Shot => {
           const base = shots[one.scene];
-          const take = one.take;
+          const fills = base.scene.layout === 'picture' || base.scene.layout === 'logo';
+          const drew = drewFor.get(order) ?? (fills ? sceneHas.get(one.scene) : undefined);
           return {
             ...base,
             seconds: one.seconds,
-            take,
+            take: one.take,
             punch: one.punch ? { ...one.punch, at: Math.max(0, one.punch.at - one.at) } : undefined,
-            // A later take keeps the scene's own full-frame picture where it has one and otherwise takes the next
-            // background along, so the frame really does change.
-            ...(take && !base.video && !base.image
-              ? { bg: others.length ? others[(order + take) % others.length] : base.bg, bgShared: true }
+            ...(drew && !base.video && !base.image
+              ? (fills
+                ? { image: drew.file, scrim: drew.hold, lift: drew.lift }
+                : { bg: drew.file, bgShared: drew.shared, scrim: drew.hold, lift: drew.lift })
               : {}),
           };
         });
@@ -880,8 +927,18 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // The words a film turns on, which are what the caption track lights up.
         const keywords = [...new Set(edit.shots.map((one) => one.keyword).filter(Boolean) as string[])];
         // And where it must stay quiet: the stretches of narration whose scene already writes the line out.
-        const quiet = cut.map((shot, index) => (saysWhatItShows(shot.scene) ? { at: starts[index], seconds: shot.seconds } : null))
+        // Where the caption track must stay quiet: a scene that already writes out what is being said, and a scene
+        // whose own type grows down into the band the captions live in. Two systems of type in one part of the
+        // frame is not a caption track, it is a collision — a real reel put the word "AWAY." on top of a checklist.
+        const quiet = cut.map((shot, index) => (saysWhatItShows(shot.scene) || crowdsCaptions(shot.scene)
+          ? { at: starts[index], seconds: shot.seconds } : null))
           .filter(Boolean) as { at: number; seconds: number }[];
+        // A film whose scenes nearly all write their own words has almost no caption track left, and a founder who
+        // switched captions on deserves to hear that from the card rather than to notice it in the film.
+        const hushed = quiet.reduce((sum, one) => sum + one.seconds, 0);
+        if (captions && total > 0 && hushed > total * 0.6) {
+          report('most of this film writes its own words on screen, so the captions stay out of the way — two sets of words in one place is read as neither');
+        }
 
         await writeFile(join(at, 'index.html'), composition({
           title: spec.title, shape, look: pack === 'brand' && !brand ? 'clean' : pack, shots: cut, pace, captions, brand,
@@ -919,7 +976,12 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         if (shot) poster = { ext: 'png', bytes: await readFile(join(at, 'poster', shot)) };
         return { ext: 'mp4', bytes, poster, credit };
       } finally {
-        await rm(at, { recursive: true, force: true }).catch(() => {});
+        // The project a film was rendered from is thrown away, because it is a copy of everything the founder
+        // wired plus a few megabytes of pictures. When something is wrong with a finished film the only way to
+        // see why is that project — which scene silenced its own captions, what the picture prompt really said —
+        // so there is one switch that keeps it, and it is off unless somebody debugging turns it on.
+        if (process.env.STAGE_KEEP_PROJECT === '1') report(`the project this was rendered from is at ${at}`);
+        else await rm(at, { recursive: true, force: true }).catch(() => {});
       }
     },
   };

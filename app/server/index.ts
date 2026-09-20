@@ -29,6 +29,7 @@ import { lettered } from './media/lettering.ts';
 import { createMedia } from './media/jobs.ts';
 import { createMusic, fakeMusic } from './media/music.ts';
 import { fakeVideos, hyperframesVideos } from './media/video.ts';
+import { pexels } from './media/stock.ts';
 import { byGrade, fakeVoices, voiceMakers, VOICES } from './media/voice.ts';
 import { createMemory } from './memory.ts';
 import { missionsOf } from './missions.ts';
@@ -136,6 +137,9 @@ const media = createMedia({
     voicegen: voices,
     videogen: fake ? [fakeVideos] : [hyperframesVideos({
       dir: workspace, images: firstImages(...pictures), voices: voices[0], think: storyboard, clips, local, lipsync: online, music,
+      // Real photographs somebody took, when the founder has put a free Pexels key in .env. Without one the
+      // studio draws every picture, which is what it did before and still does for anything nobody has photographed.
+      stock: pexels(process.env, fetch, resolve(root, 'app/.cache/stock')),
       cacheDir: resolve(root, 'app/.cache'),
       forbidden: [workspace, root],
       stage: () => store.loadStage(),

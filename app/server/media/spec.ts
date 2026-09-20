@@ -2,8 +2,12 @@ import type { Shape } from '../../shared/model.ts';
 import { MOODS, type Mood } from './audio.ts';
 import { isPack, PACES, type Pack, type Pace } from './templates/looks.ts';
 
-// Seventeen shapes a scene can take, in the order a film tends to use them.
-export const LAYOUTS = ['title', 'hook', 'statement', 'bullets', 'checklist', 'steps', 'compare', 'picture', 'device',
+// Eighteen shapes a scene can take, in the order a film tends to use them. `chart` is the newest and it is the
+// one the research kept naming: a film over fifteen seconds with a number, a list or a comparison in its script
+// and no graphic anywhere is a film reading its own bullet points out over a photograph, which is what the proof
+// films did. A bar that grows and a figure that counts up is information; four lines of type on a blurred field
+// is a slide.
+export const LAYOUTS = ['title', 'hook', 'statement', 'bullets', 'checklist', 'steps', 'compare', 'chart', 'picture', 'device',
   'stat', 'quote', 'logo', 'cta', 'footage', 'clip', 'presenter', 'outro'] as const;
 export type Layout = (typeof LAYOUTS)[number];
 // One scene of a video, as the director or a person fills it in. `say` is the line spoken over it; `image_prompt` is
@@ -29,18 +33,19 @@ export const MAX_SCENES = 24;
 // Every drawn still costs a call to a free picture service with a day's quota, and every AI clip costs far more.
 // A picture in front of the words and a picture behind them cost the same, so the two caps are near enough the same.
 export const MAX_IMAGES = 10;
-// How many pictures are drawn to stand behind the words of a whole film, and how many scenes may share one.
+// What used to cap how many pictures stood behind the words of a whole film, and how many scenes shared one.
 //
-// These were four and three, and the reasoning was sound and the result was not. Six frames of one film should
-// look like six frames of one film — but what three-scenes-to-a-picture actually produced was one photograph
-// held for the whole film with a slightly different crop on it, which reads as a still with type over it. What
-// makes six frames one film is the style bible every one of them is drawn from, not drawing fewer of them.
+// These were four and three, then six and one, and the reasoning was sound and the result was not. Six frames of
+// one film should look like six frames of one film — but what three-scenes-to-a-picture produced was one
+// photograph held for the whole film with a slightly different crop on it, which reads as a still with type over
+// it. One a scene was better and was still wrong, because a scene is not a shot: the editor cuts inside a scene,
+// and a cut where the picture does not change is worse than a hold.
 //
-// So: a picture a scene, up to six, which on a short film is a real picture change at every cut. The cost is real
-// — a free daily quota is a few hundred, and this machine takes about a minute each — and it is said on the card
-// before the founder presses Make.
+// So a picture belongs to a shot now, and how many a film can have is decided in `media/visuals.ts` by what the
+// waiting really costs — four seconds each away from this machine, most of a minute on it — rather than by a
+// number written down here. These two are kept because the tool still reports them to whoever asks what a film's
+// limits are, and because a storyboard written by hand is still held to the first of them.
 export const MAX_BACKGROUNDS = 6;
-// A run of scenes this long shares one background before another is drawn.
 export const SCENES_A_BACKGROUND = 1;
 // A clip from the free Spaces spends somebody else's daily minutes, so a film makes at most two. A clip made on this
 // machine spends nothing but time, so a film may have twice as many — the founder is told what that time costs.
@@ -75,6 +80,14 @@ export function echoes(text: string, said: string): number {
   return mine.filter((word) => theirs.has(word)).length / mine.length;
 }
 
+// The layouts whose type grows downward into the band the captions live in: a list, a comparison, a chart. A
+// scene like that already gives a viewer plenty to read, and a caption track under it is a second system of type
+// in the same part of the frame — which a real reel showed as the word "AWAY." sitting on top of a checklist.
+// These scenes keep their words and lose their captions for as long as they are on screen.
+export const CROWDS_CAPTIONS = new Set<Layout>(['bullets', 'checklist', 'steps', 'compare', 'chart']);
+export const crowdsCaptions = (scene: Scene): boolean =>
+  CROWDS_CAPTIONS.has(scene.layout) && (scene.bullets?.length ?? 0) > 0;
+
 // Whether what is written on a scene is already the whole of the line being said over it. A hook is the spoken line
 // set large, and a word-by-word caption under it is the same sentence twice on one frame — which is what the founder
 // was handed. The test is how much of the *spoken* line is already on the screen: five words of a twelve-word line
@@ -105,8 +118,26 @@ const number = (value: unknown, what: string, low: number, high: number): number
 
 // Which layouts need what, said once so the parser and the prompt cannot drift apart.
 const NEEDS_HEADING = new Set<Layout>(['title', 'stat', 'logo']);
+// One bar of a chart: a label and the figure it stands for, in either order. The figure is what the bar is as long
+// as; the rest of the line is what it is called.
+export const BAR = /(\d+(?:\.\d+)?)\s*(%|per ?cent|x\b|k\b|m\b|bn\b)?/i;
+// The verbs a spoken line hangs a figure on. A chart's label is what the bar is called, not the clause it came
+// out of: "Rent" rather than "Rent takes", which is what reading a sentence off a bar looks like.
+const HANGS_ON = /\s+(?:takes?|took|is|are|was|were|costs?|spends?|makes?|made|gets?|got|goes|went|reached?|hits?|grew|grows?|fell|falls?|accounts? for|comes? to|adds? up to|equals?)\s*$/i;
+export const barOf = (line: string): { label: string; value: number; unit: string } | null => {
+  const found = BAR.exec(line ?? '');
+  if (!found) return null;
+  const value = Number(found[1]);
+  if (!Number.isFinite(value)) return null;
+  const said = (found[2] ?? '').trim().toLowerCase();
+  const unit = said.startsWith('per') ? '%' : said;
+  const label = line.replace(found[0], ' ')
+    .replace(/[.!?,;:]+/g, ' ').replace(/\s{2,}/g, ' ').replace(/^[\s–—-]+|[\s–—-]+$/g, '').trim()
+    .replace(HANGS_ON, '').trim();
+  return { label: label || 'Total', value, unit };
+};
 const NEEDS_TEXT = new Set<Layout>(['statement', 'quote', 'outro', 'hook', 'cta']);
-const NEEDS_BULLETS = new Set<Layout>(['bullets', 'checklist', 'steps']);
+const NEEDS_BULLETS = new Set<Layout>(['bullets', 'checklist', 'steps', 'chart']);
 // A scene that is a moving picture the studio has to make or cut before there is anything to show.
 export const AI_LAYOUTS = new Set<Layout>(['clip', 'presenter']);
 // A scene that already fills the frame with something. Everything else gets a background drawn behind it.
@@ -157,6 +188,14 @@ export function parseSpec(raw: unknown): Spec {
     if (NEEDS_BULLETS.has(layout) && !made.bullets) throw new Error(`${where}: a ${layout} scene needs "bullets"`);
     // A comparison is two things next to each other; one of them is a statement and three of them is a list.
     if (layout === 'compare' && made.bullets?.length !== 2) throw new Error(`${where}: a compare scene needs exactly two "bullets" — the before and the after`);
+    // A chart is drawn from its own numbers, so every bar has to carry one. A "chart" of four labels with nothing
+    // to measure is a list with a rectangle behind it.
+    if (layout === 'chart') {
+      const bars = made.bullets ?? [];
+      if (bars.length < 2) throw new Error(`${where}: a chart scene needs at least two "bullets", each one a label and a number`);
+      const without = bars.filter((one) => !BAR.test(one));
+      if (without.length) throw new Error(`${where}: "${without[0]}" has no number in it — every bar of a chart is written as a label and a figure, like "Year one 40%"`);
+    }
     // A picture scene is a picture: its caption is welcome but not required, because a captioned film already has
     // words at the foot of the frame and a second line of them there is one line too many.
     if (layout === 'picture' && !made.image_prompt) throw new Error(`${where}: a picture scene needs "image_prompt" — the whole scene to draw`);

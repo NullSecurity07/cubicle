@@ -25,6 +25,27 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   a measured grade that is the film's declared format rather than a filter laid over it — word-by-word captions,
   and a music bed ducked under the narration. Nothing about a film leaves this
   machine except what you wired to it.
+- **A picture a cut** (2026-09-20): the narration is recorded and measured *before* anything is drawn, the film is
+  cut against it, and only then is a picture asked for — **one per shot**, written from the phrase actually being
+  spoken while that shot is on screen. A deterministic critic reads them before a single call is spent: it throws
+  out a picture that could illustrate any sentence (there is a banned list, headed by the hand-holding-a-phone shot
+  that filled a whole reel), a picture that repeats another one's subject, a picture that shares no word with its
+  own line and names no stand-in for it, and any picture that asks a picture model to write — which it cannot do.
+  The framing is dealt out rather than requested, so a film cuts between a wide, a medium and a detail instead of
+  six medium shots of the same thing. Then the still that came back is **looked at**: the brightness where the type
+  will sit is measured and the scrim is solved for the lightest wash that gets the words over 4.5:1, so a white
+  wall gets a wash and a dark doorway gets almost nothing; a graded look whose picture came back too dark to see a
+  subject in is lifted rather than ungraded. Type has floors now — a headline is never under 8% of a wide frame or
+  6% of a tall one, a support line never under 3.2%, nothing at all under 2.6% — and a still frame never holds past
+  three seconds without something arriving on it. Put a free **Pexels** key in `PEXELS_API_KEY` and real
+  photographs come first, with the photographer, the page and the licence written down beside every file.
+  A film has **one person in it** at most — a fixed look draws the same stranger every time it is asked for one,
+  and four shots of a stranger nobody introduced is the same fault as no picture change at all. And a film over
+  fifteen seconds with a number, a list or a comparison in its script now carries a **graphic**: a chart drawn in
+  the page, bars growing and figures counting up, rather than four bullet points held over a blurred field. A
+  list arrives a line at a time rather than all at once, a scene whose own words reach the caption band keeps
+  its words and drops its captions — never two systems of type in one part of the frame — and a letterboxed
+  film measures its type against the picture you can see rather than against the file.
 - **An editor, not a slideshow** (2026-09-20): the narration is read in **one go** for the whole film, so the
   voice rises and falls the way somebody talking does, and then it is listened back to — every word's exact place
   is measured. A deterministic editor turns that into a shot list: cuts land on the phrase boundaries the speaker
@@ -87,7 +108,10 @@ and then each one takes about 55 seconds on a laptop with a 4 GB graphics card �
 four steps, with the weights held in system memory because the card is too small for them. It needs a Vulkan driver
 and about 9 GB of memory free. Last come the free Hugging Face demos, which need no account and have the smallest
 allowance of the three. `STAGE_IMAGE_BACKEND=local` keeps every picture on this machine, `cloud` never uses it, and
-`STAGE_NO_LOCAL_IMAGES=1` turns the local one off. **Voices** need no key at all: Kokoro-82M runs on this
+`STAGE_NO_LOCAL_IMAGES=1` turns the local one off. **Real photographs** are optional and take one free key:
+`PEXELS_API_KEY` from pexels.com/api, 200 searches an hour, every file cached in `app/.cache/stock/` with the
+photographer, the page and the licence written down beside it. A photograph of a person is b-roll and never the
+film's own speaker, because the licence forbids implying an endorsement nobody gave. **Voices** need no key at all: Kokoro-82M runs on this
 machine's processor, and the first line spoken downloads the 310 MB model into `app/.cache/voice/` (the card
 shows the progress); `GEMINI_API_KEY` is the fallback if it will not load. **Music** needs no key and no account:
 Openverse is searched anonymously (20 searches a minute, 200 a day, which is far more than a founder will use) and

@@ -1,5 +1,5 @@
 import type { Shape } from '../../../shared/model.ts';
-import type { Scene } from '../spec.ts';
+import { barOf, type Scene } from '../spec.ts';
 import type { Part } from './captions.ts';
 import { FORMATS, PACE, PACK, type Pace, type Pack } from './looks.ts';
 
@@ -12,6 +12,13 @@ export type Shot = {
   // Whether `bg` is a picture this scene shares with others. A shared one is shown at its own crop and its own
   // tint, so the film hangs together without three scenes looking like the same frame held too long.
   bgShared?: boolean;
+  // How hard this shot's own picture has to be held down for the words on it to be read, measured off the picture
+  // itself rather than taken from the pack. A dark doorway needs almost nothing; a white wall needs most of a
+  // wash. Unset, the pack's own number stands, which is what every film had until this was measured.
+  scrim?: number;
+  // How much this shot's picture is lifted before the pack's grade goes over it. A declared grade over an already
+  // dark photograph is how "dim and murky, subjects unreadable" happens, and the fix is the picture, not the look.
+  lift?: number;
   voice?: { file: string; seconds: number; parts?: Part[] };
   // Which take of its scene this is. A scene long enough to want a picture change is several shots, and each of
   // them shows something different — otherwise the change is the same frame twice, which is worse than a hold.
@@ -105,6 +112,11 @@ function device(shot: Shot, shape: Shape): string {
 // Four soft lamps drifting behind the words, placed from the scene's own number so two renders of the same film put
 // them in the same place. This is what a scene with no picture gets, and it is the reason no film is a flat rectangle
 // any more.
+// How many lamps a scene without a picture has behind it. It is three, four or five by turns, and the timeline
+// has to ask the same question the markup did: a tween aimed at a fourth lamp on a scene that drew three is a
+// missing target, which GSAP complains about once a frame for the rest of the render.
+export const blobsAt = (index: number): number => 3 + (index % 3);
+
 export function meshHtml(index: number, pack: Pack): string {
   const paint = PACK[pack].paint;
   // Three to five lamps, a different number and a different order of the film's colours each scene, with a band of
@@ -112,7 +124,7 @@ export function meshHtml(index: number, pack: Pack): string {
   // pictures the same green cloud, which is what a founder saw when the day's free pictures ran out.
   const seed = (step: number) => ((index * 37 + step * 61) % 100) / 100;
   const wheel = [paint.signal, paint.mark, paint.quiet, paint.mark, paint.signal, paint.quiet];
-  const many = 3 + (index % 3);
+  const many = blobsAt(index);
   const colours = Array.from({ length: many }, (_one, step) => wheel[(index * 2 + step) % wheel.length]);
   const blobs = colours.map((colour, step) => {
     const x = Math.round(-8 + seed(step) * 96);
@@ -147,13 +159,22 @@ function share(index: number): string {
   return `object-position:${x}% ${y}%; filter:hue-rotate(${hue}deg) saturate(${warm}) brightness(${light}) blur(${soft}px);`;
 }
 
-export const groundHtml = (shot: Shot, index: number, pack: Pack): string =>
+// What this shot measured about its own picture, written as two variables the stylesheet reads: how hard the
+// scrim holds it down and how much the picture is lifted before the pack's grade. Both are left out where nothing
+// could look at the picture, and then the pack's own numbers stand.
+export const measured = (shot: Shot): string =>
+  [shot.scrim === undefined ? '' : `--hold: ${shot.scrim.toFixed(2)};`, shot.lift === undefined || shot.lift === 1 ? '' : `--raise: ${shot.lift.toFixed(2)};`]
+    .filter(Boolean).join(' ');
+
+export const groundHtml = (shot: Shot, index: number, pack: Pack): string => {
   // A scene playing a moving shot has its ground already: the shot. Lamps drawn over it are a green wash across
   // somebody's face, which is what the founder was shown when a clip finally arrived.
-  (shot.video ? ''
-    : shot.bg
-      ? `<div class="bg" id="bg${index}"><img src="assets/${shot.bg}" alt="" data-layout-allow-overflow${shot.bgShared ? ` style="${share(index)}"` : ''}></div>`
-      : meshHtml(index, pack));
+  if (shot.video) return '';
+  if (!shot.bg) return meshHtml(index, pack);
+  const held = measured(shot);
+  return `<div class="bg" id="bg${index}"${held ? ` style="${held}"` : ''}>`
+    + `<img src="assets/${shot.bg}" alt="" data-layout-allow-overflow${shot.bgShared ? ` style="${share(index)}"` : ''}></div>`;
+};
 
 // --- the seventeen shapes ---------------------------------------------------------------------------------------------
 
@@ -187,13 +208,24 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     parts.push(say(text, weight(text, shape)), '<div class="rule" data-mark="dash"></div>');
   } else if (scene.layout === 'bullets') {
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
-    parts.push(`<ul class="list">${(scene.bullets ?? []).map((one) => `<li class="rise"><span class="tick" data-mark="dash"></span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
+    parts.push(`<ul class="list">${(scene.bullets ?? []).map((one) => `<li class="rise one-at-a-time"><span class="tick" data-mark="dash"></span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
   } else if (scene.layout === 'checklist') {
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
-    parts.push(`<ul class="list list--check">${(scene.bullets ?? []).map((one) => `<li class="rise"><span class="mark">${CHECK}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
+    parts.push(`<ul class="list list--check">${(scene.bullets ?? []).map((one) => `<li class="rise one-at-a-time"><span class="mark">${CHECK}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
   } else if (scene.layout === 'steps') {
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
-    parts.push(`<ul class="list list--steps">${(scene.bullets ?? []).map((one, at) => `<li class="rise"><span class="step">${at + 1}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
+    parts.push(`<ul class="list list--steps">${(scene.bullets ?? []).map((one, at) => `<li class="rise one-at-a-time"><span class="step">${at + 1}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
+  } else if (scene.layout === 'chart') {
+    // The bars are measured against the largest of them, so the longest fills the track and the rest are read
+    // against it. A chart whose longest bar is two thirds of the way across is a chart nobody can read.
+    const bars = (scene.bullets ?? []).map((one) => barOf(one)).filter(Boolean) as { label: string; value: number; unit: string }[];
+    const most = Math.max(...bars.map((one) => one.value), 1);
+    if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`);
+    parts.push(`<div class="chart">${bars.map((one, at) => `<div class="chart__row rise one-at-a-time">`
+      + `<div class="chart__head"><p class="chart__name">${html(one.label)}</p>`
+      + `<p class="chart__value"><span class="count" style="min-width: ${String(Math.round(one.value)).length}ch">${Math.round(one.value)}</span>${html(one.unit)}</p></div>`
+      + `<div class="chart__track"><div class="chart__fill" id="c${index}-${at}" style="transform: scaleX(${(one.value / most).toFixed(3)})"></div></div>`
+      + `</div>`).join('')}</div>`);
   } else if (scene.layout === 'compare') {
     const labels = scene.labels ?? [];
     const sides = (scene.bullets ?? []).slice(0, 2).map((one, at) => `<div class="side${at === 1 ? ' side--after' : ''}" id="p${index}-${at}">`
@@ -201,7 +233,10 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`);
     parts.push(`<div class="compare">${sides}</div>`);
   } else if (scene.layout === 'picture') {
-    parts.push(`<div class="shot" data-mark="frame"><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
+    // A picture scene with no picture is not a picture scene, and an <img> pointed at nothing is a 404 in the
+    // render log and a blank rectangle in the film. Everything upstream tries to stop this happening; this is the
+    // line that makes it harmless when something upstream does not.
+    if (shot.image) parts.push(`<div class="shot" data-mark="frame"${measured(shot) ? ` style="${measured(shot)}"` : ''}><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
     if (text) parts.push(`<div class="plate"><p class="lead rise">${kinetic(text, scene.emphasis, pack, false)}</p></div>`);
     return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
   } else if (MOVING.has(scene.layout)) {
@@ -244,10 +279,10 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
   return `<div class="frame${onbg}" id="f${index}">${parts.join('')}</div>`;
 }
 
-// Which scenes carry the recurring line, and which carry the little marks beside a list.
+// Which scenes carry the recurring line. The little marks beside a list no longer have an entrance of their
+// own: they belong to the line they sit beside, and that line arrives on its own beat.
 const hasRule = (scene: Scene) => scene.layout === 'title' || scene.layout === 'statement' || scene.layout === 'stat'
   || scene.layout === 'outro' || scene.layout === 'logo' || ((scene.layout === 'bullets' || scene.layout === 'checklist' || scene.layout === 'steps') && !!scene.heading?.trim());
-const hasTicks = (scene: Scene) => scene.layout === 'bullets' && !!scene.bullets?.length;
 
 // A scene that fills the frame with a picture, moving or not, and so takes the slow push rather than the rise.
 const FILLS = new Set(['picture', 'footage', 'clip', 'presenter']);
@@ -257,13 +292,14 @@ const FILLS = new Set(['picture', 'footage', 'clip', 'presenter']);
 // punchy film does the same thing in half the time, which is the whole difference between an explainer and a reel.
 // What this scene actually put on the page. GSAP complains, loudly and once per frame, about a tween whose target is
 // not there, so nothing is animated that was not written: the html is the one thing that knows.
-export type Onscreen = { words: boolean; sweep: boolean; rise: boolean; rule: boolean; tick: boolean; mark: boolean; count: boolean };
+export type Onscreen = { words: boolean; sweep: boolean; rise: boolean; rule: boolean; tick: boolean; mark: boolean; count: boolean; oneAtATime: boolean };
 export const onscreen = (html: string): Onscreen => ({
   words: html.includes('class="w'), sweep: html.includes('class="sweep"'), rise: html.includes(' rise"') || html.includes('rise ') || html.includes('"rise'),
   rule: html.includes('class="rule"'), tick: html.includes('class="tick"'), mark: html.includes('class="mark"'), count: html.includes('class="count"'),
+  oneAtATime: html.includes('one-at-a-time'),
 });
 
-export function sceneSteps(shot: Shot, index: number, at: number, scale: number, pack: Pack, last: boolean, pace: Pace = 'calm', has: Onscreen = { words: true, sweep: true, rise: true, rule: true, tick: true, mark: true, count: true }): string[] {
+export function sceneSteps(shot: Shot, index: number, at: number, scale: number, pack: Pack, last: boolean, pace: Pace = 'calm', has: Onscreen = { words: true, sweep: true, rise: true, rule: true, tick: true, mark: true, count: true, oneAtATime: false }): string[] {
   const steps: string[] = [];
   const beat = PACE[pace];
   const style = PACK[pack];
@@ -277,7 +313,7 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
     const pan = index % 2 ? 1.6 : -1.8;
     steps.push(`tl.fromTo("#bg${index} img", { scale: 1.02, xPercent: 0 }, { scale: ${to.toFixed(2)}, xPercent: ${pan}, duration: ${(shot.seconds + style.overlap).toFixed(3)}, ease: "none" }, ${time(0)});`);
   } else {
-    for (let blob = 0; blob < 4; blob += 1) {
+    for (let blob = 0; blob < blobsAt(index); blob += 1) {
       const drift = ((index * 31 + blob * 17) % 9) - 4;
       steps.push(`tl.fromTo("#b${index}-${blob}", { xPercent: 0, yPercent: 0, scale: 1 }, { xPercent: ${drift * 1.6}, yPercent: ${drift * -1.1}, scale: ${(1 + blob * 0.03).toFixed(2)}, duration: ${(shot.seconds + style.overlap).toFixed(3)}, ease: "none" }, ${time(0)});`);
     }
@@ -300,7 +336,12 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
   }
   // The words. In a kinetic pack they arrive one at a time and a little oversized, which is what makes a reel read as
   // a reel; everywhere else the block moves as a block.
-  const rise = `#s${index} .rise`;
+  // A list is read a line at a time, so it arrives a line at a time. Four bullets landing together and then
+  // sitting still for four seconds is a slide, which is what a real documentary piece came back as — and a list
+  // on a stagger of a tenth of a second lands together as far as an eye is concerned. Each line gets a real beat
+  // of its own, spread over the first two thirds of the scene, and the generic entrance leaves them alone.
+  const lines = (shot.scene.bullets ?? []).length;
+  const rise = `#s${index} .rise${has.oneAtATime ? ':not(.one-at-a-time)' : ''}`;
   if (!has.rise) { /* nothing rose: a device scene or a bare picture */ }
   else if (style.motion === 'kinetic') {
     steps.push(`tl.fromTo("${rise}", { y: ${Math.round(beat.travel * scale * 0.6)}, opacity: 0 }, { y: 0, opacity: 1, duration: ${(beat.rise * 0.7).toFixed(2)}, ease: "${beat.ease}", stagger: ${(beat.stagger * 0.8).toFixed(3)} }, ${time(lead)});`);
@@ -313,6 +354,13 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
   } else {
     steps.push(`tl.fromTo("${rise}", { y: ${Math.round(beat.travel * scale)}, opacity: 0 }, { y: 0, opacity: 1, duration: ${beat.rise.toFixed(2)}, ease: "${beat.ease}", stagger: ${beat.stagger} }, ${time(lead)});`);
   }
+  if (has.oneAtATime && lines) {
+    const each = Math.min(0.95, Math.max(0.32, (shot.seconds * 0.62) / lines));
+    for (let line = 0; line < lines; line += 1) {
+      steps.push(`tl.fromTo("#s${index} .one-at-a-time:nth-child(${line + 1})", { y: ${Math.round(beat.travel * scale * 0.7)}, opacity: 0 },`
+        + ` { y: 0, opacity: 1, duration: ${(beat.rise * 0.8).toFixed(2)}, ease: "${beat.ease}" }, ${time(lead + 0.12 + line * each)});`);
+    }
+  }
   // The sweep of colour behind the one word the line turns on, drawn after the word has landed.
   if (style.sweep && has.sweep) steps.push(`tl.fromTo("#s${index} .sweep", { scaleX: 0 }, { scaleX: 1, duration: 0.30, ease: "power3.out" }, ${time(lead + 0.34)});`);
   // The two halves of a comparison are not one thing: the second arrives after the first has been read.
@@ -320,13 +368,29 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
     steps.push(`tl.fromTo("#p${index}-0", { x: ${-Math.round(beat.travel * 0.8)}, opacity: 0 }, { x: 0, opacity: 1, duration: ${beat.rise.toFixed(2)}, ease: "${beat.ease}" }, ${time(0.1)});`);
     steps.push(`tl.fromTo("#p${index}-1", { x: ${Math.round(beat.travel * 0.8)}, opacity: 0 }, { x: 0, opacity: 1, duration: ${beat.rise.toFixed(2)}, ease: "${beat.ease}" }, ${time(Math.min(1.5, shot.seconds * 0.42))});`);
   }
+  // A chart draws itself: the bars grow from nothing one after another and each figure runs up to its own number
+  // as its bar arrives. It is the one graphic in the film, so it is given the whole of its scene to land in and
+  // nothing else on the frame moves while it does.
+  if (layout === 'chart') {
+    const read = (shot.scene.bullets ?? []).map((one) => barOf(one)).filter(Boolean) as { value: number }[];
+    const most = Math.max(...read.map((one) => one.value), 1);
+    const each = Math.min(0.6, Math.max(0.3, (shot.seconds * 0.5) / Math.max(1, read.length)));
+    read.forEach((one, bar) => {
+      const at = time(lead + 0.2 + bar * each);
+      steps.push(`tl.fromTo("#c${index}-${bar}", { scaleX: 0 }, { scaleX: ${(one.value / most).toFixed(3)}, duration: ${each.toFixed(2)}, ease: "${beat.ease}" }, ${at});`);
+      if (has.count) {
+        steps.push(`tl.fromTo("#s${index} .chart__row:nth-child(${bar + 1}) .count", { textContent: 0 }, { textContent: ${Math.round(one.value)}, duration: ${each.toFixed(2)}, ease: "power2.out", snap: { textContent: 1 } }, ${at});`);
+      }
+    });
+  }
   // The figure on a stat scene runs up to itself, the way a counter settles on a number.
   const counted = layout === 'stat' && has.count && FIGURE.exec(shot.scene.heading?.trim() ?? '');
   if (counted) steps.push(`tl.fromTo("#s${index} .count", { textContent: 0 }, { textContent: ${counted[2]}, duration: ${Math.min(1.5, shot.seconds * 0.45).toFixed(2)}, ease: "power2.out", snap: { textContent: 1 } }, ${time(0.22)});`);
   // In the notebook the same lines are drawn by hand instead, which the marks script animates.
-  const straight = pack === 'sketch' ? [] : [has.rule && hasRule(shot.scene) && `#s${index} .rule`, has.tick && hasTicks(shot.scene) && `#s${index} .tick`].filter(Boolean);
+  const straight = pack === 'sketch' ? [] : [has.rule && hasRule(shot.scene) && `#s${index} .rule`].filter(Boolean);
   if (straight.length) steps.push(`tl.fromTo("${straight.join(', ')}", { scaleX: 0 }, { scaleX: 1, duration: ${(beat.rise * 0.94).toFixed(2)}, ease: "${beat.ease}", stagger: 0.07 }, ${time(0.22)});`);
-  if (layout === 'checklist' && has.mark) steps.push(`tl.fromTo("#s${index} .mark", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: ${(beat.rise * 0.6).toFixed(2)}, ease: "back.out(2)", stagger: ${beat.stagger} }, ${time(0.2)});`);
+  // A tick and a check mark belong to the line they sit beside, and that line has its own beat now, so they
+  // arrive inside it rather than on a stagger of their own.
   // The words leave before the frame does, so the picture is what the next scene is cut against.
   if (!last) {
     const targets = pack === 'sketch' ? `["#f${index}", "#m${index}"]` : `"#f${index}"`;

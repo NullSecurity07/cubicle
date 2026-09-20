@@ -1,6 +1,6 @@
 import type { Shape } from '../../../shared/model.ts';
 import { SFX, type Cue } from '../audio.ts';
-import { saysWhatItShows } from '../spec.ts';
+import { crowdsCaptions, saysWhatItShows } from '../spec.ts';
 import { capHtml, capLines, capSteps, wordTimes, type Word } from './captions.ts';
 import { cutSteps } from './cuts.ts';
 import { groundHtml, MOVING, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
@@ -112,7 +112,10 @@ export function composition(film: Film): string {
   const total = at;
   const last = film.shots.length - 1;
   // A scene is given its own length plus the time the next one needs to arrive over it, so the two really overlap.
-  const held = (index: number) => Math.round((film.shots[index].seconds + (index === last ? 0 : style.overlap)) * 100) / 100;
+  // The last one has nothing to hand over to, and used to end exactly on the film's own last frame — which the
+  // renderer captured a hair after the section had gone, so every film finished on a frame of black. It is held
+  // past the end instead. Nothing is on screen to see it, and the last picture is the last thing anybody sees.
+  const held = (index: number) => Math.round((film.shots[index].seconds + style.overlap) * 100) / 100;
 
   // The captions belong to the frame, not to any one scene's block: one track for the whole film, outside every
   // section, so a whip pan carries the picture away and leaves the words being said where they are.
@@ -120,7 +123,7 @@ export function composition(film: Film): string {
   // A stretch of narration whose scene already writes out what is being said gets none of it: a hook is the spoken
   // line set large, and a word-by-word caption under it is the same sentence twice on one frame, which is exactly
   // what a founder was handed.
-  const quiet = film.quiet ?? film.shots.map((shot, index) => (saysWhatItShows(shot.scene)
+  const quiet = film.quiet ?? film.shots.map((shot, index) => (saysWhatItShows(shot.scene) || crowdsCaptions(shot.scene)
     ? { at: starts[index], seconds: shot.seconds } : null)).filter(Boolean) as { at: number; seconds: number }[];
   const spoken = (film.words ?? []).filter((word) => !quiet.some((gap) => word.at >= gap.at - 0.01 && word.at < gap.at + gap.seconds));
   // One to three words at a time for a reel, two to four for a quieter film, and never more than four: past that
