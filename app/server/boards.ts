@@ -1,32 +1,17 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { COLUMNS, type BoardEvent, type Column, type Repeat, type Task } from '../shared/model.ts';
+import { catchUp, cleanRepeat, nextDue } from '../shared/automation.ts';
+import { COLUMNS, type BoardEvent, type Column, type Task } from '../shared/model.ts';
+import { automate } from './automation/fields.ts';
 
 export type Boards = ReturnType<typeof createBoards>;
 const GRACE = 10 * 60_000;
 const safe = (id: string) => { if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) throw new Error(`bad id: ${id}`); return id; };
 const newId = () => `task-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-// The next moment a repeat falls due, strictly after `after`, in local time.
-export function nextDue(repeat: Repeat, after: number): number {
-  const [hours, minutes] = repeat.time.split(':').map(Number);
-  const at = new Date(after);
-  at.setHours(hours, minutes, 0, 0);
-  for (let day = 0; day < 9; day += 1) {
-    const weekday = at.getDay();
-    const fits = repeat.every === 'day' || (repeat.every === 'weekdays' && weekday >= 1 && weekday <= 5) || (repeat.every === 'week' && weekday === (repeat.weekday ?? 1));
-    if (fits && at.getTime() > after) return at.getTime();
-    at.setDate(at.getDate() + 1);
-  }
-  return at.getTime();
-}
-
-export function cleanRepeat(value: unknown): Repeat | undefined {
-  const repeat = value as Partial<Repeat> | null | undefined;
-  if (!repeat || !['day', 'weekdays', 'week'].includes(String(repeat.every)) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(repeat.time))) return undefined;
-  const weekday = Number.isInteger(repeat.weekday) && repeat.weekday! >= 0 && repeat.weekday! <= 6 ? repeat.weekday : undefined;
-  return { every: repeat.every!, time: repeat.time!, ...(repeat.every === 'week' ? { weekday: weekday ?? 1 } : {}) };
-}
+// What a schedule means in time, and what a founder's sentence means at all, both live in `shared/automation.ts`:
+// the field on the board and the server read one sentence exactly the same way.
+export { cleanRepeat, nextDue };
 
 // Tasks live beside the stage, one file per board card. The server owns them: runs and proposals change them while
 // the founder's window only asks for changes. Every change is pushed to whoever watches the board.
@@ -69,13 +54,16 @@ export function createBoards(dir: string, now: () => number = Date.now) {
     },
     // The founder's edits. Only known fields, each checked; a repeat sets the next due time.
     async change(boardId: string, taskId: string, patch: Record<string, unknown>): Promise<Task> {
-      const task = (await load(boardId)).find((one) => one.id === taskId);
+      const tasks = await load(boardId);
+      const task = tasks.find((one) => one.id === taskId);
       if (!task) throw new Error('unknown task');
       if (typeof patch.title === 'string' && patch.title.trim()) task.title = patch.title.trim().slice(0, 200);
       if (typeof patch.detail === 'string') task.detail = patch.detail.slice(0, 4000);
       if (typeof patch.column === 'string' && (COLUMNS as readonly string[]).includes(patch.column)) task.column = patch.column as Column;
       if ('assignee' in patch) task.assignee = typeof patch.assignee === 'string' && patch.assignee ? safe(patch.assignee) : undefined;
       if ('repeat' in patch) { task.repeat = cleanRepeat(patch.repeat); task.nextRun = task.repeat ? nextDue(task.repeat, now()) : undefined; task.missed = undefined; }
+      // The rest of what a task can do by itself: a script, a skill, what it waits for, what a missed run means here.
+      automate(task, patch, tasks);
       save(boardId);
       return task;
     },
@@ -95,15 +83,18 @@ export function createBoards(dir: string, now: () => number = Date.now) {
       queue = queue.then(async () => { await mkdir(join(dir, 'trash'), { recursive: true }); await writeFile(join(dir, 'trash', `${stamp}-${gone.id}.json`), JSON.stringify(gone, null, 2)); }).catch(() => {});
       save(boardId);
     },
-    // Repeating tasks that are due now. One that fell due while the app was closed is marked missed, never run late.
+    // Repeating tasks that are due now. One that fell due while the app was closed is marked missed and never run
+    // late; whether it is then caught up once on return is the task's own choice.
     async due(boardId: string): Promise<Task[]> {
       const ready: Task[] = [];
       let changed = false;
       for (const task of await load(boardId)) {
         if (!task.repeat || !task.nextRun || task.nextRun > now()) continue;
-        if (now() - task.nextRun > GRACE) { task.missed = true; task.nextRun = nextDue(task.repeat, now()); changed = true; continue; }
+        const late = now() - task.nextRun > GRACE;
+        if (late) { task.missed = true; task.nextRun = nextDue(task.repeat, now()); changed = true; }
         if (task.run?.state === 'running' || task.run?.state === 'waiting') continue;
-        ready.push(task);
+        // However many were missed, one run makes up for them: what was wanted is today's answer, not five old ones.
+        if (!late || catchUp(task.repeat, task.onMissed)) ready.push(task);
       }
       if (changed) save(boardId);
       return ready;

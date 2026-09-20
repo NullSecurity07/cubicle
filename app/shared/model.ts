@@ -40,16 +40,30 @@ export type Media = { state: 'idle' | 'making' | 'failed'; log: string[]; proble
 export type MediaEvent = { id: string; line: string } | { id: string; changed: true };
 export const COLUMNS = ['proposed', 'todo', 'doing', 'review', 'done'] as const;
 export type Column = (typeof COLUMNS)[number];
-// When a task repeats, in the founder's local time. `weekday` (0 = Sunday) is used by 'week' only.
-export type Repeat = { every: 'day' | 'weekdays' | 'week'; time: string; weekday?: number };
-// One background run of a task. `approval` is the outward step waiting for the founder while `state` is 'waiting'.
+// When a task repeats, in the founder's local time. The founder types this in words; `shared/automation.ts` reads the
+// sentence and works out the next moment. The first three shapes are the ones that were saved before words were
+// allowed, and they still load and run untouched: 'week' uses `weekday` (0 = Sunday), 'days' several of them.
+export type Repeat =
+  | { every: 'day' | 'weekdays' | 'week'; time: string; weekday?: number }
+  | { every: 'days'; time: string; weekdays: number[] }
+  | { every: 'minutes'; minutes: number }
+  | { every: 'once'; at: number };
+// Work that is a script rather than a person: it runs in the same sandbox `run_code` uses, and no model is called.
+export type TaskScript = { language: 'javascript' | 'python'; code: string };
+// One background run of a task. `approval` is the outward step waiting for the founder while `state` is 'waiting';
+// 'blocked' is a run that never started, because something it needs was missing and nothing should be spent finding out.
 export type TaskRun = {
-  state: 'running' | 'waiting' | 'done' | 'failed' | 'stopped'; startedAt: number; finishedAt?: number;
+  state: 'running' | 'waiting' | 'done' | 'failed' | 'stopped' | 'blocked'; startedAt: number; finishedAt?: number;
   log: string[]; result?: string; approval?: ToolEvent; provider?: string; model?: string; usage?: Usage;
 };
 export type Task = {
   id: string; title: string; detail: string; column: Column; createdAt: number;
   assignee?: string; proposedBy?: string; repeat?: Repeat; nextRun?: number; missed?: boolean; run?: TaskRun;
+  // What the board does on its own. `onMissed` is this task's answer to a run that fell due while the app was closed;
+  // `skill` is one from the playbook to put in front of the work; `after` is the task this one waits for, and `from`
+  // is what that task came back with, waiting here until this one starts; `fails` counts failures in a row.
+  script?: TaskScript; skill?: string; onMissed?: 'once' | 'skip'; after?: string;
+  from?: { task: string; title: string; result: string }; fails?: number;
 };
 // What a board streams to its card: the tasks after every change, and stage effects from runs that the client must mirror.
 export type BoardEvent = { tasks: Task[] } | { effect: ToolEffect; roomId: string };
