@@ -496,8 +496,10 @@ createServer(async (req, res) => {
       res.on('close', attention.watch(tell));
       return;
     }
-    const dismissed = /^\/api\/attention\/([\w.:-]{1,160})\/dismiss$/.exec(path)?.[1];
-    if (dismissed && req.method === 'POST') { await attention.dismiss(dismissed); return json(res, 200, { ok: true }); }
+    // Every id on this list has a colon in it (`approval:call-1`, `run-failed:t2:5`), and a colon travels here as
+    // `%3A`. Without the `%` and the decoding, Dismiss reached nothing at all and the founder pressed it for nothing.
+    const dismissed = /^\/api\/attention\/([\w.:%-]{1,160})\/dismiss$/.exec(path)?.[1];
+    if (dismissed && req.method === 'POST') { await attention.dismiss(decodeURIComponent(dismissed)); return json(res, 200, { ok: true }); }
     const board = /^\/api\/boards\/([^/]+)(?:\/(events|tasks)(?:\/([^/]+)(?:\/(run|stop|learn))?)?)?$/.exec(path);
     if (board) {
       const [, boardId, part, taskId, action] = board;
