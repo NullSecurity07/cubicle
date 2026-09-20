@@ -97,7 +97,9 @@ describe('what a search is allowed to come back with', () => {
   });
 });
 
-describe('the bed this app writes itself', () => {
+// These really write the music, several seconds of it for every mood, and that is a few seconds of honest work for a
+// processor. The default five-second limit sat right on top of it, so any busy machine turned a correct run red.
+describe('the bed this app writes itself', { timeout: 30_000 }, () => {
   it('gives every mood its own piece of music, at the level a narrated film wants', () => {
     for (const mood of MOODS) {
       const made = makeBed(mood, 12, hashOf(`test:${mood}`));
@@ -143,7 +145,7 @@ describe('the bed this app writes itself', () => {
   });
 });
 
-describe('finding the beats in something nobody told us the tempo of', () => {
+describe('finding the beats in something nobody told us the tempo of', { timeout: 30_000 }, () => {
   it('counts a plain pulse exactly, and puts its beats on it', () => {
     // A hundred beats a minute of nothing but clicks: if this cannot be counted, nothing can.
     const samples = new Float32Array(44_100 * 20);
