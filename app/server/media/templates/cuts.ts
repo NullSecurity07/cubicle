@@ -54,6 +54,41 @@ export function cutSteps(cut: Cut, box: string, at: number, out: number, span: n
   return { into, outOf };
 }
 
+// Where a film's acts break, as the scenes that arrive on one. A film is not told its acts, so they are read off
+// its shape, which is always the same shape: an opening that earns the next ten seconds, a body, a close. The scene
+// after the opening run of titles and hooks starts the body; the first of the closing run of calls to action,
+// logos and outros starts the close; and a title card in the middle of a film is a chapter heading by definition.
+//
+// Then the rule that keeps a transition meaning something: one for every ten seconds of film at the most, and
+// never two within ten seconds of each other. The turn into the close is kept first, because it is the one a
+// viewer is being led to; then the end of the opening; then the chapters. A picture change inside one scene is
+// never a break — the same words are still on screen.
+const OPENING = new Set(['title', 'hook']);
+const CLOSING = new Set(['cta', 'logo', 'outro']);
+export function actBreaks(shots: { scene: { layout: string }; seconds: number; take?: unknown }[], apart = 10): Set<number> {
+  const found = new Set<number>();
+  if (shots.length < 3) return found;
+  const starts: number[] = [];
+  let clock = 0;
+  for (const shot of shots) { starts.push(clock); clock += shot.seconds; }
+  let open = 0;
+  while (open < shots.length && OPENING.has(shots[open].scene.layout)) open += 1;
+  let close = shots.length;
+  while (close > 0 && CLOSING.has(shots[close - 1].scene.layout)) close -= 1;
+  const wanted: number[] = [];
+  if (close > 0 && close < shots.length) wanted.push(close);
+  if (open > 0 && open < close) wanted.push(open);
+  for (let index = open + 1; index < close; index += 1) if (shots[index].scene.layout === 'title') wanted.push(index);
+  const most = Math.max(1, Math.floor(clock / apart));
+  for (const index of wanted) {
+    if (found.size >= most) break;
+    if (shots[index].take || found.has(index)) continue;
+    if ([...found].some((other) => Math.abs(starts[other] - starts[index]) < apart)) continue;
+    found.add(index);
+  }
+  return found;
+}
+
 // A cut lands better on a beat than a fraction of a second away from one. When the bed came with its beats, every
 // scene's start is pulled to the nearest one it can reach without changing the film's length by more than a hair —
 // and nothing moves further than `reach`, because a scene that waits for the beat is worse than one that misses it.

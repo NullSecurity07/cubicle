@@ -1,7 +1,8 @@
 import type { Shape } from '../../../shared/model.ts';
 import { barOf, type Scene } from '../spec.ts';
 import type { Part } from './captions.ts';
-import { FORMATS, PACE, PACK, type Pace, type Pack } from './looks.ts';
+import { barChartPiece, countUpPiece, type Piece } from '../registry/index.ts';
+import { FORMATS, PACE, PACK, typeScale, type Pace, type Pack, type Paint } from './looks.ts';
 
 // One scene, ready to be written out: what was asked for, how long it is on screen, the still drawn for it, the moving
 // picture cut into it, the picture drawn behind it and the narration recorded over it. `image`, `video` and `bg` are
@@ -35,7 +36,7 @@ const quoted = (text: string) => `“${text.replace(/^["“]|["”]$/g, '')}”`
 const FIGURE = /^(\D{0,3})(\d{1,4})(\D{0,14})$/;
 // The one number on a stat scene is as big as the frame can hold it on one line: full height for a short figure, and
 // stepped down for a longer one, down to the size of a heading — past that it is a sentence, and it wraps like one.
-function statStyle(heading: string, shape: Shape, pack: Pack): string {
+function statSize(heading: string, shape: Shape, pack: Pack): { size: number; wraps: boolean } {
   const { width, margin, scale } = FORMATS[shape];
   // How wide a character really is at that size. A display face set for a figure is narrow — Anton is very narrow —
   // and the old 0.78 was the width of a body face, which is why a seven-character figure came out at a third of the
@@ -43,7 +44,44 @@ function statStyle(heading: string, shape: Shape, pack: Pack): string {
   const wide = PACK[pack].shout ? 0.50 : 0.62;
   const room = Math.round((width - margin * 2) / Math.max(heading.length * wide, 1));
   const floor = Math.round(88 * scale);
-  return `font-size: ${Math.max(Math.min(300 * scale, room), floor)}px${room < floor ? '; white-space: normal' : ''}`;
+  return { size: Math.max(Math.min(300 * scale, room), floor), wraps: room < floor };
+}
+function statStyle(heading: string, shape: Shape, pack: Pack): string {
+  const { size, wraps } = statSize(heading, shape, pack);
+  return `font-size: ${size}px${wraps ? '; white-space: normal' : ''}`;
+}
+
+// The one data graphic a scene can carry from the registry, or nothing — and then the scene draws its own, as it
+// always has. A stat whose heading is a plain figure is run up by `count-up`. A chart is drawn as `animated-bar-chart`
+// columns only when every label is short enough to sit under a column — years, quarters, plans; a chart of names
+// that have to be read keeps the studio's own rows, which give a name a whole line. The notebook keeps its own
+// figure too: it rings it by hand, and a ring is measured around type that is already there.
+export function dataGraphic(shot: Shot, index: number, shape: Shape, pack: Pack, paint: Paint, fonts: { display: string; body: string }, captioned: boolean, at: number, pace: Pace): Piece | null {
+  if (pack === 'sketch') return null;
+  const { scene } = shot;
+  const style = PACK[pack];
+  const { width, height, scale, margin, safeRight } = FORMATS[shape];
+  const theme = { ink: paint.ink, quiet: paint.quiet, signal: paint.signal, ...fonts, weight: style.shout ? 400 : 680 };
+  const lead = style.overlap * 0.6;
+  try {
+    if (scene.layout === 'stat') {
+      const bits = FIGURE.exec(scene.heading?.trim() ?? '');
+      if (!bits) return null;
+      const size = Math.min(statSize(scene.heading!.trim(), shape, pack).size, Math.round((captioned ? 224 : 300) * scale));
+      const seconds = Math.max(1, shot.seconds - 0.22 - PACE[pace].out);
+      return countUpPiece(index, { prefix: bits[1], end: Number(bits[2]), suffix: bits[3] }, seconds, size / 0.86, at + 0.22, theme);
+    }
+    if (scene.layout === 'chart') {
+      const bars = (scene.bullets ?? []).map((one) => barOf(one)).filter(Boolean) as { label: string; value: number; unit: string }[];
+      if (bars.length < 3 || bars.length > 7 || bars.some((one) => one.label.length > 6)) return null;
+      // In a captioned film the foot of the frame is the band's, and the columns, their figures and their names
+      // all have to stop above it.
+      // …and on a tall frame the band starts a third of the way up, so the columns are shorter again.
+      const high = Math.round(Math.min(height * (captioned ? (height > width ? 0.15 : 0.19) : 0.3), width * 0.4));
+      return barChartPiece(index, bars, { high, wide: width - margin * 2 - safeRight, type: typeScale(shape, pack).body }, at + lead + 0.2, theme);
+    }
+  } catch { /* an item reshaped by a re-vendoring is a failed test, never a failed film: the scene draws its own */ }
+  return null;
 }
 const figure = (heading: string, shape: Shape, pack: Pack): string => {
   const bits = FIGURE.exec(heading);
@@ -181,7 +219,7 @@ export const groundHtml = (shot: Shot, index: number, pack: Pack): string => {
 // Most are the same left-aligned block with different weights in it; the one line that says "this block ends here"
 // recurs through them, drawn straight in the clean look and by hand in the notebook. The rest — a device, a comparison,
 // a piece of the founder's own footage — fill the frame instead.
-export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = false, pack: Pack = 'clean'): string {
+export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = false, pack: Pack = 'clean', graphic?: string): string {
   const { scene } = shot;
   const style = PACK[pack];
   // A block of type centred on a photograph lands on whatever the photograph's subject is — which, on the portrait a
@@ -221,7 +259,8 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     const bars = (scene.bullets ?? []).map((one) => barOf(one)).filter(Boolean) as { label: string; value: number; unit: string }[];
     const most = Math.max(...bars.map((one) => one.value), 1);
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`);
-    parts.push(`<div class="chart">${bars.map((one, at) => `<div class="chart__row rise one-at-a-time">`
+    if (graphic) parts.push(graphic);
+    else parts.push(`<div class="chart">${bars.map((one, at) => `<div class="chart__row rise one-at-a-time">`
       + `<div class="chart__head"><p class="chart__name">${html(one.label)}</p>`
       + `<p class="chart__value"><span class="count" style="min-width: ${String(Math.round(one.value)).length}ch">${Math.round(one.value)}</span>${html(one.unit)}</p></div>`
       + `<div class="chart__track"><div class="chart__fill" id="c${index}-${at}" style="transform: scaleX(${(one.value / most).toFixed(3)})"></div></div>`
@@ -257,7 +296,7 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     return `<div class="frame frame--device" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'stat') {
     // The ring around the figure is mark enough in the notebook: the line under it stays a straight one, or nothing.
-    parts.push(figure(heading, shape, pack), '<div class="rule"></div>');
+    parts.push(graphic ?? figure(heading, shape, pack), '<div class="rule"></div>');
     if (text) parts.push(`<p class="lead quiet rise">${html(text)}</p>`);
     return `<div class="frame frame--stat${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'quote') {
@@ -292,11 +331,11 @@ const FILLS = new Set(['picture', 'footage', 'clip', 'presenter']);
 // punchy film does the same thing in half the time, which is the whole difference between an explainer and a reel.
 // What this scene actually put on the page. GSAP complains, loudly and once per frame, about a tween whose target is
 // not there, so nothing is animated that was not written: the html is the one thing that knows.
-export type Onscreen = { words: boolean; sweep: boolean; rise: boolean; rule: boolean; tick: boolean; mark: boolean; count: boolean; oneAtATime: boolean };
+export type Onscreen = { words: boolean; sweep: boolean; rise: boolean; rule: boolean; tick: boolean; mark: boolean; count: boolean; oneAtATime: boolean; chart?: boolean };
 export const onscreen = (html: string): Onscreen => ({
   words: html.includes('class="w'), sweep: html.includes('class="sweep"'), rise: html.includes(' rise"') || html.includes('rise ') || html.includes('"rise'),
   rule: html.includes('class="rule"'), tick: html.includes('class="tick"'), mark: html.includes('class="mark"'), count: html.includes('class="count"'),
-  oneAtATime: html.includes('one-at-a-time'),
+  oneAtATime: html.includes('one-at-a-time'), chart: html.includes('class="chart"'),
 });
 
 export function sceneSteps(shot: Shot, index: number, at: number, scale: number, pack: Pack, last: boolean, pace: Pace = 'calm', has: Onscreen = { words: true, sweep: true, rise: true, rule: true, tick: true, mark: true, count: true, oneAtATime: false }): string[] {
@@ -371,7 +410,7 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
   // A chart draws itself: the bars grow from nothing one after another and each figure runs up to its own number
   // as its bar arrives. It is the one graphic in the film, so it is given the whole of its scene to land in and
   // nothing else on the frame moves while it does.
-  if (layout === 'chart') {
+  if (layout === 'chart' && has.chart !== false) {
     const read = (shot.scene.bullets ?? []).map((one) => barOf(one)).filter(Boolean) as { value: number }[];
     const most = Math.max(...read.map((one) => one.value), 1);
     const each = Math.min(0.6, Math.max(0.3, (shot.seconds * 0.5) / Math.max(1, read.length)));

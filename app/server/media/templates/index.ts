@@ -2,15 +2,16 @@ import type { Shape } from '../../../shared/model.ts';
 import { SFX, type Cue } from '../audio.ts';
 import { crowdsCaptions, saysWhatItShows } from '../spec.ts';
 import { capHtml, capLines, capSteps, wordTimes, type Word } from './captions.ts';
-import { cutSteps } from './cuts.ts';
-import { groundHtml, MOVING, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
-import { cutAt, FORMATS, PACE, PACK, styleSheet, type Brand, type Pace, type Pack } from './looks.ts';
+import { breakMove, captionPiece, type BreakMove } from '../registry/index.ts';
+import { actBreaks, cutSteps } from './cuts.ts';
+import { dataGraphic, groundHtml, MOVING, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
+import { cutAt, FORMATS, PACE, PACK, paintOf, styleSheet, type Brand, type Pace, type Pack } from './looks.ts';
 
 export { FORMATS, SAFE_1080, safeArea, LOOKS, PACKS, PACES, PACK, PACE, paintOf, lightOf, cutAt, isPack, type Brand, type Look, type Pack, type Pace, type Paint } from './looks.ts';
 export type { Shot } from './layouts.ts';
 export { FRAMES } from './layouts.ts';
 export { wordTimes, capLines, type Part, type Word } from './captions.ts';
-export { snapToBeats } from './cuts.ts';
+export { actBreaks, snapToBeats } from './cuts.ts';
 
 // A scene lasts as long as the line said over it, and never less than the time it takes to read what is on it. A
 // punchy film reads faster and holds less: the floor, the ceiling and the reading speed all move with the pace.
@@ -101,7 +102,7 @@ export type Film = {
 // The whole video as one HTML file: the scenes in order with their timing on them, the narration and the music beside
 // them, and one paused timeline the renderer steps through frame by frame.
 export function composition(film: Film): string {
-  const { width, height, scale, capChars, margin, safeRight } = FORMATS[film.shape];
+  const { width, height, scale, capChars, margin, safeRight, caps } = FORMATS[film.shape];
   const pack: Pack = film.look;
   const style = PACK[pack];
   const sketch = pack === 'sketch';
@@ -111,11 +112,30 @@ export function composition(film: Film): string {
   for (const shot of film.shots) { starts.push(Math.round(at * 100) / 100); at = Math.round((at + shot.seconds) * 100) / 100; }
   const total = at;
   const last = film.shots.length - 1;
+  const paint = paintOf(pack, film.brand);
+  const fonts = film.brand?.fontFile && paint.font
+    ? { display: `'${paint.font}', ${style.display}`, body: `'${paint.font}', ${style.body}` }
+    : { display: style.display, body: style.body };
+  // What the registry graphics bring with them, once each: rules, boxes that sit over every scene, and functions.
+  const extra = { css: new Set<string>(), html: new Set<string>(), script: new Set<string>() };
+
+  // The act breaks, and the move each one is made with. A pack that has a break transition cuts hard everywhere
+  // else. A whip or a push moves a scene's box, and a moving picture is not in the box — the renderer owns it, at
+  // the root, behind every scene — so a break with a moving picture on either side of it is a hard cut too. The
+  // sheet of white goes over everything and has no such trouble.
+  const breaks = style.breaks ? actBreaks(film.shots) : new Set<number>();
+  const moves: (BreakMove | null)[] = film.shots.map((shot, index) => {
+    if (!style.breaks || !index || !breaks.has(index)) return null;
+    if (style.breaks !== 'flash-white' && (shot.video || film.shots[index - 1].video)) return null;
+    try { return breakMove(style.breaks, `#g${index - 1}`, `#g${index}`, starts[index], index, width); } catch { return null; }
+  });
+  for (const move of moves) if (move) { extra.css.add(move.css); extra.html.add(move.html); }
   // A scene is given its own length plus the time the next one needs to arrive over it, so the two really overlap.
   // The last one has nothing to hand over to, and used to end exactly on the film's own last frame — which the
   // renderer captured a hair after the section had gone, so every film finished on a frame of black. It is held
   // past the end instead. Nothing is on screen to see it, and the last picture is the last thing anybody sees.
-  const held = (index: number) => Math.round((film.shots[index].seconds + style.overlap) * 100) / 100;
+  // A scene that leaves on a break is held for as long as that break's move takes, not for the pack's overlap.
+  const held = (index: number) => Math.round((film.shots[index].seconds + (moves[index + 1]?.span ?? style.overlap)) * 100) / 100;
 
   // The captions belong to the frame, not to any one scene's block: one track for the whole film, outside every
   // section, so a whip pan carries the picture away and leaves the words being said where they are.
@@ -135,8 +155,24 @@ export function composition(film: Film): string {
   // The band's real measure, so a long word is set smaller rather than having both ends cut off by the frame.
   const capSize = Math.round(height * 0.108) * scale;
   const capRoom = width - margin - (margin + safeRight);
-  const captionHtml = capHtml(lines, { size: capSize, room: capRoom });
-  const captionSteps = capSteps(lines, total);
+  // How they are drawn is the pack's: the studio's own track, or a caption component from the registry set in the
+  // same band at the same size. An item that will not build is a test's business; the film gets the studio's track.
+  let captionHtml = '';
+  let captionSteps: string[] = [];
+  if (lines.length && style.captions !== 'studio') {
+    try {
+      const piece = captionPiece(style.captions, lines, total, { left: margin, bottom: caps, width: capRoom, size: capSize },
+        { ink: paint.ink, signal: paint.signal, ground: paint.ground, ...fonts }, capWords);
+      captionHtml = piece.html;
+      captionSteps = piece.steps;
+      extra.css.add(piece.css);
+      extra.script.add(piece.script);
+    } catch { captionHtml = ''; }
+  }
+  if (!captionHtml) {
+    captionHtml = capHtml(lines, { size: capSize, room: capRoom });
+    captionSteps = capSteps(lines, total);
+  }
 
   // The moving pictures are elements of the film in their own right, before the scenes and behind them: the renderer
   // owns their playback, and a <video> that carried its own start inside a section that carried one too would be
@@ -152,7 +188,10 @@ export function composition(film: Film): string {
 
   // Every scene is one box that moves as one thing, because the cut between two scenes is a move of the whole box.
   const captioned = !!captionHtml;
-  const bodies = film.shots.map((shot, index) => sceneHtml(shot, index, film.shape, captioned, pack));
+  // The one data graphic a scene may take from the registry: a figure that counts up, columns that grow.
+  const graphics = film.shots.map((shot, index) => dataGraphic(shot, index, film.shape, pack, paint, fonts, captioned, starts[index], pace));
+  for (const one of graphics) if (one) { extra.css.add(one.css); if (one.script) extra.script.add(one.script); }
+  const bodies = film.shots.map((shot, index) => sceneHtml(shot, index, film.shape, captioned, pack, graphics[index]?.html));
   const sections = film.shots.map((shot, index) => `      <section class="clip" id="s${index}" data-start="${starts[index]}" data-duration="${held(index)}">`
     + `<div class="stage" id="g${index}">${groundHtml(shot, index, pack)}`
     + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}`
@@ -181,9 +220,13 @@ export function composition(film: Film): string {
     // behind them changes. Anything else reads as the film starting the scene again.
     const cut = shot.take ? 'cut' : cutAt(pack, index);
     const move = cutSteps(cut, `#g${index}`, starts[index], starts[index] + shot.seconds, style.overlap, index);
+    // A break is one move made by two scenes, so the scene arriving on it writes both halves and the scene
+    // leaving on it writes nothing of its own.
+    const arrives = moves[index];
     return [
-      ...move.into,
-      ...(index === last ? [] : move.outOf),
+      ...(arrives ? [...arrives.into, ...arrives.outOf] : move.into),
+      ...(index === last || moves[index + 1] ? [] : move.outOf),
+      ...(graphics[index]?.steps ?? []),
       ...sceneSteps(shot, index, starts[index], scale, pack, index === last, pace, onscreen(bodies[index])),
       ...punchSteps(shot, index),
     ];
@@ -199,15 +242,16 @@ export function composition(film: Film): string {
     <script src="vendor/gsap.min.js"></script>
 ${sketch ? '    <script src="vendor/rough.js"></script>\n' : ''}    <style>
 ${styleSheet(film.shape, pack, film.brand)}
+${[...extra.css].join('\n')}
     </style>
   </head>
   <body>
     <div id="root"${captioned ? ' class="has-captions"' : ''} data-composition-id="main" data-start="0" data-width="${width}" data-height="${height}" data-duration="${total}">
 ${reels.length ? `${reels.join('\n')}\n` : ''}${sections.join('\n')}
-${captionHtml ? `      ${captionHtml}\n` : ''}${letterbox ? '      <div class="bar bar--top"></div>\n      <div class="bar bar--foot"></div>\n' : ''}${bar ? '      <div class="progress" id="bar"></div>\n' : ''}${sounds.join('\n')}
+${[...extra.html].map((one) => `      ${one}\n`).join('')}${captionHtml ? `      ${captionHtml}\n` : ''}${letterbox ? '      <div class="bar bar--top"></div>\n      <div class="bar bar--foot"></div>\n' : ''}${bar ? '      <div class="progress" id="bar"></div>\n' : ''}${sounds.join('\n')}
     </div>
     <script>
-${sketch ? `${MARKS}\n` : ''}      const SCENE_AT = ${JSON.stringify(starts)};
+${sketch ? `${MARKS}\n` : ''}${[...extra.script].map((one) => `${one}\n`).join('')}      const SCENE_AT = ${JSON.stringify(starts)};
       function build(tl) {
 ${steps.map((step) => `        ${step}`).join('\n')}
       }

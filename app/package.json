@@ -17,6 +17,7 @@
     "restore": "node scripts/restore.ts",
     "check:providers": "node scripts/check-providers.ts",
     "check:media": "node scripts/check-media.ts",
+    "vendor:hyperframes": "node scripts/vendor-hyperframes.ts",
     "gate": "tsc --noEmit && vitest run && playwright test"
   },
   "dependencies": {

@@ -4,6 +4,8 @@
 // captions are set. A motion designer picks one of these and everything else follows from it, which is the point:
 // coherence is what separates a film from a slideshow.
 
+import type { BreakKind, RegistryCaps } from '../registry/index.ts';
+
 // What was found in the product's own code: the colours it paints itself with and the typeface it sets itself in.
 export type Brand = { colours: string[]; font?: string; fontFile?: string; name?: string };
 
@@ -78,6 +80,17 @@ export type PackStyle = {
   radius: number;
   // How wide a caption line runs against the format's own measure: a creator reel says two or three words at a time.
   capScale: number;
+  // How the captions are drawn. `studio` is the track this studio wrote — capitals in the display face with a black
+  // stroke, the word being said snapping up in size. The others are caption components from the HyperFrames
+  // registry, run through `media/registry`: a plate whose words darken as they are said, a block of the accent
+  // sweeping in behind each word, one word at a time from every side. The quiet packs keep the studio's own: a
+  // plate or a slam under a serif on a letterboxed frame is a different film's furniture.
+  captions: 'studio' | RegistryCaps;
+  // What happens at an act break — the end of the opening, a title card, the turn into the close — and nowhere
+  // else. A pack that has one cuts hard through its body and saves the move for the breaks, which is the rule every
+  // editor in the research gave: a transition on every cut is a tic, one at a break is punctuation. A pack without
+  // one keeps the list in `cuts` for every scene, as before.
+  breaks?: BreakKind;
 };
 
 // The seven. `clean` and `sketch` are what the studio had; `brand` still takes the product's own colours.
@@ -97,8 +110,9 @@ export const PACK: Record<Pack, PackStyle> = {
     name: 'Clean',
     paint: { ground: '#1C2530', ink: '#F2F5F8', quiet: '#AFBDCB', signal: '#E8B04B', mark: '#E8B04B', scrim: '28, 37, 48' },
     fonts: [INTER], display: "'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
-    shout: false, motion: 'settle', cuts: ['fade', 'push', 'wipe'], overlap: 0.42,
+    shout: false, motion: 'settle', cuts: ['cut'], overlap: 0.42,
     sweep: false, scrim: 0.46, radius: 22, capScale: 1,
+    captions: 'pill', breaks: 'flash-white',
   },
   creator: {
     // The reel: near-black, one acid accent, a condensed display face shouting, words landing two and three at a
@@ -106,8 +120,9 @@ export const PACK: Record<Pack, PackStyle> = {
     name: 'Creator',
     paint: { ground: '#0C0D12', ink: '#FFFFFF', quiet: '#AEB3C4', signal: '#D6FF3E', mark: '#D6FF3E', scrim: '12, 13, 18' },
     fonts: [INTER, ANTON], display: "'Studio Shout', 'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
-    shout: true, motion: 'kinetic', cuts: ['whip', 'zoom', 'cut', 'whip', 'wipe'], overlap: 0.30,
+    shout: true, motion: 'kinetic', cuts: ['cut'], overlap: 0.30,
     sweep: true, scrim: 0.52, radius: 18, capScale: 0.62,
+    captions: 'highlight', breaks: 'whip-pan',
   },
   editorial: {
     // The quiet one: a serif that has something to say, a great deal of air, pictures doing the arguing, and cuts you
@@ -117,14 +132,16 @@ export const PACK: Record<Pack, PackStyle> = {
     fonts: [INTER, SERIF], display: "'Studio Serif', Georgia, serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'glide', cuts: ['fade', 'wipe', 'fade', 'push'], overlap: 0.62,
     sweep: false, scrim: 0.44, radius: 4, capScale: 1.05,
+    captions: 'studio',
   },
   neon: {
     // Tech: an almost-black ground, cyan against magenta, a grotesk with real character, and cuts that snap.
     name: 'Neon',
     paint: { ground: '#06070C', ink: '#E9F6FF', quiet: '#97A9C2', signal: '#3BE3FF', mark: '#FF42D6', scrim: '6, 7, 12' },
     fonts: [GROTESK, INTER], display: "'Studio Tech', 'Studio Sans', sans-serif", body: "'Studio Tech', 'Studio Sans', sans-serif",
-    shout: true, motion: 'snap', cuts: ['zoom', 'wipe', 'cut', 'whip'], overlap: 0.26,
+    shout: true, motion: 'snap', cuts: ['cut'], overlap: 0.26,
     sweep: true, scrim: 0.50, radius: 8, capScale: 0.78,
+    captions: 'slam', breaks: 'zoom-through',
   },
   documentary: {
     // The long-form register. Where the reel earns attention by cutting, this one earns it by holding: a serif
@@ -139,7 +156,7 @@ export const PACK: Record<Pack, PackStyle> = {
     paint: { ground: '#0F0F0E', ink: '#EFEAE1', quiet: '#C8C1B4', signal: '#D9B33A', mark: '#D9B33A', scrim: '15, 15, 14' },
     fonts: [INTER, SERIF], display: "'Studio Serif', Georgia, serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'glide', cuts: ['cut', 'cut', 'fade', 'cut', 'wipe'], overlap: 0.55,
-    sweep: false, scrim: 0.42, radius: 2, capScale: 1.1,
+    sweep: false, scrim: 0.42, radius: 2, capScale: 1.1, captions: 'studio',
     format: { letterbox: 0.055, grade: 'saturate(0.92) contrast(1.05) brightness(0.98)' },
   },
   sketch: {
@@ -148,14 +165,16 @@ export const PACK: Record<Pack, PackStyle> = {
     fonts: [INTER], display: "'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'hand', cuts: ['fade', 'push'], overlap: 0.40,
     sweep: false, scrim: 0.38, radius: 16, capScale: 1,
+    captions: 'studio',
   },
   brand: {
     // The product's own colours, over the clean pack's manners. What `paintOf` finds replaces the palette below.
     name: 'Brand',
     paint: { ground: '#1C2530', ink: '#F2F5F8', quiet: '#93A3B4', signal: '#E8B04B', mark: '#E8B04B', scrim: '28, 37, 48' },
     fonts: [INTER], display: "'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
-    shout: false, motion: 'settle', cuts: ['fade', 'push', 'zoom'], overlap: 0.40,
+    shout: false, motion: 'settle', cuts: ['cut'], overlap: 0.40,
     sweep: false, scrim: 0.46, radius: 20, capScale: 1,
+    captions: 'pill', breaks: 'flash-white',
   },
 };
 
