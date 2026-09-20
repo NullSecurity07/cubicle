@@ -6,7 +6,9 @@ import { seedStage, type Stage } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import { createMedia } from './jobs.ts';
-import { DEFAULT_VOICE, fakeVoices, geminiVoice, isVoice, SETUP_HINT, VOICES, wavOf, wavSeconds } from './voice.ts';
+import {
+  byGrade, castLine, castVoice, DEFAULT_VOICE, fakeVoices, geminiVoice, gradeRank, isVoice, mergeVoices, SETUP_HINT, VOICES, wavOf, wavSeconds,
+} from './voice.ts';
 
 const pcm = (samples: number[]) => Buffer.from(new Int16Array(samples.map((one) => Math.round(one * 32767))).buffer);
 const asked: { url: string; body: any; headers: any }[] = [];
@@ -46,13 +48,45 @@ describe('WAV files', () => {
 describe('voices', () => {
   it('offers every voice under a name the founder can choose by, best first', () => {
     expect(VOICES).toHaveLength(28);
-    expect(VOICES[0]).toEqual({ id: 'af_heart', name: 'Heart · American woman' });
+    expect(VOICES[0]).toMatchObject({ id: 'af_heart', name: 'Heart · American woman', gender: 'f', accent: 'American', grade: 'A' });
     expect(DEFAULT_VOICE).toBe('af_heart');
     expect(new Set(VOICES.map((voice) => voice.id)).size).toBe(28);
     for (const voice of VOICES) expect(voice.name).toMatch(/^[A-Z][a-z]+ · (American|British) (woman|man)$/);
     expect(isVoice('bm_george')).toBe(true);
     expect(isVoice('af_nobody')).toBe(false);
     expect(isVoice(undefined)).toBe(false);
+  });
+
+  it('sorts by the grade the weights themselves carry, best first', () => {
+    const order = byGrade().map((one) => one.id);
+    expect(order[0]).toBe('af_heart');
+    expect(order.at(-1)).toBe('am_adam');
+    expect(gradeRank('A')).toBeGreaterThan(gradeRank('A-'));
+    expect(gradeRank('C+')).toBeGreaterThan(gradeRank('C'));
+    expect(gradeRank('D')).toBeGreaterThan(gradeRank('F+'));
+  });
+
+  it('casts one narrator a film: the best voice that fits what was asked for', () => {
+    // Nothing asked for, so the best voice in the model.
+    expect(castVoice({}).id).toBe('af_heart');
+    // A man was asked for, and every male voice in this model grades C+ or worse — so the best of those.
+    expect(castVoice({ gender: 'm' }).gender).toBe('m');
+    expect(gradeRank(castVoice({ gender: 'm' }).grade)).toBeGreaterThanOrEqual(gradeRank('C+'));
+    expect(castVoice({ gender: 'm', accent: 'British' })).toMatchObject({ gender: 'm', accent: 'British' });
+    // An accent is a preference and gives way; a gender does not, because a gender has to match who is on screen.
+    expect(castVoice({ gender: 'f', accent: 'British' }).accent).toBe('British');
+    expect(castLine(castVoice({ gender: 'm', accent: 'American' }))).toMatch(/^narrator: \w+, American, grade /);
+  });
+
+  it('takes the table the weights ship with over the written one, and keeps the written one when there is none', () => {
+    const said = mergeVoices({
+      af_heart: { name: 'Heart', gender: 'Female', language: 'en-us', overallGrade: 'A' },
+      zz_new: { name: 'New', gender: 'Male', language: 'en-gb', overallGrade: 'B+' },
+    });
+    expect(said).toHaveLength(2);
+    expect(said.find((one) => one.id === 'zz_new')).toMatchObject({ gender: 'm', accent: 'British', grade: 'B+', name: 'New · British man' });
+    expect(mergeVoices(undefined)).toBe(VOICES);
+    expect(mergeVoices({})).toBe(VOICES);
   });
 });
 

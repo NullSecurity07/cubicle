@@ -7,6 +7,7 @@ import {
 } from './spec.ts';
 import { isPack, PACES, PACKS, type Brand, type Pace, type Pack } from './templates/looks.ts';
 import { FILLER, sourcesOf } from './grounding.ts';
+import type { Wanted } from './voice.ts';
 
 // The director. Not a form to fill in — a person who reads the brief, works out what is being asked for, decides on
 // an angle and a look, writes the beats, and only then writes the storyboard. Every one of those is a separate pass,
@@ -59,6 +60,7 @@ const CUES: { was: RegExp; is: Partial<Understanding> }[] = [
   { was: /\b(testimonial|customer story|case study|what .{0,20}customers? say)\b/i, is: { purpose: 'testimonial', pace: 'calm', mood: 'warm' } },
   { was: /\b(explain\w*|how it works|walkthrough|tutorial|demo|onboarding)\b/i, is: { purpose: 'explainer', shape: 'wide', pace: 'calm', pack: 'clean', mood: 'calm' } },
   { was: /\b(feature|one thing|new in)\b/i, is: { purpose: 'feature' } },
+  { was: /\b(documentary|cinematic|film-?like|luxury|luxurious|long-?form|essay|letterbox\w*)\b/i, is: { pace: 'calm', pack: 'documentary', mood: 'calm', tone: 'measured' } },
   { was: /\b(calm|quiet|slow|editorial|elegant|minimal|considered|understated|thoughtful)\b/i, is: { pace: 'calm', pack: 'editorial', mood: 'calm', tone: 'considered' } },
   { was: /\b(punchy|fast|snappy|energetic|hype|bold|loud|upbeat)\b/i, is: { pace: 'punchy', mood: 'upbeat', tone: 'energetic' } },
   { was: /\b(tech|technical|developer|engineer|api|ai|futurist\w*|cyber)\b/i, is: { pack: 'neon', tone: 'technical' } },
@@ -241,8 +243,11 @@ export function planOf(raw: unknown, understanding: Understanding, asked: Asked)
 // look made out of a fixed line is still a film, where six unrelated stock pictures are not.
 export function bibleFor(understanding: Understanding): string {
   const by: Record<Pack, string> = {
-    creator: 'high-contrast editorial photography, single strong subject, deep shadows, one saturated accent light, shallow depth of field, shot on 35mm',
+    // Not "deep shadows": a picture model told that draws a black frame, and a scrim over a black frame is a
+    // black frame. Bright, contrasty and lit is what a reel wants — the drama comes from the cut, not the grade.
+    creator: 'bright high-contrast editorial photography, single strong subject, clean directional key light, one saturated accent colour, shallow depth of field, shot on 35mm',
     editorial: 'quiet documentary photography, soft window light, muted warm palette, generous negative space, medium format stills',
+    documentary: 'cinematic documentary photography, available light, deep field of view, restrained muted palette, anamorphic stills, nothing staged',
     neon: 'dark technical photography, cyan and magenta rim light, glass and metal surfaces, volumetric haze, long lens',
     clean: 'calm studio photography, cool slate palette, soft directional light, clean geometry, matte surfaces',
     sketch: 'loose ink and watercolour illustration on warm paper, visible pencil under-drawing, limited palette',
@@ -368,9 +373,12 @@ const askJson = async (think: Think, prompt: string, tries = 2): Promise<unknown
   throw new Error(problem || 'no answer');
 };
 
-// Which layouts this film may actually use, so nothing is offered that could not be filled.
-export function layoutsFor(ask: { ai: boolean; material: Material }): Layout[] {
+// Which layouts this film may actually use, so nothing is offered that could not be filled — or, in the presenter's
+// case, could not be filled *honestly*. A presenter is a mouth moving to a recording, so it is offered only where a
+// real lip-sync backend is standing by; without one the model never sees the word and never writes the scene.
+export function layoutsFor(ask: { ai: boolean; lipsync?: boolean; material: Material }): Layout[] {
   return LAYOUTS.filter((layout) => ask.ai || !AI_LAYOUTS.has(layout))
+    .filter((layout) => layout !== 'presenter' || ask.lipsync === true)
     .filter((layout) => layout !== 'footage' || ask.material.assets.some((asset) => asset.kind === 'video'))
     .filter((layout) => layout !== 'device' || ask.material.assets.some((asset) => asset.kind === 'screen'));
 }
@@ -379,13 +387,13 @@ export type Directed = { understanding: Understanding; plan: Plan; spec: Spec; b
 
 // Four passes and a reading. The model is asked to fix its own work twice, because its writing is better than ours;
 // after that the rules do it themselves, and the film is made either way.
-export async function direct(asked: Asked, material: Material, think: Think, help: { report: (line: string) => void; ai?: boolean }): Promise<Directed> {
+export async function direct(asked: Asked, material: Material, think: Think, help: { report: (line: string) => void; ai?: boolean; lipsync?: boolean }): Promise<Directed> {
   const read = readBrief(asked.brief);
   const raw = await askJson(think, understandPrompt(asked, material)).catch(() => ({}));
   const understanding = understandingOf(raw, asked, read);
   help.report(understanding.said);
 
-  const layouts = layoutsFor({ ai: help.ai === true, material });
+  const layouts = layoutsFor({ ai: help.ai === true, lipsync: help.lipsync === true, material });
   const plan = planOf(await askJson(think, planPrompt(understanding, asked, material)).catch(() => ({})), understanding, asked);
   if (plan.beats.length) help.report(`the angle: ${plan.angle.slice(0, 120)}`);
   else help.report('the plan came back empty, so the storyboard is written straight from the brief');
@@ -398,7 +406,10 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
     sources: sourcesOf(material, asked.brief),
     screens: material.assets.filter((asset) => asset.kind === 'screen').map((asset) => asset.name),
     pictures: givenPictures(material).slice(0, MOST_GIVEN),
-    person: understanding.person,
+    // A rule that cannot be satisfied honestly is not a rule. Asked for somebody on camera with nothing able to
+    // lip-sync one, the critic used to recast a scene as "a person moving" — which is a drawn stranger whose
+    // mouth moves to a recording they never made, and is precisely what the founder rejected.
+    person: understanding.person && help.lipsync === true,
   };
 
   // The storyboard, and one more go with the reason the first would not do: a model that forgot a field usually
@@ -440,19 +451,26 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
   return { understanding, plan, spec, bible: plan.bible };
 }
 
-// A brief that asks for somebody talking to camera gets somebody talking to camera. With the founder's own footage
-// or a made clip there is a real person; with neither, the film opens on a portrait with a slow push into it, which
-// is what a reel does when the creator is not the one holding the camera. Nothing here invents a name or a claim —
-// it is a face, and the words over it are the film's own.
-// The most a film gets of somebody talking to the camera when this machine is drawing them: two, because each one
-// costs minutes of the founder's time and a third is a third of the film.
+// A brief that asks for somebody talking to camera gets somebody talking to camera — or it gets told, plainly,
+// why it cannot have one today.
+//
+// What used to happen here is the whole of what the founder rejected. A brief saying "influencer talking, real
+// face" was answered by asking a small text-to-video model for "a person talking to camera", stretching the three
+// seconds it gave back over seventeen by cutting between the shot and a re-crop of the same shot, and laying an
+// unrelated recording over the top of it. Every one of those is a known failure: a mouth that does not match the
+// audio is flagged before a viewer has thought about it and downgrades trust in everything else on screen; a
+// re-crop of one clip is not a second angle, it is the same three seconds again; and a person who moves without
+// any physical reason for moving reads as weightless. The research is unanimous and there is no dissent to weigh:
+// **a non-lip-synced talking figure under narration is never acceptable.**
+//
+// So there is now exactly one way a person speaks in one of these films: a real lip-sync backend, given the actual
+// recording, makes the actual mouth match it. When none is ready the film does not fake it — it becomes the
+// faceless edit, which the same research says performs no worse for informational content, and the card says what
+// would be needed to get a real one instead.
 export const MOST_FACES = 2;
 // The shapes an opening can take and still be somebody talking. A wordmark or a title card is the one thing a
 // person cannot be put inside.
 const OPENS = new Set<Layout>(['hook', 'statement', 'picture', 'quote', 'outro', 'cta', 'stat']);
-// What somebody drawn for a film wears and how they are framed. Left unsaid, a small video model draws bare shoulders
-// in a close crop, which is not who a founder wants speaking for them.
-const DRESSED = 'fully dressed in a smart casual shirt';
 // How many handed-over pictures a film will carry. More than this and the film is a slideshow of somebody's folder.
 export const MOST_GIVEN = 3;
 
@@ -471,31 +489,88 @@ export const showsSomebody = (asset: { prompt?: string; what?: string }): boolea
 // The one of a film's pictures that can stand in for the person the brief asked for, or nothing.
 export const faceIn = (material: Material): string | undefined =>
   material.assets.find((one) => one.kind === 'image' && showsSomebody(one))?.name;
+
 // Whether a moving scene already has somebody in it. A clip of hands over a desk is a clip; it is not the person
 // the brief asked for, and a film that counts it as one has nobody on camera at all.
 const SOMEBODY = /\b(person|people|man|woman|founder|speaker|influencer|presenter|host|face|talking head|him|her|they|creator|someone|somebody)\b/i;
+// Somebody whose mouth is moving. This is the one thing the studio will not draw without a lip-sync backend, so
+// it is matched on its own terms rather than inferred from "there is a person in this shot": hands over a desk
+// are b-roll, a face saying words is a promise the film cannot keep.
+const SPEAKING = /\b(talking|speaking|says?|saying|to camera|down the lens|into the lens|piece to camera|presenter|host|vlog|address(?:ing|es)?)\b/i;
 export const hasSomebody = (scene: Scene): boolean =>
   scene.layout === 'presenter' || scene.layout === 'footage'
   || (scene.layout === 'clip' && SOMEBODY.test(`${scene.clip_prompt ?? ''} ${scene.portrait_prompt ?? ''}`));
 
+// Who the film reads itself in. Nothing here guesses at a person's identity: it reads the words the founder wrote
+// — "a man's voice", "British", "her" — and hands the rest to the grades.
+const SAYS_MAN = /\b(male|man's|mans|man |men|guy|his voice|he |him |bloke|gentleman|male voice|deep voice|father|dad|brother|son|sir|mr\b)/i;
+const SAYS_WOMAN = /\b(female|woman's|womans|woman |women|her voice|she |her |lady|female voice|mother|mum|mom|sister|daughter|ms\b|mrs\b)/i;
+const SAYS_BRITISH = /\b(british|uk|england|english accent|london|received pronunciation|rp\b)/i;
+const SAYS_AMERICAN = /\b(american|us|usa|new york|california|midwest|american accent)\b/i;
+export function narratorWanted(brief: string, understanding?: { audience?: string; tone?: string }): Wanted {
+  const said = `${brief} ${understanding?.audience ?? ''} ${understanding?.tone ?? ''}`;
+  const want: Wanted = {};
+  if (SAYS_MAN.test(said) && !SAYS_WOMAN.test(said)) want.gender = 'm';
+  else if (SAYS_WOMAN.test(said) && !SAYS_MAN.test(said)) want.gender = 'f';
+  if (SAYS_BRITISH.test(said)) want.accent = 'British';
+  else if (SAYS_AMERICAN.test(said)) want.accent = 'American';
+  return want;
+}
+
+// What a scene of somebody on camera becomes when nobody can lip-sync it: the line is still said, the picture the
+// founder made is still shown, but nobody's mouth moves out of time with the words. A face held still under a
+// voice is a photograph of a person, which is honest; a face moving out of sync with the voice is not.
+const facelessly = (scene: Scene): Scene => (scene.asset
+  ? { ...scene, layout: 'picture', image_prompt: undefined, portrait_prompt: undefined, clip_prompt: undefined, person: undefined }
+  : { ...scene, layout: 'statement', text: scene.text || headlineOf(scene.say ?? '', HEADING_WORDS) || undefined, heading: undefined,
+    bg_prompt: undefined, portrait_prompt: undefined, clip_prompt: undefined, image_prompt: undefined, person: undefined });
+
+// Why this film has nobody speaking on camera, and the two real ways to get one. Said once, in plain words, because
+// a founder who asked for a face and got type deserves the reason rather than a silence.
+export const NO_FACE_HINT = 'nothing here can make a mouth match a recording, so the film shows no talking person at all — '
+  + 'a fake one is the single fastest way to make a film look generated. To get a real one: drop your own footage of somebody '
+  + 'talking on the card, or add HF_TOKEN to .env so the free lip-sync service can be used.';
+
+// The whole of the person question, settled before anything is made.
+//
+// `lipsync` is whether a real lip-sync backend is ready right now. It is the only thing that decides whether the
+// film may show a mouth moving; nothing else in here can grant it.
 export function onCamera(scenes: Scene[], understanding: Understanding, bible: string, report: (line: string) => void,
-  filmHere?: { minutes: number }, face?: string): Scene[] {
-  if (!understanding.person) return scenes;
-  // A real picture of a real person, already on the card, beats anything drawn from a sentence — and it is what the
-  // founder meant when they wired the studio that drew it. So it goes in before anything else is decided, and no
-  // picture service is asked for a face the film already has.
+  lipsync?: { ready: boolean; narratorGender?: 'f' | 'm'; personGender?: 'f' | 'm' }, face?: string): Scene[] {
+  const able = lipsync?.ready === true;
+  // A voice that does not match the person on screen is the other half of the same fault. Where the film knows both
+  // — the founder named a gender, or the picture was drawn as a man or a woman — and they disagree, nobody is put
+  // on camera at all, whatever the backend could have done.
+  const mismatched = !!lipsync?.narratorGender && !!lipsync?.personGender && lipsync.narratorGender !== lipsync.personGender;
+  const mayShow = able && !mismatched;
+
+  // Whatever anybody wrote, nothing gets to be a talking person unless a real lip-sync backend will really make
+  // it. This runs before the brief is even consulted, so a person's own tool call cannot walk round it — and it
+  // catches both ways of asking: a `presenter` scene, and a `clip` scene whose prompt is somebody speaking to
+  // camera, which is the same fault with the layout filed off.
   let held = scenes;
+  const faking = (one: Scene) => one.layout === 'presenter'
+    || (one.layout === 'clip' && SPEAKING.test(`${one.clip_prompt ?? ''} ${one.portrait_prompt ?? ''}`));
+  if (!mayShow && scenes.some(faking)) {
+    report(mismatched
+      ? 'the narrator and the person on screen are not the same gender, so the film shows nobody speaking rather than a face that does not match the voice'
+      : NO_FACE_HINT);
+    held = scenes.map((one) => (faking(one) ? facelessly(one) : one));
+  }
+  if (!understanding.person) return held;
+
+  // A real picture of a real person, already on the card, is who the film puts on screen. It is what the founder
+  // meant when they wired the studio that drew it, and a still with a slow move on it is a shot — it is only a
+  // *speaking* face that has to be earned.
   if (face) {
     let used = false;
-    held = scenes.map((scene) => {
+    const withFace = held.map((scene) => {
       if (scene.layout !== 'presenter' || scene.asset) return scene;
       used = true;
       return { ...scene, asset: face, portrait_prompt: undefined };
     });
-    if (used) { report('the film uses the picture from your image studio as the person on screen'); return held; }
-    // Nobody on camera was written at all. Where this machine can film one, the opening becomes a person moving
-    // instead — that is settled a few lines down — and only where it cannot does the picture go in as a still.
-    const at = filmHere ? -1 : held.findIndex((scene) => !scene.asset && !scene.image_prompt && scene.layout !== 'device' && scene.layout !== 'footage');
+    if (used) { report('the film uses the picture from your image studio as the person on screen'); return withFace; }
+    const at = held.findIndex((scene) => !scene.asset && !scene.image_prompt && scene.layout !== 'device' && scene.layout !== 'footage');
     if (at >= 0) {
       report('the film uses the picture from your image studio as the person on screen');
       return held.map((scene, index) => (index === at
@@ -503,9 +578,9 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
         : scene));
     }
   }
+
   // Somebody is in this film already — the model wrote them, or a person's own tool call did. That is not the same
-  // as the film opening on them, and a reel that wants a person is a reel where the person says the hook. So the
-  // opening is normalised too: if the first scene is not somebody, it becomes them.
+  // as the film opening on them, and a reel that wants a person is a reel where the person says the hook.
   if (held.some(hasSomebody)) {
     if (hasSomebody(held[0]) || !OPENS.has(held[0].layout)) return held;
     const first = held.find(hasSomebody)!;
@@ -514,43 +589,11 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
       ? { ...scene, layout: first.layout, person: true, clip_prompt: first.clip_prompt, portrait_prompt: first.portrait_prompt, asset: face ?? first.asset, image_prompt: undefined }
       : scene));
   }
-  scenes = held;
-  // The bible says "single strong subject, shallow depth of field", and a picture model reads that as a macro of
-  // somebody's mouth. A talking head has to be asked for as a talking head: the framing first, and loudly.
-  const look = bible.replace(/,?\s*shallow depth of field/i, '');
-  const facing = `one person ${DRESSED}, seen from the waist up in a medium shot, facing the camera and talking to it, gesturing with both hands as they speak, head, shoulders and hands all inside the frame with room above, both eyes open and looking into the lens`;
-  const portrait = `a medium shot of ${facing}, ${look}`;
-  // The opening, always, and one more in the middle of anything long enough to come back to a face. A reel that
-  // wants a person is a reel where the person says the hook: a film that opened on a texture and produced its
-  // presenter in scene three had a person in it the way a leaflet has a photograph in it.
-  const faces = new Set([0, ...(scenes.length >= 4 ? [Math.floor(scenes.length / 2)] : [])]);
-  // Whether the person moves. A still of somebody mid-sentence is a photograph of a person, not a person talking,
-  // and the brief asked for the second one — so where this machine can draw a moving shot, it draws one. It is not
-  // left to the model to choose: a model that writes a talking-head scene writes it as a `presenter`, which only
-  // the free online service makes, and when that is out of quota the film quietly has nobody in it at all.
-  // A clip scene the model wrote of something else is one of the film's moving shots already, so the film does not
-  // get two more on top of it — unless it sits where a face is going, in which case it is the one being replaced.
-  const already = scenes.filter((one, index) => one.layout === 'clip' && !faces.has(index)).length;
-  let given = 0;
-  const made = scenes.map((scene, index) => {
-    if (!faces.has(index)) return scene;
-    // A scene already holding a real picture keeps it — unless it is the opening, where a person the film was
-    // asked for beats a still of one. That was the whole of why the person turned up third.
-    if ((scene.image_prompt || scene.asset) && index !== 0) return scene;
-    if (filmHere && given + already < MOST_FACES) {
-      given += 1;
-      // The founder's own picture rides along: what it was drawn from is what this person looks like.
-      return { ...scene, layout: 'clip' as Layout, person: true, clip_prompt: `${facing}, talking with their mouth moving, natural head movement and hand gestures, shifting their weight, static camera, ${look}`, bg_prompt: portrait, image_prompt: undefined, asset: face ?? scene.asset };
-    }
-    given += 1;
-    return { ...scene, person: true, bg_prompt: portrait };
-  });
-  if (given && filmHere) {
-    report(`the brief wants somebody on camera, so this computer films ${given === 1 ? 'one shot' : `${given} shots`} of a person talking — about ${filmHere.minutes * given} minutes, and nothing leaves the machine`);
-  } else if (given) {
-    report(`the brief wants somebody on camera and there is no footage, so ${given === 1 ? 'the opening sits' : 'two scenes sit'} on a face`);
-  }
-  return made;
+
+  // Nobody on camera, and nothing that can honestly put them there. The film stays faceless and says so once —
+  // rather than drawing a stranger, moving their mouth to somebody else's words, and hoping.
+  report(NO_FACE_HINT);
+  return held;
 }
 
 export function fixPrompt(spec: Spec, found: { says: string }[], understanding: Understanding, layouts: Layout[]): string {

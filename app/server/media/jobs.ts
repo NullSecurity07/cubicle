@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Card, Media, MediaAsset, MediaCredit, MediaEvent, MediaKind, MediaResult } from '../../shared/model.ts';
 import type { Store } from '../store.ts';
+import type { Voice } from './voice.ts';
 
 export type MediaJobs = ReturnType<typeof createMedia>;
 // What the founder or a person asked for. `prompt` is the words of it; the rest is whatever that kind of studio offers.
@@ -12,7 +13,13 @@ export type Ask = { prompt: string } & Record<string, unknown>;
 // owed the knowledge that it was drawn here rather than fetched.
 export type Piece = { ext: string; bytes: Buffer; poster?: { ext: string; bytes: Buffer }; parts?: { text: string; seconds: number }[]; credit?: MediaCredit; by?: string };
 // One backend that makes one kind of media. `ready` says in the founder's words why it cannot work yet, or nothing.
-export type Maker = { name: string; ready(): string | null; make(ask: Ask, help: { report: (line: string) => void; signal?: AbortSignal }): Promise<Piece> };
+// `cast` is the voice makers' own answer to "who can say this?": the table the loaded weights ship with, so a film
+// picking a narrator reads gender, accent and grade off the model rather than off a list somebody typed.
+export type Maker = {
+  name: string; ready(): string | null;
+  make(ask: Ask, help: { report: (line: string) => void; signal?: AbortSignal }): Promise<Piece>;
+  cast?(): Promise<Voice[]>;
+};
 export type Makers = Partial<Record<MediaKind, Maker[]>>;
 
 const KEEP = 12;

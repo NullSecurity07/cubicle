@@ -6,7 +6,7 @@ import { seedStage, type Stage } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import { createMedia } from './jobs.ts';
-import { composition, FORMATS, sceneSeconds, type Shot } from './templates/index.ts';
+import { composition, FORMATS, PACKS, SAFE_1080, safeArea, sceneSeconds, type Shot } from './templates/index.ts';
 import { meansAPicture, spendingScenes } from '../tools/media.ts';
 import { docsFor, fakeVideos, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
@@ -130,9 +130,33 @@ describe('the composition', () => {
     // A heading is about a tenth of the height of a wide frame, and a title half as much again.
     expect(page).toContain('font-size: calc(68px * var(--s));');
     expect(page).toContain('font-size: calc(112px * var(--s));');
-    // The block sits a little above the middle of the frame, where the eye reads it as centred.
-    expect(page).toContain('calc(var(--margin) + var(--lift) + var(--safe-foot) * 0.34);');
+    // The block sits a little above the middle of the frame, where the eye reads it as centred — and clear of the
+    // whole of the platform's own furniture, not a third of it.
+    expect(page).toContain('calc(var(--margin) + var(--lift) + var(--safe-foot)) var(--margin);');
     expect(page).toContain('--lift: 56px;');
+  });
+
+  it('keeps every word inside the strip a phone feed leaves free', () => {
+    // The top 250px of a 1080x1920 feed carry a handle, the bottom 510px carry the caption, the sound and the
+    // buttons, and the right 140px carry the column a thumb reaches for. Our tall frame is that canvas at two
+    // thirds, so the numbers are too, and nothing that has to be read is drawn outside what is left.
+    const page = composition({ title: 'One', shape: 'tall', look: 'creator', captions: true, shots: shots(film.scenes) });
+    expect(page).toContain(`--safe-top: ${FORMATS.tall.safeTop}px;`);
+    expect(page).toContain(`--safe-foot: ${FORMATS.tall.safeFoot}px;`);
+    expect(page).toContain(`--safe-right: ${FORMATS.tall.safeRight}px;`);
+    for (const [name, mine, theirs] of [['top', FORMATS.tall.safeTop, SAFE_1080.top], ['foot', FORMATS.tall.safeFoot, SAFE_1080.foot],
+      ['right', FORMATS.tall.safeRight, SAFE_1080.right]] as const) {
+      expect(mine, name).toBeGreaterThanOrEqual(Math.floor((theirs * FORMATS.tall.width) / 1080));
+    }
+    // The captions sit around two thirds of the way down, and well above the strip the platform owns.
+    expect(FORMATS.tall.caps).toBeGreaterThan(FORMATS.tall.safeFoot);
+    expect(1 - FORMATS.tall.caps / FORMATS.tall.height).toBeGreaterThan(0.6);
+    expect(1 - FORMATS.tall.caps / FORMATS.tall.height).toBeLessThan(0.72);
+    // And the rectangle everything has to sit inside is the frame less all of it.
+    const area = safeArea('tall');
+    expect(area.y).toBeGreaterThanOrEqual(FORMATS.tall.safeTop);
+    expect(area.x + area.width).toBeLessThanOrEqual(FORMATS.tall.width - FORMATS.tall.safeRight);
+    expect(area.y + area.height).toBeLessThanOrEqual(FORMATS.tall.height - FORMATS.tall.safeFoot);
   });
 
   it('makes the one figure on a stat scene the whole scene, and runs it up to itself', () => {
@@ -207,7 +231,7 @@ describe('generate_video', () => {
     const { tool } = await turn(wired);
     const properties = (tool.parameters as { properties: Record<string, { type: string; enum?: string[] }> }).properties;
     expect(Object.keys(properties).sort()).toEqual(['brief', 'captions', 'format', 'images', 'length', 'look', 'music', 'narrate', 'pace', 'purpose', 'scenes', 'sfx', 'title']);
-    expect(properties.look.enum).toEqual(['clean', 'creator', 'editorial', 'neon', 'sketch', 'brand']);
+    expect(properties.look.enum).toEqual(['clean', 'creator', 'editorial', 'neon', 'documentary', 'sketch', 'brand']);
     expect(properties.format.enum).toEqual(['square', 'wide', 'tall']);
     expect(properties.pace.enum).toEqual(['calm', 'punchy']);
     // Every scene field is a plain string, number, boolean or list of strings: Gemini rejects anything cleverer.
@@ -400,6 +424,33 @@ describe('a film with everything in it', () => {
     // A tall frame takes a phone and a wide one a browser, unless the storyboard said which.
     expect(composition({ title: 'One', shape: 'tall', look: 'clean', shots: shots([{ layout: 'device', asset: 'a' }]) })).toContain('device--phone');
     expect(composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([{ layout: 'device', asset: 'a' }]) })).toContain('device--browser');
+  });
+
+  it('wears a declared format where a look has one, on the pictures and never over the type', () => {
+    // The documentary look is the one place a grade belongs: letterbox bars painted once for the whole render,
+    // and a measured tune applied to the moving and still pictures. Nothing touches the words.
+    const page = composition({ title: 'One', shape: 'wide', look: 'documentary', shots: shots(film.scenes) });
+    expect(page).toContain('<div class="bar bar--top"></div>');
+    expect(page).toContain('<div class="bar bar--foot"></div>');
+    expect(page).toContain('.bg img, .shot img, .shot video, .reel, .device__glass img { filter: saturate(0.92) contrast(1.05) brightness(0.98); }');
+    // The bars are a frame, not a move: nothing on the timeline touches them.
+    expect(page).not.toContain('"#bar,');
+    expect(page).not.toMatch(/tl\.[a-z]+\("\.bar/);
+    // And every other look declares no format at all, so it has neither.
+    for (const look of PACKS.filter((one) => one !== 'documentary')) {
+      expect(composition({ title: 'One', shape: 'wide', look, shots: shots(film.scenes) }), look).not.toContain('class="bar bar--top"');
+    }
+  });
+
+  it('puts no filter, grain or vignette over the frame in any pack', () => {
+    // The founder's verdict on the last film was "obvious filter". There was one, over every frame of every film:
+    // a grain layer and a vignette layer above the whole composite. Both are gone, and no pack brings them back.
+    for (const look of PACKS) {
+      const page = composition({ title: 'One', shape: 'tall', look, pace: 'punchy', shots: shots(film.scenes) });
+      expect(page, look).not.toContain('class="grain"');
+      expect(page, look).not.toContain('class="vig"');
+      expect(page, look).not.toContain('feTurbulence');
+    }
   });
 
   it("keeps a piece of the founder's own sound only where the scene asked for it", () => {

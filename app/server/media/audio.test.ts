@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { BED, duckExpr, MOODS, musicBed, SFX, sfxFile, SFX_DIR } from './audio.ts';
 import { ffReady } from './ff.ts';
-import { cuesOf } from './templates/index.ts';
 import type { Shot } from './templates/index.ts';
 import type { Scene } from './video.ts';
 import { wavSeconds } from './voice.ts';
@@ -64,36 +63,13 @@ describe('the sounds a film is cut with', () => {
     }
   });
 
-  it('cuts into every scene, and marks what the scene itself does', () => {
-    const list = shots([
-      { layout: 'hook', text: 'Stop scrolling.' },
-      { layout: 'checklist', heading: 'Three', bullets: ['a', 'b', 'c'] },
-      { layout: 'stat', heading: '3x' },
-      { layout: 'compare', bullets: ['before', 'after'] },
-      { layout: 'logo', heading: 'Relay' },
-    ]);
-    const punchy = cuesOf(list, startsOf(list), 'punchy');
-    // The opener of a reel is the one place a hard, bright sound belongs.
-    expect(punchy[0]).toEqual({ sound: 'hard', at: 0 });
-    expect(punchy.filter((one) => one.sound === 'mark')).toHaveLength(3);
-    expect(punchy.some((one) => one.sound === 'accent')).toBe(true);
-    expect(punchy.some((one) => one.sound === 'turn')).toBe(true);
-    expect(punchy.some((one) => one.sound === 'sting')).toBe(true);
-    // A calm film opens softly and cuts softly.
-    const calm = cuesOf(list, startsOf(list), 'calm');
-    expect(calm[0]).toEqual({ sound: 'soft', at: 0 });
-    expect(calm.filter((one) => one.sound === 'cut-soft').length).toBeGreaterThan(0);
-    expect(calm.some((one) => one.sound === 'cut-hard')).toBe(false);
-    // A film that ticks forty times is a film nobody finishes.
-    const many = shots(Array(24).fill({ layout: 'bullets', heading: 'x', bullets: ['a', 'b', 'c', 'd', 'e', 'f'] }));
-    expect(cuesOf(many, startsOf(many), 'calm').length).toBeLessThanOrEqual(64);
-  });
-
-  it('carries no sound at all through a scene that moves by itself, except the cut into it', () => {
-    const list = shots([{ layout: 'footage', asset: 'walk' }, { layout: 'clip', clip_prompt: 'a kite' }]);
-    const cues = cuesOf(list, startsOf(list), 'calm');
-    expect(cues).toHaveLength(2);
-    expect(cues.every((one) => one.sound === 'cut-wood')).toBe(true);
+  it('leaves where the sounds go to the editor, which is the only thing that knows', () => {
+    // There used to be a pass here that put a sound on the head of every scene and another on every entrance of
+    // every element in it — which is a film that ticks forty times, and an effect on every cut is the thing that
+    // makes an edit sound like a template. `media/editor.ts` places them now: five in a whole film at the most,
+    // each on the frame of a cut, weighted to the opening, the close and the scenes that land on something.
+    expect(SFX['cut-soft'].file).toBeTruthy();
+    expect(Object.keys(SFX).length).toBeGreaterThan(4);
   });
 });
 

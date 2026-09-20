@@ -342,7 +342,12 @@ export function criticise(spec: Spec, want: Want): Finding[] {
     // How much of the *spoken* line is already on the screen. A scene that shows what it says loses its captions
     // when it is rendered, so saying it twice is no longer the fault — the fault is the sentence. A headline the
     // voice happens to read is a scene; a paragraph of it is the narration set in type, which nobody watches.
-    if (want.captions && scene.say && scene.text && countWords(scene.text) > HEADING_WORDS && !ECHO_FINE.has(scene.layout) && echoes(scene.say, scene.text) >= 0.6) {
+    // Whether the screen says the line is a question about the *line*, not about how long the headline is. A real
+    // reel came back with a six-word headline on every scene, each of them the whole of the sentence spoken over
+    // it — under the old seven-word threshold not one of them counted, every scene silenced its own captions, and
+    // the film ran fifteen seconds with a voice and no words under it at all. The hook and the close are the two
+    // places a spoken line *is* the type, and they are exempt; everywhere else the captions do the talking.
+    if (want.captions && scene.say && scene.text && !ECHO_FINE.has(scene.layout) && echoes(scene.say, scene.text) >= 0.6) {
       say('echo', `scene ${at} writes out what is already said over it and already captioned under it`, at);
     }
     const spoken = countWords(scene.say);
@@ -716,14 +721,16 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
   scenes = scenes.map((scene) => {
     let made = { ...scene };
     if (want.captions && made.say && !ECHO_FINE.has(made.layout)) {
-      const repeats = made.text && countWords(made.text) > HEADING_WORDS && echoes(made.say, made.text) >= 0.6;
+      const repeats = made.text && echoes(made.say, made.text) >= 0.6;
       if (repeats && made.text) {
         // First try: a headline out of the line's own opening, in English — the clause it begins on, where it has
         // one. That is emphasis and not a transcript, and it keeps something on screen: a film of nothing but
         // photographs and subtitles is the other way of getting this wrong. Failing that, the words it turns on.
         const opening = headlineOf(made.say, HEADING_WORDS);
         const kicker = opening && echoes(made.say, opening) < 0.6 ? opening : kickerOf(made.say, EMPHASIS_WORDS);
-        if (countWords(kicker) >= 2 && !ECHO_FINE.has(made.layout) && made.layout !== 'picture') {
+        // A few words *of* the line is emphasis; a few words that are still most of the line is the same fault in
+        // fewer characters, and a repair that leaves what it was called to fix is worse than none.
+        if (countWords(kicker) >= 2 && echoes(made.say, kicker) < 0.6 && !ECHO_FINE.has(made.layout) && made.layout !== 'picture') {
           note('a sentence set on screen is cut to the words it turns on, and the captions say the rest');
           made = { ...made, text: kicker, emphasis: undefined };
           if (made.bullets?.length) made = { ...made, bullets: made.bullets.map((one) => trimTo(one, 5)) };
@@ -737,7 +744,7 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
           made = reshape({ ...made, text: scene.text }, ['stat', 'compare', 'checklist', 'picture'])
             ?? { ...made, text: trimTo(keywords(scene.say ?? '', 4), 4) || 'Keep watching' };
           // Whatever shape it took, the words that were the echo do not survive into it.
-          if (made.text && scene.say && !ECHO_FINE.has(made.layout) && echoes(scene.say, made.text) >= 0.6 && countWords(made.text) > HEADING_WORDS) made = { ...made, text: undefined };
+          if (made.text && scene.say && !ECHO_FINE.has(made.layout) && echoes(scene.say, made.text) >= 0.6) made = { ...made, text: undefined };
         }
       }
       if (made.bullets?.length) made = { ...made, bullets: made.bullets.map((one) => trimTo(one, 5)) };
@@ -854,6 +861,15 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     const pick = figure ?? longest;
     return pick && countWords(scene.text) > 2 ? { ...scene, emphasis: pick } : scene;
   });
+
+  // 9. The last word on the one rule every pass above can quietly undo. Recasting a scene puts words back on it,
+  //    and a scene that ends up saying on screen exactly what is said over it silences its own captions — which,
+  //    on a whole film, is a voice with nothing under it. Nothing leaves here still doing that.
+  if (want.captions) {
+    scenes = scenes.map((scene) => (scene.text && scene.say && !ECHO_FINE.has(scene.layout) && echoes(scene.say, scene.text) >= 0.6
+      ? { ...scene, text: undefined, emphasis: undefined }
+      : scene));
+  }
 
   return { spec: { ...spec, scenes }, notes };
 }

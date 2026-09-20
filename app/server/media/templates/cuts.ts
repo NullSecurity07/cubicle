@@ -24,11 +24,14 @@ export function cutSteps(cut: Cut, box: string, at: number, out: number, span: n
   const outOf: string[] = [];
   switch (cut) {
     case 'whip':
-      into.push(`tl.fromTo("${box}", { xPercent: ${58 * way}, filter: "blur(16px)", opacity: 0.2 }, { xPercent: 0, filter: "blur(0px)", opacity: 1, duration: ${s}, ease: "power3.out" }, ${t(at)});`);
+      // No opacity on the way in. A later section paints over an earlier one, so an arriving scene is already on
+      // top of the one it is replacing — fading it up as well means both are half-transparent at the midpoint and
+      // the film shows a black frame between every two scenes, which is what "obvious cuts" looks like.
+      into.push(`tl.fromTo("${box}", { xPercent: ${58 * way}, filter: "blur(16px)" }, { xPercent: 0, filter: "blur(0px)", duration: ${s}, ease: "power3.out" }, ${t(at)});`);
       outOf.push(`tl.to("${box}", { xPercent: ${-34 * way}, filter: "blur(20px)", opacity: 0, duration: ${s}, ease: "power2.in" }, ${t(out)});`);
       break;
     case 'zoom':
-      into.push(`tl.fromTo("${box}", { scale: 1.32, opacity: 0, filter: "blur(12px)" }, { scale: 1, opacity: 1, filter: "blur(0px)", duration: ${s}, ease: "power3.out" }, ${t(at)});`);
+      into.push(`tl.fromTo("${box}", { scale: 1.32, filter: "blur(12px)" }, { scale: 1, filter: "blur(0px)", duration: ${s}, ease: "power3.out" }, ${t(at)});`);
       outOf.push(`tl.to("${box}", { scale: 1.26, opacity: 0, filter: "blur(14px)", duration: ${s}, ease: "power2.in" }, ${t(out)});`);
       break;
     case 'wipe':
@@ -41,7 +44,7 @@ export function cutSteps(cut: Cut, box: string, at: number, out: number, span: n
       break;
     case 'cut':
       // A match cut: no dissolve at all, one frame's worth of scale so the two shots lock together.
-      into.push(`tl.fromTo("${box}", { scale: 1.05, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.10, ease: "power2.out" }, ${t(at)});`);
+      into.push(`tl.fromTo("${box}", { scale: 1.05 }, { scale: 1, duration: 0.10, ease: "power2.out" }, ${t(at)});`);
       outOf.push(`tl.to("${box}", { opacity: 0, duration: 0.06, ease: "none" }, ${t(out + span - 0.06)});`);
       break;
     default:

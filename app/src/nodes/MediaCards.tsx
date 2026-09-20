@@ -145,7 +145,7 @@ export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>
 }
 
 const LOOK_WORDS: Record<VideoLook, string> = {
-  clean: 'Clean', creator: 'Creator', editorial: 'Editorial', neon: 'Neon', sketch: 'Sketch', brand: 'Brand',
+  clean: 'Clean', creator: 'Creator', editorial: 'Editorial', neon: 'Neon', documentary: 'Documentary', sketch: 'Sketch', brand: 'Brand',
 };
 // What the film is for. The words are the founder's, not the code's; each one sets a structure, a pace and a length
 // on the server. Every picker starts on Auto, which is not a default but a decision: the director reads the brief and
@@ -209,6 +209,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
   const { updateNodeData, getNodes, getEdges } = useReactFlow();
   const { media, hint, making, problem, make, reload } = useMedia(id);
   const elapsed = useElapsed(making);
+  const voices = useVoices();
   const [shown, setShown] = useState(0);
   const [over, setOver] = useState(false);
   const log = useRef<HTMLDivElement>(null);
@@ -223,7 +224,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
       prompt: brief.trim(), format: data.format ?? 'auto', look: data.look ?? 'auto', narrate: !data.silent,
       purpose: data.purpose ?? 'auto', length: data.length, pace: data.pace ?? 'auto', music: data.music ?? 'auto',
       captions: data.captions === 'on' ? true : data.captions === 'off' ? false : undefined,
-      sfx: data.sfx !== 'off', ai: data.ai ?? 'auto', address: data.address,
+      sfx: data.sfx !== 'off', ai: data.ai ?? 'auto', address: data.address, voice: data.voice,
     });
   };
 
@@ -347,13 +348,28 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
               <label className="studio__toggle"><input type="checkbox" checked={data.captions === 'on'} onChange={(event) => updateNodeData(id, { captions: event.target.checked ? 'on' : 'off' })} />Captions</label>
               <label className="studio__toggle"><input type="checkbox" checked={data.sfx !== 'off'} onChange={(event) => updateNodeData(id, { sfx: event.target.checked ? 'on' : 'off' })} />Sound</label>
             </div>
-            <label className="studio__ai" title="Moving shots and talking heads. B-roll is made here on this computer, which takes about three minutes a clip and costs nothing; a talking head is made online, out of a small daily free quota.">
-              AI clips
+            {/* "AI clips" was a switch nobody could answer: it named how a shot is made rather than what the film
+                gets. This asks the only question a founder actually has an opinion about — where the pictures in
+                my film come from — and the studio works out the rest. */}
+            <label className="studio__ai" title="Where the pictures in this film come from. Your own footage and screenshots always come first; the rest is made up from what is left.">
+              Footage
               <select value={data.ai ?? ''} onChange={(event) => updateNodeData(id, { ai: (event.target.value || undefined) as 'on' | 'off' | undefined })}>
-                <option value="">Auto</option><option value="on">On</option><option value="off">Off</option>
+                <option value="">Auto</option>
+                <option value="off">My footage only</option>
+                <option value="on">Stock and generated</option>
               </select>
             </label>
-            {data.ai === 'on' && <p className="studio__aside">Moving shots are drawn here on this computer: about three minutes each, and the film waits for them. Talking heads are made online, out of a small daily free quota.</p>}
+            {data.ai === 'on' && <p className="studio__aside">Moving shots are drawn here on this computer: about three minutes each, and the film waits for them.</p>}
+            {data.ai === 'off' && <p className="studio__aside">Only what you dropped on this card, what is wired to it, and the film's own type and graphics.</p>}
+            {/* Who reads it. One voice a film, and the card says which — a narrator who does not match whoever is
+                on screen is the fastest way to lose a viewer, so the studio would rather show nobody. */}
+            <label className="studio__ai" title="One narrator reads the whole film. Left on Auto, the studio casts the best voice that fits the brief.">
+              Narrator
+              <select value={data.voice ?? ''} onChange={(event) => updateNodeData(id, { voice: event.target.value || undefined })}>
+                <option value="">Auto</option>
+                {voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name}</option>)}
+              </select>
+            </label>
             <AssetTray id={id} assets={assets} onChange={reload} />
           </details>
         </form>

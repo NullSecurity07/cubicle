@@ -34,13 +34,20 @@ describe('word timings', () => {
 describe('caption lines', () => {
   const at = (word: string, from: number, seconds = 0.3) => ({ word, at: from, seconds });
 
-  it('breaks by width, so a line never wraps and strands a word underneath itself', () => {
-    const lines = capLines([at('Rooms', 0), at('that', 0.4), at('remember', 0.8), at('everything', 1.2)], 20);
+  it('shows one to three words at a time, never a subtitle', () => {
+    const words = 'Investors never fund an idea they fund evidence'.split(' ').map((word, index) => at(word, index * 0.32));
+    const lines = capLines(words, 40, 3);
+    for (const line of lines) expect(line.words.length).toBeLessThanOrEqual(3);
+    expect(lines.flatMap((line) => line.words.map((one) => one.word))).toEqual(words.map((one) => one.word));
+  });
+
+  it('breaks by width too, so a line never wraps and strands a word underneath itself', () => {
+    const lines = capLines([at('Rooms', 0), at('that', 0.4), at('remember', 0.8), at('everything', 1.2)], 20, 4);
     expect(lines.map((line) => line.words.map((one) => one.word).join(' '))).toEqual(['Rooms that remember', 'everything']);
   });
 
   it('ends a line at the end of a sentence and wherever the speaker stops for a beat', () => {
-    const lines = capLines([at('Done.', 0), at('Next', 0.4), at('one', 3)], 40);
+    const lines = capLines([at('Done.', 0), at('Next', 0.4), at('one', 3)], 40, 4);
     expect(lines).toHaveLength(3);
     expect(lines[0].words[0].word).toBe('Done.');
     expect(lines[2].words[0].word).toBe('one');
@@ -49,39 +56,81 @@ describe('caption lines', () => {
   it('carries every word once and only once, whatever the budget', () => {
     const words = 'one two three four five six seven eight'.split(' ').map((word, index) => at(word, index * 0.3));
     for (const budget of [6, 12, 20, 40]) {
-      expect(capLines(words, budget).flatMap((line) => line.words.map((one) => one.word))).toEqual(words.map((one) => one.word));
+      expect(capLines(words, budget, 4).flatMap((line) => line.words.map((one) => one.word))).toEqual(words.map((one) => one.word));
     }
+  });
+
+  it('lights exactly one word in a line: the one the line turns on', () => {
+    const lines = capLines([at('they', 0), at('fund', 0.3), at('evidence', 0.6)], 40, 3);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].words[lines[0].pop!].word).toBe('evidence');
+    // The director's own word beats the longest one.
+    const marked = capLines([at('they', 0), at('fund', 0.3), at('evidence', 0.6)], 40, 3, ['fund']);
+    expect(marked[0].words[marked[0].pop!].word).toBe('fund');
+    // A line of nothing but small words lights none of them.
+    expect(capLines([at('it', 0), at('is', 0.3), at('the', 0.6)], 40, 3)[0].pop).toBeUndefined();
   });
 });
 
 describe('captions in a film', () => {
-  const shot = (seconds: number, parts: { text: string; seconds: number }[]): Shot =>
-    ({ scene: { layout: 'statement', text: 'A line.', say: parts.map((one) => one.text).join(' ') }, seconds, voice: { file: 'say-0.wav', seconds: parts.reduce((sum, one) => sum + one.seconds, 0), parts } });
+  const said = (text: string, from = 0, each = 0.4) => text.split(' ').map((word, index) => ({ word, at: from + index * each, seconds: each * 0.85 }));
+  const shot = (seconds: number, say: string): Shot => ({ scene: { layout: 'picture', image_prompt: 'a kite', say }, seconds, image: 'shot-0.png' });
 
-  it('shows one line at a time, and takes the one going before the one coming arrives', () => {
-    const lines = capLines(wordTimes([{ text: 'One two.', seconds: 2 }, { text: 'Three four.', seconds: 2 }]), 20);
-    expect(lines).toHaveLength(2);
-    const steps = capSteps(lines, 0, 4).join('\n');
-    const goes = Number(/#c0-0", \{ opacity: 0, duration: 0.15[^}]*\}, ([\d.]+)\)/.exec(steps)![1]);
-    const comes = Number(/fromTo\("#c0-1", \{ opacity: 0, y: 14[^}]*\}[^}]*\}, ([\d.]+)\)/.exec(steps)![1]);
-    expect(goes + 0.15).toBeLessThanOrEqual(comes);
-  });
-
-  it('is on the frame, not in the scene, so it outlives the scene fading out', () => {
-    const page = composition({ title: 'One', shape: 'tall', look: 'clean', captions: true, shots: [shot(5, [{ text: 'Hello there.', seconds: 2 }])] });
+  it('is one track on the frame, outside every scene, so a cut cannot carry it away', () => {
+    const words = said('Hello there friend');
+    const page = composition({
+      title: 'One', shape: 'tall', look: 'clean', captions: true, words,
+      voice: { file: 'say.wav', seconds: 3 }, shots: [shot(5, 'Hello there friend')],
+    });
     expect(page).toContain('<div class="caps" aria-hidden="true">');
-    expect(page).toContain('<span class="capword" id="c0-0-0">Hello</span>');
-    // The block that fades is `#f0`; the captions are outside it.
-    expect(page.indexOf('class="caps"')).toBeGreaterThan(page.indexOf('id="f0"'));
+    expect(page).toMatch(/<span class="capword[^"]*" id="c0-0">Hello<\/span>/);
+    // Outside the sections altogether, so nothing that moves a scene moves the words being said.
+    expect(page.indexOf('class="caps"')).toBeGreaterThan(page.lastIndexOf('</section>'));
     // Held well off the bottom edge, where a phone's own furniture sits.
     expect(page).toContain(`--caps: ${FORMATS.tall.caps}px;`);
+    // One recording for the whole film, placed once.
+    expect(page).toContain('<audio id="say" src="assets/say.wav" data-start="0"');
+  });
+
+  it('sets a line too wide for the frame smaller rather than cutting its ends off', () => {
+    // A nine-letter word at a tenth of a 1280-high frame is wider than the 562px the band has between the
+    // margins, and a real reel showed it centred with its first and last letters clipped by the frame.
+    const wide = capLines(said('INVESTORS'), 40, 1);
+    const shrunk = capHtml(wide, { size: 138, room: 562 });
+    const found = /font-size: ([\d.]+)px/.exec(shrunk);
+    expect(found).toBeTruthy();
+    expect(Number(found![1])).toBeLessThan(138);
+    // Never under two thirds, or it stops being a caption.
+    expect(Number(found![1])).toBeGreaterThanOrEqual(138 * 0.66);
+    // A short line is left at the size the format asked for.
+    expect(capHtml(capLines(said('GO'), 40, 1), { size: 138, room: 562 })).not.toContain('font-size');
+    // And nothing is sized at all when no measure was given.
+    expect(capHtml(wide)).not.toContain('font-size');
+  });
+
+  it('takes the line going before the line coming arrives', () => {
+    const lines = capLines(said('One two three four'), 20, 2);
+    expect(lines.length).toBeGreaterThan(1);
+    const steps = capSteps(lines, 4).join('\n');
+    const goes = Number(/#c0", \{ opacity: 0, duration: [\d.]+[^}]*\}, ([\d.]+)\)/.exec(steps)![1]);
+    const comes = Number(/fromTo\("#c1", \{ opacity: 0, y: 16[^}]*\}[^}]*\}, ([\d.]+)\)/.exec(steps)![1]);
+    expect(goes).toBeLessThanOrEqual(comes);
+  });
+
+  it('says nothing over a scene that already writes out the line being said', () => {
+    const page = composition({
+      title: 'One', shape: 'tall', look: 'clean', captions: true, words: said('Hello there friend'),
+      voice: { file: 'say.wav', seconds: 3 },
+      shots: [{ scene: { layout: 'hook', text: 'Hello there friend', say: 'Hello there friend' }, seconds: 5 }],
+    });
+    expect(page).not.toContain('class="caps"');
   });
 
   it('writes none of it when nothing was said, or when the founder turned it off', () => {
     const silent = composition({ title: 'One', shape: 'wide', look: 'clean', captions: true, shots: [{ scene: { layout: 'statement', text: 'A line.' }, seconds: 4 }] });
     expect(silent).not.toContain('class="caps"');
-    const off = composition({ title: 'One', shape: 'wide', look: 'clean', shots: [shot(5, [{ text: 'Hello there.', seconds: 2 }])] });
+    const off = composition({ title: 'One', shape: 'wide', look: 'clean', words: said('Hello there'), voice: { file: 'say.wav', seconds: 2 }, shots: [shot(5, 'Hello there')] });
     expect(off).not.toContain('class="caps"');
-    expect(off).toContain('<audio id="say0"');
+    expect(off).toContain('<audio id="say"');
   });
 });

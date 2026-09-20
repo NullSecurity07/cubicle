@@ -22,9 +22,11 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean }
   | { kind: 'videogen'; brief?: string; format?: Shape; look?: VideoLook; silent?: boolean;
     purpose?: string; length?: number; pace?: 'calm' | 'punchy'; music?: string; voice?: string;
     captions?: Switch; sfx?: Switch; ai?: Switch; address?: string; person?: Switch });
-// The six looks a film can wear. `clean` and `sketch` are the originals, `brand` takes the wired product's colours,
-// and `creator`, `editorial` and `neon` are the three a motion designer reaches for.
-export type VideoLook = 'clean' | 'creator' | 'editorial' | 'neon' | 'sketch' | 'brand';
+// The seven looks a film can wear. `clean` and `sketch` are the originals, `brand` takes the wired product's
+// colours, `creator`, `editorial` and `neon` are the three a motion designer reaches for, and `documentary` is the
+// long-form one: a serif on a letterboxed frame, held shots and a measured grade that is the format rather than a
+// filter over it.
+export type VideoLook = 'clean' | 'creator' | 'editorial' | 'neon' | 'documentary' | 'sketch' | 'brand';
 export type Switch = 'on' | 'off';
 export const SHAPES = ['square', 'wide', 'tall'] as const;
 export type Shape = (typeof SHAPES)[number];

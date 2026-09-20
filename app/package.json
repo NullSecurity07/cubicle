@@ -25,7 +25,7 @@
     "@huggingface/transformers": "^4.3.0",
     "@xyflow/react": "^12.11",
     "agent-browser": "^0.38.1",
-    "hyperframes": "0.8.50",
+    "hyperframes": "0.8.55",
     "kokoro-js": "1.2.1",
     "mermaid": "^12.0.0",
     "nodemailer": "^10.0.10",
