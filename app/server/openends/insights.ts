@@ -1,4 +1,4 @@
-import type { Insights, Share } from '../../shared/openends.ts';
+import type { Insights, Share, Today } from '../../shared/openends.ts';
 import type { Skills } from '../skills.ts';
 import { createTrace, type Totals } from '../trace.ts';
 
@@ -14,7 +14,9 @@ export function shares(totals: Record<string, Totals>, nameOf: (id: string) => s
     .sort((one, other) => other.tokens - one.tokens || other.turns - one.turns);
 }
 
-export function createInsights(deps: { workspace: string; skills: Skills; nameOf: (id: string) => Promise<string>; now?: () => number }) {
+// `today` is the usage book's own count, which is the only number here that is about right now rather than about
+// what is written down: how much of each free allowance is still there today.
+export function createInsights(deps: { workspace: string; skills: Skills; nameOf: (id: string) => Promise<string>; today?: () => Today[]; now?: () => number }) {
   const now = deps.now ?? Date.now;
   const trace = createTrace(deps.workspace, now);
 
@@ -33,6 +35,7 @@ export function createInsights(deps: { workspace: string; skills: Skills; nameOf
         days: summary.days, turns: summary.turns, ...totals,
         people: shares(summary.people, (id) => names[id] ?? id),
         providers: shares(summary.providers, (id) => id),
+        today: (deps.today?.() ?? []).map((one) => ({ name: one.name, left: one.left, requests: one.requests, tokens: one.tokens })),
         skills: {
           learned: skills.filter((one) => one.createdAt >= since).length,
           active: skills.filter((one) => one.state === 'active').length,

@@ -114,6 +114,21 @@ export function InsightsPanel() {
             <Bars title="Which model answered" rows={held.providers} empty="No model has answered yet." />
           </>
         )}
+        {/* The one number here that is about right now: what is left of each free day, the same share the rings show. */}
+        {held && held.today.length > 0 && (
+          <section className="insights__part">
+            <h3>Today<span>free allowance left</span></h3>
+            <ul className="insights__bars insights__today">
+              {held.today.map((one) => (
+                <li key={one.name}>
+                  <span className="insights__name">{one.name}</span>
+                  <span className="insights__track"><span className={`insights__fill ring--${one.left <= 0.05 ? 'out' : one.left < 0.2 ? 'low' : 'fine'}`} style={{ width: `${Math.round(one.left * 100)}%` }} /></span>
+                  <span className="insights__numbers">{Math.round(one.left * 100)}% left<small>{one.requests === 1 ? '1 reply' : `${whole(one.requests)} replies`} · $0</small></span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         {held && (
           <p className="playbook__note">
             {whole(held.skills.active)} {held.skills.active === 1 ? 'skill is' : 'skills are'} in use, and {whole(held.skills.used)} {held.skills.used === 1 ? 'was' : 'were'} reached for in these days.

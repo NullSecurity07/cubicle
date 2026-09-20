@@ -17,13 +17,19 @@ const setup = async () => {
   const workspace = await mkdtemp(join(tmpdir(), 'insights-'));
   const skills = createSkills(workspace, () => at);
   const names: Record<string, string> = { marketing: 'Maya', build: 'Dev' };
-  return { workspace, skills, insights: createInsights({ workspace, skills, nameOf: async (id) => names[id] ?? id, now: () => at }) };
+  const today = () => [{ name: 'groq', left: 0.42, requests: 12, tokens: 3400 }];
+  return { workspace, skills, insights: createInsights({ workspace, skills, nameOf: async (id) => names[id] ?? id, today, now: () => at }) };
 };
 
 describe('insights', () => {
   it('say so kindly when nothing has happened yet', async () => {
     const { insights } = await setup();
-    expect(await insights.read(7)).toMatchObject({ days: 7, turns: 0, input: 0, output: 0, people: [], providers: [], skills: { learned: 0, active: 0, used: 0 } });
+    // Nothing has been written down, and today's free allowance is still worth saying: it is what the founder has left.
+    expect(await insights.read(7)).toMatchObject({
+      days: 7, turns: 0, input: 0, output: 0, people: [], providers: [], skills: { learned: 0, active: 0, used: 0 },
+      today: [{ name: 'groq', left: 0.42, requests: 12, tokens: 3400 }],
+    });
+    expect((await createInsights({ workspace: (await setup()).workspace, skills: (await setup()).skills, nameOf: async (id) => id }).read(7)).today).toEqual([]);
   });
 
   it('add up what the work came to, by person and by provider, biggest first', async () => {

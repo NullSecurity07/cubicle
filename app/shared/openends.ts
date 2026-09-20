@@ -15,7 +15,9 @@ export type Outside = { file: string; servers: OutsideServer[] };
 
 // What the work came to. `tokens` is input plus output, which is the number a free quota is spent in.
 export type Share = { name: string; turns: number; tokens: number; failed: number };
+// Where one provider stands right now: `left` is the share of today's free allowance still there, 0 to 1.
+export type Today = { name: string; left: number; requests: number; tokens: number };
 export type Insights = {
   days: number; turns: number; input: number; output: number; tools: number; failed: number;
-  people: Share[]; providers: Share[]; skills: { learned: number; active: number; used: number };
+  people: Share[]; providers: Share[]; today: Today[]; skills: { learned: number; active: number; used: number };
 };

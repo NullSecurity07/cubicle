@@ -83,7 +83,12 @@ function Outsiders({ held, onChange }: { held: Outside | null; onChange: (held: 
         Other programs on this machine can lend your people a few tools. You list them in {held.file}. That list is read
         when the app starts, so after you change it, start the app again to see the difference.
       </p>
-      {!held.servers.length && <p className="panel__empty">No outside programs yet. Anything you add to that file shows up here the next time the app starts.</p>}
+      {!held.servers.length && (
+        <>
+          <p className="panel__empty">No outside programs yet. Anything you put in that file shows up here the next time the app starts.</p>
+          <pre className="outside__example">{'{ "mcpServers": { "notes": { "command": "node", "args": ["notes-server.js"] } } }'}</pre>
+        </>
+      )}
       {held.servers.map((server) => (
         <div key={server.name} className="outside__server">
           <div className="outside__head">
