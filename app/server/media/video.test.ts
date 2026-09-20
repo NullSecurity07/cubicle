@@ -6,7 +6,7 @@ import { seedStage, type Stage } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import { createMedia } from './jobs.ts';
-import { composition, FORMATS, PACKS, sceneSeconds, type Shot } from './templates/index.ts';
+import { composition, FORMATS, PACKS, SAFE_1080, safeArea, sceneSeconds, type Shot } from './templates/index.ts';
 import { meansAPicture, spendingScenes } from '../tools/media.ts';
 import { docsFor, fakeVideos, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
@@ -130,9 +130,33 @@ describe('the composition', () => {
     // A heading is about a tenth of the height of a wide frame, and a title half as much again.
     expect(page).toContain('font-size: calc(68px * var(--s));');
     expect(page).toContain('font-size: calc(112px * var(--s));');
-    // The block sits a little above the middle of the frame, where the eye reads it as centred.
-    expect(page).toContain('calc(var(--margin) + var(--lift) + var(--safe-foot) * 0.34);');
+    // The block sits a little above the middle of the frame, where the eye reads it as centred — and clear of the
+    // whole of the platform's own furniture, not a third of it.
+    expect(page).toContain('calc(var(--margin) + var(--lift) + var(--safe-foot)) var(--margin);');
     expect(page).toContain('--lift: 56px;');
+  });
+
+  it('keeps every word inside the strip a phone feed leaves free', () => {
+    // The top 250px of a 1080x1920 feed carry a handle, the bottom 510px carry the caption, the sound and the
+    // buttons, and the right 140px carry the column a thumb reaches for. Our tall frame is that canvas at two
+    // thirds, so the numbers are too, and nothing that has to be read is drawn outside what is left.
+    const page = composition({ title: 'One', shape: 'tall', look: 'creator', captions: true, shots: shots(film.scenes) });
+    expect(page).toContain(`--safe-top: ${FORMATS.tall.safeTop}px;`);
+    expect(page).toContain(`--safe-foot: ${FORMATS.tall.safeFoot}px;`);
+    expect(page).toContain(`--safe-right: ${FORMATS.tall.safeRight}px;`);
+    for (const [name, mine, theirs] of [['top', FORMATS.tall.safeTop, SAFE_1080.top], ['foot', FORMATS.tall.safeFoot, SAFE_1080.foot],
+      ['right', FORMATS.tall.safeRight, SAFE_1080.right]] as const) {
+      expect(mine, name).toBeGreaterThanOrEqual(Math.floor((theirs * FORMATS.tall.width) / 1080));
+    }
+    // The captions sit around two thirds of the way down, and well above the strip the platform owns.
+    expect(FORMATS.tall.caps).toBeGreaterThan(FORMATS.tall.safeFoot);
+    expect(1 - FORMATS.tall.caps / FORMATS.tall.height).toBeGreaterThan(0.6);
+    expect(1 - FORMATS.tall.caps / FORMATS.tall.height).toBeLessThan(0.72);
+    // And the rectangle everything has to sit inside is the frame less all of it.
+    const area = safeArea('tall');
+    expect(area.y).toBeGreaterThanOrEqual(FORMATS.tall.safeTop);
+    expect(area.x + area.width).toBeLessThanOrEqual(FORMATS.tall.width - FORMATS.tall.safeRight);
+    expect(area.y + area.height).toBeLessThanOrEqual(FORMATS.tall.height - FORMATS.tall.safeFoot);
   });
 
   it('makes the one figure on a stat scene the whole scene, and runs it up to itself', () => {

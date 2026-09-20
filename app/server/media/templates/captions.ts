@@ -1,16 +1,30 @@
-// Captions, word by word, under the line being said. The voice model hands back one piece of sound a sentence, so a
-// sentence's length is known exactly and only the words inside it have to be guessed at — which is done by how long
-// each word takes to say, not by how many there are: "strategically" is not "a".
+// Captions, word by word, under the line being said.
+//
+// Two things changed here, and both came out of a real film.
+//
+// The first is where the times come from. The voice model hands back one piece of sound a sentence, so a sentence's
+// length is known and the words inside it were spread across it by how long each takes to say. That is still the net
+// — `wordTimes` below — but it is a guess, and a caption a tenth of a second off the word it belongs to is what
+// makes an automatic edit look automatic. `media/timings.ts` measures them instead, and hands the measurement here.
+//
+// The second is how many words are on screen at once. A caption line is read, not watched: one to three words at a
+// time for a reel, four at the outside, one of them the word the line turns on set in the accent colour. That is
+// the single highest-leverage graphic in short-form video and it was being set as subtitles.
 
 // One piece of narration as the voice studio recorded it: the words, and how long that piece plays.
 export type Part = { text: string; seconds: number };
 export type Word = { word: string; at: number; seconds: number };
-export type CapLine = { words: Word[]; at: number; seconds: number };
+export type CapLine = { words: Word[]; at: number; seconds: number; pop?: number };
 
 // Punctuation is written, not said, so it carries no time; the constant is the beat every word costs whatever its
 // length, which is what keeps "a" from flashing past unreadably.
 const WEIGHT = 1.9;
 const spoken = (word: string) => word.replace(/[^\p{L}\p{N}]+/gu, '').length;
+
+// How long a caption line may stay on screen, and how little. Under a fifth of a second nothing is read at all;
+// seventeen characters a second is the ceiling a general audience reads at, twenty is the hard limit.
+export const CAP_LEAST = 0.2;
+export const CAP_CPS = 17;
 
 export function wordTimes(parts: Part[], from = 0): Word[] {
   const found: Word[] = [];
@@ -35,23 +49,33 @@ export function wordTimes(parts: Part[], from = 0): Word[] {
   return found;
 }
 
-// Words are shown a handful at a time: a phone caption that runs to the edge of the frame is read instead of watched.
-// The break is by width, not by count — a line of three long words wraps by itself and leaves one of them stranded
-// underneath at the dimness of a word not yet said, which looks like a fault rather than a caption. A line also ends
-// wherever the speaker stops for a beat, and at the end of a sentence.
-export function capLines(words: Word[], perLine: number): CapLine[] {
+// Words are shown a handful at a time: one to three for a reel, two to four for a quieter film, and never more.
+// The break is by count first and by width second — a line of three long words wraps by itself and leaves one of
+// them stranded underneath at the dimness of a word not yet said, which looks like a fault rather than a caption.
+// A line also ends wherever the speaker stops for a beat, and at the end of a sentence.
+//
+// One word in each line is the one it turns on, and it takes the accent colour. It is the longest word that
+// carries meaning, or the one the director named — never "the", never "is".
+const STOPPISH = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'so', 'if', 'is', 'are', 'was', 'were', 'be', 'to', 'of',
+  'in', 'on', 'at', 'for', 'with', 'from', 'by', 'as', 'it', 'its', 'you', 'your', 'we', 'our', 'they', 'their',
+  'i', 'my', 'me', 'he', 'she', 'his', 'her', 'them', 'us', 'that', 'this', 'not', 'no', 'do', 'does', 'did']);
+const bare = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+export function capLines(words: Word[], perLine: number, mostWords = 3, keywords: string[] = []): CapLine[] {
   const lines: CapLine[] = [];
+  const wanted = new Set(keywords.map(bare).filter(Boolean));
   let held: Word[] = [];
   let wide = 0;
   const close = () => {
     if (!held.length) return;
-    lines.push({ words: held, at: held[0].at, seconds: Math.round((held.at(-1)!.at + held.at(-1)!.seconds - held[0].at) * 1000) / 1000 });
+    const last = held.at(-1)!;
+    lines.push({ words: held, at: held[0].at, seconds: Math.round((last.at + last.seconds - held[0].at) * 1000) / 1000, pop: popIn(held, wanted) });
     held = [];
     wide = 0;
   };
   for (const word of words) {
     const last = held.at(-1);
-    if (last && (word.at - (last.at + last.seconds) > 0.34 || wide + word.word.length + 1 > perLine)) close();
+    if (last && (word.at - (last.at + last.seconds) > 0.34 || held.length >= mostWords || wide + word.word.length + 1 > perLine)) close();
     held.push(word);
     wide += word.word.length + 1;
     if (/[.!?]$/.test(word.word)) close();
@@ -60,34 +84,53 @@ export function capLines(words: Word[], perLine: number): CapLine[] {
   return lines;
 }
 
+// Which word in a line is set in the accent colour: the one the director marked if it is here, otherwise the
+// longest word that carries any meaning. A line of nothing but small words highlights none of them.
+function popIn(words: Word[], wanted: Set<string>): number | undefined {
+  const marked = words.findIndex((one) => wanted.has(bare(one.word)));
+  if (marked >= 0) return marked;
+  let best = -1;
+  let longest = 3;
+  words.forEach((one, at) => {
+    const word = bare(one.word);
+    if (word.length > longest && !STOPPISH.has(word)) { longest = word.length; best = at; }
+  });
+  return best >= 0 ? best : undefined;
+}
+
 const html = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-// The band of captions for one scene, and the steps that run it: a line arrives, each of its words lights as it is
-// said, and the line goes when the next one comes. Nothing here moves the scene under it.
-export function capHtml(lines: CapLine[], index: number): string {
+// The film's one band of captions, and the steps that run it: a line arrives, each of its words lights as it is
+// said, and the line goes when the next one comes. It sits outside every scene, because a caption belongs to the
+// frame rather than to the shot under it and must not be whipped off the screen by a cut.
+export function capHtml(lines: CapLine[]): string {
   if (!lines.length) return '';
-  const said = lines.map((line, at) => `<div class="capline" id="c${index}-${at}">`
-    + line.words.map((word, order) => `<span class="capword" id="c${index}-${at}-${order}">${html(word.word)}</span>`).join('')
+  const said = lines.map((line, at) => `<div class="capline" id="c${at}">`
+    + line.words.map((word, order) => `<span class="capword${line.pop === order ? ' pop' : ''}" id="c${at}-${order}">${html(word.word)}</span>`).join('')
     + '</div>').join('');
   return `<div class="caps" aria-hidden="true">${said}</div>`;
 }
 
-export function capSteps(lines: CapLine[], index: number, until: number): string[] {
+export function capSteps(lines: CapLine[], until: number): string[] {
   const steps: string[] = [];
   const time = (value: number) => value.toFixed(3);
-  const FADE = 0.15;
+  const FADE = 0.12;
   lines.forEach((line, at) => {
-    // Every line sits in the same place, so the one going has to be gone before the one coming arrives — overlap them
-    // by even a tenth of a second and the two read as one word on top of another.
+    // Every line sits in the same place, so the one going has to be gone before the one coming arrives — overlap
+    // them by even a tenth of a second and the two read as one word on top of another.
     const next = lines[at + 1]?.at;
-    // The line going has to be gone before the line coming arrives — and two lines that all but touch used to skip
-    // the fade altogether, which left the first one on screen under the second for the rest of the scene.
-    const gone = Math.max(line.at + 0.06, next !== undefined ? next - FADE - 0.02 : Math.min(until, line.at + line.seconds + 0.5));
-    steps.push(`tl.fromTo("#c${index}-${at}", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.18, ease: "power2.out" }, ${time(line.at)});`);
+    // A line is held long enough to be read: a fifth of a second at the very least, and never faster than a
+    // general audience reads.
+    const letters = line.words.reduce((sum, one) => sum + one.word.length + 1, 0);
+    const readable = Math.max(CAP_LEAST, letters / CAP_CPS);
+    const wants = Math.max(line.seconds, readable);
+    const gone = Math.max(line.at + CAP_LEAST, next !== undefined ? next - FADE - 0.02 : Math.min(until, line.at + wants + 0.35));
+    // Nothing arrives linearly: the entrance is the bold ease-out every other element in the film uses.
+    steps.push(`tl.fromTo("#c${at}", { opacity: 0, y: 16, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.16, ease: "power3.out" }, ${time(line.at)});`);
     line.words.forEach((word, order) => {
-      steps.push(`tl.fromTo("#c${index}-${at}-${order}", { opacity: 0.26, scale: 0.94 }, { opacity: 1, scale: 1, duration: 0.14, ease: "power2.out" }, ${time(word.at)});`);
+      steps.push(`tl.fromTo("#c${at}-${order}", { opacity: 0.24, scale: 0.92 }, { opacity: 1, scale: 1, duration: 0.13, ease: "back.out(1.7)" }, ${time(word.at)});`);
     });
-    steps.push(`tl.to("#c${index}-${at}", { opacity: 0, duration: ${Math.min(FADE, Math.max(0.04, (next ?? gone + FADE) - gone)).toFixed(3)}, ease: "power2.in" }, ${time(gone)});`);
+    steps.push(`tl.to("#c${at}", { opacity: 0, duration: ${Math.min(FADE, Math.max(0.04, (next ?? gone + FADE) - gone)).toFixed(3)}, ease: "power2.in" }, ${time(gone)});`);
   });
   return steps;
 }

@@ -10,17 +10,36 @@ export { PACKS as LOOKS } from './packs.ts';
 // tall phone video is not the wide one with the words falling off the sides — a phone is read at arm's length, so its
 // words are larger against their frame, not smaller. `lift` is how much air is left under a block: type centred on the
 // middle of the frame looks low, so every block sits a little above it. `caps` is how far the captions sit off the
-// bottom edge: on a phone the last fifth of the frame is under the player's own controls and the poster's thumb.
-// `text` is the second scale, and it is the one that makes a phone film a phone film: the big type barely changes
-// between shapes, but a line of body copy set for a screen watched across a room is unreadable held in one hand, so
-// everything small grows by a third on a tall frame. `capChars` is how wide a caption line may run before it breaks —
-// measured in characters, because a caption that wraps by itself leaves one word stranded on a line of its own.
-// `safeTop` and `safeFoot` are the platform's own furniture: on a phone feed the top of the frame carries a handle
-// and the bottom carries the caption, the sound and the buttons, and anything drawn there is covered up.
-export const FORMATS: Record<Shape, { width: number; height: number; scale: number; text: number; margin: number; lift: number; caps: number; capChars: number; safeTop: number; safeFoot: number }> = {
-  wide: { width: 1280, height: 720, scale: 1, text: 1, margin: 96, lift: 56, caps: 74, capChars: 34, safeTop: 0, safeFoot: 0 },
-  tall: { width: 720, height: 1280, scale: 0.98, text: 1.34, margin: 64, lift: 96, caps: 196, capChars: 20, safeTop: 120, safeFoot: 260 },
-  square: { width: 1080, height: 1080, scale: 0.94, text: 1.12, margin: 92, lift: 58, caps: 110, capChars: 26, safeTop: 0, safeFoot: 0 },
+// bottom edge. `text` is the second scale, and it is the one that makes a phone film a phone film: the big type barely
+// changes between shapes, but a line of body copy set for a screen watched across a room is unreadable held in one
+// hand, so everything small grows by a third on a tall frame. `capChars` is how wide a caption line may run before it
+// breaks — measured in characters, because a caption that wraps by itself leaves one word stranded on a line of its own.
+//
+// `safeTop`, `safeFoot` and `safeRight` are the platform's own furniture, and they are not guesses. On a 1080×1920
+// phone feed the top 250 px carry a handle and a back arrow, the bottom 510 px carry the caption, the sound, the
+// follow button and the poster's own name, and the right-hand 140 px carry the column of buttons a thumb reaches
+// for. TikTok took another twenty pixels off the right in January 2026, Reels another fifty off the bottom in late
+// 2025, and Shorts grew its subscribe button by a third. Anything drawn in those strips is covered up.
+//
+// Our tall frame is 720×1280, which is that canvas at two thirds, so every one of those numbers is scaled by the
+// same two thirds and nothing is rounded down. `safeArea()` below is the assertion: the block, the captions and
+// every graphic have to sit inside it, and a test holds the stylesheet to it.
+export const SAFE_1080 = { top: 250, foot: 510, right: 140 };
+export const FORMATS: Record<Shape, { width: number; height: number; scale: number; text: number; margin: number; lift: number; caps: number; capChars: number; safeTop: number; safeFoot: number; safeRight: number }> = {
+  wide: { width: 1280, height: 720, scale: 1, text: 1, margin: 96, lift: 56, caps: 118, capChars: 18, safeTop: 0, safeFoot: 0, safeRight: 0 },
+  tall: { width: 720, height: 1280, scale: 0.98, text: 1.34, margin: 64, lift: 96, caps: 420, capChars: 11, safeTop: 167, safeFoot: 340, safeRight: 94 },
+  square: { width: 1080, height: 1080, scale: 0.94, text: 1.12, margin: 92, lift: 58, caps: 356, capChars: 14, safeTop: 0, safeFoot: 0, safeRight: 0 },
+};
+
+// The rectangle everything a viewer has to read must sit inside, in the frame's own pixels. Nothing outside it is
+// covered up on a screen — it is covered up in the feed, which is the only place these films are watched.
+export const safeArea = (shape: Shape): { x: number; y: number; width: number; height: number } => {
+  const { width, height, safeTop, safeFoot, safeRight, margin } = FORMATS[shape];
+  return {
+    x: margin, y: safeTop + margin * 0.5,
+    width: width - margin - safeRight - margin * 0.5,
+    height: height - safeTop - safeFoot - margin,
+  };
 };
 
 // How fast the film moves. `calm` is the explainer: one long ease, a scene held as long as it takes to read. `punchy`
@@ -36,7 +55,7 @@ export const PACE: Record<Pace, { rise: number; ease: string; stagger: number; o
 // are written for something watched from across a room, not read on a page: on a wide frame a heading is a fifteenth
 // of the height, a title a seventh, and the one number on a stat scene is over a third of it.
 export function styleSheet(shape: Shape, pack: Pack, brand?: Brand): string {
-  const { scale, text, margin, lift, caps, safeTop, safeFoot } = FORMATS[shape];
+  const { height, scale, text, margin, lift, caps, safeTop, safeFoot, safeRight } = FORMATS[shape];
   const style = PACK[pack];
   const paint = paintOf(pack, brand);
   const sketch = pack === 'sketch';
@@ -54,7 +73,7 @@ ${faces}
 ${brand?.fontFile ? `@font-face { font-family: ${JSON.stringify(paint.font ?? 'Brand')}; src: url('vendor/${brand.fontFile}'); font-weight: 100 900; font-style: normal; font-display: block; }\n` : ''}* { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.ground}; }
 :root { --s: ${scale}; --t: ${(scale * text).toFixed(3)}; --margin: ${margin}px; --lift: ${lift}px; --caps: ${caps}px;
-  --safe-top: ${safeTop}px; --safe-foot: ${safeFoot}px; --radius: ${style.radius}px;
+  --safe-top: ${safeTop}px; --safe-foot: ${safeFoot}px; --safe-right: ${safeRight}px; --radius: ${style.radius}px;
   --ground: ${paint.ground}; --ink: ${paint.ink}; --quiet: ${paint.quiet}; --signal: ${paint.signal}; --mark: ${paint.mark}; --scrim: ${paint.scrim}; }
 #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: ${paint.ground}; color: ${paint.ink};
   font-family: ${body}; font-synthesis: none; -webkit-font-smoothing: antialiased; }
@@ -91,7 +110,8 @@ ${bars ? `/* Letterbox as a fixed format, identical for the whole render: two ba
    sake. The block is set a little above the middle, because type centred on the middle of a frame reads as low.
    On a phone the frame's own top and bottom belong to the platform, so the block keeps clear of both. */
 .frame { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
-  padding: calc(var(--margin) + var(--safe-top)) var(--margin) calc(var(--margin) + var(--lift) + var(--safe-foot) * 0.34); gap: calc(var(--margin) * 0.32); }
+  padding: calc(var(--margin) + var(--safe-top)) calc(var(--margin) + var(--safe-right)) calc(var(--margin) + var(--lift) + var(--safe-foot)) var(--margin);
+  gap: calc(var(--margin) * 0.32); }
 .frame > * { position: relative; }
 /* Over a picture the words drop to the foot of the frame: that is where the scrim holds the picture down, and on a
    portrait it is the one place the type is not across somebody's face. */
@@ -99,12 +119,21 @@ ${bars ? `/* Letterbox as a fixed format, identical for the whole render: two ba
 /* …but in a captioned film the foot of the frame is already spoken for. A block of display type and a caption line
    a few pixels apart are read as one sentence, and then as a fault; the block stops well above the band. */
 #root.has-captions .frame, #root.has-captions .frame--title, #root.has-captions .frame--stat, #root.has-captions .frame--onbg {
-  padding-bottom: calc(var(--caps) + 104px * var(--s)); }
+  padding-bottom: calc(var(--caps) + 132px * var(--s)); }
+/* A captioned film has two kinds of type on it, and the caption band is a tenth of the frame high. A display line
+   set for a frame with nothing else on it overflows its box in both directions and lands on top of the words being
+   said — which is what a real reel came back as: the hook and the caption written over each other. So in a
+   captioned film the big type comes down, and the block is cut off rather than allowed to spill into the band. */
+#root.has-captions .frame { overflow: hidden; }
+#root.has-captions .hook { font-size: calc(${style.shout ? 112 : 102}px * var(--s)); }
+#root.has-captions .display { font-size: calc(${style.shout ? 94 : 90}px * var(--s)); }
+#root.has-captions .heading { font-size: calc(58px * var(--s)); }
+#root.has-captions .stat { font-size: calc(224px * var(--s)); }
 .frame--onbg.frame--stat, .frame--onbg.frame--logo { justify-content: flex-end; }
 /* A title card is set on the foot of the frame instead, with the air above it, the way a poster is. */
-.frame--title { justify-content: flex-end; padding-bottom: calc(var(--margin) * 1.05 + var(--safe-foot) * 0.34); }
+.frame--title { justify-content: flex-end; padding-bottom: calc(var(--margin) * 1.05 + var(--safe-foot)); }
 /* A figure that size carries its own lift: the digits stand well above their line and nothing hangs below them. */
-.frame--stat { padding-bottom: calc(var(--margin) + var(--safe-foot) * 0.34); }
+.frame--stat { padding-bottom: calc(var(--margin) + var(--safe-foot)); }
 ${sketch ? '' : `.display, .heading, .hook, .lead, .body, .label, .quote, .logo, .stat, .step, .side .body { text-shadow: 0 calc(2px * var(--s)) calc(22px * var(--s)) rgba(0, 0, 0, 0.58); }`}
 .display { font-family: ${display}; font-size: calc(${style.shout ? 118 : 112}px * var(--s)); line-height: ${style.shout ? 0.94 : 1.0}; letter-spacing: ${style.shout ? '-0.01em' : '-0.038em'};
   font-weight: ${style.shout ? 400 : 660}; max-width: 10.5em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
@@ -155,7 +184,7 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
 .has-caps .plate { top: 0; bottom: auto; padding: calc(var(--margin) + var(--safe-top)) var(--margin) calc(var(--margin) * 1.6);
   background: ${sketch ? 'none' : `linear-gradient(to bottom, rgb(${paint.scrim}) 10%, rgba(${paint.scrim}, 0.88) 48%, rgba(${paint.scrim}, 0) 100%)`}; }
 .frame--picture.has-caps { justify-content: flex-start; }
-.plate { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: var(--margin); padding-top: calc(var(--margin) * 1.7); padding-bottom: calc(var(--margin) + var(--safe-foot) * 0.34);
+.plate { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: var(--margin); padding-top: calc(var(--margin) * 1.7); padding-bottom: calc(var(--margin) + var(--safe-foot));
   background: ${sketch ? 'none' : `linear-gradient(to top, rgb(${paint.scrim}) 10%, rgba(${paint.scrim}, 0.88) 48%, rgba(${paint.scrim}, 0) 100%)`}; }
 .frame--picture { justify-content: flex-end; padding: 0; gap: 0; }
 /* The words over a picture are the scene's whole caption, so in a pack that shouts they are set like one rather than
@@ -202,7 +231,7 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: calc(54px * 
    into the screen so a still page has somewhere to go. The mockups are drawn here, in the page, so nothing is
    fetched and every frame of the push is drawn rather than resampled.
    The variable --devroom is the height the frame needs for all that is not the device; captions claim their own. */
-:root { --devroom: calc(78px + var(--safe-top) + var(--safe-foot) * 0.5); }
+:root { --devroom: calc(78px + var(--safe-top) + var(--safe-foot)); }
 #root.has-captions { --devroom: calc(var(--caps) + 80px + var(--safe-top)); }
 .frame--device { justify-content: center; align-items: center; gap: 0; padding: 0; overflow: visible; }
 .device { position: relative; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
@@ -237,7 +266,7 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: calc(54px * 
    whatever the screenshot is showing. */
 /* The chip sits in the floor under the device, where the ground is darkest and nothing is happening — except in a
    captioned film, where the foot of the frame is already spoken for and it goes to the head instead. */
-.chip { position: absolute; bottom: calc(var(--margin) * 0.5 + var(--safe-foot) * 0.34); left: calc(var(--margin) * 0.62); z-index: 5;
+.chip { position: absolute; bottom: calc(var(--margin) * 0.5 + var(--safe-foot)); left: calc(var(--margin) * 0.62); z-index: 5;
   padding: calc(10px * var(--t)) calc(20px * var(--t)); border-radius: 999px;
   background: rgba(${paint.scrim}, ${sketch ? '0.86' : '0.82'}); backdrop-filter: blur(calc(8px * var(--s)));
   border: 1px solid ${paint.quiet}44; color: ${paint.ink};
@@ -250,18 +279,24 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: calc(54px * 
 
 /* How far through the film a viewer is, drawn as one hairline across the foot of the frame. A reel earns this: it is
    the one thing that makes somebody stay for the last two seconds. */
-.progress { position: absolute; left: 0; bottom: 0; height: calc(7px * var(--s)); width: 100%; z-index: 9;
+.progress { position: absolute; left: 0; bottom: var(--safe-foot); height: calc(7px * var(--s)); width: 100%; z-index: 9;
   transform-origin: 0 50%; background: ${paint.signal}; opacity: 0.92; }
 
 /* The captions: the line being said, word by word, held off the bottom edge by more than it looks like it needs —
    on a phone the last fifth of the frame belongs to the player, the poster's own furniture and the thumb. */
-.caps { position: absolute; left: var(--margin); right: var(--margin); bottom: var(--caps); z-index: 6; display: flex; flex-direction: column;
+.caps { position: absolute; left: var(--margin); right: calc(var(--margin) + var(--safe-right)); bottom: var(--caps); z-index: 6; display: flex; flex-direction: column;
   align-items: center; justify-content: flex-end; pointer-events: none; }
 .capline { position: absolute; bottom: 0; left: 0; right: 0; display: flex; flex-wrap: wrap; gap: 0 calc(16px * var(--s));
   align-items: baseline; justify-content: center; text-align: center; }
-.capword { font-family: ${style.shout ? display : body}; font-size: calc(${shape === 'tall' ? 58 : shape === 'square' ? 50 : 44}px * var(--s)); line-height: 1.16; font-weight: ${style.shout ? 400 : 720}; letter-spacing: -0.018em;
-  color: ${paint.ink}; ${style.shout ? 'text-transform: uppercase;' : ''} ${sketch ? `text-shadow: 0 0 calc(12px * var(--s)) rgba(${paint.scrim}, 0.9);` : `text-shadow: 0 calc(3px * var(--s)) calc(18px * var(--s)) rgba(0, 0, 0, 0.62);`}
-  padding: calc(2px * var(--s)) 0; }
+/* The size is the whole of why captions work, and it was wrong: a tenth to a seventh of the frame's height, set in
+   the display face, in capitals, with a real black stroke around it rather than a soft shadow. The old 58px on a
+   1280-high frame was four and a half per cent — a subtitle, read rather than watched, and invisible at the size a
+   feed thumbnail is. paint-order puts the stroke behind the letterform so it thickens the outline instead of
+   eating the inside of the type. */
+.capword { font-family: ${display}; font-size: calc(${Math.round(height * 0.108)}px * var(--s)); line-height: 1.04; font-weight: ${style.shout ? 400 : 800}; letter-spacing: -0.02em;
+  color: ${paint.ink}; text-transform: uppercase; padding: calc(2px * var(--s)) 0;
+  -webkit-text-stroke: calc(${Math.max(3, Math.round(height * 0.0045))}px * var(--s)) #000000; paint-order: stroke fill;
+  text-shadow: 0 calc(3px * var(--s)) calc(16px * var(--s)) rgba(0, 0, 0, 0.55); }
 .capword.pop { color: ${sketch ? paint.ink : paint.signal}; }
 `.trim();
 }

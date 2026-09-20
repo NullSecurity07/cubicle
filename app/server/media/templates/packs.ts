@@ -70,7 +70,10 @@ export type PackStyle = {
   format?: { letterbox?: number; grade?: string };
   // A sweep of colour drawn behind a headline as it arrives — the one piece of decoration a reel earns.
   sweep: boolean;
-  // How hard a background picture is held down so type can sit on it.
+  // How hard a background picture is held down so type can sit on it. It is a hold, not a dimmer: a contrast
+  // ratio of four and a half to one is what a line of type needs over a photograph, and anything past that is
+  // turning the photograph off. A real reel came back as fifteen seconds of near-black because these were near
+  // three quarters and the pictures under them were already dark.
   scrim: number;
   radius: number;
   // How wide a caption line runs against the format's own measure: a creator reel says two or three words at a time.
@@ -93,7 +96,7 @@ export const PACK: Record<Pack, PackStyle> = {
     paint: { ground: '#1C2530', ink: '#F2F5F8', quiet: '#AFBDCB', signal: '#E8B04B', mark: '#E8B04B', scrim: '28, 37, 48' },
     fonts: [INTER], display: "'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'settle', cuts: ['fade', 'push', 'wipe'], overlap: 0.42,
-    sweep: false, scrim: 0.66, radius: 22, capScale: 1,
+    sweep: false, scrim: 0.46, radius: 22, capScale: 1,
   },
   creator: {
     // The reel: near-black, one acid accent, a condensed display face shouting, words landing two and three at a
@@ -102,7 +105,7 @@ export const PACK: Record<Pack, PackStyle> = {
     paint: { ground: '#0C0D12', ink: '#FFFFFF', quiet: '#AEB3C4', signal: '#D6FF3E', mark: '#D6FF3E', scrim: '12, 13, 18' },
     fonts: [INTER, ANTON], display: "'Studio Shout', 'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
     shout: true, motion: 'kinetic', cuts: ['whip', 'zoom', 'cut', 'whip', 'wipe'], overlap: 0.30,
-    sweep: true, scrim: 0.74, radius: 18, capScale: 0.62,
+    sweep: true, scrim: 0.52, radius: 18, capScale: 0.62,
   },
   editorial: {
     // The quiet one: a serif that has something to say, a great deal of air, pictures doing the arguing, and cuts you
@@ -111,7 +114,7 @@ export const PACK: Record<Pack, PackStyle> = {
     paint: { ground: '#14120F', ink: '#F4EFE6', quiet: '#BDB2A4', signal: '#E4B45C', mark: '#D8A54A', scrim: '20, 18, 15' },
     fonts: [INTER, SERIF], display: "'Studio Serif', Georgia, serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'glide', cuts: ['fade', 'wipe', 'fade', 'push'], overlap: 0.62,
-    sweep: false, scrim: 0.62, radius: 4, capScale: 1.05,
+    sweep: false, scrim: 0.44, radius: 4, capScale: 1.05,
   },
   neon: {
     // Tech: an almost-black ground, cyan against magenta, a grotesk with real character, and cuts that snap.
@@ -119,14 +122,14 @@ export const PACK: Record<Pack, PackStyle> = {
     paint: { ground: '#06070C', ink: '#E9F6FF', quiet: '#97A9C2', signal: '#3BE3FF', mark: '#FF42D6', scrim: '6, 7, 12' },
     fonts: [GROTESK, INTER], display: "'Studio Tech', 'Studio Sans', sans-serif", body: "'Studio Tech', 'Studio Sans', sans-serif",
     shout: true, motion: 'snap', cuts: ['zoom', 'wipe', 'cut', 'whip'], overlap: 0.26,
-    sweep: true, scrim: 0.70, radius: 8, capScale: 0.78,
+    sweep: true, scrim: 0.50, radius: 8, capScale: 0.78,
   },
   sketch: {
     name: 'Sketch',
     paint: { ground: '#F4F0E6', ink: '#1F1D1A', quiet: '#6B6660', signal: '#2B54C8', mark: '#FFD24A', scrim: '244, 240, 230' },
     fonts: [INTER], display: "'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'hand', cuts: ['fade', 'push'], overlap: 0.40,
-    sweep: false, scrim: 0.50, radius: 16, capScale: 1,
+    sweep: false, scrim: 0.38, radius: 16, capScale: 1,
   },
   brand: {
     // The product's own colours, over the clean pack's manners. What `paintOf` finds replaces the palette below.
@@ -134,7 +137,7 @@ export const PACK: Record<Pack, PackStyle> = {
     paint: { ground: '#1C2530', ink: '#F2F5F8', quiet: '#93A3B4', signal: '#E8B04B', mark: '#E8B04B', scrim: '28, 37, 48' },
     fonts: [INTER], display: "'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'settle', cuts: ['fade', 'push', 'zoom'], overlap: 0.40,
-    sweep: false, scrim: 0.66, radius: 20, capScale: 1,
+    sweep: false, scrim: 0.46, radius: 20, capScale: 1,
   },
 };
 

@@ -21,8 +21,17 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   type a **Product address**, and it photographs the real pages at desktop and phone size and puts the shots in
   phone, laptop and browser mockups; wired **notes**, **documents** and **pictures** are material too. Drop your
   own video, photographs or a music track on the card and it edits around them. Seventeen scene shapes, two paces,
-  six looks, word-by-word captions, sound on the cuts, and a music bed ducked under the narration. Nothing about
-  a film leaves this machine except what you wired to it.
+  six looks, word-by-word captions, and a music bed ducked under the narration. Nothing about a film leaves this
+  machine except what you wired to it.
+- **An editor, not a slideshow** (2026-09-20): the narration is read in **one go** for the whole film, so the
+  voice rises and falls the way somebody talking does, and then it is listened back to — every word's exact place
+  is measured. A deterministic editor turns that into a shot list: cuts land on the phrase boundaries the speaker
+  actually left, shot lengths are drawn from the look's own distribution rather than a constant, a punch-in
+  happens on a stressed word and nowhere else, the payoff gets the one long hold, and a film carries at most five
+  sounds, each on a cut frame. Captions are set the way they are in the work this format grew out of — a tenth of
+  the frame high, in capitals, with a black stroke, one to three words at a time and one of them the word the line
+  turns on. There is no grain and no vignette over any of it: a grade belongs to a look that declares one as its
+  format, on the pictures and never over the type.
 - **A director, not a form** (2026-09-19): every picker on the card starts on **Auto**, and a brief on its own is
   enough. The studio reads what the brief actually asks for — what it is for, who is watching, how long, how fast,
   what it should sound like, whether somebody is on camera — then decides an angle, a hook and one line of visual
@@ -82,10 +91,15 @@ shows the progress); `GEMINI_API_KEY` is the fallback if it will not load. **Mus
 Openverse is searched anonymously (20 searches a minute, 200 a day, which is far more than a founder will use) and
 each track is kept in `app/.cache/music/`; `STAGE_NO_MUSIC_SEARCH=1` turns the search off entirely and every bed is
 written here, `FREESOUND_API_KEY` adds a second library if you have a free key, and `STAGE_MUSIC_SEED` pins the
-dice so a re-render of one film gets the same bed. **Somebody on camera** is drawn here too when the free Spaces have nothing left: the same local video model, asked
-for a person talking to camera in the words the portrait was drawn from — moving, gesturing and blinking, about
-three minutes a scene and at most twelve minutes a film. Animating the founder's *exact* picture was measured at
-twenty minutes for two seconds on this hardware, so it is behind `STAGE_LOCAL_I2V=1` rather than on by default.
+dice so a re-render of one film gets the same bed. **Somebody on camera** is the one thing the studio will not fake. A person speaks in a film only where something
+can move their mouth to the actual recording, which today means the free Hugging Face Spaces and an `HF_TOKEN`;
+with nothing able to, the film becomes the faceless edit and the card says the two ways to get a real one — your
+own footage, or the token. A drawn person whose mouth moves to a separate voice is the fastest way to make a film
+read as generated, and there is no switch for it. **Word timings** are measured rather than guessed: the narration
+is read in one go and `hyperframes transcribe` (whisper.cpp, already a dependency, nothing leaves the machine)
+says where each word falls, so every cut, punch-in and caption lands on a word. It builds itself the first time
+and needs `cmake` on the path — `uv tool install cmake` puts one there without root; without it the film still
+renders and the card says the timings were worked out from the sentences instead.
 **Films** need no key either, only
 Chrome and ffmpeg, which the browser card and the app already rely on; they render locally, a minute or so for
 a short one. The voice runtime adds about 500 MB to `node_modules`, and each film is a few MB in

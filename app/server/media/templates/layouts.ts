@@ -13,6 +13,12 @@ export type Shot = {
   // tint, so the film hangs together without three scenes looking like the same frame held too long.
   bgShared?: boolean;
   voice?: { file: string; seconds: number; parts?: Part[] };
+  // Which take of its scene this is. A scene long enough to want a picture change is several shots, and each of
+  // them shows something different — otherwise the change is the same frame twice, which is worse than a hold.
+  take?: number;
+  // The push the editor asked for, because a word under it earned one or because the frame would otherwise sit
+  // still past three seconds. Written on the film's own clock, so it lands on the word rather than near it.
+  punch?: { to: number; at: number; seconds: number };
 };
 
 const html = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

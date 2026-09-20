@@ -1,15 +1,15 @@
 import type { Shape } from '../../../shared/model.ts';
 import { SFX, type Cue, type Sfx } from '../audio.ts';
 import { saysWhatItShows } from '../spec.ts';
-import { capHtml, capLines, capSteps, wordTimes } from './captions.ts';
+import { capHtml, capLines, capSteps, wordTimes, type Word } from './captions.ts';
 import { cutSteps } from './cuts.ts';
 import { groundHtml, MOVING, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
 import { cutAt, FORMATS, PACE, PACK, styleSheet, type Brand, type Pace, type Pack } from './looks.ts';
 
-export { FORMATS, LOOKS, PACKS, PACES, PACK, paintOf, lightOf, cutAt, isPack, type Brand, type Look, type Pack, type Pace, type Paint } from './looks.ts';
+export { FORMATS, SAFE_1080, safeArea, LOOKS, PACKS, PACES, PACK, PACE, paintOf, lightOf, cutAt, isPack, type Brand, type Look, type Pack, type Pace, type Paint } from './looks.ts';
 export type { Shot } from './layouts.ts';
 export { FRAMES } from './layouts.ts';
-export { wordTimes, capLines, type Part } from './captions.ts';
+export { wordTimes, capLines, type Part, type Word } from './captions.ts';
 export { snapToBeats } from './cuts.ts';
 
 // A scene lasts as long as the line said over it, and never less than the time it takes to read what is on it. A
@@ -90,6 +90,18 @@ function markSteps(tl, drawn) {
 }
 `.trim();
 
+// The push the editor asked for, written as a move on the film's own clock. It is on the picture, never on the
+// type: a headline that grows while it is being read is a headline nobody finishes. `1.0` to somewhere between
+// 1.08 and 1.15 over three hundred milliseconds is a punch-in; the same move over four seconds is a camera.
+function punchSteps(shot: Shot, index: number): string[] {
+  if (!shot.punch) return [];
+  const { to, at, seconds } = shot.punch;
+  // A quick push is an emphasis and overshoots a little; a slow one is a camera and must not.
+  const ease = seconds < 0.6 ? 'back.out(1.6)' : 'power1.inOut';
+  return [`tl.fromTo("#g${index} .bg img, #g${index} .shot img, #g${index} .shot video, #g${index} .mesh",`
+    + ` { scale: 1 }, { scale: ${to.toFixed(3)}, duration: ${seconds.toFixed(2)}, ease: "${ease}" }, ${at.toFixed(3)});`];
+}
+
 // What a film is, once everything it is made of has been made: the scenes in order, how fast it moves, the look it
 // wears, the bed under it and the sounds cut into it.
 export type Film = {
@@ -98,6 +110,19 @@ export type Film = {
   bed?: { file: string; seconds: number }; cues?: Cue[];
   // Where the bed's beats fall, when the bed knew: the cuts are pulled onto them.
   beats?: number[];
+  // The film's narration: **one** recording for the whole piece, not one a scene glued to the next. A voice read
+  // in pieces and stitched back together has a new breath at every join and a flat, even stress across the whole
+  // thing; read in one go it rises and falls the way somebody talking does, and every cut in the film is then
+  // placed against that one clock rather than against a dozen.
+  voice?: { file: string; seconds: number };
+  // Every word of it, and when it is said — measured, where anything could measure it. This is what the captions
+  // are built from now, so a caption lands on its word rather than near it.
+  words?: Word[];
+  // The words the film turns on, which take the accent colour in the caption track.
+  keywords?: string[];
+  // Where the captions must not be shown, in film time: the scenes that already write out what is being said, so
+  // the frame is not the same sentence twice.
+  quiet?: { at: number; seconds: number }[];
 };
 
 // The whole video as one HTML file: the scenes in order with their timing on them, the narration and the music beside
@@ -116,16 +141,21 @@ export function composition(film: Film): string {
   // A scene is given its own length plus the time the next one needs to arrive over it, so the two really overlap.
   const held = (index: number) => Math.round((film.shots[index].seconds + (index === last ? 0 : style.overlap)) * 100) / 100;
 
-  // The captions belong to the frame, not to the scene's own block, so they sit outside it and survive its fade.
-  // A scene whose own words are already the line being said gets none: a hook is the spoken line set large, and a
-  // word-by-word caption under it is the same sentence twice on one frame, which is what a founder was handed.
-  const capsFor = (shot: Shot, index: number) => {
-    if (!film.captions || !shot.voice?.parts?.length) return { html: '', steps: [] as string[] };
-    if (saysWhatItShows(shot.scene)) return { html: '', steps: [] as string[] };
-    const lines = capLines(wordTimes(shot.voice.parts, starts[index] + PACE[pace].lead), Math.round(capChars * style.capScale));
-    return { html: capHtml(lines, index), steps: capSteps(lines, index, starts[index] + shot.seconds) };
-  };
-  const captions = film.shots.map(capsFor);
+  // The captions belong to the frame, not to any one scene's block: one track for the whole film, outside every
+  // section, so a whip pan carries the picture away and leaves the words being said where they are.
+  //
+  // A stretch of narration whose scene already writes out what is being said gets none of it: a hook is the spoken
+  // line set large, and a word-by-word caption under it is the same sentence twice on one frame, which is exactly
+  // what a founder was handed.
+  const quiet = film.quiet ?? film.shots.map((shot, index) => (saysWhatItShows(shot.scene)
+    ? { at: starts[index], seconds: shot.seconds } : null)).filter(Boolean) as { at: number; seconds: number }[];
+  const spoken = (film.words ?? []).filter((word) => !quiet.some((gap) => word.at >= gap.at - 0.01 && word.at < gap.at + gap.seconds));
+  const capWords = Math.max(1, Math.round(style.capScale * 4));
+  const lines = film.captions && spoken.length
+    ? capLines(spoken, Math.round(capChars * style.capScale), capWords, film.keywords ?? [])
+    : [];
+  const captionHtml = capHtml(lines);
+  const captionSteps = capSteps(lines, total);
 
   // The moving pictures are elements of the film in their own right, before the scenes and behind them: the renderer
   // owns their playback, and a <video> that carried its own start inside a section that carried one too would be
@@ -140,15 +170,20 @@ export function composition(film: Film): string {
   });
 
   // Every scene is one box that moves as one thing, because the cut between two scenes is a move of the whole box.
-  const bodies = film.shots.map((shot, index) => sceneHtml(shot, index, film.shape, !!captions[index].html, pack));
+  const captioned = !!captionHtml;
+  const bodies = film.shots.map((shot, index) => sceneHtml(shot, index, film.shape, captioned, pack));
   const sections = film.shots.map((shot, index) => `      <section class="clip" id="s${index}" data-start="${starts[index]}" data-duration="${held(index)}">`
     + `<div class="stage" id="g${index}">${groundHtml(shot, index, pack)}`
     + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}`
-    + `${bodies[index]}${captions[index].html}</div></section>`);
-  // Every sound needs an id of its own or the mixer never finds it and the film comes out silent.
-  const sounds = film.shots.flatMap((shot, index) => (shot.voice
-    ? [`      <audio id="say${index}" src="assets/${shot.voice.file}" data-start="${(starts[index] + PACE[pace].lead).toFixed(2)}" data-duration="${shot.voice.seconds.toFixed(2)}" data-volume="1"></audio>`]
-    : []));
+    + `${bodies[index]}</div></section>`);
+  // Every sound needs an id of its own or the mixer never finds it and the film comes out silent. The narration is
+  // one element for the whole film; a scene that also carries its own recording still gets one, which is how a
+  // film made without measured timings still speaks.
+  const sounds = film.voice
+    ? [`      <audio id="say" src="assets/${film.voice.file}" data-start="0" data-duration="${film.voice.seconds.toFixed(2)}" data-volume="1"></audio>`]
+    : film.shots.flatMap((shot, index) => (shot.voice
+      ? [`      <audio id="say${index}" src="assets/${shot.voice.file}" data-start="${(starts[index] + PACE[pace].lead).toFixed(2)}" data-duration="${shot.voice.seconds.toFixed(2)}" data-volume="1"></audio>`]
+      : []));
   if (film.bed) sounds.unshift(`      <audio id="bed" src="assets/${film.bed.file}" data-start="0" data-duration="${film.bed.seconds.toFixed(2)}" data-volume="1"></audio>`);
   for (const [index, cue] of (film.cues ?? []).entries()) {
     const sound = SFX[cue.sound];
@@ -161,14 +196,17 @@ export function composition(film: Film): string {
   const letterbox = (style.format?.letterbox ?? 0) > 0;
 
   const steps = film.shots.flatMap((shot, index) => {
-    const move = cutSteps(cutAt(pack, index), `#g${index}`, starts[index], starts[index] + shot.seconds, style.overlap, index);
+    // A picture change inside one scene is a cut, not a transition: the same words stay on screen and the shot
+    // behind them changes. Anything else reads as the film starting the scene again.
+    const cut = shot.take ? 'cut' : cutAt(pack, index);
+    const move = cutSteps(cut, `#g${index}`, starts[index], starts[index] + shot.seconds, style.overlap, index);
     return [
       ...move.into,
       ...(index === last ? [] : move.outOf),
       ...sceneSteps(shot, index, starts[index], scale, pack, index === last, pace, onscreen(bodies[index])),
-      ...captions[index].steps,
+      ...punchSteps(shot, index),
     ];
-  });
+  }).concat(captionSteps);
   if (bar) steps.push(`tl.fromTo("#bar", { scaleX: 0 }, { scaleX: 1, duration: ${total.toFixed(2)}, ease: "none" }, 0);`);
 
   return `<!doctype html>
@@ -183,9 +221,9 @@ ${styleSheet(film.shape, pack, film.brand)}
     </style>
   </head>
   <body>
-    <div id="root"${film.captions ? ' class="has-captions"' : ''} data-composition-id="main" data-start="0" data-width="${width}" data-height="${height}" data-duration="${total}">
+    <div id="root"${captioned ? ' class="has-captions"' : ''} data-composition-id="main" data-start="0" data-width="${width}" data-height="${height}" data-duration="${total}">
 ${reels.length ? `${reels.join('\n')}\n` : ''}${sections.join('\n')}
-${letterbox ? '      <div class="bar bar--top"></div>\n      <div class="bar bar--foot"></div>\n' : ''}${bar ? '      <div class="progress" id="bar"></div>\n' : ''}${sounds.join('\n')}
+${captionHtml ? `      ${captionHtml}\n` : ''}${letterbox ? '      <div class="bar bar--top"></div>\n      <div class="bar bar--foot"></div>\n' : ''}${bar ? '      <div class="progress" id="bar"></div>\n' : ''}${sounds.join('\n')}
     </div>
     <script>
 ${sketch ? `${MARKS}\n` : ''}      const SCENE_AT = ${JSON.stringify(starts)};

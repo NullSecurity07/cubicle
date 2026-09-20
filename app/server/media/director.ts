@@ -242,7 +242,9 @@ export function planOf(raw: unknown, understanding: Understanding, asked: Asked)
 // look made out of a fixed line is still a film, where six unrelated stock pictures are not.
 export function bibleFor(understanding: Understanding): string {
   const by: Record<Pack, string> = {
-    creator: 'high-contrast editorial photography, single strong subject, deep shadows, one saturated accent light, shallow depth of field, shot on 35mm',
+    // Not "deep shadows": a picture model told that draws a black frame, and a scrim over a black frame is a
+    // black frame. Bright, contrasty and lit is what a reel wants — the drama comes from the cut, not the grade.
+    creator: 'bright high-contrast editorial photography, single strong subject, clean directional key light, one saturated accent colour, shallow depth of field, shot on 35mm',
     editorial: 'quiet documentary photography, soft window light, muted warm palette, generous negative space, medium format stills',
     neon: 'dark technical photography, cyan and magenta rim light, glass and metal surfaces, volumetric haze, long lens',
     clean: 'calm studio photography, cool slate palette, soft directional light, clean geometry, matte surfaces',
@@ -402,7 +404,10 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
     sources: sourcesOf(material, asked.brief),
     screens: material.assets.filter((asset) => asset.kind === 'screen').map((asset) => asset.name),
     pictures: givenPictures(material).slice(0, MOST_GIVEN),
-    person: understanding.person,
+    // A rule that cannot be satisfied honestly is not a rule. Asked for somebody on camera with nothing able to
+    // lip-sync one, the critic used to recast a scene as "a person moving" — which is a drawn stranger whose
+    // mouth moves to a recording they never made, and is precisely what the founder rejected.
+    person: understanding.person && help.lipsync === true,
   };
 
   // The storyboard, and one more go with the reason the first would not do: a model that forgot a field usually
@@ -486,6 +491,10 @@ export const faceIn = (material: Material): string | undefined =>
 // Whether a moving scene already has somebody in it. A clip of hands over a desk is a clip; it is not the person
 // the brief asked for, and a film that counts it as one has nobody on camera at all.
 const SOMEBODY = /\b(person|people|man|woman|founder|speaker|influencer|presenter|host|face|talking head|him|her|they|creator|someone|somebody)\b/i;
+// Somebody whose mouth is moving. This is the one thing the studio will not draw without a lip-sync backend, so
+// it is matched on its own terms rather than inferred from "there is a person in this shot": hands over a desk
+// are b-roll, a face saying words is a promise the film cannot keep.
+const SPEAKING = /\b(talking|speaking|says?|saying|to camera|down the lens|into the lens|piece to camera|presenter|host|vlog|address(?:ing|es)?)\b/i;
 export const hasSomebody = (scene: Scene): boolean =>
   scene.layout === 'presenter' || scene.layout === 'footage'
   || (scene.layout === 'clip' && SOMEBODY.test(`${scene.clip_prompt ?? ''} ${scene.portrait_prompt ?? ''}`));
@@ -533,14 +542,18 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
   const mismatched = !!lipsync?.narratorGender && !!lipsync?.personGender && lipsync.narratorGender !== lipsync.personGender;
   const mayShow = able && !mismatched;
 
-  // Whatever anybody wrote, nothing gets to be a presenter unless a real lip-sync backend will really make it.
-  // This runs before the brief is even consulted, so a person's own tool call cannot walk round it either.
+  // Whatever anybody wrote, nothing gets to be a talking person unless a real lip-sync backend will really make
+  // it. This runs before the brief is even consulted, so a person's own tool call cannot walk round it — and it
+  // catches both ways of asking: a `presenter` scene, and a `clip` scene whose prompt is somebody speaking to
+  // camera, which is the same fault with the layout filed off.
   let held = scenes;
-  if (!mayShow && scenes.some((one) => one.layout === 'presenter')) {
+  const faking = (one: Scene) => one.layout === 'presenter'
+    || (one.layout === 'clip' && SPEAKING.test(`${one.clip_prompt ?? ''} ${one.portrait_prompt ?? ''}`));
+  if (!mayShow && scenes.some(faking)) {
     report(mismatched
       ? 'the narrator and the person on screen are not the same gender, so the film shows nobody speaking rather than a face that does not match the voice'
       : NO_FACE_HINT);
-    held = scenes.map((one) => (one.layout === 'presenter' ? facelessly(one) : one));
+    held = scenes.map((one) => (faking(one) ? facelessly(one) : one));
   }
   if (!understanding.person) return held;
 
