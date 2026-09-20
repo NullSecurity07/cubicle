@@ -70,6 +70,14 @@ export type PackStyle = {
   // story, it is too strong — and an effect the viewer cannot switch off, applied to footage that is meant to read
   // as present-day, is always too strong.
   format?: { letterbox?: number; grade?: string };
+  // The share of the visible picture a headline is never set under, where a pack asks for more than the scale's
+  // own floor. The long-form register does: its frame is quiet, so its one line has to carry.
+  headline?: number;
+  // How heavily the display face is set. Only a face with a weight axis can answer this; the rest ignore it.
+  weight?: number;
+  // Whether a still is cut into planes by depth and moved as a camera would move through it, rather than pushed
+  // in on as one flat sheet. It costs a second a picture, so it is the long-form register's and nobody else's.
+  parallax?: boolean;
   // A sweep of colour drawn behind a headline as it arrives — the one piece of decoration a reel earns.
   sweep: boolean;
   // How hard a background picture is held down so type can sit on it. It is a hold, not a dimmer: a contrast
@@ -103,6 +111,9 @@ export type Pack = (typeof PACKS)[number];
 const INTER = { file: 'inter.woff2', family: 'Studio Sans' };
 const ANTON = { file: 'anton.woff2', family: 'Studio Shout' };
 const SERIF = { file: 'instrument-serif.woff2', family: 'Studio Serif' };
+// A serif with a weight axis. Instrument Serif is one cut, a light one, and a page that forbids synthesised bold
+// (this one does) ignores every weight it is asked for — so "heavier over a photograph" needs a face that has heavier.
+const PLAYFAIR = { file: 'playfair-display.woff2', family: 'Studio Display' };
 const GROTESK = { file: 'space-grotesk.woff2', family: 'Studio Tech' };
 
 export const PACK: Record<Pack, PackStyle> = {
@@ -154,10 +165,15 @@ export const PACK: Record<Pack, PackStyle> = {
     // purpose. If a viewer notices the grade before the story, it is too strong.
     name: 'Documentary',
     paint: { ground: '#0F0F0E', ink: '#EFEAE1', quiet: '#C8C1B4', signal: '#D9B33A', mark: '#D9B33A', scrim: '15, 15, 14' },
-    fonts: [INTER, SERIF], display: "'Studio Serif', Georgia, serif", body: "'Studio Sans', sans-serif",
+    //
+    // The grade got lighter after it was watched. Contrast up and brightness down over "available light"
+    // photographs is two pushes in the same direction, and the stills came back murky; it is a touch of
+    // desaturation and a touch of contrast now, and nothing is ever made darker than it was drawn.
+    fonts: [INTER, PLAYFAIR], display: "'Studio Display', Georgia, serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'glide', cuts: ['cut', 'cut', 'fade', 'cut', 'wipe'], overlap: 0.55,
     sweep: false, scrim: 0.42, radius: 2, capScale: 1.1, captions: 'studio',
-    format: { letterbox: 0.055, grade: 'saturate(0.92) contrast(1.05) brightness(0.98)' },
+    format: { letterbox: 0.055, grade: 'saturate(0.94) contrast(1.03)' },
+    headline: 0.09, weight: 700, parallax: true,
   },
   sketch: {
     name: 'Sketch',

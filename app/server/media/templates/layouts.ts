@@ -2,7 +2,7 @@ import type { Shape } from '../../../shared/model.ts';
 import { barOf, type Scene } from '../spec.ts';
 import type { Part } from './captions.ts';
 import { barChartPiece, countUpPiece, type Piece } from '../registry/index.ts';
-import { FORMATS, PACE, PACK, typeScale, type Pace, type Pack, type Paint } from './looks.ts';
+import { FORMATS, PACE, PACK, TYPE_FLOOR, typeScale, type Pace, type Pack, type Paint } from './looks.ts';
 
 // One scene, ready to be written out: what was asked for, how long it is on screen, the still drawn for it, the moving
 // picture cut into it, the picture drawn behind it and the narration recorded over it. `image`, `video` and `bg` are
@@ -20,6 +20,10 @@ export type Shot = {
   // How much this shot's picture is lifted before the pack's grade goes over it. A declared grade over an already
   // dark photograph is how "dim and murky, subjects unreadable" happens, and the fix is the picture, not the look.
   lift?: number;
+  // The same still cut into a far plane, a middle and a near one, as file names in the assets folder. Where a
+  // shot has them and the pack moves through its stills, they are what is drawn; `bg` or `image` is still the
+  // whole picture, for everything that measures it and for a machine that could not cut it.
+  plies?: { back: string; mid: string; fore: string };
   voice?: { file: string; seconds: number; parts?: Part[] };
   // Which take of its scene this is. A scene long enough to want a picture change is several shots, and each of
   // them shows something different — otherwise the change is the same frame twice, which is worse than a hold.
@@ -145,6 +149,52 @@ function device(shot: Shot, shape: Shape): string {
     + `<div class="device__bar"><div class="device__dot"></div><div class="device__dot"></div><div class="device__dot"></div><div class="device__pill">${where}</div></div>${glass}</div></div>`;
 }
 
+// --- a headline that fits ---------------------------------------------------------------------------------------
+
+// The long-form look asks for its headline at nine per cent of the picture, and on a wide frame that is simply
+// true. A tall frame is another matter: once the platform's own top and bottom are kept clear there are about
+// five hundred and fifty pixels of height to write in, and a heavy serif at nine per cent sets nine characters a
+// line — so a six-word heading over three bullets came out taller than the room it had and was cut off by the
+// top of the frame. A headline nobody can read the first line of is not a large headline.
+//
+// So the floor is where a line starts, and a block too tall for its room steps the headline down until it fits:
+// never under the floor every look answers to, and only in a look that asked for more than that floor to begin
+// with. Everything here is an estimate made without a browser — a greedy wrap at the face's measured average
+// width — and it leans generous, because the cost of guessing long is a slightly smaller line and the cost of
+// guessing short is a clipped one.
+const WIDE_OF = { serif: 0.47, sans: 0.5 };
+export function linesOf(words: string, size: number, measure: number, wide = WIDE_OF.serif): number {
+  const room = Math.max(1, Math.floor(measure / (size * wide)));
+  let lines = 1;
+  let used = 0;
+  for (const word of words.split(/\s+/).filter(Boolean)) {
+    const long = Math.min(word.length, room);
+    if (used && used + 1 + long > room) { lines += 1; used = long; } else used += (used ? 1 : 0) + long;
+  }
+  return lines;
+}
+type Beside = { text: string; size: number; leading: number; indent?: number }[];
+export function fitted(shape: Shape, pack: Pack, captioned: boolean, which: 'hook' | 'display' | 'heading' | 'quote', words: string, beside: Beside = [], title = false): string {
+  const style = PACK[pack];
+  if (!style.headline || !words.trim()) return '';
+  const { width, height, scale, margin, lift, caps, safeTop, safeFoot, safeRight } = FORMATS[shape];
+  const type = typeScale(shape, pack);
+  const from = title ? type.titleCard : captioned ? type[`${which === 'quote' ? 'heading' : which}Caps` as 'hookCaps' | 'displayCaps' | 'headingCaps'] : type[which];
+  const asked = which === 'quote' ? type.quote : from;
+  const least = Math.round(height * (1 - 2 * (style.format?.letterbox ?? 0)) * TYPE_FLOOR.headline[shape]);
+  const foot = title ? margin * 1.05 + safeFoot : captioned ? caps + 132 * scale : margin + lift + safeFoot;
+  const room = height - (margin + safeTop) - foot;
+  const measure = Math.min(width - margin * 2 - safeRight, asked * (which === 'hook' ? 9 : which === 'display' ? 10.5 : which === 'quote' ? 12.5 : 13.5));
+  const gap = margin * 0.32;
+  const leading = which === 'quote' ? 1.18 : which === 'heading' ? 1.08 : 1.0;
+  const rest = beside.reduce((sum, one) => sum + gap + linesOf(one.text, one.size, width - margin * 2 - safeRight - (one.indent ?? 0), WIDE_OF.sans) * one.size * one.leading, 0);
+  for (let size = asked; size >= least; size -= 2) {
+    const tall = linesOf(words, size, Math.min(measure, width - margin * 2 - safeRight)) * size * leading + rest;
+    if (tall <= room) return size === asked ? '' : ` style="font-size: ${size}px"`;
+  }
+  return asked > least ? ` style="font-size: ${least}px"` : '';
+}
+
 // --- what a scene sits on -------------------------------------------------------------------------------------------
 
 // Four soft lamps drifting behind the words, placed from the scene's own number so two renders of the same film put
@@ -184,7 +234,7 @@ export function meshHtml(index: number, pack: Pack): string {
 // The picture behind a scene, or the lamps when there is no picture. Either way the scene has somewhere to be.
 // One picture behind several scenes, each seeing a different part of it in a slightly different light. The numbers
 // come from the scene's own place in the film, so two renders of the same storyboard look the same.
-function share(index: number): string {
+function share(index: number, grade = ''): string {
   const turn = (step: number) => ((index * 41 + step * 67) % 100) / 100;
   // The crop, which is what makes two scenes of one picture two pictures. The transform is not touched: the slow
   // push across every background belongs to the timeline, and a transform set here is the first thing it overwrites.
@@ -194,7 +244,9 @@ function share(index: number): string {
   const warm = (0.88 + turn(5) * 0.34).toFixed(2);
   const soft = (turn(6) * 4).toFixed(1);
   const light = (0.86 + turn(3) * 0.3).toFixed(2);
-  return `object-position:${x}% ${y}%; filter:hue-rotate(${hue}deg) saturate(${warm}) brightness(${light}) blur(${soft}px);`;
+  // An inline filter replaces the stylesheet's, it does not add to it — so a pack that wears a grade has to be
+  // given it again here, or the shared pictures of a graded film are the only ungraded ones in it.
+  return `object-position:${x}% ${y}%; filter:${grade ? `${grade} ` : ''}hue-rotate(${hue}deg) saturate(${warm}) brightness(${light}) blur(${soft}px);`;
 }
 
 // What this shot measured about its own picture, written as two variables the stylesheet reads: how hard the
@@ -210,9 +262,16 @@ export const groundHtml = (shot: Shot, index: number, pack: Pack): string => {
   if (shot.video) return '';
   if (!shot.bg) return meshHtml(index, pack);
   const held = measured(shot);
-  return `<div class="bg" id="bg${index}"${held ? ` style="${held}"` : ''}>`
-    + `<img src="assets/${shot.bg}" alt="" data-layout-allow-overflow${shot.bgShared ? ` style="${share(index)}"` : ''}></div>`;
+  const crop = shot.bgShared ? ` style="${share(index, PACK[pack].format?.grade)}"` : '';
+  return `<div class="bg" id="bg${index}"${held ? ` style="${held}"` : ''}>${deepOf(shot, pack, crop) ?? `<img src="assets/${shot.bg}" alt="" data-layout-allow-overflow${crop}>`}</div>`;
 };
+
+// A still in three planes, stacked exactly, where the pack moves through its stills and this one could be cut.
+// Every plane takes the same crop and the same tint as the whole picture would have, or they would not line up.
+export const isDeep = (shot: Shot, pack: Pack): boolean => !!PACK[pack].parallax && !!shot.plies && !shot.video;
+const deepOf = (shot: Shot, pack: Pack, crop = ''): string | null => (isDeep(shot, pack)
+  ? `<div class="deep">${(['back', 'mid', 'fore'] as const).map((ply) => `<img class="ply ply--${ply}" src="assets/${shot.plies![ply]}" alt="" data-layout-allow-overflow${crop}>`).join('')}</div>`
+  : null);
 
 // --- the seventeen shapes ---------------------------------------------------------------------------------------------
 
@@ -229,29 +288,36 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
   const heading = scene.heading?.trim() ?? '';
   const text = scene.text?.trim() ?? '';
   const icon = scene.icon?.trim() ? `<p class="icon rise">${html(scene.icon.trim())}</p>` : '';
-  const say = (words: string, cls: string) => `<p class="${cls} rise">${kinetic(words, scene.emphasis, pack, moving)}</p>`;
+  // What else is in the block with the headline, as far as its height goes: see `fitted`.
+  const type = typeScale(shape, pack);
+  const label = (words: string) => ({ text: words.toUpperCase(), size: type.label, leading: 1.4 });
+  const lead = (words: string) => ({ text: words, size: type.lead, leading: 1.3 });
+  const list = (scene.bullets ?? []).map((one) => ({ text: one, size: type.body, leading: 1.5, indent: type.body * 1.6 }));
+  const fit = (cls: string, words: string, beside: Parameters<typeof fitted>[5] = [], title = false) =>
+    (cls === 'hook' || cls === 'display' || cls === 'heading' || cls === 'quote' ? fitted(shape, pack, captioned, cls, words, beside, title) : '');
+  const say = (words: string, cls: string, beside: Parameters<typeof fitted>[5] = []) => `<p class="${cls} rise"${fit(cls, words, beside)}>${kinetic(words, scene.emphasis, pack, moving)}</p>`;
   const parts: string[] = [];
   if (scene.layout === 'title') {
-    parts.push(`<h1 class="display rise" data-mark="highlight">${kinetic(heading, scene.emphasis, pack, moving)}</h1>`, '<div class="rule" data-mark="dash"></div>');
+    parts.push(`<h1 class="display rise" data-mark="highlight"${fit('display', heading, text ? [lead(text)] : [], true)}>${kinetic(heading, scene.emphasis, pack, moving)}</h1>`, '<div class="rule" data-mark="dash"></div>');
     if (text) parts.push(`<p class="lead quiet rise">${html(text)}</p>`);
     return `<div class="frame frame--title${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'hook') {
     if (icon) parts.push(icon);
     if (heading) parts.push(`<p class="label rise">${html(heading)}</p>`);
-    parts.push(`<p class="${hookWeight(text, shape)} rise" data-mark="highlight">${kinetic(text, scene.emphasis, pack, moving)}</p>`);
+    parts.push(`<p class="${hookWeight(text, shape)} rise" data-mark="highlight"${fit(hookWeight(text, shape), text, heading ? [label(heading)] : [])}>${kinetic(text, scene.emphasis, pack, moving)}</p>`);
     return `<div class="frame frame--hook${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'statement') {
     if (icon) parts.push(icon);
     if (heading) parts.push(`<p class="label quiet rise">${html(heading)}</p>`);
-    parts.push(say(text, weight(text, shape)), '<div class="rule" data-mark="dash"></div>');
+    parts.push(say(text, weight(text, shape), heading ? [label(heading)] : []), '<div class="rule" data-mark="dash"></div>');
   } else if (scene.layout === 'bullets') {
-    if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
+    if (heading) parts.push(`<h2 class="heading rise"${fit('heading', heading, list)}>${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
     parts.push(`<ul class="list">${(scene.bullets ?? []).map((one) => `<li class="rise one-at-a-time"><span class="tick" data-mark="dash"></span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
   } else if (scene.layout === 'checklist') {
-    if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
+    if (heading) parts.push(`<h2 class="heading rise"${fit('heading', heading, list)}>${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
     parts.push(`<ul class="list list--check">${(scene.bullets ?? []).map((one) => `<li class="rise one-at-a-time"><span class="mark">${CHECK}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
   } else if (scene.layout === 'steps') {
-    if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
+    if (heading) parts.push(`<h2 class="heading rise"${fit('heading', heading, list)}>${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
     parts.push(`<ul class="list list--steps">${(scene.bullets ?? []).map((one, at) => `<li class="rise one-at-a-time"><span class="step">${at + 1}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
   } else if (scene.layout === 'chart') {
     // The bars are measured against the largest of them, so the longest fills the track and the rest are read
@@ -275,7 +341,7 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     // A picture scene with no picture is not a picture scene, and an <img> pointed at nothing is a 404 in the
     // render log and a blank rectangle in the film. Everything upstream tries to stop this happening; this is the
     // line that makes it harmless when something upstream does not.
-    if (shot.image) parts.push(`<div class="shot" data-mark="frame"${measured(shot) ? ` style="${measured(shot)}"` : ''}><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
+    if (shot.image) parts.push(`<div class="shot" data-mark="frame"${measured(shot) ? ` style="${measured(shot)}"` : ''}>${deepOf(shot, pack) ?? `<img src="assets/${shot.image}" alt="" data-layout-allow-overflow>`}</div>`);
     if (text) parts.push(`<div class="plate"><p class="lead rise">${kinetic(text, scene.emphasis, pack, false)}</p></div>`);
     return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
   } else if (MOVING.has(scene.layout)) {
@@ -300,7 +366,7 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     if (text) parts.push(`<p class="lead quiet rise">${html(text)}</p>`);
     return `<div class="frame frame--stat${onbg}" id="f${index}">${parts.join('')}</div>`;
   } else if (scene.layout === 'quote') {
-    parts.push(`<blockquote class="quote rise" data-mark="bar">${kinetic(quoted(text), scene.emphasis, pack, false)}</blockquote>`);
+    parts.push(`<blockquote class="quote rise" data-mark="bar"${fit('quote', quoted(text), heading ? [label(`— ${heading}`)] : [])}>${kinetic(quoted(text), scene.emphasis, pack, false)}</blockquote>`);
     if (heading) parts.push(`<p class="label quiet rise">— ${html(heading)}</p>`);
   } else if (scene.layout === 'logo') {
     parts.push(shot.image ? `<div class="logo rise" data-mark="ring"><img src="assets/${shot.image}" alt=""></div>` : `<p class="logo rise" data-mark="ring">${html(heading)}</p>`, '<div class="rule" data-mark="dash"></div>');
@@ -338,6 +404,25 @@ export const onscreen = (html: string): Onscreen => ({
   oneAtATime: html.includes('one-at-a-time'), chart: html.includes('class="chart"'),
 });
 
+// The camera moving through a still. Three planes, one move: each is pushed in and drifted sideways, the near one
+// furthest and the far one least, and that difference is the whole effect — it is what the eye reads as depth.
+// The numbers are the research's: a push of four to eight per cent over four to six seconds, the background
+// moving a quarter to two fifths as far as the foreground, no rotation worth the name. A short shot gets a
+// shorter move rather than a faster one, because a plane that slides quickly is a slide.
+//
+// Every plane starts a little larger than the frame, so a drift never shows the edge of a plane. The ease is
+// none: a camera on a slider does not accelerate, and an eased push over a held shot reads as a zoom.
+export const DEPTH = { back: { push: 0.022, drift: 0.34 }, mid: { push: 0.046, drift: 0.8 }, fore: { push: 0.074, drift: 1.35 } } as const;
+export function deepSteps(shot: Shot, index: number, box: string, at: number, overlap: number): string[] {
+  const seconds = shot.seconds + overlap;
+  const much = Math.max(0.55, Math.min(1, seconds / 5));
+  const way = index % 2 ? 1 : -1;
+  return (['back', 'mid', 'fore'] as const).map((ply) => {
+    const { push, drift } = DEPTH[ply];
+    return `tl.fromTo("${box} .ply--${ply}", { scale: 1.035, xPercent: ${(-way * drift * much * 0.5).toFixed(3)} }, { scale: ${(1.035 + push * much).toFixed(4)}, xPercent: ${(way * drift * much * 0.5).toFixed(3)}, duration: ${seconds.toFixed(3)}, ease: "none" }, ${at.toFixed(3)});`;
+  });
+}
+
 export function sceneSteps(shot: Shot, index: number, at: number, scale: number, pack: Pack, last: boolean, pace: Pace = 'calm', has: Onscreen = { words: true, sweep: true, rise: true, rule: true, tick: true, mark: true, count: true, oneAtATime: false }): string[] {
   const steps: string[] = [];
   const beat = PACE[pace];
@@ -347,7 +432,9 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
   const lead = style.overlap * 0.6;
 
   // The ground. A drawn picture pushes slowly in behind the words the way a camera would; the lamps drift instead.
-  if (shot.bg) {
+  const deep = isDeep(shot, pack);
+  if (deep) steps.push(...deepSteps(shot, index, shot.bg ? `#bg${index}` : `#s${index} .shot`, at, style.overlap));
+  else if (shot.bg) {
     const to = 1.0 + (index % 2 ? 0.10 : 0.14);
     const pan = index % 2 ? 1.6 : -1.8;
     steps.push(`tl.fromTo("#bg${index} img", { scale: 1.02, xPercent: 0 }, { scale: ${to.toFixed(2)}, xPercent: ${pan}, duration: ${(shot.seconds + style.overlap).toFixed(3)}, ease: "none" }, ${time(0)});`);
@@ -363,7 +450,8 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
     steps.push(`tl.fromTo("${box}", { opacity: 0 }, { opacity: 1, duration: ${(beat.rise * 0.9).toFixed(2)}, ease: "power2.out" }, ${time(0)});`);
     // The only motion that runs the whole scene: a slow push in, so a still does not sit dead on the screen. Footage
     // moves by itself and is left alone; a talking head is a locked-off shot, so it takes the push too.
-    if (!shot.video || layout === 'presenter') {
+    if (deep) { /* the planes are already moving: a second push on top of them is two cameras */ }
+    else if (!shot.video || layout === 'presenter') {
       steps.push(`tl.fromTo("${shot.video ? box : `${box} img`}", { scale: 1 }, { scale: ${layout === 'presenter' ? 1.06 : 1.09}, duration: ${shot.seconds.toFixed(3)}, ease: "none" }, ${time(0)});`);
     }
   }

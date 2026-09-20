@@ -114,3 +114,44 @@ export async function meanLight(file: string): Promise<number | null> {
 export const LIFT_BELOW = 0.16;
 export const liftFor = (light: number): number =>
   (light >= LIFT_BELOW ? 1 : Math.min(1.28, Math.round((LIFT_BELOW / Math.max(0.04, light)) * 100) / 100));
+
+// --- the lift, done properly --------------------------------------------------------------------------------
+
+// `liftFor` above is a gain: every pixel multiplied by one number, in the page, by a CSS filter. It is the
+// fallback, and it is a blunt one — a gain strong enough to open up a dark room burns out the one lamp in it.
+// What a colourist does instead is raise the shadows and leave the highlights where they are, which is a gamma
+// curve, and a curve is something only the file can carry. So a still that came back too dark is rewritten
+// through one, once, before anything measures it: the scrim is then solved against the picture a viewer will
+// really see, and the gain in the page has nothing left to do.
+//
+// The target is a mean a viewer reads as "a dim room" rather than "a black frame". It is deliberately under a
+// well-lit photograph's: this look is available light, and a lift that turned dusk into noon would be a
+// different picture. The exponent has a floor for the same reason.
+export const LIGHT_ENOUGH = 0.10;
+export const LIFT_TO = 0.13;
+export const LEAST_GAMMA = 0.62;
+
+// The exponent that takes a picture of this mean light to the target. The mean of a curve is not the curve of
+// the mean, so this is a first guess and `lighten` measures what it really did.
+export const gammaFor = (light: number): number =>
+  (light >= LIGHT_ENOUGH ? 1 : Math.max(LEAST_GAMMA, Math.round((Math.log(LIFT_TO) / Math.log(Math.max(0.004, light))) * 100) / 100));
+
+// Rewrites one still through the curve, in place, and says what it did. `null` means nothing here could open
+// the file, and the page's own gain stands in, as it always has.
+export async function lighten(file: string): Promise<{ from: number; gamma: number } | null> {
+  const from = await meanLight(file);
+  if (from === null) return null;
+  const gamma = gammaFor(from);
+  if (gamma >= 1) return { from, gamma: 1 };
+  try {
+    const { default: sharp } = await import('sharp');
+    const { data, info } = await sharp(file).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const curve = Uint8Array.from({ length: 256 }, (_one, value) => Math.round(255 * (value / 255) ** gamma));
+    for (let at = 0; at < data.length; at += 1) data[at] = curve[data[at]];
+    const lifted = sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } });
+    const out = /\.jpe?g$/i.test(file) ? lifted.jpeg({ quality: 92 }) : /\.webp$/i.test(file) ? lifted.webp({ quality: 92 }) : lifted.png();
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(file, await out.toBuffer());
+    return { from, gamma };
+  } catch { return null; }
+}

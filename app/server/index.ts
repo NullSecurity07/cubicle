@@ -29,6 +29,7 @@ import { lettered } from './media/lettering.ts';
 import { createMedia } from './media/jobs.ts';
 import { createMusic, fakeMusic } from './media/music.ts';
 import { fakeVideos, hyperframesVideos } from './media/video.ts';
+import { createSight, sightDir } from './media/sight.ts';
 import { pexels } from './media/stock.ts';
 import { byGrade, fakeVoices, voiceMakers, VOICES } from './media/voice.ts';
 import { createMemory } from './memory.ts';
@@ -144,6 +145,9 @@ const media = createMedia({
       // studio draws every picture, which is what it did before and still does for anything nobody has photographed.
       stock: pexels(process.env, fetch, resolve(root, 'app/.cache/stock')),
       cacheDir: resolve(root, 'app/.cache'),
+      // The studio's eyes: a drawn picture is looked at before it is used, and the long-form look's stills are cut
+      // into planes by depth. Two small models, fetched once, run on the processor; nothing breaks without them.
+      sight: createSight(sightDir(resolve(root, 'app/.cache'))),
       forbidden: [workspace, root],
       stage: () => store.loadStage(),
       // `media` is read inside these, never at the moment they are made, so the studio can ask the card that asked it.

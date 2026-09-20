@@ -128,6 +128,18 @@ export const nobodyIn = (subject: string): string =>
     .replace(/\b(?:a|an|the|of|with|by|beside|near)\s*(?=[,;.]|$)/gi, ' ')
     .replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').replace(/^[\s,;.]+|[\s,;.]+$/g, '').trim();
 
+// What a picture is asked for the second time, when the first came back breaking a rule. Somebody staring down
+// the lens is answered by taking the people out of the words altogether — asking the same model for the same
+// person "turned away" is what was already asked — and either fault is answered by stepping back: a wide frame
+// of a place has no room in it for a face, and lettering a long way off is a texture rather than writing.
+export function redrawnFor(visual: Visual, found: { face: boolean }): Visual {
+  return {
+    ...visual,
+    subject: found.face ? nobodyIn(visual.subject) : visual.subject,
+    kind: visual.kind === 'wide' ? 'environment' : 'wide',
+  };
+}
+
 // --- is this picture of what is being said? ------------------------------------------------------------------
 
 // How much two subjects have in common, counted in the words that carry meaning. Two pictures that share most of

@@ -464,7 +464,7 @@ describe('a film with everything in it', () => {
     expect(page).toContain('<div class="bar bar--foot"></div>');
     // The lift in front of the grade is measured per picture and is 1 wherever nothing needed lifting, so a film
     // whose stills came back readable wears exactly the pack's own tune and nothing else.
-    expect(page).toContain('.bg img, .shot img, .shot video, .reel, .device__glass img { filter: brightness(var(--raise, 1)) saturate(0.92) contrast(1.05) brightness(0.98); }');
+    expect(page).toContain('.bg img, .shot img, .shot video, .reel, .device__glass img { filter: brightness(var(--raise, 1)) saturate(0.94) contrast(1.03); }');
     // The bars are a frame, not a move: nothing on the timeline touches them.
     expect(page).not.toContain('"#bar,');
     expect(page).not.toMatch(/tl\.[a-z]+\("\.bar/);

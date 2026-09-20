@@ -94,6 +94,36 @@ describe('the type scale has floors under it', () => {
   });
 });
 
+describe('the long-form register', () => {
+  it('sets every headline at nine per cent of the picture inside the bars, on every shape', () => {
+    for (const shape of SHAPES) {
+      const type = typeScale(shape, 'documentary');
+      for (const which of ['hook', 'display', 'heading', 'quote', 'titleCard', 'hookCaps', 'displayCaps', 'headingCaps'] as const) {
+        expect(type[which] / seenOf(shape, 'documentary'), `${shape}/${which}`).toBeGreaterThanOrEqual(0.09 - 0.0005);
+      }
+      for (const which of [...SUPPORT, ...LEAST]) {
+        expect(type[which] / seenOf(shape, 'documentary'), `${shape}/${which}`).toBeGreaterThanOrEqual(TYPE_FLOOR.least - 0.0005);
+      }
+    }
+    // Nobody else pays for it: a reel's headline floor is where it was.
+    expect(typeScale('tall', 'editorial').heading).toBeLessThan(typeScale('tall', 'documentary').heading);
+  });
+
+  it('sets its serif heavy, in a face that has a heavy cut to give', () => {
+    // Instrument Serif is one light cut and the page forbids synthesised bold, so every weight it was asked for
+    // was ignored. The long-form look sets a serif with a weight axis, and asks for seven hundred of it.
+    const sheet = styleSheet('wide', 'documentary');
+    expect(sheet).toContain("@font-face { font-family: 'Studio Display'; src: url('vendor/playfair-display.woff2') format('woff2'); font-weight: 100 900;");
+    expect(sheet).toMatch(/\.display \{[^}]*font-weight: 700;/);
+    expect(sheet).toMatch(/\.heading \{[^}]*font-weight: 700;/);
+    expect(sheet).toMatch(/\.quote \{[^}]*font-weight: 600;/);
+    expect(isSerif('documentary')).toBe(true);
+    // The editorial look keeps the light serif it was designed around.
+    expect(styleSheet('wide', 'editorial')).toMatch(/\.display \{[^}]*font-weight: 660;/);
+    expect(styleSheet('wide', 'editorial')).not.toContain('Studio Display');
+  });
+});
+
 describe('the stylesheet writes the scale out rather than leaving it to a multiplier', () => {
   it('carries the same numbers the scale says, so the floors can be read off the page', () => {
     for (const shape of SHAPES) {
@@ -132,7 +162,10 @@ describe('the scrim is a variable the shot fills in', () => {
   });
 
   it('lifts a picture in front of a pack\'s grade rather than instead of it', () => {
-    expect(styleSheet('wide', 'documentary')).toContain('filter: brightness(var(--raise, 1)) saturate(0.92)');
+    expect(styleSheet('wide', 'documentary')).toContain('filter: brightness(var(--raise, 1)) saturate(0.94)');
+    // The grade never makes a picture darker than it was drawn: contrast up and brightness down over available-light
+    // photographs is two pushes the same way, and it is what "dim and murky" was.
+    expect(PACK.documentary.format?.grade).not.toMatch(/brightness\(0\./);
     expect(styleSheet('wide', 'clean')).toContain('filter: brightness(var(--raise, 1));');
   });
 });

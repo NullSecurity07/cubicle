@@ -104,6 +104,25 @@ try {
       await timed('presenter', () => clips.presenter({ portrait: portrait.bytes, speech: speech.bytes }, { report: say }));
     }
   }
+
+  // The studio's eyes: the two small models that look at a drawn picture. A room is painted here — a far wall, a
+  // table half way, a block near the lens — so the check draws nothing and spends nobody's free pictures.
+  {
+    const { createSight, sightDir } = await import('../server/media/sight.ts');
+    const { default: sharp } = await import('sharp');
+    const room = join(dir, 'room.png');
+    const block = (width: number, height: number, grey: number) => sharp({ create: { width, height, channels: 3, background: { r: grey, g: grey, b: grey - 8 } } }).blur(6).png().toBuffer();
+    await sharp({ create: { width: 640, height: 360, channels: 3, background: { r: 70, g: 78, b: 84 } } })
+      .composite([{ input: await block(640, 120, 120), left: 0, top: 240 }, { input: await block(150, 250, 190), left: 245, top: 110 }]).png().toFile(room);
+    const sight = createSight(sightDir(resolve(import.meta.dirname, '../.cache')));
+    const started = Date.now();
+    const seen = await sight.look(room);
+    const plies = await sight.plies(room);
+    const late = sight.why();
+    if (late) console.log('Sight FETCHING:', late, '— run this again in a few minutes');
+    else if (!seen) console.log('Sight ERROR: nothing here could look at a picture (the film is made without the check)');
+    else console.log('Sight OK', `facing ${seen.facing.toFixed(2)} · lettered ${seen.lettered.toFixed(2)} · ${plies ? 'three planes cut' : 'no planes in a painted room (a real still has them)'} · ${((Date.now() - started) / 1000).toFixed(1)}s`);
+  }
 } finally {
   await rm(dir, { recursive: true, force: true }).catch(() => {});
 }

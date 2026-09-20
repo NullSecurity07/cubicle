@@ -88,7 +88,7 @@ export type TypeScale = {
 // Whether this pack sets its display line in a serif. The two that do lean on it — the editorial look and the
 // long-form documentary register — and a serif has to be set larger and heavier than a sans to hold the same
 // weight over a photograph.
-export const isSerif = (pack: Pack): boolean => PACK[pack].display.includes('Studio Serif');
+export const isSerif = (pack: Pack): boolean => /Studio (Serif|Display)/.test(PACK[pack].display);
 
 export function typeScale(shape: Shape, pack: Pack): TypeScale {
   const { height, scale, text } = FORMATS[shape];
@@ -99,7 +99,9 @@ export function typeScale(shape: Shape, pack: Pack): TypeScale {
   // frame to two black bars, so a line set at six per cent of the frame is five and a half per cent of the
   // picture — and it is the picture the eye measures it against. The floors are taken against the visible band.
   const seen = height * (1 - 2 * (style.format?.letterbox ?? 0));
-  const head = seen * TYPE_FLOOR.headline[shape];
+  // A pack may ask for a higher headline floor than the scale's own. The long-form register asks for nine per
+  // cent of the picture on every shape: its frame is quiet and its one line has to carry.
+  const head = seen * Math.max(TYPE_FLOOR.headline[shape], style.headline ?? 0);
   const support = seen * TYPE_FLOOR.support;
   const least = seen * TYPE_FLOOR.least;
   // A serif carries a twelfth more size than the sans it is measured against: its cap height is smaller and its
@@ -177,6 +179,12 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
    applied to the pictures and never to the type, and it is identical on every film in that series. --- */
 .bg { position: absolute; inset: 0; overflow: hidden; z-index: 0; background: ${paint.ground}; }
 .bg img { display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 45%; }
+/* A still cut into planes by depth, where the pack asks for one: the far plane, the middle and the near one are
+   the same photograph through three feathered masks, stacked exactly, and the timeline moves the near one
+   further than the far one — which is all a camera moving through a room is. The .deep box is the camera: a punch-in
+   is a move of the whole stack, never of one plane. */
+.deep { position: absolute; inset: 0; transform-origin: 50% 45%; will-change: transform; }
+.deep .ply { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 45%; will-change: transform; }
 /* The scrim: the ground washing up from the foot of the frame and a flat hold over the whole of it, so a line of
    type is legible over a photograph whatever the photograph turns out to be.
 
@@ -188,6 +196,13 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
 .bg { --hold: ${style.scrim.toFixed(2)}; }
 .bg::after { content: ''; position: absolute; inset: 0; pointer-events: none;
   background: linear-gradient(to top, rgba(${paint.scrim}, min(0.96, calc(var(--hold) + 0.16))) 0%, rgba(${paint.scrim}, calc(var(--hold) * 0.86)) 46%, rgba(${paint.scrim}, calc(var(--hold) * 0.62)) 100%); }
+${style.format && shape !== 'tall' ? `/* The long-form look is pictures doing the arguing, and its words sit at the foot of the frame. A wash solved for
+   the type and then laid over the whole photograph at two thirds strength is a photograph turned down to make
+   room for words that are nowhere near most of it — which is what "dim and murky" turned out to be once the
+   grade had been lightened and the stills were still dark. The hold stays where the words are and lets go above
+   them. A captioned film sets its block higher, and so does a tall one — a phone's own furniture takes the foot of
+   the frame — so both keep the even wash: let go of at the top, it let go exactly where the headline was. */
+#root:not(.has-captions) .bg::after { background: linear-gradient(to top, rgba(${paint.scrim}, min(0.96, calc(var(--hold) + 0.16))) 0%, rgba(${paint.scrim}, calc(var(--hold) * 0.86)) 48%, rgba(${paint.scrim}, calc(var(--hold) * 0.5)) 70%, rgba(${paint.scrim}, calc(var(--hold) * 0.24)) 100%); }` : ''}
 /* No picture maker, no flat colour either: four soft lamps of the film's own colours drifting behind the words. */
 .mesh { position: absolute; inset: -18%; z-index: 0; overflow: hidden; }
 .blob { position: absolute; filter: blur(calc(120px * var(--s))); opacity: 0.55; }
@@ -247,15 +262,15 @@ ${bars ? `/* Letterbox as a fixed format, identical for the whole render: two ba
 /* A figure that size carries its own lift: the digits stand well above their line and nothing hangs below them. */
 .frame--stat { padding-bottom: calc(var(--margin) + var(--safe-foot)); }
 ${sketch ? '' : `.display, .heading, .hook, .lead, .body, .label, .quote, .logo, .stat, .step, .side .body { text-shadow: 0 calc(2px * var(--s)) calc(22px * var(--s)) rgba(0, 0, 0, 0.58); }`}
-.display { font-family: ${display}; font-size: ${type.display}px; line-height: ${style.shout ? 0.94 : 1.0}; letter-spacing: ${style.shout ? '-0.01em' : '-0.038em'};
-  font-weight: ${style.shout ? 400 : 660}; max-width: 10.5em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
+.display { font-family: ${display}; font-size: ${type.display}px; line-height: ${style.shout ? 0.94 : 1.0}; letter-spacing: ${style.shout ? '-0.01em' : style.weight ? '-0.016em' : '-0.038em'};
+  font-weight: ${style.shout ? 400 : style.weight ?? 660}; max-width: 10.5em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
 ${serif ? `/* A serif display line over a photograph is the thinnest thing in this studio: its stems are a third the
    width of the sans at the same size and its cap height is smaller, so it reads two sizes down and it disappears
    into a busy picture. Every size in the scale is already a twelfth larger for it; this is the shadow, which has
    to be a real one rather than a hint. */
 .display, .heading, .hook, .quote, .logo, .plate .lead { text-shadow: 0 calc(2px * var(--s)) calc(18px * var(--s)) rgba(0, 0, 0, 0.74), 0 0 calc(3px * var(--s)) rgba(0, 0, 0, 0.55); }` : ''}
-.heading { font-family: ${display}; font-size: ${type.heading}px; line-height: ${style.shout ? 1.0 : 1.08}; letter-spacing: ${style.shout ? '-0.006em' : '-0.03em'};
-  font-weight: ${style.shout ? 400 : 630}; max-width: 13.5em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
+.heading { font-family: ${display}; font-size: ${type.heading}px; line-height: ${style.shout ? 1.0 : 1.08}; letter-spacing: ${style.shout ? '-0.006em' : style.weight ? '-0.016em' : '-0.03em'};
+  font-weight: ${style.shout ? 400 : style.weight ?? 630}; max-width: 13.5em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
 .lead { font-size: ${type.lead}px; line-height: 1.3; letter-spacing: -0.016em; font-weight: 450; max-width: 22em; overflow-wrap: break-word; }
 .body { font-size: ${type.body}px; line-height: 1.32; letter-spacing: -0.012em; font-weight: 440; max-width: 20em; overflow-wrap: break-word; }
 .label { font-size: ${type.label}px; line-height: 1.3; font-weight: 620; text-transform: uppercase; letter-spacing: 0.1em; }
@@ -270,11 +285,11 @@ ${serif ? `/* A serif display line over a photograph is the thinnest thing in th
   background: ${paint.signal}; border-radius: calc(6px * var(--s)); opacity: 1; }
 .on-sweep { position: relative; color: ${lightOf(paint.signal) > 0.55 ? '#0E1013' : '#FFFFFF'}; text-shadow: none; }
 /* The one number a stat scene carries is the scene: everything else on it is a caption to the number. */
-.stat { font-family: ${display}; font-size: ${type.stat}px; line-height: 0.88; letter-spacing: -0.052em; font-weight: ${style.shout ? 400 : 680}; color: ${sketch ? paint.ink : paint.signal};
+.stat { font-family: ${display}; font-size: ${type.stat}px; line-height: 0.88; letter-spacing: -0.052em; font-weight: ${style.shout ? 400 : style.weight ?? 680}; color: ${sketch ? paint.ink : paint.signal};
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* The figure counts up to itself, so the digits are held to their final width and nothing beside them shifts. */
 .count { display: inline-block; text-align: right; }
-.quote { font-family: ${display}; font-size: ${type.quote}px; line-height: 1.18; letter-spacing: -0.024em; font-weight: ${style.shout ? 400 : 520}; max-width: 12.5em;
+.quote { font-family: ${display}; font-size: ${type.quote}px; line-height: 1.18; letter-spacing: -0.024em; font-weight: ${style.shout ? 400 : style.weight ? Math.min(style.weight, 600) : 520}; max-width: 12.5em;
   border-left: ${sketch ? 'transparent' : paint.signal} solid calc(5px * var(--s)); padding-left: calc(var(--margin) * 0.5); overflow-wrap: break-word; }
 .quiet { color: ${paint.quiet}; }
 /* The one piece of structure that recurs: a short measured bar that says the block ends here. Drawn by hand in the notebook. */
@@ -297,7 +312,12 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
 .shot { --hold: ${style.scrim.toFixed(2)}; }
 .shot::after { content: ''; position: absolute; inset: 0; pointer-events: none;
   background: ${sketch ? 'none' : `linear-gradient(to top, rgba(${paint.scrim}, min(0.94, calc(var(--hold) + 0.22))) 0%, rgba(${paint.scrim}, calc(var(--hold) * 0.5)) 44%, rgba(${paint.scrim}, min(0.9, calc(var(--hold) + 0.18))) 100%)`}; }
-/* The words over a picture sit at the foot of the frame — unless the film is captioned, in which case the captions
+${style.format && !sketch ? `/* A picture scene's caption has a plate of its own under it, which is nearly solid where the words are. The wash
+   over the rest of the picture has nothing left to hold down, so in the look where the picture is the scene it
+   is a breath rather than a blanket. */
+.shot::after { background: linear-gradient(to top, rgba(${paint.scrim}, calc(var(--hold) * 0.5)) 0%, rgba(${paint.scrim}, calc(var(--hold) * 0.16)) 42%, rgba(${paint.scrim}, calc(var(--hold) * 0.1)) 100%); }
+.has-caps .shot::after { background: linear-gradient(to bottom, rgba(${paint.scrim}, calc(var(--hold) * 0.5)) 0%, rgba(${paint.scrim}, calc(var(--hold) * 0.16)) 42%, rgba(${paint.scrim}, calc(var(--hold) * 0.1)) 100%); }
+` : ''}/* The words over a picture sit at the foot of the frame — unless the film is captioned, in which case the captions
    are already there and the two would be read as one sentence. Then the plate lifts clear of them. */
 .has-caps .plate { top: 0; bottom: auto; padding: calc(var(--margin) + var(--safe-top)) var(--margin) calc(var(--margin) * 1.6);
   background: ${sketch ? 'none' : `linear-gradient(to bottom, rgb(${paint.scrim}) 10%, rgba(${paint.scrim}, 0.88) 48%, rgba(${paint.scrim}, 0) 100%)`}; }
@@ -310,8 +330,8 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
 ${style.shout ? `.plate .lead { font-family: ${display}; font-size: ${Math.max(type.lead, Math.round(54 * scale))}px; line-height: 1.06; font-weight: 400; letter-spacing: -0.006em; text-transform: uppercase; max-width: 13em; }` : ''}
 
 /* A hook is the first second and a half of a reel: one line, as large as the frame will carry it, and nothing else. */
-.hook { font-family: ${display}; font-size: ${type.hook}px; line-height: ${style.shout ? 0.92 : 0.98}; letter-spacing: ${style.shout ? '-0.012em' : '-0.042em'};
-  font-weight: ${style.shout ? 400 : 740}; max-width: 9em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
+.hook { font-family: ${display}; font-size: ${type.hook}px; line-height: ${style.shout ? 0.92 : 0.98}; letter-spacing: ${style.shout ? '-0.012em' : style.weight ? '-0.016em' : '-0.042em'};
+  font-weight: ${style.shout ? 400 : style.weight ?? 740}; max-width: 9em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
 .frame--hook { justify-content: center; }
 /* An emoji or a mark set beside a line, at the size of a line: the one thing in a reel that is not type. */
 .icon { font-size: ${type.icon}px; line-height: 1; }
@@ -322,7 +342,7 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: ${Math.max(t
   font-size: ${type.cta}px; font-weight: 640; letter-spacing: -0.01em; }
 /* A logo sting is the wordmark alone on the ground, with one measured line drawing itself under it. */
 .frame--logo { justify-content: center; align-items: center; padding-bottom: var(--margin); }
-.logo { font-family: ${display}; font-size: ${Math.max(type.heading, Math.round(104 * scale))}px; line-height: 1; letter-spacing: -0.03em; font-weight: ${style.shout ? 400 : 700}; text-align: center; }
+.logo { font-family: ${display}; font-size: ${Math.max(type.heading, Math.round(104 * scale))}px; line-height: 1; letter-spacing: -0.03em; font-weight: ${style.shout ? 400 : style.weight ?? 700}; text-align: center; }
 .logo img { display: block; max-width: calc(520px * var(--s)); max-height: calc(200px * var(--s)); object-fit: contain; }
 .frame--logo .lead { text-align: center; max-width: 18em; }
 .frame--logo .rule { align-self: center; }
@@ -356,7 +376,7 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: ${Math.max(t
    was the same colour as the thing it labelled and, over a background carrying that accent, the render's own
    contrast check measured it at 2.89 against a floor of 3. */
 .chart__value { flex: none; font-family: ${display};
-  font-size: ${type.step}px; line-height: 1; font-weight: ${style.shout ? 400 : 700}; letter-spacing: -0.02em;
+  font-size: ${type.step}px; line-height: 1; font-weight: ${style.shout ? 400 : style.weight ?? 700}; letter-spacing: -0.02em;
   color: ${paint.ink}; font-variant-numeric: tabular-nums; }
 /* A checklist is a list that says yes, so each line carries a mark rather than a bar. */
 .mark { flex: none; position: relative; top: 0.06em; width: ${type.mark}px; height: ${type.mark}px; color: ${sketch ? paint.ink : paint.signal}; }
@@ -434,7 +454,7 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: ${Math.max(t
    feed thumbnail is. paint-order puts the stroke behind the letterform so it thickens the outline instead of
    eating the inside of the type. */
 .capline { font-size: calc(${Math.round(height * 0.108)}px * var(--s)); }
-.capword { font-family: ${display}; font-size: inherit; line-height: 1.04; font-weight: ${style.shout ? 400 : 800}; letter-spacing: -0.02em;
+.capword { font-family: ${display}; font-size: inherit; line-height: 1.04; font-weight: ${style.shout ? 400 : style.weight ?? 800}; letter-spacing: -0.02em;
   color: ${paint.ink}; text-transform: uppercase; padding: calc(2px * var(--s)) 0;
   -webkit-text-stroke: calc(${Math.max(3, Math.round(height * 0.0045))}px * var(--s)) #000000; paint-order: stroke fill;
   text-shadow: 0 calc(3px * var(--s)) calc(16px * var(--s)) rgba(0, 0, 0, 0.55); }
