@@ -54,17 +54,22 @@ describe('boards', () => {
     expect((await readdir(join(dir, 'trash')))[0]).toContain(task.id);
   });
 
-  it('runs a repeat that is due, marks one that fell due while the app was closed as missed, and never runs it late', async () => {
+  it('runs a repeat that is due, and marks one that fell due while the app was closed as missed', async () => {
     let now = local('2026-09-21T08:59');
     const boards = createBoards(await folder(), () => now);
     const task = await boards.add('b1', { title: 'Morning numbers' });
+    const skipped = await boards.add('b1', { title: 'Check the queue' });
     await boards.change('b1', task.id, { repeat: { every: 'day', time: '09:00' } });
+    await boards.change('b1', skipped.id, { repeat: { every: 'day', time: '09:00' }, onMissed: 'skip' });
     expect(await boards.due('b1')).toEqual([]);
     now = local('2026-09-21T09:00:20');
-    expect((await boards.due('b1')).map((one) => one.id)).toEqual([task.id]);
+    expect((await boards.due('b1')).map((one) => one.id)).toEqual([task.id, skipped.id]);
+    // Hours late is never run late: it is marked missed, the next one is set, and only a task that asks for it is
+    // caught up — once, however many were missed.
     now = local('2026-09-21T13:00');
-    expect(await boards.due('b1')).toEqual([]);
+    expect((await boards.due('b1')).map((one) => one.id)).toEqual([task.id]);
     expect((await boards.list('b1'))[0]).toMatchObject({ missed: true, nextRun: local('2026-09-22T09:00') });
+    expect((await boards.list('b1'))[1]).toMatchObject({ missed: true, nextRun: local('2026-09-22T09:00') });
   });
 
   it('does not believe a run that the app closing cut short', async () => {
