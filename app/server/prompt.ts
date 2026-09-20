@@ -78,9 +78,11 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
   const reach = mineCards.filter((card) => card.kind === 'project' || card.kind === 'board' || card.kind === 'browser' || card.kind === 'imagegen' || card.kind === 'voicegen' || card.kind === 'videogen').map((card) => (card.kind === 'project'
     ? `- A project folder${card.path ? ` (${card.path})` : ''}. Any change to that code goes through delegate_coding, which works inside the folder. Documents and shared files are not the project: never write project code into them, and never say the project changed unless delegate_coding reported it.`
     : card.kind === 'board' ? '- The task board. Read it with list_tasks. When you notice follow-up work, suggest it with propose_task; the founder decides what gets done.'
-    : card.kind === 'imagegen' ? '- An image studio. Draw with generate_image when the founder asks for a picture, a mockup or an illustration, describing the whole scene in the prompt. What you make appears on the card for the founder to see.'
+    : card.kind === 'imagegen' ? '- An image studio. Draw with generate_image when the founder asks for a picture, a mockup or an illustration, describing the whole scene in the prompt. What you make appears on the card for the founder to see, and the reply tells you the path it was saved at.'
     : card.kind === 'voicegen' ? '- A voice studio. Say something out loud with generate_voice when the founder asks for a recording, a voiceover or a read-aloud, writing the words exactly as they should be spoken. What you make appears on the card for the founder to hear.'
     : card.kind === 'videogen' ? '- A video studio. Make a short narrated film with generate_video when the founder asks for one: you write the whole storyboard, a title and four to seven scenes, and the machine draws, narrates and renders it. It takes a few minutes, so plan the film before you call it once.'
+      + ' To put a picture in a film, draw it first with generate_image and pass the path it hands back in generate_video\'s "images"; a picture with somebody in it becomes the person on camera.'
+      + ' Pictures already in an image studio wired to you are used without being asked for, so there is nothing to do when the founder has drawn one already.'
     : '- A browser card the founder watches live. Use browse for anything that needs clicking, typing or being signed in.'));
   const system = [
     `You are ${room.name}, ${room.role}. ${room.brief}`,

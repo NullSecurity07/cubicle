@@ -78,10 +78,49 @@ export async function availableRam(read = () => readFile('/proc/meminfo', 'utf8'
   const found = text && /^MemAvailable:\s+(\d+) kB$/m.exec(text);
   return found ? Number(found[1]) / GB : null;
 }
+
+export const LEAST_RAM_GB = 12;
+// What the kernel could hand a model if it pushed everything it can out to disk. Swap is not memory — a model leaning
+// on it crawls — but it is the difference between a clip that takes a long while and no clip at all, and this very
+// clip has been made on this machine with about eleven gigabytes free and swap behind it. So it counts, and the old
+// flat refusal at twenty-two gigabytes was simply wrong about what this computer can do.
+export async function availableSwap(read = () => readFile('/proc/meminfo', 'utf8')): Promise<number | null> {
+  const text = await read().catch(() => null);
+  const found = text && /^SwapFree:\s+(\d+) kB$/m.exec(text);
+  return found ? Number(found[1]) / GB : null;
+}
+
+// Whether there is room to film here, and what to say about it. Three answers, because there are three real cases:
+// plenty (say nothing), enough only by leaning on swap (make it, but warn first, because a founder who is told it
+// will take three minutes and waits twenty thinks the app has hung), and genuinely too little (do not start).
+export type Room = { answer: 'yes' | 'slow' | 'no'; line: string };
+export function roomToFilm(
+  { ram, swap, needs = NEEDS_RAM_GB, least = LEAST_RAM_GB }: { ram: number | null; swap?: number | null; needs?: number; least?: number },
+): Room {
+  // A machine that will not say how much it has is given the benefit of the doubt, as it always was.
+  if (ram === null) return { answer: 'yes', line: '' };
+  if (ram >= needs) return { answer: 'yes', line: '' };
+  const behind = swap ?? 0;
+  // The floor: below this there is not enough real memory to hold the model at all, and swap only makes it thrash.
+  // A founder who lowered the bar themselves lowers the floor by the same share, so their setting still means
+  // something; it never rises above the twelve gigabytes this was measured at.
+  const floor = Math.min(least, (needs * least) / NEEDS_RAM_GB);
+  if (ram < floor || ram + behind < needs) {
+    return {
+      answer: 'no',
+      line: `there is ${Math.round(ram)} GB of memory free and ${Math.round(behind)} GB of swap behind it, and a local clip needs about ${needs} GB between them. The founder closes a few things, or turns to the free online clips.`,
+    };
+  }
+  return {
+    answer: 'slow',
+    line: `there is ${Math.round(ram)} GB of memory free, so this leans on swap: the clip will still be made, but slower than the usual ${MINUTES_EACH} minutes.`,
+  };
+}
+
 export const vulkanHere = (dirs = ['/usr/share/vulkan/icd.d', '/etc/vulkan/icd.d', '/usr/local/share/vulkan/icd.d']): boolean =>
   dirs.some((one) => existsSync(one));
 
-export const SLOW_HINT = `Making a clip on this computer takes about ${MINUTES_EACH} minutes and needs ${NEEDS_RAM_GB} GB of memory free.`;
+export const SLOW_HINT = `Making a clip on this computer takes about ${MINUTES_EACH} minutes and needs ${NEEDS_RAM_GB} GB of memory and swap together.`;
 
 type Runner = (command: string, args: string[], at: string, onLine: (line: string) => void, signal?: AbortSignal) => Promise<number>;
 const run: Runner = (command, args, at, onLine, signal) => new Promise((done, fail) => {
@@ -191,12 +230,13 @@ export function localClips(deps: LocalDeps = {}): Clips {
       const stopped = why();
       if (stopped) throw new Error(stopped);
       return inTurn(async () => {
-        // Asked at the last moment, not at start: what a machine can spare changes minute to minute.
-        const spare = await availableRam();
-        const needs = needsRam(env);
-        if (spare !== null && spare < needs) {
-          throw new Error(`there is ${spare.toFixed(0)} GB of memory free and a local clip needs about ${needs} GB. The founder closes a few things, or turns to the free online clips.`);
-        }
+        // Asked at the last moment, not at start: what a machine can spare changes minute to minute. Both numbers
+        // come out of one reading of the file, so memory and swap are describing the same moment.
+        const meminfo = await readFile('/proc/meminfo', 'utf8').catch(() => '');
+        const held = async () => meminfo;
+        const room = roomToFilm({ ram: await availableRam(held), swap: await availableSwap(held), needs: needsRam(env) });
+        if (room.answer === 'no') throw new Error(room.line);
+        if (room.answer === 'slow') help.report(room.line);
         await fetchModels(help.report, help.signal);
         const work = join(at, 'work', Date.now().toString(36));
         await mkdir(work, { recursive: true });

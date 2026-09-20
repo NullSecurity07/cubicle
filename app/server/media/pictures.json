@@ -1,0 +1,30 @@
+{
+  "pictures": [
+    {
+      "name": "Z-Image Turbo",
+      "space": "Tongyi-MAI/Z-Image-Turbo",
+      "endpoint": "/generate",
+      "params": {
+        "prompt": "$prompt",
+        "resolution": "$resolution",
+        "seed": "$seed",
+        "steps": 8,
+        "shift": 3,
+        "random_seed": false
+      }
+    },
+    {
+      "name": "FLUX.1 schnell",
+      "space": "black-forest-labs/FLUX.1-schnell",
+      "endpoint": "/infer",
+      "params": {
+        "prompt": "$prompt",
+        "seed": "$seed",
+        "randomize_seed": false,
+        "width": "$width",
+        "height": "$height",
+        "num_inference_steps": 4
+      }
+    }
+  ]
+}

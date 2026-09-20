@@ -1,6 +1,7 @@
-import { useReactFlow, type NodeProps } from '@xyflow/react';
+import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
 import { useRef, useState, type DragEvent } from 'react';
 import { fileUrl, refreshLink, uploadFile } from '../api';
+import { useMedia } from '../media';
 import type { ImageNodeType, LinkNodeType, NoteNodeType } from '../stage';
 import { useFlushStage } from '../sync';
 import { CardActions, Frame } from './Frame';
@@ -30,6 +31,20 @@ export function ImageNode({ id, data, selected }: NodeProps<ImageNodeType>) {
   const { updateNodeData } = useReactFlow();
   const picker = useRef<HTMLInputElement>(null);
   const [problem, setProblem] = useState('');
+  // An empty picture card wired to an image studio shows what that studio has drawn. The founder who joins the two
+  // up has said "show me what that makes"; before this they said it and got an empty box. The wire is read out of
+  // the live graph rather than a snapshot, so the picture arrives the moment the wire is drawn.
+  const behind = useStore((flow) => {
+    if (data.path) return '';
+    const ends = new Set<string>();
+    for (const wire of flow.edges) {
+      if (wire.source === id) ends.add(wire.target);
+      if (wire.target === id) ends.add(wire.source);
+    }
+    return [...flow.nodeLookup.values()].find((node) => ends.has(node.id) && node.type === 'imagegen')?.id ?? '';
+  });
+  const studio = useMedia(behind);
+  const drawn = behind ? studio.media.results[0] : undefined;
   async function take(file?: File) {
     if (!file) return;
     if (!file.type.startsWith('image/')) { setProblem('That is not a picture.'); return; }
@@ -45,7 +60,9 @@ export function ImageNode({ id, data, selected }: NodeProps<ImageNodeType>) {
       </header>
       <div className="picture nodrag" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
         <input ref={picker} type="file" accept="image/*" hidden onChange={(event) => { void take(event.target.files?.[0]); event.target.value = ''; }} />
-        {data.path ? <img src={fileUrl(data.path)} alt="" draggable={false} /> : <button type="button" onClick={() => picker.current?.click()}>Drop a picture here, or choose one</button>}
+        {data.path ? <img src={fileUrl(data.path)} alt="" draggable={false} />
+          : drawn ? <><img src={fileUrl(drawn.path)} alt={drawn.prompt} draggable={false} /><p className="picture__from">from the image studio</p></>
+            : <button type="button" onClick={() => picker.current?.click()}>Drop a picture here, or choose one</button>}
         {problem && <p className="msg--problem">{problem}</p>}
       </div>
     </Frame>

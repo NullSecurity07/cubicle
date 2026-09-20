@@ -9,12 +9,12 @@ import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
 import { headlineOf, trimTo } from './critic.ts';
-import { bibleFor, direct, onCamera, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
+import { bibleFor, direct, faceIn, onCamera, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
 import { cachedImages, outOfPictures } from './image.ts';
 import type { Maker, Piece } from './jobs.ts';
-import { availableRam, MINUTES_EACH, needsRam } from './local-clips.ts';
+import { availableRam, availableSwap, MINUTES_EACH, needsRam, roomToFilm as room } from './local-clips.ts';
 import {
   AI_LAYOUTS, isPurpose, MAX_AI, MAX_BACKGROUNDS, MAX_LOCAL_AI, PURPOSE, PURPOSES, SCENES_A_BACKGROUND,
   fallbackOf, withinCaps, withinLength, type Spec,
@@ -85,6 +85,11 @@ export type VideoAsk = {
   prompt: string; format?: string; look?: string; narrate?: boolean; spec?: Spec; cardId?: string;
   purpose?: string; length?: number | string; pace?: string; music?: string; sfx?: boolean; captions?: boolean;
   ai?: boolean | string; address?: string; voice?: string; person?: boolean;
+  // Who asked for the film. A person's own wires are the founder pointing at things just as much as the studio's
+  // are, so what is joined to them is joined to the film.
+  roomId?: string;
+  // Pictures the caller named outright — paths a person got back from drawing one, or the word "latest".
+  images?: string[];
 };
 
 // The other half of the studio: what it can read, what it can photograph, what it can film with.
@@ -99,7 +104,8 @@ export type VideoDeps = {
   stage?: () => Promise<Stage>;
   assets?: (cardId: string) => Promise<MediaAsset[]>;
   // The pictures another studio card has already made, newest first: a wired image studio's work is the film's.
-  pictures?: (cardId: string) => Promise<string[]>;
+  // The words each was drawn from come with it, because they are the only description of the picture anybody has.
+  pictures?: (cardId: string) => Promise<{ path: string; prompt: string }[]>;
   fileOf?: (path: string) => string;
   readDoc?: (id: string) => Promise<string>;
   readFile?: (path: string) => Promise<Buffer | null>;
@@ -114,6 +120,42 @@ export type VideoDeps = {
 export const wiredTo = (stage: Stage, cardId: string): Card[] => {
   const ends = new Set((stage.wires ?? []).flatMap((wire) => (wire.from === cardId ? [wire.to] : wire.to === cardId ? [wire.from] : [])));
   return (stage.cards ?? []).filter((card) => ends.has(card.id));
+};
+
+// What kinds of card a person carries into a film they are asked to make. A founder who wires an image studio to
+// Sam and then asks Sam for a film has already said which pictures to use; making them wire it a second time, to
+// the video card as well, is a rule they have to learn rather than a thing that works.
+const THEIRS = new Set<Card['kind']>(['imagegen', 'image', 'note', 'link', 'project']);
+
+// Everything a film may draw on, found the way a founder would point at it rather than the way a graph is stored.
+// Three reaches, in the order they matter: what is wired to the studio; what is wired to *that* — a picture card on
+// a stage is usually fed by the studio that drew the picture, and the founder who joined them up meant the film to
+// have it; and everything of that kind wired to whoever is making the film.
+//
+// This is the whole of what went wrong in a real run: an image studio fed a picture card, the picture card fed the
+// video studio, and the film gathered nothing, because only the first reach existed.
+export function sourcesFor(stage: Stage, cardId?: string, roomId?: string): Card[] {
+  const found = new Map<string, Card>();
+  const keep = (card: Card) => { if (card.id !== cardId && !found.has(card.id)) found.set(card.id, card); };
+  const direct = cardId ? wiredTo(stage, cardId) : [];
+  for (const card of direct) keep(card);
+  // One hop behind a picture card: the studio that feeds it.
+  for (const card of direct) {
+    if (card.kind !== 'image') continue;
+    for (const behind of wiredTo(stage, card.id)) if (behind.kind === 'imagegen') keep(behind);
+  }
+  if (roomId) for (const card of wiredTo(stage, roomId)) if (THEIRS.has(card.kind)) keep(card);
+  return [...found.values()];
+}
+
+// The documents a film may read: the ones wired to the studio, and the ones wired to whoever is making it.
+export const docsFor = (stage: Stage, cardId?: string, roomId?: string): string[] => {
+  const ends = new Set((stage.wires ?? []).flatMap((wire) => {
+    if (wire.from === cardId || wire.from === roomId) return [wire.to];
+    if (wire.to === cardId || wire.to === roomId) return [wire.from];
+    return [];
+  }));
+  return (stage.docs ?? []).filter((doc) => ends.has(doc.id)).map((doc) => doc.id);
 };
 
 // Where each of a page's shots is taken from: the top, then what is under it, on a desktop and on a phone.
@@ -166,7 +208,7 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
     // folder (a screenshot we just took) or in the shared files (something the founder dropped).
     const files = new Map<string, Held>();
     const stage = await deps.stage?.().catch(() => undefined);
-    const cards = stage && asked.cardId ? wiredTo(stage, asked.cardId) : [];
+    const cards = stage ? sourcesFor(stage, asked.cardId, asked.roomId) : [];
     const addresses: { url: string; own: boolean; label: string }[] = [];
     if (asked.address?.trim()) addresses.push({ url: asked.address.trim(), own: true, label: asked.address.trim() });
 
@@ -206,19 +248,22 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
           // A picture studio wired to a video studio is a picture studio whose pictures belong in the film. The
           // founder does not have to say so: they drew a wire, and a wire is the saying.
           const drawn = await latestPictures(card.id);
-          for (const [index, bytes] of drawn.entries()) {
+          for (const [index, one] of drawn.entries()) {
             const name = `drawn-${files.size + 1}`;
-            await writeFile(join(at, 'assets', `${name}.png`), bytes);
+            await writeFile(join(at, 'assets', `${name}.png`), one.bytes);
             files.set(name, { file: `${name}.png`, kind: 'image', where: 'job' });
-            material.assets.push({ name, kind: 'image', what: `a picture the founder drew in the image studio${index ? ' (an earlier one)' : ' (the latest)'}` });
+            // The words it was drawn from are the only description of it anybody has, and they are what says
+            // whether there is a person in it.
+            material.assets.push({ name, kind: 'image', prompt: one.prompt, what: `a picture drawn in the image studio${index ? ' (an earlier one)' : ' (the latest)'}: ${one.prompt || 'no words were kept'}` });
           }
           if (drawn.length) material.using.push(`${drawn.length} picture${drawn.length === 1 ? '' : 's'} from the image studio`);
         }
       } catch (error) { report(`could not read ${card.kind === 'project' ? card.path : card.kind}: ${(error as Error).message}`); }
     }
-    // Documents wired to the card are words, the same as a note is.
+    // Documents wired to the card are words, the same as a note is — and so are the ones wired to whoever asked.
+    const readable = stage ? new Set(docsFor(stage, asked.cardId, asked.roomId)) : new Set<string>();
     for (const doc of stage?.docs ?? []) {
-      if (!(stage!.wires ?? []).some((wire) => (wire.from === asked.cardId && wire.to === doc.id) || (wire.to === asked.cardId && wire.from === doc.id))) continue;
+      if (!readable.has(doc.id)) continue;
       const text = await deps.readDoc?.(doc.id).catch(() => '');
       if (text?.trim()) { material.lines.push(`${doc.title}:\n${text.slice(0, 2400)}`); material.using.push(doc.title); }
     }
@@ -242,6 +287,22 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
       if (material.assets.some((one) => one.kind === 'screen')) material.using.push(address.label);
     }
 
+    // Pictures the caller named outright: a person who has just drawn one hands back the path it got, and a film
+    // asked for that picture gets that picture. "latest" is the newest thing the wired image studio has drawn,
+    // which is what somebody means when they say "use the one you just made".
+    for (const named of asked.images ?? []) {
+      const want = named.trim();
+      if (!want || want.toLowerCase() === 'latest') continue;
+      if (material.assets.some((one) => one.what.includes(want))) continue;
+      const bytes = await deps.readFile?.(want).catch(() => null);
+      if (!bytes) { report(`there is no picture at ${want}, so the film was made without it`); continue; }
+      const name = `given-${files.size + 1}`;
+      await writeFile(join(at, 'assets', `${name}.png`), bytes);
+      files.set(name, { file: `${name}.png`, kind: 'image', where: 'job' });
+      material.assets.push({ name, kind: 'image', what: `a picture you were given to use: ${want}` });
+      material.using.push('a picture you were handed');
+    }
+
     // The founder's own footage, already on the card, normalised into the film's own frame when it is used.
     const dropped = asked.cardId ? await deps.assets?.(asked.cardId).catch(() => []) ?? [] : [];
     for (const asset of dropped) {
@@ -256,12 +317,12 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
 
     // The pictures a wired image studio has made, newest first. Its results live in the same sidecar every studio
     // card keeps, which is `assets` on the card for dropped files and `results` for made ones.
-    async function latestPictures(cardId: string): Promise<Buffer[]> {
-      const paths = (await deps.pictures?.(cardId).catch(() => [])) ?? [];
-      const found: Buffer[] = [];
-      for (const path of paths.slice(0, 3)) {
-        const bytes = await deps.readFile?.(path).catch(() => null);
-        if (bytes) found.push(bytes);
+    async function latestPictures(cardId: string): Promise<{ bytes: Buffer; prompt: string }[]> {
+      const made = (await deps.pictures?.(cardId).catch(() => [])) ?? [];
+      const found: { bytes: Buffer; prompt: string }[] = [];
+      for (const one of made.slice(0, 3)) {
+        const bytes = await deps.readFile?.(one.path).catch(() => null);
+        if (bytes) found.push({ bytes, prompt: one.prompt ?? '' });
       }
       return found;
     }
@@ -349,11 +410,15 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // this machine can film one is asked here and now, because what a computer can spare changes minute to
         // minute and a clip that leans on swap takes an hour instead of three minutes.
         const spare = here && able ? await availableRam() : null;
-        const roomToFilm = here && able && (spare === null || spare >= needsRam());
-        if (understanding.person && here && able && !roomToFilm) {
-          report(`there is ${spare?.toFixed(0)} GB of memory free and filming a person here needs about ${needsRam()}, so the film shows a still of one instead`);
-        }
-        spec = { ...spec, scenes: onCamera(spec.scenes, understanding, bible, report, roomToFilm ? { minutes: MINUTES_EACH } : undefined) };
+        // Memory and swap together, because a machine leaning on swap makes the clip slowly rather than not at all —
+        // and a founder refused at 21 GB when 22 was wanted has been told no for a gigabyte.
+        const filming = here && able ? room({ ram: spare, swap: await availableSwap(), needs: needsRam() }) : { answer: 'no' as const, line: '' };
+        const roomToFilm = here && able && filming.answer !== 'no';
+        if (understanding.person && here && able && filming.line) report(filming.line);
+        // A real picture of a real person, already on the card, is who the film puts on camera. Nothing is drawn and
+        // nothing is filmed for a face the founder has already made.
+        const face = faceIn(material);
+        spec = { ...spec, scenes: onCamera(spec.scenes, understanding, bible, report, roomToFilm ? { minutes: MINUTES_EACH } : undefined, face) };
 
         // Every drawn picture is filed under what was asked for, so the same film rendered twice draws nothing the
         // second time and a founder's daily quota lasts the week.
@@ -635,6 +700,9 @@ export const fakeVideos: Maker = {
     const asked = ask as VideoAsk;
     const spec = asked.spec ?? { title: asked.prompt.slice(0, 60), scenes: [{ layout: 'title' as const, heading: asked.prompt.slice(0, 60) }] };
     report(`reading the brief: ${asked.prompt.slice(0, 60)}`);
+    // What it was handed, said the way the real one says it, so a run without models still shows the founder that
+    // the picture they drew reached the film.
+    if (asked.images?.length) report(`using: ${asked.images.length} picture${asked.images.length === 1 ? '' : 's'} you were handed — ${asked.images.join(', ')}`);
     report(`${spec.scenes.length} scenes: ${spec.title}`);
     report('rendering 6 seconds…');
     return { ext: 'mp4', bytes: Buffer.from(CLIP, 'base64'), poster: { ext: 'png', bytes: Buffer.from(POSTER, 'base64') } };

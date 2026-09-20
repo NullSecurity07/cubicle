@@ -30,9 +30,11 @@ export function useMedia(id: string) {
   const [problem, setProblem] = useState('');
   const flushStage = useFlushStage();
   // Reading the card again, for the things a card changes without a job: a file dropped on it, or one taken off.
-  const reload = useCallback(() => { void getMedia(id).then((got) => { setMedia(got); setHint(got.hint); }).catch(() => {}); }, [id]);
+  const reload = useCallback(() => { if (id) void getMedia(id).then((got) => { setMedia(got); setHint(got.hint); }).catch(() => {}); }, [id]);
 
   useEffect(() => {
+    // No card to watch: a caller asking about a studio that is not there gets the empty one and asks nobody.
+    if (!id) return;
     let gone = false;
     const load = () => getMedia(id).then((got) => { if (!gone) { setMedia(got); setHint(got.hint); } }).catch(() => {});
     // The server must know this card before it will answer for it.

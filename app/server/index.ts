@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
-import { MEDIA_KINDS, isHeaded, newMessageId, type Attachment, type ChatEvent, type MediaKind, type Stage } from '../shared/model.ts';
+import { MEDIA_KINDS, isHeaded, newMessageId, studioBehind, type Attachment, type ChatEvent, type MediaKind, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
 import { boardAttention, createAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
@@ -18,7 +18,7 @@ import { fakeLocalClips, localClips, MINUTES_EACH } from './media/local-clips.ts
 import { createClips, fakeClips } from './media/spaces.ts';
 import { probe } from './media/ff.ts';
 import { thumbOf } from './media/footage.ts';
-import { fakeImages, imageMakers } from './media/image.ts';
+import { fakeImages, firstImages, imageMakers } from './media/image.ts';
 import { createMedia } from './media/jobs.ts';
 import { createMusic, fakeMusic } from './media/music.ts';
 import { fakeVideos, hyperframesVideos } from './media/video.ts';
@@ -108,14 +108,14 @@ const media = createMedia({
     imagegen: pictures,
     voicegen: voices,
     videogen: fake ? [fakeVideos] : [hyperframesVideos({
-      dir: workspace, images: pictures[0], voices: voices[0], think: storyboard, clips, local, music,
+      dir: workspace, images: firstImages(...pictures), voices: voices[0], think: storyboard, clips, local, music,
       cacheDir: resolve(root, 'app/.cache'),
       forbidden: [workspace, root],
       stage: () => store.loadStage(),
       // `media` is read inside these, never at the moment they are made, so the studio can ask the card that asked it.
       assets: (cardId) => media.assetsOf(cardId),
       // A wired image studio's own pictures, newest first: a wire is the founder saying "use these".
-      pictures: async (cardId) => (await media.read(cardId)).results.map((one) => one.path),
+      pictures: async (cardId) => (await media.read(cardId)).results.map((one) => ({ path: one.path, prompt: one.prompt })),
       fileOf: (path) => store.pathOf(path),
       readDoc: (id) => store.readDoc(id),
       readFile: (path) => store.readFileBytes(path),
@@ -157,7 +157,11 @@ async function promptFor(stage: Stage, roomId: string, toolNames: string[], fres
   const pictures: { name: string; url: string }[] = [];
   for (const card of stage.cards ?? []) {
     if (!mine.has(card.id)) continue;
-    const file = card.kind === 'image' ? card.path : card.kind === 'imagegen' ? (await media.read(card.id)).results[0]?.path : null;
+    // An empty picture card wired to a studio shows that studio's newest picture, so what a person sees is what
+    // the founder sees on the stage. Without this the founder built exactly that and both of them got an empty box.
+    const behind = card.kind === 'image' && !card.path ? studioBehind(stage, card.id) : null;
+    const from = card.kind === 'imagegen' ? card.id : behind;
+    const file = card.kind === 'image' && card.path ? card.path : from ? (await media.read(from)).results[0]?.path : null;
     if (!file) continue;
     const bytes = await store.readFileBytes(file).catch(() => null);
     if (bytes && bytes.length <= 4_000_000) pictures.push({ name: file, url: `data:${typeOf(file)};base64,${bytes.toString('base64')}` });

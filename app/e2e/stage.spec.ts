@@ -628,6 +628,37 @@ test('a voice studio: the founder picks a voice, a wired person speaks, and both
   await expect(page.locator('.react-flow__node-voicegen').getByLabel('Voice')).toHaveValue('bf_emma');
 });
 
+// The founder's real words were "generate an image and use that in the video", and what happened was a film with
+// nobody in it: the picture the person had just drawn was never passed on, and an empty picture card wired to the
+// studio that drew it showed an empty box. Both ends of that are one journey.
+test('a person draws a picture and makes a film with it, and an empty picture card shows what the studio drew', async ({ page }) => {
+  await tidy(page);
+  await addCard(page, 'Add image studio');
+  const studio = page.locator('.react-flow__node-imagegen');
+  const studioId = (await studio.getAttribute('data-id'))!;
+  await addCard(page, 'Add video studio');
+  const film = page.locator('.react-flow__node-videogen');
+  const filmId = (await film.getAttribute('data-id'))!;
+  await addCard(page, 'Add picture');
+  const picture = page.locator('.react-flow__node-image');
+  const pictureId = (await picture.getAttribute('data-id'))!;
+
+  await page.waitForTimeout(600);
+  await wire(page, 'marketing', studioId);
+  await wire(page, 'marketing', filmId);
+  await wire(page, studioId, pictureId);
+
+  // One turn: the person draws, reads the path out of its own reply, and hands it to the film.
+  await send(page, 'marketing', '/chain a 15 second reel of an influencer');
+  await expect(studio.locator('.studio__result img')).toBeVisible({ timeout: 20_000 });
+  await expect.poll(async () => (await (await page.request.get(`/api/media/${filmId}`)).json()).log.join(' '), { timeout: 30_000 })
+    .toMatch(/using: 1 picture you were handed — media\/[a-z0-9-]+\.png/);
+
+  // The empty picture card is not empty: it is showing the studio it is wired to, and says whose picture it is.
+  await expect(picture.locator('img')).toBeVisible();
+  await expect(picture).toContainText('from the image studio');
+});
+
 test('a video studio: the founder sets the film going and watches it being made, a wired person storyboards one', async ({ page }) => {
   await tidy(page);
   await addCard(page, 'Add video studio');

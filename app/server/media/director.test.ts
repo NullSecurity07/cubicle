@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { seedStage, type Stage } from '../../shared/model.ts';
 import { criticise } from './critic.ts';
 import {
-  bibleFor, direct, onCamera, layoutsFor, readBrief, secondsIn, specFromPlan, tellOf, understandingOf,
+  bibleFor, direct, faceIn, onCamera, showsSomebody, layoutsFor, readBrief, secondsIn, specFromPlan, tellOf, understandingOf,
   type Material, type Plan, type Understanding,
 } from './director.ts';
 import { countWords, saidWords, type Scene, type Spec } from './spec.ts';
@@ -274,5 +274,48 @@ describe('somebody on camera', () => {
     expect(made.filter((one) => one.layout === 'clip' && /talking to it/.test(one.clip_prompt ?? ''))).toHaveLength(1);
     // Two moving shots in one film is the ceiling, whoever wrote them.
     expect(made.filter((one) => one.layout === 'clip')).toHaveLength(2);
+  });
+});
+
+describe('a picture the film was handed', () => {
+  const person = (over: Partial<Understanding> = {}): Understanding => ({
+    purpose: 'reel', audience: 'founders', platform: 'a phone', shape: 'tall', seconds: 15, pace: 'punchy',
+    tone: 'friendly', mood: 'upbeat', pack: 'creator', person: true, captions: true, said: '', ...over,
+  });
+  const drawn = (prompt: string): Material => ({
+    lines: [], using: ['the image studio'],
+    assets: [{ name: 'drawn-1', kind: 'image', prompt, what: `a picture drawn in the image studio (the latest): ${prompt}` }],
+  });
+
+  it('knows whether there is anybody in it from the words it was drawn from', () => {
+    expect(showsSomebody({ prompt: 'image of influencer talking abt what investors look for' })).toBe(true);
+    expect(showsSomebody({ prompt: 'a paper plane over a quiet city at dawn' })).toBe(false);
+    expect(faceIn(drawn('image of an influencer talking to camera'))).toBe('drawn-1');
+    expect(faceIn(drawn('a kite over a field'))).toBeUndefined();
+  });
+
+  it('puts it on camera instead of drawing a stranger', () => {
+    // The founder drew a person, wired it up, asked for a film with a real face — and got three drawn faces that
+    // never arrived, because the picture they had made was only ever listed.
+    const said: string[] = [];
+    const written: Scene[] = [
+      { layout: 'presenter', say: 'Investors want traction.', portrait_prompt: 'a founder at a desk' },
+      { layout: 'statement', text: 'Traction wins', say: 'Traction wins.' },
+    ];
+    const made = onCamera(written, person(), 'warm daylight', (line) => said.push(line), undefined, 'drawn-1');
+    expect(made[0].asset).toBe('drawn-1');
+    expect(made[0].portrait_prompt).toBeUndefined();
+    expect(said.join(' ')).toContain('picture from your image studio');
+  });
+
+  it('holds it in a scene of its own when nobody was written on camera at all', () => {
+    const written: Scene[] = [
+      { layout: 'hook', text: 'Investors want traction', say: 'Investors want traction.' },
+      { layout: 'cta', text: 'Follow for more', say: 'Follow for more.' },
+    ];
+    const made = onCamera(written, person(), 'warm daylight', () => {}, undefined, 'drawn-1');
+    const holding = made.find((one) => one.asset === 'drawn-1');
+    expect(holding?.layout).toBe('picture');
+    expect(holding?.bg_prompt).toBeUndefined();
   });
 });

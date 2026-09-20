@@ -195,6 +195,19 @@ export const fakeClient: ModelClient = {
       return { text: '', calls: [{ id: `call-${messages.length}`, name: wanted[1], args: wanted[2] }], usage: { input: 10, output: 5 } };
     }
     const heard = messages.findLast((message) => message.role === 'user')?.content ?? '';
+    // Drawing a picture and then making a film with it, in one turn — what a person has to be able to do when the
+    // founder says "generate an image and use that in the video". The path comes back in the first tool's own
+    // words, and goes straight into the second call.
+    if (/^\/chain\b/m.test(heard) && tools?.some((tool) => tool.name === 'generate_video')) {
+      const drew = last?.role === 'tool' ? /saved at (\S+)/.exec(last.content) : null;
+      if (drew) {
+        const brief = heard.replace(/^\/chain\s*/m, '').trim() || 'a short film';
+        return { text: '', calls: [{ id: `call-${messages.length}`, name: 'generate_video', args: JSON.stringify({ brief, images: [drew[1]] }) }], usage: { input: 10, output: 5 } };
+      }
+      if (last?.role === 'user' && tools.some((tool) => tool.name === 'generate_image')) {
+        return { text: '', calls: [{ id: `call-${messages.length}`, name: 'generate_image', args: JSON.stringify({ prompt: 'an influencer talking to camera' }) }], usage: { input: 10, output: 5 } };
+      }
+    }
     const reply = last?.role === 'tool'
       ? `Tool said: ${last.content}`
       : heard.startsWith('/markdown') ? '**Bold plan**\n\n- one\n- two'

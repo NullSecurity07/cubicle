@@ -8,7 +8,8 @@ export type Doc = Box & { id: string; title: string; pinned?: boolean };
 // `headed` shows the card's Chrome as a real window, for the founder to sign in or pass a human check by hand.
 export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean } | { kind: 'project'; path: string } | { kind: 'board' }
   // Small things that are context when wired to a person: a note's words, a picture (for models that can see), a web page's text.
-  | { kind: 'note'; text: string; color?: string } | { kind: 'image'; path: string } | { kind: 'link'; url: string; title?: string }
+  // A picture card starts empty — the founder drops a file on it, or wires it to the studio whose work it shows.
+  | { kind: 'note'; text: string; color?: string } | { kind: 'image'; path?: string } | { kind: 'link'; url: string; title?: string }
   // Studios: the founder, or a wired person, says what they want and the server makes it. Only what was asked for lives
   // on the card; what came out lives in a sidecar the server owns.
   | { kind: 'imagegen'; prompt?: string; shape?: Shape } | { kind: 'voicegen'; text?: string; voice?: string }
@@ -82,6 +83,15 @@ export type Hit = { kind: 'doc' | 'chat' | 'memory' | 'decision' | 'file' | 'lin
 export type Mission = { id: string; title: string; tip: string; done: boolean };
 
 export const isHeaded = (card?: Card) => card?.kind === 'browser' && !!card.headed;
+
+// The image studio feeding a picture card, when the founder joined the two up and left the card empty. A picture
+// card wired to a studio is somebody saying "show me what that draws", so it shows the studio's newest picture —
+// on the stage, to a person who can see, and to a film. Both ends of this live in one place so the card, the
+// person and the film can never disagree about what is in it.
+export function studioBehind(stage: { wires?: Wire[]; cards?: Card[] }, cardId: string): string | null {
+  const ends = new Set((stage.wires ?? []).flatMap((wire) => (wire.from === cardId ? [wire.to] : wire.to === cardId ? [wire.from] : [])));
+  return (stage.cards ?? []).find((card) => card.kind === 'imagegen' && ends.has(card.id))?.id ?? null;
+}
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };
 export type Usage = { input: number; output: number };

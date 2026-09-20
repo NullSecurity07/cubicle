@@ -7,6 +7,12 @@ import { LOOKS, PACES } from '../media/templates/index.ts';
 import { wired } from '../prompt.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 
+// Words a founder uses when they mean "put a picture in it". A person that hears them and calls the video tool
+// with no picture has not disobeyed — it has not noticed — so the tool notices for it and hands over what the
+// wired image studio has. The founder should not have to learn which of two calls carries a picture.
+const MEANS_A_PICTURE = /\b(picture|image|photo|photograph|portrait|face|headshot|selfie|the one you (?:just )?(?:made|drew|generated)|that image|this image)\b/i;
+export const meansAPicture = (said: string): boolean => MEANS_A_PICTURE.test(said);
+
 // The studio of one kind the founder wired to this person. Nothing else on the stage is theirs to drive.
 const studio = (context: ToolContext, kind: Card['kind']) => {
   const cards = (context.stage.cards ?? []).filter((one) => one.kind === kind);
@@ -27,6 +33,11 @@ export const spendingScenes = (scenes: unknown, localReady = false): Layout[] =>
 // `localClipsReady` says whether the moving pictures would be made here; when they would, nothing goes out and
 // nothing is spent, so the founder is not asked.
 export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = () => false): Tool[] {
+  // The last thing the founder said to this person, which is where "use that image" lives.
+  const lastAsk = async (context: ToolContext): Promise<string> => {
+    const said = await context.store.readChat(context.roomId).catch(() => []);
+    return [...said].reverse().find((one) => one.role === 'user')?.text ?? '';
+  };
   return [{
     name: 'generate_image',
     perTurn: 4,
@@ -47,7 +58,13 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
       const shape = typeof args.shape === 'string' && (SHAPES as readonly string[]).includes(args.shape) ? args.shape : 'square';
       // The card hears the job from the server itself, so the founder and this person see the same picture appear once.
       const made = await media.make(card, { prompt: text(args, 'prompt', 2000), shape }, { signal: context.signal });
-      return { text: `Made the picture.\n\n![${made.prompt.replace(/[[\]]/g, '')}](/api/files/${made.path})`, effect: { kind: 'media-made', id: card.id } };
+      // The path, said plainly, because the next thing somebody asks for is usually a film with this picture in it
+      // and a person cannot pass on a link they were only shown.
+      return {
+        text: `Made the picture. It is saved at ${made.path} — pass that path to generate_video in "images" to put it in a film.`
+          + `\n\n![${made.prompt.replace(/[[\]]/g, '')}](/api/files/${made.path})`,
+        effect: { kind: 'media-made', id: card.id },
+      };
     },
   }, {
     name: 'generate_voice',
@@ -79,6 +96,7 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
       + 'Write "scenes" yourself only when you want a particular storyboard; then each scene needs a layout, the words on screen and the line spoken over it. '
       + 'What goes on screen is a headline of a few words, never the sentence being spoken. Everything specific a film says — a feature, a number, a name — has to come out of what is wired to the card and be quoted in "source"; anything else is cut before it renders. '
       + 'Rendering takes a few minutes, so call this once. '
+      + 'To put a picture in the film, draw it with generate_image first and pass the path it gives back in "images"; pictures already in the wired image studio are used without being asked for. '
       + 'The card lists what it is drawing on — the founder\'s own footage, screenshots of the product — under names you can put in "asset".',
     parameters: {
       type: 'object',
@@ -104,7 +122,7 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
               bg_prompt: { type: 'string', description: 'A picture to draw full-bleed behind the words of any other scene, so no scene is a flat colour' },
               emphasis: { type: 'string', description: 'The one word in "text" that carries the line; it is set in the accent colour' },
               source: { type: 'string', description: 'A short quotation, word for word, out of the wired material that this scene\'s claim rests on. A feature, number or name that cannot be quoted is cut before the film is rendered.' },
-              asset: { type: 'string', description: 'The name of a screenshot or a file already on the card, for a device or footage scene' },
+              asset: { type: 'string', description: 'The name of a screenshot or a file already on the card, for a device or footage scene — or the file path of a picture generate_image gave you' },
               frame: { type: 'string', enum: [...FRAMES], description: 'What a device scene shows the screenshot in' },
               clip_prompt: { type: 'string', description: 'Three to five seconds of moving b-roll to make, for a clip scene' },
               portrait_prompt: { type: 'string', description: 'Who is on screen, for a presenter scene' },
@@ -115,6 +133,12 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
             },
             required: ['layout'],
           },
+        },
+        images: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Pictures the film must use, as the file paths generate_image gave you, or the word "latest" for the newest picture in the wired image studio. '
+            + 'Draw the picture first and pass its path here; the film shows it rather than drawing something like it, and a picture with somebody in it becomes the person on camera.',
         },
         format: { type: 'string', enum: [...SHAPES], description: 'The shape of the film; tall for a phone reel, wide for a screen' },
         look: { type: 'string', enum: [...LOOKS], description: 'creator is bold kinetic captions for a phone reel, editorial is a serif and pictures, neon is tech, clean is typographic, sketch is hand-drawn, brand takes the wired product\'s own colours' },
@@ -141,6 +165,18 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
     async run(args, context) {
       const card = studio(context, 'videogen');
       if (!card) throw new Error('no video studio is connected to your room. Ask the founder to add one from the dock and draw a wire to it.');
+      // Every picture this film is to use, by path. What was passed, plus — when the founder's own words asked for
+      // a picture and nothing was passed — whatever the wired image studio has drawn.
+      const drew = studio(context, 'imagegen');
+      const newest = async () => (drew ? (await media.read(drew.id).catch(() => null))?.results?.[0]?.path : undefined);
+      const named = (Array.isArray(args.images) ? args.images : []).map((one) => String(one ?? '').trim()).filter(Boolean);
+      const heard = named.length ? [] : meansAPicture(await lastAsk(context)) ? ['latest'] : [];
+      const images: string[] = [];
+      for (const one of [...named, ...heard]) {
+        if (one.toLowerCase() !== 'latest') { images.push(one); continue; }
+        const path = await newest();
+        if (path) images.push(path);
+      }
       // A storyboard somebody wrote is kept; a brief alone goes to the studio's own director, which is the better of
       // the two roads and the one a person should usually take.
       const written = Array.isArray(args.scenes) && args.scenes.length;
@@ -159,6 +195,8 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
         sfx: spec?.sfx ?? (typeof args.sfx === 'boolean' ? args.sfx : undefined), narrate: args.narrate !== false,
         // The switch on the card is the founder's, not the person's: a film only spends the quota when it is on.
         ai: settings?.ai ?? 'auto', address: settings?.address, voice: settings?.voice,
+        // Who asked, so the film can reach the things wired to them, and whatever pictures they are holding.
+        roomId: context.roomId, ...(images.length ? { images: [...new Set(images)] } : {}),
       }, { signal: context.signal });
       return { text: `Made the film.\n\n[${made.prompt.replace(/[[\]]/g, '')}](/api/files/${made.path})`, effect: { kind: 'media-made', id: card.id } };
     },

@@ -332,3 +332,29 @@ describe('what a founder types and what a stranger reads', () => {
     expect(rules(criticise(fixed, reelWant({ reel: false })))).not.toContain('headline');
   });
 });
+
+describe('a film that was handed a picture', () => {
+  const given = ['drawn-1'];
+  const drawings = spec([
+    { layout: 'hook', text: 'Investors want traction', say: 'Investors want traction.', bg_prompt: 'a desk' },
+    { layout: 'statement', text: 'Show real usage', say: 'Show real usage.', bg_prompt: 'a laptop' },
+    { layout: 'cta', text: 'Follow for more', say: 'Follow for more.', bg_prompt: 'a phone' },
+  ]);
+
+  it('says so when the picture is nowhere in it', () => {
+    expect(rules(criticise(drawings, reelWant({ pictures: given })))).toContain('pictures');
+    expect(rules(criticise(drawings, reelWant()))).not.toContain('pictures');
+  });
+
+  it('gives a scene the real picture rather than a drawing of something like it', () => {
+    const { spec: fixed, notes } = repair(drawings, reelWant({ pictures: given }));
+    expect(fixed.scenes.some((one) => one.asset === 'drawn-1' && one.layout === 'picture')).toBe(true);
+    expect(notes.join(' ')).toContain('a picture you were given is in the film');
+    expect(rules(criticise(fixed, reelWant({ pictures: given })))).not.toContain('pictures');
+  });
+
+  it('leaves a film that already shows it alone', () => {
+    const already = spec([drawings.scenes[0], { layout: 'picture', asset: 'drawn-1', say: 'Here they are.' }, drawings.scenes[2]]);
+    expect(rules(criticise(already, reelWant({ pictures: given })))).not.toContain('pictures');
+  });
+});

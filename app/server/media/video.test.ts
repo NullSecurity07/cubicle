@@ -7,8 +7,8 @@ import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import { createMedia } from './jobs.ts';
 import { composition, FORMATS, sceneSeconds, type Shot } from './templates/index.ts';
-import { spendingScenes } from '../tools/media.ts';
-import { fakeVideos, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
+import { meansAPicture, spendingScenes } from '../tools/media.ts';
+import { docsFor, fakeVideos, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
 import { budgetOf } from './spec.ts';
 
@@ -206,7 +206,7 @@ describe('generate_video', () => {
   it('keeps its parameters flat and simple, the way every provider accepts them', async () => {
     const { tool } = await turn(wired);
     const properties = (tool.parameters as { properties: Record<string, { type: string; enum?: string[] }> }).properties;
-    expect(Object.keys(properties).sort()).toEqual(['brief', 'captions', 'format', 'length', 'look', 'music', 'narrate', 'pace', 'purpose', 'scenes', 'sfx', 'title']);
+    expect(Object.keys(properties).sort()).toEqual(['brief', 'captions', 'format', 'images', 'length', 'look', 'music', 'narrate', 'pace', 'purpose', 'scenes', 'sfx', 'title']);
     expect(properties.look.enum).toEqual(['clean', 'creator', 'editorial', 'neon', 'sketch', 'brand']);
     expect(properties.format.enum).toEqual(['square', 'wide', 'tall']);
     expect(properties.pace.enum).toEqual(['calm', 'punchy']);
@@ -565,5 +565,65 @@ describe('how many moving shots a film may have', () => {
     expect(spendingScenes([{ layout: 'clip' }, { layout: 'clip' }], false)).toEqual(['clip', 'clip']);
     // A talking head always goes out, whatever this machine can do.
     expect(spendingScenes([{ layout: 'clip' }, { layout: 'presenter' }], true)).toEqual(['presenter']);
+  });
+});
+
+describe('what a film is allowed to draw on', () => {
+  // The founder's own stage, card for card: an image studio feeding a picture card, the picture card feeding the
+  // video studio, and Sam wired to all three. The film that came out of it gathered nothing at all.
+  const stage = {
+    rooms: [{ id: 'sam', name: 'Sam', role: 'content', brief: '', accent: '#f0b35a', x: 0, y: 0, w: 1, h: 1 }],
+    docs: [{ id: 'brief-doc', title: 'The brief', x: 0, y: 0, w: 1, h: 1 }],
+    cards: [
+      { id: 'video', kind: 'videogen' as const, x: 0, y: 0, w: 1, h: 1 },
+      { id: 'picture', kind: 'image' as const, x: 0, y: 0, w: 1, h: 1 },
+      { id: 'studio', kind: 'imagegen' as const, x: 0, y: 0, w: 1, h: 1 },
+      { id: 'browser', kind: 'browser' as const, x: 0, y: 0, w: 1, h: 1 },
+      { id: 'note', kind: 'note' as const, text: 'A thought', x: 0, y: 0, w: 1, h: 1 },
+      { id: 'elsewhere', kind: 'imagegen' as const, x: 0, y: 0, w: 1, h: 1 },
+    ],
+    wires: [
+      { id: 'w1', from: 'picture', fromHandle: 'r', to: 'video', toHandle: 'l' },
+      { id: 'w2', from: 'studio', fromHandle: 'r', to: 'picture', toHandle: 'l' },
+      { id: 'w3', from: 'sam', fromHandle: 'r', to: 'note', toHandle: 'l' },
+      { id: 'w4', from: 'sam', fromHandle: 'r', to: 'browser', toHandle: 'l' },
+      { id: 'w5', from: 'sam', fromHandle: 'r', to: 'brief-doc', toHandle: 'l' },
+    ],
+  };
+
+  it('reaches what is wired to the studio, and one hop behind a picture card', () => {
+    // Without the second reach the studio that drew the picture is invisible, which is the whole of the bug.
+    expect(sourcesFor(stage, 'video').map((one) => one.id).sort()).toEqual(['picture', 'studio']);
+  });
+
+  it('carries what is wired to whoever is making the film', () => {
+    const found = sourcesFor(stage, 'video', 'sam').map((one) => one.id).sort();
+    expect(found).toEqual(['note', 'picture', 'studio']);
+    // A browser card of theirs is not material for a film, and a studio wired to nobody is nobody's.
+    expect(found).not.toContain('browser');
+    expect(found).not.toContain('elsewhere');
+  });
+
+  it('names nothing twice and never the studio itself', () => {
+    const both = { ...stage, wires: [...stage.wires, { id: 'w6', from: 'sam', fromHandle: 'r', to: 'video', toHandle: 'l' }, { id: 'w7', from: 'sam', fromHandle: 'r', to: 'picture', toHandle: 'l' }] };
+    const found = sourcesFor(both, 'video', 'sam').map((one) => one.id);
+    expect(found).toHaveLength(new Set(found).size);
+    expect(found).not.toContain('video');
+  });
+
+  it('reads the documents wired to the studio and to whoever asked', () => {
+    expect(docsFor(stage, 'video')).toEqual([]);
+    expect(docsFor(stage, 'video', 'sam')).toEqual(['brief-doc']);
+  });
+});
+
+describe('the founder asking for a picture in the film', () => {
+  it('hears the words a founder uses, and nothing else', () => {
+    // A person told this and calling the video tool with no picture has not disobeyed — it has not noticed.
+    expect(meansAPicture('15 second clip of influencer talking abt what investors look for real face')).toBe(true);
+    expect(meansAPicture('generate an image and use that in the video')).toBe(true);
+    expect(meansAPicture('use the one you just made')).toBe(true);
+    expect(meansAPicture('a 30 second launch film for the product')).toBe(false);
+    expect(meansAPicture('make it punchy and put music under it')).toBe(false);
   });
 });

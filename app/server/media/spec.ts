@@ -281,8 +281,18 @@ export function withinLength<T extends { seconds: number }>(shots: T[], target: 
 // could not be made is told to the founder on the card; it is never set across the frame. A film that renders
 // "nothing to show" or "Cloudflare answered 429" as its headline is worse than one that renders nothing at all.
 export function fallbackOf(scene: Scene): Scene {
-  if (scene.layout === 'clip') return { layout: 'picture', image_prompt: scene.clip_prompt ?? scene.text ?? 'an abstract product still, soft light', text: scene.text, say: scene.say, heading: scene.heading, emphasis: scene.emphasis };
-  if (scene.layout === 'presenter') return { layout: 'statement', text: scene.text || scene.say || '', say: scene.say, heading: scene.heading, bg_prompt: scene.portrait_prompt, emphasis: scene.emphasis };
+  if (scene.layout === 'clip') {
+    return scene.asset
+      ? { layout: 'picture', asset: scene.asset, text: scene.text, say: scene.say, emphasis: scene.emphasis }
+      : { layout: 'picture', image_prompt: scene.clip_prompt ?? scene.text ?? 'an abstract product still, soft light', text: scene.text, say: scene.say, heading: scene.heading, emphasis: scene.emphasis };
+  }
+  // A talking head made out of a real picture keeps the picture when the talking cannot be made: the founder drew
+  // that person and wired them up, and a scene of words where they should be is the film ignoring them.
+  if (scene.layout === 'presenter') {
+    return scene.asset
+      ? { layout: 'picture', asset: scene.asset, text: scene.text, say: scene.say, emphasis: scene.emphasis }
+      : { layout: 'statement', text: scene.text || scene.say || '', say: scene.say, heading: scene.heading, bg_prompt: scene.portrait_prompt, emphasis: scene.emphasis };
+  }
   if (scene.layout === 'device') return { layout: 'statement', text: scene.text || scene.heading || '', say: scene.say, bg_prompt: scene.bg_prompt, emphasis: scene.emphasis };
   if (scene.layout === 'footage') return { layout: 'statement', text: scene.text || scene.heading || '', say: scene.say, bg_prompt: scene.bg_prompt, emphasis: scene.emphasis };
   return { ...scene, layout: 'statement', text: scene.text || scene.heading || undefined, heading: undefined, image_prompt: undefined, bg_prompt: scene.bg_prompt ?? scene.image_prompt };

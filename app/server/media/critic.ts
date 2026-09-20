@@ -23,6 +23,9 @@ export type Want = {
   // The real screenshots of the product on the card, by name. A film that has these and draws a picture instead is
   // a film about a product nobody has seen.
   screens?: string[];
+  // Pictures the film was handed, by name: drawn in a wired image studio, dropped on the stage, or given to the
+  // tool outright. The founder who put them there meant them to be in the film.
+  pictures?: string[];
   // The one line of visual direction every drawn picture in this film is prefixed with, so six pictures look like
   // six frames of one film rather than six stock photos.
   bible: string;
@@ -254,6 +257,13 @@ export function criticise(spec: Spec, want: Want): Finding[] {
   if (want.screens?.length && !scenes.some((one) => one.layout === 'device' || one.layout === 'footage')) {
     say('screens', `there ${want.screens.length === 1 ? 'is a real picture' : `are ${want.screens.length} real pictures`} of the product on the card and the film shows none of them`);
   }
+  // The pictures the film was handed. Listing them for the model to choose from was not enough: a founder who drew
+  // a picture and wired it to the studio was shown a film of drawings of something else.
+  const held = new Set(scenes.map((one) => one.asset).filter(Boolean));
+  const unused = (want.pictures ?? []).filter((one) => !held.has(one));
+  if (unused.length) {
+    say('pictures', `${unused.length === 1 ? 'a picture you were given is' : `${unused.length} pictures you were given are`} not in the film — ${unused.join(', ')}`);
+  }
 
   const budget = budgetOf(want.seconds, scenes.length, want.pace);
   const said = saidWords(spec);
@@ -482,6 +492,22 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       note('there is no product behind this film, so it closes on what to do rather than on a made-up wordmark');
       return { ...scene, layout: 'cta', text: trimTo(scene.text || scene.heading || 'Follow for more', HEADING_WORDS), heading: undefined };
     });
+  }
+
+  // 2b2. The pictures the film was handed, put in it. A scene that was going to be a drawing holds a real picture
+  //      instead, because a real one is what the founder made and wired up.
+  if (want.pictures?.length && can('picture')) {
+    const held = new Set(scenes.map((one) => one.asset).filter(Boolean));
+    for (const name of want.pictures) {
+      if (held.has(name)) continue;
+      const at = scenes.findIndex((one) => !one.asset && (one.layout === 'picture' || one.layout === 'statement' || one.layout === 'hook'));
+      if (at < 0) break;
+      note('a picture you were given is in the film, rather than a drawing of something like it');
+      scenes = scenes.map((one, index) => (index === at
+        ? { ...one, layout: 'picture' as Layout, asset: name, image_prompt: undefined, bg_prompt: undefined }
+        : one));
+      held.add(name);
+    }
   }
 
   // 2c. The product, shown. Where there are real screenshots on the card and not one scene holds one, the scene that

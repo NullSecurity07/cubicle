@@ -28,7 +28,7 @@ export type Asked = {
 // What the film has to work with, gathered before a word of the storyboard is written.
 // `pitch` is what the product says it is, in its own words — the thing the film argues. `lines` is everything else
 // it says, which is what the film is checked against.
-export type Material = { lines: string[]; pitch?: string; assets: { name: string; kind: string; what: string }[]; brand?: Brand; using: string[] };
+export type Material = { lines: string[]; pitch?: string; assets: { name: string; kind: string; what: string; prompt?: string }[]; brand?: Brand; using: string[] };
 
 // What the director understood, which is the thing the card shows the founder before anything is made.
 export type Understanding = {
@@ -382,6 +382,7 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
     product: material.lines.length > 0 || material.assets.length > 0 || !!material.brand,
     sources: sourcesOf(material, asked.brief),
     screens: material.assets.filter((asset) => asset.kind === 'screen').map((asset) => asset.name),
+    pictures: givenPictures(material).slice(0, MOST_GIVEN),
   };
 
   // The storyboard, and one more go with the reason the first would not do: a model that forgot a field usually
@@ -430,6 +431,24 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
 // The most a film gets of somebody talking to the camera when this machine is drawing them: two, because each one
 // costs minutes of the founder's time and a third is a third of the film.
 export const MOST_FACES = 2;
+// How many handed-over pictures a film will carry. More than this and the film is a slideshow of somebody's folder.
+export const MOST_GIVEN = 3;
+
+// The pictures a film has been handed: drawn in a wired image studio, dropped on the stage, or named outright by
+// somebody who had just made one. A film given a picture and not showing it is a film that ignored the founder.
+export const givenPictures = (material: Material): string[] =>
+  material.assets.filter((one) => one.kind === 'image').map((one) => one.name);
+
+// Whether there is somebody in a picture, read off the words it was drawn from. That is the only description of it
+// anybody has when nothing has the quota to look at it, and it is usually a good one: a picture of an influencer
+// was asked for as a picture of an influencer.
+const SOMEBODY_IN = /\b(person|people|man|woman|girl|boy|founder|influencer|presenter|speaker|host|face|portrait|headshot|selfie|model|someone|somebody|talking|speaking)\b/i;
+export const showsSomebody = (asset: { prompt?: string; what?: string }): boolean =>
+  SOMEBODY_IN.test(`${asset.prompt ?? ''} ${asset.what ?? ''}`);
+
+// The one of a film's pictures that can stand in for the person the brief asked for, or nothing.
+export const faceIn = (material: Material): string | undefined =>
+  material.assets.find((one) => one.kind === 'image' && showsSomebody(one))?.name;
 // Whether a moving scene already has somebody in it. A clip of hands over a desk is a clip; it is not the person
 // the brief asked for, and a film that counts it as one has nobody on camera at all.
 const SOMEBODY = /\b(person|people|man|woman|founder|speaker|influencer|presenter|host|face|talking head|him|her|they|creator|someone|somebody)\b/i;
@@ -438,9 +457,31 @@ export const hasSomebody = (scene: Scene): boolean =>
   || (scene.layout === 'clip' && SOMEBODY.test(`${scene.clip_prompt ?? ''} ${scene.portrait_prompt ?? ''}`));
 
 export function onCamera(scenes: Scene[], understanding: Understanding, bible: string, report: (line: string) => void,
-  filmHere?: { minutes: number }): Scene[] {
+  filmHere?: { minutes: number }, face?: string): Scene[] {
   if (!understanding.person) return scenes;
-  if (scenes.some(hasSomebody)) return scenes;
+  // A real picture of a real person, already on the card, beats anything drawn from a sentence — and it is what the
+  // founder meant when they wired the studio that drew it. So it goes in before anything else is decided, and no
+  // picture service is asked for a face the film already has.
+  let held = scenes;
+  if (face) {
+    let used = false;
+    held = scenes.map((scene) => {
+      if (scene.layout !== 'presenter' || scene.asset) return scene;
+      used = true;
+      return { ...scene, asset: face, portrait_prompt: undefined };
+    });
+    if (used) { report('the film uses the picture from your image studio as the person on screen'); return held; }
+    // Nobody on camera was written at all: the opening holds the picture instead of a drawing of a stranger.
+    const at = held.findIndex((scene) => !scene.asset && !scene.image_prompt && scene.layout !== 'device' && scene.layout !== 'footage');
+    if (at >= 0) {
+      report('the film uses the picture from your image studio as the person on screen');
+      return held.map((scene, index) => (index === at
+        ? { ...scene, layout: 'picture' as Layout, asset: face, image_prompt: undefined, bg_prompt: undefined }
+        : scene));
+    }
+  }
+  if (held.some(hasSomebody)) return held;
+  scenes = held;
   // The bible says "single strong subject, shallow depth of field", and a picture model reads that as a macro of
   // somebody's mouth. A talking head has to be asked for as a talking head: the framing first, and loudly.
   const look = bible.replace(/,?\s*shallow depth of field/i, '');
