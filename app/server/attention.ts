@@ -75,6 +75,9 @@ export const boardAttention = (store: Store, boards: Boards) => async (): Promis
       const where = { cardId: card.id, taskId: task.id, title: task.title };
       if (task.column === 'proposed') found.push({ ...where, id: `proposed:${card.id}:${task.id}`, kind: 'proposed-task', at: task.createdAt, who: task.proposedBy, detail: task.detail.slice(0, 240) || undefined });
       const last = task.run?.log.at(-1) ?? '';
+      // A task that could not even start (no such person, a skill switched off, a script that does not parse) waits for
+      // the founder as surely as one that failed halfway; a repeat that stays blocked unseen is work that quietly stopped.
+      if (task.run?.state === 'blocked') found.push({ ...where, id: `run-failed:${task.id}:${task.run.startedAt}`, kind: 'run-failed', at: task.run.startedAt, who: nameOf(task.assignee), detail: (task.run.result ?? last).replace(/^did not start: /, '') });
       if (task.run?.state === 'failed') found.push({ ...where, id: `run-failed:${task.id}:${task.run.startedAt}`, kind: 'run-failed', at: task.run.finishedAt ?? task.run.startedAt, who: nameOf(task.assignee), detail: last.replace(/^failed: /, '') });
       else if (task.run?.state === 'stopped' && last === CUT_OFF) found.push({ ...where, id: `run-failed:${task.id}:${task.run.startedAt}`, kind: 'run-failed', at: task.run.finishedAt ?? task.run.startedAt, who: nameOf(task.assignee), detail: 'The app closed while this was running. Run it again when you want it.' });
       if (task.missed) found.push({ ...where, id: `missed:${task.id}:${task.nextRun ?? 0}`, kind: 'missed', at: task.createdAt, who: nameOf(task.assignee), detail: 'A repeat fell due while the app was closed. It was not run late.' });
