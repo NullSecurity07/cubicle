@@ -511,7 +511,7 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
     const first = held.find(hasSomebody)!;
     report('the brief asks for somebody on camera, so the film opens on them rather than getting to them later');
     return held.map((scene, index) => (index === 0
-      ? { ...scene, layout: first.layout, clip_prompt: first.clip_prompt, portrait_prompt: first.portrait_prompt, asset: face ?? first.asset, image_prompt: undefined }
+      ? { ...scene, layout: first.layout, person: true, clip_prompt: first.clip_prompt, portrait_prompt: first.portrait_prompt, asset: face ?? first.asset, image_prompt: undefined }
       : scene));
   }
   scenes = held;
@@ -540,10 +540,10 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
     if (filmHere && given + already < MOST_FACES) {
       given += 1;
       // The founder's own picture rides along: what it was drawn from is what this person looks like.
-      return { ...scene, layout: 'clip' as Layout, clip_prompt: `${facing}, talking with their mouth moving, natural head movement and hand gestures, shifting their weight, static camera, ${look}`, bg_prompt: portrait, image_prompt: undefined, asset: face ?? scene.asset };
+      return { ...scene, layout: 'clip' as Layout, person: true, clip_prompt: `${facing}, talking with their mouth moving, natural head movement and hand gestures, shifting their weight, static camera, ${look}`, bg_prompt: portrait, image_prompt: undefined, asset: face ?? scene.asset };
     }
     given += 1;
-    return { ...scene, bg_prompt: portrait };
+    return { ...scene, person: true, bg_prompt: portrait };
   });
   if (given && filmHere) {
     report(`the brief wants somebody on camera, so this computer films ${given === 1 ? 'one shot' : `${given} shots`} of a person talking — about ${filmHere.minutes * given} minutes, and nothing leaves the machine`);

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { orderedClips, type Clip, type Clips, type Help } from './clips.ts';
 import { fakeLocalPerson, localPerson, MOST_MINUTES, personPrompt } from './local-person.ts';
+import { onCamera } from './director.ts';
+import type { Scene, Understanding } from './video.ts';
 
 // Somebody on camera. The founder drew a person, wired it up, asked for a reel with a real face and got a
 // photograph, because every route that could animate a picture had said no and nothing else was tried.
@@ -76,5 +78,24 @@ describe('what a film will spend on people', () => {
     expect(made).toBeGreaterThan(0);
     expect(made * 3).toBeLessThanOrEqual(MOST_MINUTES);
     expect(stopped).toContain('as long as it goes');
+  });
+});
+
+describe('one person to a film', () => {
+  const person = (): Understanding => ({
+    purpose: 'reel', audience: 'founders', platform: 'a phone', shape: 'tall', seconds: 15, pace: 'punchy',
+    tone: 'friendly', mood: 'upbeat', pack: 'creator', person: true, captions: true, said: '',
+  });
+
+  it('marks every on-camera scene, so none of them lends its face to the scenes beside it', () => {
+    // A portrait drawn for one of these used to be shared down its whole run, and five scenes of a reel sat on a
+    // close-up of somebody who was not even the film's presenter.
+    const six = Array.from({ length: 6 }, (_one, index): Scene => ({ layout: 'statement', text: `Line ${index}`, say: `Line ${index}.` }));
+    const made = onCamera(six, person(), 'warm daylight', () => {}, { minutes: 3 });
+    const faces = made.filter((one) => one.person);
+    expect(faces.length).toBeGreaterThan(1);
+    for (const one of faces) expect(one.person).toBe(true);
+    // And everything that is not on camera is left to be about its own subject.
+    expect(made.filter((one) => !one.person).every((one) => !one.bg_prompt?.includes('facing the camera'))).toBe(true);
   });
 });
