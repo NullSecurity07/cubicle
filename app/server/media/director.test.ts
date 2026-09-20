@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { seedStage, type Stage } from '../../shared/model.ts';
-import { criticise } from './critic.ts';
+import { criticise, drawnWord, photographic } from './critic.ts';
 import {
-  bibleFor, direct, faceIn, onCamera, showsSomebody, layoutsFor, readBrief, secondsIn, specFromPlan, tellOf, understandingOf,
+  bibleFor, direct, faceIn, onCamera, showsSomebody, layoutsFor, planOf, readBrief, secondsIn, specFromPlan, tellOf, understandingOf,
   type Material, type Plan, type Understanding,
 } from './director.ts';
 import { countWords, saidWords, type Scene, type Spec } from './spec.ts';
@@ -81,6 +81,33 @@ describe('the style bible', () => {
       // A bible describes a look and names no subject, because it is pasted in front of every subject there is.
       expect(bible).not.toMatch(/\b(investor|founder|product|team)\b/);
     }
+  });
+
+  it('never gives a photographed film a word that asks for a drawing', () => {
+    // The fault this stops: one scene of a real fifteen-second reel came back a 3-D cartoon character standing
+    // beside four photographs, and a film with two looks has none.
+    for (const pack of ['creator', 'editorial', 'neon', 'clean', 'brand'] as const) {
+      const bible = bibleFor({ ...understandingOf({}, { brief: 'x' }, {}), pack });
+      expect(drawnWord(bible)).toBeNull();
+      // And it says what it is shot on and in what light, which is the whole of what a picture model needs.
+      expect(photographic(bible)).toBe(true);
+    }
+    // The notebook is drawn by hand on purpose and keeps its own look.
+    expect(drawnWord(bibleFor({ ...understandingOf({}, { brief: 'x' }, {}), pack: 'sketch' }))).not.toBeNull();
+  });
+
+  it('throws away a look the model wrote that is not the look this film is in', () => {
+    const mind = { ...understandingOf({}, { brief: 'x' }, {}), pack: 'clean' as const };
+    const wrote = (line: string, understanding: Understanding = mind) => planOf({ style_bible: line, beats: [] }, understanding, { brief: 'x' }).bible;
+    // A model asked for visual direction writes a mood as often as a medium, and it will write the drawn look
+    // straight into the line that was supposed to stop one.
+    expect(wrote('modern, dynamic and bold with 3d rendered characters')).toBe(bibleFor(mind));
+    expect(wrote('a vibrant and energetic feel throughout')).toBe(bibleFor(mind));
+    // A line that really is a look is the film's own, and it is kept.
+    expect(wrote('quiet documentary photography, soft window light, muted warm palette')).toContain('documentary');
+    // A notebook film handed a photographer's line keeps its hand-drawn one instead.
+    const notebook = { ...mind, pack: 'sketch' as const };
+    expect(wrote('calm studio photography, soft directional light, matte surfaces', notebook)).toBe(bibleFor(notebook));
   });
 });
 

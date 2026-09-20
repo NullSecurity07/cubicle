@@ -8,7 +8,7 @@ import { projectDir } from '../coder.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
-import { headlineOf, trimTo } from './critic.ts';
+import { headlineOf, inStyle, trimTo } from './critic.ts';
 import { bibleFor, direct, faceIn, onCamera, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
@@ -176,7 +176,8 @@ const SUMMONS_TEXT = /\b(charts?|graphs?|dashboards?|decks?|slides?|metrics|chec
 const TYPE_HEAVY = new Set(['checklist', 'bullets', 'steps', 'compare', 'stat', 'quote', 'hook', 'title', 'cta', 'outro']);
 const TEXTURE = 'a softly out-of-focus surface, the light falling across it, nothing in sharp focus, no subject in the middle of the frame';
 export function bgPrompt(bible: string, subject: string, layout: string): string {
-  const clean = subject.replace(SUMMONS_TEXT, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([,.])/g, '$1').trim();
+  // A scene may not ask to be drawn when the rest of the film is photographed: one film, one look.
+  const clean = inStyle(subject, bible).replace(SUMMONS_TEXT, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([,.])/g, '$1').trim();
   const said = TYPE_HEAVY.has(layout) || clean.split(/\s+/).filter(Boolean).length < 3 ? TEXTURE : `${clean}, shallow depth of field`;
   return said.toLowerCase().startsWith(bible.slice(0, 18).toLowerCase()) ? said : `${bible}. ${said}`;
 }
@@ -488,7 +489,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               said(index, 'making a few seconds of moving picture…');
               // A still first, so the clip looks like the rest of the film rather than like a different film.
               const still = drawing ? await drawing.make({ prompt: `${bible}. ${scene.clip_prompt!}`, shape }, { report: () => {}, signal }).then((one) => one.bytes, () => undefined) : undefined;
-              const made = await clips.broll({ prompt: scene.clip_prompt!, image: still, seconds: scene.seconds ?? 4 }, { report: (line) => said(index, line), signal });
+              const made = await clips.broll({ prompt: scene.clip_prompt!, image: still, seconds: scene.seconds ?? 4, shape }, { report: (line) => said(index, line), signal });
               shot.video = `clip-${index}.mp4`;
               await writeFile(join(at, 'assets', shot.video), made.bytes);
             } catch (error) {
@@ -515,7 +516,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               // bible with "somebody talking to camera" after it, and a person drawn from that is a stranger —
               // which is how one film came to have the founder's face in one scene and somebody else's in another.
               const about = material.assets.find((one) => one.name === scene.asset)?.prompt || scene.portrait_prompt;
-              const made = await clips.presenter({ portrait: face, speech, about }, { report: (line) => said(index, line), signal });
+              const made = await clips.presenter({ portrait: face, speech, about, shape }, { report: (line) => said(index, line), signal });
               shot.video = `pres-${index}.mp4`;
               await writeFile(join(at, 'assets', shot.video), made.bytes);
             } catch (error) {

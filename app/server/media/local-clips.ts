@@ -54,7 +54,20 @@ export const DOWNLOAD_GB = Math.round(MODELS.reduce((sum, one) => sum + one.byte
 
 // The envelope this was proven in, and nothing outside it. Wan2.1 at 1.3B makes mush at any size but its own, and a
 // longer clip is more memory than this machine has to give.
+//
+// A clip is drawn in the shape of the film it is going into. Every clip used to be drawn wide, and a phone reel
+// then cut the middle out of it — so a person framed from the waist up arrived as a face, and the founder's words
+// for that were "no body and hand movement". All three of these hold about a million pixels, which is what the
+// model was trained near; each was drawn and looked at on the founder's own machine.
 export const FRAME = { width: 832, height: 480, frames: 49, fps: 16, steps: 4 };
+export const SHAPES = {
+  wide: { width: 832, height: 480 },
+  tall: { width: 480, height: 832 },
+  square: { width: 624, height: 624 },
+} as const;
+export type ClipShape = keyof typeof SHAPES;
+export const frameOf = (shape: unknown): { width: number; height: number } =>
+  SHAPES[(typeof shape === 'string' && shape in SHAPES ? shape : 'wide') as ClipShape];
 export const CLIP_SECONDS = Math.round((FRAME.frames / FRAME.fps) * 10) / 10;
 // About what one costs in wall time here, said on the card before the founder switches it on.
 export const MINUTES_EACH = 3;
@@ -183,7 +196,7 @@ export function localClips(deps: LocalDeps = {}): Clips {
             // it), four steps, the flow shift the adapter was trained at, the tiny decoder, and the weights kept in
             // system memory rather than on a four-gigabyte card.
             '--cfg-scale', '1.0', '--sampling-method', 'euler', '--steps', String(FRAME.steps),
-            '-W', String(FRAME.width), '-H', String(FRAME.height),
+            '-W', String(frameOf(ask.shape).width), '-H', String(frameOf(ask.shape).height),
             '--video-frames', String(FRAME.frames), '--fps', String(FRAME.fps), '--flow-shift', '5.0',
             '--diffusion-fa', '--offload-to-cpu', '--vae-tiling',
             '-o', webm,

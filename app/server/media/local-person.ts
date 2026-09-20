@@ -80,7 +80,7 @@ export function localPerson(deps: LocalPersonDeps = {}): Clips {
       spentMinutes += minutes;
       help.report(`drawing the person moving on this computer — about ${minutes} minutes, and nothing leaves the machine`);
       // The picture the founder made is what this person looks like; its own words are what they are doing.
-      const made = await engine.broll({ prompt: personPrompt(ask.about), seconds: CLIP_SECONDS, ...(exact() ? { image: ask.portrait } : {}) }, help);
+      const made = await engine.broll({ prompt: personPrompt(ask.about), seconds: CLIP_SECONDS, shape: ask.shape, ...(exact() ? { image: ask.portrait } : {}) }, help);
       if (seconds <= CLIP_SECONDS + 0.2) return made;
       // A line longer than one clip is not one clip held still: it is that clip and a closer framing of it, cut
       // between, so the scene keeps moving for as long as somebody is speaking over it.
