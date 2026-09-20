@@ -18,7 +18,9 @@ export default {
   name: 'openends',
   order: 120,
   async install(deps) {
-    const dir = backupDir(process.env);
+    // A check run works on a throwaway workspace and has no business writing into the founder's own folders, so its
+    // backups land beside that workspace instead.
+    const dir = deps.fake && !process.env.STAGE_BACKUP_DIR ? join(deps.workspace, 'backups') : backupDir(process.env);
     const safe = createSafeBook(deps.workspace);
     const { entries, problem } = await loadEntries(deps.workspace);
     // A file the founder wrote wrong is one row on the screen, never a start that fails.

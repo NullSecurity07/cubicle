@@ -12,7 +12,7 @@ import { packTar, tarEntries } from './tar.ts';
 // index, caches, and the trash the app keeps for undoing things.
 export const KEEP = 5;
 const MADE = /^cubicle-(\d{4}-\d{2}-\d{2}-\d{4})\.tar\.gz$/;
-const AGAIN = [/^browsers(\/|$)/, /^\.index(\/|$)/, /^\.cache(\/|$)/, /^trash(\/|$)/, /(^|\/)node_modules(\/|$)/, /(^|\/)\.git(\/|$)/, /(^|\/)\.DS_Store$/];
+const AGAIN = [/^browsers(\/|$)/, /^\.index(\/|$)/, /^\.cache(\/|$)/, /^trash(\/|$)/, /^backups(\/|$)/, /(^|\/)node_modules(\/|$)/, /(^|\/)\.git(\/|$)/, /(^|\/)\.DS_Store$/];
 
 export const leaveOut = (path: string) => AGAIN.some((pattern) => pattern.test(path));
 // Where they go. The founder's own folder, unless this machine says otherwise — which is what a test sets.

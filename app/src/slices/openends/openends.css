@@ -1,0 +1,70 @@
+/* This slice's own look. It borrows the panel, the little acts and the dots from what is already here, and adds
+   nothing of its own: no colour, no font, no icon set. Everything below is only arrangement. */
+
+/* The views sit above the shade the window puts up. The shade keeps its click, so clicking beside a panel still
+   closes it — only the panel itself takes the pointer. */
+.openends { position: fixed; inset: 0; z-index: 41; pointer-events: none; }
+.openends > .panel { pointer-events: auto; }
+
+.health, .insights { display: flex; flex-direction: column; gap: 22px; }
+.health__part, .insights__part { display: flex; flex-direction: column; }
+.health h3, .insights h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 7px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.health h3 span, .insights h3 span { font-size: 11px; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
+.health .playbook__note, .insights .playbook__note { margin: 0 0 8px; }
+
+/* One line a thing: a dot in the colours the quota rings already use, what it is, and what you would do about it. */
+.health__rows { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.health__row { display: flex; align-items: flex-start; gap: 10px; border-radius: 11px; padding: 9px 11px; background: rgba(255, 255, 255, 0.035); }
+.health__row > .quota__dot { margin-top: 5px; }
+.health__row > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.health__row b { font-size: 13.5px; font-weight: 600; }
+.health__row small, .health__files small, .outside__head small, .outside__what small { font-size: 11.5px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
+.health__row .playbook__note { margin: 4px 0 0; }
+.health__verdict { flex: none; align-self: center; font-size: 11.5px; color: var(--muted); }
+.health__row.is-bad .health__verdict { color: var(--needs); }
+
+.health__files { margin: 0 0 4px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.health__files li { display: flex; align-items: baseline; gap: 8px; border-radius: 9px; padding: 6px 11px; background: rgba(255, 255, 255, 0.035); }
+.health__files b { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 550; overflow-wrap: anywhere; }
+.health__files small { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.health__files li.is-new { border: 1px solid rgba(78, 140, 255, 0.5); background: rgba(78, 140, 255, 0.1); }
+.health .panel__empty, .insights .panel__empty { margin: 14px 0; }
+
+.outside__server { border-radius: 13px; border: 1px solid var(--card-border); padding: 10px 12px; margin-bottom: 8px; background: rgba(255, 255, 255, 0.035); }
+.outside__head { display: flex; align-items: baseline; gap: 8px; }
+.outside__head b { font-size: 13px; font-weight: 600; }
+.outside__head small { flex: 1; text-align: right; }
+.outside__tools { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.outside__tools li { display: flex; align-items: center; gap: 10px; padding-top: 6px; border-top: 1px solid var(--card-border); }
+.outside__what { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.outside__what b { font-size: 12.5px; font-weight: 550; overflow-wrap: anywhere; }
+
+.insights__when { display: flex; gap: 6px; }
+.insights__totals { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.insights__totals li { display: flex; flex-direction: column; gap: 2px; border-radius: 12px; padding: 10px 12px; background: rgba(255, 255, 255, 0.035); }
+.insights__totals b { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.insights__totals small { font-size: 11px; line-height: 1.35; color: var(--muted); }
+
+/* The same idea as the rings in the dock, laid flat: one length, the accent, and the numbers beside it. */
+.insights__bars { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.insights__bars li { display: flex; align-items: center; gap: 10px; }
+.insights__name { flex: none; width: 96px; font-size: 12.5px; font-weight: 550; text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.insights__track { flex: 1; height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.insights__fill { display: block; height: 100%; border-radius: 4px; background: var(--accent); transition: width 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.insights__numbers { flex: none; width: 108px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.insights__numbers small { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+.insights__travel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* `color-scheme` is what the task view already uses to keep a dropdown dark, arrow and open list and all. */
+.insights__travel select { max-width: 240px; border: 1px solid var(--card-border); border-radius: 8px; padding: 5px 8px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 12px; color-scheme: dark; }
+/* The founder presses a button like any other; the file box itself is behind it, still there for the keyboard. */
+.insights__pick { position: relative; overflow: hidden; cursor: pointer; }
+.insights__pick input[type='file'] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.insights__pick:focus-within { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+.insights__said { margin-top: 8px; color: var(--text); }
+.health :focus-visible, .insights :focus-visible, .outside__tools .skill__switch input:focus-visible + span { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+
+@media (max-width: 720px) {
+  .insights__totals { grid-template-columns: repeat(2, 1fr); }
+  .insights__name { width: 72px; }
+}
