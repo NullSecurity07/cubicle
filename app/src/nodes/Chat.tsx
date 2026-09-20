@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 
 import type { Attachment, ChatMessage, ToolEvent } from '../../shared/model';
 import { deleteMessage, getChat, sendChat, uploadFile } from '../api';
 import { emit, listen } from '../bus';
+import { useLearnedIn } from '../overlay/playbook';
+import { overlay, showPlaybook } from '../overlay/store';
 import { useFlushStage } from '../sync';
 import { Message } from './Message';
 
@@ -17,6 +19,9 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
   const [problem, setProblem] = useState('');
   const [files, setFiles] = useState<Attachment[]>([]);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
+  // What this person learned while the window has been open. It is not something anybody said, so it is never stored
+  // as a message: it is a line under the conversation that opens the playbook on what was learned.
+  const learned = useLearnedIn(id);
   const picker = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
   const flushStage = useFlushStage();
@@ -32,7 +37,7 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
   }, [id]);
   // A colleague consulted this person: the question and the answer were written to this room by the server.
   useEffect(() => listen('effect', (effect) => { if (effect.kind === 'chat-changed' && effect.id === id) getChat(id).then(setMessages).catch(() => {}); }), [id]);
-  useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [messages, live]);
+  useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [messages, live, learned]);
   // Editing an earlier message happens in the ask box: the caret goes there, and Escape there cancels the edit.
   useEffect(() => { if (editing) box.current?.focus(); }, [editing]);
 
@@ -129,6 +134,13 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
             onEdit={!thinking && message.role === 'user' && !message.from && !message.id.startsWith('local-') ? () => { setEditing(message); setDraft(message.text); setFiles(message.attachments ?? []); } : undefined}
             onRegenerate={!thinking && message === lastReply && lastAsked && messages.indexOf(lastAsked) < messages.indexOf(message) ? regenerate : undefined}
           />
+        ))}
+        {learned.map((one) => (
+          <button
+            key={one.id} type="button" className="msg msg--notice msg--learned"
+            title="Open the playbook here"
+            onClick={() => { showPlaybook({ skill: one.name }); overlay.open({ kind: 'panel', name: 'playbook' }); }}
+          >{one.action === 'create' ? 'learned' : 'improved'}: "{one.name}"</button>
         ))}
         {notice && <p className="msg msg--notice">{notice}</p>}
         {live && (live.text || live.tools.length > 0) && <Message live message={{ role: 'assistant', text: live.text, tools: live.tools }} />}
