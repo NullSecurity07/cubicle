@@ -431,6 +431,9 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
 // The most a film gets of somebody talking to the camera when this machine is drawing them: two, because each one
 // costs minutes of the founder's time and a third is a third of the film.
 export const MOST_FACES = 2;
+// What somebody drawn for a film wears and how they are framed. Left unsaid, a small video model draws bare shoulders
+// in a close crop, which is not who a founder wants speaking for them.
+const DRESSED = 'fully dressed in a smart casual shirt';
 // How many handed-over pictures a film will carry. More than this and the film is a slideshow of somebody's folder.
 export const MOST_GIVEN = 3;
 
@@ -485,7 +488,7 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
   // The bible says "single strong subject, shallow depth of field", and a picture model reads that as a macro of
   // somebody's mouth. A talking head has to be asked for as a talking head: the framing first, and loudly.
   const look = bible.replace(/,?\s*shallow depth of field/i, '');
-  const facing = 'one person from the chest up, facing the camera and talking to it, their whole head and shoulders inside the frame with room above, both eyes open and looking into the lens';
+  const facing = `one person ${DRESSED}, seen from the chest up, facing the camera and talking to it, their whole head and shoulders inside the frame with room above, both eyes open and looking into the lens`;
   const portrait = `a medium shot of ${facing}, ${look}`;
   // The opening, and one more in the middle of anything long enough to come back to a face.
   const faces = new Set([0, ...(scenes.length >= 5 ? [Math.floor(scenes.length / 2)] : [])]);
