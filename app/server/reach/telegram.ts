@@ -23,6 +23,12 @@ export type Api = ReturnType<typeof createApi>;
 
 // Telegram's own limit on one message, and how long a poll waits for something to happen before answering empty.
 export const LIMIT = 4096;
+// What Telegram will take with a file: a caption of a thousand characters, ten megabytes for something it draws as a
+// picture, and fifty for anything at all. A picture over the first limit still goes — as a file, which is a tap away.
+export const CAPTION = 1024;
+export const PHOTO_MOST = 10 * 1024 * 1024;
+export const FILE_MOST = 50 * 1024 * 1024;
+export const TOO_BIG_TO_SEND = 'is bigger than Telegram will carry';
 const WAIT = 25;
 const BASE = 1000;
 const LONGEST = 60_000;
@@ -54,6 +60,18 @@ export function pieces(text: string, limit = LIMIT): string[] {
   flush();
   return out.length ? out : [text.slice(0, limit)];
 }
+
+// What Telegram should make of a file, read off the name it was saved under. Anything it has no name for is a file,
+// which is never wrong — only plainer than a picture drawn where it stands.
+export function kindOf(name: string): 'photo' | 'video' | 'audio' | 'document' {
+  const end = /\.([a-z0-9]+)\s*$/i.exec(name)?.[1].toLowerCase() ?? '';
+  if (['png', 'jpg', 'jpeg', 'webp'].includes(end)) return 'photo';
+  if (['mp4', 'webm', 'mov'].includes(end)) return 'video';
+  if (['mp3', 'm4a', 'wav', 'ogg'].includes(end)) return 'audio';
+  return 'document';
+}
+// Which call each kind is, and what the file is called inside the form.
+const AS = { photo: ['sendPhoto', 'photo'], video: ['sendVideo', 'video'], audio: ['sendAudio', 'audio'], document: ['sendDocument', 'document'] } as const;
 
 // The few calls this app makes to Telegram, by hand over `fetch`: no dependency, no public address, nothing but
 // this machine asking for what is waiting.
@@ -117,6 +135,40 @@ export function createApi(token: () => Promise<string | null>, http: typeof fetc
     sendVoice: (chatId: number, ogg: Buffer, where: Sent = {}) => upload<Message>('sendVoice', chatId, 'voice', new Blob([new Uint8Array(ogg)], { type: 'audio/ogg' }), 'reply.ogg', {
       ...(where.threadId ? { message_thread_id: where.threadId } : {}), ...(where.loud ? {} : { disable_notification: true }),
     }),
+    // A picture, a film or a recording somebody made, sent as the thing itself. Written in a reply it is a line of
+    // markdown pointing at an address that exists on this machine and nowhere else, which is no use at all on a phone.
+    // Whatever Telegram will not draw as a picture still goes, as a file: the founder is holding it either way.
+    async sendFile(chatId: number, file: { bytes: Buffer; name: string }, where: Sent & { caption?: string } = {}): Promise<Message> {
+      if (file.bytes.length > FILE_MOST) throw new Error(`${file.name} ${TOO_BIG_TO_SEND}: it is ${Math.round(file.bytes.length / 1_000_000)} MB, and the most a bot may send is 50 MB.`);
+      const kind = kindOf(file.name) === 'photo' && file.bytes.length > PHOTO_MOST ? 'document' : kindOf(file.name);
+      const blob = new Blob([new Uint8Array(file.bytes)]);
+      const held = {
+        ...(where.threadId ? { message_thread_id: where.threadId } : {}),
+        ...(where.loud ? {} : { disable_notification: true }),
+        ...(kind === 'video' ? { supports_streaming: true } : {}),
+      };
+      // The caption is the words that went with it, drawn the way a message is — and cut, because Telegram takes a
+      // quarter of a message under a picture. Plainly if it will not take the drawing, exactly as a message is.
+      const caption = (where.caption ?? '').trim().slice(0, CAPTION);
+      const shown = caption ? toTelegram(caption) : '';
+      const plain: Record<string, string> = caption ? { caption } : {};
+      const drawn: Record<string, string> = shown && shown.length <= CAPTION ? { caption: shown, parse_mode: 'HTML' } : plain;
+      const put = async (method: string, field: string): Promise<Message> => {
+        try { return await upload<Message>(method, chatId, field, blob, file.name, { ...held, ...drawn }); }
+        catch (error) {
+          if (!caption || !/Telegram answered 400/.test((error as Error).message)) throw error;
+          return upload<Message>(method, chatId, field, blob, file.name, { ...held, ...plain });
+        }
+      };
+      const [method, field] = AS[kind];
+      try { return await put(method, field); }
+      catch (error) {
+        // Telegram refuses some pictures outright — too long, too wide, made in a way it will not draw. As a file it
+        // takes every one of them, so that is the one thing worth trying again.
+        if (kind !== 'photo' || !/Telegram answered 400/.test((error as Error).message)) throw error;
+        return put('sendDocument', 'document');
+      }
+    },
   };
 }
 

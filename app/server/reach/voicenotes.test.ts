@@ -34,6 +34,13 @@ describe('a reply, as somebody would actually say it', () => {
       .toBe('The launch\n\nFriday is the day\nthe price is 29\n\nSee the note.');
   });
 
+  it('never reads a picture or a file out as a path, because the founder is being handed the file itself', () => {
+    const said = sayable('Made the picture.\n\n![a cat on a roof](/api/files/media/cat.png)\n\nand [Launch day](/api/files/media/launch.mp4).');
+    expect(said).toBe('Made the picture.\n\nand Launch day.');
+    expect(said).not.toContain('/api/files');
+    expect(said).not.toContain('!');
+  });
+
   it('never reads code or a table out loud, and says so instead', () => {
     const said = sayable('Here it is:\n\n```js\nconst a = 1;\n```\n\n| one | two |\n| --- | --- |\n\nThat is all.');
     expect(said).toContain('There is code in the written reply.');

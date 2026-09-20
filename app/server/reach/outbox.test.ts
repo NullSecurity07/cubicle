@@ -56,6 +56,28 @@ describe('the outbox', () => {
     expect((await after.pending()).map((entry) => entry.text)).toEqual(['whole']);
   });
 
+  it('keeps a picture waiting the same way it keeps words, caption and all', async () => {
+    const path = where();
+    const outbox = createOutbox(path);
+    const picture = await outbox.write(11, 'a cat on a roof', { file: 'media/cat.png', roomId: 'marketing' });
+    // A picture with nothing said about it is still a picture: the words being empty is not the same as nothing to send.
+    const bare = await outbox.write(11, '', { file: 'media/poster.png' });
+    expect((await outbox.pending()).map((entry) => entry.file)).toEqual(['media/cat.png', 'media/poster.png']);
+    expect((await outbox.pending())[0]).toMatchObject({ text: 'a cat on a roof', roomId: 'marketing' });
+    await outbox.mark(picture.id);
+    await outbox.mark(bare.id);
+    expect(await outbox.pending()).toEqual([]);
+  });
+
+  it('still reads a line written before any of this could carry a file', async () => {
+    const path = where();
+    const outbox = createOutbox(path);
+    await outbox.write(11, 'whole');
+    await outbox.settled();
+    appendFileSync(path, `${JSON.stringify({ id: 'out-old', chatId: 11, text: 'from an older day', at: 1 })}\n`);
+    expect((await createOutbox(path).pending()).map((entry) => entry.text)).toEqual(['whole', 'from an older day']);
+  });
+
   it('only ever appends, so nothing it accepted can be lost by a later write', async () => {
     const path = where();
     const outbox = createOutbox(path);

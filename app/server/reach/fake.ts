@@ -1,6 +1,6 @@
 import type { Buttons, Command, Message, Update } from './telegram.ts';
 
-export type Posted = { chatId: number; text: string; buttons?: Buttons; messageId: number; threadId?: number; loud?: boolean; voice?: number };
+export type Posted = { chatId: number; text: string; buttons?: Buttons; messageId: number; threadId?: number; loud?: boolean; voice?: number; file?: { as: string; name: string; size: number } };
 export type Topic = { threadId: number; name: string; closed?: boolean };
 export type FakeTelegram = ReturnType<typeof fakeTelegram>;
 
@@ -23,11 +23,20 @@ export function fakeTelegram(options: { canManageTopics?: boolean } = {}) {
     const method = url.pathname.split('/').pop();
     const answer = (result: unknown) => new Response(JSON.stringify({ ok: true, result }), { headers: { 'content-type': 'application/json' } });
     const refuse = (why: string) => new Response(JSON.stringify({ ok: false, description: why }), { status: 400, headers: { 'content-type': 'application/json' } });
-    // A voice note goes up as a form rather than as json, the way a file has to.
+    // A voice note, a picture, a film or any other file goes up as a form rather than as json, the way bytes have to.
+    // What is kept is what a check would want to read back: which of them it was, what it was called and how big it is.
     if (init?.body instanceof FormData) {
       const form = init.body;
-      const sound = form.get('voice');
-      const sent: Posted = { chatId: Number(form.get('chat_id')), text: '', messageId: (messages += 1), voice: sound instanceof Blob ? sound.size : 0, ...(form.get('message_thread_id') ? { threadId: Number(form.get('message_thread_id')) } : {}) };
+      const field = ({ sendVoice: 'voice', sendPhoto: 'photo', sendVideo: 'video', sendAudio: 'audio', sendDocument: 'document' } as Record<string, string>)[method ?? ''] ?? 'document';
+      const sound = form.get(field);
+      const sent: Posted = {
+        chatId: Number(form.get('chat_id')), text: String(form.get('caption') ?? ''), messageId: (messages += 1),
+        ...(field === 'voice'
+          ? { voice: sound instanceof Blob ? sound.size : 0 }
+          : { file: { as: field, name: sound instanceof File ? sound.name : '', size: sound instanceof Blob ? sound.size : 0 } }),
+        ...(form.get('message_thread_id') ? { threadId: Number(form.get('message_thread_id')) } : {}),
+        ...(form.get('disable_notification') ? {} : { loud: true }),
+      };
       posted.push(sent);
       return answer({ message_id: sent.messageId, chat: { id: sent.chatId } } satisfies Message);
     }

@@ -1,11 +1,12 @@
 import type { Attention, Room, Stage } from '../../shared/model.ts';
 import type { Answer } from '../approvals.ts';
+import { mediaOf } from './format.ts';
 import { commandsFor, menuSignature, roomForWord } from './menu.ts';
-import type { Outbox } from './outbox.ts';
+import type { Outbox, Outgoing } from './outbox.ts';
 import type { Reach } from './settings.ts';
 import type { Book } from './state.ts';
 import { createTopics, isGroup } from './topics.ts';
-import { LIMIT, pieces, type Api, type Buttons, type Message, type Sent, type Update } from './telegram.ts';
+import { LIMIT, pieces, TOO_BIG_TO_SEND, type Api, type Buttons, type Message, type Sent, type Update } from './telegram.ts';
 import { BIGGEST, TOO_BIG } from './voicenotes.ts';
 
 export type Phone = ReturnType<typeof createPhone>;
@@ -63,6 +64,10 @@ export const commandIn = (text: string): { word: string; rest: string } | null =
 // Who is speaking, above what they said, so eight people in one stream are still eight people.
 export const headed = (room: Room, said: string) => `**${room.name}**${room.role ? ` · ${room.role}` : ''}\n\n${said.trim() || '(they had nothing to say)'}`;
 
+// A failure that trying again would only meet again: Telegram refusing this very file, or a file past what it takes.
+// Everything else — no network, a service that is down, being asked to slow down — is waited out, not given up on.
+export const permanent = (error: Error) => error.message.includes(TOO_BIG_TO_SEND) || /Telegram answered 400/.test(error.message);
+
 // Everything the founder's phone does: pairing, carrying their words to a person and the answer back, and putting
 // what waits for them in front of them with two buttons.
 export function createPhone(deps: {
@@ -76,6 +81,9 @@ export function createPhone(deps: {
   hear?: (sound: Buffer, mime?: string, report?: (line: string) => void) => Promise<string>;
   // The room is who is speaking: every person has a voice of their own, and a reply has to arrive in theirs.
   say?: (roomId: string, text: string) => Promise<Buffer>;
+  // A picture or a film out of the shared files, by the path a reply named it with. Absent on a machine that cannot
+  // reach them, and then a reply says where the file is instead of carrying it.
+  file?: (path: string) => Promise<Buffer | null>;
   digest?: () => Promise<string>;
   onPaired?: () => void; onError?: (error: Error) => void;
 }) {
@@ -104,20 +112,53 @@ export function createPhone(deps: {
   };
 
   // Each piece is its own entry: what Telegram will not take in one message it will not take out of the outbox either.
+  // A picture or a film a person made is not words at all, so it comes out of them and follows as the file itself.
   async function out(where: Where, text: string, extra: { roomId?: string; loud?: boolean } = {}) {
-    for (const piece of pieces(text)) await outbox.write(where.chatId, piece, { ...(where.threadId ? { threadId: where.threadId } : {}), ...extra });
+    const { text: words, files } = mediaOf(text);
+    const to = { ...(where.threadId ? { threadId: where.threadId } : {}), ...extra };
+    if (words.trim()) for (const piece of pieces(words)) await outbox.write(where.chatId, piece, to);
+    for (const one of files) await outbox.write(where.chatId, one.label, { ...to, file: one.path });
     await flush();
+  }
+  // A file that will never go, however often it is tried: the entry is done with, the founder is told in one line
+  // where the thing actually is, and nothing else in the queue is held up behind it.
+  async function lost(entry: Outgoing, why: string, here = true) {
+    await outbox.mark(entry.id);
+    deps.onError?.(new Error(`${entry.file} could not go to the phone: ${why}`));
+    const said = why.trim().replace(/\.$/, '');
+    await outbox.write(entry.chatId, `I could not send ${entry.file} to your phone: ${said}.${here ? ` It is in the app's shared files, under ${entry.file}.` : ''}`, {
+      ...(entry.threadId ? { threadId: entry.threadId } : {}), ...(entry.roomId ? { roomId: entry.roomId } : {}),
+    });
   }
   // Written first, sent second, marked third. A send that fails leaves the entry for the next flush.
   async function flush() {
+    let told = false;
     for (const entry of await outbox.pending()) {
-      try {
-        const sent = await api.send(entry.chatId, entry.text, { ...(entry.threadId ? { threadId: entry.threadId } : {}), ...(entry.loud ? { loud: true } : {}) });
-        // Which message belonged to whom, so replying to it on the phone reaches them without a name being typed.
-        if (entry.roomId && sent?.message_id) await book.remember({ messageId: sent.message_id, chatId: entry.chatId, roomId: entry.roomId });
-      } catch (error) { deps.onError?.(error as Error); return; }
+      const where: Sent = { ...(entry.threadId ? { threadId: entry.threadId } : {}), ...(entry.loud ? { loud: true } : {}) };
+      let sent: Message | undefined;
+      if (entry.file) {
+        const bytes = deps.file ? await deps.file(entry.file).catch(() => null) : null;
+        if (!bytes) { await lost(entry, deps.file ? 'it is not in the shared files any more' : 'this machine cannot read the shared files', !deps.file); told = true; continue; }
+        try { sent = await api.sendFile(entry.chatId, { bytes, name: entry.file.split('/').pop() || entry.file }, { ...where, caption: entry.text }); }
+        catch (error) {
+          deps.onError?.(error as Error);
+          // A network that is down comes back, and the picture goes then. A file Telegram itself will not take, or
+          // one too big for it, would wedge everything behind it forever, so that one is said out loud and let go.
+          if (!permanent(error as Error)) return;
+          await lost(entry, (error as Error).message);
+          told = true;
+          continue;
+        }
+      } else {
+        try { sent = await api.send(entry.chatId, entry.text, where); }
+        catch (error) { deps.onError?.(error as Error); return; }
+      }
+      // Which message belonged to whom, so replying to it on the phone reaches them without a name being typed.
+      if (entry.roomId && sent?.message_id) await book.remember({ messageId: sent.message_id, chatId: entry.chatId, roomId: entry.roomId });
       await outbox.mark(entry.id);
     }
+    // The line saying a file could not go was written after this pass had its list, so it goes out in one more.
+    if (told) await flush();
   }
   // Everything nobody asked for goes to one place: the company's own topic when there is a group, the phones otherwise.
   async function everyone(text: string, loud = false) {
