@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
+import { VOICES } from '../server/media/voice.ts';
+import { voiceNamed } from '../shared/voices.ts';
 
 // Everybody on the stage answers in a voice of their own. Nothing here makes a sound — the app is running its stand-in
 // voice, which is a second of quiet — so what this journey watches is which voice was asked for, and whether it is
@@ -26,6 +28,8 @@ test.afterAll(async ({ playwright }) => {
   });
   const stage = await (await script.get('/api/stage')).json();
   await script.put('/api/stage', { data: { ...stage, rooms: stage.rooms.filter((room: Person) => room.name !== 'Priya') } });
+  // Replies go back to being read rather than heard, which is how every other journey expects to find the app.
+  await script.put('/api/reach', { data: { voice: false } });
   await script.dispose();
 });
 
@@ -89,4 +93,30 @@ test('two people are never said out loud in the same voice', async ({ page }) =>
   expect(maya).toMatchObject({ gender: 'woman', voice: expect.stringMatching(WOMAN) });
   expect(dev).toMatchObject({ gender: 'man', voice: expect.stringMatching(MAN) });
   expect(maya.voice).not.toBe(dev.voice);
+});
+
+test('a person carries their voice where their role and what they remember are', async ({ page }) => {
+  const maya = page.locator('.react-flow__node[data-id="marketing"]');
+  const side = page.locator('.focus__sheet .side');
+  const focus = async () => {
+    await maya.locator('.card__header').hover();
+    await maya.getByRole('button', { name: 'Focus' }).click();
+    await expect(side).toBeVisible();
+  };
+
+  // While replies are only ever read, how somebody sounds is nothing the founder needs told.
+  await focus();
+  await expect(side).toContainText('Remembers');
+  await expect(side).not.toContainText('Voice');
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: 'Command bar' }).click();
+  await page.getByRole('dialog', { name: 'Command bar' }).getByRole('combobox').fill('Reach you anywhere');
+  await page.keyboard.press('Enter');
+  await page.getByRole('dialog', { name: 'Reach you anywhere' }).getByRole('checkbox', { name: /talk to my people/ }).check();
+  await page.keyboard.press('Escape');
+
+  await focus();
+  await expect(side).toContainText(voiceNamed((await rooms(page)).find((room) => room.id === 'marketing')!.voice, VOICES));
+  await page.keyboard.press('Escape');
 });
