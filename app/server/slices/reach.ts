@@ -72,7 +72,7 @@ export default {
     async function state(): Promise<ReachState> {
       const held = await reach.read();
       return {
-        on: held.on, hasToken: !!(await reach.token()), fromEnv: reach.fromEnv(), cloudSpeech: held.cloudSpeech,
+        on: held.on, hasToken: !!(await reach.token()), fromEnv: reach.fromEnv(), voice: held.voice, cloudSpeech: held.cloudSpeech,
         paired: held.paired, hooks: held.hooks.map(({ secret: _secret, ...rest }) => rest), pairing: reach.pairing() ?? undefined,
         listening: held.cloudSpeech && !ears.cloud.ready() ? 'cloud' : 'here',
         ...(trouble ? { trouble } : {}), ...(speech ? { speech } : {}),
@@ -183,6 +183,7 @@ export default {
         if (path === '/api/reach' && method === 'PUT') {
           const asked = await deps.body(req);
           if (typeof asked.token === 'string') await reach.save((one) => { one.token = asked.token.trim() || undefined; });
+          if (typeof asked.voice === 'boolean') await reach.save((one) => { one.voice = asked.voice; });
           if (typeof asked.cloudSpeech === 'boolean') await reach.save((one) => { one.cloudSpeech = asked.cloudSpeech; });
           if (typeof asked.on === 'boolean') {
             if (asked.on && !(await reach.token())) { deps.json(res, 400, { error: 'Paste the bot token first, then switch this on.' }); return true; }

@@ -4,12 +4,14 @@ import type { ReachState } from '../../../shared/reach';
 import { getStage } from '../../api';
 import { PanelShell } from '../../overlay/PanelShell';
 import { dropHook, forgetChat, getReach, makeHook, newPairing, putReach, type Made } from './api';
+import { voiceIs } from './voice';
 
 // What leaves this machine, said once, in the words the founder would use. It is the first thing on the screen and
 // it is above the switch, not under it.
 const LEAVES = 'While this is on, the words of every message you and your people send each other here travel through Telegram\'s servers, the way any message on Telegram does. Nothing else goes with them: your documents, your files and everything else stay on this machine. It is off until you switch it on.';
 const HOW = 'In Telegram, write to @BotFather, send /newbot, and give it any name. It hands you a token. Paste it here — it stays on this machine, in a file only you can read.';
-const CLOUD = 'Leave this off and your voice is written down here on this machine, by a model that is downloaded once (about 150 MB) the first time you hold the microphone. Switch it on and the recording of your voice is sent to Groq instead, which is quicker.';
+const VOICE = 'A microphone appears in the ask box, and every reply can be read out to you. Both run on this machine: the voice is fetched once (310 MB) the first time you ask for one, and the listening the first time you hold the microphone (about 150 MB). Nothing is sent anywhere, and nothing is ever sent for you — what you say lands in the box for you to read first.';
+const CLOUD = 'Leave this off and what you say is written down here on this machine. Switch it on and the recording of your voice is sent to Groq instead, which is quicker.';
 const HOOKS = 'Another program on this machine can start one task here. This app listens on this machine only — nothing from the internet can reach it — and a call only counts if it is signed with the secret below.';
 
 export function ReachPanel() {
@@ -22,20 +24,22 @@ export function ReachPanel() {
   const boards = (stage?.cards ?? []).filter((card): card is Card & { kind: 'board' } => card.kind === 'board');
 
   useEffect(() => {
-    getReach().then(setState).catch((error: Error) => setProblem(error.message));
+    getReach().then(remember).catch((error: Error) => setProblem(error.message));
     getStage().then(setStage).catch(() => {});
   }, []);
   // A phone pairs, or Telegram falls over, while the founder is looking at this. It all happens on this machine, so
   // asking again every few seconds costs nothing and the screen is never out of date.
   useEffect(() => {
     if (!state?.on) return;
-    const timer = setInterval(() => { getReach().then(setState).catch(() => {}); }, 3000);
+    const timer = setInterval(() => { getReach().then(remember).catch(() => {}); }, 3000);
     return () => clearInterval(timer);
   }, [state?.on]);
 
-  const attempt = (work: Promise<ReachState>) => { setProblem(''); work.then(setState).catch((error: Error) => { setProblem(error.message); getReach().then(setState).catch(() => {}); }); };
+  // The conversation hears about the voice switch from here: a microphone appears in the ask box the moment it is on.
+  const remember = (next: ReachState) => { voiceIs(next); setState(next); };
+  const attempt = (work: Promise<ReachState>) => { setProblem(''); work.then(remember).catch((error: Error) => { setProblem(error.message); getReach().then(remember).catch(() => {}); }); };
   // A switch moves under the founder's finger, not a moment later when the server has written the file down.
-  const flip = (patch: { on?: boolean; cloudSpeech?: boolean }) => { setState((held) => (held ? { ...held, ...patch } : held)); attempt(putReach(patch)); };
+  const flip = (patch: { on?: boolean; voice?: boolean; cloudSpeech?: boolean }) => { setState((held) => (held ? { ...held, ...patch } : held)); attempt(putReach(patch)); };
   const left = state?.pairing ? Math.max(0, Math.round((state.pairing.until - Date.now()) / 60_000)) : 0;
 
   async function add() {
@@ -43,7 +47,7 @@ export function ReachPanel() {
     try {
       setMade(await makeHook({ name: hook.name.trim(), boardId: hook.boardId, ...(hook.assignee ? { assignee: hook.assignee } : {}) }));
       setHook({ name: '', boardId: hook.boardId, assignee: hook.assignee });
-      setState(await getReach());
+      remember(await getReach());
     } catch (error) { setProblem((error as Error).message); }
   }
 
@@ -98,12 +102,19 @@ export function ReachPanel() {
 
           <section className="reach__part">
             <h3>Your voice</h3>
-            <p className="reach__plain">{CLOUD}</p>
+            <p className="reach__plain">{VOICE}</p>
             <label className="reach__switch">
-              <input type="checkbox" checked={state.cloudSpeech} onChange={(event) => flip({ cloudSpeech: event.target.checked })} />
-              <span>Let Groq write down what I say</span>
+              <input type="checkbox" checked={state.voice} onChange={(event) => flip({ voice: event.target.checked })} />
+              <span>Let me talk to my people, and hear them</span>
             </label>
-            <p className="reach__quiet">Right now, what you say is written down {state.listening === 'cloud' ? 'at Groq' : 'here, on this machine'}.</p>
+            {state.voice && <>
+              <p className="reach__plain reach__quiet">{CLOUD}</p>
+              <label className="reach__switch">
+                <input type="checkbox" checked={state.cloudSpeech} onChange={(event) => flip({ cloudSpeech: event.target.checked })} />
+                <span>Let Groq write down what I say</span>
+              </label>
+              <p className="reach__quiet">Right now, what you say is written down {state.listening === 'cloud' ? 'at Groq' : 'here, on this machine'}.</p>
+            </>}
           </section>
 
           <section className="reach__part">

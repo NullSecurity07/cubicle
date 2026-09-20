@@ -4,6 +4,7 @@ import { deleteMessage, getChat, sendChat, uploadFile } from '../api';
 import { emit, listen } from '../bus';
 import { useLearnedIn } from '../overlay/playbook';
 import { overlay, showPlaybook } from '../overlay/store';
+import { SLICES } from '../slices';
 import { useFlushStage } from '../sync';
 import { Message } from './Message';
 
@@ -118,6 +119,9 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
   const lastReply = messages.findLast((message) => message.role === 'assistant');
   const lastAsked = messages.findLast((message) => message.role === 'user' && !message.from);
 
+  // Words from something other than the keyboard land in the draft, where the founder reads them before they go.
+  const insert = (text: string) => { setDraft((held) => `${held ? `${held} ` : ''}${text}`.trim()); box.current?.focus(); };
+
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === 'Escape' && editing) { setEditing(null); setDraft(''); }
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); }
@@ -129,7 +133,7 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
         {messages.length === 0 && !live && <p className="chat__empty">Ask {name} anything about {role.toLowerCase()}.</p>}
         {messages.map((message) => (
           <Message
-            key={message.id} message={message}
+            key={message.id} message={message} roomId={id}
             onDelete={thinking || message.id.startsWith('local-') ? undefined : () => remove(message)}
             onEdit={!thinking && message.role === 'user' && !message.from && !message.id.startsWith('local-') ? () => { setEditing(message); setDraft(message.text); setFiles(message.attachments ?? []); } : undefined}
             onRegenerate={!thinking && message === lastReply && lastAsked && messages.indexOf(lastAsked) < messages.indexOf(message) ? regenerate : undefined}
@@ -161,6 +165,8 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
         <button type="button" className="ask__attach" aria-label="Attach a file" title="Attach a file (or drop one here)" onClick={() => picker.current?.click()}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.500 7.500 7.300 11.700a2.400 2.400 0 0 1-3.400-3.400l5-5a1.600 1.600 0 0 1 2.300 2.300L6.400 10.400a.800.800 0 0 1-1.200-1.200L9 5.500" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
+        {/* What a slice brings to the ask box (a microphone): it hands words to the draft, and the founder sends them. */}
+        {SLICES.map((slice) => (slice.compose ? <slice.compose key={slice.name} roomId={id} insert={insert} busy={thinking} /> : null))}
         <textarea ref={box} rows={1} value={draft} placeholder={`Ask ${name}…`} onChange={(event) => setDraft(event.target.value)} onKeyDown={onKeyDown} {...(editing ? { 'data-holds-escape': '' } : {})} />
         {thinking ? (
           <button type="button" className="ask__stop" aria-label="Stop" title="Stop" onClick={() => stop.current?.abort()}>

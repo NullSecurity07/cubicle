@@ -5,10 +5,10 @@ import type { ReachChat, ReachHook, ReachPairing } from '../../shared/reach.ts';
 
 // A hook's secret lives here beside the bot token, because verifying a signature needs the secret itself. Nothing
 // in this file is ever answered to a GET.
-export type Kept = { on: boolean; token?: string; cloudSpeech: boolean; paired: ReachChat[]; hooks: (ReachHook & { secret: string })[] };
+export type Kept = { on: boolean; token?: string; voice: boolean; cloudSpeech: boolean; paired: ReachChat[]; hooks: (ReachHook & { secret: string })[] };
 export type Reach = ReturnType<typeof createReach>;
 
-const EMPTY: Kept = { on: false, cloudSpeech: false, paired: [], hooks: [] };
+const EMPTY: Kept = { on: false, voice: false, cloudSpeech: false, paired: [], hooks: [] };
 // No O, 0, I or 1: the founder reads this off one screen and types it on a phone.
 const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const HOUR = 3_600_000;

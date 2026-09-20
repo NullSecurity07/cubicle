@@ -10,7 +10,7 @@ const where = () => mkdtempSync(join(tmpdir(), 'reach-set-'));
 describe('what is kept about reaching the founder', () => {
   it('starts off, with nothing set up', async () => {
     const reach = createReach(where(), {});
-    expect(await reach.read()).toEqual({ on: false, cloudSpeech: false, paired: [], hooks: [] });
+    expect(await reach.read()).toEqual({ on: false, voice: false, cloudSpeech: false, paired: [], hooks: [] });
     expect(await reach.token()).toBeNull();
   });
 

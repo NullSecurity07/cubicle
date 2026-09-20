@@ -126,6 +126,96 @@ test.describe('reaching the founder on their phone', () => {
   });
 });
 
+// A microphone this machine will lend the window without anybody speaking into it: a tone, recorded and decoded by
+// the browser exactly as a real one would be. Nothing else about the path is stood in for.
+const FAKE_MIC = () => {
+  navigator.mediaDevices.getUserMedia = async () => {
+    const sound = new AudioContext();
+    await sound.resume();
+    const out = sound.createMediaStreamDestination();
+    const tone = sound.createOscillator();
+    tone.frequency.value = 220;
+    tone.connect(out);
+    tone.start();
+    return out.stream;
+  };
+};
+
+test.describe('the founder\'s own voice, in the conversation', () => {
+  const maya = (page: Page) => page.locator('.react-flow__node[data-id="marketing"]');
+  const mic = (page: Page) => maya(page).getByRole('button', { name: /Say it instead of typing it|Stop listening/ });
+
+  test('is nowhere to be seen until the founder switches it on', async ({ page }) => {
+    await expect(maya(page).getByRole('button', { name: 'Attach a file' })).toBeVisible();
+    await expect(mic(page)).toHaveCount(0);
+    await expect(maya(page).getByRole('button', { name: /Say this out loud/ })).toHaveCount(0);
+
+    await bar(page, 'Reach you anywhere');
+    await panel(page).getByRole('checkbox', { name: /talk to my people/ }).check();
+    await expect(panel(page)).toContainText('310 MB');
+    await expect(panel(page)).toContainText('about 150 MB');
+    await page.keyboard.press('Escape');
+    await expect(mic(page)).toBeVisible();
+  });
+
+  test('takes what the founder says into the ask box, and never sends it for them', async ({ page }) => {
+    await page.addInitScript(FAKE_MIC);
+    await page.reload();
+    await expect(mic(page)).toBeVisible();
+    const box = maya(page).locator('.ask textarea');
+    await box.fill('');
+
+    await mic(page).hover();
+    await page.mouse.down();
+    await expect(mic(page)).toHaveAttribute('aria-pressed', 'true');
+    await expect(maya(page).locator('.reach-mic__note')).toContainText('listening');
+    await page.waitForTimeout(700);
+    await page.mouse.up();
+
+    await expect(box).toHaveValue(/heard \d+ samples/, { timeout: 20_000 });
+    // The words are the founder's to read and send: nothing left for Maya on its own.
+    await expect(maya(page).locator('.msg--user').last()).not.toContainText('samples');
+    await box.fill('');
+  });
+
+  test('says a reply out loud, one at a time, and stops when asked', async ({ page }) => {
+    const box = maya(page).locator('.ask textarea');
+    await box.fill('what should we say at the launch');
+    await box.press('Enter');
+    await expect(maya(page).locator('.status--idle')).toBeVisible({ timeout: 20_000 });
+    const reply = maya(page).locator('.msg--assistant').last();
+
+    await reply.hover();
+    const speak = reply.getByRole('button', { name: /Say this out loud/ });
+    await expect(speak).toBeVisible();
+    // The size of what is fetched the first time is on the button before it is ever pressed.
+    await expect(speak).toHaveAttribute('title', /310 MB/);
+    const said = page.waitForResponse('**/api/reach/speak');
+    await speak.click();
+    expect((await said).ok()).toBe(true);
+    const stop = reply.getByRole('button', { name: 'Stop' });
+    await expect(stop).toBeVisible();
+    await stop.click();
+    await expect(reply.getByRole('button', { name: /Say this out loud/ })).toBeVisible();
+  });
+
+  test('is how the founder sees it', async ({ page }) => {
+    const shots = '/tmp/stage-shots';
+    const reply = maya(page).locator('.msg--assistant').last();
+    await reply.hover();
+    await expect(reply.getByRole('button', { name: /Say this out loud/ })).toBeVisible();
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${shots}/chat-voice.png` });
+
+    await bar(page, 'Reach you anywhere');
+    await expect(panel(page)).toBeVisible();
+    await panel(page).evaluate((sheet) => Promise.all(sheet.getAnimations().map((one) => one.finished)));
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${shots}/settings.png` });
+    await page.keyboard.press('Escape');
+  });
+});
+
 test.describe('a signed call in from another program', () => {
   const port = Number(process.env.E2E_PORT ?? 7430);
   let anon: APIRequestContext;

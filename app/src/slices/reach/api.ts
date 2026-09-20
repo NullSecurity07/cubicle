@@ -11,7 +11,7 @@ const send = (body: unknown, method = 'POST'): RequestInit => ({ method, headers
 export type Made = { id: string; secret: string; url: string };
 
 export const getReach = () => request<ReachState>('/api/reach');
-export const putReach = (patch: { on?: boolean; token?: string; cloudSpeech?: boolean }) => request<ReachState>('/api/reach', send(patch, 'PUT'));
+export const putReach = (patch: { on?: boolean; token?: string; voice?: boolean; cloudSpeech?: boolean }) => request<ReachState>('/api/reach', send(patch, 'PUT'));
 export const newPairing = () => request<ReachState>('/api/reach/pair', { method: 'POST' });
 export const forgetChat = (chatId: number) => request<ReachState>(`/api/reach/chats/${chatId}`, { method: 'DELETE' });
 export const makeHook = (hook: { name: string; boardId: string; assignee?: string }) => request<Made>('/api/reach/hooks', send(hook));
