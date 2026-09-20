@@ -220,6 +220,15 @@ export const fakeClient: ModelClient = {
     if (wanted && tools?.some((tool) => tool.name === wanted[1])) {
       return { text: '', calls: [{ id: `call-${messages.length}`, name: wanted[1], args: wanted[2] }], usage: { input: 10, output: 5 } };
     }
+    // Work handed over ends in a shape the asker can read, and nothing else goes back. A fake person can write one,
+    // so a browser test can watch a whole piece of work be given away without a key to a real model.
+    if (/Finish with one json object and nothing after it/.test(heard)) {
+      // What the tools said stays in their own room: a hand-over is what they did, not everything they read.
+      const since = messages.slice(messages.findLastIndex((message) => message.role === 'user'));
+      const changed = since.flatMap((message) => (message.role === 'assistant' && message.tool_calls ? message.tool_calls.map((call) => call.function.name) : []));
+      onToken(JSON.stringify({ done: true, summary: `${name} did what was asked.`, changed }));
+      return { text: '', calls: [], usage: { input: 10, output: 20 } };
+    }
     // Drawing a picture and then making a film with it, in one turn — what a person has to be able to do when the
     // founder says "generate an image and use that in the video". The path comes back in the first tool's own
     // words, and goes straight into the second call.
