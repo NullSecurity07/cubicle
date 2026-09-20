@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Attention, AttentionKind } from '../shared/model.ts';
+import type { Lapsed } from '../shared/lapsed.ts';
+import type { Attention, AttentionKind, ToolEvent } from '../shared/model.ts';
 import type { Boards } from './boards.ts';
 import type { Store } from './store.ts';
 
@@ -8,33 +9,48 @@ export type AttentionBook = ReturnType<typeof createAttention>;
 type Source = () => Promise<Attention[]>;
 // What the founder may wave away. A proposal or an approval is answered where it lives, never dismissed here.
 const DISMISSABLE = new Set<AttentionKind>(['run-failed', 'missed', 'review-due']);
+const A_DAY = 86_400_000;
+// Argument names whose value is nobody's to keep, not even for a line the founder reads.
+const PRIVATE = /key|token|secret|password/i;
+
+// The call an approval was cut off from, in a few plain words: the tool as the founder would say it, then its first
+// couple of arguments, each cut short. Enough to know what was asked, small enough to keep once the turn is gone.
+const about = (event: ToolEvent) => [event.name.replace(/_/g, ' '), ...Object.entries(event.args ?? {})
+  .filter(([key, value]) => !PRIVATE.test(key) && (typeof value === 'string' || typeof value === 'number'))
+  .slice(0, 2)
+  .map(([key, value]) => `${key} ${String(value).replace(/\s+/g, ' ').slice(0, 60)}`)].join(', ');
 
 // Everything that waits for the founder, as one list. Most of it is read fresh from where it lives (boards, decisions)
 // through `source`, so the list cannot drift from the truth. Only two things are kept here: approvals in flight, so
 // that one cut off by the app closing is still shown (as lapsed), and what the founder dismissed.
-export function createAttention(dir: string) {
+export function createAttention(dir: string, now: () => number = Date.now) {
   const path = join(dir, 'attention.json');
   const sources: Source[] = [];
   const watchers = new Set<(list: Attention[]) => void>();
   let queue: Promise<unknown> = Promise.resolve();
-  let state: { open: Attention[]; dismissed: string[] } | null = null;
+  let state: { open: Lapsed[]; dismissed: string[] } | null = null;
 
   // Read once, however many ask at the same moment: two first readers each making their own copy meant whatever was
   // raised into the first copy was gone when the second one replaced it.
-  let reading: Promise<{ open: Attention[]; dismissed: string[] }> | null = null;
+  let reading: Promise<{ open: Lapsed[]; dismissed: string[] }> | null = null;
   const load = () => (reading ??= read());
   async function read() {
-    let saved: { open?: Attention[]; dismissed?: string[] } = {};
+    let saved: { open?: Lapsed[]; dismissed?: string[] } = {};
     try { saved = JSON.parse(await readFile(path, 'utf8')); } catch { /* nothing waited */ }
-    // Whatever was waiting when the app last closed belonged to a turn that no longer exists.
+    // Whatever was waiting when the app last closed belonged to a turn that no longer exists. The event goes, but what
+    // it was for stays, so the app can say what the founder was asked and know it when the same thing is done again.
     // (A task run that was waiting is reported by its board as cut off; keeping it here too would show it twice.)
-    state = { open: (saved.open ?? []).filter((entry) => entry.kind !== 'run-approval').map(({ event: _event, ...entry }) => ({ ...entry, lapsed: true })), dismissed: saved.dismissed ?? [] };
+    state = { open: (saved.open ?? []).filter((entry) => entry.kind !== 'run-approval').map(({ event, ...entry }) => ({ ...entry, ...(event ? { tool: event.name, about: about(event) } : {}), lapsed: true })), dismissed: saved.dismissed ?? [] };
     return state;
   }
   async function list(): Promise<Attention[]> {
     const { open, dismissed } = await load();
+    // Nothing waits for ever. An approval that lapsed a day ago is about a turn the founder has long walked past, so
+    // reading the list is also where it is let go, and the file is written again without it.
+    const held = open.filter((entry) => !entry.lapsed || now() - entry.at < A_DAY);
+    if (held.length !== open.length) { state!.open = held; await changed(); }
     const reported = (await Promise.all(sources.map((source) => source().catch(() => [])))).flat();
-    return [...reported.filter((entry) => !dismissed.includes(entry.id)), ...open].sort((a, b) => b.at - a.at);
+    return [...reported.filter((entry) => !dismissed.includes(entry.id)), ...held].sort((a, b) => b.at - a.at);
   }
   async function changed() {
     const { open, dismissed } = await load();

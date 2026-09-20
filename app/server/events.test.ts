@@ -1,6 +1,11 @@
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join as joinPath } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Attention, BoardEvent, MediaEvent, RoomEvent, Skill, SkillEvent, Stage, Task } from '../shared/model.ts';
+import { createAttention } from './attention.ts';
 import { createEvents, type Envelope } from './events.ts';
+import { tidyLapsed } from './lapsed.ts';
 
 // One of the things a window used to open a connection of its own for, driven by hand.
 function feedOf<T>() {
@@ -93,6 +98,26 @@ describe('one live connection carrying every feed', () => {
     rooms.tell({ roomId: 'marketing', chat: 'changed' });
     expect(window.since()).toEqual([{ channel: 'rooms', data: { roomId: 'marketing', chat: 'changed' } }]);
     gone();
+  });
+
+  // The bell on the dock counts this one list, so anything that leaves it has to leave down here too, at once.
+  it('carries an approval away the moment a turn tidies it up, so the bell stops without a reload', async () => {
+    const NOON = new Date(2026, 8, 20, 12).getTime();
+    const dir = await mkdtemp(joinPath(tmpdir(), 'events-'));
+    const closed = createAttention(dir, () => NOON);
+    await closed.raise({ id: 'approval:c1', kind: 'approval', title: 'Send this email?', at: NOON - 600_000, roomId: 'marketing', who: 'Maya', event: { id: 'c1', name: 'send_email', args: { to: 'alex@example.com' }, waiting: true } });
+    await closed.settled();
+
+    const attention = createAttention(dir, () => NOON);
+    const events = createEvents({
+      attention, skills: { list: async () => [], watch: () => () => {} }, rooms: feedOf<RoomEvent>(), media: feedOf<MediaEvent>(),
+      boards: { list: async () => [], watchAll: () => () => {} }, stage: async () => stageOf(),
+    });
+    const window = await join(events);
+    expect((window.since()[0].data as Attention[])[0]).toMatchObject({ id: 'approval:c1', lapsed: true });
+    await tidyLapsed(attention)({ roomId: 'marketing', source: 'chat', query: 'hello again', reply: { text: 'hi', tools: [], provider: 'fake', model: 'fake', usage: { input: 1, output: 1 }, stopped: false } }, async (given) => given);
+    expect(window.since()).toEqual([{ channel: 'attention', data: [] }]);
+    window.stop();
   });
 
   it('leaves nothing listening once the last window has gone, and listens again for the next one', async () => {

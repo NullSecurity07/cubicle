@@ -29,19 +29,21 @@ function bench(options: { paired?: boolean; ask?: (roomId: string, text: string)
   const topics = createTopics({ api, reach });
   const asked: { roomId: string; text: string }[] = [];
   const answers: { id: string; answer: Answer }[] = [];
+  // Who each voice note was asked for: a reply has to be spoken by the person who wrote it, not by whoever is first.
+  const spoken: { roomId: string; text: string }[] = [];
   let known = true;
   const phone = createPhone({
     api, outbox, reach, book, topics, stage: async () => stage,
     ask: async (roomId, text) => { asked.push({ roomId, text }); return options.ask ? options.ask(roomId, text) : `about ${text}`; },
     answer: (id, answer) => { answers.push({ id, answer }); return known; },
     busy: () => new Set(['build']),
-    ...(options.voice ? { hear: async () => 'what is left this week', say: async () => { if (options.mute) throw new Error('no voice on this machine'); return Buffer.from('OggS'); } } : {}),
+    ...(options.voice ? { hear: async () => 'what is left this week', say: async (roomId: string, text: string) => { spoken.push({ roomId, text }); if (options.mute) throw new Error('no voice on this machine'); return Buffer.from('OggS'); } } : {}),
     digest: async () => '**Today** · nothing yet',
   });
   const ready = options.paired
     ? reach.save((held) => { held.on = true; held.paired = [{ chatId: CHAT, name: 'Phone', at: 0, userId: CHAT }]; })
     : reach.save((held) => { held.on = true; });
-  return { phone, fake, reach, book, topics, asked, answers, ready, unknown: () => { known = false; } };
+  return { phone, fake, reach, book, topics, asked, answers, spoken, ready, unknown: () => { known = false; } };
 }
 const texts = (fake: ReturnType<typeof fakeTelegram>) => fake.posted().map((one) => one.text);
 
@@ -252,6 +254,15 @@ describe('a voice note, both ways', () => {
     const last = fake.posted().slice(-2);
     expect(last[0].voice).toBeGreaterThan(0);
     expect(last[1].text).toContain('about what is left?');
+  });
+
+  it('asks for the reply in the voice of whoever wrote it', async () => {
+    const { phone, spoken, ready } = bench({ paired: true, voice: true });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '/voice' } });
+    await phone.update({ update_id: 2, message: { message_id: 2, chat: { id: CHAT }, text: '@maya what is left?' } });
+    await phone.update({ update_id: 3, message: { message_id: 3, chat: { id: CHAT }, text: '@dev and how long?' } });
+    expect(spoken.map((one) => one.roomId)).toEqual(['marketing', 'build']);
   });
 
   it('says so plainly on a machine that cannot listen at all', async () => {

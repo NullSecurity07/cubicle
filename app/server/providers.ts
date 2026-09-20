@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import OpenAI from 'openai';
 import type { Usage } from '../shared/model.ts';
 import models from './models.json' with { type: 'json' };
@@ -25,6 +26,12 @@ export type ModelClient = {
 
 export type Completion = ModelTurn & { client: ModelClient };
 export type Failure = { client: ModelClient; error: Error };
+
+// A name for one tool call that no other call anywhere shares. Some providers send none, and numbering them from
+// nought meant two people waiting on the founder at the same moment were both "call-0": the second approval took the
+// first one's place, and the first person's turn waited for an answer that could no longer reach it. The same name
+// keys the undo snapshot and the standing yes, so it has to be one call's alone.
+export const callId = () => `call_${randomBytes(8).toString('hex')}`;
 
 export const promptSize = (messages: ModelMessage[]) => messages.reduce((sum, message) => {
   const calls = 'tool_calls' in message && message.tool_calls ? JSON.stringify(message.tool_calls).length : 0;
@@ -179,7 +186,7 @@ export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[]
           if (delta?.content) onToken(delta.content);
           collectCalls(calls, delta?.tool_calls ?? []);
         }
-        return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || `call-${index}` })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
+        return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
       },
     };
   }));
@@ -230,7 +237,7 @@ export const fakeClient: ModelClient = {
     // Only what has run since the founder spoke: earlier turns leave their own tool messages in the conversation.
     const wanted = asked[messages.slice(messages.findLastIndex((message) => message.role === 'user')).filter((message) => message.role === 'tool').length];
     if (wanted && tools?.some((tool) => tool.name === wanted[1])) {
-      return { text: '', calls: [{ id: `call-${messages.length}`, name: wanted[1], args: wanted[2] }], usage: { input: 10, output: 5 } };
+      return { text: '', calls: [{ id: callId(), name: wanted[1], args: wanted[2] }], usage: { input: 10, output: 5 } };
     }
     // Work handed over ends in a shape the asker can read, and nothing else goes back. A fake person can write one,
     // so a browser test can watch a whole piece of work be given away without a key to a real model.
@@ -248,10 +255,10 @@ export const fakeClient: ModelClient = {
       const drew = last?.role === 'tool' ? /saved at (\S+)/.exec(last.content) : null;
       if (drew) {
         const brief = heard.replace(/^\/chain\s*/m, '').trim() || 'a short film';
-        return { text: '', calls: [{ id: `call-${messages.length}`, name: 'generate_video', args: JSON.stringify({ brief, images: [drew[1]] }) }], usage: { input: 10, output: 5 } };
+        return { text: '', calls: [{ id: callId(), name: 'generate_video', args: JSON.stringify({ brief, images: [drew[1]] }) }], usage: { input: 10, output: 5 } };
       }
       if (last?.role === 'user' && tools.some((tool) => tool.name === 'generate_image')) {
-        return { text: '', calls: [{ id: `call-${messages.length}`, name: 'generate_image', args: JSON.stringify({ prompt: 'an influencer talking to camera' }) }], usage: { input: 10, output: 5 } };
+        return { text: '', calls: [{ id: callId(), name: 'generate_image', args: JSON.stringify({ prompt: 'an influencer talking to camera' }) }], usage: { input: 10, output: 5 } };
       }
     }
     const reply = last?.role === 'tool'

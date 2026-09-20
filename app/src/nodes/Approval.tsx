@@ -14,6 +14,9 @@ const TITLES: Record<string, [title: string, yes: string]> = { send_email: ['Sen
 const FIXED = new Set(['from', 'language', 'action', 'ref', 'url', 'key', 'direction']);
 const LONG = new Set(['body', 'code', 'text', 'task']);
 const LABELS: Record<string, string> = { to: 'To', subject: 'Subject', body: 'Message', from: 'From', reply_to: 'In reply to', language: 'Language', code: 'Code' };
+// What the founder was asked, when the step itself came with no question of its own. The needs panel says it back
+// in the same words, so an approval the app closed on reads there exactly as it read in the room.
+export const asked = (name: string) => TITLES[name]?.[0] ?? `Allow ${name}?`;
 
 // An outward action waiting for the founder: everything that will go out, open to edits, and two answers.
 export function Approval({ tool }: { tool: ToolEvent }) {
@@ -21,7 +24,8 @@ export function Approval({ tool }: { tool: ToolEvent }) {
   const [sending, setSending] = useState(false);
   const [always, setAlways] = useState(false);
   const [problem, setProblem] = useState('');
-  const [fallback, yes] = TITLES[tool.name] ?? [`Allow ${tool.name}?`, 'Allow'];
+  const fallback = asked(tool.name);
+  const yes = TITLES[tool.name]?.[1] ?? 'Allow';
   const title = tool.question || fallback;
   // What this step reaches, as the founder has it in front of them now — so editing the address changes what a
   // standing yes would cover. A step whose reach nothing in it decides is never offered one.

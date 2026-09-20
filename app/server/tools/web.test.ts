@@ -22,6 +22,19 @@ describe('web_search', () => {
     await expect(search.run({ queries: ['x'], recent: 'fortnight' }, context(''))).rejects.toThrow(/day, week, month, year/);
   });
 
+  it('ends every search with the line that says snippets are not pages', async () => {
+    const { search } = asking();
+    const said = 'These are snippets, not pages. Before you state a figure, a ranking or a quote from them, open the page with web_fetch.';
+    // Last, because a small model does what the end of what it read told it to; a post claiming "60+ deals" came out
+    // of snippets nobody opened, with the same warning sitting at the top where it had already been forgotten.
+    const plain = await search.run({ queries: ['sast market size'] }, context('look up the SAST market'));
+    expect(plain.text.startsWith('What follows came from the web.')).toBe(true);
+    expect(plain.text.trimEnd().endsWith(said)).toBe(true);
+    // And on the road where a second, cleaner set of results is added after the first.
+    const again = await search.run({ queries: ['sast market size 2024'] }, context('look up the SAST market'));
+    expect(again.text.trimEnd().endsWith(said)).toBe(true);
+  });
+
   it('runs a remembered year again without it, because the founder never asked for that year', async () => {
     const { ran, search } = asking();
     const { text } = await search.run({ queries: ['global static application security testing market size 2024 AI'] }, context('look up SAST using AI market'));

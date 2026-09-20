@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { Attention, Stage } from '../../shared/model.ts';
 import { LISTEN_RATE, UPDATES, type ReachState, type ReachUpdates } from '../../shared/reach.ts';
+import { guessGender, voiceFor } from '../../shared/voices.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
-import { DEFAULT_VOICE, fakeVoices, isVoice, kokoroVoices } from '../media/voice.ts';
+import { DEFAULT_VOICE, fakeVoices, isVoice, kokoroVoices, VOICES } from '../media/voice.ts';
 import type { Source } from '../seams.ts';
 import { createBridge } from '../reach/bridge.ts';
 import { createDigest, dueAt } from '../reach/digest.ts';
@@ -72,7 +73,7 @@ export default {
       answer: (id, answer) => deps.approvals.answer(id, answer),
       busy: () => deps.busy,
       hear: async (sound, _mime, report) => heard(await samplesOf(sound, run), report),
-      say: async (said) => oggOf(await speak(sayable(said) || 'There is code in the written reply.'), run),
+      say: async (roomId, said) => oggOf(await speak(sayable(said) || 'There is code in the written reply.', await voiceOf(roomId)), run),
       digest: async () => digest(await since()),
       // A phone that has just paired should find the whole company under its `/` button, not in half a minute's time.
       onPaired: () => {
@@ -170,12 +171,26 @@ export default {
       },
     };
 
-    async function speak(said: string): Promise<Buffer> {
-      const key = createHash('sha256').update(said).digest('hex');
+    // A person's own voice, written down on them the first time it is needed. Working it out again every time would
+    // be the same answer, but writing it down is what holds it still while the founder adds and removes people.
+    async function voiceOf(roomId: string): Promise<string> {
+      const stage = await deps.store.loadStage();
+      const room = stage.rooms.find((one) => one.id === roomId);
+      if (!room) return DEFAULT_VOICE;
+      if (isVoice(room.voice)) return room.voice;
+      const given = voiceFor(room, stage.rooms, VOICES);
+      const mine = { ...room, gender: room.gender ?? guessGender(room.name), voice: given };
+      await deps.store.saveStage({ ...stage, rooms: stage.rooms.map((one) => (one.id === room.id ? mine : one)) }).catch(() => {});
+      return given;
+    }
+
+    // The same words in two voices are two recordings, so pressing speak on two people's replies never plays one
+    // person in the other's voice.
+    async function speak(said: string, voiceId: string): Promise<Buffer> {
+      const key = createHash('sha256').update(`${voiceId}\n${said}`).digest('hex');
       const held = spoken.get(key);
       if (held) return held;
-      const card = (await deps.store.loadStage()).cards?.find((one) => one.kind === 'voicegen' && isVoice(one.voice));
-      const made = await voice.make({ prompt: said, voice: card?.kind === 'voicegen' ? card.voice : DEFAULT_VOICE }, { report: () => {} });
+      const made = await voice.make({ prompt: said, voice: voiceId }, { report: () => {} });
       if (spoken.size >= SPOKEN) spoken.delete([...spoken.keys()][0]);
       spoken.set(key, made.bytes);
       return made.bytes;
@@ -285,9 +300,12 @@ export default {
           return true;
         }
         if (path === '/api/reach/speak' && method === 'POST') {
-          const said = String((await deps.body(req)).text ?? '').trim().slice(0, 4000);
+          const asked = await deps.body(req);
+          const said = String(asked.text ?? '').trim().slice(0, 4000);
           if (!said) { deps.json(res, 400, { error: 'there is nothing to say' }); return true; }
-          const bytes = await speak(said);
+          // A reply is said in the voice of whoever wrote it; one voice asked for by name is the form letting the
+          // founder hear a voice before they give it to somebody.
+          const bytes = await speak(said, isVoice(asked.voice) ? asked.voice : await voiceOf(String(asked.roomId ?? '')));
           res.writeHead(200, { 'content-type': 'audio/wav', 'content-length': String(bytes.length), 'cache-control': 'no-cache' });
           res.end(bytes);
           return true;

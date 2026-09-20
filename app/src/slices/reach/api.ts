@@ -22,9 +22,11 @@ export const dropHook = (id: string) => request<ReachState>(`/api/reach/hooks/${
 // What was said, written down. The samples go up as they are: plain numbers, one channel, 16 kHz.
 export const listen = (samples: Float32Array) => request<{ text: string }>('/api/reach/listen', { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: new Blob([new Uint8Array(samples.buffer as ArrayBuffer, samples.byteOffset, samples.byteLength)]) });
 
-// A reply said out loud. The answer is the sound itself, not json, so it is fetched rather than requested.
-export async function speaking(text: string): Promise<Blob> {
-  const response = await fetch('/api/reach/speak', send({ text }));
+// A reply said out loud. `who` is the person whose reply it is, so it arrives in their voice; a voice named outright
+// is the person form letting the founder hear one before they give it to somebody.
+// The answer is the sound itself, not json, so it is fetched rather than requested.
+export async function speaking(text: string, who: { roomId: string } | { voice: string }): Promise<Blob> {
+  const response = await fetch('/api/reach/speak', send({ text, ...who }));
   if (!response.ok) throw new Error((await response.json().catch(() => null) as { error?: string } | null)?.error ?? 'that could not be said out loud');
   return response.blob();
 }

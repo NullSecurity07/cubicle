@@ -2,11 +2,14 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type { Lapsed } from '../shared/lapsed.ts';
 import type { Attention } from '../shared/model.ts';
 import { boardAttention, createAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
 import { createStore } from './store.ts';
 
+// Sunday 20 September 2026, noon where the machine is. Nothing here reads the real clock.
+const NOON = new Date(2026, 8, 20, 12).getTime();
 const waiting = (id: string): Attention => ({ id: `approval:${id}`, kind: 'approval', title: 'Send this email?', at: 1, roomId: 'marketing', who: 'Maya', event: { id, name: 'send_email', args: { to: 'a@b.co' }, waiting: true } });
 
 describe('attention', () => {
@@ -35,13 +38,52 @@ describe('attention', () => {
     await before.settled();
     expect(JSON.parse(await readFile(join(dir, 'attention.json'), 'utf8')).open).toHaveLength(1);
 
-    const after = createAttention(dir);
-    const [entry] = await after.list();
+    // A pinned clock, because a lapsed approval is let go once it is a day old and this one says it was raised at 1.
+    const after = createAttention(dir, () => 2);
+    const [entry] = (await after.list()) as Lapsed[];
     expect(entry).toMatchObject({ id: 'approval:c2', lapsed: true, who: 'Maya' });
     expect(entry.event).toBeUndefined();
+    // What it was for outlives the turn, in a few words: the tool by name, and the call without its body.
+    expect(entry.tool).toBe('send_email');
+    expect(entry.about).toBe('send email, to a@b.co');
     await after.dismiss('approval:c2');
     await after.settled();
-    expect(await createAttention(dir).list()).toEqual([]);
+    expect(await createAttention(dir, () => 2).list()).toEqual([]);
+  });
+
+  it('keeps what a lapsed approval was for through a second closing, and never keeps a secret', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'attention-'));
+    const before = createAttention(dir);
+    await before.raise({ ...waiting('c6'), event: { id: 'c6', name: 'send_email', args: { to: 'a@b.co', api_key: 'sk-live-1', body: 'Hello there' }, waiting: true } });
+    await before.settled();
+
+    const once = createAttention(dir, () => 2);
+    // The first couple of arguments and no more, each cut short; the key was never one of them.
+    expect(((await once.list()) as Lapsed[])[0].about).toBe('send email, to a@b.co, body Hello there');
+    await once.raise({ ...waiting('c7'), at: 2 });
+    await once.settled();
+    // Closed again: the words kept the first time are still there, and no key ever was.
+    const twice = (await createAttention(dir, () => 3).list()) as Lapsed[];
+    expect(twice.map((one) => one.tool)).toEqual(['send_email', 'send_email']);
+    expect(JSON.stringify(twice)).not.toContain('sk-live-1');
+  });
+
+  it('lets a lapsed approval go on its own after a day, and writes the file again without it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'attention-'));
+    const before = createAttention(dir, () => NOON);
+    await before.raise({ ...waiting('c8'), at: NOON });
+    await before.settled();
+
+    const nearly = createAttention(dir, () => NOON + 86_399_000);
+    expect(await nearly.list()).toHaveLength(1);
+    const later = createAttention(dir, () => NOON + 86_400_001);
+    const told: number[] = [];
+    later.watch((list) => told.push(list.length));
+    expect(await later.list()).toEqual([]);
+    await later.settled();
+    expect(JSON.parse(await readFile(join(dir, 'attention.json'), 'utf8')).open).toEqual([]);
+    // The bell hears it go at once, rather than at the next thing that happens to change.
+    expect(told).toEqual([0]);
   });
 
   it('adds what other parts of the app report, newest first, and hides what the founder dismissed', async () => {

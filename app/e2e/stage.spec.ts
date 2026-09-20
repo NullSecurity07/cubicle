@@ -293,7 +293,8 @@ test('the dock shows today\'s model usage and a person can be pinned to a model'
 
   await node(page, 'marketing').hover();
   await node(page, 'marketing').getByRole('button', { name: 'Edit', exact: true }).click();
-  await node(page, 'marketing').locator('select').selectOption('fake');
+  // The form has a voice to choose as well as a model, so this one is asked for by name.
+  await node(page, 'marketing').getByLabel('Model', { exact: true }).selectOption('fake');
   await node(page, 'marketing').getByRole('button', { name: 'Done' }).click();
   await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).rooms[0].model).toBe('fake');
   await expect(await ask(page, 'marketing', 'again')).toContainText('Maya here');

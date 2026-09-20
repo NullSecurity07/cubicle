@@ -117,3 +117,16 @@ describe('wireTools', () => {
     expect(wireTools([tool])).toEqual([{ type: 'function', function: { name: 'web_search', description: 'Search', parameters: { type: 'object' } } }]);
   });
 });
+
+describe('naming a tool call', () => {
+  it('never gives two calls the same name, whoever made them and however alike they are', async () => {
+    const { callId, fakeClient } = await import('./providers.ts');
+    expect(new Set(Array.from({ length: 500 }, callId)).size).toBe(500);
+    // Two people, the same length of conversation, the same tool: the case that made one approval out of two.
+    const ask = [{ role: 'system' as const, content: 'You are Maya, Marketing.' }, { role: 'user' as const, content: '/tool list_files {}' }];
+    const tools = [{ name: 'list_files', description: 'list', parameters: { type: 'object', properties: {} } }];
+    const [one, two] = await Promise.all([fakeClient.step(ask, { tools, onToken: () => {} }), fakeClient.step(ask, { tools, onToken: () => {} })]);
+    expect(one.calls).toHaveLength(1);
+    expect(one.calls[0].id).not.toBe(two.calls[0].id);
+  });
+});

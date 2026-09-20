@@ -80,14 +80,14 @@ export function quiet() {
   if (saying) { saying = ''; tell(); }
 }
 
-export async function say(key: string, text: string): Promise<void> {
+export async function say(key: string, text: string, who: { roomId: string } | { voice: string }): Promise<void> {
   quiet();
   saying = key;
   tell();
   try {
     let url = said.get(key);
     if (!url) {
-      url = URL.createObjectURL(await speaking(text));
+      url = URL.createObjectURL(await speaking(text, who));
       said.set(key, url);
       spokenBefore = true;
     }
