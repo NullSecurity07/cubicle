@@ -19,16 +19,21 @@ const CHAT = 77;
 const GROUP = -100777;
 const STRANGER = 999;
 
-function bench(options: { paired?: boolean; ask?: (roomId: string, text: string) => Promise<string>; voice?: boolean; mute?: boolean } = {}) {
+// The shared files, as the phone sees them: whatever a studio made, by the path a reply names it with.
+const SHARED: Record<string, Buffer> = { 'media/cat.png': Buffer.from('PNG-cat'), 'media/launch.mp4': Buffer.from('MP4-launch') };
+
+function bench(options: { paired?: boolean; ask?: (roomId: string, text: string) => Promise<string>; voice?: boolean; mute?: boolean; files?: Record<string, Buffer>; api?: ReturnType<typeof createApi> } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'reach-phone-'));
   const fake = fakeTelegram();
   const reach = createReach(dir, {});
   const book = createBook(dir);
   const outbox = createOutbox(join(dir, 'outbox.jsonl'));
-  const api = createApi(async () => 'token', fake.http);
+  const api = options.api ?? createApi(async () => 'token', fake.http);
   const topics = createTopics({ api, reach });
   const asked: { roomId: string; text: string }[] = [];
   const answers: { id: string; answer: Answer }[] = [];
+  const held = options.files ?? SHARED;
+  const trouble: Error[] = [];
   // Who each voice note was asked for: a reply has to be spoken by the person who wrote it, not by whoever is first.
   const spoken: { roomId: string; text: string }[] = [];
   let known = true;
@@ -38,12 +43,14 @@ function bench(options: { paired?: boolean; ask?: (roomId: string, text: string)
     answer: (id, answer) => { answers.push({ id, answer }); return known; },
     busy: () => new Set(['build']),
     ...(options.voice ? { hear: async () => 'what is left this week', say: async (roomId: string, text: string) => { spoken.push({ roomId, text }); if (options.mute) throw new Error('no voice on this machine'); return Buffer.from('OggS'); } } : {}),
+    file: async (path: string) => held[path] ?? null,
     digest: async () => '**Today** · nothing yet',
+    onError: (error) => trouble.push(error),
   });
   const ready = options.paired
     ? reach.save((held) => { held.on = true; held.paired = [{ chatId: CHAT, name: 'Phone', at: 0, userId: CHAT }]; })
     : reach.save((held) => { held.on = true; });
-  return { phone, fake, reach, book, topics, asked, answers, spoken, ready, unknown: () => { known = false; } };
+  return { phone, fake, reach, book, topics, outbox, asked, answers, spoken, trouble, ready, unknown: () => { known = false; } };
 }
 const texts = (fake: ReturnType<typeof fakeTelegram>) => fake.posted().map((one) => one.text);
 
@@ -227,6 +234,97 @@ describe('a message from a paired phone', () => {
   });
 });
 
+describe('a picture a person made, on the founder\'s phone', () => {
+  const drew = 'Made the picture. It is saved at media/cat.png.\n\n![a cat on a roof](/api/files/media/cat.png)';
+
+  it('sends the words, then the picture itself, and never the markdown of it', async () => {
+    const { phone, fake, book, ready } = bench({ paired: true, ask: async () => drew });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '@maya draw me a cat' } });
+    const [words, picture] = fake.posted();
+    expect(words.text).toBe('<b>Maya</b> · x\n\nMade the picture. It is saved at media/cat.png.');
+    expect(words.text).not.toContain('/api/files');
+    expect(picture.file).toEqual({ as: 'photo', name: 'cat.png', size: Buffer.from('PNG-cat').length });
+    expect(picture.text).toBe('a cat on a roof');
+    // Replying to the picture on the phone reaches the person who drew it, exactly as replying to their words does.
+    expect(await book.routeOf(CHAT, picture.messageId)).toBe('marketing');
+  });
+
+  it('sends a film as a film, and a reply that is nothing but a picture as the picture alone', async () => {
+    const { phone, fake, ready } = bench({ paired: true, ask: async () => 'Made the film.\n\n[Launch day](/api/files/media/launch.mp4)' });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '@maya make the film' } });
+    expect(fake.posted().at(-1)!.file).toMatchObject({ as: 'video', name: 'launch.mp4' });
+    // The link is useless on a phone, so the words that were written around it stay and the file follows them.
+    expect(fake.posted()[0].text).toContain('Launch day');
+  });
+
+  it('says so once and moves on when the file is not in the shared files any more', async () => {
+    let first = true;
+    const { phone, fake, outbox, trouble, asked, ready } = bench({
+      paired: true,
+      ask: async (_roomId, text) => { if (!first) return `about ${text}`; first = false; return 'Made the picture.\n\n![a cat](/api/files/media/gone.png)'; },
+    });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '@maya draw me a cat' } });
+    expect(texts(fake).at(-1)).toContain('media/gone.png');
+    expect(texts(fake).at(-1)).toContain('shared files');
+    expect(fake.posted().some((one) => one.file)).toBe(false);
+    expect(trouble).toHaveLength(1);
+    // Nothing is left stuck behind it: the next message goes out as if none of this had happened.
+    expect(await outbox.pending()).toEqual([]);
+    await phone.update({ update_id: 2, message: { message_id: 2, chat: { id: CHAT }, text: 'and the price?' } });
+    expect(asked).toHaveLength(2);
+    expect(texts(fake).at(-1)).toContain('about and the price?');
+  });
+
+  it('says so once and moves on when Telegram itself refuses the file', async () => {
+    const fake = fakeTelegram();
+    const api = createApi(async () => 'token', async (url, init) => (/send(Photo|Document)$/.test(String(url))
+      ? new Response(JSON.stringify({ ok: false, description: 'Bad Request: IMAGE_PROCESS_FAILED' }), { status: 400, headers: { 'content-type': 'application/json' } })
+      : fake.http(url, init)));
+    const kit = bench({ paired: true, api, ask: async () => 'Made the picture.\n\n![a cat](/api/files/media/cat.png)' });
+    await kit.ready;
+    await kit.phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '@maya draw me a cat' } });
+    expect(texts(fake).at(-1)).toContain('media/cat.png');
+    expect(await kit.outbox.pending()).toEqual([]);
+  });
+
+  it('keeps a picture that would not go for want of a network, and sends it on the next try', async () => {
+    const fake = fakeTelegram();
+    let down = true;
+    const api = createApi(async () => 'token', async (url, init) => {
+      if (down && /sendPhoto$/.test(String(url))) throw new Error('no network');
+      return fake.http(url, init);
+    });
+    const kit = bench({ paired: true, api, ask: async () => 'Made the picture.\n\n![a cat](/api/files/media/cat.png)' });
+    await kit.ready;
+    await kit.phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '@maya draw me a cat' } });
+    expect(await kit.outbox.pending()).toHaveLength(1);
+    expect(fake.posted().some((one) => one.file)).toBe(false);
+    down = false;
+    await kit.phone.flush();
+    expect(fake.posted().at(-1)!.file).toMatchObject({ as: 'photo', name: 'cat.png' });
+    expect(await kit.outbox.pending()).toEqual([]);
+  });
+
+  it('sends nothing at all as a file on a machine where the shared files cannot be read', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'reach-phone-'));
+    const fake = fakeTelegram();
+    const reach = createReach(dir, {});
+    const outbox = createOutbox(join(dir, 'outbox.jsonl'));
+    const api = createApi(async () => 'token', fake.http);
+    const phone = createPhone({
+      api, outbox, reach, book: createBook(dir), topics: createTopics({ api, reach }),
+      stage: async () => stage, ask: async () => 'Made the picture.\n\n![a cat](/api/files/media/cat.png)', answer: () => true,
+    });
+    await reach.save((held) => { held.on = true; held.paired = [{ chatId: CHAT, name: 'Phone', at: 0 }]; });
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '@maya draw me a cat' } });
+    expect(texts(fake).at(-1)).toContain('media/cat.png');
+    expect(await outbox.pending()).toEqual([]);
+  });
+});
+
 describe('a voice note, both ways', () => {
   it('listens to one, says back what it heard, and takes it to the person as words', async () => {
     const { phone, fake, asked, ready } = bench({ paired: true, voice: true });
@@ -285,8 +383,8 @@ describe('a voice note, both ways', () => {
 });
 
 describe('the company as a group with rooms', () => {
-  async function group() {
-    const kit = bench({ paired: true });
+  async function group(options: Parameters<typeof bench>[0] = {}) {
+    const kit = bench({ paired: true, ...options });
     await kit.ready;
     kit.reach.newPairing('CODE1234');
     await kit.phone.update({ update_id: 1, message: { message_id: 1, chat: { id: GROUP, title: 'The company', type: 'supergroup', is_forum: true }, from: { id: CHAT }, text: '/pair CODE1234' } });
@@ -324,6 +422,15 @@ describe('the company as a group with rooms', () => {
     await phone.show([waiting('c1')]);
     expect(fake.posted().at(-1)!.threadId).toBe(held.topics.marketing.threadId);
     expect(fake.posted().at(-1)!.loud).toBe(true);
+  });
+
+  it('puts a picture somebody drew in their own topic, with their words above it', async () => {
+    const { phone, fake, reach } = await group({ ask: async () => 'Here it is.\n\n![a cat on a roof](/api/files/media/cat.png)' });
+    const maya = (await reach.read()).group!.topics.marketing.threadId;
+    await phone.update({ update_id: 9, message: { message_id: 9, chat: { id: GROUP, type: 'supergroup', is_forum: true }, from: { id: CHAT }, message_thread_id: maya, text: 'draw me a cat' } });
+    const picture = fake.posted().at(-1)!;
+    expect(picture.file).toMatchObject({ as: 'photo', name: 'cat.png' });
+    expect(picture.threadId).toBe(maya);
   });
 
   it('does nothing at all for a button pressed by anybody but the founder', async () => {

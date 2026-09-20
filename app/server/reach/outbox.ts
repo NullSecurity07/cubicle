@@ -3,7 +3,9 @@ import { dirname } from 'node:path';
 
 // `roomId` is who wrote it, so that a reply to it on the phone reaches them; `threadId` is the topic it belongs in.
 // Both are written down with the words, because a message resent after a restart has to land where it was meant to.
-export type Outgoing = { id: string; chatId: number; text: string; at: number; roomId?: string; threadId?: number; loud?: boolean };
+// `file` is a picture or a film a person made, by its path in the shared files; for one of those the text is the
+// caption that goes under it, which may be no more than what the picture was called.
+export type Outgoing = { id: string; chatId: number; text: string; at: number; roomId?: string; threadId?: number; loud?: boolean; file?: string };
 export type Outbox = ReturnType<typeof createOutbox>;
 
 const newId = () => `out-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -41,7 +43,8 @@ export function createOutbox(path: string) {
         try {
           const entry = JSON.parse(row) as Outgoing & { sent?: string };
           if (entry.sent) sent.add(entry.sent);
-          else if (entry.id && entry.text) written.push(entry);
+          // A picture with nothing said about it is still something to send, so a file counts as much as words do.
+          else if (entry.id && (entry.text || entry.file)) written.push(entry);
         } catch { /* a half-written last line after a crash: the rest still stands */ }
       }
       return written.filter((entry) => !sent.has(entry.id));

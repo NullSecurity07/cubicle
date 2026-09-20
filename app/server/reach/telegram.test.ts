@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BREAK_AFTER, BREAK_FOR, LIMIT, createApi, createPoller, pieces, type Update } from './telegram.ts';
+import { BREAK_AFTER, BREAK_FOR, LIMIT, TOO_BIG_TO_SEND, createApi, createPoller, kindOf, pieces, type Update } from './telegram.ts';
 
 const answer = (result: unknown, ok = true, status = 200) => new Response(JSON.stringify({ ok, result }), { status, headers: { 'content-type': 'application/json' } });
 
@@ -88,6 +88,89 @@ describe('how a reply is drawn on the phone', () => {
     // Anything else that goes wrong is not papered over by trying again.
     const down = createApi(async () => 'key', async () => answer(null, false, 502));
     await expect(down.send(5, 'hello')).rejects.toThrow('Telegram answered 502');
+  });
+});
+
+describe('a picture, a film or a file on the founder\'s phone', () => {
+  // What went up: which call it was, and the parts of the form, so a picture can be checked for arriving as a picture.
+  const watched = (refuse: (method: string, form: FormData) => Response | null = () => null) => {
+    const calls: { method: string; form: FormData }[] = [];
+    const api = createApi(async () => 'key', async (url, init) => {
+      const method = String(url).split('/').pop()!;
+      const form = init!.body as FormData;
+      calls.push({ method, form });
+      return refuse(method, form) ?? answer({ message_id: calls.length });
+    });
+    return { api, calls, methods: () => calls.map((one) => one.method) };
+  };
+
+  it('knows what each kind of file is to Telegram', () => {
+    expect(kindOf('cat.png')).toBe('photo');
+    expect(kindOf('CAT.JPEG')).toBe('photo');
+    expect(kindOf('media/a.webp')).toBe('photo');
+    expect(kindOf('launch.mp4')).toBe('video');
+    expect(kindOf('clip.mov')).toBe('video');
+    expect(kindOf('said.wav')).toBe('audio');
+    expect(kindOf('song.mp3')).toBe('audio');
+    expect(kindOf('notes.pdf')).toBe('document');
+    expect(kindOf('nothing')).toBe('document');
+  });
+
+  it('sends a picture as a picture, in the topic it belongs to and without a sound', async () => {
+    const { api, calls } = watched();
+    const sent = await api.sendFile(5, { bytes: Buffer.from('PNG'), name: 'cat.png' }, { caption: '**a cat** on a roof', threadId: 12 });
+    expect(sent.message_id).toBe(1);
+    expect(calls[0].method).toBe('sendPhoto');
+    expect((calls[0].form.get('photo') as File).name).toBe('cat.png');
+    expect(calls[0].form.get('chat_id')).toBe('5');
+    expect(calls[0].form.get('message_thread_id')).toBe('12');
+    expect(calls[0].form.get('disable_notification')).toBe('true');
+    expect(calls[0].form.get('caption')).toBe('<b>a cat</b> on a roof');
+    expect(calls[0].form.get('parse_mode')).toBe('HTML');
+  });
+
+  it('sends a film as a film it can play where it stands, a recording as a recording, and everything else as a file', async () => {
+    const { api, calls, methods } = watched();
+    await api.sendFile(5, { bytes: Buffer.from('MP4'), name: 'launch.mp4' }, { loud: true });
+    await api.sendFile(5, { bytes: Buffer.from('WAV'), name: 'said.wav' }, {});
+    await api.sendFile(5, { bytes: Buffer.from('PDF'), name: 'notes.pdf' }, {});
+    expect(methods()).toEqual(['sendVideo', 'sendAudio', 'sendDocument']);
+    expect(calls[0].form.get('supports_streaming')).toBe('true');
+    expect(calls[0].form.get('disable_notification')).toBeNull();
+  });
+
+  it('sends a picture too big for Telegram to draw as a file instead, so the founder still has it', async () => {
+    const { api, methods } = watched();
+    await api.sendFile(5, { bytes: Buffer.allocUnsafe(11 * 1024 * 1024), name: 'huge.png' }, {});
+    expect(methods()).toEqual(['sendDocument']);
+  });
+
+  it('tries once more as a file when Telegram will not take the picture at all', async () => {
+    const { api, methods } = watched((method) => (method === 'sendPhoto' ? answer(null, false, 400) : null));
+    const sent = await api.sendFile(5, { bytes: Buffer.from('PNG'), name: 'cat.png' }, { caption: 'a cat' });
+    expect(methods().at(-1)).toBe('sendDocument');
+    expect(sent.message_id).toBeGreaterThan(0);
+  });
+
+  it('says so in words a founder can read when a file is bigger than Telegram will ever take', async () => {
+    const { api, calls } = watched();
+    await expect(api.sendFile(5, { bytes: Buffer.allocUnsafe(51 * 1024 * 1024), name: 'film.mp4' }, {})).rejects.toThrow(TOO_BIG_TO_SEND);
+    expect(calls).toEqual([]);
+  });
+
+  it('sends the caption plainly when Telegram will not take the drawing of it', async () => {
+    const { api, calls } = watched((_method, form) => (form.get('parse_mode') ? answer(null, false, 400) : null));
+    await api.sendFile(5, { bytes: Buffer.from('PNG'), name: 'cat.png' }, { caption: '**a cat**' });
+    expect(calls).toHaveLength(2);
+    expect(calls[1].method).toBe('sendPhoto');
+    expect(calls[1].form.get('caption')).toBe('**a cat**');
+    expect(calls[1].form.get('parse_mode')).toBeNull();
+  });
+
+  it('never sends a caption longer than Telegram allows under a picture', async () => {
+    const { api, calls } = watched();
+    await api.sendFile(5, { bytes: Buffer.from('PNG'), name: 'cat.png' }, { caption: 'a'.repeat(3000) });
+    expect(String(calls[0].form.get('caption')).length).toBeLessThanOrEqual(1024);
   });
 });
 

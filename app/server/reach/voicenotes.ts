@@ -54,7 +54,10 @@ export function sayable(markdown: string, limit = SPOKEN): string {
   }
   const said = lines.join('\n')
     .replace(/`([^`\n]+)`/g, '$1')
-    .replace(/\[([^\]\n]+)\]\((?:https?:\/\/)[^\s)]+\)/g, '$1')
+    // A picture is handed over as a picture, so there is nothing to say about it; any other link is read as the
+    // words it was written as. Read out as it stands, an address is a minute of somebody spelling out punctuation.
+    .replace(/!\[[^\]\n]*\]\([^\s)]*\)/g, '')
+    .replace(/\[([^\]\n]+)\]\([^\s)]*\)/g, '$1')
     .replace(/(\*\*|__)([^*_\n]+)\1/g, '$2')
     .replace(/(^|[\s(])[*_]([^\s*_][^*_\n]*?)[*_](?=[\s).,;:!?]|$)/g, '$1$2')
     .replace(/\n{2,}/g, '\n\n')

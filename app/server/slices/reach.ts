@@ -74,6 +74,8 @@ export default {
       busy: () => deps.busy,
       hear: async (sound, _mime, report) => heard(await samplesOf(sound, run), report),
       say: async (roomId, said) => oggOf(await speak(sayable(said) || 'There is code in the written reply.', await voiceOf(roomId)), run),
+      // A picture or a film a person made, out of the shared files, so the phone is handed the thing itself.
+      file: (path) => deps.store.readFileBytes(path).catch(() => null),
       digest: async () => digest(await since()),
       // A phone that has just paired should find the whole company under its `/` button, not in half a minute's time.
       onPaired: () => {
