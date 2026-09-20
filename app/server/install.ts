@@ -74,7 +74,7 @@ export function lateRuns() {
   };
   // `async` so a call made too early comes back as a refusal the caller can catch, not a throw out of nowhere.
   const runs: Runs = {
-    start: async (boardId, taskId) => ready().start(boardId, taskId),
+    start: async (boardId, taskId, by) => ready().start(boardId, taskId, by),
     stop: (taskId) => ready().stop(taskId),
     note: async (roomId, text) => ready().note(roomId, text),
     tick: async () => ready().tick(),

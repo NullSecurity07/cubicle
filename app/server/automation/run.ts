@@ -28,7 +28,7 @@ export type Automation = {
 export function createAutomation(deps: {
   boards: Boards; filesDir: string; skills: Skills; clients: ModelClient[];
   notify: (title: string, body: string) => void;
-  runs: { start(boardId: string, taskId: string): Promise<void> };
+  runs: { start(boardId: string, taskId: string, by?: 'founder' | 'schedule' | 'chain' | 'call'): Promise<void> };
   now?: () => number;
 }): Automation {
   const { boards, filesDir, skills, clients, notify, runs } = deps;
@@ -117,7 +117,7 @@ export function createAutomation(deps: {
       for (const next of waitingFor(all, task.id)) {
         await boards.update(boardId, next.id, (one) => { one.from = { task: task.id, title: task.title, result: result.slice(0, MATERIAL), at }; });
         // A next task that cannot run says so on its own card, in its own blocked run; the one that finished is done.
-        await runs.start(boardId, next.id).catch(() => {});
+        await runs.start(boardId, next.id, 'chain').catch(() => {});
       }
     },
 
