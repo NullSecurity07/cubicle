@@ -48,3 +48,13 @@ describe('a reply, as somebody would actually say it', () => {
     expect(said.split('\n')[0].endsWith('.')).toBe(true);
   });
 });
+
+describe('what the listening model is told', () => {
+  it('tells an English-only model nothing about language, because it refuses to hear it', async () => {
+    const { hearing } = await import('./speech.ts');
+    // The real model said so the first time the founder sent a voice note: "Cannot specify `task` or `language` for
+    // an English-only model". Every fake had been happy.
+    expect(hearing('onnx-community/whisper-base.en')).toEqual({ chunk_length_s: 30 });
+    expect(hearing('onnx-community/whisper-base')).toEqual({ chunk_length_s: 30, language: 'en' });
+  });
+});

@@ -11,6 +11,9 @@ export const CLOUD_HINT = 'Groq needs GROQ_API_KEY in .env.';
 
 // Whisper on this machine, through the same runtime the voice and the recall models already use. Nothing is fetched
 // until the founder holds the microphone down for the first time, and the screen says how big that is beforehand.
+// What the model is told as it listens. Kept apart so it can be checked without fetching 150 MB to find out.
+export const hearing = (model: string) => ({ chunk_length_s: 30, ...(/\.en$/.test(model) ? {} : { language: 'en' }) });
+
 export function localWhisper(cacheDir: string): Transcriber {
   type Ears = (samples: Float32Array, options: Record<string, unknown>) => Promise<{ text?: string }>;
   let ready: Promise<Ears> | null = null;
@@ -43,7 +46,10 @@ export function localWhisper(cacheDir: string): Transcriber {
     async hear(samples, report) {
       const ears = await load(report);
       report('writing down what you said…');
-      const heard = await ears(samples, { chunk_length_s: 30, language: 'en' });
+      // An English-only model (the `.en` ones) refuses to be told a language or a task: it has neither to choose. Only
+      // a model that can hear several languages is told which one, and only then. Found with the real model; no fake
+      // could have said so.
+      const heard = await ears(samples, hearing(MODEL));
       return (heard.text ?? '').trim();
     },
   };
