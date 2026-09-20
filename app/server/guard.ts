@@ -5,6 +5,7 @@ export type Asked = { path: string; method: string; headers: Record<string, stri
 export type Own = { ports: number[]; token: string };
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+const HOOK = /^\/api\/hooks\/[\w-]{1,60}$/;
 const one = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value) ?? '';
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
@@ -24,6 +25,9 @@ export function guard(asked: Asked, own: Own): string | null {
   try { host = new URL(`http://${one(asked.headers.host)}`).hostname; } catch { /* refused below */ }
   if (!LOOPBACK.has(host)) return 'this host name is not this machine';
   if (!asked.path.startsWith('/api/')) return null;
+  // The one path another program on this machine may post to without the launch token: a signed call in. Its own
+  // signature is the gate, checked where it is answered. Nothing else here changes, and nothing else is let through.
+  if (asked.method === 'POST' && HOOK.test(asked.path)) return null;
 
   const token = one(asked.headers['x-stage-token']);
   if (token) return same(token, own.token) ? null : 'wrong token';
