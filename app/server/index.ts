@@ -232,6 +232,7 @@ const late = lateRuns();
 const extras = await installSlices(await loadSlices(resolve(import.meta.dirname, 'slices')), {
   workspace, root, fake, store, seams, clients, usage, approvals, attention, boards, recall, skills, founder, memory, decisions, busy,
   notify: fake ? () => {} : desktopNotify, promptFor, json, body, own, runs: late.runs,
+  toolsFor: (stage, roomId) => toolsFor(stage, roomId),
 });
 tools.push(...extras.tools);
 // The one place a turn's tools come from: everything installed, narrowed by whichever slices want a say.

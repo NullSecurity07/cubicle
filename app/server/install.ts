@@ -38,6 +38,9 @@ export type Deps = {
   own: Own;
   // Late-bound on purpose — see `lateRuns` below.
   runs: Runs;
+  // What one person is offered for one turn, after every slice has had its say. Late-bound for the same reason: the
+  // list is only final once every slice is in. Call it from a tool, a route or a tick, never while installing.
+  toolsFor: (stage: Stage, roomId: string) => Tool[];
 };
 
 // What a slice gives back. Everything is optional: a slice may only add a tool, or only answer a path.
