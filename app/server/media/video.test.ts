@@ -682,3 +682,24 @@ describe('the founder asking for a picture in the film', () => {
     expect(meansAPicture('make it punchy and put music under it')).toBe(false);
   });
 });
+
+describe('a picture scene with no picture', () => {
+  it('points no image at nothing, because that is a 404 and a blank rectangle', () => {
+    const page = composition({
+      title: 'One', shape: 'wide', look: 'clean',
+      shots: [{ scene: { layout: 'picture', image_prompt: 'a bare table', text: 'A bare table' }, seconds: 3 }],
+    });
+    expect(page).not.toContain('assets/undefined');
+    expect(page).not.toMatch(/<img src="assets\/"/);
+    // It still writes whatever words it had, so the scene is not three seconds of nothing.
+    expect(page).toContain('A bare table');
+  });
+
+  it('shows the picture where there is one', () => {
+    const page = composition({
+      title: 'One', shape: 'wide', look: 'clean',
+      shots: [{ scene: { layout: 'picture', image_prompt: 'a bare table' }, image: 'shot-0.png', seconds: 3 }],
+    });
+    expect(page).toContain('assets/shot-0.png');
+  });
+});

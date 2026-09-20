@@ -848,10 +848,17 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // The shot list as the renderer wants it: one entry a shot, each with the scene it belongs to, its own
         // picture, the hold measured off that picture and the push the editor asked for. Two shots of one scene
         // never show the same frame — a picture change that changes nothing is worse than a hold.
+        // The picture a scene ended up with, whichever of its shots was the one that got it. A second take of a
+        // picture scene whose own picture was never drawn used to render an <img> pointed at nothing.
+        const sceneHas = new Map<number, { file: string; hold?: number; lift?: number; shared: boolean }>();
+        edit.shots.forEach((one, order) => {
+          const drew = drewFor.get(order);
+          if (drew && !sceneHas.has(one.scene)) sceneHas.set(one.scene, drew);
+        });
         const cut: Shot[] = edit.shots.map((one, order): Shot => {
           const base = shots[one.scene];
-          const drew = drewFor.get(order);
           const fills = base.scene.layout === 'picture' || base.scene.layout === 'logo';
+          const drew = drewFor.get(order) ?? (fills ? sceneHas.get(one.scene) : undefined);
           return {
             ...base,
             seconds: one.seconds,

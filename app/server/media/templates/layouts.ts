@@ -233,7 +233,10 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`);
     parts.push(`<div class="compare">${sides}</div>`);
   } else if (scene.layout === 'picture') {
-    parts.push(`<div class="shot" data-mark="frame"${measured(shot) ? ` style="${measured(shot)}"` : ''}><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
+    // A picture scene with no picture is not a picture scene, and an <img> pointed at nothing is a 404 in the
+    // render log and a blank rectangle in the film. Everything upstream tries to stop this happening; this is the
+    // line that makes it harmless when something upstream does not.
+    if (shot.image) parts.push(`<div class="shot" data-mark="frame"${measured(shot) ? ` style="${measured(shot)}"` : ''}><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
     if (text) parts.push(`<div class="plate"><p class="lead rise">${kinetic(text, scene.emphasis, pack, false)}</p></div>`);
     return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
   } else if (MOVING.has(scene.layout)) {
