@@ -1,4 +1,5 @@
-import type { Stage, ToolEffect } from '../../shared/model.ts';
+import type { Stage, ToolEffect, ToolEvent } from '../../shared/model.ts';
+import type { Answer } from '../approvals.ts';
 import type { ToolSpec } from '../providers.ts';
 import type { Store } from '../store.ts';
 
@@ -6,7 +7,9 @@ import type { Store } from '../store.ts';
 // `granted` holds docs this person made during the turn, which no wire covers yet.
 // `calls` counts how often each tool ran this turn, for tools that cap it.
 // `report` shows progress while a long tool runs; `signal` ends it when the founder stops the turn.
-export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number>; report?: (effect: ToolEffect) => void; signal?: AbortSignal };
+// `approve` is the turn's own way of putting a question to the founder, for the one tool that runs a turn inside
+// itself: what a colleague wants to send still goes out under the founder's yes, asked on the asker's path.
+export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number>; report?: (effect: ToolEffect) => void; signal?: AbortSignal; approve?: (event: ToolEvent, signal?: AbortSignal) => Promise<Answer> };
 export type ToolResult = { text: string; effect?: ToolEffect };
 // `perTurn` stops a person from looping on a costly tool: past it, the tool answers with a nudge to use what it has.
 // `approval` makes the turn wait for the founder's yes. `ready` returns why the tool cannot work yet, before anyone is asked.

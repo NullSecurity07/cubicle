@@ -310,8 +310,9 @@ test('a person searches and reads the web, several at once', async ({ page }) =>
 test('a browser card can be added; only a wired person can drive it, and never to this machine', async ({ page }) => {
   await tidy(page);
   await send(page, 'build', '/tool browse {"action":"open","url":"https://example.com"}');
-  await expect(node(page, 'build').locator('.chip--fail').last()).toBeVisible();
-  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('no browser card is connected');
+  // Nothing to drive, so driving was never offered: no receipt, and nothing said that claims a page was opened.
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Dev here.');
+  await expect(node(page, 'build').locator('.msg--assistant').last().locator('.chip')).toHaveCount(0);
 
   await addCard(page, 'Add browser');
   const card = page.locator('.react-flow__node-browser');
@@ -403,7 +404,9 @@ test('a pinned doc is read by everyone; unpinning takes it away again', async ({
 test('a wire between two people lets one consult the other; the exchange shows in both rooms', async ({ page }) => {
   await tidy(page);
   await send(page, 'marketing', '/tool ask_person {"name":"Dev","question":"How long for SSO?"}');
-  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('no colleague called "Dev"');
+  // Nobody is wired to Maya yet, so asking a colleague was never offered: no receipt, and nobody was asked.
+  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('Maya here.');
+  await expect(node(page, 'marketing').locator('.msg--assistant').last().locator('.chip')).toHaveCount(0);
 
   await wire(page, 'marketing', 'build');
 

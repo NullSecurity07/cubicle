@@ -3,11 +3,14 @@ import type { TurnResult } from './loop.ts';
 import type { ModelMessage } from './prompt.ts';
 
 export type Source = 'chat' | 'run';
-// The five places a turn can be opened up. Everything this program adds later — a prompt block, compaction, a safety
+// The six places a turn can be opened up. Everything this program adds later — a prompt block, compaction, a safety
 // check, the trace — plugs in here instead of becoming another `if` in `loop.ts`.
+// `step:error` is the one that can answer back: a handler that shortened the prompt sets `retry`, and the step is
+// asked once more with what it left. Nobody setting it means the failure stands.
 export type Payloads = {
   'turn:before': { roomId: string; source: Source; query: string; messages: ModelMessage[] };
   'step:before': { roomId: string; step: number; messages: ModelMessage[] };
+  'step:error': { roomId: string; step: number; messages: ModelMessage[]; error: string; retry?: boolean };
   'tool:before': { roomId: string; call: { id: string; name: string; args: Record<string, unknown> }; refusal?: string };
   'tool:after': { roomId: string; event: ToolEvent };
   'turn:after': { roomId: string; source: Source; query: string; reply: TurnResult };
