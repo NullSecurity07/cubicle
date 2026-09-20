@@ -81,8 +81,9 @@ test('work handed to a colleague is done in their own room, and only the summary
   expect(await (await page.request.get('/api/files/delegation/notes.md')).text()).toBe('Two weeks for SSO.');
 });
 
-test('nobody can be handed work without a wire, and the refusal says how to draw one', async ({ page }) => {
+test('nobody can be handed work without a wire: a hand-over is never offered to somebody with nobody to hand to', async ({ page }) => {
   const reply = await send(page, 'marketing', '/tool delegate_task {"to":"Dev","goal":"anything at all"}');
-  await expect(reply).toContainText('no colleague called "Dev" is connected to your room');
-  await expect(reply).toContainText('drawing a wire between them');
+  // No receipt, because nothing ran, and Dev's room stays as it was. What to connect is said in the person's own prompt.
+  await expect(reply).toContainText('Maya here.');
+  await expect(reply.locator('.chip')).toHaveCount(0);
 });
