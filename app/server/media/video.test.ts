@@ -6,6 +6,7 @@ import { seedStage, type Stage } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import { createMedia } from './jobs.ts';
+import { crowdsCaptions } from './spec.ts';
 import { composition, FORMATS, PACKS, SAFE_1080, safeArea, sceneSeconds, type Shot } from './templates/index.ts';
 import { meansAPicture, spendingScenes } from '../tools/media.ts';
 import { docsFor, fakeVideos, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
@@ -79,8 +80,11 @@ describe('the composition', () => {
     expect(page).toContain('<section class="clip" id="s1" data-start="4" data-duration="4.42">');
     // Everything one scene is made of moves as one box, because a cut is a move of the whole box.
     expect(page).toContain('<div class="stage" id="g1">');
-    // The last scene has nothing to leave for, so it keeps its own length exactly.
-    expect(page).toContain('id="s3" data-start="12" data-duration="4">');
+    // The last scene has nothing to leave for, and is held past the end of the film all the same: a section that
+    // stops exactly on the last frame is a section the renderer catches a hair after it has gone, which is a
+    // frame of black on the end of every film.
+    expect(page).toContain('id="s3" data-start="12" data-duration="4.42">');
+    expect(page).toContain('data-duration="16"');
     // Every sound carries an id of its own, or the mixer never finds it and the film comes out silent.
     expect(page).toContain('<audio id="say0" src="assets/say-0.wav" data-start="0.35" data-duration="3.00" data-volume="1">');
     expect(page.match(/<audio /g)).toHaveLength(1);
@@ -701,5 +705,56 @@ describe('a picture scene with no picture', () => {
       shots: [{ scene: { layout: 'picture', image_prompt: 'a bare table' }, image: 'shot-0.png', seconds: 3 }],
     });
     expect(page).toContain('assets/shot-0.png');
+  });
+});
+
+describe('two systems of type in one band', () => {
+  const listy = { layout: 'checklist', heading: 'What you get', bullets: ['A number that moved', 'A story that holds'], say: 'Two things matter to them.' } as Scene;
+  const plain = { layout: 'statement', text: 'What they really want', say: 'Investors want proof, not promises.' } as Scene;
+
+  it('takes the captions off a scene whose own type grows into the caption band', () => {
+    expect(crowdsCaptions(listy)).toBe(true);
+    expect(crowdsCaptions(plain)).toBe(false);
+    expect(crowdsCaptions({ layout: 'checklist' } as Scene)).toBe(false);
+  });
+
+  it('leaves the band empty for the length of that scene', () => {
+    const page = composition({
+      title: 'One', shape: 'tall', look: 'creator', captions: true,
+      words: [{ word: 'Two', at: 0.2, seconds: 0.3 }, { word: 'things', at: 0.5, seconds: 0.4 }, { word: 'matter.', at: 0.9, seconds: 0.4 }],
+      shots: [{ scene: listy, seconds: 3 }],
+    });
+    expect(page).not.toContain('class="capline"');
+  });
+
+  it('keeps them where the scene puts one block of type above the band', () => {
+    const page = composition({
+      title: 'One', shape: 'tall', look: 'creator', captions: true,
+      words: [{ word: 'Investors', at: 0.2, seconds: 0.3 }, { word: 'want', at: 0.5, seconds: 0.4 }, { word: 'proof.', at: 0.9, seconds: 0.4 }],
+      shots: [{ scene: plain, seconds: 3 }],
+    });
+    expect(page).toContain('class="capline"');
+  });
+});
+
+describe('a list is read a line at a time', () => {
+  it('gives every line a beat of its own rather than one stagger', () => {
+    const page = composition({
+      title: 'One', shape: 'wide', look: 'documentary',
+      shots: [{ scene: { layout: 'steps', heading: 'How it goes', bullets: ['Map the audience', 'Measure real intent', 'Then build'] } as Scene, seconds: 6 }],
+    });
+    for (const line of [1, 2, 3]) expect(page).toContain(`#s0 .one-at-a-time:nth-child(${line})`);
+    // …and the generic entrance leaves them alone, or every line arrives twice.
+    expect(page).toContain('#s0 .rise:not(.one-at-a-time)');
+  });
+
+  it('spreads them across the scene rather than across a tenth of a second', () => {
+    const page = composition({
+      title: 'One', shape: 'wide', look: 'documentary',
+      shots: [{ scene: { layout: 'checklist', heading: 'What you get', bullets: ['One', 'Two', 'Three'] } as Scene, seconds: 6 }],
+    });
+    const at = [...page.matchAll(/one-at-a-time:nth-child\(\d\)"[^;]*?, ([\d.]+)\);/g)].map((one) => Number(one[1]));
+    expect(at).toHaveLength(3);
+    expect(at[2] - at[0]).toBeGreaterThan(1);
   });
 });

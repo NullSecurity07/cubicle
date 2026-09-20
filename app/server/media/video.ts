@@ -23,7 +23,7 @@ import type { Maker, Piece } from './jobs.ts';
 import { availableRam, availableSwap, MINUTES_EACH, needsRam, roomToFilm as room } from './local-clips.ts';
 import {
   AI_LAYOUTS, content, isPurpose, MAX_AI, MAX_LOCAL_AI, PURPOSE, PURPOSES,
-  fallbackOf, saysWhatItShows, withinCaps, type Spec,
+  crowdsCaptions, fallbackOf, saysWhatItShows, withinCaps, type Spec,
 } from './spec.ts';
 import { broll, type Stock } from './stock.ts';
 import {
@@ -797,7 +797,10 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             // that has come back too dark to see a subject in is lifted rather than ungraded.
             const path = join(at, 'assets', file);
             const big = scene.layout === 'hook' || scene.layout === 'stat' || scene.layout === 'title';
-            const hold = await scrimFor(path, visual.room === 'top' ? 'top' : 'foot', paint.ink, paint.ground,
+            // The scrim is solved for the *weakest* colour on the frame rather than the strongest. A line of
+            // support copy is set in the quiet tone, and a wash that clears the headline leaves that line
+            // floating — which is what "grey list text" was.
+            const hold = await scrimFor(path, visual.room === 'top' ? 'top' : 'foot', paint.quiet, paint.ground,
               { big, floor: PACK[pack].scrim * 0.35 }).catch(() => null);
             const light = PACK[pack].format?.grade ? await meanLight(path).catch(() => null) : null;
             made.set(which, { file, hold: hold ?? undefined, lift: light === null ? undefined : liftFor(light) });
@@ -924,7 +927,11 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // The words a film turns on, which are what the caption track lights up.
         const keywords = [...new Set(edit.shots.map((one) => one.keyword).filter(Boolean) as string[])];
         // And where it must stay quiet: the stretches of narration whose scene already writes the line out.
-        const quiet = cut.map((shot, index) => (saysWhatItShows(shot.scene) ? { at: starts[index], seconds: shot.seconds } : null))
+        // Where the caption track must stay quiet: a scene that already writes out what is being said, and a scene
+        // whose own type grows down into the band the captions live in. Two systems of type in one part of the
+        // frame is not a caption track, it is a collision — a real reel put the word "AWAY." on top of a checklist.
+        const quiet = cut.map((shot, index) => (saysWhatItShows(shot.scene) || crowdsCaptions(shot.scene)
+          ? { at: starts[index], seconds: shot.seconds } : null))
           .filter(Boolean) as { at: number; seconds: number }[];
 
         await writeFile(join(at, 'index.html'), composition({

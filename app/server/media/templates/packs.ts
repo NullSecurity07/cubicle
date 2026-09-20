@@ -113,7 +113,7 @@ export const PACK: Record<Pack, PackStyle> = {
     // The quiet one: a serif that has something to say, a great deal of air, pictures doing the arguing, and cuts you
     // barely notice. Nothing in it shouts, which is why the one thing that moves is believed.
     name: 'Editorial',
-    paint: { ground: '#14120F', ink: '#F4EFE6', quiet: '#BDB2A4', signal: '#E4B45C', mark: '#D8A54A', scrim: '20, 18, 15' },
+    paint: { ground: '#14120F', ink: '#F4EFE6', quiet: '#CFC6B8', signal: '#E4B45C', mark: '#D8A54A', scrim: '20, 18, 15' },
     fonts: [INTER, SERIF], display: "'Studio Serif', Georgia, serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'glide', cuts: ['fade', 'wipe', 'fade', 'push'], overlap: 0.62,
     sweep: false, scrim: 0.44, radius: 4, capScale: 1.05,
@@ -136,7 +136,7 @@ export const PACK: Record<Pack, PackStyle> = {
     // photographs and never over the type — not an effect laid over a finished frame. The numbers are small on
     // purpose. If a viewer notices the grade before the story, it is too strong.
     name: 'Documentary',
-    paint: { ground: '#0F0F0E', ink: '#EFEAE1', quiet: '#A9A296', signal: '#C9A227', mark: '#C9A227', scrim: '15, 15, 14' },
+    paint: { ground: '#0F0F0E', ink: '#EFEAE1', quiet: '#C8C1B4', signal: '#D9B33A', mark: '#D9B33A', scrim: '15, 15, 14' },
     fonts: [INTER, SERIF], display: "'Studio Serif', Georgia, serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'glide', cuts: ['cut', 'cut', 'fade', 'cut', 'wipe'], overlap: 0.55,
     sweep: false, scrim: 0.42, radius: 2, capScale: 1.1,

@@ -208,20 +208,20 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     parts.push(say(text, weight(text, shape)), '<div class="rule" data-mark="dash"></div>');
   } else if (scene.layout === 'bullets') {
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
-    parts.push(`<ul class="list">${(scene.bullets ?? []).map((one) => `<li class="rise"><span class="tick" data-mark="dash"></span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
+    parts.push(`<ul class="list">${(scene.bullets ?? []).map((one) => `<li class="rise one-at-a-time"><span class="tick" data-mark="dash"></span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
   } else if (scene.layout === 'checklist') {
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
-    parts.push(`<ul class="list list--check">${(scene.bullets ?? []).map((one) => `<li class="rise"><span class="mark">${CHECK}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
+    parts.push(`<ul class="list list--check">${(scene.bullets ?? []).map((one) => `<li class="rise one-at-a-time"><span class="mark">${CHECK}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
   } else if (scene.layout === 'steps') {
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
-    parts.push(`<ul class="list list--steps">${(scene.bullets ?? []).map((one, at) => `<li class="rise"><span class="step">${at + 1}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
+    parts.push(`<ul class="list list--steps">${(scene.bullets ?? []).map((one, at) => `<li class="rise one-at-a-time"><span class="step">${at + 1}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
   } else if (scene.layout === 'chart') {
     // The bars are measured against the largest of them, so the longest fills the track and the rest are read
     // against it. A chart whose longest bar is two thirds of the way across is a chart nobody can read.
     const bars = (scene.bullets ?? []).map((one) => barOf(one)).filter(Boolean) as { label: string; value: number; unit: string }[];
     const most = Math.max(...bars.map((one) => one.value), 1);
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`);
-    parts.push(`<div class="chart">${bars.map((one, at) => `<div class="chart__row rise">`
+    parts.push(`<div class="chart">${bars.map((one, at) => `<div class="chart__row rise one-at-a-time">`
       + `<div class="chart__head"><p class="chart__name">${html(one.label)}</p>`
       + `<p class="chart__value"><span class="count" style="min-width: ${String(Math.round(one.value)).length}ch">${Math.round(one.value)}</span>${html(one.unit)}</p></div>`
       + `<div class="chart__track"><div class="chart__fill" id="c${index}-${at}" style="transform: scaleX(${(one.value / most).toFixed(3)})"></div></div>`
@@ -279,10 +279,10 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
   return `<div class="frame${onbg}" id="f${index}">${parts.join('')}</div>`;
 }
 
-// Which scenes carry the recurring line, and which carry the little marks beside a list.
+// Which scenes carry the recurring line. The little marks beside a list no longer have an entrance of their
+// own: they belong to the line they sit beside, and that line arrives on its own beat.
 const hasRule = (scene: Scene) => scene.layout === 'title' || scene.layout === 'statement' || scene.layout === 'stat'
   || scene.layout === 'outro' || scene.layout === 'logo' || ((scene.layout === 'bullets' || scene.layout === 'checklist' || scene.layout === 'steps') && !!scene.heading?.trim());
-const hasTicks = (scene: Scene) => scene.layout === 'bullets' && !!scene.bullets?.length;
 
 // A scene that fills the frame with a picture, moving or not, and so takes the slow push rather than the rise.
 const FILLS = new Set(['picture', 'footage', 'clip', 'presenter']);
@@ -292,13 +292,14 @@ const FILLS = new Set(['picture', 'footage', 'clip', 'presenter']);
 // punchy film does the same thing in half the time, which is the whole difference between an explainer and a reel.
 // What this scene actually put on the page. GSAP complains, loudly and once per frame, about a tween whose target is
 // not there, so nothing is animated that was not written: the html is the one thing that knows.
-export type Onscreen = { words: boolean; sweep: boolean; rise: boolean; rule: boolean; tick: boolean; mark: boolean; count: boolean };
+export type Onscreen = { words: boolean; sweep: boolean; rise: boolean; rule: boolean; tick: boolean; mark: boolean; count: boolean; oneAtATime: boolean };
 export const onscreen = (html: string): Onscreen => ({
   words: html.includes('class="w'), sweep: html.includes('class="sweep"'), rise: html.includes(' rise"') || html.includes('rise ') || html.includes('"rise'),
   rule: html.includes('class="rule"'), tick: html.includes('class="tick"'), mark: html.includes('class="mark"'), count: html.includes('class="count"'),
+  oneAtATime: html.includes('one-at-a-time'),
 });
 
-export function sceneSteps(shot: Shot, index: number, at: number, scale: number, pack: Pack, last: boolean, pace: Pace = 'calm', has: Onscreen = { words: true, sweep: true, rise: true, rule: true, tick: true, mark: true, count: true }): string[] {
+export function sceneSteps(shot: Shot, index: number, at: number, scale: number, pack: Pack, last: boolean, pace: Pace = 'calm', has: Onscreen = { words: true, sweep: true, rise: true, rule: true, tick: true, mark: true, count: true, oneAtATime: false }): string[] {
   const steps: string[] = [];
   const beat = PACE[pace];
   const style = PACK[pack];
@@ -335,7 +336,12 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
   }
   // The words. In a kinetic pack they arrive one at a time and a little oversized, which is what makes a reel read as
   // a reel; everywhere else the block moves as a block.
-  const rise = `#s${index} .rise`;
+  // A list is read a line at a time, so it arrives a line at a time. Four bullets landing together and then
+  // sitting still for four seconds is a slide, which is what a real documentary piece came back as — and a list
+  // on a stagger of a tenth of a second lands together as far as an eye is concerned. Each line gets a real beat
+  // of its own, spread over the first two thirds of the scene, and the generic entrance leaves them alone.
+  const lines = (shot.scene.bullets ?? []).length;
+  const rise = `#s${index} .rise${has.oneAtATime ? ':not(.one-at-a-time)' : ''}`;
   if (!has.rise) { /* nothing rose: a device scene or a bare picture */ }
   else if (style.motion === 'kinetic') {
     steps.push(`tl.fromTo("${rise}", { y: ${Math.round(beat.travel * scale * 0.6)}, opacity: 0 }, { y: 0, opacity: 1, duration: ${(beat.rise * 0.7).toFixed(2)}, ease: "${beat.ease}", stagger: ${(beat.stagger * 0.8).toFixed(3)} }, ${time(lead)});`);
@@ -347,6 +353,13 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
     steps.push(`tl.fromTo("${rise}", { y: ${Math.round(beat.travel * scale * 1.3)}, opacity: 0, filter: "blur(9px)" }, { y: 0, opacity: 1, filter: "blur(0px)", duration: ${(beat.rise * 1.25).toFixed(2)}, ease: "${beat.ease}", stagger: ${(beat.stagger * 1.4).toFixed(3)} }, ${time(lead)});`);
   } else {
     steps.push(`tl.fromTo("${rise}", { y: ${Math.round(beat.travel * scale)}, opacity: 0 }, { y: 0, opacity: 1, duration: ${beat.rise.toFixed(2)}, ease: "${beat.ease}", stagger: ${beat.stagger} }, ${time(lead)});`);
+  }
+  if (has.oneAtATime && lines) {
+    const each = Math.min(0.95, Math.max(0.32, (shot.seconds * 0.62) / lines));
+    for (let line = 0; line < lines; line += 1) {
+      steps.push(`tl.fromTo("#s${index} .one-at-a-time:nth-child(${line + 1})", { y: ${Math.round(beat.travel * scale * 0.7)}, opacity: 0 },`
+        + ` { y: 0, opacity: 1, duration: ${(beat.rise * 0.8).toFixed(2)}, ease: "${beat.ease}" }, ${time(lead + 0.12 + line * each)});`);
+    }
   }
   // The sweep of colour behind the one word the line turns on, drawn after the word has landed.
   if (style.sweep && has.sweep) steps.push(`tl.fromTo("#s${index} .sweep", { scaleX: 0 }, { scaleX: 1, duration: 0.30, ease: "power3.out" }, ${time(lead + 0.34)});`);
@@ -363,7 +376,7 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
     const most = Math.max(...read.map((one) => one.value), 1);
     const each = Math.min(0.6, Math.max(0.3, (shot.seconds * 0.5) / Math.max(1, read.length)));
     read.forEach((one, bar) => {
-      const at = time(0.2 + bar * each * 0.7);
+      const at = time(lead + 0.2 + bar * each);
       steps.push(`tl.fromTo("#c${index}-${bar}", { scaleX: 0 }, { scaleX: ${(one.value / most).toFixed(3)}, duration: ${each.toFixed(2)}, ease: "${beat.ease}" }, ${at});`);
       if (has.count) {
         steps.push(`tl.fromTo("#s${index} .chart__row:nth-child(${bar + 1}) .count", { textContent: 0 }, { textContent: ${Math.round(one.value)}, duration: ${each.toFixed(2)}, ease: "power2.out", snap: { textContent: 1 } }, ${at});`);
@@ -374,9 +387,10 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
   const counted = layout === 'stat' && has.count && FIGURE.exec(shot.scene.heading?.trim() ?? '');
   if (counted) steps.push(`tl.fromTo("#s${index} .count", { textContent: 0 }, { textContent: ${counted[2]}, duration: ${Math.min(1.5, shot.seconds * 0.45).toFixed(2)}, ease: "power2.out", snap: { textContent: 1 } }, ${time(0.22)});`);
   // In the notebook the same lines are drawn by hand instead, which the marks script animates.
-  const straight = pack === 'sketch' ? [] : [has.rule && hasRule(shot.scene) && `#s${index} .rule`, has.tick && hasTicks(shot.scene) && `#s${index} .tick`].filter(Boolean);
+  const straight = pack === 'sketch' ? [] : [has.rule && hasRule(shot.scene) && `#s${index} .rule`].filter(Boolean);
   if (straight.length) steps.push(`tl.fromTo("${straight.join(', ')}", { scaleX: 0 }, { scaleX: 1, duration: ${(beat.rise * 0.94).toFixed(2)}, ease: "${beat.ease}", stagger: 0.07 }, ${time(0.22)});`);
-  if (layout === 'checklist' && has.mark) steps.push(`tl.fromTo("#s${index} .mark", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: ${(beat.rise * 0.6).toFixed(2)}, ease: "back.out(2)", stagger: ${beat.stagger} }, ${time(0.2)});`);
+  // A tick and a check mark belong to the line they sit beside, and that line has its own beat now, so they
+  // arrive inside it rather than on a stagger of their own.
   // The words leave before the frame does, so the picture is what the next scene is cut against.
   if (!last) {
     const targets = pack === 'sketch' ? `["#f${index}", "#m${index}"]` : `"#f${index}"`;

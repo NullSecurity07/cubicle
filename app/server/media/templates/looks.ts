@@ -85,21 +85,33 @@ export type TypeScale = {
 };
 
 // Every size in the film, in whole pixels of its own frame, with the floors already applied.
+// Whether this pack sets its display line in a serif. The two that do lean on it — the editorial look and the
+// long-form documentary register — and a serif has to be set larger and heavier than a sans to hold the same
+// weight over a photograph.
+export const isSerif = (pack: Pack): boolean => PACK[pack].display.includes('Studio Serif');
+
 export function typeScale(shape: Shape, pack: Pack): TypeScale {
   const { height, scale, text } = FORMATS[shape];
   const style = PACK[pack];
   const s = scale;
   const t = scale * text;
-  const head = height * TYPE_FLOOR.headline[shape];
-  const support = height * TYPE_FLOOR.support;
-  const least = height * TYPE_FLOOR.least;
+  // The floors are shares of the picture a viewer actually sees. A letterboxed film gives an eleventh of its
+  // frame to two black bars, so a line set at six per cent of the frame is five and a half per cent of the
+  // picture — and it is the picture the eye measures it against. The floors are taken against the visible band.
+  const seen = height * (1 - 2 * (style.format?.letterbox ?? 0));
+  const head = seen * TYPE_FLOOR.headline[shape];
+  const support = seen * TYPE_FLOOR.support;
+  const least = seen * TYPE_FLOOR.least;
+  // A serif carries a twelfth more size than the sans it is measured against: its cap height is smaller and its
+  // stems are thinner, so at the same em it reads two sizes down over a photograph.
+  const display = isSerif(pack) ? 1.08 : 1;
   const at = (px: number, floor: number) => Math.round(Math.max(px, floor));
   return {
-    hook: at((style.shout ? 146 : 132) * s, head),
-    display: at((style.shout ? 118 : 112) * s, head),
-    titleCard: at((style.shout ? 118 : 112) * s, height * TYPE_FLOOR.title),
-    heading: at(68 * s, head),
-    quote: at((pack === 'editorial' || pack === 'documentary' ? 74 : 62) * s, head),
+    hook: at((style.shout ? 146 : 132) * s * display, head),
+    display: at((style.shout ? 118 : 112) * s * display, head),
+    titleCard: at((style.shout ? 118 : 112) * s * display, seen * TYPE_FLOOR.title),
+    heading: at(68 * s * display, head),
+    quote: at((pack === 'editorial' || pack === 'documentary' ? 74 : 62) * s * display, head),
     stat: Math.round(300 * s),
     lead: at(38 * t, support),
     body: at(34 * t, support),
@@ -129,6 +141,8 @@ export function styleSheet(shape: Shape, pack: Pack, brand?: Brand): string {
   const style = PACK[pack];
   const paint = paintOf(pack, brand);
   const sketch = pack === 'sketch';
+  // Whether this pack's display face is a serif, which changes how heavily it has to be set over a photograph.
+  const serif = isSerif(pack);
   // What this pack declares as its format, if anything. Almost none of them do.
   const grade = style.format?.grade;
   const bars = style.format?.letterbox ?? 0;
@@ -235,6 +249,11 @@ ${bars ? `/* Letterbox as a fixed format, identical for the whole render: two ba
 ${sketch ? '' : `.display, .heading, .hook, .lead, .body, .label, .quote, .logo, .stat, .step, .side .body { text-shadow: 0 calc(2px * var(--s)) calc(22px * var(--s)) rgba(0, 0, 0, 0.58); }`}
 .display { font-family: ${display}; font-size: ${type.display}px; line-height: ${style.shout ? 0.94 : 1.0}; letter-spacing: ${style.shout ? '-0.01em' : '-0.038em'};
   font-weight: ${style.shout ? 400 : 660}; max-width: 10.5em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
+${serif ? `/* A serif display line over a photograph is the thinnest thing in this studio: its stems are a third the
+   width of the sans at the same size and its cap height is smaller, so it reads two sizes down and it disappears
+   into a busy picture. Every size in the scale is already a twelfth larger for it; this is the shadow, which has
+   to be a real one rather than a hint. */
+.display, .heading, .hook, .quote, .logo, .plate .lead { text-shadow: 0 calc(2px * var(--s)) calc(18px * var(--s)) rgba(0, 0, 0, 0.74), 0 0 calc(3px * var(--s)) rgba(0, 0, 0, 0.55); }` : ''}
 .heading { font-family: ${display}; font-size: ${type.heading}px; line-height: ${style.shout ? 1.0 : 1.08}; letter-spacing: ${style.shout ? '-0.006em' : '-0.03em'};
   font-weight: ${style.shout ? 400 : 630}; max-width: 13.5em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
 .lead { font-size: ${type.lead}px; line-height: 1.3; letter-spacing: -0.016em; font-weight: 450; max-width: 22em; overflow-wrap: break-word; }
@@ -333,9 +352,12 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: ${Math.max(t
   background: rgba(${paint.scrim}, 0.62); overflow: hidden; }
 .chart__fill { position: absolute; inset: 0; transform-origin: 0% 50%; border-radius: 999px;
   background: ${sketch ? paint.ink : paint.signal}; }
+/* The bar is the accent and the figure is information, so the figure is set in the ink. Set in the accent too it
+   was the same colour as the thing it labelled and, over a background carrying that accent, the render's own
+   contrast check measured it at 2.89 against a floor of 3. */
 .chart__value { flex: none; font-family: ${display};
   font-size: ${type.step}px; line-height: 1; font-weight: ${style.shout ? 400 : 700}; letter-spacing: -0.02em;
-  color: ${sketch ? paint.ink : paint.signal}; font-variant-numeric: tabular-nums; }
+  color: ${paint.ink}; font-variant-numeric: tabular-nums; }
 /* A checklist is a list that says yes, so each line carries a mark rather than a bar. */
 .mark { flex: none; position: relative; top: 0.06em; width: ${type.mark}px; height: ${type.mark}px; color: ${sketch ? paint.ink : paint.signal}; }
 .mark svg { display: block; width: 100%; height: 100%; }

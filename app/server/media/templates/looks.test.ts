@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Shape } from '../../../shared/model.ts';
-import { FORMATS, PACKS, styleSheet, TYPE_FLOOR, typeScale } from './looks.ts';
+import { FORMATS, isSerif, PACK, PACKS, styleSheet, TYPE_FLOOR, typeScale } from './looks.ts';
 
 const SHAPES: Shape[] = ['wide', 'tall', 'square'];
+
+// The picture a viewer actually sees. A letterboxed film gives an eleventh of its frame to two black bars, and a
+// line of type is measured by the eye against the picture rather than against the file, so every floor below is
+// taken against this rather than against the frame's height.
+const seenOf = (shape: Shape, pack: (typeof PACKS)[number]) =>
+  FORMATS[shape].height * (1 - 2 * (PACK[pack].format?.letterbox ?? 0));
 
 // Which floor each size in the scale answers to. A headline is the one line a scene is about; a support line is
 // anything a viewer has to read beside it; everything else still has a floor, because writing set below two and a
@@ -14,11 +20,10 @@ const LEAST = ['label', 'chip', 'sideLabel'] as const;
 describe('the type scale has floors under it', () => {
   it('sets every headline at eight per cent of a wide frame and six of a tall one', () => {
     for (const shape of SHAPES) {
-      const { height } = FORMATS[shape];
       for (const pack of PACKS) {
         const type = typeScale(shape, pack);
         for (const which of HEADLINE) {
-          expect(type[which] / height, `${shape}/${pack}/${which}`).toBeGreaterThanOrEqual(TYPE_FLOOR.headline[shape] - 0.0005);
+          expect(type[which] / seenOf(shape, pack), `${shape}/${pack}/${which}`).toBeGreaterThanOrEqual(TYPE_FLOOR.headline[shape] - 0.0005);
         }
       }
     }
@@ -26,11 +31,10 @@ describe('the type scale has floors under it', () => {
 
   it('sets every support line at three point two per cent, captions or no captions', () => {
     for (const shape of SHAPES) {
-      const { height } = FORMATS[shape];
       for (const pack of PACKS) {
         const type = typeScale(shape, pack);
         for (const which of SUPPORT) {
-          expect(type[which] / height, `${shape}/${pack}/${which}`).toBeGreaterThanOrEqual(TYPE_FLOOR.support - 0.0005);
+          expect(type[which] / seenOf(shape, pack), `${shape}/${pack}/${which}`).toBeGreaterThanOrEqual(TYPE_FLOOR.support - 0.0005);
         }
       }
     }
@@ -38,11 +42,10 @@ describe('the type scale has floors under it', () => {
 
   it('sets nothing at all under two point six per cent', () => {
     for (const shape of SHAPES) {
-      const { height } = FORMATS[shape];
       for (const pack of PACKS) {
         const type = typeScale(shape, pack);
         for (const which of [...HEADLINE, ...SUPPORT, ...LEAST]) {
-          expect(type[which] / height, `${shape}/${pack}/${which}`).toBeGreaterThanOrEqual(TYPE_FLOOR.least - 0.0005);
+          expect(type[which] / seenOf(shape, pack), `${shape}/${pack}/${which}`).toBeGreaterThanOrEqual(TYPE_FLOOR.least - 0.0005);
         }
       }
     }
@@ -50,23 +53,44 @@ describe('the type scale has floors under it', () => {
 
   it('sets a title card larger than a headline, because it is the film announcing itself', () => {
     for (const shape of SHAPES) {
-      const { height } = FORMATS[shape];
       for (const pack of PACKS) {
         const type = typeScale(shape, pack);
-        expect(type.titleCard / height, `${shape}/${pack}`).toBeGreaterThanOrEqual(TYPE_FLOOR.title - 0.0005);
+        expect(type.titleCard / seenOf(shape, pack), `${shape}/${pack}`).toBeGreaterThanOrEqual(TYPE_FLOOR.title - 0.0005);
         expect(type.titleCard).toBeGreaterThanOrEqual(type.heading);
       }
     }
     expect(styleSheet('tall', 'documentary')).toContain(`.frame--title .display, #root.has-captions .frame--title .display { font-size: ${typeScale('tall', 'documentary').titleCard}px; }`);
   });
 
+  it('takes the floors against the picture, not the file, where a look wears bars', () => {
+    // The documentary register gives 11% of its frame to two black bars. A headline at six per cent of the file
+    // would be five and a half of the picture, which is the size the eye reads it at.
+    const doc = typeScale('tall', 'documentary');
+    const clean = typeScale('tall', 'clean');
+    expect(seenOf('tall', 'documentary')).toBeLessThan(FORMATS.tall.height);
+    expect(doc.heading / seenOf('tall', 'documentary')).toBeGreaterThanOrEqual(TYPE_FLOOR.headline.tall - 0.0005);
+    expect(clean.heading / FORMATS.tall.height).toBeGreaterThanOrEqual(TYPE_FLOOR.headline.tall - 0.0005);
+  });
+
+  it('sets a serif a twelfth larger than the sans it is measured against', () => {
+    // A serif's cap height is smaller and its stems are thinner, so at the same em it reads two sizes down over a
+    // photograph — which is what "small serif lost in the frame" was.
+    for (const pack of PACKS) {
+      if (!isSerif(pack)) continue;
+      expect(typeScale('wide', pack).display).toBeGreaterThan(typeScale('wide', 'clean').display);
+      expect(styleSheet('wide', pack)).toContain('.display, .heading, .hook, .quote, .logo, .plate .lead { text-shadow:');
+    }
+    expect(styleSheet('wide', 'clean')).not.toContain('.plate .lead { text-shadow:');
+  });
+
   it('is the reason a tall frame no longer sets its labels at two per cent', () => {
     // The proof films failed here: "bullet text is tiny", "a tiny CTA pill", "type small and lost in the frame".
     // On a 1280-high frame those were a 22px eyebrow and a 34px button — 1.7 and 2.6 per cent.
     const tall = typeScale('tall', 'documentary');
-    expect(tall.label).toBeGreaterThanOrEqual(Math.round(1280 * 0.026));
-    expect(tall.cta).toBeGreaterThanOrEqual(Math.round(1280 * 0.032));
-    expect(tall.heading).toBeGreaterThanOrEqual(Math.round(1280 * 0.06));
+    const seen = seenOf('tall', 'documentary');
+    expect(tall.label).toBeGreaterThanOrEqual(Math.round(seen * 0.026));
+    expect(tall.cta).toBeGreaterThanOrEqual(Math.round(seen * 0.032));
+    expect(tall.heading).toBeGreaterThanOrEqual(Math.round(seen * 0.06));
   });
 });
 

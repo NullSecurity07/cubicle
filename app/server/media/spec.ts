@@ -80,6 +80,14 @@ export function echoes(text: string, said: string): number {
   return mine.filter((word) => theirs.has(word)).length / mine.length;
 }
 
+// The layouts whose type grows downward into the band the captions live in: a list, a comparison, a chart. A
+// scene like that already gives a viewer plenty to read, and a caption track under it is a second system of type
+// in the same part of the frame — which a real reel showed as the word "AWAY." sitting on top of a checklist.
+// These scenes keep their words and lose their captions for as long as they are on screen.
+export const CROWDS_CAPTIONS = new Set<Layout>(['bullets', 'checklist', 'steps', 'compare', 'chart']);
+export const crowdsCaptions = (scene: Scene): boolean =>
+  CROWDS_CAPTIONS.has(scene.layout) && (scene.bullets?.length ?? 0) > 0;
+
 // Whether what is written on a scene is already the whole of the line being said over it. A hook is the spoken line
 // set large, and a word-by-word caption under it is the same sentence twice on one frame — which is what the founder
 // was handed. The test is how much of the *spoken* line is already on the screen: five words of a twelve-word line
