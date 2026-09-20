@@ -7,7 +7,7 @@ import { seedStage, type Stage } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import {
-  askedFor, cachedImages, cloudflareImages, fakeImages, firstImages, HF_SPENT, huggingFaceImages, outOfPictures,
+  askedFor, cachedImages, cloudflareImages, DRAWN_BEFORE, firstOf, spentFile, fakeImages, firstImages, HF_SPENT, huggingFaceImages, outOfPictures,
   type Picture, type PictureConnect, pictureOf, pictureSpaces, pictureUrlOf, SETUP_HINT,
 } from './image.ts';
 import { createMedia } from './jobs.ts';
@@ -135,6 +135,17 @@ describe('a picture is paid for once', () => {
     await kept.make({ prompt: 'a paper boat', shape: 'wide' }, { report: () => {} });
     expect(drawn).toBe(3);
     expect(askedFor('a', 'b', 'wide')).not.toBe(askedFor('a', 'b', 'tall'));
+    // A film counts what its second run cost it by who the picture says drew it.
+    expect(first.by).toBeUndefined();
+    expect(again.by).toBe(DRAWN_BEFORE);
+    // A draft is drawn smaller, so it is a picture of its own — and asking for no size at all files a picture
+    // exactly where it was filed before anybody could ask for one.
+    await kept.make({ prompt: 'a paper plane', shape: 'wide', size: 'draft' }, { report: () => {} });
+    expect(drawn).toBe(4);
+    await kept.make({ prompt: 'a paper plane', shape: 'wide', size: 'draft' }, { report: () => {} });
+    expect(drawn).toBe(4);
+    expect(askedFor('a', 'b', 'wide', undefined)).toBe(askedFor('a', 'b', 'wide'));
+    expect(askedFor('a', 'b', 'wide', 'draft')).not.toBe(askedFor('a', 'b', 'wide'));
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -305,6 +316,43 @@ describe('when one free day runs out', () => {
     expect(cloud.asked).toBe(1);
     expect(face.asked).toBe(2);
     expect(said).toHaveLength(1);
+  });
+
+  it('says who the next picture would be asked of, which is what a film tells its minutes by', async () => {
+    const cloud = counted('Cloudflare', { fails: spent });
+    const here = counted('this computer');
+    const both = firstImages(cloud, here);
+    // Nobody has been asked yet, so the quick one is still the answer.
+    expect(both.next?.()).toBe('Cloudflare');
+    await both.make({ prompt: 'a kite' }, { report: () => {} });
+    expect(both.next?.()).toBe('this computer');
+    // The cache in front of them passes the question on, and one that is not set up is never the answer.
+    expect(cachedImages(both, '/nowhere').next?.()).toBe('this computer');
+    expect(firstImages(counted('Cloudflare', { hint: SETUP_HINT }), here).next?.()).toBe('this computer');
+    expect(firstImages(counted('Cloudflare', { hint: SETUP_HINT })).next?.()).toBe(null);
+  });
+
+  it('remembers across a restart that a service ran dry today, so the first film after one is told the right minutes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'stage-spent-'));
+    const file = join(dir, 'deeper', 'spent.json');
+    const cloud = counted('Cloudflare', { fails: spent });
+    const before = firstOf([cloud, counted('this computer')], spentFile(file));
+    await before.make({ prompt: 'a kite' }, { report: () => {} });
+    // The app restarts: new makers, the same file. Cloudflare is not asked again, and is not the answer.
+    const again = counted('Cloudflare', { fails: spent });
+    const here = counted('this computer');
+    const after = firstOf([again, here], spentFile(file));
+    expect(after.next?.()).toBe('this computer');
+    await after.make({ prompt: 'a boat' }, { report: () => {} });
+    expect(again.asked).toBe(0);
+    expect(here.asked).toBe(1);
+    // Yesterday's news is not today's: a day later the quick one is asked first again.
+    const kept = spentFile(file);
+    kept.write({ Cloudflare: { day: Math.floor(Date.now() / 86_400_000) - 1, why: spent } });
+    expect(firstOf([counted('Cloudflare'), counted('this computer')], kept).next?.()).toBe('Cloudflare');
+    // And a file that cannot be read is simply nothing remembered.
+    expect(firstOf([counted('Cloudflare')], spentFile(join(dir, 'never-written.json'))).next?.()).toBe('Cloudflare');
+    await rm(dir, { recursive: true, force: true });
   });
 
   it('tells the founder once when every way of drawing is spent, and lets the film fall back to textures', async () => {

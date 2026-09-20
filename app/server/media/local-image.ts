@@ -51,14 +51,23 @@ export const SIZES = {
   tall: { width: 768, height: 1344 },
   wide: { width: 1344, height: 768 },
 } as const;
+// A draft is the same three shapes at a little over half the pixels. Nearly all of a picture's minute is the four
+// drawing steps, and those cost by the pixel: measured here, a tall draft is 28 seconds where the full one is 50.
+// It is scaled up into the frame behind a scrim and a line of type, which is where nobody counts pixels.
+export const DRAFT_SIZES = {
+  square: { width: 768, height: 768 },
+  tall: { width: 576, height: 1024 },
+  wide: { width: 1024, height: 576 },
+} as const;
 export type Shape = keyof typeof SIZES;
-export const sizeOf = (shape: unknown): { width: number; height: number } =>
-  SIZES[(typeof shape === 'string' && shape in SIZES ? shape : 'square') as Shape];
+export const sizeOf = (shape: unknown, size?: unknown): { width: number; height: number } =>
+  (size === 'draft' ? DRAFT_SIZES : SIZES)[(typeof shape === 'string' && shape in SIZES ? shape : 'square') as Shape];
 
 // Four steps is what the model was distilled for; eight is no better and takes twice as long.
 export const STEPS = 4;
 // About what one costs in wall time here, said on the card before anybody waits for it.
 export const SECONDS_EACH = 55;
+export const SECONDS_EACH_DRAFT = 30;
 // The weights alone are 6.2 GB, and the renderer wants room to work beside them. Below this it would swap, and a
 // picture that takes ten minutes is not a picture anybody waited for.
 export const NEEDS_RAM_GB = 9;
@@ -102,6 +111,9 @@ export function localImages(deps: LocalImageDeps = {}): Maker {
       const stopped = why();
       if (stopped) throw new Error(stopped);
       return inTurn(async () => {
+        // A picture waits its turn, and whoever asked may have stopped wanting it by the time the turn comes: a
+        // film that found its cut had no shot for this one. The renderer is only told to stop if it is running.
+        if (help.signal?.aborted) throw new Error('stopped');
         // Asked at the last moment, not at start: what a machine can spare changes minute to minute, and a picture
         // drawn out of swap takes ten minutes rather than one.
         const spare = await availableRam(deps.read);
@@ -115,8 +127,8 @@ export function localImages(deps: LocalImageDeps = {}): Maker {
         const out = join(work, 'out.png');
         const wrong: string[] = [];
         try {
-          const { width, height } = sizeOf(ask.shape);
-          help.report(`drawing it on this computer — about ${SECONDS_EACH} seconds`);
+          const { width, height } = sizeOf(ask.shape, ask.size);
+          help.report(`drawing it on this computer — about ${ask.size === 'draft' ? SECONDS_EACH_DRAFT : SECONDS_EACH} seconds`);
           const code = await run(binary, [
             '--diffusion-model', join(at, MODELS[1].file),
             '--llm', join(at, MODELS[2].file),

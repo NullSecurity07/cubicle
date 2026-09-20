@@ -19,6 +19,9 @@ export type Maker = {
   name: string; ready(): string | null;
   make(ask: Ask, help: { report: (line: string) => void; signal?: AbortSignal }): Promise<Piece>;
   cast?(): Promise<Voice[]>;
+  // Several backends as one may say which of them the next ask would really go to, so a film can tell the founder
+  // whether its pictures are four seconds each or most of a minute before anybody starts waiting.
+  next?(): string | null;
 };
 export type Makers = Partial<Record<MediaKind, Maker[]>>;
 

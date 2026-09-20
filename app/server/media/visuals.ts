@@ -439,32 +439,36 @@ export function drawnAs(visual: Visual, bible: string): string {
 // How many pictures a film can afford to draw, in minutes rather than in principle. Away from this machine a
 // picture is four seconds and a free account covers hundreds a day, so a film draws one a shot. Here it is nearly
 // a minute each, and eleven minutes of waiting for a fifteen-second reel is not a trade a founder would make.
-export const SECONDS_AWAY = 4;
-export const SECONDS_HERE = 50;
-export function afforded(shots: number, here: boolean, minutes = 8): number {
-  const each = here ? SECONDS_HERE : SECONDS_AWAY;
-  const room = Math.floor((minutes * 60) / each);
-  return Math.max(2, Math.min(shots, room));
-}
+// The arithmetic lives in `shared/film-time.ts`, because the card says the same minutes before Make is pressed.
+export { afforded, SECONDS_AWAY, SECONDS_HERE } from '../../shared/film-time.ts';
 
 // Which shots get a picture of their own when there is not one for every shot: the opening, the close, and then
 // the longest, because a long shot is where a repeat is seen. The rest share the picture nearest them, at their
 // own crop — which is the old behaviour, kept honest by being the exception rather than the rule.
-export function shareOut(lengths: number[], many: number): number[] {
+//
+// `have` is the shots whose picture is already drawn or being drawn. They were started while the narration was
+// still being listened back to, from a cut that was guessed; the measured cut may rank its shots a little
+// differently, and a picture already paid for is never thrown away to draw its neighbour instead.
+export function shareOut(lengths: number[], many: number, have: ReadonlySet<number> = new Set()): number[] {
   if (many >= lengths.length) return lengths.map((_one, at) => at);
   const order = lengths.map((seconds, at) => ({ seconds, at }))
     .sort((a, b) => (a.at === 0 ? -1 : b.at === 0 ? 1 : b.seconds - a.seconds || a.at - b.at));
-  const drawn = new Set(order.slice(0, many).map((one) => one.at));
+  const kept = [...have].filter((at) => at >= 0 && at < lengths.length);
+  const drawn = new Set([...kept, ...order.map((one) => one.at).filter((at) => !have.has(at))].slice(0, Math.max(many, kept.length)));
   const owners: number[] = [];
-  let last = [...drawn][0] ?? 0;
+  let last = -1;
   for (let at = 0; at < lengths.length; at += 1) {
     if (drawn.has(at)) last = at;
     owners.push(last);
   }
   // A shot before the first drawn one takes the first drawn one.
-  const first = owners.find((one) => drawn.has(one)) ?? 0;
-  return owners.map((one) => (drawn.has(one) ? one : first));
+  const first = owners.find((one) => one >= 0) ?? 0;
+  return owners.map((one) => (one >= 0 ? one : first));
 }
+
+// A shot's name across two cuts of the same film: which scene it is in and which take of that scene it is. The
+// guessed cut and the measured one disagree by a few frames about *when*, and almost never about *which*.
+export const shotKey = (one: { scene: number; take: number }): string => `${one.scene}:${one.take}`;
 
 // The words really spoken under one shot, out of the film's measured word timings. A shot is given the words
 // whose middle falls inside it, so a picture is of the phrase on the screen rather than of the scene in general.

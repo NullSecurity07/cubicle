@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   afforded, aboutTheLine, criticiseVisuals, drawnAs, fillerShot, kindFor, lineUnder, repairVisuals,
-  shareOut, shares, slotsFor, somebodyIn, unlettered, visualFrom, visualsOf, visualsPrompt, type Visual,
+  shareOut, shares, slotsFor, somebodyIn, unlettered, visualFrom, visualsOf, visualsPrompt, type Visual, shotKey,
 } from './visuals.ts';
 import type { Scene } from './spec.ts';
 
@@ -159,6 +159,25 @@ describe('what the film can afford', () => {
     expect(owners).toHaveLength(5);
     expect(owners[0]).toBe(0);
     expect(new Set(owners).size).toBe(3);
+  });
+
+  it('draws a draft on four pictures at the most, and on three when this computer has to draw them', () => {
+    expect(afforded(11, false, 8, true)).toBe(4);
+    expect(afforded(11, true, 8, true)).toBe(3);
+    expect(afforded(3, true, 8, true)).toBe(3);
+  });
+
+  it('never throws away a picture that is already being drawn to draw its neighbour instead', () => {
+    // Against the guessed cut the third shot was the long one. Measured, the fourth is — but the third is paid for.
+    const owners = shareOut([2, 1.4, 1.3, 3.8, 2.2], 3, new Set([0, 2]));
+    expect(owners[0]).toBe(0);
+    expect(owners[2]).toBe(2);
+    expect(new Set(owners).size).toBe(3);
+    expect(new Set(owners).has(3)).toBe(true);
+    // And when more are under way than the measured cut would have asked for, every one of them is still used.
+    expect(new Set(shareOut([2, 2, 2, 2], 2, new Set([0, 1, 3]))).size).toBe(3);
+    // A shot keeps its name across two cuts: which scene, which take.
+    expect(shotKey({ scene: 2, take: 1 })).toBe('2:1');
   });
 
   it('gives every shot its own picture when there is room for one', () => {

@@ -29,6 +29,17 @@ describe('the picture model on this machine', () => {
     // Anything else is a square, because a size this model was not distilled for is minutes of mush.
     expect(sizeOf('portrait')).toEqual(sizeOf('square'));
     expect(sizeOf(undefined)).toEqual(sizeOf('square'));
+    // A draft is the same three shapes at a little over half the pixels, and every side still divides by sixteen.
+    expect(sizeOf('tall', 'draft')).toEqual({ width: 576, height: 1024 });
+    expect(sizeOf('wide', 'draft')).toEqual({ width: 1024, height: 576 });
+    expect(sizeOf('square', 'draft')).toEqual({ width: 768, height: 768 });
+    for (const shape of ['tall', 'wide', 'square']) {
+      const small = sizeOf(shape, 'draft');
+      const whole = sizeOf(shape);
+      expect(small.width % 16 + small.height % 16).toBe(0);
+      expect((small.width * small.height) / (whole.width * whole.height)).toBeLessThan(0.62);
+    }
+    expect(sizeOf('tall', 'full')).toEqual(sizeOf('tall'));
     // Four steps is what it was distilled for; eight is no better and twice as long.
     expect(STEPS).toBe(4);
   });
