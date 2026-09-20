@@ -4,10 +4,12 @@
 // (minutes a clip) but unlimited and private. `spaces.ts` asks free Hugging Face Spaces — fast, but it spends a small
 // daily quota and is the only one that can make a talking head. The studio takes whichever answers first and falls
 // back in plain words when neither can.
-export type ClipAsk = { prompt: string; image?: Buffer; seconds: number };
+// `shape` is the film's own shape. A clip drawn wide and cut down to a phone loses whatever was at the sides,
+// which on a person is their hands.
+export type ClipAsk = { prompt: string; image?: Buffer; seconds: number; shape?: string };
 // `about` is what the portrait was drawn from, in words. A backend that cannot animate the picture itself can still
 // draw somebody of that description moving, which is nearer what was asked for than the photograph held still.
-export type PresenterAsk = { portrait: Buffer; speech: Buffer; about?: string };
+export type PresenterAsk = { portrait: Buffer; speech: Buffer; about?: string; shape?: string };
 export type Help = { report: (line: string) => void; signal?: AbortSignal };
 export type Clip = { ext: 'mp4'; bytes: Buffer };
 export type Clips = {

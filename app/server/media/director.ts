@@ -1,6 +1,6 @@
 import type { Shape } from '../../shared/model.ts';
 import { MOODS, type Mood } from './audio.ts';
-import { contrasty, criticise, figureIn, hasNumber, headlineOf, keywords, listy, repair, trimTo, type Want } from './critic.ts';
+import { contrasty, criticise, drawnWord, figureIn, hasNumber, headlineOf, keywords, listy, photographic, repair, trimTo, type Want } from './critic.ts';
 import {
   AI_LAYOUTS, budgetOf, CAPS, HEADING_WORDS, isPurpose, LAYOUTS, MAX_SCENES, parseSpec, PURPOSE, PURPOSES,
   saidWords, scenesFor, TEXT_WORDS, type Layout, type Purpose, type Scene, type Spec,
@@ -201,6 +201,9 @@ export function planPrompt(understanding: Understanding, asked: Asked, material:
       ? 'Everything specific this film says — every feature, every number, every name — must come out of the material below, and every beat must carry the words it came from in "source", quoted exactly. Say it in your own words; the quotation is what proves it, not what you read out. A beat whose claim you cannot quote is a beat you must not write.'
       : 'There is no material behind this film, so it may say only what is generally true. No brand name, no product name, no customer, and no statistics at all — not a percentage, not a multiple, not a sum of money. A number nobody measured is a lie with a decimal point in it. Leave "source" out.',
     'A number belongs in this film only if it changes something for the person watching — money, time, how many people, how much better. How many kinds of something the product has is an inventory, not a number worth a scene.',
+    understanding.pack === 'sketch'
+      ? 'This film is drawn by hand from end to end, so the style bible describes one drawing and every picture in the film is that same drawing.'
+      : 'Every picture in this film is the same photograph, so the style bible names a real medium and a real light, and it never asks for a cartoon, an illustration, a 3d render or a drawing.',
     material.lines.length
       ? 'The last beat asks the viewer to do one thing they really can do — an address, a command or an action the material names. If the material names none, close on something plain and true instead, with no invented website, download or button.'
       : 'The last beat closes on something plain: no website, no download, no button, because there is nothing behind this film to click.',
@@ -223,9 +226,13 @@ export function planOf(raw: unknown, understanding: Understanding, asked: Asked)
       source: beat.source ? String(beat.source).slice(0, CAPS.text) : undefined,
     };
   }).filter((beat) => beat.say.trim() || beat.on_screen.trim());
-  const bible = typeof said.style_bible === 'string' && said.style_bible.trim().length > 12
-    ? said.style_bible.trim().slice(0, 180)
-    : bibleFor(understanding);
+  // The look the model wrote, kept only when it really is one. A model asked for a line of visual direction writes
+  // "modern and dynamic" as often as it writes a medium and a light, and a picture model handed that draws whatever
+  // it feels like — which is how one scene of a real reel came back a cartoon. A notebook film is the other way
+  // round: it is drawn by hand on purpose, so its line has to say so.
+  const written = typeof said.style_bible === 'string' && said.style_bible.trim().length > 12 ? said.style_bible.trim().slice(0, 180) : '';
+  const fits = understanding.pack === 'sketch' ? !!drawnWord(written) : photographic(written);
+  const bible = written && fits ? written : bibleFor(understanding);
   const hook = typeof said.hook === 'string' && said.hook.trim() ? trimTo(said.hook.trim(), 9) : trimTo(asked.brief, 8);
   return { angle: String(said.angle ?? '').slice(0, 200) || asked.brief.slice(0, 160), hook, bible, beats: beats.slice(0, MAX_SCENES) };
 }
@@ -241,7 +248,12 @@ export function bibleFor(understanding: Understanding): string {
     sketch: 'loose ink and watercolour illustration on warm paper, visible pencil under-drawing, limited palette',
     brand: 'clean still-life photography, soft even light, uncluttered surfaces, one accent colour, matte finish',
   };
-  return by[understanding.pack] ?? by.clean;
+  // Every pack but the notebook is photographed, and the line has to say what it is photographed on and in what
+  // light or it is not a look at all. A pack whose line has drifted off that falls back to the plain studio one
+  // rather than handing a picture model a mood word.
+  const line = by[understanding.pack];
+  if (understanding.pack === 'sketch') return line;
+  return line && photographic(line) ? line : by.clean;
 }
 
 // --- pass three: the storyboard ----------------------------------------------------------------------------------
@@ -291,6 +303,9 @@ export function specPrompt(plan: Plan, understanding: Understanding, material: M
     material.lines.length
       ? '- Every feature, number and name has to be in the material, and has to be quoted in "source". Anything you cannot quote is cut before this is rendered.'
       : '- No statistics of any kind, and no product or company name: there is nothing behind this film to have measured or built anything.',
+    understanding.pack === 'sketch'
+      ? '- Every picture in this film is the same hand-drawn look, and no scene asks for a photograph.'
+      : '- Every picture in this film is the same photograph. No scene may ask for a cartoon, an illustration, a 3d render, a drawing, a painting or anything else drawn: one scene in another look is the fault a stranger sees before they have read a word.',
     `- Never these words: ${FILLER.slice(0, 14).join(', ')}.`,
     ...(understanding.purpose === 'reel' || understanding.purpose === 'ad' ? ['- The first scene is a hook and the last is a cta.'] : []),
     '',

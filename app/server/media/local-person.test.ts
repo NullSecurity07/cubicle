@@ -39,6 +39,16 @@ describe('the order a moving person is asked for in', () => {
     expect((await clips.presenter({ portrait: Buffer.of(1), speech: Buffer.of(1) }, help())).bytes.toString()).toBe('online-person');
   });
 
+  it('draws them in the shape of the film, so their hands are not cut off at the sides', async () => {
+    // The shape has to reach the renderer, or a phone reel gets a wide clip with its middle cut out.
+    let asked: string | undefined;
+    const here = backend('here', { broll: async (ask) => { asked = ask.shape; return clip('here-broll'); } });
+    await here.presenter({ portrait: Buffer.of(1), speech: Buffer.of(1), shape: 'tall' }, help());
+    const person = localPerson({ env: {} as NodeJS.ProcessEnv, clips: here });
+    await person.presenter({ portrait: Buffer.of(1), speech: Buffer.of(1), shape: 'tall' }, help());
+    expect(asked).toBe('tall');
+  });
+
   it('draws the person here when the free service has nothing left', async () => {
     const spent = backend('online', { presenter: async () => { throw new Error('today\'s free GPU minutes are used up'); } });
     const clips = orderedClips({ broll: [], presenter: [spent, backend('here')] });

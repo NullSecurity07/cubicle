@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carriesVisual, criticise, echoes, figureIn, headlineOf, keywords, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
+import { carriesVisual, criticise, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
 import { countWords, LAYOUTS, saidWords, saysWhatItShows, type Layout, type Scene, type Spec } from './spec.ts';
 
 // Every rule here is written the same way round: a lazy storyboard of the kind a free model really hands back goes
@@ -384,5 +384,94 @@ describe('a film that was asked for somebody on camera', () => {
   it('leaves a film that already has somebody moving alone', () => {
     const already = spec([still.scenes[0], { layout: 'presenter', portrait_prompt: 'a founder', say: 'They watch.' }, still.scenes[2]]);
     expect(rules(criticise(already, reelWant({ person: true })))).not.toContain('person');
+  });
+});
+
+describe('one film, one look', () => {
+  // The two kinds of film there are. The first is what five of the six packs are shot in; the second is the
+  // notebook, which is drawn by hand on purpose.
+  const photo = 'high-contrast editorial photography, deep shadows, one saturated accent light';
+  const drawn = 'loose ink and watercolour illustration on warm paper, visible pencil under-drawing';
+  const lookWant = (bible: string) => reelWant({ bible });
+
+  it('names the word a scene used to ask for a look the film is not shot in', () => {
+    // This is the real fault, word for word: one scene of a fifteen-second reel came back a 3-D cartoon character
+    // standing beside four photographs, and the film had no single look.
+    expect(offStyle('a 3d render of a founder at a desk', photo)).toBe('3d render');
+    expect(offStyle('a 3-D rendered founder', photo)).toBe('3-D rendered');
+    expect(offStyle('a cartoon founder waving', photo)).toBe('cartoon');
+    expect(offStyle('an illustrated skyline, flat design', photo)).toBe('illustrated');
+    expect(offStyle('a watercolor desk', photo)).toBe('watercolor');
+    expect(offStyle('anime characters in an office', photo)).toBe('anime');
+    // And says nothing about a picture that is already the film.
+    expect(offStyle('a founder at a desk, deep shadows, shallow depth of field', photo)).toBeNull();
+  });
+
+  it('leaves alone the ordinary words that only look like a style', () => {
+    // A founder drawing on experience is a person doing something, and rendering is what this tool does to every
+    // film it makes. Either one read as a style would rewrite a scene that was never wrong.
+    expect(offStyle('a founder drawing on years of experience', photo)).toBeNull();
+    expect(offStyle('a laptop finishing the rendering of a film', photo)).toBeNull();
+    expect(offStyle('a founder drawing up a list at a desk', photo)).toBeNull();
+    // The noun itself is still the noun.
+    expect(offStyle('a pencil drawing of a desk', photo)).toBe('drawing');
+    expect(offStyle('a render of a phone', photo)).toBe('render');
+  });
+
+  it('allows every drawn word in a film whose own look is drawn', () => {
+    for (const asked of ['a cartoon founder', 'a watercolour desk', 'a 3d render of a phone', 'a loose pencil drawing']) {
+      expect(offStyle(asked, drawn)).toBeNull();
+    }
+  });
+
+  it('shoots a stray prompt the way the rest of the film is shot, and changes nothing else about it', () => {
+    expect(inStyle('a 3d render of a founder at a desk', photo)).toBe('a photograph of a founder at a desk');
+    // "a photograph founder" is not English, so the word beside a subject is the one that describes it.
+    expect(inStyle('a cartoon founder at a desk', photo)).toBe('a photographed founder at a desk');
+    expect(inStyle('a cartoon illustration of a phone', photo)).toBe('a photograph of a phone');
+    expect(inStyle('a founder at a desk', photo)).toBe('a founder at a desk');
+    expect(inStyle('a cartoon founder', drawn)).toBe('a cartoon founder');
+  });
+
+  it('criticises the scene that wandered off, names it, and puts it back in the film', () => {
+    const mixed = spec([
+      { layout: 'hook', text: 'Investors want traction', say: 'Investors want traction.', bg_prompt: `${photo}. a founder at a desk` },
+      { layout: 'statement', text: 'Show real usage', say: 'Show real usage.', bg_prompt: `${photo}. a 3d render of a founder` },
+      { layout: 'cta', text: 'Follow for more', say: 'Follow for more.', bg_prompt: `${photo}. a phone in a hand` },
+    ]);
+    const found = criticise(mixed, lookWant(photo));
+    expect(rules(found)).toContain('style');
+    expect(found.find((one) => one.rule === 'style')).toMatchObject({ scene: 2 });
+    const { spec: fixed, notes } = repair(mixed, lookWant(photo));
+    expect(fixed.scenes[1].bg_prompt).not.toMatch(/3d render/i);
+    expect(fixed.scenes[1].bg_prompt).toContain('a photograph of a founder');
+    expect(notes.join(' ')).toContain('shot the way the rest of the film is');
+    expect(rules(criticise(fixed, lookWant(photo)))).not.toContain('style');
+    // The scenes that were already the film are untouched, so a good storyboard is not rewritten around one bad one.
+    expect(fixed.scenes[0].bg_prompt).toBe(mixed.scenes[0].bg_prompt);
+  });
+
+  it('does the same for the picture scenes, which is the other field a model writes a look into', () => {
+    const drawnScene = spec([
+      { layout: 'hook', text: 'Investors want traction', say: 'Investors want traction.', bg_prompt: `${photo}. a founder at a desk` },
+      { layout: 'picture', image_prompt: `${photo}. a cartoon founder waving`, say: 'They watch what people do.' },
+      { layout: 'cta', text: 'Follow for more', say: 'Follow for more.', bg_prompt: `${photo}. a phone in a hand` },
+    ]);
+    expect(rules(criticise(drawnScene, lookWant(photo)))).toContain('style');
+    const { spec: fixed } = repair(drawnScene, lookWant(photo));
+    expect(fixed.scenes[1].image_prompt).not.toMatch(/cartoon/i);
+    expect(fixed.scenes[1].image_prompt).toContain('a photographed founder waving');
+  });
+
+  it('keeps a hand-drawn film hand-drawn, because there the drawn words are the look', () => {
+    const notebook = spec([
+      { layout: 'hook', text: 'Investors want traction', say: 'Investors want traction.', bg_prompt: `${drawn}. a founder at a desk` },
+      { layout: 'statement', text: 'Show real usage', say: 'Show real usage.', bg_prompt: `${drawn}. a loose ink drawing of a laptop` },
+      { layout: 'cta', text: 'Follow for more', say: 'Follow for more.', bg_prompt: `${drawn}. a phone in a hand` },
+    ]);
+    expect(rules(criticise(notebook, lookWant(drawn)))).not.toContain('style');
+    const { spec: fixed, notes } = repair(notebook, lookWant(drawn));
+    expect(fixed.scenes[1].bg_prompt).toContain('a loose ink drawing of a laptop');
+    expect(notes.join(' ')).not.toContain('shot the way the rest of the film is');
   });
 });

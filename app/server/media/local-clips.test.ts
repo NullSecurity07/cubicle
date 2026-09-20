@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { firstClips, noClips, type Clips } from './clips.ts';
 import {
-  availableRam, availableSwap, CLIP_SECONDS, DOWNLOAD_GB, FRAME, LEAST_RAM_GB, LORA, localClips, MINUTES_EACH,
+  availableRam, availableSwap, CLIP_SECONDS, DOWNLOAD_GB, FRAME, frameOf, LEAST_RAM_GB, LORA, localClips, MINUTES_EACH, SHAPES,
   MODELS, modelsDir, NEEDS_RAM_GB, REAL_DISK, roomToFilm, fakeLocalClips, vulkanHere,
 } from './local-clips.ts';
 
@@ -153,5 +153,30 @@ describe('whether there is room to film here', () => {
     expect(roomToFilm({ ram: 9, swap: 0, needs: 8 })).toEqual({ answer: 'yes', line: '' });
     expect(roomToFilm({ ram: 7, swap: 4, needs: 8 }).answer).toBe('slow');
     expect(roomToFilm({ ram: 3, swap: 40, needs: 8 }).answer).toBe('no');
+  });
+});
+
+describe('the shape a clip is drawn in', () => {
+  it('draws it in the shape of the film it is going into', () => {
+    // Every clip used to be drawn wide and then have its middle cut out for a phone reel, so a person framed from
+    // the waist up arrived as a face — which is what the founder meant by "no body and hand movement".
+    expect(frameOf('tall')).toEqual({ width: 480, height: 832 });
+    expect(frameOf('wide')).toEqual({ width: 832, height: 480 });
+    expect(frameOf('square')).toEqual({ width: 624, height: 624 });
+    // A shape nobody proved is not a shape this model draws; wide is what it was trained nearest.
+    expect(frameOf('portrait')).toEqual(frameOf('wide'));
+    expect(frameOf(undefined)).toEqual(frameOf('wide'));
+  });
+
+  it('keeps every shape near the million pixels the model was trained at', () => {
+    // Far outside that and Wan2.1 at 1.3B makes mush, whatever the shape.
+    for (const [name, size] of Object.entries(SHAPES)) {
+      const pixels = size.width * size.height;
+      expect(pixels, name).toBeGreaterThan(350_000);
+      expect(pixels, name).toBeLessThan(450_000);
+      // Both sides a multiple of 16, or the renderer pads and the person drifts off centre.
+      expect(size.width % 16, name).toBe(0);
+      expect(size.height % 16, name).toBe(0);
+    }
   });
 });
