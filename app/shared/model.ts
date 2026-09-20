@@ -1,7 +1,11 @@
+import type { Gender } from './voices.ts';
+
 // The plain model both sides agree on. The client maps it to React Flow; the server stores it.
 export type Box = { x: number; y: number; w: number; h: number };
 // `model` is a name from server/models.json; absent or 'auto' lets the server choose.
-export type Room = Box & { id: string; name: string; role: string; accent: string; brief: string; model?: string };
+// `gender` and `voice` are how this person sounds. Both are absent on a stage saved before people had voices of
+// their own, and `shared/voices.ts` then works them out from the name and the id until one is written down here.
+export type Room = Box & { id: string; name: string; role: string; accent: string; brief: string; model?: string; gender?: Gender; voice?: string };
 // `pinned` makes a doc company-wide: every person reads it, wired or not. Writing it still needs a wire.
 export type Doc = Box & { id: string; title: string; pinned?: boolean };
 // Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is a code folder a wired person may hand to a coding agent; `board` holds tasks that wired people may propose and the founder runs.
