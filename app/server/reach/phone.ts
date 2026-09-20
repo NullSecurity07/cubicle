@@ -74,7 +74,8 @@ export function createPhone(deps: {
   // Listening to a voice note and answering with one. Both are absent on a machine without ffmpeg, and everything
   // below still works: the words come and go as words.
   hear?: (sound: Buffer, mime?: string, report?: (line: string) => void) => Promise<string>;
-  say?: (text: string) => Promise<Buffer>;
+  // The room is who is speaking: every person has a voice of their own, and a reply has to arrive in theirs.
+  say?: (roomId: string, text: string) => Promise<Buffer>;
   digest?: () => Promise<string>;
   onPaired?: () => void; onError?: (error: Error) => void;
 }) {
@@ -157,7 +158,7 @@ export function createPhone(deps: {
     // Out loud first, then always in words: a mishearing, a missing voice or a walk past a tunnel never costs the reply.
     let quiet = '';
     if (deps.say && await reach.speaks(where.chatId)) {
-      try { await api.sendVoice(where.chatId, await deps.say(reply), { ...(where.threadId ? { threadId: where.threadId } : {}) }); }
+      try { await api.sendVoice(where.chatId, await deps.say(room.id, reply), { ...(where.threadId ? { threadId: where.threadId } : {}) }); }
       catch (error) { quiet = `I could not say that out loud: ${(error as Error).message}`; }
     }
     // An answer to the founder's own question makes a sound: real work takes minutes, the phone has gone back in a
