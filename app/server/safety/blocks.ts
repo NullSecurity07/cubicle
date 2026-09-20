@@ -24,8 +24,8 @@ const PIPE_TO_SHELL = /\b(?:curl|wget|fetch|iwr|Invoke-WebRequest)\b[^|\n]{0,300
 const PRIVATE_FILES = /(?:^|[\s"'`(=:;&|])(?:~|\$HOME|\$\{HOME\}|\/home\/[^/\s"']+|\/root|\/Users\/[^/\s"']+)\/\.(?:ssh|aws|kube|gnupg|docker|config\/gcloud)\b|(?:^|[\s"'`(=:;&|])(?:[\w.~$/-]*\/)?\.env(?![\w.-])/;
 // Letters that are not what they look like: invisible marks, writing direction switches, and the Cyrillic, Greek and
 // full-width shapes that stand in for Latin ones in an address.
-const INVISIBLE = /[­᠎​-‏‪-‮⁠-⁤⁦-⁩﻿]/;
-const LOOKALIKE = /[Ͱ-ϿЀ-ӿԀ-ԯ‐-―−！-～]/;
+const INVISIBLE = /[\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/;
+const LOOKALIKE = /[\u0370-\u03FF\u0400-\u04FF\u0500-\u052F\u2010-\u2015\u2212\uFF01-\uFF5E]/;
 
 // A web address as it sits in a line of prose or a line of code. Square brackets stay in, because an address written
 // the IPv6 way is nothing but brackets; what trails off the end of a sentence is trimmed instead.
