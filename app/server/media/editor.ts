@@ -232,7 +232,16 @@ function splitPoints(from: number, span: number, style: Cutting, inner: Phrase[]
     const phrase = nearestPhrase(inner, asked);
     // A boundary that cannot be reached without breaking the floor either side is not a boundary worth having.
     const ok = phrase !== null && phrase - cursor >= style.min && from + span - phrase >= style.min;
-    const landed = ok ? phrase! : betweenWords(words, asked);
+    let landed = ok ? phrase! : betweenWords(words, asked);
+    // The opening's cap is a cap, not a preference. A phrase boundary half a second the wrong side of it is still
+    // the wrong side of it, and a hook that has not changed picture by two and a half seconds is a hook nobody is
+    // watching by then — a real reel reported that fault and shipped with it. So when the nearest boundary lands
+    // late, the last one that lands in time is taken instead, and failing that the gap between two words.
+    if (at === 1 && firstAt && landed > from + firstAt + 0.01) {
+      const inTime = inner.flatMap((one) => [one.at, one.at + one.seconds])
+        .filter((edge) => edge - cursor >= style.min && edge <= from + firstAt + 0.01 && from + span - edge >= style.min);
+      landed = inTime.length ? Math.max(...inTime) : betweenWords(words, from + firstAt);
+    }
     const edge = Math.round(landed * 1000) / 1000;
     if (edge - cursor < style.min || from + span - edge < style.min) break;
     edges.push(edge);

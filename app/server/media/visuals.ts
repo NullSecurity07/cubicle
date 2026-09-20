@@ -82,7 +82,7 @@ export const fillerShot = (subject: string): string | null => FILLER_RE.exec(sub
 //
 // The only thing that works is never asking. So every noun that summons lettering is struck out of a subject
 // before it is drawn, and a verb that asks for writing goes with it.
-export const SUMMONS_TEXT = /\b(charts?|graphs?|dashboards?|decks?|slides?|metrics|checklists?|lists?|texts?|signs?|signage|screens?|displays?|interfaces?|ui|uis|apps?|websites?|web ?pages?|pages?|documents?|reports?|spreadsheets?|logos?|brands?|labels?|posters?|banners?|headlines?|newspapers?|magazines?|books?|whiteboards?|notebooks?|notes?|letters?|words?|writing|written|typography|captions?|subtitles?|numbers?|figures?|percentages?|slogans?|titles?|inscriptions?|lettering|typeface|font)\b/gi;
+export const SUMMONS_TEXT = /\b(charts?|graphs?|dashboards?|decks?|slides?|metrics|checklists?|lists?|texts?|signs?|signage|screens?|displays?|interfaces?|ui|uis|apps?|websites?|web ?pages?|pages?|documents?|reports?|spreadsheets?|logos?|brands?|labels?|posters?|banners?|headlines?|newspapers?|magazines?|books?|whiteboards?|notebooks?|notes?|letters?|words?|writing|written|typography|captions?|subtitles?|numbers?|figures?|percentages?|slogans?|titles?|inscriptions?|lettering|typeface|font|question\s+marks?|exclamation\s+marks?|punctuation|symbols?|emoji|icons?|pictograms?|glyphs?)\b/gi;
 // "a sign reading OPEN", "a mug that says Boss", "a door labelled Accounts" — the literal goes with the verb that
 // introduced it, because the noun alone is not what summons the lettering: the quoted words are. A verb with no
 // literal after it ("a founder reading a summary") is somebody doing something and is left where it is.
@@ -104,6 +104,25 @@ export function unlettered(subject: string): string {
     .replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').replace(/^[\s,;.]+|[\s,;.]+$/g, '')
     .trim();
 }
+
+// Somebody in the frame. A film has one person in it at most, and this is how that is counted.
+//
+// The rule is not squeamishness, it is what a real render showed. A fifteen-second reel made with everything else
+// in this file working came back with four different shots of the same dark-haired woman in the same office,
+// because four different subjects all ended with "anybody in the picture is at work and turned away from the
+// camera" and a picture model handed that draws a person — the same person, because the look is fixed and that is
+// what a fixed look is for. Four shots of one stranger nobody introduced is the identity-drift fault from the
+// other direction: not a person who keeps changing, a person who keeps coming back.
+//
+// So at most one picture in a film may have somebody in it. Everything else is a place, a thing or a detail, and
+// the clause that invites a person is only written on the one that is allowed one.
+const SOMEBODY = /\b(person|people|man|men|woman|women|boy|girl|child|founder|investor|partner|presenter|speaker|host|worker|customer|client|colleague|stranger|somebody|someone|crowd|team|face|portrait|hands?|figures?|silhouettes?|shoulders?)\b/gi;
+export const somebodyIn = (subject: string): string | null => ((subject ?? '').match(SOMEBODY)?.[0] ?? null);
+// The same subject with the people taken out of it, so what is left is the place or the thing it was set in.
+export const nobodyIn = (subject: string): string =>
+  (subject ?? '').replace(SOMEBODY, ' ')
+    .replace(/\b(?:a|an|the|of|with|by|beside|near)\s*(?=[,;.]|$)/gi, ' ')
+    .replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').replace(/^[\s,;.]+|[\s,;.]+$/g, '').trim();
 
 // --- is this picture of what is being said? ------------------------------------------------------------------
 
@@ -170,6 +189,12 @@ export function criticiseVisuals(visuals: Visual[]): Finding[] {
       }
     }
   });
+  // A film has one person in it. The second one is a stranger nobody introduced, and in a fixed look it is the
+  // same stranger, which is worse.
+  const peopled = visuals.map((one, index) => (somebodyIn(one.subject) ? index : -1)).filter((one) => one >= 0);
+  for (const index of peopled.slice(1)) {
+    say('crowd', index, `picture ${index + 1} has somebody in it and so does picture ${peopled[0] + 1} — a film has one person in it`);
+  }
   // A film framed the same way throughout is a slideshow however varied its subjects are.
   const kinds = new Set(visuals.map((one) => one.kind));
   if (visuals.length >= 4 && kinds.size < 3) {
@@ -236,6 +261,8 @@ export function repairVisuals(visuals: Visual[]): { visuals: Visual[]; notes: st
   const note = (line: string) => { if (!notes.includes(line)) notes.push(line); };
   const used = new Set<string>();
   const made: Visual[] = [];
+  // Whether somebody has already been put on screen in this film.
+  let peopled = false;
   for (const [index, visual] of visuals.entries()) {
     let one: Visual = { ...visual, subject: unlettered(visual.subject) };
     if (one.subject !== visual.subject) note('a picture was asked to have writing in it, and a picture model cannot write, so the writing came out');
@@ -257,6 +284,15 @@ export function repairVisuals(visuals: Visual[]): { visuals: Visual[]; notes: st
       one = { ...one, subject: visualFrom(one.line, index, used), metaphor: undefined };
     } else {
       for (const word of content(one.subject).slice(0, 3)) used.add(word);
+    }
+    // One person in a film. The first picture that has somebody in it keeps them; every one after it is the same
+    // place or the same thing with nobody in it, which is what it should have been.
+    if (somebodyIn(one.subject)) {
+      if (peopled) {
+        const alone = nobodyIn(one.subject);
+        note('a second picture had somebody in it, and a film has one person in it, so that shot is of the place instead');
+        one = { ...one, subject: countWords(alone) >= 3 ? alone : visualFrom(one.line, index, used), kind: one.kind === 'medium' ? 'environment' : one.kind };
+      } else peopled = true;
     }
     made.push(one);
   }
@@ -298,7 +334,8 @@ export function visualsPrompt(slots: Visual[], bible: string, angle: string): st
     '- No two pictures in this film may be of the same thing. Not the same subject, not the same place, not the same action.',
     '- Never a hand holding a phone, a laptop on a desk, hands on a keyboard, a meeting room, a city street, an abstract background, a lightbulb or a rocket, unless the line itself is about one.',
     '- A picture model cannot write. Nothing in a picture may be a screen, a chart, a sign, a document, a logo or any other surface with words on it.',
-    '- Nobody looks at the camera. Anybody in a picture is at work and turned away.',
+    '- At most ONE picture in the whole film may have a person in it. Every other picture is a place, an object or a detail with nobody in it.',
+    '- Nobody looks at the camera. Anybody in that one picture is at work and turned away.',
     '- The framing of each picture is already decided and is written beside it. Keep it.',
     '',
     'The moments:',
@@ -366,7 +403,11 @@ export function slotsFor(slots: Slot[], captions: boolean, scenes: Scene[]): Vis
 export function drawnAs(visual: Visual, bible: string): string {
   const subject = unlettered(noFace(photographic(bible) ? inStyle(visual.subject, bible) : visual.subject));
   const body = subject || visualFrom(visual.line, visual.at, new Set());
-  return `${bible}. ${FRAMING[visual.kind]}: ${body}, ${ROOM[visual.room]}, anybody in the picture is at work and turned away from the camera`
+  // The clause that invites a person is written on the one picture that is allowed one and nowhere else. It used
+  // to be on all of them, and a picture model handed it draws a person every time — the same person, because the
+  // look is fixed. Four shots of one stranger is what that cost on a real reel.
+  const who = somebodyIn(body) ? ', anybody in the picture is at work and turned away from the camera' : '';
+  return `${bible}. ${FRAMING[visual.kind]}: ${body}, ${ROOM[visual.room]}${who}`
     .replace(/\s{2,}/g, ' ').replace(/\s+([,.])/g, '$1');
 }
 

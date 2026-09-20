@@ -2,8 +2,12 @@ import type { Shape } from '../../shared/model.ts';
 import { MOODS, type Mood } from './audio.ts';
 import { isPack, PACES, type Pack, type Pace } from './templates/looks.ts';
 
-// Seventeen shapes a scene can take, in the order a film tends to use them.
-export const LAYOUTS = ['title', 'hook', 'statement', 'bullets', 'checklist', 'steps', 'compare', 'picture', 'device',
+// Eighteen shapes a scene can take, in the order a film tends to use them. `chart` is the newest and it is the
+// one the research kept naming: a film over fifteen seconds with a number, a list or a comparison in its script
+// and no graphic anywhere is a film reading its own bullet points out over a photograph, which is what the proof
+// films did. A bar that grows and a figure that counts up is information; four lines of type on a blurred field
+// is a slide.
+export const LAYOUTS = ['title', 'hook', 'statement', 'bullets', 'checklist', 'steps', 'compare', 'chart', 'picture', 'device',
   'stat', 'quote', 'logo', 'cta', 'footage', 'clip', 'presenter', 'outro'] as const;
 export type Layout = (typeof LAYOUTS)[number];
 // One scene of a video, as the director or a person fills it in. `say` is the line spoken over it; `image_prompt` is
@@ -106,8 +110,26 @@ const number = (value: unknown, what: string, low: number, high: number): number
 
 // Which layouts need what, said once so the parser and the prompt cannot drift apart.
 const NEEDS_HEADING = new Set<Layout>(['title', 'stat', 'logo']);
+// One bar of a chart: a label and the figure it stands for, in either order. The figure is what the bar is as long
+// as; the rest of the line is what it is called.
+export const BAR = /(\d+(?:\.\d+)?)\s*(%|per ?cent|x\b|k\b|m\b|bn\b)?/i;
+// The verbs a spoken line hangs a figure on. A chart's label is what the bar is called, not the clause it came
+// out of: "Rent" rather than "Rent takes", which is what reading a sentence off a bar looks like.
+const HANGS_ON = /\s+(?:takes?|took|is|are|was|were|costs?|spends?|makes?|made|gets?|got|goes|went|reached?|hits?|grew|grows?|fell|falls?|accounts? for|comes? to|adds? up to|equals?)\s*$/i;
+export const barOf = (line: string): { label: string; value: number; unit: string } | null => {
+  const found = BAR.exec(line ?? '');
+  if (!found) return null;
+  const value = Number(found[1]);
+  if (!Number.isFinite(value)) return null;
+  const said = (found[2] ?? '').trim().toLowerCase();
+  const unit = said.startsWith('per') ? '%' : said;
+  const label = line.replace(found[0], ' ')
+    .replace(/[.!?,;:]+/g, ' ').replace(/\s{2,}/g, ' ').replace(/^[\s–—-]+|[\s–—-]+$/g, '').trim()
+    .replace(HANGS_ON, '').trim();
+  return { label: label || 'Total', value, unit };
+};
 const NEEDS_TEXT = new Set<Layout>(['statement', 'quote', 'outro', 'hook', 'cta']);
-const NEEDS_BULLETS = new Set<Layout>(['bullets', 'checklist', 'steps']);
+const NEEDS_BULLETS = new Set<Layout>(['bullets', 'checklist', 'steps', 'chart']);
 // A scene that is a moving picture the studio has to make or cut before there is anything to show.
 export const AI_LAYOUTS = new Set<Layout>(['clip', 'presenter']);
 // A scene that already fills the frame with something. Everything else gets a background drawn behind it.
@@ -158,6 +180,14 @@ export function parseSpec(raw: unknown): Spec {
     if (NEEDS_BULLETS.has(layout) && !made.bullets) throw new Error(`${where}: a ${layout} scene needs "bullets"`);
     // A comparison is two things next to each other; one of them is a statement and three of them is a list.
     if (layout === 'compare' && made.bullets?.length !== 2) throw new Error(`${where}: a compare scene needs exactly two "bullets" — the before and the after`);
+    // A chart is drawn from its own numbers, so every bar has to carry one. A "chart" of four labels with nothing
+    // to measure is a list with a rectangle behind it.
+    if (layout === 'chart') {
+      const bars = made.bullets ?? [];
+      if (bars.length < 2) throw new Error(`${where}: a chart scene needs at least two "bullets", each one a label and a number`);
+      const without = bars.filter((one) => !BAR.test(one));
+      if (without.length) throw new Error(`${where}: "${without[0]}" has no number in it — every bar of a chart is written as a label and a figure, like "Year one 40%"`);
+    }
     // A picture scene is a picture: its caption is welcome but not required, because a captioned film already has
     // words at the foot of the frame and a second line of them there is one line too many.
     if (layout === 'picture' && !made.image_prompt) throw new Error(`${where}: a picture scene needs "image_prompt" — the whole scene to draw`);

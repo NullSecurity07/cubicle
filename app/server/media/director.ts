@@ -654,6 +654,7 @@ export function fixPictures(visuals: Visual[], found: { at: number; says: string
     '',
     `Every picture is shot the same way: ${bible}`,
     'A picture names a subject, what it is doing and where. No two pictures in the film may be of the same thing.',
+    'At most one picture in the film may have a person in it; the rest are places, objects and details.',
     'Nothing in a picture may carry writing — no screen, no chart, no sign, no document, no logo.',
     '',
     JSON.stringify({ pictures: visuals.map((one) => ({ at: one.at + 1, subject: one.subject, metaphor: one.metaphor })) }),

@@ -1,5 +1,5 @@
 import type { Shape } from '../../../shared/model.ts';
-import type { Scene } from '../spec.ts';
+import { barOf, type Scene } from '../spec.ts';
 import type { Part } from './captions.ts';
 import { FORMATS, PACE, PACK, type Pace, type Pack } from './looks.ts';
 
@@ -210,6 +210,17 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
   } else if (scene.layout === 'steps') {
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`, '<div class="rule" data-mark="dash"></div>');
     parts.push(`<ul class="list list--steps">${(scene.bullets ?? []).map((one, at) => `<li class="rise"><span class="step">${at + 1}</span><span class="body">${html(one)}</span></li>`).join('')}</ul>`);
+  } else if (scene.layout === 'chart') {
+    // The bars are measured against the largest of them, so the longest fills the track and the rest are read
+    // against it. A chart whose longest bar is two thirds of the way across is a chart nobody can read.
+    const bars = (scene.bullets ?? []).map((one) => barOf(one)).filter(Boolean) as { label: string; value: number; unit: string }[];
+    const most = Math.max(...bars.map((one) => one.value), 1);
+    if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`);
+    parts.push(`<div class="chart">${bars.map((one, at) => `<div class="chart__row rise">`
+      + `<div class="chart__head"><p class="chart__name">${html(one.label)}</p>`
+      + `<p class="chart__value"><span class="count" style="min-width: ${String(Math.round(one.value)).length}ch">${Math.round(one.value)}</span>${html(one.unit)}</p></div>`
+      + `<div class="chart__track"><div class="chart__fill" id="c${index}-${at}" style="transform: scaleX(${(one.value / most).toFixed(3)})"></div></div>`
+      + `</div>`).join('')}</div>`);
   } else if (scene.layout === 'compare') {
     const labels = scene.labels ?? [];
     const sides = (scene.bullets ?? []).slice(0, 2).map((one, at) => `<div class="side${at === 1 ? ' side--after' : ''}" id="p${index}-${at}">`
@@ -335,6 +346,21 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
   if (layout === 'compare') {
     steps.push(`tl.fromTo("#p${index}-0", { x: ${-Math.round(beat.travel * 0.8)}, opacity: 0 }, { x: 0, opacity: 1, duration: ${beat.rise.toFixed(2)}, ease: "${beat.ease}" }, ${time(0.1)});`);
     steps.push(`tl.fromTo("#p${index}-1", { x: ${Math.round(beat.travel * 0.8)}, opacity: 0 }, { x: 0, opacity: 1, duration: ${beat.rise.toFixed(2)}, ease: "${beat.ease}" }, ${time(Math.min(1.5, shot.seconds * 0.42))});`);
+  }
+  // A chart draws itself: the bars grow from nothing one after another and each figure runs up to its own number
+  // as its bar arrives. It is the one graphic in the film, so it is given the whole of its scene to land in and
+  // nothing else on the frame moves while it does.
+  if (layout === 'chart') {
+    const read = (shot.scene.bullets ?? []).map((one) => barOf(one)).filter(Boolean) as { value: number }[];
+    const most = Math.max(...read.map((one) => one.value), 1);
+    const each = Math.min(0.6, Math.max(0.3, (shot.seconds * 0.5) / Math.max(1, read.length)));
+    read.forEach((one, bar) => {
+      const at = time(0.2 + bar * each * 0.7);
+      steps.push(`tl.fromTo("#c${index}-${bar}", { scaleX: 0 }, { scaleX: ${(one.value / most).toFixed(3)}, duration: ${each.toFixed(2)}, ease: "${beat.ease}" }, ${at});`);
+      if (has.count) {
+        steps.push(`tl.fromTo("#s${index} .chart__row:nth-child(${bar + 1}) .count", { textContent: 0 }, { textContent: ${Math.round(one.value)}, duration: ${each.toFixed(2)}, ease: "power2.out", snap: { textContent: 1 } }, ${at});`);
+      }
+    });
   }
   // The figure on a stat scene runs up to itself, the way a counter settles on a number.
   const counted = layout === 'stat' && has.count && FIGURE.exec(shot.scene.heading?.trim() ?? '');

@@ -236,6 +236,10 @@ export const carriesVisual = (scene: Scene): boolean =>
 // transcript. Three or four is a creator reel; a sentence is a wall of type.
 export const EMPHASIS_WORDS = 4;
 const ECHO_FINE = new Set<Layout>(['hook', 'cta', 'logo', 'title', 'stat', 'quote', 'presenter']);
+// The shapes that are information rather than a sentence set in type: a figure the size of the frame, bars that
+// grow, a before beside an after, a list that arrives one line at a time. One of these is what "a data beat"
+// means, and a film long enough to have something to measure has to carry one.
+export const DATA = new Set<Layout>(['stat', 'chart', 'compare', 'checklist', 'steps']);
 const NEEDS_TEXT = new Set<Layout>(['statement', 'quote', 'outro', 'hook', 'cta']);
 
 // --- one film, one look -------------------------------------------------------------------------------------
@@ -372,6 +376,15 @@ export function criticise(spec: Spec, want: Want): Finding[] {
     const last = scenes.at(-1)?.layout;
     if (last !== 'cta' && last !== 'logo' && last !== 'outro') say('close', 'the film does not close on a call to action');
   }
+  // A film over fifteen seconds whose script has a number, a list, a comparison or a process in it, and no graphic
+  // anywhere, is a film reading its own bullet points out over a photograph. That is what the proof films did —
+  // "a long static hold of a list over a blurred field" — and it is the difference between information and a slide.
+  if (want.seconds > 15 && scenes.length >= 3 && !scenes.some((one) => DATA.has(one.layout))) {
+    const script = scenes.map((one) => `${one.text ?? ''} ${one.heading ?? ''} ${(one.bullets ?? []).join(' ')} ${one.say ?? ''}`).join(' ');
+    if (hasNumber(script) || listy(script) || contrasty(script)) {
+      say('data', `${want.seconds} seconds with ${hasNumber(script) ? 'a number' : listy(script) ? 'a list' : 'a before and an after'} in the script and not one graphic in the film`);
+    }
+  }
   const kinds = new Set(scenes.map((one) => one.layout));
   if (want.seconds > 10 && kinds.size < 4 && scenes.length >= 4) {
     say('variety', `the whole film is ${[...kinds].join(' and ')} — ${scenes.length} scenes of the same shape is a slideshow`);
@@ -472,6 +485,18 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       const halves = (scene.text || scene.say || '').split(/\s+(?:but|instead of|rather than|versus|vs\.?)\s+/i);
       return halves.length >= 2 && halves[0].trim() && halves[1].trim()
         ? { ...scene, layout: 'compare', heading: scene.heading && countWords(scene.heading) <= HEADING_WORDS ? scene.heading : undefined, bullets: [trimTo(halves[0], 6), trimTo(halves[1], 6)], text: undefined } : null;
+    }
+    if (next === 'chart') {
+      // A chart is only a chart where there are numbers to draw. Two bars at the least, each one a label and a
+      // figure, out of whatever the scene already says.
+      // The line with the numbers in it, which is usually the spoken one: a headline is a headline precisely
+      // because the figures have been taken out of it.
+      const counted = [scene.say, scene.text].find((one) => figureIn(one ?? '')) ?? scene.text ?? scene.say ?? '';
+      const bars = counted.split(/[,;]|\band\b/i).map((part) => part.trim())
+        .filter((part) => figureIn(part) && content(part).length >= 1).map((part) => trimTo(part, 5)).slice(0, 4);
+      return bars.length >= 2 && bars.every((one) => figureIn(one))
+        ? { ...scene, layout: 'chart', heading: scene.heading && countWords(scene.heading) <= HEADING_WORDS ? scene.heading : undefined, bullets: bars, text: undefined }
+        : null;
     }
     const parts = (scene.text || scene.say || '').split(/[,;]|\band\b/i).map((part) => trimTo(part.trim(), 5)).filter(Boolean).slice(0, 4);
     return listable(parts) ? { ...scene, layout: next, heading: scene.heading && countWords(scene.heading) <= HEADING_WORDS ? scene.heading : 'What you get', bullets: parts, text: undefined } : null;
@@ -701,6 +726,23 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       scenes = scenes.map((one, index) => (index === where
         ? { ...one, layout: 'device' as Layout, asset: want.screens![0], frame: one.frame ?? 'browser', image_prompt: undefined, heading: undefined, text: one.text || trimTo(one.heading ?? '', HEADING_WORDS) || undefined }
         : one));
+    }
+  }
+
+  // 1d. One graphic in a film that has something to measure. The scene in the middle whose own words will carry a
+  //     figure, a list or a comparison becomes one, in that order of preference: a chart where there are numbers
+  //     to draw, a figure where there is one, a comparison where there is a turn, a list where there is a list.
+  if (want.seconds > 15 && scenes.length >= 3 && !scenes.some((one) => DATA.has(one.layout))) {
+    const script = scenes.map((one) => `${one.text ?? ''} ${one.heading ?? ''} ${one.say ?? ''}`).join(' ');
+    if (hasNumber(script) || listy(script) || contrasty(script)) {
+      const order: Layout[] = ['chart', 'stat', 'compare', 'checklist', 'steps'];
+      for (let index = 1; index < scenes.length - 1; index += 1) {
+        const made = reshape(scenes[index], order);
+        if (!made) continue;
+        note('the film had something to measure and no graphic in it, so one scene is drawn rather than written');
+        scenes[index] = made;
+        break;
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { carriesVisual, criticise, facesCamera, noFace, opensADoor, plainClose, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
-import { countWords, LAYOUTS, saidWords, saysWhatItShows, type Layout, type Scene, type Spec } from './spec.ts';
+import { carriesVisual, criticise, DATA, facesCamera, noFace, opensADoor, plainClose, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
+import { barOf, countWords, LAYOUTS, parseSpec, saidWords, saysWhatItShows, type Layout, type Scene, type Spec } from './spec.ts';
 
 // Every rule here is written the same way round: a lazy storyboard of the kind a free model really hands back goes
 // in, and what comes out is a film. The founder's own run is the case they all descend from — three identical
@@ -542,5 +542,89 @@ describe('what sits behind the words', () => {
     expect(fixed.scenes[1].bg_prompt).toContain('portrait');
     expect(notes.join(' ')).toContain('somebody looking at the camera');
     expect(rules(criticise(fixed, reelWant()))).not.toContain('faces');
+  });
+});
+
+describe('a graphic, in a film that has something to measure', () => {
+  const want = (over: Partial<Want> = {}): Want => ({
+    seconds: 30, pace: 'calm', purpose: 'explainer', captions: false,
+    bible: 'quiet documentary photography, soft window light', layouts: [...LAYOUTS], reel: false, ...over,
+  });
+  const wordy: Spec = {
+    title: 'Why most die',
+    scenes: [
+      { layout: 'hook', text: 'Most die in year two', say: 'Most companies that die do it in year two.' },
+      { layout: 'statement', text: 'Seed rounds carry them', say: 'Seed money carries 70 per cent of them for a year and a half.' },
+      { layout: 'statement', text: 'Then the road ends', say: 'Then the road ends and nobody is buying.' },
+      { layout: 'cta', text: 'Count your months', say: 'Count your months.' },
+    ],
+  };
+
+  it('says so when thirty seconds of script with a number in it carries no graphic at all', () => {
+    expect(criticise(wordy, want()).some((one) => one.rule === 'data')).toBe(true);
+  });
+
+  it('says nothing about a short film, which has no room for one', () => {
+    expect(criticise(wordy, want({ seconds: 15 })).some((one) => one.rule === 'data')).toBe(false);
+  });
+
+  it('says nothing where there is a graphic already', () => {
+    const withOne: Spec = { ...wordy, scenes: wordy.scenes.map((one, at) => (at === 1 ? { layout: 'stat', heading: '70%', text: 'carried for a year', say: one.say } : one)) };
+    expect(criticise(withOne, want()).some((one) => one.rule === 'data')).toBe(false);
+  });
+
+  it('draws one rather than writing one, and never touches the opening or the close', () => {
+    const { spec: mended } = repair(wordy, want());
+    expect(mended.scenes.some((one) => DATA.has(one.layout))).toBe(true);
+    expect(mended.scenes[0].layout).toBe('hook');
+    expect(mended.scenes.at(-1)?.layout).toBe('cta');
+    expect(criticise(mended, want()).some((one) => one.rule === 'data')).toBe(false);
+  });
+
+  it('reports it and invents nothing where there is nothing to draw', () => {
+    // A rule that cannot be satisfied honestly is still worth saying out loud. What it must never do is make a
+    // figure up so the film has a graphic in it.
+    const nothing: Spec = {
+      title: 'A feeling',
+      scenes: [
+        { layout: 'hook', text: 'It creeps up', say: 'It creeps up on you.' },
+        { layout: 'statement', text: 'Then it is here', say: 'Then one morning it is simply here.' },
+        { layout: 'statement', text: 'And it stays', say: 'And then it stays.' },
+        { layout: 'cta', text: 'Watch for it', say: 'Watch for it.' },
+      ],
+    };
+    const { spec: mended } = repair(nothing, want());
+    expect(mended.scenes.some((one) => one.layout === 'chart' || one.layout === 'stat')).toBe(false);
+  });
+
+  it('only makes a chart where there really are numbers to draw', () => {
+    const bars: Spec = {
+      title: 'Where it goes',
+      scenes: [
+        { layout: 'hook', text: 'Where it goes', say: 'Here is where the money goes.' },
+        { layout: 'statement', text: 'Rent and wages', say: 'Rent takes 40 per cent and wages take 35 per cent.' },
+        { layout: 'statement', text: 'What is left', say: 'What is left is what you build with.' },
+        { layout: 'cta', text: 'Look at yours', say: 'Look at yours.' },
+      ],
+    };
+    const { spec: mended } = repair(bars, want());
+    const chart = mended.scenes.find((one) => one.layout === 'chart');
+    expect(chart?.bullets?.length).toBeGreaterThanOrEqual(2);
+    for (const bar of chart?.bullets ?? []) expect(barOf(bar)?.value).toBeGreaterThan(0);
+  });
+});
+
+describe('one bar of a chart', () => {
+  it('is a label and the figure it stands for, in either order', () => {
+    expect(barOf('Year one 40%')).toEqual({ label: 'Year one', value: 40, unit: '%' });
+    expect(barOf('12x Seed')).toEqual({ label: 'Seed', value: 12, unit: 'x' });
+    // A label is what the bar is called, not the clause the figure came out of.
+    expect(barOf('Rent takes 40 per cent')).toEqual({ label: 'Rent', value: 40, unit: '%' });
+    expect(barOf('nothing to measure')).toBeNull();
+  });
+
+  it('refuses a chart whose bars carry no numbers', () => {
+    expect(() => parseSpec({ title: 'One', scenes: [{ layout: 'chart', bullets: ['One thing', 'Another thing'] }] })).toThrow(/number/);
+    expect(() => parseSpec({ title: 'One', scenes: [{ layout: 'chart', bullets: ['Rent 40%'] }] })).toThrow(/at least two/);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   afforded, aboutTheLine, criticiseVisuals, drawnAs, fillerShot, kindFor, lineUnder, repairVisuals,
-  shareOut, shares, slotsFor, unlettered, visualFrom, visualsOf, visualsPrompt, type Visual,
+  shareOut, shares, slotsFor, somebodyIn, unlettered, visualFrom, visualsOf, visualsPrompt, type Visual,
 } from './visuals.ts';
 import type { Scene } from './spec.ts';
 
@@ -205,5 +205,45 @@ describe('asking the model', () => {
   it('leaves a slot empty rather than inventing one, so the repair builds it', () => {
     const slots = slotsFor([{ scene: 0, take: 0, line: 'one', layout: 'hook' }], false, [{ layout: 'hook' } as Scene]);
     expect(visualsOf({}, slots)[0].subject).toBe('');
+  });
+});
+
+describe('a film has one person in it', () => {
+  it('reads somebody off the words a picture was written from', () => {
+    expect(somebodyIn('a partner sliding one sheet across a table')).toBe('partner');
+    expect(somebodyIn('rain running off a loading bay at dusk')).toBeNull();
+  });
+
+  it('catches the second one, because in a fixed look it is the same stranger', () => {
+    const found = criticiseVisuals([
+      one(0, 'a partner sliding one sheet across a bare table', 'investors want the partner to see proof'),
+      one(1, 'a founder waiting in a stairwell', 'a founder waits months for an answer', { kind: 'wide' }),
+      one(2, 'rain filling a gutter at dusk', 'the rain never stops', { kind: 'detail' }),
+    ]);
+    expect(found.filter((note) => note.rule === 'crowd').map((note) => note.at)).toEqual([1]);
+  });
+
+  it('turns every later one into the place it was set in', () => {
+    const { visuals } = repairVisuals([
+      one(0, 'a partner sliding one sheet across a bare table', 'investors want the partner to see proof'),
+      one(1, 'a founder waiting in a cold stairwell', 'a founder waits months for an answer', { kind: 'medium' }),
+    ]);
+    expect(somebodyIn(visuals[0].subject)).not.toBeNull();
+    expect(somebodyIn(visuals[1].subject)).toBeNull();
+    expect(visuals[1].kind).toBe('environment');
+  });
+
+  it('only writes the clause that invites a person onto the picture allowed one', () => {
+    const withOne = drawnAs(one(0, 'a partner sliding one sheet across a table', 'investors want proof'), BIBLE);
+    const without = drawnAs(one(0, 'rain filling a gutter at dusk', 'the rain never stops'), BIBLE);
+    expect(withOne).toContain('turned away from the camera');
+    expect(without).not.toContain('turned away from the camera');
+  });
+});
+
+describe('a glyph is lettering too', () => {
+  it('strikes the symbols a picture model draws as characters', () => {
+    expect(unlettered('a huge question mark painted on a beige wall')).not.toMatch(/question mark/i);
+    expect(unlettered('an arrow icon over a bare desk')).not.toMatch(/icon/i);
   });
 });

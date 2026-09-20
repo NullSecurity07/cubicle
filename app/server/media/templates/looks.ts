@@ -310,6 +310,25 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: ${Math.max(t
 .side--after .label { color: ${paint.signal}; }
 .side p.body { max-width: none; font-size: ${type.sideBody}px; line-height: 1.24; font-weight: 500; }
 .side .label { font-size: ${type.sideLabel}px; }
+/* A chart: the one graphic a film of numbers actually needs, drawn in the page so every frame of it is drawn
+   rather than resampled. Horizontal bars, because a horizontal bar works on a phone held upright and a column
+   chart does not: the label reads along the line rather than under it, and the figure sits at the end where the
+   eye already is. Nothing here is a picture of a chart — a picture model cannot draw one, and a film that asks
+   for one gets fake lettering. */
+.chart { display: flex; flex-direction: column; gap: calc(var(--margin) * 0.38); width: 100%; }
+/* The label and the figure sit on a line of their own above the bar, and the bar gets the whole width. Side by
+   side they do not: a display figure is fifty pixels tall on a phone, so a value column wide enough to hold one
+   leaves the bar a third of the frame and every bar reads as the same short pill. */
+.chart__row { display: flex; flex-direction: column; gap: calc(var(--margin) * 0.14); width: 100%; }
+.chart__head { display: flex; align-items: baseline; justify-content: space-between; gap: calc(var(--margin) * 0.3); }
+.chart__name { font-size: ${type.body}px; line-height: 1.15; font-weight: 540; letter-spacing: -0.012em; }
+.chart__track { position: relative; width: 100%; height: ${Math.round(type.body * 0.72)}px; border-radius: 999px;
+  background: rgba(${paint.scrim}, 0.62); overflow: hidden; }
+.chart__fill { position: absolute; inset: 0; transform-origin: 0% 50%; border-radius: 999px;
+  background: ${sketch ? paint.ink : paint.signal}; }
+.chart__value { flex: none; font-family: ${display};
+  font-size: ${type.step}px; line-height: 1; font-weight: ${style.shout ? 400 : 700}; letter-spacing: -0.02em;
+  color: ${sketch ? paint.ink : paint.signal}; font-variant-numeric: tabular-nums; }
 /* A checklist is a list that says yes, so each line carries a mark rather than a bar. */
 .mark { flex: none; position: relative; top: 0.06em; width: ${type.mark}px; height: ${type.mark}px; color: ${sketch ? paint.ink : paint.signal}; }
 .mark svg { display: block; width: 100%; height: 100%; }
