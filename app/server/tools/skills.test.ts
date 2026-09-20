@@ -39,7 +39,8 @@ describe('use_skill', () => {
     // Named loosely, or by the id the panel shows: the same skill either way.
     expect((await run('use_skill', { name: 'launch page' })).text).toContain('Write the headline first');
     expect((await run('use_skill', { name: 'ship-a-launch-page' })).ok).toBe(true);
-    expect((await skills.get('ship-a-launch-page'))!.uses).toBe(3);
+    // Opened three times in the same few minutes is one piece of work, so one use.
+    expect((await skills.get('ship-a-launch-page'))!.uses).toBe(1);
   });
 
   it('says what there is rather than inventing a skill, and leaves a switched-off one alone', async () => {
