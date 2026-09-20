@@ -382,11 +382,15 @@ export const kindFor = (at: number, layout: Layout): Kind =>
 // of its own is the only one that gets the whole frame.
 export function roomFor(scene: Scene, captions: boolean): Room {
   const writes = [scene.heading, scene.text, ...(scene.bullets ?? [])].some((one) => one?.trim());
+  // Nothing is going to be written on this frame and nothing is being said under it, so the picture is the whole
+  // scene and may fill the frame. It is the only one that may.
   if (!writes && !captions) return 'none';
-  // A captioned film keeps its bottom fifth for the caption band, so the block of type moves to the head of the
-  // frame and the hole has to move with it.
+  // A picture scene in a captioned film moves its own caption to the head of the frame, because the foot is
+  // already spoken for by the caption band — so the hole in the picture moves with it.
   if (captions && scene.layout === 'picture') return 'top';
-  return scene.layout === 'title' || scene.layout === 'stat' || scene.layout === 'picture' ? 'foot' : 'foot';
+  // Everywhere else the words a viewer reads end up in the lower half: the caption band in a captioned film, the
+  // block of type over a photograph in one without.
+  return 'foot';
 }
 
 // One slot per shot, empty, ready for the model to fill or the rules to fill for it. `line` is the phrase really

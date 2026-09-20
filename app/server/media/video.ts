@@ -956,7 +956,12 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         if (shot) poster = { ext: 'png', bytes: await readFile(join(at, 'poster', shot)) };
         return { ext: 'mp4', bytes, poster, credit };
       } finally {
-        await rm(at, { recursive: true, force: true }).catch(() => {});
+        // The project a film was rendered from is thrown away, because it is a copy of everything the founder
+        // wired plus a few megabytes of pictures. When something is wrong with a finished film the only way to
+        // see why is that project — which scene silenced its own captions, what the picture prompt really said —
+        // so there is one switch that keeps it, and it is off unless somebody debugging turns it on.
+        if (process.env.STAGE_KEEP_PROJECT === '1') report(`the project this was rendered from is at ${at}`);
+        else await rm(at, { recursive: true, force: true }).catch(() => {});
       }
     },
   };
