@@ -14,8 +14,12 @@ const presses = (page: Page, data: string) => page.request.post('/api/reach/tele
 const panel = (page: Page) => page.getByRole('dialog', { name: 'Reach you anywhere' });
 
 async function bar(page: Page, typed: string) {
-  await page.keyboard.press('Control+k');
   const box = page.getByRole('dialog', { name: 'Command bar' }).getByRole('combobox');
+  // The key is heard by the window itself, which has to be listening first: press it again if the bar is not there.
+  await expect(async () => {
+    await page.keyboard.press('Control+k');
+    await expect(box).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
   await box.fill(typed);
   await expect(page.getByRole('dialog', { name: 'Command bar' }).getByRole('option').first()).toContainText(typed, { ignoreCase: true });
   await page.keyboard.press('Enter');
@@ -34,9 +38,28 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('.react-flow__node[data-id="marketing"]')).toBeVisible();
 });
 test.afterEach(() => { expect(broke).toEqual([]); });
-// The stage, and how the founder is reached, are shared with every other journey: this one leaves both as it found them.
+// What this journey says to Maya goes into her conversation, the same as anything the founder types: it is taken
+// back out afterwards, because the next journey reads that conversation.
+const before: string[] = [];
+test.beforeAll(async ({ playwright }) => {
+  const script = await playwright.request.newContext({ baseURL: `http://localhost:${Number(process.env.E2E_PORT ?? 7430)}`, extraHTTPHeaders: { 'x-stage-token': 'e2e-token' } });
+  for (const message of await (await script.get('/api/rooms/marketing/chat')).json() as { id: string }[]) before.push(message.id);
+  await script.dispose();
+});
+
+// The stage, the conversation and how the founder is reached are shared with every other journey: this one leaves
+// all three as it found them.
 test.afterAll(async ({ playwright }) => {
   const script = await playwright.request.newContext({ baseURL: `http://localhost:${Number(process.env.E2E_PORT ?? 7430)}`, extraHTTPHeaders: { 'x-stage-token': 'e2e-token' } });
+  for (const message of await (await script.get('/api/rooms/marketing/chat')).json() as { id: string }[]) {
+    if (before.includes(message.id)) continue;
+    // The task the call in started is Maya's work too, and nothing in her conversation may be taken out while she
+    // is in the middle of something: wait for her.
+    for (let tries = 0; tries < 40; tries += 1) {
+      if ((await script.delete(`/api/rooms/marketing/chat/${message.id}`)).ok()) break;
+      await new Promise((done) => { setTimeout(done, 250); });
+    }
+  }
   const state = await (await script.put('/api/reach', { data: { on: false, token: '' } })).json();
   for (const hook of state.hooks as { id: string }[]) await script.delete(`/api/reach/hooks/${hook.id}`);
   const stage = await (await script.get('/api/stage')).json();
