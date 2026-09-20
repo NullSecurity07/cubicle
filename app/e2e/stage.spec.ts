@@ -473,7 +473,8 @@ test('a person keeps notes the founder can read and rewrite, and sees them in la
   await room.hover();
   await room.getByRole('button', { name: 'Memory' }).click();
   const panel = room.getByRole('dialog', { name: 'What Dev remembers' });
-  await expect(panel.getByLabel('Notes')).toHaveValue('- The founder wants weekly releases.');
+  // A note carries the day it was kept, so the founder can see how old it is and still edit the line by hand.
+  await expect(panel.getByLabel('Notes')).toHaveValue(/^- \d{1,2} \w+ \d{4} · The founder wants weekly releases\.$/);
   await panel.getByLabel('Notes').fill('- The founder wants releases every two weeks.');
   await panel.getByRole('button', { name: 'Save' }).click();
   await expect(panel).toHaveCount(0);
@@ -935,7 +936,7 @@ test('decisions: a person lays a choice out, only the founder decides, and every
 
   // From now on every person works from it, and can read it in full.
   await send(page, 'build', '/tool read_decision {"title":"launch channel"}');
-  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Decided: Hacker News');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText(/Decided on \d{1,2} \w+ \d{4}: Hacker News/);
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Our first fifty users came from there.');
 });
 
