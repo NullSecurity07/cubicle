@@ -16,12 +16,34 @@ const { mediaTools } = await import('../server/tools/media.ts');
 const { skillTools } = await import('../server/tools/skills.ts');
 const { founderTools } = await import('../server/tools/founder.ts');
 // Whatever `server/slices` holds counts too: a dropped-in feature must not be the thing that makes a provider refuse
-// the list. Its deps are stubbed the way everything else here is; one that cannot live with that is named and left out.
-const { installSlices, loadSlices } = await import('../server/install.ts');
-const said = (name: string, error: Error) => console.log('slice', name, 'skipped:', error.message);
-const extras = await installSlices(await loadSlices(resolve(import.meta.dirname, '../server/slices'), said), { workspace: '/tmp', root: resolve(import.meta.dirname, '../..'), fake: true, json: () => {}, body: async () => ({}), busy: new Set(), notify: () => {}, own: { ports: [], token: '' } } as any, said);
+// the list. A slice only installs when it is handed the real things it listens to, so it gets them, small and empty, on
+// a throwaway workspace; stubs that were too thin left four slices out, and the check passed without ever offering
+// their tools. `fake` keeps every slice away from the outside world. One that still cannot install fails the check.
+const { mkdtempSync } = await import('node:fs');
+const { tmpdir } = await import('node:os');
+const { installSlices, loadSlices, lateRuns } = await import('../server/install.ts');
+const scratch = mkdtempSync(resolve(tmpdir(), 'check-providers-'));
+const { createStore } = await import('../server/store.ts');
+const { createSeams } = await import('../server/seams.ts');
+const { createAttention } = await import('../server/attention.ts');
+const { createBoards } = await import('../server/boards.ts');
+const { createSkills } = await import('../server/skills.ts');
+const { createFounder } = await import('../server/founder.ts');
+const { createApprovals } = await import('../server/approvals.ts');
+const { createUsage } = await import('../server/usage.ts');
+const skipped: string[] = [];
+const said = (name: string, error: Error) => { skipped.push(name); console.log('slice', name, 'COULD NOT INSTALL:', error.message); };
+const extras = await installSlices(await loadSlices(resolve(import.meta.dirname, '../server/slices'), said), {
+  workspace: scratch, root: resolve(import.meta.dirname, '../..'), fake: true, store: createStore(scratch), seams: createSeams(), clients: [], usage: createUsage(null),
+  approvals: createApprovals(), attention: createAttention(scratch), boards: createBoards(scratch), skills: createSkills(scratch), founder: createFounder(scratch),
+  busy: new Set(), notify: () => {}, promptFor: async () => [], json: () => {}, body: async () => ({}), own: { ports: [], token: '' }, runs: lateRuns().runs, toolsFor: () => [],
+} as any, said);
 const tools = [...docTools, ...fileTools, ...webTools({} as any), ...outwardTools({ ready: () => true, ways: () => ({}) } as any, '/tmp'), ...projectTools((async () => ({})) as any, []), ...teamTools((async () => '') as any), ...taskTools({} as any), ...memoryTools({} as any), ...decisionTools({} as any), ...recallTools({} as any), ...mediaTools({ ready: () => null } as any), ...skillTools({} as any), ...founderTools({} as any), ...extras.tools];
+const refused: string[] = [];
 for (const client of realClients()) {
   try { const turn = await client.step([{ role: 'user', content: 'List the shared files with your tool.' }], { tools, onToken: () => {} }); console.log(client.name, 'OK with', tools.length, 'tools ->', turn.calls.map((c: any) => c.name).join(',') || 'text'); }
-  catch (error: any) { console.log(client.name, 'ERROR', error.status, String(error.message).slice(0, 200)); }
+  catch (error: any) { refused.push(client.name); console.log(client.name, 'ERROR', error.status, String(error.message).slice(0, 200)); }
 }
+// A check that cannot fail is not one: a slice left out or a provider that refused the list ends this with a red exit.
+await extras.close().catch(() => {});
+process.exit(skipped.length || refused.length ? 1 : 0);
