@@ -79,9 +79,6 @@ export default {
       };
     }
 
-    // Read once here, while nothing is happening: the book of what waits for the founder is only read from disk the
-    // first time somebody asks for it, and the first thing this slice does to it is add to it.
-    void deps.attention.list().catch(() => {});
     deps.attention.watch((list) => { void phone.show(list).catch(() => {}); });
     deps.seams.on('turn:before', async (payload, next) => {
       sources.set(payload.roomId, payload.source);

@@ -10,6 +10,12 @@ import { createStore } from './store.ts';
 const waiting = (id: string): Attention => ({ id: `approval:${id}`, kind: 'approval', title: 'Send this email?', at: 1, roomId: 'marketing', who: 'Maya', event: { id, name: 'send_email', args: { to: 'a@b.co' }, waiting: true } });
 
 describe('attention', () => {
+  it('keeps everything raised in the first moment, when several ask before the file has been read', async () => {
+    const attention = createAttention(await mkdtemp(join(tmpdir(), 'attention-')));
+    await Promise.all([attention.raise(waiting('c1')), attention.list(), attention.raise(waiting('c2')), attention.list()]);
+    expect((await attention.list()).map((one) => one.id).sort()).toEqual(['approval:c1', 'approval:c2']);
+  });
+
   it('holds an approval while it waits and lets it go when the founder answers', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'attention-'));
     const attention = createAttention(dir);
