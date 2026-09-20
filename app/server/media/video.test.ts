@@ -231,7 +231,7 @@ describe('generate_video', () => {
     const { tool } = await turn(wired);
     const properties = (tool.parameters as { properties: Record<string, { type: string; enum?: string[] }> }).properties;
     expect(Object.keys(properties).sort()).toEqual(['brief', 'captions', 'format', 'images', 'length', 'look', 'music', 'narrate', 'pace', 'purpose', 'scenes', 'sfx', 'title']);
-    expect(properties.look.enum).toEqual(['clean', 'creator', 'editorial', 'neon', 'sketch', 'brand']);
+    expect(properties.look.enum).toEqual(['clean', 'creator', 'editorial', 'neon', 'documentary', 'sketch', 'brand']);
     expect(properties.format.enum).toEqual(['square', 'wide', 'tall']);
     expect(properties.pace.enum).toEqual(['calm', 'punchy']);
     // Every scene field is a plain string, number, boolean or list of strings: Gemini rejects anything cleverer.
@@ -424,6 +424,22 @@ describe('a film with everything in it', () => {
     // A tall frame takes a phone and a wide one a browser, unless the storyboard said which.
     expect(composition({ title: 'One', shape: 'tall', look: 'clean', shots: shots([{ layout: 'device', asset: 'a' }]) })).toContain('device--phone');
     expect(composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([{ layout: 'device', asset: 'a' }]) })).toContain('device--browser');
+  });
+
+  it('wears a declared format where a look has one, on the pictures and never over the type', () => {
+    // The documentary look is the one place a grade belongs: letterbox bars painted once for the whole render,
+    // and a measured tune applied to the moving and still pictures. Nothing touches the words.
+    const page = composition({ title: 'One', shape: 'wide', look: 'documentary', shots: shots(film.scenes) });
+    expect(page).toContain('<div class="bar bar--top"></div>');
+    expect(page).toContain('<div class="bar bar--foot"></div>');
+    expect(page).toContain('.bg img, .shot img, .shot video, .reel, .device__glass img { filter: saturate(0.92) contrast(1.05) brightness(0.98); }');
+    // The bars are a frame, not a move: nothing on the timeline touches them.
+    expect(page).not.toContain('"#bar,');
+    expect(page).not.toMatch(/tl\.[a-z]+\("\.bar/);
+    // And every other look declares no format at all, so it has neither.
+    for (const look of PACKS.filter((one) => one !== 'documentary')) {
+      expect(composition({ title: 'One', shape: 'wide', look, shots: shots(film.scenes) }), look).not.toContain('class="bar bar--top"');
+    }
   });
 
   it('puts no filter, grain or vignette over the frame in any pack', () => {

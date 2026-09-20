@@ -49,6 +49,9 @@ export const CUTTING: Record<string, Cutting> = {
   creator: { min: 1.2, mean: 2.2, spread: 0.8, max: 4.0, changes: [5, 7], hold: [3, 4], punch: [1.08, 1.15], sfx: 5, duck: [18, 25] },
   neon: { min: 1.2, mean: 2.6, spread: 0.8, max: 4.5, changes: [4, 6], hold: [3, 4], punch: [1.06, 1.12], sfx: 5, duck: [15, 20] },
   editorial: { min: 1.5, mean: 3.4, spread: 1.0, max: 6.0, changes: [2, 4], hold: [4, 8], punch: [1.04, 1.08], sfx: 4, duck: [15, 20] },
+  // The long-form register holds longer than anything else here and lets the pictures do the arguing: two to four
+  // changes in ten seconds, a hold of up to eight on the payoff, and a push so slow it reads as a camera.
+  documentary: { min: 1.5, mean: 3.8, spread: 1.1, max: 6.5, changes: [2, 4], hold: [4, 8], punch: [1.04, 1.08], sfx: 4, duck: [15, 20] },
   sketch: { min: 1.5, mean: 3.2, spread: 0.9, max: 6.0, changes: [3, 5], hold: [4, 6], punch: [1.03, 1.06], sfx: 4, duck: [18, 22] },
   brand: { min: 1.5, mean: 3.0, spread: 0.9, max: 6.0, changes: [3, 5], hold: [4, 6], punch: [1.04, 1.08], sfx: 4, duck: [18, 22] },
 };

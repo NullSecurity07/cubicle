@@ -144,7 +144,7 @@ export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>
 }
 
 const LOOK_WORDS: Record<VideoLook, string> = {
-  clean: 'Clean', creator: 'Creator', editorial: 'Editorial', neon: 'Neon', sketch: 'Sketch', brand: 'Brand',
+  clean: 'Clean', creator: 'Creator', editorial: 'Editorial', neon: 'Neon', documentary: 'Documentary', sketch: 'Sketch', brand: 'Brand',
 };
 // What the film is for. The words are the founder's, not the code's; each one sets a structure, a pace and a length
 // on the server. Every picker starts on Auto, which is not a default but a decision: the director reads the brief and

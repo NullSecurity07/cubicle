@@ -774,24 +774,28 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         }
         takes[0].from = 0;
         // A film that runs short of what was asked for is a film that ends before the viewer expected it to. The
-        // narration is already budgeted to the length, so a shortfall is the breaths around it rather than the
-        // words: it goes to the two places a film can honestly hold — the last frame, where the call to action
-        // needs a second and a half to be read, and the payoff before it.
+        // narration is already budgeted to the length, so a shortfall is the breaths around the words rather than
+        // the words themselves — and it is spread across every scene rather than dumped on the last two.
+        //
+        // Which is the whole point: a scene given a little more room is a scene the editor can *cut inside*, and
+        // what the film was short of was picture changes, not holds. Held on the close instead, a real reel came
+        // out at three and a half changes in ten seconds against a floor of four, with the last two shots sitting
+        // still for the difference. The payoff still gets a larger share, because one long hold is the rhythm.
         const runs = takes.at(-1)?.to ?? 0;
-        if (target && runs > 0 && runs < target * 0.94) {
-          const short = target * 0.97 - runs;
-          // The close first, up to the hold the style allows, then whatever is left on the payoff before it.
-          const close = Math.max(0, Math.min(short, style.hold[1] - (takes.at(-1)!.to - takes.at(-1)!.from)));
-          const payoff = Math.max(0, short - close);
-          const lastAt = takes.length - 1;
+        if (target && runs > 0 && runs < target * 0.96) {
+          const short = target * 0.98 - runs;
+          const payoff = Math.max(0, takes.length - 2);
+          // The payoff takes a double share; everything else splits the rest by how long it already is.
+          const weights = takes.map((one, index) => Math.max(0.2, one.to - one.from) * (index === payoff ? 2 : 1));
+          const whole = weights.reduce((sum, one) => sum + one, 0) || 1;
           let shift = 0;
           for (const [index, one] of takes.entries()) {
+            const share = (short * weights[index]) / whole;
             one.from += shift;
-            one.to += shift;
-            if (index === lastAt - 1) { one.to += payoff; shift += payoff; }
-            if (index === lastAt) { one.to += close; shift += close; }
+            one.to += shift + share;
+            shift += share;
           }
-          report(`the reading came to ${Math.round(runs)} seconds against ${target}, so the payoff and the close are held longer rather than the film ending early`);
+          report(`the reading came to ${Math.round(runs)} seconds against ${target}, so every scene is given a little more room rather than the film ending early`);
         }
 
         const edit = editFilm(takes, words, style, { sfxOn: sfx });

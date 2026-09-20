@@ -159,6 +159,8 @@ describe('the table each look cuts to', () => {
     // Nothing anywhere cuts under the 1.2 seconds a viewer needs to process a shot.
     for (const style of Object.values(CUTTING)) expect(style.min).toBeGreaterThanOrEqual(1.2);
     // A look nobody wrote a row for still cuts like something.
-    expect(cuttingFor('documentary', 'calm')).toEqual(CUTTING.clean);
+    expect(cuttingFor('nothing-like-this', 'calm')).toEqual(CUTTING.clean);
+    // The long-form look holds longest of the lot.
+    expect(CUTTING.documentary.mean).toBeGreaterThanOrEqual(CUTTING.editorial.mean);
   });
 });

@@ -80,9 +80,11 @@ export type PackStyle = {
   capScale: number;
 };
 
-// The six. `clean` and `sketch` are what the studio had; `brand` still takes the product's own colours. `creator`,
-// `editorial` and `neon` are the three a motion designer would actually reach for.
-export const PACKS = ['clean', 'creator', 'editorial', 'neon', 'sketch', 'brand'] as const;
+// The seven. `clean` and `sketch` are what the studio had; `brand` still takes the product's own colours.
+// `creator`, `editorial` and `neon` are the three a motion designer would reach for, and `documentary` is the
+// long-form register: a serif on a letterboxed frame, held shots, and a grade that is a declared format rather
+// than a filter somebody switched on.
+export const PACKS = ['clean', 'creator', 'editorial', 'neon', 'documentary', 'sketch', 'brand'] as const;
 export type Pack = (typeof PACKS)[number];
 
 const INTER = { file: 'inter.woff2', family: 'Studio Sans' };
@@ -123,6 +125,22 @@ export const PACK: Record<Pack, PackStyle> = {
     fonts: [GROTESK, INTER], display: "'Studio Tech', 'Studio Sans', sans-serif", body: "'Studio Tech', 'Studio Sans', sans-serif",
     shout: true, motion: 'snap', cuts: ['zoom', 'wipe', 'cut', 'whip'], overlap: 0.26,
     sweep: true, scrim: 0.50, radius: 8, capScale: 0.78,
+  },
+  documentary: {
+    // The long-form register. Where the reel earns attention by cutting, this one earns it by holding: a serif
+    // display against a geometric sans, a great deal of quiet, and hard cuts through the body with the decorative
+    // ones kept for the breaks between acts.
+    //
+    // The grade and the bars here are the one place in this studio a look is allowed to touch the picture, and
+    // that is the whole distinction: a **format**, identical on every film in the series, applied to the
+    // photographs and never over the type — not an effect laid over a finished frame. The numbers are small on
+    // purpose. If a viewer notices the grade before the story, it is too strong.
+    name: 'Documentary',
+    paint: { ground: '#0F0F0E', ink: '#EFEAE1', quiet: '#A9A296', signal: '#C9A227', mark: '#C9A227', scrim: '15, 15, 14' },
+    fonts: [INTER, SERIF], display: "'Studio Serif', Georgia, serif", body: "'Studio Sans', sans-serif",
+    shout: false, motion: 'glide', cuts: ['cut', 'cut', 'fade', 'cut', 'wipe'], overlap: 0.55,
+    sweep: false, scrim: 0.42, radius: 2, capScale: 1.1,
+    format: { letterbox: 0.055, grade: 'saturate(0.92) contrast(1.05) brightness(0.98)' },
   },
   sketch: {
     name: 'Sketch',

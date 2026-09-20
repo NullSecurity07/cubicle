@@ -60,6 +60,7 @@ const CUES: { was: RegExp; is: Partial<Understanding> }[] = [
   { was: /\b(testimonial|customer story|case study|what .{0,20}customers? say)\b/i, is: { purpose: 'testimonial', pace: 'calm', mood: 'warm' } },
   { was: /\b(explain\w*|how it works|walkthrough|tutorial|demo|onboarding)\b/i, is: { purpose: 'explainer', shape: 'wide', pace: 'calm', pack: 'clean', mood: 'calm' } },
   { was: /\b(feature|one thing|new in)\b/i, is: { purpose: 'feature' } },
+  { was: /\b(documentary|cinematic|film-?like|luxury|luxurious|long-?form|essay|letterbox\w*)\b/i, is: { pace: 'calm', pack: 'documentary', mood: 'calm', tone: 'measured' } },
   { was: /\b(calm|quiet|slow|editorial|elegant|minimal|considered|understated|thoughtful)\b/i, is: { pace: 'calm', pack: 'editorial', mood: 'calm', tone: 'considered' } },
   { was: /\b(punchy|fast|snappy|energetic|hype|bold|loud|upbeat)\b/i, is: { pace: 'punchy', mood: 'upbeat', tone: 'energetic' } },
   { was: /\b(tech|technical|developer|engineer|api|ai|futurist\w*|cyber)\b/i, is: { pack: 'neon', tone: 'technical' } },
@@ -246,6 +247,7 @@ export function bibleFor(understanding: Understanding): string {
     // black frame. Bright, contrasty and lit is what a reel wants — the drama comes from the cut, not the grade.
     creator: 'bright high-contrast editorial photography, single strong subject, clean directional key light, one saturated accent colour, shallow depth of field, shot on 35mm',
     editorial: 'quiet documentary photography, soft window light, muted warm palette, generous negative space, medium format stills',
+    documentary: 'cinematic documentary photography, available light, deep field of view, restrained muted palette, anamorphic stills, nothing staged',
     neon: 'dark technical photography, cyan and magenta rim light, glass and metal surfaces, volumetric haze, long lens',
     clean: 'calm studio photography, cool slate palette, soft directional light, clean geometry, matte surfaces',
     sketch: 'loose ink and watercolour illustration on warm paper, visible pencil under-drawing, limited palette',

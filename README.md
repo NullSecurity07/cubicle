@@ -21,7 +21,9 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   type a **Product address**, and it photographs the real pages at desktop and phone size and puts the shots in
   phone, laptop and browser mockups; wired **notes**, **documents** and **pictures** are material too. Drop your
   own video, photographs or a music track on the card and it edits around them. Seventeen scene shapes, two paces,
-  six looks, word-by-word captions, and a music bed ducked under the narration. Nothing about a film leaves this
+  seven looks — including **documentary**, the long-form register: a serif on a letterboxed frame, held shots, and
+  a measured grade that is the film's declared format rather than a filter laid over it — word-by-word captions,
+  and a music bed ducked under the narration. Nothing about a film leaves this
   machine except what you wired to it.
 - **An editor, not a slideshow** (2026-09-20): the narration is read in **one go** for the whole film, so the
   voice rises and falls the way somebody talking does, and then it is listened back to — every word's exact place

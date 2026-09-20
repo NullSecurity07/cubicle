@@ -98,7 +98,12 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
 /* No picture maker, no flat colour either: four soft lamps of the film's own colours drifting behind the words. */
 .mesh { position: absolute; inset: -18%; z-index: 0; overflow: hidden; }
 .blob { position: absolute; filter: blur(calc(120px * var(--s))); opacity: 0.55; }
-.sweep { position: absolute; inset: -20%; mix-blend-mode: screen; }
+/* One band of light lying across the lamps. It used to be called .sweep, which is also the name of the block of
+   accent colour drawn behind a headline — two completely different things sharing a selector, so each took half of
+   the other's rules. The headline block inherited the screen blend mode, and inside a scene being blurred out
+   on a cut that blends against the whole frame: a full-frame acid wash, one frame long, at several of the cuts in
+   a real reel. They have their own names now. */
+.glint { position: absolute; inset: -20%; mix-blend-mode: screen; }
 ${grade ? `/* This pack's declared grade: a measured, bounded tune applied to the moving and still pictures only. The
    type sits above it and is never graded, because graded type is a filter over a film rather than a look in it. */
 .bg img, .shot img, .shot video, .reel, .device__glass img { filter: ${grade}; }` : ''}

@@ -126,7 +126,7 @@ export function meshHtml(index: number, pack: Pack): string {
   }).join('');
   // One sweep of light across the frame, at its own angle, so the eye has somewhere to go.
   const angle = Math.round(seed(29) * 180);
-  const sweep = `<div class="sweep" id="w${index}" data-layout-allow-overflow style="background:linear-gradient(${angle}deg,`
+  const sweep = `<div class="glint" id="w${index}" data-layout-allow-overflow style="background:linear-gradient(${angle}deg,`
     + ` rgba(255,255,255,0) 28%, rgba(255,255,255,${(0.05 + seed(31) * 0.09).toFixed(3)}) 50%, rgba(255,255,255,0) 72%)"></div>`;
   return `<div class="mesh" id="mesh${index}">${blobs}${sweep}</div>`;
 }
