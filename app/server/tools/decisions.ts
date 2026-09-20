@@ -1,3 +1,4 @@
+import { shortDay } from '../clock.ts';
 import type { Decisions } from '../decisions.ts';
 import { text, type Tool } from './registry.ts';
 
@@ -22,7 +23,7 @@ export function decisionTools(decisions: Decisions): Tool[] {
     },
     {
       name: 'read_decision',
-      description: 'Read one of the founder\'s decisions in full: the options that were on the table, what was chosen and why. Name it by its title.',
+      description: 'Read one of the founder\'s decisions in full: the day it was made, the options that were on the table, what was chosen and why. Name it by its title. An old decision was made on what was true then, so check its day against today\'s before you lean on it.',
       parameters: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] },
       async run(args) {
         const wanted = text(args, 'title', 160).trim().toLowerCase();
@@ -30,7 +31,8 @@ export function decisionTools(decisions: Decisions): Tool[] {
         const found = all.find((one) => one.title.toLowerCase() === wanted) ?? all.find((one) => one.title.toLowerCase().includes(wanted) || one.id === wanted);
         if (!found) throw new Error(`no decision called "${args.title}". Decisions so far: ${all.map((one) => `"${one.title}"`).join(', ') || 'none'}`);
         return { text: [
-          `# ${found.title}`, found.status === 'proposed' ? `NOT DECIDED YET. Proposed by ${found.proposedBy ?? 'someone'}; the founder has not chosen.` : `Decided: ${found.chosen}`,
+          // When it was decided matters as much as what was: a choice made on last spring's numbers is not this week's.
+          `# ${found.title}`, found.status === 'proposed' ? `NOT DECIDED YET. Proposed by ${found.proposedBy ?? 'someone'} on ${shortDay(found.at)}; the founder has not chosen.` : `Decided on ${shortDay(found.decidedAt ?? found.at)}: ${found.chosen}`,
           found.why ? `Why: ${found.why}` : '', found.effect ? `Expected effect: ${found.effect}` : '', found.review ? `To be looked at again on ${found.review}.` : '',
           found.context ? `Context: ${found.context}` : '', found.options.length ? `Options that were on the table:\n${found.options.map((option, index) => `${index + 1}. ${option}`).join('\n')}` : '',
         ].filter(Boolean).join('\n\n') };

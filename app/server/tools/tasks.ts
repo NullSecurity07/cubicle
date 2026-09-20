@@ -1,4 +1,5 @@
 import type { Boards } from '../boards.ts';
+import { shortDay } from '../clock.ts';
 import { wired } from '../prompt.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 
@@ -23,14 +24,18 @@ export function taskTools(boards: Boards): Tool[] {
     },
     {
       name: 'list_tasks',
-      description: 'Read the task board connected to your room.',
+      description: 'Read the task board connected to your room. Each task says the day it was put up, when it next runs, and when its last run finished; compare those with today\'s date before you call anything late or done.',
       parameters: { type: 'object', properties: {} },
       async run(_args, context) {
         const id = board(context);
         if (!id) throw new Error(NO_BOARD);
         const tasks = await boards.list(id);
         const name = (roomId?: string) => context.stage.rooms.find((room) => room.id === roomId)?.name;
-        return { text: tasks.map((task) => `- [${task.column}] ${task.title}${task.assignee ? ` (${name(task.assignee) ?? 'unassigned'})` : ''}${task.run?.result ? ` · result: ${task.run.result.replace(/\s+/g, ' ').slice(0, 160)}` : ''}`).join('\n') || 'The board is empty.' };
+        // Without the days, a board is a list of things all equally "now": a task put up in March and one from this
+        // morning read the same, and a run that has not happened for weeks reads as fresh.
+        return { text: tasks.map((task) => `- [${task.column}] ${task.title}${task.assignee ? ` (${name(task.assignee) ?? 'unassigned'})` : ''}`
+          + ` · put up ${shortDay(task.createdAt)}${task.nextRun ? ` · next run ${shortDay(task.nextRun)}` : ''}${task.missed ? ' · missed while the app was closed' : ''}`
+          + `${task.run?.finishedAt ? ` · last ran ${shortDay(task.run.finishedAt)}` : ''}${task.run?.result ? ` · result: ${task.run.result.replace(/\s+/g, ' ').slice(0, 160)}` : ''}`).join('\n') || 'The board is empty.' };
       },
     },
   ];

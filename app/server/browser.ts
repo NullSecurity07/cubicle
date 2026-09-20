@@ -9,7 +9,9 @@ import type { Reader } from './readers.ts';
 export type Launch = { profile?: string; headed?: boolean };
 // Runs one agent-browser command in a named session and returns what it printed.
 export type Runner = (session: string, args: string[], launch?: Launch) => Promise<string>;
-export type SearchHit = { title: string; url: string; snippet: string };
+export type SearchHit = { title: string; url: string; snippet: string; date?: string };
+// How far back a search may look. Only an engine that really supports it gets it; see ENGINES.
+export type Recent = 'day' | 'week' | 'month' | 'year';
 export type Browser = ReturnType<typeof createBrowser>;
 
 const MAX_AT_ONCE = 4;
@@ -65,12 +67,25 @@ export function unwrapRedirect(href: string): string {
   } catch { return href; }
 }
 
-const hits = (rows: string, title: string, snippet: string) => `JSON.stringify([...document.querySelectorAll("${rows}")].slice(0,6).map(r=>({title:(r.querySelector("${title}")?.textContent||"").trim(),url:r.querySelector("${title}")?.href||r.querySelector("${title} a")?.href||"",snippet:(r.querySelector("${snippet}")?.textContent||"").trim().slice(0,180)})))`;
-// Tried in order for each query; an engine that answers with nothing (a challenge page, a changed layout) hands over to the next.
+const hits = (rows: string, title: string, snippet: string, date: string) => `JSON.stringify([...document.querySelectorAll("${rows}")].slice(0,6).map(r=>({title:(r.querySelector("${title}")?.textContent||"").trim(),url:r.querySelector("${title}")?.href||r.querySelector("${title} a")?.href||"",snippet:(r.querySelector("${snippet}")?.textContent||"").trim().slice(0,180),date:(r.querySelector("${date}")?.textContent||"").trim().slice(0,40)})))`;
+// DuckDuckGo's HTML endpoint narrows by date with `df`; Bing's search page has no honest equivalent, so it says so
+// rather than pretending. Tried in order for each query; an engine that answers with nothing (a challenge page, a
+// changed layout) hands over to the next.
+const DF: Record<Recent, string> = { day: 'd', week: 'w', month: 'm', year: 'y' };
 export const ENGINES = [
-  { name: 'duckduckgo', url: (query: string) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, read: hits('.result:not(.result--ad)', '.result__a', '.result__snippet') },
-  { name: 'bing', url: (query: string) => `https://www.bing.com/search?q=${encodeURIComponent(query)}`, read: hits('li.b_algo', 'h2 a', '.b_caption p, p') },
+  { name: 'duckduckgo', narrows: true, url: (query: string, recent?: Recent) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}${recent ? `&df=${DF[recent]}` : ''}`, read: hits('.result:not(.result--ad)', '.result__a', '.result__snippet', '.result__timestamp') },
+  { name: 'bing', narrows: false, url: (query: string) => `https://www.bing.com/search?q=${encodeURIComponent(query)}`, read: hits('li.b_algo', 'h2 a', '.b_caption p, p', '.news_dt') },
 ];
+
+// How old a result is, so nobody quotes a four-year-old page as this morning's news: the engine's own stamp when it
+// gives one, otherwise the date many pages put at the head of their own snippet, lifted out so it is not said twice.
+const DATED = /^\s*(\d{4}-\d{2}-\d{2}|\d{1,2} [A-Z][a-z]{2,8},? \d{4}|[A-Z][a-z]{2,8}\.? \d{1,2},? \d{4}|\d+ (?:hours?|days?|weeks?|months?|years?) ago)\s*[·•\-–—:|]?\s*/;
+export function aged(hit: SearchHit): { when: string; snippet: string } {
+  const stamp = hit.date?.trim();
+  if (stamp) return { when: stamp, snippet: hit.snippet };
+  const found = DATED.exec(hit.snippet);
+  return found ? { when: found[1], snippet: hit.snippet.slice(found[0].length) } : { when: '', snippet: hit.snippet };
+}
 // A site that answers with a human check instead of its page. The person must hear that plainly, or it will guess the content.
 const WALL = /prove your humanity|verify (that )?you('| a)re (a )?human|are you a robot|unusual traffic|complete the (following )?challenge|checking your browser|just a moment|access denied|attention required|enable javascript and cookies|captcha/i;
 export const walled = (title: string, text: string) => WALL.test(title) || (text.length < 1200 && WALL.test(text));
@@ -153,14 +168,17 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
     .map((result, index) => (result.status === 'fulfilled' ? result.value : `## ${label(index)}\nFailed: ${(result.reason as Error).message}`));
 
   return {
-    // All queries at once, each in its own throwaway session.
-    async search(queries: string[]): Promise<string> {
+    // All queries at once, each in its own throwaway session. `recent` asks for the last day, week, month or year.
+    async search(queries: string[], recent?: Recent): Promise<string> {
       const blocks = await settled(queries.map((query) => scratch(async (session) => {
         for (const engine of ENGINES) {
-          const found = await run(session, ['open', engine.url(query)]).then(() => run(session, ['eval', engine.read])).then((printed) => unwrap<SearchHit[]>(printed).filter((hit) => hit.url), () => []);
+          const found = await run(session, ['open', engine.url(query, recent)]).then(() => run(session, ['eval', engine.read])).then((printed) => unwrap<SearchHit[]>(printed).filter((hit) => hit.url), () => []);
           if (!found.length) continue;
-          const lines = found.map((hit, index) => `${index + 1}. ${hit.title || '(untitled)'}\n   ${unwrapRedirect(hit.url)}\n   ${hit.snippet}`);
-          return `## ${query}\n${lines.join('\n')}`;
+          const lines = found.map((hit, index) => { const { when, snippet } = aged(hit); return `${index + 1}. ${hit.title || '(untitled)'}\n   ${unwrapRedirect(hit.url)}\n   ${when ? `(${when}) ` : ''}${snippet}`; });
+          // An engine that cannot narrow still answers rather than leaving the person with nothing, but it says so:
+          // silently ignoring the ask is how an old page gets read as this year's.
+          const wide = recent && !engine.narrows ? `\nThese are not limited to the last ${recent}: ${engine.name} answered and cannot narrow by date. Check each date yourself.` : '';
+          return `## ${query}\n${lines.join('\n')}${wide}`;
         }
         return `## ${query}\nNo results: every search engine refused or came back empty.`;
       })), (index) => queries[index]);
