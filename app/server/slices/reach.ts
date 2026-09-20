@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { Attention } from '../../shared/model.ts';
-import { HOOK_ID, LISTEN_RATE, type ReachState } from '../../shared/reach.ts';
+import { LISTEN_RATE, type ReachState } from '../../shared/reach.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { DEFAULT_VOICE, fakeVoices, isVoice, kokoroVoices } from '../media/voice.ts';
 import type { Source } from '../seams.ts';

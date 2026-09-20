@@ -10,6 +10,5 @@ export type ReachState = {
   // What the screen tells the founder when Telegram will not answer, and how the local speech model is coming along.
   trouble?: string; speech?: string; listening: 'here' | 'cloud';
 };
-export const HOOK_ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 // What the microphone sends and the voice model here expects: one channel of plain samples at 16 kHz.
 export const LISTEN_RATE = 16_000;
