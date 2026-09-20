@@ -51,7 +51,8 @@ describe('the morning note', () => {
       task({ id: 'later', title: 'the evening post', column: 'todo', nextRun: NOON + 7200_000 }),
       task({ id: 'gone', title: 'yesterday\'s post', column: 'todo', nextRun: NOON - 7200_000 }),
     ], [{ id: 'a1', kind: 'approval', title: 'send an email', at: NOON, who: 'Maya' }])(NOON - 86_400_000);
-    expect(said).toContain('Maya finished the weekly numbers');
+    // An hour ago is an hour ago, not "just now": a note read after two days away has to sort itself out by time.
+    expect(said).toContain('Maya finished the weekly numbers at 11:00');
     expect(said).not.toContain('last week');
     expect(said).toContain('the evening post');
     expect(said).not.toContain('yesterday');

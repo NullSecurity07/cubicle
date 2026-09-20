@@ -1,5 +1,6 @@
 import type { Attention, Skill, Stage, Task } from '../../shared/model.ts';
 import type { Boards } from '../boards.ts';
+import { clockTime, dayKey, timeOrDay, weekDay } from '../clock.ts';
 import type { Skills } from '../skills.ts';
 import { createTrace } from '../trace.ts';
 
@@ -10,9 +11,7 @@ export type Digest = { done: string[]; waiting: string[]; today: string[]; learn
 const FEW = 5;
 const DAY = 86_400_000;
 
-const clock = (at: number) => new Date(at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-const day = (at: number) => new Date(at).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
-const sameDay = (one: number, other: number) => new Date(one).toDateString() === new Date(other).toDateString();
+const sameDay = (one: number, other: number) => dayKey(one) === dayKey(other);
 const thousands = (many: number) => (many >= 1000 ? `${Math.round(many / 100) / 10}k` : String(many));
 
 // "and four more" rather than four more lines: the founder can ask for any of it, and the point of this is the shape
@@ -21,7 +20,7 @@ const some = (lines: string[]) => (lines.length <= FEW ? lines : [...lines.slice
 
 // The words themselves. Nothing to say still says something: a founder who hears nothing cannot tell quiet from broken.
 export function digestText(at: number, parts: Digest): string {
-  const blocks: string[] = [`**Today** · ${day(at)}`];
+  const blocks: string[] = [`**Today** · ${weekDay(at)}`];
   const part = (title: string, lines: string[]) => { if (lines.length) blocks.push([`**${title}**`, ...some(lines).map((line) => `• ${line}`)].join('\n')); };
   part('Done', parts.done);
   part('Waiting for you', parts.waiting);
@@ -46,8 +45,9 @@ export function createDigest(deps: { boards: Boards; stage: () => Promise<Stage>
     for (const card of stage.cards ?? []) {
       if (card.kind !== 'board') continue;
       for (const task of await deps.boards.list(card.id) as Task[]) {
-        if (task.run?.state === 'done' && (task.run.finishedAt ?? 0) >= since) done.push(`${nameOf(task.assignee)} finished ${task.title}`);
-        if (task.nextRun && sameDay(task.nextRun, at) && task.nextRun >= at) today.push(`${clock(task.nextRun)} ${task.title} — ${nameOf(task.assignee)}`);
+        // A note the founder reads after two days away covers two days: each finished thing says which one it was.
+        if (task.run?.state === 'done' && (task.run.finishedAt ?? 0) >= since) done.push(`${nameOf(task.assignee)} finished ${task.title} ${timeOrDay(task.run.finishedAt!, at)}`);
+        if (task.nextRun && sameDay(task.nextRun, at) && task.nextRun >= at) today.push(`${clockTime(task.nextRun)} ${task.title} — ${nameOf(task.assignee)}`);
       }
     }
     const waiting = (await deps.attention().catch(() => [] as Attention[]))
