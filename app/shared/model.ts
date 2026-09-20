@@ -28,7 +28,7 @@ export const MEDIA_KINDS = ['imagegen', 'voicegen', 'videogen'] as const;
 export type MediaKind = (typeof MEDIA_KINDS)[number];
 // One thing a studio made. `prompt` is what was asked for: a picture prompt, the words to say, a video brief.
 // `music` credits the bed a film was made with, because a track's terms travel with the file it is in.
-export type MediaResult = { path: string; prompt: string; at: number; poster?: string; music?: MediaCredit };
+export type MediaResult = { path: string; prompt: string; at: number; poster?: string; music?: MediaCredit; by?: string };
 export type MediaCredit = { title: string; by: string; licence: string; source: string };
 // Something the founder dropped on a studio card for it to build with: their own footage, a photograph, a music track.
 // `name` is what a storyboard calls it in `asset`; `path` is where it really is in the shared files.

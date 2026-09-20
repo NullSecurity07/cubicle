@@ -383,6 +383,9 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .studio__strip button.is-shown { border-color: rgba(78, 140, 255, 0.8); }
 .studio__strip img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .studio__done { flex: none; display: flex; gap: 12px; margin: 8px 12px 0; }
+/* Which machine drew it. A founder who waited a minute is owed the reason, and one who waited four seconds is owed
+   the knowledge that somebody else's quota paid for it. */
+.studio__by { font-size: 11px; color: var(--muted); margin-right: auto; }
 .studio__done a, .studio__done button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 11.5px; text-decoration: none; cursor: pointer; }
 .studio__done a:hover, .studio__done button:hover { text-decoration: underline; }
 .studio__ask { flex: none; display: flex; flex-direction: column; gap: 7px; padding: 9px 12px 11px; }

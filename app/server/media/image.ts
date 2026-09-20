@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Maker, Piece } from './jobs.ts';
+import { localImages } from './local-image.ts';
 // The Hugging Face client is loaded on first use, the way the clips backend loads it: a second, optional way of
 // drawing must never be the reason the server will not start.
 const gradio = () => import('@gradio/client');
@@ -198,8 +199,24 @@ export function huggingFaceImages(
 
 // Cloudflare first, because it is quick and its day is generous; Hugging Face second, because it is slower but it is
 // still there when the first day is over.
-export const imageMakers = (env: NodeJS.ProcessEnv = process.env, http: typeof fetch = fetch): Maker[] =>
-  [cloudflareImages(env, http), huggingFaceImages(env, undefined, http)];
+// The order pictures are asked for in, and why. Cloudflare answers in four seconds, so it goes first while it has
+// anything left. This machine is next: it takes a minute but it never runs out, which is the whole point — both
+// free services ran dry inside one afternoon and a founder's film came out as coloured fog. The Hugging Face demos
+// come last because they are somebody else's machine and their allowance is the smallest of the three.
+//
+// `STAGE_IMAGE_BACKEND` is the founder's override: `local` never leaves the house, `cloud` never uses the machine.
+// Whether a picture might be drawn here, which is what a film needs to know before it tells the founder how long
+// it will take: a minute a picture is worth saying out loud, four seconds is not.
+export const mayDrawHere = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  imageMakers(env).some((one) => one.name === 'this computer' && !one.ready());
+export const imageMakers = (env: NodeJS.ProcessEnv = process.env, http: typeof fetch = fetch): Maker[] => {
+  const only = env.STAGE_IMAGE_BACKEND?.trim().toLowerCase();
+  const here = localImages({ env, fetch: http });
+  if (only === 'local') return [here];
+  const away = [cloudflareImages(env, http), huggingFaceImages(env, undefined, http)];
+  if (only === 'cloud') return away;
+  return [away[0], here, away[1]];
+};
 
 // What a free daily quota is spent on, and what it is never spent on twice. A picture is filed under a hash of
 // exactly what was asked for, so a founder who renders the same film again — after a line of narration changed, or
@@ -277,7 +294,9 @@ export function firstImages(...makers: Maker[]): Maker {
       const failures: string[] = [];
       for (const one of able) {
         try {
-          return await one.make(ask, help);
+          // Whose picture it is, carried back so the card can say it rather than leaving the founder to guess why
+          // one took four seconds and the next took a minute.
+          return { ...await one.make(ask, help), by: one.name };
         } catch (error) {
           const why = (error as Error).message;
           if (help.signal?.aborted) throw error;

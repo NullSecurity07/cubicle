@@ -12,7 +12,8 @@ import { headlineOf, trimTo } from './critic.ts';
 import { bibleFor, direct, faceIn, onCamera, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
-import { cachedImages, outOfPictures } from './image.ts';
+import { cachedImages, mayDrawHere, outOfPictures } from './image.ts';
+import { SECONDS_EACH } from './local-image.ts';
 import type { Maker, Piece } from './jobs.ts';
 import { availableRam, availableSwap, MINUTES_EACH, needsRam, roomToFilm as room } from './local-clips.ts';
 import {
@@ -182,14 +183,20 @@ export function bgPrompt(bible: string, subject: string, layout: string): string
 
 // About how long this is going to take, said before it starts rather than found out. Nothing here is precise; it is
 // honest, which is what a founder watching a spinner actually needs.
-export function estimate(ask: { scenes: number; seconds: number; pictures: number; clips: number; narrate: boolean }): string {
-  const drawing = Math.ceil(ask.pictures / 3) * 8;
+export function estimate(ask: { scenes: number; seconds: number; pictures: number; clips: number; narrate: boolean; here?: boolean }): string {
+  // Drawn away, three at a time, a few seconds each. Drawn here, one at a time and a minute each — which is worth
+  // a founder knowing before they start waiting rather than after.
+  const drawing = ask.here ? ask.pictures * SECONDS_EACH : Math.ceil(ask.pictures / 3) * 8;
   const saying = ask.narrate ? ask.seconds * 0.6 : 0;
   const rendering = 14 + ask.seconds * 4;
   const local = ask.clips * 180;
   const all = drawing + saying + rendering + local;
   const minutes = Math.max(1, Math.round(all / 60));
-  return `about ${minutes} minute${minutes === 1 ? '' : 's'}${ask.clips ? ` — ${ask.clips} of that is the moving shot${ask.clips === 1 ? '' : 's'} this computer draws` : ''}`;
+  const slow = [
+    ask.clips ? `${ask.clips} of that is the moving shot${ask.clips === 1 ? '' : 's'} this computer draws` : '',
+    ask.here && ask.pictures ? `${Math.round(drawing / 60)} of it is the ${ask.pictures} picture${ask.pictures === 1 ? '' : 's'} this computer draws` : '',
+  ].filter(Boolean);
+  return `about ${minutes} minute${minutes === 1 ? '' : 's'}${slow.length ? ` — ${slow.join(', and ')}` : ''}`;
 }
 
 // The renderer: our own scenes written as one HTML page, which headless Chrome steps through frame by frame and ffmpeg
@@ -434,7 +441,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
 
         const wantsPictures = spec.scenes.filter((scene) => scene.layout === 'picture' || scene.bg_prompt).length;
         const wantsClips = spec.scenes.filter((scene) => AI_LAYOUTS.has(scene.layout)).length;
-        report(`${spec.scenes.length} scenes, ${estimate({ scenes: spec.scenes.length, seconds, pictures: drawing ? wantsPictures : 0, clips: here ? wantsClips : 0, narrate: !!saying })}`);
+        const drawnHere = mayDrawHere();
+        report(`${spec.scenes.length} scenes, ${estimate({ scenes: spec.scenes.length, seconds, pictures: drawing ? Math.min(wantsPictures, MAX_BACKGROUNDS + 2) : 0, clips: here ? wantsClips : 0, narrate: !!saying, here: drawnHere })}`);
         report('drawing the pictures and recording the narration…');
         const shots: Shot[] = spec.scenes.map((scene) => ({ scene, seconds: 0 }));
         const said = (index: number, line: string) => report(`scene ${index + 1}: ${line}`);
