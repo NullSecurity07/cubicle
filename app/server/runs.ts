@@ -31,6 +31,9 @@ export function createRuns(deps: {
 }) {
   const { boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify, seams } = deps;
   const stops = new Map<string, AbortController>();
+  // The last task each person ran. What watches a finished turn finishes after the run does, and this is how the one
+  // line it has to say ("learned: …") finds its way back into the log the founder is looking at.
+  const lately = new Map<string, { boardId: string; taskId: string }>();
 
   async function start(boardId: string, taskId: string): Promise<void> {
     const stage = await store.loadStage();
@@ -41,6 +44,7 @@ export function createRuns(deps: {
     if (task.run?.state === 'running' || task.run?.state === 'waiting') throw new Error('this task is already running');
     if (busy.has(room.id)) throw new Error(`${room.name} is in the middle of something. Try again when they are done.`);
     busy.add(room.id);
+    lately.set(room.id, { boardId, taskId });
     const stop = new AbortController();
     stops.set(taskId, stop);
     await boards.update(boardId, taskId, (one) => { one.column = 'doing'; one.missed = undefined; one.run = { state: 'running', startedAt: Date.now(), log: [`${room.name} started`] }; if (one.repeat) one.nextRun = nextDue(one.repeat, Date.now()); });
@@ -88,6 +92,11 @@ export function createRuns(deps: {
   return {
     start,
     stop(taskId: string) { stops.get(taskId)?.abort(); },
+    // One more line in the log of the last thing this person ran, for something that only became true after they finished.
+    async note(roomId: string, text: string) {
+      const last = lately.get(roomId);
+      if (last) await boards.update(last.boardId, last.taskId, (one) => { if (one.run) one.run.log = [...one.run.log.slice(-199), text]; });
+    },
     // Called every half minute: start the repeating tasks that are due. One whose person is busy stays due and is tried again.
     async tick() {
       const stage = await store.loadStage();
