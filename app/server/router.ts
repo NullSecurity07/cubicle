@@ -1,4 +1,4 @@
-import type { ModelClient } from './providers.ts';
+import { providerOf, type ModelClient } from './providers.ts';
 import type { UsageBook } from './usage.ts';
 
 const FLOOR = 0.05;
@@ -12,14 +12,16 @@ export function route(clients: ModelClient[], usage: UsageBook, want: { pinned?:
   // A turn with a picture in it goes to a model that can see, when one is set up.
   const seeing = want.vision ? able.filter((client) => client.vision) : [];
   const pool = seeing.length ? [...seeing, ...able.filter((client) => !client.vision)] : able.length ? able : clients;
-  const pinned = want.pinned && want.pinned !== 'auto' ? pool.find((client) => client.name === want.pinned) : undefined;
+  // A pinned provider means every key it has here, the roomiest first: one key resting on a 429 is not the founder
+  // asking for another provider.
+  const pinned = want.pinned && want.pinned !== 'auto' ? pool.filter((client) => providerOf(client.name) === want.pinned) : [];
   const roomy = (client: ModelClient) => usage.left(client) > FLOOR && !usage.hot(client, want.promptChars);
 
-  if (pinned) {
-    const share = usage.left(pinned);
-    const notice = share <= FLOOR ? `${title(pinned.name)} has no free quota left today. Another model answers if it fails.`
-      : share < 0.2 ? `${title(pinned.name)} has ${Math.round(share * 100)}% of today's free quota left.` : undefined;
-    return { order: [pinned, ...pool.filter((client) => client !== pinned && roomy(client))], notice };
+  if (pinned.length) {
+    const share = Math.max(...pinned.map((client) => usage.left(client)));
+    const notice = share <= FLOOR ? `${title(want.pinned!)} has no free quota left today. Another model answers if it fails.`
+      : share < 0.2 ? `${title(want.pinned!)} has ${Math.round(share * 100)}% of today's free quota left.` : undefined;
+    return { order: [...pinned.filter(roomy), ...pinned.filter((client) => !roomy(client)), ...pool.filter((client) => !pinned.includes(client) && roomy(client))], notice };
   }
   if (want.pinned && want.pinned !== 'auto') {
     return { order: [...pool.filter(roomy), ...pool.filter((client) => !roomy(client))], notice: `${title(want.pinned)} is not set up here, so another model answers.` };
