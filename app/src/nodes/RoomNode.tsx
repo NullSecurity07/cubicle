@@ -42,7 +42,7 @@ export function RoomNode({ id, data, selected }: NodeProps<RoomNodeType>) {
         <div className={`status status--${status}`} title={status} />
       </header>
       {remembering && <MemoryPanel id={id} name={data.name} onClose={() => setRemembering(false)} />}
-      {setup && <PersonForm person={data} onCancel={data.name ? () => setEditing(false) : undefined} onSave={(next) => { updateNodeData(id, next); setEditing(false); }} />}
+      {setup && <PersonForm id={id} person={data} onCancel={data.name ? () => setEditing(false) : undefined} onSave={(next) => { updateNodeData(id, next); setEditing(false); }} />}
       {/* The chat stays mounted under the form, so a reply in flight survives an edit. */}
       <div className="card__row" hidden={setup}>
         <div className="card__body">

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { ChatMessage } from '../../shared/model';
 import { getChat, getMemory } from '../api';
 import { listen } from '../bus';
+import { SLICES } from '../slices';
 import type { StageNode } from '../stage';
 import type { Status } from './Chat';
 
@@ -41,6 +42,7 @@ export function RoomSide({ id, name, status, onEditMemory }: { id: string; name:
   }, [id, status]);
   useEffect(() => listen('effect', (effect) => { if (effect.kind === 'memory-changed' && effect.id === id) getMemory(id).then(setMemory).catch(() => {}); }), [id]);
 
+  const me = nodes.find((node) => node.id === id);
   const wired = edges.filter((edge) => edge.source === id || edge.target === id)
     .map((edge) => nodes.find((node) => node.id === (edge.source === id ? edge.target : edge.source)))
     .filter((node): node is StageNode => !!node);
@@ -50,6 +52,8 @@ export function RoomSide({ id, name, status, onEditMemory }: { id: string; name:
 
   return (
     <aside className="side nowheel" aria-label={`About ${name}`}>
+      {/* What a slice knows about this person that the stage does not: the voice they answer in. */}
+      {me?.type === 'room' && SLICES.map((slice) => (slice.person ? <slice.person key={slice.name} roomId={id} room={me.data} /> : null))}
       <section>
         <h3>Wired to</h3>
         {wired.length ? <ul>{wired.map((node) => <li key={node.id}><span>{labelOf(node)}</span><em>{KIND[node.type ?? ''] ?? ''}</em></li>)}</ul>

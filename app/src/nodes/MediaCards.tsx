@@ -71,9 +71,10 @@ export function ImageGenNode({ id, data, selected }: NodeProps<ImageGenNodeType>
   );
 }
 
-// The voices come from the server once, for every voice card on the stage: a fixed list, not a model that must load first.
+// The voices come from the server once, for every voice card on the stage and every person who speaks in one: a
+// fixed list, not a model that must load first.
 let voicesAsked: Promise<{ id: string; name: string }[]> | null = null;
-function useVoices() {
+export function useVoices() {
   const [voices, setVoices] = useState<{ id: string; name: string }[]>([]);
   useEffect(() => {
     let gone = false;

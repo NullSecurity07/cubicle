@@ -177,6 +177,14 @@ div.msg--assistant { white-space: normal; display: flex; flex-direction: column;
 .setup select { border: 1px solid var(--card-border); border-radius: 8px; padding: 7px 9px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 13px; }
 .setup select:focus { border-color: rgba(78, 140, 255, 0.7); }
 .setup option { background: #16181d; color: var(--text); }
+/* The three gender options, and the voice with its play button beside it: the form's own labels and boxes, laid out
+   in a row instead of a column. */
+.setup__pick { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 0; padding: 0; border: 0; font-size: 11.5px; color: var(--muted); }
+.setup__pick legend { float: left; width: 100%; padding: 0 0 4px; }
+.setup__pick label, .setup__more { flex-direction: row; align-items: center; gap: 6px; color: var(--text); font-size: 12.5px; cursor: pointer; }
+.setup__pick input, .setup__more input { width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--accent); }
+.setup__row { display: flex; align-items: center; gap: 6px; }
+.setup__row select { flex: 1; min-width: 0; }
 .card__saved { transition: color 0.3s; }
 .doc--fresh { animation: fresh 1.6s ease-out; }
 @keyframes fresh { from { background: rgba(78, 140, 255, 0.16); } to { background: transparent; } }

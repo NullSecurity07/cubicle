@@ -1,6 +1,7 @@
 import type { UiSlice } from '..';
 import { overlay, useLayers } from '../../overlay/store';
 import { Mic } from './Mic';
+import { HearVoice, PersonVoice } from './PersonVoice';
 import { ReachPanel } from './ReachPanel';
 import { Speak } from './Speak';
 import './reach.css';
@@ -21,4 +22,6 @@ export default {
   overlay: ReachOverlay,
   reply: Speak,
   compose: Mic,
+  person: PersonVoice,
+  voice: HearVoice,
 } satisfies UiSlice;
