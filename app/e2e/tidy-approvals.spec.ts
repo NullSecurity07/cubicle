@@ -48,10 +48,6 @@ test.afterEach(async ({ page }) => {
 test('an approval the app closed on says what it was, and goes when the founder has dealt with it', async ({ page }) => {
   await send(page, 'marketing', email('alex@example.com'));
   await expect(node(page, 'marketing').getByRole('group', { name: 'Send this email?' })).toBeVisible();
-  // A word to Dev first, only so that his conversation is a different length from Maya's: the fake model names a call
-  // after the number of messages it was handed, and two calls of the same name are one approval, not two.
-  await send(page, 'build', 'hello there');
-  await expect(node(page, 'build').locator('.status--idle')).toBeVisible();
   await send(page, 'build', email('sam@example.com'));
   await expect(node(page, 'build').getByRole('group', { name: 'Send this email?' })).toBeVisible();
   await expect.poll(async () => (await waiting(page)).filter((one) => one.kind === 'approval').length).toBe(2);
