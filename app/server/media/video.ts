@@ -8,25 +8,28 @@ import { projectDir } from '../coder.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
-import { headlineOf, inStyle, noFace, subjectOf, trimTo } from './critic.ts';
-import { bibleFor, direct, faceIn, onCamera, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
+import { headlineOf, inStyle, noFace, repair, subjectOf, trimTo, type Want } from './critic.ts';
+import {
+  bibleFor, direct, faceIn, layoutsFor, narratorWanted, onCamera, readBrief, tellOf, understandingOf,
+  type Asked, type Material, type Understanding,
+} from './director.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
 import { cachedImages, mayDrawHere, outOfPictures } from './image.ts';
 import { SECONDS_EACH } from './local-image.ts';
 import type { Maker, Piece } from './jobs.ts';
 import { availableRam, availableSwap, MINUTES_EACH, needsRam, roomToFilm as room } from './local-clips.ts';
-import { secondAngle } from './local-person.ts';
 import {
   AI_LAYOUTS, isPurpose, MAX_AI, MAX_BACKGROUNDS, MAX_LOCAL_AI, PURPOSE, PURPOSES, SCENES_A_BACKGROUND,
   fallbackOf, withinCaps, withinLength, type Spec,
 } from './spec.ts';
+import { sourcesOf } from './grounding.ts';
 import { readProject, VIEWPORTS } from './sources.ts';
 import {
   composition, cuesOf, FORMATS, isPack, PACK, PACKS, PACES, projectFile, sceneSeconds, snapToBeats,
   type Pace, type Pack, type Shot,
 } from './templates/index.ts';
-import { wavSeconds } from './voice.ts';
+import { castLine, castVoice, isVoice, VOICES, wavSeconds } from './voice.ts';
 
 // The spec vocabulary lives in `spec.ts` now, so the director and the critic can share it without importing the
 // whole renderer. Everything that used to be here is still here, by the same names.
@@ -101,8 +104,10 @@ export type VideoDeps = {
   // the workspace, which still saves a second render of the same film.
   cacheDir?: string;
   // `clips` is every moving-picture backend as one; `local` is the one that runs here, which is what decides how many
-  // such scenes a film may have and whether a person's call needs the founder's yes.
-  clips?: Clips; local?: Clips; music?: Music; forbidden?: string[];
+  // such scenes a film may have and whether a person's call needs the founder's yes. `lipsync` is the narrower
+  // thing: the backend that can move a real mouth to a real recording. Without one this studio shows no talking
+  // person at all, so it is asked for by name rather than inferred from `clips`.
+  clips?: Clips; local?: Clips; lipsync?: Clips; music?: Music; forbidden?: string[];
   stage?: () => Promise<Stage>;
   assets?: (cardId: string) => Promise<MediaAsset[]>;
   // The pictures another studio card has already made, newest first: a wired image studio's work is the film's.
@@ -378,11 +383,18 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const { material, files, bed } = await gather(deps, asked, at, report, signal);
         if (material.using.length) report(`using: ${material.using.join(', ')}`);
 
-        // A person who wrote the whole storyboard is not overruled about what is in it, only about how it is set.
+        // A person who wrote the whole storyboard is not overruled about what is in it, only about how it is set —
+        // but it is read by the same editor as the director's own work. A storyboard written by somebody in a chat
+        // used to go straight to the renderer, which is exactly how the founder's own film came back as three
+        // talking-head scenes with no variety, no length check and nothing grounding them. The rules do not care
+        // who wrote the scenes.
         let understanding: Understanding;
         let spec: Spec;
         let bible: string;
         const mayUseAi = wantsAi || (autoAi && here);
+        // Whether anything can really move a mouth to a recording right now. It is the only thing that lets a
+        // person speak on camera in one of these films, and a film never fakes it.
+        const lipsync = !!deps.lipsync && !deps.lipsync.ready() && mayUseAi;
         if (asked.spec) {
           understanding = understandingOf({}, told, readBrief(asked.prompt));
           bible = bibleFor(understanding);
@@ -392,8 +404,20 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           if (spec.music) understanding.mood = spec.music;
           if (spec.captions !== undefined) understanding.captions = spec.captions;
           report(tellOf(understanding));
+          const want: Want = {
+            seconds: understanding.seconds, pace: understanding.pace, purpose: understanding.purpose,
+            captions: understanding.captions, bible, layouts: layoutsFor({ ai: mayUseAi, lipsync, material }),
+            reel: understanding.purpose === 'reel' || understanding.purpose === 'ad',
+            product: material.lines.length > 0 || material.assets.length > 0 || !!material.brand,
+            sources: sourcesOf(material, asked.prompt),
+            screens: material.assets.filter((one) => one.kind === 'screen').map((one) => one.name),
+            person: understanding.person,
+          };
+          const mended = repair(spec, want);
+          spec = mended.spec;
+          for (const line of mended.notes.slice(0, 5)) report(line);
         } else {
-          const directed = await direct(told, material, deps.think, { report, ai: mayUseAi });
+          const directed = await direct(told, material, deps.think, { report, ai: mayUseAi, lipsync });
           understanding = directed.understanding;
           spec = directed.spec;
           bible = directed.bible;
@@ -432,7 +456,21 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // A real picture of a real person, already on the card, is who the film puts on camera. Nothing is drawn and
         // nothing is filmed for a face the founder has already made.
         const face = faceIn(material);
-        spec = { ...spec, scenes: onCamera(spec.scenes, understanding, bible, report, roomToFilm ? { minutes: MINUTES_EACH } : undefined, face) };
+
+        // Casting, which is one decision and is made once. The voices the model really ships are read off the
+        // weights themselves — gender, accent and the grade the model's own authors gave them — and the film takes
+        // the best one that fits what the brief asked for. The founder's pick on the card overrules all of it.
+        const table = await deps.voices?.cast?.().catch(() => undefined) ?? VOICES;
+        const wanted = narratorWanted(asked.prompt, understanding);
+        const narrator = isVoice(asked.voice) ? (table.find((one) => one.id === asked.voice) ?? castVoice(wanted, table)) : castVoice(wanted, table);
+        if (asked.narrate !== false) report(castLine(narrator));
+        // Whoever is on screen has to sound like themselves. The only description of a drawn or dropped picture
+        // anybody has is the words it was drawn from, so that is what is read — and where it says a man and the
+        // narrator is a woman, nobody goes on camera at all rather than the two being put together.
+        const shownAs = narratorWanted([face && material.assets.find((one) => one.name === face)?.prompt,
+          spec.scenes.map((one) => one.portrait_prompt).filter(Boolean).join(' ')].filter(Boolean).join(' ')).gender;
+        spec = { ...spec, scenes: onCamera(spec.scenes, understanding, bible, report,
+          { ready: lipsync, narratorGender: narrator.gender, personGender: shownAs }, face) };
 
         // Every drawn picture is filed under what was asked for, so the same film rendered twice draws nothing the
         // second time and a founder's daily quota lasts the week.
@@ -452,16 +490,6 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         report(`${spec.scenes.length} scenes, ${estimate({ scenes: spec.scenes.length, seconds, pictures: drawing ? Math.min(wantsPictures, MAX_BACKGROUNDS + 2) : 0, clips: here ? wantsClips : 0, narrate: !!saying, here: drawnHere })}`);
         report('drawing the pictures and recording the narration…');
         const shots: Shot[] = spec.scenes.map((scene) => ({ scene, seconds: 0 }));
-        // A film has one person in it. The first on-camera scene is filmed; every later one cuts back to that same
-        // shot from a second angle, because a film whose presenter changes face halfway through is two films. It
-        // is also minutes of this machine's time that nobody has to spend twice.
-        let personShot: string | null = null;
-        let personTurn: Promise<void> = Promise.resolve();
-        const asOnePerson = <T>(job: () => Promise<T>): Promise<T> => {
-          const mine = personTurn.then(job, job);
-          personTurn = mine.then(() => {}, () => {});
-          return mine;
-        };
         const said = (index: number, line: string) => report(`scene ${index + 1}: ${line}`);
 
         // Everything a scene needs is made beside everything else: the stills, the lines, the clips and the founder's
@@ -494,7 +522,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           // The line is recorded before a talking head is made of it, because the head is made out of the line.
           if (saying && scene.say) {
             try {
-              const piece = await saying.make({ prompt: scene.say, voice: asked.voice || 'af_heart' }, { report: () => {}, signal });
+              const piece = await saying.make({ prompt: scene.say, voice: narrator.id }, { report: () => {}, signal });
               const file = `say-${index}.wav`;
               await writeFile(join(at, 'assets', file), piece.bytes);
               shot.voice = { file, seconds: wavSeconds(piece.bytes), parts: piece.parts ?? [{ text: scene.say, seconds: wavSeconds(piece.bytes) }] };
@@ -513,41 +541,27 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               shot.scene = fallbackOf(scene);
             }
           }
-          if (scene.layout === 'presenter' && able) {
+          // Somebody speaking on camera, and the only way this studio will make one: a real lip-sync backend,
+          // handed the actual recording, moving the actual mouth to it. There is no second route and there is no
+          // stand-in. A drawn person whose mouth moves to a separate recording is the single fastest way to make a
+          // film read as generated, and the studio would rather show nobody at all — `onCamera` has already turned
+          // these scenes into the faceless edit wherever no backend was standing by, so reaching here means one is.
+          if (scene.layout === 'presenter' && lipsync) {
             try {
-              await asOnePerson(async () => {
-              // The same person again, from a second angle, rather than a stranger drawn from scratch.
-              if (personShot) {
-                said(index, 'the same person again, from a closer angle');
-                const again = `pres-${index}.mp4`;
-                await secondAngle(join(at, 'assets', personShot), join(at, 'assets', again));
-                shot.video = again;
-                return;
-              }
-              // What this scene is going to do, before it starts: a founder watching a spinner needs to know
-              // whether somebody is being drawn here for minutes or fetched in seconds.
-              said(index, 'making the person on screen…');
+              said(index, 'making the person on screen say it…');
               const face = shot.image ? await readFile(join(at, 'assets', shot.image))
                 : drawing && scene.portrait_prompt ? (await drawing.make({ prompt: `${scene.portrait_prompt}, head and shoulders portrait, plain background, even light`, shape }, { report: () => {}, signal })).bytes
                   : null;
-              // A recording is what a lip-sync service needs; a backend that draws somebody moving needs only the
-              // face and the length. Demanding one of every route meant a film whose narration failed had nobody in
-              // it at all, which is two faults for the price of one.
-              const speech = shot.voice ? await readFile(join(at, 'assets', shot.voice.file)) : Buffer.alloc(0);
               if (!face) throw new Error('there is no face to use');
-              // The words the portrait was drawn from travel with it: a backend that cannot animate the picture
-              // itself can still draw somebody of that description moving, which is nearer what was asked for.
-              // The picture's own words come first. A storyboard's `portrait_prompt` is usually the film's style
-              // bible with "somebody talking to camera" after it, and a person drawn from that is a stranger —
-              // which is how one film came to have the founder's face in one scene and somebody else's in another.
+              // No recording, no lip sync, no person: a mouth cannot be matched to a line that was never said.
+              const speech = shot.voice ? await readFile(join(at, 'assets', shot.voice.file)) : null;
+              if (!speech?.length) throw new Error('there is no recording for the mouth to match');
               const about = material.assets.find((one) => one.name === scene.asset)?.prompt || scene.portrait_prompt;
               const made = await clips.presenter({ portrait: face, speech, about, shape }, { report: (line) => said(index, line), signal });
               shot.video = `pres-${index}.mp4`;
               await writeFile(join(at, 'assets', shot.video), made.bytes);
-              personShot = shot.video;
-              });
             } catch (error) {
-              said(index, `the talking head could not be made (${(error as Error).message}), so the line is said over the words instead`);
+              said(index, `nobody could be lip-synced (${(error as Error).message}), so the line is said over the film's own pictures instead`);
               shot.scene = fallbackOf(scene);
             }
           }

@@ -14,5 +14,5 @@ allowBuilds:
   sharp: true
 
 minimumReleaseAgeExclude:
-  - hyperframes@0.8.50
+  - hyperframes@0.8.50 || 0.8.55
   - '@gradio/client@2.7.0'

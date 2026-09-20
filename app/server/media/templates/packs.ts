@@ -57,10 +57,17 @@ export type PackStyle = {
   cuts: Cut[];
   // How much of a second two scenes share while one leaves and the next arrives.
   overlap: number;
-  // Depth, in the two amounts that actually change how a frame reads: how much film grain sits over it and how far
-  // the corners are pulled down.
-  grain: number;
-  vignette: number;
+  // A declared format: the grade and the bars this pack wears on every frame of every film in the series, so they
+  // read as a house look rather than as a filter somebody switched on. `letterbox` is the fraction of the frame
+  // each bar covers; `grade` is a CSS filter, and it is applied **to the pictures only** — never over the type,
+  // never over the whole composite.
+  //
+  // Almost every pack leaves this undefined, and that is the point. A vignette and a grain sat over the whole
+  // timeline of every film this studio made until now, and the founder's verdict on it was "obvious filter". The
+  // test a look has to pass is the one the research states plainly: if the viewer notices the effect before the
+  // story, it is too strong — and an effect the viewer cannot switch off, applied to footage that is meant to read
+  // as present-day, is always too strong.
+  format?: { letterbox?: number; grade?: string };
   // A sweep of colour drawn behind a headline as it arrives — the one piece of decoration a reel earns.
   sweep: boolean;
   // How hard a background picture is held down so type can sit on it.
@@ -86,7 +93,7 @@ export const PACK: Record<Pack, PackStyle> = {
     paint: { ground: '#1C2530', ink: '#F2F5F8', quiet: '#AFBDCB', signal: '#E8B04B', mark: '#E8B04B', scrim: '28, 37, 48' },
     fonts: [INTER], display: "'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'settle', cuts: ['fade', 'push', 'wipe'], overlap: 0.42,
-    grain: 0.035, vignette: 0.26, sweep: false, scrim: 0.66, radius: 22, capScale: 1,
+    sweep: false, scrim: 0.66, radius: 22, capScale: 1,
   },
   creator: {
     // The reel: near-black, one acid accent, a condensed display face shouting, words landing two and three at a
@@ -95,7 +102,7 @@ export const PACK: Record<Pack, PackStyle> = {
     paint: { ground: '#0C0D12', ink: '#FFFFFF', quiet: '#AEB3C4', signal: '#D6FF3E', mark: '#D6FF3E', scrim: '12, 13, 18' },
     fonts: [INTER, ANTON], display: "'Studio Shout', 'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
     shout: true, motion: 'kinetic', cuts: ['whip', 'zoom', 'cut', 'whip', 'wipe'], overlap: 0.30,
-    grain: 0.055, vignette: 0.40, sweep: true, scrim: 0.74, radius: 18, capScale: 0.62,
+    sweep: true, scrim: 0.74, radius: 18, capScale: 0.62,
   },
   editorial: {
     // The quiet one: a serif that has something to say, a great deal of air, pictures doing the arguing, and cuts you
@@ -104,7 +111,7 @@ export const PACK: Record<Pack, PackStyle> = {
     paint: { ground: '#14120F', ink: '#F4EFE6', quiet: '#BDB2A4', signal: '#E4B45C', mark: '#D8A54A', scrim: '20, 18, 15' },
     fonts: [INTER, SERIF], display: "'Studio Serif', Georgia, serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'glide', cuts: ['fade', 'wipe', 'fade', 'push'], overlap: 0.62,
-    grain: 0.05, vignette: 0.34, sweep: false, scrim: 0.62, radius: 4, capScale: 1.05,
+    sweep: false, scrim: 0.62, radius: 4, capScale: 1.05,
   },
   neon: {
     // Tech: an almost-black ground, cyan against magenta, a grotesk with real character, and cuts that snap.
@@ -112,14 +119,14 @@ export const PACK: Record<Pack, PackStyle> = {
     paint: { ground: '#06070C', ink: '#E9F6FF', quiet: '#97A9C2', signal: '#3BE3FF', mark: '#FF42D6', scrim: '6, 7, 12' },
     fonts: [GROTESK, INTER], display: "'Studio Tech', 'Studio Sans', sans-serif", body: "'Studio Tech', 'Studio Sans', sans-serif",
     shout: true, motion: 'snap', cuts: ['zoom', 'wipe', 'cut', 'whip'], overlap: 0.26,
-    grain: 0.06, vignette: 0.44, sweep: true, scrim: 0.70, radius: 8, capScale: 0.78,
+    sweep: true, scrim: 0.70, radius: 8, capScale: 0.78,
   },
   sketch: {
     name: 'Sketch',
     paint: { ground: '#F4F0E6', ink: '#1F1D1A', quiet: '#6B6660', signal: '#2B54C8', mark: '#FFD24A', scrim: '244, 240, 230' },
     fonts: [INTER], display: "'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'hand', cuts: ['fade', 'push'], overlap: 0.40,
-    grain: 0.07, vignette: 0.10, sweep: false, scrim: 0.50, radius: 16, capScale: 1,
+    sweep: false, scrim: 0.50, radius: 16, capScale: 1,
   },
   brand: {
     // The product's own colours, over the clean pack's manners. What `paintOf` finds replaces the palette below.
@@ -127,7 +134,7 @@ export const PACK: Record<Pack, PackStyle> = {
     paint: { ground: '#1C2530', ink: '#F2F5F8', quiet: '#93A3B4', signal: '#E8B04B', mark: '#E8B04B', scrim: '28, 37, 48' },
     fonts: [INTER], display: "'Studio Sans', sans-serif", body: "'Studio Sans', sans-serif",
     shout: false, motion: 'settle', cuts: ['fade', 'push', 'zoom'], overlap: 0.40,
-    grain: 0.04, vignette: 0.30, sweep: false, scrim: 0.66, radius: 20, capScale: 1,
+    sweep: false, scrim: 0.66, radius: 20, capScale: 1,
   },
 };
 

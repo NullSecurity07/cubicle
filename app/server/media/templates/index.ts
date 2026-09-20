@@ -144,8 +144,7 @@ export function composition(film: Film): string {
   const sections = film.shots.map((shot, index) => `      <section class="clip" id="s${index}" data-start="${starts[index]}" data-duration="${held(index)}">`
     + `<div class="stage" id="g${index}">${groundHtml(shot, index, pack)}`
     + `${sketch ? `<svg class="marks" id="m${index}" viewBox="0 0 ${width} ${height}"></svg>` : ''}`
-    + `${bodies[index]}${captions[index].html}`
-    + `<div class="vig"></div><div class="grain"></div></div></section>`);
+    + `${bodies[index]}${captions[index].html}</div></section>`);
   // Every sound needs an id of its own or the mixer never finds it and the film comes out silent.
   const sounds = film.shots.flatMap((shot, index) => (shot.voice
     ? [`      <audio id="say${index}" src="assets/${shot.voice.file}" data-start="${(starts[index] + PACE[pace].lead).toFixed(2)}" data-duration="${shot.voice.seconds.toFixed(2)}" data-volume="1"></audio>`]
@@ -158,6 +157,8 @@ export function composition(film: Film): string {
   // How far through the film a viewer is, on the packs that are made for a feed. It sits outside every scene, so it
   // runs across the cuts rather than restarting at each one.
   const bar = (pack === 'creator' || pack === 'neon') && film.shots.length > 1;
+  // A pack that wears letterbox wears it for the whole render: a declared format, painted once, never animated.
+  const letterbox = (style.format?.letterbox ?? 0) > 0;
 
   const steps = film.shots.flatMap((shot, index) => {
     const move = cutSteps(cutAt(pack, index), `#g${index}`, starts[index], starts[index] + shot.seconds, style.overlap, index);
@@ -184,7 +185,7 @@ ${styleSheet(film.shape, pack, film.brand)}
   <body>
     <div id="root"${film.captions ? ' class="has-captions"' : ''} data-composition-id="main" data-start="0" data-width="${width}" data-height="${height}" data-duration="${total}">
 ${reels.length ? `${reels.join('\n')}\n` : ''}${sections.join('\n')}
-${bar ? '      <div class="progress" id="bar"></div>\n' : ''}${sounds.join('\n')}
+${letterbox ? '      <div class="bar bar--top"></div>\n      <div class="bar bar--foot"></div>\n' : ''}${bar ? '      <div class="progress" id="bar"></div>\n' : ''}${sounds.join('\n')}
     </div>
     <script>
 ${sketch ? `${MARKS}\n` : ''}      const SCENE_AT = ${JSON.stringify(starts)};

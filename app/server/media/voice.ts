@@ -5,26 +5,95 @@ const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/models';
 const GEMINI_RATE = 24_000;
 export const SETUP_HINT = 'No voice maker is set up. The voice model runs on this machine and needs nothing but the first download; if it will not load, the founder can add GEMINI_API_KEY to .env instead and restart the app.';
 
-// The voices the model was trained on, best first, named the way the founder picks one: no codes, no grades.
-export type Voice = { id: string; name: string };
+// The voices the model was trained on, best first, named the way the founder picks one — and, beside the name, the
+// three things a film has to know to cast one: who it sounds like, where it sounds like it is from, and how good it
+// actually is. The model ships that table itself (`tts.voices`, one entry a voice with `gender`, `language` and
+// `overallGrade`), and `castableVoices` reads it off the loaded model so this list can never drift from the weights.
+// It is written out here as well because a founder opening the card should not have to wait for a 310 MB download
+// before the picker has any names in it.
+//
+// Worth saying plainly, because it decides what a film may show: **every male voice in this model grades C+ or
+// worse**, and the best voice by a long way is a woman's. A film that puts an identifiable man on screen and reads
+// him in a woman's voice is the fastest credibility loss in the format, so the studio would rather show nobody than
+// mismatch — see `castVoice`.
+export type Grade = 'A' | 'A-' | 'B+' | 'B' | 'B-' | 'C+' | 'C' | 'C-' | 'D+' | 'D' | 'D-' | 'F+' | 'F';
+export type Voice = { id: string; name: string; who: string; gender: 'f' | 'm'; accent: 'American' | 'British'; grade: Grade };
+// How good a grade is as one number, so voices sort without a table of special cases.
+export const gradeRank = (grade: string): number => {
+  const letters = 'FEDCBA';
+  const at = letters.indexOf(grade[0]?.toUpperCase() ?? 'F');
+  const sign = grade.includes('+') ? 0.33 : grade.includes('-') ? -0.33 : 0;
+  return (at < 0 ? 0 : at) + sign;
+};
 export const VOICES: Voice[] = [
-  { id: 'af_heart', name: 'Heart · American woman' }, { id: 'af_bella', name: 'Bella · American woman' },
-  { id: 'bf_emma', name: 'Emma · British woman' }, { id: 'af_nicole', name: 'Nicole · American woman' },
-  { id: 'af_aoede', name: 'Aoede · American woman' }, { id: 'af_kore', name: 'Kore · American woman' },
-  { id: 'af_sarah', name: 'Sarah · American woman' }, { id: 'am_fenrir', name: 'Fenrir · American man' },
-  { id: 'am_michael', name: 'Michael · American man' }, { id: 'am_puck', name: 'Puck · American man' },
-  { id: 'af_alloy', name: 'Alloy · American woman' }, { id: 'af_nova', name: 'Nova · American woman' },
-  { id: 'bf_isabella', name: 'Isabella · British woman' }, { id: 'bm_george', name: 'George · British man' },
-  { id: 'bm_fable', name: 'Fable · British man' }, { id: 'af_sky', name: 'Sky · American woman' },
-  { id: 'bm_lewis', name: 'Lewis · British man' }, { id: 'af_jessica', name: 'Jessica · American woman' },
-  { id: 'af_river', name: 'River · American woman' }, { id: 'am_echo', name: 'Echo · American man' },
-  { id: 'am_eric', name: 'Eric · American man' }, { id: 'am_liam', name: 'Liam · American man' },
-  { id: 'am_onyx', name: 'Onyx · American man' }, { id: 'bf_alice', name: 'Alice · British woman' },
-  { id: 'bf_lily', name: 'Lily · British woman' }, { id: 'bm_daniel', name: 'Daniel · British man' },
-  { id: 'am_santa', name: 'Santa · American man' }, { id: 'am_adam', name: 'Adam · American man' },
+  { id: 'af_heart', who: 'Heart', gender: 'f', accent: 'American', grade: 'A', name: 'Heart · American woman' },
+  { id: 'af_bella', who: 'Bella', gender: 'f', accent: 'American', grade: 'A-', name: 'Bella · American woman' },
+  { id: 'bf_emma', who: 'Emma', gender: 'f', accent: 'British', grade: 'B-', name: 'Emma · British woman' },
+  { id: 'af_nicole', who: 'Nicole', gender: 'f', accent: 'American', grade: 'B-', name: 'Nicole · American woman' },
+  { id: 'af_aoede', who: 'Aoede', gender: 'f', accent: 'American', grade: 'C+', name: 'Aoede · American woman' },
+  { id: 'af_kore', who: 'Kore', gender: 'f', accent: 'American', grade: 'C+', name: 'Kore · American woman' },
+  { id: 'af_sarah', who: 'Sarah', gender: 'f', accent: 'American', grade: 'C+', name: 'Sarah · American woman' },
+  { id: 'am_fenrir', who: 'Fenrir', gender: 'm', accent: 'American', grade: 'C+', name: 'Fenrir · American man' },
+  { id: 'am_michael', who: 'Michael', gender: 'm', accent: 'American', grade: 'C+', name: 'Michael · American man' },
+  { id: 'am_puck', who: 'Puck', gender: 'm', accent: 'American', grade: 'C+', name: 'Puck · American man' },
+  { id: 'af_alloy', who: 'Alloy', gender: 'f', accent: 'American', grade: 'C', name: 'Alloy · American woman' },
+  { id: 'af_nova', who: 'Nova', gender: 'f', accent: 'American', grade: 'C', name: 'Nova · American woman' },
+  { id: 'bf_isabella', who: 'Isabella', gender: 'f', accent: 'British', grade: 'C', name: 'Isabella · British woman' },
+  { id: 'bm_george', who: 'George', gender: 'm', accent: 'British', grade: 'C', name: 'George · British man' },
+  { id: 'bm_fable', who: 'Fable', gender: 'm', accent: 'British', grade: 'C', name: 'Fable · British man' },
+  { id: 'af_sky', who: 'Sky', gender: 'f', accent: 'American', grade: 'C-', name: 'Sky · American woman' },
+  { id: 'bm_lewis', who: 'Lewis', gender: 'm', accent: 'British', grade: 'D+', name: 'Lewis · British man' },
+  { id: 'af_jessica', who: 'Jessica', gender: 'f', accent: 'American', grade: 'D', name: 'Jessica · American woman' },
+  { id: 'af_river', who: 'River', gender: 'f', accent: 'American', grade: 'D', name: 'River · American woman' },
+  { id: 'am_echo', who: 'Echo', gender: 'm', accent: 'American', grade: 'D', name: 'Echo · American man' },
+  { id: 'am_eric', who: 'Eric', gender: 'm', accent: 'American', grade: 'D', name: 'Eric · American man' },
+  { id: 'am_liam', who: 'Liam', gender: 'm', accent: 'American', grade: 'D', name: 'Liam · American man' },
+  { id: 'am_onyx', who: 'Onyx', gender: 'm', accent: 'American', grade: 'D', name: 'Onyx · American man' },
+  { id: 'bf_alice', who: 'Alice', gender: 'f', accent: 'British', grade: 'D', name: 'Alice · British woman' },
+  { id: 'bf_lily', who: 'Lily', gender: 'f', accent: 'British', grade: 'D', name: 'Lily · British woman' },
+  { id: 'bm_daniel', who: 'Daniel', gender: 'm', accent: 'British', grade: 'D', name: 'Daniel · British man' },
+  { id: 'am_santa', who: 'Santa', gender: 'm', accent: 'American', grade: 'D-', name: 'Santa · American man' },
+  { id: 'am_adam', who: 'Adam', gender: 'm', accent: 'American', grade: 'F+', name: 'Adam · American man' },
 ];
 export const DEFAULT_VOICE = VOICES[0].id;
 export const isVoice = (id: unknown): id is string => typeof id === 'string' && VOICES.some((voice) => voice.id === id);
+export const voiceOf = (id: string): Voice | undefined => VOICES.find((one) => one.id === id);
+// The picker's order: best first, and within a grade the women before the men only because that is how the grades
+// already fall. Nothing here hides a voice — a founder who wants the low-graded British man can still pick him.
+export const byGrade = (voices: Voice[] = VOICES): Voice[] =>
+  [...voices].sort((a, b) => gradeRank(b.grade) - gradeRank(a.grade) || a.who.localeCompare(b.who));
+
+// Who a film asks to read it. One narrator a film, always — a piece that changes voice between scenes is two
+// pieces — and the best voice that fits what was asked for, because a grade is the difference between a narrator
+// and a robot reading. Nothing is asked for, everything falls back: the highest-graded voice in the model.
+export type Wanted = { gender?: 'f' | 'm'; accent?: 'American' | 'British' };
+export function castVoice(want: Wanted, voices: Voice[] = VOICES): Voice {
+  const ranked = byGrade(voices);
+  const both = ranked.find((one) => (!want.gender || one.gender === want.gender) && (!want.accent || one.accent === want.accent));
+  // An accent is a preference; a gender is not, because a gender is what has to match whoever is on screen.
+  return both ?? ranked.find((one) => !want.gender || one.gender === want.gender) ?? ranked[0];
+}
+// The line the card and the log carry, so a founder never has to guess who they are hearing.
+export const castLine = (voice: Voice): string => `narrator: ${voice.who}, ${voice.accent}, grade ${voice.grade}`;
+
+// What the model itself says about its voices, read off the loaded instance rather than trusted from the table
+// above. `tts.voices` is the frozen object the weights ship with; `list_voices()` only prints and returns nothing,
+// so it is never used. A runtime that does not expose it at all leaves the written table standing.
+type VoiceRow = { name?: string; gender?: string; language?: string; overallGrade?: string };
+export function mergeVoices(said: Record<string, VoiceRow> | undefined, known: Voice[] = VOICES): Voice[] {
+  if (!said || typeof said !== 'object') return known;
+  const out: Voice[] = [];
+  for (const [id, row] of Object.entries(said)) {
+    const already = known.find((one) => one.id === id);
+    const gender = /^f/i.test(String(row?.gender ?? '')) ? 'f' : /^m/i.test(String(row?.gender ?? '')) ? 'm' : already?.gender;
+    const accent = /gb|uk|british/i.test(String(row?.language ?? '')) ? 'British' : /us|american/i.test(String(row?.language ?? '')) ? 'American' : already?.accent;
+    if (!gender || !accent) continue;
+    const who = String(row?.name ?? already?.who ?? id).trim() || id;
+    const grade = (String(row?.overallGrade ?? already?.grade ?? 'D').trim() || 'D') as Grade;
+    out.push({ id, who, gender, accent, grade, name: `${who} · ${accent} ${gender === 'f' ? 'woman' : 'man'}` });
+  }
+  return out.length ? out : known;
+}
 
 // A WAV every player and ffmpeg reads without argument: one channel, sixteen bits a sample.
 export function wavOf(samples: Float32Array, rate = RATE): Buffer {
@@ -65,7 +134,10 @@ export function wavSeconds(bytes: Buffer): number {
 // The runtime's cache setting is shared with recall's model, and both only read it while a model is loading.
 export function kokoroVoices(cacheDir: string): Maker {
   type Kokoro = { generate: (text: string, options: { voice: string }) => Promise<{ audio: Float32Array; sampling_rate: number }>;
-    stream: (text: unknown, options: { voice: string }) => AsyncIterable<{ text?: string; audio: { audio: Float32Array; sampling_rate: number } }> };
+    stream: (text: unknown, options: { voice: string }) => AsyncIterable<{ text?: string; audio: { audio: Float32Array; sampling_rate: number } }>;
+    // The table the weights ship with, one row a voice. `list_voices()` prints it and returns nothing, so it is
+    // this getter or the written table.
+    voices?: Record<string, { name?: string; gender?: string; language?: string; overallGrade?: string }> };
   let ready: Promise<{ tts: Kokoro; Splitter: new () => { push: (text: string) => void; close: () => void } }> | null = null;
 
   const load = (report: (line: string) => void) => {
@@ -96,6 +168,12 @@ export function kokoroVoices(cacheDir: string): Maker {
   return {
     name: 'Kokoro',
     ready: () => null,
+    // Who this model can actually be, read off the weights. Asked for before the narration is recorded, which is
+    // the same moment the model is loaded anyway, so it costs a film nothing.
+    async cast() {
+      const { tts } = await load(() => {});
+      return mergeVoices(tts.voices);
+    },
     async make(ask, { report, signal }) {
       const { tts, Splitter } = await load(report);
       const voice = isVoice(ask.voice) ? ask.voice : DEFAULT_VOICE;

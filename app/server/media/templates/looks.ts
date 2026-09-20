@@ -32,11 +32,6 @@ export const PACE: Record<Pace, { rise: number; ease: string; stagger: number; o
   punchy: { rise: 0.52, ease: 'power3.out', stagger: 0.05, out: 0.22, travel: 30, read: 4.3, floor: 1.6, ceiling: 6, lead: 0.16, tail: 0.24 },
 };
 
-// Film grain, drawn rather than fetched: one tile of monochrome noise as an SVG, repeated over the whole frame. It is
-// static, and it has to be — a grain that moved would have to be driven by something, and nothing in a film rendered
-// frame by frame may depend on anything but the clock.
-const GRAIN = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E\")";
-
 // One type scale, set once, used everywhere: display, heading, lead, body, label, and the one big number. The sizes
 // are written for something watched from across a room, not read on a page: on a wide frame a heading is a fifteenth
 // of the height, a title a seventh, and the one number on a stat scene is over a third of it.
@@ -45,6 +40,9 @@ export function styleSheet(shape: Shape, pack: Pack, brand?: Brand): string {
   const style = PACK[pack];
   const paint = paintOf(pack, brand);
   const sketch = pack === 'sketch';
+  // What this pack declares as its format, if anything. Almost none of them do.
+  const grade = style.format?.grade;
+  const bars = style.format?.letterbox ?? 0;
   // A product's own typeface is used only when its file could be copied out of the product. Naming a face the page
   // cannot load is not a fallback, it is a lie the renderer calls out: nothing would be fetched, nothing would
   // change, and the check would carry an error about it for the rest of the film's life.
@@ -66,8 +64,12 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
 .stage { position: absolute; inset: 0; will-change: transform, opacity; }
 .marks { position: absolute; inset: 0; width: 100%; height: 100%; }
 
-/* --- Depth. Three layers nothing else touches: the picture under the words, the grain over everything, and the
-   corners pulled down so the middle of the frame is where the eye goes. --- */
+/* --- Depth. One layer, and it is a picture: the photograph under the words. There is no grain over the frame and
+   no vignette pulling the corners down, and there used to be both, on every film this studio made. The founder's
+   word for that was "obvious filter", and the research says the same thing in more words: heavy contrast, crushed
+   blacks, a strong vignette and visible grain are what generated video looks like, and the test is whether the
+   viewer notices the effect before the story. A grade belongs to a pack that declares one as its format, it is
+   applied to the pictures and never to the type, and it is identical on every film in that series. --- */
 .bg { position: absolute; inset: 0; overflow: hidden; z-index: 0; background: ${paint.ground}; }
 .bg img { display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 45%; }
 /* The scrim: the ground washing up from the foot of the frame and a flat hold over the whole of it, so a line of
@@ -78,9 +80,12 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
 .mesh { position: absolute; inset: -18%; z-index: 0; overflow: hidden; }
 .blob { position: absolute; filter: blur(calc(120px * var(--s))); opacity: 0.55; }
 .sweep { position: absolute; inset: -20%; mix-blend-mode: screen; }
-.grain { position: absolute; inset: 0; z-index: 8; pointer-events: none; opacity: ${style.grain}; background-image: ${GRAIN}; background-size: calc(180px * var(--s)); mix-blend-mode: ${lightIsDark(paint.ground) ? 'screen' : 'multiply'}; }
-.vig { position: absolute; inset: 0; z-index: 7; pointer-events: none;
-  background: radial-gradient(ellipse at 50% 46%, rgba(0,0,0,0) 44%, rgba(0,0,0,${style.vignette.toFixed(2)}) 100%); }
+${grade ? `/* This pack's declared grade: a measured, bounded tune applied to the moving and still pictures only. The
+   type sits above it and is never graded, because graded type is a filter over a film rather than a look in it. */
+.bg img, .shot img, .shot video, .reel, .device__glass img { filter: ${grade}; }` : ''}
+${bars ? `/* Letterbox as a fixed format, identical for the whole render: two bars, not a transition, not an effect. */
+.bar { position: absolute; left: 0; right: 0; height: ${(bars * 100).toFixed(2)}%; z-index: 9; background: #000; pointer-events: none; }
+.bar--top { top: 0; } .bar--foot { bottom: 0; }` : ''}
 
 /* Every scene is the same asymmetric block: one left margin, the words stacked down it, nothing centred for its own
    sake. The block is set a little above the middle, because type centred on the middle of a frame reads as low.
@@ -261,5 +266,3 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: calc(54px * 
 `.trim();
 }
 
-// Grain is light on a dark ground and dark on a light one, or it is a grey haze over the picture rather than film.
-const lightIsDark = (hex: string) => lightOf(hex) < 0.5;

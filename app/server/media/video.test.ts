@@ -6,7 +6,7 @@ import { seedStage, type Stage } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import { createMedia } from './jobs.ts';
-import { composition, FORMATS, sceneSeconds, type Shot } from './templates/index.ts';
+import { composition, FORMATS, PACKS, sceneSeconds, type Shot } from './templates/index.ts';
 import { meansAPicture, spendingScenes } from '../tools/media.ts';
 import { docsFor, fakeVideos, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
@@ -400,6 +400,17 @@ describe('a film with everything in it', () => {
     // A tall frame takes a phone and a wide one a browser, unless the storyboard said which.
     expect(composition({ title: 'One', shape: 'tall', look: 'clean', shots: shots([{ layout: 'device', asset: 'a' }]) })).toContain('device--phone');
     expect(composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([{ layout: 'device', asset: 'a' }]) })).toContain('device--browser');
+  });
+
+  it('puts no filter, grain or vignette over the frame in any pack', () => {
+    // The founder's verdict on the last film was "obvious filter". There was one, over every frame of every film:
+    // a grain layer and a vignette layer above the whole composite. Both are gone, and no pack brings them back.
+    for (const look of PACKS) {
+      const page = composition({ title: 'One', shape: 'tall', look, pace: 'punchy', shots: shots(film.scenes) });
+      expect(page, look).not.toContain('class="grain"');
+      expect(page, look).not.toContain('class="vig"');
+      expect(page, look).not.toContain('feTurbulence');
+    }
   });
 
   it("keeps a piece of the founder's own sound only where the scene asked for it", () => {
