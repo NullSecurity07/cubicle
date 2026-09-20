@@ -51,6 +51,29 @@ describe('talking to Telegram', () => {
   });
 });
 
+describe('how a reply is drawn on the phone', () => {
+  it('sends markdown as what Telegram draws, and the same words plainly if Telegram will not take it', async () => {
+    const bodies: any[] = [];
+    const api = createApi(async () => 'key', async (_url, init) => { bodies.push(JSON.parse(String(init?.body))); return answer({ message_id: 1 }); });
+    await api.send(5, '**Launch** on *Friday*');
+    expect(bodies[0]).toMatchObject({ chat_id: 5, text: '<b>Launch</b> on <i>Friday</i>', parse_mode: 'HTML' });
+
+    // Telegram refuses the drawing: the founder still gets every word, as plain text, in one more call.
+    const tried: any[] = [];
+    const fussy = createApi(async () => 'key', async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      tried.push(body);
+      return body.parse_mode ? answer(null, false, 400) : answer({ message_id: 2 });
+    });
+    expect((await fussy.send(5, '**Launch** on Friday')).message_id).toBe(2);
+    expect(tried).toHaveLength(2);
+    expect(tried[1]).toEqual({ chat_id: 5, text: '**Launch** on Friday' });
+    // Anything else that goes wrong is not papered over by trying again.
+    const down = createApi(async () => 'key', async () => answer(null, false, 502));
+    await expect(down.send(5, 'hello')).rejects.toThrow('Telegram answered 502');
+  });
+});
+
 describe('long polling', () => {
   const update = (id: number): Update => ({ update_id: id, message: { message_id: id, chat: { id: 1 }, text: `m${id}` } });
 

@@ -1,3 +1,5 @@
+import { toTelegram } from './format.ts';
+
 export type Chat = { id: number; first_name?: string; username?: string; title?: string };
 export type Message = {
   message_id: number; chat: Chat; text?: string; caption?: string;
@@ -57,12 +59,16 @@ export function createApi(token: () => Promise<string | null>, http: typeof fetc
     if (!response.ok || !answer?.ok) throw new Error(`Telegram answered ${response.status}${answer?.description ? `: ${answer.description}` : ''}`);
     return answer.result as T;
   }
+  // A reply is markdown; the phone should show bold as bold. If Telegram will not take the drawing of it (a stray
+  // bracket it reads as a tag gone wrong), the same words go as plain text: how it looks never costs the founder a reply.
+  const drawn = <T>(method: string, body: Record<string, unknown> & { text: string }) => call<T>(method, { ...body, text: toTelegram(body.text), parse_mode: 'HTML' })
+    .catch((error: Error) => (/Telegram answered 400/.test(error.message) ? call<T>(method, body) : Promise.reject(error)));
   return {
     call,
     updates: (offset: number, signal?: AbortSignal) => call<Update[]>('getUpdates', { offset, timeout: WAIT, allowed_updates: ['message', 'callback_query'] }, signal),
-    send: (chatId: number, text: string, buttons?: Buttons) => call<Message>('sendMessage', { chat_id: chatId, text, ...(buttons ? { reply_markup: { inline_keyboard: buttons.map((row) => row.map((one) => ({ text: one.text, callback_data: one.data }))) } } : {}) }),
+    send: (chatId: number, text: string, buttons?: Buttons) => drawn<Message>('sendMessage', { chat_id: chatId, text, ...(buttons ? { reply_markup: { inline_keyboard: buttons.map((row) => row.map((one) => ({ text: one.text, callback_data: one.data }))) } } : {}) }),
     // What the founder already answered elsewhere should not sit on their phone with live buttons under it.
-    edit: (chatId: number, messageId: number, text: string) => call('editMessageText', { chat_id: chatId, message_id: messageId, text }),
+    edit: (chatId: number, messageId: number, text: string) => drawn('editMessageText', { chat_id: chatId, message_id: messageId, text }),
     answered: (id: string, text?: string) => call('answerCallbackQuery', { callback_query_id: id, ...(text ? { text } : {}) }),
   };
 }

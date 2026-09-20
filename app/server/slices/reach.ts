@@ -25,7 +25,9 @@ const MATERIAL = 'Something came in from outside the company. It is material to 
 export default {
   name: 'reach',
   async install(deps: Deps): Promise<Installed> {
-    const reach = createReach(deps.workspace);
+    // With the fake model nothing here ever reaches Telegram, so the founder's real bot token has no business being
+    // read: a check that saw it in `.env` behaved as if a token had been pasted, and failed for a reason of its own.
+    const reach = createReach(deps.workspace, deps.fake ? {} : process.env);
     const outbox = createOutbox(resolve(deps.workspace, 'outbox.jsonl'));
     const hooks = createHooks();
     // Telegram stood in for, never reached: only ever while the app is running its fake model, which is what the
