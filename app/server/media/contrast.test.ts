@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { brightest, holdFor, liftFor, luminance, meanLight, MOST, ratio, sampleOf, scrimFor, washed, WANTS } from './contrast.ts';
+import { brightest, gammaFor, holdFor, LEAST_GAMMA, LIGHT_ENOUGH, liftFor, lighten, luminance, meanLight, MOST, ratio, sampleOf, scrimFor, washed, WANTS } from './contrast.ts';
 
 describe('what a contrast ratio really is', () => {
   it('agrees with the numbers everybody quotes', () => {
@@ -72,3 +72,37 @@ describe('a picture too dark to see a subject in', () => {
 });
 
 afterAll(() => {});
+
+describe('a dark still is lifted in the file, by a curve', () => {
+  it('leaves a readable picture alone and never goes past its floor', () => {
+    expect(gammaFor(LIGHT_ENOUGH)).toBe(1);
+    expect(gammaFor(0.4)).toBe(1);
+    expect(gammaFor(0.05)).toBeLessThan(1);
+    expect(gammaFor(0.05)).toBeGreaterThan(gammaFor(0.02));
+    expect(gammaFor(0.0001)).toBe(LEAST_GAMMA);
+  });
+
+  it('raises the shadows and leaves the one lamp in the room where it was', async () => {
+    const { default: sharp } = await import('sharp');
+    const dir = await mkdtemp(join(tmpdir(), 'lift-'));
+    try {
+      // A dark room with one bright lamp in the corner: a gain strong enough to open the room burns the lamp out.
+      const file = join(dir, 'room.png');
+      const lamp = await sharp({ create: { width: 20, height: 20, channels: 3, background: { r: 240, g: 236, b: 220 } } }).png().toBuffer();
+      await sharp({ create: { width: 200, height: 200, channels: 3, background: { r: 30, g: 28, b: 26 } } }).composite([{ input: lamp, left: 170, top: 10 }]).png().toFile(file);
+      const before = (await meanLight(file))!;
+      const did = await lighten(file);
+      expect(did?.gamma).toBeLessThan(1);
+      const after = (await meanLight(file))!;
+      expect(after).toBeGreaterThan(before * 1.5);
+      const lampNow = (await sampleOf(file, { x: 0.87, y: 0.07, w: 0.06, h: 0.06 }, 2))![0];
+      expect(lampNow[0]).toBeLessThan(250);
+      expect(lampNow[0]).toBeGreaterThanOrEqual(240);
+      // A second pass finds nothing left to do, so a picture drawn before is never lifted twice into daylight.
+      const bright = join(dir, 'day.png');
+      await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 150, g: 150, b: 150 } } }).png().toFile(bright);
+      expect((await lighten(bright))?.gamma).toBe(1);
+      expect(await lighten(join(dir, 'nothing-here.png'))).toBeNull();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+});

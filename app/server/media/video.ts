@@ -9,7 +9,8 @@ import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
 import { headlineOf, repair, trimTo, type Want } from './critic.ts';
-import { liftFor, meanLight, scrimFor } from './contrast.ts';
+import { liftFor, lighten, meanLight, scrimFor } from './contrast.ts';
+import { facesLens, fault, isLettered, type Sight } from './sight.ts';
 import {
   bibleFor, direct, faceIn, layoutsFor, narratorWanted, onCamera, photograph, readBrief, tellOf, understandingOf,
   type Asked, type Material, type Understanding,
@@ -26,7 +27,7 @@ import {
 } from './spec.ts';
 import { broll, type Stock } from './stock.ts';
 import {
-  afforded, drawnAs, lineUnder, shareOut, shotKey, slotsFor, type Slot, type Visual,
+  afforded, drawnAs, lineUnder, redrawnFor, shareOut, shotKey, slotsFor, type Slot, type Visual,
 } from './visuals.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
@@ -120,6 +121,10 @@ export type VideoDeps = {
   clips?: Clips; local?: Clips; lipsync?: Clips; music?: Music; forbidden?: string[];
   // Real photographs somebody took, when a free key is set. Nothing breaks without one; the film draws instead.
   stock?: Stock;
+  // Something that can look at a picture once it is drawn: whether anybody in it is staring down the lens, whether
+  // it came back with writing on it, and how far away each part of it is. Without one a film is made from
+  // pictures nobody looked at, which is what every film was until a proof came back with two strangers in it.
+  sight?: Sight;
   stage?: () => Promise<Stage>;
   assets?: (cardId: string) => Promise<MediaAsset[]>;
   // The pictures another studio card has already made, newest first: a wired image studio's work is the film's.
@@ -736,7 +741,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // They are asked for as soon as there is a cut to ask against, and they are kept under the shot's own
         // name — which scene, which take — rather than its place in a list, so a picture started against the
         // guessed cut is still the right shot's picture when the measured cut arrives.
-        type Drawn = { file: string; hold?: number; lift?: number };
+        type Drawn = { file: string; hold?: number; lift?: number; plies?: { back: string; mid: string; fore: string } };
         const pictures = new Map<string, Promise<Drawn | undefined>>();
         const stops = new Map<string, AbortController>();
         // Three at a time whoever draws them. This machine takes its own pictures one at a time whatever it is
@@ -750,6 +755,10 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // the rest of the makers' chatter, so a film quietly took eight minutes after promising two. Said once,
         // with the new wait beside it.
         const switched = new Set<string>();
+        // What looking at the pictures found, said once a kind rather than once a picture.
+        const looked = new Set<string>();
+        let redrawn = 0;
+        deps.sight?.warm();
         let pending = 0;
         const fromMaker = (line: string) => {
           if (!/used up/.test(line) || switched.has(line)) return;
@@ -791,19 +800,46 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               file = `frame-${name}.${piece.ext}`;
               await writeFile(join(at, 'assets', file), piece.bytes);
             }
+              // The picture is looked at before it is used. Every rule this studio has about a picture — nobody
+              // staring down the lens, no writing — was only ever applied to the sentence the picture was asked
+              // for with, and a picture model does what it likes: a proof film came back with two strangers
+              // looking straight at the viewer and a sheet of handwriting. One that breaks a rule is drawn once
+              // more, as a place rather than a person and from further off, and the better of the two is kept.
+            const seen = await deps.sight?.look(join(at, 'assets', file)).catch(() => null);
+            // Twice a film at most: a redraw here is most of a minute, and a studio that doubts every picture it
+            // draws is a studio that takes twice as long to make the same film.
+            if (fault(seen) > 0 && !stop.aborted && redrawn < 2) {
+              redrawn += 1;
+              const why = facesLens(seen) ? 'somebody looking straight at the camera' : 'writing on it';
+              const again = redrawnFor(visual, { face: facesLens(seen) });
+              try {
+                const piece = await drawing.make({ prompt: drawnAs(again, bible), shape, ...(draft ? { size: 'draft' } : {}) }, { report: fromMaker, signal: stop });
+                const second = `frame-${name}-b.${piece.ext}`;
+                await writeFile(join(at, 'assets', second), piece.bytes);
+                const better = fault(await deps.sight?.look(join(at, 'assets', second)).catch(() => null)) < fault(seen);
+                if (better) file = second;
+                if (!looked.has(why)) { looked.add(why); report(`a picture came back with ${why}, so it was drawn again${isLettered(seen) && facesLens(seen) ? ' without either' : ''}`); }
+              } catch { /* the first picture stands: a film with a face in it beats a film with a hole in it */ }
+            }
               // And now the one thing nobody was doing: looking at the picture that came back. How hard it has to
               // be held down for the words on it to be read is measured off the picture itself, where the words
               // really sit — so a white wall gets a wash and a dark doorway gets almost nothing. A graded pack
               // that has come back too dark to see a subject in is lifted rather than ungraded.
             const path = join(at, 'assets', file);
+            // A graded look over a picture that came back dark is how "dim and murky" happens. The shadows are
+            // raised in the file itself, before anything measures it, so the scrim is solved against the picture
+            // a viewer will really see; the gain in the page is only for a machine that could not rewrite it.
+            const raised = PACK[pack].format?.grade ? await lighten(path).catch(() => null) : null;
+            // …and where the look moves through its stills, the still is cut into the planes it moves.
+            const plies = PACK[pack].parallax ? await deps.sight?.plies(path).catch(() => null) : null;
             const big = scene.layout === 'hook' || scene.layout === 'stat' || scene.layout === 'title';
             // The scrim is solved for the *weakest* colour on the frame rather than the strongest. A line of
             // support copy is set in the quiet tone, and a wash that clears the headline leaves that line
             // floating — which is what "grey list text" was.
             const hold = await scrimFor(path, visual.room === 'top' ? 'top' : 'foot', paint.quiet, paint.ground,
               { big, floor: PACK[pack].scrim * 0.35 }).catch(() => null);
-            const light = PACK[pack].format?.grade ? await meanLight(path).catch(() => null) : null;
-            return { file, hold: hold ?? undefined, lift: light === null ? undefined : liftFor(light) };
+            const light = PACK[pack].format?.grade && !raised ? await meanLight(path).catch(() => null) : null;
+            return { file, hold: hold ?? undefined, lift: light === null ? undefined : liftFor(light), plies: plies ?? undefined };
           } catch (error) {
             // A picture nobody is waiting for any more was stopped on purpose, and is not a thing that went wrong.
             if (!stop.aborted) gone(error as Error, visual.scene);
@@ -926,6 +962,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const piece = await pictures.get(shotKey(needing[which].one));
           if (piece) made.set(which, piece);
         }));
+        const unseen = deps.sight?.why();
+        if (unseen) report(unseen);
         if (kept) report(`${kept} of the pictures ${kept === 1 ? 'was' : 'were'} drawn before, so ${kept === 1 ? 'it' : 'they'} cost nothing this time`);
 
         await lipsyncWork();
@@ -933,7 +971,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
 
         // A scene whose picture never arrived becomes the words it carries, so a founder with no picture key still
         // gets a film, and every scene is as long as the line said over it.
-        const drewFor = new Map<number, { file: string; hold?: number; lift?: number; shared: boolean }>();
+        const drewFor = new Map<number, Drawn & { shared: boolean }>();
         needing.forEach(({ at: order }, which) => {
           const owner = owners[which];
           const piece = made.get(owner);
@@ -973,7 +1011,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // never show the same frame — a picture change that changes nothing is worse than a hold.
         // The picture a scene ended up with, whichever of its shots was the one that got it. A second take of a
         // picture scene whose own picture was never drawn used to render an <img> pointed at nothing.
-        const sceneHas = new Map<number, { file: string; hold?: number; lift?: number; shared: boolean }>();
+        const sceneHas = new Map<number, Drawn & { shared: boolean }>();
         edit.shots.forEach((one, order) => {
           const drew = drewFor.get(order);
           if (drew && !sceneHas.has(one.scene)) sceneHas.set(one.scene, drew);
@@ -989,8 +1027,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             punch: one.punch ? { ...one.punch, at: Math.max(0, one.punch.at - one.at) } : undefined,
             ...(drew && !base.video && !base.image
               ? (fills
-                ? { image: drew.file, scrim: drew.hold, lift: drew.lift }
-                : { bg: drew.file, bgShared: drew.shared, scrim: drew.hold, lift: drew.lift })
+                ? { image: drew.file, scrim: drew.hold, lift: drew.lift, plies: drew.plies }
+                : { bg: drew.file, bgShared: drew.shared, scrim: drew.hold, lift: drew.lift, plies: drew.plies })
               : {}),
           };
         });
