@@ -190,7 +190,7 @@ export async function connectAll(entries: Entry[], wait = HANDSHAKE_MS, env: Nod
   const late = (entry: Entry): Connected => ({ entry, rpc: null, tools: [], ok: false, detail: `it did not answer within ${Math.round(wait / 1000)} seconds, so it was left out of this start` });
   return Promise.all(entries.map(async (entry) => {
     const going = connect(entry, wait, env);
-    const given = await Promise.race([going, new Promise<null>((done) => { setTimeout(() => done(null), wait + 500).unref?.(); })]);
+    const given = await Promise.race([going, new Promise<null>((done) => { setTimeout(() => done(null), wait + 500); })]);
     // A server that answers after the app has started still has to be let go of, or its process outlives the wait.
     if (given) return given;
     void going.then((held) => held.rpc?.close().catch(() => {}));

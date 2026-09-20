@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -144,6 +145,25 @@ describe('the tools a program offers', () => {
     expect(view[1].tools[0]).toMatchObject({ name: 'mcp_notes_echo', tool: 'echo', safe: false });
     for (const one of found) await one.rpc?.close();
   });
+
+  it('holds the process up while it waits, so the app is never cut short half way through starting', async () => {
+    // The bug this catches, found by starting the real server: these servers are connected before the port is open,
+    // so if every timer involved is unreferenced, node decides there is nothing left to do and leaves mid-start.
+    // A test runner holds its own process up, which is exactly why only a run of the real thing showed it.
+    const code = `
+      const { connectAll } = await import(${JSON.stringify(resolve(import.meta.dirname, 'mcp.ts'))});
+      const found = await connectAll([{ name: 'quiet', command: process.execPath, args: [${JSON.stringify(FAKE)}], env: { FAKE_MCP: 'slow' } }], 700);
+      process.stdout.write(found.map((one) => one.detail).join());
+    `;
+    const said = await new Promise<string>((done) => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'pipe', 'ignore'] });
+      let out = '';
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => { out += chunk; });
+      child.on('exit', () => done(out));
+    });
+    expect(said).toContain('did not answer');
+  }, 20_000);
 
   it('is a refusal a person can read when the program is not there', async () => {
     const missing = await connect({ name: 'gone', command: resolve(import.meta.dirname, 'no-such-program') }, 500);

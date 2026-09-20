@@ -12,7 +12,10 @@ export type Hello = (rpc: Rpc) => Promise<void>;
 
 const CALL_MS = 20_000;
 const BACKOFF = [0, 400, 1200, 3000, 6000];
-const sleep = (milliseconds: number) => new Promise<void>((done) => { setTimeout(done, milliseconds).unref?.(); });
+// These timers are never unreferenced. A server is connected while the app is still starting, before the port is
+// open, and at that moment a waiting timer may be the only thing holding the process up: unreference it and node
+// decides there is nothing left to do and leaves, halfway through the start.
+const sleep = (milliseconds: number) => new Promise<void>((done) => { setTimeout(done, milliseconds); });
 
 // What came back, unwrapped. A server's own error is an error here, in its own words: the person reads it and moves on.
 export function unwrap(answer: any): unknown {
@@ -73,7 +76,6 @@ export function stdioRpc(options: { command: string; args?: string[]; env?: Node
     if (!live?.stdin?.writable) throw new Error('the outside tool is not listening');
     const answer = id === undefined ? Promise.resolve(undefined) : new Promise<unknown>((keep, drop) => {
       const timer = setTimeout(() => { waiting.delete(id); drop(new Error(`the outside tool did not answer within ${Math.round(timeout / 1000)} seconds`)); }, timeout);
-      timer.unref?.();
       waiting.set(id, { keep: (value) => { clearTimeout(timer); keep(value); }, drop: (error) => { clearTimeout(timer); drop(error); } });
     });
     live.stdin.write(`${JSON.stringify(body)}\n`);
