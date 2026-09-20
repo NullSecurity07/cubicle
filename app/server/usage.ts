@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ModelInfo, Usage } from '../shared/model.ts';
-import type { ModelClient, Quota } from './providers.ts';
+import { providerOf, type ModelClient, type Quota } from './providers.ts';
 
 type Count = { requests: number; input: number; output: number };
 type State = { day: string; providers: Record<string, Count> };
@@ -76,12 +76,21 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       const header = quotas[client.name];
       return !!header && now() - header.at < WINDOW && header.quota.remainingTokens !== undefined && header.quota.remainingTokens < tokens;
     },
+    // Several keys for one provider are one provider to the founder: the rings show what they have done together and
+    // what is left of the two days' worth between them. It is also the name a person is pinned to.
     info(clients: ModelClient[]): ModelInfo[] {
       roll();
-      return clients.map((client) => {
+      const rows = new Map<string, { info: ModelInfo; keys: number }>();
+      for (const client of clients) {
+        const name = providerOf(client.name);
         const used = count(client.name);
-        return { name: client.name, model: client.model, ready: true, left: left(client), requests: used.requests, tokens: used.input + used.output };
-      });
+        const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0 }, keys: 0 };
+        rows.set(name, {
+          keys: row.keys + 1,
+          info: { ...row.info, left: row.info.left + left(client), requests: row.info.requests + used.requests, tokens: row.info.tokens + used.input + used.output },
+        });
+      }
+      return [...rows.values()].map(({ info, keys }) => ({ ...info, left: info.left / keys }));
     },
   };
 }
