@@ -187,8 +187,12 @@ export const noFace = (prompt: string): string =>
 // parts set forty points high, which tells a stranger how somebody's code is organised and nothing else.
 const VIEWER_FIGURE = /(%|[$£€]|\b\d+(?:\.\d+)?\s*x\b)/i;
 const VIEWER_WORDS = /\b(per ?cents?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|people|persons?|founders?|customers?|users?|clients?|teams?|companies|company|dollars?|pounds?|euros?|revenue|sales|cost|costs|price|prices|faster|quicker|slower|cheaper|longer|shorter|more|less|fewer|times|a ?week|a ?day|a ?month)\b/i;
+// A figure scene is a figure set the size of the frame. "Proven" is not a figure, and a real reel set it forty
+// points high because the line beside it happened to say "every month" — the words around a figure were being
+// allowed to make something a figure. They can only ever make a figure *worth* setting that large.
 export const worthAStat = (figure: string, beside = ''): boolean =>
-  VIEWER_FIGURE.test(figure) || VIEWER_WORDS.test(`${figure} ${beside}`);
+  (VIEWER_FIGURE.test(figure) || /\d/.test(figure))
+  && (VIEWER_FIGURE.test(figure) || VIEWER_WORDS.test(`${figure} ${beside}`));
 
 // A path, a flag or a filename is something a founder types, not something a stranger reads off a screen.
 export const CODEY = /(?:\S*\/\S*\.[a-z]{1,5}\b|\S+\/\s*$|\s--[a-z][\w-]+|\b[\w-]+\.(?:ts|tsx|js|jsx|json|py|rs|go|md|yml|yaml|toml|sh)\b)/i;
@@ -895,6 +899,18 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       return { ...scene, image_prompt: image, bg_prompt: bg };
     });
     if (wandered) note('a scene asked to be drawn rather than photographed, so it is shot the way the rest of the film is');
+  }
+
+  // 7c. Emoji. One in a film at the very most, on the scene that closes it — a reel with a chart, a map and a
+  //     rocket scattered down it reads as clip art, and a picture of a chart is the one thing the pictures in
+  //     this film are forbidden from containing.
+  {
+    const carries = scenes.map((one, index) => (one.icon?.trim() ? index : -1)).filter((one) => one >= 0);
+    if (carries.length) {
+      const keep = carries.at(-1);
+      if (carries.length > 1) note('a film carries one emoji at the most, so the rest came off');
+      scenes = scenes.map((one, index) => (one.icon && index !== keep ? { ...one, icon: undefined } : one));
+    }
   }
 
   // 8. The one word in a line that is the line, for the colour pop. The director may have named it; when it did not,
