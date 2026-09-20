@@ -10,9 +10,11 @@ import type { Status } from './Chat';
 export function labelOf(node: StageNode): string {
   if (node.type === 'room') return node.data.name || 'New person';
   if (node.type === 'doc') return node.data.title || 'Untitled doc';
-  if (node.type === 'project') return node.data.path.split('/').filter(Boolean).pop() ?? 'Project';
-  if (node.type === 'note') return node.data.text.trim().split('\n')[0].slice(0, 40) || 'Note';
-  if (node.type === 'image') return node.data.path.split('/').pop() ?? 'Picture';
+  // A card the founder has put down but not filled in yet (a picture card with no picture, a project with no folder)
+  // has none of these, and a name for a list must never be the thing that takes the whole window down.
+  if (node.type === 'project') return (node.data.path ?? '').split('/').filter(Boolean).pop() ?? 'Project';
+  if (node.type === 'note') return (node.data.text ?? '').trim().split('\n')[0].slice(0, 40) || 'Note';
+  if (node.type === 'image') return (node.data.path ?? '').split('/').pop() || 'Picture';
   if (node.type === 'link') return node.data.title || node.data.url || 'Link';
   if (node.type === 'imagegen') return 'Image studio';
   if (node.type === 'voicegen') return 'Voice studio';

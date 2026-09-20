@@ -573,6 +573,11 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 /* The founder's views: one glass sheet over the shade. */
 .panel { position: absolute; top: 7vh; max-height: 86vh; left: 50%; width: min(620px, calc(100% - 40px)); transform: translateX(-50%); display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(16, 17, 20, 0.86); -webkit-backdrop-filter: blur(22px) saturate(1.2); backdrop-filter: blur(22px) saturate(1.2); box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6); animation: panel-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .panel--wide { bottom: 7vh; width: min(1120px, calc(100% - 56px)); }
+/* A view that could not be drawn says so here, instead of taking the stage with it. */
+.guard { padding: 22px 22px 18px; gap: 14px; }
+.guard p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text); }
+.guard button { align-self: flex-start; padding: 6px 12px; border: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.1); color: var(--text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.guard button:hover { background: rgba(255, 255, 255, 0.16); }
 .panel__header { flex: none; display: flex; align-items: baseline; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--card-border); }
 .panel__header h2 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: 0.01em; }
 .panel__header span { flex: 1; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }

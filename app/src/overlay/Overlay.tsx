@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { NeedsPanel } from './NeedsPanel';
 import { CommandBar, KeysSheet } from './CommandBar';
 import { DecisionsPanel } from './DecisionsPanel';
+import { Guard } from './Guard';
 import { MessagesPanel } from './MessagesPanel';
 import { PlaybookPanel } from '../nodes/PlaybookPanel';
 import { SLICES } from '../slices';
@@ -65,9 +66,9 @@ export function Overlay() {
       <div className={`overlay${layers.length ? ' is-open' : ''}`} ref={top}>
         <div className="overlay__shade" onClick={() => overlay.back()} />
         <div className="focus__sheet" ref={focusHost} hidden={!focused || !!View} role="dialog" aria-modal="true" aria-label="Focused card" />
-        {View && <View />}
+        {View && panel && <Guard name={panel} onClose={() => overlay.back()}><View /></Guard>}
       </div>
-      {SLICES.map((slice) => (slice.overlay ? <slice.overlay key={slice.name} /> : null))}
+      {SLICES.map((slice) => (slice.overlay ? <Guard key={slice.name} name={slice.name} quiet><slice.overlay /></Guard> : null))}
     </>,
     document.body,
   );
