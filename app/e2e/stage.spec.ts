@@ -691,8 +691,11 @@ test('a video studio: the founder sets the film going and watches it being made,
   await card.getByLabel('How long').selectOption('30');
   await card.getByText('More', { exact: false }).click();
   await card.getByLabel('Look').selectOption('sketch');
-  await expect(card.getByLabel('AI clips')).toHaveValue('');
-  await card.getByLabel('AI clips').selectOption('off');
+  // "AI clips" named how a shot is made; "Footage" asks the only question a founder has an opinion about.
+  await expect(card.getByLabel('Footage')).toHaveValue('');
+  await expect(card.getByLabel('Narrator')).toHaveValue('');
+  await card.getByLabel('Footage').selectOption('off');
+  await expect(card.getByText('Only what you dropped on this card')).toBeVisible();
   await card.getByRole('checkbox', { name: 'Narrate' }).uncheck();
   await card.getByRole('checkbox', { name: 'Captions' }).check();
   await card.getByLabel('Product address').fill('relay.app');
@@ -726,7 +729,7 @@ test('a video studio: the founder sets the film going and watches it being made,
   await expect(again.getByLabel('How long')).toHaveValue('30');
   await again.getByText('More', { exact: false }).click();
   await expect(again.getByLabel('Look')).toHaveValue('sketch');
-  await expect(again.getByLabel('AI clips')).toHaveValue('off');
+  await expect(again.getByLabel('Footage')).toHaveValue('off');
   await expect(again.getByRole('checkbox', { name: 'Narrate' })).not.toBeChecked();
   await expect(again.getByRole('checkbox', { name: 'Captions' })).toBeChecked();
   await expect(again.getByLabel('Product address')).toHaveValue('relay.app');

@@ -13,6 +13,12 @@ export type Shot = {
   // tint, so the film hangs together without three scenes looking like the same frame held too long.
   bgShared?: boolean;
   voice?: { file: string; seconds: number; parts?: Part[] };
+  // Which take of its scene this is. A scene long enough to want a picture change is several shots, and each of
+  // them shows something different — otherwise the change is the same frame twice, which is worse than a hold.
+  take?: number;
+  // The push the editor asked for, because a word under it earned one or because the frame would otherwise sit
+  // still past three seconds. Written on the film's own clock, so it lands on the word rather than near it.
+  punch?: { to: number; at: number; seconds: number };
 };
 
 const html = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -120,7 +126,7 @@ export function meshHtml(index: number, pack: Pack): string {
   }).join('');
   // One sweep of light across the frame, at its own angle, so the eye has somewhere to go.
   const angle = Math.round(seed(29) * 180);
-  const sweep = `<div class="sweep" id="w${index}" data-layout-allow-overflow style="background:linear-gradient(${angle}deg,`
+  const sweep = `<div class="glint" id="w${index}" data-layout-allow-overflow style="background:linear-gradient(${angle}deg,`
     + ` rgba(255,255,255,0) 28%, rgba(255,255,255,${(0.05 + seed(31) * 0.09).toFixed(3)}) 50%, rgba(255,255,255,0) 72%)"></div>`;
   return `<div class="mesh" id="mesh${index}">${blobs}${sweep}</div>`;
 }

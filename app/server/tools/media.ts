@@ -97,7 +97,8 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
       + 'What goes on screen is a headline of a few words, never the sentence being spoken. Everything specific a film says — a feature, a number, a name — has to come out of what is wired to the card and be quoted in "source"; anything else is cut before it renders. '
       + 'Rendering takes a few minutes, so call this once. '
       + 'To put a picture in the film, draw it with generate_image first and pass the path it gives back in "images"; pictures already in the wired image studio are used without being asked for. '
-      + 'The card lists what it is drawing on — the founder\'s own footage, screenshots of the product — under names you can put in "asset".',
+      + 'The card lists what it is drawing on — the founder\'s own footage, screenshots of the product — under names you can put in "asset". '
+      + 'Scenes you write are read by the same editor as the studio\'s own: length, variety, captions and what the film is allowed to claim are checked either way.',
     parameters: {
       type: 'object',
       properties: {
@@ -125,7 +126,7 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
               asset: { type: 'string', description: 'The name of a screenshot or a file already on the card, for a device or footage scene — or the file path of a picture generate_image gave you' },
               frame: { type: 'string', enum: [...FRAMES], description: 'What a device scene shows the screenshot in' },
               clip_prompt: { type: 'string', description: 'Three to five seconds of moving b-roll to make, for a clip scene' },
-              portrait_prompt: { type: 'string', description: 'Who is on screen, for a presenter scene' },
+              portrait_prompt: { type: 'string', description: 'Who is on screen, for a presenter scene. A presenter is only ever made where something can lip-sync them to the real recording; with nothing able to, the scene becomes the film\'s faceless edit instead, and the card says why.' },
               seconds: { type: 'number', description: 'How many seconds of a clip or a piece of footage to use' },
               start: { type: 'number', description: 'How far into a piece of footage the scene starts' },
               mute: { type: 'boolean', description: "Whether a footage scene's own sound is silenced; true when left out" },

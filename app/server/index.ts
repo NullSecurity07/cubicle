@@ -20,7 +20,6 @@ import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
 import { firstClips, orderedClips } from './media/clips.ts';
 import { fakeLocalClips, localClips, MINUTES_EACH } from './media/local-clips.ts';
-import { fakeLocalPerson, localPerson } from './media/local-person.ts';
 import { createClips, fakeClips } from './media/spaces.ts';
 import { probe } from './media/ff.ts';
 import { thumbOf } from './media/footage.ts';
@@ -28,7 +27,7 @@ import { fakeImages, firstImages, imageMakers } from './media/image.ts';
 import { createMedia } from './media/jobs.ts';
 import { createMusic, fakeMusic } from './media/music.ts';
 import { fakeVideos, hyperframesVideos } from './media/video.ts';
-import { fakeVoices, voiceMakers, VOICES } from './media/voice.ts';
+import { byGrade, fakeVoices, voiceMakers, VOICES } from './media/voice.ts';
 import { createMemory } from './memory.ts';
 import { missionsOf } from './missions.ts';
 import { createPlaybook } from './playbook.ts';
@@ -116,11 +115,11 @@ const music = fake ? fakeMusic : createMusic({ cacheDir: resolve(root, 'app/.cac
 // out there. Either way a scene that cannot be made falls back in plain words.
 const local = fake ? fakeLocalClips : localClips();
 const online = fake ? fakeClips : createClips();
-// B-roll is made here first, because it is unlimited and nobody is waiting on a particular face. A person on camera
-// is asked of the free Spaces first, because they are the only ones that can make the founder's own picture speak —
-// and when they have nothing left, this machine draws somebody moving rather than holding a photograph still.
-const person = fake ? fakeLocalPerson : localPerson();
-const clips = orderedClips({ broll: [local, online], presenter: [online, person] });
+// B-roll is made here first, because it is unlimited and nobody is waiting on a particular face. Somebody speaking
+// on camera is asked of the free Spaces and of nothing else: they are the only thing that can move a real mouth to
+// a real recording, and a drawn person whose mouth does not match the words is the one thing this studio will not
+// make. When they have nothing left the film is faceless and says so.
+const clips = orderedClips({ broll: [local, online], presenter: [online] });
 if (!fake) console.log('clips · here:', local.ready() ?? `ready (about ${MINUTES_EACH} minutes each)`, '· online:', online.ready() ?? 'ready');
 const media = createMedia({
   dir: workspace,
@@ -129,7 +128,7 @@ const media = createMedia({
     imagegen: pictures,
     voicegen: voices,
     videogen: fake ? [fakeVideos] : [hyperframesVideos({
-      dir: workspace, images: firstImages(...pictures), voices: voices[0], think: storyboard, clips, local, music,
+      dir: workspace, images: firstImages(...pictures), voices: voices[0], think: storyboard, clips, local, lipsync: online, music,
       cacheDir: resolve(root, 'app/.cache'),
       forbidden: [workspace, root],
       stage: () => store.loadStage(),
@@ -538,7 +537,9 @@ createServer(async (req, res) => {
       return;
     }
     // The voices a voice studio offers, named for the founder. A fixed list: asking the model would fetch 310 MB first.
-    if (path === '/api/media/voices' && req.method === 'GET') return json(res, 200, { voices: VOICES });
+    // Best first, and each one saying who it sounds like: a founder choosing a narrator is casting, and casting
+    // needs to know the gender, the accent and how good the voice actually is.
+    if (path === '/api/media/voices' && req.method === 'GET') return json(res, 200, { voices: byGrade(VOICES) });
     const studio = /^\/api\/media\/([^/]+)(?:\/(make|stop|assets)(?:\/([^/]{1,120}))?)?$/.exec(path);
     if (studio) {
       const [, cardId, action, assetName] = studio;
