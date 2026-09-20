@@ -103,7 +103,13 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
    the other's rules. The headline block inherited the screen blend mode, and inside a scene being blurred out
    on a cut that blends against the whole frame: a full-frame acid wash, one frame long, at several of the cuts in
    a real reel. They have their own names now. */
-.glint { position: absolute; inset: -20%; mix-blend-mode: screen; }
+/* One band of light lying across the lamps. It used to be called .sweep, which is also the name of the block of
+   accent colour drawn behind a headline — two different things sharing a selector, so each took half of the
+   other's rules. And it used to blend in screen mode, which is worse than it sounds: a scene with no photograph
+   falls back to these lamps, and on the frames where one scene is leaving while the next arrives the leaving
+   scene's green lamps screened over the arriving scene's photograph. A full-frame acid wash, one frame long, at
+   several of the cuts in a real reel. It is a band of light. It does not need a blend mode. */
+.glint { position: absolute; inset: -20%; opacity: 0.7; }
 ${grade ? `/* This pack's declared grade: a measured, bounded tune applied to the moving and still pictures only. The
    type sits above it and is never graded, because graded type is a filter over a film rather than a look in it. */
 .bg img, .shot img, .shot video, .reel, .device__glass img { filter: ${grade}; }` : ''}
