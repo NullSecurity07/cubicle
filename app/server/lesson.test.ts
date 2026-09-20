@@ -30,8 +30,8 @@ const ground = (over: Partial<Ground> = {}): Ground => ({ names: ['Maya', 'Dev',
 
 describe('what makes a lesson a lesson', () => {
   it('refuses the skill the live model really wrote, and says which of the three it broke', () => {
-    // All three at once; the first one it meets is the one it says, which is the one to fix first.
-    expect(() => checkLesson(LIVE, ground())).toThrow(/"Brand doc" is the name of a document, a card or a person on this stage/);
+    // All three rules at once. Names come first and come together, so one rewrite can take every one of them out.
+    expect(() => checkLesson(LIVE, ground())).toThrow(/"Brand doc" and "Company brief" are names of a document, a card or a person on this stage/);
     expect(() => checkLesson({ ...GOOD, name: 'Draft launch FAQ for the export add-on' }, ground({ names: [] })))
       .toThrow(/"launch faq export" is taken word for word out of this one piece of work/);
     expect(() => checkLesson({ ...GOOD, procedure: LIVE.procedure }, ground({ names: [] }))).toThrow(/there are 7 steps: only write steps that were really done\. 2 tool calls were made, so write at most 4 steps/);
@@ -55,6 +55,12 @@ describe('what makes a lesson a lesson', () => {
     }
     it('leaves a name too short to mean anything alone out of it', () => {
       expect(() => checkLesson(GOOD, ground({ names: ['Ed', 'a'] }))).not.toThrow();
+    });
+    // What the live run cost: refused for one name, the model took it out, was refused for the second and had no
+    // turn left. Both are named at once so one correction can take both out.
+    it('names every one of them in the same breath', () => {
+      expect(() => checkLesson({ ...GOOD, procedure: ['Read the Company brief first', 'Write it into the Brand doc'] }, ground()))
+        .toThrow('"Brand doc" and "Company brief" are names of a document, a card or a person on this stage, and a skill has to fit the next case too. Say what kind of thing each is, not what this one is called, and take out every one of them');
     });
   });
 

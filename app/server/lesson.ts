@@ -32,12 +32,13 @@ export const mostSteps = (calls: number) => Math.max(3, calls + 2);
 // where only the lines being changed are in hand and the length of the finished procedure is not.
 export function checkLesson(lesson: Partial<Lesson>, ground: Ground, whole = true): void {
   const said = [lesson.name, lesson.when, ...(lesson.procedure ?? []), ...(lesson.pitfalls ?? []), lesson.verify].filter((one): one is string => !!one);
-  for (const name of ground.names) {
-    if (name.trim().length < 3) continue;
-    const spoken = new RegExp(`(^|[^\\p{L}\\p{N}])${loose(name.trim())}($|[^\\p{L}\\p{N}])`, 'iu');
-    if (said.some((line) => spoken.test(line))) {
-      throw new Error(`"${name.trim()}" is the name of a document, a card or a person on this stage, and a skill has to fit the next case too. Say what kind of thing it is, not what this one is called`);
-    }
+  // Every one of them at once. Named one at a time, a model that used two of them fixes the first, is refused for
+  // the second and has run out of turns — which is how a good lesson was lost on a live run.
+  const named = ground.names.map((name) => name.trim()).filter((name) => name.length >= 3
+    && said.some((line) => new RegExp(`(^|[^\\p{L}\\p{N}])${loose(name)}($|[^\\p{L}\\p{N}])`, 'iu').test(line)));
+  if (named.length) {
+    throw new Error(`${named.map((name) => `"${name}"`).join(' and ')} ${named.length > 1 ? 'are names' : 'is the name'} of a document, a card or a person on this stage, and a skill has to fit the next case too. `
+      + `Say what kind of thing ${named.length > 1 ? 'each' : 'it'} is, not what this one is called, and take out every one of them`);
   }
   if (ground.asked) {
     const taken = runs(ground.asked);
