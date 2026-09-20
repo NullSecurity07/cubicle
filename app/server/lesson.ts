@@ -40,6 +40,13 @@ export function checkLesson(lesson: Partial<Lesson>, ground: Ground, whole = tru
     throw new Error(`${named.map((name) => `"${name}"`).join(' and ')} ${named.length > 1 ? 'are names' : 'is the name'} of a document, a card or a person on this stage, and a skill has to fit the next case too. `
       + `Say what kind of thing ${named.length > 1 ? 'each' : 'it'} is, not what this one is called, and take out every one of them`);
   }
+  // A skill is read back into prompts for as long as it exists, so a year written into one goes wrong the moment the
+  // year turns — and the run that taught it usually had a year in its searches for the learner to copy.
+  const dated = [...new Set(said.flatMap((line) => line.match(/\b(?:19|20)\d{2}\b/g) ?? []))];
+  if (dated.length) {
+    throw new Error(`${dated.map((year) => `"${year}"`).join(' and ')} ${dated.length > 1 ? 'are years' : 'is a year'}, and a skill has to be as right next year as it is today. `
+      + 'Say it in words that stay true — "this year", "the current figures", "the newest version" — and take every year out');
+  }
   if (ground.asked) {
     const taken = runs(ground.asked);
     for (const line of [lesson.name, lesson.when].filter((one): one is string => !!one)) {
