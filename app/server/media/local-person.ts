@@ -39,9 +39,10 @@ export const MOST_MINUTES = 12;
 
 // The words a portrait was drawn from, turned into a few seconds of that person moving. What matters is that the
 // framing survives: a video model given "an influencer" draws a wide shot of a room with somebody in it.
-export const FACING = 'one person from the chest up, facing the camera and talking to it, their whole head and '
-  + 'shoulders inside the frame, both eyes open and looking into the lens, talking, small natural head movement, '
-  + 'blinking, a hand gesture, static camera';
+// From the waist up, not the chest: the founder asked for a body and hands that move, and a tight face cannot show them.
+export const FACING = 'one person fully dressed, seen from the waist up in a medium shot, facing the camera and talking to it, '
+  + 'head, shoulders and both hands inside the frame, both eyes open and looking into the lens, mouth moving as they talk, '
+  + 'gesturing with both hands, natural head movement, shifting their weight, blinking, static camera';
 export function personPrompt(about?: string): string {
   const said = (about ?? '').replace(/\s+/g, ' ').trim();
   // Whatever the picture was about, said after the framing so the framing is what the model reads first.

@@ -24,7 +24,7 @@ describe('who the person on camera is', () => {
     // "a picture of" is how the card describes it to itself, not something to draw.
     expect(personPrompt('a picture of a woman in a red coat')).not.toMatch(/a picture of/);
     // Nothing known about them is still somebody, rather than nobody.
-    expect(personPrompt()).toContain('one person from the chest up');
+    expect(personPrompt()).toContain('seen from the waist up');
   });
 });
 

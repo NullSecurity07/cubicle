@@ -489,7 +489,7 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
   // The bible says "single strong subject, shallow depth of field", and a picture model reads that as a macro of
   // somebody's mouth. A talking head has to be asked for as a talking head: the framing first, and loudly.
   const look = bible.replace(/,?\s*shallow depth of field/i, '');
-  const facing = `one person ${DRESSED}, seen from the chest up, facing the camera and talking to it, their whole head and shoulders inside the frame with room above, both eyes open and looking into the lens`;
+  const facing = `one person ${DRESSED}, seen from the waist up in a medium shot, facing the camera and talking to it, gesturing with both hands as they speak, head, shoulders and hands all inside the frame with room above, both eyes open and looking into the lens`;
   const portrait = `a medium shot of ${facing}, ${look}`;
   // The opening, and one more in the middle of anything long enough to come back to a face.
   const faces = new Set([0, ...(scenes.length >= 5 ? [Math.floor(scenes.length / 2)] : [])]);
@@ -505,7 +505,7 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
     if (!faces.has(index) || scene.image_prompt || scene.asset) return scene;
     if (filmHere && given + already < MOST_FACES) {
       given += 1;
-      return { ...scene, layout: 'clip' as Layout, clip_prompt: `${facing}, talking, small natural head movement, ${look}`, bg_prompt: portrait, image_prompt: undefined };
+      return { ...scene, layout: 'clip' as Layout, clip_prompt: `${facing}, talking with their mouth moving, natural head movement and hand gestures, shifting their weight, static camera, ${look}`, bg_prompt: portrait, image_prompt: undefined };
     }
     given += 1;
     return { ...scene, bg_prompt: portrait };
