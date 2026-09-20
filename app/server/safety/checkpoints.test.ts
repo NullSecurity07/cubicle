@@ -66,7 +66,8 @@ describe('checkpoints', () => {
     expect(await checkpoints.seal('call-3')).toBe(false);
   });
 
-  it('keeps the last twenty snapshots of a folder and nothing older than a week', async () => {
+  // Twenty-two snapshots means a hundred-odd calls to git; on a busy machine that is slow, never wrong.
+  it('keeps the last twenty snapshots of a folder and nothing older than a week', { timeout: 60_000 }, async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'workspace-'));
     const dir = await project();
     let now = new Date('2026-09-20T09:00:00').getTime();

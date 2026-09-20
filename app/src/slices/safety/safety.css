@@ -18,6 +18,8 @@
 .undo__act:disabled { opacity: 0.4; cursor: default; }
 .undo__said { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
 
-/* The one line on an approval that makes it a standing yes. */
-.approval__always { flex-direction: row; align-items: center; gap: 7px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
-.approval__always input { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; }
+/* The one line on an approval that makes it a standing yes. The card lays its fields out in columns, so this says
+   plainly that it is a line, not a field. */
+.approval label.approval__always { flex-direction: row; align-items: center; gap: 7px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.approval label.approval__always:hover { color: var(--text); }
+.approval .approval__always input { flex: none; width: 13px; height: 13px; margin: 0; accent-color: var(--accent); cursor: pointer; }
