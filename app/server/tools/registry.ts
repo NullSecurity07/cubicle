@@ -9,7 +9,9 @@ import type { Store } from '../store.ts';
 // `report` shows progress while a long tool runs; `signal` ends it when the founder stops the turn.
 // `approve` is the turn's own way of putting a question to the founder, for the one tool that runs a turn inside
 // itself: what a colleague wants to send still goes out under the founder's yes, asked on the asker's path.
-export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number>; report?: (effect: ToolEffect) => void; signal?: AbortSignal; approve?: (event: ToolEvent, signal?: AbortSignal) => Promise<Answer> };
+// `query` is what set this turn off in the founder's own words, for a tool that has to tell what the founder asked
+// for from what the model made up — a year in a search query is the founder's when they typed it and nobody else's.
+export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number>; query?: string; report?: (effect: ToolEffect) => void; signal?: AbortSignal; approve?: (event: ToolEvent, signal?: AbortSignal) => Promise<Answer> };
 export type ToolResult = { text: string; effect?: ToolEffect };
 // `perTurn` stops a person from looping on a costly tool: past it, the tool answers with a nudge to use what it has.
 // `approval` makes the turn wait for the founder's yes. `ready` returns why the tool cannot work yet, before anyone is asked.

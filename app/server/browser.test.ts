@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ENGINES, WALL_NOTE, nameOfRef, createBrowser, fakeRunner, honestUserAgent, unwrapRedirect, webUrl, type Runner } from './browser.ts';
+import { ENGINES, WALL_NOTE, aged, nameOfRef, createBrowser, fakeRunner, honestUserAgent, unwrapRedirect, webUrl, type Runner } from './browser.ts';
 
 describe('webUrl', () => {
   it('accepts web pages and adds https to a bare domain', () => {
@@ -44,6 +44,34 @@ describe('browser', () => {
     expect(closed).toHaveLength(6);
     expect(text.match(/^## /gm)).toHaveLength(6);
     expect(text).toContain('https://example.com/');
+  });
+
+  // A search that cannot be narrowed is the whole reason a person answered about this year with last year's figures.
+  it('narrows the search where the engine can, and says plainly where it cannot', async () => {
+    const opened: string[] = [];
+    const run: Runner = async (session, args) => { if (args[0] === 'open') opened.push(args[1]); return fakeRunner(session, args); };
+    const narrowed = await createBrowser(run).search(['sast market size'], 'year');
+    expect(opened[0]).toContain('&df=y');
+    expect(narrowed).not.toContain('not limited to the last');
+    expect(opened).toHaveLength(1);
+    // Bing has no honest way to do it, so when Bing answers the person is told rather than left to assume.
+    const skipFirst: Runner = async (session, args) => {
+      if (args[0] === 'open') opened.push(args[1]);
+      return args[0] === 'eval' && args[1] === ENGINES[0].read ? JSON.stringify('[]') : fakeRunner(session, args);
+    };
+    const wide = await createBrowser(skipFirst).search(['sast market size'], 'month');
+    expect(wide).toContain('not limited to the last month');
+    expect(wide).toContain('bing answered and cannot narrow by date');
+    expect(opened.at(-1)).not.toContain('df=');
+    // Nobody asked for a window, so nobody hears about one.
+    expect(await createBrowser(run).search(['calm'])).not.toContain('not limited to the last');
+  });
+
+  it('shows how old each result is, from the engine\'s own stamp or from the head of its snippet', () => {
+    expect(aged({ title: 't', url: 'u', snippet: 'An example.', date: '12 Sept 2026' })).toEqual({ when: '12 Sept 2026', snippet: 'An example.' });
+    expect(aged({ title: 't', url: 'u', snippet: 'Sep 3, 2024 · The market was worth 3bn.' })).toEqual({ when: 'Sep 3, 2024', snippet: 'The market was worth 3bn.' });
+    expect(aged({ title: 't', url: 'u', snippet: '2 days ago — Funding closed.' })).toEqual({ when: '2 days ago', snippet: 'Funding closed.' });
+    expect(aged({ title: 't', url: 'u', snippet: 'No date anywhere.' })).toEqual({ when: '', snippet: 'No date anywhere.' });
   });
 
   it('moves to the next search engine when one comes back empty, and says so when all do', async () => {
