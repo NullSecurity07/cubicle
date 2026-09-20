@@ -10,7 +10,7 @@ export function createBridge(deps: { port: number; token: string; http?: typeof 
   const http = deps.http ?? fetch;
   return async function ask(roomId: string, text: string, signal?: AbortSignal): Promise<string> {
     const response = await http(`http://127.0.0.1:${deps.port}/api/rooms/${encodeURIComponent(roomId)}/chat`, {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-stage-token': deps.token }, body: JSON.stringify({ text }), signal,
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-stage-token': deps.token }, body: JSON.stringify({ text, via: 'phone' }), signal,
     });
     // A refusal (unknown room, this person is still replying) comes back as plain json, not as a stream.
     if (!response.ok || !response.body) throw new Error((await response.json().catch(() => null) as { error?: string } | null)?.error ?? `the app answered ${response.status}`);
