@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carriesVisual, criticise, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
+import { carriesVisual, criticise, opensADoor, plainClose, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
 import { countWords, LAYOUTS, saidWords, saysWhatItShows, type Layout, type Scene, type Spec } from './spec.ts';
 
 // Every rule here is written the same way round: a lazy storyboard of the kind a free model really hands back goes
@@ -473,5 +473,42 @@ describe('one film, one look', () => {
     const { spec: fixed, notes } = repair(notebook, lookWant(drawn));
     expect(fixed.scenes[1].bg_prompt).toContain('a loose ink drawing of a laptop');
     expect(notes.join(' ')).not.toContain('shot the way the rest of the film is');
+  });
+});
+
+describe('a close the founder can stand behind', () => {
+  it('knows an action somebody has to be offering from one they need not', () => {
+    // "Book a call / Let's talk now" closed a reel whose founder had offered neither.
+    expect(opensADoor('Book a call')).toBeTruthy();
+    expect(opensADoor("Let's talk now, phone us today")).toBeTruthy();
+    expect(opensADoor('Download the guide')).toBeTruthy();
+    expect(opensADoor('Link in bio')).toBeTruthy();
+    // These ask nothing of anybody and promise nothing either.
+    expect(opensADoor('Follow for more')).toBe(null);
+    expect(opensADoor('Show real traction')).toBe(null);
+    expect(opensADoor('Save this for later')).toBe(null);
+  });
+
+  it('closes on something plain when nothing behind the film offers a door', () => {
+    const asking = spec([
+      { layout: 'hook', text: 'Investors want proof', say: 'Investors want proof.', bg_prompt: 'x' },
+      { layout: 'statement', text: 'Show real usage', say: 'Show real usage.', bg_prompt: 'x' },
+      { layout: 'cta', text: 'Book a call', heading: "Let's talk", say: 'Book a call now.', bg_prompt: 'x' },
+    ]);
+    const { spec: fixed, notes } = repair(asking, reelWant({ purpose: 'reel' }));
+    const close = fixed.scenes.at(-1)!;
+    expect(opensADoor(`${close.text} ${close.heading ?? ''} ${close.say}`)).toBe(null);
+    expect(close.text).toBe(plainClose('reel').text);
+    expect(notes.join(' ')).toContain('closes on something it can stand behind');
+  });
+
+  it('leaves a door the founder really named alone', () => {
+    // Material behind the film answers for its own close; the grounding rules have it from there.
+    const asking = spec([
+      { layout: 'hook', text: 'One canvas', say: 'One canvas.', bg_prompt: 'x' },
+      { layout: 'cta', text: 'Download it today', say: 'Download it today.', bg_prompt: 'x', source: 'can be downloaded' },
+    ]);
+    const held = repair(asking, reelWant({ sources: { corpus: 'everything made can be downloaded', brief: 'a launch', has: true, lines: [] } })).spec;
+    expect(held.scenes.at(-1)!.text).toBe('Download it today');
   });
 });

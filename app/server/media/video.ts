@@ -8,7 +8,7 @@ import { projectDir } from '../coder.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
-import { headlineOf, inStyle, trimTo } from './critic.ts';
+import { headlineOf, inStyle, subjectOf, trimTo } from './critic.ts';
 import { bibleFor, direct, faceIn, onCamera, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
@@ -557,14 +557,20 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
 
           // What goes behind the words. A handful for the whole film, shared out in runs, each scene taking its own
           // crop and tint of the one it was given: six frames of one film rather than six photographs of six.
-          const wants = spec.scenes.map((scene, index) => ({ scene, index }))
-            .filter(({ scene, index }) => !shots[index].image && scene.layout !== 'picture' && scene.layout !== 'logo' && scene.bg_prompt?.trim());
+          // Every scene that is not itself a moving picture gets a real one behind it. A scene carrying an asset
+          // its own layout cannot show — a hook holding a picture, say — used to fall through both the picture
+          // pass and this one and end up on the drifting mesh, so a reel with a whole picture model ready opened
+          // on coloured fog. A scene with nothing written in `bg_prompt` is given one out of its own words.
+          const wants = spec.scenes.map((scene, index) => ({
+            scene, index,
+            about: scene.bg_prompt?.trim() || `${bible}. ${subjectOf(scene)}`,
+          })).filter(({ scene, index }) => !shots[index].image && !shots[index].video && scene.layout !== 'picture' && scene.layout !== 'logo');
           const takes = Math.min(MAX_BACKGROUNDS, Math.max(2, Math.ceil(wants.length / SCENES_A_BACKGROUND)));
           const runs = Array.from({ length: Math.min(takes, wants.length) }, (_, take) =>
             wants.filter((_one, at) => Math.floor((at * takes) / wants.length) === take));
           const behind = runs.filter((run) => run.length).map((run, take) => async () => spendable(async () => {
             try {
-              const piece = await drawing.make({ prompt: bgPrompt(bible, run[0].scene.bg_prompt!, run[0].scene.layout), shape }, { report: () => {}, signal });
+              const piece = await drawing.make({ prompt: bgPrompt(bible, run[0].about, run[0].scene.layout), shape }, { report: () => {}, signal });
               const file = `bg-${take}.${piece.ext}`;
               await writeFile(join(at, 'assets', file), piece.bytes);
               for (const { index } of run) { shots[index].bg = file; shots[index].bgShared = run.length > 1; }
