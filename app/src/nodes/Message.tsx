@@ -13,6 +13,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   recall: ['Looking up', 'Looked up'], propose_decision: ['Proposing', 'Proposed'], read_decision: ['Reading', 'Read'],
   list_files: ['Looking at', 'Looked at'], read_file: ['Reading', 'Read'], write_file: ['Saving', 'Saved'],
   generate_image: ['Drawing', 'Drew'], generate_voice: ['Saying', 'Said'], generate_video: ['Filming', 'Filmed'],
+  delegate_task: ['Handing to', 'Handed to'],
 };
 const compact = (count: number) => (count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`);
 

@@ -48,10 +48,18 @@ export async function runTurn(input: {
     const offered = step < MAX_STEPS ? tools : [];
     const gap = text && !/\s$/.test(text) ? '\n\n' : '';
     let first = true;
-    const turn = await complete(messages, {
+    const ask = () => complete(messages, {
       tools: offered, signal,
       onToken: (token) => { const piece = first ? gap + token : token; first = false; text += piece; events.token(piece); },
     }, clients, onFailure);
+    // A step every model refused — usually because the prompt outgrew them — gets one more chance: whatever listens
+    // here shortens it and says so, and we ask again with what it left.
+    const turn = seams ? await ask().catch(async (error: Error) => {
+      const again = await seams.run('step:error', { roomId, step, messages, error: error.message });
+      if (!again.retry) throw error;
+      messages = again.messages;
+      return ask();
+    }) : await ask();
 
     if (failed.length) events.notice?.(`${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
     // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
@@ -96,6 +104,8 @@ export async function runTurn(input: {
       events.tool({ id: call.id, name: call.name, args });
       context.signal = signal;
       context.report = (effect) => events.tool({ id: call.id, name: call.name, args, effect });
+      // A tool that runs a turn of its own inside itself asks the founder on this turn's path, not on one of its own.
+      context.approve = input.approve;
       const ran = refusal ? { text: refusal, ok: false, args, effect: undefined } : await runTool(tools, call.name, rawArgs, context);
       let event: ToolEvent = { id: call.id, name: call.name, args: ran.args, ok: ran.ok, result: ran.text.slice(0, RESULT_CHARS), effect: ran.effect };
       if (seams) event = (await seams.run('tool:after', { roomId, event })).event;

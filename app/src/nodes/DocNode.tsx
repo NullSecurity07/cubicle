@@ -11,13 +11,26 @@ export function DocNode({ id, data, selected }: NodeProps<DocNodeType>) {
   const [fresh, setFresh] = useState(false);
   const { updateNodeData } = useReactFlow();
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Words typed but not saved yet. Saving waits half a second for the typing to pause, and that half second must never
+  // cost the founder a sentence: a card taken off the stage, a reload or a closed window all save what is pending first.
+  const pending = useRef<string | null>(null);
 
   useEffect(() => { getDoc(id).then(setText).catch(() => setText('')); }, [id]);
-  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => {
+    const flush = () => {
+      clearTimeout(timer.current);
+      if (pending.current === null) return;
+      void putDoc(id, pending.current, true).catch(() => {});
+      pending.current = null;
+    };
+    window.addEventListener('pagehide', flush);
+    return () => { window.removeEventListener('pagehide', flush); flush(); };
+  }, [id]);
   // A person rewrote this doc: show their version, and drop any save of ours that would undo it.
   useEffect(() => listen('effect', (effect) => {
     if (effect.kind !== 'doc-changed' || effect.id !== id) return;
     clearTimeout(timer.current);
+    pending.current = null;
     getDoc(id).then((next) => { setText(next); setSaved(true); setFresh(true); setTimeout(() => setFresh(false), 1600); }).catch(() => {});
   }), [id]);
 
@@ -25,7 +38,8 @@ export function DocNode({ id, data, selected }: NodeProps<DocNodeType>) {
     setText(next);
     setSaved(false);
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => { putDoc(id, next).then(() => setSaved(true)).catch(() => setSaved(false)); }, 500);
+    pending.current = next;
+    timer.current = setTimeout(() => { pending.current = null; putDoc(id, next).then(() => setSaved(true)).catch(() => { setSaved(false); pending.current ??= next; }); }, 500);
   }
 
   return (
