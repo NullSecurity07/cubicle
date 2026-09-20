@@ -43,8 +43,10 @@ async function shown(page: Page, title: string) {
 // The bar is asked for again rather than the check failing over how loaded the machine was.
 async function bar(page: Page, typed: string) {
   const sheet = page.getByRole('dialog', { name: 'Command bar' });
+  // The key is only heard once the app is listening at the window, and on a busy machine that can be a moment after the
+  // page says it has loaded. Pressed again only while the bar is still shut: a second press on an open bar closes it.
   await expect(async () => {
-    await page.keyboard.press('Control+k');
+    if (!(await sheet.isVisible())) await page.keyboard.press('Control+k');
     await expect(sheet.getByRole('combobox')).toBeVisible({ timeout: 2000 });
   }).toPass({ timeout: 25_000 });
   await sheet.getByRole('combobox').fill(typed);
