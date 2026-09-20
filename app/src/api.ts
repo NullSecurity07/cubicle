@@ -1,5 +1,5 @@
 import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaAsset, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, RoomEvent, Skill, SkillEvent, Stage, Task, Thread } from '../shared/model';
-import { feed } from './feed';
+import { feed, snapshot } from './feed';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -43,8 +43,14 @@ export const changeTask = (boardId: string, taskId: string, patch: Partial<Pick<
 export const removeTask = (boardId: string, taskId: string) => request(`/api/boards/${boardId}/tasks/${taskId}`, send('DELETE'));
 export const runTask = (boardId: string, taskId: string) => request(`/api/boards/${boardId}/tasks/${taskId}/run`, send('POST'));
 export const stopTask = (boardId: string, taskId: string) => request(`/api/boards/${boardId}/tasks/${taskId}/stop`, send('POST'));
-// The board's live feed: tasks after every change, and stage effects from background runs.
-export const watchBoard = (boardId: string, onEvent: (event: BoardEvent) => void) => feed<BoardEvent>(`/api/boards/${boardId}/events`, onEvent);
+export const getBoard = (boardId: string) => request<Task[]>(`/api/boards/${boardId}`);
+// The board's live channel: tasks after every change, and stage effects from background runs. A card the founder has
+// just put down was not on the stage when the window's connection opened, so it reads its own tasks once.
+export const watchBoard = (boardId: string, onEvent: (event: BoardEvent) => void) => {
+  const channel = `board:${boardId}`;
+  if (snapshot(channel) === undefined) void getBoard(boardId).then((tasks) => onEvent({ tasks }), () => {});
+  return feed<BoardEvent>(channel, onEvent);
+};
 
 // A studio card: what it has made, and asking it for more. `hint` says why it cannot work yet, when it cannot.
 export const getMedia = (id: string) => request<Media & { hint: string | null }>(`/api/media/${id}`);
@@ -59,11 +65,11 @@ export const removeAsset = (id: string, name: string) => request(`/api/media/${i
 // One feed for every studio on the stage: a line while something is being made, a nudge after every change.
 // A feed that outlives the server restarting: a browser gives up for good on a refused feed, so it is opened again,
 // and `onOpen` lets the cards read themselves afresh for whatever they missed meanwhile.
-export const watchMedia = (onEvent: (event: MediaEvent) => void, onOpen: () => void = () => {}) => feed<MediaEvent>('/api/media/events', onEvent, () => onOpen());
+export const watchMedia = (onEvent: (event: MediaEvent) => void, onOpen: () => void = () => {}) => feed<MediaEvent>('media', onEvent, () => onOpen());
 
 // What is happening in every conversation, however it was started. `onOpen` is told whether the feed had been open
 // before, because a card that missed a gap has to read its conversation again to find out what was said in it.
-export const watchRooms = (onEvent: (event: RoomEvent) => void, onOpen: (again: boolean) => void = () => {}) => feed<RoomEvent>('/api/rooms/events', onEvent, onOpen);
+export const watchRooms = (onEvent: (event: RoomEvent) => void, onOpen: (again: boolean) => void = () => {}) => feed<RoomEvent>('rooms', onEvent, onOpen);
 
 export const deleteMessage = (roomId: string, messageId: string) => request<ChatMessage[]>(`/api/rooms/${roomId}/chat/${messageId}`, { method: 'DELETE' });
 export const uploadFile = (file: File) => request<Attachment>(`/api/files?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
@@ -71,7 +77,7 @@ export const fileUrl = (path: string) => `/api/files/${path.split('/').map(encod
 export const refreshLink = (id: string) => request<{ title: string; preview: string }>(`/api/links/${id}`, { method: 'POST' });
 
 // Everything that waits for the founder, pushed whole after every change.
-export const watchAttention = (onList: (list: Attention[]) => void) => feed<Attention[]>('/api/attention/events', onList);
+export const watchAttention = (onList: (list: Attention[]) => void) => feed<Attention[]>('attention', onList);
 export const dismissAttention = (id: string) => request(`/api/attention/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });
 export const getThreads = (query = '') => request<Thread[]>(`/api/threads${query ? `?q=${encodeURIComponent(query)}` : ''}`);
 export const getDecisions = () => request<Decision[]>('/api/decisions');
@@ -89,6 +95,6 @@ export const removeSkill = (id: string) => request(`/api/skills/${id}`, send('DE
 export const getFounder = () => request<{ text: string }>('/api/founder').then((profile) => profile.text);
 export const putFounder = (text: string) => request('/api/founder', put({ text }));
 // The playbook whole after every change, and the one line a birth or an improvement leaves in the room it happened in.
-export const watchSkills = (onEvent: (event: SkillEvent) => void) => feed<SkillEvent>('/api/skills/events', onEvent);
+export const watchSkills = (onEvent: (event: SkillEvent) => void) => feed<SkillEvent>('skills', onEvent);
 // "Learn this" on a task the founder can see is finished. Nothing worth keeping answers with `learned: null`.
 export const learnFromTask = (boardId: string, taskId: string) => request<{ learned: { name: string; action: 'create' | 'patch' } | null }>(`/api/boards/${boardId}/tasks/${taskId}/learn`, send('POST'));

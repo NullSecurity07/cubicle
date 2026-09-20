@@ -562,7 +562,7 @@ test('a sticky note and a link are context for the person they are wired to', as
 // The feed is the fast path, never the only one: a server restart once killed it for good and left a finished
 // picture behind a card that said "making it…" for ever.
 test('an image studio finishes even when its feed is lost', async ({ page }) => {
-  await page.route('**/api/media/events', (route) => route.abort());
+  await page.route('**/api/events', (route) => route.abort());
   await tidy(page);
   await addCard(page, 'Add image studio');
   const card = page.locator('.react-flow__node-imagegen');
