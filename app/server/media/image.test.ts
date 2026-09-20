@@ -91,6 +91,28 @@ describe('generate_image', () => {
     const { tool, context } = await turn(wired);
     await expect(tool.run({ prompt: '  ' }, context)).rejects.toThrow('"prompt" is missing');
   });
+
+  // The studio cannot spell, so words never go in the prompt. They are handed over separately and set over the
+  // finished picture in real type, and the person is told in so many words which words went on it.
+  it('hands the words to the studio rather than to the model, and says which went on the picture', async () => {
+    const asked: Record<string, unknown>[] = [];
+    const watching: Maker = { name: 'watched', ready: () => null, async make(ask) { asked.push(ask); return { ext: 'png', bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }; } };
+    const dir = await mkdtemp(join(tmpdir(), 'imagewords-'));
+    const store = createStore(dir);
+    const media = createMedia({ dir, store, makers: { imagegen: [watching] } });
+    const [tool] = mediaTools(media);
+    const context = { stage: wired, roomId: 'marketing', store, granted: new Map<string, string>() };
+    const ran = await tool.run({ prompt: 'a city at dusk', headline: 'Top VCs backing India', lines: ['Accel India', '  ', 'Blume Ventures'] }, context);
+    expect(asked[0].headline).toBe('Top VCs backing India');
+    expect(asked[0].lines).toEqual(['Accel India', 'Blume Ventures']);
+    expect(ran.text).toContain('set on it in real type: “Top VCs backing India”, over 2 lines');
+    // A picture with no words is still a picture with no words said about it.
+    await tool.run({ prompt: 'a city at dawn' }, context);
+    expect(asked[1].headline).toBe('');
+    expect(asked[1].lines).toEqual([]);
+    await expect(tool.run({ prompt: 'a city', headline: 'x'.repeat(61) }, context)).rejects.toThrow('"headline" is too long');
+    await rm(dir, { recursive: true, force: true });
+  });
 });
 
 describe('a picture is paid for once', () => {

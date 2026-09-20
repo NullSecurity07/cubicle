@@ -25,6 +25,7 @@ import { createClips, fakeClips } from './media/spaces.ts';
 import { probe } from './media/ff.ts';
 import { thumbOf } from './media/footage.ts';
 import { fakeImages, firstImages, imageMakers } from './media/image.ts';
+import { lettered } from './media/lettering.ts';
 import { createMedia } from './media/jobs.ts';
 import { createMusic, fakeMusic } from './media/music.ts';
 import { fakeVideos, hyperframesVideos } from './media/video.ts';
@@ -94,7 +95,12 @@ attention.source(boardAttention(store, boards));
 boards.onChange(() => { void attention.refresh(); });
 // The studio cards: one job per card, the files in the shared files folder, the rest beside the stage.
 // A video is made out of the other two: it draws its stills with the picture makers and records its lines with the voice ones.
-const pictures = fake ? [fakeImages] : imageMakers();
+// Every way of drawing, wrapped so that none of them is ever asked for writing: a picture model cannot spell, so the
+// picture comes out wordless and the real words are set over it afterwards in real type. This sits round the makers
+// rather than round any one studio, so the stills a film draws are as free of gibberish lettering as the ones a
+// person draws by hand. The video studio's own cache sits outside this, on the ask as it was written, and what it
+// holds is therefore the wordless picture — so a film rendered twice still costs one picture.
+const pictures = (fake ? [fakeImages] : imageMakers()).map(lettered);
 const voices = fake ? [fakeVoices] : voiceMakers(resolve(root, 'app/.cache/voice'));
 // Direction is the one place in the app where the *best* free model matters more than the roomiest: a storyboard is
 // short, and what it needs is judgement. The configured order puts gpt-oss-120b first and the router moves anything
