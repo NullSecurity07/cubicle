@@ -150,7 +150,9 @@ export function composition(film: Film): string {
   const quiet = film.quiet ?? film.shots.map((shot, index) => (saysWhatItShows(shot.scene)
     ? { at: starts[index], seconds: shot.seconds } : null)).filter(Boolean) as { at: number; seconds: number }[];
   const spoken = (film.words ?? []).filter((word) => !quiet.some((gap) => word.at >= gap.at - 0.01 && word.at < gap.at + gap.seconds));
-  const capWords = Math.max(1, Math.round(style.capScale * 4));
+  // One to three words at a time for a reel, two to four for a quieter film, and never more than four: past that
+  // a caption is a subtitle, read instead of watched. The pack's own caption measure decides which end it sits at.
+  const capWords = Math.min(4, Math.max(1, Math.round(style.capScale * 3.4)));
   const lines = film.captions && spoken.length
     ? capLines(spoken, Math.round(capChars * style.capScale), capWords, film.keywords ?? [])
     : [];

@@ -29,13 +29,19 @@ export const MAX_SCENES = 24;
 // Every drawn still costs a call to a free picture service with a day's quota, and every AI clip costs far more.
 // A picture in front of the words and a picture behind them cost the same, so the two caps are near enough the same.
 export const MAX_IMAGES = 10;
-// How many pictures are drawn to stand behind the words of a whole film. Not one a scene: a free daily quota is a
-// few hundred pictures and a founder making three films a day would spend it by lunchtime, and — the better
-// reason — six frames of one film should look like six frames of one film. So a handful are drawn from the style
-// bible and shared out, each scene taking its own crop, tint and drift of the same picture.
-export const MAX_BACKGROUNDS = 4;
+// How many pictures are drawn to stand behind the words of a whole film, and how many scenes may share one.
+//
+// These were four and three, and the reasoning was sound and the result was not. Six frames of one film should
+// look like six frames of one film — but what three-scenes-to-a-picture actually produced was one photograph
+// held for the whole film with a slightly different crop on it, which reads as a still with type over it. What
+// makes six frames one film is the style bible every one of them is drawn from, not drawing fewer of them.
+//
+// So: a picture a scene, up to six, which on a short film is a real picture change at every cut. The cost is real
+// — a free daily quota is a few hundred, and this machine takes about a minute each — and it is said on the card
+// before the founder presses Make.
+export const MAX_BACKGROUNDS = 6;
 // A run of scenes this long shares one background before another is drawn.
-export const SCENES_A_BACKGROUND = 3;
+export const SCENES_A_BACKGROUND = 1;
 // A clip from the free Spaces spends somebody else's daily minutes, so a film makes at most two. A clip made on this
 // machine spends nothing but time, so a film may have twice as many — the founder is told what that time costs.
 export const MAX_AI = 2;
