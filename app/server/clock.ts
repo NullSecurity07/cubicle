@@ -3,11 +3,16 @@
 const FULL = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const WEEKDAY = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
 const SHORT = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+const TIME = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' });
 
 export const fullDay = (at: number) => FULL.format(new Date(at));
 export const weekDay = (at: number) => WEEKDAY.format(new Date(at));
 export const shortDay = (at: number) => SHORT.format(new Date(at));
+export const clockTime = (at: number) => TIME.format(new Date(at));
 // The machine's own zone, which is the founder's: a date without it is a date in somebody else's day.
 export const zoneName = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time';
 // The calendar day a moment falls on where the founder is, as a key two moments can be compared by.
 export const dayKey = (at: number) => new Date(at).toDateString();
+// When something happened, said the way the founder would say it: today by the clock, any other day by its name.
+// A backlog that arrives after a day away is unreadable without this — everything in it sounds like it just happened.
+export const timeOrDay = (at: number, now: number) => (dayKey(at) === dayKey(now) ? `at ${clockTime(at)}` : `on ${weekDay(at)}`);

@@ -205,7 +205,7 @@ export default {
       const task = await deps.boards.add(hook.boardId, { title: hook.name, detail: `${MATERIAL}\n"""\n${said}\n"""` });
       if (hook.assignee) {
         await deps.boards.change(hook.boardId, task.id, { assignee: hook.assignee });
-        void deps.runs.start(hook.boardId, task.id).catch(() => {});
+        void deps.runs.start(hook.boardId, task.id, 'call').catch(() => {});
       }
       return deps.json(res, 200, { ok: true, task: task.id });
     }

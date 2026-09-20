@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createDecisions, decisionAttention, parseDecision, writeDecision } from './decisions.ts';
+import { createDecisions, decidedLines, decisionAttention, parseDecision, writeDecision } from './decisions.ts';
 
 const day = (text: string) => new Date(`${text}T09:00:00`).getTime();
 
@@ -60,6 +60,21 @@ describe('decisions', () => {
     const list = await createDecisions(dir).list();
     expect(list).toHaveLength(1);
     expect(list[0].why).toBe('Rhythm, and customers notice.\n\nSecond paragraph.');
+  });
+
+  // Newest first with nothing to date it is how a decision made in the spring gets worked from as if it were today's.
+  it('puts the day it was decided on every line a person reads', async () => {
+    let now = day('2026-03-02');
+    const decisions = createDecisions(await mkdtemp(join(tmpdir(), 'decisions-')), () => now);
+    await decisions.record({ title: 'Charge per seat', context: '', options: [], chosen: 'Per seat, $20.', why: 'Simple.' });
+    now = day('2026-09-19');
+    await decisions.record({ title: 'Launch channel', context: '', options: [], chosen: 'Hacker News.', why: 'Our users are there.' });
+    await decisions.propose({ title: 'Pick a CRM', context: 'c', options: ['a', 'b'], proposedBy: 'Maya' });
+    expect(decidedLines(await decisions.list())).toEqual([
+      '- 19 Sept 2026 — Launch channel: Hacker News.',
+      '- 2 Mar 2026 — Charge per seat: Per seat, $20.',
+    ]);
+    expect(decidedLines(await decisions.list(), 1)).toHaveLength(1);
   });
 
   it('reports proposals and due reviews to the founder\'s list', async () => {

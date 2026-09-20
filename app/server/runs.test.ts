@@ -83,3 +83,22 @@ describe('runs', () => {
     expect(busy.has('marketing')).toBe(false);
   });
 });
+
+describe('who set the work going', () => {
+  it('is told truthfully to the person doing it', async () => {
+    // Pressed by the founder, and then started by something else: the opening sentence says which, every time.
+    const told: Record<string, string> = {};
+    for (const by of ['founder', 'schedule', 'chain', 'call'] as const) {
+      const { runs, boards, task, state, seen } = await setup(['Done.']);
+      await boards.change('b1', task.id, { assignee: 'marketing' });
+      await runs.start('b1', task.id, by);
+      await until(async () => (await state()).run?.state === 'done');
+      told[by] = seen[0];
+    }
+    expect(told.founder).toContain('The founder started this task from the board.');
+    expect(told.schedule).toContain('started by itself, on the schedule');
+    expect(told.chain).toContain('because the task before it finished');
+    expect(told.call).toContain('Another program');
+    for (const by of ['schedule', 'chain', 'call']) expect(told[by]).not.toContain('The founder started this task');
+  });
+});

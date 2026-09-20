@@ -93,6 +93,9 @@ export function createRecall(deps: { dir: string; embed: Embedder; gather: () =>
   }
   async function passages(): Promise<Passage[]> {
     const vectors = await load();
+    // The hash is what was embedded and nothing else: the kind, the title and the words. When a piece was written is
+    // not in it, so an index saved before passages carried a date still matches every one of them and nothing is
+    // embedded again for the sake of a new field.
     const all: Passage[] = (await deps.gather()).flatMap((piece) => chunksOf(piece.text).map((text) => ({ ...piece, text, hash: createHash('sha1').update(`${piece.kind}\n${piece.title}\n${text}`).digest('hex') })));
     const fresh = all.filter((passage) => !vectors.has(passage.hash));
     if (fresh.length) {

@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Attention, Decision } from '../shared/model.ts';
+import { shortDay } from './clock.ts';
 
 export type Decisions = ReturnType<typeof createDecisions>;
 const safe = (id: string) => { if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(id)) throw new Error(`bad id: ${id}`); return id; };
@@ -37,6 +38,12 @@ export function parseDecision(id: string, file: string): Decision {
 }
 
 const words = (value: unknown, max: number) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+
+// The decided ones as every person reads them in their instructions. Each line carries the day it was decided:
+// "newest first" with nothing to date it is how a decision made in the spring gets worked from as if it were this
+// morning's. Newest first is the order `list` already puts them in.
+export const decidedLines = (all: Decision[], many = 12): string[] => all.filter((one) => one.status === 'decided').slice(0, many)
+  .map((one) => `- ${shortDay(one.decidedAt ?? one.at)} — ${one.title}: ${(one.chosen ?? '').replace(/\s+/g, ' ').slice(0, 160)}`);
 
 // The founder's decisions, one markdown file each in `decisions/`. People may add proposals; deciding, recording and
 // removing are the founder's and go through the api only.

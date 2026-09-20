@@ -147,10 +147,12 @@ describe('prompt', () => {
     const team: Stage = { ...stage, wires: [...stage.wires, { id: 't', from: 'build', fromHandle: 'l', to: 'marketing', toHandle: 'l' }] };
     expect(colleagueIds(team, 'marketing')).toEqual(['build']);
     expect(colleagueIds(stage, 'marketing')).toEqual([]);
-    const theirs = [{ id: '1', role: 'user' as const, text: 'What is the build order?', at: 1 }, { id: '2', role: 'assistant' as const, text: 'Canvas first, then chat. '.repeat(40), at: 2 }];
+    const friday = new Date(2026, 8, 18, 9, 0).getTime();
+    const theirs = [{ id: '1', role: 'user' as const, text: 'What is the build order?', at: friday }, { id: '2', role: 'assistant' as const, text: 'Canvas first, then chat. '.repeat(40), at: friday + 60_000 }];
     const system = buildMessages(team, 'marketing', docs, [], ['ask_person'], { build: theirs })[0].content;
     expect(system).toContain('- Dev, Build.');
-    expect(system).toContain('Founder: What is the build order?');
+    // Which day each of these was said, because a room nobody has opened in a month reads like this morning otherwise.
+    expect(system).toContain('18 Sept 2026 · Founder: What is the build order?');
     expect(system).toMatch(/Dev: Canvas first, then chat\./);
     expect(system.length).toBeLessThan(3200);
     const asked = buildMessages(team, 'build', docs, [{ id: 'q', role: 'user', text: 'Is SSO in scope?', at: 3, from: 'Maya' }]);

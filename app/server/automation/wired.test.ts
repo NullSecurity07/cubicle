@@ -74,4 +74,21 @@ describe('a board that gets on with it', () => {
     expect(asked[1]).toContain('Forty seven people came by.');
     expect((await state(second.id)).run!.log).toContain('after "Morning numbers"');
   });
+
+  // Today's date is already in every person's instructions. What a repeat is missing is the other end of the stretch:
+  // without it "this week's signups" is a question nobody can answer twice the same way.
+  it('tells a repeating task where last time was, and says nothing of the sort the first time it runs', async () => {
+    const { boards, runs, state, asked } = await setup();
+    const task = await boards.add('b1', { title: "This week's signups" });
+    await boards.change('b1', task.id, { assignee: 'marketing', repeat: { every: 'day', time: '09:00' } });
+    await runs.start('b1', task.id);
+    await until(async () => (await state(task.id)).run?.state === 'done');
+    expect(asked[0]).not.toContain('This task repeats');
+
+    const ran = new Date(2026, 8, 18, 9, 0).getTime();
+    await boards.update('b1', task.id, (one) => { one.run = { state: 'done', startedAt: ran, finishedAt: ran + 5 * 60_000, log: [] }; });
+    await runs.start('b1', task.id);
+    await until(async () => (await state(task.id)).run?.startedAt !== ran);
+    expect(asked[1]).toContain('This task repeats; it last ran on Friday, 18 September 2026 and finished at 09:05.');
+  });
 });

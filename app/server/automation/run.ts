@@ -1,6 +1,7 @@
 import { nextDue } from '../../shared/automation.ts';
 import type { Stage, Task } from '../../shared/model.ts';
 import type { Boards } from '../boards.ts';
+import { timeOrDay } from '../clock.ts';
 import type { ModelClient } from '../providers.ts';
 import { runCode } from '../sandbox.ts';
 import { bodyOf, type Skills } from '../skills.ts';
@@ -27,7 +28,7 @@ export type Automation = {
 export function createAutomation(deps: {
   boards: Boards; filesDir: string; skills: Skills; clients: ModelClient[];
   notify: (title: string, body: string) => void;
-  runs: { start(boardId: string, taskId: string): Promise<void> };
+  runs: { start(boardId: string, taskId: string, by?: 'founder' | 'schedule' | 'chain' | 'call'): Promise<void> };
   now?: () => number;
 }): Automation {
   const { boards, filesDir, skills, clients, notify, runs } = deps;
@@ -74,7 +75,10 @@ export function createAutomation(deps: {
       // the card, so a second run of this task is not still working from last week's answer.
       const from = task.from;
       if (from) {
-        parts.push(`${HANDOVER}\n\n${from.result}`);
+        // Which task, and when it finished: asked to say what has changed since the last run, a person needs the
+        // moment that run ended or it has nothing to measure from.
+        const said = from.at ? `"${from.title}" finished ${timeOrDay(from.at, now())}.\n\n` : '';
+        parts.push(`${HANDOVER}\n\n${said}${from.result}`);
         await boards.update(boardId, task.id, (one) => {
           one.from = undefined;
           if (one.run) one.run.log = [...one.run.log, `after "${from.title}"`];
@@ -107,10 +111,13 @@ export function createAutomation(deps: {
     // and started. A task that was stopped or failed starts nothing.
     async done(boardId, task, result) {
       if (task.fails) await boards.update(boardId, task.id, (one) => { one.fails = undefined; });
-      for (const next of waitingFor(await boards.list(boardId), task.id)) {
-        await boards.update(boardId, next.id, (one) => { one.from = { task: task.id, title: task.title, result: result.slice(0, MATERIAL) }; });
+      const all = await boards.list(boardId);
+      // Read off the card rather than from the task as it was handed in, which is the run before this one.
+      const at = all.find((one) => one.id === task.id)?.run?.finishedAt ?? now();
+      for (const next of waitingFor(all, task.id)) {
+        await boards.update(boardId, next.id, (one) => { one.from = { task: task.id, title: task.title, result: result.slice(0, MATERIAL), at }; });
         // A next task that cannot run says so on its own card, in its own blocked run; the one that finished is done.
-        await runs.start(boardId, next.id).catch(() => {});
+        await runs.start(boardId, next.id, 'chain').catch(() => {});
       }
     },
 

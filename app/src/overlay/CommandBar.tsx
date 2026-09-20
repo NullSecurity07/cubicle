@@ -10,8 +10,11 @@ import { KEYS, suggest, type Action, type Suggestion } from './commands';
 import { overlay, showDecision, showPlaybook, showThread } from './store';
 
 const WHERE: Record<Hit['kind'], string> = { doc: 'Doc', chat: 'Conversation', memory: 'Memory', decision: 'Decision', file: 'File', link: 'Web page', skill: 'Playbook' };
+// Said quietly, between where a hit lives and what it says: a search that reaches back a year should not hand the
+// founder something from last spring looking exactly like something from this morning.
+const date = (at: number) => new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 const fromHit = (hit: Hit): Suggestion => ({
-  section: 'In the workspace', label: hit.title, hint: `${WHERE[hit.kind]} · ${hit.text.replace(/\s+/g, ' ').slice(0, 110)}`,
+  section: 'In the workspace', label: hit.title, hint: `${WHERE[hit.kind]}${hit.at ? ` · ${date(hit.at)}` : ''} · ${hit.text.replace(/\s+/g, ' ').slice(0, 110)}`,
   action: hit.kind === 'chat' ? { do: 'thread', id: hit.id } : hit.kind === 'decision' ? { do: 'decision', id: hit.id } : hit.kind === 'file' ? { do: 'file', path: hit.id }
     : hit.kind === 'memory' ? { do: 'focus', id: hit.id } : { do: 'jump', id: hit.id },
 });

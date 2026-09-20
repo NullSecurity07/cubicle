@@ -62,8 +62,10 @@ export type Task = {
   // What the board does on its own. `onMissed` is this task's answer to a run that fell due while the app was closed;
   // `skill` is one from the playbook to put in front of the work; `after` is the task this one waits for, and `from`
   // is what that task came back with, waiting here until this one starts; `fails` counts failures in a row.
+  // `from.at` is when that earlier run finished, so "what changed since then" has a boundary; a board saved before
+  // this was carried across has none, and then nothing is said about when.
   script?: TaskScript; skill?: string; onMissed?: 'once' | 'skip'; after?: string;
-  from?: { task: string; title: string; result: string }; fails?: number;
+  from?: { task: string; title: string; result: string; at?: number }; fails?: number;
 };
 // What a board streams to its card: the tasks after every change, and stage effects from runs that the client must mirror.
 export type BoardEvent = { tasks: Task[] } | { effect: ToolEffect; roomId: string };

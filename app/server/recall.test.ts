@@ -56,6 +56,24 @@ describe('recall', () => {
     expect(hits[0].text).toContain('bold and loud');
   });
 
+  it('reads an index saved before a passage carried the day it was from, and embeds nothing again for it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'recall-'));
+    let embedded = 0;
+    const counting = async (texts: string[]) => { embedded += texts.length; return wordEmbedder(texts); };
+    // The index as an older version of this left it: the same words, with no dates anywhere.
+    const undated = pieces.map(({ at: _at, ...piece }) => piece);
+    const before = createRecall({ dir, embed: counting, gather: async () => undated });
+    await before.search('anything');
+    await before.settled();
+    // The same workspace, every piece now carrying its day. What was embedded before still answers for all of it:
+    // only the question itself is new. When a passage is from is not part of what was embedded, and must not be.
+    embedded = 0;
+    const dated = pieces.map((piece) => ({ ...piece, at: Date.UTC(2026, 8, 3) }));
+    const hits = await createRecall({ dir, embed: counting, gather: async () => dated }).search('which launch channel was chosen?');
+    expect(embedded).toBe(1);
+    expect(hits[0]).toMatchObject({ kind: 'decision', title: 'Launch channel', at: Date.UTC(2026, 8, 3) });
+  });
+
   it('falls back to matching words while the model is not there, and says so', async () => {
     const recall = createRecall({ dir: await mkdtemp(join(tmpdir(), 'recall-')), embed: async () => { throw new Error('model is still downloading'); }, gather: async () => pieces });
     const hits = await recall.search('Hacker News');

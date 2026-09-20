@@ -1,5 +1,5 @@
 import { createWriteStream } from 'node:fs';
-import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
@@ -20,6 +20,7 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
   const docPath = (id: string) => join(dir, 'docs', `${safe(id)}.md`);
   const chatPath = (id: string) => join(dir, 'rooms', `${safe(id)}.json`);
   const memoryPath = (id: string) => join(dir, 'rooms', `${safe(id)}.memory.json`);
+  const pagePath = (id: string) => join(dir, 'links', `${safe(id)}.json`);
   const filesDir = resolve(dir, 'files');
   let queue: Promise<unknown> = Promise.resolve();
   const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
@@ -54,6 +55,9 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     queue = job.catch(() => {});
     return job;
   };
+  // When a file was last written. Nothing here keeps a date of its own, so for a doc, a shared file or a fetched page
+  // this is the only honest answer to "how old is this?", which is what recall has to say about what it finds.
+  const timeOf = (path: string) => stat(path).then((info) => info.mtimeMs, () => undefined);
   const read = async (path: string) => {
     await queue;
     try { return await readFile(path, 'utf8'); } catch (error) {
@@ -95,6 +99,9 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
       }
     },
     readDoc: async (id: string) => (await read(docPath(id))) ?? '',
+    docTime: async (id: string) => timeOf(docPath(id)),
+    fileTime: async (name: string) => timeOf(filePath(name)),
+    pageTime: async (id: string) => timeOf(pagePath(id)),
     writeDoc: (id: string, text: string) => write(docPath(id), text),
     async replaceDoc(id: string, text: string) {
       await keep(docPath(id));
@@ -115,8 +122,8 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
       await write(path, JSON.stringify(messages, null, 2));
       onChat(id);
     },
-    readPage: async (id: string): Promise<{ url: string; title: string; text: string } | null> => JSON.parse((await read(join(dir, 'links', `${safe(id)}.json`))) ?? 'null'),
-    writePage: (id: string, page: { url: string; title: string; text: string }) => write(join(dir, 'links', `${safe(id)}.json`), JSON.stringify(page, null, 2)),
+    readPage: async (id: string): Promise<{ url: string; title: string; text: string } | null> => JSON.parse((await read(pagePath(id))) ?? 'null'),
+    writePage: (id: string, page: { url: string; title: string; text: string }) => write(pagePath(id), JSON.stringify(page, null, 2)),
     async readMemory(id: string): Promise<Memory> {
       const saved = JSON.parse((await read(memoryPath(id))) ?? '{}') as Partial<Memory>;
       return { notes: saved.notes ?? '', summary: saved.summary ?? '', upTo: saved.upTo };
