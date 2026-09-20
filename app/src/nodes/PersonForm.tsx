@@ -54,16 +54,17 @@ export function PersonForm({ id, person, onSave, onCancel }: { id: string; perso
           </label>
         ))}
       </fieldset>
-      <label>Voice
-        <span className="setup__row">
-          <select value={voice} onChange={(event) => { setPicked(true); setForm({ ...form, voice: event.target.value }); }}>
+      <div className="setup__row">
+        <label>Voice
+          {/* Named outright: a label wrapping a select is read out with every option inside it, which is no name at all. */}
+          <select aria-label="Voice" value={voice} onChange={(event) => { setPicked(true); setForm({ ...form, voice: event.target.value }); }}>
             {shown.map((one) => <option key={one.id} value={one.id}>{one.name}</option>)}
           </select>
-          {/* Hearing it belongs to whichever slice can speak, so the form only says what to say and in which voice. */}
-          {SLICES.map((slice) => (slice.voice
-            ? <slice.voice key={slice.name} voice={voice} text={`Hello, I am ${form.name.trim() || 'one of your people'}. This is how I sound.`} /> : null))}
-        </span>
-      </label>
+        </label>
+        {/* Hearing it belongs to whichever slice can speak, so the form only says what to say and in which voice. */}
+        {SLICES.map((slice) => (slice.voice
+          ? <slice.voice key={slice.name} voice={voice} text={`Hello, I am ${form.name.trim() || 'one of your people'}. This is how I sound.`} /> : null))}
+      </div>
       {gender !== 'neither' && (
         <label className="setup__more">
           <input type="checkbox" checked={allVoices} onChange={(event) => setAllVoices(event.target.checked)} />
@@ -71,7 +72,7 @@ export function PersonForm({ id, person, onSave, onCancel }: { id: string; perso
         </label>
       )}
       <label>Model
-        <select value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })}>
+        <select aria-label="Model" value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })}>
           <option value="auto">Auto · best free model with room left</option>
           {models.map((model) => <option key={model.name} value={model.name}>{model.name} · {model.model} · {Math.round(model.left * 100)}% left</option>)}
           {form.model !== 'auto' && !models.some((model) => model.name === form.model) && <option value={form.model}>{form.model} · not set up</option>}
