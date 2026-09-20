@@ -134,3 +134,29 @@ describe('captions in a film', () => {
     expect(off).toContain('<audio id="say"');
   });
 });
+
+describe('a caption word before it is spoken', () => {
+  const words = [
+    { word: 'Investors', at: 0.2, seconds: 0.4 },
+    { word: 'chase', at: 0.6, seconds: 0.3 },
+    { word: 'sales.', at: 0.9, seconds: 0.4 },
+  ];
+
+  it('is at full strength, because a dimmed stroke over a bright picture is a smear', () => {
+    const steps = capSteps(capLines(words, 18, 3, ['sales']), 4);
+    const perWord = steps.filter((step) => /#c\d+-\d+/.test(step));
+    expect(perWord.length).toBeGreaterThan(0);
+    for (const step of perWord) expect(step).not.toMatch(/opacity: 0\.\d/);
+  });
+
+  it('snaps up in size as it is said, which is the emphasis', () => {
+    const steps = capSteps(capLines(words, 18, 3, ['sales']), 4);
+    expect(steps.some((step) => /#c\d+-\d+.*scale: 0\.9.*scale: 1/.test(step))).toBe(true);
+  });
+
+  it('still brings the whole line up from nothing and takes it away again', () => {
+    const steps = capSteps(capLines(words, 18, 3, ['sales']), 4);
+    expect(steps.some((step) => /#c0".*opacity: 0, y: 16/.test(step))).toBe(true);
+    expect(steps.some((step) => /tl\.to\("#c0".*opacity: 0/.test(step))).toBe(true);
+  });
+});

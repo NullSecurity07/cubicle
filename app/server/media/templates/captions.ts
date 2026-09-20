@@ -144,8 +144,13 @@ export function capSteps(lines: CapLine[], until: number): string[] {
     const gone = Math.max(line.at + CAP_LEAST, next !== undefined ? next - FADE - 0.02 : Math.min(until, line.at + wants + 0.35));
     // Nothing arrives linearly: the entrance is the bold ease-out every other element in the film uses.
     steps.push(`tl.fromTo("#c${at}", { opacity: 0, y: 16, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.16, ease: "power3.out" }, ${time(line.at)});`);
+    // A word that has not been said yet is still a word a viewer can read. It used to start at a quarter opacity
+    // and rise as it was spoken, which is the karaoke idea taken too literally: at a quarter the black stroke is
+    // at a quarter too, and a dimmed stroke over a bright photograph is a dull olive smear. A real reel came back
+    // with two of its six caption frames unreadable that way. So the line arrives at full strength and the word
+    // being said snaps up in size — the size is the emphasis, and the one keyword keeps the accent colour.
     line.words.forEach((word, order) => {
-      steps.push(`tl.fromTo("#c${at}-${order}", { opacity: 0.24, scale: 0.92 }, { opacity: 1, scale: 1, duration: 0.13, ease: "back.out(1.7)" }, ${time(word.at)});`);
+      steps.push(`tl.fromTo("#c${at}-${order}", { scale: 0.9 }, { scale: 1, duration: 0.13, ease: "back.out(1.7)" }, ${time(word.at)});`);
     });
     steps.push(`tl.to("#c${at}", { opacity: 0, duration: ${Math.min(FADE, Math.max(0.04, (next ?? gone + FADE) - gone)).toFixed(3)}, ease: "power2.in" }, ${time(gone)});`);
   });
