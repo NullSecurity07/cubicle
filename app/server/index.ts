@@ -9,6 +9,7 @@ import { createBoards } from './boards.ts';
 import { createDecisions, decisionAttention } from './decisions.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
 import { guard } from './guard.ts';
+import { createGuards } from './guards.ts';
 import { createBrowser, dnsResolve, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
@@ -33,9 +34,11 @@ import { buildMessages, colleagueIds, readableDocIds, wired, type Attached } fro
 import { complete, fakeClient, promptSize, realClients } from './providers.ts';
 import { route } from './router.ts';
 import { createRuns, desktopNotify } from './runs.ts';
+import { createSeams } from './seams.ts';
 import { rangeOf, readStatic } from './static.ts';
 import { createStore } from './store.ts';
 import { threadsOf } from './threads.ts';
+import { createTrace } from './trace.ts';
 import { decisionTools } from './tools/decisions.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
@@ -184,8 +187,17 @@ const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
   await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
   return reply.text;
 };
+// Where everything that watches or shapes a turn plugs in. Two live here today: the trace, which writes down what a
+// turn cost once it is over, and the guard that will not let a person run the same call twice in one turn.
+const seams = createSeams();
+const trace = createTrace(workspace);
+seams.on('turn:after', trace.handler);
+const guards = createGuards();
+seams.on('turn:before', guards.reset);
+seams.on('tool:before', guards.before);
+seams.on('tool:after', guards.after);
 const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media, () => !local.ready())];
-const runs = createRuns({ boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify: fake ? () => {} : desktopNotify });
+const runs = createRuns({ boards, store, tools, clients, usage, approvals, attention, promptFor, busy, seams, notify: fake ? () => {} : desktopNotify });
 setInterval(() => { void runs.tick().catch(() => {}); }, 30_000).unref();
 
 // Started by the desktop shell: leave when the shell does, even if it was killed.
@@ -258,7 +270,7 @@ async function chat(roomId: string, text: string, res: ServerResponse, extra: { 
     if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
     if (notice) send({ notice });
     const reply = await runTurn({
-      messages, tools, clients: order, usage, signal: stop.signal,
+      messages, tools, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
       approve: async (event, signal) => {
         await attention.raise({ id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event });
         try { return await approvals.ask(event.id, signal); } finally { await attention.clear(`approval:${event.id}`); }
@@ -319,6 +331,8 @@ createServer(async (req, res) => {
       const hits = await recall.search(new URL(req.url ?? '/', 'http://localhost').searchParams.get('q') ?? '', { top: 12 });
       return json(res, 200, { hits, mode: recall.mode() });
     }
+    // What the people have spent and done lately. No screen reads it yet; the file behind it is the founder's to keep.
+    if (path === '/api/trace' && req.method === 'GET') return json(res, 200, await trace.summary(Number(new URL(req.url ?? '/', 'http://localhost').searchParams.get('days')) || 7));
     if (path === '/api/decisions' && req.method === 'GET') return json(res, 200, await decisions.list());
     if (path === '/api/decisions' && req.method === 'POST') return json(res, 200, await decisions.record(await body(req)));
     const ruled = /^\/api\/decisions\/([a-z0-9-]{1,100})(?:\/(decide))?$/.exec(path);

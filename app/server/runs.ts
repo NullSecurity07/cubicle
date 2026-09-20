@@ -8,6 +8,7 @@ import { runTurn } from './loop.ts';
 import type { ModelMessage } from './prompt.ts';
 import { promptSize, type ModelClient } from './providers.ts';
 import { route } from './router.ts';
+import type { Seams } from './seams.ts';
 import type { Store } from './store.ts';
 import type { Tool } from './tools/registry.ts';
 import type { UsageBook } from './usage.ts';
@@ -26,9 +27,9 @@ const line = (event: ToolEvent) => `${event.ok ? '✓' : '✗'} ${event.name} ${
 // written into the task instead of a conversation. An outward step parks the run in "waiting" until the founder answers on the board.
 export function createRuns(deps: {
   boards: Boards; store: Store; tools: Tool[]; clients: ModelClient[]; usage: UsageBook; approvals: ReturnType<typeof createApprovals>; attention?: AttentionBook;
-  promptFor: (stage: Stage, roomId: string, toolNames: string[], fresh?: boolean) => Promise<ModelMessage[]>; busy: Set<string>; notify: Notify;
+  promptFor: (stage: Stage, roomId: string, toolNames: string[], fresh?: boolean) => Promise<ModelMessage[]>; busy: Set<string>; notify: Notify; seams?: Seams;
 }) {
-  const { boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify } = deps;
+  const { boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify, seams } = deps;
   const stops = new Map<string, AbortController>();
 
   async function start(boardId: string, taskId: string): Promise<void> {
@@ -48,11 +49,12 @@ export function createRuns(deps: {
     void (async () => {
       let result = '';
       try {
+        const asked = `${task.title}${task.detail ? `\n\n${task.detail}` : ''}`;
         const messages = await promptFor(stage, room.id, tools.map((tool) => tool.name), true);
-        messages.push({ role: 'user', content: `The founder started this task from the board. Do it now with your tools, then report the result in a few lines.\n\nTask: ${task.title}${task.detail ? `\n\n${task.detail}` : ''}` });
+        messages.push({ role: 'user', content: `The founder started this task from the board. Do it now with your tools, then report the result in a few lines.\n\nTask: ${asked}` });
         const { order } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true });
         const reply = await runTurn({
-          messages, tools, clients: order, usage, signal: stop.signal,
+          messages, tools, clients: order, usage, signal: stop.signal, seams, source: 'run', query: asked,
           context: { stage, roomId: room.id, store, granted: new Map() },
           events: {
             token: (token) => { result += token; },
