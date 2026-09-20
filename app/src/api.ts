@@ -1,4 +1,4 @@
-import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaAsset, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, Skill, SkillEvent, Stage, Task, Thread } from '../shared/model';
+import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaAsset, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, RoomEvent, Skill, SkillEvent, Stage, Task, Thread } from '../shared/model';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -70,6 +70,26 @@ export function watchMedia(onEvent: (event: MediaEvent) => void, onOpen: () => v
     source = new EventSource('/api/media/events');
     source.onopen = onOpen;
     source.onmessage = (message) => onEvent(JSON.parse(message.data) as MediaEvent);
+    source.onerror = () => {
+      if (closed || source?.readyState !== EventSource.CLOSED) return;
+      again = setTimeout(open, 1500);
+    };
+  };
+  open();
+  return () => { closed = true; clearTimeout(again); source?.close(); };
+}
+
+// What is happening in every conversation, however it was started. `onOpen` is told whether the feed had been open
+// before, because a card that missed a gap has to read its conversation again to find out what was said in it.
+export function watchRooms(onEvent: (event: RoomEvent) => void, onOpen: (again: boolean) => void = () => {}) {
+  let source: EventSource | null = null;
+  let again: ReturnType<typeof setTimeout> | undefined;
+  let opened = false;
+  let closed = false;
+  const open = () => {
+    source = new EventSource('/api/rooms/events');
+    source.onopen = () => { onOpen(opened); opened = true; };
+    source.onmessage = (message) => onEvent(JSON.parse(message.data) as RoomEvent);
     source.onerror = () => {
       if (closed || source?.readyState !== EventSource.CLOSED) return;
       again = setTimeout(open, 1500);
