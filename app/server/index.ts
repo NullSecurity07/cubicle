@@ -14,6 +14,7 @@ import { fakeCoder, opencodeCoder } from './coder.ts';
 import { guard } from './guard.ts';
 import { createGuards } from './guards.ts';
 import { installSlices, lateRuns, loadSlices } from './install.ts';
+import { tidyLapsed } from './lapsed.ts';
 import { createBrowser, dnsResolve, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
@@ -243,6 +244,8 @@ async function body(req: IncomingMessage): Promise<any> {
 const seams = createSeams((name, error) => console.error(`seam ${name}: ${error.message}`));
 const trace = createTrace(workspace);
 seams.on('turn:after', trace.handler);
+// An approval left over from a turn the app closed on goes by itself once this room has moved past it.
+seams.on('turn:after', tidyLapsed(attention));
 const guards = createGuards();
 seams.on('turn:before', guards.reset);
 seams.on('tool:before', guards.before);
