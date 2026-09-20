@@ -154,6 +154,19 @@ export function headlineOf(said: string, most: number): string {
   return content(line).length >= 3 && endsClean(line) ? line : '';
 }
 
+// An action a film may only ask for if somebody really offers it. A call to book, a number to ring, a page to visit
+// or a thing to download is a promise the founder has to keep, and a film that invents one sends a stranger looking
+// for a door that is not there. "Book a call, let's talk now" closed a reel whose founder had offered neither a
+// call nor any way to make one.
+const A_DOOR = /\b(book|booking|call us|call me|call now|ring|phone|dial|whatsapp|dm|message us|email us|sign ?up|subscribe|register|download|install|buy|order|shop|visit|click|tap|link in bio|schedule|demo|free trial|apply)\b/i;
+export const opensADoor = (line?: string): string | null => A_DOOR.exec(line ?? '')?.[0] ?? null;
+
+// What a film closes on when nobody has offered anything: something true that costs the viewer nothing to believe.
+export const plainClose = (purpose: Purpose): { text: string; say: string } =>
+  (purpose === 'reel' || purpose === 'ad' ? { text: 'Follow for more', say: 'Follow for more.' }
+    : purpose === 'explainer' || purpose === 'launch' || purpose === 'feature' ? { text: 'Try it this week', say: 'Try it this week.' }
+      : { text: 'Save this for later', say: 'Save this for later.' });
+
 // A figure worth a scene of its own. A number belongs in a film because it changes something for the person
 // watching: money, time, how many people, how much better. "17 — scene shapes" is an inventory of the product's own
 // parts set forty points high, which tells a stranger how somebody's code is organised and nothing else.
@@ -585,6 +598,19 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     return { ...scene, heading: figure, text: trimTo([rest, scene.text].filter(Boolean).join(' '), 6) || scene.text };
   });
 
+  // 2b4. A close that asks for something nobody offered. Where the film has material it answers for itself; where
+  //      it has none, a door has to be named in the brief or it is not there to be opened.
+  if (!want.sources?.has) {
+    scenes = scenes.map((scene) => {
+      if (scene.layout !== 'cta' && scene.layout !== 'outro') return scene;
+      const door = opensADoor(`${scene.text ?? ''} ${scene.heading ?? ''} ${scene.say ?? ''}`);
+      if (!door || (want.sources?.brief ?? '').includes(door.toLowerCase())) return scene;
+      note(`nothing here offers a ${door.toLowerCase()}, so the film closes on something it can stand behind instead`);
+      const close = plainClose(want.purpose);
+      return { ...scene, text: close.text, say: close.say, heading: undefined };
+    });
+  }
+
   // 2b. A wordmark is the mark of something. A film with no product behind it closes on what to do instead.
   if (want.product === false) {
     scenes = scenes.map((scene) => {
@@ -615,7 +641,11 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
   //      voice over it.
   const canMove = want.layouts.includes('presenter') ? 'presenter' as Layout : want.layouts.includes('clip') ? 'clip' as Layout : null;
   if (want.person && canMove && !scenes.some((one) => one.layout === 'presenter' || one.layout === 'clip' || one.layout === 'footage')) {
-    const at = scenes.findIndex((one, index) => index < Math.max(1, scenes.length - 1) && one.say?.trim());
+    // The opening, wherever it can hold somebody: a reel that wants a person is a reel where the person says the
+    // hook. A film that produced its presenter in scene three had a person in it the way a leaflet has a
+    // photograph in it. Only a wordmark or a close is left alone.
+    const holds = (one: Scene) => one.layout !== 'logo' && one.layout !== 'title' && one.layout !== 'cta';
+    const at = holds(scenes[0]) ? 0 : scenes.findIndex((one, index) => index < Math.max(1, scenes.length - 1) && holds(one) && one.say?.trim());
     if (at >= 0) {
       note('the brief asks for somebody on camera, so one scene is a person moving rather than a picture of one');
       scenes = scenes.map((one, index) => (index === at

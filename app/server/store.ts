@@ -13,7 +13,9 @@ const safe = (id: string) => {
   return id;
 };
 
-export function createStore(dir: string) {
+// `onChat` is told whenever a conversation changed, whoever changed it. It lives here rather than at each of the
+// half-dozen callers so that a writer added later cannot forget it: there is nowhere else a message can be written.
+export function createStore(dir: string, onChat: (roomId: string) => void = () => {}) {
   const stagePath = join(dir, 'stage.json');
   const docPath = (id: string) => join(dir, 'docs', `${safe(id)}.md`);
   const chatPath = (id: string) => join(dir, 'rooms', `${safe(id)}.json`);
@@ -111,6 +113,7 @@ export function createStore(dir: string) {
       const messages: ChatMessage[] = JSON.parse((await read(path)) ?? '[]');
       messages.push(message);
       await write(path, JSON.stringify(messages, null, 2));
+      onChat(id);
     },
     readPage: async (id: string): Promise<{ url: string; title: string; text: string } | null> => JSON.parse((await read(join(dir, 'links', `${safe(id)}.json`))) ?? 'null'),
     writePage: (id: string, page: { url: string; title: string; text: string }) => write(join(dir, 'links', `${safe(id)}.json`), JSON.stringify(page, null, 2)),
@@ -127,6 +130,7 @@ export function createStore(dir: string) {
       const gone = andAfter ? messages.splice(at) : messages.splice(at, 1);
       await write(join(dir, 'trash', `${stamp()}-${safe(id)}-messages.json`), JSON.stringify(gone, null, 2));
       await write(chatPath(id), JSON.stringify(messages, null, 2));
+      onChat(id);
       return messages;
     },
     // A file the founder dropped into a chat. Kept under files/uploads with a name that cannot clash or escape.
