@@ -1,4 +1,5 @@
 import { STANCE, type ChatMessage, type Stage } from '../shared/model.ts';
+import { dayKey, fullDay, weekDay, zoneName } from './clock.ts';
 import { recent, type Memory } from './memory.ts';
 
 type CallEcho = { id: string; type: 'function'; function: { name: string; arguments: string }; extra_content?: unknown };
@@ -45,12 +46,25 @@ const CONNECT: [tool: string, cannot: string][] = [
   ['send_email', 'email (a mailbox)'],
 ];
 
+// A model has no clock: left alone it answers out of the year it was trained in, which is why a search for today's
+// market came back headed 2024. So every person is told the day, and what follows from knowing it.
+export function todayBlock(now: number): string {
+  const year = new Date(now).getFullYear();
+  return `Today is ${fullDay(now)}, in the founder's time zone (${zoneName()}).\n`
+    + 'What you learned in training is older than today, often by a year or more, so your own sense of what is current is wrong. '
+    + 'For anything that changes — markets, prices, funding, events, people, laws, versions, and anything the founder calls "latest", "now" or "this year" — search before you answer instead of telling them what you remember.\n'
+    + `Never put a year you remember into a search query: leave the year out, or write ${year} when the founder named no other. `
+    + 'Prefer the newest sources, say how old each source is, and never give an old figure as if it were current: when only old figures exist, say so and give the year they are from.';
+}
+
 // An earlier reply that used tools goes back to the model the way it happened: the calls, short results, then the words.
 // What the founder attached, as the model gets it: text files inline, images as images.
 export type Attached = { texts: Record<string, string>; images: Record<string, string> };
 const ATTACHED_CHARS = 8000;
 
-function past(message: ChatMessage, attached: Attached): ModelMessage[] {
+// `stamp` is the day this message was said, when the talk has moved on since; it rides on the first thing the model
+// reads for that message, so an assistant's calls and their results still arrive as the one unbroken pair.
+function past(message: ChatMessage, attached: Attached, stamp = ''): ModelMessage[] {
   if (message.role === 'user') {
     const files = (message.attachments ?? []).map((file) => {
       const text = attached.texts[file.path];
@@ -59,18 +73,18 @@ function past(message: ChatMessage, attached: Attached): ModelMessage[] {
     }).join('');
     const images = (message.attachments ?? []).filter((file) => attached.images[file.path]).map((file) => ({ name: file.path, url: attached.images[file.path] }));
     const words = message.from ? `[${message.from}, a colleague, asks you. The founder will see your answer.]\n${message.text}` : message.text;
-    return [{ role: 'user', content: `${words}${files}`, ...(images.length ? { images } : {}) }];
+    return [{ role: 'user', content: `${stamp}${words}${files}`, ...(images.length ? { images } : {}) }];
   }
   const tools = (message.tools ?? []).filter((tool) => tool.ok !== undefined);
-  if (!tools.length) return [{ role: 'assistant', content: message.text }];
+  if (!tools.length) return [{ role: 'assistant', content: `${stamp}${message.text}` }];
   return [
-    { role: 'assistant', content: '', tool_calls: tools.map((tool) => ({ id: tool.id, type: 'function', function: { name: tool.name, arguments: JSON.stringify(tool.args) } })) },
+    { role: 'assistant', content: stamp.trim(), tool_calls: tools.map((tool) => ({ id: tool.id, type: 'function', function: { name: tool.name, arguments: JSON.stringify(tool.args) } })) },
     ...tools.map((tool): ModelMessage => ({ role: 'tool', tool_call_id: tool.id, content: (tool.result ?? '').slice(0, PAST_RESULT_CHARS) })),
     ...(message.text.trim() ? [{ role: 'assistant' as const, content: message.text }] : []),
   ];
 }
 
-export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}, memory?: Memory, attached: Attached = { texts: {}, images: {} }, pages: Record<string, { title: string; text: string }> = {}, decided: string[] = [], founder = ''): ModelMessage[] {
+export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}, memory?: Memory, attached: Attached = { texts: {}, images: {} }, pages: Record<string, { title: string; text: string }> = {}, decided: string[] = [], founder = '', now = Date.now()): ModelMessage[] {
   const room = stage.rooms.find((candidate) => candidate.id === roomId);
   if (!room) throw new Error(`unknown room: ${roomId}`);
 
@@ -147,7 +161,20 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
       ? `Your memory (the founder can read and edit it).${memory.notes.trim() ? `\nNotes you kept:\n${memory.notes.trim()}` : ''}${memory.summary.trim() ? `\nEarlier conversation, in short:\n${memory.summary.trim()}` : ''}`
       : '',
     team.length ? `Colleagues connected to your room. Ask one with ask_person when their field decides the answer; say in your reply what they told you.\n${team.join('\n')}` : '',
+    // The day goes last of all, among the things that change. It turns over once every twenty-four hours, so at the
+    // head it would throw away the whole cached prefix each morning for nothing; here it only costs what already
+    // changes every turn. Last is also the strongest place left: a small model reads the end of its instructions
+    // hardest, and this is the one line that has to land. Only the playbook block, added later, comes after it.
+    todayBlock(now),
   ].filter(Boolean).join('\n\n');
 
-  return [{ role: 'system', content: system }, ...recent(history).flatMap((message) => past(message, attached))];
+  // Old talk reaches the model with no sense of when it was said, so a message from three weeks ago reads as just now.
+  // The first message of each day carries its day, and only when the talk in front of the model spans more than one.
+  const kept = recent(history);
+  const days = kept.map((message) => dayKey(message.at));
+  const spans = new Set(days).size > 1;
+  const stamp = (index: number) => (!spans || days[index] === days[index - 1] ? ''
+    : `[${days[index] === dayKey(now) ? 'today' : weekDay(kept[index].at)}]\n`);
+
+  return [{ role: 'system', content: system }, ...kept.flatMap((message, index) => past(message, attached, stamp(index)))];
 }

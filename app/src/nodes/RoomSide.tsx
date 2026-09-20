@@ -29,7 +29,9 @@ export function RoomSide({ id, name, status, onEditMemory }: { id: string; name:
   const nodes = useNodes<StageNode>();
   const edges = useEdges();
   const [memory, setMemory] = useState<{ notes: string; summary: string } | null>(null);
-  const [chat, setChat] = useState<ChatMessage[]>([]);
+  // Null until the conversation has been read: a view that could not read it said "Replies 0", which is a lie about
+  // a conversation full of words rather than a view that is not ready yet.
+  const [chat, setChat] = useState<ChatMessage[] | null>(null);
 
   // Both change only when a turn ends or the founder edits the memory.
   useEffect(() => {
@@ -42,7 +44,7 @@ export function RoomSide({ id, name, status, onEditMemory }: { id: string; name:
   const wired = edges.filter((edge) => edge.source === id || edge.target === id)
     .map((edge) => nodes.find((node) => node.id === (edge.source === id ? edge.target : edge.source)))
     .filter((node): node is StageNode => !!node);
-  const replies = chat.filter((message) => message.role === 'assistant');
+  const replies = (chat ?? []).filter((message) => message.role === 'assistant');
   const used = replies.reduce((sum, message) => ({ input: sum.input + (message.usage?.input ?? 0), output: sum.output + (message.usage?.output ?? 0) }), { input: 0, output: 0 });
   const last = replies.at(-1);
 
@@ -61,9 +63,9 @@ export function RoomSide({ id, name, status, onEditMemory }: { id: string; name:
       <section>
         <h3>This conversation</h3>
         <dl>
-          <div><dt>Replies</dt><dd>{replies.length}</dd></div>
-          <div><dt>Tokens read</dt><dd>{compact(used.input)}</dd></div>
-          <div><dt>Tokens written</dt><dd>{compact(used.output)}</dd></div>
+          <div><dt>Replies</dt><dd>{chat ? replies.length : '—'}</dd></div>
+          <div><dt>Tokens read</dt><dd>{chat ? compact(used.input) : '—'}</dd></div>
+          <div><dt>Tokens written</dt><dd>{chat ? compact(used.output) : '—'}</dd></div>
           {last?.provider && <div><dt>Last answered by</dt><dd>{last.provider}</dd></div>}
         </dl>
       </section>

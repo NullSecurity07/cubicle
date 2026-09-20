@@ -20,7 +20,13 @@ export function createBoards(dir: string, now: () => number = Date.now) {
   const cache = new Map<string, Task[]>();
   const watchers = new Map<string, Set<(event: BoardEvent) => void>>();
   const listeners = new Set<() => void>();
+  // Whoever carries every board at once (the window's one feed) rather than picking a board to watch.
+  const all = new Set<(boardId: string, event: BoardEvent) => void>();
   let queue: Promise<unknown> = Promise.resolve();
+  function shout(boardId: string, event: BoardEvent) {
+    for (const tell of watchers.get(boardId) ?? []) tell(event);
+    for (const tell of all) tell(boardId, event);
+  }
 
   async function load(boardId: string): Promise<Task[]> {
     const known = cache.get(boardId);
@@ -35,7 +41,7 @@ export function createBoards(dir: string, now: () => number = Date.now) {
   function save(boardId: string) {
     const text = JSON.stringify(cache.get(boardId) ?? [], null, 2);
     queue = queue.then(async () => { await mkdir(join(dir, 'boards'), { recursive: true }); await writeFile(`${path(boardId)}.tmp`, text); await rename(`${path(boardId)}.tmp`, path(boardId)); }).catch(() => {});
-    for (const tell of watchers.get(boardId) ?? []) tell({ tasks: cache.get(boardId) ?? [] });
+    shout(boardId, { tasks: cache.get(boardId) ?? [] });
     for (const tell of listeners) tell();
   }
 
@@ -105,6 +111,8 @@ export function createBoards(dir: string, now: () => number = Date.now) {
       set.add(tell);
       return () => { set.delete(tell); };
     },
-    tell(boardId: string, event: BoardEvent) { for (const tell of watchers.get(boardId) ?? []) tell(event); },
+    // Every board at once, named as it speaks: a board card put on the stage later needs nobody to subscribe to it.
+    watchAll(tell: (boardId: string, event: BoardEvent) => void) { all.add(tell); return () => { all.delete(tell); }; },
+    tell(boardId: string, event: BoardEvent) { shout(boardId, event); },
   };
 }

@@ -1,9 +1,17 @@
-import { memo, useEffect, useId, useState, type ReactNode } from 'react';
+import { Children, memo, useEffect, useId, useState, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 const VIDEO = /\.(mp4|webm|mov)(\?.*)?$/i;
 const AUDIO = /\.(wav|mp3|ogg|m4a)(\?.*)?$/i;
+// A table cell is the one place markdown gives no way to start a new line, so models write <br> there and the founder
+// reads it as letters. Only this one tag, only in a cell, and only as a break: nothing else here becomes HTML.
+const BR = /<br\s*\/?>/i;
+export function broken(children: ReactNode): ReactNode[] {
+  return Children.toArray(children).flatMap((child, index): ReactNode[] => (typeof child === 'string' && BR.test(child)
+    ? child.split(BR).flatMap((piece, at) => (at ? [<br key={`${index}-${at}`} />, piece] : [piece]))
+    : [child]));
+}
 
 // A diagram written as Mermaid text. The library is large, so it loads only when a reply first contains one.
 function Diagram({ source }: { source: string }) {
@@ -60,6 +68,8 @@ export const Words = memo(function Words({ text }: { text: string }) {
           : typeof src === 'string' && AUDIO.test(src) ? <audio className="md__media md__media--sound" src={src} controls preload="metadata" />
           : <img className="md__media" src={typeof src === 'string' ? src : undefined} alt={alt ?? ''} loading="lazy" />),
         code: ({ node: _node, className, children }) => <Code className={className}>{children}</Code>,
+        td: ({ node: _node, children, ...props }) => <td {...props}>{broken(children)}</td>,
+        th: ({ node: _node, children, ...props }) => <th {...props}>{broken(children)}</th>,
         pre: ({ node: _node, children }) => {
           const only = Array.isArray(children) ? children[0] : children;
           const language = /language-(mermaid|html)/.exec((only as { props?: { className?: string } })?.props?.className ?? '');

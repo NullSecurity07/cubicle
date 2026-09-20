@@ -11,17 +11,25 @@ const pane = setHostElement('messages');
 
 // Every conversation in one place. A person's thread is their own card, moved into the pane with whatever it is in
 // the middle of; a thread between two people is read-only, picked out of the room where the question was answered.
+// How long a window waits before saying out loud that it is not getting an answer. A request that never comes back
+// used to leave this panel looking like an app with nothing in it, which is how the founder read it.
+const PATIENCE = 4000;
+
 export function MessagesPanel() {
   const [threads, setThreads] = useState<Thread[] | null>(null);
+  const [lost, setLost] = useState(false);
   const [query, setQuery] = useState('');
   const open = useThread();
 
   useEffect(() => {
-    const load = () => { getThreads(query).then(setThreads).catch(() => setThreads([])); };
+    let answered = false;
+    const load = () => { getThreads(query).then((got) => { answered = true; setThreads(got); setLost(false); }).catch(() => setLost(true)); };
     const soon = setTimeout(load, query ? 180 : 0);
     const every = setInterval(load, 5000);
+    // Nothing has come back and nothing has failed either: say so rather than sit there looking like an empty app.
+    const patience = setTimeout(() => { if (!answered) setLost(true); }, PATIENCE);
     const stops = [listen('usage', load), listen('effect', (effect) => { if (effect.kind === 'chat-changed') load(); })];
-    return () => { clearTimeout(soon); clearInterval(every); for (const stop of stops) stop(); };
+    return () => { clearTimeout(soon); clearTimeout(patience); clearInterval(every); for (const stop of stops) stop(); };
   }, [query]);
   // The first time the view opens it shows the latest conversation.
   useEffect(() => { if (threads?.length && !threads.some((thread) => thread.id === open) && !query) showThread(threads[0].id); }, [threads, open, query]);
@@ -33,6 +41,7 @@ export function MessagesPanel() {
         <nav className="threads__list" aria-label="Conversations">
           <input type="search" aria-label="Search conversations" placeholder="Search what was said" value={query} onChange={(event) => setQuery(event.target.value)} />
           {threads?.length === 0 && <p className="panel__empty">{query ? 'Nobody said that.' : 'No conversations yet.'}</p>}
+          {!threads && <p className="panel__empty">{lost ? 'Could not load your conversations. Trying again…' : 'Reading your conversations…'}</p>}
           <ul>
             {threads?.map((thread) => (
               <li key={thread.id}>

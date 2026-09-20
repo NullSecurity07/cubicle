@@ -86,6 +86,20 @@ describe('what makes a lesson a lesson', () => {
     });
   });
 
+  // A skill is replayed into prompts for as long as it exists, so a year in one is wrong from the next new year on.
+  describe('a year that would go stale', () => {
+    it('refuses every year at once, wherever in the lesson it was written', () => {
+      expect(() => checkLesson({ ...GOOD, when: 'When the founder asks about the 2024 market' }, ground({ names: [], asked: '' })))
+        .toThrow(/"2024" is a year, and a skill has to be as right next year as it is today/);
+      expect(() => checkLesson({ ...GOOD, procedure: ['Search for the 2023 figures', 'Check them against the 2024 ones'] }, ground({ names: [], asked: '', calls: 3 })))
+        .toThrow(/"2023" and "2024" are years/);
+      expect(() => checkLesson({ ...GOOD, verify: 'The figures are the current ones.' }, ground({ names: [], asked: '' }))).not.toThrow();
+    });
+    it('leaves a plain number alone: only four digits that read as a year are one', () => {
+      expect(() => checkLesson({ ...GOOD, pitfalls: ['Never quote a price above 1200 dollars'] }, ground({ names: [], asked: '' }))).not.toThrow();
+    });
+  });
+
   describe('steps nobody took', () => {
     for (const [calls, steps, ok] of [[0, 3, true], [0, 4, false], [1, 3, true], [2, 4, true], [2, 5, false], [3, 5, true], [6, 8, true]] as const) {
       it(`${calls} calls and ${steps} steps is ${ok ? 'fair' : 'too many'}`, () => {

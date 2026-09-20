@@ -17,7 +17,7 @@ test.beforeEach(async ({ page }) => {
   page.on('pageerror', (error) => broke.push(error.message));
   // The cards' feed has to be listening before anything is sent from outside. A window that opens mid-turn catches
   // up at the end of it, which is right but is not what is being checked here.
-  const listening = page.waitForResponse((response) => response.url().includes('/api/rooms/events'));
+  const listening = page.waitForResponse((response) => response.url().endsWith('/api/events'));
   await page.goto('/');
   await expect(node(page, 'marketing')).toBeVisible();
   await listening;
