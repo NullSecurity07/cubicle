@@ -1,0 +1,25 @@
+/* The safety extra's own styles. Nothing new is invented here: the panel, the buttons and the colours are the ones
+   the rest of the window already uses. */
+
+/* A slice's view is mounted beside the shade rather than inside it, so it brings its own frame to sit in — the same
+   box the built-in panels are placed in, and clicks anywhere else still reach the shade behind. */
+.safety-layer { position: fixed; inset: 0; z-index: 41; pointer-events: none; }
+.safety-layer .panel { pointer-events: auto; }
+
+.allowed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.allowed__item { display: flex; align-items: center; gap: 12px; padding: 11px 13px; border-radius: 12px; border: 1px solid var(--card-border); background: rgba(255, 255, 255, 0.035); }
+.allowed__what { flex: 1; min-width: 0; font-size: 13px; line-height: 1.45; }
+.allowed__what small { display: block; margin-top: 2px; font-size: 11.5px; color: var(--muted); }
+
+/* At the foot of a coding receipt, and as quiet as the receipt itself. */
+.undo { display: flex; flex-direction: column; gap: 4px; padding: 7px 10px; border-top: 1px solid var(--card-border); }
+.undo__act { align-self: flex-start; border: 0; border-radius: 7px; padding: 4px 10px; font: inherit; font-size: 11.5px; font-weight: 550; color: var(--muted); background: rgba(255, 255, 255, 0.07); cursor: pointer; }
+.undo__act:hover { background: rgba(255, 255, 255, 0.13); color: var(--text); }
+.undo__act:disabled { opacity: 0.4; cursor: default; }
+.undo__said { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+
+/* The one line on an approval that makes it a standing yes. The card lays its fields out in columns, so this says
+   plainly that it is a line, not a field. */
+.approval label.approval__always { flex-direction: row; align-items: center; gap: 7px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.approval label.approval__always:hover { color: var(--text); }
+.approval .approval__always input { flex: none; width: 13px; height: 13px; margin: 0; accent-color: var(--accent); cursor: pointer; }

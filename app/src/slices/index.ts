@@ -1,11 +1,14 @@
 import type React from 'react';
+import type { ToolEvent } from '../../shared/model';
 import type { Command } from '../overlay/commands';
 
 // The same idea as the server's slices, lighter: a feature the founder can see is a folder in here with a
 // `slice.tsx` in it, default-exporting this. Nothing in a slice edits `Overlay.tsx` or `commands.ts` — both of them
 // read this list instead. A slice imports its own stylesheet from its own files.
 // `overlay` is mounted once, above the canvas, for as long as the window is open: it shows and hides itself.
-export type UiSlice = { name: string; commands?: Command[]; overlay?: React.ComponentType };
+// `receipt` is drawn at the foot of every opened tool receipt, so a slice can offer what to do about one step (put it
+// back, say it again); it decides for itself which calls it has anything to say about, and draws nothing otherwise.
+export type UiSlice = { name: string; commands?: Command[]; overlay?: React.ComponentType; receipt?: React.ComponentType<{ tool: ToolEvent }> };
 
 // Vite reads the folder while it builds, so a slice that is not there costs nothing at all, and an empty folder is
 // an empty object. It has to be written out in full, exactly like this: Vite and vitest both replace the whole

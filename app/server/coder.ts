@@ -2,6 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { childEnv, coderKeys } from './safety/env.ts';
 
 export type CoderJob = { dir: string; task: string; onLine: (line: string) => void; signal?: AbortSignal };
 export type CoderResult = { ok: boolean; summary: string; changed: string[] };
@@ -49,7 +50,9 @@ export function opencodeCoder(env: NodeJS.ProcessEnv = process.env): Coder {
     onLine(`opencode · ${model}`);
     return new Promise<CoderResult>((done) => {
       // stdin must be closed, or opencode waits on it forever.
-      const run = spawn(bin, ['run', '--format', 'json', '--dir', dir, '-m', model!, task], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'], env: { ...env, OPENCODE_PERMISSION: PERMISSION } });
+      // The harness is a child, not this app: it starts without the founder's keys, except the one its own provider
+      // needs (it signs in to its built-in models from a file under HOME).
+      const run = spawn(bin, ['run', '--format', 'json', '--dir', dir, '-m', model!, task], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'], env: { ...childEnv(env, coderKeys(model!)), OPENCODE_PERMISSION: PERMISSION } });
       const timer = setTimeout(() => run.kill('SIGTERM'), TIME_LIMIT);
       signal?.addEventListener('abort', () => run.kill('SIGTERM'), { once: true });
       let buffer = ''; let last = ''; let err = '';
