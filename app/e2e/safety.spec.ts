@@ -14,10 +14,15 @@ const email = (to: string, subject: string) => `/tool send_email {"to":"${to}","
 
 // Opens the command bar and runs the first thing it offers for what was typed.
 async function bar(page: Page, typed: string) {
-  await page.keyboard.press('Control+k');
-  const box = page.getByRole('dialog', { name: 'Command bar' }).getByRole('combobox');
-  await box.fill(typed);
-  await expect(page.getByRole('dialog', { name: 'Command bar' }).getByRole('option').first()).toContainText(typed, { ignoreCase: true });
+  const sheet = page.getByRole('dialog', { name: 'Command bar' });
+  // The key is only heard once the app is listening at the window, and on a busy machine that can be a moment after the
+  // page says it has loaded. Pressed again only while the bar is still shut: a second press on an open bar closes it.
+  await expect(async () => {
+    if (!(await sheet.isVisible())) await page.keyboard.press('Control+k');
+    await expect(sheet.getByRole('combobox')).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 25_000 });
+  await sheet.getByRole('combobox').fill(typed);
+  await expect(sheet.getByRole('option').first()).toContainText(typed, { ignoreCase: true });
   await page.keyboard.press('Enter');
 }
 
