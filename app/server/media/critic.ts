@@ -26,6 +26,9 @@ export type Want = {
   // Pictures the film was handed, by name: drawn in a wired image studio, dropped on the stage, or given to the
   // tool outright. The founder who put them there meant them to be in the film.
   pictures?: string[];
+  // Whether the brief asked for somebody on camera. A film that was asked for one and shows a photograph instead is
+  // the thing a founder wrote "no talking, no body and hand movement" about.
+  person?: boolean;
   // The one line of visual direction every drawn picture in this film is prefixed with, so six pictures look like
   // six frames of one film rather than six stock photos.
   bible: string;
@@ -256,6 +259,13 @@ export function criticise(spec: Spec, want: Want): Finding[] {
   // is the thing being launched, and a launch film that never shows it is a film about an idea.
   if (want.screens?.length && !scenes.some((one) => one.layout === 'device' || one.layout === 'footage')) {
     say('screens', `there ${want.screens.length === 1 ? 'is a real picture' : `are ${want.screens.length} real pictures`} of the product on the card and the film shows none of them`);
+  }
+  // Somebody on camera, and moving. A still of a person under a voice-over is a photograph with words over it, and
+  // a founder who asked for a face said so in exactly those terms. This bites only where a moving shot can really
+  // be made — where none can, a still with a camera move on it is the honest best.
+  const moving = want.layouts.includes('presenter') || want.layouts.includes('clip');
+  if (want.person && moving && !scenes.some((one) => one.layout === 'presenter' || one.layout === 'clip' || one.layout === 'footage')) {
+    say('person', 'the brief asks for somebody on camera and no scene has anybody moving in it');
   }
   // The pictures the film was handed. Listing them for the model to choose from was not enough: a founder who drew
   // a picture and wired it to the studio was shown a film of drawings of something else.
@@ -507,6 +517,20 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
         ? { ...one, layout: 'picture' as Layout, asset: name, image_prompt: undefined, bg_prompt: undefined }
         : one));
       held.add(name);
+    }
+  }
+
+  // 2b3. Somebody on camera, moving. Where the brief asked for a face and a moving shot can be made, one scene is
+  //      a person rather than a picture of one — which is the difference between a film and a photograph with a
+  //      voice over it.
+  const canMove = want.layouts.includes('presenter') ? 'presenter' as Layout : want.layouts.includes('clip') ? 'clip' as Layout : null;
+  if (want.person && canMove && !scenes.some((one) => one.layout === 'presenter' || one.layout === 'clip' || one.layout === 'footage')) {
+    const at = scenes.findIndex((one, index) => index < Math.max(1, scenes.length - 1) && one.say?.trim());
+    if (at >= 0) {
+      note('the brief asks for somebody on camera, so one scene is a person moving rather than a picture of one');
+      scenes = scenes.map((one, index) => (index === at
+        ? { ...one, layout: canMove, ...(canMove === 'presenter' ? { portrait_prompt: one.portrait_prompt ?? `${want.bible}. somebody talking to camera` } : { clip_prompt: one.clip_prompt ?? `${want.bible}. somebody talking to camera` }) }
+        : one));
     }
   }
 

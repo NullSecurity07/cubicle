@@ -358,3 +358,31 @@ describe('a film that was handed a picture', () => {
     expect(rules(criticise(already, reelWant({ pictures: given })))).not.toContain('pictures');
   });
 });
+
+describe('a film that was asked for somebody on camera', () => {
+  const still = spec([
+    { layout: 'hook', text: 'Investors want traction', say: 'Investors want traction.', bg_prompt: 'a desk' },
+    { layout: 'picture', asset: 'drawn-1', say: 'They watch what people do.' },
+    { layout: 'cta', text: 'Follow for more', say: 'Follow for more.', bg_prompt: 'a phone' },
+  ]);
+
+  it('says so when nobody in it is moving and somebody could be', () => {
+    // The founder's words were "it is a static image, no talking, no body and hand movement".
+    expect(rules(criticise(still, reelWant({ person: true })))).toContain('person');
+    // Where no moving shot can be made at all, a still is the honest best and this does not bite.
+    expect(rules(criticise(still, reelWant({ person: true, layouts: ['hook', 'picture', 'cta', 'statement'] })))).not.toContain('person');
+    expect(rules(criticise(still, reelWant()))).not.toContain('person');
+  });
+
+  it('makes one scene a person rather than a picture of one', () => {
+    const { spec: fixed, notes } = repair(still, reelWant({ person: true }));
+    expect(fixed.scenes.some((one) => one.layout === 'presenter' || one.layout === 'clip')).toBe(true);
+    expect(notes.join(' ')).toContain('somebody on camera');
+    expect(rules(criticise(fixed, reelWant({ person: true })))).not.toContain('person');
+  });
+
+  it('leaves a film that already has somebody moving alone', () => {
+    const already = spec([still.scenes[0], { layout: 'presenter', portrait_prompt: 'a founder', say: 'They watch.' }, still.scenes[2]]);
+    expect(rules(criticise(already, reelWant({ person: true })))).not.toContain('person');
+  });
+});
