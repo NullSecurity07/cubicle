@@ -7,7 +7,7 @@ const SHAPES: Shape[] = ['wide', 'tall', 'square'];
 // Which floor each size in the scale answers to. A headline is the one line a scene is about; a support line is
 // anything a viewer has to read beside it; everything else still has a floor, because writing set below two and a
 // half per cent of a frame is decoration rather than writing.
-const HEADLINE = ['hook', 'display', 'heading', 'quote', 'stat', 'hookCaps', 'displayCaps', 'headingCaps', 'statCaps'] as const;
+const HEADLINE = ['hook', 'display', 'heading', 'quote', 'stat', 'titleCard', 'hookCaps', 'displayCaps', 'headingCaps', 'statCaps'] as const;
 const SUPPORT = ['lead', 'body', 'step', 'cta', 'icon', 'sideBody', 'mark'] as const;
 const LEAST = ['label', 'chip', 'sideLabel'] as const;
 
@@ -46,6 +46,18 @@ describe('the type scale has floors under it', () => {
         }
       }
     }
+  });
+
+  it('sets a title card larger than a headline, because it is the film announcing itself', () => {
+    for (const shape of SHAPES) {
+      const { height } = FORMATS[shape];
+      for (const pack of PACKS) {
+        const type = typeScale(shape, pack);
+        expect(type.titleCard / height, `${shape}/${pack}`).toBeGreaterThanOrEqual(TYPE_FLOOR.title - 0.0005);
+        expect(type.titleCard).toBeGreaterThanOrEqual(type.heading);
+      }
+    }
+    expect(styleSheet('tall', 'documentary')).toContain(`.frame--title .display, #root.has-captions .frame--title .display { font-size: ${typeScale('tall', 'documentary').titleCard}px; }`);
   });
 
   it('is the reason a tall frame no longer sets its labels at two per cent', () => {

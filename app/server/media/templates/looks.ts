@@ -69,12 +69,16 @@ export const PACE: Record<Pace, { rise: number; ease: string; stagger: number; o
 // than hoped for: every size in the stylesheet below comes out of it, and a test holds it to these numbers.
 export const TYPE_FLOOR = {
   headline: { wide: 0.080, tall: 0.060, square: 0.065 } as Record<Shape, number>,
+  // A title card is not a headline, it is the film announcing itself, and the long-form register leans on it the
+  // way a reel leans on its captions. Nine per cent of the frame is where a serif display line stops being a
+  // heading and starts being a title.
+  title: 0.090,
   support: 0.032,
   least: 0.026,
 };
 
 export type TypeScale = {
-  hook: number; display: number; heading: number; quote: number; stat: number;
+  hook: number; display: number; heading: number; quote: number; stat: number; titleCard: number;
   lead: number; body: number; step: number; cta: number; icon: number; sideBody: number;
   label: number; chip: number; sideLabel: number; mark: number;
   hookCaps: number; displayCaps: number; headingCaps: number; statCaps: number;
@@ -93,6 +97,7 @@ export function typeScale(shape: Shape, pack: Pack): TypeScale {
   return {
     hook: at((style.shout ? 146 : 132) * s, head),
     display: at((style.shout ? 118 : 112) * s, head),
+    titleCard: at((style.shout ? 118 : 112) * s, height * TYPE_FLOOR.title),
     heading: at(68 * s, head),
     quote: at((pack === 'editorial' || pack === 'documentary' ? 74 : 62) * s, head),
     stat: Math.round(300 * s),
@@ -221,8 +226,10 @@ ${bars ? `/* Letterbox as a fixed format, identical for the whole render: two ba
 #root.has-captions .heading { font-size: ${type.headingCaps}px; }
 #root.has-captions .stat { font-size: ${type.statCaps}px; }
 .frame--onbg.frame--stat, .frame--onbg.frame--logo { justify-content: flex-end; }
-/* A title card is set on the foot of the frame instead, with the air above it, the way a poster is. */
+/* A title card is set on the foot of the frame instead, with the air above it, the way a poster is — and it is
+   the one line in the film that is larger than a headline, because it is the film announcing itself. */
 .frame--title { justify-content: flex-end; padding-bottom: calc(var(--margin) * 1.05 + var(--safe-foot)); }
+.frame--title .display, #root.has-captions .frame--title .display { font-size: ${type.titleCard}px; }
 /* A figure that size carries its own lift: the digits stand well above their line and nothing hangs below them. */
 .frame--stat { padding-bottom: calc(var(--margin) + var(--safe-foot)); }
 ${sketch ? '' : `.display, .heading, .hook, .lead, .body, .label, .quote, .logo, .stat, .step, .side .body { text-shadow: 0 calc(2px * var(--s)) calc(22px * var(--s)) rgba(0, 0, 0, 0.58); }`}
