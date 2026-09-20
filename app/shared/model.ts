@@ -131,17 +131,28 @@ export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-crea
 export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; waiting?: boolean; question?: string; ok?: boolean; result?: string; effect?: ToolEffect };
 // A file the founder attached to a message; it lives in the shared files folder.
 export type Attachment = { path: string; type: string; size: number };
+// The founder is not always at the stage. When their words came in some other way, the message says which, so the
+// card can tell them where they were standing when they said it. Absent means this window.
+export type ChatVia = 'phone' | 'call';
 export type ChatMessage = {
   id: string; role: 'user' | 'assistant'; text: string; at: number;
   // Set when the words came from a colleague's consult, not from the founder: the colleague's name.
-  from?: string;
+  from?: string; via?: ChatVia;
   provider?: string; model?: string; usage?: Usage; tools?: ToolEvent[]; stopped?: boolean; attachments?: Attachment[];
 };
-export type ChatEvent = { token: string } | { tool: ToolEvent } | { notice: string } | { done: true; message: ChatMessage } | { error: string };
+// `turn` names the turn this stream is; the same name goes out on the rooms feed, so the window that asked for a
+// reply can tell its own turn from one it is only watching.
+export type ChatEvent = { turn: string } | { token: string } | { tool: ToolEvent } | { notice: string } | { done: true; message: ChatMessage } | { error: string };
+// What the rooms feed carries, to every open window rather than only the one that started something: a conversation
+// changed (by anybody at all — the phone, a colleague, another window), and a turn from its first word to its last.
+export type RoomEvent = { roomId: string } & (
+  { chat: 'changed' } | { turn: string; started: { via?: ChatVia } } | { turn: string; token: string }
+  | { turn: string; tool: ToolEvent } | { turn: string; ended: true });
 // One configured model as the client sees it: `left` is the share of today's free quota still there, 0 to 1.
 export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number };
 
 export const newMessageId = () => `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+export const newTurnId = () => `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 export const STANCE =
   'You work for the founder. You boost the founder; you do not run the company. Be concise. Offer options when '
