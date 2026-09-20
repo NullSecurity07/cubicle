@@ -85,8 +85,13 @@ export function echoes(text: string, said: string): number {
 // in the same part of the frame — which a real reel showed as the word "AWAY." sitting on top of a checklist.
 // These scenes keep their words and lose their captions for as long as they are on screen.
 export const CROWDS_CAPTIONS = new Set<Layout>(['bullets', 'checklist', 'steps', 'compare', 'chart']);
-export const crowdsCaptions = (scene: Scene): boolean =>
-  CROWDS_CAPTIONS.has(scene.layout) && (scene.bullets?.length ?? 0) > 0;
+export const crowdsCaptions = (scene: Scene): boolean => {
+  if (CROWDS_CAPTIONS.has(scene.layout)) return (scene.bullets?.length ?? 0) > 0;
+  // A quotation's attribution hangs below it, at the bottom of the block, which is where the caption band starts.
+  // The renderer's own check caught one: "— LEAD INVESTOR" overlapping the word being said, and its words for it
+  // were "two text blocks overlap and may render unreadable".
+  return scene.layout === 'quote' && !!scene.heading?.trim();
+};
 
 // Whether what is written on a scene is already the whole of the line being said over it. A hook is the spoken line
 // set large, and a word-by-word caption under it is the same sentence twice on one frame — which is what the founder

@@ -628,3 +628,52 @@ describe('one bar of a chart', () => {
     expect(() => parseSpec({ title: 'One', scenes: [{ layout: 'chart', bullets: ['Rent 40%'] }] })).toThrow(/at least two/);
   });
 });
+
+describe('a figure scene carries a figure', () => {
+  it('refuses a word set the size of the frame, however the line beside it reads', () => {
+    // A real reel set "Proven" forty points high because the line beside it said "every month". The words around
+    // a figure can make a figure worth setting that large; they cannot make something a figure.
+    expect(worthAStat('Proven', 'User traction every month')).toBe(false);
+    expect(worthAStat('74%', 'of them never get a second meeting')).toBe(true);
+    expect(worthAStat('3x', 'faster')).toBe(true);
+    expect(worthAStat('18', 'months of runway')).toBe(true);
+    expect(worthAStat('17', 'scene shapes')).toBe(false);
+  });
+
+  it('says it out loud and sets the line as a sentence instead', () => {
+    const want: Want = {
+      seconds: 15, pace: 'punchy', purpose: 'reel', captions: true, reel: true,
+      bible: 'bright editorial photography, clean key light', layouts: [...LAYOUTS],
+    };
+    const spec: Spec = {
+      title: 'One',
+      scenes: [
+        { layout: 'hook', text: 'Investors want proof', say: 'Investors want proof.' },
+        { layout: 'stat', heading: 'Proven', text: 'User traction every month', say: 'They want traction every month.' },
+        { layout: 'cta', text: 'Show them', say: 'Show them.' },
+      ],
+    };
+    expect(criticise(spec, want).some((one) => one.rule === 'stat')).toBe(true);
+    expect(repair(spec, want).spec.scenes[1].layout).not.toBe('stat');
+  });
+});
+
+describe('emoji', () => {
+  it('leaves a film one at the most, on the scene that closes it', () => {
+    const want: Want = {
+      seconds: 15, pace: 'punchy', purpose: 'reel', captions: true, reel: true,
+      bible: 'bright editorial photography, clean key light', layouts: [...LAYOUTS],
+    };
+    const spec: Spec = {
+      title: 'One',
+      scenes: [
+        { layout: 'hook', text: 'Investors want proof', icon: '📈', say: 'Investors want proof.' },
+        { layout: 'statement', text: 'Map every phase', icon: '🗺', say: 'Map every phase of it.' },
+        { layout: 'cta', text: 'Share your plan', icon: '🚀', say: 'Share your plan now.' },
+      ],
+    };
+    const made = repair(spec, want).spec.scenes.map((one) => one.icon);
+    expect(made.filter(Boolean)).toHaveLength(1);
+    expect(made.at(-1)).toBe('🚀');
+  });
+});

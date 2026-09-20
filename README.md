@@ -37,7 +37,8 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   wall gets a wash and a dark doorway gets almost nothing; a graded look whose picture came back too dark to see a
   subject in is lifted rather than ungraded. Type has floors now — a headline is never under 8% of a wide frame or
   6% of a tall one, a support line never under 3.2%, nothing at all under 2.6% — and a still frame never holds past
-  three seconds without something arriving on it. Put a free **Pexels** key in `PEXELS_API_KEY` and real
+  three seconds without something arriving on it, while the opening changes picture inside two and a half
+  whatever the pace. Put a free **Pexels** key in `PEXELS_API_KEY` and real
   photographs come first, with the photographer, the page and the licence written down beside every file.
   A film has **one person in it** at most — a fixed look draws the same stranger every time it is asked for one,
   and four shots of a stranger nobody introduced is the same fault as no picture change at all. And a film over
