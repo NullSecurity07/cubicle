@@ -32,13 +32,16 @@ test.beforeEach(async ({ page }) => {
   await expect(node(page, 'marketing')).toBeVisible();
 });
 
-// Every journey shares one workspace, so this one puts the stage, the playbook and the two conversations back as it
-// found them — a later journey starts from a company that has learned nothing.
+// Every journey shares one workspace and this one runs first, so it puts the stage, the playbook and both
+// conversations back as it found them: empty, with nothing learned and only the seed wire drawn.
 test.afterEach(async ({ page }) => {
   await page.goto('about:blank');
   const stage = await (await page.request.get('/api/stage')).json();
   await page.request.put('/api/stage', { data: { ...stage, cards: [], wires: (stage.wires as { id: string }[]).filter((wire) => wire.id === 'marketing-brand-doc') } });
   for (const skill of (await (await page.request.get('/api/skills')).json()) as { id: string }[]) await page.request.delete(`/api/skills/${skill.id}`);
+  for (const room of ['marketing', 'build']) {
+    for (const message of (await (await page.request.get(`/api/rooms/${room}/chat`)).json()) as { id: string }[]) await page.request.delete(`/api/rooms/${room}/chat/${message.id}`);
+  }
   expect(broke).toEqual([]);
 });
 
