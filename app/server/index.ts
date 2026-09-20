@@ -208,6 +208,17 @@ const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
   return reply.text;
 };
 // The two http helpers, up here because the slices installed below are handed them.
+// A feed that has gone quiet and a feed that has died look exactly the same from the other end: when this server
+// restarts, or a laptop sleeps, whatever sits between (Vite's proxy, the shell's web view) can keep the window's half of
+// the connection open and say nothing. So every feed says "still here" four times a minute, and a window that hears
+// nothing for a while knows to open it again. A named event, so it never reaches a handler that expects real news.
+const PULSE = 15_000;
+const pulse = (res: ServerResponse) => {
+  const beat = setInterval(() => { if (!res.writableEnded) res.write('event: pulse\ndata: 1\n\n'); }, PULSE);
+  beat.unref();
+  res.on('close', () => clearInterval(beat));
+};
+
 const json = (res: ServerResponse, status: number, body: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(JSON.stringify(body));
@@ -414,7 +425,7 @@ createServer(async (req, res) => {
     // put back or thrown away by the founder, and the panel hears about every change on one feed.
     if (path === '/api/skills' && req.method === 'GET') return json(res, 200, await skills.list());
     if (path === '/api/skills/events' && req.method === 'GET') {
-      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' }); pulse(res);
       const tell = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`);
       tell({ skills: await skills.list() });
       res.on('close', skills.watch(tell));
@@ -451,7 +462,7 @@ createServer(async (req, res) => {
     // One feed for every conversation on the stage, the way the studios have one: a card only draws what happened in
     // its own room, and a turn started anywhere reaches all of them.
     if (path === '/api/rooms/events' && req.method === 'GET') {
-      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' }); pulse(res);
       // Nothing is sent on opening, and a browser is told a feed is open only once something comes down it. A comment
       // costs one line and means a card knows it is listening before the founder's first word arrives, not after.
       res.write(': listening\n\n');
@@ -460,7 +471,7 @@ createServer(async (req, res) => {
     }
     if (path === '/api/attention' && req.method === 'GET') return json(res, 200, await attention.list());
     if (path === '/api/attention/events' && req.method === 'GET') {
-      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' }); pulse(res);
       const tell = (list: unknown) => res.write(`data: ${JSON.stringify(list)}\n\n`);
       tell(await attention.list());
       res.on('close', attention.watch(tell));
@@ -474,7 +485,7 @@ createServer(async (req, res) => {
       if (!(await store.loadStage()).cards?.some((card) => card.id === boardId && card.kind === 'board')) return json(res, 404, { error: 'unknown board' });
       if (!part && req.method === 'GET') return json(res, 200, await boards.list(boardId));
       if (part === 'events' && req.method === 'GET') {
-        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' }); pulse(res);
         const tell = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`);
         tell({ tasks: await boards.list(boardId) });
         res.on('close', boards.watch(boardId, tell));
@@ -503,7 +514,7 @@ createServer(async (req, res) => {
     }
     // Every studio card on the stage streams through one feed, the way the attention list does.
     if (path === '/api/media/events' && req.method === 'GET') {
-      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' }); pulse(res);
       res.on('close', media.watch((event) => res.write(`data: ${JSON.stringify(event)}\n\n`)));
       return;
     }
