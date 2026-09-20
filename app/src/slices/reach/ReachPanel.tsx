@@ -100,7 +100,7 @@ export function ReachPanel() {
                   {state.paired.map((chat) => (
                     <li key={chat.chatId}>
                       <span>{chat.name}</span>
-                      <span className="reach__row">
+                      <span className="reach__aside">
                         <label className="reach__switch reach__quiet">
                           <input type="checkbox" checked={!!chat.speak} onChange={(event) => attempt(speakTo(chat.chatId, event.target.checked))} />
                           <span>Answer me out loud</span>

@@ -74,7 +74,11 @@ export default {
       hear: async (sound, _mime, report) => heard(await samplesOf(sound, run), report),
       say: async (said) => oggOf(await speak(sayable(said) || 'There is code in the written reply.'), run),
       digest: async () => digest(await since()),
-      onPaired: () => { void deps.attention.list().then((list) => phone.show(list)).catch(() => {}); },
+      // A phone that has just paired should find the whole company under its `/` button, not in half a minute's time.
+      onPaired: () => {
+        void deps.store.loadStage().then((stage) => phone.menu(stage)).catch(() => {});
+        void deps.attention.list().then((list) => phone.show(list)).catch(() => {});
+      },
       onError: (error) => { trouble = `Telegram would not take a message: ${error.message.slice(0, 160)}`; },
     });
     // Work that finished or fell over, a task that could not start, a repeat that was missed. The board says when it
@@ -207,6 +211,9 @@ export default {
     }
 
     const unwatch = updates.watch();
+    // One look before anything is watched for: whatever was already over when the app started is not news, and this
+    // is what tells the difference between that and the first thing to finish after it.
+    void updates.look().catch(() => {});
     const held = await reach.read();
     if (held.on) void running(true).catch(() => {});
 
@@ -297,10 +304,11 @@ export default {
         // A door for the browser check only, and only while the app is running its fake model: the fake Telegram
         // has no other way in, and outside a check there is no fake Telegram at all.
         if (path === '/api/reach/telegram' && fake) {
-          if (method === 'GET') { deps.json(res, 200, { posted: fake.posted() }); return true; }
+          if (method === 'GET') { deps.json(res, 200, { posted: fake.posted(), topics: fake.topics(), commands: fake.commands() }); return true; }
           if (method === 'POST') {
             const asked = await deps.body(req);
-            if (typeof asked.presses === 'string') fake.presses(Number(asked.chatId ?? 1), asked.presses);
+            if (typeof asked.presses === 'string') fake.presses(Number(asked.chatId ?? 1), asked.presses, asked.messageId, asked.from);
+            else if (asked.group) fake.inGroup(Number(asked.chatId), Number(asked.from), String(asked.text ?? ''), asked.extra ?? {});
             else fake.says(Number(asked.chatId ?? 1), String(asked.text ?? ''), asked.extra ?? {});
             deps.json(res, 200, { ok: true });
             return true;

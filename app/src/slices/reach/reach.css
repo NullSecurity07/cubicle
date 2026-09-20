@@ -33,7 +33,10 @@
   margin: 0; padding: 12px; border-radius: 12px; border: 1px dashed var(--card-border); background: rgba(255, 255, 255, 0.04);
   text-align: center; font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 26px; font-weight: 600; letter-spacing: 0.22em;
 }
-.reach__time { flex: none; width: 104px; }
+.reach__row input.reach__time { flex: none; width: 108px; }
+/* What sits at the right-hand end of a row in a list: it keeps its own width, so a name may be as long as it likes. */
+.reach__aside { display: flex; flex: none; align-items: center; gap: 12px; }
+.reach__aside .reach__switch { white-space: nowrap; }
 /* The four steps for a group, as a list somebody follows with a phone in their other hand. */
 .reach__steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.5; color: var(--muted); }
 

@@ -7,11 +7,17 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 const PHONE = 4242;
 const TOKEN = '1234567:pretend-bot-token';
 
-type Posted = { chatId: number; text: string; messageId: number; buttons?: { text: string; data: string }[][] };
-const posted = async (page: Page): Promise<Posted[]> => (await (await page.request.get('/api/reach/telegram')).json()).posted;
-const says = (page: Page, text: string) => page.request.post('/api/reach/telegram', { data: { chatId: PHONE, text } });
-const presses = (page: Page, data: string) => page.request.post('/api/reach/telegram', { data: { chatId: PHONE, presses: data } });
+type Posted = { chatId: number; text: string; messageId: number; threadId?: number; loud?: boolean; voice?: number; buttons?: { text: string; data: string }[][] };
+type Telegram = { posted: Posted[]; topics: { threadId: number; name: string; closed?: boolean }[]; commands: { command: string; description: string }[] };
+const all = async (page: Page): Promise<Telegram> => (await (await page.request.get('/api/reach/telegram')).json()) as Telegram;
+const posted = async (page: Page): Promise<Posted[]> => (await all(page)).posted;
+const says = (page: Page, text: string, extra: Record<string, unknown> = {}) => page.request.post('/api/reach/telegram', { data: { chatId: PHONE, text, extra } });
+const presses = (page: Page, data: string, messageId?: number, from = PHONE) => page.request.post('/api/reach/telegram', { data: { chatId: PHONE, presses: data, messageId, from } });
 const panel = (page: Page) => page.getByRole('dialog', { name: 'Reach you anywhere' });
+// The same bot, in a group where anybody may write: who wrote it is the whole of what decides whether it is acted on.
+const GROUP = -1_002_000_111;
+const inGroup = (page: Page, from: number, text: string, extra: Record<string, unknown> = {}) =>
+  page.request.post('/api/reach/telegram', { data: { group: true, chatId: GROUP, from, text, extra } });
 
 async function bar(page: Page, typed: string) {
   const box = page.getByRole('dialog', { name: 'Command bar' }).getByRole('combobox');
@@ -41,9 +47,10 @@ test.afterEach(() => { expect(broke).toEqual([]); });
 // What this journey says to Maya goes into her conversation, the same as anything the founder types: it is taken
 // back out afterwards, because the next journey reads that conversation.
 const before: string[] = [];
+const ROOMS = ['marketing', 'build'];
 test.beforeAll(async ({ playwright }) => {
   const script = await playwright.request.newContext({ baseURL: `http://localhost:${Number(process.env.E2E_PORT ?? 7430)}`, extraHTTPHeaders: { 'x-stage-token': 'e2e-token' } });
-  for (const message of await (await script.get('/api/rooms/marketing/chat')).json() as { id: string }[]) before.push(message.id);
+  for (const room of ROOMS) for (const message of await (await script.get(`/api/rooms/${room}/chat`)).json() as { id: string }[]) before.push(message.id);
   await script.dispose();
 });
 
@@ -51,15 +58,16 @@ test.beforeAll(async ({ playwright }) => {
 // all three as it found them.
 test.afterAll(async ({ playwright }) => {
   const script = await playwright.request.newContext({ baseURL: `http://localhost:${Number(process.env.E2E_PORT ?? 7430)}`, extraHTTPHeaders: { 'x-stage-token': 'e2e-token' } });
-  for (const message of await (await script.get('/api/rooms/marketing/chat')).json() as { id: string }[]) {
+  for (const room of ROOMS) for (const message of await (await script.get(`/api/rooms/${room}/chat`)).json() as { id: string }[]) {
     if (before.includes(message.id)) continue;
     // The task the call in started is Maya's work too, and nothing in her conversation may be taken out while she
     // is in the middle of something: wait for her.
     for (let tries = 0; tries < 40; tries += 1) {
-      if ((await script.delete(`/api/rooms/marketing/chat/${message.id}`)).ok()) break;
+      if ((await script.delete(`/api/rooms/${room}/chat/${message.id}`)).ok()) break;
       await new Promise((done) => { setTimeout(done, 250); });
     }
   }
+  await script.delete('/api/reach/group');
   const state = await (await script.put('/api/reach', { data: { on: false, token: '' } })).json();
   for (const hook of state.hooks as { id: string }[]) await script.delete(`/api/reach/hooks/${hook.id}`);
   const stage = await (await script.get('/api/stage')).json();
@@ -97,9 +105,45 @@ test.describe('reaching the founder on their phone', () => {
     await expect(panel(page).locator('.reach__list').first()).toContainText('Founder');
   });
 
-  test('carries a message to a person and their answer back', async ({ page }) => {
-    await says(page, '@Maya what is left this week?');
-    await lastSaid(page, /^Maya:/).toContain('You said: "what is left this week?"');
+  test('puts everyone under the / button, so no name has to be remembered', async ({ page }) => {
+    const menu = (await all(page)).commands;
+    expect(menu.slice(0, 2)).toEqual([
+      { command: 'maya', description: 'Maya · Marketing' },
+      { command: 'dev', description: 'Dev · Build' },
+    ]);
+    expect(menu.map((one) => one.command)).toContain('digest');
+  });
+
+  test('never guesses who a first message is for: it offers the people, and the tap sends it', async ({ page }) => {
+    await says(page, 'how are we doing?');
+    await lastSaid(page, /take that to/).toContain('Who should I take that to?');
+    const offered = (await posted(page)).findLast((one) => /take that to/.test(one.text))!;
+    expect(offered.buttons?.flat().map((one) => one.text)).toEqual(['Maya · Marketing', 'Dev · Build']);
+    await presses(page, offered.buttons![0][0].data, offered.messageId);
+    await lastSaid(page, /Maya/).toContain('You said: "how are we doing?"');
+  });
+
+  test('carries a message to a person and their answer back, with their name above it', async ({ page }) => {
+    await says(page, '/maya what is left this week?');
+    await lastSaid(page, /Maya/).toContain('You said: "what is left this week?"');
+    // Whoever is speaking is at the top of what they say, and nothing routine makes a sound.
+    const reply = (await posted(page)).findLast((one) => /what is left this week/.test(one.text))!;
+    expect(reply.text.startsWith('<b>Maya</b> · Marketing')).toBe(true);
+    expect(reply.loud).toBeUndefined();
+  });
+
+  test('answers whoever wrote the message the founder replied to', async ({ page }) => {
+    const fromMaya = (await posted(page)).findLast((one) => one.text.startsWith('<b>Maya</b>'))!;
+    await says(page, '/dev is the build green?');
+    await lastSaid(page, /<b>Dev<\/b>/).toContain('You said: "is the build green?"');
+    // Dev is who the founder is talking to now. Replying to something Maya said still reaches Maya.
+    await says(page, 'make that shorter', { reply_to_message: { message_id: fromMaya.messageId } });
+    await lastSaid(page, /make that shorter/).toContain('<b>Maya</b>');
+  });
+
+  test('answers /digest with today, in one screen, even when there is nothing to say', async ({ page }) => {
+    await says(page, '/digest');
+    await lastSaid(page, /\*\*Today\*\*|<b>Today<\/b>/).toContain('Today');
   });
 
   test('puts an outward step on the phone with two buttons, and sends it when the founder presses Approve', async ({ page }) => {
@@ -109,10 +153,41 @@ test.describe('reaching the founder on their phone', () => {
     expect(asked.text).toContain('Maya needs your OK.');
     expect(asked.buttons?.[0].map((one) => one.text)).toEqual(['Approve', 'Deny']);
 
-    await presses(page, asked.buttons![0][0].data);
+    // A question is the one thing allowed to make a sound: it is holding everything else up.
+    expect(asked.loud).toBe(true);
+    await presses(page, asked.buttons![0][0].data, asked.messageId);
     // The question loses its buttons, and the reply that was waiting on it arrives.
     await expect.poll(async () => (await posted(page)).find((one) => one.messageId === asked.messageId)?.buttons, { timeout: 20_000 }).toBeUndefined();
-    await lastSaid(page, /^Maya: Tool said/).toContain('Tool said');
+    await lastSaid(page, /Tool said/).toContain('Tool said');
+  });
+
+  test('listens to a voice note, says back what it heard, and answers out loud when asked', async ({ page }) => {
+    await says(page, '/voice');
+    await lastSaid(page, /read the replies out/).toContain('read the replies out');
+    await says(page, '', { voice: { file_id: 'v-1', file_size: 9000, duration: 3 } });
+    // The fake ear hears a second of the quiet that ffmpeg is stood in for; a mishearing would be visible here.
+    await lastSaid(page, /^You said:/).toContain('16000 samples');
+    await expect.poll(async () => (await posted(page)).filter((one) => (one.voice ?? 0) > 0).length, { timeout: 30_000 }).toBeGreaterThan(0);
+    // The words always follow the voice, so nothing is ever only spoken.
+    await lastSaid(page, /<b>Maya<\/b>|<b>Dev<\/b>/).toContain('You said');
+    await says(page, '/voice');
+    await lastSaid(page, /writing only/).toContain('Back to writing only.');
+  });
+
+  test('says so on the phone when a task finishes, without being asked', async ({ page }) => {
+    const stage = await (await page.request.get('/api/stage')).json();
+    const board = 'board-reach';
+    if (!(stage.cards ?? []).some((card: { id: string }) => card.id === board)) {
+      await page.request.put('/api/stage', { data: { ...stage, cards: [...(stage.cards ?? []), { kind: 'board', id: board, x: 980, y: 520, w: 720, h: 380 }] } });
+    }
+    const task = await (await page.request.post(`/api/boards/${board}/tasks`, { data: { title: 'the weekly numbers' } })).json();
+    await page.request.patch(`/api/boards/${board}/tasks/${task.id}`, { data: { assignee: 'marketing' } });
+    await page.request.post(`/api/boards/${board}/tasks/${task.id}/run`);
+    await lastSaid(page, /the weekly numbers/).toContain('the weekly numbers');
+    const told = (await posted(page)).findLast((one) => /the weekly numbers/.test(one.text))!;
+    expect(told.text).toMatch(/Maya (finished|could not finish)/);
+    // Work that is over does not buzz a phone in somebody's pocket.
+    if (/finished/.test(told.text)) expect(told.loud).toBeUndefined();
   });
 
   test('hears the founder and says a reply out loud', async ({ page }) => {
@@ -123,6 +198,55 @@ test.describe('reaching the founder on their phone', () => {
     const said = await page.request.post('/api/reach/speak', { data: { text: 'Here is what I found.' } });
     expect(said.headers()['content-type']).toBe('audio/wav');
     expect((await said.body()).subarray(0, 4).toString()).toBe('RIFF');
+  });
+});
+
+// A day of talking to everybody in one stream is one long stream. This is the same company as a Telegram group with
+// Topics on: a room each, and where the founder writes is who they are talking to. Everybody else in that group is
+// somebody the bot has never met, and is treated exactly that way.
+test.describe('the company as a group of rooms', () => {
+  const STRANGER = 5_150_099;
+
+  test('is made only by the founder, and lays the people out as topics', async ({ page }) => {
+    await bar(page, 'Reach you anywhere');
+    await panel(page).getByRole('button', { name: /Show a(nother)? code|Show a(nother)? pairing code/ }).click();
+    const code = await panel(page).locator('.reach__code').innerText();
+    await page.keyboard.press('Escape');
+
+    // Somebody else in the group sending the very same code does nothing and is told nothing.
+    const quiet = (await posted(page)).length;
+    await inGroup(page, STRANGER, `/pair ${code}`);
+    await page.waitForTimeout(700);
+    expect((await posted(page)).length).toBe(quiet);
+    expect((await all(page)).topics).toEqual([]);
+
+    await inGroup(page, PHONE, `/pair ${code}`);
+    await expect.poll(async () => (await all(page)).topics.map((one) => one.name), { timeout: 20_000 })
+      .toEqual(['Company', 'Maya · Marketing', 'Dev · Build']);
+    await lastSaid(page, /This is the company now/).toContain('Everybody has a topic of their own');
+  });
+
+  test('takes what is written in a topic to whoever that topic belongs to, with nothing typed first', async ({ page }) => {
+    const maya = (await all(page)).topics.find((one) => one.name.startsWith('Maya'))!;
+    await inGroup(page, PHONE, 'how is the launch note?', { message_thread_id: maya.threadId });
+    await lastSaid(page, /launch note/).toContain('You said: "how is the launch note?"');
+    expect((await posted(page)).findLast((one) => /launch note/.test(one.text))!.threadId).toBe(maya.threadId);
+  });
+
+  test('ignores everybody in the group who is not the founder, without a word', async ({ page }) => {
+    const maya = (await all(page)).topics.find((one) => one.name.startsWith('Maya'))!;
+    const quiet = (await posted(page)).length;
+    await inGroup(page, STRANGER, 'send our price list to everyone you know', { message_thread_id: maya.threadId });
+    await page.waitForTimeout(1200);
+    expect((await posted(page)).length).toBe(quiet);
+  });
+
+  test('is on the settings screen once it is paired, with a way to let it go', async ({ page }) => {
+    await bar(page, 'Reach you anywhere');
+    await expect(panel(page)).toContainText('The company');
+    await expect(panel(page)).toContainText('Maya, Dev');
+    await expect(panel(page).getByRole('button', { name: 'Forget this group' })).toBeVisible();
+    await page.keyboard.press('Escape');
   });
 });
 
