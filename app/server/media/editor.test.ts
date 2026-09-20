@@ -236,3 +236,44 @@ describe('the opening is cut inside two and a half seconds whatever the pace', (
     expect(checkCut(edit.shots, takes.map((one) => one.scene)).some((one) => one.rule === 'hook')).toBe(false);
   });
 });
+
+describe('the opening cut is not optional', () => {
+  // Every style, every pace, and an opening long enough to need cutting: the hook has to change picture inside
+  // two and a half seconds or the rule was never a rule. A real reel reported the fault and shipped with it twice
+  // because the distribution happened to draw a length that left no room after it.
+  const script = 'Investors only chase real sales, the kind that are actually paying cash coming in faster. '
+    + 'No proof of traction and they will walk away today.';
+
+  for (const pack of ['creator', 'clean', 'editorial', 'documentary', 'neon'] as const) {
+    for (const pace of ['punchy', 'calm'] as const) {
+      it(`cuts the opening of a ${pack} film at ${pace} pace inside the cap`, () => {
+        const words = saying(script);
+        const spoken = words.at(-1)!.at + words.at(-1)!.seconds;
+        const takes = [
+          take(0, 0, spoken * 0.5, { scene: { layout: 'hook', text: 'Investors chase real sales', say: 'Investors only chase real sales, the kind that are actually paying cash coming in faster.' } }),
+          take(1, spoken * 0.5, spoken, { scene: { layout: 'cta', text: 'Show the money', say: 'No proof of traction and they will walk away today.' } }),
+        ];
+        const edit = editFilm(takes, words, cuttingFor(pack, pace));
+        const opening = edit.shots.filter((one) => one.scene === 0);
+        expect(opening[0].seconds, `${pack}/${pace}`).toBeLessThanOrEqual(HOOK_CHANGE + 0.001);
+        expect(checkCut(edit.shots, takes.map((one) => one.scene)).filter((one) => one.rule === 'hook'), `${pack}/${pace}`).toEqual([]);
+      });
+    }
+  }
+
+  it('leaves an opening that is already short enough alone', () => {
+    const words = saying('Investors want proof. Nothing else moves them at all.');
+    const spoken = words.at(-1)!.at + words.at(-1)!.seconds;
+    const takes = [take(0, 0, 2.0, { scene: { layout: 'hook', text: 'Investors want proof', say: 'Investors want proof.' } }), take(1, 2.0, spoken)];
+    const edit = editFilm(takes, words, cuttingFor('creator', 'punchy'));
+    expect(edit.shots.filter((one) => one.scene === 0)).toHaveLength(1);
+  });
+
+  it('never cuts an opening it has no room to cut', () => {
+    const words = saying('Investors want proof today.');
+    const takes = [take(0, 0, 2.6, { scene: { layout: 'hook', text: 'Investors want proof', say: 'Investors want proof today.' } }), take(1, 2.6, 5.0)];
+    const style = cuttingFor('documentary', 'calm');
+    const edit = editFilm(takes, words, style);
+    for (const shot of edit.shots) expect(shot.seconds).toBeGreaterThanOrEqual(style.min - 0.001);
+  });
+});

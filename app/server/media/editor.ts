@@ -160,7 +160,7 @@ function cutOnce(takes: Take[], words: Word[], style: Cutting, opts: { sfxOn?: b
     // not changed picture by two and a half seconds is a hook nobody is still watching: a real reel held its
     // opening headline unchanged for five. So the opening is cut inside whatever the distribution would have
     // said, whenever there is room to cut it at all.
-    const hook = take.index === 0 && !take.moving && span > HOOK_CHANGE + style.min;
+    const hook = take.index === 0 && !take.moving && span > HOOK_CHANGE + 0.01 && span >= style.min * 2;
     const whole = !hook && (take.moving || take.index === payoff || span <= style.mean * 1.35);
     const edges = whole ? [] : splitPoints(take.from, span, style, inner, take.index, words, hook ? HOOK_CHANGE : 0);
     const points = [take.from, ...edges, take.from + span];
@@ -227,8 +227,13 @@ function splitPoints(from: number, span: number, style: Cutting, inner: Phrase[]
     // The opening's first shot is capped however calm the film is: the hook has to change picture inside it.
     const ceiling = at === 1 && firstAt ? Math.min(style.max, firstAt) : style.max;
     const length = Math.min(ceiling, Math.max(style.min, nudged));
-    const asked = cursor + length;
-    if (asked >= from + span - style.min) break;
+    // The opening's first cut is not optional, so it is not allowed to fall through the guard below: a length
+    // the distribution drew long enough to leave no room after it used to end the loop and leave the hook whole,
+    // which is how a reel reported a three-and-a-half-second opening against a cap of two and a half and shipped
+    // with it twice. Where the cap applies, the ask is brought back to the last moment a cut can still be made.
+    const capped = at === 1 && firstAt ? Math.min(from + firstAt, from + span - style.min) : 0;
+    const asked = capped ? Math.min(cursor + length, capped) : cursor + length;
+    if (!capped && asked >= from + span - style.min) break;
     const phrase = nearestPhrase(inner, asked);
     // A boundary that cannot be reached without breaking the floor either side is not a boundary worth having.
     const ok = phrase !== null && phrase - cursor >= style.min && from + span - phrase >= style.min;
@@ -237,11 +242,14 @@ function splitPoints(from: number, span: number, style: Cutting, inner: Phrase[]
     // the wrong side of it, and a hook that has not changed picture by two and a half seconds is a hook nobody is
     // watching by then — a real reel reported that fault and shipped with it. So when the nearest boundary lands
     // late, the last one that lands in time is taken instead, and failing that the gap between two words.
-    if (at === 1 && firstAt && landed > from + firstAt + 0.01) {
+    if (capped && landed > capped + 0.01) {
       const inTime = inner.flatMap((one) => [one.at, one.at + one.seconds])
-        .filter((edge) => edge - cursor >= style.min && edge <= from + firstAt + 0.01 && from + span - edge >= style.min);
-      landed = inTime.length ? Math.max(...inTime) : betweenWords(words, from + firstAt);
+        .filter((edge) => edge - cursor >= style.min && edge <= capped + 0.01 && from + span - edge >= style.min);
+      landed = inTime.length ? Math.max(...inTime) : betweenWords(words, capped);
     }
+    // Wherever it landed, an opening cut is held inside the room there is for one: never under the floor, never
+    // past the cap, never so late that what follows is under the floor either.
+    if (capped) landed = Math.min(Math.max(landed, cursor + style.min), capped);
     const edge = Math.round(landed * 1000) / 1000;
     if (edge - cursor < style.min || from + span - edge < style.min) break;
     edges.push(edge);
