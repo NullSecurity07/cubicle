@@ -12,6 +12,7 @@ export type Fields = Pick<Skill, 'name' | 'when' | 'procedure' | 'pitfalls' | 'v
 // a procedure that loses its last step is worse than no procedure at all.
 export const CAPS = { name: 60, when: 160, steps: 8, step: 240, pitfalls: 5, pitfall: 240, verify: 240, whole: 1500 };
 const HISTORY = 5;
+const SAME_WORK = 10 * 60_000;
 const FIELDS = ['name', 'when', 'procedure', 'pitfalls', 'verify'] as const;
 const safe = (id: string) => { if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(id)) throw new Error(`bad id: ${id}`); return id; };
 const slug = (name: string) => name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'skill';
@@ -161,9 +162,11 @@ export function createSkills(dir: string, now: () => number = Date.now) {
       const { at: _at, ...fields } = back;
       return save({ ...skill, ...fields, editedByFounder: true, history: skill.history.slice(0, -1) });
     },
-    // Counted by `use_skill`, and the only thing that keeps a skill out of the curator's way.
+    // The only thing that keeps a skill out of the curator's way. One piece of work is one use: a skill put in front of
+    // a person and then opened by them in the same few minutes was used once, not twice.
     async used(id: string): Promise<Skill> {
       const skill = await held(id);
+      if (skill.usedAt && now() - skill.usedAt < SAME_WORK) return skill;
       return save({ ...skill, uses: skill.uses + 1, usedAt: now() });
     },
     // Nothing is deleted: the file goes to trash, where everything else the founder let go of is kept.

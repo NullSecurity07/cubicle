@@ -99,6 +99,17 @@ describe('skills', () => {
     expect((await readdir(join(dir, 'trash'))).some((name) => name.endsWith('-ship-a-launch-page.json'))).toBe(true);
   });
 
+  it('counts one piece of work as one use, however many times the skill was opened during it', async () => {
+    let clock = at;
+    const { skills } = await setup(() => clock);
+    await skills.create(born);
+    await skills.used('ship-a-launch-page');
+    clock += 60_000;
+    expect(await skills.used('ship-a-launch-page')).toMatchObject({ uses: 1, usedAt: at });
+    clock += 10 * 60_000;
+    expect(await skills.used('ship-a-launch-page')).toMatchObject({ uses: 2, usedAt: clock });
+  });
+
   it('counts a use and tells whoever is watching after every change', async () => {
     const { skills } = await setup();
     const heard: SkillEvent[] = [];

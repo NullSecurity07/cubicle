@@ -7,7 +7,7 @@ import type { TurnResult } from './loop.ts';
 import type { ModelMessage } from './prompt.ts';
 import type { ModelClient } from './providers.ts';
 import { createRecall, wordEmbedder, type Piece } from './recall.ts';
-import { asksToLearn, checkVerdict, createLearner, isCorrection, shouldReflect } from './reflect.ts';
+import { asksToLearn, checkVerdict, createLearner, isCorrection, plain, shouldReflect } from './reflect.ts';
 import { createSeams } from './seams.ts';
 import { createSkills } from './skills.ts';
 import { createStore } from './store.ts';
@@ -189,5 +189,21 @@ describe('the learner', () => {
     answer(CREATE);
     await turn;
     expect(await skills.list()).toHaveLength(1);
+  });
+});
+
+describe('plain', () => {
+  const lesson = { action: 'create' as const, name: 'Write a launch FAQ', when: 'When something new is about to go out', pitfalls: [], verify: 'It is there to read.' };
+
+  it('takes the tool label off a step, but only for tools the person really called', () => {
+    const verdict = plain({ ...lesson, procedure: ['read_doc – review the briefing', 'recall: find what customers asked', 'Write_doc - draft five questions', 'send_email – tell everyone', 'Re-read it once'] }, ['read_doc', 'recall', 'write_doc']);
+    expect(verdict).toMatchObject({ procedure: ['Review the briefing', 'Find what customers asked', 'Draft five questions', 'send_email – tell everyone', 'Re-read it once'] });
+  });
+
+  it('does the same for a step a patch adds, and leaves everything else alone', () => {
+    expect(plain({ action: 'patch', skill: 'a', changes: [{ field: 'procedure', old: '', new: 'read_doc – read the brief first' }, { field: 'verify', old: 'x', new: 'read_doc – stays' }] }, ['read_doc']))
+      .toMatchObject({ changes: [{ new: 'Read the brief first' }, { new: 'read_doc – stays' }] });
+    expect(plain({ action: 'none' }, ['read_doc'])).toEqual({ action: 'none' });
+    expect(plain({ ...lesson, procedure: ['recall – as written'] }, [])).toMatchObject({ procedure: ['recall – as written'] });
   });
 });

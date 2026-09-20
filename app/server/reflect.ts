@@ -78,6 +78,13 @@ const WHY: Record<Reason, string> = {
   taught: 'The founder asked for this to be learned.',
 };
 
+// A small model likes to open a step with the tool it used ("read_doc – review the brief"). That is a log's habit, and
+// a founder reading the playbook should find plain sentences, so the label is taken off rather than argued about.
+const unlabelled = (step: string, tools: string[]) => (tools.length
+  ? step.replace(new RegExp(`^(?:${tools.map((name) => name.replace(/\W/g, '')).join('|')})\\s*[–—:-]\\s*(.)`, 'i'), (_, first: string) => first.toUpperCase()) : step);
+export const plain = (verdict: Verdict, tools: string[]): Verdict => (verdict.action === 'create' ? { ...verdict, procedure: verdict.procedure.map((step) => unlabelled(step, tools)) }
+  : verdict.action === 'patch' ? { ...verdict, changes: verdict.changes.map((change) => (change.field === 'procedure' ? { ...change, new: unlabelled(change.new, tools) } : change)) } : verdict);
+
 export function checkVerdict(value: unknown): Verdict {
   const asked = (value ?? {}) as Record<string, unknown>;
   if (asked.action === 'none') return { action: 'none' };
@@ -113,7 +120,7 @@ export async function reflect(evidence: Evidence, nearest: { id: string; name: s
   // words are the lesson itself.
   const ground: Ground = { names: options.names ?? [], asked: evidence.source === 'run' ? evidence.asked : '', calls: evidence.calls.length };
   const check = (value: unknown): Verdict => {
-    const verdict = checkVerdict(value);
+    const verdict = plain(checkVerdict(value), evidence.calls.map((call) => call.name));
     if (verdict.action === 'create') checkLesson(verdict, ground);
     if (verdict.action === 'patch') checkLesson(lessonOf(verdict.changes), ground, false);
     return verdict;
