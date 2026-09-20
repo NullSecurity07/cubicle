@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { shortDay } from '../server/clock.ts';
 
 // The same pair the config starts the app on; another checkout running its checks at the same time has another pair.
 const WEB_PORT = Number(process.env.E2E_PORT ?? 7430);
@@ -947,7 +948,8 @@ test('recall: a person finds by meaning only what their wires let them read; the
   // Maya is wired to the brand doc: she finds it. Dev is not: for him it does not exist.
   await send(page, 'marketing', '/tool recall {"query":"which voice do we write in, calm or hype?"}');
   await expect(node(page, 'marketing').locator('.chip--ok summary').last()).toContainText('Looked up which voice');
-  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText('[Doc: Brand doc]');
+  // What it found, and when it is from: the doc was written a moment ago, so it is dated today.
+  await expect(node(page, 'marketing').locator('.msg--assistant').last()).toContainText(`[Doc: Brand doc, last changed ${shortDay(Date.now())}]`);
   await send(page, 'build', '/tool recall {"query":"which voice do we write in, calm or hype?"}');
   await expect(node(page, 'build').locator('.msg--assistant').last()).not.toContainText('Brand doc');
 
