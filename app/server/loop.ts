@@ -74,14 +74,17 @@ export async function runTurn(input: {
       const tool = tools.find((candidate) => candidate.name === call.name);
       let rawArgs = call.args;
       let refusal = tool?.ready?.() ?? null;
+      // The founder may have said yes in advance to calls that reach exactly this far. It only skips the asking.
+      let approved = false;
       if (seams) {
         const checked = await seams.run('tool:before', { roomId, call: { id: call.id, name: call.name, args }, ...(refusal ? { refusal } : {}) });
         // Only a rewrite is taken as one: the raw text the model wrote goes on untouched otherwise.
         if (checked.call.args !== args) { args = checked.call.args; rawArgs = JSON.stringify(args); }
         refusal = refusal || checked.refusal || null;
+        approved = checked.approved === true;
       }
       const question = refusal || !tool?.approval ? null : typeof tool.approval === 'function' ? await tool.approval(args, context).catch(() => 'Allow this step?') : '';
-      if (question !== null) {
+      if (question !== null && !approved) {
         const asking: ToolEvent = { id: call.id, name: call.name, args, waiting: true, ...(question ? { question } : {}) };
         events.tool(asking);
         // An approval that fails is a no, not the end of the turn: the founder still gets their reply.
