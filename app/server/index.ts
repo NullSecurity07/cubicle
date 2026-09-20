@@ -17,8 +17,9 @@ import { createBrowser, dnsResolve, fakeRunner, jinaReader, realRunner } from '.
 import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
-import { firstClips } from './media/clips.ts';
+import { firstClips, orderedClips } from './media/clips.ts';
 import { fakeLocalClips, localClips, MINUTES_EACH } from './media/local-clips.ts';
+import { fakeLocalPerson, localPerson } from './media/local-person.ts';
 import { createClips, fakeClips } from './media/spaces.ts';
 import { probe } from './media/ff.ts';
 import { thumbOf } from './media/footage.ts';
@@ -110,7 +111,11 @@ const music = fake ? fakeMusic : createMusic({ cacheDir: resolve(root, 'app/.cac
 // out there. Either way a scene that cannot be made falls back in plain words.
 const local = fake ? fakeLocalClips : localClips();
 const online = fake ? fakeClips : createClips();
-const clips = firstClips(local, online);
+// B-roll is made here first, because it is unlimited and nobody is waiting on a particular face. A person on camera
+// is asked of the free Spaces first, because they are the only ones that can make the founder's own picture speak —
+// and when they have nothing left, this machine draws somebody moving rather than holding a photograph still.
+const person = fake ? fakeLocalPerson : localPerson();
+const clips = orderedClips({ broll: [local, online], presenter: [online, person] });
 if (!fake) console.log('clips · here:', local.ready() ?? `ready (about ${MINUTES_EACH} minutes each)`, '· online:', online.ready() ?? 'ready');
 const media = createMedia({
   dir: workspace,

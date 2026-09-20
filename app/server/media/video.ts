@@ -498,13 +498,24 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           }
           if (scene.layout === 'presenter' && able) {
             try {
+              // What this scene is going to do, before it starts: a founder watching a spinner needs to know
+              // whether somebody is being drawn here for minutes or fetched in seconds.
               said(index, 'making the person on screen…');
               const face = shot.image ? await readFile(join(at, 'assets', shot.image))
                 : drawing && scene.portrait_prompt ? (await drawing.make({ prompt: `${scene.portrait_prompt}, head and shoulders portrait, plain background, even light`, shape }, { report: () => {}, signal })).bytes
                   : null;
-              const speech = shot.voice ? await readFile(join(at, 'assets', shot.voice.file)) : null;
-              if (!face || !speech) throw new Error(!face ? 'there is no face to use' : 'there is nothing recorded for them to say');
-              const made = await clips.presenter({ portrait: face, speech }, { report: (line) => said(index, line), signal });
+              // A recording is what a lip-sync service needs; a backend that draws somebody moving needs only the
+              // face and the length. Demanding one of every route meant a film whose narration failed had nobody in
+              // it at all, which is two faults for the price of one.
+              const speech = shot.voice ? await readFile(join(at, 'assets', shot.voice.file)) : Buffer.alloc(0);
+              if (!face) throw new Error('there is no face to use');
+              // The words the portrait was drawn from travel with it: a backend that cannot animate the picture
+              // itself can still draw somebody of that description moving, which is nearer what was asked for.
+              // The picture's own words come first. A storyboard's `portrait_prompt` is usually the film's style
+              // bible with "somebody talking to camera" after it, and a person drawn from that is a stranger —
+              // which is how one film came to have the founder's face in one scene and somebody else's in another.
+              const about = material.assets.find((one) => one.name === scene.asset)?.prompt || scene.portrait_prompt;
+              const made = await clips.presenter({ portrait: face, speech, about }, { report: (line) => said(index, line), signal });
               shot.video = `pres-${index}.mp4`;
               await writeFile(join(at, 'assets', shot.video), made.bytes);
             } catch (error) {

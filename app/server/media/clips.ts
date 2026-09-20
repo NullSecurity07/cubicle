@@ -5,7 +5,9 @@
 // daily quota and is the only one that can make a talking head. The studio takes whichever answers first and falls
 // back in plain words when neither can.
 export type ClipAsk = { prompt: string; image?: Buffer; seconds: number };
-export type PresenterAsk = { portrait: Buffer; speech: Buffer };
+// `about` is what the portrait was drawn from, in words. A backend that cannot animate the picture itself can still
+// draw somebody of that description moving, which is nearer what was asked for than the photograph held still.
+export type PresenterAsk = { portrait: Buffer; speech: Buffer; about?: string };
 export type Help = { report: (line: string) => void; signal?: AbortSignal };
 export type Clip = { ext: 'mp4'; bytes: Buffer };
 export type Clips = {
@@ -28,6 +30,18 @@ export const noClips: Clips = {
 // Several backends as one, tried in the order given: the first that is ready makes it, and a failure hands on to the
 // next rather than ending the scene. `ready()` is nothing when any of them is ready, and otherwise the first hint —
 // the one the founder is most likely to be able to act on.
+// The same backends in two different orders, because b-roll and a person on camera want opposite things: b-roll is
+// made here first because it is unlimited and nobody is waiting on a particular face, while a person is asked of the
+// free Spaces first because they are the only ones that can make the founder's own picture speak.
+export function orderedClips(order: { broll: Clips[]; presenter: Clips[] }): Clips {
+  const both = [...new Set([...order.broll, ...order.presenter])];
+  return {
+    ready: () => (both.some((one) => !one.ready()) ? null : both.map((one) => one.ready()).find(Boolean) ?? null),
+    broll: (ask, help) => firstClips(...order.broll).broll(ask, help),
+    presenter: (ask, help) => firstClips(...order.presenter).presenter(ask, help),
+  };
+}
+
 export function firstClips(...backends: Clips[]): Clips {
   const able = () => backends.filter((one) => !one.ready());
   const hint = () => backends.map((one) => one.ready()).find(Boolean) ?? null;

@@ -383,6 +383,7 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
     sources: sourcesOf(material, asked.brief),
     screens: material.assets.filter((asset) => asset.kind === 'screen').map((asset) => asset.name),
     pictures: givenPictures(material).slice(0, MOST_GIVEN),
+    person: understanding.person,
   };
 
   // The storyboard, and one more go with the reason the first would not do: a model that forgot a field usually

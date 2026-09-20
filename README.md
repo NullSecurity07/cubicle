@@ -82,7 +82,11 @@ shows the progress); `GEMINI_API_KEY` is the fallback if it will not load. **Mus
 Openverse is searched anonymously (20 searches a minute, 200 a day, which is far more than a founder will use) and
 each track is kept in `app/.cache/music/`; `STAGE_NO_MUSIC_SEARCH=1` turns the search off entirely and every bed is
 written here, `FREESOUND_API_KEY` adds a second library if you have a free key, and `STAGE_MUSIC_SEED` pins the
-dice so a re-render of one film gets the same bed. **Films** need no key either, only
+dice so a re-render of one film gets the same bed. **Somebody on camera** is drawn here too when the free Spaces have nothing left: the same local video model, asked
+for a person talking to camera in the words the portrait was drawn from — moving, gesturing and blinking, about
+three minutes a scene and at most twelve minutes a film. Animating the founder's *exact* picture was measured at
+twenty minutes for two seconds on this hardware, so it is behind `STAGE_LOCAL_I2V=1` rather than on by default.
+**Films** need no key either, only
 Chrome and ffmpeg, which the browser card and the app already rely on; they render locally, a minute or so for
 a short one. The voice runtime adds about 500 MB to `node_modules`, and each film is a few MB in
 `workspace/files/media/`.
