@@ -8,6 +8,7 @@ import {
 import { isPack, PACES, PACKS, type Brand, type Pace, type Pack } from './templates/looks.ts';
 import { FILLER, sourcesOf } from './grounding.ts';
 import type { Wanted } from './voice.ts';
+import { criticiseVisuals, repairVisuals, visualsOf, visualsPrompt, type Visual } from './visuals.ts';
 
 // The director. Not a form to fill in — a person who reads the brief, works out what is being asked for, decides on
 // an angle and a look, writes the beats, and only then writes the storyboard. Every one of those is a separate pass,
@@ -607,5 +608,54 @@ export function fixPrompt(spec: Spec, found: { says: string }[], understanding: 
     `All the "say" lines together must come to about ${budgetOf(understanding.seconds, spec.scenes.length, understanding.pace)} words.`,
     '',
     JSON.stringify(spec),
+  ].join('\n');
+}
+
+// --- pass four: the pictures ---------------------------------------------------------------------------------
+//
+// The three passes above decide what the film says. This one decides what is on the screen while it says it, and
+// it runs after the edit rather than before it, because until the film has been read aloud and cut nobody knows
+// how many pictures it needs. The rules, the critic and the deterministic repair are all in `visuals.ts`; this is
+// only the part that talks to a model, and it works the way every other pass here does — two goes at its own
+// work, because a model's own repair is better writing than ours, and then the rules do it and the film is made
+// either way.
+export async function photograph(slots: Visual[], bible: string, angle: string, think: Think,
+  help: { report: (line: string) => void }): Promise<Visual[]> {
+  let visuals = slots;
+  try {
+    visuals = visualsOf(await askJson(think, visualsPrompt(slots, bible, angle), 1), slots);
+  } catch { help.report('nothing came back about what is on screen, so the pictures are built from the lines themselves'); }
+
+  for (let round = 0; round < 2; round += 1) {
+    const found = criticiseVisuals(visuals);
+    if (!found.length) break;
+    help.report(round === 0
+      ? `the pictures did not hold up (${found[0].says}), so they are being written again`
+      : 'the pictures are still repeating themselves, one more pass');
+    try {
+      const again = visualsOf(await askJson(think, fixPictures(visuals, found, bible), 1), visuals);
+      if (criticiseVisuals(again).length < found.length) visuals = again;
+      else break;
+    } catch { break; }
+  }
+  const { visuals: mended, notes } = repairVisuals(visuals);
+  for (const line of notes.slice(0, 3)) help.report(line);
+  return mended;
+}
+
+// The pictures, sent back with what is wrong with each one named. A model told "picture four is generic" fixes
+// picture four; a model told "try again" writes the same six pictures.
+export function fixPictures(visuals: Visual[], found: { at: number; says: string }[], bible: string): string {
+  return [
+    'These pictures were read by the film\'s editor and sent back. Fix exactly these and change nothing else.',
+    'Answer with the whole corrected JSON object and nothing else.',
+    '',
+    ...found.slice(0, 10).map((one) => `- ${one.says}`),
+    '',
+    `Every picture is shot the same way: ${bible}`,
+    'A picture names a subject, what it is doing and where. No two pictures in the film may be of the same thing.',
+    'Nothing in a picture may carry writing — no screen, no chart, no sign, no document, no logo.',
+    '',
+    JSON.stringify({ pictures: visuals.map((one) => ({ at: one.at + 1, subject: one.subject, metaphor: one.metaphor })) }),
   ].join('\n');
 }

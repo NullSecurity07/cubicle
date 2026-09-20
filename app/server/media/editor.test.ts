@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CUTTING, cuttingFor, editFilm, keywordOf, whenSaid, type Take } from './editor.ts';
+import { checkCut, CUTTING, cuttingFor, editFilm, HOOK_CHANGE, keywordOf, whenSaid, type Shot as EditShot, type Take } from './editor.ts';
+import type { Scene } from './spec.ts';
 import type { Word } from './timings.ts';
 
 // One second of narration a word, with a breath every four: enough to have real phrase boundaries to land on.
@@ -175,5 +176,63 @@ describe('the table each look cuts to', () => {
     expect(cuttingFor('nothing-like-this', 'calm')).toEqual(CUTTING.clean);
     // The long-form look holds longest of the lot.
     expect(CUTTING.documentary.mean).toBeGreaterThanOrEqual(CUTTING.editorial.mean);
+  });
+});
+
+describe('reading the cut back', () => {
+  const scene = (layout: string, text?: string) => ({ layout, text, say: 'something is said here.' } as Scene);
+
+  it('says nothing about a shot list that holds nothing still for too long', () => {
+    const shots: EditShot[] = [
+      { scene: 0, at: 0, seconds: 1.8, take: 0 },
+      { scene: 0, at: 1.8, seconds: 2.2, take: 1 },
+      { scene: 1, at: 4, seconds: 2.4, take: 0 },
+    ];
+    expect(checkCut(shots, [scene('hook', 'A line'), scene('statement', 'Another')])).toEqual([]);
+  });
+
+  it('catches a still frame held past three seconds with nothing arriving on it', () => {
+    const shots: EditShot[] = [
+      { scene: 0, at: 0, seconds: 2.0, take: 0 },
+      { scene: 0, at: 2.0, seconds: 4.6, take: 1 },
+    ];
+    const notes = checkCut(shots, [scene('statement', 'A line')]);
+    expect(notes.map((one) => one.rule)).toContain('held');
+  });
+
+  it('lets a long shot stand where the picture is moving or the words are arriving', () => {
+    const shots: EditShot[] = [
+      { scene: 0, at: 0, seconds: 2.0, take: 0 },
+      { scene: 0, at: 2.0, seconds: 4.6, take: 1, punch: { to: 1.06, at: 2.0, seconds: 4 } },
+    ];
+    expect(checkCut(shots, [scene('statement', 'A line')])).toEqual([]);
+    // A scene's first take is where its type lands, so it has a beat of its own.
+    expect(checkCut([{ scene: 0, at: 0, seconds: 4.6, take: 0 }], [scene('statement', 'A line')])).toEqual([]);
+    // And a moving scene is never still by definition.
+    expect(checkCut([{ scene: 0, at: 0, seconds: 6, take: 0 }], [scene('footage')], [true])).toEqual([]);
+  });
+
+  it('catches an opening that has not changed picture by two and a half seconds', () => {
+    const shots: EditShot[] = [
+      { scene: 0, at: 0, seconds: 5.0, take: 0, punch: { to: 1.06, at: 0, seconds: 4 } },
+      { scene: 1, at: 5, seconds: 3.0, take: 0 },
+    ];
+    expect(checkCut(shots, [scene('hook', 'A line'), scene('statement', 'Another')]).map((one) => one.rule)).toContain('hook');
+  });
+});
+
+describe('the opening is cut inside two and a half seconds whatever the pace', () => {
+  it('cuts a long hook even in the calmest style there is', () => {
+    const words = saying('Most companies that die in year two never saw it coming at all. They ran out of road.');
+    const spoken = words.at(-1)!.at + words.at(-1)!.seconds;
+    const takes = [
+      take(0, 0, spoken * 0.55, { scene: { layout: 'hook', text: 'Most die in year two', say: 'Most companies that die in year two never saw it coming at all.' } }),
+      take(1, spoken * 0.55, spoken),
+    ];
+    const edit = editFilm(takes, words, cuttingFor('documentary', 'calm'));
+    const opening = edit.shots.filter((one) => one.scene === 0);
+    expect(opening.length).toBeGreaterThan(1);
+    expect(opening[0].seconds).toBeLessThanOrEqual(HOOK_CHANGE + 0.001);
+    expect(checkCut(edit.shots, takes.map((one) => one.scene)).some((one) => one.rule === 'hook')).toBe(false);
   });
 });

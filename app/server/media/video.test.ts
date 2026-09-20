@@ -127,9 +127,11 @@ describe('the composition', () => {
 
   it('sets the words for a screen watched from across a room', () => {
     const page = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots(film.scenes) });
-    // A heading is about a tenth of the height of a wide frame, and a title half as much again.
-    expect(page).toContain('font-size: calc(68px * var(--s));');
-    expect(page).toContain('font-size: calc(112px * var(--s));');
+    // A heading is about a tenth of the height of a wide frame, and a title half as much again. The sizes are
+    // written out in whole pixels rather than left to a multiplier, because there are floors under them now and a
+    // floor that cannot be read off the stylesheet is not a floor.
+    expect(page).toContain('font-size: 68px;');
+    expect(page).toContain('font-size: 112px;');
     // The block sits a little above the middle of the frame, where the eye reads it as centred — and clear of the
     // whole of the platform's own furniture, not a third of it.
     expect(page).toContain('calc(var(--margin) + var(--lift) + var(--safe-foot)) var(--margin);');
@@ -432,7 +434,9 @@ describe('a film with everything in it', () => {
     const page = composition({ title: 'One', shape: 'wide', look: 'documentary', shots: shots(film.scenes) });
     expect(page).toContain('<div class="bar bar--top"></div>');
     expect(page).toContain('<div class="bar bar--foot"></div>');
-    expect(page).toContain('.bg img, .shot img, .shot video, .reel, .device__glass img { filter: saturate(0.92) contrast(1.05) brightness(0.98); }');
+    // The lift in front of the grade is measured per picture and is 1 wherever nothing needed lifting, so a film
+    // whose stills came back readable wears exactly the pack's own tune and nothing else.
+    expect(page).toContain('.bg img, .shot img, .shot video, .reel, .device__glass img { filter: brightness(var(--raise, 1)) saturate(0.92) contrast(1.05) brightness(0.98); }');
     // The bars are a frame, not a move: nothing on the timeline touches them.
     expect(page).not.toContain('"#bar,');
     expect(page).not.toMatch(/tl\.[a-z]+\("\.bar/);

@@ -156,8 +156,13 @@ function cutOnce(takes: Take[], words: Word[], style: Cutting, opts: { sfxOn?: b
     // A scene is one shot when it is about the length the style wants a shot to be. Holding anything half again
     // as long as that is where "the same shot for three seconds" comes from, and `style.max` was far too generous
     // a line to draw it at.
-    const whole = take.moving || take.index === payoff || span <= style.mean * 1.35;
-    const edges = whole ? [] : splitPoints(take.from, span, style, inner, take.index, words);
+    // …except at the opening. The first two seconds decide whether anybody sees the third, and a hook that has
+    // not changed picture by two and a half seconds is a hook nobody is still watching: a real reel held its
+    // opening headline unchanged for five. So the opening is cut inside whatever the distribution would have
+    // said, whenever there is room to cut it at all.
+    const hook = take.index === 0 && !take.moving && span > HOOK_CHANGE + style.min;
+    const whole = !hook && (take.moving || take.index === payoff || span <= style.mean * 1.35);
+    const edges = whole ? [] : splitPoints(take.from, span, style, inner, take.index, words, hook ? HOOK_CHANGE : 0);
     const points = [take.from, ...edges, take.from + span];
     for (let at = 0; at < points.length - 1; at += 1) {
       const seconds = Math.round((points[at + 1] - points[at]) * 1000) / 1000;
@@ -211,15 +216,17 @@ function cutOnce(takes: Take[], words: Word[], style: Cutting, opts: { sfxOn?: b
 // within reach at all, never inside a *word* either. A cut landing on the second syllable of "evidence" is the
 // thing that reads as a mistake rather than as an edit, and a scene of one unbroken sentence would otherwise get
 // one every time.
-function splitPoints(from: number, span: number, style: Cutting, inner: Phrase[], seed: number, words: Word[]): number[] {
-  const want = Math.max(1, Math.round(span / style.mean));
+function splitPoints(from: number, span: number, style: Cutting, inner: Phrase[], seed: number, words: Word[], firstAt = 0): number[] {
+  const want = Math.max(firstAt ? 2 : 1, Math.round(span / style.mean));
   if (want < 2) return [];
   const edges: number[] = [];
   let cursor = from;
   for (let at = 1; at < want; at += 1) {
     // Each shot's own length out of the distribution: the mean, nudged by where it sits, floored and capped.
     const nudged = style.mean + wobble(seed * 7.13 + at * 3.77) * style.spread;
-    const length = Math.min(style.max, Math.max(style.min, nudged));
+    // The opening's first shot is capped however calm the film is: the hook has to change picture inside it.
+    const ceiling = at === 1 && firstAt ? Math.min(style.max, firstAt) : style.max;
+    const length = Math.min(ceiling, Math.max(style.min, nudged));
     const asked = cursor + length;
     if (asked >= from + span - style.min) break;
     const phrase = nearestPhrase(inner, asked);
@@ -278,4 +285,44 @@ function soundsFor(shots: Shot[], takes: Take[], style: Cutting, total: number):
     .slice(0, style.sfx)
     .sort((a, b) => a.at - b.at);
   return scored.map((one) => ({ sound: one.sound, at: Math.min(total, Math.max(0, one.shot.at)) }));
+}
+
+// --- reading the cut back ---------------------------------------------------------------------------------
+//
+// Everything above makes the shot list. This reads it, and it is the assertion under the two rules that were
+// written down and then not met on three real films: the opening still had not changed picture five seconds in,
+// and a list of bullets sat over one blurred field for the length of a whole scene.
+//
+// A finding here is worth saying out loud and is not worth withholding the film over — every one of them is a
+// judgement about rhythm rather than a fault that would break a render — so it is reported, not thrown.
+export type Note = { rule: string; at: number; says: string };
+
+// How long a frame may sit still. Past three seconds a static frame is where viewers leave, and the only things
+// that earn longer are a picture change, a move on the picture, or words arriving on it.
+export const MOST_HELD = 3.0;
+// How long the opening may hold its first picture. The first two seconds decide whether anybody sees the third.
+export const HOOK_CHANGE = 2.5;
+
+// Whether words arrive on this shot: a scene's first take is where its type lands, so it has a beat of its own
+// even if nothing moves on the picture. A later take of the same scene shows the same words already settled.
+const hasType = (shot: Shot, scene: Scene): boolean =>
+  shot.take === 0 && [scene.heading, scene.text, ...(scene.bullets ?? [])].some((one) => one?.trim());
+
+export function checkCut(shots: Shot[], scenes: Scene[], moving: boolean[] = []): Note[] {
+  const notes: Note[] = [];
+  shots.forEach((shot, at) => {
+    const scene = scenes[shot.scene];
+    if (!scene || moving[shot.scene]) return;
+    if (shot.seconds > MOST_HELD + 0.01 && !shot.punch && !hasType(shot, scene)) {
+      notes.push({ rule: 'held', at, says: `shot ${at + 1} holds one still frame for ${shot.seconds.toFixed(1)} seconds with nothing arriving on it` });
+    }
+  });
+  const opening = shots.filter((one) => one.scene === 0);
+  const first = opening[0];
+  const whole = shots.reduce((sum, one) => sum + one.seconds, 0);
+  // A moving opening changes picture sixty times a second, so it answers the rule by being what it is.
+  if (first && !moving[0] && whole > HOOK_CHANGE * 2 && first.seconds > HOOK_CHANGE + 0.01) {
+    notes.push({ rule: 'hook', at: 0, says: `the opening picture holds for ${first.seconds.toFixed(1)} seconds — a hook changes picture inside ${HOOK_CHANGE}` });
+  }
+  return notes;
 }

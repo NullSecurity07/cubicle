@@ -51,6 +51,71 @@ export const PACE: Record<Pace, { rise: number; ease: string; stagger: number; o
   punchy: { rise: 0.52, ease: 'power3.out', stagger: 0.05, out: 0.22, travel: 30, read: 4.3, floor: 1.6, ceiling: 6, lead: 0.16, tail: 0.24 },
 };
 
+// The type scale, and the floors under it.
+//
+// A film is not a page. Everything on it is read once, at a glance, on a phone held at arm's length or on a screen
+// across a room, and the sizes that survive that are far larger than any web design would use. The three proof
+// films failed exactly here: "type is small serif lost in the frame", "bullet text is tiny", "a tiny CTA pill" —
+// every one of them a line set at two per cent of the frame's height, which at feed-thumbnail size is nothing.
+//
+// So the scale has floors, stated as a share of the frame's height and enforced rather than intended:
+//
+//   - a **headline** — the one line a scene is about — is at least eight per cent of the frame on a wide film and
+//     six on a tall one, where the frame is taller and the type is read closer;
+//   - a **support line** — a lead, a bullet, a step, a button — is at least three point two per cent;
+//   - **nothing at all** is under two point six per cent. An eyebrow that small is decoration, not writing.
+//
+// A pack may set anything larger. Nothing may set anything smaller, and `typeScale` is where that is true rather
+// than hoped for: every size in the stylesheet below comes out of it, and a test holds it to these numbers.
+export const TYPE_FLOOR = {
+  headline: { wide: 0.080, tall: 0.060, square: 0.065 } as Record<Shape, number>,
+  support: 0.032,
+  least: 0.026,
+};
+
+export type TypeScale = {
+  hook: number; display: number; heading: number; quote: number; stat: number;
+  lead: number; body: number; step: number; cta: number; icon: number; sideBody: number;
+  label: number; chip: number; sideLabel: number; mark: number;
+  hookCaps: number; displayCaps: number; headingCaps: number; statCaps: number;
+};
+
+// Every size in the film, in whole pixels of its own frame, with the floors already applied.
+export function typeScale(shape: Shape, pack: Pack): TypeScale {
+  const { height, scale, text } = FORMATS[shape];
+  const style = PACK[pack];
+  const s = scale;
+  const t = scale * text;
+  const head = height * TYPE_FLOOR.headline[shape];
+  const support = height * TYPE_FLOOR.support;
+  const least = height * TYPE_FLOOR.least;
+  const at = (px: number, floor: number) => Math.round(Math.max(px, floor));
+  return {
+    hook: at((style.shout ? 146 : 132) * s, head),
+    display: at((style.shout ? 118 : 112) * s, head),
+    heading: at(68 * s, head),
+    quote: at((pack === 'editorial' || pack === 'documentary' ? 74 : 62) * s, head),
+    stat: Math.round(300 * s),
+    lead: at(38 * t, support),
+    body: at(34 * t, support),
+    step: at(40 * t, support),
+    cta: at(34 * t, support),
+    icon: at(64 * t, support),
+    sideBody: at(38 * t, support),
+    label: at(22 * t, least),
+    chip: at(26 * t, least),
+    sideLabel: at(24 * t, least),
+    mark: at(40 * t, support),
+    // A captioned film has two kinds of type on it and the caption band is a tenth of the frame, so the big type
+    // comes down to make room — down to the floor and no further. A headline that has gone under the floor to
+    // clear the captions is a headline nobody reads, which is the trade that was quietly being made.
+    hookCaps: at((style.shout ? 112 : 102) * s, head),
+    displayCaps: at((style.shout ? 94 : 90) * s, head),
+    headingCaps: at(58 * s, head),
+    statCaps: Math.round(224 * s),
+  };
+}
+
 // One type scale, set once, used everywhere: display, heading, lead, body, label, and the one big number. The sizes
 // are written for something watched from across a room, not read on a page: on a wide frame a heading is a fifteenth
 // of the height, a title a seventh, and the one number on a stat scene is over a third of it.
@@ -62,6 +127,8 @@ export function styleSheet(shape: Shape, pack: Pack, brand?: Brand): string {
   // What this pack declares as its format, if anything. Almost none of them do.
   const grade = style.format?.grade;
   const bars = style.format?.letterbox ?? 0;
+  // Every size in the film, floored. Nothing below writes a number of its own.
+  const type = typeScale(shape, pack);
   // A product's own typeface is used only when its file could be copied out of the product. Naming a face the page
   // cannot load is not a fallback, it is a lie the renderer calls out: nothing would be fetched, nothing would
   // change, and the check would carry an error about it for the rest of the film's life.
@@ -92,9 +159,16 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
 .bg { position: absolute; inset: 0; overflow: hidden; z-index: 0; background: ${paint.ground}; }
 .bg img { display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 45%; }
 /* The scrim: the ground washing up from the foot of the frame and a flat hold over the whole of it, so a line of
-   type is legible over a photograph whatever the photograph turns out to be. */
+   type is legible over a photograph whatever the photograph turns out to be.
+
+   How hard it holds is the --hold variable, and it is a number measured off the picture itself — the brightness where the
+   words really sit, turned into the contrast ratio the words would really have, solved for the lightest wash
+   that clears four and a half to one. The pack's own number is the fallback, for a machine with nothing able to
+   look at a picture. One number for every photograph in a film is how a white wall came back with body copy
+   floating on it and a whole reel came back near-black. */
+.bg { --hold: ${style.scrim.toFixed(2)}; }
 .bg::after { content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(to top, rgba(${paint.scrim}, ${Math.min(0.96, style.scrim + 0.16).toFixed(2)}) 0%, rgba(${paint.scrim}, ${(style.scrim * 0.86).toFixed(2)}) 46%, rgba(${paint.scrim}, ${(style.scrim * 0.62).toFixed(2)}) 100%); }
+  background: linear-gradient(to top, rgba(${paint.scrim}, min(0.96, calc(var(--hold) + 0.16))) 0%, rgba(${paint.scrim}, calc(var(--hold) * 0.86)) 46%, rgba(${paint.scrim}, calc(var(--hold) * 0.62)) 100%); }
 /* No picture maker, no flat colour either: four soft lamps of the film's own colours drifting behind the words. */
 .mesh { position: absolute; inset: -18%; z-index: 0; overflow: hidden; }
 .blob { position: absolute; filter: blur(calc(120px * var(--s))); opacity: 0.55; }
@@ -110,9 +184,15 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${paint.gr
    scene's green lamps screened over the arriving scene's photograph. A full-frame acid wash, one frame long, at
    several of the cuts in a real reel. It is a band of light. It does not need a blend mode. */
 .glint { position: absolute; inset: -20%; opacity: 0.7; }
-${grade ? `/* This pack's declared grade: a measured, bounded tune applied to the moving and still pictures only. The
-   type sits above it and is never graded, because graded type is a filter over a film rather than a look in it. */
-.bg img, .shot img, .shot video, .reel, .device__glass img { filter: ${grade}; }` : ''}
+/* This pack's declared grade, where it has one: a measured, bounded tune applied to the moving and still
+   pictures only. The type sits above it and is never graded, because graded type is a filter over a film rather
+   than a look in it.
+
+   The --raise variable goes in front of it. A grade is a house look and is identical on every film in the series, so a
+   photograph that came back too dark to read a subject out of is lifted rather than ungraded — which is the
+   difference between "the grade is too heavy" and "that picture was dark". It is measured, per picture, and it
+   is 1 whenever nothing needed lifting. */
+.bg img, .shot img, .shot video, .reel, .device__glass img { filter: brightness(var(--raise, 1))${grade ? ` ${grade}` : ''}; }
 ${bars ? `/* Letterbox as a fixed format, identical for the whole render: two bars, not a transition, not an effect. */
 .bar { position: absolute; left: 0; right: 0; height: ${(bars * 100).toFixed(2)}%; z-index: 9; background: #000; pointer-events: none; }
 .bar--top { top: 0; } .bar--foot { bottom: 0; }` : ''}
@@ -136,23 +216,23 @@ ${bars ? `/* Letterbox as a fixed format, identical for the whole render: two ba
    said — which is what a real reel came back as: the hook and the caption written over each other. So in a
    captioned film the big type comes down, and the block is cut off rather than allowed to spill into the band. */
 #root.has-captions .frame { overflow: hidden; }
-#root.has-captions .hook { font-size: calc(${style.shout ? 112 : 102}px * var(--s)); }
-#root.has-captions .display { font-size: calc(${style.shout ? 94 : 90}px * var(--s)); }
-#root.has-captions .heading { font-size: calc(58px * var(--s)); }
-#root.has-captions .stat { font-size: calc(224px * var(--s)); }
+#root.has-captions .hook { font-size: ${type.hookCaps}px; }
+#root.has-captions .display { font-size: ${type.displayCaps}px; }
+#root.has-captions .heading { font-size: ${type.headingCaps}px; }
+#root.has-captions .stat { font-size: ${type.statCaps}px; }
 .frame--onbg.frame--stat, .frame--onbg.frame--logo { justify-content: flex-end; }
 /* A title card is set on the foot of the frame instead, with the air above it, the way a poster is. */
 .frame--title { justify-content: flex-end; padding-bottom: calc(var(--margin) * 1.05 + var(--safe-foot)); }
 /* A figure that size carries its own lift: the digits stand well above their line and nothing hangs below them. */
 .frame--stat { padding-bottom: calc(var(--margin) + var(--safe-foot)); }
 ${sketch ? '' : `.display, .heading, .hook, .lead, .body, .label, .quote, .logo, .stat, .step, .side .body { text-shadow: 0 calc(2px * var(--s)) calc(22px * var(--s)) rgba(0, 0, 0, 0.58); }`}
-.display { font-family: ${display}; font-size: calc(${style.shout ? 118 : 112}px * var(--s)); line-height: ${style.shout ? 0.94 : 1.0}; letter-spacing: ${style.shout ? '-0.01em' : '-0.038em'};
+.display { font-family: ${display}; font-size: ${type.display}px; line-height: ${style.shout ? 0.94 : 1.0}; letter-spacing: ${style.shout ? '-0.01em' : '-0.038em'};
   font-weight: ${style.shout ? 400 : 660}; max-width: 10.5em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
-.heading { font-family: ${display}; font-size: calc(68px * var(--s)); line-height: ${style.shout ? 1.0 : 1.08}; letter-spacing: ${style.shout ? '-0.006em' : '-0.03em'};
+.heading { font-family: ${display}; font-size: ${type.heading}px; line-height: ${style.shout ? 1.0 : 1.08}; letter-spacing: ${style.shout ? '-0.006em' : '-0.03em'};
   font-weight: ${style.shout ? 400 : 630}; max-width: 13.5em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
-.lead { font-size: calc(38px * var(--t)); line-height: 1.3; letter-spacing: -0.016em; font-weight: 450; max-width: 22em; overflow-wrap: break-word; }
-.body { font-size: calc(34px * var(--t)); line-height: 1.32; letter-spacing: -0.012em; font-weight: 440; max-width: 20em; overflow-wrap: break-word; }
-.label { font-size: calc(22px * var(--t)); line-height: 1.3; font-weight: 620; text-transform: uppercase; letter-spacing: 0.1em; }
+.lead { font-size: ${type.lead}px; line-height: 1.3; letter-spacing: -0.016em; font-weight: 450; max-width: 22em; overflow-wrap: break-word; }
+.body { font-size: ${type.body}px; line-height: 1.32; letter-spacing: -0.012em; font-weight: 440; max-width: 20em; overflow-wrap: break-word; }
+.label { font-size: ${type.label}px; line-height: 1.3; font-weight: 620; text-transform: uppercase; letter-spacing: 0.1em; }
 /* One word in a line may be the line: it takes the accent colour, and on a kinetic pack a little more size with it. */
 .pop { color: ${sketch ? paint.ink : paint.signal}; }
 /* The words of a display line are set one at a time so they can arrive one at a time. The box has to be inline for
@@ -164,11 +244,11 @@ ${sketch ? '' : `.display, .heading, .hook, .lead, .body, .label, .quote, .logo,
   background: ${paint.signal}; border-radius: calc(6px * var(--s)); opacity: 1; }
 .on-sweep { position: relative; color: ${lightOf(paint.signal) > 0.55 ? '#0E1013' : '#FFFFFF'}; text-shadow: none; }
 /* The one number a stat scene carries is the scene: everything else on it is a caption to the number. */
-.stat { font-family: ${display}; font-size: calc(300px * var(--s)); line-height: 0.88; letter-spacing: -0.052em; font-weight: ${style.shout ? 400 : 680}; color: ${sketch ? paint.ink : paint.signal};
+.stat { font-family: ${display}; font-size: ${type.stat}px; line-height: 0.88; letter-spacing: -0.052em; font-weight: ${style.shout ? 400 : 680}; color: ${sketch ? paint.ink : paint.signal};
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* The figure counts up to itself, so the digits are held to their final width and nothing beside them shifts. */
 .count { display: inline-block; text-align: right; }
-.quote { font-family: ${display}; font-size: calc(${pack === 'editorial' ? 74 : 62}px * var(--s)); line-height: 1.18; letter-spacing: -0.024em; font-weight: ${style.shout ? 400 : 520}; max-width: 12.5em;
+.quote { font-family: ${display}; font-size: ${type.quote}px; line-height: 1.18; letter-spacing: -0.024em; font-weight: ${style.shout ? 400 : 520}; max-width: 12.5em;
   border-left: ${sketch ? 'transparent' : paint.signal} solid calc(5px * var(--s)); padding-left: calc(var(--margin) * 0.5); overflow-wrap: break-word; }
 .quiet { color: ${paint.quiet}; }
 /* The one piece of structure that recurs: a short measured bar that says the block ends here. Drawn by hand in the notebook. */
@@ -188,8 +268,9 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
   background: ${paint.ground}; transform-origin: 50% 50%; }
 /* Somebody talking: their eyes belong a third of the way down, not in the middle. */
 .reel--face { object-position: 50% 26%; transform-origin: 50% 26%; }
+.shot { --hold: ${style.scrim.toFixed(2)}; }
 .shot::after { content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: ${sketch ? 'none' : `linear-gradient(to top, rgba(${paint.scrim}, 0.64) 0%, rgba(${paint.scrim}, 0.26) 44%, rgba(${paint.scrim}, 0.60) 100%)`}; }
+  background: ${sketch ? 'none' : `linear-gradient(to top, rgba(${paint.scrim}, min(0.94, calc(var(--hold) + 0.22))) 0%, rgba(${paint.scrim}, calc(var(--hold) * 0.5)) 44%, rgba(${paint.scrim}, min(0.9, calc(var(--hold) + 0.18))) 100%)`}; }
 /* The words over a picture sit at the foot of the frame — unless the film is captioned, in which case the captions
    are already there and the two would be read as one sentence. Then the plate lifts clear of them. */
 .has-caps .plate { top: 0; bottom: auto; padding: calc(var(--margin) + var(--safe-top)) var(--margin) calc(var(--margin) * 1.6);
@@ -200,22 +281,22 @@ ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''
 .frame--picture { justify-content: flex-end; padding: 0; gap: 0; }
 /* The words over a picture are the scene's whole caption, so in a pack that shouts they are set like one rather than
    like a footnote: a line of body copy under a photograph reads as a stray subtitle. */
-${style.shout ? `.plate .lead { font-family: ${display}; font-size: calc(54px * var(--s)); line-height: 1.06; font-weight: 400; letter-spacing: -0.006em; text-transform: uppercase; max-width: 13em; }` : ''}
+${style.shout ? `.plate .lead { font-family: ${display}; font-size: ${Math.max(type.lead, Math.round(54 * scale))}px; line-height: 1.06; font-weight: 400; letter-spacing: -0.006em; text-transform: uppercase; max-width: 13em; }` : ''}
 
 /* A hook is the first second and a half of a reel: one line, as large as the frame will carry it, and nothing else. */
-.hook { font-family: ${display}; font-size: calc(${style.shout ? 146 : 132}px * var(--s)); line-height: ${style.shout ? 0.92 : 0.98}; letter-spacing: ${style.shout ? '-0.012em' : '-0.042em'};
+.hook { font-family: ${display}; font-size: ${type.hook}px; line-height: ${style.shout ? 0.92 : 0.98}; letter-spacing: ${style.shout ? '-0.012em' : '-0.042em'};
   font-weight: ${style.shout ? 400 : 740}; max-width: 9em; overflow-wrap: break-word; ${style.shout ? 'text-transform: uppercase;' : ''} }
 .frame--hook { justify-content: center; }
 /* An emoji or a mark set beside a line, at the size of a line: the one thing in a reel that is not type. */
-.icon { font-size: calc(64px * var(--t)); line-height: 1; }
+.icon { font-size: ${type.icon}px; line-height: 1; }
 /* A call to action is a line and the place to go, set apart from it the way a button is. */
 .frame--cta { justify-content: center; align-items: flex-start; }
 .cta { display: inline-flex; align-items: center; gap: calc(22px * var(--s)); padding: calc(20px * var(--t)) calc(38px * var(--t));
   border-radius: 999px; background: ${paint.signal}; color: ${lightOf(paint.signal) > 0.55 ? '#14181D' : '#FFFFFF'};
-  font-size: calc(34px * var(--t)); font-weight: 640; letter-spacing: -0.01em; }
+  font-size: ${type.cta}px; font-weight: 640; letter-spacing: -0.01em; }
 /* A logo sting is the wordmark alone on the ground, with one measured line drawing itself under it. */
 .frame--logo { justify-content: center; align-items: center; padding-bottom: var(--margin); }
-.logo { font-family: ${display}; font-size: calc(104px * var(--s)); line-height: 1; letter-spacing: -0.03em; font-weight: ${style.shout ? 400 : 700}; text-align: center; }
+.logo { font-family: ${display}; font-size: ${Math.max(type.heading, Math.round(104 * scale))}px; line-height: 1; letter-spacing: -0.03em; font-weight: ${style.shout ? 400 : 700}; text-align: center; }
 .logo img { display: block; max-width: calc(520px * var(--s)); max-height: calc(200px * var(--s)); object-fit: contain; }
 .frame--logo .lead { text-align: center; max-width: 18em; }
 .frame--logo .rule { align-self: center; }
@@ -227,14 +308,14 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: calc(54px * 
 .side--after { border-color: ${sketch ? 'transparent' : paint.signal}; }
 .side .label { color: ${paint.quiet}; }
 .side--after .label { color: ${paint.signal}; }
-.side p.body { max-width: none; font-size: calc(38px * var(--t)); line-height: 1.24; font-weight: 500; }
-.side .label { font-size: calc(24px * var(--t)); }
+.side p.body { max-width: none; font-size: ${type.sideBody}px; line-height: 1.24; font-weight: 500; }
+.side .label { font-size: ${type.sideLabel}px; }
 /* A checklist is a list that says yes, so each line carries a mark rather than a bar. */
-.mark { flex: none; position: relative; top: 0.06em; width: calc(40px * var(--t)); height: calc(40px * var(--t)); color: ${sketch ? paint.ink : paint.signal}; }
+.mark { flex: none; position: relative; top: 0.06em; width: ${type.mark}px; height: ${type.mark}px; color: ${sketch ? paint.ink : paint.signal}; }
 .mark svg { display: block; width: 100%; height: 100%; }
 .list--check li { align-items: flex-start; gap: calc(26px * var(--s)); }
 /* Steps are numbered, and the number is the structure: it is set in the signal colour and held to one width. */
-.step { flex: none; font-size: calc(40px * var(--t)); font-weight: 700; line-height: 1.1; color: ${sketch ? paint.ink : paint.signal};
+.step { flex: none; font-size: ${type.step}px; font-weight: 700; line-height: 1.1; color: ${sketch ? paint.ink : paint.signal};
   font-variant-numeric: tabular-nums; min-width: 1.6em; }
 .list--steps li { align-items: baseline; gap: calc(26px * var(--s)); }
 /* A screenshot in the thing it was taken on, and the thing it was taken on is the scene: the mockup takes most of
@@ -281,7 +362,7 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: calc(54px * 
   padding: calc(10px * var(--t)) calc(20px * var(--t)); border-radius: 999px;
   background: rgba(${paint.scrim}, ${sketch ? '0.86' : '0.82'}); backdrop-filter: blur(calc(8px * var(--s)));
   border: 1px solid ${paint.quiet}44; color: ${paint.ink};
-  font-size: calc(26px * var(--t)); font-weight: 600; letter-spacing: -0.008em; max-width: 72%; }
+  font-size: ${type.chip}px; font-weight: 600; letter-spacing: -0.008em; max-width: 72%; }
 #root.has-captions .chip { top: calc(var(--margin) * 0.55 + var(--safe-top)); bottom: auto; }
 /* A person talking to camera, or a generated clip, fills the frame and takes the words over it. */
 .frame--presenter { justify-content: flex-end; padding: 0; gap: 0; }

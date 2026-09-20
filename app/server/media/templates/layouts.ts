@@ -12,6 +12,13 @@ export type Shot = {
   // Whether `bg` is a picture this scene shares with others. A shared one is shown at its own crop and its own
   // tint, so the film hangs together without three scenes looking like the same frame held too long.
   bgShared?: boolean;
+  // How hard this shot's own picture has to be held down for the words on it to be read, measured off the picture
+  // itself rather than taken from the pack. A dark doorway needs almost nothing; a white wall needs most of a
+  // wash. Unset, the pack's own number stands, which is what every film had until this was measured.
+  scrim?: number;
+  // How much this shot's picture is lifted before the pack's grade goes over it. A declared grade over an already
+  // dark photograph is how "dim and murky, subjects unreadable" happens, and the fix is the picture, not the look.
+  lift?: number;
   voice?: { file: string; seconds: number; parts?: Part[] };
   // Which take of its scene this is. A scene long enough to want a picture change is several shots, and each of
   // them shows something different — otherwise the change is the same frame twice, which is worse than a hold.
@@ -147,13 +154,22 @@ function share(index: number): string {
   return `object-position:${x}% ${y}%; filter:hue-rotate(${hue}deg) saturate(${warm}) brightness(${light}) blur(${soft}px);`;
 }
 
-export const groundHtml = (shot: Shot, index: number, pack: Pack): string =>
+// What this shot measured about its own picture, written as two variables the stylesheet reads: how hard the
+// scrim holds it down and how much the picture is lifted before the pack's grade. Both are left out where nothing
+// could look at the picture, and then the pack's own numbers stand.
+export const measured = (shot: Shot): string =>
+  [shot.scrim === undefined ? '' : `--hold: ${shot.scrim.toFixed(2)};`, shot.lift === undefined || shot.lift === 1 ? '' : `--raise: ${shot.lift.toFixed(2)};`]
+    .filter(Boolean).join(' ');
+
+export const groundHtml = (shot: Shot, index: number, pack: Pack): string => {
   // A scene playing a moving shot has its ground already: the shot. Lamps drawn over it are a green wash across
   // somebody's face, which is what the founder was shown when a clip finally arrived.
-  (shot.video ? ''
-    : shot.bg
-      ? `<div class="bg" id="bg${index}"><img src="assets/${shot.bg}" alt="" data-layout-allow-overflow${shot.bgShared ? ` style="${share(index)}"` : ''}></div>`
-      : meshHtml(index, pack));
+  if (shot.video) return '';
+  if (!shot.bg) return meshHtml(index, pack);
+  const held = measured(shot);
+  return `<div class="bg" id="bg${index}"${held ? ` style="${held}"` : ''}>`
+    + `<img src="assets/${shot.bg}" alt="" data-layout-allow-overflow${shot.bgShared ? ` style="${share(index)}"` : ''}></div>`;
+};
 
 // --- the seventeen shapes ---------------------------------------------------------------------------------------------
 
@@ -201,7 +217,7 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     if (heading) parts.push(`<h2 class="heading rise">${kinetic(heading, scene.emphasis, pack, false)}</h2>`);
     parts.push(`<div class="compare">${sides}</div>`);
   } else if (scene.layout === 'picture') {
-    parts.push(`<div class="shot" data-mark="frame"><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
+    parts.push(`<div class="shot" data-mark="frame"${measured(shot) ? ` style="${measured(shot)}"` : ''}><img src="assets/${shot.image}" alt="" data-layout-allow-overflow></div>`);
     if (text) parts.push(`<div class="plate"><p class="lead rise">${kinetic(text, scene.emphasis, pack, false)}</p></div>`);
     return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
   } else if (MOVING.has(scene.layout)) {

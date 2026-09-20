@@ -29,18 +29,19 @@ export const MAX_SCENES = 24;
 // Every drawn still costs a call to a free picture service with a day's quota, and every AI clip costs far more.
 // A picture in front of the words and a picture behind them cost the same, so the two caps are near enough the same.
 export const MAX_IMAGES = 10;
-// How many pictures are drawn to stand behind the words of a whole film, and how many scenes may share one.
+// What used to cap how many pictures stood behind the words of a whole film, and how many scenes shared one.
 //
-// These were four and three, and the reasoning was sound and the result was not. Six frames of one film should
-// look like six frames of one film — but what three-scenes-to-a-picture actually produced was one photograph
-// held for the whole film with a slightly different crop on it, which reads as a still with type over it. What
-// makes six frames one film is the style bible every one of them is drawn from, not drawing fewer of them.
+// These were four and three, then six and one, and the reasoning was sound and the result was not. Six frames of
+// one film should look like six frames of one film — but what three-scenes-to-a-picture produced was one
+// photograph held for the whole film with a slightly different crop on it, which reads as a still with type over
+// it. One a scene was better and was still wrong, because a scene is not a shot: the editor cuts inside a scene,
+// and a cut where the picture does not change is worse than a hold.
 //
-// So: a picture a scene, up to six, which on a short film is a real picture change at every cut. The cost is real
-// — a free daily quota is a few hundred, and this machine takes about a minute each — and it is said on the card
-// before the founder presses Make.
+// So a picture belongs to a shot now, and how many a film can have is decided in `media/visuals.ts` by what the
+// waiting really costs — four seconds each away from this machine, most of a minute on it — rather than by a
+// number written down here. These two are kept because the tool still reports them to whoever asks what a film's
+// limits are, and because a storyboard written by hand is still held to the first of them.
 export const MAX_BACKGROUNDS = 6;
-// A run of scenes this long shares one background before another is drawn.
 export const SCENES_A_BACKGROUND = 1;
 // A clip from the free Spaces spends somebody else's daily minutes, so a film makes at most two. A clip made on this
 // machine spends nothing but time, so a film may have twice as many — the founder is told what that time costs.
