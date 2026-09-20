@@ -267,6 +267,39 @@ describe('somebody on camera', () => {
   });
   const six = Array.from({ length: 6 }, (_one, index): Scene => ({ layout: 'statement', text: `Line ${index}`, say: `Line ${index}.` }));
 
+  it('puts the person in the opening, where the hook is said', () => {
+    // A reel that wants a person and opens on a texture, producing its presenter in scene three, has a person in
+    // it the way a leaflet has a photograph in it.
+    const made = onCamera(six, person(), 'warm daylight', () => {}, { minutes: 3 });
+    expect(made[0].layout).toBe('clip');
+    // And comes back once in the middle of anything long enough to want a second look at them.
+    expect(made.filter((one) => one.layout === 'clip')).toHaveLength(2);
+  });
+
+  it('gives the opening to the person even when a picture was already put there', () => {
+    // The founder's own picture used to take the opening and push the moving person to scene three.
+    const held: Scene[] = [{ ...six[0], asset: 'drawn-1' }, ...six.slice(1)];
+    const made = onCamera(held, person(), 'warm daylight', () => {}, { minutes: 3 });
+    expect(made[0].layout).toBe('clip');
+    expect(made[0].asset).toBe('drawn-1');
+  });
+
+  it('opens on the person even when the storyboard already had them later', () => {
+    // A person's own tool call wrote its presenter scenes second and fourth, so neither placement fired and the
+    // reel still opened on a picture with type over it for three seconds.
+    const said: string[] = [];
+    const written: Scene[] = [
+      { layout: 'hook', text: 'Want investors to chase you?', say: 'Want investors to chase you?' },
+      { layout: 'presenter', portrait_prompt: 'a founder', say: 'They want proof.' },
+      ...six.slice(2),
+    ];
+    const made = onCamera(written, person(), 'warm daylight', (line) => said.push(line), { minutes: 3 });
+    expect(made[0].layout).toBe('presenter');
+    // The words on the opening are kept: the hook is what they say.
+    expect(made[0].text).toBe('Want investors to chase you?');
+    expect(said.join(' ')).toContain('opens on them');
+  });
+
   it('films the person here rather than leaving it to the model to ask somebody else', () => {
     // A model that wants a talking head writes a `presenter` scene, which only the free online service makes; when
     // that is out of quota the film quietly has nobody in it. So the director places the shots itself.

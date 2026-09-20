@@ -447,6 +447,9 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
 // The most a film gets of somebody talking to the camera when this machine is drawing them: two, because each one
 // costs minutes of the founder's time and a third is a third of the film.
 export const MOST_FACES = 2;
+// The shapes an opening can take and still be somebody talking. A wordmark or a title card is the one thing a
+// person cannot be put inside.
+const OPENS = new Set<Layout>(['hook', 'statement', 'picture', 'quote', 'outro', 'cta', 'stat']);
 // What somebody drawn for a film wears and how they are framed. Left unsaid, a small video model draws bare shoulders
 // in a close crop, which is not who a founder wants speaking for them.
 const DRESSED = 'fully dressed in a smart casual shirt';
@@ -490,8 +493,9 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
       return { ...scene, asset: face, portrait_prompt: undefined };
     });
     if (used) { report('the film uses the picture from your image studio as the person on screen'); return held; }
-    // Nobody on camera was written at all: the opening holds the picture instead of a drawing of a stranger.
-    const at = held.findIndex((scene) => !scene.asset && !scene.image_prompt && scene.layout !== 'device' && scene.layout !== 'footage');
+    // Nobody on camera was written at all. Where this machine can film one, the opening becomes a person moving
+    // instead — that is settled a few lines down — and only where it cannot does the picture go in as a still.
+    const at = filmHere ? -1 : held.findIndex((scene) => !scene.asset && !scene.image_prompt && scene.layout !== 'device' && scene.layout !== 'footage');
     if (at >= 0) {
       report('the film uses the picture from your image studio as the person on screen');
       return held.map((scene, index) => (index === at
@@ -499,15 +503,27 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
         : scene));
     }
   }
-  if (held.some(hasSomebody)) return held;
+  // Somebody is in this film already — the model wrote them, or a person's own tool call did. That is not the same
+  // as the film opening on them, and a reel that wants a person is a reel where the person says the hook. So the
+  // opening is normalised too: if the first scene is not somebody, it becomes them.
+  if (held.some(hasSomebody)) {
+    if (hasSomebody(held[0]) || !OPENS.has(held[0].layout)) return held;
+    const first = held.find(hasSomebody)!;
+    report('the brief asks for somebody on camera, so the film opens on them rather than getting to them later');
+    return held.map((scene, index) => (index === 0
+      ? { ...scene, layout: first.layout, clip_prompt: first.clip_prompt, portrait_prompt: first.portrait_prompt, asset: face ?? first.asset, image_prompt: undefined }
+      : scene));
+  }
   scenes = held;
   // The bible says "single strong subject, shallow depth of field", and a picture model reads that as a macro of
   // somebody's mouth. A talking head has to be asked for as a talking head: the framing first, and loudly.
   const look = bible.replace(/,?\s*shallow depth of field/i, '');
   const facing = `one person ${DRESSED}, seen from the waist up in a medium shot, facing the camera and talking to it, gesturing with both hands as they speak, head, shoulders and hands all inside the frame with room above, both eyes open and looking into the lens`;
   const portrait = `a medium shot of ${facing}, ${look}`;
-  // The opening, and one more in the middle of anything long enough to come back to a face.
-  const faces = new Set([0, ...(scenes.length >= 5 ? [Math.floor(scenes.length / 2)] : [])]);
+  // The opening, always, and one more in the middle of anything long enough to come back to a face. A reel that
+  // wants a person is a reel where the person says the hook: a film that opened on a texture and produced its
+  // presenter in scene three had a person in it the way a leaflet has a photograph in it.
+  const faces = new Set([0, ...(scenes.length >= 4 ? [Math.floor(scenes.length / 2)] : [])]);
   // Whether the person moves. A still of somebody mid-sentence is a photograph of a person, not a person talking,
   // and the brief asked for the second one — so where this machine can draw a moving shot, it draws one. It is not
   // left to the model to choose: a model that writes a talking-head scene writes it as a `presenter`, which only
@@ -517,10 +533,14 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
   const already = scenes.filter((one, index) => one.layout === 'clip' && !faces.has(index)).length;
   let given = 0;
   const made = scenes.map((scene, index) => {
-    if (!faces.has(index) || scene.image_prompt || scene.asset) return scene;
+    if (!faces.has(index)) return scene;
+    // A scene already holding a real picture keeps it — unless it is the opening, where a person the film was
+    // asked for beats a still of one. That was the whole of why the person turned up third.
+    if ((scene.image_prompt || scene.asset) && index !== 0) return scene;
     if (filmHere && given + already < MOST_FACES) {
       given += 1;
-      return { ...scene, layout: 'clip' as Layout, clip_prompt: `${facing}, talking with their mouth moving, natural head movement and hand gestures, shifting their weight, static camera, ${look}`, bg_prompt: portrait, image_prompt: undefined };
+      // The founder's own picture rides along: what it was drawn from is what this person looks like.
+      return { ...scene, layout: 'clip' as Layout, clip_prompt: `${facing}, talking with their mouth moving, natural head movement and hand gestures, shifting their weight, static camera, ${look}`, bg_prompt: portrait, image_prompt: undefined, asset: face ?? scene.asset };
     }
     given += 1;
     return { ...scene, bg_prompt: portrait };
