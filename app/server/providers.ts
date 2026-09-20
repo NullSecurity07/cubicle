@@ -138,11 +138,23 @@ export function collectCalls(calls: ToolCall[], parts: CallPart[]) {
 
 type Entry = (typeof models)[number] & { vision?: boolean; streamUsage?: boolean; callSignature?: string; extra?: Record<string, unknown>; limits?: Limits };
 
+// The provider behind a client's name: `groq#2` is Groq's second key. Everything that counts what a key has spent
+// works on the name; everything the founder reads works on this.
+export const providerOf = (name: string) => name.split('#')[0];
+
+// A provider may hold more than one free key: `GROQ_API_KEY`, then `GROQ_API_KEY_2`, `_3` and so on, in any order.
+// Each becomes a client of its own, so each has its own day's count and its own rest after a 429.
+function keysOf(env: NodeJS.ProcessEnv, keyEnv: string): { key: string; at: number }[] {
+  const more = new RegExp(`^${keyEnv}_(\\d+)$`);
+  const spare = Object.entries(env).flatMap(([name, value]) => { const at = more.exec(name); return at && value ? [{ key: value, at: Number(at[1]) }] : []; });
+  return [...(env[keyEnv] ? [{ key: env[keyEnv]!, at: 1 }] : []), ...spare.sort((one, other) => one.at - other.at)];
+}
+
 export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[] {
-  return (models as Entry[]).filter((entry) => env[entry.keyEnv]).map((entry) => {
-    const api = new OpenAI({ apiKey: env[entry.keyEnv], baseURL: entry.baseURL, timeout: 45_000, maxRetries: 0 });
+  return (models as Entry[]).flatMap((entry) => keysOf(env, entry.keyEnv).map(({ key, at }) => {
+    const api = new OpenAI({ apiKey: key, baseURL: entry.baseURL, timeout: 45_000, maxRetries: 0 });
     return {
-      name: entry.name,
+      name: at > 1 ? `${entry.name}#${at}` : entry.name,
       model: entry.model,
       maxPromptChars: entry.maxPromptChars,
       tools: entry.tools,
@@ -170,7 +182,7 @@ export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[]
         return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || `call-${index}` })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
       },
     };
-  });
+  }));
 }
 
 // Deterministic stand-in for browser tests: says who it is, what it heard and which docs it can see.
@@ -219,6 +231,15 @@ export const fakeClient: ModelClient = {
     const wanted = asked[messages.slice(messages.findLastIndex((message) => message.role === 'user')).filter((message) => message.role === 'tool').length];
     if (wanted && tools?.some((tool) => tool.name === wanted[1])) {
       return { text: '', calls: [{ id: `call-${messages.length}`, name: wanted[1], args: wanted[2] }], usage: { input: 10, output: 5 } };
+    }
+    // Work handed over ends in a shape the asker can read, and nothing else goes back. A fake person can write one,
+    // so a browser test can watch a whole piece of work be given away without a key to a real model.
+    if (/Finish with one json object and nothing after it/.test(heard)) {
+      // What the tools said stays in their own room: a hand-over is what they did, not everything they read.
+      const since = messages.slice(messages.findLastIndex((message) => message.role === 'user'));
+      const changed = since.flatMap((message) => (message.role === 'assistant' && message.tool_calls ? message.tool_calls.map((call) => call.function.name) : []));
+      onToken(JSON.stringify({ done: true, summary: `${name} did what was asked.`, changed }));
+      return { text: '', calls: [], usage: { input: 10, output: 20 } };
     }
     // Drawing a picture and then making a film with it, in one turn — what a person has to be able to do when the
     // founder says "generate an image and use that in the video". The path comes back in the first tool's own

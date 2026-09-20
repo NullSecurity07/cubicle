@@ -82,16 +82,21 @@ describe('attention', () => {
     const late = await boards.add('b1', { title: 'Morning digest' });
     await boards.update('b1', late.id, (task) => { task.missed = true; task.nextRun = 99; });
 
+    // A task that could not even start waits for the founder too, with the reason it gave.
+    const stuck = await boards.add('b1', { title: 'Nightly tidy-up' });
+    await boards.update('b1', stuck.id, (task) => { task.run = { state: 'blocked', startedAt: 11, finishedAt: 11, log: ['did not start: the skill it names is switched off'], result: 'the skill it names is switched off' }; });
+
     const list = await attention.list();
-    expect(list.map((one) => one.kind).sort()).toEqual(['missed', 'proposed-task', 'run-failed']);
+    expect(list.map((one) => one.kind).sort()).toEqual(['missed', 'proposed-task', 'run-failed', 'run-failed']);
+    expect(list.find((one) => one.taskId === stuck.id)).toMatchObject({ kind: 'run-failed', title: 'Nightly tidy-up', detail: 'the skill it names is switched off' });
     expect(list.find((one) => one.kind === 'proposed-task')).toMatchObject({ who: 'Maya', cardId: 'b1', taskId: proposed.id, title: 'Draft the launch post' });
-    expect(list.find((one) => one.kind === 'run-failed')).toMatchObject({ who: 'Dev', detail: 'no provider answered' });
+    expect(list.find((one) => one.taskId === failing.id)).toMatchObject({ who: 'Dev', detail: 'no provider answered' });
 
     // The founder accepts the proposal on the board: it leaves the list by itself.
     await boards.change('b1', proposed.id, { column: 'todo' });
-    expect((await attention.list()).map((one) => one.kind).sort()).toEqual(['missed', 'run-failed']);
+    expect((await attention.list()).map((one) => one.kind).sort()).toEqual(['missed', 'run-failed', 'run-failed']);
     await new Promise((done) => setTimeout(done, 20));
-    expect(told.at(-1)).toBe(2);
+    expect(told.at(-1)).toBe(3);
     // A board that left the stage takes its entries with it.
     await store.saveStage({ ...(await store.loadStage()), cards: [] });
     expect(await attention.list()).toEqual([]);

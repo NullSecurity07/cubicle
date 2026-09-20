@@ -1,5 +1,6 @@
 import type { ChatMessage, ToolEvent } from '../../shared/model';
 import { fileUrl } from '../api';
+import { SLICES } from '../slices';
 import { Approval } from './Approval';
 import { Words } from './Rich';
 
@@ -12,6 +13,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   recall: ['Looking up', 'Looked up'], propose_decision: ['Proposing', 'Proposed'], read_decision: ['Reading', 'Read'],
   list_files: ['Looking at', 'Looked at'], read_file: ['Reading', 'Read'], write_file: ['Saving', 'Saved'],
   generate_image: ['Drawing', 'Drew'], generate_voice: ['Saying', 'Said'], generate_video: ['Filming', 'Filmed'],
+  delegate_task: ['Handing to', 'Handed to'],
 };
 const compact = (count: number) => (count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`);
 
@@ -35,6 +37,8 @@ function Chip({ tool }: { tool: ToolEvent }) {
     <details className={`chip chip--${state}`}>
       <summary><span className="chip__mark" aria-hidden="true" />{state === 'fail' ? `Could not: ${doing.toLowerCase()}` : state === 'run' ? doing : done} {subject}</summary>
       <pre>{JSON.stringify(tool.args, null, 2)}{tool.result ? `\n\n${tool.result}` : ''}</pre>
+      {/* What a slice offers to do about this one step, if any of them has anything to say about it. */}
+      {SLICES.map((slice) => (slice.receipt ? <slice.receipt key={slice.name} tool={tool} /> : null))}
     </details>
   );
 }

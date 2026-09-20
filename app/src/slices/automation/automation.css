@@ -1,0 +1,6 @@
+/* Automation sits inside the task view's own column, so it takes that column's labels, boxes and spacing as they are
+   and adds only what is new: a box for a script, which reads better in the same fixed-width face as a run's log, and
+   the one line that says what a schedule could not be read as, in the same red as everything else that went wrong. */
+.automation { display: contents; }
+.automation__code { min-height: 92px; font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; line-height: 1.5; resize: vertical; }
+.taskview__hint.automation__problem { color: #f0968e; }
