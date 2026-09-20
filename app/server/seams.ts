@@ -11,7 +11,9 @@ export type Payloads = {
   'turn:before': { roomId: string; source: Source; query: string; messages: ModelMessage[] };
   'step:before': { roomId: string; step: number; messages: ModelMessage[] };
   'step:error': { roomId: string; step: number; messages: ModelMessage[]; error: string; retry?: boolean };
-  'tool:before': { roomId: string; call: { id: string; name: string; args: Record<string, unknown> }; refusal?: string };
+  // `approved`: the founder already said yes to calls that reach exactly this far, so this one is not put to them
+  // again. It never overrules a refusal — a no, wherever it comes from, ends the step.
+  'tool:before': { roomId: string; call: { id: string; name: string; args: Record<string, unknown> }; refusal?: string; approved?: true };
   'tool:after': { roomId: string; event: ToolEvent };
   'turn:after': { roomId: string; source: Source; query: string; reply: TurnResult };
 };
