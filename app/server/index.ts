@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
-import { MEDIA_KINDS, isHeaded, newMessageId, studioBehind, type Attachment, type ChatEvent, type MediaKind, type Stage } from '../shared/model.ts';
+import { MEDIA_KINDS, isHeaded, newMessageId, newTurnId, studioBehind, type Attachment, type ChatEvent, type ChatVia, type MediaKind, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
 import { boardAttention, createAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
@@ -40,6 +40,7 @@ import { recent } from './memory.ts';
 import { buildMessages, colleagueIds, readableDocIds, wired, type Attached } from './prompt.ts';
 import { complete, fakeClient, promptSize, realClients } from './providers.ts';
 import { route } from './router.ts';
+import { createRoomFeed } from './rooms-feed.ts';
 import { createRuns, desktopNotify } from './runs.ts';
 import { createSeams } from './seams.ts';
 import { rangeOf, readStatic } from './static.ts';
@@ -70,7 +71,10 @@ const own = { ports: [port, Number(process.env.STAGE_PORT ?? 7420)], token: proc
 const clients = fake ? [fakeClient] : realClients();
 const busy = new Set<string>();
 const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
-const store = createStore(workspace);
+// Every open window hears what every other writer did, through the store: a message written anywhere at all reaches
+// the canvas, whether the founder typed it here, sent it from their phone or a colleague put it there.
+const roomFeed = createRoomFeed();
+const store = createStore(workspace, (roomId) => roomFeed.tell({ roomId, chat: 'changed' }));
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner) : createBrowser(realRunner(), { direct: [redditFeed(), stackExchange()], fallback: process.env.STAGE_NO_READER === '1' ? [] : [jinaReader, archiveCopy()] }, dnsResolve);
@@ -303,7 +307,7 @@ async function learnFrom(turn: Turn, res: ServerResponse) {
   return json(res, 200, { learned: learned ? { name: learned.name, action: learned.action } : null });
 }
 
-async function chat(roomId: string, text: string, res: ServerResponse, extra: { replace?: string; attachments?: Attachment[] } = {}) {
+async function chat(roomId: string, text: string, res: ServerResponse, extra: { replace?: string; attachments?: Attachment[]; via?: ChatVia } = {}) {
   const stage = await store.loadStage();
   if (!stage.rooms.some((room) => room.id === roomId)) return json(res, 404, { error: 'unknown room' });
   if (busy.has(roomId)) return json(res, 409, { error: 'this person is still replying' });
@@ -311,13 +315,18 @@ async function chat(roomId: string, text: string, res: ServerResponse, extra: { 
 
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
   const send = (event: ChatEvent) => !res.writableEnded && res.write(`data: ${JSON.stringify(event)}\n\n`);
+  // One name for this turn, said on both roads out of here: whoever asked hears it on their own stream, every other
+  // window hears it on the feed, and so nobody draws the same reply twice.
+  const turn = newTurnId();
+  send({ turn });
   // The founder pressing Stop closes the request; the turn ends there and what was said is kept.
   const stop = new AbortController();
   res.on('close', () => stop.abort());
   try {
     // Regenerate and edit: the old message and everything after it leave the conversation (to trash) before the new one goes in.
     if (extra.replace) await store.cutChat(roomId, extra.replace, true);
-    await store.appendChat(roomId, { id: newMessageId(), role: 'user', text, at: Date.now(), ...(extra.attachments?.length ? { attachments: extra.attachments } : {}) });
+    await store.appendChat(roomId, { id: newMessageId(), role: 'user', text, at: Date.now(), ...(extra.via ? { via: extra.via } : {}), ...(extra.attachments?.length ? { attachments: extra.attachments } : {}) });
+    roomFeed.tell({ roomId, turn, started: { ...(extra.via ? { via: extra.via } : {}) } });
     // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
     const mine = toolsFor(stage, roomId);
     const messages = await promptFor(stage, roomId, mine.map((tool) => tool.name));
@@ -333,7 +342,12 @@ async function chat(roomId: string, text: string, res: ServerResponse, extra: { 
         try { return await approvals.ask(event.id, signal); } finally { await attention.clear(`approval:${event.id}`); }
       },
       context: { stage, roomId, store, granted: new Map() },
-      events: { token: (token) => send({ token }), tool: (tool) => send({ tool }), notice: (text) => send({ notice: text }) },
+      // Both roads at once: the window that asked, and every window that is only watching.
+      events: {
+        token: (token) => { send({ token }); roomFeed.tell({ roomId, turn, token }); },
+        tool: (tool) => { send({ tool }); roomFeed.tell({ roomId, turn, tool }); },
+        notice: (text) => send({ notice: text }),
+      },
     });
     const message = {
       id: newMessageId(), role: 'assistant' as const, text: reply.text, at: Date.now(), provider: reply.provider, model: reply.model,
@@ -347,6 +361,7 @@ async function chat(roomId: string, text: string, res: ServerResponse, extra: { 
     send({ error: (error as Error).message });
   } finally {
     busy.delete(roomId);
+    roomFeed.tell({ roomId, turn, ended: true });
     res.end();
   }
 }
@@ -432,6 +447,16 @@ createServer(async (req, res) => {
       const chats: Record<string, Awaited<ReturnType<typeof store.readChat>>> = {};
       for (const one of stage.rooms) chats[one.id] = await store.readChat(one.id);
       return json(res, 200, threadsOf(stage, chats, busy, new URL(req.url ?? '/', 'http://localhost').searchParams.get('q') ?? ''));
+    }
+    // One feed for every conversation on the stage, the way the studios have one: a card only draws what happened in
+    // its own room, and a turn started anywhere reaches all of them.
+    if (path === '/api/rooms/events' && req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      // Nothing is sent on opening, and a browser is told a feed is open only once something comes down it. A comment
+      // costs one line and means a card knows it is listening before the founder's first word arrives, not after.
+      res.write(': listening\n\n');
+      res.on('close', roomFeed.watch((event) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); }));
+      return;
     }
     if (path === '/api/attention' && req.method === 'GET') return json(res, 200, await attention.list());
     if (path === '/api/attention/events' && req.method === 'GET') {
@@ -577,7 +602,9 @@ createServer(async (req, res) => {
         if (bytes) attachments.push({ path: file.path, type: typeOf(file.path), size: bytes.length });
       }
       if (!text && !attachments.length) return json(res, 400, { error: 'empty message' });
-      return await chat(room, text || 'See the attached file.', res, { replace: typeof sent.replace === 'string' ? sent.replace : undefined, attachments });
+      // Where the founder was standing. Only what this app knows how to say back is kept; anything else is nobody.
+      const via: ChatVia | undefined = sent.via === 'phone' || sent.via === 'call' ? sent.via : undefined;
+      return await chat(room, text || 'See the attached file.', res, { replace: typeof sent.replace === 'string' ? sent.replace : undefined, attachments, via });
     }
     // Last before the 404: the built-in paths above are the app's own, and a slice answers what is left of them.
     if (await extras.route(req, res, path)) return;
