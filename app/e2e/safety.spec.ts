@@ -29,17 +29,27 @@ async function shown(page: Page) {
 }
 
 const broke: string[] = [];
+// Every journey shares one workspace, so this one notes what the two conversations held before it said anything.
+const ROOMS = ['marketing', 'build'];
+const said = new Map<string, string[]>();
+const messageIds = async (page: Page, room: string) => ((await (await page.request.get(`/api/rooms/${room}/chat`)).json()) as { id: string }[]).map((one) => one.id);
+
 test.beforeEach(async ({ page }) => {
   broke.length = 0;
   page.on('pageerror', (error) => broke.push(error.message));
   await page.goto('/');
   await expect(node(page, 'marketing')).toBeVisible();
+  for (const room of ROOMS) said.set(room, await messageIds(page, room));
 });
 
-// Standing yeses outlive a journey on purpose, so this one puts them all back the way it found them.
+// A standing yes and a conversation both outlive a journey on purpose, so this one puts both back as it found them.
 test.afterEach(async ({ page }) => {
   for (const rule of (await (await page.request.get('/api/safety/rules')).json()) as { id: string }[]) {
     await page.request.delete(`/api/safety/rules/${rule.id}`);
+  }
+  for (const room of ROOMS) {
+    const had = said.get(room) ?? [];
+    for (const id of await messageIds(page, room)) if (!had.includes(id)) await page.request.delete(`/api/rooms/${room}/chat/${id}`);
   }
   expect(broke).toEqual([]);
 });
