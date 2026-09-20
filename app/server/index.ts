@@ -24,7 +24,7 @@ import { fakeLocalClips, localClips, MINUTES_EACH } from './media/local-clips.ts
 import { createClips, fakeClips } from './media/spaces.ts';
 import { probe } from './media/ff.ts';
 import { thumbOf } from './media/footage.ts';
-import { fakeImages, firstImages, imageMakers } from './media/image.ts';
+import { fakeImages, firstOf, imageMakers, spentFile } from './media/image.ts';
 import { lettered } from './media/lettering.ts';
 import { createMedia } from './media/jobs.ts';
 import { createMusic, fakeMusic } from './media/music.ts';
@@ -102,6 +102,9 @@ boards.onChange(() => { void attention.refresh(); });
 // person draws by hand. The video studio's own cache sits outside this, on the ask as it was written, and what it
 // holds is therefore the wordless picture — so a film rendered twice still costs one picture.
 const pictures = (fake ? [fakeImages] : imageMakers()).map(lettered);
+// The film's own way of drawing: every maker as one, tried in order. It is named because the card asks it one
+// thing before anything is made — whether the next picture is four seconds away or most of a minute.
+const filmPictures = firstOf(pictures, fake ? undefined : spentFile(resolve(root, 'app/.cache/pictures-spent.json')));
 const voices = fake ? [fakeVoices] : voiceMakers(resolve(root, 'app/.cache/voice'));
 // Direction is the one place in the app where the *best* free model matters more than the roomiest: a storyboard is
 // short, and what it needs is judgement. The configured order puts gpt-oss-120b first and the router moves anything
@@ -136,7 +139,7 @@ const media = createMedia({
     imagegen: pictures,
     voicegen: voices,
     videogen: fake ? [fakeVideos] : [hyperframesVideos({
-      dir: workspace, images: firstImages(...pictures), voices: voices[0], think: storyboard, clips, local, lipsync: online, music,
+      dir: workspace, images: filmPictures, voices: voices[0], think: storyboard, clips, local, lipsync: online, music,
       // Real photographs somebody took, when the founder has put a free Pexels key in .env. Without one the
       // studio draws every picture, which is what it did before and still does for anything nobody has photographed.
       stock: pexels(process.env, fetch, resolve(root, 'app/.cache/stock')),
@@ -560,7 +563,11 @@ createServer(async (req, res) => {
       const [, cardId, action, assetName] = studio;
       const card = (await store.loadStage()).cards?.find((one) => one.id === cardId && (MEDIA_KINDS as readonly string[]).includes(one.kind));
       if (!card) return json(res, 404, { error: 'unknown studio' });
-      if (!action && req.method === 'GET') return json(res, 200, { ...(await media.read(cardId)), hint: media.ready(card.kind as MediaKind) });
+      if (!action && req.method === 'GET') return json(res, 200, {
+        ...(await media.read(cardId)), hint: media.ready(card.kind as MediaKind),
+        // A video studio says its minutes before Make is pressed, and the minutes turn on where pictures are drawn.
+        ...(card.kind === 'videogen' ? { drawnHere: filmPictures.next?.() === 'this computer' } : {}),
+      });
       // The founder's own footage, dropped on a studio card. A video is far bigger than anything else this app takes,
       // so it is written to disk as it arrives rather than held in memory, and only then looked at.
       if (action === 'assets' && !assetName && req.method === 'POST') {

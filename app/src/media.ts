@@ -26,17 +26,19 @@ function share() {
 export function useMedia(id: string) {
   const [media, setMedia] = useState<Media>(EMPTY);
   const [hint, setHint] = useState<string | null>(null);
+  // For a video studio: whether the next picture would be drawn on this computer, which is what its minutes turn on.
+  const [drawnHere, setDrawnHere] = useState(false);
   const [asked, setAsked] = useState(false);
   const [problem, setProblem] = useState('');
   const flushStage = useFlushStage();
   // Reading the card again, for the things a card changes without a job: a file dropped on it, or one taken off.
-  const reload = useCallback(() => { if (id) void getMedia(id).then((got) => { setMedia(got); setHint(got.hint); }).catch(() => {}); }, [id]);
+  const reload = useCallback(() => { if (id) void getMedia(id).then((got) => { setMedia(got); setHint(got.hint); setDrawnHere(!!got.drawnHere); }).catch(() => {}); }, [id]);
 
   useEffect(() => {
     // No card to watch: a caller asking about a studio that is not there gets the empty one and asks nobody.
     if (!id) return;
     let gone = false;
-    const load = () => getMedia(id).then((got) => { if (!gone) { setMedia(got); setHint(got.hint); } }).catch(() => {});
+    const load = () => getMedia(id).then((got) => { if (!gone) { setMedia(got); setHint(got.hint); setDrawnHere(!!got.drawnHere); } }).catch(() => {});
     // The server must know this card before it will answer for it.
     const stops = [listen('effect', (effect) => {
       if (effect.id !== id) return;
@@ -58,7 +60,7 @@ export function useMedia(id: string) {
     if (!making) return;
     const timer = setInterval(() => {
       void getMedia(id).then((got) => {
-        setMedia(got); setHint(got.hint);
+        setMedia(got); setHint(got.hint); setDrawnHere(!!got.drawnHere);
         const settled = got.state !== 'making' && (Date.now() - askedAt.current > 3000 || (got.results[0]?.at ?? 0) >= askedAt.current);
         if (settled) setAsked(false);
       }).catch(() => {});
@@ -74,7 +76,7 @@ export function useMedia(id: string) {
     catch (error) { setProblem((error as Error).message); setAsked(false); }
   }, [id]);
 
-  return { media, hint, making, problem, make, reload };
+  return { media, hint, drawnHere, making, problem, make, reload };
 }
 
 // How long a card has been at it, as the founder reads it: proof of life beside the step it is on.

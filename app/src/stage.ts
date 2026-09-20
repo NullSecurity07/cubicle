@@ -13,7 +13,7 @@ export type ImageNodeType = Node<{ path: string }, 'image'>;
 export type LinkNodeType = Node<{ url: string; title?: string }, 'link'>;
 export type ImageGenNodeType = Node<{ prompt?: string; shape?: Shape }, 'imagegen'>;
 export type VoiceGenNodeType = Node<{ text?: string; voice?: string }, 'voicegen'>;
-export type VideoGenNodeType = Node<{ brief?: string; format?: Shape; look?: VideoLook; silent?: boolean; purpose?: string; length?: number; pace?: 'calm' | 'punchy'; music?: string; voice?: string; captions?: Switch; sfx?: Switch; ai?: Switch; address?: string; person?: Switch }, 'videogen'>;
+export type VideoGenNodeType = Node<{ brief?: string; format?: Shape; look?: VideoLook; silent?: boolean; purpose?: string; length?: number; pace?: 'calm' | 'punchy'; music?: string; voice?: string; captions?: Switch; sfx?: Switch; ai?: Switch; address?: string; person?: Switch; speed?: 'draft' }, 'videogen'>;
 export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | NoteNodeType | ImageNodeType | LinkNodeType | ImageGenNodeType | VoiceGenNodeType | VideoGenNodeType;
 export type StageNode = RoomNodeType | DocNodeType | CardNodeType;
 

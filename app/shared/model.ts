@@ -21,7 +21,9 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean }
   // The switches that can be on, off *or* whatever the purpose says are words rather than flags, for the same reason.
   | { kind: 'videogen'; brief?: string; format?: Shape; look?: VideoLook; silent?: boolean;
     purpose?: string; length?: number; pace?: 'calm' | 'punchy'; music?: string; voice?: string;
-    captions?: Switch; sfx?: Switch; ai?: Switch; address?: string; person?: Switch });
+    captions?: Switch; sfx?: Switch; ai?: Switch; address?: string; person?: Switch;
+    // Left unset it is the full film. 'draft' is the quick one to look at first: fewer, smaller pictures and nothing moving.
+    speed?: 'draft' });
 // The seven looks a film can wear. `clean` and `sketch` are the originals, `brand` takes the wired product's
 // colours, `creator`, `editorial` and `neon` are the three a motion designer reaches for, and `documentary` is the
 // long-form one: a serif on a letterboxed frame, held shots and a measured grade that is the format rather than a

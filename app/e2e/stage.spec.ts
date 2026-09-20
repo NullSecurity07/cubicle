@@ -687,6 +687,12 @@ test('a video studio: the founder sets the film going and watches it being made,
   await card.getByLabel('What the film is about').fill('a 15 second reel');
   await expect(card.locator('.studio__note').first()).toContainText('Making it takes about');
   await expect(card.locator('.studio__note').first()).toContainText('left on Auto');
+  // The one choice about time sits beside Make, and the minutes above it change the moment it does.
+  await expect(card.getByLabel('How fast')).toHaveValue('');
+  await card.getByLabel('How fast').selectOption('draft');
+  await expect(card.locator('.studio__note').first()).toContainText('A draft takes about');
+  await card.getByLabel('How fast').selectOption('');
+  await expect(card.locator('.studio__note').first()).toContainText('Making it takes about');
   // Everything the founder sets once is folded away; what the film is for and how long it runs are not.
   await card.getByLabel('What it is for').selectOption('reel');
   await card.getByLabel('How long').selectOption('30');

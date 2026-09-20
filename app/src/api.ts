@@ -53,7 +53,7 @@ export const watchBoard = (boardId: string, onEvent: (event: BoardEvent) => void
 };
 
 // A studio card: what it has made, and asking it for more. `hint` says why it cannot work yet, when it cannot.
-export const getMedia = (id: string) => request<Media & { hint: string | null }>(`/api/media/${id}`);
+export const getMedia = (id: string) => request<Media & { hint: string | null; drawnHere?: boolean }>(`/api/media/${id}`);
 // The server answers the moment the job starts; what it made arrives on the feed, however long it takes.
 export const makeMedia = (id: string, ask: { prompt: string } & Record<string, unknown>) => request<{ started: true }>(`/api/media/${id}/make`, send('POST', ask));
 export const stopMedia = (id: string) => request(`/api/media/${id}/stop`, send('POST'));

@@ -9,7 +9,7 @@ import { createMedia } from './jobs.ts';
 import { crowdsCaptions } from './spec.ts';
 import { composition, FORMATS, PACKS, SAFE_1080, safeArea, sceneSeconds, type Shot } from './templates/index.ts';
 import { meansAPicture, spendingScenes } from '../tools/media.ts';
-import { docsFor, fakeVideos, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
+import { docsFor, estimate, fakeVideos, hands, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
 import { budgetOf } from './spec.ts';
 
@@ -760,5 +760,42 @@ describe('a list is read a line at a time', () => {
     const at = [...page.matchAll(/one-at-a-time:nth-child\(\d\)"[^;]*?, ([\d.]+)\);/g)].map((one) => Number(one[1]));
     expect(at).toHaveLength(3);
     expect(at[2] - at[0]).toBeGreaterThan(1);
+  });
+});
+
+describe('pictures that start before the cut is measured', () => {
+  it('draws three at a time however they arrive, and hands a free place straight to whoever is waiting', async () => {
+    const inHand = hands(3);
+    let busy = 0;
+    let most = 0;
+    const finished: number[] = [];
+    const job = (name: number, ticks: number) => inHand(async () => {
+      busy += 1;
+      most = Math.max(most, busy);
+      for (let tick = 0; tick < ticks; tick += 1) await Promise.resolve();
+      busy -= 1;
+      finished.push(name);
+      return name;
+    });
+    // The first lot, as the guessed cut asks for them — and two more once the measured cut arrives.
+    const early = [job(0, 5), job(1, 1), job(2, 3), job(3, 1)];
+    await Promise.resolve();
+    const late = [job(4, 1), job(5, 1)];
+    expect(await Promise.all([...early, ...late])).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(most).toBe(3);
+    expect(finished).toHaveLength(6);
+  });
+
+  it('keeps going after one of them fails, because a picture that could not be drawn is a texture and not the end', async () => {
+    const inHand = hands(1);
+    await expect(inHand(async () => { throw new Error('no picture'); })).rejects.toThrow('no picture');
+    expect(await inHand(async () => 'the next one')).toBe('the next one');
+  });
+
+  it('says a draft is a draft in minutes: a few for the quick one, most of ten for the film drawn here', () => {
+    const film = { scenes: 5, seconds: 15, clips: 0, narrate: true, here: true };
+    const minutes = (said: string) => Number(/about (\d+) minute/.exec(said)?.[1]);
+    expect(minutes(estimate({ ...film, pictures: 3, draft: true }))).toBeLessThanOrEqual(3);
+    expect(minutes(estimate({ ...film, pictures: 7 }))).toBeGreaterThanOrEqual(6);
   });
 });

@@ -206,7 +206,7 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
         captions: spec?.captions ?? (typeof args.captions === 'boolean' ? args.captions : undefined),
         sfx: spec?.sfx ?? (typeof args.sfx === 'boolean' ? args.sfx : undefined), narrate: args.narrate !== false,
         // The switch on the card is the founder's, not the person's: a film only spends the quota when it is on.
-        ai: settings?.ai ?? 'auto', address: settings?.address, voice: settings?.voice,
+        ai: settings?.ai ?? 'auto', address: settings?.address, voice: settings?.voice, speed: settings?.speed,
         // Who asked, so the film can reach the things wired to them, and whatever pictures they are holding.
         roomId: context.roomId, ...(images.length ? { images: [...new Set(images)] } : {}),
       }, { signal: context.signal });

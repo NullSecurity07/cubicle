@@ -1,6 +1,7 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useRef, useState } from 'react';
 import { SHAPES, type MediaAsset, type Shape, type VideoLook } from '../../shared/model';
+import { afforded, makingWords, shotsIn } from '../../shared/film-time';
 import { useAddCard } from '../addCard';
 import { addAsset, fileUrl, getVoices, removeAsset, stopMedia } from '../api';
 import { useElapsed, useMedia } from '../media';
@@ -162,12 +163,13 @@ const MUSIC_WORDS: [string, string][] = [
 ];
 const LENGTH_WORDS = [15, 20, 30, 45, 60, 90];
 // How long a film of this length takes to make here, in the founder's words, said before they press Make rather than
-// found out afterwards: the pictures, the voice, and Chrome drawing every frame of it.
-const howLong = (seconds: number | undefined, clips: 'auto' | 'on' | 'off'): string => {
+// found out afterwards. The sum is the studio's own (`shared/film-time`), so the card and the first line of the log
+// agree: what decides it is how many pictures there are and whether this computer has to draw them.
+const howLong = (seconds: number | undefined, clips: 'auto' | 'on' | 'off', draft: boolean, here: boolean, narrate: boolean): string => {
   const length = seconds ?? 30;
-  const minutes = Math.max(1, Math.round((40 + length * 3) / 60));
-  const moving = clips === 'on' ? ' — plus about three minutes for each moving shot' : '';
-  return `about ${minutes} minute${minutes === 1 ? '' : 's'}${moving}`;
+  const pictures = afforded(shotsIn(length), here, 8, draft);
+  const moving = clips === 'on' && !draft ? ' — plus about three minutes for each moving shot' : '';
+  return `${makingWords({ seconds: length, pictures, clips: 0, narrate, here, draft })}${moving}`;
 };
 const MEDIA_FILE = 'video/*,image/*,audio/*';
 const seconds = (value?: number) => (value ? `${Math.round(value)}s` : '');
@@ -207,7 +209,7 @@ function AssetTray({ id, assets, onChange }: { id: string; assets: MediaAsset[];
 // so every step the renderer takes shows on the card as it happens.
 export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>) {
   const { updateNodeData, getNodes, getEdges } = useReactFlow();
-  const { media, hint, making, problem, make, reload } = useMedia(id);
+  const { media, hint, drawnHere, making, problem, make, reload } = useMedia(id);
   const elapsed = useElapsed(making);
   const voices = useVoices();
   const [shown, setShown] = useState(0);
@@ -224,7 +226,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
       prompt: brief.trim(), format: data.format ?? 'auto', look: data.look ?? 'auto', narrate: !data.silent,
       purpose: data.purpose ?? 'auto', length: data.length, pace: data.pace ?? 'auto', music: data.music ?? 'auto',
       captions: data.captions === 'on' ? true : data.captions === 'off' ? false : undefined,
-      sfx: data.sfx !== 'off', ai: data.ai ?? 'auto', address: data.address, voice: data.voice,
+      sfx: data.sfx !== 'off', ai: data.ai ?? 'auto', address: data.address, voice: data.voice, speed: data.speed ?? 'full',
     });
   };
 
@@ -289,7 +291,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
         {film && !making && <div className="studio__done"><a href={fileUrl(film.path)} download>Download</a></div>}
         {!!using.length && <p className="studio__using">Using: {using.join(', ')}</p>}
         {film?.music && !making && <p className="studio__note">Music: {film.music.title} by {film.music.by} · {film.music.licence}</p>}
-        {!making && !!brief.trim() && <p className="studio__note">Making it takes {howLong(data.length, data.ai ?? 'auto')}. Everything left on Auto, the director reads out of the brief.</p>}
+        {!making && !!brief.trim() && <p className="studio__note">{data.speed === 'draft' ? 'A draft takes' : 'Making it takes'} {howLong(data.length, data.ai ?? 'auto', data.speed === 'draft', drawnHere, !data.silent)}. Everything left on Auto, the director reads out of the brief.</p>}
         <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); shoot(); }}>
           <textarea
             aria-label="What the film is about" placeholder="A one-minute update for investors: what shipped this month, the numbers, what is next…" rows={2} value={brief}
@@ -304,6 +306,15 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
             <select aria-label="How long" value={String(data.length ?? '')} onChange={(event) => updateNodeData(id, { length: event.target.value ? Number(event.target.value) : undefined })}>
               <option value="">Auto</option>
               {LENGTH_WORDS.map((one) => <option key={one} value={one}>{one} seconds</option>)}
+            </select>
+            {/* The one choice about time, beside the button it decides the wait for. Full is the film; Draft is the
+                quick one to look at first, and asking for Full afterwards finishes that same film. */}
+            <select
+              className="studio__speed" aria-label="How fast" value={data.speed ?? ''}
+              title="Full is the film. Draft is the quick one to look at first: the same words and the same cut, on a few small pictures, with nothing moving drawn for it. Ask for Full afterwards and it is that film, finished."
+              onChange={(event) => updateNodeData(id, { speed: (event.target.value || undefined) as 'draft' | undefined })}
+            >
+              <option value="">Full</option><option value="draft">Draft</option>
             </select>
             {making
               ? <button type="button" onClick={() => void stopMedia(id)}>Stop</button>

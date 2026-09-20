@@ -403,6 +403,9 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .studio__clock { display: block; margin-top: 4px; font-size: 11px; font-variant-numeric: tabular-nums; opacity: 0.6; }
 .studio__end { display: flex; align-items: center; gap: 8px; }
 .studio__end select { flex: 0 1 auto; min-width: 0; text-overflow: ellipsis; border: 1px solid var(--card-border); border-radius: 8px; padding: 5px 8px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 12px; }
+/* The speed picker holds two short words and must always show the one chosen, so it never gives way; the two
+   long pickers beside it are the ones that shorten. */
+.studio__end select.studio__speed { flex: none; }
 .studio__end option { background: #16181d; }
 .studio__end button { flex: none; margin-left: auto; border: 0; border-radius: 8px; padding: 6px 16px; font: inherit; font-size: 12.5px; font-weight: 550; color: var(--text); background: rgba(255, 255, 255, 0.1); cursor: pointer; }
 .studio__end button:hover { background: rgba(255, 255, 255, 0.16); }

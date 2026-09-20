@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { join } from 'node:path';
 import type { Maker, Piece } from './jobs.ts';
 import { localImages } from './local-image.ts';
@@ -222,17 +224,22 @@ export const imageMakers = (env: NodeJS.ProcessEnv = process.env, http: typeof f
 // exactly what was asked for, so a founder who renders the same film again — after a line of narration changed, or
 // after the app restarted — pays nothing for the pictures they already have. A cache that cannot be written to is
 // not an error: the film is made either way.
-export const askedFor = (name: string, prompt: string, shape: unknown): string =>
-  createHash('sha256').update(`${name}|${String(shape ?? '')}|${prompt}`).digest('hex').slice(0, 32);
+// A draft is drawn smaller, so it is filed apart from the full-size picture of the same words. The size joins the
+// name only when one was asked for, which leaves every picture already in the cache exactly where it was.
+export const askedFor = (name: string, prompt: string, shape: unknown, size?: unknown): string =>
+  createHash('sha256').update(`${name}|${String(shape ?? '')}|${prompt}${typeof size === 'string' && size ? `|${size}` : ''}`).digest('hex').slice(0, 32);
+// Who drew a picture that nobody had to draw: said in `by`, so a film can count what its second run cost it.
+export const DRAWN_BEFORE = 'drawn before';
 
 export function cachedImages(maker: Maker, dir: string): Maker {
   return {
     name: maker.name,
     ready: maker.ready,
+    next: maker.next ? () => maker.next!() : undefined,
     async make(ask, help): Promise<Piece> {
-      const file = join(dir, `${askedFor(maker.name, String(ask.prompt ?? ''), ask.shape)}.img`);
+      const file = join(dir, `${askedFor(maker.name, String(ask.prompt ?? ''), ask.shape, ask.size)}.img`);
       const held = await readFile(file).catch(() => null);
-      if (held?.length) { help.report('drawn before, so it costs nothing'); return { ext: held[0] === 0x89 ? 'png' : 'jpg', bytes: held }; }
+      if (held?.length) { help.report('drawn before, so it costs nothing'); return { ext: held[0] === 0x89 ? 'png' : 'jpg', bytes: held, by: DRAWN_BEFORE }; }
       const piece = await maker.make(ask, help);
       await mkdir(dir, { recursive: true }).then(() => writeFile(file, piece.bytes)).catch(() => { /* a cache is a kindness, not a requirement */ });
       return piece;
@@ -263,11 +270,23 @@ export const fakeImages: Maker = {
 // thirty scenes; being told the same thing thirty times, a minute apart, is the difference between a film that
 // finishes and one that does not. So a backend that says it is spent is skipped for the rest of the day without
 // being asked again, and the founder hears about it once, in a line that says what happens next.
-export function firstImages(...makers: Maker[]): Maker {
+export const firstImages = (...makers: Maker[]): Maker => firstOf(makers);
+
+// Where "spent today" is kept between one run of the app and the next. A service finds out it is empty by being
+// asked, and the app is restarted many times a day — so without this the first film after every restart told the
+// founder "about two minutes" and then spent eight drawing on this computer. It is read once and written on the
+// rare occasion something runs dry; a file that cannot be read or written changes nothing.
+export type SpentKept = { read(): Record<string, { day: number; why: string }>; write(all: Record<string, { day: number; why: string }>): void };
+export const spentFile = (file: string): SpentKept => ({
+  read() { try { return JSON.parse(readFileSync(file, 'utf8')) as Record<string, { day: number; why: string }>; } catch { return {}; } },
+  write(all) { try { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(all)); } catch { /* remembered for this run only */ } },
+});
+
+export function firstOf(makers: Maker[], kept?: SpentKept): Maker {
   // Which backends have gone quiet, and on which day they did, so tomorrow starts clean without anyone restarting
   // anything. The day is the plain calendar-ish one a free quota resets on; near enough for "come back tomorrow".
-  const spent = new Map<string, { day: number; why: string }>();
   const today = () => Math.floor(Date.now() / 86_400_000);
+  const spent = new Map<string, { day: number; why: string }>(Object.entries(kept?.read() ?? {}).filter(([, one]) => one?.day === today()));
   const hint = () => makers.map((one) => one.ready()).find(Boolean) ?? SETUP_HINT;
   let toldAllOut = -1;
   const allOut = (help: { report: (line: string) => void }) => {
@@ -280,6 +299,9 @@ export function firstImages(...makers: Maker[]): Maker {
     name: makers.map((one) => one.name).join(' then ') || 'nothing',
     // Ready while any one of them is ready; otherwise the first hint, which is the one the founder can act on.
     ready: () => (makers.some((one) => !one.ready()) ? null : hint()),
+    // Which of them the next picture would be asked of: the first that is set up and has not said it is spent
+    // today. It is what is known rather than what is certain — a service finds out it is empty by being asked.
+    next: () => makers.find((one) => !one.ready() && spent.get(one.name)?.day !== today())?.name ?? null,
     async make(ask, help) {
       const day = today();
       const set = makers.filter((one) => !one.ready());
@@ -302,6 +324,7 @@ export function firstImages(...makers: Maker[]): Maker {
           if (help.signal?.aborted) throw error;
           if (outOfPictures(why)) {
             spent.set(one.name, { day, why });
+            kept?.write(Object.fromEntries(spent));
             const next = set.find((other) => spent.get(other.name)?.day !== day);
             if (!next) { allOut(help); throw new Error(why); }
             help.report(`today's free pictures from ${one.name} are used up, so the rest are drawn on ${next.name} — they come back tomorrow`);
