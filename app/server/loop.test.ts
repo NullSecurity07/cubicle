@@ -4,10 +4,13 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { seedStage, type ToolEvent } from '../shared/model.ts';
 import { runTurn } from './loop.ts';
+import type { ModelMessage } from './prompt.ts';
 import type { ModelClient, ModelTurn } from './providers.ts';
+import { createSeams, type Payloads, type Seams } from './seams.ts';
 import { createStore } from './store.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
+import type { Tool } from './tools/registry.ts';
 import { createUsage } from './usage.ts';
 
 // A model that plays back a script: each step is either words or tool calls.
@@ -146,5 +149,108 @@ describe('runTurn', () => {
     const result = await run(client, 'marketing', stop.signal);
     expect(result.stopped).toBe(true);
     expect(result.tools).toHaveLength(0);
+  });
+});
+
+// A tool that says what it was called with, so a rewrite on the way in or out can be seen.
+const echo = (approval?: Tool['approval']): Tool & { ran: Record<string, unknown>[] } => {
+  const ran: Record<string, unknown>[] = [];
+  return {
+    name: 'echo', description: 'says its arguments back', parameters: { type: 'object', properties: { say: { type: 'string' } } }, ran,
+    ...(approval === undefined ? {} : { approval }),
+    async run(args) { ran.push(args); return { text: `echo: ${JSON.stringify(args)}` }; },
+  };
+};
+
+// Everything the model was given, turn by turn, beside the turn it produced.
+const listening = (client: ModelClient & { seen: number[] }) => {
+  const heard: ModelMessage[][] = [];
+  const original = client.step;
+  client.step = async (messages, options) => { heard.push(structuredClone(messages)); return original(messages, options); };
+  return heard;
+};
+
+describe('runTurn with seams', () => {
+  async function go(client: ModelClient, seams: Seams, extra: { tools?: Tool[]; source?: 'chat' | 'run'; query?: string; approve?: Parameters<typeof runTurn>[0]['approve'] } = {}) {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const events: ToolEvent[] = [];
+    const reply = await runTurn({
+      messages: [{ role: 'user', content: 'go' }], tools: extra.tools ?? [], clients: [client], usage: createUsage(null),
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: () => {}, tool: (event) => events.push(event) },
+      seams, source: extra.source, query: extra.query, approve: extra.approve,
+    });
+    return { reply, events };
+  }
+
+  it('lets the prompt be rewritten before the first step, and opens every step after that', async () => {
+    const seams = createSeams();
+    seams.on('turn:before', async (payload, next) => next({ ...payload, messages: [...payload.messages, { role: 'user', content: `${payload.source} asked: ${payload.query}` }] }));
+    const steps: number[] = [];
+    seams.on('step:before', async (payload, next) => { steps.push(payload.step); return next(payload); });
+    const client = scripted([[{ name: 'echo', args: { say: 'hi' } }], 'done']);
+    const heard = listening(client);
+    await go(client, seams, { tools: [echo()], source: 'run', query: 'write the launch note' });
+    expect(heard[0].at(-1)!.content).toBe('run asked: write the launch note');
+    expect(steps).toEqual([1, 2]);
+  });
+
+  it('refuses a call at the seam without asking the founder, and without running the tool', async () => {
+    const seams = createSeams();
+    seams.on('tool:before', async (payload, next) => next({ ...payload, refusal: 'Not that one.' }));
+    const tool = echo(true);
+    const asked: string[] = [];
+    const { reply, events } = await go(scripted([[{ name: 'echo', args: { say: 'hi' } }], 'fine']), seams, {
+      tools: [tool], approve: async (event) => { asked.push(event.name); return { ok: true }; },
+    });
+    expect(asked).toEqual([]);
+    expect(tool.ran).toEqual([]);
+    expect(reply.tools[0]).toMatchObject({ ok: false, result: 'Not that one.' });
+    expect(events.some((event) => event.waiting)).toBe(false);
+  });
+
+  it('lets the arguments be rewritten before the tool sees them', async () => {
+    const seams = createSeams();
+    seams.on('tool:before', async (payload, next) => next({ ...payload, call: { ...payload.call, args: { say: 'rewritten' } } }));
+    const tool = echo();
+    const { reply } = await go(scripted([[{ name: 'echo', args: { say: 'hi' } }], 'fine']), seams, { tools: [tool] });
+    expect(tool.ran).toEqual([{ say: 'rewritten' }]);
+    expect(reply.tools[0].args).toEqual({ say: 'rewritten' });
+  });
+
+  it('lets the result be rewritten before the model and the founder see it', async () => {
+    const seams = createSeams();
+    seams.on('tool:after', async (payload, next) => next({ ...payload, event: { ...payload.event, result: 'trimmed to this' } }));
+    const client = scripted([[{ name: 'echo', args: { say: 'hi' } }], 'fine']);
+    const heard = listening(client);
+    const { reply, events } = await go(client, seams, { tools: [echo()] });
+    expect(reply.tools[0].result).toBe('trimmed to this');
+    expect(events.at(-1)!.result).toBe('trimmed to this');
+    expect(heard[1].at(-1)).toMatchObject({ role: 'tool', content: 'trimmed to this' });
+  });
+
+  it('tells what watches a finished turn afterwards, and waits for none of it', async () => {
+    const seams = createSeams();
+    let told: Payloads['turn:after'] | undefined;
+    let settle = () => {};
+    const done = new Promise<void>((resolve) => { settle = resolve; });
+    seams.on('turn:after', async (payload, next) => { told = payload; settle(); return next(payload); });
+    seams.on('turn:after', async () => new Promise(() => {}));
+    const { reply } = await go(scripted(['all done']), seams, { source: 'run', query: 'the task' });
+    expect(reply.text).toBe('all done');
+    await done;
+    expect(told).toMatchObject({ roomId: 'build', source: 'run', query: 'the task', reply: { text: 'all done' } });
+  });
+
+  it('takes an approval that fails as a no, and finishes the turn', async () => {
+    const seams = createSeams();
+    const tool = echo(true);
+    const { reply } = await go(scripted([[{ name: 'echo', args: { say: 'hi' } }], 'I could not.']), seams, {
+      tools: [tool], approve: async () => { throw new Error('the founder\'s window went away'); },
+    });
+    expect(tool.ran).toEqual([]);
+    expect(reply.tools[0]).toMatchObject({ ok: false });
+    expect(reply.tools[0].result).toMatch(/said no to this/);
+    expect(reply.text).toBe('I could not.');
   });
 });

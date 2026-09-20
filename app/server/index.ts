@@ -6,9 +6,12 @@ import { MEDIA_KINDS, isHeaded, newMessageId, studioBehind, type Attachment, typ
 import { createApprovals } from './approvals.ts';
 import { boardAttention, createAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
+import { createCurator } from './curator.ts';
 import { createDecisions, decisionAttention } from './decisions.ts';
+import { createFounder } from './founder.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
 import { guard } from './guard.ts';
+import { createGuards } from './guards.ts';
 import { createBrowser, dnsResolve, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
@@ -25,6 +28,9 @@ import { fakeVideos, hyperframesVideos } from './media/video.ts';
 import { fakeVoices, voiceMakers, VOICES } from './media/voice.ts';
 import { createMemory } from './memory.ts';
 import { missionsOf } from './missions.ts';
+import { createPlaybook } from './playbook.ts';
+import { createLearner, type Turn } from './reflect.ts';
+import { createSkills } from './skills.ts';
 import { TEXT_FILE, gatherPieces } from './gather.ts';
 import { createRecall, localEmbedder, wordEmbedder } from './recall.ts';
 import { recallTools } from './tools/recall.ts';
@@ -33,16 +39,20 @@ import { buildMessages, colleagueIds, readableDocIds, wired, type Attached } fro
 import { complete, fakeClient, promptSize, realClients } from './providers.ts';
 import { route } from './router.ts';
 import { createRuns, desktopNotify } from './runs.ts';
+import { createSeams } from './seams.ts';
 import { rangeOf, readStatic } from './static.ts';
 import { createStore } from './store.ts';
 import { threadsOf } from './threads.ts';
+import { createTrace } from './trace.ts';
 import { decisionTools } from './tools/decisions.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
 import { mediaTools } from './tools/media.ts';
 import { outwardTools } from './tools/outward.ts';
 import { projectTools } from './tools/project.ts';
+import { founderTools } from './tools/founder.ts';
 import { memoryTools } from './tools/remember.ts';
+import { skillTools } from './tools/skills.ts';
 import { taskTools } from './tools/tasks.ts';
 import { teamTools, type Consult } from './tools/team.ts';
 import { browserSession, webTools } from './tools/web.ts';
@@ -126,8 +136,11 @@ const media = createMedia({
 const decisions = createDecisions(workspace);
 attention.source(decisionAttention(decisions));
 decisions.onChange(() => { void attention.refresh(); });
+// The one playbook everybody shares, and the one page everybody has read about the founder.
+const skills = createSkills(workspace);
+const founder = createFounder(workspace);
 // Search by meaning over everything the workspace holds. The model runs inside this process; its file is fetched once.
-const recall = createRecall({ dir: workspace, embed: fake ? wordEmbedder : localEmbedder(resolve(root, 'app/.cache/recall')), gather: gatherPieces(store, decisions, (roomId) => memory.read(roomId)) });
+const recall = createRecall({ dir: workspace, embed: fake ? wordEmbedder : localEmbedder(resolve(root, 'app/.cache/recall')), gather: gatherPieces(store, decisions, (roomId) => memory.read(roomId), skills) });
 // Bring the saved vectors up to date shortly after start, so the first search does not wait for it.
 setTimeout(() => { void recall.warm().catch(() => {}); }, 4000).unref();
 // A review date falls due without anything else changing: look once an hour.
@@ -151,7 +164,7 @@ async function promptFor(stage: Stage, roomId: string, toolNames: string[], fres
   }
   // What the founder has decided lately: everyone works from it, wired or not.
   const decided = (await decisions.list()).filter((one) => one.status === 'decided').slice(0, 12).map((one) => `- ${one.title}: ${(one.chosen ?? '').replace(/\s+/g, ' ').slice(0, 160)}`);
-  const messages = buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(roomId), pages, decided);
+  const messages = buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(roomId), pages, decided, await founder.read());
   // Image cards wired to this person ride along with the latest question, for a model that can see. An image studio
   // sends the last picture it made the same way, so a person can look at their own work.
   const pictures: { name: string; url: string }[] = [];
@@ -184,9 +197,37 @@ const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
   await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
   return reply.text;
 };
-const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media, () => !local.ready())];
-const runs = createRuns({ boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify: fake ? () => {} : desktopNotify });
-setInterval(() => { void runs.tick().catch(() => {}); }, 30_000).unref();
+// Where everything that watches or shapes a turn plugs in: the trace, which writes down what a turn cost once it is
+// over, the guard that will not let a person run the same call twice, the playbook block on the way in and the
+// learner on the way out. A handler that breaks is written down here and skipped; nothing in it can cost a turn.
+const seams = createSeams((name, error) => console.error(`seam ${name}: ${error.message}`));
+const trace = createTrace(workspace);
+seams.on('turn:after', trace.handler);
+const guards = createGuards();
+seams.on('turn:before', guards.reset);
+seams.on('tool:before', guards.before);
+seams.on('tool:after', guards.after);
+seams.on('turn:before', createPlaybook({ skills, recall }).before);
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media, () => !local.ready()), ...skillTools(skills), ...founderTools(founder)];
+const runs = createRuns({ boards, store, tools, clients, usage, approvals, attention, promptFor, busy, seams, notify: fake ? () => {} : desktopNotify });
+// A birth or a patch says so once, where the founder was already looking: in the run's log, or on the playbook's feed.
+const learner = createLearner({
+  skills, recall, store, clients, usage,
+  roomName: async (roomId) => (await store.loadStage()).rooms.find((one) => one.id === roomId)?.name ?? 'Someone',
+  // Everything here that the founder gave a name to. A lesson that uses one of them is about this company only, so
+  // the learner is told to write it again without.
+  names: async () => {
+    const stage = await store.loadStage();
+    return [...stage.rooms.map((one) => one.name), ...stage.docs.map((one) => one.title), ...(stage.cards ?? []).flatMap((card) => (card.kind === 'link' && card.title ? [card.title] : []))];
+  },
+  onLearned: (learned) => {
+    skills.tell({ learned: { roomId: learned.roomId, name: learned.name, action: learned.action } });
+    if (learned.source === 'run') void runs.note(learned.roomId, `${learned.action === 'create' ? 'learned' : 'improved'}: "${learned.name}"`).catch(() => {});
+  },
+});
+seams.on('turn:after', learner.after);
+const curator = createCurator(skills);
+setInterval(() => { void runs.tick().catch(() => {}); void curator.tick().catch(() => {}); }, 30_000).unref();
 
 // Started by the desktop shell: leave when the shell does, even if it was killed.
 if (process.env.STAGE_EXIT_WITH_PARENT === '1') {
@@ -236,6 +277,12 @@ async function attachedTo(roomId: string): Promise<Attached> {
   return attached;
 }
 
+// "Learn this": the founder asking for the reflection a turn can also set off by itself, on work already finished.
+async function learnFrom(turn: Turn, res: ServerResponse) {
+  const learned = await learner.learn(turn, 'taught');
+  return json(res, 200, { learned: learned ? { name: learned.name, action: learned.action } : null });
+}
+
 async function chat(roomId: string, text: string, res: ServerResponse, extra: { replace?: string; attachments?: Attachment[] } = {}) {
   const stage = await store.loadStage();
   if (!stage.rooms.some((room) => room.id === roomId)) return json(res, 404, { error: 'unknown room' });
@@ -258,7 +305,7 @@ async function chat(roomId: string, text: string, res: ServerResponse, extra: { 
     if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
     if (notice) send({ notice });
     const reply = await runTurn({
-      messages, tools, clients: order, usage, signal: stop.signal,
+      messages, tools, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
       approve: async (event, signal) => {
         await attention.raise({ id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event });
         try { return await approvals.ask(event.id, signal); } finally { await attention.clear(`approval:${event.id}`); }
@@ -319,11 +366,45 @@ createServer(async (req, res) => {
       const hits = await recall.search(new URL(req.url ?? '/', 'http://localhost').searchParams.get('q') ?? '', { top: 12 });
       return json(res, 200, { hits, mode: recall.mode() });
     }
+    // What the people have spent and done lately. No screen reads it yet; the file behind it is the founder's to keep.
+    if (path === '/api/trace' && req.method === 'GET') return json(res, 200, await trace.summary(Number(new URL(req.url ?? '/', 'http://localhost').searchParams.get('days')) || 7));
     if (path === '/api/decisions' && req.method === 'GET') return json(res, 200, await decisions.list());
     if (path === '/api/decisions' && req.method === 'POST') return json(res, 200, await decisions.record(await body(req)));
     const ruled = /^\/api\/decisions\/([a-z0-9-]{1,100})(?:\/(decide))?$/.exec(path);
     if (ruled && ruled[2] === 'decide' && req.method === 'POST') return json(res, 200, await decisions.decide(ruled[1], await body(req)));
     if (ruled && !ruled[2] && req.method === 'DELETE') { await decisions.remove(ruled[1]); return json(res, 200, { ok: true }); }
+    // The playbook. Everything in it was written without asking, so everything in it can be edited, switched off,
+    // put back or thrown away by the founder, and the panel hears about every change on one feed.
+    if (path === '/api/skills' && req.method === 'GET') return json(res, 200, await skills.list());
+    if (path === '/api/skills/events' && req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      const tell = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+      tell({ skills: await skills.list() });
+      res.on('close', skills.watch(tell));
+      return;
+    }
+    const taught = /^\/api\/skills\/([a-z0-9-]{1,80})$/.exec(path)?.[1];
+    if (taught && req.method === 'PATCH') {
+      const asked = await body(req);
+      let skill = await skills.get(taught);
+      if (!skill) return json(res, 404, { error: 'unknown skill' });
+      if (asked.undo === true) skill = await skills.undo(taught);
+      else if (['name', 'when', 'procedure', 'pitfalls', 'verify'].some((field) => asked[field] !== undefined)) skill = await skills.edit(taught, asked);
+      if (typeof asked.state === 'string') skill = await skills.setState(taught, asked.state);
+      return json(res, 200, skill);
+    }
+    if (taught && req.method === 'DELETE') { await skills.remove(taught); return json(res, 200, { ok: true }); }
+    if (path === '/api/founder' && req.method === 'GET') return json(res, 200, { text: await founder.read() });
+    if (path === '/api/founder' && req.method === 'PUT') { await founder.write(String((await body(req)).text ?? '')); return json(res, 200, { ok: true }); }
+    const learns = /^\/api\/rooms\/([^/]+)\/learn$/.exec(path)?.[1];
+    if (learns && req.method === 'POST') {
+      const talk = await store.readChat(learns);
+      const at = talk.findLastIndex((one) => one.role === 'assistant');
+      const asked = at > 0 ? talk.slice(0, at).findLast((one) => one.role === 'user') : undefined;
+      if (at < 0 || !asked) return json(res, 400, { error: 'there is nothing finished here to learn from yet' });
+      const said = talk[at];
+      return await learnFrom({ roomId: learns, source: 'chat', query: asked.text, reply: { text: said.text, tools: said.tools ?? [], provider: said.provider ?? '', model: said.model ?? '', usage: said.usage ?? { input: 0, output: 0 }, stopped: false } }, res);
+    }
     if (path === '/api/threads' && req.method === 'GET') {
       const stage = await store.loadStage();
       const chats: Record<string, Awaited<ReturnType<typeof store.readChat>>> = {};
@@ -340,7 +421,7 @@ createServer(async (req, res) => {
     }
     const dismissed = /^\/api\/attention\/([\w.:-]{1,160})\/dismiss$/.exec(path)?.[1];
     if (dismissed && req.method === 'POST') { await attention.dismiss(dismissed); return json(res, 200, { ok: true }); }
-    const board = /^\/api\/boards\/([^/]+)(?:\/(events|tasks)(?:\/([^/]+)(?:\/(run|stop))?)?)?$/.exec(path);
+    const board = /^\/api\/boards\/([^/]+)(?:\/(events|tasks)(?:\/([^/]+)(?:\/(run|stop|learn))?)?)?$/.exec(path);
     if (board) {
       const [, boardId, part, taskId, action] = board;
       if (!(await store.loadStage()).cards?.some((card) => card.id === boardId && card.kind === 'board')) return json(res, 404, { error: 'unknown board' });
@@ -357,6 +438,16 @@ createServer(async (req, res) => {
       if (taskId && !action && req.method === 'DELETE') { runs.stop(taskId); await boards.remove(boardId, taskId); return json(res, 200, { ok: true }); }
       if (taskId && action === 'run' && req.method === 'POST') { await runs.start(boardId, taskId); return json(res, 200, { ok: true }); }
       if (taskId && action === 'stop' && req.method === 'POST') { runs.stop(taskId); return json(res, 200, { ok: true }); }
+      if (taskId && action === 'learn' && req.method === 'POST') {
+        const task = (await boards.list(boardId)).find((one) => one.id === taskId);
+        if (!task?.run || task.run.state !== 'done' || !task.assignee) return json(res, 400, { error: 'only a task that a person finished can be learned from' });
+        // The names of what it reached for, out of the log. Not a word of what any of them came back with.
+        const did = task.run.log.flatMap((one) => { const call = /^([✓✗]) (\w+)/.exec(one); return call ? [{ id: call[2], name: call[2], args: {}, ok: call[1] === '✓' }] : []; });
+        return await learnFrom({
+          roomId: task.assignee, source: 'run', ref: taskId, query: `${task.title}${task.detail ? `\n\n${task.detail}` : ''}`,
+          reply: { text: task.run.result ?? '', tools: did, provider: task.run.provider ?? '', model: task.run.model ?? '', usage: task.run.usage ?? { input: 0, output: 0 }, stopped: false },
+        }, res);
+      }
     }
     // Every studio card on the stage streams through one feed, the way the attention list does.
     if (path === '/api/media/events' && req.method === 'GET') {

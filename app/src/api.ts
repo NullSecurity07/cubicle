@@ -1,4 +1,4 @@
-import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaAsset, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, Stage, Task, Thread } from '../shared/model';
+import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaAsset, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, Skill, SkillEvent, Stage, Task, Thread } from '../shared/model';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -98,3 +98,18 @@ export const removeDecision = (id: string) => request(`/api/decisions/${id}`, se
 export const search = (query: string, signal?: AbortSignal) => request<{ hits: Hit[]; mode: 'meaning' | 'words' }>(`/api/search?q=${encodeURIComponent(query)}`, { signal });
 export const getMissions = () => request<{ dismissed: boolean; missions: Mission[] }>('/api/missions');
 export const dismissMissions = () => request('/api/missions/dismiss', { method: 'POST' });
+
+// The one playbook everybody shares, and the page everybody has read about the founder.
+export type SkillPatch = Partial<Pick<Skill, 'name' | 'when' | 'procedure' | 'pitfalls' | 'verify' | 'state'>> & { undo?: true };
+export const changeSkill = (id: string, patch: SkillPatch) => request<Skill>(`/api/skills/${id}`, send('PATCH', patch));
+export const removeSkill = (id: string) => request(`/api/skills/${id}`, send('DELETE'));
+export const getFounder = () => request<{ text: string }>('/api/founder').then((profile) => profile.text);
+export const putFounder = (text: string) => request('/api/founder', put({ text }));
+// The playbook whole after every change, and the one line a birth or an improvement leaves in the room it happened in.
+export function watchSkills(onEvent: (event: SkillEvent) => void) {
+  const source = new EventSource('/api/skills/events');
+  source.onmessage = (message) => onEvent(JSON.parse(message.data) as SkillEvent);
+  return () => source.close();
+}
+// "Learn this" on a task the founder can see is finished. Nothing worth keeping answers with `learned: null`.
+export const learnFromTask = (boardId: string, taskId: string) => request<{ learned: { name: string; action: 'create' | 'patch' } | null }>(`/api/boards/${boardId}/tasks/${taskId}/learn`, send('POST'));

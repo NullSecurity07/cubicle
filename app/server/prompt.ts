@@ -55,7 +55,7 @@ function past(message: ChatMessage, attached: Attached): ModelMessage[] {
   ];
 }
 
-export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}, memory?: Memory, attached: Attached = { texts: {}, images: {} }, pages: Record<string, { title: string; text: string }> = {}, decided: string[] = []): ModelMessage[] {
+export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}, memory?: Memory, attached: Attached = { texts: {}, images: {} }, pages: Record<string, { title: string; text: string }> = {}, decided: string[] = [], founder = ''): ModelMessage[] {
   const room = stage.rooms.find((candidate) => candidate.id === roomId);
   if (!room) throw new Error(`unknown room: ${roomId}`);
 
@@ -86,6 +86,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     : '- A browser card the founder watches live. Use browse for anything that needs clicking, typing or being signed in.'));
   const system = [
     `You are ${room.name}, ${room.role}. ${room.brief}`,
+    founder.trim() ? `About the founder. They can read and edit this.\n${founder.trim()}` : '',
     STANCE,
     'Reply in short markdown: brief paragraphs, lists where they help, a table only for real comparisons.',
     toolNames.length

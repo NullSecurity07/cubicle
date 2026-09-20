@@ -6,10 +6,11 @@ import { NeedsPanel } from './NeedsPanel';
 import { CommandBar, KeysSheet } from './CommandBar';
 import { DecisionsPanel } from './DecisionsPanel';
 import { MessagesPanel } from './MessagesPanel';
+import { PlaybookPanel } from '../nodes/PlaybookPanel';
 import { overlay, setHostElement, useLayers } from './store';
 
 // The founder's views, by layer name.
-const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel, command: CommandBar, keys: KeysSheet };
+const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel, playbook: PlaybookPanel, command: CommandBar, keys: KeysSheet };
 // Single keys that open a view, when nothing is open and nobody is typing.
 const OPENERS: Record<string, string> = { n: 'needs', m: 'messages', d: 'decisions', '/': 'command', '?': 'keys' };
 const focusHost = setHostElement('focus');

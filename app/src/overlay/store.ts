@@ -34,6 +34,11 @@ export const showThread = (id: string | null) => { thread = id; set(stack); };
 let decision: string | null = null;
 export const showDecision = (id: string | null) => { decision = id; set(stack); };
 export const useDecision = () => useSyncExternalStore(subscribe, () => decision);
+// There is one playbook, so this says only where to look in it: the skill to open, and whose work to mark. Set when
+// the panel is opened from a person's card or from the line a birth left in their chat; empty from the command bar.
+let playbook: { skill?: string; roomId?: string } = {};
+export const showPlaybook = (at: { skill?: string; roomId?: string }) => { playbook = at; set(stack); };
+export const usePlaybookAt = () => useSyncExternalStore(subscribe, () => playbook);
 export const useThread = () => useSyncExternalStore(subscribe, () => thread);
 export const setHostElement = (host: Host) => (element: HTMLElement | null) => { if (elements[host] === element) return; elements[host] = element; set(stack); };
 

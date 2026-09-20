@@ -594,6 +594,74 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .needs__end .needs__show { margin-right: auto; background: transparent; color: var(--muted); padding-left: 0; }
 .needs__end .needs__show:hover { background: transparent; color: var(--text); }
 .needs__end .primary { background: var(--accent); color: #fff; }
+/* The playbook: the page everybody has read about the founder, then what the people learned doing the work. */
+.playbook { display: flex; flex-direction: column; gap: 22px; }
+.playbook h3 { margin: 0 0 8px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.playbook h3 span { flex: none; font-weight: 400; letter-spacing: 0.01em; text-transform: none; font-variant-numeric: tabular-nums; }
+.playbook h3 .is-over { color: #f0968e; }
+.playbook__note { margin: 7px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.playbook .msg--problem { margin: 7px 0 0; }
+.playbook__you textarea { box-sizing: border-box; width: 100%; min-height: 92px; border: 1px solid var(--card-border); border-radius: 9px; padding: 9px 11px; outline: 0; resize: vertical; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 13px; line-height: 1.55; }
+.playbook__you textarea::placeholder { color: var(--muted); }
+.playbook__end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.playbook__act { border: 0; border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 12px; font-weight: 550; color: var(--text); background: rgba(255, 255, 255, 0.1); cursor: pointer; }
+.playbook__act:hover { background: rgba(255, 255, 255, 0.16); }
+.playbook__act.primary { background: var(--accent); color: #fff; }
+.playbook__act.danger { background: #c9473d; color: #fff; }
+.playbook__act:disabled { opacity: 0.35; cursor: default; }
+.playbook__act:disabled:hover { background: rgba(255, 255, 255, 0.1); }
+.playbook__act.primary:disabled:hover { background: var(--accent); }
+.playbook :focus-visible, .skill__switch input:focus-visible + span { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+.playbook textarea:focus, .playbook input:focus-visible { outline: 0; border-color: rgba(78, 140, 255, 0.7); }
+
+.skills { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.skill { border-radius: 13px; border: 1px solid var(--card-border); background: rgba(255, 255, 255, 0.035); transition: border-color 0.15s; }
+/* Opened from one person's card: the ones they learned carry a mark, and nothing else about the panel changes. */
+.skill.is-theirs { border-left: 2px solid var(--accent); }
+.skill.is-off .skill__name b { color: var(--muted); }
+.skill__head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
+.skill__name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 7px; padding: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.skill__text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.skill__text b { font-size: 13.5px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.skill__text small { font-size: 11.5px; color: var(--muted); }
+.skill__mark { flex: none; align-self: center; width: 10px; height: 10px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s; }
+.skill.is-open .skill__mark { transform: rotate(90deg); }
+.skill__acts { flex: none; display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s; }
+.skill:hover .skill__acts, .skill.is-open .skill__acts, .skill__acts:focus-within { opacity: 1; }
+.skill__switch { flex: none; position: relative; display: inline-flex; }
+.skill__switch input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.skill__switch span { display: block; width: 30px; height: 18px; border-radius: 9px; background: rgba(255, 255, 255, 0.16); transition: background 0.15s; }
+.skill__switch span::after { content: ''; display: block; width: 14px; height: 14px; margin: 2px; border-radius: 50%; background: var(--text); transition: transform 0.15s; }
+.skill__switch input:checked + span { background: var(--accent); }
+.skill__switch input:checked + span::after { transform: translateX(12px); }
+.skill__switch input:disabled { cursor: default; }
+.skill__ask { display: flex; align-items: center; gap: 8px; padding: 0 12px 11px; }
+.skill__ask p { flex: 1; margin: 0; font-size: 12.5px; line-height: 1.45; }
+.skill__detail { display: flex; flex-direction: column; gap: 13px; padding: 2px 12px 13px; }
+.skill__detail h4 { margin: 0 0 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.skill__detail p { margin: 0; font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.skill__detail ol, .skill__detail ul { margin: 0; padding-left: 19px; display: flex; flex-direction: column; gap: 4px; }
+.skill__detail li { font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.skill__detail label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+.skill__detail input, .skill__detail textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--card-border); border-radius: 9px; padding: 7px 9px; outline: 0; resize: vertical; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 13px; line-height: 1.55; }
+.skill__detail .playbook__end { margin-top: 0; }
+/* What nobody has reached for in a month: still here, still the founder's, just not in the way. */
+.skill__folded { margin-top: 10px; }
+.skill__folded > summary { padding: 7px 2px; color: var(--muted); font-size: 12px; cursor: pointer; list-style: none; border-radius: 7px; }
+.skill__folded > summary::-webkit-details-marker { display: none; }
+.skill__folded > summary::before { content: '›'; display: inline-block; width: 12px; transition: transform 0.15s; }
+.skill__folded[open] > summary::before { transform: rotate(90deg); }
+.skill__folded > summary:hover { color: var(--text); }
+.skill__folded .skills { margin-top: 4px; }
+/* The line a birth or an improvement leaves in the room: not a message from anybody, and never kept as one. */
+button.msg--learned { align-self: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
+button.msg--learned:hover { color: var(--text); background: rgba(255, 255, 255, 0.07); }
+.taskview__learn { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; padding-top: 4px; }
+.taskview__learn button { flex: none; border: 0; border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 12px; font-weight: 550; color: var(--text); background: rgba(255, 255, 255, 0.1); cursor: pointer; }
+.taskview__learn button:hover { background: rgba(255, 255, 255, 0.16); }
+.taskview__learn button:disabled { opacity: 0.45; cursor: default; }
+.taskview__learn span { font-size: 12px; line-height: 1.45; color: var(--muted); }
+
 .dock__gap { width: 1px; height: 22px; margin: 0 4px; background: var(--card-border); }
 .dock .dock__needs { position: relative; }
 .dock .dock__needs.is-waiting { color: var(--needs); }

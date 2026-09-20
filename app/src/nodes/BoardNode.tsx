@@ -1,7 +1,7 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useState, type DragEvent } from 'react';
 import { COLUMNS, type Column, type Repeat, type Task } from '../../shared/model';
-import { addTask, changeTask, removeTask, runTask, stopTask, watchBoard } from '../api';
+import { addTask, changeTask, learnFromTask, removeTask, runTask, stopTask, watchBoard } from '../api';
 import { emit } from '../bus';
 import type { BoardNodeType, StageNode } from '../stage';
 import { useFlushStage } from '../sync';
@@ -20,6 +20,9 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [problem, setProblem] = useState('');
+  // "Learn this": what the person took away from a run the founder can see is finished, said in one line.
+  const [learning, setLearning] = useState(false);
+  const [learned, setLearned] = useState('');
   const { getNodes, getEdges } = useReactFlow<StageNode>();
   const flushStage = useFlushStage();
 
@@ -52,6 +55,14 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
     setDraft('');
     act(addTask(id, title));
   }
+  async function learn(taskId: string) {
+    setLearning(true);
+    setLearned('');
+    try {
+      const { learned: lesson } = await learnFromTask(id, taskId);
+      setLearned(lesson ? `${lesson.action === 'create' ? 'Learned' : 'Improved'}: "${lesson.name}".` : 'Nothing new here worth keeping.');
+    } catch (error) { setLearned((error as Error).message); } finally { setLearning(false); }
+  }
 
   return (
     <Frame selected={!!selected} minWidth={640} minHeight={300}>
@@ -69,7 +80,7 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
               <h3>{NAMES[column]} <span>{mine.length || ''}</span></h3>
               <div className="board__tasks">
                 {mine.map((task) => (
-                  <button key={task.id} type="button" className={`task task--${task.run?.state ?? 'idle'}`} draggable onDragStart={(event) => event.dataTransfer.setData('text/task', task.id)} onClick={() => setOpenId(task.id)}>
+                  <button key={task.id} type="button" className={`task task--${task.run?.state ?? 'idle'}`} draggable onDragStart={(event) => event.dataTransfer.setData('text/task', task.id)} onClick={() => { setOpenId(task.id); setLearned(''); }}>
                     <span className="task__title">{task.title}</span>
                     <span className="task__meta">
                       {task.assignee && <i style={{ background: who(task.assignee)?.accent }} />}{who(task.assignee)?.name}
@@ -97,7 +108,7 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
         <div className="taskview nodrag nowheel" role="dialog" aria-label={open.title}>
           <div className="taskview__head">
             <input aria-label="Task title" defaultValue={open.title} key={`${open.id}-title`} onBlur={(event) => event.target.value.trim() !== open.title && act(changeTask(id, open.id, { title: event.target.value }))} />
-            <button type="button" aria-label="Close task" onClick={() => setOpenId(null)}>
+            <button type="button" aria-label="Close task" onClick={() => { setOpenId(null); setLearned(''); }}>
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
             </button>
           </div>
@@ -147,6 +158,13 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
               {open.run?.approval && <Approval tool={open.run.approval} />}
               {open.run?.result && <div className="md taskview__result"><Words text={open.run.result} /></div>}
               {open.run?.provider && <div className="msg__foot">{open.run.provider} · {open.run.model}{open.run.usage ? ` · ${open.run.usage.input + open.run.usage.output} tokens` : ''} · {open.run.state}</div>}
+              {/* Only a finished run has anything to take away from, and the founder hears in one line what was taken. */}
+              {open.run?.state === 'done' && (
+                <div className="taskview__learn">
+                  <button type="button" disabled={learning} onClick={() => void learn(open.id)}>{learning ? 'Looking at how it went…' : 'Learn this'}</button>
+                  {learned && <span>{learned}</span>}
+                </div>
+              )}
             </div>
           </div>
         </div>

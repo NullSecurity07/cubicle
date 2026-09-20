@@ -174,7 +174,8 @@ export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[]
 }
 
 // Deterministic stand-in for browser tests: says who it is, what it heard and which docs it can see.
-// `/tool <name> <json>` from the founder makes it call that tool, then report what the tool said.
+// `/tool <name> <json>` from the founder makes it call that tool, then report what the tool said. Several of those
+// lines are worked through one at a time, which is what a piece of work that took real effort looks like from here.
 export const fakeClient: ModelClient = {
   name: 'fake',
   model: 'fake-1',
@@ -189,12 +190,36 @@ export const fakeClient: ModelClient = {
     const notes = /Sticky notes the founder connected to your room:\n- ([^\n]+)/.exec(system)?.[1];
     const pages = [...system.matchAll(/^## Page: (.+)$/gm)].map((match) => match[1]);
     const studios = [...system.matchAll(/^- An? (image|voice|video) studio\./gm)].map((match) => match[1]);
+    // Said back so a browser test can see that a skill learned on one turn really reached the next one's prompt:
+    // the one written out in full first, then the ones only mentioned.
+    const block = system.slice(system.indexOf('Your company playbook:'));
+    const playbook = system.includes('Your company playbook:')
+      ? [/^[^\n]*\n\n(.+)\nWhen: /.exec(block)?.[1], ...[...(block.split('Others that may fit')[1] ?? '').matchAll(/^- ([^:\n]+):/gm)].map((match) => match[1])].filter((one) => one !== undefined)
+      : [];
     const last = messages.at(-1);
-    const wanted = last?.role === 'user' ? /^\/tool (\w+) (\{.*\})$/m.exec(last.content) : null;
+    const heard = messages.findLast((message) => message.role === 'user')?.content ?? '';
+    // The playbook asks this in json and takes none for an answer twice; a fake person always has something to teach,
+    // so a browser test can watch a skill be born without a key to a real model.
+    if (/^You keep the one playbook/.test(system)) {
+      // A fake person keeps the doctrine the real ones are held to: it takes the kind of thing the work was about,
+      // never the whole of what it was asked, so the checks that refuse a lesson copied out of one job let it pass.
+      // The kind still tells two skills apart, which is what keeps one from being dropped as a copy of the other.
+      const task = /^What the founder asked .+ for:\n(.+)$/m.exec(heard)?.[1]?.replace(/^\/tool \w+ .*/, '').trim() ?? '';
+      const said = task.match(/[\p{L}\p{N}]+/gu)?.filter((word) => word.length > 2 && !/^(the|and|for|with|that|this|into|then|from|about|write|make)$/i.test(word)) ?? [];
+      const kind = said.slice(-2).join(' ').slice(0, 40) || 'work of this kind';
+      onToken(JSON.stringify({
+        action: 'create', name: `How to handle a ${kind}`.slice(0, 60), when: `When the founder needs a ${kind} and nobody has done it yet`.slice(0, 160),
+        procedure: [`Read what is wired to you before starting on a ${kind}`, 'Do the work with your tools, one call at a time', `Say in a line or two what changed about the ${kind}`],
+        pitfalls: [`Never say a ${kind} is done unless a tool said so`], verify: `The founder can see the ${kind} without asking.`,
+      }));
+      return { text: '', calls: [], usage: { input: 10, output: 40 } };
+    }
+    const asked = [...heard.matchAll(/^\/tool (\w+) (\{.*\})$/gm)];
+    // Only what has run since the founder spoke: earlier turns leave their own tool messages in the conversation.
+    const wanted = asked[messages.slice(messages.findLastIndex((message) => message.role === 'user')).filter((message) => message.role === 'tool').length];
     if (wanted && tools?.some((tool) => tool.name === wanted[1])) {
       return { text: '', calls: [{ id: `call-${messages.length}`, name: wanted[1], args: wanted[2] }], usage: { input: 10, output: 5 } };
     }
-    const heard = messages.findLast((message) => message.role === 'user')?.content ?? '';
     // Drawing a picture and then making a film with it, in one turn — what a person has to be able to do when the
     // founder says "generate an image and use that in the video". The path comes back in the first tool's own
     // words, and goes straight into the second call.
@@ -213,7 +238,7 @@ export const fakeClient: ModelClient = {
       : heard.startsWith('/markdown') ? '**Bold plan**\n\n- one\n- two'
       : heard.startsWith('/rich') ? 'A flow:\n\n```mermaid\ngraph TD; Idea-->Build; Build-->Launch;\n```\n\nA page:\n\n```html\n<!doctype html><html><body><h1 id="t">Landing</h1><script>document.getElementById("t").textContent += " page";</script></body></html>\n```'
       : last?.role === 'user' && last.images?.length ? `I can see ${last.images.length} picture: ${last.images[0].name.split('/').pop()}.`
-      : `${name} here. You said: "${heard}". Docs I can read: ${docs.join(', ') || 'none'}.${notes ? ` Notes: ${notes}.` : ''}${pages.length ? ` Pages: ${pages.join(', ')}.` : ''}${studios.length ? ` Studios: ${studios.join(', ')}.` : ''}`;
+      : `${name} here. You said: "${heard}". Docs I can read: ${docs.join(', ') || 'none'}.${notes ? ` Notes: ${notes}.` : ''}${pages.length ? ` Pages: ${pages.join(', ')}.` : ''}${studios.length ? ` Studios: ${studios.join(', ')}.` : ''}${playbook.length ? ` Playbook: ${playbook.join(', ')}.` : ''}`;
     const delay = heard.startsWith('/slow') ? 150 : 15;
     for (const word of reply.split(/(?<= )/)) {
       await new Promise((resolve) => setTimeout(resolve, delay));

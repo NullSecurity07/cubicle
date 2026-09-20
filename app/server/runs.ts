@@ -8,6 +8,7 @@ import { runTurn } from './loop.ts';
 import type { ModelMessage } from './prompt.ts';
 import { promptSize, type ModelClient } from './providers.ts';
 import { route } from './router.ts';
+import type { Seams } from './seams.ts';
 import type { Store } from './store.ts';
 import type { Tool } from './tools/registry.ts';
 import type { UsageBook } from './usage.ts';
@@ -26,10 +27,13 @@ const line = (event: ToolEvent) => `${event.ok ? '✓' : '✗'} ${event.name} ${
 // written into the task instead of a conversation. An outward step parks the run in "waiting" until the founder answers on the board.
 export function createRuns(deps: {
   boards: Boards; store: Store; tools: Tool[]; clients: ModelClient[]; usage: UsageBook; approvals: ReturnType<typeof createApprovals>; attention?: AttentionBook;
-  promptFor: (stage: Stage, roomId: string, toolNames: string[], fresh?: boolean) => Promise<ModelMessage[]>; busy: Set<string>; notify: Notify;
+  promptFor: (stage: Stage, roomId: string, toolNames: string[], fresh?: boolean) => Promise<ModelMessage[]>; busy: Set<string>; notify: Notify; seams?: Seams;
 }) {
-  const { boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify } = deps;
+  const { boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify, seams } = deps;
   const stops = new Map<string, AbortController>();
+  // The last task each person ran. What watches a finished turn finishes after the run does, and this is how the one
+  // line it has to say ("learned: …") finds its way back into the log the founder is looking at.
+  const lately = new Map<string, { boardId: string; taskId: string }>();
 
   async function start(boardId: string, taskId: string): Promise<void> {
     const stage = await store.loadStage();
@@ -40,6 +44,7 @@ export function createRuns(deps: {
     if (task.run?.state === 'running' || task.run?.state === 'waiting') throw new Error('this task is already running');
     if (busy.has(room.id)) throw new Error(`${room.name} is in the middle of something. Try again when they are done.`);
     busy.add(room.id);
+    lately.set(room.id, { boardId, taskId });
     const stop = new AbortController();
     stops.set(taskId, stop);
     await boards.update(boardId, taskId, (one) => { one.column = 'doing'; one.missed = undefined; one.run = { state: 'running', startedAt: Date.now(), log: [`${room.name} started`] }; if (one.repeat) one.nextRun = nextDue(one.repeat, Date.now()); });
@@ -48,11 +53,12 @@ export function createRuns(deps: {
     void (async () => {
       let result = '';
       try {
+        const asked = `${task.title}${task.detail ? `\n\n${task.detail}` : ''}`;
         const messages = await promptFor(stage, room.id, tools.map((tool) => tool.name), true);
-        messages.push({ role: 'user', content: `The founder started this task from the board. Do it now with your tools, then report the result in a few lines.\n\nTask: ${task.title}${task.detail ? `\n\n${task.detail}` : ''}` });
+        messages.push({ role: 'user', content: `The founder started this task from the board. Do it now with your tools, then report the result in a few lines.\n\nTask: ${asked}` });
         const { order } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true });
         const reply = await runTurn({
-          messages, tools, clients: order, usage, signal: stop.signal,
+          messages, tools, clients: order, usage, signal: stop.signal, seams, source: 'run', query: asked,
           context: { stage, roomId: room.id, store, granted: new Map() },
           events: {
             token: (token) => { result += token; },
@@ -86,6 +92,11 @@ export function createRuns(deps: {
   return {
     start,
     stop(taskId: string) { stops.get(taskId)?.abort(); },
+    // One more line in the log of the last thing this person ran, for something that only became true after they finished.
+    async note(roomId: string, text: string) {
+      const last = lately.get(roomId);
+      if (last) await boards.update(last.boardId, last.taskId, (one) => { if (one.run) one.run.log = [...one.run.log.slice(-199), text]; });
+    },
     // Called every half minute: start the repeating tasks that are due. One whose person is busy stays due and is tried again.
     async tick() {
       const stage = await store.loadStage();

@@ -49,6 +49,16 @@ describe('prompt', () => {
     expect(words).toEqual({ role: 'assistant', content: 'Done.' });
   });
 
+  it('shows every person what is known about the founder, right after who they are', () => {
+    const profile = '- Prefers the short answer first\n- Ships on Thursdays';
+    const system = buildMessages(stage, 'build', docs, [], [], {}, undefined, undefined, {}, [], profile)[0].content;
+    expect(system.indexOf('About the founder. They can read and edit this.')).toBe(system.indexOf('You are Dev') + 'You are Dev, Build. You are the engineering lead: architecture, scope, build order, technical risk.'.length + 2);
+    expect(system).toContain(profile);
+    expect(system.indexOf(profile)).toBeLessThan(system.indexOf(STANCE));
+    expect(buildMessages(stage, 'build', docs, [])[0].content).not.toContain('About the founder');
+    expect(buildMessages(stage, 'build', docs, [], [], {}, undefined, undefined, {}, [], '   ')[0].content).not.toContain('About the founder');
+  });
+
   it('names the tools only when there are some', () => {
     expect(buildMessages(stage, 'build', docs, [], ['write_doc'])[0].content).toContain('write_doc');
     expect(buildMessages(stage, 'build', docs, [])[0].content).not.toContain('You can act');

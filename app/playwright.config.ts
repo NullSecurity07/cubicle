@@ -5,7 +5,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 // Own ports, a fake model and a throwaway workspace: the checks never touch the owner's running stage or data.
 // WebKit is not listed: Playwright's build cannot launch on this machine; the WebKitGTK check belongs to the Tauri slice.
-const env = { STAGE_PORT: '7430', STAGE_API_PORT: '7431', STAGE_FAKE_MODEL: '1', STAGE_API_TOKEN: 'e2e-token', STAGE_WORKSPACE: mkdtempSync(join(tmpdir(), 'stage-e2e-')) };
+// Made once, by the process that starts the server, and put on the environment so the workers inherit the same path:
+// a journey that has to seed files (the playbook with a shelf-full of skills) writes them where the server reads them.
+process.env.STAGE_WORKSPACE ??= mkdtempSync(join(tmpdir(), 'stage-e2e-'));
+const env = { STAGE_PORT: '7430', STAGE_API_PORT: '7431', STAGE_FAKE_MODEL: '1', STAGE_API_TOKEN: 'e2e-token', STAGE_WORKSPACE: process.env.STAGE_WORKSPACE };
 
 export default defineConfig({
   testDir: 'e2e',
