@@ -483,7 +483,12 @@ createServer(async (req, res) => {
       if (part === 'tasks' && !taskId && req.method === 'POST') return json(res, 200, await boards.add(boardId, await body(req)));
       if (taskId && !action && req.method === 'PATCH') return json(res, 200, await boards.change(boardId, taskId, await body(req)));
       if (taskId && !action && req.method === 'DELETE') { runs.stop(taskId); await boards.remove(boardId, taskId); return json(res, 200, { ok: true }); }
-      if (taskId && action === 'run' && req.method === 'POST') { await runs.start(boardId, taskId); return json(res, 200, { ok: true }); }
+      // A task that cannot start (nobody to do it, already running, its person busy, a skill switched off) is not the
+      // server breaking: the reason goes back as a plain "not now", and the card and needs-you show it as they always did.
+      if (taskId && action === 'run' && req.method === 'POST') {
+        try { await runs.start(boardId, taskId); } catch (error) { return json(res, 409, { error: (error as Error).message }); }
+        return json(res, 200, { ok: true });
+      }
       if (taskId && action === 'stop' && req.method === 'POST') { runs.stop(taskId); return json(res, 200, { ok: true }); }
       if (taskId && action === 'learn' && req.method === 'POST') {
         const task = (await boards.list(boardId)).find((one) => one.id === taskId);
