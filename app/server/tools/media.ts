@@ -42,12 +42,16 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
     name: 'generate_image',
     perTurn: 4,
     description: 'Make a picture from a description, in the image studio connected to your room. Write the prompt as a whole scene: subject, setting, style, light. '
+      + 'The studio cannot spell. Any words, titles, names or numbers you ask for in the prompt come out as gibberish letters, so the prompt describes only what is SEEN — never what it should say. '
+      + 'Words that belong on the picture go in "headline" and "lines" instead; they are set over the finished picture in real type, exactly as you write them. A picture that needs no words gets none. '
       + 'The picture appears on the card and in your reply, and the file stays in the shared files.',
     parameters: {
       type: 'object',
       properties: {
-        prompt: { type: 'string', description: 'The whole scene to draw' },
+        prompt: { type: 'string', description: 'The whole scene to draw — subject, setting, style, light. What is seen, never what is written: asking for a title, a name or a number here produces gibberish.' },
         shape: { type: 'string', enum: [...SHAPES], description: 'The shape of the picture; square when left out' },
+        headline: { type: 'string', description: 'The words across the picture, a few at most, set in real type exactly as written. Leave it out when the picture needs no words.' },
+        lines: { type: 'array', items: { type: 'string' }, description: 'Up to six short lines set as a list under the headline — names, points, figures — each in real type exactly as written' },
       },
       required: ['prompt'],
     },
@@ -56,12 +60,19 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
       const card = studio(context, 'imagegen');
       if (!card) throw new Error('no image studio is connected to your room. Ask the founder to add one from the dock and draw a wire to it.');
       const shape = typeof args.shape === 'string' && (SHAPES as readonly string[]).includes(args.shape) ? args.shape : 'square';
+      // The words are the founder's own, so they are checked the way every other written thing is — a headline that
+      // will not fit on a picture is worth saying so about, rather than quietly cutting in half.
+      const headline = typeof args.headline === 'string' && args.headline.trim() ? text(args, 'headline', 60).trim() : '';
+      const lines = (Array.isArray(args.lines) ? args.lines : []).map((one) => String(one ?? '').trim()).filter(Boolean).slice(0, 6).map((one) => one.slice(0, 80));
       // The card hears the job from the server itself, so the founder and this person see the same picture appear once.
-      const made = await media.make(card, { prompt: text(args, 'prompt', 2000), shape }, { signal: context.signal });
+      const made = await media.make(card, { prompt: text(args, 'prompt', 2000), shape, headline, lines }, { signal: context.signal });
       // The path, said plainly, because the next thing somebody asks for is usually a film with this picture in it
       // and a person cannot pass on a link they were only shown.
+      const set = headline && lines.length ? ` The words are set on it in real type: “${headline}”, over ${lines.length} ${lines.length === 1 ? 'line' : 'lines'}.`
+        : headline ? ` The words are set on it in real type: “${headline}”.`
+        : lines.length ? ` The ${lines.length} ${lines.length === 1 ? 'line' : 'lines'} are set on it in real type.` : '';
       return {
-        text: `Made the picture. It is saved at ${made.path} — pass that path to generate_video in "images" to put it in a film.`
+        text: `Made the picture.${set} It is saved at ${made.path} — pass that path to generate_video in "images" to put it in a film.`
           + `\n\n![${made.prompt.replace(/[[\]]/g, '')}](/api/files/${made.path})`,
         effect: { kind: 'media-made', id: card.id },
       };
