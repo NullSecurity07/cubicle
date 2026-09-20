@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { LISTEN_RATE } from '../../shared/reach.ts';
 import { wavOf } from '../media/voice.ts';
 
@@ -23,7 +25,9 @@ export function localWhisper(cacheDir: string): Transcriber {
       const { env, pipeline } = await import('@huggingface/transformers');
       env.cacheDir = cacheDir;
       env.allowLocalModels = false;
-      report(`getting the listening model ready — the first time, that is a download of ${MODEL_SIZE}…`);
+      // Only a machine that has never listened before has anything to fetch. Saying "a download of 150 MB" on every
+      // voice note made a model that was already here sound like a wait that was about to happen.
+      report(existsSync(join(cacheDir, MODEL)) ? 'getting the listening model ready…' : `getting the listening model ready — the first time, that is a download of ${MODEL_SIZE}…`);
       let said = -1;
       const ears = await pipeline('automatic-speech-recognition', MODEL, {
         dtype: 'q8', device: 'cpu',
