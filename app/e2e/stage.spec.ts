@@ -448,8 +448,9 @@ test('the board: a person proposes, the founder accepts, assigns and runs; an ou
   await mail.getByLabel('Task detail').fill('/tool send_email {"to":"lead@example.com","subject":"Hello","body":"Hi"}');
   await mail.getByLabel('Task title').click();
   await mail.getByLabel('Assignee').selectOption({ label: 'Maya' });
-  await mail.getByLabel('Repeat').selectOption('week');
-  await expect(mail.locator('.taskview__hint').last()).toContainText('Runs only while the app is open');
+  await mail.getByLabel('When it runs').fill('mondays at 9am');
+  await mail.getByLabel('When it runs').press('Enter');
+  await expect(mail.locator('.automation .taskview__hint').first()).toContainText('only while the app is open');
   await mail.getByRole('button', { name: 'Run' }).click();
   await expect(mail.getByRole('group', { name: 'Send this email?' })).toBeVisible();
   await expect(board.locator('.board__badge')).toHaveText('1 needs you');
