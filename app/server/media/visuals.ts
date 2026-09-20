@@ -219,9 +219,14 @@ const PLACES = [
 ];
 // What the camera is doing, per kind. This is the half of a picture nobody writes down and every generated still
 // is missing: a frame has a distance and a lens, and six frames at the same distance read as one frame.
+// One of these describes a person and the rest describe a place or a thing, and that is the whole point. A
+// picture model told "the subject to one side of the frame" draws a person, because to a picture model a subject
+// is a person — so a film where four slots were framed that way came back with three strangers in it even after
+// the one-person rule had struck every person out of the words. The framing is where a person really gets in, so
+// only `medium` lets one in, and `slotsFor` hands `medium` out exactly once a film.
 const FRAMING: Record<Kind, string> = {
-  wide: 'a wide establishing frame, the subject small and low in the picture, a great deal of air above',
-  medium: 'a medium shot at eye level, the subject to one side of the frame, the other side empty',
+  wide: 'a wide establishing frame of an empty place, a great deal of air above, nothing in the middle of the frame',
+  medium: 'a medium shot at eye level of one person at work, seen in profile or from behind, to one side of the frame',
   detail: 'a tight detail filling the frame, very shallow focus, the background fallen away',
   object: 'one object alone on a plain surface, raked side light, the rest of the frame empty',
   environment: 'a room with nobody in it, the light falling across the floor, seen from the doorway',
@@ -397,12 +402,22 @@ export function roomFor(scene: Scene, captions: boolean): Room {
 // spoken under that shot rather than the whole scene's narration: a three-second shot in the middle of a long
 // sentence gets the words that land on it.
 export type Slot = { scene: number; take: number; line: string; layout: Layout };
+// The framings a film may use for the shots that are not its one person: a place, a thing, a detail, a wide.
+const WITHOUT: Kind[] = ['environment', 'detail', 'object', 'wide'];
 export function slotsFor(slots: Slot[], captions: boolean, scenes: Scene[]): Visual[] {
-  return slots.map((slot, at) => ({
+  const made = slots.map((slot, at) => ({
     at, scene: slot.scene, take: slot.take, line: slot.line,
     about: (scenes[slot.scene]?.say ?? '').trim() || undefined,
     subject: '', kind: kindFor(at, slot.layout), room: roomFor(scenes[slot.scene] ?? { layout: slot.layout }, captions),
   }));
+  // Exactly one shot in a film is framed as a person. The first one the wheel offers keeps it; the rest take a
+  // place or a thing, by rotation, so the film still cuts between distances.
+  let person = false;
+  return made.map((one, at) => {
+    if (one.kind !== 'medium') return one;
+    if (!person) { person = true; return one; }
+    return { ...one, kind: WITHOUT[at % WITHOUT.length] };
+  });
 }
 
 // --- the words a picture model is finally handed -----------------------------------------------------------

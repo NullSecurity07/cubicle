@@ -271,3 +271,26 @@ describe('a shot that lands in the middle of a sentence', () => {
     expect(slots.every((slot) => slot.about === 'Investors want proof, not promises.')).toBe(true);
   });
 });
+
+describe('the framing is where a person really gets in', () => {
+  const scenes = Array.from({ length: 8 }, () => ({ layout: 'statement', say: 'a line is said here.' } as Scene));
+  const slots = Array.from({ length: 8 }, (_one, at) => ({ scene: at, take: 0, line: 'a line is said here', layout: 'statement' as const }));
+
+  it('frames exactly one shot in a film as a person, however long the film is', () => {
+    const made = slotsFor(slots, true, scenes);
+    expect(made.filter((one) => one.kind === 'medium')).toHaveLength(1);
+  });
+
+  it('still cuts between distances with the rest', () => {
+    const made = slotsFor(slots, true, scenes);
+    expect(new Set(made.map((one) => one.kind)).size).toBeGreaterThanOrEqual(3);
+  });
+
+  it('only the person framing says there is a person in the frame', () => {
+    const person = drawnAs(one(0, 'a founder waiting for an answer', 'the wait is the hard part', { kind: 'medium' }), BIBLE);
+    expect(person).toMatch(/one person at work/);
+    for (const kind of ['wide', 'detail', 'object', 'environment'] as const) {
+      expect(drawnAs(one(0, 'a cold kettle on a ring', 'it runs out quietly', { kind }), BIBLE), kind).not.toMatch(/\bperson\b/);
+    }
+  });
+});

@@ -213,7 +213,11 @@ const FIGURE_IN = /([$£€]\s?\d[\d,.]*\s*(?:%|x\b|k\b|m\b|bn\b)?|\d{1,3}(?:,\d
 export const hasNumber = (text?: string): boolean => FIGURE_IN.test(text ?? '');
 // Pieces that could really be bullets: two words at the least, none of them opening on a word that only makes sense
 // as the middle of a sentence. A "list" of sentence fragments is worse on screen than the sentence was.
-const OPENERS = new Set(['which', 'that', 'who', 'whose', 'where', 'when', 'because', 'so', 'then', 'but', 'or']);
+// A bullet is a thing, not the second half of a sentence. Anything opening on one of these is the rest of the
+// line it was cut out of — "No proof" over "they walk away" is one sentence set as two bullets, which reads worse
+// than the sentence did, and a real reel shipped with it.
+const OPENERS = new Set(['which', 'that', 'who', 'whose', 'where', 'when', 'because', 'so', 'then', 'but', 'or',
+  'they', 'it', 'he', 'she', 'we', 'you', 'i', 'this', 'these', 'those', 'there', 'his', 'her', 'its', 'their']);
 export const listable = (parts: string[]): boolean =>
   parts.length >= 2 && parts.every((one) => countWords(one) >= 2 && countWords(one) <= 6 && !OPENERS.has(one.trim().split(/\s+/)[0].toLowerCase()));
 
