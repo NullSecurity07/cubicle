@@ -67,7 +67,10 @@ function Tools({ onEdit, onDelete, onRegenerate }: Actions) {
   );
 }
 
-export function Message({ message, live = false, ...actions }: { message: Omit<ChatMessage, 'id' | 'at'>; live?: boolean } & Actions) {
+// A reply still streaming has no id and no room yet, so what a slice draws at its foot waits until it is finished.
+type Shown = Omit<ChatMessage, 'id' | 'at'> & Partial<Pick<ChatMessage, 'id' | 'at'>>;
+
+export function Message({ message, live = false, roomId, ...actions }: { message: Shown; live?: boolean; roomId?: string } & Actions) {
   if (message.role === 'user') return message.from
     ? <div className="msg msg--colleague"><span>{message.from} asked</span>{message.text}</div>
     : <div className="msg msg--user"><Attachments message={message} />{message.text}<Tools {...actions} /></div>;
@@ -80,6 +83,8 @@ export function Message({ message, live = false, ...actions }: { message: Omit<C
         <div className="msg__foot">
           {message.provider} · {message.model}{tokens ? ` · ${compact(tokens)} tokens` : ''}{message.stopped ? ' · stopped' : ''}
           <Tools {...actions} />
+          {/* What a slice offers to do with this finished reply, where the reply's own actions are. */}
+          {message.id && roomId && SLICES.map((slice) => (slice.reply ? <slice.reply key={slice.name} message={{ ...message, id: message.id!, at: message.at ?? 0 }} roomId={roomId} /> : null))}
         </div>
       )}
     </div>

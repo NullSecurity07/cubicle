@@ -19,8 +19,11 @@ export function createAttention(dir: string) {
   let queue: Promise<unknown> = Promise.resolve();
   let state: { open: Attention[]; dismissed: string[] } | null = null;
 
-  async function load() {
-    if (state) return state;
+  // Read once, however many ask at the same moment: two first readers each making their own copy meant whatever was
+  // raised into the first copy was gone when the second one replaced it.
+  let reading: Promise<{ open: Attention[]; dismissed: string[] }> | null = null;
+  const load = () => (reading ??= read());
+  async function read() {
     let saved: { open?: Attention[]; dismissed?: string[] } = {};
     try { saved = JSON.parse(await readFile(path, 'utf8')); } catch { /* nothing waited */ }
     // Whatever was waiting when the app last closed belonged to a turn that no longer exists.
