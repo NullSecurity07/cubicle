@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { UPDATES } from '../../shared/reach.ts';
 import { TRIES, createReach, newCode } from './settings.ts';
 
 const where = () => mkdtempSync(join(tmpdir(), 'reach-set-'));
@@ -10,7 +11,7 @@ const where = () => mkdtempSync(join(tmpdir(), 'reach-set-'));
 describe('what is kept about reaching the founder', () => {
   it('starts off, with nothing set up', async () => {
     const reach = createReach(where(), {});
-    expect(await reach.read()).toEqual({ on: false, voice: false, cloudSpeech: false, paired: [], hooks: [] });
+    expect(await reach.read()).toEqual({ on: false, voice: false, cloudSpeech: false, paired: [], hooks: [], updates: UPDATES });
     expect(await reach.token()).toBeNull();
   });
 

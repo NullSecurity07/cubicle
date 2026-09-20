@@ -1,0 +1,71 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import type { Attention, Stage, Task } from '../../shared/model.ts';
+import type { Boards } from '../boards.ts';
+import type { Skills } from '../skills.ts';
+import { createDigest, digestText, dueAt } from './digest.ts';
+
+const NOON = new Date(2026, 8, 20, 12, 0, 0).getTime();
+const stage: Stage = {
+  rooms: [{ id: 'marketing', name: 'Maya', role: 'x', accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1 }],
+  docs: [], wires: [], cards: [{ kind: 'board', id: 'board', x: 0, y: 0, w: 1, h: 1 }],
+};
+const task = (over: Partial<Task>): Task => ({ id: 't1', title: 'the weekly numbers', detail: '', column: 'done', createdAt: 0, assignee: 'marketing', ...over });
+
+const make = (tasks: Task[], waiting: Attention[] = []) => createDigest({
+  boards: { list: async () => tasks } as unknown as Boards,
+  stage: async () => stage,
+  skills: { list: async () => [] } as unknown as Skills,
+  attention: async () => waiting,
+  workspace: mkdtempSync(join(tmpdir(), 'reach-dig-')),
+  now: () => NOON,
+});
+
+describe('the morning note', () => {
+  it('is one screen: what is done, what waits, what is coming, what was learned', () => {
+    const said = digestText(NOON, { done: ['Maya finished the launch note'], waiting: ['Maya needs your OK: send an email'], today: ['14:00 the weekly numbers — Maya'], learned: ['Maya: how to price a plan'] });
+    expect(said).toContain('**Today** · Sunday 20 September');
+    expect(said).toContain('• Maya finished the launch note');
+    expect(said).toContain('**Waiting for you**');
+    expect(said).toContain('• 14:00 the weekly numbers — Maya');
+    expect(said.length).toBeLessThan(700);
+  });
+
+  it('cuts a long list short rather than filling the screen with it', () => {
+    const said = digestText(NOON, { done: Array.from({ length: 9 }, (_, at) => `thing ${at}`), waiting: [], today: [], learned: [] });
+    expect(said).toContain('• thing 4');
+    expect(said).not.toContain('• thing 5');
+    expect(said).toContain('…and 4 more');
+  });
+
+  it('says something when there is nothing, so a quiet day is not a broken one', () => {
+    expect(digestText(NOON, { done: [], waiting: [], today: [], learned: [] })).toContain('Everything is quiet, and I am here.');
+  });
+
+  it('is made of what finished since last time, and what is still to come today', async () => {
+    const said = await make([
+      task({ run: { state: 'done', startedAt: 0, finishedAt: NOON - 3600_000, log: [] } }),
+      task({ id: 'old', title: 'last week\'s numbers', run: { state: 'done', startedAt: 0, finishedAt: NOON - 86_400_000 * 3, log: [] } }),
+      task({ id: 'later', title: 'the evening post', column: 'todo', nextRun: NOON + 7200_000 }),
+      task({ id: 'gone', title: 'yesterday\'s post', column: 'todo', nextRun: NOON - 7200_000 }),
+    ], [{ id: 'a1', kind: 'approval', title: 'send an email', at: NOON, who: 'Maya' }])(NOON - 86_400_000);
+    expect(said).toContain('Maya finished the weekly numbers');
+    expect(said).not.toContain('last week');
+    expect(said).toContain('the evening post');
+    expect(said).not.toContain('yesterday');
+    expect(said).toContain('Maya needs your OK: send an email');
+  });
+});
+
+describe('when the morning note is due', () => {
+  it('is the time of day the founder chose, in their own clock', () => {
+    expect(new Date(dueAt('09:00', NOON)).getHours()).toBe(9);
+    expect(new Date(dueAt('18:30', NOON)).getMinutes()).toBe(30);
+  });
+
+  it('falls back to nine in the morning for anything it cannot read', () => {
+    expect(new Date(dueAt('not a time', NOON)).getHours()).toBe(9);
+  });
+});
