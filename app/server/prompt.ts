@@ -1,5 +1,5 @@
 import { STANCE, type ChatMessage, type Stage } from '../shared/model.ts';
-import { dayKey, fullDay, weekDay, zoneName } from './clock.ts';
+import { dayKey, fullDay, shortDay, weekDay, zoneName } from './clock.ts';
 import { recent, type Memory } from './memory.ts';
 
 type CallEcho = { id: string; type: 'function'; function: { name: string; arguments: string }; extra_content?: unknown };
@@ -93,10 +93,13 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
   const docsWired = mine.map(block);
   const pinned = stage.docs.filter((doc) => doc.pinned && !mine.includes(doc.id)).map((doc) => block(doc.id));
   // Wired colleagues: who they are and the last things said in their room, so a consult starts from common ground.
+  // Each line says which day it is from: four lines out of a room nobody has opened in a month read exactly like
+  // four from this morning, and "lately" is the word that turns that into a lie.
+  const said = (at: number) => (at ? `${dayKey(at) === dayKey(now) ? 'Today' : shortDay(at)} · ` : '');
   const team = colleagueIds(stage, roomId).map((id) => {
     const other = stage.rooms.find((candidate) => candidate.id === id)!;
     const recent = (colleagues[id] ?? []).filter((message) => message.text.trim()).slice(-4)
-      .map((message) => `  ${message.role === 'assistant' ? other.name : message.from ?? 'Founder'}: ${message.text.replace(/\s+/g, ' ').slice(0, EXCERPT)}`);
+      .map((message) => `  ${said(message.at)}${message.role === 'assistant' ? other.name : message.from ?? 'Founder'}: ${message.text.replace(/\s+/g, ' ').slice(0, EXCERPT)}`);
     return `- ${other.name}, ${other.role}. ${other.brief}${recent.length ? `\n  Lately in ${other.name}'s room:\n${recent.join('\n')}` : ''}`;
   });
   // A person only uses what it knows it has: say which cards are wired to the room, and what each is for.
