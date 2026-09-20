@@ -128,7 +128,7 @@ export type Film = {
 // The whole video as one HTML file: the scenes in order with their timing on them, the narration and the music beside
 // them, and one paused timeline the renderer steps through frame by frame.
 export function composition(film: Film): string {
-  const { width, height, scale, capChars } = FORMATS[film.shape];
+  const { width, height, scale, capChars, margin, safeRight } = FORMATS[film.shape];
   const pack: Pack = film.look;
   const style = PACK[pack];
   const sketch = pack === 'sketch';
@@ -156,7 +156,10 @@ export function composition(film: Film): string {
   const lines = film.captions && spoken.length
     ? capLines(spoken, Math.round(capChars * style.capScale), capWords, film.keywords ?? [])
     : [];
-  const captionHtml = capHtml(lines);
+  // The band's real measure, so a long word is set smaller rather than having both ends cut off by the frame.
+  const capSize = Math.round(height * 0.108) * scale;
+  const capRoom = width - margin - (margin + safeRight);
+  const captionHtml = capHtml(lines, { size: capSize, room: capRoom });
   const captionSteps = capSteps(lines, total);
 
   // The moving pictures are elements of the film in their own right, before the scenes and behind them: the renderer

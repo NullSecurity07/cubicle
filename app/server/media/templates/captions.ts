@@ -103,9 +103,26 @@ const html = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
 // The film's one band of captions, and the steps that run it: a line arrives, each of its words lights as it is
 // said, and the line goes when the next one comes. It sits outside every scene, because a caption belongs to the
 // frame rather than to the shot under it and must not be whipped off the screen by a cut.
-export function capHtml(lines: CapLine[]): string {
+// How wide a capital of the display face really is against its own size. Measured off the rendered frames rather
+// than assumed: a condensed shouting face is narrow and a serif is not, and the difference decides whether a long
+// word fits between the margins or has both its ends cut off by them.
+export const CAP_WIDTH = 0.58;
+
+// `room` is how many pixels the caption band actually has between the margins, and `size` the height the format
+// wants its captions at. A line wider than the room it has is set smaller — never wrapped, because a caption that
+// wraps leaves one word stranded underneath at the dimness of a word not yet said, and never clipped, which is
+// what a real reel did: a nine-letter word centred in the band with its first and last letters cut off by the
+// frame. Type that shrinks to fit is what every caption tool does and nobody notices.
+export function capHtml(lines: CapLine[], fit?: { size: number; room: number }): string {
   if (!lines.length) return '';
-  const said = lines.map((line, at) => `<div class="capline" id="c${at}">`
+  const sized = (line: CapLine): string => {
+    if (!fit) return '';
+    const letters = line.words.reduce((sum, one) => sum + one.word.length, 0) + Math.max(0, line.words.length - 1);
+    const fits = fit.room / Math.max(1, letters * CAP_WIDTH);
+    // Never under two thirds: past that it stops being a caption and becomes a subtitle.
+    return fits >= fit.size ? '' : ` style="font-size: ${Math.max(fit.size * 0.66, fits).toFixed(1)}px"`;
+  };
+  const said = lines.map((line, at) => `<div class="capline" id="c${at}"${sized(line)}>`
     + line.words.map((word, order) => `<span class="capword${line.pop === order ? ' pop' : ''}" id="c${at}-${order}">${html(word.word)}</span>`).join('')
     + '</div>').join('');
   return `<div class="caps" aria-hidden="true">${said}</div>`;

@@ -92,6 +92,22 @@ describe('captions in a film', () => {
     expect(page).toContain('<audio id="say" src="assets/say.wav" data-start="0"');
   });
 
+  it('sets a line too wide for the frame smaller rather than cutting its ends off', () => {
+    // A nine-letter word at a tenth of a 1280-high frame is wider than the 562px the band has between the
+    // margins, and a real reel showed it centred with its first and last letters clipped by the frame.
+    const wide = capLines(said('INVESTORS'), 40, 1);
+    const shrunk = capHtml(wide, { size: 138, room: 562 });
+    const found = /font-size: ([\d.]+)px/.exec(shrunk);
+    expect(found).toBeTruthy();
+    expect(Number(found![1])).toBeLessThan(138);
+    // Never under two thirds, or it stops being a caption.
+    expect(Number(found![1])).toBeGreaterThanOrEqual(138 * 0.66);
+    // A short line is left at the size the format asked for.
+    expect(capHtml(capLines(said('GO'), 40, 1), { size: 138, room: 562 })).not.toContain('font-size');
+    // And nothing is sized at all when no measure was given.
+    expect(capHtml(wide)).not.toContain('font-size');
+  });
+
   it('takes the line going before the line coming arrives', () => {
     const lines = capLines(said('One two three four'), 20, 2);
     expect(lines.length).toBeGreaterThan(1);

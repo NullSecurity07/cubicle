@@ -291,14 +291,15 @@ ${style.shout ? `.plate .lead { font-family: ${display}; font-size: calc(54px * 
    on a phone the last fifth of the frame belongs to the player, the poster's own furniture and the thumb. */
 .caps { position: absolute; left: var(--margin); right: calc(var(--margin) + var(--safe-right)); bottom: var(--caps); z-index: 6; display: flex; flex-direction: column;
   align-items: center; justify-content: flex-end; pointer-events: none; }
-.capline { position: absolute; bottom: 0; left: 0; right: 0; display: flex; flex-wrap: wrap; gap: 0 calc(16px * var(--s));
-  align-items: baseline; justify-content: center; text-align: center; }
+.capline { position: absolute; bottom: 0; left: 0; right: 0; display: flex; flex-wrap: nowrap; gap: 0 calc(14px * var(--s));
+  align-items: baseline; justify-content: center; text-align: center; white-space: nowrap; }
 /* The size is the whole of why captions work, and it was wrong: a tenth to a seventh of the frame's height, set in
    the display face, in capitals, with a real black stroke around it rather than a soft shadow. The old 58px on a
    1280-high frame was four and a half per cent — a subtitle, read rather than watched, and invisible at the size a
    feed thumbnail is. paint-order puts the stroke behind the letterform so it thickens the outline instead of
    eating the inside of the type. */
-.capword { font-family: ${display}; font-size: calc(${Math.round(height * 0.108)}px * var(--s)); line-height: 1.04; font-weight: ${style.shout ? 400 : 800}; letter-spacing: -0.02em;
+.capline { font-size: calc(${Math.round(height * 0.108)}px * var(--s)); }
+.capword { font-family: ${display}; font-size: inherit; line-height: 1.04; font-weight: ${style.shout ? 400 : 800}; letter-spacing: -0.02em;
   color: ${paint.ink}; text-transform: uppercase; padding: calc(2px * var(--s)) 0;
   -webkit-text-stroke: calc(${Math.max(3, Math.round(height * 0.0045))}px * var(--s)) #000000; paint-order: stroke fill;
   text-shadow: 0 calc(3px * var(--s)) calc(16px * var(--s)) rgba(0, 0, 0, 0.55); }
