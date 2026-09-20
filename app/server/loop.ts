@@ -2,6 +2,7 @@ import type { ToolEvent, Usage } from '../shared/model.ts';
 import type { ModelMessage } from './prompt.ts';
 import { complete, retryAfter, type Failure, type ModelClient } from './providers.ts';
 import type { Answer } from './approvals.ts';
+import type { Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
 import type { UsageBook } from './usage.ts';
 
@@ -18,9 +19,14 @@ export async function runTurn(input: {
   usage: UsageBook; events: TurnEvents; signal?: AbortSignal;
   // Asks the founder about one outward call. Absent (nobody is there to ask) means no.
   approve?: (event: ToolEvent, signal?: AbortSignal) => Promise<Answer>;
+  // Where the extras plug in, and what set this turn off. Without seams the turn runs exactly as it always did.
+  seams?: Seams; source?: Source; query?: string;
 }): Promise<TurnResult> {
-  const { tools, context, usage, events, signal } = input;
-  const messages = [...input.messages];
+  const { tools, context, usage, events, signal, seams } = input;
+  const { roomId } = context;
+  const source = input.source ?? 'chat';
+  const query = input.query ?? '';
+  let messages = [...input.messages];
   let clients = input.clients;
   const done: ToolEvent[] = [];
   const total: Usage = { input: 0, output: 0 };
@@ -35,7 +41,10 @@ export async function runTurn(input: {
     if (status === 429) usage.cool(client.name, retryAfter(error));
   };
 
+  if (seams) messages = (await seams.run('turn:before', { roomId, source, query, messages })).messages;
+
   for (let step = 1; step <= MAX_STEPS && !signal?.aborted; step += 1) {
+    if (seams) messages = (await seams.run('step:before', { roomId, step, messages })).messages;
     const offered = step < MAX_STEPS ? tools : [];
     const gap = text && !/\s$/.test(text) ? '\n\n' : '';
     let first = true;
@@ -65,11 +74,18 @@ export async function runTurn(input: {
       const tool = tools.find((candidate) => candidate.name === call.name);
       let rawArgs = call.args;
       let refusal = tool?.ready?.() ?? null;
+      if (seams) {
+        const checked = await seams.run('tool:before', { roomId, call: { id: call.id, name: call.name, args }, ...(refusal ? { refusal } : {}) });
+        // Only a rewrite is taken as one: the raw text the model wrote goes on untouched otherwise.
+        if (checked.call.args !== args) { args = checked.call.args; rawArgs = JSON.stringify(args); }
+        refusal = refusal || checked.refusal || null;
+      }
       const question = refusal || !tool?.approval ? null : typeof tool.approval === 'function' ? await tool.approval(args, context).catch(() => 'Allow this step?') : '';
       if (question !== null) {
         const asking: ToolEvent = { id: call.id, name: call.name, args, waiting: true, ...(question ? { question } : {}) };
         events.tool(asking);
-        const answer = input.approve ? await input.approve(asking, signal) : { ok: false };
+        // An approval that fails is a no, not the end of the turn: the founder still gets their reply.
+        const answer: Answer = input.approve ? await input.approve(asking, signal).catch(() => ({ ok: false })) : { ok: false };
         if (!answer.ok) refusal = signal?.aborted ? 'Stopped by the founder.' : 'The founder said no to this. Do not try it again; ask what they want changed.';
         // The founder may have edited what goes out. Only fields the person proposed can change; nothing new is added.
         else if (answer.args) { args = { ...args, ...Object.fromEntries(Object.entries(answer.args).filter(([key, value]) => key in args && typeof value === typeof args[key])) }; rawArgs = JSON.stringify(args); }
@@ -78,12 +94,16 @@ export async function runTurn(input: {
       context.signal = signal;
       context.report = (effect) => events.tool({ id: call.id, name: call.name, args, effect });
       const ran = refusal ? { text: refusal, ok: false, args, effect: undefined } : await runTool(tools, call.name, rawArgs, context);
-      const event: ToolEvent = { id: call.id, name: call.name, args: ran.args, ok: ran.ok, result: ran.text.slice(0, RESULT_CHARS), effect: ran.effect };
+      let event: ToolEvent = { id: call.id, name: call.name, args: ran.args, ok: ran.ok, result: ran.text.slice(0, RESULT_CHARS), effect: ran.effect };
+      if (seams) event = (await seams.run('tool:after', { roomId, event })).event;
       done.push(event);
       events.tool(event);
-      messages.push({ role: 'tool', tool_call_id: call.id, content: event.result! });
+      messages.push({ role: 'tool', tool_call_id: call.id, content: event.result ?? '' });
     }
   }
 
-  return { text, tools: done, provider: answered?.name ?? '', model: answered?.model ?? '', usage: total, stopped: !!signal?.aborted };
+  const reply: TurnResult = { text, tools: done, provider: answered?.name ?? '', model: answered?.model ?? '', usage: total, stopped: !!signal?.aborted };
+  // Whatever watches a finished turn watches it afterwards: the founder waits for nothing here.
+  if (seams) void seams.run('turn:after', { roomId, source, query, reply }).catch(() => {});
+  return reply;
 }
