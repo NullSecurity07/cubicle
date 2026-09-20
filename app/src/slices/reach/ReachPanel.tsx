@@ -3,7 +3,7 @@ import type { Card, Stage } from '../../../shared/model';
 import type { ReachState } from '../../../shared/reach';
 import { getStage } from '../../api';
 import { PanelShell } from '../../overlay/PanelShell';
-import { dropHook, forgetChat, getReach, makeHook, newPairing, putReach, type Made } from './api';
+import { dropHook, forgetChat, forgetGroup, getReach, makeHook, newPairing, putReach, speakTo, type Made } from './api';
 import { voiceIs } from './voice';
 
 // What leaves this machine, said once, in the words the founder would use. It is the first thing on the screen and
@@ -13,6 +13,14 @@ const HOW = 'In Telegram, write to @BotFather, send /newbot, and give it any nam
 const VOICE = 'A microphone appears in the ask box, and every reply can be read out to you. Both run on this machine: the voice is fetched once (310 MB) the first time you ask for one, and the listening the first time you hold the microphone (about 150 MB). Nothing is sent anywhere, and nothing is ever sent for you — what you say lands in the box for you to read first.';
 const CLOUD = 'Leave this off and what you say is written down here on this machine. Switch it on and the recording of your voice is sent to Groq instead, which is quicker.';
 const HOOKS = 'Another program on this machine can start one task here. This app listens on this machine only — nothing from the internet can reach it — and a call only counts if it is signed with the secret below.';
+const TELLS = 'You do not have to come and look. When something finishes or falls over, you hear about it, and each morning you get a short note about the day ahead. Finished work arrives quietly; anything that needs you makes a sound.';
+const GROUP = 'One chat with everybody in it gets long. A Telegram group with Topics on gives each person a room of their own: you write in Maya\'s room and you are talking to Maya, with nothing to type first. Everything above keeps working — use whichever you like.';
+const STEPS = [
+  'In Telegram, make a new group and call it anything you like.',
+  'Open the group\'s settings and turn Topics on.',
+  'Add your bot to the group, then make it an administrator with "Manage topics".',
+  'Show a pairing code below and send it in the group. The rooms appear by themselves.',
+];
 
 export function ReachPanel() {
   const [state, setState] = useState<ReachState | null>(null);
@@ -40,6 +48,7 @@ export function ReachPanel() {
   const attempt = (work: Promise<ReachState>) => { setProblem(''); work.then(remember).catch((error: Error) => { setProblem(error.message); getReach().then(remember).catch(() => {}); }); };
   // A switch moves under the founder's finger, not a moment later when the server has written the file down.
   const flip = (patch: { on?: boolean; voice?: boolean; cloudSpeech?: boolean }) => { setState((held) => (held ? { ...held, ...patch } : held)); attempt(putReach(patch)); };
+  const tells = (patch: Partial<ReachState['updates']>) => { setState((held) => (held ? { ...held, updates: { ...held.updates, ...patch } } : held)); attempt(putReach({ updates: patch })); };
   const left = state?.pairing ? Math.max(0, Math.round((state.pairing.until - Date.now()) / 60_000)) : 0;
 
   async function add() {
@@ -91,7 +100,13 @@ export function ReachPanel() {
                   {state.paired.map((chat) => (
                     <li key={chat.chatId}>
                       <span>{chat.name}</span>
-                      <button type="button" onClick={() => attempt(forgetChat(chat.chatId))}>Forget</button>
+                      <span className="reach__row">
+                        <label className="reach__switch reach__quiet">
+                          <input type="checkbox" checked={!!chat.speak} onChange={(event) => attempt(speakTo(chat.chatId, event.target.checked))} />
+                          <span>Answer me out loud</span>
+                        </label>
+                        <button type="button" onClick={() => attempt(forgetChat(chat.chatId))}>Forget</button>
+                      </span>
                     </li>
                   ))}
                   {!state.paired.length && <li className="reach__quiet">No phone is paired yet.</li>}
@@ -99,6 +114,59 @@ export function ReachPanel() {
               </>
             )}
           </section>
+
+          {state.on && (
+            <section className="reach__part">
+              <h3>What I tell you, without being asked</h3>
+              <p className="reach__plain">{TELLS}</p>
+              <label className="reach__switch">
+                <input type="checkbox" checked={state.updates.on} onChange={(event) => tells({ on: event.target.checked })} />
+                <span>Tell me things without being asked</span>
+              </label>
+              {state.updates.on && (
+                <>
+                  <label className="reach__switch">
+                    <input type="checkbox" checked={state.updates.finished} onChange={(event) => tells({ finished: event.target.checked })} />
+                    <span>When work finishes, or falls over</span>
+                  </label>
+                  <label className="reach__switch">
+                    <input type="checkbox" checked={state.updates.stuck} onChange={(event) => tells({ stuck: event.target.checked })} />
+                    <span>When something could not start, or was missed while the app was closed</span>
+                  </label>
+                  <label className="reach__switch">
+                    <input type="checkbox" checked={state.updates.digest} onChange={(event) => tells({ digest: event.target.checked })} />
+                    <span>A short note each morning</span>
+                  </label>
+                  {state.updates.digest && (
+                    <div className="reach__row">
+                      <span className="reach__quiet">Send it at</span>
+                      <input type="time" className="reach__time" value={state.updates.at} aria-label="When the morning note arrives" onChange={(event) => { if (event.target.value) tells({ at: event.target.value }); }} />
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+          )}
+
+          {state.on && (
+            <section className="reach__part">
+              <h3>A room for each of them</h3>
+              <p className="reach__plain">{GROUP}</p>
+              {state.group
+                ? (
+                  <>
+                    <ul className="reach__list">
+                      <li>
+                        <span>{state.group.title} <span className="reach__quiet">{state.group.people.length ? `· ${state.group.people.join(', ')}` : '· no rooms yet'}</span></span>
+                        <button type="button" onClick={() => attempt(forgetGroup())}>Forget this group</button>
+                      </li>
+                    </ul>
+                    {state.group.trouble && <p className="reach__trouble">{state.group.trouble}</p>}
+                  </>
+                )
+                : <ol className="reach__steps">{STEPS.map((step) => <li key={step}>{step}</li>)}</ol>}
+            </section>
+          )}
 
           <section className="reach__part">
             <h3>Your voice</h3>
