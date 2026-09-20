@@ -76,8 +76,23 @@ export type Decision = {
 };
 
 // One thing recall found. `kind` and `id` say where it lives (a doc, a room's chat or memory, a decision, a shared file,
-// a link card's page); `roomId` is set for what belongs to one person.
-export type Hit = { kind: 'doc' | 'chat' | 'memory' | 'decision' | 'file' | 'link'; id: string; title: string; text: string; score: number; roomId?: string; at?: number };
+// a link card's page, a skill in the playbook); `roomId` is set for what belongs to one person.
+export type Hit = { kind: 'doc' | 'chat' | 'memory' | 'decision' | 'file' | 'link' | 'skill'; id: string; title: string; text: string; score: number; roomId?: string; at?: number };
+
+// One thing the people learned to do, written by whoever learned it and kept in the one playbook everybody shares.
+// `off` is the founder switching it out of every prompt; `stale` is the curator setting aside what nobody has used.
+export type SkillState = 'active' | 'off' | 'stale';
+// Where the lesson came from: a board run, a conversation, or the founder saying "learn this". `ref` is the task or the room.
+export type SkillSource = { kind: 'run' | 'chat' | 'taught'; ref: string };
+// What a skill said before its last change, so the founder can put it back with one press.
+export type SkillVersion = { name: string; when: string; procedure: string[]; pitfalls: string[]; verify: string; at: number };
+export type Skill = {
+  id: string; name: string; when: string; procedure: string[]; pitfalls: string[]; verify: string;
+  state: SkillState; by: { roomId: string; name: string }; source: SkillSource;
+  uses: number; patches: number; createdAt: number; usedAt?: number; editedByFounder?: boolean; history: SkillVersion[];
+};
+// What the playbook's feed carries: the whole list after every change, and the quiet line when something was just learned.
+export type SkillEvent = { skills: Skill[] } | { learned: { roomId: string; name: string; action: 'create' | 'patch' } };
 
 // One step of the first-run list. `done` is worked out from what the workspace holds, never from what was clicked.
 export type Mission = { id: string; title: string; tip: string; done: boolean };
