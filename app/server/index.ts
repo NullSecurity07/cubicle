@@ -8,6 +8,7 @@ import { boardAttention, createAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
 import { createCurator } from './curator.ts';
 import { createDecisions, decisionAttention } from './decisions.ts';
+import { createEvents } from './events.ts';
 import { createFounder } from './founder.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
 import { guard } from './guard.ts';
@@ -149,6 +150,9 @@ decisions.onChange(() => { void attention.refresh(); });
 // The one playbook everybody shares, and the one page everybody has read about the founder.
 const skills = createSkills(workspace);
 const founder = createFounder(workspace);
+// The one live connection a window holds: every feed below still answers on its own address for scripts and checks,
+// but the page hears all of them through this.
+const events = createEvents({ attention, skills, rooms: roomFeed, media, boards, stage: () => store.loadStage() });
 // Search by meaning over everything the workspace holds. The model runs inside this process; its file is fetched once.
 const recall = createRecall({ dir: workspace, embed: fake ? wordEmbedder : localEmbedder(resolve(root, 'app/.cache/recall')), gather: gatherPieces(store, decisions, (roomId) => memory.read(roomId), skills) });
 // Bring the saved vectors up to date shortly after start, so the first search does not wait for it.
@@ -386,9 +390,24 @@ createServer(async (req, res) => {
     const room = /^\/api\/rooms\/([^/]+)\/chat$/.exec(path)?.[1];
 
     if (path === '/api/stage' && req.method === 'GET') return json(res, 200, await store.loadStage());
+    // One connection for the whole window, carrying every feed below it under its own channel name. The comment on
+    // opening, and the pulse, are the rooms feed's for the rooms feed's reasons: a window knows it is listening
+    // before the first word arrives, and it can tell a feed that has gone quiet from one that has died.
+    if (path === '/api/events' && req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' }); pulse(res);
+      res.write(': listening\n\n');
+      // A window that goes away while its opening is still being read has to leave whenever it does arrive.
+      let leave = () => {};
+      res.on('close', () => leave());
+      const stop = await events.join((envelope) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(envelope)}\n\n`); });
+      if (res.writableEnded) stop(); else leave = stop;
+      return;
+    }
     if (path === '/api/stage' && req.method === 'PUT') {
       const [before, next] = [await store.loadStage(), (await body(req)) as Stage];
       await store.saveStage(next);
+      // The window's one feed follows the stage: a board card put down here is live before this answer goes back.
+      events.restage(next);
       // A browser card that left the stage takes its Chrome session with it.
       for (const card of before.cards ?? []) if (!next.cards?.some((kept) => kept.id === card.id)) void browser.close(browserSession(card.id));
       if ((before.cards ?? []).length !== (next.cards ?? []).length) void attention.refresh();
