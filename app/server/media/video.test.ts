@@ -123,10 +123,33 @@ describe('the composition', () => {
       const page = composition({ title: 'One', shape: shape as keyof typeof FORMATS, look: 'clean', shots: drawn });
       expect(page).toContain(`data-width="${size.width}" data-height="${size.height}"`);
       expect(page).toContain(`--s: ${size.scale};`);
-      for (const mark of ['class="display', 'class="heading', 'class="list"', 'class="shot"', 'class="stat', 'class="quote', 'class="plate"']) expect(page).toContain(mark);
+      for (const mark of ['class="display', 'class="heading', 'class="list"', 'class="shot"', 'class="regstat"', 'class="quote', 'class="plate"']) expect(page).toContain(mark);
       // The quote marks are put on for whoever wrote the line without them.
       expect(page).toContain('“It just works.”');
     }
+  });
+
+  it('hands a plain figure to the registry\'s count-up, in the box the figure had, and draws short-label charts as its columns', () => {
+    const stat = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([{ layout: 'stat', heading: '38%', text: 'of a sprint' }]) });
+    expect(stat).toContain('<div class="regstat" style="height: 349px"><div class="regcount" id="regcount0"');
+    expect(stat).toContain('var vars = {"start":0,"end":38,"prefix":"","suffix":"%"');
+    expect(stat).toContain('tl.add(registryCount0().paused(false), 0.220);');
+    // One way of counting a figure, not two.
+    expect(stat).not.toContain('class="count"');
+    expect(stat).not.toContain('textContent: 38');
+    expect(stat).toContain('<p class="lead quiet rise">of a sprint</p>');
+    const years: Scene = { layout: 'chart', heading: 'Revenue', bullets: ['2023 12k', '2024 30k', '2025 48k'] };
+    const chart = composition({ title: 'One', shape: 'wide', look: 'creator', shots: shots([years]) });
+    expect(chart).toContain('class="hf-catalog-animated-bar-chart regbars" id="regbars0"');
+    expect(chart).toContain('tl.fromTo("#regbars0", { "--hf-grow": 0 }');
+    expect(chart).not.toContain('class="chart"');
+    expect(chart).not.toContain('"#c0-0"');
+    // Names that have to be read keep the studio's rows, which give a name a line of its own.
+    const names: Scene = { layout: 'chart', bullets: ['Spreadsheets 12h', 'Our studio 2h'] };
+    const rows = composition({ title: 'One', shape: 'wide', look: 'creator', shots: shots([names]) });
+    expect(rows).toContain('class="chart"');
+    expect(rows).toContain('"#c0-0"');
+    expect(rows).not.toContain('regbars');
   });
 
   it('sets the words for a screen watched from across a room', () => {
@@ -166,7 +189,8 @@ describe('the composition', () => {
   });
 
   it('makes the one figure on a stat scene the whole scene, and runs it up to itself', () => {
-    const wide = composition({ title: 'One', shape: 'wide', look: 'clean', shots: shots([{ layout: 'stat', heading: '38%', text: 'of a sprint' }]) });
+    // The notebook draws its own figure, because it rings it by hand and a ring is measured around type that is there.
+    const wide = composition({ title: 'One', shape: 'wide', look: 'sketch', shots: shots([{ layout: 'stat', heading: '38%', text: 'of a sprint' }]) });
     expect(wide).toContain('<p class="stat rise" data-mark="ring" style="font-size: 300px">');
     expect(wide).toContain('<span class="count" style="min-width: 2ch">38</span>%');
     expect(wide).toContain('{ textContent: 0 }, { textContent: 38,');
@@ -729,6 +753,7 @@ describe('two systems of type in one band', () => {
       shots: [{ scene: listy, seconds: 3 }],
     });
     expect(page).not.toContain('class="capline"');
+    expect(page).not.toContain('class="regcaps"');
   });
 
   it('keeps them where the scene puts one block of type above the band', () => {
@@ -737,7 +762,8 @@ describe('two systems of type in one band', () => {
       words: [{ word: 'Investors', at: 0.2, seconds: 0.3 }, { word: 'want', at: 0.5, seconds: 0.4 }, { word: 'proof.', at: 0.9, seconds: 0.4 }],
       shots: [{ scene: plain, seconds: 3 }],
     });
-    expect(page).toContain('class="capline"');
+    // The creator pack draws its captions with the registry's highlight component.
+    expect(page).toContain('class="regcaps"');
   });
 });
 

@@ -1,0 +1,72 @@
+{
+  "source": "https://github.com/heygen-com/hyperframes (registry/), installed with `hyperframes add`",
+  "licence": "Apache-2.0",
+  "cli": "0.8.55",
+  "fetched": "2026-09-20",
+  "items": [
+    {
+      "name": "caption-pill-karaoke",
+      "type": "component",
+      "file": "caption-pill-karaoke.html",
+      "bytes": 13113,
+      "sha256": "cdbbc72af7fbac440c0bf5750cf9e3d4ded20f26588b00ac79399342ca60b3e3",
+      "job": "captions of the clean and brand packs"
+    },
+    {
+      "name": "caption-highlight",
+      "type": "component",
+      "file": "caption-highlight.html",
+      "bytes": 8321,
+      "sha256": "77f877ddcef85e787453daa6724cec5e85a0678fcb098fe94f9b86ce0ef5f2f4",
+      "job": "captions of the creator pack"
+    },
+    {
+      "name": "caption-kinetic-slam",
+      "type": "component",
+      "file": "caption-kinetic-slam.html",
+      "bytes": 6406,
+      "sha256": "86b7a54e045f626d1375636a2f1cde19c2f3cbdad1df1d7d0204fe6b4452044a",
+      "job": "captions of the neon pack"
+    },
+    {
+      "name": "whip-pan",
+      "type": "block",
+      "file": "whip-pan.html",
+      "bytes": 12658,
+      "sha256": "ecc645dcab00845e2008adb9c87486c2b873341a53d4711d20da6285093f80ac",
+      "job": "the act-break transition of the creator pack"
+    },
+    {
+      "name": "zoom-through-transition",
+      "type": "component",
+      "file": "zoom-through-transition.html",
+      "bytes": 12129,
+      "sha256": "8201b6de2c2908e3c8d9ca8d36d1b55b8093484ec40bd37bdf7754ae7b61d97d",
+      "job": "the act-break transition of the neon pack"
+    },
+    {
+      "name": "flash-through-white",
+      "type": "block",
+      "file": "flash-through-white.html",
+      "bytes": 12530,
+      "sha256": "0b5f25cd3eca2de71269475e1178a8a0667afa5f7bc08bb9cf80b49dd6f97596",
+      "job": "the act-break transition of the clean and brand packs"
+    },
+    {
+      "name": "count-up",
+      "type": "component",
+      "file": "count-up.html",
+      "bytes": 12389,
+      "sha256": "6b34b9873a243fedb060d23f4eb5cef1b61a5b169ec1ae064030b70b48beea66",
+      "job": "the figure on a stat scene"
+    },
+    {
+      "name": "animated-bar-chart",
+      "type": "component",
+      "file": "animated-bar-chart.html",
+      "bytes": 2778,
+      "sha256": "ceae5ee442ace07edfc115ed509982805c311e0c57a07517d3c95e1d60c898f2",
+      "job": "the columns of a chart scene whose labels are short"
+    }
+  ]
+}

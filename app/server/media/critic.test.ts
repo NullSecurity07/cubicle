@@ -621,6 +621,10 @@ describe('one bar of a chart', () => {
     // A label is what the bar is called, not the clause the figure came out of.
     expect(barOf('Rent takes 40 per cent')).toEqual({ label: 'Rent', value: 40, unit: '%' });
     expect(barOf('nothing to measure')).toBeNull();
+    // A year in front of a figure names the bar; a year on its own is still a figure.
+    expect(barOf('2024 30k')).toEqual({ label: '2024', value: 30, unit: 'k' });
+    expect(barOf('2025: 48%')).toEqual({ label: '2025', value: 48, unit: '%' });
+    expect(barOf('Founded 2019')).toEqual({ label: 'Founded', value: 2019, unit: '' });
   });
 
   it('refuses a chart whose bars carry no numbers', () => {

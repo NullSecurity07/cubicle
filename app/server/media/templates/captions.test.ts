@@ -78,8 +78,9 @@ describe('captions in a film', () => {
 
   it('is one track on the frame, outside every scene, so a cut cannot carry it away', () => {
     const words = said('Hello there friend');
+    // The quiet packs keep the studio's own track; the editorial pack is one of them.
     const page = composition({
-      title: 'One', shape: 'tall', look: 'clean', captions: true, words,
+      title: 'One', shape: 'tall', look: 'editorial', captions: true, words,
       voice: { file: 'say.wav', seconds: 3 }, shots: [shot(5, 'Hello there friend')],
     });
     expect(page).toContain('<div class="caps" aria-hidden="true">');
@@ -90,6 +91,26 @@ describe('captions in a film', () => {
     expect(page).toContain(`--caps: ${FORMATS.tall.caps}px;`);
     // One recording for the whole film, placed once.
     expect(page).toContain('<audio id="say" src="assets/say.wav" data-start="0"');
+  });
+
+  it('draws them with the pack\'s registry component where the pack has one — still one track, still outside every scene', () => {
+    const words = said('Hello there friend');
+    const film = { title: 'One', shape: 'tall' as const, captions: true, words, voice: { file: 'say.wav', seconds: 3 }, shots: [shot(5, 'Hello there friend')] };
+    for (const [look, root] of [['clean', 'pill-karaoke'], ['brand', 'pill-karaoke'], ['creator', 'highlight'], ['neon', 'kinetic-slam']] as const) {
+      const page = composition({ ...film, look });
+      expect(page, look).toContain(`<div id="${root}">`);
+      expect(page, look).not.toContain('class="caps"');
+      expect(page.indexOf('class="regcaps"'), look).toBeGreaterThan(page.lastIndexOf('</section>'));
+      // In the band the studio's own captions sit in, at the measure they have.
+      const { margin, caps, width, safeRight } = FORMATS.tall;
+      expect(page, look).toContain(`left: ${margin}px; bottom: ${caps}px; width: ${width - margin - (margin + safeRight)}px`);
+      // Its own script, on this film's words, handed to the film's one clock — and nothing fetched to draw it.
+      expect(page, look).toContain('"text":"Hello"');
+      expect(page, look).toContain('tl.add(registryCaptions().paused(false), 0);');
+      expect(page, look).not.toMatch(/https?:\/\/(?!hyperframes\.heygen\.com\/schema)/);
+      expect(page, look).toContain('class="has-captions"');
+    }
+    for (const look of ['editorial', 'documentary', 'sketch'] as const) expect(composition({ ...film, look }), look).toContain('class="caps"');
   });
 
   it('sets a line too wide for the frame smaller rather than cutting its ends off', () => {
@@ -124,13 +145,16 @@ describe('captions in a film', () => {
       shots: [{ scene: { layout: 'hook', text: 'Hello there friend', say: 'Hello there friend' }, seconds: 5 }],
     });
     expect(page).not.toContain('class="caps"');
+    expect(page).not.toContain('class="regcaps"');
   });
 
   it('writes none of it when nothing was said, or when the founder turned it off', () => {
     const silent = composition({ title: 'One', shape: 'wide', look: 'clean', captions: true, shots: [{ scene: { layout: 'statement', text: 'A line.' }, seconds: 4 }] });
     expect(silent).not.toContain('class="caps"');
+    expect(silent).not.toContain('class="regcaps"');
     const off = composition({ title: 'One', shape: 'wide', look: 'clean', words: said('Hello there'), voice: { file: 'say.wav', seconds: 2 }, shots: [shot(5, 'Hello there')] });
     expect(off).not.toContain('class="caps"');
+    expect(off).not.toContain('class="regcaps"');
     expect(off).toContain('<audio id="say"');
   });
 });

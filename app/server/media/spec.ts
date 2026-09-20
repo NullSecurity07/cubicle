@@ -130,7 +130,12 @@ export const BAR = /(\d+(?:\.\d+)?)\s*(%|per ?cent|x\b|k\b|m\b|bn\b)?/i;
 // out of: "Rent" rather than "Rent takes", which is what reading a sentence off a bar looks like.
 const HANGS_ON = /\s+(?:takes?|took|is|are|was|were|costs?|spends?|makes?|made|gets?|got|goes|went|reached?|hits?|grew|grows?|fell|falls?|accounts? for|comes? to|adds? up to|equals?)\s*$/i;
 export const barOf = (line: string): { label: string; value: number; unit: string } | null => {
-  const found = BAR.exec(line ?? '');
+  // "2024 30k" is a year and a figure, and the first number on it is the year. A bare year in front of another
+  // figure is what the bar is called, never what it measures — read the other way round, a chart of four years
+  // came out as four bars of the same height labelled with the revenue.
+  const figures = [...(line ?? '').matchAll(new RegExp(BAR.source, 'gi'))];
+  const bareYear = (one: RegExpMatchArray) => !one[2] && /^(?:19|20)\d\d$/.test(one[1]);
+  const found = figures.length > 1 && bareYear(figures[0]) ? figures.find((one) => !bareYear(one)) ?? figures[0] : figures[0];
   if (!found) return null;
   const value = Number(found[1]);
   if (!Number.isFinite(value)) return null;
