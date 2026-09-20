@@ -1,7 +1,7 @@
 // What the command bar can do, as plain data: the bar shows suggestions, the window carries the chosen action out.
 export type Action =
   | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'videogen' | 'browser' | 'project' | 'board'; data?: Record<string, string> }
-  | { do: 'focus' | 'jump'; id: string } | { do: 'panel'; name: 'needs' | 'messages' | 'decisions' }
+  | { do: 'focus' | 'jump'; id: string } | { do: 'panel'; name: 'needs' | 'messages' | 'decisions' | 'playbook' }
   | { do: 'ask'; roomId: string; text: string } | { do: 'thread' | 'decision'; id: string } | { do: 'file'; path: string }
   | { do: 'new-decision' } | { do: 'idle' } | { do: 'fit' } | { do: 'keys' };
 // `fallback`: nothing matched, so the text is only offered to people. What was found in the workspace ranks above these,
@@ -21,6 +21,7 @@ const STARTERS: Suggestion[] = [
   { section: 'Do', label: 'Needs you', hint: 'What waits for you', action: { do: 'panel', name: 'needs' } },
   { section: 'Do', label: 'Messages', hint: 'Every conversation', action: { do: 'panel', name: 'messages' } },
   { section: 'Do', label: 'Decisions', hint: 'What you decided, and why', action: { do: 'panel', name: 'decisions' } },
+  { section: 'Do', label: 'Playbook', hint: 'What the people learned', action: { do: 'panel', name: 'playbook' } },
   { section: 'Do', label: 'Add a person', action: { do: 'add', kind: 'room' } },
   { section: 'Do', label: 'Add a doc', action: { do: 'add', kind: 'doc' } },
   { section: 'Do', label: 'Record a decision', action: { do: 'new-decision' } },
@@ -61,11 +62,12 @@ export function suggest(input: string, known: Known): Suggestion[] {
 
   if (/^(needs?( you| me)?|what needs me|inbox|approvals?|waiting)$/.test(low)) found.push(STARTERS[0]);
   if (/^(messages?|conversations?|chats?|threads?)$/.test(low)) found.push(STARTERS[1]);
-  if (/^(record|log|new|add)( a)? decision$/.test(low)) found.push(STARTERS[5]);
+  if (/^(record|log|new|add)( a)? decision$/.test(low)) found.push(STARTERS[6]);
   else if (/^decisions?( log)?$/.test(low)) found.push(STARTERS[2]);
-  if (/^who('s| is)? (idle|free|busy|working)$/.test(low)) found.push(STARTERS[6]);
-  if (/^(show (everything|all)|fit|zoom out|overview)$/.test(low)) found.push(STARTERS[7]);
-  if (/^(shortcuts?|keys|keyboard( shortcuts)?|help)$/.test(low)) found.push(STARTERS[8]);
+  if (/^(playbook|skills?|what (we|they|the people) learned|how we work)$/.test(low)) found.push(STARTERS[3]);
+  if (/^who('s| is)? (idle|free|busy|working)$/.test(low)) found.push(STARTERS[7]);
+  if (/^(show (everything|all)|fit|zoom out|overview)$/.test(low)) found.push(STARTERS[8]);
+  if (/^(shortcuts?|keys|keyboard( shortcuts)?|help)$/.test(low)) found.push(STARTERS[9]);
 
   if (!opening && !target) for (const card of named(low).slice(0, 5)) found.push({ section: 'On the stage', label: card.label, hint: card.role ?? card.type, action: { do: 'jump', id: card.id } });
   // A few letters of a starter ("dec", "mess") find it too.
