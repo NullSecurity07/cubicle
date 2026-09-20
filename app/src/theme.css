@@ -617,15 +617,16 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .skill.is-theirs { border-left: 2px solid var(--accent); }
 .skill.is-off .skill__name b { color: var(--muted); }
 .skill__head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
-.skill__name { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; border: 0; border-radius: 7px; padding: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
-.skill__name b { min-width: 0; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
-.skill__name small { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.skill__name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 7px; padding: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.skill__text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.skill__text b { font-size: 13.5px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.skill__text small { font-size: 11.5px; color: var(--muted); }
 .skill__mark { flex: none; align-self: center; width: 10px; height: 10px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s; }
 .skill.is-open .skill__mark { transform: rotate(90deg); }
 .skill__acts { flex: none; display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s; }
 .skill:hover .skill__acts, .skill.is-open .skill__acts, .skill__acts:focus-within { opacity: 1; }
 .skill__switch { flex: none; position: relative; display: inline-flex; }
-.skill__switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.skill__switch input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .skill__switch span { display: block; width: 30px; height: 18px; border-radius: 9px; background: rgba(255, 255, 255, 0.16); transition: background 0.15s; }
 .skill__switch span::after { content: ''; display: block; width: 14px; height: 14px; margin: 2px; border-radius: 50%; background: var(--text); transition: transform 0.15s; }
 .skill__switch input:checked + span { background: var(--accent); }
@@ -652,7 +653,7 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 /* The line a birth or an improvement leaves in the room: not a message from anybody, and never kept as one. */
 button.msg--learned { align-self: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
 button.msg--learned:hover { color: var(--text); background: rgba(255, 255, 255, 0.07); }
-.taskview__learn { display: flex; align-items: center; gap: 10px; padding-top: 4px; }
+.taskview__learn { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; padding-top: 4px; }
 .taskview__learn button { flex: none; border: 0; border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 12px; font-weight: 550; color: var(--text); background: rgba(255, 255, 255, 0.1); cursor: pointer; }
 .taskview__learn button:hover { background: rgba(255, 255, 255, 0.16); }
 .taskview__learn button:disabled { opacity: 0.45; cursor: default; }

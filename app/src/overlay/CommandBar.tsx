@@ -7,7 +7,7 @@ import { emit } from '../bus';
 import { labelOf } from '../nodes/RoomSide';
 import type { StageNode } from '../stage';
 import { KEYS, suggest, type Action, type Suggestion } from './commands';
-import { overlay, showDecision, showThread } from './store';
+import { overlay, showDecision, showPlaybook, showThread } from './store';
 
 const WHERE: Record<Hit['kind'], string> = { doc: 'Doc', chat: 'Conversation', memory: 'Memory', decision: 'Decision', file: 'File', link: 'Web page', skill: 'Playbook' };
 const fromHit = (hit: Hit): Suggestion => ({
@@ -62,7 +62,8 @@ export function CommandBar() {
     if (action.do === 'add') addCard(action.kind, action.data);
     if (action.do === 'jump') goTo(action.id);
     if (action.do === 'focus') overlay.open({ kind: 'focus', id: action.id });
-    if (action.do === 'panel') overlay.open({ kind: 'panel', name: action.name });
+    // Every way into the playbook says where to look in it; asked for by name, it opens on the whole company.
+    if (action.do === 'panel') { if (action.name === 'playbook') showPlaybook({}); overlay.open({ kind: 'panel', name: action.name }); }
     if (action.do === 'thread') { showThread(action.id); overlay.open({ kind: 'panel', name: 'messages' }); }
     if (action.do === 'decision') { showDecision(action.id); overlay.open({ kind: 'panel', name: 'decisions' }); }
     if (action.do === 'new-decision') { showDecision('new'); overlay.open({ kind: 'panel', name: 'decisions' }); }

@@ -3,7 +3,7 @@ import type { Skill } from '../../shared/model';
 import { changeSkill, getFounder, putFounder, removeSkill } from '../api';
 import { PanelShell } from '../overlay/PanelShell';
 import { usePlaybook } from '../overlay/playbook';
-import { showPlaybook, usePlaybookAt } from '../overlay/store';
+import { usePlaybookAt } from '../overlay/store';
 
 const PROFILE_CHARS = 1200;
 const whole = (count: number) => count.toLocaleString();
@@ -40,9 +40,13 @@ function AboutYou() {
       <p className="playbook__note">Everyone here reads this before they answer you, and adds a line now and then. Every line is yours to change.</p>
       {over > 0 && <p className="msg--problem">That is {whole(over)} characters more than fits. Take a line out, or say it shorter.</p>}
       {state === 'problem' && <p className="msg--problem">{problem}</p>}
-      <div className="playbook__end">
-        <button type="button" className="playbook__act primary" disabled={text === null || text === saved || over > 0 || state === 'saving'} onClick={() => void save()}>Save</button>
-      </div>
+      {/* Nothing to save, nothing to press: the button is here the moment there is a change and gone once it is kept. */}
+      {text !== null && text !== saved && (
+        <div className="playbook__end">
+          <button type="button" className="playbook__act" onClick={() => setText(saved)}>Leave it</button>
+          <button type="button" className="playbook__act primary" disabled={over > 0 || state === 'saving'} onClick={() => void save()}>Save</button>
+        </div>
+      )}
     </section>
   );
 }
@@ -76,8 +80,7 @@ function SkillRow({ skill, open, mine, onOpen }: { skill: Skill; open: boolean; 
       <div className="skill__head">
         <button type="button" className="skill__name" aria-expanded={open} onClick={() => onOpen(open ? null : skill.id)}>
           <svg className="skill__mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 4l4 4-4 4" /></svg>
-          <b>{skill.name}</b>
-          <small>{skill.by.name} learned this · {timesUsed(skill.uses)}</small>
+          <span className="skill__text"><b>{skill.name}</b><small>{skill.by.name} learned this · {timesUsed(skill.uses)}</small></span>
         </button>
         <div className="skill__acts">
           <button type="button" className="playbook__act" onClick={edit}>Edit</button>
@@ -138,7 +141,6 @@ export function PlaybookPanel() {
   // Opened from the line in a chat: that one skill is what the founder came for. It is found once, so closing it stays closed.
   const wanted = at.skill ? skills.find((one) => one.name === at.skill)?.id : undefined;
   useEffect(() => { if (wanted) setOpen(wanted); }, [wanted]);
-  useEffect(() => () => showPlaybook({}), []);
 
   const theirs = at.roomId;
   const whose = theirs ? skills.find((one) => one.by.roomId === theirs)?.by.name : undefined;
