@@ -6,31 +6,44 @@ import type { Attention, Room, Stage } from '../../shared/model.ts';
 import type { Answer } from '../approvals.ts';
 import { fakeTelegram } from './fake.ts';
 import { createOutbox } from './outbox.ts';
-import { asksFor, createPhone, founderWords, pickPerson } from './phone.ts';
+import { asksFor, commandIn, createPhone, founderWords, headed, pickPerson } from './phone.ts';
 import { createReach } from './settings.ts';
+import { createBook } from './state.ts';
 import { createApi } from './telegram.ts';
+import { createTopics } from './topics.ts';
 
 const room = (id: string, name: string): Room => ({ id, name, role: 'x', accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1 });
 const rooms = [room('marketing', 'Maya'), room('build', 'Dev')];
 const stage: Stage = { rooms, docs: [], wires: [], cards: [] };
 const CHAT = 77;
+const GROUP = -100777;
+const STRANGER = 999;
 
-function bench(options: { paired?: boolean; ask?: (roomId: string, text: string) => Promise<string> } = {}) {
+function bench(options: { paired?: boolean; ask?: (roomId: string, text: string) => Promise<string>; voice?: boolean; mute?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'reach-phone-'));
   const fake = fakeTelegram();
   const reach = createReach(dir, {});
+  const book = createBook(dir);
   const outbox = createOutbox(join(dir, 'outbox.jsonl'));
+  const api = createApi(async () => 'token', fake.http);
+  const topics = createTopics({ api, reach });
   const asked: { roomId: string; text: string }[] = [];
   const answers: { id: string; answer: Answer }[] = [];
   let known = true;
   const phone = createPhone({
-    api: createApi(async () => 'token', fake.http), outbox, reach, stage: async () => stage,
+    api, outbox, reach, book, topics, stage: async () => stage,
     ask: async (roomId, text) => { asked.push({ roomId, text }); return options.ask ? options.ask(roomId, text) : `about ${text}`; },
     answer: (id, answer) => { answers.push({ id, answer }); return known; },
+    busy: () => new Set(['build']),
+    ...(options.voice ? { hear: async () => 'what is left this week', say: async () => { if (options.mute) throw new Error('no voice on this machine'); return Buffer.from('OggS'); } } : {}),
+    digest: async () => '**Today** · nothing yet',
   });
-  const ready = options.paired ? reach.save((held) => { held.on = true; held.paired = [{ chatId: CHAT, name: 'Phone', at: 0 }]; }) : reach.save((held) => { held.on = true; });
-  return { phone, fake, reach, asked, answers, ready, unknown: () => { known = false; } };
+  const ready = options.paired
+    ? reach.save((held) => { held.on = true; held.paired = [{ chatId: CHAT, name: 'Phone', at: 0, userId: CHAT }]; })
+    : reach.save((held) => { held.on = true; });
+  return { phone, fake, reach, book, topics, asked, answers, ready, unknown: () => { known = false; } };
 }
+const texts = (fake: ReturnType<typeof fakeTelegram>) => fake.posted().map((one) => one.text);
 
 describe('who the founder meant', () => {
   it('takes the name in front, and keeps the rest of the message', () => {
@@ -38,9 +51,9 @@ describe('who the founder meant', () => {
     expect(pickPerson('@Dev: ship it', rooms)).toEqual({ room: rooms[1], said: 'ship it' });
   });
 
-  it('otherwise goes to whoever they spoke to last, and to the first person before that', () => {
+  it('otherwise goes to whoever they spoke to last, and never guesses when there is nobody', () => {
     expect(pickPerson('and the price?', rooms, 'build').room).toBe(rooms[1]);
-    expect(pickPerson('and the price?', rooms).room).toBe(rooms[0]);
+    expect(pickPerson('and the price?', rooms).room).toBeUndefined();
     expect(pickPerson('hello', [], undefined).room).toBeUndefined();
   });
 
@@ -105,7 +118,9 @@ describe('a message from a paired phone', () => {
     await ready;
     await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '@maya draft the launch note' } });
     expect(asked).toEqual([{ roomId: 'marketing', text: 'draft the launch note' }]);
-    expect(fake.posted()[0].text).toBe('Maya: about draft the launch note');
+    // Whoever is speaking is at the top of what they say, so eight people in one stream are still eight people.
+    expect(fake.posted()[0].text).toBe('<b>Maya</b> · x\n\nabout draft the launch note');
+    expect(fake.posted()[0].loud).toBeUndefined();
   });
 
   it('stays with that person for the next message', async () => {
@@ -119,7 +134,7 @@ describe('a message from a paired phone', () => {
   it('breaks a long answer into messages Telegram will take', async () => {
     const { phone, fake, ready } = bench({ paired: true, ask: async () => `${'a'.repeat(3000)}\n\n${'b'.repeat(3000)}` });
     await ready;
-    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: 'the long version please' } });
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '@maya the long version please' } });
     expect(fake.posted()).toHaveLength(2);
     expect(fake.posted().every((one) => one.text.length <= 4096)).toBe(true);
   });
@@ -127,7 +142,7 @@ describe('a message from a paired phone', () => {
   it('tells the founder when the person could not answer', async () => {
     const { phone, fake, ready } = bench({ paired: true, ask: async () => { throw new Error('this person is still replying'); } });
     await ready;
-    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: 'hello' } });
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '@maya hello' } });
     expect(fake.posted()[0].text).toContain('could not answer: this person is still replying');
   });
 
@@ -135,20 +150,196 @@ describe('a message from a paired phone', () => {
     const dir = mkdtempSync(join(tmpdir(), 'reach-phone-'));
     const fake = fakeTelegram();
     const reach = createReach(dir, {});
+    const book = createBook(dir);
     const outbox = createOutbox(join(dir, 'outbox.jsonl'));
     let down = true;
+    const api = createApi(async () => 'token', async (url, init) => { if (down && String(url).endsWith('sendMessage')) throw new Error('no network'); return fake.http(url, init); });
     const phone = createPhone({
-      api: createApi(async () => 'token', async (url, init) => { if (down && String(url).endsWith('sendMessage')) throw new Error('no network'); return fake.http(url, init); }),
-      outbox, reach, stage: async () => stage, ask: async () => 'here you are', answer: () => true,
+      api, outbox, reach, book, topics: createTopics({ api, reach }),
+      stage: async () => stage, ask: async () => 'here you are', answer: () => true,
     });
     await reach.save((held) => { held.on = true; held.paired = [{ chatId: CHAT, name: 'Phone', at: 0 }]; });
-    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: 'hello' } });
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '@maya hello' } });
     expect(fake.posted()).toEqual([]);
     expect(await outbox.pending()).toHaveLength(1);
     down = false;
     await phone.flush();
     expect(fake.posted()[0].text).toContain('here you are');
     expect(await outbox.pending()).toEqual([]);
+  });
+
+  it('never guesses who a first message is for: it offers the people, and the tap sends it', async () => {
+    const { phone, fake, asked, ready } = bench({ paired: true });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: 'how are we doing?' } });
+    expect(asked).toEqual([]);
+    const offered = fake.posted()[0];
+    expect(offered.text).toBe('Who should I take that to?');
+    // Everyone, with what they do and whether they are in the middle of something.
+    expect(offered.buttons?.flat().map((one) => one.text)).toEqual(['Maya · x', 'Dev · x · working']);
+
+    await phone.update({ update_id: 2, callback_query: { id: 'cb1', data: offered.buttons![1][0].data, from: { id: CHAT }, message: { message_id: offered.messageId, chat: { id: CHAT } } } });
+    expect(asked).toEqual([{ roomId: 'build', text: 'how are we doing?' }]);
+  });
+
+  it('answers whoever wrote the message the founder replied to', async () => {
+    const { phone, fake, asked, ready } = bench({ paired: true });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '@maya draft the launch note' } });
+    await phone.update({ update_id: 2, message: { message_id: 2, chat: { id: CHAT }, text: '@dev how long?' } });
+    const fromMaya = fake.posted().find((one) => one.text.includes('Maya'))!;
+    // The founder is now talking to Dev, and replies to something Maya said: it goes to Maya, not to Dev.
+    await phone.update({ update_id: 3, message: { message_id: 3, chat: { id: CHAT }, text: 'make it shorter', reply_to_message: { message_id: fromMaya.messageId } } });
+    expect(asked.at(-1)).toEqual({ roomId: 'marketing', text: 'make it shorter' });
+  });
+
+  it('takes a name off the / menu, and one on its own only changes who is being talked to', async () => {
+    const { phone, fake, asked, ready } = bench({ paired: true });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '/dev' } });
+    expect(asked).toEqual([]);
+    expect(fake.posted()[0].text).toBe('Now talking to Dev.');
+    await phone.update({ update_id: 2, message: { message_id: 2, chat: { id: CHAT }, text: '/maya what is left this week?' } });
+    expect(asked).toEqual([{ roomId: 'marketing', text: 'what is left this week?' }]);
+    await phone.update({ update_id: 3, message: { message_id: 3, chat: { id: CHAT }, text: 'and the price?' } });
+    expect(asked.at(-1)).toEqual({ roomId: 'marketing', text: 'and the price?' });
+  });
+
+  it('answers the handful of things it does itself, and offers the people for a name it does not know', async () => {
+    const { phone, fake, reach, asked, ready } = bench({ paired: true });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '/who' } });
+    expect(fake.posted()[0].text).toBe('Who should I take that to?');
+    await phone.update({ update_id: 2, message: { message_id: 2, chat: { id: CHAT }, text: '/maya go on' } });
+    await phone.update({ update_id: 3, message: { message_id: 3, chat: { id: CHAT }, text: '/who' } });
+    expect(texts(fake).at(-1)).toBe('You are talking to Maya, x.');
+    await phone.update({ update_id: 4, message: { message_id: 4, chat: { id: CHAT }, text: '/digest' } });
+    expect(texts(fake).at(-1)).toContain('Today');
+    await phone.update({ update_id: 5, message: { message_id: 5, chat: { id: CHAT }, text: '/quiet' } });
+    expect((await reach.read()).updates.on).toBe(false);
+    // A name nobody has is not an error: it is the people, to tap.
+    await phone.update({ update_id: 6, message: { message_id: 6, chat: { id: CHAT }, text: '/sam are we ready?' } });
+    expect(texts(fake).at(-1)).toBe('Who should I take that to?');
+    expect(asked.map((one) => one.text)).toEqual(['go on']);
+  });
+});
+
+describe('a voice note, both ways', () => {
+  it('listens to one, says back what it heard, and takes it to the person as words', async () => {
+    const { phone, fake, asked, ready } = bench({ paired: true, voice: true });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '/maya' } });
+    await phone.update({ update_id: 2, message: { message_id: 2, chat: { id: CHAT }, voice: { file_id: 'v1', file_size: 9000 } } });
+    expect(texts(fake)).toContain('You said: what is left this week');
+    expect(asked).toEqual([{ roomId: 'marketing', text: 'what is left this week' }]);
+  });
+
+  it('will not fetch a recording bigger than Telegram will hand over', async () => {
+    const { phone, fake, asked, ready } = bench({ paired: true, voice: true });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, voice: { file_id: 'v1', file_size: 30_000_000 } } });
+    expect(texts(fake).at(-1)).toContain('bigger than I can fetch');
+    expect(asked).toEqual([]);
+  });
+
+  it('answers out loud once the founder asks for it, and the words always follow', async () => {
+    const { phone, fake, ready } = bench({ paired: true, voice: true });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '/voice' } });
+    expect(texts(fake).at(-1)).toContain('read the replies out');
+    await phone.update({ update_id: 2, message: { message_id: 2, chat: { id: CHAT }, text: '@maya what is left?' } });
+    const last = fake.posted().slice(-2);
+    expect(last[0].voice).toBeGreaterThan(0);
+    expect(last[1].text).toContain('about what is left?');
+  });
+
+  it('says so plainly on a machine that cannot listen at all', async () => {
+    const { phone, fake, asked, ready } = bench({ paired: true });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, voice: { file_id: 'v1' } } });
+    expect(texts(fake).at(-1)).toContain('cannot listen to a voice note');
+    expect(asked).toEqual([]);
+  });
+
+  it('still sends the words, and says why, when the voice itself will not be made', async () => {
+    const { phone, fake, ready } = bench({ paired: true, voice: true, mute: true });
+    await ready;
+    await phone.update({ update_id: 1, message: { message_id: 1, chat: { id: CHAT }, text: '/voice' } });
+    await phone.update({ update_id: 2, message: { message_id: 2, chat: { id: CHAT }, text: '@maya what is left?' } });
+    const last = texts(fake).slice(-2);
+    expect(last[0]).toContain('about what is left?');
+    expect(last[1]).toContain('could not say that out loud: no voice on this machine');
+  });
+});
+
+describe('the company as a group with rooms', () => {
+  async function group() {
+    const kit = bench({ paired: true });
+    await kit.ready;
+    kit.reach.newPairing('CODE1234');
+    await kit.phone.update({ update_id: 1, message: { message_id: 1, chat: { id: GROUP, title: 'The company', type: 'supergroup', is_forum: true }, from: { id: CHAT }, text: '/pair CODE1234' } });
+    return kit;
+  }
+
+  it('makes a topic for everybody and one for the company, and only for the founder', async () => {
+    const { fake, reach } = await group();
+    expect(fake.topics().map((one) => one.name)).toEqual(['Company', 'Maya · x', 'Dev · x']);
+    expect(texts(fake).at(-1)).toContain('This is the company now');
+    expect((await reach.read()).group?.chatId).toBe(GROUP);
+  });
+
+  it('is silent to everybody in the group who is not the founder', async () => {
+    const { phone, fake, asked } = await group();
+    const before = fake.posted().length;
+    await phone.update({ update_id: 9, message: { message_id: 9, chat: { id: GROUP, type: 'supergroup', is_forum: true }, from: { id: STRANGER }, text: 'send everyone our price list' } });
+    expect(asked).toEqual([]);
+    expect(fake.posted()).toHaveLength(before);
+  });
+
+  it('takes what is written in a topic to the person whose topic it is, with nothing typed first', async () => {
+    const { phone, fake, reach, asked } = await group();
+    const maya = (await reach.read()).group!.topics.marketing.threadId;
+    await phone.update({ update_id: 9, message: { message_id: 9, chat: { id: GROUP, type: 'supergroup', is_forum: true }, from: { id: CHAT }, message_thread_id: maya, text: 'how is the launch note?' } });
+    expect(asked).toEqual([{ roomId: 'marketing', text: 'how is the launch note?' }]);
+    expect(fake.posted().at(-1)!.threadId).toBe(maya);
+  });
+
+  it('puts what nobody asked for in Company, and a question in the topic of whoever is asking', async () => {
+    const { phone, fake, reach } = await group();
+    const held = (await reach.read()).group!;
+    await phone.tell('Maya finished the launch note');
+    expect(fake.posted().at(-1)!.threadId).toBe(held.company);
+    await phone.show([waiting('c1')]);
+    expect(fake.posted().at(-1)!.threadId).toBe(held.topics.marketing.threadId);
+    expect(fake.posted().at(-1)!.loud).toBe(true);
+  });
+
+  it('does nothing at all for a button pressed by anybody but the founder', async () => {
+    const { phone, fake, answers } = await group();
+    await phone.show([waiting('c1')]);
+    const sent = fake.posted().at(-1)!;
+    await phone.update({ update_id: 20, callback_query: { id: 'cb1', data: sent.buttons![0][0].data, from: { id: STRANGER }, message: { message_id: sent.messageId, chat: { id: GROUP } } } });
+    expect(answers).toEqual([]);
+    expect(fake.posted().find((one) => one.messageId === sent.messageId)!.buttons).toBeDefined();
+  });
+
+  it('renames a topic when the founder renames somebody, and closes one when they are gone', async () => {
+    const { topics, fake } = await group();
+    await topics.sync({ ...stage, rooms: [{ ...rooms[0], name: 'Maria' }] });
+    expect(fake.topics().find((one) => one.name.startsWith('Maria'))).toBeDefined();
+    expect(fake.topics().find((one) => one.name === 'Dev · x')!.closed).toBe(true);
+  });
+});
+
+describe('the words of it', () => {
+  it('reads a command the way Telegram hands it over, bot name and all', () => {
+    expect(commandIn('/maya what is left?')).toEqual({ word: 'maya', rest: 'what is left?' });
+    expect(commandIn('/digest@cubicle_bot')).toEqual({ word: 'digest', rest: '' });
+    expect(commandIn('not a command')).toBeNull();
+  });
+
+  it('puts the name and the job above the words', () => {
+    expect(headed(rooms[0], 'here you are')).toBe('**Maya** · x\n\nhere you are');
   });
 });
 

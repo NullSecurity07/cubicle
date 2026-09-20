@@ -1,7 +1,9 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-export type Outgoing = { id: string; chatId: number; text: string; at: number };
+// `roomId` is who wrote it, so that a reply to it on the phone reaches them; `threadId` is the topic it belongs in.
+// Both are written down with the words, because a message resent after a restart has to land where it was meant to.
+export type Outgoing = { id: string; chatId: number; text: string; at: number; roomId?: string; threadId?: number; loud?: boolean };
 export type Outbox = ReturnType<typeof createOutbox>;
 
 const newId = () => `out-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -23,8 +25,8 @@ export function createOutbox(path: string) {
 
   return {
     settled: () => queue.catch(() => {}),
-    async write(chatId: number, text: string, at = Date.now()): Promise<Outgoing> {
-      const entry: Outgoing = { id: newId(), chatId, text, at };
+    async write(chatId: number, text: string, extra: Omit<Partial<Outgoing>, 'id' | 'chatId' | 'text'> = {}): Promise<Outgoing> {
+      const entry: Outgoing = { id: newId(), chatId, text, at: Date.now(), ...extra };
       await line(entry);
       return entry;
     },

@@ -43,7 +43,9 @@ async function bench() {
   const deps = {
     workspace: dir, root: dir, fake: true, seams, approvals, attention,
     store: { loadStage: async () => stage },
-    boards: {}, own: { ports: [port, port + 1], token: 'launch-token' },
+    boards: { list: async () => [], onChange: () => () => {} },
+    skills: { list: async () => [] }, busy: new Set<string>(),
+    own: { ports: [port, port + 1], token: 'launch-token' },
     json: () => {}, body: async () => ({}), runs: {},
   } as unknown as Deps;
   // Read before anything is written, the way the app reads it when the founder's window first asks what waits for them.

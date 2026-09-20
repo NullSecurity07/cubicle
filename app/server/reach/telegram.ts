@@ -1,15 +1,24 @@
 import { toTelegram } from './format.ts';
 
-export type Chat = { id: number; first_name?: string; username?: string; title?: string };
+export type Chat = { id: number; first_name?: string; username?: string; title?: string; type?: string; is_forum?: boolean };
+export type User = { id: number; first_name?: string; username?: string };
+// A voice note or a piece of music, as Telegram hands it over: an id to fetch it by, and how big it is.
+export type Sound = { file_id: string; file_size?: number; duration?: number; mime_type?: string };
 export type Message = {
-  message_id: number; chat: Chat; text?: string; caption?: string;
+  message_id: number; chat: Chat; text?: string; caption?: string; from?: User; message_thread_id?: number;
+  voice?: Sound; audio?: Sound;
   // Anything Telegram marks as coming from somewhere else. Those words are not the founder speaking.
   forward_origin?: unknown; forward_date?: number; forward_from?: unknown; forward_sender_name?: string;
   reply_to_message?: { message_id: number; text?: string; caption?: string };
 };
-export type Callback = { id: string; data?: string; message?: { message_id: number; chat: Chat } };
-export type Update = { update_id: number; message?: Message; edited_message?: Message; callback_query?: Callback };
+export type Callback = { id: string; data?: string; from?: User; message?: { message_id: number; chat: Chat; message_thread_id?: number } };
+// What the bot was just made, and by whom: how it learns it has been put in a group at all.
+export type Membership = { chat: Chat; from?: User; new_chat_member?: { status?: string; can_manage_topics?: boolean } };
+export type Update = { update_id: number; message?: Message; edited_message?: Message; callback_query?: Callback; my_chat_member?: Membership };
 export type Buttons = { text: string; data: string }[][];
+// Where a message goes and how loudly it lands. `threadId` is a topic in a group; everything routine is silent.
+export type Sent = { buttons?: Buttons; threadId?: number; loud?: boolean };
+export type Command = { command: string; description: string };
 export type Api = ReturnType<typeof createApi>;
 
 // Telegram's own limit on one message, and how long a poll waits for something to happen before answering empty.
@@ -63,13 +72,51 @@ export function createApi(token: () => Promise<string | null>, http: typeof fetc
   // bracket it reads as a tag gone wrong), the same words go as plain text: how it looks never costs the founder a reply.
   const drawn = <T>(method: string, body: Record<string, unknown> & { text: string }) => call<T>(method, { ...body, text: toTelegram(body.text), parse_mode: 'HTML' })
     .catch((error: Error) => (/Telegram answered 400/.test(error.message) ? call<T>(method, body) : Promise.reject(error)));
+  // A voice note is bytes, not json, so it goes as a form. Node builds the parts itself — the same way the founder's
+  // own recording already goes to Groq — so there is still nothing here but `fetch`.
+  async function upload<T>(method: string, chatId: number, field: string, file: Blob, name: string, extra: Record<string, string | number | boolean> = {}): Promise<T> {
+    const key = await token();
+    if (!key) throw new Error('no bot token is set');
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    for (const [at, value] of Object.entries(extra)) form.append(at, String(value));
+    form.append(field, file, name);
+    const response = await http(`https://api.telegram.org/bot${key}/${method}`, { method: 'POST', body: form });
+    const answer = await response.json().catch(() => null) as { ok?: boolean; result?: T; description?: string } | null;
+    if (!response.ok || !answer?.ok) throw new Error(`Telegram answered ${response.status}${answer?.description ? `: ${answer.description}` : ''}`);
+    return answer.result as T;
+  }
+  const to = (chatId: number, where: Sent = {}) => ({
+    chat_id: chatId,
+    ...(where.threadId ? { message_thread_id: where.threadId } : {}),
+    // Silence is the normal way for something to arrive: only what the founder has to act on is allowed to buzz.
+    ...(where.loud ? {} : { disable_notification: true }),
+    ...(where.buttons ? { reply_markup: { inline_keyboard: where.buttons.map((row) => row.map((one) => ({ text: one.text, callback_data: one.data }))) } } : {}),
+  });
   return {
     call,
-    updates: (offset: number, signal?: AbortSignal) => call<Update[]>('getUpdates', { offset, timeout: WAIT, allowed_updates: ['message', 'callback_query'] }, signal),
-    send: (chatId: number, text: string, buttons?: Buttons) => drawn<Message>('sendMessage', { chat_id: chatId, text, ...(buttons ? { reply_markup: { inline_keyboard: buttons.map((row) => row.map((one) => ({ text: one.text, callback_data: one.data }))) } } : {}) }),
+    updates: (offset: number, signal?: AbortSignal) => call<Update[]>('getUpdates', { offset, timeout: WAIT, allowed_updates: ['message', 'callback_query', 'my_chat_member'] }, signal),
+    send: (chatId: number, text: string, where: Sent = {}) => drawn<Message>('sendMessage', { ...to(chatId, where), text }),
     // What the founder already answered elsewhere should not sit on their phone with live buttons under it.
     edit: (chatId: number, messageId: number, text: string) => drawn('editMessageText', { chat_id: chatId, message_id: messageId, text }),
     answered: (id: string, text?: string) => call('answerCallbackQuery', { callback_query_id: id, ...(text ? { text } : {}) }),
+    // The `/` menu, filled from the stage. Telegram keeps whatever was set last, so this is only called when it changed.
+    setCommands: (commands: Command[]) => call('setMyCommands', { commands }),
+    topic: (chatId: number, name: string) => call<{ message_thread_id: number }>('createForumTopic', { chat_id: chatId, name }),
+    renameTopic: (chatId: number, threadId: number, name: string) => call('editForumTopic', { chat_id: chatId, message_thread_id: threadId, name }),
+    closeTopic: (chatId: number, threadId: number) => call('closeForumTopic', { chat_id: chatId, message_thread_id: threadId }),
+    // Getting a voice note off Telegram is two steps: where the file is, and then the file.
+    fileOf: (fileId: string) => call<{ file_path?: string; file_size?: number }>('getFile', { file_id: fileId }),
+    async grab(filePath: string): Promise<Buffer> {
+      const key = await token();
+      if (!key) throw new Error('no bot token is set');
+      const response = await http(`https://api.telegram.org/file/bot${key}/${filePath}`);
+      if (!response.ok) throw new Error(`Telegram answered ${response.status} for that recording`);
+      return Buffer.from(await response.arrayBuffer());
+    },
+    sendVoice: (chatId: number, ogg: Buffer, where: Sent = {}) => upload<Message>('sendVoice', chatId, 'voice', new Blob([new Uint8Array(ogg)], { type: 'audio/ogg' }), 'reply.ogg', {
+      ...(where.threadId ? { message_thread_id: where.threadId } : {}), ...(where.loud ? {} : { disable_notification: true }),
+    }),
   };
 }
 

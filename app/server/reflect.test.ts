@@ -174,15 +174,19 @@ describe('the learner', () => {
 
   it('lets go of the turn before it starts thinking', async () => {
     let answer = (_reply: string) => {};
+    // Told when the learner has really reached the model. Waiting a few milliseconds and hoping it had got there was a
+    // race: on a busy machine it had not, the answer went to nobody, and the turn waited out the whole time limit.
+    let reached = () => {};
+    const asked = new Promise<void>((done) => { reached = done; });
     const slow: ModelClient = {
       name: 'slow', model: 's-1', maxPromptChars: Infinity, tools: true, limits: {},
-      async step(_messages, { onToken }) { await new Promise<void>((done) => { answer = (reply) => { onToken(reply); done(); }; }); return { text: '', calls: [], usage: { input: 1, output: 1 } }; },
+      async step(_messages, { onToken }) { await new Promise<void>((done) => { answer = (reply) => { onToken(reply); done(); }; reached(); }); return { text: '', calls: [], usage: { input: 1, output: 1 } }; },
     };
     const { seams, after, skills } = await setup([slow]);
     const order: string[] = [];
     seams.on('turn:after', async (payload, next) => { order.push('the next handler'); return next(payload); });
     const turn = after('Write the launch page', answered('Done.', THREE));
-    await new Promise((done) => { setTimeout(done, 5); });
+    await asked;
     // Everything else that watches a finished turn has been and gone while the learner is still waiting on a model.
     expect(order).toEqual(['the next handler']);
     expect(await skills.list()).toEqual([]);

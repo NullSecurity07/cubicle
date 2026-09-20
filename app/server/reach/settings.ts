@@ -1,14 +1,17 @@
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import type { ReachChat, ReachHook, ReachPairing } from '../../shared/reach.ts';
+import { UPDATES, type ReachChat, type ReachGroup, type ReachHook, type ReachPairing, type ReachUpdates } from '../../shared/reach.ts';
 
 // A hook's secret lives here beside the bot token, because verifying a signature needs the secret itself. Nothing
 // in this file is ever answered to a GET.
-export type Kept = { on: boolean; token?: string; voice: boolean; cloudSpeech: boolean; paired: ReachChat[]; hooks: (ReachHook & { secret: string })[] };
+export type Kept = {
+  on: boolean; token?: string; voice: boolean; cloudSpeech: boolean; paired: ReachChat[]; hooks: (ReachHook & { secret: string })[];
+  updates: ReachUpdates; group?: ReachGroup;
+};
 export type Reach = ReturnType<typeof createReach>;
 
-const EMPTY: Kept = { on: false, voice: false, cloudSpeech: false, paired: [], hooks: [] };
+const EMPTY: Kept = { on: false, voice: false, cloudSpeech: false, paired: [], hooks: [], updates: UPDATES };
 // No O, 0, I or 1: the founder reads this off one screen and types it on a phone.
 const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const HOUR = 3_600_000;
@@ -29,7 +32,8 @@ export function createReach(dir: string, env: NodeJS.ProcessEnv = process.env, n
     if (kept) return kept;
     let saved: Partial<Kept> = {};
     try { saved = JSON.parse(await readFile(path, 'utf8')); } catch { /* nothing set up yet */ }
-    kept = { ...EMPTY, ...saved, paired: saved.paired ?? [], hooks: saved.hooks ?? [] };
+    // A file written before a switch existed is missing it, and a missing switch means the founder never said no.
+    kept = { ...EMPTY, ...saved, paired: saved.paired ?? [], hooks: saved.hooks ?? [], updates: { ...UPDATES, ...saved.updates } };
     return kept;
   }
   async function save(change: (held: Kept) => void): Promise<Kept> {
@@ -46,6 +50,11 @@ export function createReach(dir: string, env: NodeJS.ProcessEnv = process.env, n
     return held;
   }
 
+  async function speaks(chatId: number): Promise<boolean> {
+    const held = await read();
+    return held.group?.chatId === chatId ? !!held.group.speak : !!held.paired.find((one) => one.chatId === chatId)?.speak;
+  }
+
   return {
     read,
     save,
@@ -54,6 +63,26 @@ export function createReach(dir: string, env: NodeJS.ProcessEnv = process.env, n
     token: async () => env.TELEGRAM_BOT_TOKEN || (await read()).token || null,
     fromEnv: () => !!env.TELEGRAM_BOT_TOKEN,
     paired: async (chatId: number) => (await read()).paired.some((one) => one.chatId === chatId),
+    // Who may be listened to in a group. A chat paired before any of this was written has no user id of its own,
+    // and a private chat's id *is* the person's id, so the one it was paired with still stands.
+    founder: async (userId?: number) => !!userId && (await read()).paired.some((one) => (one.userId ?? one.chatId) === userId),
+    // Where the things nobody asked for go: the group's Company topic once there is a group, and the paired phones
+    // otherwise. Sending to both would mean reading every update twice.
+    async where(): Promise<{ chatId: number; threadId?: number }[]> {
+      const held = await read();
+      if (held.group) return [{ chatId: held.group.chatId, ...(held.group.company ? { threadId: held.group.company } : {}) }];
+      return held.paired.map((one) => ({ chatId: one.chatId }));
+    },
+    // "Answer me out loud", which the founder sets where they are: their phone, or the group, each on its own.
+    speaks,
+    async speak(chatId: number): Promise<boolean> {
+      const on = !(await speaks(chatId));
+      await save((held) => {
+        if (held.group?.chatId === chatId) held.group = { ...held.group, speak: on };
+        else held.paired = held.paired.map((one) => (one.chatId === chatId ? { ...one, speak: on } : one));
+      });
+      return on;
+    },
     hook: async (id: string) => (await read()).hooks.find((one) => one.id === id) ?? null,
     pairing: () => (pairing && pairing.until > now() && pairing.tries < TRIES ? pairing : null),
     // A new code puts the old one out of use at once, so only what the founder is looking at can pair.

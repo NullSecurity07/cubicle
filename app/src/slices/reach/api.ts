@@ -1,4 +1,4 @@
-import type { ReachState } from '../../../shared/reach';
+import type { ReachState, ReachUpdates } from '../../../shared/reach';
 
 // This slice's own way of asking the server, kept beside the screens that use it.
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -11,9 +11,11 @@ const send = (body: unknown, method = 'POST'): RequestInit => ({ method, headers
 export type Made = { id: string; secret: string; url: string };
 
 export const getReach = () => request<ReachState>('/api/reach');
-export const putReach = (patch: { on?: boolean; token?: string; voice?: boolean; cloudSpeech?: boolean }) => request<ReachState>('/api/reach', send(patch, 'PUT'));
+export const putReach = (patch: { on?: boolean; token?: string; voice?: boolean; cloudSpeech?: boolean; updates?: Partial<ReachUpdates> }) => request<ReachState>('/api/reach', send(patch, 'PUT'));
 export const newPairing = () => request<ReachState>('/api/reach/pair', { method: 'POST' });
 export const forgetChat = (chatId: number) => request<ReachState>(`/api/reach/chats/${chatId}`, { method: 'DELETE' });
+export const speakTo = (chatId: number, speak: boolean) => request<ReachState>(`/api/reach/chats/${chatId}`, send({ speak }, 'PUT'));
+export const forgetGroup = () => request<ReachState>('/api/reach/group', { method: 'DELETE' });
 export const makeHook = (hook: { name: string; boardId: string; assignee?: string }) => request<Made>('/api/reach/hooks', send(hook));
 export const dropHook = (id: string) => request<ReachState>(`/api/reach/hooks/${id}`, { method: 'DELETE' });
 

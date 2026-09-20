@@ -45,9 +45,26 @@ describe('talking to Telegram', () => {
   it('sends the buttons Telegram expects', async () => {
     let body: any = null;
     const api = createApi(async () => 'key', async (_url, init) => { body = JSON.parse(String(init?.body)); return answer({ message_id: 7 }); });
-    const sent = await api.send(5, 'Allow this?', [[{ text: 'Approve', data: 'ok:k1' }, { text: 'Deny', data: 'no:k1' }]]);
+    const sent = await api.send(5, 'Allow this?', { buttons: [[{ text: 'Approve', data: 'ok:k1' }, { text: 'Deny', data: 'no:k1' }]], loud: true });
     expect(sent.message_id).toBe(7);
     expect(body.reply_markup.inline_keyboard[0]).toEqual([{ text: 'Approve', callback_data: 'ok:k1' }, { text: 'Deny', callback_data: 'no:k1' }]);
+  });
+
+  it('lands quietly unless it is something the founder has to act on, and in the topic it belongs to', async () => {
+    const bodies: any[] = [];
+    const api = createApi(async () => 'key', async (_url, init) => { bodies.push(JSON.parse(String(init?.body))); return answer({ message_id: 1 }); });
+    await api.send(5, 'Maya finished the launch note');
+    await api.send(5, 'Maya needs your OK', { loud: true, threadId: 12 });
+    expect(bodies[0].disable_notification).toBe(true);
+    expect(bodies[1]).toMatchObject({ message_thread_id: 12 });
+    expect(bodies[1].disable_notification).toBeUndefined();
+  });
+
+  it('asks for the one kind of update that says it was put in a group', async () => {
+    let body: any = null;
+    const api = createApi(async () => 'key', async (_url, init) => { body = JSON.parse(String(init?.body)); return answer([]); });
+    await api.updates(0);
+    expect(body.allowed_updates).toContain('my_chat_member');
   });
 });
 
@@ -67,7 +84,7 @@ describe('how a reply is drawn on the phone', () => {
     });
     expect((await fussy.send(5, '**Launch** on Friday')).message_id).toBe(2);
     expect(tried).toHaveLength(2);
-    expect(tried[1]).toEqual({ chat_id: 5, text: '**Launch** on Friday' });
+    expect(tried[1]).toEqual({ chat_id: 5, text: '**Launch** on Friday', disable_notification: true });
     // Anything else that goes wrong is not papered over by trying again.
     const down = createApi(async () => 'key', async () => answer(null, false, 502));
     await expect(down.send(5, 'hello')).rejects.toThrow('Telegram answered 502');
