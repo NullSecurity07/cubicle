@@ -59,9 +59,46 @@ describe('prompt', () => {
     expect(buildMessages(stage, 'build', docs, [], [], {}, undefined, undefined, {}, [], '   ')[0].content).not.toContain('About the founder');
   });
 
-  it('names the tools only when there are some', () => {
+  it('names the tools only when there are some, and the rule about documents only when they can write one', () => {
     expect(buildMessages(stage, 'build', docs, [], ['write_doc'])[0].content).toContain('write_doc');
     expect(buildMessages(stage, 'build', docs, [])[0].content).not.toContain('You can act');
+    expect(buildMessages(stage, 'marketing', docs, [], ['write_doc'])[0].content).toContain('You may change only the documents connected to your room ("Brand doc")');
+    expect(buildMessages(stage, 'build', docs, [], ['web_search'])[0].content).not.toContain('You may change only');
+  });
+
+  it('says what this room cannot do yet and what the founder would connect for each', () => {
+    // A bare room: everything that needs a card or a wire is named once, in plain words and in one line.
+    const bare = buildMessages(stage, 'build', docs, [], ['web_search', 'recall'])[0].content;
+    const line = /^Not connected to your room, so you cannot yet:.*$/m.exec(bare)![0];
+    expect(line).toContain('use a live browser (a browser card)');
+    expect(line).toContain('ask a colleague (a wire)');
+    expect(line).toContain('Say in a line what to connect');
+    // The longest it can ever be: a person with nothing at all connected to them.
+    expect(line.length).toBeLessThan(360);
+    // Partly wired: only what is really missing is named.
+    const partly = buildMessages(stage, 'marketing', docs, [], ['write_doc', 'browse', 'web_search'])[0].content;
+    expect(partly).not.toContain('write documents (a wire to one)');
+    expect(partly).not.toContain('a browser card)');
+    expect(partly).toContain('film (a video studio)');
+    // Everything wired: nothing to say, and nothing said.
+    const wholly = buildMessages(stage, 'marketing', docs, [], ['browse', 'write_doc', 'delegate_coding', 'list_tasks', 'generate_image', 'generate_voice', 'generate_video', 'ask_person', 'send_email'])[0].content;
+    expect(wholly).not.toContain('Not connected to your room');
+    // Nobody offered any tools at all (a colleague answering a consult) is told nothing either.
+    expect(buildMessages(stage, 'build', docs, [])[0].content).not.toContain('Not connected to your room');
+  });
+
+  // A provider's prefix cache only holds while the start of the prompt is the same as last time, so what never
+  // changes comes first and what changes every turn comes last.
+  it('puts who they are and the rules first, and the day\'s news last', () => {
+    const team: Stage = { ...stage, cards: [{ id: 'n1', kind: 'note', text: 'Never discount.', x: 0, y: 0, w: 1, h: 1 }],
+      docs: [...stage.docs, { id: 'brief', title: 'Company brief', pinned: true, x: 0, y: 0, w: 1, h: 1 }],
+      wires: [...stage.wires, { id: 't', from: 'marketing', fromHandle: 'r', to: 'build', toHandle: 'l' }, { id: 'n', from: 'marketing', fromHandle: 'r', to: 'n1', toHandle: 'l' }] };
+    const system = buildMessages(team, 'marketing', { ...docs, brief: 'We ship weekly.' }, [], ['ask_person'], { build: [] },
+      { notes: '- Short emails.', summary: 'Launch moved.' }, undefined, {}, ['- Pricing: per seat'], '- Ships on Thursdays')[0].content;
+    const order = ['You are Maya', 'About the founder', STANCE, 'You can act with these tools', 'Company documents every person reads',
+      'The founder has connected these documents', 'Sticky notes', 'What the founder has decided', 'Your memory', 'Colleagues connected to your room'];
+    expect(order.map((part) => system.indexOf(part))).toEqual([...order.map((part) => system.indexOf(part))].sort((one, other) => one - other));
+    expect(order.every((part) => system.includes(part))).toBe(true);
   });
 
   it('tells a person which cards are wired to it, and that project code changes only through the coding agent', () => {

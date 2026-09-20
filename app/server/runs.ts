@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import type { Stage, ToolEvent } from '../shared/model.ts';
 import type { createApprovals } from './approvals.ts';
 import type { AttentionBook } from './attention.ts';
+import { automation } from './automation/run.ts';
 import type { Boards } from './boards.ts';
 import { nextDue } from './boards.ts';
 import { runTurn } from './loop.ts';
@@ -43,9 +44,15 @@ export function createRuns(deps: {
     const stage = await store.loadStage();
     const task = (await boards.list(boardId)).find((one) => one.id === taskId);
     if (!task) throw new Error('unknown task');
+    if (task.run?.state === 'running' || task.run?.state === 'waiting') throw new Error('this task is already running');
+    // Nothing is spent before this comes back empty: the person, the skill, the script, a model to do the work with.
+    const plan = automation();
+    const blocked = plan ? await plan.check(boardId, task, stage) : '';
+    if (blocked) throw new Error(blocked);
+    // Work that is a script needs nobody: it runs in the sandbox, and leaves the same kind of record as anyone else.
+    if (plan && task.script) return plan.script(boardId, task);
     const room = stage.rooms.find((one) => one.id === task.assignee);
     if (!room) throw new Error('give the task to a person first');
-    if (task.run?.state === 'running' || task.run?.state === 'waiting') throw new Error('this task is already running');
     if (busy.has(room.id)) throw new Error(`${room.name} is in the middle of something. Try again when they are done.`);
     busy.add(room.id);
     lately.set(room.id, { boardId, taskId });
@@ -56,12 +63,16 @@ export function createRuns(deps: {
 
     void (async () => {
       let result = '';
+      // Kept until the person is free again: what waits on this task is often theirs too.
+      let over: { result: string } | { problem: string } | null = null;
       try {
         const asked = `${task.title}${task.detail ? `\n\n${task.detail}` : ''}`;
+        // A skill the task names goes in front of the work, and what the task before it came back with rides along.
+        const before = plan ? await plan.opening(boardId, task) : '';
         // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
         const mine = toolsFor(stage, room.id);
         const messages = await promptFor(stage, room.id, mine.map((tool) => tool.name), true);
-        messages.push({ role: 'user', content: `The founder started this task from the board. Do it now with your tools, then report the result in a few lines.\n\nTask: ${asked}` });
+        messages.push({ role: 'user', content: `The founder started this task from the board. Do it now with your tools, then report the result in a few lines.\n\n${before}Task: ${asked}` });
         const { order } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true });
         const reply = await runTurn({
           messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'run', query: asked,
@@ -84,14 +95,18 @@ export function createRuns(deps: {
           },
         });
         await boards.update(boardId, taskId, (one) => { one.column = 'review'; one.run = { ...one.run!, state: reply.stopped ? 'stopped' : 'done', finishedAt: Date.now(), result: reply.text, provider: reply.provider, model: reply.model, usage: reply.usage }; });
-        if (!reply.stopped) notify(`${room.name} finished`, task.title);
+        if (!reply.stopped) { over = { result: reply.text }; notify(`${room.name} finished`, task.title); }
       } catch (error) {
-        await boards.update(boardId, taskId, (one) => { one.column = 'review'; one.run = { ...one.run!, state: 'failed', finishedAt: Date.now(), approval: undefined, result: result || undefined, log: [...one.run!.log, `failed: ${(error as Error).message.slice(0, 300)}`] }; });
-        notify(`${room.name} could not finish`, task.title);
+        const said = (error as Error).message.slice(0, 300);
+        await boards.update(boardId, taskId, (one) => { one.column = 'review'; one.run = { ...one.run!, state: 'failed', finishedAt: Date.now(), approval: undefined, result: result || undefined, log: [...one.run!.log, `failed: ${said}`] }; });
+        over = { problem: said };
       } finally {
         busy.delete(room.id);
         stops.delete(taskId);
       }
+      // Last of all, now this person is free: the chain moves on, and a repeat that keeps failing says so only once.
+      if (over && 'result' in over) await plan?.done(boardId, task, over.result);
+      else if (over && !(await plan?.failed(boardId, task, room.name, over.problem))) notify(`${room.name} could not finish`, task.title);
     })();
   }
 
