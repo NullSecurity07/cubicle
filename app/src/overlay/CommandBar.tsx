@@ -59,6 +59,8 @@ export function CommandBar() {
       return;
     }
     close();
+    // A slice's own command: the bar has no idea what it does, only that the founder chose it.
+    if (action.do === 'run') return action.run();
     if (action.do === 'add') addCard(action.kind, action.data);
     if (action.do === 'jump') goTo(action.id);
     if (action.do === 'focus') overlay.open({ kind: 'focus', id: action.id });

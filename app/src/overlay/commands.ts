@@ -1,13 +1,19 @@
+import { sliceCommands } from '../slices';
+
 // What the command bar can do, as plain data: the bar shows suggestions, the window carries the chosen action out.
+// `run` is the one a UI slice brings: the bar closes and calls it, without knowing what it does.
 export type Action =
   | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'videogen' | 'browser' | 'project' | 'board'; data?: Record<string, string> }
   | { do: 'focus' | 'jump'; id: string } | { do: 'panel'; name: 'needs' | 'messages' | 'decisions' | 'playbook' }
   | { do: 'ask'; roomId: string; text: string } | { do: 'thread' | 'decision'; id: string } | { do: 'file'; path: string }
-  | { do: 'new-decision' } | { do: 'idle' } | { do: 'fit' } | { do: 'keys' };
+  | { do: 'new-decision' } | { do: 'idle' } | { do: 'fit' } | { do: 'keys' } | { do: 'run'; run: () => void };
 // `fallback`: nothing matched, so the text is only offered to people. What was found in the workspace ranks above these,
 // and below everything the founder asked for outright.
 export type Suggestion = { section: 'Do' | 'On the stage' | 'In the workspace' | 'Ask'; label: string; hint?: string; action: Action; fallback?: true };
 export type Known = { cards: { id: string; type: string; label: string; role?: string }[] };
+// What a UI slice adds to the bar: the suggestion the bar already knows how to show, and when to show it. `when` is
+// asked with what was typed, tidied and in lower case; a command without one is offered only on an empty bar.
+export type Command = Suggestion & { when?: (typed: string) => boolean };
 
 const CARD_WORDS: [RegExp, Extract<Action, { do: 'add' }>['kind'], string][] = [
   [/^(sticky( note)?|note)$/, 'note', 'Add a sticky note'], [/^(link|web ?page|url)$/, 'link', 'Add a link'], [/^(picture|image|photo)$/, 'image', 'Add a picture'],
@@ -32,9 +38,9 @@ const STARTERS: Suggestion[] = [
 
 // Patterns first, then names on the stage. Text that matches neither is never interpreted: it is offered to each
 // person as a question, and the workspace search (added by the bar itself) shows where those words were said.
-export function suggest(input: string, known: Known): Suggestion[] {
+export function suggest(input: string, known: Known, extra: Command[] = sliceCommands()): Suggestion[] {
   const typed = input.trim().replace(/\s+/g, ' ');
-  if (!typed) return STARTERS;
+  if (!typed) return [...STARTERS, ...extra.filter((one) => !one.when)];
   const low = typed.toLowerCase().replace(/[?.!]+$/, '');
   const people = known.cards.filter((card) => card.type === 'room' && card.label);
   const person = (name: string) => people.find((one) => one.label.toLowerCase() === name.toLowerCase());
@@ -72,6 +78,9 @@ export function suggest(input: string, known: Known): Suggestion[] {
   if (!opening && !target) for (const card of named(low).slice(0, 5)) found.push({ section: 'On the stage', label: card.label, hint: card.role ?? card.type, action: { do: 'jump', id: card.id } });
   // A few letters of a starter ("dec", "mess") find it too.
   if (low.length >= 3) for (const starter of STARTERS) if (starter.label.toLowerCase().startsWith(low) && !found.includes(starter)) found.push(starter);
+
+  // What the slices brought, on their own terms; a command without a `when` answers to a few letters of its label.
+  for (const one of extra) if (one.when ? one.when(low) : low.length >= 3 && one.label.toLowerCase().startsWith(low)) found.push(one);
 
   if (!found.length) for (const one of people.slice(0, 5)) found.push({ section: 'Ask', label: `Ask ${one.label}`, hint: typed, action: { do: 'ask', roomId: one.id, text: typed }, fallback: true });
   return found;

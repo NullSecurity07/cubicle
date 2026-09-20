@@ -12,6 +12,7 @@ import { createFounder } from './founder.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
 import { guard } from './guard.ts';
 import { createGuards } from './guards.ts';
+import { installSlices, lateRuns, loadSlices } from './install.ts';
 import { createBrowser, dnsResolve, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
@@ -197,6 +198,21 @@ const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
   await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
   return reply.text;
 };
+// The two http helpers, up here because the slices installed below are handed them.
+const json = (res: ServerResponse, status: number, body: unknown) => {
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(body));
+};
+
+async function body(req: IncomingMessage): Promise<any> {
+  let text = '';
+  for await (const chunk of req) {
+    text += chunk;
+    if (text.length > 2_000_000) throw new Error('body too large');
+  }
+  return text ? JSON.parse(text) : {};
+}
+
 // Where everything that watches or shapes a turn plugs in: the trace, which writes down what a turn cost once it is
 // over, the guard that will not let a person run the same call twice, the playbook block on the way in and the
 // learner on the way out. A handler that breaks is written down here and skipped; nothing in it can cost a turn.
@@ -209,7 +225,19 @@ seams.on('tool:before', guards.before);
 seams.on('tool:after', guards.after);
 seams.on('turn:before', createPlaybook({ skills, recall }).before);
 const tools = [...docTools, ...fileTools, ...webTools(browser, (id, headed) => ({ profile: store.browserProfile(id), headed })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media, () => !local.ready()), ...skillTools(skills), ...founderTools(founder)];
-const runs = createRuns({ boards, store, tools, clients, usage, approvals, attention, promptFor, busy, seams, notify: fake ? () => {} : desktopNotify });
+// Anything dropped into `server/slices` is installed here, so a new feature is new files rather than one more edit to
+// this one. They are handed a `runs` that is not built yet: the runner is made from the final tool list, and that
+// list is only final once every slice has added its own, so `late.runs` stands in and is filled the moment it exists.
+const late = lateRuns();
+const extras = await installSlices(await loadSlices(resolve(import.meta.dirname, 'slices')), {
+  workspace, root, fake, store, seams, clients, usage, approvals, attention, boards, recall, skills, founder, memory, decisions, busy,
+  notify: fake ? () => {} : desktopNotify, promptFor, json, body, own, runs: late.runs,
+});
+tools.push(...extras.tools);
+// The one place a turn's tools come from: everything installed, narrowed by whichever slices want a say.
+const toolsFor = (stage: Stage, roomId: string) => extras.offer(tools, stage, roomId);
+const runs = createRuns({ boards, store, tools, toolsFor, clients, usage, approvals, attention, promptFor, busy, seams, notify: fake ? () => {} : desktopNotify });
+late.fill(runs);
 // A birth or a patch says so once, where the founder was already looking: in the run's log, or on the playbook's feed.
 const learner = createLearner({
   skills, recall, store, clients, usage,
@@ -227,26 +255,12 @@ const learner = createLearner({
 });
 seams.on('turn:after', learner.after);
 const curator = createCurator(skills);
-setInterval(() => { void runs.tick().catch(() => {}); void curator.tick().catch(() => {}); }, 30_000).unref();
+setInterval(() => { void runs.tick().catch(() => {}); void curator.tick().catch(() => {}); void extras.tick(); }, 30_000).unref();
 
 // Started by the desktop shell: leave when the shell does, even if it was killed.
 if (process.env.STAGE_EXIT_WITH_PARENT === '1') {
   process.stdin.resume();
-  process.stdin.on('end', () => process.exit(0));
-}
-
-const json = (res: ServerResponse, status: number, body: unknown) => {
-  res.writeHead(status, { 'content-type': 'application/json' });
-  res.end(JSON.stringify(body));
-};
-
-async function body(req: IncomingMessage): Promise<any> {
-  let text = '';
-  for await (const chunk of req) {
-    text += chunk;
-    if (text.length > 2_000_000) throw new Error('body too large');
-  }
-  return text ? JSON.parse(text) : {};
+  process.stdin.on('end', () => { void extras.close().finally(() => process.exit(0)); });
 }
 
 const IMAGE_FILE = /\.(png|jpe?g|webp|gif)$/i;
@@ -298,14 +312,16 @@ async function chat(roomId: string, text: string, res: ServerResponse, extra: { 
     // Regenerate and edit: the old message and everything after it leave the conversation (to trash) before the new one goes in.
     if (extra.replace) await store.cutChat(roomId, extra.replace, true);
     await store.appendChat(roomId, { id: newMessageId(), role: 'user', text, at: Date.now(), ...(extra.attachments?.length ? { attachments: extra.attachments } : {}) });
-    const messages = await promptFor(stage, roomId, tools.map((tool) => tool.name));
+    // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
+    const mine = toolsFor(stage, roomId);
+    const messages = await promptFor(stage, roomId, mine.map((tool) => tool.name));
     const room = stage.rooms.find((candidate) => candidate.id === roomId)!;
     const vision = messages.some((message) => message.role === 'user' && !!message.images?.length);
     const { order, notice } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true, vision });
     if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
     if (notice) send({ notice });
     const reply = await runTurn({
-      messages, tools, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
+      messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
       approve: async (event, signal) => {
         await attention.raise({ id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event });
         try { return await approvals.ask(event.id, signal); } finally { await attention.clear(`approval:${event.id}`); }
@@ -557,6 +573,8 @@ createServer(async (req, res) => {
       if (!text && !attachments.length) return json(res, 400, { error: 'empty message' });
       return await chat(room, text || 'See the attached file.', res, { replace: typeof sent.replace === 'string' ? sent.replace : undefined, attachments });
     }
+    // Last before the 404: the built-in paths above are the app's own, and a slice answers what is left of them.
+    if (await extras.route(req, res, path)) return;
     if (path.startsWith('/api/')) return json(res, 404, { error: 'not found' });
     const file = req.method === 'GET' ? await readStatic(resolve(import.meta.dirname, '../dist'), path) : null;
     if (!file) return json(res, 404, { error: 'not found — run `pnpm build` so the server has a client to serve' });

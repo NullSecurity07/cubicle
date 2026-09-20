@@ -25,11 +25,15 @@ const line = (event: ToolEvent) => `${event.ok ? '✓' : '✗'} ${event.name} ${
 
 // Background work on a task: the same turn a chat runs, started by the founder (the Run button or a repeat the founder set),
 // written into the task instead of a conversation. An outward step parks the run in "waiting" until the founder answers on the board.
+// `tools` is everything installed; `toolsFor` is what this one person is offered for this one turn, which slices may
+// narrow. Without it a person is offered the lot, which is what this was before any of them existed.
 export function createRuns(deps: {
   boards: Boards; store: Store; tools: Tool[]; clients: ModelClient[]; usage: UsageBook; approvals: ReturnType<typeof createApprovals>; attention?: AttentionBook;
   promptFor: (stage: Stage, roomId: string, toolNames: string[], fresh?: boolean) => Promise<ModelMessage[]>; busy: Set<string>; notify: Notify; seams?: Seams;
+  toolsFor?: (stage: Stage, roomId: string) => Tool[];
 }) {
   const { boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify, seams } = deps;
+  const toolsFor = deps.toolsFor ?? (() => tools);
   const stops = new Map<string, AbortController>();
   // The last task each person ran. What watches a finished turn finishes after the run does, and this is how the one
   // line it has to say ("learned: …") finds its way back into the log the founder is looking at.
@@ -54,11 +58,13 @@ export function createRuns(deps: {
       let result = '';
       try {
         const asked = `${task.title}${task.detail ? `\n\n${task.detail}` : ''}`;
-        const messages = await promptFor(stage, room.id, tools.map((tool) => tool.name), true);
+        // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
+        const mine = toolsFor(stage, room.id);
+        const messages = await promptFor(stage, room.id, mine.map((tool) => tool.name), true);
         messages.push({ role: 'user', content: `The founder started this task from the board. Do it now with your tools, then report the result in a few lines.\n\nTask: ${asked}` });
         const { order } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true });
         const reply = await runTurn({
-          messages, tools, clients: order, usage, signal: stop.signal, seams, source: 'run', query: asked,
+          messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'run', query: asked,
           context: { stage, roomId: room.id, store, granted: new Map() },
           events: {
             token: (token) => { result += token; },

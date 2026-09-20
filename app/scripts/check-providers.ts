@@ -15,7 +15,12 @@ const { recallTools } = await import('../server/tools/recall.ts');
 const { mediaTools } = await import('../server/tools/media.ts');
 const { skillTools } = await import('../server/tools/skills.ts');
 const { founderTools } = await import('../server/tools/founder.ts');
-const tools = [...docTools, ...fileTools, ...webTools({} as any), ...outwardTools({ ready: () => true, ways: () => ({}) } as any, '/tmp'), ...projectTools((async () => ({})) as any, []), ...teamTools((async () => '') as any), ...taskTools({} as any), ...memoryTools({} as any), ...decisionTools({} as any), ...recallTools({} as any), ...mediaTools({ ready: () => null } as any), ...skillTools({} as any), ...founderTools({} as any)];
+// Whatever `server/slices` holds counts too: a dropped-in feature must not be the thing that makes a provider refuse
+// the list. Its deps are stubbed the way everything else here is; one that cannot live with that is named and left out.
+const { installSlices, loadSlices } = await import('../server/install.ts');
+const said = (name: string, error: Error) => console.log('slice', name, 'skipped:', error.message);
+const extras = await installSlices(await loadSlices(resolve(import.meta.dirname, '../server/slices'), said), { workspace: '/tmp', root: resolve(import.meta.dirname, '../..'), fake: true, json: () => {}, body: async () => ({}), busy: new Set(), notify: () => {}, own: { ports: [], token: '' } } as any, said);
+const tools = [...docTools, ...fileTools, ...webTools({} as any), ...outwardTools({ ready: () => true, ways: () => ({}) } as any, '/tmp'), ...projectTools((async () => ({})) as any, []), ...teamTools((async () => '') as any), ...taskTools({} as any), ...memoryTools({} as any), ...decisionTools({} as any), ...recallTools({} as any), ...mediaTools({ ready: () => null } as any), ...skillTools({} as any), ...founderTools({} as any), ...extras.tools];
 for (const client of realClients()) {
   try { const turn = await client.step([{ role: 'user', content: 'List the shared files with your tool.' }], { tools, onToken: () => {} }); console.log(client.name, 'OK with', tools.length, 'tools ->', turn.calls.map((c: any) => c.name).join(',') || 'text'); }
   catch (error: any) { console.log(client.name, 'ERROR', error.status, String(error.message).slice(0, 200)); }

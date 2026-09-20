@@ -7,6 +7,7 @@ import { CommandBar, KeysSheet } from './CommandBar';
 import { DecisionsPanel } from './DecisionsPanel';
 import { MessagesPanel } from './MessagesPanel';
 import { PlaybookPanel } from '../nodes/PlaybookPanel';
+import { SLICES } from '../slices';
 import { overlay, setHostElement, useLayers } from './store';
 
 // The founder's views, by layer name.
@@ -57,12 +58,17 @@ export function Overlay() {
   // A focused card is not a selected card: no resize grips behind the shade, and Backspace removes nothing.
   useEffect(() => { if (focused) setNodes((nodes) => nodes.map((node) => (node.selected ? { ...node, selected: false } : node))); }, [focused, setNodes]);
 
+  // Each UI slice's own view is mounted beside the shade, not under it: `.overlay` is hidden whenever no layer is
+  // open, and a slice decides for itself when it is on screen. With no slices there is nothing here to render.
   return createPortal(
-    <div className={`overlay${layers.length ? ' is-open' : ''}`} ref={top}>
-      <div className="overlay__shade" onClick={() => overlay.back()} />
-      <div className="focus__sheet" ref={focusHost} hidden={!focused || !!View} role="dialog" aria-modal="true" aria-label="Focused card" />
-      {View && <View />}
-    </div>,
+    <>
+      <div className={`overlay${layers.length ? ' is-open' : ''}`} ref={top}>
+        <div className="overlay__shade" onClick={() => overlay.back()} />
+        <div className="focus__sheet" ref={focusHost} hidden={!focused || !!View} role="dialog" aria-modal="true" aria-label="Focused card" />
+        {View && <View />}
+      </div>
+      {SLICES.map((slice) => (slice.overlay ? <slice.overlay key={slice.name} /> : null))}
+    </>,
     document.body,
   );
 }
