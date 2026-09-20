@@ -9,7 +9,7 @@ import type { StageNode } from '../stage';
 import { KEYS, suggest, type Action, type Suggestion } from './commands';
 import { overlay, showDecision, showThread } from './store';
 
-const WHERE: Record<Hit['kind'], string> = { doc: 'Doc', chat: 'Conversation', memory: 'Memory', decision: 'Decision', file: 'File', link: 'Web page' };
+const WHERE: Record<Hit['kind'], string> = { doc: 'Doc', chat: 'Conversation', memory: 'Memory', decision: 'Decision', file: 'File', link: 'Web page', skill: 'Playbook' };
 const fromHit = (hit: Hit): Suggestion => ({
   section: 'In the workspace', label: hit.title, hint: `${WHERE[hit.kind]} · ${hit.text.replace(/\s+/g, ' ').slice(0, 110)}`,
   action: hit.kind === 'chat' ? { do: 'thread', id: hit.id } : hit.kind === 'decision' ? { do: 'decision', id: hit.id } : hit.kind === 'file' ? { do: 'file', path: hit.id }

@@ -1,7 +1,7 @@
 import { mayRecall, type createRecall } from '../recall.ts';
 import { text, type Tool } from './registry.ts';
 
-const WHERE: Record<string, string> = { doc: 'Doc', chat: 'Conversation', memory: 'Your memory', decision: 'Decision', file: 'Shared file', link: 'Web page' };
+const WHERE: Record<string, string> = { doc: 'Doc', chat: 'Conversation', memory: 'Your memory', decision: 'Decision', file: 'Shared file', link: 'Web page', skill: 'Playbook skill' };
 
 // Looking things up by meaning, inside the same limits as everything else: a person finds only what they may read.
 export function recallTools(recall: ReturnType<typeof createRecall>): Tool[] {
