@@ -1,8 +1,10 @@
 import { useReactFlow } from '@xyflow/react';
 import { useState } from 'react';
+import type { Lapsed } from '../../shared/lapsed';
 import type { Attention } from '../../shared/model';
 import { changeTask, dismissAttention, removeTask } from '../api';
-import { Approval } from '../nodes/Approval';
+import { emit } from '../bus';
+import { Approval, asked } from '../nodes/Approval';
 import { useAttention } from './attention';
 import { PanelShell } from './PanelShell';
 import { overlay, showDecision } from './store';
@@ -15,10 +17,15 @@ export const ago = (at: number, now = Date.now()) => {
   const minutes = Math.max(0, Math.round((now - at) / 60_000));
   return minutes < 1 ? 'now' : minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.round(minutes / 60)} h` : `${Math.round(minutes / 1440)} d`;
 };
+// How long ago, said in a sentence the way the clock beside it says it.
+const since = (at: number) => (ago(at) === 'now' ? 'just now' : `${ago(at)} ago`);
+// What the founder says to start it over. It asks for the work, never for the step: the person still has to come back
+// for the OK through the usual door, and pressing this has never said yes to anything.
+const again = (title: string) => `Go ahead with what you asked me about: "${title}". Ask me again when you need my OK.`;
 
 // Everything that waits for the founder, in one place. Answer here, or go to where it lives.
 export function NeedsPanel() {
-  const list = useAttention();
+  const list = useAttention() as Lapsed[];
   const { fitView, setNodes } = useReactFlow();
   const [problem, setProblem] = useState('');
   const attempt = (work: Promise<unknown>) => { setProblem(''); work.catch((error: Error) => setProblem(error.message)); };
@@ -30,6 +37,14 @@ export function NeedsPanel() {
     void fitView({ nodes: [{ id }], duration: 450, maxZoom: 1, padding: 0.35 });
   }
 
+  // The founder in front of the person again, with the ask already typed: the same road the command bar takes.
+  function ask(entry: Lapsed, said: string) {
+    if (!entry.roomId) return;
+    overlay.close({ kind: 'panel', name: 'needs' });
+    overlay.open({ kind: 'focus', id: entry.roomId });
+    emit('ask', { roomId: entry.roomId, text: again(said) });
+  }
+
   return (
     <PanelShell name="needs" title="Needs you" note={list.length ? `${list.length} waiting` : undefined}>
       {!list.length && <p className="panel__empty">Nothing is waiting for you.</p>}
@@ -37,6 +52,9 @@ export function NeedsPanel() {
       <ul className="needs">
         {list.map((entry) => {
           const home = entry.kind === 'approval' ? entry.roomId : entry.cardId ?? entry.roomId;
+          // A step that came with no question of its own was written down under the tool's plain name; here it is
+          // given back the words the founder actually read on the card in the room.
+          const said = entry.tool && entry.title === entry.tool.replace(/_/g, ' ') ? asked(entry.tool) : entry.title;
           return (
             <li key={entry.id} className={`needs__item needs__item--${entry.kind}`}>
               <div className="needs__head">
@@ -44,7 +62,10 @@ export function NeedsPanel() {
                 <time>{ago(entry.at)}</time>
               </div>
               {entry.lapsed
-                ? <p className="needs__title">"{entry.title}" was waiting when the app closed, and that turn is over. Ask {entry.who ?? 'them'} again if you still want it.</p>
+                ? <>
+                    <p className="needs__title">{entry.who ?? 'Someone'} asked: "{said}"</p>
+                    <p className="needs__detail">That was {since(entry.at)}. The app restarted before you answered, so that step never ran.{entry.about ? ` The step was: ${entry.about}.` : ''}</p>
+                  </>
                 : entry.event ? <>{entry.detail && <p className="needs__detail">Task: {entry.detail}</p>}<Approval tool={entry.event} /></>
                 : <><p className="needs__title">{entry.title}</p>{entry.detail && <p className="needs__detail">{entry.detail}</p>}</>}
               <div className="needs__end">
@@ -55,6 +76,7 @@ export function NeedsPanel() {
                 </>}
                 {entry.decisionId && <button type="button" className="primary" onClick={() => { showDecision(entry.decisionId!); overlay.open({ kind: 'panel', name: 'decisions' }); }}>{entry.kind === 'review-due' ? 'Look at it' : 'Decide'}</button>}
                 {(entry.lapsed || entry.kind === 'run-failed' || entry.kind === 'missed' || entry.kind === 'review-due') && <button type="button" onClick={() => attempt(dismissAttention(entry.id))}>Dismiss</button>}
+                {entry.lapsed && entry.roomId && <button type="button" className="primary" onClick={() => ask(entry, said)}>Ask {entry.who ?? 'them'} again</button>}
               </div>
             </li>
           );
