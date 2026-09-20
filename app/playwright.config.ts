@@ -8,9 +8,13 @@ import { defineConfig, devices } from '@playwright/test';
 // Made once, by the process that starts the server, and put on the environment so the workers inherit the same path:
 // a journey that has to seed files (the playbook with a shelf-full of skills) writes them where the server reads them.
 process.env.STAGE_WORKSPACE ??= mkdtempSync(join(tmpdir(), 'stage-e2e-'));
+// A folder of its own, outside the checkout, that the api also watches: a journey that has to see the app restart
+// under a person writes a file in here. Nothing of the repository is ever written to, so the founder's own app —
+// which watches `server` and `shared` from their working copy — is never restarted by a check running beside it.
+process.env.STAGE_RESTART_DIR ??= mkdtempSync(join(tmpdir(), 'stage-e2e-restart-'));
 // Several checkouts may run their checks at once (one worktree per piece of work), so the pair of ports can be moved.
 const web = Number(process.env.E2E_PORT ?? 7430);
-const env = { STAGE_PORT: String(web), STAGE_API_PORT: String(web + 1), STAGE_FAKE_MODEL: '1', STAGE_API_TOKEN: 'e2e-token', STAGE_WORKSPACE: process.env.STAGE_WORKSPACE };
+const env = { STAGE_PORT: String(web), STAGE_API_PORT: String(web + 1), STAGE_FAKE_MODEL: '1', STAGE_API_TOKEN: 'e2e-token', STAGE_WORKSPACE: process.env.STAGE_WORKSPACE, STAGE_RESTART_DIR: process.env.STAGE_RESTART_DIR };
 
 export default defineConfig({
   testDir: 'e2e',

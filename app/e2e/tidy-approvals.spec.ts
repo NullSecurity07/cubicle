@@ -1,5 +1,5 @@
-import { utimesSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Attention } from '../shared/model';
 
@@ -7,7 +7,8 @@ import type { Attention } from '../shared/model';
 // is answered, and both asks are still on the list when they come back. Nothing here is a door built for the test —
 // the restart is the real one (the api runs under `node --watch`, and a deploy restarts it the same way), and the two
 // buttons are the founder's own. A lapsed approval cannot be seeded any other way: the list is read from the file once,
-// at startup, so writing that file while the app is up changes nothing.
+// at startup, so writing that file while the app is up changes nothing. The restart is caused in a throwaway folder the
+// api is told to watch for this run only; nothing in the checkout is touched, so no app running beside this one moves.
 const node = (page: Page, id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
 const bell = (page: Page) => page.locator('.dock__needs');
 const panel = (page: Page) => page.getByRole('dialog', { name: 'Needs you' });
@@ -55,9 +56,9 @@ test('an approval the app closed on says what it was, and goes when the founder 
   await expect(node(page, 'build').getByRole('group', { name: 'Send this email?' })).toBeVisible();
   await expect.poll(async () => (await waiting(page)).filter((one) => one.kind === 'approval').length).toBe(2);
 
-  // The restart, exactly as it reaches the founder: the watcher sees a server file change and starts the api again,
-  // and the two turns that were waiting die with it.
-  utimesSync(fileURLToPath(new URL('../server/lapsed.ts', import.meta.url)), new Date(), new Date());
+  // The restart, exactly as it reaches the founder: the watcher sees a file change and starts the api again, and the
+  // two turns that were waiting die with it.
+  writeFileSync(join(process.env.STAGE_RESTART_DIR!, 'restart.txt'), String(Date.now()));
   await expect.poll(async () => (await waiting(page)).filter((one) => one.lapsed).length, { timeout: 60_000, intervals: [500] }).toBe(2);
   await page.reload();
 
