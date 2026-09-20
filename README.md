@@ -65,10 +65,18 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
 more keys mean more free quota for Auto. Your data lives in `workspace/`, which is not in git. The first search
 downloads a 23 MB embedding model into `app/.cache/recall/`.
 
-The studios are free too, and only the pictures need a key. **Pictures** come from Cloudflare Workers AI
-(FLUX.1 schnell): `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, from a free Cloudflare account — the token
-needs the **Workers AI Read** permission, or the call comes back 401. It covers hundreds of pictures a day, and
-`STAGE_IMAGE_MODEL` points at another Workers AI model. **Voices** need no key at all: Kokoro-82M runs on this
+The studios are free, and nothing in them needs a key. **Pictures** are asked for in three places in turn. First
+Cloudflare Workers AI (FLUX.1 schnell), which answers in about four seconds: `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID`, from a free Cloudflare account — the token needs the **Workers AI Read** permission, or the
+call comes back 401. It covers hundreds of pictures a day, and `STAGE_IMAGE_MODEL` points at another Workers AI
+model. When that day is spent, **this machine draws them itself** and never runs out: Z-Image-Turbo quantised to
+four bits (Apache-2.0) with a Qwen3-4B text encoder, driven by the same stable-diffusion.cpp the local clips use.
+The first picture downloads 6.5 GB once into `~/.cache/stage-video-models/pictures/` (the card shows the progress)
+and then each one takes about 55 seconds on a laptop with a 4 GB graphics card — 1024×1024, 768×1344 or 1344×768,
+four steps, with the weights held in system memory because the card is too small for them. It needs a Vulkan driver
+and about 9 GB of memory free. Last come the free Hugging Face demos, which need no account and have the smallest
+allowance of the three. `STAGE_IMAGE_BACKEND=local` keeps every picture on this machine, `cloud` never uses it, and
+`STAGE_NO_LOCAL_IMAGES=1` turns the local one off. **Voices** need no key at all: Kokoro-82M runs on this
 machine's processor, and the first line spoken downloads the 310 MB model into `app/.cache/voice/` (the card
 shows the progress); `GEMINI_API_KEY` is the fallback if it will not load. **Music** needs no key and no account:
 Openverse is searched anonymously (20 searches a minute, 200 a day, which is far more than a founder will use) and

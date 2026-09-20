@@ -10,6 +10,7 @@ const { DEFAULT_VOICE, voiceMakers, wavSeconds } = await import('../server/media
 const { hyperframesVideos } = await import('../server/media/video.ts');
 const { createClips } = await import('../server/media/spaces.ts');
 const { localClips, CLIP_SECONDS, MINUTES_EACH } = await import('../server/media/local-clips.ts');
+const { localImages, DOWNLOAD_GB, SECONDS_EACH } = await import('../server/media/local-image.ts');
 const { createMusic } = await import('../server/media/music.ts');
 import type { Ask, Maker, Piece } from '../server/media/jobs.ts';
 
@@ -50,6 +51,20 @@ try {
       // The one line that matters: a live search that quietly fell back has not proven anything about the network.
       if (what.includes('found') && !found) console.log('  (nothing was found online, so this was written here too)');
     } catch (error) { console.log(what, 'ERROR', String((error as Error).message).slice(0, 200)); }
+  }
+
+  // Pictures made here on this machine: the one backend that never runs out, and the one that takes a minute. Like
+  // the clips it is run only when the founder asks, so a check does not keep anybody waiting.
+  const drawsHere = localImages();
+  const drawHint = drawsHere.ready();
+  if (drawHint) console.log('Local pictures NOT SET UP:', drawHint);
+  else if (!process.argv.includes('--local')) console.log(`Local pictures READY (not run: ${DOWNLOAD_GB} GB once, then about ${SECONDS_EACH}s a picture; pass --local to draw one)`);
+  else {
+    const started = Date.now();
+    try {
+      const made = await drawsHere.make({ prompt: 'a paper plane over a desk, soft morning light, photo', shape: 'square' }, { report: (line: string) => console.log('  ·', line) });
+      console.log(`Local pictures OK a ${made.ext} · ${(made.bytes.length / 1024).toFixed(0)} KB · ${((Date.now() - started) / 1000).toFixed(0)}s`);
+    } catch (error) { console.log('Local pictures ERROR', String((error as Error).message).slice(0, 200)); }
   }
 
   // Moving pictures made here on this machine. It is the slow one, so it is asked for the shortest thing it makes,

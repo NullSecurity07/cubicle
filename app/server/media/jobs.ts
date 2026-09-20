@@ -8,7 +8,9 @@ export type MediaJobs = ReturnType<typeof createMedia>;
 export type Ask = { prompt: string } & Record<string, unknown>;
 // What a backend made: the bytes and the file ending they belong in, for a video the still that stands in for it, and
 // for a recording the pieces it was said in — which is the only honest way to know when each word is spoken.
-export type Piece = { ext: string; bytes: Buffer; poster?: { ext: string; bytes: Buffer }; parts?: { text: string; seconds: number }[]; credit?: MediaCredit };
+// `by` is which backend really made it, for the card to say so: a founder who waited a minute for a picture is
+// owed the knowledge that it was drawn here rather than fetched.
+export type Piece = { ext: string; bytes: Buffer; poster?: { ext: string; bytes: Buffer }; parts?: { text: string; seconds: number }[]; credit?: MediaCredit; by?: string };
 // One backend that makes one kind of media. `ready` says in the founder's words why it cannot work yet, or nothing.
 export type Maker = { name: string; ready(): string | null; make(ask: Ask, help: { report: (line: string) => void; signal?: AbortSignal }): Promise<Piece> };
 export type Makers = Partial<Record<MediaKind, Maker[]>>;
@@ -115,6 +117,7 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
             const piece = await maker.make({ ...ask, cardId: card.id }, { report: line, signal: stop.signal });
             const at = now();
             const made: MediaResult = { path: await deps.store.saveFileBytes(nameOf(ask, at, piece.ext), piece.bytes), prompt: ask.prompt, at };
+            if (piece.by) made.by = piece.by;
             if (piece.poster) made.poster = await deps.store.saveFileBytes(nameOf(ask, at + 1, piece.poster.ext), piece.poster.bytes);
             if (piece.credit) made.music = piece.credit;
             // What the founder dropped on the card while it was working is still theirs: read the card again, not `before`.

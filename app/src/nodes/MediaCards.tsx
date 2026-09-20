@@ -45,6 +45,7 @@ export function ImageGenNode({ id, data, selected }: NodeProps<ImageGenNodeType>
         )}
         {picture && (
           <div className="studio__done">
+            {picture.by && <span className="studio__by">{picture.by === 'this computer' ? 'Drawn on this computer' : `Drawn on ${picture.by}`}</span>}
             <a href={fileUrl(picture.path)} download>Download</a>
             <button type="button" onClick={() => addCard('image', { path: picture.path })}>Put on stage</button>
           </div>
