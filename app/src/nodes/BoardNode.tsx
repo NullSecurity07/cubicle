@@ -1,8 +1,10 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useState, type DragEvent } from 'react';
-import { COLUMNS, type Column, type Repeat, type Task } from '../../shared/model';
+import { sayRepeat } from '../../shared/automation';
+import { COLUMNS, type Column, type Task } from '../../shared/model';
 import { addTask, changeTask, learnFromTask, removeTask, runTask, stopTask, watchBoard } from '../api';
 import { emit } from '../bus';
+import { Automation } from '../slices/automation/Automation';
 import type { BoardNodeType, StageNode } from '../stage';
 import { useFlushStage } from '../sync';
 import { Approval } from './Approval';
@@ -10,8 +12,6 @@ import { CardActions, Frame } from './Frame';
 import { Words } from './Rich';
 
 const NAMES: Record<Column, string> = { proposed: 'Proposed', todo: 'To do', doing: 'Doing', review: 'Review', done: 'Done' };
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const repeatWords = (repeat?: Repeat) => (!repeat ? '' : `${repeat.every === 'day' ? 'daily' : repeat.every === 'weekdays' ? 'weekdays' : DAYS[repeat.weekday ?? 1].slice(0, 3)} ${repeat.time}`);
 const active = (task: Task) => task.run?.state === 'running' || task.run?.state === 'waiting';
 
 // The founder's task board. People wired to it may propose tasks; only the founder accepts, assigns and runs them.
@@ -83,13 +83,15 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
                   <button key={task.id} type="button" className={`task task--${task.run?.state ?? 'idle'}`} draggable onDragStart={(event) => event.dataTransfer.setData('text/task', task.id)} onClick={() => { setOpenId(task.id); setLearned(''); }}>
                     <span className="task__title">{task.title}</span>
                     <span className="task__meta">
-                      {task.assignee && <i style={{ background: who(task.assignee)?.accent }} />}{who(task.assignee)?.name}
+                      {task.assignee && !task.script && <i style={{ background: who(task.assignee)?.accent }} />}{task.script ? 'a script' : who(task.assignee)?.name}
                       {task.proposedBy && column === 'proposed' && <>from {task.proposedBy}</>}
-                      {task.repeat && <em>↻ {repeatWords(task.repeat)}</em>}
+                      {task.repeat && <em>↻ {sayRepeat(task.repeat)}</em>}
                       {task.missed && <em className="task__missed">missed</em>}
                       {task.run?.state === 'waiting' && <em className="task__needs">needs you</em>}
                       {task.run?.state === 'running' && <em>working…</em>}
-                      {task.run?.state === 'failed' && <em className="task__missed">failed</em>}
+                      {task.run?.state === 'blocked' && <em className="task__missed">held up</em>}
+                      {/* Told once: after the first, a repeat that keeps failing is only counted here. */}
+                      {task.run?.state === 'failed' && <em className="task__missed">failed{(task.fails ?? 0) > 1 ? ` ${task.fails} times` : ''}</em>}
                     </span>
                   </button>
                 ))}
@@ -130,26 +132,14 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
                   {COLUMNS.map((column) => <option key={column} value={column}>{NAMES[column]}</option>)}
                 </select>
               </label>
-              <label>Repeat
-                <span className="taskview__repeat">
-                  <select aria-label="Repeat" value={open.repeat?.every ?? ''} onChange={(event) => act(changeTask(id, open.id, { repeat: event.target.value ? { every: event.target.value as Repeat['every'], time: open.repeat?.time ?? '09:00', weekday: open.repeat?.weekday ?? 1 } : null }))}>
-                    <option value="">Off</option><option value="day">Every day</option><option value="weekdays">Weekdays</option><option value="week">Every week</option>
-                  </select>
-                  {open.repeat?.every === 'week' && (
-                    <select aria-label="Day" value={open.repeat.weekday ?? 1} onChange={(event) => act(changeTask(id, open.id, { repeat: { ...open.repeat!, weekday: Number(event.target.value) } }))}>
-                      {DAYS.map((day, index) => <option key={day} value={index}>{day}</option>)}
-                    </select>
-                  )}
-                  {open.repeat && <input type="time" aria-label="Time" value={open.repeat.time} onChange={(event) => event.target.value && act(changeTask(id, open.id, { repeat: { ...open.repeat!, time: event.target.value } }))} />}
-                </span>
-              </label>
-              {open.repeat && <p className="taskview__hint">Runs only while the app is open. {open.missed ? 'The last one was missed; press Run to catch up.' : open.nextRun ? `Next: ${new Date(open.nextRun).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}.` : ''}</p>}
+              {/* Everything this task does without being asked: the schedule in words, a script, a skill, what it follows. */}
+              <Automation key={open.id} boardId={id} task={open} tasks={tasks} act={act} />
               <div className="taskview__end">
                 <button type="button" className="danger" onClick={() => { act(removeTask(id, open.id)); setOpenId(null); }}>Remove</button>
                 {open.column === 'proposed' && <button type="button" onClick={() => act(changeTask(id, open.id, { column: 'todo' }))}>Accept</button>}
                 {active(open)
                   ? <button type="button" onClick={() => act(stopTask(id, open.id))}>Stop</button>
-                  : <button type="button" className="primary" disabled={!open.assignee} title={open.assignee ? '' : 'Give the task to a person first'} onClick={() => act(runTask(id, open.id))}>{open.run ? 'Run again' : 'Run'}</button>}
+                  : <button type="button" className="primary" disabled={!open.assignee && !open.script} title={open.assignee || open.script ? '' : 'Give the task to a person first'} onClick={() => act(runTask(id, open.id))}>{open.run ? 'Run again' : 'Run'}</button>}
               </div>
             </div>
             <div className="taskview__run">
@@ -158,8 +148,8 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
               {open.run?.approval && <Approval tool={open.run.approval} />}
               {open.run?.result && <div className="md taskview__result"><Words text={open.run.result} /></div>}
               {open.run?.provider && <div className="msg__foot">{open.run.provider} · {open.run.model}{open.run.usage ? ` · ${open.run.usage.input + open.run.usage.output} tokens` : ''} · {open.run.state}</div>}
-              {/* Only a finished run has anything to take away from, and the founder hears in one line what was taken. */}
-              {open.run?.state === 'done' && (
+              {/* Only a finished run of a person's has anything to take away from, and the founder hears in one line what was taken. */}
+              {open.run?.state === 'done' && !open.script && (
                 <div className="taskview__learn">
                   <button type="button" disabled={learning} onClick={() => void learn(open.id)}>{learning ? 'Looking at how it went…' : 'Learn this'}</button>
                   {learned && <span>{learned}</span>}
