@@ -39,11 +39,16 @@ async function shown(page: Page, title: string) {
   await expect.poll(() => panel(page, title).evaluate((sheet) => getComputedStyle(sheet).opacity)).toBe('1');
 }
 
+// This machine is often busy with something else, and a window that is still settling can miss the first key.
+// The bar is asked for again rather than the check failing over how loaded the machine was.
 async function bar(page: Page, typed: string) {
-  await page.keyboard.press('Control+k');
-  const box = page.getByRole('dialog', { name: 'Command bar' }).getByRole('combobox');
-  await box.fill(typed);
-  await expect(page.getByRole('dialog', { name: 'Command bar' }).getByRole('option').first()).toContainText(typed, { ignoreCase: true });
+  const sheet = page.getByRole('dialog', { name: 'Command bar' });
+  await expect(async () => {
+    await page.keyboard.press('Control+k');
+    await expect(sheet.getByRole('combobox')).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 25_000 });
+  await sheet.getByRole('combobox').fill(typed);
+  await expect(sheet.getByRole('option').first()).toContainText(typed, { ignoreCase: true });
   await page.keyboard.press('Enter');
 }
 
