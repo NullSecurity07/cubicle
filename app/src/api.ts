@@ -10,7 +10,8 @@ const put = (body: unknown): RequestInit => ({ method: 'PUT', headers: { 'conten
 export const getStage = () => request<Stage>('/api/stage');
 export const putStage = (stage: Stage) => request('/api/stage', put(stage));
 export const getDoc = (id: string) => request<{ text: string }>(`/api/docs/${id}`).then((doc) => doc.text);
-export const putDoc = (id: string, text: string) => request(`/api/docs/${id}`, put({ text }));
+// `last` is a save made as the page goes away: the browser is asked to finish it even though nobody is left to hear the answer.
+export const putDoc = (id: string, text: string, last = false) => request(`/api/docs/${id}`, { ...put({ text }), ...(last ? { keepalive: true } : {}) });
 export const getModels = () => request<ModelInfo[]>('/api/models');
 export const getBrowser = (id: string) => request<{ port: number; url: string }>(`/api/browsers/${id}`);
 export const answerApproval = (id: string, ok: boolean, args?: Record<string, string>) => request(`/api/approvals/${encodeURIComponent(id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok, args }) });

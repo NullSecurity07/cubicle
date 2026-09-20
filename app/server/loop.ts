@@ -48,10 +48,18 @@ export async function runTurn(input: {
     const offered = step < MAX_STEPS ? tools : [];
     const gap = text && !/\s$/.test(text) ? '\n\n' : '';
     let first = true;
-    const turn = await complete(messages, {
+    const ask = () => complete(messages, {
       tools: offered, signal,
       onToken: (token) => { const piece = first ? gap + token : token; first = false; text += piece; events.token(piece); },
     }, clients, onFailure);
+    // A step every model refused — usually because the prompt outgrew them — gets one more chance: whatever listens
+    // here shortens it and says so, and we ask again with what it left.
+    const turn = seams ? await ask().catch(async (error: Error) => {
+      const again = await seams.run('step:error', { roomId, step, messages, error: error.message });
+      if (!again.retry) throw error;
+      messages = again.messages;
+      return ask();
+    }) : await ask();
 
     if (failed.length) events.notice?.(`${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
     // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
