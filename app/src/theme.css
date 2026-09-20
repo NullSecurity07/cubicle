@@ -238,6 +238,7 @@ div.msg--assistant:has(.approval) { align-self: stretch; max-width: none; }
 
 /* Teamwork: a colleague's question in this room; a pinned doc. */
 .msg--colleague { align-self: flex-end; max-width: 85%; padding: 6px 10px; border-radius: 12px 12px 3px 12px; border: 1px dashed rgba(255, 255, 255, 0.22); background: rgba(255, 255, 255, 0.04); white-space: pre-wrap; }
+.msg__via { display: block; margin-bottom: 2px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); }
 .msg--colleague span { display: block; margin-bottom: 2px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); }
 .doc__all { flex: none; padding: 1px 6px; border-radius: 6px; font-size: 10px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: #0b0c10; background: var(--accent); }
 .doc__pin { flex: none; width: 24px; height: 24px; padding: 5px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 0.15s; }

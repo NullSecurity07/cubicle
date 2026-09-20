@@ -16,6 +16,8 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   delegate_task: ['Handing to', 'Handed to'],
 };
 const compact = (count: number) => (count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`);
+// Where the founder was when they said it, when they were not at the stage.
+const VIA: Record<NonNullable<ChatMessage['via']>, string> = { phone: 'from your phone', call: 'from another program' };
 
 // One tool call: what the person did, in a line. Opens to show exactly what was sent and what came back.
 function Chip({ tool }: { tool: ToolEvent }) {
@@ -73,7 +75,8 @@ type Shown = Omit<ChatMessage, 'id' | 'at'> & Partial<Pick<ChatMessage, 'id' | '
 export function Message({ message, live = false, roomId, ...actions }: { message: Shown; live?: boolean; roomId?: string } & Actions) {
   if (message.role === 'user') return message.from
     ? <div className="msg msg--colleague"><span>{message.from} asked</span>{message.text}</div>
-    : <div className="msg msg--user"><Attachments message={message} />{message.text}<Tools {...actions} /></div>;
+    // The founder is not always at the stage: when they said this somewhere else, the bubble says quietly where.
+    : <div className="msg msg--user">{message.via && <span className="msg__via">{VIA[message.via]}</span>}<Attachments message={message} />{message.text}<Tools {...actions} /></div>;
   const tokens = message.usage ? message.usage.input + message.usage.output : 0;
   return (
     <div className="msg msg--assistant">
