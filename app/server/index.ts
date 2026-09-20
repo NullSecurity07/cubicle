@@ -7,7 +7,7 @@ import { createApprovals } from './approvals.ts';
 import { boardAttention, createAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
 import { createCurator } from './curator.ts';
-import { createDecisions, decisionAttention } from './decisions.ts';
+import { createDecisions, decidedLines, decisionAttention } from './decisions.ts';
 import { createEvents } from './events.ts';
 import { createFounder } from './founder.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
@@ -176,8 +176,8 @@ async function promptFor(stage: Stage, roomId: string, toolNames: string[], fres
     if (!page || page.url !== card.url) { page = { url: card.url, ...(await browser.page(card.url).catch((error: Error) => ({ title: card.url, text: `(could not be read: ${error.message})` }))) }; await store.writePage(card.id, page); }
     pages[card.id] = page;
   }
-  // What the founder has decided lately: everyone works from it, wired or not.
-  const decided = (await decisions.list()).filter((one) => one.status === 'decided').slice(0, 12).map((one) => `- ${one.title}: ${(one.chosen ?? '').replace(/\s+/g, ' ').slice(0, 160)}`);
+  // What the founder has decided lately, each line with the day it was decided: everyone works from it, wired or not.
+  const decided = decidedLines(await decisions.list());
   const messages = buildMessages(stage, roomId, docs, fresh ? [] : await store.readChat(roomId), toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(roomId), pages, decided, await founder.read());
   // Image cards wired to this person ride along with the latest question, for a model that can see. An image studio
   // sends the last picture it made the same way, so a person can look at their own work.
