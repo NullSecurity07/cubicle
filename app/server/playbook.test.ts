@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createDecisions } from './decisions.ts';
 import { gatherPieces } from './gather.ts';
-import { createPlaybook, nearestSkills, SKILL_FLOOR, SKILL_MATCH } from './playbook.ts';
+import { createPlaybook, nearestSkills, SKILL_FLOOR, SKILL_INLINE, SKILL_MATCH } from './playbook.ts';
 import type { ModelMessage } from './prompt.ts';
 import { createRecall, wordEmbedder } from './recall.ts';
 import { runTurn } from './loop.ts';
@@ -38,6 +38,7 @@ async function setup() {
   return { dir, store, skills, recall, seams, ask };
 }
 const blockOf = (messages: ModelMessage[]) => /\n\nYour company playbook:[\s\S]*$/.exec(messages[0].content)?.[0] ?? '';
+const LEARN_LINE = 'When the founder asks you to learn how something was done, it is recorded after your reply; confirm in one line.';
 
 describe('the two numbers', () => {
   it('drops a reworded copy and keeps a skill about other work', async () => {
@@ -66,9 +67,11 @@ describe('the two numbers', () => {
 
   it('puts the playbook in front of a person only when something in it fits', async () => {
     const { ask } = await setup();
+    // This question half wants the launch skill (0.38), so it is named and offered, not written out.
     const block = blockOf(await ask('make a landing page for our launch next week'));
     expect(block).toContain('Ship a launch page: When the founder asks for a landing page');
-    expect(block).toContain('read it with use_skill before you start');
+    expect(block).toContain('read one with use_skill before you start');
+    expect(block).not.toContain('What to do:');
     // An unrelated question gets no block at all: a playbook shown when it does not apply teaches people to ignore it.
     expect(blockOf(await ask('what should we have for lunch today'))).toBe('');
     expect(blockOf(await ask('explain how our pricing compares to Notion'))).toBe('');
@@ -90,12 +93,46 @@ describe('the playbook block', () => {
   it('names at most four skills, one line each, and only the ones above the floor', async () => {
     const { ask, recall } = await setup();
     const block = blockOf(await ask('write the weekly update for the team'));
-    const named = block.split('\n').filter((line) => line.startsWith('- '));
+    const named = block.split('Others that may fit')[1].split('\n').filter((line) => line.startsWith('- '));
     expect(named.length).toBeGreaterThan(0);
     expect(named.length).toBeLessThanOrEqual(4);
     for (const line of named) expect(line).toMatch(/^- [^\n]+: [^\n]+$/);
+    // The best of them is written out instead of named, so the ones named are the rest of what cleared the floor.
     const hits = await nearestSkills(recall, 'write the weekly update for the team', 8);
-    expect(named).toHaveLength(hits.filter((hit) => hit.score >= SKILL_FLOOR).length);
+    expect(named).toHaveLength(hits.filter((hit) => hit.score >= SKILL_FLOOR).length - 1);
+  });
+
+  it('writes the one that plainly fits out in full, and marks it used there and then', async () => {
+    const { ask, skills, recall } = await setup();
+    const [best] = await nearestSkills(recall, 'write the weekly update for the team', 1);
+    expect(best.score).toBeGreaterThanOrEqual(SKILL_INLINE);
+
+    const block = blockOf(await ask('write the weekly update for the team'));
+    expect(block).toContain('Prepare a weekly update\nWhen: When the founder asks for the weekly progress note');
+    expect(block).toContain('What to do:\n1. List what shipped from the board, the done column only\n2.');
+    expect(block).toContain('Done when: It is under ten lines and every line is something that happened.');
+    expect(block).toContain('Follow this one; it is how this kind of work was done well before.');
+    // It was put in front of them, so it was used: nobody had to go and find it.
+    const used = (await skills.list()).find((one) => one.id === 'prepare-a-weekly-update')!;
+    expect(used).toMatchObject({ uses: 1, state: 'active' });
+    expect(used.usedAt).toBeGreaterThan(0);
+    // The ones only named are not; they were offered, not read.
+    expect((await skills.list()).filter((one) => one.uses > 0)).toHaveLength(1);
+  });
+
+  it('keeps the block short enough to leave room for the founder\'s own words', async () => {
+    const { ask, skills } = await setup();
+    // The longest a skill may be, and three more wanting to be named beside it.
+    await skills.edit('prepare-a-weekly-update', {
+      procedure: Array.from({ length: 8 }, (_, at) => `Step ${at + 1} of the weekly update: ${'say what moved and where the founder can see it, '.repeat(3)}`.slice(0, 100)),
+      pitfalls: Array.from({ length: 5 }, (_, at) => `Watch out ${at + 1}: ${'never call the weekly update done before a tool has said so, '.repeat(3)}`.slice(0, 100)),
+    });
+    const block = blockOf(await ask('write the weekly update for the team'));
+    expect(block.length).toBeLessThanOrEqual(2000);
+    // What is cut is the mentions, never the one written out.
+    expect(block).toContain('Step 8 of the weekly update');
+    expect(block).toContain('Done when:');
+    expect(block).toContain(LEARN_LINE);
   });
 
   it('cannot give a person permission for anything, whatever a skill says', async () => {

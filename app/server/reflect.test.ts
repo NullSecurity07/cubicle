@@ -164,10 +164,11 @@ describe('the learner', () => {
     expect(problems.map((one) => one.message).join(' ')).toContain('the model is down');
     expect(await skills.list()).toEqual([]);
 
-    // A reply in no shape anybody asked for is nothing learned, and still nothing said to the founder.
+    // Told twice what was wrong with it and wrong twice over is not a failure, it is an answer: there was no lesson
+    // here. Nothing is written down and nothing is reported, because nothing went wrong.
     const { after: again, problems: more, skills: none } = await setup([says('I would rather not.', 'Still no.')]);
     await expect(again('Write the launch page', answered('Done.', THREE))).resolves.toBeTruthy();
-    expect(more).toHaveLength(1);
+    expect(more).toEqual([]);
     expect(await none.list()).toEqual([]);
   });
 

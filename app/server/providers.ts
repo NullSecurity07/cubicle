@@ -190,20 +190,27 @@ export const fakeClient: ModelClient = {
     const notes = /Sticky notes the founder connected to your room:\n- ([^\n]+)/.exec(system)?.[1];
     const pages = [...system.matchAll(/^## Page: (.+)$/gm)].map((match) => match[1]);
     const studios = [...system.matchAll(/^- An? (image|voice|video) studio\./gm)].map((match) => match[1]);
-    // Said back so a browser test can see that a skill learned on one turn really reached the next one's prompt.
-    const playbook = [...(/Your company playbook:[^\n]*\n([\s\S]*?)\nIf one fits/.exec(system)?.[1] ?? '').matchAll(/^- ([^:\n]+):/gm)].map((match) => match[1]);
+    // Said back so a browser test can see that a skill learned on one turn really reached the next one's prompt:
+    // the one written out in full first, then the ones only mentioned.
+    const block = system.slice(system.indexOf('Your company playbook:'));
+    const playbook = system.includes('Your company playbook:')
+      ? [/^[^\n]*\n\n(.+)\nWhen: /.exec(block)?.[1], ...[...(block.split('Others that may fit')[1] ?? '').matchAll(/^- ([^:\n]+):/gm)].map((match) => match[1])].filter((one) => one !== undefined)
+      : [];
     const last = messages.at(-1);
     const heard = messages.findLast((message) => message.role === 'user')?.content ?? '';
     // The playbook asks this in json and takes none for an answer twice; a fake person always has something to teach,
     // so a browser test can watch a skill be born without a key to a real model.
     if (/^You keep the one playbook/.test(system)) {
-      // The task's own words go through the whole skill, so two different tasks do not teach the same lesson twice
-      // and get thrown away as near-copies of each other.
-      const task = (/^What the founder asked .+ for:\n(.+)$/m.exec(heard)?.[1]?.replace(/^\/tool \w+ .*/, '').trim() || 'work of this kind').slice(0, 50);
+      // A fake person keeps the doctrine the real ones are held to: it takes the kind of thing the work was about,
+      // never the whole of what it was asked, so the checks that refuse a lesson copied out of one job let it pass.
+      // The kind still tells two skills apart, which is what keeps one from being dropped as a copy of the other.
+      const task = /^What the founder asked .+ for:\n(.+)$/m.exec(heard)?.[1]?.replace(/^\/tool \w+ .*/, '').trim() ?? '';
+      const said = task.match(/[\p{L}\p{N}]+/gu)?.filter((word) => word.length > 2 && !/^(the|and|for|with|that|this|into|then|from|about|write|make)$/i.test(word)) ?? [];
+      const kind = said.slice(-2).join(' ').slice(0, 40) || 'work of this kind';
       onToken(JSON.stringify({
-        action: 'create', name: `How to ${task}`.slice(0, 60), when: `When the founder asks for ${task}`.slice(0, 160),
-        procedure: [`Read what is wired to you before starting on ${task}`, 'Do the work with your tools, one call at a time', `Say in a line or two what changed about ${task}`],
-        pitfalls: [`Never say ${task} is done unless a tool said so`], verify: `The founder can see ${task} without asking.`,
+        action: 'create', name: `How to handle a ${kind}`.slice(0, 60), when: `When the founder needs a ${kind} and nobody has done it yet`.slice(0, 160),
+        procedure: [`Read what is wired to you before starting on a ${kind}`, 'Do the work with your tools, one call at a time', `Say in a line or two what changed about the ${kind}`],
+        pitfalls: [`Never say a ${kind} is done unless a tool said so`], verify: `The founder can see the ${kind} without asking.`,
       }));
       return { text: '', calls: [], usage: { input: 10, output: 40 } };
     }

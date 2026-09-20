@@ -214,6 +214,12 @@ const runs = createRuns({ boards, store, tools, clients, usage, approvals, atten
 const learner = createLearner({
   skills, recall, store, clients, usage,
   roomName: async (roomId) => (await store.loadStage()).rooms.find((one) => one.id === roomId)?.name ?? 'Someone',
+  // Everything here that the founder gave a name to. A lesson that uses one of them is about this company only, so
+  // the learner is told to write it again without.
+  names: async () => {
+    const stage = await store.loadStage();
+    return [...stage.rooms.map((one) => one.name), ...stage.docs.map((one) => one.title), ...(stage.cards ?? []).flatMap((card) => (card.kind === 'link' && card.title ? [card.title] : []))];
+  },
   onLearned: (learned) => {
     skills.tell({ learned: { roomId: learned.roomId, name: learned.name, action: learned.action } });
     if (learned.source === 'run') void runs.note(learned.roomId, `${learned.action === 'create' ? 'learned' : 'improved'}: "${learned.name}"`).catch(() => {});

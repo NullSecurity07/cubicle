@@ -1,5 +1,6 @@
 import type { ToolEvent } from '../shared/model.ts';
 import { completeJson, JSON_RULE } from './json.ts';
+import { checkLesson, mostSteps, type Ground } from './lesson.ts';
 import type { TurnResult } from './loop.ts';
 import { nearestSkills, SKILL_MATCH, type Recall } from './playbook.ts';
 import type { ModelMessage } from './prompt.ts';
@@ -62,6 +63,8 @@ const DOCTRINE = 'You keep the one playbook shared by the people who work for a 
   + '{"action": "none"}\n'
   + '{"action": "create", "name": "…", "when": "…", "procedure": ["…"], "pitfalls": ["…"], "verify": "…"}\n'
   + '{"action": "patch", "skill": "<the id of one of the nearest skills>", "changes": [{"field": "procedure", "old": "", "new": "…"}]}\n\n'
+  + 'Every step must be something the person really did — one of the tool calls listed below — or something the founder said. Never add a step nobody did, such as telling people about it, getting it signed off, or putting it under version control. '
+  + 'Write it for the next case, which will be a different one: a different product, a different document, a different customer. Nothing on this stage may be named — not a document\'s title, not a card, not a person.\n\n'
   + 'name: at most 60 characters. when: one line, at most 160, saying when to reach for it. procedure: at most 8 steps, each at most 240. '
   + 'pitfalls: at most 5, each at most 240, and may be empty. verify: at most 240, how to tell it worked. Together they must stay under 1500 characters.\n'
   + 'A change names one of these fields: name, when, procedure, pitfalls, verify. "old" is the line it replaces; an empty "old" adds a line to a list. '
@@ -92,7 +95,7 @@ export function checkVerdict(value: unknown): Verdict {
 }
 
 // The one model call. No tools are offered and no result text goes in, so the worst a bad reply can do is be dropped.
-export async function reflect(evidence: Evidence, nearest: { id: string; name: string; when: string }[], clients: ModelClient[], options: { usage: UsageBook; signal?: AbortSignal }): Promise<Verdict> {
+export async function reflect(evidence: Evidence, nearest: { id: string; name: string; when: string }[], clients: ModelClient[], options: { usage: UsageBook; names?: string[]; signal?: AbortSignal }): Promise<Verdict> {
   const messages: ModelMessage[] = [
     { role: 'system', content: DOCTRINE },
     { role: 'user', content: [
@@ -101,20 +104,50 @@ export async function reflect(evidence: Evidence, nearest: { id: string; name: s
       evidence.earlier.length ? `What was said before:\n${evidence.earlier.join('\n')}` : '',
       `What the founder asked ${evidence.roomName} for:\n${evidence.asked}`,
       evidence.calls.length ? `What ${evidence.roomName} did, in order:\n${evidence.calls.map((call) => `- ${call.name} ${call.args}`).join('\n')}` : `${evidence.roomName} used no tools.`,
+      `At most ${mostSteps(evidence.calls.length)} steps, then: ${evidence.roomName} made ${evidence.calls.length} tool calls, and a step nobody took did not happen.`,
       `What ${evidence.roomName} answered:\n${evidence.said}`,
     ].filter(Boolean).join('\n\n') },
   ];
+  // What was in front of this one piece of work, so the checks below can tell a lesson from a note about it. A task
+  // is one job and copying its words is the mistake; a conversation is the founder saying what they want, and their
+  // words are the lesson itself.
+  const ground: Ground = { names: options.names ?? [], asked: evidence.source === 'run' ? evidence.asked : '', calls: evidence.calls.length };
+  const check = (value: unknown): Verdict => {
+    const verdict = checkVerdict(value);
+    if (verdict.action === 'create') checkLesson(verdict, ground);
+    if (verdict.action === 'patch') checkLesson(lessonOf(verdict.changes), ground, false);
+    return verdict;
+  };
   const { order } = route(clients, options.usage, { promptChars: promptSize(messages), tools: false });
-  return completeJson(messages, checkVerdict, order.length ? order : clients, {
-    signal: options.signal,
-    onReply: (reply) => options.usage.record(reply.client.name, reply.usage, reply.quota),
-  });
+  try {
+    return await completeJson(messages, check, order.length ? order : clients, {
+      signal: options.signal,
+      onReply: (reply) => options.usage.record(reply.client.name, reply.usage, reply.quota),
+    });
+  } catch (error) {
+    // Twice told what was wrong and twice wrong: there was no lesson here. A model that could not answer at all is
+    // another matter and goes back to the caller.
+    if (!/^the model did not answer in the shape asked for/.test((error as Error).message)) throw error;
+    return { action: 'none' };
+  }
 }
+
+// The lines a patch would put into a skill, gathered under the field they belong to so the same checks read them.
+const lessonOf = (changes: Change[]) => ({
+  name: changes.find((change) => change.field === 'name')?.new,
+  when: changes.find((change) => change.field === 'when')?.new,
+  procedure: changes.filter((change) => change.field === 'procedure').map((change) => change.new).filter(Boolean),
+  pitfalls: changes.filter((change) => change.field === 'pitfalls').map((change) => change.new).filter(Boolean),
+  verify: changes.find((change) => change.field === 'verify')?.new,
+});
 
 // The other half: what to reflect on, what came of it, and the promise that none of it can cost the founder a turn.
 export function createLearner(deps: {
   skills: Skills; recall: Recall; store: Store; clients: ModelClient[]; usage: UsageBook;
   roomName: (roomId: string) => Promise<string>; onLearned?: (learned: Learned) => void; now?: () => number;
+  // Everything on this stage that has a name of its own, which a lesson may not use: a skill that names the
+  // founder's own documents and people is about this company and nothing else.
+  names?: () => Promise<string[]>;
 }) {
   const now = deps.now ?? Date.now;
   const lately: number[] = [];
@@ -143,7 +176,8 @@ export function createLearner(deps: {
     const evidence = await evidenceOf(turn, reason);
     const known = new Map((await deps.skills.list()).filter((skill) => skill.state !== 'off').map((skill) => [skill.id, skill]));
     const nearest = (await nearestSkills(deps.recall, `${turn.query}\n${evidence.said}`, 3)).flatMap((hit) => (known.has(hit.id) ? [known.get(hit.id)!] : []));
-    const verdict = await reflect(evidence, nearest, deps.clients, { usage: deps.usage });
+    const names = await deps.names?.().catch(() => [] as string[]);
+    const verdict = await reflect(evidence, nearest, deps.clients, { usage: deps.usage, names });
     if (verdict.action === 'none') return null;
     if (verdict.action === 'patch') {
       const skill = await deps.skills.patch(verdict.skill, verdict.changes);

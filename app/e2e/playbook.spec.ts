@@ -124,55 +124,55 @@ test('a person learns from a task they finished, the founder reads it, and the n
     '/tool list_files {}',
   ].join('\n'));
   // Three calls that got somewhere is real effort, so Maya writes down how it is done and says so in the run's log.
-  await expect(view.locator('.taskview__log')).toContainText('learned: "How to Write the launch FAQ"', { timeout: 30_000 });
+  await expect(view.locator('.taskview__log')).toContainText('learned: "How to handle a launch FAQ"', { timeout: 30_000 });
   await view.getByRole('button', { name: 'Close task' }).click();
 
   // The founder opens the playbook from Maya's own card and reads what she learned.
   const maya = node(page, 'marketing');
   await maya.locator('.card__header').hover();
   await maya.getByRole('button', { name: 'Playbook' }).click();
-  const skill = rowFor(page, 'How to Write the launch FAQ');
+  const skill = rowFor(page, 'How to handle a launch FAQ');
   await expect(skill).toContainText('Maya learned this');
   await expect(skill).toContainText('not used yet');
   // Opened from her card it is still the one company playbook; what she learned is only marked.
   await expect(panel(page)).toContainText("Maya's are marked");
   await expect(skill).toHaveClass(/is-theirs/);
   // Everything in a row can be reached from the keyboard: the buttons show themselves the moment one of them has it.
-  await skill.getByRole('button', { name: /How to Write the launch FAQ/ }).focus();
+  await skill.getByRole('button', { name: /How to handle a launch FAQ/ }).focus();
   await page.keyboard.press('Tab');
   await expect(skill.getByRole('button', { name: 'Edit' })).toBeFocused();
   await expect(skill.locator('.skill__acts')).toHaveCSS('opacity', '1');
 
-  await skill.getByRole('button', { name: /How to Write the launch FAQ/ }).click();
-  await expect(skill).toContainText('When the founder asks for Write the launch FAQ');
+  await skill.getByRole('button', { name: /How to handle a launch FAQ/ }).click();
+  await expect(skill).toContainText('When the founder needs a launch FAQ and nobody has done it yet');
   await expect(skill).toContainText('Read what is wired to you');
   await shown(page);
   await page.screenshot({ path: '.shots/playbook-one-skill-open.png' });
   await page.keyboard.press('Escape');
 
   // The next time the same kind of work comes round, it is in front of her before she starts.
-  await expect(await send(page, 'marketing', 'how should I write the launch FAQ this time')).toContainText('Playbook: How to Write the launch FAQ.');
+  await expect(await send(page, 'marketing', 'how should I write the launch FAQ this time')).toContainText('Playbook: How to handle a launch FAQ.');
 
   // Switched off, nobody is shown it.
   await maya.locator('.card__header').hover();
   await maya.getByRole('button', { name: 'Playbook' }).click();
   // The switch is the playbook's, not the page's: it flips when the server has really put it away.
-  await panel(page).getByLabel('Use "How to Write the launch FAQ"').click();
-  await expect(panel(page).getByLabel('Use "How to Write the launch FAQ"')).not.toBeChecked();
-  await expect.poll(async () => ((await (await page.request.get('/api/skills')).json()) as { name: string; state: string }[]).find((one) => one.name === 'How to Write the launch FAQ')?.state).toBe('off');
+  await panel(page).getByLabel('Use "How to handle a launch FAQ"').click();
+  await expect(panel(page).getByLabel('Use "How to handle a launch FAQ"')).not.toBeChecked();
+  await expect.poll(async () => ((await (await page.request.get('/api/skills')).json()) as { name: string; state: string }[]).find((one) => one.name === 'How to handle a launch FAQ')?.state).toBe('off');
   await page.keyboard.press('Escape');
   await expect(await send(page, 'marketing', 'and the launch FAQ again please')).not.toContainText('Playbook:');
 
   // Edited by hand, and put back with one press.
   await bar(page, 'playbook');
-  await panel(page).getByLabel('Use "How to Write the launch FAQ"').click();
-  await expect(panel(page).getByLabel('Use "How to Write the launch FAQ"')).toBeChecked();
+  await panel(page).getByLabel('Use "How to handle a launch FAQ"').click();
+  await expect(panel(page).getByLabel('Use "How to handle a launch FAQ"')).toBeChecked();
   await skill.getByRole('button', { name: 'Edit' }).click();
   await skill.getByLabel('Done when').fill('The founder has read it and has no more questions.');
   await skill.getByRole('button', { name: 'Save' }).click();
   await expect(skill).toContainText('The founder has read it and has no more questions.');
   await skill.getByRole('button', { name: 'Undo last change' }).click();
-  await expect(skill).toContainText('The founder can see Write the launch FAQ without asking.');
+  await expect(skill).toContainText('The founder can see the launch FAQ without asking.');
   await expect(skill).not.toContainText('no more questions');
   await page.keyboard.press('Escape');
 });
@@ -183,7 +183,7 @@ test('a finished task can be learned from on purpose, and says in one line what 
   // One call is not effort, so nothing was learned by itself: this is the founder asking for it.
   await expect(view.locator('.taskview__log')).not.toContainText('learned:');
   await view.getByRole('button', { name: 'Learn this' }).click();
-  await expect(view.locator('.taskview__learn span')).toHaveText('Learned: "How to Pick the webinar date".', { timeout: 30_000 });
+  await expect(view.locator('.taskview__learn span')).toHaveText('Learned: "How to handle a webinar date".', { timeout: 30_000 });
   await page.screenshot({ path: '.shots/playbook-board-learn-this.png' });
 
   // Asked again about the same work, there is nothing left to take away from it.
