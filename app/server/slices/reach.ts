@@ -28,7 +28,9 @@ export default {
     const reach = createReach(deps.workspace);
     const outbox = createOutbox(resolve(deps.workspace, 'outbox.jsonl'));
     const hooks = createHooks();
-    const fake = deps.fake && process.env.STAGE_FAKE_TELEGRAM === '1' ? fakeTelegram() : null;
+    // Telegram stood in for, never reached: only ever while the app is running its fake model, which is what the
+    // browser checks run against. `STAGE_FAKE_TELEGRAM=0` turns the stand-in off for a check that wants no phone at all.
+    const fake = deps.fake && process.env.STAGE_FAKE_TELEGRAM !== '0' ? fakeTelegram() : null;
     const api = createApi(() => reach.token(), fake?.http);
     const bridge = createBridge({ port: deps.own.ports[0], token: deps.own.token });
     const voice = deps.fake ? fakeVoices : kokoroVoices(resolve(deps.root, 'app/.cache/voice'));
@@ -55,7 +57,9 @@ export default {
     });
     const poller = createPoller({
       updates: (offset, signal) => api.updates(offset, signal),
-      onUpdate: (update) => phone.update(update),
+      // A person may take a minute over an answer, and the founder must still be heard meanwhile — not least when
+      // what they send next is the press of the button that turn is waiting for. The phone keeps its own order.
+      onUpdate: async (update) => { void phone.update(update).catch(() => {}); },
       onTrouble: (why) => { trouble = why; },
     });
 
@@ -75,6 +79,9 @@ export default {
       };
     }
 
+    // Read once here, while nothing is happening: the book of what waits for the founder is only read from disk the
+    // first time somebody asks for it, and the first thing this slice does to it is add to it.
+    void deps.attention.list().catch(() => {});
     deps.attention.watch((list) => { void phone.show(list).catch(() => {}); });
     deps.seams.on('turn:before', async (payload, next) => {
       sources.set(payload.roomId, payload.source);

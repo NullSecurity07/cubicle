@@ -56,6 +56,8 @@ export function createPhone(deps: {
   let asking: { attentionId: string; eventId: string; who: string } | null = null;
   let last: string | undefined;
   let count = 0;
+  // One message at a time, in the order they were sent, so "and after that?" reaches whoever the one before it did.
+  let work: Promise<void> = Promise.resolve();
 
   // Each piece is its own entry: what Telegram will not take in one message it will not take out of the outbox either.
   async function out(chatId: number, text: string) {
@@ -136,10 +138,14 @@ export function createPhone(deps: {
     flush,
     tell: everyone,
     lastRoom: () => last,
-    async update(update: Update) {
+    // A press of a button is answered at once: it is often the very thing the conversation ahead of it is waiting
+    // for, so it can never be made to queue behind it.
+    update(update: Update): Promise<void> {
+      if (update.callback_query?.message) return pressed(update.callback_query.id, update.callback_query.data ?? '', update.callback_query.message.chat.id, update.callback_query.message.message_id);
       const message = update.message ?? update.edited_message;
-      if (update.callback_query?.message) await pressed(update.callback_query.id, update.callback_query.data ?? '', update.callback_query.message.chat.id, update.callback_query.message.message_id);
-      else if (message?.chat) await said(message);
+      if (!message?.chat) return Promise.resolve();
+      work = work.then(() => said(message)).catch((error: Error) => deps.onError?.(error));
+      return work;
     },
     // Everything waiting for the founder, mirrored onto the phone: new questions go out with two buttons, and one
     // answered anywhere loses its buttons here.
