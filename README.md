@@ -39,6 +39,10 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   6% of a tall one, a support line never under 3.2%, nothing at all under 2.6% — and a still frame never holds past
   three seconds without something arriving on it. Put a free **Pexels** key in `PEXELS_API_KEY` and real
   photographs come first, with the photographer, the page and the licence written down beside every file.
+  A film has **one person in it** at most — a fixed look draws the same stranger every time it is asked for one,
+  and four shots of a stranger nobody introduced is the same fault as no picture change at all. And a film over
+  fifteen seconds with a number, a list or a comparison in its script now carries a **graphic**: a chart drawn in
+  the page, bars growing and figures counting up, rather than four bullet points held over a blurred field.
 - **An editor, not a slideshow** (2026-09-20): the narration is read in **one go** for the whole film, so the
   voice rises and falls the way somebody talking does, and then it is listened back to — every word's exact place
   is measured. A deterministic editor turns that into a shot list: cuts land on the phrase boundaries the speaker

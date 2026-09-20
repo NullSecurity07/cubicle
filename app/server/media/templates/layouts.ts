@@ -112,6 +112,11 @@ function device(shot: Shot, shape: Shape): string {
 // Four soft lamps drifting behind the words, placed from the scene's own number so two renders of the same film put
 // them in the same place. This is what a scene with no picture gets, and it is the reason no film is a flat rectangle
 // any more.
+// How many lamps a scene without a picture has behind it. It is three, four or five by turns, and the timeline
+// has to ask the same question the markup did: a tween aimed at a fourth lamp on a scene that drew three is a
+// missing target, which GSAP complains about once a frame for the rest of the render.
+export const blobsAt = (index: number): number => 3 + (index % 3);
+
 export function meshHtml(index: number, pack: Pack): string {
   const paint = PACK[pack].paint;
   // Three to five lamps, a different number and a different order of the film's colours each scene, with a band of
@@ -119,7 +124,7 @@ export function meshHtml(index: number, pack: Pack): string {
   // pictures the same green cloud, which is what a founder saw when the day's free pictures ran out.
   const seed = (step: number) => ((index * 37 + step * 61) % 100) / 100;
   const wheel = [paint.signal, paint.mark, paint.quiet, paint.mark, paint.signal, paint.quiet];
-  const many = 3 + (index % 3);
+  const many = blobsAt(index);
   const colours = Array.from({ length: many }, (_one, step) => wheel[(index * 2 + step) % wheel.length]);
   const blobs = colours.map((colour, step) => {
     const x = Math.round(-8 + seed(step) * 96);
@@ -304,7 +309,7 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
     const pan = index % 2 ? 1.6 : -1.8;
     steps.push(`tl.fromTo("#bg${index} img", { scale: 1.02, xPercent: 0 }, { scale: ${to.toFixed(2)}, xPercent: ${pan}, duration: ${(shot.seconds + style.overlap).toFixed(3)}, ease: "none" }, ${time(0)});`);
   } else {
-    for (let blob = 0; blob < 4; blob += 1) {
+    for (let blob = 0; blob < blobsAt(index); blob += 1) {
       const drift = ((index * 31 + blob * 17) % 9) - 4;
       steps.push(`tl.fromTo("#b${index}-${blob}", { xPercent: 0, yPercent: 0, scale: 1 }, { xPercent: ${drift * 1.6}, yPercent: ${drift * -1.1}, scale: ${(1 + blob * 0.03).toFixed(2)}, duration: ${(shot.seconds + style.overlap).toFixed(3)}, ease: "none" }, ${time(0)});`);
     }

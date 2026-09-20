@@ -247,3 +247,27 @@ describe('a glyph is lettering too', () => {
     expect(unlettered('an arrow icon over a bare desk')).not.toMatch(/icon/i);
   });
 });
+
+describe('a shot that lands in the middle of a sentence', () => {
+  it('is judged against the sentence it came out of, not only the fragment on it', () => {
+    // A real run threw a good picture away over the fragment "sales. Prove customers", which has two words in it
+    // and no room to be wrong about.
+    const fragment = one(0, 'a partner sliding one sheet back across a bare table', 'sales. Prove customers',
+      { about: 'Show them the sales, and prove the customers came back to the table.' });
+    expect(aboutTheLine(fragment)).toBe(true);
+    expect(criticiseVisuals([fragment]).some((note) => note.rule === 'unrelated')).toBe(false);
+  });
+
+  it('still asks for a stand-in where neither the fragment nor the sentence is in the picture', () => {
+    expect(aboutTheLine(one(0, 'rain filling a gutter', 'sales. Prove customers',
+      { about: 'Show them the sales, and prove the customers came back.' }))).toBe(false);
+  });
+
+  it('carries the sentence onto every slot of a scene', () => {
+    const slots = slotsFor([
+      { scene: 0, take: 0, line: 'Investors want', layout: 'hook' },
+      { scene: 0, take: 1, line: 'proof, not promises', layout: 'hook' },
+    ], true, [{ layout: 'hook', say: 'Investors want proof, not promises.' } as Scene]);
+    expect(slots.every((slot) => slot.about === 'Investors want proof, not promises.')).toBe(true);
+  });
+});

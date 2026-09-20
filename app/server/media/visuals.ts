@@ -40,6 +40,10 @@ export type Visual = {
   at: number; scene: number; take: number;
   // The words spoken under it. Everything else in here is checked against these.
   line: string;
+  // The whole line the scene says, of which `line` is the part that lands on this shot. A shot in the middle of a
+  // sentence gets a fragment — "sales. Prove customers" was a real one — and a fragment has too few words in it to
+  // judge a picture against, so the sentence it came out of counts too.
+  about?: string;
   // What is in the picture: a subject doing something somewhere, in the words a picture model reads.
   subject: string;
   kind: Kind;
@@ -144,7 +148,7 @@ export const headNoun = (subject: string): string => content(subject)[0] ?? '';
 // Whether a picture is of the line it sits under. It is, if it uses one of the line's own words; or if it says,
 // in as many words, that it stands for the line instead. Anything else is a picture of something else.
 export const aboutTheLine = (visual: Visual): boolean => {
-  const line = new Set(content(visual.line));
+  const line = new Set([...content(visual.line), ...content(visual.about ?? '')]);
   if (!line.size) return true;
   if (content(visual.subject).some((word) => line.has(word))) return true;
   return !!visual.metaphor && content(visual.metaphor).length >= 2;
@@ -281,7 +285,7 @@ export function repairVisuals(visuals: Visual[]): { visuals: Visual[]; notes: st
       note(fault === 'generic' ? 'a picture that could have illustrated any sentence was drawn from the line it sits under instead'
         : fault === 'repeated' ? 'two pictures in the film were the same picture, so the second is drawn from its own line'
           : 'a picture was of something the line never mentions, so it is drawn from the line instead');
-      one = { ...one, subject: visualFrom(one.line, index, used), metaphor: undefined };
+      one = { ...one, subject: visualFrom(content(one.line).length >= 2 ? one.line : (one.about ?? one.line), index, used), metaphor: undefined };
     } else {
       for (const word of content(one.subject).slice(0, 3)) used.add(word);
     }
@@ -339,7 +343,8 @@ export function visualsPrompt(slots: Visual[], bible: string, angle: string): st
     '- The framing of each picture is already decided and is written beside it. Keep it.',
     '',
     'The moments:',
-    ...slots.map((slot) => `${slot.at + 1}. [${slot.kind} shot; ${ROOM[slot.room]}] said over it: "${slot.line || '(nothing is said)'}"`),
+    ...slots.map((slot) => `${slot.at + 1}. [${slot.kind} shot; ${ROOM[slot.room]}] said over it: "${slot.line || '(nothing is said)'}"`
+      + (slot.about && slot.about !== slot.line ? `  (out of: "${slot.about}")` : '')),
   ].join('\n');
 }
 
@@ -391,6 +396,7 @@ export type Slot = { scene: number; take: number; line: string; layout: Layout }
 export function slotsFor(slots: Slot[], captions: boolean, scenes: Scene[]): Visual[] {
   return slots.map((slot, at) => ({
     at, scene: slot.scene, take: slot.take, line: slot.line,
+    about: (scenes[slot.scene]?.say ?? '').trim() || undefined,
     subject: '', kind: kindFor(at, slot.layout), room: roomFor(scenes[slot.scene] ?? { layout: slot.layout }, captions),
   }));
 }
