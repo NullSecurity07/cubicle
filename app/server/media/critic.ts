@@ -167,6 +167,21 @@ export const plainClose = (purpose: Purpose): { text: string; say: string } =>
     : purpose === 'explainer' || purpose === 'launch' || purpose === 'feature' ? { text: 'Try it this week', say: 'Try it this week.' }
       : { text: 'Save this for later', say: 'Save this for later.' });
 
+// What a picture behind the words is of: the thing being talked about — a workspace, a screen, hands at work, the
+// light in a room. Never somebody looking down the lens. A film has one person in it and they are on camera; a face
+// behind a headline is a second person the film never introduced, and a reel once sat five scenes on a close-up of
+// a stranger who was not even its presenter.
+const A_FACE = /\b(portraits? of|portrait|close[- ]?ups? of (?:a |the )?(?:person|man|woman|face|founder|presenter|speaker)|close[- ]?up (?:portrait|face)|(?:a |the )?face to camera|facing the camera|looking into the lens|head and shoulders|talking to camera|headshots?|selfies?)\b/gi;
+export const facesCamera = (prompt?: string): string | null => {
+  const found = A_FACE.exec(prompt ?? '');
+  A_FACE.lastIndex = 0;
+  return found ? found[0] : null;
+};
+
+// The same line with the face taken out of it, so what is left is the thing the scene is about.
+export const noFace = (prompt: string): string =>
+  prompt.replace(A_FACE, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([,.])/g, '$1').replace(/^[\s,.]+|[\s,]+$/g, '').trim();
+
 // A figure worth a scene of its own. A number belongs in a film because it changes something for the person
 // watching: money, time, how many people, how much better. "17 — scene shapes" is an inventory of the product's own
 // parts set forty points high, which tells a stranger how somebody's code is organised and nothing else.
@@ -367,6 +382,12 @@ export function criticise(spec: Spec, want: Want): Finding[] {
   // a founder who asked for a face said so in exactly those terms. This bites only where a moving shot can really
   // be made — where none can, a still with a camera move on it is the honest best.
   const moving = want.layouts.includes('presenter') || want.layouts.includes('clip');
+  // A picture behind the words that is a face to camera: a second person the film never introduced.
+  scenes.forEach((scene, index) => {
+    if (scene.person || scene.layout === 'presenter' || scene.layout === 'clip') return;
+    const face = facesCamera(scene.bg_prompt);
+    if (face) say('faces', `scene ${index + 1} puts "${face}" behind its words, and the only person in a film is the one on camera`, index + 1);
+  });
   if (want.person && moving && !scenes.some((one) => one.layout === 'presenter' || one.layout === 'clip' || one.layout === 'footage')) {
     say('person', 'the brief asks for somebody on camera and no scene has anybody moving in it');
   }
@@ -596,6 +617,17 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     const rest = scene.heading.replace(figure, ' ').replace(/\s+/g, ' ').trim();
     note('the words beside a figure are set under it, so the figure can be the size of the scene');
     return { ...scene, heading: figure, text: trimTo([rest, scene.text].filter(Boolean).join(' '), 6) || scene.text };
+  });
+
+  // 2b5. A picture behind the words is of the thing being talked about, not of somebody looking down the lens. The
+  //      film's own person is on camera; anybody else is a stranger the film never introduced.
+  scenes = scenes.map((scene) => {
+    if (scene.person || scene.layout === 'presenter' || scene.layout === 'clip' || !scene.bg_prompt) return scene;
+    const face = facesCamera(scene.bg_prompt);
+    if (!face) return scene;
+    note('a picture behind the words was of somebody looking at the camera, so it is of what the scene is about instead');
+    const left = noFace(scene.bg_prompt);
+    return { ...scene, bg_prompt: countWords(left) >= 3 ? left : `${want.bible}. ${subjectOf(scene)}` };
   });
 
   // 2b4. A close that asks for something nobody offered. Where the film has material it answers for itself; where

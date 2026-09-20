@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carriesVisual, criticise, opensADoor, plainClose, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
+import { carriesVisual, criticise, facesCamera, noFace, opensADoor, plainClose, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
 import { countWords, LAYOUTS, saidWords, saysWhatItShows, type Layout, type Scene, type Spec } from './spec.ts';
 
 // Every rule here is written the same way round: a lazy storyboard of the kind a free model really hands back goes
@@ -510,5 +510,37 @@ describe('a close the founder can stand behind', () => {
     ]);
     const held = repair(asking, reelWant({ sources: { corpus: 'everything made can be downloaded', brief: 'a launch', has: true, lines: [] } })).spec;
     expect(held.scenes.at(-1)!.text).toBe('Download it today');
+  });
+});
+
+describe('what sits behind the words', () => {
+  it('knows a picture of somebody looking down the lens from a picture of the work', () => {
+    // A reel sat five scenes on a close-up of a stranger, drawn as a backdrop for the scene beside them.
+    expect(facesCamera('a close-up of a person facing the camera')).toBeTruthy();
+    expect(facesCamera('a head and shoulders portrait, plain background')).toBeTruthy();
+    expect(facesCamera('somebody talking to camera in an office')).toBeTruthy();
+    // What a backdrop is supposed to be.
+    expect(facesCamera('a quiet desk at dawn, papers and a cold coffee')).toBe(null);
+    expect(facesCamera('hands at work over a keyboard, seen from above')).toBe(null);
+  });
+
+  it('leaves the thing the scene is about when it takes the face out', () => {
+    expect(noFace('a portrait of a founder at a desk in a bright office')).toContain('desk');
+    expect(noFace('a portrait of a founder at a desk in a bright office')).not.toMatch(/portrait/i);
+  });
+
+  it('takes a face out of a backdrop and leaves the person on camera alone', () => {
+    const film = spec([
+      { layout: 'hook', text: 'Investors want proof', say: 'Investors want proof.', bg_prompt: 'a close-up of a person facing the camera' },
+      { layout: 'clip', person: true, clip_prompt: 'somebody talking to camera', say: 'They watch.', bg_prompt: 'a head and shoulders portrait of a founder' },
+      { layout: 'cta', text: 'Follow for more', say: 'Follow for more.', bg_prompt: 'a desk at dawn' },
+    ]);
+    expect(rules(criticise(film, reelWant()))).toContain('faces');
+    const { spec: fixed, notes } = repair(film, reelWant());
+    expect(facesCamera(fixed.scenes[0].bg_prompt)).toBe(null);
+    // The film's own person keeps theirs: they are the one who is really on camera.
+    expect(fixed.scenes[1].bg_prompt).toContain('portrait');
+    expect(notes.join(' ')).toContain('somebody looking at the camera');
+    expect(rules(criticise(fixed, reelWant()))).not.toContain('faces');
   });
 });

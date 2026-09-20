@@ -121,6 +121,15 @@ export async function stretch(bytes: Buffer, seconds: number, workRoot: string, 
   }
 }
 
+// The same shot again, read as a second angle: mirrored and pushed in a fifth on the speaker's eyes. A film that
+// comes back to its presenter comes back to the same presenter — drawing a new one is a different person halfway
+// through, and minutes of this machine's time to make the mistake with.
+export async function secondAngle(from: string, to: string): Promise<void> {
+  await ff(FFMPEG, ['-y', '-loglevel', 'error', '-i', from, '-an',
+    '-vf', 'hflip,scale=iw*1.25:ih*1.25,crop=iw/1.25:ih/1.25:(iw-iw/1.25)/2:(ih-ih/1.25)*0.3',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', to]);
+}
+
 // Stands in for the whole of this in tests and fake-model runs: a person who moves, made instantly.
 export const fakeLocalPerson: Clips = {
   ready: () => null,

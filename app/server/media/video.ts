@@ -8,7 +8,7 @@ import { projectDir } from '../coder.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
-import { headlineOf, inStyle, subjectOf, trimTo } from './critic.ts';
+import { headlineOf, inStyle, noFace, subjectOf, trimTo } from './critic.ts';
 import { bibleFor, direct, faceIn, onCamera, tellOf, understandingOf, readBrief, type Asked, type Material, type Understanding } from './director.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
@@ -16,6 +16,7 @@ import { cachedImages, mayDrawHere, outOfPictures } from './image.ts';
 import { SECONDS_EACH } from './local-image.ts';
 import type { Maker, Piece } from './jobs.ts';
 import { availableRam, availableSwap, MINUTES_EACH, needsRam, roomToFilm as room } from './local-clips.ts';
+import { secondAngle } from './local-person.ts';
 import {
   AI_LAYOUTS, isPurpose, MAX_AI, MAX_BACKGROUNDS, MAX_LOCAL_AI, PURPOSE, PURPOSES, SCENES_A_BACKGROUND,
   fallbackOf, withinCaps, withinLength, type Spec,
@@ -176,9 +177,14 @@ const SUMMONS_TEXT = /\b(charts?|graphs?|dashboards?|decks?|slides?|metrics|chec
 const TYPE_HEAVY = new Set(['checklist', 'bullets', 'steps', 'compare', 'stat', 'quote', 'hook', 'title', 'cta', 'outro']);
 const TEXTURE = 'a softly out-of-focus surface, the light falling across it, nothing in sharp focus, no subject in the middle of the frame';
 export function bgPrompt(bible: string, subject: string, layout: string): string {
-  // A scene may not ask to be drawn when the rest of the film is photographed: one film, one look.
-  const clean = inStyle(subject, bible).replace(SUMMONS_TEXT, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([,.])/g, '$1').trim();
-  const said = TYPE_HEAVY.has(layout) || clean.split(/\s+/).filter(Boolean).length < 3 ? TEXTURE : `${clean}, shallow depth of field`;
+  // A scene may not ask to be drawn when the rest of the film is photographed: one film, one look. Nor may it ask
+  // for somebody looking down the lens: a picture behind the words is of what is being talked about, and the only
+  // person in a film is the one who is actually on camera.
+  const clean = noFace(inStyle(subject, bible)).replace(SUMMONS_TEXT, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([,.])/g, '$1').trim();
+  // What a picture behind the words is of, said to the model in as many words: the subject, and people only where
+  // they happen to be in it.
+  const said = TYPE_HEAVY.has(layout) || clean.split(/\s+/).filter(Boolean).length < 3 ? TEXTURE
+    : `${clean}, shallow depth of field, anybody in the picture is at work and turned away from the camera`;
   return said.toLowerCase().startsWith(bible.slice(0, 18).toLowerCase()) ? said : `${bible}. ${said}`;
 }
 
@@ -446,6 +452,16 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         report(`${spec.scenes.length} scenes, ${estimate({ scenes: spec.scenes.length, seconds, pictures: drawing ? Math.min(wantsPictures, MAX_BACKGROUNDS + 2) : 0, clips: here ? wantsClips : 0, narrate: !!saying, here: drawnHere })}`);
         report('drawing the pictures and recording the narration…');
         const shots: Shot[] = spec.scenes.map((scene) => ({ scene, seconds: 0 }));
+        // A film has one person in it. The first on-camera scene is filmed; every later one cuts back to that same
+        // shot from a second angle, because a film whose presenter changes face halfway through is two films. It
+        // is also minutes of this machine's time that nobody has to spend twice.
+        let personShot: string | null = null;
+        let personTurn: Promise<void> = Promise.resolve();
+        const asOnePerson = <T>(job: () => Promise<T>): Promise<T> => {
+          const mine = personTurn.then(job, job);
+          personTurn = mine.then(() => {}, () => {});
+          return mine;
+        };
         const said = (index: number, line: string) => report(`scene ${index + 1}: ${line}`);
 
         // Everything a scene needs is made beside everything else: the stills, the lines, the clips and the founder's
@@ -499,6 +515,15 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           }
           if (scene.layout === 'presenter' && able) {
             try {
+              await asOnePerson(async () => {
+              // The same person again, from a second angle, rather than a stranger drawn from scratch.
+              if (personShot) {
+                said(index, 'the same person again, from a closer angle');
+                const again = `pres-${index}.mp4`;
+                await secondAngle(join(at, 'assets', personShot), join(at, 'assets', again));
+                shot.video = again;
+                return;
+              }
               // What this scene is going to do, before it starts: a founder watching a spinner needs to know
               // whether somebody is being drawn here for minutes or fetched in seconds.
               said(index, 'making the person on screen…');
@@ -519,6 +544,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               const made = await clips.presenter({ portrait: face, speech, about, shape }, { report: (line) => said(index, line), signal });
               shot.video = `pres-${index}.mp4`;
               await writeFile(join(at, 'assets', shot.video), made.bytes);
+              personShot = shot.video;
+              });
             } catch (error) {
               said(index, `the talking head could not be made (${(error as Error).message}), so the line is said over the words instead`);
               shot.scene = fallbackOf(scene);
@@ -564,7 +591,11 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const wants = spec.scenes.map((scene, index) => ({
             scene, index,
             about: scene.bg_prompt?.trim() || `${bible}. ${subjectOf(scene)}`,
-          })).filter(({ scene, index }) => !shots[index].image && !shots[index].video && scene.layout !== 'picture' && scene.layout !== 'logo');
+          })).filter(({ scene, index }) => !shots[index].image && !shots[index].video && scene.layout !== 'picture' && scene.layout !== 'logo')
+            // Somebody on camera is not a backdrop for the scenes either side of them. A portrait drawn for one of
+            // these used to be shared down its whole run, so five scenes of a reel sat on a close-up of a face
+            // that was not even the film's presenter.
+            .filter(({ scene }) => !scene.person && !AI_LAYOUTS.has(scene.layout));
           const takes = Math.min(MAX_BACKGROUNDS, Math.max(2, Math.ceil(wants.length / SCENES_A_BACKGROUND)));
           const runs = Array.from({ length: Math.min(takes, wants.length) }, (_, take) =>
             wants.filter((_one, at) => Math.floor((at * takes) / wants.length) === take));
@@ -576,7 +607,19 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               for (const { index } of run) { shots[index].bg = file; shots[index].bgShared = run.length > 1; }
             } catch (error) { gone(error as Error, run[0].index, false); }
           }));
-          await pool([...front, ...behind], 3);
+          // The one portrait a film draws: every on-camera scene that has no moving shot takes the same one, so a
+          // film has one person in it whichever way it got them.
+          const faces = spec.scenes.map((scene, index) => ({ scene, index }))
+            .filter(({ scene, index }) => (scene.person || AI_LAYOUTS.has(scene.layout)) && !shots[index].image && !shots[index].video && scene.bg_prompt?.trim());
+          const theirs = faces.length ? [async () => spendable(async () => {
+            try {
+              const piece = await drawing.make({ prompt: faces[0].scene.bg_prompt!, shape }, { report: () => {}, signal });
+              const file = `face-of-this-film.${piece.ext}`;
+              await writeFile(join(at, 'assets', file), piece.bytes);
+              for (const { index } of faces) shots[index].bg = file;
+            } catch (error) { gone(error as Error, faces[0].index, false); }
+          })] : [];
+          await pool([...front, ...theirs, ...behind], 3);
         })();
         await Promise.all([scenework, picturework]);
         if (signal?.aborted) throw new Error('stopped');

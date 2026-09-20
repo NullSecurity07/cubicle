@@ -16,6 +16,9 @@ export type Scene = {
   emphasis?: string; icon?: string;
   // The few words out of the wired material that this scene's claim rests on. The critic checks it is really there.
   source?: string;
+  // Whether this scene is somebody on camera. A film has one person in it, so the second of these reuses the first
+  // one's shot rather than drawing a stranger, and none of them lends its picture to the scenes around it.
+  person?: boolean;
   seconds?: number; start?: number; mute?: boolean; say?: string;
 };
 // The whole film as one flat object. `music` is the mood the bed wants, `sfx` and `captions` are on or off, `pace` is
