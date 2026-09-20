@@ -2,11 +2,13 @@ import { createServer, type Server } from 'node:http';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Room, Stage } from '../../shared/model.ts';
+import { voiceFor } from '../../shared/voices.ts';
 import { createApprovals } from '../approvals.ts';
 import { createAttention } from '../attention.ts';
-import type { Deps } from '../install.ts';
+import type { Deps, Installed } from '../install.ts';
+import { fakeVoices, VOICES } from '../media/voice.ts';
 import { createSeams } from '../seams.ts';
 import type { ToolContext } from '../tools/registry.ts';
 import reach from '../slices/reach.ts';
@@ -134,5 +136,58 @@ describe('a person asking the founder', () => {
     await until(async () => approvals.answer(open.event!.id, { ok: false }), (known) => known);
     expect((await running).text).toContain('did not answer');
     await part.close?.();
+  });
+});
+
+// A reply said out loud in the window. The route answers with the sound itself rather than json, so what this check
+// watches is which voice the maker was asked for.
+function saying(body: Record<string, unknown>) {
+  const dir = mkdtempSync(join(tmpdir(), 'reach-say-'));
+  let held: Stage = { rooms: [room('marketing', 'Maya'), room('build', 'Dev')], docs: [], wires: [], cards: [] };
+  const deps = {
+    workspace: dir, root: dir, fake: true, seams: createSeams(), approvals: createApprovals(), attention: createAttention(dir),
+    store: { loadStage: async () => held, saveStage: async (next: Stage) => { held = next; } },
+    boards: { list: async () => [], onChange: () => () => {} }, skills: { list: async () => [] }, busy: new Set<string>(),
+    own: { ports: [port, port + 1], token: 'launch-token' }, json: () => {}, body: async () => body, runs: {},
+  } as unknown as Deps;
+  const req = { method: 'POST', headers: {} } as unknown as Parameters<NonNullable<Installed['route']>>[0];
+  const res = { writeHead: () => {}, end: () => {} } as unknown as Parameters<NonNullable<Installed['route']>>[1];
+  return { deps, req, res, stage: () => held };
+}
+
+describe('saying a reply out loud', () => {
+  it('uses the voice of the person who wrote it, and writes that voice down on them', async () => {
+    const asked = vi.spyOn(fakeVoices, 'make');
+    try {
+      const maya = saying({ text: 'Here is what I found.', roomId: 'marketing' });
+      const first = await reach.install(maya.deps);
+      expect(await first.route!(maya.req, maya.res, '/api/reach/speak')).toBe(true);
+      const mine = voiceFor(maya.stage().rooms[0], maya.stage().rooms, VOICES);
+      expect(asked.mock.calls.at(-1)![0].voice).toBe(mine);
+      // Written down where it cannot move again, with the guess that chose it.
+      expect(maya.stage().rooms[0]).toMatchObject({ gender: 'woman', voice: mine });
+      await first.close?.();
+
+      const dev = saying({ text: 'Here is what I found.', roomId: 'build' });
+      const second = await reach.install(dev.deps);
+      await second.route!(dev.req, dev.res, '/api/reach/speak');
+      // The same words from somebody else are somebody else's voice, not the one already made.
+      expect(asked.mock.calls.at(-1)![0].voice).toBe(voiceFor(dev.stage().rooms[1], dev.stage().rooms, VOICES));
+      expect(asked.mock.calls.at(-1)![0].voice).not.toBe(mine);
+      await second.close?.();
+    } finally { asked.mockRestore(); }
+  });
+
+  it('says one voice asked for by name, for the founder to hear before they give it to somebody', async () => {
+    const asked = vi.spyOn(fakeVoices, 'make');
+    try {
+      const heard = saying({ text: 'Morning. Where would you like to start?', roomId: 'marketing', voice: 'bm_fable' });
+      const part = await reach.install(heard.deps);
+      await part.route!(heard.req, heard.res, '/api/reach/speak');
+      expect(asked.mock.calls.at(-1)![0].voice).toBe('bm_fable');
+      // Hearing a voice gives nobody that voice.
+      expect(heard.stage().rooms[0].voice).toBeUndefined();
+      await part.close?.();
+    } finally { asked.mockRestore(); }
   });
 });
