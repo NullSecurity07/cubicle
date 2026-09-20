@@ -46,7 +46,7 @@ export function webTools(browser: Browser, launchFor: (cardId: string, headed: b
       perTurn: 3,
       description: `Search the web. Give every query you need at once (up to ${MAX_EACH}); they run in parallel. Returns titles, addresses, a date where the engine gives one, and snippets. `
         + 'Set "recent" — day, week, month or year — for anything that changes: a price, a market size, a funding round, who holds a job, the version of something. '
-        + 'Never put a year you remember into a query. Leave the year out, or write this year, which the start of your instructions gives you. '
+        + 'Never put a year you remember into a query. Leave the year out, or write this year: the date today is in your instructions. '
         + 'Snippets are hints: read a page with web_fetch before you state a fact such as a price.',
       parameters: {
         type: 'object',
