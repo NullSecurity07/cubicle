@@ -716,6 +716,10 @@ describe('two systems of type in one band', () => {
     expect(crowdsCaptions(listy)).toBe(true);
     expect(crowdsCaptions(plain)).toBe(false);
     expect(crowdsCaptions({ layout: 'checklist' } as Scene)).toBe(false);
+    // A quotation's attribution hangs below it, at the bottom of the block, which is where the band starts. The
+    // renderer's own check caught "— LEAD INVESTOR" overlapping the word being said.
+    expect(crowdsCaptions({ layout: 'quote', text: 'It just works.', heading: 'Lead investor' } as Scene)).toBe(true);
+    expect(crowdsCaptions({ layout: 'quote', text: 'It just works.' } as Scene)).toBe(false);
   });
 
   it('leaves the band empty for the length of that scene', () => {
