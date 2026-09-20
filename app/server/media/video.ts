@@ -933,6 +933,12 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const quiet = cut.map((shot, index) => (saysWhatItShows(shot.scene) || crowdsCaptions(shot.scene)
           ? { at: starts[index], seconds: shot.seconds } : null))
           .filter(Boolean) as { at: number; seconds: number }[];
+        // A film whose scenes nearly all write their own words has almost no caption track left, and a founder who
+        // switched captions on deserves to hear that from the card rather than to notice it in the film.
+        const hushed = quiet.reduce((sum, one) => sum + one.seconds, 0);
+        if (captions && total > 0 && hushed > total * 0.6) {
+          report('most of this film writes its own words on screen, so the captions stay out of the way — two sets of words in one place is read as neither');
+        }
 
         await writeFile(join(at, 'index.html'), composition({
           title: spec.title, shape, look: pack === 'brand' && !brand ? 'clean' : pack, shots: cut, pace, captions, brand,
