@@ -13,6 +13,9 @@ function inline(text: string): string {
   out = out.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replace(/__([^_\n]+)__/g, '<b>$1</b>');
   // A single star only when it hugs the words, so "2 * 3 * 4" and a bullet stay what they are.
   out = out.replace(/(^|[\s(])\*([^\s*][^*\n]*?)\*(?=[\s).,;:!?]|$)/g, '$1<i>$2</i>');
+  // The same with underscores, which is how a quiet aside is usually written; `snake_case_names` have no space before
+  // the first one, so they are left alone.
+  out = out.replace(/(^|[\s(])_([^\s_][^_\n]*?)_(?=[\s).,;:!?]|$)/g, '$1<i>$2</i>');
   return out.replace(/\u0000(\d+)\u0000/g, (_, index: string) => kept[Number(index)]);
 }
 

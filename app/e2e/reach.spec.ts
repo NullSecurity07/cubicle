@@ -126,10 +126,11 @@ test.describe('reaching the founder on their phone', () => {
   test('carries a message to a person and their answer back, with their name above it', async ({ page }) => {
     await says(page, '/maya what is left this week?');
     await lastSaid(page, /Maya/).toContain('You said: "what is left this week?"');
-    // Whoever is speaking is at the top of what they say, and nothing routine makes a sound.
+    // Whoever is speaking is at the top of what they say, and an answer the founder asked for is heard arriving: it is
+    // the updates nobody asked for that come quietly (a finished task, further down).
     const reply = (await posted(page)).findLast((one) => /what is left this week/.test(one.text))!;
     expect(reply.text.startsWith('<b>Maya</b> · Marketing')).toBe(true);
-    expect(reply.loud).toBeUndefined();
+    expect(reply.loud).toBe(true);
   });
 
   test('answers whoever wrote the message the founder replied to', async ({ page }) => {

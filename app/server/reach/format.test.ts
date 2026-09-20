@@ -15,6 +15,10 @@ describe('what a reply looks like on the founder\'s phone', () => {
     expect(toTelegram('2 * 3 * 4 is 24')).toBe('2 * 3 * 4 is 24');
     expect(toTelegram('`**not bold**` and [not a link](javascript:alert(1))')).toBe('<code>**not bold**</code> and [not a link](javascript:alert(1))');
     expect(toTelegram('snake_case_name stays')).toBe('snake_case_name stays');
+    // The aside under the morning note, exactly as it reached the founder's phone with its underscores showing.
+    expect(toTelegram('Everything is quiet.\n\n_1 turn, 13.1k in and 409 out. All of it on free allowances._'))
+      .toBe('Everything is quiet.\n\n<i>1 turn, 13.1k in and 409 out. All of it on free allowances.</i>');
+    expect(toTelegram('see my_file_name.ts and _this_ too')).toBe('see my_file_name.ts and <i>this</i> too');
   });
 
   it('keeps the real draft that showed the problem readable', () => {

@@ -120,7 +120,8 @@ describe('a message from a paired phone', () => {
     expect(asked).toEqual([{ roomId: 'marketing', text: 'draft the launch note' }]);
     // Whoever is speaking is at the top of what they say, so eight people in one stream are still eight people.
     expect(fake.posted()[0].text).toBe('<b>Maya</b> · x\n\nabout draft the launch note');
-    expect(fake.posted()[0].loud).toBeUndefined();
+    // An answer to the founder's own question is heard arriving; it is the updates nobody asked for that come quietly.
+    expect(fake.posted()[0].loud).toBe(true);
   });
 
   it('stays with that person for the next message', async () => {

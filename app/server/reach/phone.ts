@@ -153,14 +153,16 @@ export function createPhone(deps: {
     if (announce && chosen && chosen !== room.id) await out(where, `Now talking to ${room.name}.`);
     let reply: string;
     try { reply = await deps.ask(room.id, founderWords({ ...message, text: words })); }
-    catch (error) { await out(where, `${room.name} could not answer: ${(error as Error).message}`); return; }
+    catch (error) { await out(where, `${room.name} could not answer: ${(error as Error).message}`, { loud: true }); return; }
     // Out loud first, then always in words: a mishearing, a missing voice or a walk past a tunnel never costs the reply.
     let quiet = '';
     if (deps.say && await reach.speaks(where.chatId)) {
       try { await api.sendVoice(where.chatId, await deps.say(reply), { ...(where.threadId ? { threadId: where.threadId } : {}) }); }
       catch (error) { quiet = `I could not say that out loud: ${(error as Error).message}`; }
     }
-    await out(where, headed(room, reply), { roomId: room.id });
+    // An answer to the founder's own question makes a sound: real work takes minutes, the phone has gone back in a
+    // pocket by then, and an answer nobody heard arrive is an answer that waits until they happen to look.
+    await out(where, headed(room, reply), { roomId: room.id, loud: true });
     if (quiet) await out(where, quiet);
   }
 
