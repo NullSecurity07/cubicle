@@ -1,6 +1,7 @@
 import { CODE_TOOLS_HINT, createCodeTools } from '../delegation/codetools.ts';
 import { delegationTools } from '../delegation/delegate.ts';
 import type { Slice } from '../install.ts';
+import { colleagueIds } from '../prompt.ts';
 import { offerToolsToCode } from '../sandbox.ts';
 import type { Handler } from '../seams.ts';
 
@@ -24,6 +25,8 @@ export default {
         store: deps.store, clients: deps.clients, usage: deps.usage, busy: deps.busy, seams: deps.seams,
         promptFor: deps.promptFor, toolsFor: deps.toolsFor,
       }),
+      // Nobody to hand work to, nothing to describe: the same rule `ask_person` lives by.
+      offer: (tools, stage, roomId) => (colleagueIds(stage, roomId).length ? tools : tools.filter((tool) => tool.name !== 'delegate_task')),
       async close() { offerToolsToCode(null); },
     };
   },
