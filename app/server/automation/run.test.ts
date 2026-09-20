@@ -18,7 +18,11 @@ const skillOf = (state: Skill['state'] = 'active'): Skill => ({
 });
 const until = async (check: () => Promise<boolean>) => { for (let at = 0; at < 600; at += 1) { if (await check()) return; await new Promise((r) => setTimeout(r, 25)); } throw new Error('timed out'); };
 
-async function setup(held?: Skill) {
+// Pinned: half past three on Sunday 20 September 2026, with the run before this one over on the Friday morning.
+const NOW = new Date(2026, 8, 20, 15, 30).getTime();
+const FRIDAY = new Date(2026, 8, 18, 9, 5).getTime();
+
+async function setup(held?: Skill, now?: () => number) {
   const dir = await folder();
   const boards = createBoards(dir);
   const told: string[] = [];
@@ -30,7 +34,7 @@ async function setup(held?: Skill) {
   } as unknown as Skills;
   const plan = createAutomation({
     boards, filesDir: join(dir, 'files'), skills, clients: [client], runs: { start: async (_board, taskId) => { started.push(taskId); } },
-    notify: (title, body) => told.push(`${title} | ${body}`),
+    notify: (title, body) => told.push(`${title} | ${body}`), ...(now ? { now } : {}),
   });
   const task = await boards.add('b1', { title: 'Morning numbers' });
   const state = async (id = task.id) => (await boards.list('b1')).find((one) => one.id === id)!;
@@ -112,6 +116,26 @@ describe('one task after another', () => {
     expect((await state(next.id)).run!.log).toEqual(['Maya started', 'after "Morning numbers"']);
     // Run again by hand, it works from the task itself rather than from last week's answer.
     expect(await plan.opening('b1', await state(next.id))).toBe('');
+  });
+
+  // "Summarise what changed since the last run" is a sentence with nothing under it unless the last run has a moment.
+  it('hands on when the task before it finished, and says nothing about when for a board saved before it did', async () => {
+    const { boards, plan, task, state } = await setup(undefined, () => NOW);
+    const next = await boards.add('b1', { title: 'Write it up' });
+    await boards.change('b1', next.id, { assignee: 'marketing', after: task.id });
+    await boards.update('b1', task.id, (one) => { one.run = { state: 'done', startedAt: FRIDAY - 60_000, finishedAt: FRIDAY, log: [] }; });
+    await plan.done('b1', task, 'Forty seven people came by.');
+    expect((await state(next.id)).from).toMatchObject({ title: 'Morning numbers', at: FRIDAY });
+    await boards.update('b1', next.id, (one) => { one.run = { state: 'running', startedAt: NOW, log: [] }; });
+    const opening = await plan.opening('b1', await state(next.id));
+    expect(opening).toContain('"Morning numbers" finished on Friday 18 September.');
+    expect(opening).toContain('Forty seven people came by.');
+
+    // A task waiting on the board since before any of this was written has no such moment, and nothing is invented.
+    await boards.update('b1', next.id, (one) => { one.from = { task: task.id, title: 'Morning numbers', result: 'Forty seven people came by.' }; });
+    const older = await plan.opening('b1', await state(next.id));
+    expect(older).toContain(HANDOVER);
+    expect(older).not.toContain('finished');
   });
 
   it('refuses a chain that would go round in a circle, in words, while it is being set up', async () => {

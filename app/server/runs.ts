@@ -4,6 +4,7 @@ import type { createApprovals } from './approvals.ts';
 import type { AttentionBook } from './attention.ts';
 import { automation } from './automation/run.ts';
 import type { Boards } from './boards.ts';
+import { clockTime, fullDay } from './clock.ts';
 import { nextDue } from './boards.ts';
 import { runTurn } from './loop.ts';
 import type { ModelMessage } from './prompt.ts';
@@ -58,6 +59,9 @@ export function createRuns(deps: {
     lately.set(room.id, { boardId, taskId });
     const stop = new AbortController();
     stops.set(taskId, stop);
+    // The run before this one, taken off the card before the line below writes over it: "this week's signups" means
+    // nothing to a repeating task that is not told where last week ended.
+    const last = task.run;
     await boards.update(boardId, taskId, (one) => { one.column = 'doing'; one.missed = undefined; one.run = { state: 'running', startedAt: Date.now(), log: [`${room.name} started`] }; if (one.repeat) one.nextRun = nextDue(one.repeat, Date.now()); });
     const log = (text: string) => boards.update(boardId, taskId, (one) => { one.run!.log = [...one.run!.log.slice(-199), text]; });
 
@@ -72,7 +76,11 @@ export function createRuns(deps: {
         // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
         const mine = toolsFor(stage, room.id);
         const messages = await promptFor(stage, room.id, mine.map((tool) => tool.name), true);
-        messages.push({ role: 'user', content: `The founder started this task from the board. Do it now with your tools, then report the result in a few lines.\n\n${before}Task: ${asked}` });
+        // Today's date is already in their instructions, so only the far end of the stretch is said here.
+        const again = task.repeat && last?.startedAt
+          ? `This task repeats; it last ran on ${fullDay(last.startedAt)}${last.finishedAt ? ` and finished at ${clockTime(last.finishedAt)}` : ''}. Anything asked of you "since last time" starts there.\n\n`
+          : '';
+        messages.push({ role: 'user', content: `The founder started this task from the board. Do it now with your tools, then report the result in a few lines.\n\n${again}${before}Task: ${asked}` });
         const { order } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true });
         const reply = await runTurn({
           messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'run', query: asked,
