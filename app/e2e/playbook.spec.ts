@@ -9,6 +9,14 @@ const node = (page: Page, id: string) => page.locator(`.react-flow__node[data-id
 const panel = (page: Page) => page.getByRole('dialog', { name: 'Playbook' });
 const rowFor = (page: Page, name: string) => panel(page).locator('.skill').filter({ hasText: name });
 
+// The panel fades in like every other one. A check passes the moment it is in the page, which is before it can be
+// seen: anything that looks at it — a founder or a screenshot — waits for it to finish arriving.
+async function shown(page: Page) {
+  await expect(panel(page)).toBeVisible();
+  await panel(page).evaluate((sheet) => Promise.all(sheet.getAnimations().map((one) => one.finished)));
+  await expect.poll(() => panel(page).evaluate((sheet) => getComputedStyle(sheet).opacity)).toBe('1');
+}
+
 // A board on the stage, wired to Maya. Put there through the api rather than dragged: drawing wires is the stage
 // journey's business, and this one is about what a person takes away from the work.
 async function boardWiredToMaya(page: Page) {
@@ -61,7 +69,12 @@ async function runTask(page: Page, boardId: string, title: string, detail: strin
   return view;
 }
 
+// Nothing here may throw in the page: an error in a panel over the whole window unmounts the window with it, and what
+// the founder is left looking at is the wallpaper.
+const broke: string[] = [];
 test.beforeEach(async ({ page }) => {
+  broke.length = 0;
+  page.on('pageerror', (error) => broke.push(error.message));
   await page.goto('/');
   await expect(node(page, 'marketing')).toBeVisible();
 });
@@ -74,6 +87,8 @@ test.afterEach(async ({ page }) => {
   await page.request.put('/api/stage', { data: { ...stage, cards: [], wires: (stage.wires as { id: string }[]).filter((wire) => wire.id === 'marketing-brand-doc') } });
   for (const skill of (await (await page.request.get('/api/skills')).json()) as { id: string }[]) await page.request.delete(`/api/skills/${skill.id}`);
   await page.request.put('/api/founder', { data: { text: '' } });
+  // Last, so that a window that broke is still reported after everything has been put back for the next journey.
+  expect(broke).toEqual([]);
 });
 
 test('the playbook starts with nothing in it and nothing to set up, and the page about the founder is theirs', async ({ page }) => {
@@ -81,6 +96,7 @@ test('the playbook starts with nothing in it and nothing to set up, and the page
   await expect(panel(page)).toContainText('Nothing here yet, and nothing to set up.');
   await expect(panel(page).getByLabel('About you')).toHaveValue('');
   await expect(panel(page)).toContainText('0 of 1,200 characters');
+  await shown(page);
   await page.screenshot({ path: '.shots/playbook-empty.png' });
 
   const about = 'Mornings are for building. Say it in plain words, and say what you are unsure about.';
@@ -130,6 +146,7 @@ test('a person learns from a task they finished, the founder reads it, and the n
   await skill.getByRole('button', { name: /How to Write the launch FAQ/ }).click();
   await expect(skill).toContainText('When the founder asks for Write the launch FAQ');
   await expect(skill).toContainText('Read what is wired to you');
+  await shown(page);
   await page.screenshot({ path: '.shots/playbook-one-skill-open.png' });
   await page.keyboard.press('Escape');
 
@@ -210,6 +227,11 @@ test('the playbook holds a shelf full of skills, one of them as long as a skill 
   expect(size).toBeGreaterThan(1300);
   expect(size).toBeLessThan(1500);
 
+  // One of them as the founder left it after opening the file in an editor: half the fields gone, and a step emptied.
+  await writeFile(join(folder, 'seeded-by-hand.json'), JSON.stringify({
+    name: 'How to send the Friday note', when: 'When it is Friday and the week has not been written up yet',
+    procedure: ['Read what everybody finished this week', ''], verify: 'The founder sent it before they shut the laptop.',
+  }, null, 2));
   for (let at = 0; at < 12; at += 1) {
     await writeFile(join(folder, `seeded-${at}.json`), JSON.stringify({
       ...(at === 0 ? longest : {
@@ -226,13 +248,37 @@ test('the playbook holds a shelf full of skills, one of them as long as a skill 
   await expect(node(page, 'marketing')).toBeVisible();
   await bar(page, 'playbook');
 
-  const held = (await (await page.request.get('/api/skills')).json()) as { state: string }[];
+  const held = (await (await page.request.get('/api/skills')).json()) as { state: string; name: string }[];
+  expect(held).toHaveLength(13);
   await expect(panel(page).locator('.skill')).toHaveCount(held.length);
+  // The file somebody edited by hand is whole again and reads like the rest, rather than blanking the window.
+  await expect(rowFor(page, 'How to send the Friday note')).toContainText('Somebody learned this · not used yet');
   // What nobody has reached for lately is folded away, in words that say what that means.
   const folded = panel(page).getByRole('group');
   await expect(folded).toContainText(`Not used lately (${held.filter((one) => one.state === 'stale').length})`);
   await expect(rowFor(page, 'How to answer a customer who has waited more than a day')).toBeVisible();
-  await page.screenshot({ path: '.shots/playbook-many.png' });
+
+  // Whatever the window is, the panel stays inside it: its head and the way out never leave, and the shelf scrolls
+  // within it down to the last thing learned.
+  await folded.locator('summary').click();
+  for (const [size, shot] of [[{ width: 1600, height: 1000 }, 'many'], [{ width: 1280, height: 720 }, 'many-720']] as const) {
+    await page.setViewportSize(size);
+    await shown(page);
+    const sheet = (await panel(page).boundingBox())!;
+    expect(sheet.y).toBeGreaterThanOrEqual(0);
+    expect(sheet.y + sheet.height).toBeLessThanOrEqual(size.height);
+    await expect(panel(page).locator('.panel__header')).toBeInViewport({ ratio: 1 });
+    await expect(panel(page).getByRole('button', { name: 'Close' })).toBeInViewport({ ratio: 1 });
+    await panel(page).locator('.panel__body').evaluate((body) => body.scrollTo({ top: 0 }));
+    await page.screenshot({ path: `.shots/playbook-${shot}.png` });
+
+    // The last row is reached by scrolling the panel, not the window, and the head is still there when it is.
+    const last = panel(page).locator('.skill').last();
+    await last.scrollIntoViewIfNeeded();
+    await expect(last).toBeInViewport({ ratio: 1 });
+    await expect(panel(page).locator('.panel__header')).toBeInViewport({ ratio: 1 });
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  }
 
   // The longest a skill may be still reads as one row, and opens without pushing anything else off the panel.
   await rowFor(page, 'How to answer a customer').getByRole('button', { name: /How to answer a customer/ }).click();

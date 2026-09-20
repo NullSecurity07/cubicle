@@ -143,10 +143,15 @@ export function PlaybookPanel() {
   useEffect(() => { if (wanted) setOpen(wanted); }, [wanted]);
 
   const theirs = at.roomId;
-  const whose = theirs ? skills.find((one) => one.by.roomId === theirs)?.by.name : undefined;
+  const whose = theirs ? skills.find((one) => one.by?.roomId === theirs)?.by.name : undefined;
   const asleep = skills.filter((one) => one.state === 'stale');
   const live = skills.filter((one) => one.state !== 'stale');
-  const row = (skill: Skill) => <SkillRow key={skill.id} skill={skill} open={skill.id === open} mine={!!theirs && skill.by.roomId === theirs} onOpen={setOpen} />;
+  // The store makes every file whole before it leaves the server. This says so once more anyway, because the one thing
+  // a panel over the founder's whole window may never do is throw and take the window with it.
+  const row = (one: Skill) => {
+    const skill: Skill = { ...one, procedure: one.procedure ?? [], pitfalls: one.pitfalls ?? [], history: one.history ?? [], by: one.by ?? { roomId: '', name: 'Somebody' } };
+    return <SkillRow key={skill.id} skill={skill} open={skill.id === open} mine={!!theirs && skill.by.roomId === theirs} onOpen={setOpen} />;
+  };
 
   return (
     <PanelShell name="playbook" title="Playbook" note={skills.length ? `${skills.length} ${skills.length === 1 ? 'thing' : 'things'} learned` : undefined}>

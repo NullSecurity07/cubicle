@@ -52,6 +52,25 @@ export const wordsOf = (fields: Fields) => [fields.name, fields.when, ...fields.
 export const bodyOf = (skill: Skill) => [`${skill.name}. ${skill.when}`, skill.procedure.map((step, at) => `${at + 1}. ${step}`).join('\n'),
   skill.pitfalls.length ? `Watch out for:\n${skill.pitfalls.map((one) => `- ${one}`).join('\n')}` : '', `Done when: ${skill.verify}`].filter(Boolean).join('\n\n');
 
+// A file the founder edited by hand, or one written by an older version of this. Whatever it says, what leaves here is
+// a whole skill or nothing: half a skill in a reply is a blank panel, and a lesson nobody can read is worse than none.
+// Only the words are required; everything a skill is counted or sorted by has an answer that is true of a new one.
+const list_ = (value: unknown): string[] => (Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string' && !!one.trim()) : []);
+const number_ = (value: unknown, fallback = 0) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+export function whatIsThere(held: Partial<Skill>, id: string): Skill | null {
+  const words = [held.name, held.when, held.verify];
+  if (words.some((one) => typeof one !== 'string' || !one.trim()) || !list_(held.procedure).length) return null;
+  return {
+    id, name: held.name!, when: held.when!, verify: held.verify!, procedure: list_(held.procedure), pitfalls: list_(held.pitfalls),
+    state: held.state === 'off' || held.state === 'stale' ? held.state : 'active',
+    by: { roomId: typeof held.by?.roomId === 'string' ? held.by.roomId : '', name: held.by?.name?.trim() || 'Somebody' },
+    source: { kind: held.source?.kind === 'chat' || held.source?.kind === 'taught' ? held.source.kind : 'run', ref: typeof held.source?.ref === 'string' ? held.source.ref : '' },
+    uses: number_(held.uses), patches: number_(held.patches), createdAt: number_(held.createdAt),
+    ...(number_(held.usedAt, 0) ? { usedAt: held.usedAt } : {}), ...(held.editedByFounder ? { editedByFounder: true } : {}),
+    history: (Array.isArray(held.history) ? held.history : []).filter((one): one is SkillVersion => !!one && typeof one.verify === 'string' && Array.isArray(one.procedure)),
+  };
+}
+
 // The one playbook every person shares: a file each under `skills/`, written the way the store writes everything.
 // Nothing here asks the founder first — a skill is born quietly and they can switch it off, edit it or undo it after.
 export function createSkills(dir: string, now: () => number = Date.now) {
@@ -65,7 +84,10 @@ export function createSkills(dir: string, now: () => number = Date.now) {
     const names = await readdir(folder).catch(() => [] as string[]);
     const found: Skill[] = [];
     for (const name of names.filter((one) => one.endsWith('.json') && !one.endsWith('.tmp'))) {
-      try { found.push({ ...(JSON.parse(await readFile(join(folder, name), 'utf8')) as Skill), id: name.slice(0, -5) }); } catch { /* not a skill: left alone */ }
+      try {
+        const whole = whatIsThere(JSON.parse(await readFile(join(folder, name), 'utf8')) as Partial<Skill>, name.slice(0, -5));
+        if (whole) found.push(whole);
+      } catch { /* not a skill: left alone */ }
     }
     return found.sort((a, b) => b.createdAt - a.createdAt);
   }

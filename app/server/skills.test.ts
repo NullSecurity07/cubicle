@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -111,6 +111,23 @@ describe('skills', () => {
     stop();
     await skills.setState('ship-a-launch-page', 'off');
     expect(heard).toHaveLength(2);
+  });
+
+  // The founder can open any of these files in an editor. Whatever comes back out of one, what leaves the store is a
+  // whole skill or nothing at all: a skill with half its fields reaches a screen and leaves the founder looking at nothing.
+  it('makes a hand-edited file whole again, and keeps back one with no lesson in it', async () => {
+    const { dir, skills } = await setup();
+    await mkdir(join(dir, 'skills'), { recursive: true });
+    await writeFile(join(dir, 'skills', 'hand-edited.json'), JSON.stringify({ name: 'How we answer late', when: 'When somebody has waited a day', procedure: ['Say sorry first', ''], verify: 'They got an answer.' }));
+    await writeFile(join(dir, 'skills', 'half-a-thought.json'), JSON.stringify({ name: 'Something', procedure: [] }));
+    const [whole, ...rest] = await skills.list();
+    expect(rest).toHaveLength(0);
+    expect(whole).toMatchObject({
+      id: 'hand-edited', name: 'How we answer late', procedure: ['Say sorry first'], pitfalls: [], history: [],
+      state: 'active', by: { roomId: '', name: 'Somebody' }, source: { kind: 'run', ref: '' }, uses: 0, patches: 0, createdAt: 0,
+    });
+    // And it is still the founder's to work on: what was made whole can be edited, undone and switched off like any other.
+    expect((await skills.setState('hand-edited', 'off')).state).toBe('off');
   });
 
   it('reads out the way a person is meant to read it', async () => {
