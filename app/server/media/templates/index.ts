@@ -1,5 +1,5 @@
 import type { Shape } from '../../../shared/model.ts';
-import { SFX, type Cue, type Sfx } from '../audio.ts';
+import { SFX, type Cue } from '../audio.ts';
 import { saysWhatItShows } from '../spec.ts';
 import { capHtml, capLines, capSteps, wordTimes, type Word } from './captions.ts';
 import { cutSteps } from './cuts.ts';
@@ -19,33 +19,6 @@ export function sceneSeconds(words: string, spoken: number, pace: Pace = 'calm')
   const count = words.trim().split(/\s+/).filter(Boolean).length;
   const readable = Math.min(beat.ceiling, Math.max(beat.floor, count / beat.read + (pace === 'punchy' ? 0.9 : 1.6)));
   return Math.round(Math.max(readable, spoken ? spoken + beat.lead + beat.tail : 0) * 100) / 100;
-}
-
-// Where the sounds land. A cut at the head of every scene, and then whatever that scene does: a figure arriving, a
-// list ticking down, a comparison turning over, a wordmark dropping. A film with `sfx` off gets none of it.
-const CUT: Record<Pace, Sfx> = { calm: 'cut-soft', punchy: 'cut-hard' };
-export function cuesOf(shots: Shot[], starts: number[], pace: Pace): Cue[] {
-  const beat = PACE[pace];
-  const cues: Cue[] = [];
-  shots.forEach((shot, index) => {
-    const at = starts[index];
-    const layout = shot.scene.layout;
-    const first = index === 0;
-    // The opener of a punchy film is the one place a hard, bright sound belongs.
-    if (first && layout === 'hook' && pace === 'punchy') cues.push({ sound: 'hard', at });
-    else if (MOVING.has(layout) || layout === 'device') cues.push({ sound: 'cut-wood', at });
-    else if (first && pace === 'calm') cues.push({ sound: 'soft', at });
-    else cues.push({ sound: CUT[pace], at });
-    const lines = (shot.scene.bullets ?? []).length;
-    if (layout === 'bullets' || layout === 'steps') for (let one = 0; one < lines; one += 1) cues.push({ sound: 'tick', at: at + 0.22 + one * beat.stagger });
-    if (layout === 'checklist') for (let one = 0; one < lines; one += 1) cues.push({ sound: 'mark', at: at + 0.2 + one * beat.stagger });
-    if (layout === 'compare') cues.push({ sound: 'turn', at: at + Math.min(1.5, shot.seconds * 0.42) });
-    if (layout === 'stat') cues.push({ sound: 'accent', at: at + 0.22 });
-    if (layout === 'logo') cues.push({ sound: 'sting', at: at + 0.1 });
-    if (layout === 'cta') cues.push({ sound: 'accent', at: at + 0.3 });
-  });
-  // Enough is enough: a film that ticks forty times is a film nobody finishes.
-  return cues.slice(0, 64);
 }
 
 // The hand-drawn look, done in the page itself: every element that carries a mark is measured once the type has settled
