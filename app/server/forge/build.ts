@@ -23,7 +23,7 @@ export type PersonResult = { key: string; attempts: Attempt[]; winner: Attempt; 
 // The stage the candidates work on: the proposed people, the documents they share with the words they start with,
 // and the founder's notes as cards wired to everybody. It is never saved, never shown and never merged into the
 // founder's own stage — the ids say so out loud.
-export function scratchStage(proposal: Proposal, noteIds: string[]): Stage {
+export function scratchStage(proposal: Pick<Proposal, 'rooms' | 'docs' | 'wires'>, noteIds: string[]): Stage {
   const id = (key: string) => `forge-${key}`;
   const rooms: Room[] = proposal.rooms.map((person, index) => ({
     id: id(person.key), name: person.name, role: person.role, accent: person.accent, brief: person.brief,

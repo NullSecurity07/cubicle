@@ -1,7 +1,8 @@
 import { providerOf, type ModelClient } from './providers.ts';
 import type { UsageBook } from './usage.ts';
 
-const FLOOR = 0.05;
+// Below this share of a day's free quota a provider is treated as spent: what is left would not survive a turn.
+export const FLOOR = 0.05;
 const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 
 // The order in which to try models for one turn, and a line for the founder when it is not the usual one.

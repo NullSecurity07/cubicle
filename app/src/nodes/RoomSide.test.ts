@@ -5,6 +5,10 @@ import { labelOf } from './RoomSide';
 const node = (type: string, data: Record<string, unknown>) => ({ id: 'n', type, position: { x: 0, y: 0 }, data }) as unknown as Parameters<typeof labelOf>[0];
 
 describe('labelOf', () => {
+  it('names a note card by its title in the library, and says so when the library has not answered yet', () => {
+    expect(labelOf(node('library', { noteId: 'yc' }), [{ id: 'yc', title: 'YC notes' }])).toBe('YC notes');
+    expect(labelOf(node('library', { noteId: 'yc' }))).toBe('Note from the library');
+  });
   it('names a card that has nothing in it yet, instead of throwing and taking the window down', () => {
     expect(labelOf(node('image', {}))).toBe('Picture');
     expect(labelOf(node('project', {}))).toBe('Project');

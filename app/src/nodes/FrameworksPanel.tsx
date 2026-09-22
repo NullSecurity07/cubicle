@@ -1,14 +1,15 @@
 import { useReactFlow } from '@xyflow/react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Case, Framework } from '../../shared/frameworks';
 import { sizeLine, spanOf } from '../../shared/frameworks';
-import { placeFramework, removeFramework, saveFramework } from '../api';
+import { getModels, placeFramework, removeFramework, rerunEvals, saveFramework } from '../api';
 import { MARGIN, refreshFrameworks, useFrameworks } from '../frameworks';
 import { useNotes } from '../library';
 import { freeSpot } from '../place';
 import { overlay } from '../overlay/store';
 import { PanelShell } from '../overlay/PanelShell';
 import { ForgeView } from './ForgeView';
+import { Runs, ScorePill } from './EvalsView';
 import { toFlow, type StageNode } from '../stage';
 import { useFlushStage } from '../sync';
 
@@ -91,16 +92,55 @@ function Cases({ framework, onChanged }: { framework: Framework; onChanged: (nex
   );
 }
 
+// The briefs the framework's people work to. A brief is the team — it is what was written, scored and promoted — so
+// editing one here is not a saved preference, it is a change that has to earn its place: the panel writes the
+// framework and runs every case against it at once, and the runs list says whether the change was an improvement.
+function Briefs({ framework, onSave }: { framework: Framework; onSave: (next: Framework) => Promise<void> }) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const briefOf = (key: string, was: string) => drafts[key] ?? was;
+  const changed = framework.rooms.some((room) => briefOf(room.key, room.brief) !== room.brief);
+
+  return (
+    <div className="briefs">
+      {framework.rooms.map((room) => (
+        <label key={room.key} className="briefs__one">
+          <small className="forge__cap">{room.name} · {room.role}</small>
+          <textarea
+            aria-label={`Brief for ${room.name}`} rows={5} value={briefOf(room.key, room.brief)}
+            onChange={(event) => setDrafts((was) => ({ ...was, [room.key]: event.target.value }))}
+          />
+        </label>
+      ))}
+      <div className="library__end">
+        <button
+          type="button" className="primary" disabled={!changed}
+          onClick={() => { void onSave({ ...framework, rooms: framework.rooms.map((room) => ({ ...room, brief: briefOf(room.key, room.brief) })) }).then(() => setDrafts({})); }}
+        >
+          Save and score
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // The frameworks the founder has: what each one is for, what it will put on the stage, which of their notes it needs,
-// and the one press that lands it.
+// what it scored last time it was asked, and the one press that lands it.
 export function FrameworksPanel() {
   const frameworks = useFrameworks();
   const notes = useNotes();
   const flush = useFlushStage();
   const { fitBounds, getNodes, screenToFlowPosition, setNodes, setEdges } = useReactFlow<StageNode>();
-  const [open, setOpen] = useState<string | null>(null);
+  // Which framework is open, and at which of its three shelves: its test cases, its briefs, or its runs. One at a
+  // time, because the panel is a column and three lists stacked in it is a page nobody reads.
+  const [open, setOpen] = useState<{ id: string; what: 'cases' | 'people' | 'runs' } | null>(null);
   const [problem, setProblem] = useState('');
   const [busy, setBusy] = useState('');
+  // Which models are set up here right now. A scorecard turns amber when the model that made it has gone, so the
+  // panel has to know what is configured, and it is one small question asked once.
+  const [models, setModels] = useState<string[]>([]);
+  // Bumped when a rerun starts, so the runs list under that framework starts watching again.
+  const [watch, setWatch] = useState(0);
+  useEffect(() => { getModels().then((held) => setModels(held.map((model) => model.name))).catch(() => {}); }, []);
   // Which framework is being asked "really?". Throwing a team away takes two presses, in the place the first one was.
   const [sure, setSure] = useState<string | null>(null);
   // The forge lives inside this panel rather than beside it in the dock: forging a team and keeping one are the same
@@ -137,6 +177,21 @@ export function FrameworksPanel() {
     } catch (error) { setProblem((error as Error).message); } finally { setBusy(''); }
   }
 
+  // Running every case again, against the briefs this framework holds now. The founder is answered at once and the
+  // runs list, which opens with it, shows what is happening line by line.
+  async function score(framework: Framework) {
+    setOpen({ id: framework.id, what: 'runs' });
+    try { setProblem(''); await rerunEvals(framework.id); setWatch((was) => was + 1); }
+    catch (error) { setProblem((error as Error).message); }
+  }
+
+  // A brief the founder rewrote: written down, and then scored, because a team nobody measured again is a team whose
+  // scorecard is about somebody else.
+  async function rewrite(framework: Framework) {
+    await put(framework);
+    await score(framework);
+  }
+
   async function forget(framework: Framework) {
     setSure(null);
     try { setProblem(''); await removeFramework(framework.id); await refreshFrameworks(); }
@@ -163,7 +218,10 @@ export function FrameworksPanel() {
                   <div className="frameworks__what">
                     <b>{framework.name}</b>
                     {framework.intent && <p>{framework.intent}</p>}
-                    <small>{sizeLine(framework)}</small>
+                    <small className="frameworks__size">
+                      {sizeLine(framework)}
+                      <ScorePill framework={framework} notes={notes} models={models} />
+                    </small>
                     {framework.notes.length > 0 && (
                       <small className={missing.length ? 'frameworks__needs is-missing' : 'frameworks__needs'}>
                         {missing.length
@@ -175,9 +233,18 @@ export function FrameworksPanel() {
                   <button type="button" className="frameworks__place" disabled={busy === framework.id} onClick={() => void land(framework)}>Place</button>
                 </div>
                 <div className="frameworks__acts">
-                  <button type="button" aria-expanded={open === framework.id} onClick={() => setOpen(open === framework.id ? null : framework.id)}>
+                  <button type="button" aria-expanded={open?.id === framework.id && open.what === 'cases'} onClick={() => setOpen(open?.id === framework.id && open.what === 'cases' ? null : { id: framework.id, what: 'cases' })}>
                     {framework.dataset.length === 1 ? '1 test case' : `${framework.dataset.length} test cases`}
                   </button>
+                  {framework.rooms.length > 0 && (
+                    <button type="button" aria-expanded={open?.id === framework.id && open.what === 'people'} onClick={() => setOpen(open?.id === framework.id && open.what === 'people' ? null : { id: framework.id, what: 'people' })}>
+                      Briefs
+                    </button>
+                  )}
+                  <button type="button" aria-expanded={open?.id === framework.id && open.what === 'runs'} onClick={() => setOpen(open?.id === framework.id && open.what === 'runs' ? null : { id: framework.id, what: 'runs' })}>
+                    Runs
+                  </button>
+                  {framework.dataset.length > 0 && <button type="button" onClick={() => void score(framework)}>Rerun evals</button>}
                   {sure === framework.id ? (
                     <>
                       <span>Remove this team?</span>
@@ -186,7 +253,9 @@ export function FrameworksPanel() {
                     </>
                   ) : <button type="button" onClick={() => { setProblem(''); setSure(framework.id); }}>Remove</button>}
                 </div>
-                {open === framework.id && <Cases framework={framework} onChanged={put} />}
+                {open?.id === framework.id && open.what === 'cases' && <Cases framework={framework} onChanged={put} />}
+                {open?.id === framework.id && open.what === 'people' && <Briefs framework={framework} onSave={rewrite} />}
+                {open?.id === framework.id && open.what === 'runs' && <Runs framework={framework} watch={watch} onChanged={async () => { await refreshFrameworks(); }} />}
               </li>
             );
           })}

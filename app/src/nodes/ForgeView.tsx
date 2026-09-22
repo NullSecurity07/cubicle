@@ -19,13 +19,22 @@ const WORKING: ForgeJob['state'][] = ['reading', 'proposing', 'building', 'testi
 
 const newCase = (key: string): Case => ({ id: '', keys: key ? [key] : [], input: '', addedBy: 'founder' });
 
+// One box in the preview, with a word above it saying what it is. Four fields in a column all look alike, and the
+// founder reading a proposal for the first time should not have to guess which one is the answer and which one is
+// the criteria — the placeholder disappears the moment they type, and this does not.
+const Cap = ({ children }: { children: string }) => <small className="forge__cap">{children}</small>;
+
 // One test case, as the founder reads and changes it before anything is run against it.
 function CaseRow({ held, onChange, onRemove }: { held: Case; onChange: (one: Case) => void; onRemove: () => void }) {
   return (
     <li className="forge__case">
+      <Cap>Case for</Cap>
       <input aria-label="Whose case" placeholder="Whose case is it?" value={held.keys.join(', ')} onChange={(event) => onChange({ ...held, keys: event.target.value.split(',').map((key) => key.trim()).filter(Boolean) })} />
+      <Cap>Asked</Cap>
       <textarea aria-label="What is asked" rows={2} placeholder="What is asked" value={held.input} onChange={(event) => onChange({ ...held, input: event.target.value })} />
+      <Cap>The answer the notes state</Cap>
       <textarea aria-label="Expected answer" rows={1} placeholder="The answer your notes state, if they state one" value={held.expected ?? ''} onChange={(event) => onChange({ ...held, expected: event.target.value })} />
+      <Cap>Criteria, in the notes' words</Cap>
       <textarea aria-label="Rubric" rows={1} placeholder="Or the criteria, in your notes' own words" value={held.rubric ?? ''} onChange={(event) => onChange({ ...held, rubric: event.target.value })} />
       <button type="button" className="forge__drop" onClick={onRemove}>Remove</button>
     </li>
@@ -61,10 +70,13 @@ function Preview({ draft, onChange }: { draft: Proposal; onChange: (next: Propos
       {draft.docs.length > 0 && (
         <div className="forge__docs">
           {draft.docs.map((doc) => (
-            <input
-              key={doc.key} aria-label="Document title" value={doc.title}
-              onChange={(event) => onChange({ ...draft, docs: draft.docs.map((one) => (one.key === doc.key ? { ...one, title: event.target.value } : one)) })}
-            />
+            <label key={doc.key} className="forge__doc">
+              <Cap>Doc</Cap>
+              <input
+                aria-label="Document title" value={doc.title}
+                onChange={(event) => onChange({ ...draft, docs: draft.docs.map((one) => (one.key === doc.key ? { ...one, title: event.target.value } : one)) })}
+              />
+            </label>
           ))}
         </div>
       )}

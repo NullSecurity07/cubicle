@@ -21,6 +21,10 @@ export type ModelClient = {
   tools: boolean;
   vision?: boolean;
   limits: Limits;
+  // The OpenAI-compatible handle behind this client, when there is one. Nothing in a turn uses it — a turn goes
+  // through `step`, which streams and counts — but a library that speaks the OpenAI API for us (the eval scorers)
+  // needs the very same key and base URL rather than a second one the founder would have to go and get.
+  openai?: OpenAI;
   step(messages: ModelMessage[], options: StepOptions): Promise<ModelTurn>;
 };
 
@@ -167,6 +171,7 @@ export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[]
       tools: entry.tools,
       vision: !!entry.vision,
       limits: entry.limits ?? {},
+      openai: api,
       async step(history, { tools, signal, onToken }) {
         const messages = withImages(portable(history, entry.callSignature), !!entry.vision);
         const { data: stream, response } = await api.chat.completions.create({

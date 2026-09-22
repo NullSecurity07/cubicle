@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Case } from '../../shared/frameworks.ts';
 import { firstJson, JSON_RULE } from '../json.ts';
 import { todayBlock, type ModelMessage } from '../prompt.ts';
+import { formatScore } from './scorers.ts';
 
 // What one answer is worth. A score here is never a number somebody made up about a person: it is what the founder's
 // own notes say about that answer, asked of a model that has the passages in front of it, plus the one check that
@@ -9,15 +10,18 @@ import { todayBlock, type ModelMessage } from '../prompt.ts';
 // scorers — so everything outside this file only ever sees `scoreCase` and the shape it gives back.
 
 // An answer longer than this is not an answer any more: the founder asked one person one question, and a person who
-// cannot say it inside a doc's worth of words has not done the work. The same cap a tool result is held to.
-export const MOST_OUTPUT_CHARS = 6000;
+// cannot say it inside a doc's worth of words has not done the work. The same cap a tool result is held to. It lives
+// beside the check that uses it and is said again here, because it is part of what this file promises.
+export { MOST_OUTPUT_CHARS } from './scorers.ts';
 // How much of the founder's notes the judge is shown. Three passages, the ones that answer this case.
 export const JUDGE_CHUNKS = 3;
 
 export type Judged = { scores: Record<string, number>; critique: string };
 // One question put to a judge: the case it is about, and the words to send. The case rides along so a stand-in judge
 // can answer from the case alone, without a model and without reading a prompt it did not write.
-export type Ask = { kase: Case; messages: ModelMessage[] };
+// The answer, the brief it was written to and the passages of the notes behind it ride along too: a judge made of
+// `autoevals` scorers writes its own prompts out of them and never reads `messages` at all.
+export type Ask = { kase: Case; messages: ModelMessage[]; output?: string; brief?: string; chunks?: string[] };
 export type Judge = (ask: Ask) => Promise<string>;
 
 const clamp = (value: unknown, fallback?: number): number | undefined => {
@@ -74,10 +78,13 @@ export async function scoreCase(
   judge: Judge,
 ): Promise<Judged> {
   const output = asked.output ?? '';
-  const scores: Record<string, number> = { format: output.trim() && output.length < MOST_OUTPUT_CHARS ? 1 : 0 };
+  const scores: Record<string, number> = { format: formatScore(output, asked.brief) };
   let critique = '';
   try {
-    const held = firstJson(await judge({ kase: asked.kase, messages: judgeMessages({ ...asked, output }) })) as Record<string, unknown>;
+    const held = firstJson(await judge({
+      kase: asked.kase, messages: judgeMessages({ ...asked, output }),
+      output, brief: asked.brief, chunks: asked.chunks,
+    })) as Record<string, unknown>;
     const faithful = clamp(held.faithful, 0);
     if (faithful !== undefined) scores.faithful = faithful;
     if (asked.kase.rubric) { const rubric = clamp(held.rubric); if (rubric !== undefined) scores.rubric = rubric; }

@@ -1,4 +1,5 @@
 import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaAsset, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, RoomEvent, Skill, SkillEvent, Stage, Task, Thread } from '../shared/model';
+import type { EvalsView } from '../shared/evals';
 import type { Framework, Placed } from '../shared/frameworks';
 import type { ForgeJob, ForgeMode, Proposal } from '../shared/forge';
 import type { Note } from '../shared/library';
@@ -111,6 +112,13 @@ export const forgePropose = (asked: { noteIds: string[]; intent: string; mode: F
 export const forgeBuild = (asked: { jobId: string; proposal: Proposal; mode: ForgeMode }) => request<{ jobId: string }>('/api/forge/build', send('POST', asked));
 export const getForge = (jobId: string) => request<ForgeJob>(`/api/forge/${jobId}`);
 export const stopForge = (jobId: string) => request(`/api/forge/${jobId}/stop`, send('POST'));
+
+// Evals: running a framework's people against the founder's own test cases again. The rerun answers at once with the
+// job's name and goes on working, the same way the forge does, so the panel watches the runs list rather than holding
+// a request open for minutes. Promoting is the founder overruling the rule by hand, one press, written down for good.
+export const rerunEvals = (id: string) => request<{ jobId: string }>(`/api/frameworks/${id}/evals`, send('POST'));
+export const getEvals = (id: string) => request<EvalsView>(`/api/frameworks/${id}/runs`);
+export const promoteRun = (id: string, at: number) => request<{ framework: Framework }>(`/api/frameworks/${id}/runs/${at}/promote`, send('POST'));
 
 export const getMissions = () => request<{ dismissed: boolean; missions: Mission[] }>('/api/missions');
 export const dismissMissions = () => request('/api/missions/dismiss', { method: 'POST' });

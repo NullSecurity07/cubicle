@@ -1,15 +1,20 @@
 import { useEdges, useNodes } from '@xyflow/react';
 import { useEffect, useState } from 'react';
-import type { ChatMessage } from '../../shared/model';
+import { builtFrom, casesFor } from '../../shared/evals';
+import type { ChatMessage, Room } from '../../shared/model';
 import { getChat, getMemory } from '../api';
 import { listen } from '../bus';
+import { useFrameworks } from '../frameworks';
+import { useNotes } from '../library';
 import { SLICES } from '../slices';
 import type { StageNode } from '../stage';
 import type { Status } from './Chat';
 
 // How a card is named when it is listed somewhere else.
-export function labelOf(node: StageNode): string {
+export function labelOf(node: StageNode, notes: { id: string; title: string }[] = []): string {
   if (node.type === 'room') return node.data.name || 'New person';
+  // A note card only says which note it is; its name is the note's title, kept in the library.
+  if (node.type === 'library') return notes.find((note) => note.id === node.data.noteId)?.title ?? 'Note from the library';
   if (node.type === 'doc') return node.data.title || 'Untitled doc';
   // A card the founder has put down but not filled in yet (a picture card with no picture, a project with no folder)
   // has none of these, and a name for a list must never be the thing that takes the whole window down.
@@ -22,13 +27,36 @@ export function labelOf(node: StageNode): string {
   if (node.type === 'videogen') return 'Video studio';
   return node.type === 'browser' ? 'Browser' : 'Board';
 }
-const KIND: Record<string, string> = { room: 'can ask', doc: 'reads and writes', browser: 'drives', project: 'hands coding work to', board: 'proposes tasks on', note: 'reads', image: 'sees', link: 'reads', imagegen: 'makes pictures in', voicegen: 'speaks in', videogen: 'makes films in' };
+const KIND: Record<string, string> = { room: 'can ask', doc: 'reads and writes', browser: 'drives', project: 'hands coding work to', board: 'proposes tasks on', note: 'reads', image: 'sees', link: 'reads', imagegen: 'makes pictures in', voicegen: 'speaks in', videogen: 'makes films in', library: 'reads' };
 const compact = (count: number) => (count >= 1000 ? `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}k` : String(count));
 
-// Beside a focused person: what they are wired to, what they remember, and what this conversation has cost.
+// Where a person came from, when they came from a saved team: which of the founder's notes they were written out of,
+// and what they scored on the founder's own test cases the last time anybody asked. Nothing is said at all about a
+// person the founder made by hand, or about a team nobody has scored yet — a line with no number in it would only be
+// furniture.
+function BuiltFrom({ stamp }: { stamp?: Room['framework'] }) {
+  const frameworks = useFrameworks();
+  const notes = useNotes();
+  const held = stamp ? frameworks.find((one) => one.id === stamp.id) : undefined;
+  const score = stamp && held?.scorecard?.byPerson[stamp.key];
+  if (!stamp || !held || score === undefined) return null;
+  const noteId = held.notes[0]?.id;
+  return (
+    <p className="side__from">
+      {builtFrom({
+        noteTitle: notes.find((note) => note.id === noteId)?.title,
+        frameworkName: held.name, score, cases: casesFor(held.dataset, stamp.key),
+      })}
+    </p>
+  );
+}
+
+// Beside a focused person: where they came from, what they are wired to, what they remember, and what this
+// conversation has cost.
 export function RoomSide({ id, name, status, onEditMemory }: { id: string; name: string; status: Status; onEditMemory: () => void }) {
   const nodes = useNodes<StageNode>();
   const edges = useEdges();
+  const notes = useNotes();
   const [memory, setMemory] = useState<{ notes: string; summary: string } | null>(null);
   // Null until the conversation has been read: a view that could not read it said "Replies 0", which is a lie about
   // a conversation full of words rather than a view that is not ready yet.
@@ -52,11 +80,12 @@ export function RoomSide({ id, name, status, onEditMemory }: { id: string; name:
 
   return (
     <aside className="side nowheel" aria-label={`About ${name}`}>
+      {me?.type === 'room' && <BuiltFrom stamp={me.data.framework} />}
       {/* What a slice knows about this person that the stage does not: the voice they answer in. */}
       {me?.type === 'room' && SLICES.map((slice) => (slice.person ? <slice.person key={slice.name} roomId={id} room={me.data} /> : null))}
       <section>
         <h3>Wired to</h3>
-        {wired.length ? <ul>{wired.map((node) => <li key={node.id}><span>{labelOf(node)}</span><em>{KIND[node.type ?? ''] ?? ''}</em></li>)}</ul>
+        {wired.length ? <ul>{wired.map((node) => <li key={node.id}><span>{labelOf(node, notes)}</span><em>{KIND[node.type ?? ''] ?? ''}</em></li>)}</ul>
           : <p className="side__none">Nothing yet. Drag a line from {name} to a doc, a card or another person.</p>}
       </section>
       <section>
