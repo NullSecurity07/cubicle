@@ -106,7 +106,9 @@ describe('the forge', () => {
     const runs = await readdir(join(workspace, 'frameworks', framework.id, 'runs'));
     expect(runs).toHaveLength(1);
     const run = JSON.parse(await readFile(join(workspace, 'frameworks', framework.id, 'runs', runs[0]), 'utf8'));
-    expect(Object.keys(run).sort()).toEqual(['at', 'cases', 'mean', 'mode', 'models', 'version']);
+    expect(Object.keys(run).sort()).toEqual(['at', 'calls', 'cases', 'mean', 'mode', 'models', 'version']);
+    // What the build really cost is kept with the scores: a run the founder reads a month later says what it took.
+    expect(run.calls).toBe(done.calls);
     expect(run.cases).toHaveLength(2);
     expect(run.cases[0]).toMatchObject({ key: 'finder', id: 'first-case' });
     expect(run.cases[0].briefHash).toHaveLength(40);

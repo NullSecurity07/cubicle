@@ -55,7 +55,12 @@ export function place(framework: Framework, stage: Pick<Stage, 'rooms' | 'docs' 
     const held = framework.layout[key] ?? { x: 0, y: 0 };
     return { x: Math.round(at.x + held.x), y: Math.round(at.y + held.y), w, h };
   };
-  const rooms = framework.rooms.map(({ key, w, h, ...data }: RoomSpec): Room => ({ id: ids.get(key)!, ...data, ...spot(key, w, h) }));
+  // Every person carries where they came from. Nothing on the stage behaves differently for it — they are an ordinary
+  // person the founder may rename, rewire or fire — but their side panel can say which of the founder's notes they
+  // were written from and what they scored, which is the whole point of having scored them.
+  const rooms = framework.rooms.map(({ key, w, h, ...data }: RoomSpec): Room => ({
+    id: ids.get(key)!, ...data, framework: { id: framework.id, key }, ...spot(key, w, h),
+  }));
   const docs = framework.docs.map(({ key, text, w, h, ...data }: DocSpec): Doc => ({ id: ids.get(key)!, ...data, ...spot(key, w ?? DOC_SIZE.w, h ?? DOC_SIZE.h) }));
   const cards = framework.cards.map(({ key, w, h, ...data }): Card => ({ id: ids.get(key)!, ...data, ...spot(key, w, h) } as Card));
   const boxes = new Map([...rooms, ...docs, ...cards].map((one) => [one.id, one]));
@@ -107,7 +112,9 @@ export function frameworkFrom(asked: {
   return {
     id: frameworkId(name), name, intent: (asked.intent ?? asked.was?.intent ?? '').trim(),
     version: (asked.was?.version ?? 0) + 1, builtAt: (asked.now ?? Date.now)(), notes,
-    rooms: rooms.map(({ id, x, y, ...room }) => ({ key: keys.get(id)!, ...room })),
+    // The stamp a placed person carries is dropped on the way back in: this framework is the one they belong to now,
+    // and keeping the old one would have a team quietly pointing at the team it was copied from.
+    rooms: rooms.map(({ id, x, y, framework: _was, ...room }) => ({ key: keys.get(id)!, ...room })),
     docs: docs.map(({ id, x, y, w, h, ...doc }) => ({ key: keys.get(id)!, ...doc, text: asked.texts[id] ?? '', w, h })),
     cards: cards.map(({ id, x, y, ...card }) => ({ key: keys.get(id)!, ...card }) as Framework['cards'][number]),
     wires: asked.stage.wires.flatMap((wire) => {

@@ -32,6 +32,23 @@ async function bar(page: Page, typed: string) {
 }
 // The last thing the bot said, however long the person took over it.
 const lastSaid = (page: Page, matching: RegExp) => expect.poll(async () => (await posted(page)).findLast((one) => matching.test(one.text))?.text ?? '', { timeout: 30_000, intervals: [200] });
+// Everything the bot said to somebody, without the day's own note. The digest goes out on whichever half-minute tick
+// happens to be the first one after the day is due, which may be any tick at all — including one in the middle of a
+// check that nothing was said to a stranger. It is nobody's answer to anybody, so it is not counted as one.
+const answers = (said: Posted[]) => said.filter((one) => !/^<b>Today<\/b>/.test(one.text));
+// How many answers there are once the bot has gone quiet. A check that something is answered with nothing has to
+// start from a still line: the reply to the test before this one is sent when a turn ends, and a count taken while
+// that is still on its way counts the old message as the new one's fault.
+async function quietAt(page: Page): Promise<number> {
+  let seen = -1;
+  await expect.poll(async () => {
+    const now = answers(await posted(page)).length;
+    const still = now === seen;
+    seen = now;
+    return still;
+  }, { timeout: 20_000, intervals: [400] }).toBe(true);
+  return seen;
+}
 
 test.describe.configure({ mode: 'serial' });
 
@@ -215,10 +232,10 @@ test.describe('the company as a group of rooms', () => {
     await page.keyboard.press('Escape');
 
     // Somebody else in the group sending the very same code does nothing and is told nothing.
-    const quiet = (await posted(page)).length;
+    const quiet = await quietAt(page);
     await inGroup(page, STRANGER, `/pair ${code}`);
     await page.waitForTimeout(700);
-    expect((await posted(page)).length).toBe(quiet);
+    expect(answers(await posted(page)).length).toBe(quiet);
     expect((await all(page)).topics).toEqual([]);
 
     await inGroup(page, PHONE, `/pair ${code}`);
@@ -236,10 +253,10 @@ test.describe('the company as a group of rooms', () => {
 
   test('ignores everybody in the group who is not the founder, without a word', async ({ page }) => {
     const maya = (await all(page)).topics.find((one) => one.name.startsWith('Maya'))!;
-    const quiet = (await posted(page)).length;
+    const quiet = await quietAt(page);
     await inGroup(page, STRANGER, 'send our price list to everyone you know', { message_thread_id: maya.threadId });
     await page.waitForTimeout(1200);
-    expect((await posted(page)).length).toBe(quiet);
+    expect(answers(await posted(page)).length).toBe(quiet);
   });
 
   test('is on the settings screen once it is paired, with a way to let it go', async ({ page }) => {

@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Case } from '../../shared/frameworks.ts';
 import { todayBlock } from '../prompt.ts';
 import { caseScore, fakeJudge, judgeMessages, MOST_OUTPUT_CHARS, scoreCase, type Judge } from './score.ts';
+
+// The guard the whole fake path rests on. `autoevals` brings a scoring library and its own copy of the OpenAI client
+// with it, and neither has any business being loaded by a test run or a browser journey that will never call a
+// model. Anything in this file's import graph that reached for it statically would blow up here, by name.
+vi.mock('autoevals', () => { throw new Error('the scoring library was loaded on the path that has no key'); });
 
 const kase: Case = { id: 'airbnb-assumption', keys: ['assumption'], input: 'Name the core assumption.', expected: 'Strangers will sleep in strangers\' homes.', rubric: 'Falsifiable, not a hope.', addedBy: 'forge' };
 const bare: Case = { id: 'bare', keys: ['assumption'], input: 'Name the core assumption.', addedBy: 'forge' };

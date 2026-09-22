@@ -158,6 +158,15 @@ describe('saving a framework from what is selected on the stage', () => {
     expect(part.layout[part.rooms[0].key]).toEqual({ x: 0, y: 0 });
   });
 
+  it('stamps every person with the team they came from, so their own panel can say what they scored', () => {
+    const { placed } = place(team, seedStage, { x: 0, y: 0 });
+    expect(placed.rooms.map((room) => room.framework)).toEqual([
+      { id: 'pressure-test', key: 'assumption' }, { id: 'pressure-test', key: 'verdict' },
+    ]);
+    // Only the people: a doc and a card are not answerable to a scorecard.
+    expect(placed.docs.every((doc) => !('framework' in doc))).toBe(true);
+  });
+
   it('keeps what the founder had already put into a framework it replaces', () => {
     const { placed, texts } = place(team, seedStage, { x: 0, y: 0 });
     const stage: Stage = { rooms: placed.rooms, docs: placed.docs, cards: placed.cards, wires: placed.wires };
@@ -167,6 +176,9 @@ describe('saving a framework from what is selected on the stage', () => {
     expect(again.dataset).toEqual(team.dataset);
     expect(again.intent).toBe('Pressure-test an idea.');
     expect(again.version).toBe(2);
+    // And the stamp they were placed with is not written back into the file: a person saved into this framework
+    // belongs to this one, whichever one they happened to land from.
+    expect(again.rooms.every((room) => !('framework' in room))).toBe(true);
   });
 
   it('refuses a selection with nothing in it', () => {
