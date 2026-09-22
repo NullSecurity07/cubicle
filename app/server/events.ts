@@ -17,6 +17,11 @@ type Deps = {
 
 const boardsOn = (stage: Stage) => new Set((stage.cards ?? []).filter((card) => card.kind === 'board').map((card) => card.id));
 
+// A slice has no feed of its own to hand over here, and the window has only this one connection: news from an extra
+// goes out through this. It is filled in by `createEvents` below, and until a window is listening it says nothing.
+// The same trick the library uses to ask the frameworks whether a note is held: one small handle both sides share.
+export const hub: { say: (channel: string, data: unknown) => void } = { say: () => {} };
+
 export function createEvents(deps: Deps) {
   const windows = new Set<(envelope: Envelope) => void>();
   // Which board cards are on the stage. The stage itself says when this changes, so nothing is re-read on a timer.
@@ -26,6 +31,8 @@ export function createEvents(deps: Deps) {
   // A window that went away mid-write throws on the way out. That is its own business, not the other windows'.
   const say = (hear: (envelope: Envelope) => void, envelope: Envelope) => { try { hear(envelope); } catch { /* one closed browser never silences the rest */ } };
   const tell = (channel: string, data: unknown) => { for (const one of [...windows]) say(one, { channel, data }); };
+  // Whatever the extras have to say goes down the same stream as everything the app says itself.
+  hub.say = tell;
   // Nothing is listened to while no window is here, and nothing is left listening once the last one leaves.
   const attach = () => [
     deps.attention.watch((list) => tell('attention', list)),

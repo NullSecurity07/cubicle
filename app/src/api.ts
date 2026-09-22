@@ -1,5 +1,6 @@
 import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaAsset, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, RoomEvent, Skill, SkillEvent, Stage, Task, Thread } from '../shared/model';
 import type { Framework, Placed } from '../shared/frameworks';
+import type { ForgeJob, ForgeMode, Proposal } from '../shared/forge';
 import type { Note } from '../shared/library';
 import { feed, snapshot } from './feed';
 
@@ -103,6 +104,13 @@ export const placeFramework = (id: string, at: { x: number; y: number }) => requ
 // in it (its test cases).
 export const saveFramework = (id: string, framework: Framework | { name: string; intent?: string; ids: string[] }) => request<Framework>(`/api/frameworks/${id}`, put(framework));
 export const removeFramework = (id: string) => request(`/api/frameworks/${id}`, send('DELETE'));
+
+// The forge: notes and a line of intent go in, a team comes back. Proposing and building both answer at once with
+// the job's name and go on working, so the window watches the job rather than holding a request open for a minute.
+export const forgePropose = (asked: { noteIds: string[]; intent: string; mode: ForgeMode }) => request<{ jobId: string }>('/api/forge/propose', send('POST', asked));
+export const forgeBuild = (asked: { jobId: string; proposal: Proposal; mode: ForgeMode }) => request<{ jobId: string }>('/api/forge/build', send('POST', asked));
+export const getForge = (jobId: string) => request<ForgeJob>(`/api/forge/${jobId}`);
+export const stopForge = (jobId: string) => request(`/api/forge/${jobId}/stop`, send('POST'));
 
 export const getMissions = () => request<{ dismissed: boolean; missions: Mission[] }>('/api/missions');
 export const dismissMissions = () => request('/api/missions/dismiss', { method: 'POST' });
