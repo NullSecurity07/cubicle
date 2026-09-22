@@ -236,6 +236,29 @@ export const fakeClient: ModelClient = {
       }));
       return { text: '', calls: [], usage: { input: 10, output: 40 } };
     }
+    // The forge asks for a whole team in json, out of the founder's own notes. A fake one proposes two people who
+    // quote the note it was given, and two cases, so a browser test can watch a team be forged, scored and placed
+    // with no key to anything. The marker is the first line of `server/forge/propose.ts`'s own prompt.
+    if (/^You are the forge\./.test(system)) {
+      const title = /^## The founder's note: (.+)$/m.exec(heard)?.[1] ?? "the founder's notes";
+      const sections = (/^Its sections, in order: (.+)$/m.exec(heard)?.[1] ?? '').split(' · ').filter((one) => one && one !== '(none)' && one !== title);
+      const where = (index: number) => `Work from section "${sections[index] ?? title}" of "${title}".`;
+      onToken(JSON.stringify({
+        name: 'Forged team',
+        rooms: [
+          { key: 'finder', name: 'Ada', role: 'Assumption finder', brief: `${where(0)} Name the one belief the whole idea rests on, as a sentence that could be shown to be false.` },
+          { key: 'judge', name: 'Bruno', role: 'Verdict judge', brief: `${where(1)} Read what the finder said and give one verdict, in the words the note allows and no others.` },
+        ],
+        docs: [{ key: 'working', title: 'Working notes', text: `# Working notes\n\n## ${sections[0] ?? 'Findings'}\n` }],
+        cards: [],
+        wires: [{ from: 'finder', to: 'working' }, { from: 'judge', to: 'working' }, { from: 'judge', to: 'finder' }],
+        dataset: [
+          { id: 'first-case', keys: ['finder'], input: 'Idea: people rent out a spare room in their own home to travellers. Name the core assumption.', rubric: sections[0] ?? 'The one belief that, if false, makes everything else irrelevant.' },
+          { id: 'second-case', keys: ['judge'], input: 'The assumption holds, the flaws are survivable and the pain is real. What is the verdict?', expected: 'STRONG' },
+        ],
+      }));
+      return { text: '', calls: [], usage: { input: 40, output: 200 } };
+    }
     const asked = [...heard.matchAll(/^\/tool (\w+) (\{.*\})$/gm)];
     // Only what has run since the founder spoke: earlier turns leave their own tool messages in the conversation.
     const wanted = asked[messages.slice(messages.findLastIndex((message) => message.role === 'user')).filter((message) => message.role === 'tool').length];

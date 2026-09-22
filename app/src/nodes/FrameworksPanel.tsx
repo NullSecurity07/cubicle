@@ -8,6 +8,7 @@ import { useNotes } from '../library';
 import { freeSpot } from '../place';
 import { overlay } from '../overlay/store';
 import { PanelShell } from '../overlay/PanelShell';
+import { ForgeView } from './ForgeView';
 import { toFlow, type StageNode } from '../stage';
 import { useFlushStage } from '../sync';
 
@@ -102,6 +103,9 @@ export function FrameworksPanel() {
   const [busy, setBusy] = useState('');
   // Which framework is being asked "really?". Throwing a team away takes two presses, in the place the first one was.
   const [sure, setSure] = useState<string | null>(null);
+  // The forge lives inside this panel rather than beside it in the dock: forging a team and keeping one are the same
+  // shelf, and a founder who has just built a team is one press from placing it.
+  const [forging, setForging] = useState(false);
 
   async function put(framework: Framework) {
     try { setProblem(''); await saveFramework(framework.id, framework); await refreshFrameworks(); }
@@ -141,6 +145,12 @@ export function FrameworksPanel() {
 
   return (
     <PanelShell name="frameworks" title="Frameworks" note="Teams that land ready to work">
+      {forging ? <ForgeView onPlace={land} onBack={() => setForging(false)} /> : (
+      <>
+      <div className="library__ways">
+        <button type="button" onClick={() => { setProblem(''); setForging(true); }}>Forge</button>
+        <span className="forge__hint">Build a team from your notes</span>
+      </div>
       {problem && <p className="msg--problem">{problem}</p>}
       {frameworks.length === 0 ? <p className="library__empty">Nothing here yet. Select a few cards on the stage and save them as a framework, and they will come back in one press.</p> : (
         <ul className="frameworks__list">
@@ -181,6 +191,8 @@ export function FrameworksPanel() {
             );
           })}
         </ul>
+      )}
+      </>
       )}
     </PanelShell>
   );
