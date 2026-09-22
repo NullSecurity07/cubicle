@@ -17,6 +17,7 @@ const NEW = {
   note: { size: [220, 180], data: { text: '' } },
   image: { size: [300, 260], data: { path: '' } },
   link: { size: [320, 150], data: { url: '' } },
+  library: { size: [260, 180], data: { noteId: '' } },
   imagegen: { size: [320, 420], data: { prompt: '' } },
   voicegen: { size: [320, 340], data: { text: '' } },
   videogen: { size: [380, 420], data: { brief: '' } },
@@ -24,13 +25,14 @@ const NEW = {
 export type CardKind = keyof typeof NEW;
 
 // Adds a card at the centre of the view, in the nearest free space, selected, and glides there. `data` fills in what
-// is already known (a role from the command bar, a doc title).
+// is already known (a role from the command bar, a doc title). `at` is a place on the canvas to put it instead of
+// the middle of the window: where a file was let go of.
 export function useAddCard() {
   const { getNodes, setNodes, screenToFlowPosition, setCenter, getZoom } = useReactFlow<StageNode>();
-  return useCallback((kind: CardKind, extra: Record<string, string> = {}) => {
+  return useCallback((kind: CardKind, extra: Record<string, string> = {}, at?: { x: number; y: number }) => {
     const nodes = getNodes();
     const { size: [width, height], data } = NEW[kind];
-    const centre = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+    const centre = at ?? screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
     const position = freeSpot(nodes, { x: Math.round(centre.x - width / 2), y: Math.round(centre.y - height / 2) }, width, height);
     const rooms = nodes.filter((node) => node.type === 'room').length;
     const node = { id: newId(kind), type: kind, position, width, height, selected: true, data: kind === 'room' ? { ...data, ...extra, accent: PALETTE[rooms % PALETTE.length] } : { ...data, ...extra }, ...CARD } as StageNode;

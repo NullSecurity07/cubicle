@@ -34,6 +34,11 @@ export const showThread = (id: string | null) => { thread = id; set(stack); };
 let decision: string | null = null;
 export const showDecision = (id: string | null) => { decision = id; set(stack); };
 export const useDecision = () => useSyncExternalStore(subscribe, () => decision);
+// Which note from the library the reading view shows. One at a time, like a decision: it is a note being read, not
+// a place in the app.
+let note: string | null = null;
+export const showNote = (id: string | null) => { note = id; set(stack); };
+export const useNoteShown = () => useSyncExternalStore(subscribe, () => note);
 // There is one playbook, so this says only where to look in it: the skill to open, and whose work to mark. Set when
 // the panel is opened from a person's card or from the line a birth left in their chat; empty from the command bar.
 let playbook: { skill?: string; roomId?: string } = {};

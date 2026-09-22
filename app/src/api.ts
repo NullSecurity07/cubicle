@@ -1,4 +1,5 @@
 import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaAsset, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, RoomEvent, Skill, SkillEvent, Stage, Task, Thread } from '../shared/model';
+import type { Note } from '../shared/library';
 import { feed, snapshot } from './feed';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -85,6 +86,14 @@ export const recordDecision = (decision: Partial<Decision>) => request<Decision>
 export const decide = (id: string, verdict: Pick<Decision, 'chosen' | 'why' | 'effect' | 'review'>) => request<Decision>(`/api/decisions/${id}/decide`, send('POST', verdict));
 export const removeDecision = (id: string) => request(`/api/decisions/${id}`, send('DELETE'));
 export const search = (query: string, signal?: AbortSignal) => request<{ hits: Hit[]; mode: 'meaning' | 'words' }>(`/api/search?q=${encodeURIComponent(query)}`, { signal });
+// The founder's library: the notes they learn from. The index is small — a title, its tags and its size — so cards
+// and pickers read the whole of it; the words themselves are fetched only when a note is opened.
+export const getNotes = () => request<Note[]>('/api/library');
+export const getNote = (id: string) => request<Note & { text: string }>(`/api/library/${id}`);
+export const addNote = (note: { title: string; text: string; tags?: string[]; source?: 'file' | 'paste' }) => request<Note>('/api/library', send('POST', note));
+export const removeNote = (id: string) => request(`/api/library/${id}`, send('DELETE'));
+export const searchNotes = (query: string, signal?: AbortSignal) => request<{ hits: Hit[] }>(`/api/library/search?q=${encodeURIComponent(query)}`, { signal });
+
 export const getMissions = () => request<{ dismissed: boolean; missions: Mission[] }>('/api/missions');
 export const dismissMissions = () => request('/api/missions/dismiss', { method: 'POST' });
 
