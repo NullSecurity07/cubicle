@@ -6,6 +6,7 @@ import { listen } from './bus';
 import { useAttention } from './overlay/attention';
 import { overlay } from './overlay/store';
 import { useAddCard, type CardKind } from './addCard';
+import { openLibrary } from './library';
 
 // One ring per model provider: how much of today's free quota is left. Amber under a fifth, red when gone.
 function Quota() {
@@ -44,6 +45,7 @@ function Quota() {
 }
 
 const MORE: [kind: CardKind, label: string, hint: string][] = [
+  ['library', 'Note from library', 'Something you learned, for a person to work from'],
   ['note', 'Sticky note', 'Words a wired person keeps in mind'],
   ['link', 'Link', 'A web page a wired person reads'],
   ['image', 'Picture', 'An image a wired person can see'],
@@ -71,7 +73,8 @@ function Needs() {
 export function Dock() {
   const addCard = useAddCard();
   const [more, setMore] = useState(false);
-  const add = (kind: CardKind) => { setMore(false); addCard(kind); };
+  // A note is picked, not made: the library opens, and the card lands once the founder has chosen or added one.
+  const add = (kind: CardKind) => { setMore(false); if (kind === 'library') openLibrary(); else addCard(kind); };
 
   return (
     <Panel position="bottom-center" className="dock">

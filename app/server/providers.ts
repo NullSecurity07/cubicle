@@ -209,6 +209,9 @@ export const fakeClient: ModelClient = {
     const notes = /Sticky notes the founder connected to your room:\n- ([^\n]+)/.exec(system)?.[1];
     const pages = [...system.matchAll(/^## Page: (.+)$/gm)].map((match) => match[1]);
     const studios = [...system.matchAll(/^- An? (image|voice|video) studio\./gm)].map((match) => match[1]);
+    // A passage of one of the founder's notes, wired to this person: the note it came from and the line the passage
+    // opens with, so a browser test can see that the right part of a long note reached the prompt.
+    const library = [...system.matchAll(/^From the founder's notes \(([^)]+)\):\n(.+)$/gm)].map((match) => `${match[1]} — ${match[2].slice(0, 60)}`);
     // Said back so a browser test can see that a skill learned on one turn really reached the next one's prompt:
     // the one written out in full first, then the ones only mentioned.
     const block = system.slice(system.indexOf('Your company playbook:'));
@@ -266,7 +269,7 @@ export const fakeClient: ModelClient = {
       : heard.startsWith('/markdown') ? '**Bold plan**\n\n- one\n- two'
       : heard.startsWith('/rich') ? 'A flow:\n\n```mermaid\ngraph TD; Idea-->Build; Build-->Launch;\n```\n\nA page:\n\n```html\n<!doctype html><html><body><h1 id="t">Landing</h1><script>document.getElementById("t").textContent += " page";</script></body></html>\n```'
       : last?.role === 'user' && last.images?.length ? `I can see ${last.images.length} picture: ${last.images[0].name.split('/').pop()}.`
-      : `${name} here. You said: "${heard}". Docs I can read: ${docs.join(', ') || 'none'}.${notes ? ` Notes: ${notes}.` : ''}${pages.length ? ` Pages: ${pages.join(', ')}.` : ''}${studios.length ? ` Studios: ${studios.join(', ')}.` : ''}${playbook.length ? ` Playbook: ${playbook.join(', ')}.` : ''}`;
+      : `${name} here. You said: "${heard}". Docs I can read: ${docs.join(', ') || 'none'}.${notes ? ` Notes: ${notes}.` : ''}${pages.length ? ` Pages: ${pages.join(', ')}.` : ''}${studios.length ? ` Studios: ${studios.join(', ')}.` : ''}${library.length ? ` Library: ${library.join('; ')}.` : ''}${playbook.length ? ` Playbook: ${playbook.join(', ')}.` : ''}`;
     const delay = heard.startsWith('/slow') ? 150 : 15;
     for (const word of reply.split(/(?<= )/)) {
       await new Promise((resolve) => setTimeout(resolve, delay));

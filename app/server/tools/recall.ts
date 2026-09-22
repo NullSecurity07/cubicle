@@ -3,10 +3,10 @@ import { shortDay } from '../clock.ts';
 import { mayRecall, type createRecall } from '../recall.ts';
 import { text, type Tool } from './registry.ts';
 
-const WHERE: Record<string, string> = { doc: 'Doc', chat: 'Conversation', memory: 'Your memory', decision: 'Decision', file: 'Shared file', link: 'Web page', skill: 'Playbook skill' };
+const WHERE: Record<string, string> = { doc: 'Doc', chat: 'Conversation', memory: 'Your memory', decision: 'Decision', file: 'Shared file', link: 'Web page', skill: 'Playbook skill', library: "The founder's notes" };
 // This is the one tool that reaches across time, so what it brings back says when it is from, in the words that fit
 // where it came from. A memory keeps no date of its own and so says nothing rather than something made up.
-const WHEN: Record<Hit['kind'], string> = { doc: 'last changed', chat: 'said on', memory: '', decision: 'decided on', file: 'last changed', link: 'read on', skill: 'from' };
+const WHEN: Record<Hit['kind'], string> = { doc: 'last changed', chat: 'said on', memory: '', decision: 'decided on', file: 'last changed', link: 'read on', skill: 'from', library: 'added on' };
 const where = (hit: Hit) => `[${WHERE[hit.kind]}: ${hit.title}${hit.at && WHEN[hit.kind] ? `, ${WHEN[hit.kind]} ${shortDay(hit.at)}` : ''}]`;
 
 // Looking things up by meaning, inside the same limits as everything else: a person finds only what they may read.

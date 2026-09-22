@@ -2,22 +2,26 @@ import { useReactFlow } from '@xyflow/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Hit } from '../../shared/model';
 import { useAddCard } from '../addCard';
-import { fileUrl, getThreads, search } from '../api';
+import { fileUrl, getThreads, search, searchNotes } from '../api';
 import { emit } from '../bus';
 import { labelOf } from '../nodes/RoomSide';
 import type { StageNode } from '../stage';
 import { KEYS, suggest, type Action, type Suggestion } from './commands';
+import { openNote } from '../library';
 import { overlay, showDecision, showPlaybook, showThread } from './store';
 
-const WHERE: Record<Hit['kind'], string> = { doc: 'Doc', chat: 'Conversation', memory: 'Memory', decision: 'Decision', file: 'File', link: 'Web page', skill: 'Playbook' };
+const WHERE: Record<Hit['kind'], string> = { doc: 'Doc', chat: 'Conversation', memory: 'Memory', decision: 'Decision', file: 'File', link: 'Web page', skill: 'Playbook', library: 'Note' };
 // Said quietly, between where a hit lives and what it says: a search that reaches back a year should not hand the
 // founder something from last spring looking exactly like something from this morning.
 const date = (at: number) => new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 const fromHit = (hit: Hit): Suggestion => ({
   section: 'In the workspace', label: hit.title, hint: `${WHERE[hit.kind]}${hit.at ? ` · ${date(hit.at)}` : ''} · ${hit.text.replace(/\s+/g, ' ').slice(0, 110)}`,
   action: hit.kind === 'chat' ? { do: 'thread', id: hit.id } : hit.kind === 'decision' ? { do: 'decision', id: hit.id } : hit.kind === 'file' ? { do: 'file', path: hit.id }
-    : hit.kind === 'memory' ? { do: 'focus', id: hit.id } : { do: 'jump', id: hit.id },
+    : hit.kind === 'memory' ? { do: 'focus', id: hit.id } : hit.kind === 'library' ? { do: 'note', id: hit.id } : { do: 'jump', id: hit.id },
 });
+// A passage of one of the founder's own notes. It says which note and which heading it was under, because that is how
+// they will recognise it, and pressing it opens the note to be read.
+const fromNote = (hit: Hit): Suggestion => ({ section: 'Notes', label: hit.title, hint: hit.text.replace(/\s+/g, ' ').slice(0, 110), action: { do: 'note', id: hit.id } });
 
 // One bar for everything: type a few letters of a name, a command in plain words, or what you are looking for.
 // Patterns and names answer at once; the workspace search joins a moment later. Nothing typed here is ever guessed at.
@@ -26,6 +30,7 @@ export function CommandBar() {
   const addCard = useAddCard();
   const [input, setInput] = useState('');
   const [hits, setHits] = useState<Hit[]>([]);
+  const [notes, setNotes] = useState<Hit[]>([]);
   const [answer, setAnswer] = useState('');
   const [at, setAt] = useState(0);
   const list = useRef<HTMLUListElement>(null);
@@ -33,17 +38,21 @@ export function CommandBar() {
   const known = useMemo(() => ({ cards: getNodes().map((node) => ({ id: node.id, type: node.type ?? '', label: labelOf(node), role: node.type === 'room' ? node.data.role : undefined })) }), [getNodes]);
   const typed = useMemo(() => suggest(input, known), [input, known]);
   // What the founder asked for outright comes first, then what the workspace holds, then the offers to ask someone.
+  // The founder's own notes rank above the rest of the workspace: they wrote them to be worked from.
   const offered = useMemo(() => {
-    const found = hits.map(fromHit);
-    return input.trim().length < 3 ? typed : [...typed.filter((one) => !one.fallback), ...found, ...typed.filter((one) => one.fallback)];
-  }, [typed, hits, input]);
+    if (input.trim().length < 3) return typed;
+    return [...typed.filter((one) => !one.fallback), ...notes.map(fromNote), ...hits.map(fromHit), ...typed.filter((one) => one.fallback)];
+  }, [typed, hits, notes, input]);
 
   useEffect(() => {
     setAt(0); setAnswer('');
     const asked = input.trim();
-    if (asked.length < 3) { setHits([]); return; }
+    if (asked.length < 3) { setHits([]); setNotes([]); return; }
     const stop = new AbortController();
-    const soon = setTimeout(() => { search(asked, stop.signal).then((found) => setHits(found.hits.slice(0, 6))).catch(() => {}); }, 220);
+    const soon = setTimeout(() => {
+      search(asked, stop.signal).then((found) => setHits(found.hits.slice(0, 6))).catch(() => {});
+      searchNotes(asked, stop.signal).then((found) => setNotes(found.hits.slice(0, 5))).catch(() => {});
+    }, 220);
     return () => { clearTimeout(soon); stop.abort(); };
   }, [input]);
   useEffect(() => { list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }); }, [at]);
@@ -72,6 +81,7 @@ export function CommandBar() {
     if (action.do === 'thread') { showThread(action.id); overlay.open({ kind: 'panel', name: 'messages' }); }
     if (action.do === 'decision') { showDecision(action.id); overlay.open({ kind: 'panel', name: 'decisions' }); }
     if (action.do === 'new-decision') { showDecision('new'); overlay.open({ kind: 'panel', name: 'decisions' }); }
+    if (action.do === 'note') openNote(action.id);
     if (action.do === 'file') window.open(fileUrl(action.path), '_blank', 'noreferrer');
     if (action.do === 'fit') void fitView({ duration: 450, padding: 0.15, maxZoom: 1 });
     if (action.do === 'keys') overlay.open({ kind: 'panel', name: 'keys' });

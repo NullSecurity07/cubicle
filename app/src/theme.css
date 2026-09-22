@@ -683,6 +683,46 @@ button.msg--learned:hover { color: var(--text); background: rgba(255, 255, 255, 
 .dock .dock__needs { position: relative; }
 .dock .dock__needs.is-waiting { color: var(--needs); }
 .dock__needs b { position: absolute; top: 3px; right: 2px; min-width: 15px; height: 15px; box-sizing: border-box; padding: 0 4px; border-radius: 8px; background: var(--needs); color: #17120a; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; font-variant-numeric: tabular-nums; }
+/* A note out of the library, on the stage: what it is called, what it is about, how big it is, and a way in. */
+.library-card { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; cursor: auto; }
+.library-card__tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.library-card__tags li { border: 1px solid var(--card-border); border-radius: 7px; padding: 2px 7px; background: rgba(255, 255, 255, 0.05); font-size: 11px; color: var(--muted); }
+.library-card__size { margin: 0; font-size: 11.5px; letter-spacing: 0.01em; color: var(--muted); font-variant-numeric: tabular-nums; }
+.library-card__hint { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+.library-card__open { align-self: flex-start; margin-top: auto; border: 1px solid var(--card-border); border-radius: 8px; padding: 5px 14px; background: rgba(255, 255, 255, 0.07); color: var(--text); font: inherit; font-size: 12px; font-weight: 550; cursor: pointer; }
+.library-card__open:hover { background: rgba(255, 255, 255, 0.14); }
+
+/* The library: the notes kept, and the two ways to keep another. */
+.library__ways { display: flex; gap: 8px; margin-bottom: 14px; }
+.library__ways button { border: 1px solid var(--card-border); border-radius: 9px; padding: 7px 14px; background: rgba(255, 255, 255, 0.06); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 550; cursor: pointer; }
+.library__ways button:hover { background: rgba(255, 255, 255, 0.13); }
+.library__empty { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--muted); }
+.library__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.library__note { display: flex; align-items: center; gap: 8px; border-radius: 10px; }
+.library__note:hover { background: rgba(255, 255, 255, 0.05); }
+.library__pick { flex: 1; min-width: 0; display: grid; grid-template-columns: 16px 1fr; align-items: baseline; gap: 2px 9px; border: 0; border-radius: 10px; padding: 9px 10px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.library__pick .doc-icon { grid-row: span 2; align-self: center; }
+.library__pick b { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library__pick small { font-size: 11.5px; color: var(--muted); }
+.library__acts { flex: none; display: flex; gap: 6px; padding-right: 8px; opacity: 0; transition: opacity 0.12s; }
+.library__note:hover .library__acts, .library__acts:focus-within { opacity: 1; }
+.library__acts button { border: 0; border-radius: 8px; padding: 5px 10px; background: rgba(255, 255, 255, 0.1); color: var(--text); font: inherit; font-size: 11.5px; cursor: pointer; }
+.library__acts button:hover { background: rgba(255, 255, 255, 0.18); }
+.library__paste { display: flex; flex-direction: column; gap: 9px; }
+.library__paste input, .library__paste textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--card-border); border-radius: 9px; padding: 9px 11px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 13px; line-height: 1.55; }
+.library__paste textarea { resize: vertical; }
+.library__paste input:focus, .library__paste textarea:focus { border-color: rgba(78, 140, 255, 0.7); }
+.library__end { display: flex; justify-content: flex-end; gap: 8px; }
+.library__end button { border: 0; border-radius: 9px; padding: 7px 16px; background: rgba(255, 255, 255, 0.1); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 550; cursor: pointer; }
+.library__end .primary { background: var(--accent); color: #fff; }
+.library__end .primary:disabled { opacity: 0.35; cursor: default; }
+.library__words { font-size: 13.5px; line-height: 1.6; }
+
+/* A file that could not join the library, said where it was dropped. */
+.drop-problem { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 10px; margin: 0; border: 1px solid var(--card-border); border-radius: 10px; padding: 8px 10px 8px 14px; background: rgba(16, 17, 20, 0.9); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); color: #f0968e; font-size: 12.5px; }
+.drop-problem button { border: 0; border-radius: 7px; padding: 2px 8px; background: transparent; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; }
+.drop-problem button:hover { color: var(--text); background: rgba(255, 255, 255, 0.1); }
+
 @keyframes panel-in { from { opacity: 0; transform: translateX(-50%) scale(0.985) translateY(6px); } }
 @keyframes shade-in { from { opacity: 0; } }
 @keyframes sheet-in { from { opacity: 0; transform: scale(0.985) translateY(6px); } }

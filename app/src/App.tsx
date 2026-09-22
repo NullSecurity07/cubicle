@@ -9,6 +9,7 @@ import { Dock } from './Dock';
 import { Missions } from './Missions';
 import { edgeTypes } from './edges';
 import { nodeTypes } from './nodes';
+import { NoteDrop } from './nodes/LibraryCard';
 import { Overlay } from './overlay/Overlay';
 import { freeSpot } from './place';
 import { CARD, WIRE, fromFlow, toFlow, type StageNode } from './stage';
@@ -77,6 +78,7 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
       <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="rgba(255, 255, 255, 0.24)" bgColor="transparent" />
       <Dock />
       <Missions />
+      <NoteDrop />
       <Overlay />
     </ReactFlow>
     </SyncContext.Provider>

@@ -14,6 +14,9 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean }
   // Small things that are context when wired to a person: a note's words, a picture (for models that can see), a web page's text.
   // A picture card starts empty — the founder drops a file on it, or wires it to the studio whose work it shows.
   | { kind: 'note'; text: string; color?: string } | { kind: 'image'; path?: string } | { kind: 'link'; url: string; title?: string }
+  // A note out of the founder's library. The words live in `<workspace>/library`; the card only says which note it is,
+  // and a person wired to it is given the passages of that note which answer the question in front of them.
+  | { kind: 'library'; noteId: string }
   // Studios: the founder, or a wired person, says what they want and the server makes it. Only what was asked for lives
   // on the card; what came out lives in a sidecar the server owns.
   | { kind: 'imagegen'; prompt?: string; shape?: Shape } | { kind: 'voicegen'; text?: string; voice?: string }
@@ -101,7 +104,7 @@ export type Decision = {
 
 // One thing recall found. `kind` and `id` say where it lives (a doc, a room's chat or memory, a decision, a shared file,
 // a link card's page, a skill in the playbook); `roomId` is set for what belongs to one person.
-export type Hit = { kind: 'doc' | 'chat' | 'memory' | 'decision' | 'file' | 'link' | 'skill'; id: string; title: string; text: string; score: number; roomId?: string; at?: number };
+export type Hit = { kind: 'doc' | 'chat' | 'memory' | 'decision' | 'file' | 'link' | 'skill' | 'library'; id: string; title: string; text: string; score: number; roomId?: string; at?: number };
 
 // One thing the people learned to do, written by whoever learned it and kept in the one playbook everybody shares.
 // `off` is the founder switching it out of every prompt; `stale` is the curator setting aside what nobody has used.

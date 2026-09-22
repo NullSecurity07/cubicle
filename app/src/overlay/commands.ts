@@ -4,12 +4,14 @@ import { sliceCommands } from '../slices';
 // `run` is the one a UI slice brings: the bar closes and calls it, without knowing what it does.
 export type Action =
   | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'videogen' | 'browser' | 'project' | 'board'; data?: Record<string, string> }
-  | { do: 'focus' | 'jump'; id: string } | { do: 'panel'; name: 'needs' | 'messages' | 'decisions' | 'playbook' }
+  | { do: 'focus' | 'jump'; id: string } | { do: 'panel'; name: 'needs' | 'messages' | 'decisions' | 'playbook' | 'library' }
+  // One note out of the founder's library, opened to be read.
+  | { do: 'note'; id: string }
   | { do: 'ask'; roomId: string; text: string } | { do: 'thread' | 'decision'; id: string } | { do: 'file'; path: string }
   | { do: 'new-decision' } | { do: 'idle' } | { do: 'fit' } | { do: 'keys' } | { do: 'run'; run: () => void };
 // `fallback`: nothing matched, so the text is only offered to people. What was found in the workspace ranks above these,
 // and below everything the founder asked for outright.
-export type Suggestion = { section: 'Do' | 'On the stage' | 'In the workspace' | 'Ask'; label: string; hint?: string; action: Action; fallback?: true };
+export type Suggestion = { section: 'Do' | 'On the stage' | 'Notes' | 'In the workspace' | 'Ask'; label: string; hint?: string; action: Action; fallback?: true };
 export type Known = { cards: { id: string; type: string; label: string; role?: string }[] };
 // What a UI slice adds to the bar: the suggestion the bar already knows how to show, and when to show it. `when` is
 // asked with what was typed, tidied and in lower case; a command without one is offered only on an empty bar.
@@ -28,6 +30,7 @@ const STARTERS: Suggestion[] = [
   { section: 'Do', label: 'Messages', hint: 'Every conversation', action: { do: 'panel', name: 'messages' } },
   { section: 'Do', label: 'Decisions', hint: 'What you decided, and why', action: { do: 'panel', name: 'decisions' } },
   { section: 'Do', label: 'Playbook', hint: 'What the people learned', action: { do: 'panel', name: 'playbook' } },
+  { section: 'Do', label: 'Notes', hint: 'What you learned', action: { do: 'panel', name: 'library' } },
   { section: 'Do', label: 'Add a person', action: { do: 'add', kind: 'room' } },
   { section: 'Do', label: 'Add a doc', action: { do: 'add', kind: 'doc' } },
   { section: 'Do', label: 'Record a decision', action: { do: 'new-decision' } },
@@ -68,12 +71,13 @@ export function suggest(input: string, known: Known, extra: Command[] = sliceCom
 
   if (/^(needs?( you| me)?|what needs me|inbox|approvals?|waiting)$/.test(low)) found.push(STARTERS[0]);
   if (/^(messages?|conversations?|chats?|threads?)$/.test(low)) found.push(STARTERS[1]);
-  if (/^(record|log|new|add)( a)? decision$/.test(low)) found.push(STARTERS[6]);
+  if (/^(record|log|new|add)( a)? decision$/.test(low)) found.push(STARTERS[7]);
   else if (/^decisions?( log)?$/.test(low)) found.push(STARTERS[2]);
   if (/^(playbook|skills?|what (we|they|the people) learned|how we work)$/.test(low)) found.push(STARTERS[3]);
-  if (/^who('s| is)? (idle|free|busy|working)$/.test(low)) found.push(STARTERS[7]);
-  if (/^(show (everything|all)|fit|zoom out|overview)$/.test(low)) found.push(STARTERS[8]);
-  if (/^(shortcuts?|keys|keyboard( shortcuts)?|help)$/.test(low)) found.push(STARTERS[9]);
+  if (/^(notes?|library|my notes|what i learned)$/.test(low)) found.push(STARTERS[4]);
+  if (/^who('s| is)? (idle|free|busy|working)$/.test(low)) found.push(STARTERS[8]);
+  if (/^(show (everything|all)|fit|zoom out|overview)$/.test(low)) found.push(STARTERS[9]);
+  if (/^(shortcuts?|keys|keyboard( shortcuts)?|help)$/.test(low)) found.push(STARTERS[10]);
 
   if (!opening && !target) for (const card of named(low).slice(0, 5)) found.push({ section: 'On the stage', label: card.label, hint: card.role ?? card.type, action: { do: 'jump', id: card.id } });
   // A few letters of a starter ("dec", "mess") find it too.
