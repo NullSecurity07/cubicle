@@ -6,7 +6,9 @@ import { listen } from './bus';
 import { useAttention } from './overlay/attention';
 import { overlay } from './overlay/store';
 import { useAddCard, type CardKind } from './addCard';
+import { openFrameworks } from './frameworks';
 import { openLibrary } from './library';
+import { BlocksIcon } from './nodes/FrameworksPanel';
 
 // One ring per model provider: how much of today's free quota is left. Amber under a fifth, red when gone.
 function Quota() {
@@ -94,6 +96,9 @@ export function Dock() {
           </div>
         )}
       </div>
+      <button type="button" aria-label="Frameworks" title="Frameworks: teams that land ready to work" onClick={() => { setMore(false); openFrameworks(); }}>
+        <BlocksIcon />
+      </button>
       <span className="dock__gap" aria-hidden="true" />
       <button type="button" aria-label="Command bar" title="Find or do anything (Ctrl K)" onClick={() => overlay.open({ kind: 'panel', name: 'command' })}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.200" /><path d="M13 13l3.800 3.800" /></svg>

@@ -10,6 +10,7 @@ import { Missions } from './Missions';
 import { edgeTypes } from './edges';
 import { nodeTypes } from './nodes';
 import { NoteDrop } from './nodes/LibraryCard';
+import { SelectionMenu } from './SelectionMenu';
 import { Overlay } from './overlay/Overlay';
 import { freeSpot } from './place';
 import { CARD, WIRE, fromFlow, toFlow, type StageNode } from './stage';
@@ -79,6 +80,7 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
       <Dock />
       <Missions />
       <NoteDrop />
+      <SelectionMenu />
       <Overlay />
     </ReactFlow>
     </SyncContext.Provider>

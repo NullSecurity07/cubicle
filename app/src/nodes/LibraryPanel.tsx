@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { noteSize, type Note } from '../../shared/library';
+import { noteLength, type Note } from '../../shared/library';
 import { useAddCard } from '../addCard';
 import { addNote, getNote, removeNote } from '../api';
 import { NOTE_FILE, openNote, refreshNotes, titleOf, useNotes } from '../library';
@@ -45,6 +45,9 @@ export function LibraryPanel() {
   const picker = useRef<HTMLInputElement>(null);
   const [adding, setAdding] = useState(false);
   const [problem, setProblem] = useState('');
+  // Which note is asking "really?". Removing one takes two presses and no dialog over the whole window: it is a file
+  // of the founder's, and the second press is right where the first one was.
+  const [sure, setSure] = useState<string | null>(null);
 
   const place = (note: Note) => { overlay.close({ kind: 'panel', name: 'library' }); addCard('library', { noteId: note.id }); };
   async function added(note: Note) { setAdding(false); await refreshNotes(); place(note); }
@@ -54,7 +57,10 @@ export function LibraryPanel() {
     try { setProblem(''); await added(await addNote({ title: titleOf(file.name), text: await file.text(), source: 'file' })); }
     catch (error) { setProblem((error as Error).message); }
   }
+  // A note a framework was built from cannot go; the server says which framework is holding it, and that sentence is
+  // shown exactly as it came, because it already names the thing the founder has to deal with.
   async function forget(note: Note) {
+    setSure(null);
     try { setProblem(''); await removeNote(note.id); await refreshNotes(); } catch (error) { setProblem((error as Error).message); }
   }
 
@@ -75,11 +81,21 @@ export function LibraryPanel() {
                   <button type="button" className="library__pick" onClick={() => place(note)}>
                     <BookIcon />
                     <b>{note.title}</b>
-                    <small>{noteSize(note.bytes)} · added {when(note.addedAt)}{note.tags.length ? ` · ${note.tags.join(', ')}` : ''}</small>
+                    <small>{noteLength(note)} · added {when(note.addedAt)}{note.tags.length ? ` · ${note.tags.join(', ')}` : ''}</small>
                   </button>
-                  <div className="library__acts">
-                    <button type="button" onClick={() => openNote(note.id)}>Read</button>
-                    <button type="button" onClick={() => void forget(note)}>Delete</button>
+                  <div className={sure === note.id ? 'library__acts is-asking' : 'library__acts'}>
+                    {sure === note.id ? (
+                      <>
+                        <span>Remove it?</span>
+                        <button type="button" onClick={() => void forget(note)}>Remove</button>
+                        <button type="button" onClick={() => setSure(null)}>Keep</button>
+                      </>
+                    ) : (
+                      <>
+                        <button type="button" onClick={() => openNote(note.id)}>Read</button>
+                        <button type="button" onClick={() => { setProblem(''); setSure(note.id); }}>Remove</button>
+                      </>
+                    )}
                   </div>
                 </li>
               ))}
@@ -108,7 +124,7 @@ export function NotePanel() {
   }, [id]);
 
   return (
-    <PanelShell name="note" title={note?.title ?? 'Note'} note={note ? `${noteSize(note.bytes)} · added ${when(note.addedAt)}` : undefined} wide>
+    <PanelShell name="note" title={note?.title ?? 'Note'} note={note ? `${noteLength(note)} · added ${when(note.addedAt)}` : undefined} wide>
       {problem && <p className="msg--problem">{problem}</p>}
       {note && <div className="md library__words"><Words text={note.text} /></div>}
     </PanelShell>

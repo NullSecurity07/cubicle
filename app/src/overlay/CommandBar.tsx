@@ -1,5 +1,6 @@
 import { useReactFlow } from '@xyflow/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { plainLine } from '../../shared/library';
 import type { Hit } from '../../shared/model';
 import { useAddCard } from '../addCard';
 import { fileUrl, getThreads, search, searchNotes } from '../api';
@@ -21,7 +22,7 @@ const fromHit = (hit: Hit): Suggestion => ({
 });
 // A passage of one of the founder's own notes. It says which note and which heading it was under, because that is how
 // they will recognise it, and pressing it opens the note to be read.
-const fromNote = (hit: Hit): Suggestion => ({ section: 'Notes', label: hit.title, hint: hit.text.replace(/\s+/g, ' ').slice(0, 110), action: { do: 'note', id: hit.id } });
+const fromNote = (hit: Hit): Suggestion => ({ section: 'Notes', label: hit.title, hint: plainLine(hit.text).slice(0, 110), action: { do: 'note', id: hit.id } });
 
 // One bar for everything: type a few letters of a name, a command in plain words, or what you are looking for.
 // Patterns and names answer at once; the workspace search joins a moment later. Nothing typed here is ever guessed at.

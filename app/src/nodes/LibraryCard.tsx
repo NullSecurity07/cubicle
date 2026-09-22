@@ -1,6 +1,6 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useState } from 'react';
-import { noteSize } from '../../shared/library';
+import { noteLength } from '../../shared/library';
 import { useAddCard } from '../addCard';
 import { addNote } from '../api';
 import { NOTE_FILE, openNote, refreshNotes, titleOf, useNotes } from '../library';
@@ -31,7 +31,7 @@ export function LibraryNode({ id, data, selected }: NodeProps<LibraryNodeType>) 
         {note ? (
           <>
             {note.tags.length > 0 && <ul className="library-card__tags">{note.tags.map((tag) => <li key={tag}>{tag}</li>)}</ul>}
-            <p className="library-card__size">{noteSize(note.bytes)} · {note.source === 'file' ? 'from a file' : 'pasted in'}</p>
+            <p className="library-card__size">{noteLength(note)} · {note.source === 'file' ? 'from a file' : 'pasted in'}</p>
             <p className="library-card__hint">Whoever is wired to this reads the parts of it that answer their question.</p>
             <button type="button" className="library-card__open" onClick={() => openNote(note.id)}>Open</button>
           </>
