@@ -57,7 +57,9 @@ test('a note pasted into the library stands on the stage and answers from the pa
   // The dock's way in: a note is picked out of the library, not made blank on the canvas.
   await page.getByLabel('More cards').click();
   await page.getByRole('menuitem', { name: 'Add note from library' }).click();
-  await expect(panel(page)).toContainText('Nothing here yet.');
+  // The library is not empty on a first start any more — the built-in framework's note is in it — so this journey
+  // looks for its own note rather than for an empty shelf.
+  await expect(panel(page).getByRole('button', { name: TITLE })).toHaveCount(0);
   await panel(page).getByRole('button', { name: 'Paste' }).click();
   await panel(page).getByLabel('Note title').fill(TITLE);
   await panel(page).getByLabel('Note', { exact: true }).fill(NOTE);

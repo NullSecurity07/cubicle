@@ -1,4 +1,5 @@
 import type { Attachment, Attention, BoardEvent, Decision, Hit, Media, MediaAsset, MediaEvent, Mission, ChatEvent, ChatMessage, ModelInfo, RoomEvent, Skill, SkillEvent, Stage, Task, Thread } from '../shared/model';
+import type { Framework, Placed } from '../shared/frameworks';
 import type { Note } from '../shared/library';
 import { feed, snapshot } from './feed';
 
@@ -93,6 +94,15 @@ export const getNote = (id: string) => request<Note & { text: string }>(`/api/li
 export const addNote = (note: { title: string; text: string; tags?: string[]; source?: 'file' | 'paste' }) => request<Note>('/api/library', send('POST', note));
 export const removeNote = (id: string) => request(`/api/library/${id}`, send('DELETE'));
 export const searchNotes = (query: string, signal?: AbortSignal) => request<{ hits: Hit[] }>(`/api/library/search?q=${encodeURIComponent(query)}`, { signal });
+
+// Frameworks: teams the founder does not have to build twice. Placing one hands back a piece of stage with ids of its
+// own, which the window merges and saves the way it saves a card it has just added.
+export const getFrameworks = () => request<Framework[]>('/api/frameworks');
+export const placeFramework = (id: string, at: { x: number; y: number }) => request<Placed>(`/api/frameworks/${id}/place`, send('POST', { at }));
+// Two ways to save one: the ids of what is selected on the canvas, or the whole framework back with something changed
+// in it (its test cases).
+export const saveFramework = (id: string, framework: Framework | { name: string; intent?: string; ids: string[] }) => request<Framework>(`/api/frameworks/${id}`, put(framework));
+export const removeFramework = (id: string) => request(`/api/frameworks/${id}`, send('DELETE'));
 
 export const getMissions = () => request<{ dismissed: boolean; missions: Mission[] }>('/api/missions');
 export const dismissMissions = () => request('/api/missions/dismiss', { method: 'POST' });

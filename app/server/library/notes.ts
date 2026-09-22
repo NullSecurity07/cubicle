@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Note, NoteSource } from '../../shared/library.ts';
+import { wordsIn, type Note, type NoteSource } from '../../shared/library.ts';
 import { chunksOf, type Piece } from '../recall.ts';
 
 export type Library = ReturnType<typeof createLibrary>;
@@ -101,7 +101,7 @@ export function createLibrary(workspace: string, now: () => number = Date.now) {
       if (bytes > MOST_BYTES) throw new Error(`That note is ${kb(bytes)}, and the library takes notes up to ${kb(MOST_BYTES)}. Split it, or keep it as a doc on the stage.`);
       const note: Note = {
         id: idOf(title), title, tags: (asked.tags ?? []).map((tag) => tag.trim()).filter(Boolean).slice(0, 8),
-        source: asked.source === 'file' ? 'file' : 'paste', addedAt: now(), bytes, hash: createHash('sha1').update(text).digest('hex'),
+        source: asked.source === 'file' ? 'file' : 'paste', addedAt: now(), bytes, words: wordsIn(text), hash: createHash('sha1').update(text).digest('hex'),
       };
       await mkdir(folder, { recursive: true });
       await writeFile(path(note.id), text);
